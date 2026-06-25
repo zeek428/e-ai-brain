@@ -10,6 +10,14 @@ def uses_repository_context(current_store: Any) -> bool:
     return getattr(current_store, "repository", None) is not None
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
 def latest_graph_run(current_store: Any, task: dict[str, Any]) -> dict[str, Any] | None:
     graph_run_ids = task.get("graph_run_ids", [])
     if not graph_run_ids:
@@ -41,7 +49,7 @@ def write_graph_checkpoint(
         "created_at": datetime.now(UTC).isoformat(),
     }
     if not uses_repository_context(current_store):
-        current_store.graph_checkpoints[checkpoint_id] = checkpoint
+        _memory_dict(current_store, "graph_checkpoints")[checkpoint_id] = checkpoint
     graph_run["checkpoint_id"] = checkpoint_id
     graph_run["current_step"] = current_step
     graph_run["state_snapshot"] = current_store.snapshot(snapshot)
@@ -96,7 +104,7 @@ def start_graph_run(
         "completed_at": None,
     }
     if not uses_repository_context(current_store):
-        current_store.graph_runs[graph_run_id] = graph_run
+        _memory_dict(current_store, "graph_runs")[graph_run_id] = graph_run
     task.setdefault("graph_run_ids", []).append(graph_run_id)
     checkpoint = write_graph_checkpoint(
         current_store,

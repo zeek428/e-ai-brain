@@ -8,6 +8,14 @@ def uses_repository_context(current_store: Any) -> bool:
     return getattr(current_store, "repository", None) is not None
 
 
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
 def save_task_state_records(
     current_store: Any,
     *,
@@ -108,8 +116,9 @@ def record_audit_event(
     subject_id: str | None = None,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if not uses_repository_context(current_store):
-        return current_store.audit(
+    audit = getattr(current_store, "audit", None)
+    if callable(audit):
+        return audit(
             event_type=event_type,
             actor_id=actor_id,
             ai_task_id=ai_task_id,
@@ -117,7 +126,8 @@ def record_audit_event(
             subject_id=subject_id,
             payload=payload,
         )
-    return {
+    audit_events = _memory_list(current_store, "audit_events")
+    event = {
         "id": current_store.new_id("audit"),
         "event_type": event_type,
         "actor_id": actor_id,
@@ -125,9 +135,11 @@ def record_audit_event(
         "subject_type": subject_type,
         "subject_id": subject_id,
         "payload": payload or {},
-        "sequence": len(current_store.audit_events) + 1,
+        "sequence": len(audit_events) + 1,
         "created_at": datetime.now(UTC).isoformat(),
     }
+    audit_events.append(event)
+    return event
 
 
 def save_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:

@@ -19,6 +19,14 @@ from app.services.model_gateway import (
 settings = get_settings()
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
 def code_review_executor_payload(
     current_store: Any,
     task: dict[str, Any],
@@ -225,6 +233,6 @@ def create_code_review_report(
         "gitlab_writeback_performed": False,
     }
     if not uses_repository_context(current_store):
-        current_store.code_review_reports[report_id] = report
+        _memory_dict(current_store, "code_review_reports")[report_id] = report
     task["code_review_report_id"] = report_id
     return report

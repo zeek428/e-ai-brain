@@ -7,6 +7,7 @@ from app.api.deps import api_error
 from app.core.listing import ensure_list_enum
 from app.services.bug_lifecycle import BUG_SEVERITIES
 from app.services.task_graph_runtime import transition_latest_graph_run
+from app.services.task_persistence_helpers import record_audit_event
 
 REQUIREMENT_STATUSES = {
     "accepted",
@@ -39,6 +40,14 @@ REQUIREMENT_STATUS_AFTER_TASK_COMPLETED = {
 
 def uses_repository_context(current_store: Any) -> bool:
     return getattr(current_store, "repository", None) is not None
+
+
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
 
 
 def set_requirement_status(requirement: dict[str, Any], status: str) -> None:
@@ -147,9 +156,10 @@ def create_task_suggested_bugs(
             "created_at": now,
             "updated_at": now,
         }
-        current_store.bugs[bug_id] = bug
+        _memory_dict(current_store, "bugs")[bug_id] = bug
         created_bug_ids.append(bug_id)
-        current_store.audit(
+        record_audit_event(
+            current_store,
             event_type="bug.created",
             actor_id=actor_id,
             ai_task_id=task["id"],
@@ -183,7 +193,8 @@ def create_automated_testing_bugs(
     )
     if created_bug_ids:
         task["generated_bug_ids"] = created_bug_ids
-        current_store.audit(
+        record_audit_event(
+            current_store,
             event_type="automated_testing.bugs_created",
             actor_id=actor_id,
             ai_task_id=task["id"],
@@ -213,7 +224,8 @@ def create_post_release_bugs(
     )
     if created_bug_ids:
         task["generated_bug_ids"] = created_bug_ids
-        current_store.audit(
+        record_audit_event(
+            current_store,
             event_type="post_release_analysis.bugs_created",
             actor_id=actor_id,
             ai_task_id=task["id"],
@@ -255,7 +267,7 @@ def create_knowledge_deposit(current_store: Any, task: dict[str, Any]) -> dict[s
         "updated_at": now,
     }
     if not uses_repository_context(current_store):
-        current_store.knowledge_deposits[deposit_id] = deposit
+        _memory_dict(current_store, "knowledge_deposits")[deposit_id] = deposit
     return deposit
 
 
@@ -291,7 +303,8 @@ def complete_review_with_edited_approval(
         current_step="complete_archive",
         state_snapshot={"task_status": task["status"], "review_id": review_id},
     )
-    current_store.audit(
+    record_audit_event(
+        current_store,
         event_type="review.submitted",
         actor_id=actor_id,
         ai_task_id=task["id"],

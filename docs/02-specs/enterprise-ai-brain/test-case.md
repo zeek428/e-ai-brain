@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.677 |
+| 功能版本 | v1.1.678 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.678 | 2026-06-25 | 补充任务运行与评审产物 fallback 收口验收：任务审计 helper、Graph run/checkpoint、代码评审报告、任务确认后派生 Bug 和知识沉淀不得直接写 `current_store` 业务集合或调用 `current_store.audit()`；MemoryStore 测试 fallback 必须通过集合 helper 和审计 helper 保持可查询与 audit_events 切片语义；`test_task_runtime_fallbacks.py`、任务回归测试与 DB-first 扫描必须通过 | Codex |
 | v1.1.677 | 2026-06-25 | 补充产品配置上下文 fallback 收口验收：`save_requirement_record` 不得直接写 `current_store.requirements`，`record_audit_event` 不得直接调用 `current_store.audit()`；无 `audit()` 方法的轻量测试上下文必须通过审计事件列表 helper 写入事件；`test_product_config_context.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.676 | 2026-06-25 | 补充用户反馈 fallback 收口验收：反馈创建、编辑和转需求不得直接写 `current_store.user_feedback` / `current_store.requirements`；MemoryStore 测试 fallback 必须通过 `save_user_feedback_record` 和 `save_user_feedback_requirement_conversion` 写入反馈、需求和 linked 状态；`test_user_feedback.py`、用户洞察持久化测试与 DB-first 扫描必须通过 | Codex |
 | v1.1.675 | 2026-06-25 | 补充用户洞察审计 helper fallback 收口验收：`record_audit_event` 在轻量上下文无 `audit()` 方法时不得直接 append `current_store.audit_events`；必须通过审计事件列表 helper 写入并保留事件 ID、payload 和返回值一致性；`test_user_insights_persistence.py` 与 DB-first 扫描必须通过 | Codex |
