@@ -83,6 +83,22 @@ def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str
     return collection
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record_id: Any,
+) -> dict[str, Any] | None:
+    if record_id is None:
+        return None
+    record = _read_memory_dict(current_store, collection_name).get(str(record_id))
+    return record if isinstance(record, dict) else None
+
+
 def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     if not isinstance(collection, list):
@@ -213,16 +229,18 @@ def public_git_repository(repository: dict[str, Any]) -> dict[str, Any]:
 
 
 def requirement_product_context(current_store: Any, requirement: dict[str, Any]) -> dict[str, Any]:
-    product = current_store.products[requirement["product_id"]]
+    product = _read_memory_record(current_store, "products", requirement["product_id"])
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Product not found")
     version = (
-        current_store.product_versions.get(requirement["version_id"])
+        _read_memory_record(current_store, "product_versions", requirement["version_id"])
         if requirement.get("version_id")
         else None
     )
     module = next(
         (
             item
-            for item in current_store.product_modules.values()
+            for item in _read_memory_dict(current_store, "product_modules").values()
             if item["product_id"] == product["id"]
             and item["code"] == requirement.get("module_code")
         ),
@@ -230,12 +248,12 @@ def requirement_product_context(current_store: Any, requirement: dict[str, Any])
     )
     repositories = [
         public_git_repository(repository)
-        for repository in current_store.product_git_repositories.values()
+        for repository in _read_memory_dict(current_store, "product_git_repositories").values()
         if repository["product_id"] == product["id"] and repository.get("status") == "active"
     ]
     related_systems = [
         related_system
-        for related_system in current_store.related_systems.values()
+        for related_system in _read_memory_dict(current_store, "related_systems").values()
         if related_system.get("product_id") == product["id"]
         and related_system.get("status") == "active"
     ]
@@ -259,7 +277,7 @@ def create_requirement_result(
     require_roles(user, {"product_owner", "rd_owner"})
     title = ensure_non_blank(payload.title, "title")
     content = ensure_non_blank(payload.content, "content")
-    product = current_store.products.get(payload.product_id)
+    product = _read_memory_record(current_store, "products", payload.product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
@@ -271,7 +289,7 @@ def create_requirement_result(
     )
     if payload.module_code is not None and not any(
         module["product_id"] == payload.product_id and module["code"] == payload.module_code
-        for module in current_store.product_modules.values()
+        for module in _read_memory_dict(current_store, "product_modules").values()
     ):
         raise api_error(404, "NOT_FOUND", "Product module not found")
     if payload.source not in REQUIREMENT_SOURCES:
@@ -313,7 +331,7 @@ def patch_requirement_result(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner", "rd_owner"})
-    requirement = current_store.requirements.get(requirement_id)
+    requirement = _read_memory_record(current_store, "requirements", requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     current_status = canonical_requirement_status(requirement.get("status"))
@@ -330,7 +348,7 @@ def patch_requirement_result(
 
     next_product_id = updates.get("product_id", requirement["product_id"])
     next_version_id = updates.get("version_id", requirement["version_id"])
-    product = current_store.products.get(next_product_id)
+    product = _read_memory_record(current_store, "products", next_product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
@@ -344,7 +362,7 @@ def patch_requirement_result(
     next_module_code = updates.get("module_code", requirement.get("module_code"))
     if next_module_code is not None and not any(
         module["product_id"] == next_product_id and module["code"] == next_module_code
-        for module in current_store.product_modules.values()
+        for module in _read_memory_dict(current_store, "product_modules").values()
     ):
         raise api_error(404, "NOT_FOUND", "Product module not found")
 
@@ -370,7 +388,7 @@ def delete_requirement_result(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner", "rd_owner"})
-    requirement = current_store.requirements.get(requirement_id)
+    requirement = _read_memory_record(current_store, "requirements", requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     if requirement.get("task_ids"):
@@ -460,7 +478,7 @@ def generate_requirement_task_result(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner", "rd_owner"})
-    requirement = current_store.requirements.get(requirement_id)
+    requirement = _read_memory_record(current_store, "requirements", requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     if canonical_requirement_status(requirement.get("status")) != "planned":
