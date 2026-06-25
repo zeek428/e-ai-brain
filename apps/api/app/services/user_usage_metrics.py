@@ -80,14 +80,14 @@ def validate_usage_metric_context(
     product_id: str,
     module_code: str | None = None,
 ) -> None:
-    product = current_store.products.get(product_id)
+    product = _memory_dict(current_store, "products").get(product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
     if module_code is not None and not any(
         module["product_id"] == product_id and module["code"] == module_code
-        for module in current_store.product_modules.values()
+        for module in _memory_dict(current_store, "product_modules").values()
     ):
         raise api_error(404, "NOT_FOUND", "Product module not found")
 
@@ -116,7 +116,7 @@ def list_usage_metrics_response(
         )
         return {"items": items, "total": len(items)}
     items = []
-    for metric in current_store.user_usage_metrics.values():
+    for metric in _user_usage_metrics_collection(current_store).values():
         if product_id is not None and metric.get("product_id") != product_id:
             continue
         if module_code is not None and metric.get("module_code") != module_code:

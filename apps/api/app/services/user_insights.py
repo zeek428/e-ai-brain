@@ -90,6 +90,18 @@ def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any
     return collection
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    return list(_memory_dict(current_store, collection_name).values())
+
+
 def _audit_events_collection(current_store: Any) -> list[dict[str, Any]]:
     return _memory_list(current_store, "audit_events")
 
@@ -212,9 +224,9 @@ def user_insight_rows(current_store: Any) -> list[dict[str, Any]]:
         feedback_items = repository.list_user_feedback()
         iteration_suggestions = repository.list_iteration_plan_suggestions()
     else:
-        usage_metrics = list(current_store.user_usage_metrics.values())
-        feedback_items = list(current_store.user_feedback.values())
-        iteration_suggestions = list(current_store.iteration_plan_suggestions.values())
+        usage_metrics = _memory_records(current_store, "user_usage_metrics")
+        feedback_items = _memory_records(current_store, "user_feedback")
+        iteration_suggestions = _memory_records(current_store, "iteration_plan_suggestions")
     return [
         *(user_insight_projection("使用趋势", item) for item in usage_metrics),
         *(user_insight_projection("用户反馈", item) for item in feedback_items),
@@ -298,4 +310,3 @@ def list_user_insight_items_response(
         started_at=started_at,
         trace_id=trace_id,
     )["data"]
-

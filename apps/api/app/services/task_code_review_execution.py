@@ -14,6 +14,7 @@ from app.services.model_gateway import (
     ModelGatewayCallError,
     ModelGatewayConfigError,
     call_model_gateway_for_task,
+    model_gateway_config_records,
 )
 
 settings = get_settings()
@@ -34,9 +35,9 @@ def code_review_executor_payload(
     public_product_context: Callable[[Any], Any],
 ) -> dict[str, Any]:
     snapshot_id = str(task.get("input_json", {}).get("gitlab_mr_snapshot_id") or "")
-    snapshot = current_store.gitlab_mr_snapshots.get(snapshot_id)
+    snapshot = _memory_dict(current_store, "gitlab_mr_snapshots").get(snapshot_id)
     technical_solution = (
-        current_store.ai_tasks.get(snapshot["technical_solution_task_id"])
+        _memory_dict(current_store, "ai_tasks").get(snapshot["technical_solution_task_id"])
         if snapshot is not None
         else None
     )
@@ -77,7 +78,7 @@ def should_use_model_gateway_code_review_executor(
         return False
     if any(
         item.get("is_default") and item.get("status") == "active"
-        for item in current_store.model_gateway_configs.values()
+        for item in model_gateway_config_records(current_store).values()
     ):
         return True
     return settings.model_gateway_status == "configured"
