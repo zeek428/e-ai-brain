@@ -51,13 +51,13 @@ def validate_iteration_context(
     version_id: str | None = None,
     module_codes: list[str] | None = None,
 ) -> None:
-    product = current_store.products.get(product_id)
+    product = _read_memory_dict(current_store, "products").get(product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
     if version_id is not None:
-        version = current_store.product_versions.get(version_id)
+        version = _read_memory_dict(current_store, "product_versions").get(version_id)
         if version is None or version["product_id"] != product_id:
             raise api_error(404, "NOT_FOUND", "Product version not found")
         if version["status"] == "archived":
@@ -65,7 +65,7 @@ def validate_iteration_context(
     for module_code in module_codes or []:
         if not any(
             module["product_id"] == product_id and module["code"] == module_code
-            for module in current_store.product_modules.values()
+            for module in _read_memory_dict(current_store, "product_modules").values()
         ):
             raise api_error(404, "NOT_FOUND", "Product module not found")
 
@@ -107,6 +107,11 @@ def _memory_collection(current_store: Any, collection_name: str) -> dict[str, di
         collection = {}
         setattr(current_store, collection_name, collection)
     return collection
+
+
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
 
 
 def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
@@ -188,7 +193,7 @@ def collect_iteration_evidence(
             "summary": feedback["content"],
         }
         for feedback in sorted(
-            current_store.user_feedback.values(),
+            _read_memory_dict(current_store, "user_feedback").values(),
             key=lambda item: (item.get("created_at") or "", item["id"]),
         )
         if feedback["product_id"] == product_id
@@ -202,7 +207,7 @@ def collect_iteration_evidence(
             "summary": bug["title"],
         }
         for bug in sorted(
-            current_store.bugs.values(),
+            _read_memory_dict(current_store, "bugs").values(),
             key=lambda item: (item.get("created_at") or "", item["id"]),
         )
         if bug["product_id"] == product_id
@@ -221,7 +226,7 @@ def build_iteration_suggestion(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
-    product_name = current_store.products[payload.product_id]["name"]
+    product_name = _read_memory_dict(current_store, "products")[payload.product_id]["name"]
     module_scope = "、".join(module_codes) if module_codes else product_name
     evidence_types = {item["subject_type"] for item in evidence}
     if len(evidence) >= 4:
@@ -332,7 +337,10 @@ def list_iteration_suggestions_response(
         )
         return {"items": items, "total": len(items)}
     items = []
-    for suggestion in current_store.iteration_plan_suggestions.values():
+    for suggestion in _read_memory_dict(
+        current_store,
+        "iteration_plan_suggestions",
+    ).values():
         if product_id is not None and suggestion.get("product_id") != product_id:
             continue
         if planning_cycle is not None and suggestion.get("planning_cycle") != planning_cycle:
@@ -411,7 +419,9 @@ def decide_iteration_suggestion_response(
     require_iteration_planning_role(user)
     validate_iteration_enums(decision=payload.decision)
     current_store = user_insight_write_store(current_store)
-    suggestion = current_store.iteration_plan_suggestions.get(suggestion_id)
+    suggestion = _read_memory_dict(current_store, "iteration_plan_suggestions").get(
+        suggestion_id
+    )
     if suggestion is None:
         raise api_error(404, "NOT_FOUND", "Iteration suggestion not found")
     if suggestion["status"] not in {"suggested", "accepted", "edited_accepted"}:
