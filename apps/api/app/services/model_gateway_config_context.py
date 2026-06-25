@@ -38,6 +38,14 @@ def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str
     return collection
 
 
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
 def _model_gateway_configs_collection(current_store: Any) -> dict[str, dict[str, Any]]:
     return _memory_dict(current_store, "model_gateway_configs")
 
@@ -96,8 +104,8 @@ def save_model_gateway_records(
 ) -> None:
     save_model_gateway_payload(
         current_store,
-        configs=current_store.model_gateway_configs,
-        logs=current_store.model_gateway_logs,
+        configs=_memory_dict(current_store, "model_gateway_configs"),
+        logs=_memory_list(current_store, "model_gateway_logs"),
         audit_event=audit_event,
     )
 
@@ -126,7 +134,7 @@ def get_model_gateway_config_record(current_store: Any, config_id: str) -> dict[
     if repository is not None:
         config = repository.get_model_gateway_config(config_id)
         return dict(config) if config is not None else None
-    config = current_store.model_gateway_configs.get(config_id)
+    config = _memory_dict(current_store, "model_gateway_configs").get(config_id)
     return dict(config) if config is not None else None
 
 
@@ -196,7 +204,7 @@ def model_gateway_configs_after_default(
 
 
 def default_model_gateway_config(current_store: Any) -> dict[str, Any] | None:
-    for item in current_store.model_gateway_configs.values():
+    for item in _memory_dict(current_store, "model_gateway_configs").values():
         if item.get("is_default") and item.get("status") == "active":
             return item
     return None
