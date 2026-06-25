@@ -22,6 +22,11 @@ def require_pending_attribution_write_role(user: dict[str, Any]) -> None:
     require_roles(user, {"product_owner", "rd_owner"})
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def validate_pending_attribution_suggested_context(
     current_store: Any,
     *,
@@ -30,14 +35,14 @@ def validate_pending_attribution_suggested_context(
 ) -> None:
     if suggested_product_id is None:
         return
-    product = current_store.products.get(suggested_product_id)
+    product = _read_memory_dict(current_store, "products").get(suggested_product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Suggested product not found")
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive suggested product cannot be used")
     if suggested_module_code is not None and not any(
         module["product_id"] == suggested_product_id and module["code"] == suggested_module_code
-        for module in current_store.product_modules.values()
+        for module in _read_memory_dict(current_store, "product_modules").values()
     ):
         raise api_error(404, "NOT_FOUND", "Suggested product module not found")
 
@@ -58,7 +63,7 @@ def validate_pending_attribution_create_request(
     ):
         raise api_error(400, "VALIDATION_ERROR", "confidence must be between 0 and 1")
     if payload.collector_run_id is not None and payload.collector_run_id not in (
-        current_store.collector_runs
+        _read_memory_dict(current_store, "collector_runs")
     ):
         raise api_error(404, "NOT_FOUND", "Collector run not found")
     validate_pending_attribution_suggested_context(
@@ -117,7 +122,7 @@ def validate_pending_attribution_resolve_request(
             "VALIDATION_ERROR",
             "resolved_product_id is required for link_existing_context",
         )
-    product = current_store.products.get(payload.resolved_product_id)
+    product = _read_memory_dict(current_store, "products").get(payload.resolved_product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Resolved product not found")
     if product["status"] != "active":
@@ -125,11 +130,13 @@ def validate_pending_attribution_resolve_request(
     if resolved_module_code is not None and not any(
         module["product_id"] == payload.resolved_product_id
         and module["code"] == resolved_module_code
-        for module in current_store.product_modules.values()
+        for module in _read_memory_dict(current_store, "product_modules").values()
     ):
         raise api_error(404, "NOT_FOUND", "Resolved product module not found")
     if payload.resolved_requirement_id is not None:
-        requirement = current_store.requirements.get(payload.resolved_requirement_id)
+        requirement = _read_memory_dict(current_store, "requirements").get(
+            payload.resolved_requirement_id
+        )
         if requirement is None or requirement["product_id"] != payload.resolved_product_id:
             raise api_error(404, "NOT_FOUND", "Resolved requirement not found")
     return (
@@ -163,7 +170,7 @@ def list_pending_attribution_items_response(
         )
         return {"items": items, "total": len(items)}
     items = []
-    for item in current_store.pending_attribution_items.values():
+    for item in _read_memory_dict(current_store, "pending_attribution_items").values():
         if source_type is not None and item.get("source_type") != source_type:
             continue
         if status is not None and item.get("status") != status:
