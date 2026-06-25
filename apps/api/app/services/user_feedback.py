@@ -60,15 +60,18 @@ def validate_user_feedback_context(
     module_code: str | None = None,
     related_requirement_id: str | None = None,
 ) -> None:
-    if product_id not in current_store.products:
+    products = _memory_dict(current_store, "products")
+    product_modules = _memory_dict(current_store, "product_modules")
+    requirements = _memory_dict(current_store, "requirements")
+    if product_id not in products:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if module_code is not None and not any(
         module["product_id"] == product_id and module["code"] == module_code
-        for module in current_store.product_modules.values()
+        for module in product_modules.values()
     ):
         raise api_error(404, "NOT_FOUND", "Product module not found")
     if related_requirement_id is not None:
-        requirement = current_store.requirements.get(related_requirement_id)
+        requirement = requirements.get(related_requirement_id)
         if requirement is None or requirement["product_id"] != product_id:
             raise api_error(404, "NOT_FOUND", "Requirement not found")
 
@@ -155,7 +158,7 @@ def list_user_feedback_response(
         )
         return {"items": items, "total": len(items)}
     items = []
-    for feedback in current_store.user_feedback.values():
+    for feedback in _user_feedback_collection(current_store).values():
         if product_id is not None and feedback.get("product_id") != product_id:
             continue
         if module_code is not None and feedback.get("module_code") != module_code:
