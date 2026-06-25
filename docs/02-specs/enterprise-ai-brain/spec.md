@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.570 |
+| 功能版本 | v1.1.571 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.571 | 2026-06-25 | 定时作业 DB-first fallback 写入收口：AI Skill/Agent、定时作业配置、采集运行、定时作业运行记录和作业最近运行状态更新不再直接写 `current_store` 作业集合；统一通过定时作业内存集合 helper 维护测试 fallback，PostgreSQL 运行态继续由 scheduled job repository 单记录写入和审计事务提交 | Codex |
 | v1.1.570 | 2026-06-25 | 插件管理 DB-first fallback 写入收口：标准插件同步、插件定义新增/复制/编辑/删除、插件连接新增/编辑/删除/测试、插件动作新增/编辑/删除、插件调用日志和 Runner 任务关联不再直接写 `current_store` 插件集合；统一通过插件内存集合 helper 更新测试 fallback，PostgreSQL 运行态继续由插件 repository 单记录方法和审计事务提交 | Codex |
 | v1.1.569 | 2026-06-25 | 任务运行与评审产物 DB-first fallback 写入收口：任务审计 helper、Graph run/checkpoint、代码评审报告、AI 任务确认后派生 Bug 和知识沉淀不再直接写 `current_store` 业务集合或调用 `current_store.audit()`；MemoryStore 测试 fallback 统一通过集合 helper 和审计 helper 操作，PostgreSQL 运行态继续由任务启动/评审决策 repository 事务提交任务、Review、Graph、报告、Bug、知识沉淀和审计 | Codex |
 | v1.1.568 | 2026-06-25 | 产品配置上下文需求/审计 helper DB-first fallback 写入收口：需求单记录 fallback 不再直接写 `current_store.requirements`，审计 helper 不再直接调用 `current_store.audit()`；统一通过需求集合 helper 和审计方法引用/事件列表 helper 操作测试集合，PostgreSQL 运行态继续由 repository 单记录写入和调用方事务提交审计 | Codex |

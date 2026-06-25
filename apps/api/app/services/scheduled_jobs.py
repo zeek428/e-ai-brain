@@ -192,6 +192,26 @@ def replace_collection(
     )
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _put_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record: dict[str, Any],
+) -> None:
+    _memory_dict(current_store, collection_name)[str(record["id"])] = record
+
+
+def _delete_memory_record(current_store: Any, collection_name: str, record_id: str) -> None:
+    _memory_dict(current_store, collection_name).pop(record_id, None)
+
+
 def sync_ai_skill_store(
     current_store: Any,
     *,
@@ -377,7 +397,7 @@ def create_ai_skill_response(
         "updated_at": now,
         "version": payload.version,
     }
-    current_store.ai_skills[skill_id] = skill
+    _put_memory_record(current_store, "ai_skills", skill)
     audit_event = record_audit_event(
         current_store,
         event_type="ai_skill.created",
@@ -448,7 +468,7 @@ def create_ai_skill_package_response(
         "updated_at": now,
         "version": str(manifest.get("version") or skill_version),
     }
-    current_store.ai_skills[skill_id] = skill
+    _put_memory_record(current_store, "ai_skills", skill)
     audit_event = record_audit_event(
         current_store,
         event_type="ai_skill.package_uploaded",
@@ -490,7 +510,7 @@ def patch_ai_skill_response(
         if key in updates:
             updates[key] = ensure_non_blank(updates[key], key)
     skill = {**skill, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    current_store.ai_skills[skill_id] = skill
+    _put_memory_record(current_store, "ai_skills", skill)
     audit_event = record_audit_event(
         current_store,
         event_type="ai_skill.updated",
@@ -583,7 +603,7 @@ def create_ai_agent_response(
         "tool_policy": payload.tool_policy,
         "updated_at": now,
     }
-    current_store.ai_agents[agent_id] = agent
+    _put_memory_record(current_store, "ai_agents", agent)
     audit_event = record_audit_event(
         current_store,
         event_type="ai_agent.created",
@@ -626,7 +646,7 @@ def patch_ai_agent_response(
         if key in updates:
             updates[key] = ensure_non_blank(updates[key], key)
     agent = {**agent, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    current_store.ai_agents[agent_id] = agent
+    _put_memory_record(current_store, "ai_agents", agent)
     audit_event = record_audit_event(
         current_store,
         event_type="ai_agent.updated",
@@ -1464,7 +1484,7 @@ def create_scheduled_job_response(
         "timezone": payload.timezone,
         "updated_at": now,
     }
-    current_store.scheduled_jobs[job_id] = job
+    _put_memory_record(current_store, "scheduled_jobs", job)
     audit_event = record_audit_event(
         current_store,
         event_type="scheduled_job.created",
@@ -1706,7 +1726,7 @@ def patch_scheduled_job_response(
     if "enabled" in updates:
         updates["status"] = "active" if updates["enabled"] else "disabled"
     job = {**job, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    current_store.scheduled_jobs[job_id] = job
+    _put_memory_record(current_store, "scheduled_jobs", job)
     audit_event = record_audit_event(
         current_store,
         event_type="scheduled_job.updated",
@@ -1735,7 +1755,7 @@ def delete_scheduled_job_response(
     job = current_store.scheduled_jobs.get(job_id)
     if job is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
-    current_store.scheduled_jobs.pop(job_id, None)
+    _delete_memory_record(current_store, "scheduled_jobs", job_id)
     audit_event = record_audit_event(
         current_store,
         event_type="scheduled_job.deleted",
@@ -1815,7 +1835,7 @@ def create_collector_run_for_job(
         "status": "running",
         "updated_at": now,
     }
-    current_store.collector_runs[collector_run_id] = collector_run
+    _put_memory_record(current_store, "collector_runs", collector_run)
     audit_event = record_audit_event(
         current_store,
         event_type="collector_run.created",
@@ -1858,7 +1878,7 @@ def complete_collector_run(
         "status": collector_status,
         "updated_at": now,
     }
-    current_store.collector_runs[collector_run["id"]] = updated
+    _put_memory_record(current_store, "collector_runs", updated)
     audit_event = record_audit_event(
         current_store,
         event_type="collector_run.updated",
@@ -2928,7 +2948,7 @@ def execute_queued_scheduled_job_run_response(
         "status": "running",
         "updated_at": now,
     }
-    current_store.scheduled_job_runs[run_id] = run
+    _put_memory_record(current_store, "scheduled_job_runs", run)
     persist_record(current_store, "save_scheduled_job_run_record", run)
 
     plugin_summary = None
@@ -3146,7 +3166,7 @@ def execute_queued_scheduled_job_run_response(
         "status": status,
         "updated_at": updated_at,
     }
-    current_store.scheduled_job_runs[run_id] = run
+    _put_memory_record(current_store, "scheduled_job_runs", run)
     complete_collector_run(
         current_store,
         collector_run=collector_run,
@@ -3163,7 +3183,7 @@ def execute_queued_scheduled_job_run_response(
         "last_success_at": finished_at if status == "succeeded" else job.get("last_success_at"),
         "updated_at": updated_at,
     }
-    current_store.scheduled_jobs[job["id"]] = job_update
+    _put_memory_record(current_store, "scheduled_jobs", job_update)
     persist_record(current_store, "save_scheduled_job_record", job_update)
     persist_record(current_store, "save_scheduled_job_run_record", run)
     audit_event = record_audit_event(
@@ -3265,7 +3285,7 @@ def run_scheduled_job_response(
         "trigger_type": trigger_type,
         "updated_at": now,
     }
-    current_store.scheduled_job_runs[run_id] = run
+    _put_memory_record(current_store, "scheduled_job_runs", run)
     collector_run = create_collector_run_for_job(
         current_store,
         job=job,
@@ -3683,7 +3703,7 @@ def run_scheduled_job_response(
         "status": status,
         "updated_at": updated_at,
     }
-    current_store.scheduled_job_runs[run_id] = run
+    _put_memory_record(current_store, "scheduled_job_runs", run)
     if status in SCHEDULED_JOB_RUN_TERMINAL_STATUSES:
         complete_collector_run(
             current_store,
@@ -3701,7 +3721,7 @@ def run_scheduled_job_response(
         "last_success_at": finished_at if status == "succeeded" else job.get("last_success_at"),
         "updated_at": updated_at,
     }
-    current_store.scheduled_jobs[job_id] = job_update
+    _put_memory_record(current_store, "scheduled_jobs", job_update)
     persist_record(
         current_store,
         "save_scheduled_job_record",
@@ -3777,7 +3797,7 @@ def cancel_scheduled_job_run_response(
         raise api_error(409, "SCHEDULED_JOB_RUN_STATE_INVALID", "Terminal run cannot be cancelled")
     now = datetime.now(UTC).isoformat()
     run = {**run, "finished_at": now, "status": "cancelled", "updated_at": now}
-    current_store.scheduled_job_runs[run_id] = run
+    _put_memory_record(current_store, "scheduled_job_runs", run)
     collector_run_id = run.get("collector_run_id")
     collector_run = current_store.collector_runs.get(collector_run_id) if collector_run_id else None
     if collector_run is not None and collector_run.get("status") not in {
