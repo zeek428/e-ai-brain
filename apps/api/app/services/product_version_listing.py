@@ -34,6 +34,18 @@ VERSION_SORT_FIELDS = {
 }
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    return list(_memory_dict(current_store, collection_name).values())
+
+
 def list_all_product_versions_response(
     *,
     active_only: bool,
@@ -98,7 +110,7 @@ def list_all_product_versions_response(
     else:
         items = [
             product_version_summary_projection(version, current_store)
-            for version in current_store.product_versions.values()
+            for version in _memory_records(current_store, "product_versions")
         ]
         if active_only:
             items = [item for item in items if item.get("status") == "active"]

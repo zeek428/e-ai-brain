@@ -33,6 +33,18 @@ PRODUCT_SORT_FIELDS = {
 }
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    return list(_memory_dict(current_store, collection_name).values())
+
+
 def list_products_response(
     *,
     active_only: bool,
@@ -94,7 +106,7 @@ def list_products_response(
         items = repository.list_products(active_only=active_only)
     else:
         items = sorted(
-            current_store.products.values(),
+            _memory_records(current_store, "products"),
             key=lambda item: (item.get("display_order", 0), item["code"]),
         )
         if active_only:

@@ -120,6 +120,18 @@ def ensure_enum(value: str | None, allowed_values: set[str], field: str) -> None
         raise _domain_error(400, "VALIDATION_ERROR", f"Unsupported {field}")
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    return list(_memory_dict(current_store, collection_name).values())
+
+
 def canonical_requirement_status(status: str | None) -> str:
     if status is None:
         return "draft"
@@ -152,7 +164,7 @@ def validate_requirement_version(
 ) -> dict[str, Any] | None:
     if version_id is None:
         return None
-    version = current_store.product_versions.get(version_id)
+    version = _memory_dict(current_store, "product_versions").get(version_id)
     if version is None or version["product_id"] != product_id:
         raise _domain_error(404, "NOT_FOUND", "Product version not found")
     if version["status"] == "archived":
@@ -200,7 +212,7 @@ def requirements_for_version(
 ) -> list[dict[str, Any]]:
     requirements = [
         requirement
-        for requirement in current_store.requirements.values()
+        for requirement in _memory_records(current_store, "requirements")
         if requirement.get("version_id") == version_id
     ]
     requirements.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or ""))
