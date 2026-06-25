@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.573 |
+| 功能版本 | v1.1.574 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.574 | 2026-06-25 | 管理列表体验继续统一：研发执行器策略页接入 `ManagementListPage`，保留新增/编辑/删除策略能力，同时获得统一筛选、横向滚动、表格设置、刷新和本地筛选视图保存能力 | Codex |
 | v1.1.573 | 2026-06-25 | DB-first 兼容层 P1 读路径清零：定时作业观测、审计、业务脑配置、平台状态、模型网关日志、Markdown 导出、Mock 写回、原生代码扫描、Graph runtime、首页看板和知识域只读链路不再直接读取 `current_store` 业务集合；统一改为 repository/helper 优先读取，`audit_memory_store_usage` 仅保留 P2 helper/test fallback 残留 | Codex |
 | v1.1.572 | 2026-06-25 | 产品配置 DB-first 读路径继续收口：产品详情、产品编码冲突校验、产品删除引用检查、产品子资源清理、按产品列迭代版本和版本分支配置补全不再由路由层直接读取 `current_store` 集合；统一通过产品配置 helper 走 repository-first 读取，PostgreSQL 运行态使用产品级 `EXISTS` 校验引用，MemoryStore 仅作为测试 fallback | Codex |
 | v1.1.571 | 2026-06-25 | 定时作业 DB-first fallback 写入收口：AI Skill/Agent、定时作业配置、采集运行、定时作业运行记录和作业最近运行状态更新不再直接写 `current_store` 作业集合；统一通过定时作业内存集合 helper 维护测试 fallback，PostgreSQL 运行态继续由 scheduled job repository 单记录写入和审计事务提交 | Codex |

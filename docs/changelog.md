@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 管理列表体验继续统一：研发执行器策略页接入 `ManagementListPage`，支持策略名称、任务类型、执行器、产品和状态筛选，复用统一横向滚动、表格设置、刷新和本地筛选视图保存能力。
 - DB-first 兼容层 P1 读路径清零：定时作业观测、审计、业务脑配置、平台状态、模型网关日志、Markdown 导出、Mock 写回、原生代码扫描、Graph runtime、首页看板和知识域只读链路不再直接读取 `current_store` 业务集合，统一改为 repository/helper 优先读取；专项扫描当前仅保留 P2 helper/test fallback 残留。
 - 产品配置 DB-first 读路径继续收口：产品详情、产品编码冲突校验、产品删除引用检查、产品子资源清理、按产品列迭代版本和版本分支配置补全不再由路由层直接读取 `current_store` 集合，统一通过产品配置 helper 走 repository-first 读取；PostgreSQL 运行态新增产品级 `EXISTS` 引用校验。
 - 定时作业 DB-first fallback 收口：AI Skill/Agent、定时作业配置、采集运行、运行记录和作业最近运行状态更新不再直接写 `current_store` 作业集合，统一通过定时作业集合 helper 操作测试 fallback。

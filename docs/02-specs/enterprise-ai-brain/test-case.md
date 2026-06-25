@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.680 |
+| 功能版本 | v1.1.681 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.681 | 2026-06-25 | 补充研发执行器策略列表标准化验收：页面必须复用统一管理列表底座，支持策略名称、任务类型、执行器、产品和状态筛选、本地筛选视图保存、横向滚动和表格设置，同时新增/编辑弹窗仍不得出现 AI角色、Skill 或模型网关字段；`RdExecutorPoliciesPage.test.tsx` 必须覆盖统一筛选入口与保存视图入口 | Codex |
 | v1.1.680 | 2026-06-25 | 补充定时作业 fallback 收口验收：AI Skill/Agent、定时作业配置、采集运行、运行记录和作业最近运行状态更新不得直接写 `current_store` 作业集合；MemoryStore 测试 fallback 必须通过定时作业集合 helper 保持配置、运行、取消、异步队列和采集状态可查询；`test_scheduled_ai_jobs.py`、插件调用作业测试与 DB-first 扫描必须通过 | Codex |
 | v1.1.679 | 2026-06-25 | 补充插件管理 fallback 收口验收：标准插件同步、插件定义、连接、动作、调用日志和 Runner 任务关联不得直接写 `current_store` 插件集合；MemoryStore 测试 fallback 必须通过插件集合 helper 保持新增、复制、编辑、删除、连接测试和调用日志可查询；`test_plugin_management.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.678 | 2026-06-25 | 补充任务运行与评审产物 fallback 收口验收：任务审计 helper、Graph run/checkpoint、代码评审报告、任务确认后派生 Bug 和知识沉淀不得直接写 `current_store` 业务集合或调用 `current_store.audit()`；MemoryStore 测试 fallback 必须通过集合 helper 和审计 helper 保持可查询与 audit_events 切片语义；`test_task_runtime_fallbacks.py`、任务回归测试与 DB-first 扫描必须通过 | Codex |

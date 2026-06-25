@@ -1,9 +1,8 @@
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { PageContainer, ProTable, type ProColumns } from '@ant-design/pro-components';
+import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Tag, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { StatusTag } from '../../components/ManagementListPage';
+import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { ProductGitRepositoryRecord, ProductRecord } from '../../data/management';
 import {
   createRdTaskExecutorPolicy,
@@ -34,6 +33,8 @@ type PolicyFormValues = {
   timeout_seconds: number;
   workspace_root: string;
 };
+
+type RdTaskExecutorPolicyRow = RdTaskExecutorPolicyRecord & Record<string, unknown>;
 
 const TASK_TYPE_OPTIONS = [
   { label: 'PRD / 原型 / 产品详细设计', value: 'product_detail_design' },
@@ -255,7 +256,7 @@ export default function RdExecutorPoliciesPage() {
     }
   };
 
-  const columns: ProColumns<RdTaskExecutorPolicyRecord>[] = [
+  const columns: ProColumns<RdTaskExecutorPolicyRow>[] = [
     {
       dataIndex: 'name',
       title: '策略名称',
@@ -338,23 +339,28 @@ export default function RdExecutorPoliciesPage() {
   ];
 
   return (
-    <PageContainer title="研发执行器策略">
-      <ProTable<RdTaskExecutorPolicyRecord>
+    <>
+      <ManagementListPage<RdTaskExecutorPolicyRow>
+        breadcrumbGroup="需求交付"
         columns={columns}
-        dataSource={policies}
-        loading={loading}
-        pagination={{ pageSize: 10 }}
-        rowKey="id"
-        search={false}
-        scroll={{ x: 1810 }}
-        toolBarRender={() => [
-          <Button key="reload" icon={<ReloadOutlined />} onClick={reload}>
-            刷新
-          </Button>,
-          <Button key="create" icon={<PlusOutlined />} type="primary" onClick={openCreateModal}>
-            新增策略
-          </Button>,
+        dataSource={policies as RdTaskExecutorPolicyRow[]}
+        viewStorageKey="delivery.rd_executor_policies"
+        filters={[
+          { label: '策略名称', name: 'name', type: 'text' },
+          { label: '任务类型', name: 'task_type', options: TASK_TYPE_OPTIONS, type: 'select' },
+          { label: '执行器', name: 'executor_type', options: EXECUTOR_OPTIONS, type: 'select' },
+          { label: '产品', name: 'product_name', type: 'text' },
+          { label: '状态', name: 'status', options: STATUS_OPTIONS, type: 'select' },
         ]}
+        loading={loading}
+        onPrimaryAction={openCreateModal}
+        onReload={() => void reload()}
+        primaryAction="新增策略"
+        rowKey="id"
+        tableLayout="fixed"
+        tableScroll={{ x: 1810 }}
+        tableTitle="研发执行器策略"
+        title="研发执行器策略"
       />
 
       <Modal
@@ -418,6 +424,6 @@ export default function RdExecutorPoliciesPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </PageContainer>
+    </>
   );
 }

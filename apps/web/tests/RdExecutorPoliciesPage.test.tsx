@@ -136,6 +136,8 @@ describe('RdExecutorPoliciesPage', () => {
     expect(await screen.findByText('开发计划走 Codex')).toBeInTheDocument();
     expect(screen.getByText('本地 Codex Runner')).toBeInTheDocument();
     expect(screen.getByText('/Users/zeek/source/e-ai-brain')).toBeInTheDocument();
+    expect(screen.getAllByText('策略名称').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole('button', { name: '保存视图' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /新增策略/ }));
     const dialog = await screen.findByRole('dialog');
@@ -147,11 +149,11 @@ describe('RdExecutorPoliciesPage', () => {
 
     fireEvent.mouseDown(within(dialog).getByLabelText('任务类型'));
     expect((await screen.findAllByText('PRD / 原型 / 产品详细设计')).length).toBeGreaterThan(0);
-    expect(screen.getByText('技术方案设计')).toBeInTheDocument();
+    expect(screen.getAllByText('技术方案设计').length).toBeGreaterThan(0);
     const codeImplementationOptions = screen.getAllByText('代码实现 / 开发计划');
     expect(codeImplementationOptions.length).toBeGreaterThan(0);
-    expect(screen.getByText('发布上线评估')).toBeInTheDocument();
-    expect(screen.getByText('上线后分析')).toBeInTheDocument();
+    expect(screen.getAllByText('发布上线评估').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('上线后分析').length).toBeGreaterThan(0);
     fireEvent.click(codeImplementationOptions[codeImplementationOptions.length - 1]);
 
     fireEvent.change(within(dialog).getByLabelText('策略名称'), { target: { value: '新增策略' } });
