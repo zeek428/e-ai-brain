@@ -12,9 +12,12 @@ from app.services.product_config_context import (
     ensure_enum,
     ensure_non_blank,
     ensure_unique_value,
+    get_product_record,
+    list_product_child_config_records,
+    list_product_records,
     payload_updates,
-    product_config_query_repository,
     product_config_write_store,
+    product_has_related_records,
     record_audit_event,
     save_product_config_record,
 )
@@ -82,8 +85,13 @@ def create_product(
     ensure_enum(payload.status, PRODUCT_STATUSES, "product status")
     product_id = current_store.new_id("product")
     code = ensure_non_blank(payload.code or product_id, "code")
+    products_by_id = {
+        str(product["id"]): dict(product)
+        for product in list_product_records(current_store, active_only=False)
+        if product.get("id") is not None
+    }
     ensure_unique_value(
-        current_store.products,
+        products_by_id,
         field="code",
         value=code,
         conflict_code="PRODUCT_CODE_EXISTS",
@@ -121,13 +129,7 @@ def get_product(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
-    repository = product_config_query_repository(current_store)
-    if repository is not None:
-        product = repository.get_product(product_id)
-        if product is None:
-            raise api_error(404, "NOT_FOUND", "Product not found")
-        return envelope(product, get_trace_id(request))
-    product = current_store.products.get(product_id)
+    product = get_product_record(current_store, product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     return envelope(product, get_trace_id(request))
@@ -142,7 +144,7 @@ def patch_product(
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
     current_store = product_config_write_store(store(request))
-    product = current_store.products.get(product_id)
+    product = get_product_record(current_store, product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     updates = payload_updates(payload)
@@ -150,8 +152,13 @@ def patch_product(
         updates["name"] = ensure_non_blank(updates["name"], "name")
     if "code" in updates:
         updates["code"] = ensure_non_blank(updates["code"], "code")
+        products_by_id = {
+            str(item["id"]): dict(item)
+            for item in list_product_records(current_store, active_only=False)
+            if item.get("id") is not None
+        }
         ensure_unique_value(
-            current_store.products,
+            products_by_id,
             field="code",
             value=updates["code"],
             conflict_code="PRODUCT_CODE_EXISTS",
@@ -185,28 +192,18 @@ def delete_product(
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
     current_store = product_config_write_store(store(request))
-    if product_id not in current_store.products:
+    if get_product_record(current_store, product_id) is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
-    has_dependencies = any(
-        item["product_id"] == product_id
-        for collection in [
-            current_store.requirements,
-            current_store.ai_tasks,
-            current_store.bugs,
-        ]
-        for item in collection.values()
-    )
-    if has_dependencies:
+    if product_has_related_records(current_store, product_id):
         raise api_error(409, "RESOURCE_IN_USE", "Product still has related records")
-    for collection_name, collection in [
-        ("product_versions", current_store.product_versions),
-        ("product_modules", current_store.product_modules),
-        ("product_git_repositories", current_store.product_git_repositories),
-        ("related_systems", current_store.related_systems),
+    for collection_name in [
+        "product_versions",
+        "product_modules",
+        "product_git_repositories",
+        "related_systems",
     ]:
-        for item_id, item in list(collection.items()):
-            if item.get("product_id") == product_id:
-                delete_product_config_record(current_store, collection_name, item_id)
+        for item in list_product_child_config_records(current_store, collection_name, product_id):
+            delete_product_config_record(current_store, collection_name, str(item["id"]))
     audit_event = record_audit_event(
         current_store,
         event_type="product.deleted",

@@ -317,6 +317,9 @@ class PostgresSnapshotRepository:
             module_code,
         )
 
+    def product_has_related_records(self, product_id: str) -> bool:
+        return self._product_config_read_repository.product_has_related_records(product_id)
+
     def product_version_has_related_records(self, version_id: str) -> bool:
         return self._product_config_read_repository.product_version_has_related_records(
             version_id,

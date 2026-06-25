@@ -174,14 +174,32 @@ def get_product_record(current_store: Any, product_id: str) -> dict[str, Any] | 
     get_product = getattr(runtime_repository(current_store), "get_product", None)
     if callable(get_product):
         return get_product(product_id)
-    return current_store.products.get(product_id)
+    products = getattr(current_store, "products", {})
+    return products.get(product_id)
+
+
+def list_product_records(
+    current_store: Any,
+    *,
+    active_only: bool = False,
+) -> list[dict[str, Any]]:
+    list_products = getattr(runtime_repository(current_store), "list_products", None)
+    if callable(list_products):
+        return list_products(active_only=active_only)
+    products = getattr(current_store, "products", {})
+    return [
+        dict(product)
+        for product in products.values()
+        if not active_only or product.get("status") == "active"
+    ]
 
 
 def get_product_version_record(current_store: Any, version_id: str) -> dict[str, Any] | None:
     get_version = getattr(runtime_repository(current_store), "get_product_version", None)
     if callable(get_version):
         return get_version(version_id)
-    return current_store.product_versions.get(version_id)
+    versions = getattr(current_store, "product_versions", {})
+    return versions.get(version_id)
 
 
 def list_product_version_records(
@@ -193,9 +211,10 @@ def list_product_version_records(
     list_versions = getattr(runtime_repository(current_store), "list_product_versions", None)
     if callable(list_versions):
         return list_versions(product_id, active_only=active_only)
+    versions = getattr(current_store, "product_versions", {})
     return [
         dict(version)
-        for version in current_store.product_versions.values()
+        for version in versions.values()
         if version.get("product_id") == product_id
         and (not active_only or version.get("status") == "active")
     ]
@@ -208,14 +227,38 @@ def get_product_git_repository_record(
     get_repository = getattr(runtime_repository(current_store), "get_product_git_repository", None)
     if callable(get_repository):
         return get_repository(repository_id)
-    return current_store.product_git_repositories.get(repository_id)
+    repositories = getattr(current_store, "product_git_repositories", {})
+    return repositories.get(repository_id)
+
+
+def list_product_git_repository_records(
+    current_store: Any,
+    product_id: str,
+    *,
+    active_only: bool = False,
+) -> list[dict[str, Any]]:
+    list_repositories = getattr(
+        runtime_repository(current_store),
+        "list_product_git_repositories",
+        None,
+    )
+    if callable(list_repositories):
+        return list_repositories(product_id, active_only=active_only)
+    repositories = getattr(current_store, "product_git_repositories", {})
+    return [
+        dict(repository)
+        for repository in repositories.values()
+        if repository.get("product_id") == product_id
+        and (not active_only or repository.get("status") == "active")
+    ]
 
 
 def get_product_module_record(current_store: Any, module_id: str) -> dict[str, Any] | None:
     get_module = getattr(runtime_repository(current_store), "get_product_module", None)
     if callable(get_module):
         return get_module(module_id)
-    return current_store.product_modules.get(module_id)
+    modules = getattr(current_store, "product_modules", {})
+    return modules.get(module_id)
 
 
 def list_product_module_records(
@@ -227,11 +270,30 @@ def list_product_module_records(
     list_modules = getattr(runtime_repository(current_store), "list_product_modules", None)
     if callable(list_modules):
         return list_modules(product_id, active_only=active_only)
+    modules = getattr(current_store, "product_modules", {})
     return [
         dict(module)
-        for module in current_store.product_modules.values()
+        for module in modules.values()
         if module.get("product_id") == product_id
         and (not active_only or module.get("status") == "active")
+    ]
+
+
+def list_related_system_records(
+    current_store: Any,
+    *,
+    active_only: bool = False,
+    product_id: str | None = None,
+) -> list[dict[str, Any]]:
+    list_systems = getattr(runtime_repository(current_store), "list_related_systems", None)
+    if callable(list_systems):
+        return list_systems(active_only=active_only, product_id=product_id)
+    systems = getattr(current_store, "related_systems", {})
+    return [
+        dict(system)
+        for system in systems.values()
+        if (product_id is None or system.get("product_id") == product_id)
+        and (not active_only or system.get("status") == "active")
     ]
 
 
@@ -248,12 +310,36 @@ def product_module_has_related_records(
     )
     if callable(has_related_records):
         return bool(has_related_records(product_id, module_code))
+    requirements = getattr(current_store, "requirements", {})
+    tasks = getattr(current_store, "ai_tasks", {})
+    bugs = getattr(current_store, "bugs", {})
     return any(
         item.get("product_id") == product_id and item.get("module_code") == module_code
         for item in [
-            *current_store.requirements.values(),
-            *current_store.ai_tasks.values(),
-            *current_store.bugs.values(),
+            *requirements.values(),
+            *tasks.values(),
+            *bugs.values(),
+        ]
+    )
+
+
+def product_has_related_records(current_store: Any, product_id: str) -> bool:
+    has_related_records = getattr(
+        runtime_repository(current_store),
+        "product_has_related_records",
+        None,
+    )
+    if callable(has_related_records):
+        return bool(has_related_records(product_id))
+    requirements = getattr(current_store, "requirements", {})
+    tasks = getattr(current_store, "ai_tasks", {})
+    bugs = getattr(current_store, "bugs", {})
+    return any(
+        item.get("product_id") == product_id
+        for item in [
+            *requirements.values(),
+            *tasks.values(),
+            *bugs.values(),
         ]
     )
 
@@ -266,14 +352,15 @@ def product_version_has_related_records(current_store: Any, version_id: str) -> 
     )
     if callable(has_related_records):
         return bool(has_related_records(version_id))
+    requirements = getattr(current_store, "requirements", {})
+    tasks = getattr(current_store, "ai_tasks", {})
+    bugs = getattr(current_store, "bugs", {})
+    branch_configs = getattr(current_store, "product_version_branch_configs", {})
     return (
-        any(item.get("version_id") == version_id for item in current_store.requirements.values())
-        or any(item.get("version_id") == version_id for item in current_store.ai_tasks.values())
-        or any(item.get("version_id") == version_id for item in current_store.bugs.values())
-        or any(
-            item.get("version_id") == version_id
-            for item in current_store.product_version_branch_configs.values()
-        )
+        any(item.get("version_id") == version_id for item in requirements.values())
+        or any(item.get("version_id") == version_id for item in tasks.values())
+        or any(item.get("version_id") == version_id for item in bugs.values())
+        or any(item.get("version_id") == version_id for item in branch_configs.values())
     )
 
 
@@ -281,14 +368,16 @@ def get_related_system_record(current_store: Any, system_id: str) -> dict[str, A
     get_system = getattr(runtime_repository(current_store), "get_related_system", None)
     if callable(get_system):
         return get_system(system_id)
-    return current_store.related_systems.get(system_id)
+    systems = getattr(current_store, "related_systems", {})
+    return systems.get(system_id)
 
 
 def get_related_system_by_code(current_store: Any, code: str) -> dict[str, Any] | None:
     get_system = getattr(runtime_repository(current_store), "get_related_system_by_code", None)
     if callable(get_system):
         return get_system(code)
-    for system in current_store.related_systems.values():
+    systems = getattr(current_store, "related_systems", {})
+    for system in systems.values():
         if system.get("code") == code:
             return system
     return None
@@ -305,7 +394,53 @@ def get_product_version_branch_config_record(
     )
     if callable(get_branch_config):
         return get_branch_config(branch_config_id)
-    return current_store.product_version_branch_configs.get(branch_config_id)
+    branch_configs = getattr(current_store, "product_version_branch_configs", {})
+    return branch_configs.get(branch_config_id)
+
+
+def list_product_version_branch_config_records(
+    current_store: Any,
+    version_id: str,
+) -> list[dict[str, Any]]:
+    list_branch_configs = getattr(
+        runtime_repository(current_store),
+        "list_product_version_branch_configs",
+        None,
+    )
+    if callable(list_branch_configs):
+        return list_branch_configs(version_id)
+    branch_configs = getattr(current_store, "product_version_branch_configs", {})
+    return [
+        dict(branch_config)
+        for branch_config in branch_configs.values()
+        if branch_config.get("version_id") == version_id
+    ]
+
+
+def list_product_child_config_records(
+    current_store: Any,
+    collection_name: str,
+    product_id: str,
+) -> list[dict[str, Any]]:
+    if collection_name == "product_versions":
+        return list_product_version_records(current_store, product_id, active_only=False)
+    if collection_name == "product_modules":
+        return list_product_module_records(current_store, product_id, active_only=False)
+    if collection_name == "product_git_repositories":
+        return list_product_git_repository_records(current_store, product_id, active_only=False)
+    if collection_name == "related_systems":
+        return list_related_system_records(current_store, product_id=product_id, active_only=False)
+    raise ValueError(f"Unsupported product child collection: {collection_name}")
+
+
+def get_requirement_record(current_store: Any, requirement_id: str) -> dict[str, Any] | None:
+    requirements = getattr(current_store, "requirements", {})
+    if requirement_id in requirements:
+        return requirements[requirement_id]
+    load_requirements = getattr(runtime_repository(current_store), "load_requirements", None)
+    if callable(load_requirements):
+        return payload_collection(load_requirements(), "requirements").get(requirement_id)
+    return None
 
 
 def _memory_product_config_collection(

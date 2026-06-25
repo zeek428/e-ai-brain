@@ -18,6 +18,8 @@ from app.services.product_config_context import (
     get_product_record,
     get_product_version_branch_config_record,
     get_product_version_record,
+    get_requirement_record,
+    list_product_version_branch_config_records,
     list_product_version_records,
     payload_updates,
     product_config_query_repository,
@@ -103,8 +105,6 @@ def _public_branch_config(
         and branch_config.get("repository_provider")
     )
     if missing_repository_projection:
-        repository = current_store.product_git_repositories.get(branch_config["repository_id"], {})
-    if not repository and missing_repository_projection and branch_config.get("repository_id"):
         repository = get_product_git_repository_record(
             current_store,
             str(branch_config["repository_id"]),
@@ -131,8 +131,7 @@ def _list_branch_configs(
             return list_branch_configs(version_id)
     items = [
         _public_branch_config(item, current_store)
-        for item in current_store.product_version_branch_configs.values()
-        if item["version_id"] == version_id
+        for item in list_product_version_branch_config_records(current_store, version_id)
     ]
     items.sort(key=lambda item: (item.get("repository_name") or "", item["working_branch"]))
     return items
@@ -194,21 +193,11 @@ def list_product_versions(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
-    repository = product_config_query_repository(current_store)
-    if repository is not None:
-        if repository.get_product(product_id) is None:
-            raise api_error(404, "NOT_FOUND", "Product not found")
-        items = repository.list_product_versions(product_id, active_only=active_only)
-        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
-    if product_id not in current_store.products:
+    if get_product_record(current_store, product_id) is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
-    items = [
-        item
-        for item in current_store.product_versions.values()
-        if item["product_id"] == product_id
-    ]
+    items = list_product_version_records(current_store, product_id, active_only=active_only)
     items.sort(key=lambda item: item["code"])
-    return list_payload(items, trace_id=get_trace_id(request), active_only=active_only)
+    return list_payload(items, trace_id=get_trace_id(request))
 
 
 @router.get("/api/product-versions/{version_id}/branch-configs")
@@ -417,7 +406,7 @@ def advance_product_version_status(
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner", "rd_owner"})
     current_store = product_config_write_store(store(request))
-    version = current_store.product_versions.get(version_id)
+    version = get_product_version_record(current_store, version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
     from_status = version.get("status", "planning")
@@ -449,7 +438,9 @@ def advance_product_version_status(
             "updated_at": now,
         }
         for item in impact["updated_requirements"]:
-            requirement = current_store.requirements[item["id"]]
+            requirement = get_requirement_record(current_store, item["id"])
+            if requirement is None:
+                continue
             updated_requirement = {
                 **requirement,
                 "status": item["to_status"],

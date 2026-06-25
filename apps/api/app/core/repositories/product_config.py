@@ -144,6 +144,30 @@ class ProductConfigReadRepository:
                 row = cursor.fetchone()
         return bool(row[0]) if row is not None else False
 
+    def product_has_related_records(self, product_id: str) -> bool:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                      EXISTS (
+                        SELECT 1 FROM requirements
+                        WHERE product_id = %s
+                      )
+                      OR EXISTS (
+                        SELECT 1 FROM ai_tasks
+                        WHERE product_id = %s
+                      )
+                      OR EXISTS (
+                        SELECT 1 FROM bugs
+                        WHERE product_id = %s
+                      )
+                    """,
+                    (product_id, product_id, product_id),
+                )
+                row = cursor.fetchone()
+        return bool(row[0]) if row is not None else False
+
     def product_version_has_related_records(self, version_id: str) -> bool:
         with self._connect() as connection:
             with connection.cursor() as cursor:

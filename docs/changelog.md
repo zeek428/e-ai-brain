@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 产品配置 DB-first 读路径继续收口：产品详情、产品编码冲突校验、产品删除引用检查、产品子资源清理、按产品列迭代版本和版本分支配置补全不再由路由层直接读取 `current_store` 集合，统一通过产品配置 helper 走 repository-first 读取；PostgreSQL 运行态新增产品级 `EXISTS` 引用校验。
 - 定时作业 DB-first fallback 收口：AI Skill/Agent、定时作业配置、采集运行、运行记录和作业最近运行状态更新不再直接写 `current_store` 作业集合，统一通过定时作业集合 helper 操作测试 fallback。
 - 插件管理 DB-first fallback 收口：标准插件同步、插件定义、连接、动作、调用日志和 Runner 任务关联不再直接写 `current_store` 插件集合，统一通过插件集合 helper 操作测试 fallback。
 - 任务运行与评审产物 DB-first fallback 收口：任务审计 helper、Graph run/checkpoint、代码评审报告、任务确认后派生 Bug 和知识沉淀不再直接写 `current_store` 业务集合或调用 `current_store.audit()`，统一通过集合 helper 和审计 helper 操作测试集合。
