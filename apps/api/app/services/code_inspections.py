@@ -92,6 +92,25 @@ def _memory_collection(current_store: Any, collection_name: str) -> dict[str, di
     return collection
 
 
+def _read_memory_collection(
+    current_store: Any,
+    collection_name: str,
+) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record_id: Any,
+) -> dict[str, Any] | None:
+    if record_id is None:
+        return None
+    record = _read_memory_collection(current_store, collection_name).get(str(record_id))
+    return record if isinstance(record, dict) else None
+
+
 def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     if not isinstance(collection, list):
@@ -248,7 +267,11 @@ def code_inspection_result_mapping(current_store: Any, job: dict[str, Any]) -> d
     job_mapping = job.get("plugin_output_mapping") or {}
     if isinstance(job_mapping, dict) and job_mapping:
         return dict(job_mapping)
-    action = current_store.plugin_actions.get(job.get("plugin_action_id")) or {}
+    action = _read_memory_record(
+        current_store,
+        "plugin_actions",
+        job.get("plugin_action_id"),
+    ) or {}
     action_mapping = action.get("result_mapping") or {}
     return dict(action_mapping) if isinstance(action_mapping, dict) else {}
 
@@ -281,7 +304,11 @@ def mapped_code_inspection_source_json(
 
 
 def action_severity_mapping(current_store: Any, job: dict[str, Any]) -> dict[str, str]:
-    action = current_store.plugin_actions.get(job.get("plugin_action_id")) or {}
+    action = _read_memory_record(
+        current_store,
+        "plugin_actions",
+        job.get("plugin_action_id"),
+    ) or {}
     action_config = action.get("request_config") or {}
     job_config = job.get("config_json") or {}
     return normalized_severity_mapping(
@@ -433,7 +460,11 @@ def normalized_findings(
 def repository_snapshot(current_store: Any, repository_id: str | None) -> dict[str, Any]:
     if not repository_id:
         return {}
-    repository = current_store.product_git_repositories.get(repository_id)
+    repository = _read_memory_record(
+        current_store,
+        "product_git_repositories",
+        repository_id,
+    )
     return dict(repository) if repository is not None else {}
 
 
@@ -469,10 +500,11 @@ def resolve_code_inspection_repository_id(
 ) -> str | None:
     source_repository_id = normalized_repository_identifier(source_json.get("repository_id"))
     configured_id = configured_repository_id(job)
-    if source_repository_id and source_repository_id in current_store.product_git_repositories:
+    repositories = _read_memory_collection(current_store, "product_git_repositories")
+    if source_repository_id and source_repository_id in repositories:
         return source_repository_id
     if source_repository_id:
-        for repository in current_store.product_git_repositories.values():
+        for repository in repositories.values():
             if job.get("product_id") and repository.get("product_id") != job.get("product_id"):
                 continue
             if repository_matches_identifier(repository, source_repository_id):
@@ -503,9 +535,10 @@ def previous_code_inspection_report(
 ) -> dict[str, Any] | None:
     if not repository_id:
         return None
+    reports = _read_memory_collection(current_store, "code_inspection_reports")
     candidates = [
         report
-        for report in current_store.code_inspection_reports.values()
+        for report in reports.values()
         if report.get("repository_id") == repository_id
         and report.get("branch") == branch
         and report.get("product_id") == product_id
@@ -545,7 +578,11 @@ def create_code_inspection_report_records(
     if repository_id is not None:
         source_json["repository_id"] = repository_id
     if repository_id is not None:
-        repository = current_store.product_git_repositories.get(repository_id)
+        repository = _read_memory_record(
+            current_store,
+            "product_git_repositories",
+            repository_id,
+        )
         if repository is None:
             raise api_error(404, "NOT_FOUND", "Product Git repository not found")
         if job.get("product_id") and repository.get("product_id") != job.get("product_id"):
@@ -740,7 +777,7 @@ def existing_code_inspection_bug_id(
             sort_order="desc",
         )
     else:
-        bugs = list(current_store.bugs.values())
+        bugs = list(_read_memory_collection(current_store, "bugs").values())
     for bug in bugs:
         evidence = bug.get("evidence") or {}
         if (
@@ -1182,7 +1219,11 @@ def public_code_inspection_report(report: dict[str, Any], current_store: Any) ->
     repository_id = report.get("repository_id")
     repository = (
         report.get("repository")
-        or current_store.product_git_repositories.get(repository_id)
+        or _read_memory_record(
+            current_store,
+            "product_git_repositories",
+            repository_id,
+        )
         or {}
     )
     return {
@@ -1213,7 +1254,7 @@ def scoped_code_inspection_reports(
             status=status,
         )
     else:
-        items = list(current_store.code_inspection_reports.values())
+        items = list(_read_memory_collection(current_store, "code_inspection_reports").values())
     if product_id:
         items = [item for item in items if item.get("product_id") == product_id]
     if repository_id:
@@ -1250,7 +1291,10 @@ def findings_for_code_inspection_reports(
         return findings
     return [
         finding
-        for finding in current_store.code_inspection_findings.values()
+        for finding in _read_memory_collection(
+            current_store,
+            "code_inspection_findings",
+        ).values()
         if str(finding.get("report_id")) in report_ids
     ]
 
@@ -1898,14 +1942,17 @@ def code_inspection_detail_response(
             detail.get("findings") or [],
         )
         return detail
-    report = current_store.code_inspection_reports.get(report_id)
+    report = _read_memory_record(current_store, "code_inspection_reports", report_id)
     if report is None:
         raise api_error(404, "NOT_FOUND", "Code inspection report not found")
     if not user_can_read_product(user, report.get("product_id")):
         raise api_error(404, "NOT_FOUND", "Code inspection report not found")
     findings = [
         finding
-        for finding in current_store.code_inspection_findings.values()
+        for finding in _read_memory_collection(
+            current_store,
+            "code_inspection_findings",
+        ).values()
         if finding.get("report_id") == report_id
     ]
     findings.sort(
@@ -1918,7 +1965,10 @@ def code_inspection_detail_response(
     )
     notifications = [
         notification
-        for notification in current_store.code_inspection_notifications.values()
+        for notification in _read_memory_collection(
+            current_store,
+            "code_inspection_notifications",
+        ).values()
         if notification.get("report_id") == report_id
     ]
     notifications.sort(key=lambda item: (item.get("created_at") or "", item["id"]))
@@ -1937,17 +1987,23 @@ def _code_inspection_detail_raw(current_store: Any, report_id: str) -> dict[str,
         if detail is None:
             raise api_error(404, "NOT_FOUND", "Code inspection report not found")
         return detail
-    report = current_store.code_inspection_reports.get(report_id)
+    report = _read_memory_record(current_store, "code_inspection_reports", report_id)
     if report is None:
         raise api_error(404, "NOT_FOUND", "Code inspection report not found")
     findings = [
         finding
-        for finding in current_store.code_inspection_findings.values()
+        for finding in _read_memory_collection(
+            current_store,
+            "code_inspection_findings",
+        ).values()
         if finding.get("report_id") == report_id
     ]
     notifications = [
         notification
-        for notification in current_store.code_inspection_notifications.values()
+        for notification in _read_memory_collection(
+            current_store,
+            "code_inspection_notifications",
+        ).values()
         if notification.get("report_id") == report_id
     ]
     return {"findings": findings, "notifications": notifications, "report": report}
