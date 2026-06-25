@@ -11,6 +11,8 @@ from app.services.operational_records import (
     operational_query_repository,
     operational_write_store,
     parse_optional_time,
+    read_memory_dict,
+    read_memory_records,
     record_audit_event,
     save_single_repository_record,
     uses_repository_context,
@@ -43,12 +45,12 @@ def validate_jenkins_release_context(
     product_id: str,
     version_id: str,
 ) -> None:
-    product = current_store.products.get(product_id)
+    product = read_memory_dict(current_store, "products").get(product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
-    version = current_store.product_versions.get(version_id)
+    version = read_memory_dict(current_store, "product_versions").get(version_id)
     if version is None or version["product_id"] != product_id:
         raise api_error(404, "NOT_FOUND", "Product version not found")
     if version["status"] == "archived":
@@ -75,7 +77,7 @@ def list_jenkins_releases_response(
         )
         return {"items": items, "total": len(items)}
     items = []
-    for release in current_store.jenkins_release_records.values():
+    for release in read_memory_records(current_store, "jenkins_release_records"):
         if product_id is not None and release.get("product_id") != product_id:
             continue
         if version_id is not None and release.get("version_id") != version_id:

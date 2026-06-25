@@ -9,6 +9,8 @@ from app.services.operational_records import (
     ensure_non_blank,
     operational_query_repository,
     operational_write_store,
+    read_memory_dict,
+    read_memory_records,
     record_audit_event,
     save_single_repository_record,
     uses_repository_context,
@@ -34,7 +36,7 @@ def validate_online_log_metric_context(
     product_id: str,
     module_code: str | None = None,
 ) -> None:
-    product = current_store.products.get(product_id)
+    product = read_memory_dict(current_store, "products").get(product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
@@ -43,7 +45,7 @@ def validate_online_log_metric_context(
         module["product_id"] == product_id
         and module["code"] == module_code
         and module.get("status", "active") == "active"
-        for module in current_store.product_modules.values()
+        for module in read_memory_records(current_store, "product_modules")
     ):
         raise api_error(404, "NOT_FOUND", "Product module not found")
 
@@ -99,7 +101,7 @@ def list_online_log_metrics_response(
         )
         return {"items": items, "total": len(items)}
     items = []
-    for metric in current_store.online_log_metrics.values():
+    for metric in read_memory_records(current_store, "online_log_metrics"):
         if product_id is not None and metric.get("product_id") != product_id:
             continue
         if module_code is not None and metric.get("module_code") != module_code:

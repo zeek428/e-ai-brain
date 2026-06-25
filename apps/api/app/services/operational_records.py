@@ -99,6 +99,18 @@ def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any
     return collection
 
 
+def read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def read_memory_records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    return list(read_memory_dict(current_store, collection_name).values())
+
+
 def _audit_events_collection(current_store: Any) -> list[dict[str, Any]]:
     return _memory_list(current_store, "audit_events")
 
@@ -172,7 +184,7 @@ def require_collector_run_write_role(user: dict[str, Any]) -> None:
 def validate_collector_product_context(current_store: Any, *, product_id: str | None) -> None:
     if product_id is None:
         return
-    product = current_store.products.get(product_id)
+    product = read_memory_dict(current_store, "products").get(product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
@@ -262,7 +274,7 @@ def list_collector_runs_response(
         )
         return {"items": items, "total": len(items)}
     items = []
-    for run in current_store.collector_runs.values():
+    for run in read_memory_records(current_store, "collector_runs"):
         if collector_type is not None and run.get("collector_type") != collector_type:
             continue
         if product_id is not None and run.get("product_id") != product_id:

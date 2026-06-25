@@ -10,6 +10,8 @@ from app.services.operational_records import (
     ensure_non_blank,
     operational_query_repository,
     operational_write_store,
+    read_memory_dict,
+    read_memory_records,
     record_audit_event,
     save_single_repository_record,
     uses_repository_context,
@@ -54,12 +56,12 @@ def validate_gitlab_metric_context(
     product_id: str,
     repository_id: str,
 ) -> None:
-    product = current_store.products.get(product_id)
+    product = read_memory_dict(current_store, "products").get(product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
-    repository = current_store.product_git_repositories.get(repository_id)
+    repository = read_memory_dict(current_store, "product_git_repositories").get(repository_id)
     if repository is None or repository["product_id"] != product_id:
         raise api_error(404, "NOT_FOUND", "Product Git repository not found")
     if repository.get("status") != "active":
@@ -86,7 +88,7 @@ def list_gitlab_metrics_response(
         )
         return {"items": items, "total": len(items)}
     items = []
-    for metric in current_store.gitlab_daily_code_metrics.values():
+    for metric in read_memory_records(current_store, "gitlab_daily_code_metrics"):
         if product_id is not None and metric.get("product_id") != product_id:
             continue
         if repository_id is not None and metric.get("repository_id") != repository_id:
