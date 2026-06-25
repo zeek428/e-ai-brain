@@ -138,6 +138,20 @@ def get_model_gateway_config_record(current_store: Any, config_id: str) -> dict[
     return dict(config) if config is not None else None
 
 
+def model_gateway_config_records(current_store: Any) -> dict[str, dict[str, Any]]:
+    repository = model_gateway_query_repository(current_store)
+    if repository is not None:
+        return {
+            str(config["id"]): dict(config)
+            for config in repository.list_model_gateway_configs()
+            if config.get("id") is not None
+        }
+    return {
+        str(config_id): dict(config)
+        for config_id, config in _memory_dict(current_store, "model_gateway_configs").items()
+    }
+
+
 def replace_memory_model_gateway_configs(
     current_store: Any,
     configs: dict[str, dict[str, Any]],

@@ -14,6 +14,7 @@ from app.services.model_gateway import (
     delete_model_gateway_config_record,
     embedding_connection_mode,
     get_model_gateway_config_record,
+    model_gateway_config_records,
     model_gateway_configs_after_default,
     model_gateway_write_store,
     normalize_embedding_dimension,
@@ -178,7 +179,7 @@ def create_model_gateway_config(
         **embedding_fields,
     }
     next_configs = {
-        **current_store.model_gateway_configs,
+        **model_gateway_config_records(current_store),
         config_id: config,
     }
     next_configs = model_gateway_configs_after_default(
@@ -275,7 +276,7 @@ def patch_model_gateway_config(
         updates.update(embedding_fields)
     config = {**config, **updates}
     next_configs = {
-        **current_store.model_gateway_configs,
+        **model_gateway_config_records(current_store),
         config_id: config,
     }
     next_configs = model_gateway_configs_after_default(
@@ -306,7 +307,7 @@ def delete_model_gateway_config(
     current_store = store(request)
     if get_model_gateway_config_record(current_store, config_id) is None:
         raise api_error(404, "NOT_FOUND", "Model gateway config not found")
-    next_configs = dict(current_store.model_gateway_configs)
+    next_configs = model_gateway_config_records(current_store)
     next_configs.pop(config_id, None)
     audit_event = record_audit_event(
         current_store,

@@ -15,6 +15,18 @@ from app.core.listing import (
 OPERATIONAL_METRIC_SORT_FIELDS = {"category", "id", "name", "status", "updated_at", "value"}
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    return list(_memory_dict(current_store, collection_name).values())
+
+
 def operational_query_repository(current_store: Any) -> Any | None:
     repository = getattr(current_store, "repository", None)
     if repository is None:
@@ -97,9 +109,9 @@ def operational_metric_rows(current_store: Any) -> list[dict[str, Any]]:
         jenkins_releases = repository.list_jenkins_release_records()
         online_logs = repository.list_online_log_metrics()
     else:
-        gitlab_metrics = list(current_store.gitlab_daily_code_metrics.values())
-        jenkins_releases = list(current_store.jenkins_release_records.values())
-        online_logs = list(current_store.online_log_metrics.values())
+        gitlab_metrics = _memory_records(current_store, "gitlab_daily_code_metrics")
+        jenkins_releases = _memory_records(current_store, "jenkins_release_records")
+        online_logs = _memory_records(current_store, "online_log_metrics")
     return [
         *(operational_metric_projection("GitLab 指标", item) for item in gitlab_metrics),
         *(operational_metric_projection("Jenkins 发布", item) for item in jenkins_releases),
