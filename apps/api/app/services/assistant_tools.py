@@ -9,6 +9,17 @@ from app.services.plugins import result_write_record_from_scheduled_run
 
 __all__ = ["assistant_tool_results"]
 
+
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, list) else []
+
+
 def assistant_tool_results(
     current_store: Any,
     *,
@@ -91,24 +102,24 @@ def assistant_tool_results(
 
 
 def _assistant_read_context(current_store: Any, *, product_id: str | None) -> dict[str, Any]:
-    products = list(current_store.products.values())
+    products = list(_read_memory_dict(current_store, "products").values())
     if product_id:
         products = [product for product in products if product.get("id") == product_id]
     product_ids = {str(product["id"]) for product in products if product.get("id") is not None}
     requirements = [
         requirement
-        for requirement in current_store.requirements.values()
+        for requirement in _read_memory_dict(current_store, "requirements").values()
         if not product_ids or requirement.get("product_id") in product_ids
     ]
     tasks = [
         task
-        for task in current_store.ai_tasks.values()
+        for task in _read_memory_dict(current_store, "ai_tasks").values()
         if not product_ids or task.get("product_id") in product_ids
     ]
     task_ids = {str(task["id"]) for task in tasks if task.get("id") is not None}
     scheduled_jobs = [
         job
-        for job in getattr(current_store, "scheduled_jobs", {}).values()
+        for job in _read_memory_dict(current_store, "scheduled_jobs").values()
         if not product_ids or job.get("product_id") in product_ids
     ]
     scheduled_job_ids = {
@@ -116,7 +127,7 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
     }
     scheduled_job_runs = [
         run
-        for run in getattr(current_store, "scheduled_job_runs", {}).values()
+        for run in _read_memory_dict(current_store, "scheduled_job_runs").values()
         if not product_ids or str(run.get("scheduled_job_id")) in scheduled_job_ids
     ]
     result_write_records = []
@@ -125,32 +136,40 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
         if record is not None:
             result_write_records.append(record)
     return {
-        "ai_agents": list(getattr(current_store, "ai_agents", {}).values()),
-        "ai_skills": list(getattr(current_store, "ai_skills", {}).values()),
+        "ai_agents": list(_read_memory_dict(current_store, "ai_agents").values()),
+        "ai_skills": list(_read_memory_dict(current_store, "ai_skills").values()),
         "bugs": [
             bug
-            for bug in current_store.bugs.values()
+            for bug in _read_memory_dict(current_store, "bugs").values()
             if not product_ids or bug.get("product_id") in product_ids
         ],
         "code_review_reports": [
             report
-            for report in current_store.code_review_reports.values()
+            for report in _read_memory_dict(current_store, "code_review_reports").values()
             if str(report.get("task_id")) in task_ids
         ],
         "human_reviews": [
             review
-            for review in current_store.human_reviews.values()
+            for review in _read_memory_dict(current_store, "human_reviews").values()
             if str(review.get("ai_task_id")) in task_ids
         ],
-        "integration_plugins": list(getattr(current_store, "integration_plugins", {}).values()),
-        "knowledge_deposits": list(getattr(current_store, "knowledge_deposits", {}).values()),
-        "knowledge_documents": list(getattr(current_store, "knowledge_documents", {}).values()),
-        "model_gateway_configs": list(getattr(current_store, "model_gateway_configs", {}).values()),
-        "model_gateway_logs": list(getattr(current_store, "model_gateway_logs", [])),
-        "plugin_actions": list(getattr(current_store, "plugin_actions", {}).values()),
-        "plugin_connections": list(getattr(current_store, "plugin_connections", {}).values()),
+        "integration_plugins": list(
+            _read_memory_dict(current_store, "integration_plugins").values()
+        ),
+        "knowledge_deposits": list(
+            _read_memory_dict(current_store, "knowledge_deposits").values()
+        ),
+        "knowledge_documents": list(
+            _read_memory_dict(current_store, "knowledge_documents").values()
+        ),
+        "model_gateway_configs": list(
+            _read_memory_dict(current_store, "model_gateway_configs").values()
+        ),
+        "model_gateway_logs": list(_read_memory_list(current_store, "model_gateway_logs")),
+        "plugin_actions": list(_read_memory_dict(current_store, "plugin_actions").values()),
+        "plugin_connections": list(_read_memory_dict(current_store, "plugin_connections").values()),
         "plugin_invocation_logs": list(
-            getattr(current_store, "plugin_invocation_logs", {}).values()
+            _read_memory_dict(current_store, "plugin_invocation_logs").values()
         ),
         "products": products,
         "requirements": requirements,
@@ -161,7 +180,7 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
         "task_by_id": {str(task["id"]): task for task in tasks if task.get("id") is not None},
         "versions": [
             version
-            for version in current_store.product_versions.values()
+            for version in _read_memory_dict(current_store, "product_versions").values()
             if not product_ids or version.get("product_id") in product_ids
         ],
     }
@@ -1577,7 +1596,7 @@ def _model_gateway_tool(current_store: Any) -> dict[str, Any]:
     default_gateway = next(
         (
             config
-            for config in current_store.model_gateway_configs.values()
+            for config in _read_memory_dict(current_store, "model_gateway_configs").values()
             if config.get("is_default") and config.get("status") == "active"
         ),
         None,

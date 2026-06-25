@@ -26,6 +26,11 @@ ASSISTANT_HISTORY_TOOL_RESULT_LIMIT = 4
 ASSISTANT_HISTORY_TOOL_ITEM_LIMIT = 4
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def build_assistant_system_context(
     current_store: Any,
     *,
@@ -33,30 +38,30 @@ def build_assistant_system_context(
     model_gateway_status: str,
     product_id: str | None,
 ) -> dict[str, Any]:
-    products = list(current_store.products.values())
+    products = list(_read_memory_dict(current_store, "products").values())
     if product_id:
         products = [product for product in products if product["id"] == product_id]
     product_ids = {product["id"] for product in products}
     requirements = [
         requirement
-        for requirement in current_store.requirements.values()
+        for requirement in _read_memory_dict(current_store, "requirements").values()
         if not product_ids or requirement.get("product_id") in product_ids
     ]
     tasks = [
         task
-        for task in current_store.ai_tasks.values()
+        for task in _read_memory_dict(current_store, "ai_tasks").values()
         if not product_ids or task.get("product_id") in product_ids
     ]
     task_by_id = {str(task["id"]): task for task in tasks}
     task_ids = set(task_by_id)
     versions = [
         version
-        for version in current_store.product_versions.values()
+        for version in _read_memory_dict(current_store, "product_versions").values()
         if not product_ids or version.get("product_id") in product_ids
     ]
     bugs = [
         bug
-        for bug in current_store.bugs.values()
+        for bug in _read_memory_dict(current_store, "bugs").values()
         if not product_ids or bug.get("product_id") in product_ids
     ]
     open_bugs = [bug for bug in bugs if bug.get("status") != "closed"]
@@ -65,22 +70,22 @@ def build_assistant_system_context(
     ]
     pending_reviews = [
         review
-        for review in current_store.human_reviews.values()
+        for review in _read_memory_dict(current_store, "human_reviews").values()
         if review.get("status") == "pending" and str(review.get("ai_task_id")) in task_ids
     ]
     code_review_reports = [
         report
-        for report in current_store.code_review_reports.values()
+        for report in _read_memory_dict(current_store, "code_review_reports").values()
         if str(report.get("task_id")) in task_ids
     ]
     knowledge_deposits = [
         deposit
-        for deposit in current_store.knowledge_deposits.values()
+        for deposit in _read_memory_dict(current_store, "knowledge_deposits").values()
         if str(deposit.get("ai_task_id")) in task_ids
     ]
     repositories = [
         repository
-        for repository in current_store.product_git_repositories.values()
+        for repository in _read_memory_dict(current_store, "product_git_repositories").values()
         if not product_ids or repository.get("product_id") in product_ids
     ]
     return {
@@ -604,7 +609,7 @@ def assistant_conversation_messages(
 ) -> list[dict[str, Any]]:
     messages = [
         message
-        for message in current_store.assistant_messages.values()
+        for message in _read_memory_dict(current_store, "assistant_messages").values()
         if message.get("conversation_id") == conversation_id
     ]
     return sorted(messages, key=lambda item: item.get("created_at", ""))
