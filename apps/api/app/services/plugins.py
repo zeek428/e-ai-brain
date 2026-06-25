@@ -89,6 +89,26 @@ PLUGIN_ACTION_SORT_FIELDS = {
 }
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _put_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record: dict[str, Any],
+) -> None:
+    _memory_dict(current_store, collection_name)[str(record["id"])] = record
+
+
+def _delete_memory_record(current_store: Any, collection_name: str, record_id: str) -> None:
+    _memory_dict(current_store, collection_name).pop(record_id, None)
+
+
 def require_admin(user: dict[str, Any]) -> None:
     require_permissions(user, {"system.plugins.manage"})
 
@@ -300,7 +320,7 @@ def ensure_standard_plugins(current_store: Any) -> None:
                 "protocol": normalized_protocol,
                 "updated_at": now,
             }
-            current_store.integration_plugins[demoted_plugin["id"]] = demoted_plugin
+            _put_memory_record(current_store, "integration_plugins", demoted_plugin)
             persist_record(current_store, "save_plugin_record", demoted_plugin)
     existing_by_code = {
         str(plugin.get("code")): plugin
@@ -321,9 +341,9 @@ def ensure_standard_plugins(current_store: Any) -> None:
             "updated_at": now,
             **({"id": existing["id"]} if existing else {}),
         }
-        current_store.integration_plugins[plugin["id"]] = plugin
+        _put_memory_record(current_store, "integration_plugins", plugin)
         if existing and existing.get("id") != plugin["id"]:
-            current_store.integration_plugins.pop(existing["id"], None)
+            _delete_memory_record(current_store, "integration_plugins", existing["id"])
         persist_record(current_store, "save_plugin_record", plugin)
 
 
@@ -906,7 +926,7 @@ def create_plugin_response(
         "status": payload.status,
         "updated_at": now,
     }
-    current_store.integration_plugins[plugin_id] = plugin
+    _put_memory_record(current_store, "integration_plugins", plugin)
     audit_event = record_audit_event(
         current_store,
         event_type="plugin.created",
@@ -974,7 +994,7 @@ def copy_plugin_response(
     ensure_enum(copied["category"], PLUGIN_CATEGORIES, "category")
     ensure_enum(copied["protocol"], PLUGIN_PROTOCOLS, "protocol")
     ensure_enum(copied["status"], PLUGIN_STATUSES, "status")
-    current_store.integration_plugins[copied_id] = copied
+    _put_memory_record(current_store, "integration_plugins", copied)
     audit_event = record_audit_event(
         current_store,
         event_type="plugin.copied",
@@ -1015,7 +1035,7 @@ def patch_plugin_response(
         if key in updates:
             updates[key] = ensure_non_blank(updates[key], key)
     plugin = {**plugin, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    current_store.integration_plugins[plugin_id] = plugin
+    _put_memory_record(current_store, "integration_plugins", plugin)
     audit_event = record_audit_event(
         current_store,
         event_type="plugin.updated",
@@ -1044,7 +1064,7 @@ def delete_plugin_response(
         plugin_delete_usages(current_store, plugin_id),
         object_label=f"插件「{plugin['name']}」",
     )
-    current_store.integration_plugins.pop(plugin_id, None)
+    _delete_memory_record(current_store, "integration_plugins", plugin_id)
     audit_event = record_audit_event(
         current_store,
         event_type="plugin.deleted",
@@ -1393,7 +1413,7 @@ def create_plugin_connection_response(
         "timeout_seconds": payload.timeout_seconds,
         "updated_at": now,
     }
-    current_store.plugin_connections[connection_id] = connection
+    _put_memory_record(current_store, "plugin_connections", connection)
     audit_event = record_audit_event(
         current_store,
         event_type="plugin_connection.created",
@@ -1465,7 +1485,7 @@ def patch_plugin_connection_response(
         auth_type=str(connection.get("auth_type") or "none"),
         plugin=plugin,
     )
-    current_store.plugin_connections[connection_id] = connection
+    _put_memory_record(current_store, "plugin_connections", connection)
     audit_event = record_audit_event(
         current_store,
         event_type="plugin_connection.updated",
@@ -1498,7 +1518,7 @@ def delete_plugin_connection_response(
         connection_delete_usages(current_store, connection_id),
         object_label=f"连接「{connection['name']}」",
     )
-    current_store.plugin_connections.pop(connection_id, None)
+    _delete_memory_record(current_store, "plugin_connections", connection_id)
     audit_event = record_audit_event(
         current_store,
         event_type="plugin_connection.deleted",
@@ -1732,7 +1752,7 @@ def test_plugin_connection_response(
         "test_history": test_history,
         "updated_at": datetime.now(UTC).isoformat(),
     }
-    current_store.plugin_connections[connection_id] = connection
+    _put_memory_record(current_store, "plugin_connections", connection)
     audit_event = record_audit_event(
         current_store,
         event_type=f"plugin_connection.test_{status}",
@@ -1924,7 +1944,7 @@ def create_plugin_action_response(
         "status": payload.status,
         "updated_at": now,
     }
-    current_store.plugin_actions[action_id] = action
+    _put_memory_record(current_store, "plugin_actions", action)
     audit_event = record_audit_event(
         current_store,
         event_type="plugin_action.created",
@@ -1977,7 +1997,7 @@ def patch_plugin_action_response(
             updates["request_config"] or {},
         )
     action = {**action, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    current_store.plugin_actions[action_id] = action
+    _put_memory_record(current_store, "plugin_actions", action)
     audit_event = record_audit_event(
         current_store,
         event_type="plugin_action.updated",
@@ -2014,7 +2034,7 @@ def delete_plugin_action_response(
         action_delete_usages(current_store, action_id),
         object_label=f"动作「{action['name']}」",
     )
-    current_store.plugin_actions.pop(action_id, None)
+    _delete_memory_record(current_store, "plugin_actions", action_id)
     audit_event = record_audit_event(
         current_store,
         event_type="plugin_action.deleted",
@@ -2928,7 +2948,7 @@ def invoke_plugin_action_response(
         "trigger_type": trigger_type,
         "updated_at": now,
     }
-    current_store.plugin_invocation_logs[log_id] = log
+    _put_memory_record(current_store, "plugin_invocation_logs", log)
     audit_event = record_audit_event(
         current_store,
         event_type=f"plugin_action.invoke_{status}",
@@ -2954,7 +2974,7 @@ def invoke_plugin_action_response(
             "plugin_invocation_log_id": log_id,
             "updated_at": now,
         }
-        current_store.ai_executor_tasks[runner_task_id] = runner_task
+        _put_memory_record(current_store, "ai_executor_tasks", runner_task)
         save_single_repository_record(
             current_store,
             "save_ai_executor_task_record",
