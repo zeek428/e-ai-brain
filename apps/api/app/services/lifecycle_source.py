@@ -42,6 +42,11 @@ def lifecycle_query_repository(current_store: Any) -> Any | None:
     return None
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, Any]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def lifecycle_source_store(rows: dict[str, Any]) -> LifecycleContextReadModel:
     source_store = LifecycleContextReadModel()
     source_store.audit_events = list(rows.get("audit_events", []))
@@ -90,7 +95,13 @@ def save_lifecycle_context_records(current_store: Any) -> None:
     if callable(save_records):
         save_records(
             {
-                "lifecycle_context_edges": current_store.lifecycle_context_edges,
-                "lifecycle_risk_signals": current_store.lifecycle_risk_signals,
+                "lifecycle_context_edges": _read_memory_dict(
+                    current_store,
+                    "lifecycle_context_edges",
+                ),
+                "lifecycle_risk_signals": _read_memory_dict(
+                    current_store,
+                    "lifecycle_risk_signals",
+                ),
             }
         )

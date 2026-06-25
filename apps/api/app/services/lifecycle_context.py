@@ -23,6 +23,16 @@ from app.services.lifecycle_subjects import (
 from app.services.task_access import can_read_task
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, Any]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, list) else []
+
+
 def lifecycle_relation(
     *,
     subject_type: str,
@@ -65,7 +75,7 @@ def lifecycle_upstream(
         requirement_id = task.get("requirement_id")
         if not requirement_id or requirement_id in seen_requirement_ids:
             continue
-        requirement = current_store.requirements.get(requirement_id)
+        requirement = _read_memory_dict(current_store, "requirements").get(requirement_id)
         if requirement is None:
             continue
         seen_requirement_ids.add(requirement_id)
@@ -93,6 +103,7 @@ def lifecycle_downstream(
 ) -> list[dict[str, Any]]:
     relations: list[dict[str, Any]] = []
     task_ids = {task["id"] for task in tasks}
+    ai_tasks_by_id = _read_memory_dict(current_store, "ai_tasks")
     for task in tasks:
         relations.append(
             lifecycle_relation(
@@ -109,7 +120,7 @@ def lifecycle_downstream(
             )
         )
         for review_id in task.get("review_ids", []):
-            review = current_store.human_reviews.get(review_id)
+            review = _read_memory_dict(current_store, "human_reviews").get(review_id)
             if review is None:
                 continue
             relations.append(
@@ -126,8 +137,9 @@ def lifecycle_downstream(
                 )
             )
         report_id = task.get("code_review_report_id")
-        if report_id and report_id in current_store.code_review_reports:
-            report = current_store.code_review_reports[report_id]
+        reports = _read_memory_dict(current_store, "code_review_reports")
+        if report_id and report_id in reports:
+            report = reports[report_id]
             relations.append(
                 lifecycle_relation(
                     subject_type="code_review_report",
@@ -141,7 +153,7 @@ def lifecycle_downstream(
                     metadata={"status": report["status"], "risk_level": report["risk_level"]},
                 )
             )
-    for snapshot in current_store.gitlab_mr_snapshots.values():
+    for snapshot in _read_memory_dict(current_store, "gitlab_mr_snapshots").values():
         if snapshot.get("technical_solution_task_id") not in task_ids:
             continue
         relations.append(
@@ -160,11 +172,13 @@ def lifecycle_downstream(
                 metadata={"mr_iid": snapshot["mr_iid"], "writeback_allowed": False},
             )
         )
-    for result in current_store.mock_writebacks.values():
+    for result in _read_memory_dict(current_store, "mock_writebacks").values():
         for issue in result["issues"]:
             if issue["source_task_id"] not in task_ids:
                 continue
-            task = current_store.ai_tasks[issue["source_task_id"]]
+            task = ai_tasks_by_id.get(issue["source_task_id"])
+            if task is None:
+                continue
             relations.append(
                 lifecycle_relation(
                     subject_type="mock_issue",
@@ -181,10 +195,12 @@ def lifecycle_downstream(
                     },
                 )
             )
-    for deposit in current_store.knowledge_deposits.values():
+    for deposit in _read_memory_dict(current_store, "knowledge_deposits").values():
         if deposit["ai_task_id"] not in task_ids:
             continue
-        task = current_store.ai_tasks[deposit["ai_task_id"]]
+        task = ai_tasks_by_id.get(deposit["ai_task_id"])
+        if task is None:
+            continue
         relations.append(
             lifecycle_relation(
                 subject_type="knowledge_deposit",
@@ -197,8 +213,8 @@ def lifecycle_downstream(
                 source_module="knowledge",
                 metadata={"status": deposit["status"]},
             )
-        )
-    for event in current_store.audit_events:
+            )
+    for event in _read_memory_list(current_store, "audit_events"):
         task_match = event.get("ai_task_id") in task_ids
         subject_task_match = event.get("subject_type") == "ai_task" and event.get(
             "subject_id"
@@ -396,7 +412,7 @@ def lifecycle_context_response(
         module_code=module_code,
     )
     if subject_type == "ai_task":
-        subject_task = current_store.ai_tasks.get(str(subject_id))
+        subject_task = _read_memory_dict(current_store, "ai_tasks").get(str(subject_id))
         if subject_task is None:
             raise api_error(404, "NOT_FOUND", "AI task not found")
         if not can_read_task(user, subject_task):
@@ -431,8 +447,14 @@ def lifecycle_context_response(
     if repository is not None:
         repository.save_lifecycle_context(
             {
-                "lifecycle_context_edges": current_store.lifecycle_context_edges,
-                "lifecycle_risk_signals": current_store.lifecycle_risk_signals,
+                "lifecycle_context_edges": _read_memory_dict(
+                    current_store,
+                    "lifecycle_context_edges",
+                ),
+                "lifecycle_risk_signals": _read_memory_dict(
+                    current_store,
+                    "lifecycle_risk_signals",
+                ),
             }
         )
     else:
