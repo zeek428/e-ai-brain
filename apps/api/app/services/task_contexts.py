@@ -40,6 +40,22 @@ def raise_task_context_mismatch(message: str) -> None:
     raise api_error(400, "TASK_CONTEXT_MISMATCH", message)
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record_id: Any,
+) -> dict[str, Any] | None:
+    if record_id is None:
+        return None
+    record = _read_memory_dict(current_store, collection_name).get(str(record_id))
+    return record if isinstance(record, dict) else None
+
+
 def ensure_task_matches_requirement(
     task: dict[str, Any],
     requirement: dict[str, Any],
@@ -55,16 +71,18 @@ def ensure_task_matches_requirement(
 
 
 def product_context(current_store: Any, requirement: dict[str, Any]) -> dict[str, Any]:
-    product = current_store.products[requirement["product_id"]]
+    product = _read_memory_record(current_store, "products", requirement["product_id"])
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Product not found")
     version = (
-        current_store.product_versions.get(requirement["version_id"])
+        _read_memory_record(current_store, "product_versions", requirement["version_id"])
         if requirement.get("version_id")
         else None
     )
     module = next(
         (
             item
-            for item in current_store.product_modules.values()
+            for item in _read_memory_dict(current_store, "product_modules").values()
             if item["product_id"] == product["id"]
             and item["code"] == requirement.get("module_code")
         ),
@@ -72,12 +90,15 @@ def product_context(current_store: Any, requirement: dict[str, Any]) -> dict[str
     )
     repositories = [
         public_git_repository(repository)
-        for repository in current_store.product_git_repositories.values()
+        for repository in _read_memory_dict(
+            current_store,
+            "product_git_repositories",
+        ).values()
         if repository["product_id"] == product["id"] and repository.get("status") == "active"
     ]
     related_systems = [
         related_system
-        for related_system in current_store.related_systems.values()
+        for related_system in _read_memory_dict(current_store, "related_systems").values()
         if related_system.get("product_id") == product["id"]
         and related_system.get("status") == "active"
     ]
@@ -98,7 +119,11 @@ def ensure_confirmed_technical_solution_task(
     requirement: dict[str, Any],
     technical_solution_task_id: Any,
 ) -> dict[str, Any]:
-    technical_solution = current_store.ai_tasks.get(str(technical_solution_task_id))
+    technical_solution = _read_memory_record(
+        current_store,
+        "ai_tasks",
+        technical_solution_task_id,
+    )
     if (
         technical_solution is None
         or technical_solution["task_type"] != "technical_solution"
@@ -123,7 +148,11 @@ def ensure_confirmed_release_readiness_task(
     requirement: dict[str, Any],
     release_readiness_task_id: Any,
 ) -> dict[str, Any]:
-    release_readiness = current_store.ai_tasks.get(str(release_readiness_task_id))
+    release_readiness = _read_memory_record(
+        current_store,
+        "ai_tasks",
+        release_readiness_task_id,
+    )
     if (
         release_readiness is None
         or release_readiness["task_type"] != "release_readiness"
@@ -190,7 +219,7 @@ def matching_bugs_for_task_context(
     include_closed: bool = False,
 ) -> list[dict[str, Any]]:
     bugs = []
-    for bug in current_store.bugs.values():
+    for bug in _read_memory_dict(current_store, "bugs").values():
         if bug["product_id"] != task["product_id"]:
             continue
         if bug.get("version_id") not in {None, task["version_id"]}:
@@ -207,7 +236,7 @@ def matching_bugs_for_task_context(
 def matching_jenkins_releases(current_store: Any, task: dict[str, Any]) -> list[dict[str, Any]]:
     releases = [
         release
-        for release in current_store.jenkins_release_records.values()
+        for release in _read_memory_dict(current_store, "jenkins_release_records").values()
         if release.get("product_id") == task["product_id"]
         and release.get("version_id") == task["version_id"]
     ]
@@ -224,7 +253,7 @@ def matching_jenkins_releases(current_store: Any, task: dict[str, Any]) -> list[
 def matching_online_log_metrics(current_store: Any, task: dict[str, Any]) -> list[dict[str, Any]]:
     module_code = task.get("module_code")
     metrics = []
-    for metric in current_store.online_log_metrics.values():
+    for metric in _read_memory_dict(current_store, "online_log_metrics").values():
         if metric.get("product_id") != task["product_id"]:
             continue
         if module_code is not None and metric.get("module_code") not in {None, module_code}:
@@ -246,12 +275,15 @@ def matching_gitlab_daily_code_metrics(
 ) -> list[dict[str, Any]]:
     product_repository_ids = {
         repository["id"]
-        for repository in current_store.product_git_repositories.values()
+        for repository in _read_memory_dict(
+            current_store,
+            "product_git_repositories",
+        ).values()
         if repository["product_id"] == task["product_id"]
     }
     metrics = [
         metric
-        for metric in current_store.gitlab_daily_code_metrics.values()
+        for metric in _read_memory_dict(current_store, "gitlab_daily_code_metrics").values()
         if metric.get("product_id") == task["product_id"]
         and metric.get("repository_id") in product_repository_ids
     ]
