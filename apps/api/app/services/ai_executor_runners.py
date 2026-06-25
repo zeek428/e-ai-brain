@@ -953,7 +953,7 @@ def create_ai_executor_runner_install_package_response(
             "系统默认执行器由平台托管，不需要 Runner 安装包",
         )
     sync_ai_executor_runner_store(current_store)
-    runner = current_store.ai_executor_runners.get(runner_id)
+    runner = _read_record(current_store, "ai_executor_runners", runner_id)
     if runner is None:
         raise api_error(404, "NOT_FOUND", "AI executor runner not found")
 
@@ -999,6 +999,25 @@ RUNNER_RECORD_METHOD_COLLECTIONS = {
     "save_scheduled_job_record": "scheduled_jobs",
     "save_scheduled_job_run_record": "scheduled_job_runs",
 }
+
+
+def _read_collection(
+    current_store: Any,
+    collection_name: str,
+) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, {})
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_record(
+    current_store: Any,
+    collection_name: str,
+    record_id: str | None,
+) -> dict[str, Any] | None:
+    if record_id is None:
+        return None
+    item = _read_collection(current_store, collection_name).get(str(record_id))
+    return item if isinstance(item, dict) else None
 
 
 def _memory_collection(
@@ -1106,7 +1125,7 @@ def _load_scheduled_job_run(current_store: Any, task: dict[str, Any]) -> dict[st
     run_id = task.get("scheduled_job_run_id")
     if not run_id:
         return None
-    run = current_store.scheduled_job_runs.get(run_id)
+    run = _read_record(current_store, "scheduled_job_runs", run_id)
     if run is not None:
         return run
     repository = getattr(current_store, "repository", None)
@@ -1122,7 +1141,7 @@ def _load_plugin_invocation_log(current_store: Any, task: dict[str, Any]) -> dic
     log_id = task.get("plugin_invocation_log_id")
     if not log_id:
         return None
-    log = current_store.plugin_invocation_logs.get(log_id)
+    log = _read_record(current_store, "plugin_invocation_logs", log_id)
     if log is not None:
         return log
     repository = getattr(current_store, "repository", None)
@@ -1137,7 +1156,7 @@ def _load_plugin_invocation_log(current_store: Any, task: dict[str, Any]) -> dic
 def _load_collector_run(current_store: Any, collector_run_id: str | None) -> dict[str, Any] | None:
     if not collector_run_id:
         return None
-    collector_run = current_store.collector_runs.get(collector_run_id)
+    collector_run = _read_record(current_store, "collector_runs", collector_run_id)
     if collector_run is not None:
         return collector_run
     repository = getattr(current_store, "repository", None)
@@ -1152,7 +1171,7 @@ def _load_collector_run(current_store: Any, collector_run_id: str | None) -> dic
 def _load_scheduled_job(current_store: Any, scheduled_job_id: str | None) -> dict[str, Any] | None:
     if not scheduled_job_id:
         return None
-    job = current_store.scheduled_jobs.get(scheduled_job_id)
+    job = _read_record(current_store, "scheduled_jobs", scheduled_job_id)
     if job is not None:
         return job
     repository = getattr(current_store, "repository", None)
@@ -1167,7 +1186,7 @@ def _load_scheduled_job(current_store: Any, scheduled_job_id: str | None) -> dic
 def _load_ai_task(current_store: Any, ai_task_id: str | None) -> dict[str, Any] | None:
     if not ai_task_id:
         return None
-    task = current_store.ai_tasks.get(ai_task_id)
+    task = _read_record(current_store, "ai_tasks", ai_task_id)
     if task is not None:
         return task
     repository = getattr(current_store, "repository", None)
@@ -1177,7 +1196,7 @@ def _load_ai_task(current_store: Any, ai_task_id: str | None) -> dict[str, Any] 
         for candidate in payload.get("ai_tasks", {}).values():
             if candidate.get("id") == ai_task_id:
                 return candidate
-        return current_store.ai_tasks.get(ai_task_id)
+        return _read_record(current_store, "ai_tasks", ai_task_id)
     return None
 
 
@@ -1231,7 +1250,7 @@ def _existing_pending_review(
                 and review.get("status") == "pending"
             ):
                 return review
-    for review in current_store.human_reviews.values():
+    for review in _read_collection(current_store, "human_reviews").values():
         if (
             review.get("ai_task_id") == ai_task_id
             and review.get("stage") == stage
@@ -1610,7 +1629,7 @@ def list_ai_executor_runners_response(
         system_default_ai_executor_runner(),
         *[
             runner
-            for runner in current_store.ai_executor_runners.values()
+            for runner in _read_collection(current_store, "ai_executor_runners").values()
             if runner.get("id") != SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID
         ],
     ]
@@ -1620,7 +1639,7 @@ def list_ai_executor_runners_response(
         latest_task = max(
             (
                 task
-                for task in current_store.ai_executor_tasks.values()
+                for task in _read_collection(current_store, "ai_executor_tasks").values()
                 if task.get("runner_id") == runner.get("id")
             ),
             key=lambda task: (
@@ -1659,7 +1678,7 @@ def list_ai_executor_tasks_response(
     )
     items = [
         _task_public(task)
-        for task in current_store.ai_executor_tasks.values()
+        for task in _read_collection(current_store, "ai_executor_tasks").values()
         if (ai_task_id is None or task.get("ai_task_id") == ai_task_id)
         and (runner_id is None or task.get("runner_id") == runner_id)
         and (
@@ -1707,7 +1726,7 @@ def test_ai_executor_runner_response(
     if _is_system_default_runner_id(runner_id):
         runner = system_default_ai_executor_runner()
     else:
-        runner = current_store.ai_executor_runners.get(runner_id)
+        runner = _read_record(current_store, "ai_executor_runners", runner_id)
     if runner is None:
         raise api_error(404, "NOT_FOUND", "AI executor runner not found")
 
@@ -1841,7 +1860,7 @@ def patch_ai_executor_runner_response(
             "系统默认执行器由平台托管，不能修改",
         )
     sync_ai_executor_runner_store(current_store)
-    runner = current_store.ai_executor_runners.get(runner_id)
+    runner = _read_record(current_store, "ai_executor_runners", runner_id)
     if runner is None:
         raise api_error(404, "NOT_FOUND", "AI executor runner not found")
     updates = payload.model_dump(exclude_unset=True)
@@ -1916,7 +1935,7 @@ def rotate_ai_executor_runner_token_response(
             "系统默认执行器由平台托管，不需要 Runner Token",
         )
     sync_ai_executor_runner_store(current_store)
-    runner = current_store.ai_executor_runners.get(runner_id)
+    runner = _read_record(current_store, "ai_executor_runners", runner_id)
     if runner is None:
         raise api_error(404, "NOT_FOUND", "AI executor runner not found")
     runner_token = str(getattr(payload, "runner_token", None) or secrets.token_urlsafe(32))
@@ -1960,12 +1979,12 @@ def delete_ai_executor_runner_response(
         )
     sync_ai_executor_runner_store(current_store)
     sync_ai_executor_task_store(current_store, runner_id=runner_id)
-    runner = current_store.ai_executor_runners.get(runner_id)
+    runner = _read_record(current_store, "ai_executor_runners", runner_id)
     if runner is None:
         raise api_error(404, "NOT_FOUND", "AI executor runner not found")
     active_tasks = [
         task["id"]
-        for task in current_store.ai_executor_tasks.values()
+        for task in _read_collection(current_store, "ai_executor_tasks").values()
         if task.get("runner_id") == runner_id
         and task.get("status") not in AI_EXECUTOR_TASK_TERMINAL_STATUSES
     ]
@@ -2016,7 +2035,7 @@ def _authenticated_runner(
             "系统默认执行器由平台托管，不接收 Runner 心跳或任务领取",
         )
     sync_ai_executor_runner_store(current_store)
-    runner = current_store.ai_executor_runners.get(runner_id)
+    runner = _read_record(current_store, "ai_executor_runners", runner_id)
     if runner is None:
         raise api_error(404, "NOT_FOUND", "AI executor runner not found")
     token = _runner_token_from_request(request)
@@ -2077,7 +2096,7 @@ def find_available_runner(
             "System default runner only supports the model_gateway executor type",
         )
     sync_ai_executor_runner_store(current_store)
-    candidates = list(current_store.ai_executor_runners.values())
+    candidates = list(_read_collection(current_store, "ai_executor_runners").values())
     if runner_id:
         candidates = [runner for runner in candidates if runner.get("id") == runner_id]
     for runner in candidates:
@@ -2179,7 +2198,7 @@ def claim_ai_executor_task_response(
     sync_ai_executor_task_store(current_store, runner_id=runner_id, status="queued")
     queued = [
         task
-        for task in current_store.ai_executor_tasks.values()
+        for task in _read_collection(current_store, "ai_executor_tasks").values()
         if task.get("runner_id") == runner_id
         and task.get("status") == "queued"
         and (requested_executor is None or task.get("executor_type") == requested_executor)
@@ -2225,7 +2244,7 @@ def claim_ai_executor_task_response(
 
 def _sync_ai_executor_task_by_id(current_store: Any, task_id: str) -> dict[str, Any]:
     sync_ai_executor_task_store(current_store)
-    task = current_store.ai_executor_tasks.get(task_id)
+    task = _read_record(current_store, "ai_executor_tasks", task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI executor task not found")
     return task
@@ -2275,7 +2294,7 @@ def append_ai_executor_task_logs_response(
     runner_id = _ensure_non_blank(getattr(payload, "runner_id", None), "runner_id")
     _authenticated_runner(current_store, request=request, runner_id=runner_id)
     sync_ai_executor_task_store(current_store, runner_id=runner_id)
-    task = current_store.ai_executor_tasks.get(task_id)
+    task = _read_record(current_store, "ai_executor_tasks", task_id)
     if task is None or task.get("runner_id") != runner_id:
         raise api_error(404, "NOT_FOUND", "AI executor task not found")
     if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
@@ -2383,7 +2402,7 @@ def timeout_ai_executor_tasks_response(
     now = _datetime_value(getattr(payload, "now", None)) or datetime.now(UTC)
     sync_ai_executor_task_store(current_store)
     timed_out: list[dict[str, Any]] = []
-    for task in list(current_store.ai_executor_tasks.values()):
+    for task in list(_read_collection(current_store, "ai_executor_tasks").values()):
         if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
             continue
         reference_at = (
@@ -2458,7 +2477,7 @@ def complete_ai_executor_task_response(
     runner_id = _ensure_non_blank(getattr(payload, "runner_id", None), "runner_id")
     _authenticated_runner(current_store, request=request, runner_id=runner_id)
     sync_ai_executor_task_store(current_store, runner_id=runner_id)
-    task = current_store.ai_executor_tasks.get(task_id)
+    task = _read_record(current_store, "ai_executor_tasks", task_id)
     if task is None or task.get("runner_id") != runner_id:
         raise api_error(404, "NOT_FOUND", "AI executor task not found")
     status = _ensure_enum(getattr(payload, "status", None), AI_EXECUTOR_TASK_STATUSES, "status")
