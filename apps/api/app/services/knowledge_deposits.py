@@ -89,7 +89,7 @@ def knowledge_deposit_list_response(
     if repository is not None:
         items = repository.list_knowledge_deposits(status=status)
     else:
-        items = list(current_store.knowledge_deposits.values())
+        items = list(_read_memory_dict(current_store, "knowledge_deposits").values())
         if status:
             items = [item for item in items if item["status"] == status]
     return envelope({"items": items, "total": len(items)}, trace_id)
@@ -186,11 +186,11 @@ def get_knowledge_deposit(current_store: Any, deposit_id: str) -> dict[str, Any]
     get_deposit = getattr(repository, "get_knowledge_deposit", None)
     if callable(get_deposit):
         return get_deposit(deposit_id)
-    return current_store.knowledge_deposits.get(deposit_id)
+    return _read_memory_dict(current_store, "knowledge_deposits").get(deposit_id)
 
 
 def get_knowledge_document(current_store: Any, document_id: str) -> dict[str, Any] | None:
-    return current_store.knowledge_documents.get(document_id)
+    return _read_memory_dict(current_store, "knowledge_documents").get(document_id)
 
 
 def record_audit_event(
@@ -263,6 +263,16 @@ def _memory_collection(current_store: Any, collection_name: str) -> dict[str, di
         collection = {}
         vars(current_store)[collection_name] = collection
     return collection
+
+
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, Any]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, list) else []
 
 
 def get_knowledge_chunk_set_from_memory(
@@ -461,14 +471,14 @@ def create_knowledge_document_result(
 ) -> dict[str, Any]:
     title = ensure_non_blank(title, "title")
     content = ensure_non_blank(content, "content")
-    if product_id is not None and product_id not in current_store.products:
+    if product_id is not None and product_id not in _read_memory_dict(current_store, "products"):
         raise api_error(404, "NOT_FOUND", "Product not found")
     if knowledge_space_id is not None:
         from app.services.knowledge_management import ensure_space_access
 
         ensure_space_access(current_store, user, space_id=knowledge_space_id, required="write")
         if folder_id is not None:
-            folder = current_store.knowledge_folders.get(folder_id)
+            folder = _read_memory_dict(current_store, "knowledge_folders").get(folder_id)
             if folder is None or folder.get("knowledge_space_id") != knowledge_space_id:
                 raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
     ensure_roles(permission_roles)
@@ -519,7 +529,7 @@ def create_knowledge_document_result(
                     "activated_at": None,
                 },
             )
-    model_log_start_index = len(current_store.model_gateway_logs)
+    model_log_start_index = len(_read_memory_list(current_store, "model_gateway_logs"))
     document, chunks = replace_knowledge_chunks_result(current_store, document)
     if chunk_set_id is not None:
         for chunk in chunks:
@@ -556,7 +566,7 @@ def create_knowledge_document_result(
         document=document,
         chunks=chunks,
         audit_event=audit_event,
-        model_logs=current_store.model_gateway_logs[model_log_start_index:],
+        model_logs=_read_memory_list(current_store, "model_gateway_logs")[model_log_start_index:],
     )
     persist_knowledge_structure(current_store, document=document)
     return knowledge_document_response(current_store, document, chunks)
@@ -580,7 +590,7 @@ def patch_knowledge_document_result(
     if "permission_roles" in updates:
         ensure_roles(updates["permission_roles"])
     if "product_id" in updates and updates["product_id"] is not None:
-        if updates["product_id"] not in current_store.products:
+        if updates["product_id"] not in _read_memory_dict(current_store, "products"):
             raise api_error(404, "NOT_FOUND", "Product not found")
     target_space_id = updates.get("knowledge_space_id", document.get("knowledge_space_id"))
     target_folder_id = updates.get("folder_id", document.get("folder_id"))
@@ -589,7 +599,7 @@ def patch_knowledge_document_result(
 
         ensure_space_access(current_store, user, space_id=target_space_id, required="write")
         if target_folder_id is not None:
-            folder = current_store.knowledge_folders.get(target_folder_id)
+            folder = _read_memory_dict(current_store, "knowledge_folders").get(target_folder_id)
             if folder is None or folder.get("knowledge_space_id") != target_space_id:
                 raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
     if "index_status" in updates:
@@ -597,7 +607,7 @@ def patch_knowledge_document_result(
     if "index_error" in updates and updates["index_error"] is not None:
         updates["index_error"] = ensure_non_blank(updates["index_error"], "index_error")
     document = {**document, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    model_log_start_index = len(current_store.model_gateway_logs)
+    model_log_start_index = len(_read_memory_list(current_store, "model_gateway_logs"))
     if updates.get("index_status") == "index_failed":
         document, chunks = knowledge_index_failed_result(
             document,
@@ -693,7 +703,7 @@ def patch_knowledge_document_result(
         document=document,
         chunks=chunks,
         audit_event=audit_event,
-        model_logs=current_store.model_gateway_logs[model_log_start_index:],
+        model_logs=_read_memory_list(current_store, "model_gateway_logs")[model_log_start_index:],
     )
     persist_knowledge_structure(current_store, document=document)
     return knowledge_document_response(current_store, document, chunks)
@@ -715,7 +725,7 @@ def retry_knowledge_document_index_result(
             "Knowledge document is not eligible for index retry",
         )
     document = {**document, "updated_at": datetime.now(UTC).isoformat()}
-    model_log_start_index = len(current_store.model_gateway_logs)
+    model_log_start_index = len(_read_memory_list(current_store, "model_gateway_logs"))
     document, chunks = replace_knowledge_chunks_result(current_store, document)
     chunk_set_id = document.get("active_chunk_set_id")
     if chunk_set_id:
@@ -758,7 +768,7 @@ def retry_knowledge_document_index_result(
         document=document,
         chunks=chunks,
         audit_event=audit_event,
-        model_logs=current_store.model_gateway_logs[model_log_start_index:],
+        model_logs=_read_memory_list(current_store, "model_gateway_logs")[model_log_start_index:],
     )
     persist_knowledge_structure(current_store, document=document)
     return knowledge_document_response(current_store, document, chunks)
@@ -774,7 +784,7 @@ def delete_knowledge_document_result(
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
     affected_deposits = []
     now = datetime.now(UTC).isoformat()
-    for deposit in current_store.knowledge_deposits.values():
+    for deposit in _read_memory_dict(current_store, "knowledge_deposits").values():
         if deposit.get("knowledge_document_id") == document_id:
             affected_deposit = {
                 **deposit,
