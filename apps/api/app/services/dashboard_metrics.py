@@ -68,6 +68,15 @@ def _dashboard_metric_snapshot_collection(current_store: Any) -> dict[str, dict[
     return collection
 
 
+def _read_store_records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if isinstance(collection, dict):
+        return list(collection.values())
+    if isinstance(collection, list):
+        return list(collection)
+    return []
+
+
 def dashboard_metric_snapshot_record(
     *,
     data: dict[str, Any],
@@ -103,34 +112,46 @@ def dashboard_source_rows_from_store(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     return {
-        "audit_events": list(current_store.audit_events),
-        "bugs": list(current_store.bugs.values()),
-        "code_review_reports": list(current_store.code_review_reports.values()),
-        "gitlab_daily_code_metrics": list(current_store.gitlab_daily_code_metrics.values()),
-        "gitlab_mr_snapshots": list(current_store.gitlab_mr_snapshots.values()),
-        "human_reviews": list(current_store.human_reviews.values()),
-        "iteration_plan_suggestions": list(current_store.iteration_plan_suggestions.values()),
-        "jenkins_release_records": list(current_store.jenkins_release_records.values()),
-        "knowledge_deposits": list(current_store.knowledge_deposits.values()),
+        "audit_events": _read_store_records(current_store, "audit_events"),
+        "bugs": _read_store_records(current_store, "bugs"),
+        "code_review_reports": _read_store_records(current_store, "code_review_reports"),
+        "gitlab_daily_code_metrics": _read_store_records(
+            current_store,
+            "gitlab_daily_code_metrics",
+        ),
+        "gitlab_mr_snapshots": _read_store_records(current_store, "gitlab_mr_snapshots"),
+        "human_reviews": _read_store_records(current_store, "human_reviews"),
+        "iteration_plan_suggestions": _read_store_records(
+            current_store,
+            "iteration_plan_suggestions",
+        ),
+        "jenkins_release_records": _read_store_records(
+            current_store,
+            "jenkins_release_records",
+        ),
+        "knowledge_deposits": _read_store_records(current_store, "knowledge_deposits"),
         "knowledge_documents": [
             document
-            for document in current_store.knowledge_documents.values()
+            for document in _read_store_records(current_store, "knowledge_documents")
             if can_read_roles(user, document["permission_roles"])
         ],
-        "mock_writebacks": list(current_store.mock_writebacks.values()),
-        "online_log_metrics": list(current_store.online_log_metrics.values()),
-        "product_git_repositories": list(current_store.product_git_repositories.values()),
-        "product_modules": list(current_store.product_modules.values()),
-        "product_versions": list(current_store.product_versions.values()),
+        "mock_writebacks": _read_store_records(current_store, "mock_writebacks"),
+        "online_log_metrics": _read_store_records(current_store, "online_log_metrics"),
+        "product_git_repositories": _read_store_records(
+            current_store,
+            "product_git_repositories",
+        ),
+        "product_modules": _read_store_records(current_store, "product_modules"),
+        "product_versions": _read_store_records(current_store, "product_versions"),
         "products": [
             product
-            for product in current_store.products.values()
+            for product in _read_store_records(current_store, "products")
             if product.get("status") == "active"
         ],
-        "requirements": list(current_store.requirements.values()),
-        "tasks": list(current_store.ai_tasks.values()),
-        "user_feedback": list(current_store.user_feedback.values()),
-        "user_usage_metrics": list(current_store.user_usage_metrics.values()),
+        "requirements": _read_store_records(current_store, "requirements"),
+        "tasks": _read_store_records(current_store, "ai_tasks"),
+        "user_feedback": _read_store_records(current_store, "user_feedback"),
+        "user_usage_metrics": _read_store_records(current_store, "user_usage_metrics"),
     }
 
 
