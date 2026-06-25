@@ -45,9 +45,21 @@ def ai_task_list_query_repository(current_store: Any) -> Any | None:
     return None
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    return list(_memory_dict(current_store, collection_name).values())
+
+
 def task_product_name(current_store: Any, task: dict[str, Any]) -> str | None:
     product_id = task.get("product_id")
-    product = current_store.products.get(str(product_id)) if product_id else None
+    product = _memory_dict(current_store, "products").get(str(product_id)) if product_id else None
     if product:
         return product.get("name")
     product_context = task.get("product_context")
@@ -152,7 +164,11 @@ def list_ai_tasks_response(
             started_at=started_at,
         )
 
-    items = [item for item in current_store.ai_tasks.values() if can_read_task(user, item)]
+    items = [
+        item
+        for item in _memory_records(current_store, "ai_tasks")
+        if can_read_task(user, item)
+    ]
     if status:
         items = [item for item in items if item["status"] == status]
     if task_type:

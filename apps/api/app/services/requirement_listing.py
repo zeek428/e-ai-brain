@@ -48,12 +48,22 @@ def requirement_list_query_repository(current_store: Any) -> Any | None:
     return None
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
 def requirement_summary_projection(
     requirement: dict[str, Any],
     current_store: Any,
 ) -> dict[str, Any]:
-    product = current_store.products.get(requirement.get("product_id"), {})
-    version = current_store.product_versions.get(requirement.get("version_id"), {})
+    product = _memory_dict(current_store, "products").get(requirement.get("product_id"), {})
+    version = _memory_dict(current_store, "product_versions").get(
+        requirement.get("version_id"), {}
+    )
     return {
         **requirement,
         "product_code": product.get("code"),
