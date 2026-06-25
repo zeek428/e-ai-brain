@@ -18,11 +18,24 @@ def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str
     return collection
 
 
+def _graph_run_rows(current_store: Any) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    repository = getattr(current_store, "repository", None)
+    load_tasks = getattr(repository, "load_ai_tasks", None)
+    if callable(load_tasks):
+        payload = load_tasks() or {}
+        graph_runs = payload.get("graph_runs", {})
+        if isinstance(graph_runs, dict):
+            rows.update({str(run_id): run for run_id, run in graph_runs.items()})
+    rows.update(_memory_dict(current_store, "graph_runs"))
+    return rows
+
+
 def latest_graph_run(current_store: Any, task: dict[str, Any]) -> dict[str, Any] | None:
     graph_run_ids = task.get("graph_run_ids", [])
     if not graph_run_ids:
         return None
-    return current_store.graph_runs.get(graph_run_ids[-1])
+    return _graph_run_rows(current_store).get(graph_run_ids[-1])
 
 
 def write_graph_checkpoint(
@@ -125,7 +138,7 @@ def start_graph_run(
 def graph_runs_for_task(current_store: Any, task_id: str) -> list[dict[str, Any]]:
     runs = [
         run
-        for run in current_store.graph_runs.values()
+        for run in _graph_run_rows(current_store).values()
         if run["ai_task_id"] == task_id
     ]
     runs.sort(key=lambda run: run["started_at"])

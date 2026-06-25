@@ -6,6 +6,7 @@ from app.api.deps import api_error
 from app.core.trace import envelope
 from app.services.knowledge_documents import (
     knowledge_document_chunks,
+    knowledge_memory_records,
     knowledge_query_repository,
     knowledge_repository_access_args,
     user_can_read_roles,
@@ -73,7 +74,7 @@ def chunk_embedding_is_compatible(
 def has_readable_vector_chunks(current_store: Any, user: dict[str, Any]) -> bool:
     from app.services.knowledge_management import document_is_readable
 
-    for document in current_store.knowledge_documents.values():
+    for document in knowledge_memory_records(current_store, "knowledge_documents"):
         if document.get("index_status") not in KNOWLEDGE_SEARCHABLE_STATUSES:
             continue
         if not document_is_readable(current_store, user, document):
@@ -192,7 +193,7 @@ def memory_knowledge_search_candidates(
     from app.services.knowledge_management import document_is_readable
 
     candidates = []
-    for document in current_store.knowledge_documents.values():
+    for document in knowledge_memory_records(current_store, "knowledge_documents"):
         if document.get("index_status") not in KNOWLEDGE_SEARCHABLE_STATUSES:
             continue
         if knowledge_space_id and document.get("knowledge_space_id") != knowledge_space_id:

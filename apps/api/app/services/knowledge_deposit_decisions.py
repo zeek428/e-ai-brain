@@ -13,6 +13,11 @@ from app.services.knowledge_deposits import (
 )
 
 
+def _memory_model_gateway_logs(current_store: Any) -> list[dict[str, Any]]:
+    logs = getattr(current_store, "model_gateway_logs", [])
+    return logs if isinstance(logs, list) else []
+
+
 def approve_knowledge_deposit_result(
     *,
     current_store: Any,
@@ -44,7 +49,8 @@ def approve_knowledge_deposit_result(
         "created_at": now,
         "updated_at": now,
     }
-    model_log_start_index = len(current_store.model_gateway_logs)
+    model_gateway_logs = _memory_model_gateway_logs(current_store)
+    model_log_start_index = len(model_gateway_logs)
     document, chunks = replace_knowledge_chunks_result(current_store, document)
     deposit = {
         **deposit,
@@ -64,7 +70,7 @@ def approve_knowledge_deposit_result(
         document=document,
         chunks=chunks,
         audit_event=audit_event,
-        model_logs=current_store.model_gateway_logs[model_log_start_index:],
+        model_logs=_memory_model_gateway_logs(current_store)[model_log_start_index:],
     )
     return deposit
 

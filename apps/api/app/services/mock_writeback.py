@@ -34,8 +34,19 @@ def _audit_events_collection(current_store: Any) -> list[dict[str, Any]]:
     return _memory_list(current_store, "audit_events")
 
 
+def _ai_task_record(current_store: Any, task_id: str) -> dict[str, Any] | None:
+    repository = getattr(current_store, "repository", None)
+    load_tasks = getattr(repository, "load_ai_tasks", None)
+    if callable(load_tasks):
+        payload = load_tasks() or {}
+        tasks = payload.get("ai_tasks", {})
+        if isinstance(tasks, dict):
+            return tasks.get(task_id)
+    return _memory_dict(current_store, "ai_tasks").get(task_id)
+
+
 def completed_task_for_writeback(current_store: Any, task_id: str) -> dict[str, Any]:
-    task = current_store.ai_tasks.get(task_id)
+    task = _ai_task_record(current_store, task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
     if task["status"] != "completed":

@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from app.core.config import Settings
 from app.core.store import MemoryStore
+from app.services.model_gateway_config_context import model_gateway_query_repository
 
 
 def runtime_data_access_mode(settings: Settings) -> str:
@@ -43,8 +44,18 @@ def _embedding_connection_mode(config: dict[str, Any]) -> str:
     return "disabled"
 
 
+def _model_gateway_config_rows(current_store: Any) -> list[dict[str, Any]]:
+    repository = model_gateway_query_repository(current_store)
+    if repository is not None:
+        return repository.list_model_gateway_configs()
+    configs = getattr(current_store, "model_gateway_configs", {})
+    if isinstance(configs, dict):
+        return list(configs.values())
+    return list(configs or [])
+
+
 def _default_model_gateway_config(current_store: MemoryStore) -> dict[str, Any] | None:
-    for item in current_store.model_gateway_configs.values():
+    for item in _model_gateway_config_rows(current_store):
         if item.get("is_default") and item.get("status") == "active":
             return item
     return None

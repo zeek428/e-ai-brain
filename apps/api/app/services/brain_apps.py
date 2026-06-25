@@ -20,11 +20,16 @@ def brain_app_rows_from_repository(repository: Any) -> dict[str, dict[str, Any]]
     }
 
 
+def brain_app_rows_from_memory(current_store: Any) -> dict[str, dict[str, Any]]:
+    rows = getattr(current_store, "brain_apps", {})
+    return rows if isinstance(rows, dict) else {}
+
+
 def brain_app_rows(current_store: Any) -> dict[str, dict[str, Any]]:
     repository = brain_app_query_repository(current_store)
     if repository is not None:
         return brain_app_rows_from_repository(repository)
-    return current_store.brain_apps
+    return brain_app_rows_from_memory(current_store)
 
 
 def find_brain_app(

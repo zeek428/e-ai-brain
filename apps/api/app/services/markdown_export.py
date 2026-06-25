@@ -7,6 +7,23 @@ from fastapi import HTTPException
 from app.services.task_access import can_read_task
 
 
+def _ai_task_rows(current_store: Any) -> dict[str, dict[str, Any]]:
+    repository = getattr(current_store, "repository", None)
+    load_ai_tasks = getattr(repository, "load_ai_tasks", None)
+    if callable(load_ai_tasks):
+        payload = load_ai_tasks() or {}
+        rows = payload.get("ai_tasks", {})
+        return rows if isinstance(rows, dict) else {}
+    rows = getattr(current_store, "ai_tasks", {})
+    return rows if isinstance(rows, dict) else {}
+
+
+def _ai_task_by_id(current_store: Any, task_id: Any) -> dict[str, Any] | None:
+    if task_id is None:
+        return None
+    return _ai_task_rows(current_store).get(str(task_id))
+
+
 def require_markdown_export_task(
     user: dict[str, Any],
     task: dict[str, Any] | None,
@@ -35,7 +52,7 @@ def require_markdown_export_task(
 def render_task_markdown(current_store: Any, task: dict[str, Any]) -> str:
     requirement = task["requirement_snapshot"]
     design_task_id = task["input_json"].get("product_detail_design_task_id")
-    design_task = current_store.ai_tasks.get(str(design_task_id))
+    design_task = _ai_task_by_id(current_store, design_task_id)
     design_output = design_task.get("output_json") if design_task else None
     solution_output = task.get("output_json")
     design_summary = (

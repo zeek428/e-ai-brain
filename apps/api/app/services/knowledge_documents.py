@@ -77,10 +77,22 @@ def user_can_read_roles(user: dict[str, Any], permission_roles: list[str]) -> bo
     return bool(user_roles.intersection(permission_roles))
 
 
+def knowledge_memory_collection(
+    current_store: Any,
+    collection_name: str,
+) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, {})
+    return collection if isinstance(collection, dict) else {}
+
+
+def knowledge_memory_records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    return list(knowledge_memory_collection(current_store, collection_name).values())
+
+
 def knowledge_document_chunks(current_store: Any, document_id: str) -> list[dict[str, Any]]:
     chunks = [
         chunk
-        for chunk in current_store.knowledge_chunks.values()
+        for chunk in knowledge_memory_records(current_store, "knowledge_chunks")
         if chunk.get("document_id") == document_id
     ]
     return sorted(chunks, key=lambda chunk: (chunk.get("chunk_index", 0), chunk.get("id", "")))
@@ -199,7 +211,7 @@ def memory_knowledge_document_items(
 
     items = [
         document
-        for document in current_store.knowledge_documents.values()
+        for document in knowledge_memory_records(current_store, "knowledge_documents")
         if document_is_readable(current_store, user, document)
     ]
     if keyword:

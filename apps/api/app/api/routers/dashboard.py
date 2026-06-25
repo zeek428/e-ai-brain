@@ -28,6 +28,7 @@ from app.services.dashboard_metrics import (
     dashboard_time_cutoff,
     sync_dashboard_metric_snapshot,
 )
+from app.services.product_config_context import get_product_record
 from app.services.task_access import can_read_task
 
 settings = get_settings()
@@ -133,7 +134,7 @@ def dashboard_metrics(
         return envelope(dashboard_with_metadata(data, metadata), get_trace_id(request))
 
     current_store = runtime_store
-    if product_id and product_id not in current_store.products:
+    if product_id and get_product_record(current_store, product_id) is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
 
     started_at = perf_counter()
@@ -202,7 +203,12 @@ def _save_dashboard_snapshot_records(current_store: Any) -> None:
     repository = _runtime_repository(current_store)
     save_records = getattr(repository, "save_dashboard_snapshots", None)
     if save_records is not None:
-        save_records({"dashboard_metric_snapshots": current_store.dashboard_metric_snapshots})
+        save_records({"dashboard_metric_snapshots": _dashboard_metric_snapshot_rows(current_store)})
+
+
+def _dashboard_metric_snapshot_rows(current_store: Any) -> dict[str, dict[str, Any]]:
+    snapshots = getattr(current_store, "dashboard_metric_snapshots", {})
+    return snapshots if isinstance(snapshots, dict) else {}
 
 
 def _stable_record_id(prefix: str, payload: dict[str, Any]) -> str:

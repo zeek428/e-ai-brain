@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from app.api.deps import api_error
 from app.services.code_inspections import sync_product_git_repository_store
 from app.services.git_review import credential_ref_token
+from app.services.product_config_context import get_product_git_repository_record
 
 NATIVE_CODE_SCAN_MODE = "native_full_scan"
 NATIVE_CODE_SCANNER_NAME = "ai_brain_builtin_static"
@@ -1162,7 +1163,7 @@ def run_native_code_scan(
     if not repository_id:
         raise api_error(400, "CODE_SCAN_REPOSITORY_REQUIRED", "repository_id is required")
     sync_product_git_repository_store(current_store, job.get("product_id"))
-    repository = current_store.product_git_repositories.get(repository_id)
+    repository = get_product_git_repository_record(current_store, repository_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "Product Git repository not found")
     if job.get("product_id") and repository.get("product_id") != job.get("product_id"):

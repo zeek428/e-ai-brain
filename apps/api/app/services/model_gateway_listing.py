@@ -34,6 +34,13 @@ MODEL_GATEWAY_CONFIG_SORT_FIELDS = {
 BOOLEAN_FILTER_VALUES = {"false", "true"}
 
 
+def _memory_model_gateway_logs(current_store: Any) -> list[dict[str, Any]]:
+    logs = getattr(current_store, "model_gateway_logs", [])
+    if isinstance(logs, dict):
+        return list(logs.values())
+    return list(logs or [])
+
+
 def list_model_gateway_configs_response(
     *,
     current_store: Any,
@@ -135,7 +142,7 @@ def list_model_gateway_logs_response(
             status=status,
         )
     else:
-        items = list(current_store.model_gateway_logs)
+        items = _memory_model_gateway_logs(current_store)
         if ai_task_id:
             items = [item for item in items if item.get("ai_task_id") == ai_task_id]
         if purpose:

@@ -43,6 +43,13 @@ def audit_query_repository(current_store: Any) -> Any | None:
     return repository if callable(list_events) else None
 
 
+def _memory_audit_events(current_store: Any) -> list[dict[str, Any]]:
+    events = getattr(current_store, "audit_events", [])
+    if isinstance(events, dict):
+        return list(events.values())
+    return list(events or [])
+
+
 def audit_events_response(
     current_store: Any,
     *,
@@ -78,7 +85,7 @@ def audit_events_response(
             created_to=to_at,
         )
     else:
-        items = list(current_store.audit_events)
+        items = _memory_audit_events(current_store)
         if actor_id:
             items = [item for item in items if item.get("actor_id") == actor_id]
         if event_type:

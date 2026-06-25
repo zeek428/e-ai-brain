@@ -15,38 +15,23 @@ def _scheduled_jobs_repository(current_store: Any) -> Any | None:
     return None
 
 
-def _replace_collection(
-    current_store: Any,
-    collection_name: str,
-    items: list[dict[str, Any]],
-) -> None:
-    setattr(
-        current_store,
-        collection_name,
-        {str(item["id"]): dict(item) for item in items if item.get("id") is not None},
-    )
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, {})
+    return collection if isinstance(collection, dict) else {}
 
 
-def _sync_scheduled_job_store(current_store: Any) -> None:
+def _scheduled_job_rows(current_store: Any) -> list[dict[str, Any]]:
     repository = _scheduled_jobs_repository(current_store)
-    if repository is None:
-        return
-    _replace_collection(
-        current_store,
-        "scheduled_jobs",
-        repository.list_scheduled_jobs(enabled=None, job_type=None, status=None),
-    )
+    if repository is not None:
+        return repository.list_scheduled_jobs(enabled=None, job_type=None, status=None)
+    return list(_memory_dict(current_store, "scheduled_jobs").values())
 
 
-def _sync_scheduled_job_run_store(current_store: Any) -> None:
+def _scheduled_job_run_rows(current_store: Any) -> list[dict[str, Any]]:
     repository = _scheduled_jobs_repository(current_store)
-    if repository is None:
-        return
-    _replace_collection(
-        current_store,
-        "scheduled_job_runs",
-        repository.list_scheduled_job_runs(scheduled_job_id=None, status=None),
-    )
+    if repository is not None:
+        return repository.list_scheduled_job_runs(scheduled_job_id=None, status=None)
+    return list(_memory_dict(current_store, "scheduled_job_runs").values())
 
 
 def _scheduled_job_run_datetime(value: Any) -> datetime | None:
@@ -160,10 +145,12 @@ def _percentage(part: int, total: int) -> float:
 
 
 def scheduled_job_run_observability_response(*, current_store: Any) -> dict[str, Any]:
-    _sync_scheduled_job_store(current_store)
-    _sync_scheduled_job_run_store(current_store)
-    runs = list(current_store.scheduled_job_runs.values())
-    jobs_by_id = current_store.scheduled_jobs
+    runs = _scheduled_job_run_rows(current_store)
+    jobs_by_id = {
+        str(job["id"]): job
+        for job in _scheduled_job_rows(current_store)
+        if job.get("id") is not None
+    }
     model_logs_by_id = _model_gateway_log_index(current_store)
 
     status_counter: Counter[str] = Counter()

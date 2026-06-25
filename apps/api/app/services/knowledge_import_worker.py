@@ -47,6 +47,13 @@ def _worker_user_for_import_job(import_job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _knowledge_import_job_records(current_store: Any) -> list[dict[str, Any]]:
+    jobs = getattr(current_store, "knowledge_import_jobs", {})
+    if isinstance(jobs, dict):
+        return list(jobs.values())
+    return list(jobs or [])
+
+
 class KnowledgeImportWorker:
     def __init__(
         self,
@@ -117,7 +124,7 @@ class KnowledgeImportWorker:
     def enqueue_existing_queued_jobs(self, *, user: dict[str, Any] | None = None) -> int:
         current_store = knowledge_write_store(self.app.state.store)
         count = 0
-        for import_job in current_store.knowledge_import_jobs.values():
+        for import_job in _knowledge_import_job_records(current_store):
             if import_job.get("status") == "queued":
                 import_user = user or _worker_user_for_import_job(import_job)
                 if self.enqueue(job_id=import_job["id"], user=import_user):
@@ -220,7 +227,7 @@ def enqueue_existing_queued_import_jobs(app: Any) -> int:
         return 0
     current_store = knowledge_write_store(app.state.store)
     count = 0
-    for import_job in current_store.knowledge_import_jobs.values():
+    for import_job in _knowledge_import_job_records(current_store):
         if import_job.get("status") == "queued":
             user = _worker_user_for_import_job(import_job)
             if enqueue(job_id=import_job["id"], user=user):
