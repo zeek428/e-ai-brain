@@ -609,11 +609,7 @@ def product_current_version_for_list(
     product_id: str,
 ) -> dict[str, Any] | None:
     status_order = {"active": 0, "testing": 1, "released": 2, "planning": 3, "archived": 4}
-    versions = [
-        version
-        for version in current_store.product_versions.values()
-        if version.get("product_id") == product_id
-    ]
+    versions = list_product_version_records(current_store, product_id, active_only=False)
     if not versions:
         return None
     return sorted(
@@ -637,8 +633,11 @@ def product_list_projection(item: dict[str, Any], current_store: Any) -> dict[st
     if module_count is None:
         module_count = sum(
             1
-            for module in current_store.product_modules.values()
-            if module.get("product_id") == product_id and module.get("status") == "active"
+            for module in list_product_module_records(
+                current_store,
+                product_id,
+                active_only=True,
+            )
         )
     return {
         **item,
@@ -654,7 +653,7 @@ def product_version_summary_projection(
     version: dict[str, Any],
     current_store: Any,
 ) -> dict[str, Any]:
-    product = current_store.products.get(version.get("product_id"), {})
+    product = get_product_record(current_store, str(version.get("product_id") or "")) or {}
     return {
         **version,
         "product_code": product.get("code"),
