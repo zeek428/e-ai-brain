@@ -38,6 +38,11 @@ def _memory_collection(current_store: Any, collection_name: str) -> dict[str, di
     return collection
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, Any]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def assistant_conversations_response(
     current_store: MemoryStore,
     *,
@@ -94,7 +99,10 @@ def _conversation_page_items(
     else:
         conversations = [
             conversation
-            for conversation in current_store.assistant_conversations.values()
+            for conversation in _read_memory_dict(
+                current_store,
+                "assistant_conversations",
+            ).values()
             if conversation.get("user_id") == user_id
         ]
         conversations = _conversation_page_slice(
@@ -324,7 +332,9 @@ def assistant_conversation_for_user(
     conversation_id: str,
     user_id: str,
 ) -> dict[str, Any]:
-    conversation = current_store.assistant_conversations.get(conversation_id)
+    conversation = _read_memory_dict(current_store, "assistant_conversations").get(
+        conversation_id,
+    )
     if conversation is None or conversation.get("user_id") != user_id:
         raise AssistantServiceError(404, "NOT_FOUND", "Assistant conversation not found")
     return conversation
@@ -342,7 +352,9 @@ def ensure_assistant_conversation(
     user_id = user["id"]
     signature_fields = _conversation_signature_fields(message, product_id=product_id)
     if conversation_id:
-        existing = current_store.assistant_conversations.get(conversation_id)
+        existing = _read_memory_dict(current_store, "assistant_conversations").get(
+            conversation_id,
+        )
         if existing is not None:
             if existing.get("user_id") != user_id:
                 raise AssistantServiceError(404, "NOT_FOUND", "Assistant conversation not found")
@@ -438,7 +450,7 @@ def _find_reusable_command_conversation(
     )
     candidates = [
         conversation
-        for conversation in current_store.assistant_conversations.values()
+        for conversation in _read_memory_dict(current_store, "assistant_conversations").values()
         if conversation.get("user_id") == user_id
         and _conversation_collapse_key(conversation) == target_key
     ]

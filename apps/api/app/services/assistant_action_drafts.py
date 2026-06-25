@@ -1331,6 +1331,11 @@ def assistant_action_repository(current_store: Any) -> Any | None:
     return getattr(current_store, "repository", None)
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, Any]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def _memory_collection(current_store: Any, collection_name: str) -> dict[str, Any]:
     collection = getattr(current_store, collection_name, None)
     if not isinstance(collection, dict):
@@ -1687,7 +1692,7 @@ def _rd_task_draft_preview(
     if not requirement_id:
         _finalize_validation(validation)
         return preview
-    requirement = current_store.requirements.get(requirement_id)
+    requirement = _read_memory_dict(current_store, "requirements").get(requirement_id)
     if requirement is None:
         _add_issue(
             validation,
@@ -1712,7 +1717,8 @@ def _rd_task_draft_preview(
             "Requirement already has linked tasks",
         )
     product_id = str(requirement.get("product_id") or "").strip()
-    if not product_id or product_id not in current_store.products:
+    products = _read_memory_dict(current_store, "products")
+    if not product_id or product_id not in products:
         _add_issue(
             validation,
             "product_id",
@@ -1720,7 +1726,7 @@ def _rd_task_draft_preview(
             "Requirement product is missing or inactive",
         )
     else:
-        product = current_store.products[product_id]
+        product = products[product_id]
         if product.get("status") and product.get("status") != "active":
             _add_issue(
                 validation,
@@ -1729,7 +1735,7 @@ def _rd_task_draft_preview(
                 "Requirement product is inactive",
             )
     version_id = str(requirement.get("version_id") or "").strip()
-    if not version_id or version_id not in current_store.product_versions:
+    if not version_id or version_id not in _read_memory_dict(current_store, "product_versions"):
         _add_issue(
             validation,
             "version_id",
@@ -1766,7 +1772,7 @@ def _append_scheduled_job_reference_validation(
         )
     for action_id in plugin_action_ids:
         _validate_collection_ref(
-            current_store.plugin_actions,
+            _read_memory_dict(current_store, "plugin_actions"),
             action_id,
             field="plugin_action_id",
             label="Plugin action",
@@ -1790,7 +1796,7 @@ def _append_scheduled_job_reference_validation(
         _add_issue(validation, "agent_id", "error", "AI job requires agent_id")
     else:
         _validate_collection_ref(
-            current_store.ai_agents,
+            _read_memory_dict(current_store, "ai_agents"),
             str(agent_id),
             field="agent_id",
             label="AI agent",
@@ -1801,7 +1807,7 @@ def _append_scheduled_job_reference_validation(
         _add_issue(validation, "skill_ids", "error", "AI processing job requires skill_ids")
     for skill_id in skill_ids:
         _validate_collection_ref(
-            current_store.ai_skills,
+            _read_memory_dict(current_store, "ai_skills"),
             skill_id,
             field="skill_ids",
             label="AI skill",
@@ -1817,7 +1823,7 @@ def _append_scheduled_job_reference_validation(
         )
     elif model_gateway_config_id:
         _validate_collection_ref(
-            current_store.model_gateway_configs,
+            _read_memory_dict(current_store, "model_gateway_configs"),
             str(model_gateway_config_id),
             field="model_gateway_config_id",
             label="Model gateway config",
@@ -1851,7 +1857,7 @@ def _append_ai_agent_validation(
     model_gateway_config_id = payload.get("model_gateway_config_id")
     if model_gateway_config_id:
         _validate_collection_ref(
-            current_store.model_gateway_configs,
+            _read_memory_dict(current_store, "model_gateway_configs"),
             str(model_gateway_config_id),
             field="model_gateway_config_id",
             label="Model gateway config",
@@ -1859,7 +1865,7 @@ def _append_ai_agent_validation(
         )
     for skill_id in _string_ids(payload.get("default_skill_ids")):
         _validate_collection_ref(
-            current_store.ai_skills,
+            _read_memory_dict(current_store, "ai_skills"),
             skill_id,
             field="default_skill_ids",
             label="AI skill",
@@ -2007,7 +2013,7 @@ def _draft_source_plugin_action(
     if not source_resource:
         return None
     action_id = str(source_resource.get("id") or "").strip()
-    return current_store.plugin_actions.get(action_id)
+    return _read_memory_dict(current_store, "plugin_actions").get(action_id)
 
 
 def _preview_source_resource(source_resource: dict[str, Any]) -> dict[str, Any]:
@@ -2041,7 +2047,7 @@ def _validate_plugin_connection_ref(
     field: str,
     validation: dict[str, Any],
 ) -> None:
-    item = current_store.plugin_connections.get(item_id)
+    item = _read_memory_dict(current_store, "plugin_connections").get(item_id)
     if item is None:
         _add_issue(validation, field, "error", f"Plugin connection not found: {item_id}")
         return

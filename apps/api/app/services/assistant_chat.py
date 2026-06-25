@@ -212,11 +212,14 @@ def assistant_chat_response(
     )
     if (
         normalized_payload.product_id
-        and normalized_payload.product_id not in current_store.products
+        and normalized_payload.product_id not in _read_memory_dict(current_store, "products")
     ):
         raise AssistantServiceError(404, "NOT_FOUND", "Product not found")
     if normalized_payload.conversation_id:
-        existing_conversation = current_store.assistant_conversations.get(
+        existing_conversation = _read_memory_dict(
+            current_store,
+            "assistant_conversations",
+        ).get(
             normalized_payload.conversation_id,
         )
         if existing_conversation is not None and existing_conversation.get("user_id") != user["id"]:
@@ -413,6 +416,11 @@ def _memory_collection(current_store: Any, collection_name: str) -> dict[str, di
         collection = {}
         setattr(current_store, collection_name, collection)
     return collection
+
+
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, Any]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
 
 
 def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
@@ -1479,7 +1487,7 @@ def _action_draft_answer(draft_results: list[dict[str, Any]]) -> str:
 
 
 def _default_model_gateway_config(current_store: MemoryStore) -> dict[str, Any] | None:
-    for item in current_store.model_gateway_configs.values():
+    for item in _read_memory_dict(current_store, "model_gateway_configs").values():
         if item.get("is_default") and item.get("status") == "active":
             return item
     return None
