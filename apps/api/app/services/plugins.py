@@ -97,6 +97,22 @@ def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str
     return collection
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, {})
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record_id: str | None,
+) -> dict[str, Any] | None:
+    if record_id is None:
+        return None
+    item = _read_memory_dict(current_store, collection_name).get(str(record_id))
+    return item if isinstance(item, dict) else None
+
+
 def _put_memory_record(
     current_store: Any,
     collection_name: str,
@@ -298,7 +314,7 @@ def persist_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None
 
 def ensure_standard_plugins(current_store: Any) -> None:
     now = datetime.now(UTC).isoformat()
-    for plugin in list(current_store.integration_plugins.values()):
+    for plugin in list(_read_memory_dict(current_store, "integration_plugins").values()):
         if str(plugin.get("code")) in DEPRECATED_STANDARD_PLUGIN_CODES:
             description = str(plugin.get("description") or "")
             if "官方标准" in description:
@@ -324,7 +340,7 @@ def ensure_standard_plugins(current_store: Any) -> None:
             persist_record(current_store, "save_plugin_record", demoted_plugin)
     existing_by_code = {
         str(plugin.get("code")): plugin
-        for plugin in current_store.integration_plugins.values()
+        for plugin in _read_memory_dict(current_store, "integration_plugins").values()
     }
     for template in STANDARD_PLUGINS:
         existing = existing_by_code.get(template["code"])
@@ -503,25 +519,25 @@ def ensure_not_used_for_delete(
 def plugin_delete_usages(current_store: Any, plugin_id: str) -> dict[str, list[dict[str, Any]]]:
     connections = [
         connection
-        for connection in current_store.plugin_connections.values()
+        for connection in _read_memory_dict(current_store, "plugin_connections").values()
         if connection.get("plugin_id") == plugin_id
     ]
     actions = [
         action
-        for action in current_store.plugin_actions.values()
+        for action in _read_memory_dict(current_store, "plugin_actions").values()
         if action.get("plugin_id") == plugin_id
     ]
     connection_ids = {connection["id"] for connection in connections}
     action_ids = {action["id"] for action in actions}
     scheduled_jobs = [
         job
-        for job in getattr(current_store, "scheduled_jobs", {}).values()
+        for job in _read_memory_dict(current_store, "scheduled_jobs").values()
         if job.get("plugin_action_id") in action_ids
         or job.get("plugin_connection_id") in connection_ids
     ]
     logs = [
         log
-        for log in current_store.plugin_invocation_logs.values()
+        for log in _read_memory_dict(current_store, "plugin_invocation_logs").values()
         if log.get("plugin_id") == plugin_id
         or log.get("action_id") in action_ids
         or log.get("connection_id") in connection_ids
@@ -540,17 +556,17 @@ def connection_delete_usages(
 ) -> dict[str, list[dict[str, Any]]]:
     actions = [
         action
-        for action in current_store.plugin_actions.values()
+        for action in _read_memory_dict(current_store, "plugin_actions").values()
         if action.get("connection_id") == connection_id
     ]
     scheduled_jobs = [
         job
-        for job in getattr(current_store, "scheduled_jobs", {}).values()
+        for job in _read_memory_dict(current_store, "scheduled_jobs").values()
         if job.get("plugin_connection_id") == connection_id
     ]
     logs = [
         log
-        for log in current_store.plugin_invocation_logs.values()
+        for log in _read_memory_dict(current_store, "plugin_invocation_logs").values()
         if log.get("connection_id") == connection_id
     ]
     return {"actions": actions, "scheduled_jobs": scheduled_jobs, "logs": logs}
@@ -559,12 +575,12 @@ def connection_delete_usages(
 def action_delete_usages(current_store: Any, action_id: str) -> dict[str, list[dict[str, Any]]]:
     scheduled_jobs = [
         job
-        for job in getattr(current_store, "scheduled_jobs", {}).values()
+        for job in _read_memory_dict(current_store, "scheduled_jobs").values()
         if job.get("plugin_action_id") == action_id
     ]
     logs = [
         log
-        for log in current_store.plugin_invocation_logs.values()
+        for log in _read_memory_dict(current_store, "plugin_invocation_logs").values()
         if log.get("action_id") == action_id
     ]
     return {"scheduled_jobs": scheduled_jobs, "logs": logs}
@@ -583,7 +599,7 @@ def list_plugins_response(
     sync_plugin_store(current_store, protocol=protocol, status=status)
     ensure_standard_plugins(current_store)
     items = []
-    for plugin in current_store.integration_plugins.values():
+    for plugin in _read_memory_dict(current_store, "integration_plugins").values():
         if protocol is not None and plugin.get("protocol") != protocol:
             continue
         if status is not None and plugin.get("status") != status:
@@ -601,11 +617,11 @@ def list_plugin_marketplace_response(
     require_admin(user)
     sync_plugin_dependency_store(current_store)
     ensure_standard_plugins(current_store)
-    connections = list(current_store.plugin_connections.values())
-    actions = list(current_store.plugin_actions.values())
+    connections = list(_read_memory_dict(current_store, "plugin_connections").values())
+    actions = list(_read_memory_dict(current_store, "plugin_actions").values())
     plugins_by_code = {
         str(plugin.get("code")): plugin
-        for plugin in current_store.integration_plugins.values()
+        for plugin in _read_memory_dict(current_store, "integration_plugins").values()
     }
     items: list[dict[str, Any]] = []
     for template in STANDARD_PLUGINS:
@@ -659,7 +675,7 @@ def list_plugin_action_templates_response(
     ensure_standard_plugins(current_store)
     plugins_by_code = {
         str(plugin.get("code")): plugin
-        for plugin in current_store.integration_plugins.values()
+        for plugin in _read_memory_dict(current_store, "integration_plugins").values()
     }
     items = []
     for template in standard_plugin_action_templates():
@@ -756,7 +772,7 @@ def result_write_record_from_scheduled_run(
     )
     snapshot_action = snapshot.get("action") if isinstance(snapshot.get("action"), dict) else {}
     scheduled_job_id = run.get("scheduled_job_id")
-    job = current_store.scheduled_jobs.get(str(scheduled_job_id)) if scheduled_job_id else None
+    job = _read_memory_record(current_store, "scheduled_jobs", str(scheduled_job_id))
     return {
         "created_at": run.get("finished_at") or run.get("started_at"),
         "feedback": feedback,
@@ -809,7 +825,7 @@ def result_write_record_from_invocation_log(
 ) -> dict[str, Any] | None:
     if log.get("scheduled_job_run_id"):
         return None
-    action = current_store.plugin_actions.get(str(log.get("action_id")))
+    action = _read_memory_record(current_store, "plugin_actions", str(log.get("action_id")))
     if not isinstance(action, dict):
         return None
     mapping = action.get("result_mapping") if isinstance(action.get("result_mapping"), dict) else {}
@@ -822,7 +838,7 @@ def result_write_record_from_invocation_log(
         or mapping.get("write_target")
         or "scheduled_job_result",
     )
-    plugin = current_store.integration_plugins.get(str(log.get("plugin_id")))
+    plugin = _read_memory_record(current_store, "integration_plugins", str(log.get("plugin_id")))
     return {
         "created_at": log.get("created_at"),
         "feedback": {
@@ -869,11 +885,11 @@ def list_result_write_records_response(
         ensure_enum(status, RESULT_WRITE_RECORD_STATUSES, "status")
     sync_result_write_record_store(current_store)
     records: list[dict[str, Any]] = []
-    for run in current_store.scheduled_job_runs.values():
+    for run in _read_memory_dict(current_store, "scheduled_job_runs").values():
         record = result_write_record_from_scheduled_run(current_store, run)
         if record is not None:
             records.append(record)
-    for log in current_store.plugin_invocation_logs.values():
+    for log in _read_memory_dict(current_store, "plugin_invocation_logs").values():
         record = result_write_record_from_invocation_log(current_store, log)
         if record is not None:
             records.append(record)
@@ -953,7 +969,7 @@ def copy_plugin_response(
     require_admin(user)
     sync_plugin_store(current_store)
     ensure_standard_plugins(current_store)
-    source = current_store.integration_plugins.get(plugin_id)
+    source = _read_memory_record(current_store, "integration_plugins", plugin_id)
     if source is None:
         raise api_error(404, "NOT_FOUND", "Plugin not found")
     updates = payload.model_dump(exclude_unset=True)
@@ -961,7 +977,7 @@ def copy_plugin_response(
     code = ensure_non_blank(updates.get("code") or f"{base_code}_custom", "code")
     if any(
         plugin.get("code") == code
-        for plugin in current_store.integration_plugins.values()
+        for plugin in _read_memory_dict(current_store, "integration_plugins").values()
     ):
         raise api_error(409, "PLUGIN_CODE_EXISTS", f"Plugin code already exists: {code}")
     name = ensure_non_blank(
@@ -1020,7 +1036,7 @@ def patch_plugin_response(
 ) -> dict[str, Any]:
     require_admin(user)
     sync_plugin_store(current_store)
-    plugin = current_store.integration_plugins.get(plugin_id)
+    plugin = _read_memory_record(current_store, "integration_plugins", plugin_id)
     if plugin is None:
         raise api_error(404, "NOT_FOUND", "Plugin not found")
     ensure_plugin_mutable(plugin)
@@ -1056,7 +1072,7 @@ def delete_plugin_response(
 ) -> dict[str, Any]:
     require_admin(user)
     sync_plugin_dependency_store(current_store)
-    plugin = current_store.integration_plugins.get(plugin_id)
+    plugin = _read_memory_record(current_store, "integration_plugins", plugin_id)
     if plugin is None:
         raise api_error(404, "NOT_FOUND", "Plugin not found")
     ensure_plugin_mutable(plugin)
@@ -1083,7 +1099,7 @@ def delete_plugin_response(
 def ensure_active_plugin(current_store: Any, plugin_id: str) -> dict[str, Any]:
     sync_plugin_store(current_store)
     ensure_standard_plugins(current_store)
-    plugin = current_store.integration_plugins.get(plugin_id)
+    plugin = _read_memory_record(current_store, "integration_plugins", plugin_id)
     if plugin is None:
         raise api_error(404, "NOT_FOUND", "Plugin not found")
     if plugin.get("status") != "active":
@@ -1306,7 +1322,7 @@ def list_plugin_connections_response(
         status=status,
     )
     items = []
-    for connection in current_store.plugin_connections.values():
+    for connection in _read_memory_dict(current_store, "plugin_connections").values():
         if environment is not None and connection.get("environment") != environment:
             continue
         if plugin_id is not None and connection.get("plugin_id") != plugin_id:
@@ -1440,7 +1456,7 @@ def patch_plugin_connection_response(
 ) -> dict[str, Any]:
     require_admin(user)
     sync_plugin_connection_store(current_store)
-    connection = current_store.plugin_connections.get(connection_id)
+    connection = _read_memory_record(current_store, "plugin_connections", connection_id)
     if connection is None:
         raise api_error(404, "NOT_FOUND", "Plugin connection not found")
     updates = payload.model_dump(exclude_unset=True)
@@ -1511,7 +1527,7 @@ def delete_plugin_connection_response(
 ) -> dict[str, Any]:
     require_admin(user)
     sync_plugin_dependency_store(current_store)
-    connection = current_store.plugin_connections.get(connection_id)
+    connection = _read_memory_record(current_store, "plugin_connections", connection_id)
     if connection is None:
         raise api_error(404, "NOT_FOUND", "Plugin connection not found")
     ensure_not_used_for_delete(
@@ -1543,10 +1559,14 @@ def test_plugin_connection_response(
     require_admin(user)
     sync_plugin_connection_store(current_store)
     sync_plugin_store(current_store)
-    connection = current_store.plugin_connections.get(connection_id)
+    connection = _read_memory_record(current_store, "plugin_connections", connection_id)
     if connection is None:
         raise api_error(404, "NOT_FOUND", "Plugin connection not found")
-    plugin = current_store.integration_plugins.get(connection.get("plugin_id"))
+    plugin = _read_memory_record(
+        current_store,
+        "integration_plugins",
+        connection.get("plugin_id"),
+    )
     if plugin is None:
         raise api_error(404, "NOT_FOUND", "Plugin not found")
     start = perf_counter()
@@ -1784,7 +1804,7 @@ def ensure_active_connection(
     if connection_id is None:
         return None
     sync_plugin_connection_store(current_store)
-    connection = current_store.plugin_connections.get(connection_id)
+    connection = _read_memory_record(current_store, "plugin_connections", connection_id)
     if connection is None:
         raise api_error(404, "NOT_FOUND", "Plugin connection not found")
     if plugin_id is not None and connection.get("plugin_id") != plugin_id:
@@ -1853,7 +1873,7 @@ def list_plugin_actions_response(
         )
     sync_plugin_action_store(current_store, plugin_id=plugin_id, status=status)
     items = []
-    for action in current_store.plugin_actions.values():
+    for action in _read_memory_dict(current_store, "plugin_actions").values():
         if plugin_id is not None and action.get("plugin_id") != plugin_id:
             continue
         if status is not None and action.get("status") != status:
@@ -1975,7 +1995,7 @@ def patch_plugin_action_response(
 ) -> dict[str, Any]:
     require_admin(user)
     sync_plugin_action_store(current_store)
-    action = current_store.plugin_actions.get(action_id)
+    action = _read_memory_record(current_store, "plugin_actions", action_id)
     if action is None:
         raise api_error(404, "NOT_FOUND", "Plugin action not found")
     updates = payload.model_dump(exclude_unset=True)
@@ -2027,7 +2047,7 @@ def delete_plugin_action_response(
 ) -> dict[str, Any]:
     require_admin(user)
     sync_plugin_dependency_store(current_store)
-    action = current_store.plugin_actions.get(action_id)
+    action = _read_memory_record(current_store, "plugin_actions", action_id)
     if action is None:
         raise api_error(404, "NOT_FOUND", "Plugin action not found")
     ensure_not_used_for_delete(
@@ -2059,7 +2079,7 @@ def ensure_active_plugin_action(
     if action_id is None:
         raise api_error(400, "PLUGIN_ACTION_REQUIRED", "plugin_action_id is required")
     sync_plugin_action_store(current_store)
-    action = current_store.plugin_actions.get(action_id)
+    action = _read_memory_record(current_store, "plugin_actions", action_id)
     if action is None:
         raise api_error(404, "NOT_FOUND", "Plugin action not found")
     if action.get("status") != "active":
@@ -2968,9 +2988,10 @@ def invoke_plugin_action_response(
         log,
         audit_event=audit_event,
     )
-    if runner_task_id and runner_task_id in current_store.ai_executor_tasks:
+    runner_task = _read_memory_record(current_store, "ai_executor_tasks", runner_task_id)
+    if runner_task is not None:
         runner_task = {
-            **current_store.ai_executor_tasks[runner_task_id],
+            **runner_task,
             "plugin_invocation_log_id": log_id,
             "updated_at": now,
         }
@@ -3007,7 +3028,7 @@ def list_plugin_invocation_logs_response(
         status=status,
     )
     items = []
-    for log in current_store.plugin_invocation_logs.values():
+    for log in _read_memory_dict(current_store, "plugin_invocation_logs").values():
         if action_id is not None and log.get("action_id") != action_id:
             continue
         if scheduled_job_id is not None and log.get("scheduled_job_id") != scheduled_job_id:
