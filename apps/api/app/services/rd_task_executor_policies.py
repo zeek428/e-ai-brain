@@ -82,6 +82,11 @@ def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str
     return collection
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def _policy_collection(current_store: Any) -> dict[str, dict[str, Any]]:
     return _memory_dict(current_store, "rd_task_executor_policies")
 
@@ -160,9 +165,13 @@ def sync_rd_task_executor_policy_store(
 def _policy_public(current_store: Any, policy: dict[str, Any]) -> dict[str, Any]:
     sync_policy_resource_store(current_store, policy)
     public = dict(policy)
-    runner = current_store.ai_executor_runners.get(policy.get("runner_id"))
-    repository = current_store.product_git_repositories.get(policy.get("repository_id"))
-    product = current_store.products.get(policy.get("product_id"))
+    runner = _read_memory_dict(current_store, "ai_executor_runners").get(
+        policy.get("runner_id")
+    )
+    repository = _read_memory_dict(current_store, "product_git_repositories").get(
+        policy.get("repository_id")
+    )
+    product = _read_memory_dict(current_store, "products").get(policy.get("product_id"))
     public["runner_name"] = runner.get("name") if runner else None
     public["repository_name"] = repository.get("name") if repository else None
     public["repository_default_branch"] = repository.get("default_branch") if repository else None
@@ -174,7 +183,11 @@ def sync_policy_resource_store(current_store: Any, policy: dict[str, Any]) -> No
     repository = getattr(current_store, "repository", None)
     list_products = getattr(repository, "list_products", None)
     product_id = policy.get("product_id")
-    if product_id and product_id not in current_store.products and callable(list_products):
+    if (
+        product_id
+        and product_id not in _read_memory_dict(current_store, "products")
+        and callable(list_products)
+    ):
         for product in list_products(active_only=False):
             _cache_product_record(current_store, product)
 
@@ -183,7 +196,10 @@ def sync_policy_resource_store(current_store: Any, policy: dict[str, Any]) -> No
     if (
         product_id
         and repository_id
-        and repository_id not in current_store.product_git_repositories
+        and repository_id not in _read_memory_dict(
+            current_store,
+            "product_git_repositories",
+        )
         and callable(list_repositories)
     ):
         for git_repository in list_repositories(product_id, active_only=False):
@@ -210,7 +226,7 @@ def list_rd_task_executor_policies_response(
     )
     policies = [
         _policy_public(current_store, policy)
-        for policy in current_store.rd_task_executor_policies.values()
+        for policy in _read_memory_dict(current_store, "rd_task_executor_policies").values()
         if (product_id is None or policy.get("product_id") == product_id)
         and (status is None or policy.get("status") == status)
         and (task_type is None or policy.get("task_type") == task_type)
@@ -228,11 +244,14 @@ def list_rd_task_executor_policies_response(
 def _validate_resource_scope(current_store: Any, policy: dict[str, Any]) -> None:
     sync_policy_resource_store(current_store, policy)
     product_id = policy.get("product_id")
-    if product_id and product_id not in current_store.products:
+    if product_id and product_id not in _read_memory_dict(current_store, "products"):
         raise api_error(400, "PRODUCT_NOT_FOUND", "product_id does not exist")
     repository_id = policy.get("repository_id")
     if repository_id:
-        repository = current_store.product_git_repositories.get(repository_id)
+        repository = _read_memory_dict(
+            current_store,
+            "product_git_repositories",
+        ).get(repository_id)
         if repository is None:
             raise api_error(400, "REPOSITORY_NOT_FOUND", "repository_id does not exist")
         if product_id and repository.get("product_id") != product_id:
@@ -242,7 +261,10 @@ def _validate_resource_scope(current_store: Any, policy: dict[str, Any]) -> None
                 "repository must belong to policy product",
             )
     runner_id = policy.get("runner_id")
-    if runner_id and runner_id not in current_store.ai_executor_runners:
+    if (
+        runner_id
+        and runner_id not in _read_memory_dict(current_store, "ai_executor_runners")
+    ):
         raise api_error(400, "AI_EXECUTOR_RUNNER_NOT_FOUND", "runner_id does not exist")
 
 
@@ -346,7 +368,7 @@ def patch_rd_task_executor_policy_response(
 ) -> dict[str, Any]:
     _ensure_policy_manager(user)
     sync_rd_task_executor_policy_store(current_store)
-    existing = current_store.rd_task_executor_policies.get(policy_id)
+    existing = _read_memory_dict(current_store, "rd_task_executor_policies").get(policy_id)
     if existing is None:
         raise api_error(404, "NOT_FOUND", "RD task executor policy not found")
     policy = _policy_from_payload(
@@ -384,7 +406,7 @@ def delete_rd_task_executor_policy_response(
 ) -> dict[str, Any]:
     _ensure_policy_manager(user)
     sync_rd_task_executor_policy_store(current_store)
-    existing = current_store.rd_task_executor_policies.get(policy_id)
+    existing = _read_memory_dict(current_store, "rd_task_executor_policies").get(policy_id)
     if existing is None:
         raise api_error(404, "NOT_FOUND", "RD task executor policy not found")
     audit_event = record_audit_event(
@@ -413,7 +435,7 @@ def _matching_policies(current_store: Any, task: dict[str, Any]) -> list[dict[st
     brain_app_id = task.get("brain_app_id") or DEFAULT_BRAIN_APP_ID
     policies = [
         policy
-        for policy in current_store.rd_task_executor_policies.values()
+        for policy in _read_memory_dict(current_store, "rd_task_executor_policies").values()
         if policy.get("status") == "active"
         and policy.get("task_type") == task.get("task_type")
         and (policy.get("brain_app_id") or DEFAULT_BRAIN_APP_ID) == brain_app_id
