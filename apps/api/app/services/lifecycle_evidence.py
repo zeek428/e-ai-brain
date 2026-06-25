@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def lifecycle_task_scope(tasks: list[dict[str, Any]]) -> dict[str, set[str]]:
     return {
         "module_codes": {str(task["module_code"]) for task in tasks if task.get("module_code")},
@@ -40,37 +45,46 @@ def lifecycle_matching_evidence(
     return {
         "bug": [
             item
-            for item in current_store.bugs.values()
+            for item in _read_memory_dict(current_store, "bugs").values()
             if lifecycle_matches_scope(item, scope)
         ],
         "gitlab_daily_code_metric": [
             item
-            for item in current_store.gitlab_daily_code_metrics.values()
+            for item in _read_memory_dict(
+                current_store,
+                "gitlab_daily_code_metrics",
+            ).values()
             if lifecycle_matches_scope(item, scope)
         ],
         "jenkins_release": [
             item
-            for item in current_store.jenkins_release_records.values()
+            for item in _read_memory_dict(
+                current_store,
+                "jenkins_release_records",
+            ).values()
             if lifecycle_matches_scope(item, scope)
         ],
         "online_log_metric": [
             item
-            for item in current_store.online_log_metrics.values()
+            for item in _read_memory_dict(current_store, "online_log_metrics").values()
             if lifecycle_matches_scope(item, scope)
         ],
         "user_usage_metric": [
             item
-            for item in current_store.user_usage_metrics.values()
+            for item in _read_memory_dict(current_store, "user_usage_metrics").values()
             if lifecycle_matches_scope(item, scope)
         ],
         "user_feedback": [
             item
-            for item in current_store.user_feedback.values()
+            for item in _read_memory_dict(current_store, "user_feedback").values()
             if lifecycle_matches_scope(item, scope)
         ],
         "iteration_plan_suggestion": [
             item
-            for item in current_store.iteration_plan_suggestions.values()
+            for item in _read_memory_dict(
+                current_store,
+                "iteration_plan_suggestions",
+            ).values()
             if lifecycle_matches_scope(item, scope)
         ],
     }

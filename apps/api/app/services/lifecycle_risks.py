@@ -11,6 +11,11 @@ from app.services.lifecycle_evidence import (
 )
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def lifecycle_risk_signals(
     current_store: Any,
     *,
@@ -18,7 +23,7 @@ def lifecycle_risk_signals(
 ) -> list[dict[str, Any]]:
     signals = []
     task_ids = {task["id"] for task in tasks}
-    for report in current_store.code_review_reports.values():
+    for report in _read_memory_dict(current_store, "code_review_reports").values():
         if report["task_id"] not in task_ids or report["risk_level"] == "low":
             continue
         signals.append(
@@ -228,8 +233,12 @@ def lifecycle_risk_context(
         "version_id": task.get("version_id") if task else None,
     }
     if source_type == "code_review_report":
-        report = current_store.code_review_reports.get(source_id)
-        report_task = current_store.ai_tasks.get(str(report.get("task_id"))) if report else None
+        report = _read_memory_dict(current_store, "code_review_reports").get(source_id)
+        report_task = (
+            _read_memory_dict(current_store, "ai_tasks").get(str(report.get("task_id")))
+            if report
+            else None
+        )
         if report_task:
             context.update(
                 {
@@ -242,7 +251,7 @@ def lifecycle_risk_context(
                 }
             )
     elif source_type == "bug":
-        bug = current_store.bugs.get(source_id)
+        bug = _read_memory_dict(current_store, "bugs").get(source_id)
         if bug:
             context.update(
                 {
@@ -255,7 +264,7 @@ def lifecycle_risk_context(
                 }
             )
     elif source_type == "gitlab_daily_code_metric":
-        metric = current_store.gitlab_daily_code_metrics.get(source_id)
+        metric = _read_memory_dict(current_store, "gitlab_daily_code_metrics").get(source_id)
         if metric:
             context.update(
                 {
@@ -264,7 +273,7 @@ def lifecycle_risk_context(
                 }
             )
     elif source_type == "jenkins_release":
-        release = current_store.jenkins_release_records.get(source_id)
+        release = _read_memory_dict(current_store, "jenkins_release_records").get(source_id)
         if release:
             context.update(
                 {
@@ -276,7 +285,7 @@ def lifecycle_risk_context(
                 }
             )
     elif source_type == "online_log_metric":
-        metric = current_store.online_log_metrics.get(source_id)
+        metric = _read_memory_dict(current_store, "online_log_metrics").get(source_id)
         if metric:
             context.update(
                 {
@@ -286,7 +295,7 @@ def lifecycle_risk_context(
                 }
             )
     elif source_type == "user_feedback":
-        feedback = current_store.user_feedback.get(source_id)
+        feedback = _read_memory_dict(current_store, "user_feedback").get(source_id)
         if feedback:
             context.update(
                 {
@@ -298,7 +307,9 @@ def lifecycle_risk_context(
                 }
             )
     elif source_type == "iteration_plan_suggestion":
-        suggestion = current_store.iteration_plan_suggestions.get(source_id)
+        suggestion = _read_memory_dict(current_store, "iteration_plan_suggestions").get(
+            source_id
+        )
         if suggestion:
             context.update(
                 {
