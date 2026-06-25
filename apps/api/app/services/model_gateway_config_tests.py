@@ -10,9 +10,12 @@ from app.services.model_gateway import (
     model_gateway_embedding_test_fields,
     model_gateway_test_skipped,
     normalized_model_gateway_embedding_fields,
-    save_model_gateway_payload,
     test_model_gateway_chat,
     test_model_gateway_embedding,
+)
+from app.services.model_gateway_config_context import (
+    get_model_gateway_config_record,
+    save_model_gateway_records,
 )
 from app.services.product_config_context import (
     ensure_enum,
@@ -63,7 +66,7 @@ def run_model_gateway_config_test(
     ensure_enum(payload.status, MODEL_GATEWAY_STATUSES, "model gateway status")
     existing_config = None
     if payload.config_id:
-        existing_config = current_store.model_gateway_configs.get(payload.config_id)
+        existing_config = get_model_gateway_config_record(current_store, payload.config_id)
         if existing_config is None:
             raise api_error(404, "NOT_FOUND", "Model gateway config not found")
     api_key = payload.api_key or (existing_config or {}).get("api_key")
@@ -139,10 +142,5 @@ def run_model_gateway_config_test(
             "test_target": test_target,
         },
     )
-    save_model_gateway_payload(
-        current_store,
-        configs=current_store.model_gateway_configs,
-        logs=current_store.model_gateway_logs,
-        audit_event=audit_event,
-    )
+    save_model_gateway_records(current_store, audit_event=audit_event)
     return result
