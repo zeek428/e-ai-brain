@@ -5,9 +5,8 @@ import {
   EditOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
-  PlusOutlined,
 } from '@ant-design/icons';
-import { PageContainer } from '@ant-design/pro-components';
+import type { ProColumns } from '@ant-design/pro-components';
 import {
   Button,
   Form,
@@ -15,17 +14,15 @@ import {
   InputNumber,
   Modal,
   Popconfirm,
-  Select,
   Space,
   Switch,
-  Table,
   Tag,
   Typography,
   message,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ColumnsType } from 'antd/es/table';
 
+import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import {
   createAssistantActionReferenceConfig,
   deleteAssistantActionReferenceConfig,
@@ -56,6 +53,12 @@ type RolloutFormValues = {
   percentage?: number | string;
   template_version?: string;
 };
+
+type AssistantActionReferenceRow = AssistantActionReferenceConfig & {
+  roleText: string;
+  searchText: string;
+  statusValue: 'disabled' | 'enabled';
+} & Record<string, unknown>;
 
 const { Text } = Typography;
 
@@ -123,10 +126,7 @@ export default function AssistantActionReferencesPage() {
   const [mutatingConfigIds, setMutatingConfigIds] = useState<Set<string>>(() => new Set());
   const [rolloutTarget, setRolloutTarget] = useState<AssistantActionReferenceConfig>();
   const [rolloutSubmitting, setRolloutSubmitting] = useState(false);
-  const [roleFilter, setRoleFilter] = useState<string>();
-  const [searchText, setSearchText] = useState('');
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<'disabled' | 'enabled'>();
   const [configForm] = Form.useForm<ActionReferenceFormValues>();
   const [rolloutForm] = Form.useForm<RolloutFormValues>();
 
@@ -151,40 +151,27 @@ export default function AssistantActionReferencesPage() {
     () => configs.filter((item) => item.enabled).length,
     [configs],
   );
-  const roleOptions = useMemo(
-    () => Array.from(new Set(configs.flatMap((item) => item.roles))).sort(),
+  const configRows = useMemo<AssistantActionReferenceRow[]>(
+    () =>
+      configs.map((record) => ({
+        ...record,
+        roleText: record.roles.join(', '),
+        searchText: [
+          record.action_key,
+          ...record.aliases,
+          record.enterprise_id ?? '',
+          ...record.permissions,
+          record.prompt,
+          ...record.roles,
+          record.summary,
+          record.template_version ?? '',
+          record.title,
+          record.url,
+        ].join(' '),
+        statusValue: record.enabled ? 'enabled' : 'disabled',
+      })),
     [configs],
   );
-  const filteredConfigs = useMemo(() => {
-    const normalizedSearch = searchText.trim().toLowerCase();
-    return configs.filter((record) => {
-      if (statusFilter === 'enabled' && !record.enabled) {
-        return false;
-      }
-      if (statusFilter === 'disabled' && record.enabled) {
-        return false;
-      }
-      if (roleFilter && !record.roles.includes(roleFilter)) {
-        return false;
-      }
-      if (!normalizedSearch) {
-        return true;
-      }
-      const searchableText = [
-        record.action_key,
-        ...record.aliases,
-        record.enterprise_id ?? '',
-        ...record.permissions,
-        record.prompt,
-        ...record.roles,
-        record.summary,
-        record.template_version ?? '',
-        record.title,
-        record.url,
-      ].join(' ').toLowerCase();
-      return searchableText.includes(normalizedSearch);
-    });
-  }, [configs, roleFilter, searchText, statusFilter]);
   const selectedConfigs = useMemo(
     () => configs.filter((item) => selectedRowKeys.includes(item.id)),
     [configs, selectedRowKeys],
@@ -353,7 +340,7 @@ export default function AssistantActionReferencesPage() {
     }
   };
 
-  const columns: ColumnsType<AssistantActionReferenceConfig> = [
+  const columns: ProColumns<AssistantActionReferenceRow>[] = [
     {
       dataIndex: 'title',
       fixed: 'left',
@@ -369,8 +356,11 @@ export default function AssistantActionReferencesPage() {
     },
     {
       dataIndex: 'enabled',
-      render: (enabled: boolean) => (
-        <Tag color={enabled ? 'green' : 'default'}>{enabled ? '启用' : '停用'}</Tag>
+      render: (_value, record) => (
+        <StatusTag
+          color={record.enabled ? 'green' : 'default'}
+          label={record.enabled ? '启用' : '停用'}
+        />
       ),
       title: '状态',
       width: 90,
@@ -383,31 +373,31 @@ export default function AssistantActionReferencesPage() {
     },
     {
       dataIndex: 'permissions',
-      render: (permissions: string[]) => tagList(permissions),
+      render: (_value, record) => tagList(record.permissions),
       title: '权限预览',
       width: 180,
     },
     {
       dataIndex: 'roles',
-      render: (roles: string[]) => tagList(roles),
+      render: (_value, record) => tagList(record.roles),
       title: '角色',
       width: 180,
     },
     {
       dataIndex: 'aliases',
-      render: (aliases: string[]) => tagList(aliases.slice(0, 8)),
+      render: (_value, record) => tagList(record.aliases.slice(0, 8)),
       title: '关键词',
       width: 180,
     },
     {
       dataIndex: 'enterprise_id',
-      render: (enterpriseId?: string | null) => enterpriseId || <Text type="secondary">全局</Text>,
+      render: (_value, record) => record.enterprise_id || <Text type="secondary">全局</Text>,
       title: '企业',
       width: 120,
     },
     {
       dataIndex: 'template_version',
-      render: (version?: string | null) => version || <Text type="secondary">默认</Text>,
+      render: (_value, record) => record.template_version || <Text type="secondary">默认</Text>,
       title: '模板版本',
       width: 120,
     },
@@ -475,78 +465,73 @@ export default function AssistantActionReferencesPage() {
   ];
 
   return (
-    <PageContainer
-      title="AI助手 @ 能力配置"
-      extra={[
-        <Tag color="blue" key="total">{configs.length} 项</Tag>,
-        <Tag color="green" key="enabled">{enabledCount} 项启用</Tag>,
-        <Button icon={<PlusOutlined />} key="create" onClick={openCreateConfig} type="primary">
-          新增能力
-        </Button>,
-      ]}
-    >
-      <Space style={{ marginBottom: 16, width: '100%' }} wrap>
-        <Input.Search
-          allowClear
-          onChange={(event) => setSearchText(event.target.value)}
-          placeholder="搜索标题、关键词、角色、权限或 URL"
-          style={{ width: 320 }}
-          value={searchText}
-        />
-        <Select
-          allowClear
-          onChange={setStatusFilter}
-          options={[
-            { label: '启用', value: 'enabled' },
-            { label: '停用', value: 'disabled' },
-          ]}
-          placeholder="状态"
-          style={{ width: 120 }}
-          value={statusFilter}
-        />
-        <Select
-          allowClear
-          onChange={setRoleFilter}
-          options={roleOptions.map((role) => ({ label: role, value: role }))}
-          placeholder="角色"
-          style={{ minWidth: 160 }}
-          value={roleFilter}
-        />
-        <Button
-          disabled={!selectedConfigs.length}
-          loading={batchAction === 'enable'}
-          onClick={() => void batchSetStatus(true)}
-        >
-          批量启用
-        </Button>
-        <Button
-          disabled={!selectedConfigs.length}
-          loading={batchAction === 'disable'}
-          onClick={() => void batchSetStatus(false)}
-        >
-          批量停用
-        </Button>
-        <Text type="secondary">
-          已筛选 {filteredConfigs.length} 项 · 已选择 {selectedConfigs.length} 项
-        </Text>
-      </Space>
-
-      <Table<AssistantActionReferenceConfig>
+    <>
+      <ManagementListPage<AssistantActionReferenceRow>
+        breadcrumbGroup="AI 助手"
         columns={columns}
-        dataSource={filteredConfigs}
+        dataSource={configRows}
+        viewStorageKey="assistant.action_references"
+        filters={[
+          {
+            label: '搜索',
+            name: 'searchText',
+            placeholder: '搜索标题、关键词、角色、权限或 URL',
+            type: 'text',
+          },
+          {
+            label: '状态',
+            name: 'statusValue',
+            options: [
+              { label: '启用', value: 'enabled' },
+              { label: '停用', value: 'disabled' },
+            ],
+            type: 'select',
+          },
+          {
+            label: '角色',
+            name: 'roleText',
+            placeholder: '输入角色',
+            type: 'text',
+          },
+        ]}
         loading={loading}
-        pagination={{
-          defaultPageSize: 8,
-          pageSizeOptions: [8, 16, 32],
-          showSizeChanger: true,
-          showTotal: (total) => `共 ${total} 项`,
-        }}
+        onPrimaryAction={openCreateConfig}
+        onReload={() => void loadConfigs()}
+        primaryAction="新增能力"
         rowKey="id"
         rowSelection={{
           onChange: (keys) => setSelectedRowKeys(keys.map(String)),
           selectedRowKeys,
         }}
-        scroll={{ x: 1480 }}
+        tableLayout="fixed"
+        tableScroll={{ x: 1480 }}
+        tableTitle="AI助手 @ 能力配置"
+        title="@ 能力配置"
+        beforeTable={
+          <Space style={{ marginBottom: 16, width: '100%' }} wrap>
+            <Tag color="blue">{configs.length} 项</Tag>
+            <Tag color="green">{enabledCount} 项启用</Tag>
+            <Text type="secondary">已选择 {selectedConfigs.length} 项</Text>
+          </Space>
+        }
+        toolbarActions={[
+          <Button
+            disabled={!selectedConfigs.length}
+            key="batch-enable"
+            loading={batchAction === 'enable'}
+            onClick={() => void batchSetStatus(true)}
+          >
+            批量启用
+          </Button>,
+          <Button
+            disabled={!selectedConfigs.length}
+            key="batch-disable"
+            loading={batchAction === 'disable'}
+            onClick={() => void batchSetStatus(false)}
+          >
+            批量停用
+          </Button>,
+        ]}
       />
 
       <Modal
@@ -645,6 +630,6 @@ export default function AssistantActionReferencesPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </PageContainer>
+    </>
   );
 }

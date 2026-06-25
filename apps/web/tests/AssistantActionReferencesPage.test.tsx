@@ -140,6 +140,7 @@ describe('Assistant action references page', () => {
     render(<AssistantActionReferencesPage />);
 
     await screen.findByText('新建需求');
+    expect(screen.getByRole('button', { name: '保存视图' })).toBeInTheDocument();
     expect(screen.getByText('create_requirement')).toBeInTheDocument();
     expect(screen.getByText('product_owner')).toBeInTheDocument();
 
@@ -172,24 +173,27 @@ describe('Assistant action references page', () => {
 
     await screen.findByText('新建需求');
     expect(screen.getByText('新建 Bug')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存视图' })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText('搜索标题、关键词、角色、权限或 URL'), {
+    const searchInput = screen.getByLabelText('搜索');
+    fireEvent.change(searchInput, {
       target: { value: 'Bug' },
     });
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
 
     await waitFor(() => {
       expect(screen.queryByText('新建需求')).not.toBeInTheDocument();
     });
     expect(screen.getByText('新建 Bug')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText('搜索标题、关键词、角色、权限或 URL'), {
+    fireEvent.change(searchInput, {
       target: { value: '' },
     });
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
     await screen.findByText('新建需求');
 
-    const rowCheckboxes = screen.getAllByRole('checkbox');
-    fireEvent.click(rowCheckboxes[2]);
-    fireEvent.click(screen.getByText('批量启用'));
+    fireEvent.click(screen.getByLabelText('选择 assistant_action_reference_config_create_bug'));
+    fireEvent.click(screen.getByRole('button', { name: '批量启用' }));
 
     await waitFor(() => {
       expect(bodies).toContainEqual({ enabled: true });
