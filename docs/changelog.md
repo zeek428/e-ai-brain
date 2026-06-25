@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 用户反馈 DB-first fallback 收口：反馈创建、编辑和转需求不再直接写 `current_store.user_feedback` / `current_store.requirements`，统一通过反馈保存和反馈转需求 helper 写入测试集合或 repository。
 - 用户洞察审计 helper DB-first fallback 收口：`record_audit_event` 在轻量上下文无 `audit()` 方法时不再直接 append `current_store.audit_events`，统一通过审计事件列表 helper 写入测试集合。
 - 用户使用指标 DB-first fallback 收口：使用指标创建不再直接写 `current_store.user_usage_metrics`，统一通过 `save_user_usage_metric_record` 写入 repository 或 MemoryStore 测试集合。
 - 运营记录审计 helper DB-first fallback 收口：`record_audit_event` 在轻量上下文无 `audit()` 方法时不再直接 append `current_store.audit_events`，统一通过审计事件列表 helper 写入测试集合。

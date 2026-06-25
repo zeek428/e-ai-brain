@@ -54,6 +54,7 @@ def test_user_feedback_supports_create_filter_update_and_audit():
     assert created["created_by"] == "user_reviewer"
     assert created["status"] == "open"
     assert created["tags"] == ["search", "relevance"]
+    assert app.state.store.user_feedback[created["id"]]["status"] == "open"
 
     filtered = client.get(
         (
@@ -75,6 +76,7 @@ def test_user_feedback_supports_create_filter_update_and_audit():
     ).json()["data"]
     assert updated["status"] == "triaged"
     assert updated["triage_note"] == "归入知识检索相关性优化。"
+    assert app.state.store.user_feedback[created["id"]]["status"] == "triaged"
 
     audit_events = client.get(
         f"/api/audit/events?subject_type=user_feedback&subject_id={created['id']}",
@@ -122,6 +124,8 @@ def test_user_feedback_can_convert_to_requirement_and_sync_status():
     assert linked_feedback["status"] == "linked"
     assert linked_feedback["related_requirement_id"] == requirement["id"]
     assert linked_feedback["triage_note"] == "反馈有效，进入需求评审。"
+    assert app.state.store.requirements[requirement["id"]]["source"] == "user_feedback"
+    assert app.state.store.user_feedback[feedback["id"]]["status"] == "linked"
 
     listed = client.get(
         f"/api/requirements?source=user_feedback&product_id={context['product_id']}",

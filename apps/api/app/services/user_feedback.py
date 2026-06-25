@@ -11,9 +11,7 @@ from app.services.user_insights import (
     ensure_non_blank,
     payload_updates,
     record_audit_event,
-    save_single_repository_record,
     user_insight_query_repository,
-    uses_repository_context,
 )
 from app.services.version_status import validate_requirement_version
 
@@ -21,6 +19,22 @@ USER_FEEDBACK_TYPES = {"bug", "complaint", "improvement", "praise", "question"}
 USER_FEEDBACK_SENTIMENTS = {"negative", "neutral", "positive"}
 USER_FEEDBACK_STATUSES = {"archived", "linked", "open", "resolved", "triaged"}
 REQUIREMENT_PRIORITIES = {"P0", "P1", "P2"}
+
+
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _user_feedback_collection(current_store: Any) -> dict[str, dict[str, Any]]:
+    return _memory_dict(current_store, "user_feedback")
+
+
+def _requirements_collection(current_store: Any) -> dict[str, dict[str, Any]]:
+    return _memory_dict(current_store, "requirements")
 
 
 def validate_user_feedback_enums(
@@ -91,6 +105,20 @@ def user_feedback_by_id(current_store: Any, feedback_id: str) -> dict[str, Any] 
         feedback = get_feedback(feedback_id)
         return dict(feedback) if feedback is not None else None
     return None
+
+
+def save_user_feedback_record(
+    current_store: Any,
+    feedback: dict[str, Any],
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_record = getattr(repository, "save_user_feedback_record", None)
+    if callable(save_record):
+        save_record(feedback, audit_event=audit_event)
+        return
+    _user_feedback_collection(current_store)[str(feedback["id"])] = dict(feedback)
 
 
 def normalized_tags(tags: list[str]) -> list[str]:
@@ -182,8 +210,6 @@ def create_user_feedback_response(
         "tags": normalized_tags(payload.tags),
         "updated_at": now,
     }
-    if not uses_repository_context(current_store):
-        current_store.user_feedback[feedback["id"]] = feedback
     audit_event = record_audit_event(
         current_store,
         event_type="user_feedback.created",
@@ -196,9 +222,8 @@ def create_user_feedback_response(
             "status": feedback["status"],
         },
     )
-    save_single_repository_record(
+    save_user_feedback_record(
         current_store,
-        "save_user_feedback_record",
         feedback,
         audit_event=audit_event,
     )
@@ -228,8 +253,6 @@ def patch_user_feedback_response(
     if "tags" in updates:
         updates["tags"] = normalized_tags(updates["tags"])
     feedback = {**feedback, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    if not uses_repository_context(current_store):
-        current_store.user_feedback[feedback_id] = feedback
     audit_event = record_audit_event(
         current_store,
         event_type="user_feedback.updated",
@@ -241,9 +264,8 @@ def patch_user_feedback_response(
             "updated_fields": sorted(updates.keys()),
         },
     )
-    save_single_repository_record(
+    save_user_feedback_record(
         current_store,
-        "save_user_feedback_record",
         feedback,
         audit_event=audit_event,
     )
@@ -265,6 +287,9 @@ def save_user_feedback_requirement_conversion(
             feedback=feedback,
             requirement=requirement,
         )
+        return
+    _requirements_collection(current_store)[str(requirement["id"])] = dict(requirement)
+    _user_feedback_collection(current_store)[str(feedback["id"])] = dict(feedback)
 
 
 def convert_user_feedback_to_requirement_response(
@@ -323,9 +348,6 @@ def convert_user_feedback_to_requirement_response(
         "triage_note": payload.triage_note or feedback.get("triage_note"),
         "updated_at": now,
     }
-    if not uses_repository_context(current_store):
-        current_store.requirements[requirement["id"]] = requirement
-        current_store.user_feedback[feedback_id] = feedback
     requirement_audit_event = record_audit_event(
         current_store,
         event_type="requirement.created",
