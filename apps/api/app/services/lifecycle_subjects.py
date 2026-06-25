@@ -5,34 +5,66 @@ from typing import Any
 from app.api.deps import api_error
 
 
+def _collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, {})
+    return collection if isinstance(collection, dict) else {}
+
+
+def _record(
+    current_store: Any,
+    collection_name: str,
+    record_id: str | None,
+) -> dict[str, Any] | None:
+    if record_id is None:
+        return None
+    item = _collection(current_store, collection_name).get(str(record_id))
+    return item if isinstance(item, dict) else None
+
+
+def _records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    return list(_collection(current_store, collection_name).values())
+
+
+def _task(current_store: Any, task_id: str | None) -> dict[str, Any] | None:
+    return _record(current_store, "ai_tasks", task_id)
+
+
+def _tasks(current_store: Any) -> list[dict[str, Any]]:
+    return _records(current_store, "ai_tasks")
+
+
+def _audit_events(current_store: Any) -> list[dict[str, Any]]:
+    events = getattr(current_store, "audit_events", [])
+    return events if isinstance(events, list) else []
+
+
 def lifecycle_mock_issue(current_store: Any, subject_id: str) -> dict[str, Any] | None:
-    for result in current_store.mock_writebacks.values():
-        for issue in result["issues"]:
+    for result in _records(current_store, "mock_writebacks"):
+        for issue in result.get("issues", []):
             if issue["id"] == subject_id:
                 return issue
     return None
 
 
 def lifecycle_audit_event(current_store: Any, subject_id: str) -> dict[str, Any] | None:
-    return next((event for event in current_store.audit_events if event["id"] == subject_id), None)
+    return next(
+        (event for event in _audit_events(current_store) if event["id"] == subject_id),
+        None,
+    )
 
 
 def lifecycle_require_tasks_by_requirement(
     current_store: Any,
     requirement_id: str,
 ) -> list[dict[str, Any]]:
-    requirement = current_store.requirements.get(requirement_id)
+    requirement = _record(current_store, "requirements", requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
-    return [
-        task
-        for task in current_store.ai_tasks.values()
-        if task.get("requirement_id") == requirement_id
-    ]
+    return [task for task in _tasks(current_store) if task.get("requirement_id") == requirement_id]
 
 
 def lifecycle_require_task(current_store: Any, task_id: str | None) -> dict[str, Any]:
-    task = current_store.ai_tasks.get(str(task_id))
+    task = _task(current_store, task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
     return task
@@ -41,7 +73,7 @@ def lifecycle_require_task(current_store: Any, task_id: str | None) -> dict[str,
 def task_product_id(current_store: Any, task_id: str | None) -> str | None:
     if task_id is None:
         return None
-    task = current_store.ai_tasks.get(str(task_id))
+    task = _task(current_store, task_id)
     return str(task["product_id"]) if task is not None and task.get("product_id") else None
 
 
@@ -54,49 +86,49 @@ def subject_product_id(
         return None
     normalized_id = str(subject_id)
     if subject_type == "product":
-        return normalized_id if normalized_id in current_store.products else None
+        return normalized_id if _record(current_store, "products", normalized_id) else None
     if subject_type == "product_version":
-        version = current_store.product_versions.get(normalized_id)
+        version = _record(current_store, "product_versions", normalized_id)
         return str(version["product_id"]) if version is not None else None
     if subject_type == "product_module":
-        module = current_store.product_modules.get(normalized_id)
+        module = _record(current_store, "product_modules", normalized_id)
         return str(module["product_id"]) if module is not None else None
     if subject_type == "product_git_repository":
-        repository = current_store.product_git_repositories.get(normalized_id)
+        repository = _record(current_store, "product_git_repositories", normalized_id)
         return str(repository["product_id"]) if repository is not None else None
     if subject_type == "requirement":
-        requirement = current_store.requirements.get(normalized_id)
+        requirement = _record(current_store, "requirements", normalized_id)
         return str(requirement["product_id"]) if requirement is not None else None
     if subject_type == "ai_task":
         return task_product_id(current_store, normalized_id)
     if subject_type == "human_review":
-        review = current_store.human_reviews.get(normalized_id)
+        review = _record(current_store, "human_reviews", normalized_id)
         return task_product_id(current_store, review.get("ai_task_id") if review else None)
     if subject_type == "code_review_report":
-        report = current_store.code_review_reports.get(normalized_id)
+        report = _record(current_store, "code_review_reports", normalized_id)
         return task_product_id(current_store, report.get("task_id") if report else None)
     if subject_type == "gitlab_mr_snapshot":
-        snapshot = current_store.gitlab_mr_snapshots.get(normalized_id)
+        snapshot = _record(current_store, "gitlab_mr_snapshots", normalized_id)
         return str(snapshot["product_id"]) if snapshot is not None else None
     if subject_type == "mock_issue":
         issue = lifecycle_mock_issue(current_store, normalized_id)
         return task_product_id(current_store, issue.get("source_task_id") if issue else None)
     if subject_type == "knowledge_deposit":
-        deposit = current_store.knowledge_deposits.get(normalized_id)
+        deposit = _record(current_store, "knowledge_deposits", normalized_id)
         return task_product_id(current_store, deposit.get("ai_task_id") if deposit else None)
     product_scoped_collections = {
-        "bug": current_store.bugs,
-        "gitlab_daily_code_metric": current_store.gitlab_daily_code_metrics,
-        "jenkins_release": current_store.jenkins_release_records,
-        "online_log_metric": current_store.online_log_metrics,
-        "user_feedback": current_store.user_feedback,
-        "user_usage_metric": current_store.user_usage_metrics,
-        "iteration_plan_suggestion": current_store.iteration_plan_suggestions,
+        "bug": "bugs",
+        "gitlab_daily_code_metric": "gitlab_daily_code_metrics",
+        "jenkins_release": "jenkins_release_records",
+        "online_log_metric": "online_log_metrics",
+        "user_feedback": "user_feedback",
+        "user_usage_metric": "user_usage_metrics",
+        "iteration_plan_suggestion": "iteration_plan_suggestions",
     }
-    collection = product_scoped_collections.get(subject_type)
-    if collection is None:
+    collection_name = product_scoped_collections.get(subject_type)
+    if collection_name is None:
         return None
-    item = collection.get(normalized_id)
+    item = _record(current_store, collection_name, normalized_id)
     return str(item["product_id"]) if item is not None and item.get("product_id") else None
 
 
@@ -112,23 +144,21 @@ def lifecycle_subject_tasks(
     if subject_type == "ai_task":
         return [lifecycle_require_task(current_store, subject_id)]
     if subject_type == "product":
-        if subject_id not in current_store.products:
+        if _record(current_store, "products", subject_id) is None:
             raise api_error(404, "NOT_FOUND", "Product not found")
-        return [
-            task for task in current_store.ai_tasks.values() if task.get("product_id") == subject_id
-        ]
+        return [task for task in _tasks(current_store) if task.get("product_id") == subject_id]
     if subject_type == "human_review":
-        review = current_store.human_reviews.get(subject_id)
+        review = _record(current_store, "human_reviews", subject_id)
         if review is None:
             raise api_error(404, "NOT_FOUND", "Review not found")
         return [lifecycle_require_task(current_store, review.get("ai_task_id"))]
     if subject_type == "code_review_report":
-        report = current_store.code_review_reports.get(subject_id)
+        report = _record(current_store, "code_review_reports", subject_id)
         if report is None:
             raise api_error(404, "NOT_FOUND", "Code review report not found")
         return [lifecycle_require_task(current_store, report.get("task_id"))]
     if subject_type == "gitlab_mr_snapshot":
-        snapshot = current_store.gitlab_mr_snapshots.get(subject_id)
+        snapshot = _record(current_store, "gitlab_mr_snapshots", subject_id)
         if snapshot is None:
             raise api_error(404, "NOT_FOUND", "GitLab MR snapshot not found")
         return [lifecycle_require_task(current_store, snapshot.get("technical_solution_task_id"))]
@@ -138,7 +168,7 @@ def lifecycle_subject_tasks(
             raise api_error(404, "NOT_FOUND", "Mock issue not found")
         return [lifecycle_require_task(current_store, issue.get("source_task_id"))]
     if subject_type == "knowledge_deposit":
-        deposit = current_store.knowledge_deposits.get(subject_id)
+        deposit = _record(current_store, "knowledge_deposits", subject_id)
         if deposit is None:
             raise api_error(404, "NOT_FOUND", "Knowledge deposit not found")
         return [lifecycle_require_task(current_store, deposit.get("ai_task_id"))]
@@ -159,7 +189,7 @@ def lifecycle_subject_tasks(
             )
         return []
     if subject_type == "bug":
-        bug = current_store.bugs.get(subject_id)
+        bug = _record(current_store, "bugs", subject_id)
         if bug is None:
             raise api_error(404, "NOT_FOUND", "Bug not found")
         if bug.get("related_task_id"):
@@ -168,31 +198,31 @@ def lifecycle_subject_tasks(
             return lifecycle_require_tasks_by_requirement(current_store, bug["requirement_id"])
         return [
             task
-            for task in current_store.ai_tasks.values()
+            for task in _tasks(current_store)
             if task.get("product_id") == bug.get("product_id")
         ]
     evidence_collections = {
         "gitlab_daily_code_metric": (
-            current_store.gitlab_daily_code_metrics,
+            "gitlab_daily_code_metrics",
             "GitLab daily code metric",
         ),
-        "jenkins_release": (current_store.jenkins_release_records, "Jenkins release"),
-        "online_log_metric": (current_store.online_log_metrics, "Online log metric"),
-        "user_usage_metric": (current_store.user_usage_metrics, "User usage metric"),
-        "user_feedback": (current_store.user_feedback, "User feedback"),
+        "jenkins_release": ("jenkins_release_records", "Jenkins release"),
+        "online_log_metric": ("online_log_metrics", "Online log metric"),
+        "user_usage_metric": ("user_usage_metrics", "User usage metric"),
+        "user_feedback": ("user_feedback", "User feedback"),
         "iteration_plan_suggestion": (
-            current_store.iteration_plan_suggestions,
+            "iteration_plan_suggestions",
             "Iteration plan suggestion",
         ),
     }
     if subject_type in evidence_collections:
-        collection, label = evidence_collections[subject_type]
-        evidence = collection.get(subject_id)
+        collection_name, label = evidence_collections[subject_type]
+        evidence = _record(current_store, collection_name, subject_id)
         if evidence is None:
             raise api_error(404, "NOT_FOUND", f"{label} not found")
         return [
             task
-            for task in current_store.ai_tasks.values()
+            for task in _tasks(current_store)
             if task.get("product_id") == evidence.get("product_id")
             and (
                 not evidence.get("version_id")
@@ -228,7 +258,7 @@ def tasks_for_lifecycle_subject(
     else:
         tasks = [
             task
-            for task in current_store.ai_tasks.values()
+            for task in _tasks(current_store)
             if not product_id or task.get("product_id") == product_id
         ]
     if product_id:
@@ -257,16 +287,16 @@ def lifecycle_subject(
         )
         resolved_product_id = tasks[0]["product_id"] if tasks else None
         if subject_type == "requirement":
-            requirement = current_store.requirements[normalized_subject_id]
-            resolved_product_id = requirement["product_id"]
+            requirement = _record(current_store, "requirements", normalized_subject_id)
+            resolved_product_id = requirement["product_id"] if requirement is not None else None
         elif subject_type == "product":
             resolved_product_id = normalized_subject_id
         elif subject_type == "gitlab_mr_snapshot":
-            snapshot = current_store.gitlab_mr_snapshots[normalized_subject_id]
-            resolved_product_id = snapshot["product_id"]
+            snapshot = _record(current_store, "gitlab_mr_snapshots", normalized_subject_id)
+            resolved_product_id = snapshot["product_id"] if snapshot is not None else None
         elif subject_type == "bug":
-            bug = current_store.bugs[normalized_subject_id]
-            resolved_product_id = bug["product_id"]
+            bug = _record(current_store, "bugs", normalized_subject_id)
+            resolved_product_id = bug["product_id"] if bug is not None else None
         elif subject_type in {
             "gitlab_daily_code_metric",
             "jenkins_release",

@@ -192,6 +192,11 @@ def replace_collection(
     )
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, {})
+    return collection if isinstance(collection, dict) else {}
+
+
 def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     if not isinstance(collection, dict):
@@ -352,7 +357,7 @@ def list_ai_skills_response(
         ensure_enum(status, AI_SKILL_STATUSES, "status")
     sync_ai_skill_store(current_store, code=code, status=status)
     items = []
-    for skill in current_store.ai_skills.values():
+    for skill in _read_memory_dict(current_store, "ai_skills").values():
         if code is not None and skill.get("code") != code:
             continue
         if status is not None and skill.get("status") != status:
@@ -500,7 +505,7 @@ def patch_ai_skill_response(
 ) -> dict[str, Any]:
     require_ai_capabilities_manager(user)
     sync_ai_skill_store(current_store)
-    skill = current_store.ai_skills.get(skill_id)
+    skill = _read_memory_dict(current_store, "ai_skills").get(skill_id)
     if skill is None:
         raise api_error(404, "NOT_FOUND", "AI skill not found")
     updates = payload.model_dump(exclude_unset=True)
@@ -538,7 +543,7 @@ def list_ai_agents_response(
         ensure_enum(status, AI_AGENT_STATUSES, "status")
     sync_ai_agent_store(current_store, brain_app_id=brain_app_id, status=status)
     items = []
-    for agent in current_store.ai_agents.values():
+    for agent in _read_memory_dict(current_store, "ai_agents").values():
         if brain_app_id is not None and agent.get("brain_app_id") != brain_app_id:
             continue
         if status is not None and agent.get("status") != status:
@@ -554,7 +559,7 @@ def ensure_active_model_gateway(current_store: Any, config_id: str | None) -> st
     if config_id is None:
         return None
     sync_reference_store(current_store)
-    config = current_store.model_gateway_configs.get(config_id)
+    config = _read_memory_dict(current_store, "model_gateway_configs").get(config_id)
     if config is None:
         raise api_error(404, "NOT_FOUND", "Model gateway config not found")
     if config.get("status") != "active":
@@ -565,7 +570,7 @@ def ensure_active_model_gateway(current_store: Any, config_id: str | None) -> st
 def ensure_active_skills(current_store: Any, skill_ids: list[str]) -> list[str]:
     sync_ai_skill_store(current_store)
     for skill_id in skill_ids:
-        skill = current_store.ai_skills.get(skill_id)
+        skill = _read_memory_dict(current_store, "ai_skills").get(skill_id)
         if skill is None:
             raise api_error(404, "NOT_FOUND", "AI skill not found")
         if skill.get("status") != "active":
@@ -632,7 +637,7 @@ def patch_ai_agent_response(
     sync_ai_agent_store(current_store)
     sync_ai_skill_store(current_store)
     sync_reference_store(current_store)
-    agent = current_store.ai_agents.get(agent_id)
+    agent = _read_memory_dict(current_store, "ai_agents").get(agent_id)
     if agent is None:
         raise api_error(404, "NOT_FOUND", "AI agent not found")
     updates = payload.model_dump(exclude_unset=True)
@@ -668,7 +673,7 @@ def validate_product(current_store: Any, product_id: str | None) -> None:
     if product_id is None:
         return
     sync_reference_store(current_store)
-    product = current_store.products.get(product_id)
+    product = _read_memory_dict(current_store, "products").get(product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product.get("status") != "active":
@@ -798,7 +803,7 @@ def scheduled_job_config_with_code_inspection_defaults(
 
     config["repository_id"] = repository_id
     sync_product_git_repository_store(current_store, product_id)
-    repository = current_store.product_git_repositories.get(repository_id)
+    repository = _read_memory_dict(current_store, "product_git_repositories").get(repository_id)
     if repository is None:
         return config
     if product_id and repository.get("product_id") != product_id:
@@ -884,7 +889,7 @@ def readable_knowledge_documents_by_id(
 
         documents = [
             document
-            for document in current_store.knowledge_documents.values()
+            for document in _read_memory_dict(current_store, "knowledge_documents").values()
             if document_is_readable(current_store, user, document)
         ]
     return {
@@ -975,7 +980,7 @@ def validate_job_refs(
     if ai_processing_job:
         if agent_id is None:
             raise api_error(400, "AI_AGENT_REQUIRED", "AI job requires agent_id")
-        agent = current_store.ai_agents.get(agent_id)
+        agent = _read_memory_dict(current_store, "ai_agents").get(agent_id)
         if agent is None:
             raise api_error(404, "NOT_FOUND", "AI agent not found")
         if agent.get("status") != "active":
@@ -1043,7 +1048,7 @@ def validate_plugin_refs(
     connection_ids = normalized_string_ids([resolved_connection_id, *connection_ids])
 
     for extra_action_id in action_ids[1:]:
-        action = current_store.plugin_actions.get(extra_action_id)
+        action = _read_memory_dict(current_store, "plugin_actions").get(extra_action_id)
         if action is None:
             raise api_error(404, "NOT_FOUND", "Plugin action not found")
         if action.get("status") != "active":
@@ -1143,7 +1148,7 @@ def list_scheduled_jobs_response(
     normalized_keyword = str(keyword or "").strip().lower()
     normalized_name = str(name or "").strip().lower()
     items = []
-    for job in current_store.scheduled_jobs.values():
+    for job in _read_memory_dict(current_store, "scheduled_jobs").values():
         if enabled is not None and job.get("enabled") is not enabled:
             continue
         if job_type is not None and job.get("job_type") != job_type:
@@ -1328,7 +1333,7 @@ def public_scheduled_job_run(
     source_run_id = run.get("source_run_id")
     if source_run_id:
         public_run["source_run_summary"] = scheduled_job_run_source_summary(
-            current_store.scheduled_job_runs.get(source_run_id),
+            _read_memory_dict(current_store, "scheduled_job_runs").get(source_run_id),
         )
     return public_run
 
@@ -1341,7 +1346,7 @@ def scheduled_job_template_from_run_response(
 ) -> dict[str, Any]:
     require_admin(user)
     sync_scheduled_job_run_store(current_store)
-    run = current_store.scheduled_job_runs.get(run_id)
+    run = _read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
     if run is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job run not found")
     if run.get("status") != "succeeded":
@@ -1608,7 +1613,7 @@ def dry_run_scheduled_job_response(
     response_summary = plugin_summary.get("response_summary") if plugin_summary else {}
     result_actions = []
     for action_id in plugin_action_ids:
-        action = current_store.plugin_actions.get(action_id) or {}
+        action = _read_memory_dict(current_store, "plugin_actions").get(action_id) or {}
         action_mapping = action.get("result_mapping") if isinstance(action, dict) else {}
         mapping = action_mapping if isinstance(action_mapping, dict) else {}
         preview = result_write_preview(response_summary or {}, mapping or output_mapping)
@@ -1666,7 +1671,7 @@ def patch_scheduled_job_response(
 ) -> dict[str, Any]:
     require_admin(user)
     sync_scheduled_job_store(current_store)
-    job = current_store.scheduled_jobs.get(job_id)
+    job = _read_memory_dict(current_store, "scheduled_jobs").get(job_id)
     if job is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
     updates = payload.model_dump(exclude_unset=True)
@@ -1752,7 +1757,7 @@ def delete_scheduled_job_response(
 ) -> dict[str, Any]:
     require_admin(user)
     sync_scheduled_job_store(current_store)
-    job = current_store.scheduled_jobs.get(job_id)
+    job = _read_memory_dict(current_store, "scheduled_jobs").get(job_id)
     if job is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
     _delete_memory_record(current_store, "scheduled_jobs", job_id)
@@ -1772,10 +1777,14 @@ def delete_scheduled_job_response(
 
 
 def resolve_ai_snapshots(current_store: Any, job: dict[str, Any]) -> dict[str, Any]:
-    agent = current_store.ai_agents.get(job.get("agent_id")) if job.get("agent_id") else None
+    agent = (
+        _read_memory_dict(current_store, "ai_agents").get(job.get("agent_id"))
+        if job.get("agent_id")
+        else None
+    )
     skills = []
     for skill_id in job.get("skill_ids", []):
-        skill = dict(current_store.ai_skills[skill_id])
+        skill = dict(_read_memory_dict(current_store, "ai_skills")[skill_id])
         package_snapshot = load_skill_package_snapshot(skill)
         if package_snapshot is not None:
             skill["package_snapshot"] = package_snapshot
@@ -1903,7 +1912,7 @@ def cancelled_scheduled_job_run_if_requested(
     run_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any] | None:
-    latest_run = current_store.scheduled_job_runs.get(run_id)
+    latest_run = _read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
     if latest_run is None or latest_run.get("status") != "cancelled":
         return None
     complete_collector_run(
@@ -1962,7 +1971,7 @@ def resolve_job_plugin_output_mapping(current_store: Any, job: dict[str, Any]) -
     action_id = job.get("plugin_action_id")
     if not action_id:
         return {}
-    action = current_store.plugin_actions.get(action_id) or {}
+    action = _read_memory_dict(current_store, "plugin_actions").get(action_id) or {}
     action_mapping = action.get("result_mapping") or {}
     return dict(action_mapping) if isinstance(action_mapping, dict) else {}
 
@@ -1970,7 +1979,7 @@ def resolve_job_plugin_output_mapping(current_store: Any, job: dict[str, Any]) -
 def skill_codes_for_job(current_store: Any, job: dict[str, Any]) -> list[str]:
     codes: list[str] = []
     for skill_id in job.get("skill_ids", []):
-        skill = current_store.ai_skills.get(skill_id)
+        skill = _read_memory_dict(current_store, "ai_skills").get(skill_id)
         if skill is not None and skill.get("code"):
             codes.append(str(skill["code"]))
     return codes
@@ -1981,7 +1990,7 @@ def merged_skill_output_schema(current_store: Any, job: dict[str, Any]) -> dict[
     required: list[str] = []
     properties: dict[str, Any] = {}
     for skill_id in job.get("skill_ids") or []:
-        skill = current_store.ai_skills.get(skill_id)
+        skill = _read_memory_dict(current_store, "ai_skills").get(skill_id)
         schema = skill.get("output_schema") if isinstance(skill, dict) else None
         if not isinstance(schema, dict) or not schema:
             continue
@@ -2079,7 +2088,11 @@ def validate_skill_output_json_contract(
 def selected_model_gateway_config(current_store: Any, job: dict[str, Any]) -> dict[str, Any]:
     sync_reference_store(current_store)
     config_id = job.get("model_gateway_config_id")
-    config = current_store.model_gateway_configs.get(config_id) if config_id else None
+    config = (
+        _read_memory_dict(current_store, "model_gateway_configs").get(config_id)
+        if config_id
+        else None
+    )
     if config is None:
         raise api_error(400, "MODEL_GATEWAY_CONFIG_REQUIRED", "AI model config is required")
     if config.get("status") != "active":
@@ -2192,10 +2205,14 @@ def scheduled_job_ai_messages(
     source_row_count: int,
     knowledge_references: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
-    agent = current_store.ai_agents.get(job.get("agent_id")) if job.get("agent_id") else None
+    agent = (
+        _read_memory_dict(current_store, "ai_agents").get(job.get("agent_id"))
+        if job.get("agent_id")
+        else None
+    )
     skill_prompts = []
     for skill_id in job.get("skill_ids", []):
-        skill = current_store.ai_skills.get(skill_id)
+        skill = _read_memory_dict(current_store, "ai_skills").get(skill_id)
         if skill is not None:
             prompt = skill.get("prompt_template") or skill.get("description") or skill.get("name")
             if prompt:
@@ -2568,7 +2585,10 @@ def plugin_summary_from_log(current_store: Any, plugin_log: dict[str, Any]) -> d
     return {
         "action_id": plugin_log.get("action_id"),
         "connection_environment": (
-            current_store.plugin_connections.get(plugin_log.get("connection_id")) or {}
+            _read_memory_dict(current_store, "plugin_connections").get(
+                plugin_log.get("connection_id"),
+            )
+            or {}
         ).get("environment"),
         "connection_id": plugin_log.get("connection_id"),
         "invocation_log_id": plugin_log["id"],
@@ -2836,7 +2856,10 @@ def queued_native_scan_result_summary(
     job_config = job.get("config_json") or {}
     repository_id = job_config.get("repository_id")
     sync_product_git_repository_store(current_store, job.get("product_id"))
-    repository = current_store.product_git_repositories.get(str(repository_id)) or {}
+    repository = (
+        _read_memory_dict(current_store, "product_git_repositories").get(str(repository_id))
+        or {}
+    )
     branch = job_config.get("branch") or repository.get("default_branch")
     return {
         "execution_nodes": {
@@ -2915,14 +2938,14 @@ def execute_queued_scheduled_job_run_response(
     sync_ai_skill_store(current_store)
     sync_reference_store(current_store)
     sync_scheduled_job_run_store(current_store)
-    run = current_store.scheduled_job_runs.get(run_id)
+    run = _read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
     if run is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job run not found")
     if run.get("status") in SCHEDULED_JOB_RUN_TERMINAL_STATUSES:
         raise api_error(409, "SCHEDULED_JOB_RUN_STATE_INVALID", "Terminal run cannot be executed")
     if run.get("status") != "queued":
         raise api_error(409, "SCHEDULED_JOB_RUN_STATE_INVALID", "Only queued runs can be executed")
-    job = current_store.scheduled_jobs.get(run.get("scheduled_job_id"))
+    job = _read_memory_dict(current_store, "scheduled_jobs").get(run.get("scheduled_job_id"))
     if job is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
     if not scheduled_job_uses_async_worker(job):
@@ -2931,7 +2954,9 @@ def execute_queued_scheduled_job_run_response(
         raise api_error(409, "SCHEDULED_JOB_DISABLED", "Scheduled job is disabled")
 
     now = datetime.now(UTC).isoformat()
-    collector_run = current_store.collector_runs.get(run.get("collector_run_id"))
+    collector_run = _read_memory_dict(current_store, "collector_runs").get(
+        run.get("collector_run_id"),
+    )
     if collector_run is None:
         collector_run = create_collector_run_for_job(
             current_store,
@@ -3217,13 +3242,13 @@ def run_scheduled_job_response(
     sync_ai_agent_store(current_store)
     sync_ai_skill_store(current_store)
     sync_reference_store(current_store)
-    job = current_store.scheduled_jobs.get(job_id)
+    job = _read_memory_dict(current_store, "scheduled_jobs").get(job_id)
     if job is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
     source_run = None
     if source_run_id:
         sync_scheduled_job_run_store(current_store, scheduled_job_id=job_id)
-        source_run = current_store.scheduled_job_runs.get(source_run_id)
+        source_run = _read_memory_dict(current_store, "scheduled_job_runs").get(source_run_id)
         if source_run is None:
             raise api_error(404, "NOT_FOUND", "Source scheduled job run not found")
         if source_run.get("scheduled_job_id") != job_id:
@@ -3770,7 +3795,7 @@ def list_scheduled_job_runs_response(
         status=status,
     )
     items = []
-    for run in current_store.scheduled_job_runs.values():
+    for run in _read_memory_dict(current_store, "scheduled_job_runs").values():
         if normalized_run_ids and run.get("id") not in normalized_run_ids:
             continue
         if scheduled_job_id is not None and run.get("scheduled_job_id") != scheduled_job_id:
@@ -3790,7 +3815,7 @@ def cancel_scheduled_job_run_response(
 ) -> dict[str, Any]:
     require_admin(user)
     sync_scheduled_job_run_store(current_store)
-    run = current_store.scheduled_job_runs.get(run_id)
+    run = _read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
     if run is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job run not found")
     if run["status"] in SCHEDULED_JOB_RUN_TERMINAL_STATUSES:
@@ -3799,7 +3824,11 @@ def cancel_scheduled_job_run_response(
     run = {**run, "finished_at": now, "status": "cancelled", "updated_at": now}
     _put_memory_record(current_store, "scheduled_job_runs", run)
     collector_run_id = run.get("collector_run_id")
-    collector_run = current_store.collector_runs.get(collector_run_id) if collector_run_id else None
+    collector_run = (
+        _read_memory_dict(current_store, "collector_runs").get(collector_run_id)
+        if collector_run_id
+        else None
+    )
     if collector_run is not None and collector_run.get("status") not in {
         "cancelled",
         "failed",
