@@ -21,13 +21,19 @@ def pending_review_query_repository(current_store: Any) -> Any | None:
     return None
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def task_detail_projection(current_store: Any, task: dict[str, Any]) -> dict[str, Any]:
     detail = current_store.snapshot(task)
     detail["product_context"] = public_product_context(task.get("product_context"))
+    human_reviews = _read_memory_dict(current_store, "human_reviews")
     reviews = [
-        current_store.human_reviews[review_id]
+        human_reviews[review_id]
         for review_id in task.get("review_ids", [])
-        if review_id in current_store.human_reviews
+        if review_id in human_reviews
     ]
     pending_review = next(
         (review for review in reviews if review["status"] == "pending"),
@@ -50,11 +56,13 @@ def task_detail_projection(current_store: Any, task: dict[str, Any]) -> dict[str
     detail["knowledge_deposits"] = {
         "items": [
             deposit
-            for deposit in current_store.knowledge_deposits.values()
+            for deposit in _read_memory_dict(current_store, "knowledge_deposits").values()
             if deposit["ai_task_id"] == task["id"]
         ]
     }
-    writeback = current_store.mock_writebacks.get(writeback_idempotency_key(task["id"]))
+    writeback = _read_memory_dict(current_store, "mock_writebacks").get(
+        writeback_idempotency_key(task["id"])
+    )
     detail["mock_issues"] = {
         "status": writeback["status"] if writeback else "not_written",
         "items": current_store.snapshot(writeback["issues"]) if writeback else [],
