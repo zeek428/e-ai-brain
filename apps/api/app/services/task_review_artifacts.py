@@ -57,7 +57,7 @@ def set_requirement_status(requirement: dict[str, Any], status: str) -> None:
 
 
 def advance_requirement_after_task_completed(current_store: Any, task: dict[str, Any]) -> None:
-    requirement = current_store.requirements.get(task.get("requirement_id"))
+    requirement = _memory_dict(current_store, "requirements").get(task.get("requirement_id"))
     if requirement is None:
         return
     next_status = REQUIREMENT_STATUS_AFTER_TASK_COMPLETED.get(task["task_type"])
@@ -71,7 +71,7 @@ def confirm_code_review_report(current_store: Any, task: dict[str, Any]) -> None
     report_id = task.get("code_review_report_id")
     if not report_id:
         return
-    report = current_store.code_review_reports[report_id]
+    report = _memory_dict(current_store, "code_review_reports")[report_id]
     output = task.get("output_json") or {}
     for key in ("summary", "risk_level", "findings", "executor"):
         if key in output:
@@ -242,14 +242,14 @@ def ensure_review_decidable(
     review_id: str,
     version: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    review = current_store.human_reviews.get(review_id)
+    review = _memory_dict(current_store, "human_reviews").get(review_id)
     if review is None:
         raise api_error(404, "NOT_FOUND", "Review not found")
     if review["status"] != "pending":
         raise api_error(409, "REVIEW_STATE_INVALID", "Review has already been decided")
     if review["version"] != version:
         raise api_error(409, "REVIEW_VERSION_CONFLICT", "Review version conflict")
-    task = current_store.ai_tasks[review["ai_task_id"]]
+    task = _memory_dict(current_store, "ai_tasks")[review["ai_task_id"]]
     return review, task
 
 
