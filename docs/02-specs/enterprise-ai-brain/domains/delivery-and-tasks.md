@@ -18,6 +18,7 @@
 - 迭代版本与产品模块创建、编辑、删除属于产品配置单记录写入，PostgreSQL/repository 运行态创建时必须按产品 ID 单查产品存在性，版本/模块编码冲突校验只读取同产品版本/模块列表；编辑和删除时必须按版本 ID 或模块 ID 读取源记录，删除版本前通过 repository 检查需求、任务、Bug 和分支配置引用，删除模块前通过 repository 检查需求、任务和 Bug 引用。
 - 产品、产品模块、产品 Git 仓库和相关系统路由不得直接写 `current_store` 集合；写入必须通过产品配置单记录 helper，测试环境可落到 MemoryStore fallback，PostgreSQL 运行态必须直接调用 repository，且单记录写入/删除和审计事件在同一数据库事务中提交。
 - 迭代版本和版本代码分支配置路由不得直接写 `current_store` 集合；新增、编辑、删除和状态推进必须通过产品配置单记录 helper 或需求记录 helper 写入，测试环境由 helper 落到 MemoryStore fallback，PostgreSQL 运行态通过 repository 单记录写入。需求单记录写入/删除与审计事件必须在同一数据库事务中提交。
+- 产品配置上下文公共 helper 的需求单记录和审计事件 fallback 不得直接操作 `current_store.requirements` 或调用 `current_store.audit()`；轻量测试上下文统一通过集合 helper 和审计事件列表 helper 追加，repository 运行态继续由业务写入事务携带审计事件。
 
 ## 关键 API 与页面
 

@@ -321,6 +321,22 @@ def _memory_product_config_collection(
     return collection
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
 def save_product_config_record(
     current_store: Any,
     collection_name: str,
@@ -367,7 +383,7 @@ def save_requirement_record(
         save_record(record, audit_event=audit_event)
         return True
     if repository is None:
-        current_store.requirements[record["id"]] = record
+        _memory_dict(current_store, "requirements")[record["id"]] = record
     return False
 
 
@@ -381,13 +397,29 @@ def record_audit_event(
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not uses_repository_context(current_store):
-        return current_store.audit(
-            event_type=event_type,
-            actor_id=actor_id,
-            subject_type=subject_type,
-            subject_id=subject_id,
-            payload=payload,
-        )
+        audit = getattr(current_store, "audit", None)
+        if callable(audit):
+            return audit(
+                event_type=event_type,
+                actor_id=actor_id,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                payload=payload,
+            )
+        audit_events = _memory_list(current_store, "audit_events")
+        event = {
+            "id": current_store.new_id("audit"),
+            "event_type": event_type,
+            "actor_id": actor_id,
+            "ai_task_id": None,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "payload": payload or {},
+            "sequence": len(audit_events) + 1,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        audit_events.append(event)
+        return event
     return {
         "id": current_store.new_id("audit"),
         "event_type": event_type,

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.567 |
+| 功能版本 | v1.1.568 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.568 | 2026-06-25 | 产品配置上下文需求/审计 helper DB-first fallback 写入收口：需求单记录 fallback 不再直接写 `current_store.requirements`，审计 helper 不再直接调用 `current_store.audit()`；统一通过需求集合 helper 和审计方法引用/事件列表 helper 操作测试集合，PostgreSQL 运行态继续由 repository 单记录写入和调用方事务提交审计 | Codex |
 | v1.1.567 | 2026-06-25 | 用户反馈 DB-first fallback 写入收口：反馈创建、编辑和转需求不再直接写 `current_store.user_feedback` / `current_store.requirements`；反馈单记录通过 `save_user_feedback_record` 写入 repository 或 MemoryStore 测试集合，转需求通过 `save_user_feedback_requirement_conversion` 同步提交需求、反馈 linked 状态和审计事件 | Codex |
 | v1.1.566 | 2026-06-25 | 用户洞察审计 helper DB-first fallback 收口：`record_audit_event` 在轻量上下文无 `audit()` 方法时不再直接 append `current_store.audit_events`，统一通过审计事件列表 helper 写入测试集合；普通 MemoryStore 继续走 `audit()`，repository 运行态审计事件继续由对应业务写入 helper 携带提交 | Codex |
 | v1.1.565 | 2026-06-25 | 用户使用指标 DB-first fallback 写入收口：使用指标创建不再由调用方直接写 `current_store.user_usage_metrics`，统一通过 `save_user_usage_metric_record` 在 repository 单记录写入或 MemoryStore 测试 fallback 中保存指标；审计事件继续随 repository 写入或测试 fallback 提交 | Codex |
