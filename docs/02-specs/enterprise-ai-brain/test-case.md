@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.673 |
+| 功能版本 | v1.1.674 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.674 | 2026-06-25 | 补充用户使用指标 fallback 收口验收：使用指标创建不得直接写 `current_store.user_usage_metrics`；MemoryStore 测试 fallback 必须通过 `save_user_usage_metric_record` 写入指标并可查询，repository 运行态继续通过 `save_user_usage_metric_record` 单记录写入指标和审计；`test_usage_metrics.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.673 | 2026-06-25 | 补充运营记录审计 helper fallback 收口验收：`record_audit_event` 在轻量上下文无 `audit()` 方法时不得直接 append `current_store.audit_events`；必须通过审计事件列表 helper 写入并保留事件 ID、payload 和返回值一致性；`test_operational_records.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.672 | 2026-06-25 | 补充模型网关配置与日志 fallback 收口验收：配置替换不得直接赋值 `current_store.model_gateway_configs`，模型调用日志不得直接 append `current_store.model_gateway_logs`；MemoryStore 测试 fallback 必须通过配置集合和日志集合 helper 更新，repository 运行态继续通过模型网关仓储/调用方事务持久化；`test_model_gateway_persistence.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.671 | 2026-06-25 | 补充 Mock Issue 写回 fallback 收口验收：写回创建不得直接写 `current_store.mock_writebacks` 或调用 `current_store.audit()`；MemoryStore 测试 fallback 必须通过写回保存 helper 同时落写结果和单条审计，repository 运行态重复 POST 必须复用本地读缓存保持幂等；`test_mock_writeback_persistence.py` 与 DB-first 扫描必须通过 | Codex |

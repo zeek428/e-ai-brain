@@ -7,11 +7,35 @@ from app.api.deps import api_error, require_roles
 from app.services.user_insights import (
     ensure_non_blank,
     record_audit_event,
-    save_single_repository_record,
     user_insight_query_repository,
     user_insight_write_store,
-    uses_repository_context,
 )
+
+
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _user_usage_metrics_collection(current_store: Any) -> dict[str, dict[str, Any]]:
+    return _memory_dict(current_store, "user_usage_metrics")
+
+
+def save_user_usage_metric_record(
+    current_store: Any,
+    metric: dict[str, Any],
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_record = getattr(repository, "save_user_usage_metric_record", None)
+    if callable(save_record):
+        save_record(metric, audit_event=audit_event)
+        return
+    _user_usage_metrics_collection(current_store)[str(metric["id"])] = dict(metric)
 
 
 def parse_usage_window(value: str, field_name: str) -> str:
@@ -161,8 +185,6 @@ def create_usage_metric_response(
     ):
         if metric[optional_key] is None:
             metric.pop(optional_key)
-    if not uses_repository_context(current_store):
-        current_store.user_usage_metrics[metric_id] = metric
     audit_event = record_audit_event(
         current_store,
         event_type="usage_metric.created",
@@ -176,9 +198,8 @@ def create_usage_metric_response(
             "window_start": metric["window_start"],
         },
     )
-    save_single_repository_record(
+    save_user_usage_metric_record(
         current_store,
-        "save_user_usage_metric_record",
         metric,
         audit_event=audit_event,
     )
