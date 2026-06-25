@@ -1,10 +1,9 @@
-import { PlusOutlined } from '@ant-design/icons';
-import { PageContainer, ProTable, type ProColumns } from '@ant-design/pro-components';
+import { PageContainer, type ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Tabs, Tag, Switch, Upload, message } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { StatusTag } from '../../components/ManagementListPage';
+import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { ModelGatewayConfigRecord } from '../../data/management';
 import {
   createAiAgent,
@@ -49,6 +48,17 @@ type AgentFormValues = {
   system_prompt: string;
 };
 
+type AiAgentRow = AiAgentRecord & {
+  defaultSkillText: string;
+  modelGatewayText: string;
+  searchText: string;
+} & Record<string, unknown>;
+
+type AiSkillRow = AiSkillRecord & {
+  reviewValue: string;
+  searchText: string;
+} & Record<string, unknown>;
+
 const SKILL_STATUS_OPTIONS = [
   { label: '启用', value: 'active' },
   { label: '草稿', value: 'draft' },
@@ -71,6 +81,16 @@ const STATUS_COLORS: Record<string, string> = {
   disabled: 'default',
   draft: 'gold',
 };
+
+const SKILL_SOURCE_OPTIONS = [
+  { label: '表单', value: 'form' },
+  { label: '文件包', value: 'package' },
+];
+
+const REVIEW_OPTIONS = [
+  { label: '需要', value: 'required' },
+  { label: '不需要', value: 'optional' },
+];
 
 const stringValue = (value: unknown) => {
   if (typeof value === 'string') {
@@ -381,23 +401,68 @@ export default function AiCapabilitiesPage() {
     })),
   ];
 
-  const agentColumns = useMemo<ProColumns<AiAgentRecord>[]>(
+  const agentRows = useMemo<AiAgentRow[]>(
+    () =>
+      agents.map((agent) => {
+        const defaultSkillText = Array.isArray(agent.default_skill_ids) && agent.default_skill_ids.length
+          ? agent.default_skill_ids.join(', ')
+          : '-';
+        const modelGatewayText = modelGatewayConfigName(agent);
+        return {
+          ...agent,
+          defaultSkillText,
+          modelGatewayText,
+          searchText: [
+            agent.name,
+            agent.code,
+            modelGatewayText,
+            defaultSkillText,
+            agent.status,
+            agent.system_prompt ?? '',
+          ].join(' '),
+        };
+      }),
+    [agents, modelGatewayConfigName],
+  );
+
+  const skillRows = useMemo<AiSkillRow[]>(
+    () =>
+      skills.map((skill) => {
+        const reviewValue = skill.requires_human_review ? 'required' : 'optional';
+        return {
+          ...skill,
+          reviewValue,
+          searchText: [
+            skill.name,
+            skill.code,
+            skill.version ?? '',
+            skill.source_type ?? '',
+            skill.risk_level ?? '',
+            skill.status,
+            skill.prompt_template ?? '',
+            JSON.stringify(skill.input_schema ?? {}),
+            JSON.stringify(skill.output_schema ?? {}),
+          ].join(' '),
+        };
+      }),
+    [skills],
+  );
+
+  const agentColumns = useMemo<ProColumns<AiAgentRow>[]>(
     () => [
       { dataIndex: 'name', ellipsis: true, title: '名称', width: 220 },
       { dataIndex: 'code', ellipsis: true, title: '编码', width: 180 },
       {
-        dataIndex: 'model_gateway_config_id',
+        dataIndex: 'modelGatewayText',
         ellipsis: true,
         title: '模型网关',
         width: 240,
-        render: (_, record) => modelGatewayConfigName(record),
       },
       {
-        dataIndex: 'default_skill_ids',
+        dataIndex: 'defaultSkillText',
         ellipsis: true,
         title: '默认 Skills',
         width: 220,
-        render: (value) => (Array.isArray(value) && value.length ? value.join(', ') : '-'),
       },
       {
         dataIndex: 'status',
@@ -431,10 +496,10 @@ export default function AiCapabilitiesPage() {
         ),
       },
     ],
-    [disableAgent, modelGatewayConfigName, openEditAgent],
+    [disableAgent, openEditAgent],
   );
 
-  const skillColumns = useMemo<ProColumns<AiSkillRecord>[]>(
+  const skillColumns = useMemo<ProColumns<AiSkillRow>[]>(
     () => [
       { dataIndex: 'name', ellipsis: true, title: '名称', width: 220 },
       { dataIndex: 'code', ellipsis: true, title: '编码', width: 200 },
@@ -494,33 +559,40 @@ export default function AiCapabilitiesPage() {
             key: 'agents',
             label: 'AI角色',
             children: (
-              <ProTable<AiAgentRecord>
-                cardBordered
-                className="management-list-table"
+              <ManagementListPage<AiAgentRow>
+                breadcrumbGroup="任务中心"
                 columns={agentColumns}
-                dateFormatter="string"
-                headerTitle="AI角色配置"
-                loading={loading}
-                options={{
-                  density: true,
-                  fullScreen: true,
-                  reload,
-                  setting: true,
-                }}
-                pagination={{
-                  showSizeChanger: true,
-                  showTotal: (total) => `共 ${total} 条`,
-                }}
-                rowKey="id"
-                scroll={{ x: 1156 }}
-                search={false}
-                dataSource={agents}
-                tableLayout="fixed"
-                toolBarRender={() => [
-                  <Button key="create-agent" icon={<PlusOutlined />} type="primary" onClick={openCreateAgent}>
-                    新增 AI角色
-                  </Button>,
+                dataSource={agentRows}
+                embedded
+                filters={[
+                  {
+                    label: '关键词',
+                    name: 'searchText',
+                    placeholder: '搜索名称、编码、模型、Skill 或提示词',
+                    type: 'text',
+                  },
+                  {
+                    label: '状态',
+                    name: 'status',
+                    options: AGENT_STATUS_OPTIONS,
+                    type: 'select',
+                  },
+                  {
+                    label: '模型网关',
+                    name: 'modelGatewayText',
+                    placeholder: '请输入模型网关',
+                    type: 'text',
+                  },
                 ]}
+                loading={loading}
+                onPrimaryAction={openCreateAgent}
+                onReload={reload}
+                primaryAction="新增 AI角色"
+                rowKey="id"
+                tableScroll={{ x: 1156 }}
+                tableTitle="AI角色配置"
+                title="AI 能力配置"
+                viewStorageKey="tasks.ai-capabilities.agents"
               />
             ),
           },
@@ -528,36 +600,51 @@ export default function AiCapabilitiesPage() {
             key: 'skills',
             label: 'Skill 管理',
             children: (
-              <ProTable<AiSkillRecord>
-                cardBordered
-                className="management-list-table"
+              <ManagementListPage<AiSkillRow>
+                breadcrumbGroup="任务中心"
                 columns={skillColumns}
-                dateFormatter="string"
-                headerTitle="Skill 管理"
+                dataSource={skillRows}
+                embedded
+                filters={[
+                  {
+                    label: '关键词',
+                    name: 'searchText',
+                    placeholder: '搜索名称、编码、版本、风险等级或 Prompt',
+                    type: 'text',
+                  },
+                  {
+                    label: '状态',
+                    name: 'status',
+                    options: SKILL_STATUS_OPTIONS,
+                    type: 'select',
+                  },
+                  {
+                    label: '来源',
+                    name: 'source_type',
+                    options: SKILL_SOURCE_OPTIONS,
+                    type: 'select',
+                  },
+                  {
+                    label: '人工确认',
+                    name: 'reviewValue',
+                    options: REVIEW_OPTIONS,
+                    type: 'select',
+                  },
+                ]}
                 loading={loading}
-                options={{
-                  density: true,
-                  fullScreen: true,
-                  reload,
-                  setting: true,
-                }}
-                pagination={{
-                  showSizeChanger: true,
-                  showTotal: (total) => `共 ${total} 条`,
-                }}
+                onPrimaryAction={openCreateSkill}
+                onReload={reload}
+                primaryAction="新增 Skill"
                 rowKey="id"
-                scroll={{ x: 1056 }}
-                search={false}
-                dataSource={skills}
-                tableLayout="fixed"
-                toolBarRender={() => [
-                  <Button key="create-skill" icon={<PlusOutlined />} type="primary" onClick={openCreateSkill}>
-                    新增 Skill
-                  </Button>,
+                tableScroll={{ x: 1056 }}
+                tableTitle="Skill 管理"
+                title="AI 能力配置"
+                toolbarActions={[
                   <Button key="upload-skill" onClick={() => setSkillPackageModalOpen(true)}>
                     上传 Skill 包
                   </Button>,
                 ]}
+                viewStorageKey="tasks.ai-capabilities.skills"
               />
             ),
           },

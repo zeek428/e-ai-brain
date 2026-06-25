@@ -162,6 +162,45 @@ describe('AI capabilities page', () => {
     );
   });
 
+  it('uses the unified management list filters and saved views for AI roles', async () => {
+    installCapabilitiesFetchMock();
+
+    render(<AiCapabilitiesPage />);
+
+    expect(await screen.findByText('洞察 Agent')).toBeInTheDocument();
+    expect(screen.getByText('反馈 Agent')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('关键词'), { target: { value: 'feedback_agent' } });
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
+
+    await waitFor(() => expect(screen.queryByText('洞察 Agent')).not.toBeInTheDocument());
+    expect(screen.getByText('反馈 Agent')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '保存视图' }));
+    fireEvent.change(screen.getByLabelText('筛选视图名称'), {
+      target: { value: '反馈角色' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存筛选视图' }));
+
+    await waitFor(() => {
+      const storedViews = JSON.parse(
+        window.localStorage.getItem(
+          'ai-brain:management-list-filter-views:tasks.ai-capabilities.agents',
+        ) ?? '[]',
+      );
+      expect(storedViews).toMatchObject([
+        {
+          name: '反馈角色',
+          query: {
+            filters: {
+              searchText: 'feedback_agent',
+            },
+          },
+        },
+      ]);
+    });
+  });
+
   it('normalizes object shaped model gateway references when editing an AI role', async () => {
     installCapabilitiesFetchMock();
 

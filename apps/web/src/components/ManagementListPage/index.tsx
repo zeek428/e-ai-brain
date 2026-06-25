@@ -19,6 +19,7 @@ type ManagementListPageProps<Row extends Record<string, unknown>> = {
   breadcrumbGroup: string;
   columns: ProColumns<Row>[];
   dataSource: Row[];
+  embedded?: boolean;
   filters: FilterField[];
   loading?: boolean;
   notice?: ReactNode;
@@ -248,6 +249,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
   breadcrumbGroup,
   columns,
   dataSource,
+  embedded = false,
   filters,
   loading = false,
   notice,
@@ -476,13 +478,8 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
     </Space>
   ) : null;
 
-  return (
-    <PageContainer
-      breadcrumb={{
-        items: [{ title: breadcrumbGroup }, { title }],
-      }}
-      title={false}
-    >
+  const listContent = (
+    <>
       {notice ? <Alert className="management-list-alert" showIcon title={notice} type="warning" /> : null}
       {beforeTable}
       <ProTable<Row>
@@ -567,6 +564,21 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
           />
         </Modal>
       ) : null}
+    </>
+  );
+
+  if (embedded) {
+    return listContent;
+  }
+
+  return (
+    <PageContainer
+      breadcrumb={{
+        items: [{ title: breadcrumbGroup }, { title }],
+      }}
+      title={false}
+    >
+      {listContent}
     </PageContainer>
   );
 }
