@@ -47,8 +47,24 @@ def bug_list_query_repository(current_store: Any) -> Any | None:
     return None
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record_id: Any,
+) -> dict[str, Any] | None:
+    if record_id is None:
+        return None
+    record = _read_memory_dict(current_store, collection_name).get(str(record_id))
+    return record if isinstance(record, dict) else None
+
+
 def bug_summary_projection(bug: dict[str, Any], current_store: Any) -> dict[str, Any]:
-    version = current_store.product_versions.get(bug.get("version_id"), {})
+    version = _read_memory_record(current_store, "product_versions", bug.get("version_id")) or {}
     return {
         **bug,
         "version_code": version.get("code"),
@@ -128,7 +144,7 @@ def list_bugs_response(
             source=source,
         )
     else:
-        items = list(current_store.bugs.values())
+        items = list(_read_memory_dict(current_store, "bugs").values())
         if product_id:
             items = [item for item in items if item["product_id"] == product_id]
         if version_id:

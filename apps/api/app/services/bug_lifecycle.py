@@ -32,6 +32,22 @@ def _domain_error(status_code: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record_id: Any,
+) -> dict[str, Any] | None:
+    if record_id is None:
+        return None
+    record = _read_memory_dict(current_store, collection_name).get(str(record_id))
+    return record if isinstance(record, dict) else None
+
+
 def validate_bug_enums(
     *,
     source: str | None = None,
@@ -57,29 +73,29 @@ def validate_bug_context(
     duplicate_of_bug_id: str | None = None,
     bug_id: str | None = None,
 ) -> None:
-    if product_id not in current_store.products:
+    if _read_memory_record(current_store, "products", product_id) is None:
         raise _domain_error(404, "NOT_FOUND", "Product not found")
     if version_id is not None:
-        version = current_store.product_versions.get(version_id)
+        version = _read_memory_record(current_store, "product_versions", version_id)
         if version is None or version["product_id"] != product_id:
             raise _domain_error(404, "NOT_FOUND", "Product version not found")
     if module_code is not None and not any(
         module["product_id"] == product_id and module["code"] == module_code
-        for module in current_store.product_modules.values()
+        for module in _read_memory_dict(current_store, "product_modules").values()
     ):
         raise _domain_error(404, "NOT_FOUND", "Product module not found")
     if requirement_id is not None:
-        requirement = current_store.requirements.get(requirement_id)
+        requirement = _read_memory_record(current_store, "requirements", requirement_id)
         if requirement is None or requirement["product_id"] != product_id:
             raise _domain_error(404, "NOT_FOUND", "Requirement not found")
     if related_task_id is not None:
-        task = current_store.ai_tasks.get(related_task_id)
+        task = _read_memory_record(current_store, "ai_tasks", related_task_id)
         if task is None or task["product_id"] != product_id:
             raise _domain_error(404, "NOT_FOUND", "AI task not found")
     if duplicate_of_bug_id is not None:
         if duplicate_of_bug_id == bug_id:
             raise _domain_error(400, "VALIDATION_ERROR", "Bug cannot duplicate itself")
-        duplicate = current_store.bugs.get(duplicate_of_bug_id)
+        duplicate = _read_memory_record(current_store, "bugs", duplicate_of_bug_id)
         if duplicate is None or duplicate["product_id"] != product_id:
             raise _domain_error(404, "NOT_FOUND", "Duplicate bug not found")
 

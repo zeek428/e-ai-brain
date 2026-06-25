@@ -119,6 +119,25 @@ def _memory_collection(current_store: Any, collection_name: str) -> dict[str, di
     return collection
 
 
+def _read_memory_collection(
+    current_store: Any,
+    collection_name: str,
+) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record_id: Any,
+) -> dict[str, Any] | None:
+    if record_id is None:
+        return None
+    record = _read_memory_collection(current_store, collection_name).get(str(record_id))
+    return record if isinstance(record, dict) else None
+
+
 def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     if not isinstance(collection, list):
@@ -220,7 +239,7 @@ def batch_update_bugs_result(
             continue
         seen_bug_ids.add(bug_id)
 
-        bug = current_store.bugs.get(bug_id)
+        bug = _read_memory_record(current_store, "bugs", bug_id)
         if bug is None:
             skipped.append(
                 {
@@ -307,7 +326,7 @@ def patch_bug_result(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_bug_write_role(user)
-    bug = current_store.bugs.get(bug_id)
+    bug = _read_memory_record(current_store, "bugs", bug_id)
     if bug is None:
         raise api_error(404, "NOT_FOUND", "Bug not found")
     updates = payload_updates(payload)
@@ -352,7 +371,7 @@ def delete_bug_result(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_bug_write_role(user)
-    if bug_id not in current_store.bugs:
+    if _read_memory_record(current_store, "bugs", bug_id) is None:
         raise api_error(404, "NOT_FOUND", "Bug not found")
     audit_event = record_audit_event(
         current_store,
