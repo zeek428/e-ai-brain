@@ -12,6 +12,11 @@ from app.services.requirements import (
 from app.services.version_status import canonical_requirement_status
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def approve_requirement_result(
     *,
     current_store: Any,
@@ -20,7 +25,8 @@ def approve_requirement_result(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner", "rd_owner"})
-    requirement = current_store.requirements.get(requirement_id)
+    requirements = _read_memory_dict(current_store, "requirements")
+    requirement = requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     if canonical_requirement_status(requirement.get("status")) != "submitted":
@@ -51,7 +57,8 @@ def reject_requirement_result(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
-    requirement = current_store.requirements.get(requirement_id)
+    requirements = _read_memory_dict(current_store, "requirements")
+    requirement = requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     if canonical_requirement_status(requirement.get("status")) != "submitted":
@@ -84,17 +91,18 @@ def close_requirement_result(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner", "rd_owner"})
-    requirement = current_store.requirements.get(requirement_id)
+    requirements = _read_memory_dict(current_store, "requirements")
+    ai_tasks = _read_memory_dict(current_store, "ai_tasks")
+    requirement = requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     if canonical_requirement_status(requirement.get("status")) not in REQUIREMENT_CLOSABLE_STATUSES:
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement cannot be closed")
 
     active_tasks = [
-        current_store.ai_tasks[task_id]
+        ai_tasks[task_id]
         for task_id in requirement.get("task_ids", [])
-        if current_store.ai_tasks[task_id]["status"]
-        not in {"completed", "failed", "cancelled"}
+        if ai_tasks[task_id]["status"] not in {"completed", "failed", "cancelled"}
     ]
     if active_tasks:
         raise api_error(409, "REQUIREMENT_HAS_ACTIVE_TASKS", "Requirement has active tasks")
