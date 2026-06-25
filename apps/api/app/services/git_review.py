@@ -36,6 +36,22 @@ def product_config_write_store(current_store: Any) -> Any:
     return product_config_source_store(repository)
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record_id: Any,
+) -> dict[str, Any] | None:
+    if record_id is None:
+        return None
+    record = _read_memory_dict(current_store, collection_name).get(str(record_id))
+    return record if isinstance(record, dict) else None
+
+
 def credential_ref_env_candidates(credential_ref: str) -> list[str]:
     if credential_ref.startswith("env:"):
         return [credential_ref.removeprefix("env:").strip()]
@@ -239,7 +255,7 @@ def preview_gitlab_mr_response(
 ) -> dict[str, Any]:
     require_roles(user, {"reviewer", "rd_owner"})
     current_store = product_config_write_store(current_store)
-    repository = current_store.product_git_repositories.get(repository_id)
+    repository = _read_memory_record(current_store, "product_git_repositories", repository_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "GitLab repository binding not found")
     if repository["git_provider"] != "gitlab":
@@ -267,13 +283,17 @@ def snapshot_gitlab_mr_response(
 ) -> dict[str, Any]:
     require_roles(user, {"reviewer", "rd_owner"})
     current_store = task_workflow_write_store(current_store)
-    repository = current_store.product_git_repositories.get(repository_id)
+    repository = _read_memory_record(current_store, "product_git_repositories", repository_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "GitLab repository binding not found")
-    requirement = current_store.requirements.get(payload.requirement_id)
+    requirement = _read_memory_record(current_store, "requirements", payload.requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
-    technical_solution = current_store.ai_tasks.get(payload.technical_solution_task_id)
+    technical_solution = _read_memory_record(
+        current_store,
+        "ai_tasks",
+        payload.technical_solution_task_id,
+    )
     if (
         technical_solution is None
         or technical_solution["task_type"] != "technical_solution"
@@ -313,7 +333,7 @@ def list_github_pull_requests_response(
     require_roles(user, {"reviewer", "rd_owner"})
     ensure_enum(state, {"open", "closed", "all"}, "GitHub pull request state")
     current_store = product_config_write_store(current_store)
-    repository = current_store.product_git_repositories.get(repository_id)
+    repository = _read_memory_record(current_store, "product_git_repositories", repository_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "GitHub repository binding not found")
     if repository["git_provider"] != "github":
@@ -340,7 +360,7 @@ def preview_github_pr_response(
 ) -> dict[str, Any]:
     require_roles(user, {"reviewer", "rd_owner"})
     current_store = product_config_write_store(current_store)
-    repository = current_store.product_git_repositories.get(repository_id)
+    repository = _read_memory_record(current_store, "product_git_repositories", repository_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "GitHub repository binding not found")
     if repository["git_provider"] != "github":
@@ -368,15 +388,19 @@ def snapshot_github_pr_response(
 ) -> dict[str, Any]:
     require_roles(user, {"reviewer", "rd_owner"})
     current_store = task_workflow_write_store(current_store)
-    repository = current_store.product_git_repositories.get(repository_id)
+    repository = _read_memory_record(current_store, "product_git_repositories", repository_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "GitHub repository binding not found")
     if repository["git_provider"] != "github":
         raise api_error(400, "VALIDATION_ERROR", "Repository is not a GitHub binding")
-    requirement = current_store.requirements.get(payload.requirement_id)
+    requirement = _read_memory_record(current_store, "requirements", payload.requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
-    technical_solution = current_store.ai_tasks.get(payload.technical_solution_task_id)
+    technical_solution = _read_memory_record(
+        current_store,
+        "ai_tasks",
+        payload.technical_solution_task_id,
+    )
     if (
         technical_solution is None
         or technical_solution["task_type"] != "technical_solution"

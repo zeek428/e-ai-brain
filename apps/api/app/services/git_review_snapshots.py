@@ -33,6 +33,14 @@ def _memory_collection(current_store: Any, collection_name: str) -> dict[str, di
     return collection
 
 
+def _read_memory_collection(
+    current_store: Any,
+    collection_name: str,
+) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     if not isinstance(collection, list):
@@ -167,7 +175,7 @@ def create_code_review_source_snapshot(
     snapshot_hash = hashlib.sha256(diff_content.encode()).hexdigest()
     related_snapshots = [
         snapshot
-        for snapshot in current_store.gitlab_mr_snapshots.values()
+        for snapshot in _read_memory_collection(current_store, "gitlab_mr_snapshots").values()
         if snapshot.get("repository_id") == repository["id"]
         and int(snapshot.get("mr_iid") or 0) == int(mr_iid)
     ]
@@ -181,7 +189,7 @@ def create_code_review_source_snapshot(
     existing_snapshot = next(
         (
             snapshot
-            for snapshot in current_store.gitlab_mr_snapshots.values()
+            for snapshot in _read_memory_collection(current_store, "gitlab_mr_snapshots").values()
             if snapshot.get("repository_id") == repository["id"]
             and snapshot.get("snapshot_hash") == snapshot_hash
         ),
