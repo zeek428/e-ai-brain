@@ -22,6 +22,11 @@ from app.services.version_status import (
 )
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def batch_generate_requirement_tasks_result(
     *,
     current_store: Any,
@@ -29,7 +34,7 @@ def batch_generate_requirement_tasks_result(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner", "rd_owner"})
-    product = current_store.products.get(payload.product_id)
+    product = _read_memory_dict(current_store, "products").get(payload.product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
@@ -53,7 +58,7 @@ def batch_generate_requirement_tasks_result(
             continue
         seen_requirement_ids.add(requirement_id)
 
-        requirement = current_store.requirements.get(requirement_id)
+        requirement = _read_memory_dict(current_store, "requirements").get(requirement_id)
         if requirement is None:
             skipped.append(
                 {
@@ -151,7 +156,7 @@ def batch_assign_requirement_owner_result(
             continue
         seen_requirement_ids.add(requirement_id)
 
-        requirement = current_store.requirements.get(requirement_id)
+        requirement = _read_memory_dict(current_store, "requirements").get(requirement_id)
         if requirement is None:
             skipped.append(
                 {
@@ -234,7 +239,7 @@ def batch_schedule_requirements_result(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner", "rd_owner"})
-    product = current_store.products.get(payload.product_id)
+    product = _read_memory_dict(current_store, "products").get(payload.product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
@@ -263,7 +268,7 @@ def batch_schedule_requirements_result(
             continue
         seen_requirement_ids.add(requirement_id)
 
-        requirement = current_store.requirements.get(requirement_id)
+        requirement = _read_memory_dict(current_store, "requirements").get(requirement_id)
         if requirement is None:
             skipped.append(
                 {
@@ -381,7 +386,7 @@ def batch_advance_requirement_status_result(
             continue
         seen_requirement_ids.add(requirement_id)
 
-        requirement = current_store.requirements.get(requirement_id)
+        requirement = _read_memory_dict(current_store, "requirements").get(requirement_id)
         if requirement is None:
             skipped.append(
                 {
