@@ -1,6 +1,35 @@
 from test_database_persistence import FakeSnapshotRepository
 
 from app.core.persistence import PersistentMemoryStore
+from app.services.user_insights import record_audit_event
+
+
+class MinimalInsightAuditStore:
+    def __init__(self) -> None:
+        self.audit_events = []
+        self.counters = {}
+
+    def new_id(self, prefix: str) -> str:
+        next_value = self.counters.get(prefix, 0) + 1
+        self.counters[prefix] = next_value
+        return f"{prefix}_{next_value:03d}"
+
+
+def test_user_insight_record_audit_event_appends_minimal_store_fallback_event():
+    current_store = MinimalInsightAuditStore()
+
+    event = record_audit_event(
+        current_store,
+        actor_id="user_admin",
+        event_type="user_feedback.created",
+        payload={"source": "feedback"},
+        subject_id="feedback_001",
+        subject_type="user_feedback",
+    )
+
+    assert event["id"] == "audit_event_001"
+    assert event["payload"] == {"source": "feedback"}
+    assert current_store.audit_events == [event]
 
 
 def test_user_feedback_is_persisted_through_fine_grained_repository_payload():
@@ -128,5 +157,4 @@ def test_user_usage_metrics_are_persisted_through_fine_grained_repository_payloa
 
     assert rebuilt_store.user_usage_metrics["usage_010"]["feature_code"] == "semantic-search"
     assert rebuilt_store.new_id("usage") == "usage_011"
-
 

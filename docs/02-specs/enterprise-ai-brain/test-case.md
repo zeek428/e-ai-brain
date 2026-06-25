@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.674 |
+| 功能版本 | v1.1.675 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.675 | 2026-06-25 | 补充用户洞察审计 helper fallback 收口验收：`record_audit_event` 在轻量上下文无 `audit()` 方法时不得直接 append `current_store.audit_events`；必须通过审计事件列表 helper 写入并保留事件 ID、payload 和返回值一致性；`test_user_insights_persistence.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.674 | 2026-06-25 | 补充用户使用指标 fallback 收口验收：使用指标创建不得直接写 `current_store.user_usage_metrics`；MemoryStore 测试 fallback 必须通过 `save_user_usage_metric_record` 写入指标并可查询，repository 运行态继续通过 `save_user_usage_metric_record` 单记录写入指标和审计；`test_usage_metrics.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.673 | 2026-06-25 | 补充运营记录审计 helper fallback 收口验收：`record_audit_event` 在轻量上下文无 `audit()` 方法时不得直接 append `current_store.audit_events`；必须通过审计事件列表 helper 写入并保留事件 ID、payload 和返回值一致性；`test_operational_records.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.672 | 2026-06-25 | 补充模型网关配置与日志 fallback 收口验收：配置替换不得直接赋值 `current_store.model_gateway_configs`，模型调用日志不得直接 append `current_store.model_gateway_logs`；MemoryStore 测试 fallback 必须通过配置集合和日志集合 helper 更新，repository 运行态继续通过模型网关仓储/调用方事务持久化；`test_model_gateway_persistence.py` 与 DB-first 扫描必须通过 | Codex |
