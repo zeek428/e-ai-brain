@@ -764,6 +764,7 @@ function installPluginsFetchMock(
           task: {
             id: 'ai_executor_task_001',
             runner_id: 'ai_executor_runner_001',
+            scheduled_job_run_id: 'scheduled_job_run_runner_trace',
             status: 'running',
           },
         },
@@ -1315,6 +1316,18 @@ describe('PluginsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '查看执行日志 Zeek Mac 本地执行器' }));
     const logDrawer = await screen.findByRole('dialog', { name: 'Runner 执行日志' });
     expect(within(logDrawer).getByText('ai_executor_task_001')).toBeInTheDocument();
+    expect(within(logDrawer).getByRole('link', { name: '任务诊断' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=ai_executor_task_001&source_type=ai_executor_task',
+    );
+    expect(within(logDrawer).getByRole('link', { name: 'Runner 诊断' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=ai_executor_runner_001&source_type=ai_executor_runner',
+    );
+    expect(within(logDrawer).getByRole('link', { name: '来源运行诊断' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=scheduled_job_run_runner_trace&source_type=scheduled_job_run',
+    );
     expect(within(logDrawer).getByText('checkout repository')).toBeInTheDocument();
     expect(within(logDrawer).getByText('scan started')).toBeInTheDocument();
     expect(within(logDrawer).getAllByText('2026-06-13 17:11').length).toBeGreaterThanOrEqual(2);

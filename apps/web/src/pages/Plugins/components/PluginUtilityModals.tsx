@@ -3,6 +3,7 @@ import type { ColumnsType } from 'antd/es/table';
 import type { SelectProps } from 'antd';
 import { Alert, Button, Input, Modal, Select, Space, Table, Tag, Typography } from 'antd';
 
+import { ExecutionTraceLink } from '../../../components/ExecutionTraceLink';
 import type {
   AiExecutorRunnerRecord,
   AiExecutorTaskLogRecord,
@@ -126,6 +127,15 @@ export function RunnerLogModal({
             {task?.id ?? '-'}
           </Typography.Text>
           <Tag>{task?.status ?? '-'}</Tag>
+          <ExecutionTraceLink fallback={null} sourceId={task?.id} sourceType="ai_executor_task">
+            任务诊断
+          </ExecutionTraceLink>
+          <ExecutionTraceLink fallback={null} sourceId={task?.runner_id} sourceType="ai_executor_runner">
+            Runner 诊断
+          </ExecutionTraceLink>
+          <ExecutionTraceLink fallback={null} sourceId={task?.scheduled_job_run_id} sourceType="scheduled_job_run">
+            来源运行诊断
+          </ExecutionTraceLink>
         </Space>
         <Table<AiExecutorTaskLogRecord>
           columns={[
