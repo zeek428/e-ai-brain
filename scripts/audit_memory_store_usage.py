@@ -119,7 +119,10 @@ def _risk_for(kind: str, attr: str) -> str:
     return "P2"
 
 
-def scan_memory_store_usage(root: Path, scan_path: str = DEFAULT_SCAN_PATH) -> list[MemoryStoreUsage]:
+def scan_memory_store_usage(
+    root: Path,
+    scan_path: str = DEFAULT_SCAN_PATH,
+) -> list[MemoryStoreUsage]:
     findings: list[MemoryStoreUsage] = []
     for path in _iter_python_files(root, scan_path):
         source = path.read_text(encoding="utf-8")
@@ -181,7 +184,10 @@ def _text_report(root: Path, findings: list[MemoryStoreUsage], *, limit: int) ->
     lines.extend(["", f"First {limit} P0 findings:"])
     p0_findings = [item for item in findings if item.risk == "P0"][:limit]
     lines.extend(
-        f"- {item.path}:{item.line}:{item.column} [{item.kind}] current_store.{item.attr} :: {item.context}"
+        (
+            f"- {item.path}:{item.line}:{item.column} [{item.kind}] "
+            f"current_store.{item.attr} :: {item.context}"
+        )
         for item in p0_findings
     )
     if not p0_findings:
@@ -193,7 +199,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Scan production API code for current_store.* compatibility usage.",
     )
-    parser.add_argument("--root", default=".", help="Repository root. Defaults to current directory.")
+    parser.add_argument(
+        "--root",
+        default=".",
+        help="Repository root. Defaults to current directory.",
+    )
     parser.add_argument("--scan-path", default=DEFAULT_SCAN_PATH, help="Relative path to scan.")
     parser.add_argument("--format", choices=("json", "text"), default="text")
     parser.add_argument("--limit", default=40, type=int, help="Number of P0 findings to print.")
@@ -201,6 +211,11 @@ def main(argv: list[str] | None = None) -> int:
         "--fail-on-p0",
         action="store_true",
         help="Exit non-zero when write/helper P0 usage remains.",
+    )
+    parser.add_argument(
+        "--fail-on-p1",
+        action="store_true",
+        help="Exit non-zero when P0 or direct-read P1 usage remains.",
     )
     args = parser.parse_args(argv)
 
@@ -217,6 +232,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(_text_report(root, findings, limit=args.limit))
     has_p0 = any(item.risk == "P0" for item in findings)
+    has_p1 = any(item.risk == "P1" for item in findings)
+    if args.fail_on_p1 and (has_p0 or has_p1):
+        return 1
     return 1 if args.fail_on_p0 and has_p0 else 0
 
 
