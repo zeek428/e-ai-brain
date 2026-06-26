@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.601 |
+| 功能版本 | v1.1.602 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.602 | 2026-06-26 | 插件管理删除保护补齐多连接/多动作定时作业引用：删除插件、连接或动作前同时检查单值兼容字段和 `plugin_connection_ids` / `plugin_action_ids` 数组字段 | Codex |
 | v1.1.601 | 2026-06-26 | 执行诊断列表与详情补充派生 `diagnostic_nodes`，返回失败、取消、运行中或排队节点的轻量摘要，供前端和 AI 助手统一诊断且不暴露节点 metadata | Codex |
 | v1.1.600 | 2026-06-26 | 系统菜单治理补充静态路由一致性门禁：active 的可导航菜单 path 必须在前端 routes.ts 中注册，关键菜单路径不得漂移到旧入口 | Codex |
 | v1.1.599 | 2026-06-26 | 执行诊断筛选文案从“根类型”调整为“来源类型”，明确 `source_type` 可定位根节点或任一执行节点，避免把节点类型误解为 root_type | Codex |
@@ -630,7 +631,7 @@
 
 ## 概述
 
-企业 AI 大脑平台 v1 系列采用基于 Ant Design Pro 模板的 React + TypeScript 前端、FastAPI 后端、LangGraph 工作流、PostgreSQL + pgvector 知识存储、Redis 缓存/队列、GBrain 长期记忆层和 OpenAI-compatible 模型网关，先以模块化单体跑通产品研发大脑从需求审批到产品详细设计、技术方案、GitLab MR / GitHub PR 代码 Review、人工确认、内部报告归档和知识沉淀的 MVP 闭环，并通过研发上下文图谱感知需求、设计、代码、测试、发布、线上反馈、用户使用和用户反馈之间的关联与风险。AI 助手工作台已接入模型网关 Chat 能力，聊天前由后端按用户问题生成 delivery progress、pending reviews、code review、iteration、bugs、model gateway 等确定性 read-model 工具结果，模型优先依据 `system_context.tool_results` 回答 AI Brain 产品配置、需求/任务进展、迭代、Git 仓库、代码评审和模型网关状态问题；助手服务同时生成产品、迭代、需求、任务、Review、Bug、代码评审和知识沉淀引用候选，回答消息持久化 `references` 与 `tool_results` 并在前端展示可跳转来源链接。GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、基于反馈/Bug 的迭代规划建议、开发计划、自动化测试、发布上线评估、上线后分析基础闭环、代码仓库质量/安全/规范巡检和生命周期 v1.2 真实证据扩展已进入当前实现；外部自动采集器和真实外部系统双向写回按后续阶段确认后推进。后续定时采集、AI 日志分析、AI 迭代建议、代码仓库巡检和看板刷新统一通过 `scheduled_jobs` 调度定义、`scheduled_job_runs` 运行实例、`collector_runs` 采集台账和 `ai_agents` / `ai_skills` 能力装配完成，用户侧将 `ai_agents` 展示为“AI角色”，每次运行必须保存解析后的 AI角色（Agent）、Skill、模型网关、Prompt、输出 Schema、工具策略和上下文范围快照；其中 `code_repository_inspection` 可通过内置本地扫描器或动作调用 GitLab/GitHub/SonarQube/SAST、自建扫描服务，按 `result_actions` 依次写入代码巡检报告、派生严重问题 Bug，并记录邮件、钉钉机器人等通知反馈。需求交付下的研发执行器策略与定时作业 AI 装配分离：策略只引用插件管理下的 Codex、Claude Code、OpenClaw Runner、仓库工作区和指令模板，不使用 Agent/Skill。定时作业定义支持多数据连接与多动作配置，完整数组保存在 `config_json.orchestration.plugin_connection_ids` 和 `config_json.orchestration.plugin_action_ids`，响应同时展开为顶层数组字段；`plugin_connection_id` / `plugin_action_id` 仍作为第一项兼容字段供现有执行入口、报表来源链路和旧客户端消费。
+企业 AI 大脑平台 v1 系列采用基于 Ant Design Pro 模板的 React + TypeScript 前端、FastAPI 后端、LangGraph 工作流、PostgreSQL + pgvector 知识存储、Redis 缓存/队列、GBrain 长期记忆层和 OpenAI-compatible 模型网关，先以模块化单体跑通产品研发大脑从需求审批到产品详细设计、技术方案、GitLab MR / GitHub PR 代码 Review、人工确认、内部报告归档和知识沉淀的 MVP 闭环，并通过研发上下文图谱感知需求、设计、代码、测试、发布、线上反馈、用户使用和用户反馈之间的关联与风险。AI 助手工作台已接入模型网关 Chat 能力，聊天前由后端按用户问题生成 delivery progress、pending reviews、code review、iteration、bugs、model gateway 等确定性 read-model 工具结果，模型优先依据 `system_context.tool_results` 回答 AI Brain 产品配置、需求/任务进展、迭代、Git 仓库、代码评审和模型网关状态问题；助手服务同时生成产品、迭代、需求、任务、Review、Bug、代码评审和知识沉淀引用候选，回答消息持久化 `references` 与 `tool_results` 并在前端展示可跳转来源链接。GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、基于反馈/Bug 的迭代规划建议、开发计划、自动化测试、发布上线评估、上线后分析基础闭环、代码仓库质量/安全/规范巡检和生命周期 v1.2 真实证据扩展已进入当前实现；外部自动采集器和真实外部系统双向写回按后续阶段确认后推进。后续定时采集、AI 日志分析、AI 迭代建议、代码仓库巡检和看板刷新统一通过 `scheduled_jobs` 调度定义、`scheduled_job_runs` 运行实例、`collector_runs` 采集台账和 `ai_agents` / `ai_skills` 能力装配完成，用户侧将 `ai_agents` 展示为“AI角色”，每次运行必须保存解析后的 AI角色（Agent）、Skill、模型网关、Prompt、输出 Schema、工具策略和上下文范围快照；其中 `code_repository_inspection` 可通过内置本地扫描器或动作调用 GitLab/GitHub/SonarQube/SAST、自建扫描服务，按 `result_actions` 依次写入代码巡检报告、派生严重问题 Bug，并记录邮件、钉钉机器人等通知反馈。需求交付下的研发执行器策略与定时作业 AI 装配分离：策略只引用插件管理下的 Codex、Claude Code、OpenClaw Runner、仓库工作区和指令模板，不使用 Agent/Skill。定时作业定义支持多数据连接与多动作配置，完整数组保存在 `config_json.orchestration.plugin_connection_ids` 和 `config_json.orchestration.plugin_action_ids`，响应同时展开为顶层数组字段；`plugin_connection_id` / `plugin_action_id` 仍作为第一项兼容字段供现有执行入口、报表来源链路和旧客户端消费；插件管理删除插件、连接或动作前必须同时检查旧单值字段和顶层数组字段引用，命中任一定时作业时阻断删除并展示作业名称。
 
 ## AI 助手工作台升级
 

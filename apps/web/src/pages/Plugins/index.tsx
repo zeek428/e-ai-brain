@@ -109,15 +109,18 @@ import {
 } from './components/pluginFormTransformHelpers';
 import { PluginWorkspaceGuide } from './components/PluginWorkspaceGuide';
 import { SYSTEM_VARIABLE_OPTIONS } from './components/pluginSystemVariableOptions';
+import {
+  actionDeleteUsageGroups,
+  connectionDeleteUsageGroups,
+  deleteUsageContent,
+  hasDeleteUsage,
+  pluginDeleteUsageGroups,
+  type DeleteUsageGroup,
+} from './components/pluginDeleteUsageHelpers';
 
 type ConnectionFormValues = PluginConnectionFormValues;
 
 type ActionFormValues = PluginActionFormValues;
-
-type DeleteUsageGroup = {
-  items: string[];
-  label: string;
-};
 
 const connectionEnvironmentOptions = [
   { label: '默认', value: 'default' },
@@ -131,29 +134,6 @@ const connectionEnvironmentOptions = [
 const connectionEnvironmentLabelByValue = new Map(
   connectionEnvironmentOptions.map((option) => [option.value, option.label]),
 );
-
-function usageItemName(item: { code?: string; id?: string; name?: string | null }) {
-  return item.name || item.code || item.id || '-';
-}
-
-function hasDeleteUsage(groups: DeleteUsageGroup[]) {
-  return groups.some((group) => group.items.length > 0);
-}
-
-function deleteUsageContent(groups: DeleteUsageGroup[]) {
-  return (
-    <Space orientation="vertical" size={8}>
-      <Typography.Text>当前对象正在被使用，不能删除。请先解除下面的引用，或将其停用。</Typography.Text>
-      {groups.filter((group) => group.items.length > 0).map((group) => (
-        <div key={group.label}>
-          <Typography.Text strong>{group.label}：</Typography.Text>
-          <Typography.Text>{group.items.slice(0, 5).join('、')}</Typography.Text>
-          {group.items.length > 5 ? <Typography.Text type="secondary"> 等 {group.items.length} 个</Typography.Text> : null}
-        </div>
-      ))}
-    </Space>
-  );
-}
 
 export default function PluginsPage() {
   const [pluginForm] = Form.useForm<PluginFormValues>();
@@ -578,56 +558,12 @@ export default function PluginsPage() {
     });
   };
 
-  const pluginDeleteUsageGroups = (plugin: PluginRecord): DeleteUsageGroup[] => {
-    const pluginConnections = connections.filter((connection) => connection.plugin_id === plugin.id);
-    const pluginActions = actions.filter((action) => action.plugin_id === plugin.id);
-    const connectionIds = new Set(pluginConnections.map((connection) => connection.id));
-    const actionIds = new Set(pluginActions.map((action) => action.id));
-    return [
-      { items: pluginConnections.map(usageItemName), label: '连接' },
-      { items: pluginActions.map(usageItemName), label: '动作' },
-      {
-        items: scheduledJobs
-          .filter((job) => (
-            actionIds.has(String(job.plugin_action_id ?? ''))
-            || connectionIds.has(String(job.plugin_connection_id ?? ''))
-          ))
-          .map(usageItemName),
-        label: '定时作业',
-      },
-    ];
-  };
-
-  const connectionDeleteUsageGroups = (connection: PluginConnectionRecord): DeleteUsageGroup[] => [
-    {
-      items: actions
-        .filter((action) => action.connection_id === connection.id)
-        .map(usageItemName),
-      label: '动作',
-    },
-    {
-      items: scheduledJobs
-        .filter((job) => job.plugin_connection_id === connection.id)
-        .map(usageItemName),
-      label: '定时作业',
-    },
-  ];
-
-  const actionDeleteUsageGroups = (action: PluginActionRecord): DeleteUsageGroup[] => [
-    {
-      items: scheduledJobs
-        .filter((job) => job.plugin_action_id === action.id)
-        .map(usageItemName),
-      label: '定时作业',
-    },
-  ];
-
   const confirmDeletePlugin = (plugin: PluginRecord) => {
     if (plugin.is_system) {
       message.info('官方标准插件不能删除，请在连接里维护接入参数');
       return;
     }
-    const usageGroups = pluginDeleteUsageGroups(plugin);
+    const usageGroups = pluginDeleteUsageGroups({ actions, connections, plugin, scheduledJobs });
     if (hasDeleteUsage(usageGroups)) {
       warnDeleteUsage(`插件「${plugin.name}」正在使用中`, usageGroups);
       return;
@@ -651,7 +587,7 @@ export default function PluginsPage() {
   };
 
   const confirmDeleteConnection = (connection: PluginConnectionRecord) => {
-    const usageGroups = connectionDeleteUsageGroups(connection);
+    const usageGroups = connectionDeleteUsageGroups({ actions, connection, scheduledJobs });
     if (hasDeleteUsage(usageGroups)) {
       warnDeleteUsage(`连接「${connection.name}」正在使用中`, usageGroups);
       return;
@@ -675,7 +611,7 @@ export default function PluginsPage() {
   };
 
   const confirmDeleteAction = (action: PluginActionRecord) => {
-    const usageGroups = actionDeleteUsageGroups(action);
+    const usageGroups = actionDeleteUsageGroups({ action, scheduledJobs });
     if (hasDeleteUsage(usageGroups)) {
       warnDeleteUsage(`动作「${action.name}」正在使用中`, usageGroups);
       return;

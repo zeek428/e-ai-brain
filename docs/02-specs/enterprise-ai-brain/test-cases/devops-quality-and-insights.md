@@ -198,14 +198,15 @@
 | 5 | 管理员创建 `job_type=plugin_action_invoke` 的定时作业并引用 `plugin_action_id` | 定时作业保存插件动作、可选连接覆盖、输入映射和输出映射；记录 `scheduled_job.created` 审计。 |
 | 6 | 手动触发该定时作业 | 运行实例保存 `resolved_plugin_snapshot`、`plugin_invocation_log_id`、`result_summary.plugin` 和 records_imported 映射结果；关联 collector run 和审计事件。 |
 | 7 | 选择“MaxCompute 每周用户反馈”动作模板，创建 `job_type=user_feedback_insight_extract` 定时作业并手动运行 | 页面生成 MCP 查询 JSON 且允许高级 JSON 编辑；运行实例从 `$.insights` 读取洞察，通过用户反馈 service 写入用户洞察表，`records_imported` 等于新增洞察数。 |
-| 8 | 插件协议为 `mcp_stdio` 时尝试执行 | 返回 `PLUGIN_PROTOCOL_UNSUPPORTED`，第一阶段不得执行未隔离的本地命令。 |
+| 8 | 定时作业通过 `plugin_connection_ids` / `plugin_action_ids` 多选数组引用插件连接或动作后，在插件管理页删除对应连接或动作 | 删除前端阻断并展示“正在使用”提示和占用定时作业名称，不调用 DELETE 接口；旧单值 `plugin_connection_id` / `plugin_action_id` 引用也必须保持同样保护。 |
+| 9 | 插件协议为 `mcp_stdio` 时尝试执行 | 返回 `PLUGIN_PROTOCOL_UNSUPPORTED`，第一阶段不得执行未隔离的本地命令。 |
 
 **预期结果**:
 1. 插件管理负责“调哪个三方动作、用哪个连接、如何审计”，AI Skill 只负责消费插件返回数据进行语义分析。
 2. 插件连接密钥和调用日志均不得泄露明文凭据。
-3. 定时任务调用插件动作必须可追溯到作业定义、插件快照、调用日志和审计事件。
+3. 定时任务调用插件动作必须可追溯到作业定义、插件快照、调用日志和审计事件；插件、连接和动作删除保护必须识别定时作业单值与数组型引用。
 
-**状态**: 基础自动化已覆盖插件/连接/动作 CRUD 与编辑维护、密钥脱敏占位保留、审计、mock HTTP 插件调用、定时作业插件快照、调用日志，以及 MaxCompute 每周用户反馈洞察抽取。
+**状态**: 基础自动化已覆盖插件/连接/动作 CRUD 与编辑维护、密钥脱敏占位保留、审计、mock HTTP 插件调用、定时作业插件快照、调用日志，以及 MaxCompute 每周用户反馈洞察抽取；插件页多连接/多动作定时作业占用删除保护见 `apps/web/tests/PluginsPage.test.tsx`。
 
 ---
 

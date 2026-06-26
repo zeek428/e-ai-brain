@@ -143,6 +143,7 @@ function installPluginsFetchMock(
     emptyActionTemplates?: boolean;
     includeOfficialActions?: boolean;
     includeOfficialPlugins?: boolean;
+    includeMultiResourceScheduledJob?: boolean;
   } = {},
 ) {
   const actionBodies: unknown[] = [];
@@ -955,7 +956,22 @@ function installPluginsFetchMock(
       });
     }
     if (input === '/api/system/scheduled-jobs' && init?.method === 'GET') {
-      return jsonResponse({ data: { items: [], total: 0 } });
+      const items = options.includeMultiResourceScheduledJob
+        ? [
+            {
+              id: 'scheduled_job_multi_plugin_usage',
+              job_type: 'plugin_action_invoke',
+              name: '多连接插件巡检',
+              plugin_action_id: null,
+              plugin_action_ids: ['action_feedback_api'],
+              plugin_connection_id: null,
+              plugin_connection_ids: ['connection_maxcompute_prod'],
+              schedule_type: 'manual',
+              status: 'active',
+            },
+          ]
+        : [];
+      return jsonResponse({ data: { items, total: items.length } });
     }
     if (String(input).startsWith('/api/system/plugin-system-variables') && init?.method === 'GET') {
       return jsonResponse({
@@ -1733,6 +1749,20 @@ describe('PluginsPage', () => {
     await screen.findByText('确定删除动作「调用反馈 API」吗？');
     fireEvent.click(screen.getAllByRole('button', { name: /删\s*除/ }).at(-1)!);
     await waitFor(() => expect(actionDeleteIds).toEqual(['action_feedback_api']));
+  });
+
+  it('blocks deleting actions referenced by multi-resource scheduled jobs', async () => {
+    const { actionDeleteIds } = installPluginsFetchMock({ includeMultiResourceScheduledJob: true });
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(await screen.findByRole('button', { name: '删除动作 调用反馈 API' }));
+
+    expect(await screen.findByText('当前对象正在被使用，不能删除。请先解除下面的引用，或将其停用。')).toBeInTheDocument();
+    expect(screen.getByText('定时作业：')).toBeInTheDocument();
+    expect(screen.getByText('多连接插件巡检')).toBeInTheDocument();
+    expect(actionDeleteIds).toEqual([]);
   });
 
   it('uses predefined connection environments and can test a connection', async () => {
