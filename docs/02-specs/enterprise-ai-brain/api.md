@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.397 |
+| 功能版本 | v1.1.398 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.398 | 2026-06-26 | 执行诊断列表和详情响应补充 `diagnostic_nodes[]`，服务端从异常/运行中节点派生安全摘要，避免前端和 AI 助手自行解析完整节点 metadata | Codex |
 | v1.1.397 | 2026-06-26 | 执行诊断查询语义澄清：`source_type` 是来源类型，可筛选根或节点来源；前端筛选项展示为“来源类型”，不再称为“根类型” | Codex |
 | v1.1.396 | 2026-06-26 | 执行诊断深链契约收紧：前端和文档示例统一使用 `source_id + source_type` 定位来源节点，避免仅按 ID 下钻造成跨来源歧义 | Codex |
 | v1.1.395 | 2026-06-26 | `GET /api/system/roles` 补齐管理列表查询契约，支持 `page/page_size`、角色、分类、业务角色、可见入口、权限点、状态、白名单排序和 `query/performance` 观测；角色管理页改为调用远程分页接口 | Codex |
@@ -4259,6 +4260,7 @@ Runner 聚合规则：`ai_executor_task.runner_id` 必须解析为 `ai_executor_
         "node_count": 8,
         "failed_node_count": 0,
         "running_node_count": 0,
+        "diagnostic_nodes": [],
         "related_ids": {
           "plugin_invocation_log": ["plugin_invocation_log_001"],
           "ai_executor_runner": ["ai_executor_runner_001"],
@@ -4278,6 +4280,7 @@ Runner 聚合规则：`ai_executor_task.runner_id` 必须解析为 `ai_executor_
 
 详情响应在列表字段基础上返回：
 
+- `diagnostic_nodes[]`：从 `nodes[]` 派生的诊断摘要，最多返回 5 个失败、取消、运行中或排队节点；只包含 `id/source_type/source_id/label/status/summary/error_message/error_code/started_at/finished_at/duration_ms` 等安全字段，不返回 `metadata`，供列表、详情顶部诊断建议和 AI 助手共享。
 - `nodes[]`：包含 `id/source_type/source_id/label/status/summary/error_message/started_at/finished_at/duration_ms/metadata`。
 - `edges[]`：包含 `from/to/label`，用于展示调用、派发、写报告、审计等依赖关系。
 
@@ -4286,6 +4289,7 @@ Runner 聚合规则：`ai_executor_task.runner_id` 必须解析为 `ai_executor_
 - 详情 `trace_id` 可传链路根 ID，也可传任一关联对象 ID 或节点 `source_id`；服务端会返回同一条聚合链路。
 - `assistant_chat_run` 链路根来自 `assistant_chat_runs`，详情节点只展示运行状态、会话/消息 ID、用户、产品和引用数量等排障元数据，不返回完整用户提问、助手回复、Prompt 或知识正文。
 - `result_write_record` 是从定时作业运行或独立插件调用派生的可重建写入记录节点，不是新的事实源；详情元数据仅展示写入目标、状态、导入数、预览摘要和安全反馈，用于判断运行是否真正写入报告、用户反馈、通知等产物。
+- `diagnostic_nodes` 是响应层派生摘要，不是新的业务事实源；当链路无失败、取消、运行中或排队节点时返回空数组。
 - 聚合来源是现有结构表或 repository source rows；PostgreSQL 运行时会在单个数据库事务中刷新可重建的 `execution_trace_snapshots` 只读快照并优先从该表分页/过滤/排序读取。列表和已命中详情可在短 TTL 内复用快照；详情未命中时必须强制重建一次快照再判定 404。该表不是新的业务事实源，也不在查询时写审计。
 - 元数据返回前必须按敏感键脱敏，包含但不限于 `token`、`api_key`、`authorization`、`password`、`secret`、`cookie`；敏感值统一替换为 `<redacted>`。
 - 无匹配链路返回 `404 EXECUTION_TRACE_NOT_FOUND`；非法枚举或时间格式返回 `400 VALIDATION_ERROR`。

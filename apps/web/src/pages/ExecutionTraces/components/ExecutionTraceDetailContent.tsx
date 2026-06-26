@@ -97,7 +97,10 @@ function TraceDiagnostics({
   sourceTypeLabel: (value?: string | null) => string;
   statusTag: (status?: string | null) => ReactNode;
 }) {
-  const attentionNodes = detail.nodes.filter((node) => ATTENTION_NODE_STATUSES.has(node.status));
+  const attentionNodes = (detail.diagnostic_nodes?.length
+    ? detail.diagnostic_nodes
+    : detail.nodes.filter((node) => ATTENTION_NODE_STATUSES.has(node.status))
+  );
   const failedNodes = attentionNodes.filter((node) => FAILED_NODE_STATUSES.has(node.status));
   if (attentionNodes.length === 0) {
     return (

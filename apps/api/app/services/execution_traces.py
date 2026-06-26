@@ -62,6 +62,8 @@ EXECUTION_TRACE_SNAPSHOT_REFRESH_STATE_ATTR = "_execution_trace_snapshot_refresh
 
 FAILED_STATUSES = {"cancelled", "failed"}
 RUNNING_STATUSES = {"pending", "queued", "running"}
+ATTENTION_STATUSES = FAILED_STATUSES | RUNNING_STATUSES
+DIAGNOSTIC_NODE_LIMIT = 5
 SENSITIVE_KEYWORDS = (
     "api_key",
     "apikey",
@@ -1369,7 +1371,7 @@ class ExecutionTraceBuilder:
             )
         failed_node_count = sum(1 for node in nodes if node["status"] in FAILED_STATUSES)
         running_node_count = sum(1 for node in nodes if node["status"] in RUNNING_STATUSES)
-        return {
+        trace = {
             "duration_ms": duration,
             "edges": edges,
             "failed_node_count": failed_node_count,
@@ -1393,6 +1395,7 @@ class ExecutionTraceBuilder:
             "title": title,
             "updated_at": root.get("updated_at") or finished_at or started_at,
         }
+        return _with_diagnostic_nodes(trace)
 
 
 def _unique_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1486,8 +1489,41 @@ def _trace_matches_source_type(trace: dict[str, Any], source_type: str | None) -
     return any(node.get("source_type") == normalized for node in trace.get("nodes", []))
 
 
-def _list_item(trace: dict[str, Any]) -> dict[str, Any]:
+def _diagnostic_node_projection(node: dict[str, Any]) -> dict[str, Any]:
     return {
+        "duration_ms": node.get("duration_ms"),
+        "error_code": node.get("error_code"),
+        "error_message": node.get("error_message"),
+        "finished_at": node.get("finished_at"),
+        "id": node.get("id"),
+        "label": node.get("label"),
+        "source_id": node.get("source_id"),
+        "source_type": node.get("source_type"),
+        "started_at": node.get("started_at"),
+        "status": node.get("status"),
+        "summary": node.get("summary"),
+    }
+
+
+def _diagnostic_nodes(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    nodes = trace.get("nodes") if isinstance(trace.get("nodes"), list) else []
+    return [
+        _diagnostic_node_projection(node)
+        for node in nodes
+        if isinstance(node, dict) and node.get("status") in ATTENTION_STATUSES
+    ][:DIAGNOSTIC_NODE_LIMIT]
+
+
+def _with_diagnostic_nodes(trace: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(trace.get("diagnostic_nodes"), list):
+        return trace
+    return {**trace, "diagnostic_nodes": _diagnostic_nodes(trace)}
+
+
+def _list_item(trace: dict[str, Any]) -> dict[str, Any]:
+    trace = _with_diagnostic_nodes(trace)
+    return {
+        "diagnostic_nodes": trace.get("diagnostic_nodes", []),
         "duration_ms": trace.get("duration_ms"),
         "failed_node_count": trace["failed_node_count"],
         "id": trace["id"],
@@ -1655,19 +1691,19 @@ def get_execution_trace_response(
             _refresh_trace_snapshots(current_store, force=True)
             trace = repository.get_execution_trace_snapshot(trace_id)
             if trace is not None:
-                return trace
+                return _with_diagnostic_nodes(trace)
             raise api_error(404, "EXECUTION_TRACE_NOT_FOUND", "Execution trace not found")
         trace = repository.get_execution_trace_snapshot(trace_id)
         if trace is not None:
-            return trace
+            return _with_diagnostic_nodes(trace)
         _refresh_trace_snapshots(current_store, force=True)
         trace = repository.get_execution_trace_snapshot(trace_id)
         if trace is not None:
-            return trace
+            return _with_diagnostic_nodes(trace)
         raise api_error(404, "EXECUTION_TRACE_NOT_FOUND", "Execution trace not found")
     for trace in ExecutionTraceBuilder(current_store).traces():
         if _trace_matches_related_id(trace, trace_id):
-            return trace
+            return _with_diagnostic_nodes(trace)
     raise api_error(404, "EXECUTION_TRACE_NOT_FOUND", "Execution trace not found")
 
 

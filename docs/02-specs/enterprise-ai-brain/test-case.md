@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.707 |
+| 功能版本 | v1.1.708 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.708 | 2026-06-26 | 补充执行诊断 `diagnostic_nodes` 验收：列表和详情需返回异常/运行中节点安全摘要，成功链路为空数组，失败 AI 助手链路不暴露 metadata；`test_execution_traces.py` 覆盖 | Codex |
 | v1.1.707 | 2026-06-26 | 补充菜单资源与前端路由一致性验收：active 的可导航菜单 path 必须在前端 `routes.ts` 注册，研发任务、定时作业、插件管理、执行诊断等关键菜单路径不得回退旧入口；`test_menu_route_consistency.py` 覆盖 | Codex |
 | v1.1.706 | 2026-06-26 | 补充执行诊断来源类型筛选文案验收：列表查询表单必须展示“来源类型”，对应 `source_type` 可筛选根或节点来源类型；`ExecutionTracesPage.test.tsx` 覆盖文案存在 | Codex |
 | v1.1.705 | 2026-06-26 | 补充可复用执行诊断链接验收：`ExecutionTraceLink` 必须生成 `source_id + source_type` 深链，缺少 `source_type` 时展示 fallback，不生成仅按 ID 定位的歧义链接；`ExecutionTraceLink.test.tsx` 覆盖组件行为 | Codex |

@@ -507,6 +507,7 @@ def test_execution_trace_lists_related_runtime_nodes_and_redacts_secrets():
         "result_write_record_scheduled_job_run_trace"
     ]
     assert item["related_ids"]["audit_event"] == ["audit_trace"]
+    assert item["diagnostic_nodes"] == []
 
     detail_response = client.get(
         "/api/governance/execution-traces/result_write_record_scheduled_job_run_trace",
@@ -609,6 +610,15 @@ def test_execution_trace_includes_assistant_chat_run_model_and_audit_nodes():
     ]
     assert item["related_ids"]["model_gateway_log"] == ["model_gateway_log_assistant_trace"]
     assert item["related_ids"]["audit_event"] == ["audit_assistant_trace"]
+    diagnostic_nodes = item["diagnostic_nodes"]
+    assert {node["source_type"] for node in diagnostic_nodes} == {
+        "assistant_chat_run",
+        "assistant_message",
+        "audit_event",
+        "model_gateway_log",
+    }
+    assert all("metadata" not in node for node in diagnostic_nodes)
+    assert any(node["error_message"] == "模型网关调用失败" for node in diagnostic_nodes)
 
     detail_response = client.get(
         "/api/governance/execution-traces/model_gateway_log_assistant_trace",
@@ -622,6 +632,7 @@ def test_execution_trace_includes_assistant_chat_run_model_and_audit_nodes():
     assert {"assistant_chat_run", "assistant_message", "audit_event", "model_gateway_log"}.issubset(
         source_types
     )
+    assert detail["diagnostic_nodes"] == diagnostic_nodes
     assert any(edge["label"] == "calls_model" for edge in detail["edges"])
     assert any(edge["label"] == "triggers" for edge in detail["edges"])
     assert any(edge["label"] == "writes_message" for edge in detail["edges"])

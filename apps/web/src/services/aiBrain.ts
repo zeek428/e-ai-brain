@@ -1445,6 +1445,7 @@ export type ExecutionTraceEdgeRecord = {
 };
 
 export type ExecutionTraceListItem = {
+  diagnostic_nodes?: ExecutionTraceNodeRecord[];
   duration_ms?: number | null;
   failed_node_count: number;
   id: string;

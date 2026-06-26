@@ -300,11 +300,11 @@
 **测试步骤**:
 | 步骤 | 操作 | 预期结果 |
 |------|------|----------|
-| 1 | 管理员 GET `/api/governance/execution-traces` | 返回按运行根聚合的链路列表，包含 root_type、status、node_count、failed_node_count、duration_ms、started_at、updated_at 和 related_ids。 |
+| 1 | 管理员 GET `/api/governance/execution-traces` | 返回按运行根聚合的链路列表，包含 root_type、status、node_count、failed_node_count、duration_ms、started_at、updated_at、related_ids 和 `diagnostic_nodes`；成功链路的 `diagnostic_nodes` 为空数组。 |
 | 2 | 使用 `scheduled_job_run_id`、`plugin_invocation_log_id`、`result_write_record_id` 或任一节点 `source_id` GET `/api/governance/execution-traces/{trace_id}` | 返回同一条详情链路，nodes 至少覆盖定时作业运行、阶段节点、插件调用、AI 执行器任务、模型网关日志、代码巡检报告、结果写入记录和审计事件，edges 展示 invokes/dispatches/writes_report/writes_result/audits 等关系。 |
 | 3 | 管理员 GET `/api/governance/execution-traces?source_type=assistant_chat_run`，再用关联的 `model_gateway_log_id` 打开详情 | 返回 `root_type=assistant_chat_run` 的链路，nodes 至少覆盖 AI 助手运行、模型网关日志和审计事件，edges 展示 `calls_model` 和 `audits`，详情不返回完整用户提问、助手回复、Prompt 或知识正文。 |
 | 4 | 管理员 GET `/api/governance/execution-traces?source_id={model_gateway_log_id}&source_type=model_gateway_log`、`source_type=result_write_record&source_id={result_write_record_id}`、`source_type=scheduled_job_stage&source_id={run_id}:{stage_id}` 或 `source_type=ai_executor_runner&source_id={runner_id}`，并打开 `/governance/execution-traces?source_id={model_gateway_log_id}&source_type=model_gateway_log` | 列表只返回该来源 ID 所属链路；Runner 过滤返回包含对应 `ai_executor_runner` 节点的运行链路，任务节点通过 `assigned_runner` 关联 Runner 且不暴露 `token_hash`；前端深链必须同时携带 `source_id` 与 `source_type`，命中唯一链路时自动打开详情弹窗，便于从模型网关、插件、Runner、定时作业阶段、结果写入记录、代码巡检或 AI 助手页面跳转排障。 |
-| 5 | 打开包含失败、取消、运行中或排队节点的执行诊断详情 | 详情顶部展示“诊断建议”，汇总异常节点，提供来源 ID 深链和“问 AI”入口；成功链路展示无失败节点提示。 |
+| 5 | 打开包含失败、取消、运行中或排队节点的执行诊断详情 | 详情响应 `diagnostic_nodes` 返回异常/运行中节点安全摘要且不包含 metadata；详情顶部展示“诊断建议”，优先按该摘要汇总异常节点，提供来源 ID 深链和“问 AI”入口；成功链路展示无失败节点提示。 |
 | 6 | 在插件请求摘要、执行器 request_config 或审计 payload 中放入 token/API key/Authorization | 响应详情 metadata 中敏感值统一为 `<redacted>`，不得泄露明文 token、API key、cookie、password 或 secret。 |
 | 7 | reviewer 调用列表或详情接口 | 返回 `403 FORBIDDEN`，不暴露运行链路。 |
 | 8 | 打开运营治理 / 执行诊断页面 | 页面使用服务端分页、排序和筛选；列表显示规范化北京时间、状态、耗时和节点数；点击详情弹窗展示关联对象、节点表、节点关系表，长文本和 JSON 不撑坏布局。 |
@@ -313,7 +313,7 @@
 **预期结果**:
 1. 执行诊断只读聚合已有运行事实，不新增业务写入事实源。
 2. 诊断入口能把作业运行失败排障需要的插件、执行器、模型、巡检报告、AI 助手运行和审计线索放在同一视图中。
-3. 所有响应必须脱敏敏感配置和值，权限由后端强制校验。
+3. 所有响应必须脱敏敏感配置和值，`diagnostic_nodes` 不返回完整节点 metadata，权限由后端强制校验。
 4. `execution_trace_snapshots` 是可重建读模型；短 TTL 只能用于降低重复读取成本，详情未命中必须刷新后再判断不存在。
 
 **状态**: 已新增后端和前端自动化覆盖；见 `apps/api/tests/test_execution_traces.py` 与 `apps/web/tests/ExecutionTracesPage.test.tsx`。
