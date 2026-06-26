@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 菜单资源与前端路由一致性门禁：新增 `test_menu_route_consistency.py`，校验 active 可导航菜单 path 均存在于前端静态 routes，并锁定研发任务、定时作业、插件管理、执行诊断等关键入口不回退旧路径。
 - DB-first 兼容层扫描：新增 `scripts/audit_memory_store_usage.py`，按读路径、写路径和 helper 对 `current_store.*` 残留输出 P0/P1/P2 分级，便于持续清理 MemoryStore 生产兼容路径。
 - 执行诊断结果写入节点：定时作业和插件调用链路新增派生 `result_write_record` 节点，可按写入记录 ID 反查同一条 Trace，确认报告、反馈或通知是否真正写入。
 - 代码巡检 finding 误报忽略审批：报告详情支持对单条问题提交忽略申请，管理员可批准或驳回，审批通过后同步报告 suppression 统计、治理概览分布和审计事件。
