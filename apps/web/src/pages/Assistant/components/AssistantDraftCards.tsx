@@ -14,13 +14,13 @@ import {
   ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   assistantScopedStorageKey,
-  type AssistantActionDraftPreview,
   type AssistantDraftResolutionMap,
   type AssistantDraftResolutionRecord,
-  type AssistantRepairAction,
   type AssistantToolResultItem,
 } from '../../../services/aiBrain';
+import { AssistantDraftPreviewBlock } from './AssistantDraftPreviewBlock';
 import { AssistantDraftWizardBlock } from './AssistantDraftWizardBlock';
+import { draftPreviewValueText } from './assistantDraftPreviewHelpers';
 import { draftWizardSteps } from './assistantDraftWizardHelpers';
 import { assistantDraftId, draftStatusLabel } from './draftPresentation';
 
@@ -110,62 +110,6 @@ function assistantDraftDependencyLabelMap(drafts: AssistantToolResultItem[]) {
     });
   });
   return items;
-}
-
-function draftPreviewStatusLabel(status?: string) {
-  if (status === 'blocked') {
-    return { color: 'red', text: '阻塞' };
-  }
-  if (status === 'warning') {
-    return { color: 'orange', text: '需确认' };
-  }
-  return { color: 'green', text: '通过' };
-}
-
-function draftPreviewValueText(value: unknown): string {
-  if (value === null || value === undefined || value === '') {
-    return '-';
-  }
-  if (Array.isArray(value)) {
-    return value.length ? value.map(String).join('、') : '-';
-  }
-  if (typeof value === 'object') {
-    return JSON.stringify(value);
-  }
-  return String(value);
-}
-
-function assistantRepairActionUrl(action?: AssistantRepairAction) {
-  if (!action || action.action !== 'open_plugin_connection_test' || !action.resource_id) {
-    return undefined;
-  }
-  return `/tasks/plugins?connection_id=${encodeURIComponent(action.resource_id)}&open_test=1`;
-}
-
-function assistantRepairActionPrompt(
-  draftTitle: string | undefined,
-  action: AssistantRepairAction,
-) {
-  const targetTitle = draftTitle ? `「${draftTitle}」` : '当前草案';
-  if (action.action === 'generate_plugin_action_draft') {
-    return `请为${targetTitle}补齐结果动作草案`;
-  }
-  if (action.action === 'generate_connection_draft') {
-    return `请为${targetTitle}补齐数据连接草案`;
-  }
-  if (action.action === 'generate_ai_agent_draft') {
-    return `请为${targetTitle}补齐 AI角色草案`;
-  }
-  if (action.action === 'generate_ai_skill_draft') {
-    return `请为${targetTitle}补齐 AI Skill 草案`;
-  }
-  if (action.action === 'select_model_gateway') {
-    return `请为${targetTitle}选择可用模型网关配置`;
-  }
-  if (action.action === 'edit_field') {
-    return `请修正${targetTitle}的 ${action.field ?? '阻塞字段'}`;
-  }
-  return `请修复${targetTitle}的校验问题：${action.label ?? action.action}`;
 }
 
 function draftResourceLink(resolution?: AssistantDraftResolutionRecord) {
@@ -381,69 +325,6 @@ function draftPayloadFields({
     });
   }
   return fields;
-}
-
-function AssistantDraftPreviewBlock({
-  draftTitle,
-  onUseRepairAction,
-  preview,
-}: {
-  draftTitle?: string;
-  onUseRepairAction?: (prompt: string) => void;
-  preview?: AssistantActionDraftPreview;
-}) {
-  if (!preview) {
-    return null;
-  }
-  const diffs = (preview.diffs ?? []).slice(0, 4);
-  const issues = preview.validation?.issues ?? [];
-  const statusLabel = draftPreviewStatusLabel(preview.validation?.status);
-  return (
-    <div className="assistant-action-draft-precheck">
-      <Space size={8} wrap>
-        <Text strong>应用前预检</Text>
-        <Tag color={statusLabel.color}>{statusLabel.text}</Tag>
-      </Space>
-      {diffs.length ? (
-        <div className="assistant-action-draft-precheck-diffs">
-          {diffs.map((diff) => (
-            <span key={diff.field}>
-              <Text type="secondary">{diff.label ?? diff.field}</Text>
-              <Text>
-                {draftPreviewValueText(diff.current)} -&gt; {draftPreviewValueText(diff.proposed)}
-              </Text>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {issues.length ? (
-        <div className="assistant-action-draft-precheck-issues">
-          {issues.map((issue) => {
-            const repairAction = issue.repair_action;
-            const repairUrl = assistantRepairActionUrl(repairAction);
-            return (
-              <span key={`${issue.field}:${issue.message}`}>
-                <Text type={issue.severity === 'error' ? 'danger' : 'warning'}>
-                  {issue.message}
-                </Text>
-                {repairAction?.label ? (
-                  <Button
-                    href={repairUrl}
-                    size="small"
-                    onClick={repairUrl ? undefined : () => onUseRepairAction?.(
-                      assistantRepairActionPrompt(draftTitle, repairAction),
-                    )}
-                  >
-                    {repairAction.label}
-                  </Button>
-                ) : null}
-              </span>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function AssistantDraftDetailModal({
