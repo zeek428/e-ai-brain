@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- AI 助手草案卡片继续组件化：助手页草案详情弹窗抽到 `AssistantDraftDetailModal`，Payload、对比来源、字段差异和校验问题展示独立于草案卡主体。
 - AI 助手草案卡片继续组件化：应用前预检、字段差异、校验问题和修复动作入口抽到 `AssistantDraftPreviewBlock` 与 `assistantDraftPreviewHelpers`，草案卡主体继续保留确认、取消、详情和资源追踪编排。
 - AI 助手草案卡片继续组件化：配置向导、步骤状态、前置草案提示和手动调整入口抽到 `AssistantDraftWizardBlock`，草案卡主体继续保留确认、取消、详情和资源追踪编排。
 - 插件管理配置弹窗继续组件化：Runner Token/日志、插件、执行器、连接、动作和动作试运行弹窗装配抽到 `PluginManagementModals`，主页面继续保留表单联动、保存/测试/试运行和数据加载编排。

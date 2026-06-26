@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.694 |
+| 功能版本 | v1.1.695 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.695 | 2026-06-26 | 补充 AI 助手页草案详情弹窗组件化验收：`AssistantDraftDetailModal` 承载 Payload、对比来源、字段差异和校验问题展示，草案卡主体继续保留确认、取消、详情打开和资源追踪编排；`AssistantPage.test.tsx`、typecheck、lint 和真实 `/assistant` 页面 smoke 必须通过 | Codex |
 | v1.1.694 | 2026-06-26 | 补充 AI 助手草案应用前预检组件化验收：`AssistantDraftPreviewBlock` 承载字段差异、校验问题和修复动作入口，`assistantDraftPreviewHelpers` 统一卡片与详情中的差异值格式化；`AssistantPage.test.tsx`、typecheck、lint 和真实 `/assistant` 页面 smoke 必须通过 | Codex |
 | v1.1.693 | 2026-06-26 | 补充 AI 助手草案配置向导组件化验收：`AssistantDraftWizardBlock` 承载向导步骤、AI 生成步骤草案、前置草案和手动调整入口；`AssistantPage.test.tsx`、typecheck、lint 和真实 `/assistant` 页面 smoke 必须通过 | Codex |
 | v1.1.692 | 2026-06-26 | 补充插件管理弹窗组组件化验收：`PluginManagementModals` 承载 Runner Token/日志、插件、执行器、连接、动作和动作试运行弹窗装配；`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
