@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.579 |
+| 功能版本 | v1.1.580 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.580 | 2026-06-26 | 角色治理列表补齐服务端管理列表契约：`GET /api/system/roles` 支持分页、筛选、排序和 `query/performance` 观测，前端角色管理页不再拉取全量角色后本地分页过滤；查询权限对齐为 `system.roles.read` 或 `system.roles.manage` | Codex |
 | v1.1.579 | 2026-06-26 | AI 助手草案任务台继续组件化：摘要指标条、草案详情弹窗和草案展示 helper 分别收口到 `AssistantDraftSummaryStrip`、`AssistantDraftDetailModal` 与 `assistantDraftWorkbenchPresentation`，主页面只保留远程查询、确认/取消和详情打开编排 | Codex |
 | v1.1.578 | 2026-06-26 | 插件管理前端主文件继续减重：系统变量预览、全部变量弹窗入口和通用调用链路说明收口到 `PluginWorkspaceGuide`，主页面继续聚焦插件、连接、动作、Runner 数据加载与操作编排，系统变量选项由 `pluginSystemVariableOptions` 统一维护并给连接/动作弹窗复用 | Codex |
 | v1.1.577 | 2026-06-25 | 定时作业前端主文件继续减重：作业配置表格和运行记录表格分别收口到 `ScheduledJobConfigTable` 与 `ScheduledJobRunTable`，列表列渲染、工具栏、横向滚动、表格设置和行操作由表格组件承接，主页面只保留数据加载、弹窗、复制、运行、删除和详情打开编排 | Codex |

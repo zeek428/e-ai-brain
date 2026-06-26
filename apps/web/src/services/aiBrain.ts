@@ -4645,39 +4645,6 @@ export async function fetchRoleDefinitionList(
   };
 }
 
-function filterSystemRoles(rows: SystemRoleRecord[], query: RoleListQuery) {
-  const includes = (value: string | string[] | undefined, keyword?: string) => {
-    if (!keyword) {
-      return true;
-    }
-    const source = Array.isArray(value) ? value.join(', ') : value ?? '';
-    return source.toLowerCase().includes(keyword.toLowerCase());
-  };
-
-  return rows.filter(
-    (role) =>
-      includes(`${role.name} ${role.code}`, query.role) &&
-      includes(role.category, query.category) &&
-      includes(role.menu_codes, query.menuScope) &&
-      includes(role.permission_codes, query.permission) &&
-      includes(role.status, query.status) &&
-      includes(role.business_roles, query.businessRole),
-  );
-}
-
-function sortSystemRoles(rows: SystemRoleRecord[], query: RoleListQuery) {
-  const sortField = query.sortField;
-  if (!sortField || !query.sortOrder) {
-    return rows;
-  }
-  const direction = query.sortOrder === 'descend' ? -1 : 1;
-  return [...rows].sort((left, right) => {
-    const leftValue = String(left[sortField as keyof SystemRoleRecord] ?? '');
-    const rightValue = String(right[sortField as keyof SystemRoleRecord] ?? '');
-    return leftValue.localeCompare(rightValue, 'zh-Hans-CN') * direction;
-  });
-}
-
 export async function fetchSystemPermissions(): Promise<PermissionRecord[]> {
   const token = requireAccessToken();
   const permissions = await apiRequest<{ items: PermissionRecord[] }>('/api/system/permissions', {
@@ -4779,19 +4746,24 @@ export async function fetchSystemRoleList(
   query: RoleListQuery = {},
 ): Promise<RemoteListResult<SystemRoleRecord>> {
   const token = requireAccessToken();
-  const roles = await apiRequest<{ items: RoleDefinitionListItem[] }>('/api/system/roles', {
-    token,
-  });
-  const filteredRows = filterSystemRoles(roles.items.map(mapSystemRole), query);
-  const sortedRows = sortSystemRoles(filteredRows, query);
-  const page = query.page ?? 1;
-  const pageSize = query.pageSize ?? 10;
-  const start = (page - 1) * pageSize;
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'business_role', query.businessRole);
+  appendQueryParam(params, 'category', query.category);
+  appendQueryParam(params, 'menu_scope', query.menuScope);
+  appendQueryParam(params, 'permission', query.permission);
+  appendQueryParam(params, 'role', query.role);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const roles = await apiRequest<ListResponse<RoleDefinitionListItem>>(
+    queryString ? `/api/system/roles?${queryString}` : '/api/system/roles',
+    { token },
+  );
   return {
-    page,
-    pageSize,
-    rows: sortedRows.slice(start, start + pageSize),
-    total: sortedRows.length,
+    page: roles.page ?? query.page ?? 1,
+    pageSize: roles.page_size ?? query.pageSize ?? 10,
+    rows: roles.items.map(mapSystemRole),
+    total: roles.total,
   };
 }
 

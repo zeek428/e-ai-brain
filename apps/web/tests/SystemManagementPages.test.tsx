@@ -309,6 +309,26 @@ describe('system management pages', () => {
           },
         );
       }
+      if (String(input).startsWith('/api/system/roles?')) {
+        const url = new URL(String(input), 'http://localhost');
+        expect(url.searchParams.get('page')).toBe('1');
+        expect(url.searchParams.get('page_size')).toBe('10');
+        expect(url.searchParams.get('sort_by')).toBe('sort_order');
+        expect(url.searchParams.get('sort_order')).toBe('asc');
+        return new Response(
+          JSON.stringify({
+            data: {
+              ...roleCatalogEnvelope.data,
+              page: 1,
+              page_size: 10,
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
       expect(String(input)).toBe('/api/system/roles');
       return new Response(
         JSON.stringify({

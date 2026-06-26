@@ -12,6 +12,16 @@ from app.core.db import DatabaseConnectionPool
 from app.core.roles import ROLE_DEFINITIONS
 
 SYSTEM_ROLE_CODES = {role["code"] for role in ROLE_DEFINITIONS}
+ROLE_METADATA_BY_CODE = {role["code"]: role for role in ROLE_DEFINITIONS}
+ROLE_METADATA_FIELDS = (
+    "business_roles",
+    "data_scope",
+    "decision_scope",
+    "limitations",
+    "menu_scope",
+    "responsibilities",
+)
+ROLE_METADATA_LIST_FIELDS = {"business_roles", "limitations", "menu_scope", "responsibilities"}
 VALID_SCOPE_TYPES = {
     "department",
     "global",
@@ -1027,6 +1037,7 @@ class CompatibilityAuthorizationRepository:
         )
 
     def _role_detail(self, role: dict[str, Any]) -> dict[str, Any]:
+        metadata = ROLE_METADATA_BY_CODE.get(role["code"], {})
         return {
             "id": role["id"],
             "code": role["code"],
@@ -1046,6 +1057,15 @@ class CompatibilityAuthorizationRepository:
                 else self._role_menu_grants.get(role["code"], set())
             ),
             "scopes": deepcopy(self._role_scope_grants.get(role["code"], [])),
+            **{
+                field: deepcopy(
+                    role.get(
+                        field,
+                        metadata.get(field, [] if field in ROLE_METADATA_LIST_FIELDS else ""),
+                    )
+                )
+                for field in ROLE_METADATA_FIELDS
+            },
         }
 
     def _next_sort_order(self) -> int:
@@ -2151,6 +2171,7 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
             permission_codes = self._postgres_permission_codes(cursor, role_id, code)
             menu_codes = self._postgres_menu_codes(cursor, role_id, code)
             scopes = self._postgres_scope_grants(cursor, role_id)
+        metadata = ROLE_METADATA_BY_CODE.get(code, {})
         return {
             "id": role_id,
             "code": code,
@@ -2164,6 +2185,12 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
             "permission_codes": permission_codes,
             "menu_codes": menu_codes,
             "scopes": scopes,
+            **{
+                field: deepcopy(
+                    metadata.get(field, [] if field in ROLE_METADATA_LIST_FIELDS else "")
+                )
+                for field in ROLE_METADATA_FIELDS
+            },
         }
 
     def _postgres_permission_codes(self, cursor, role_id: str, role_code: str) -> list[str]:

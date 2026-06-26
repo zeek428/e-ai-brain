@@ -66,6 +66,70 @@ def test_admin_can_create_role_update_permissions_disable_and_enable():
     assert enabled.json()["data"]["status"] == "active"
 
 
+def test_system_roles_list_supports_remote_pagination_filters_sort_and_observability():
+    headers = auth_headers()
+    for code, name in (
+        ("delivery_operator_alpha", "Delivery Operator Alpha"),
+        ("delivery_operator_beta", "Delivery Operator Beta"),
+    ):
+        response = client.post(
+            "/api/system/roles",
+            headers=headers,
+            json={
+                "code": code,
+                "name": name,
+                "category": "delivery",
+            },
+        )
+        assert response.status_code == 200
+
+    response = client.get(
+        "/api/system/roles",
+        headers=headers,
+        params={
+            "category": "delivery",
+            "page": 1,
+            "page_size": 1,
+            "role": "Delivery Operator",
+            "sort_by": "code",
+            "sort_order": "desc",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["page"] == 1
+    assert data["page_size"] == 1
+    assert data["total"] == 2
+    assert data["items"][0]["code"] == "delivery_operator_beta"
+    assert data["query"]["name"] == "roles"
+    assert data["query"]["filters"]["category"] == "delivery"
+    assert data["query"]["filters"]["role"] == "Delivery Operator"
+    assert data["performance"]["total"] == 2
+
+    business_role_response = client.get(
+        "/api/system/roles",
+        headers=headers,
+        params={"business_role": "平台管理员", "page": 1, "page_size": 10},
+    )
+    assert business_role_response.status_code == 200
+    business_role_data = business_role_response.json()["data"]
+    assert business_role_data["total"] == 1
+    assert business_role_data["items"][0]["code"] == "admin"
+    assert business_role_data["items"][0]["business_roles"] == ["平台管理员"]
+
+
+def test_system_roles_list_rejects_unsupported_sort_field():
+    response = client.get(
+        "/api/system/roles",
+        headers=auth_headers(),
+        params={"page": 1, "page_size": 10, "sort_by": "permission_codes"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
 def test_non_admin_gets_403_on_role_create():
     response = client.post(
         "/api/system/roles",

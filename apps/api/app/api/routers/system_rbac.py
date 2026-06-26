@@ -1,15 +1,34 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, api_error, require_any_permission, require_permissions
+from app.core.listing import (
+    ensure_list_enum,
+    list_text_matches,
+    paginated_list_payload,
+    sort_list_items,
+)
 from app.core.trace import envelope, get_trace_id
 from app.services.rbac_matrix import build_rbac_policy_matrix, build_user_permission_diagnostic
 
 router = APIRouter(tags=["system-rbac"])
+ROLE_CATEGORIES = {
+    "delivery",
+    "knowledge",
+    "readonly",
+    "release",
+    "review",
+    "system",
+    "testing",
+    "workspace",
+}
+ROLE_LIST_SORT_FIELDS = {"category", "code", "name", "sort_order", "status"}
+ROLE_STATUSES = {"active", "inactive"}
 
 
 class RoleCreateRequest(BaseModel):
@@ -351,12 +370,61 @@ def _set_menu_status(
 @router.get("/api/system/roles")
 def list_roles(
     request: Request,
+    business_role: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    menu_scope: str | None = Query(default=None),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    permission: str | None = Query(default=None),
+    role: str | None = Query(default=None),
+    sort_by: str | None = Query(default=None),
+    sort_order: str = Query(default="asc"),
+    status: str | None = Query(default=None),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_permissions(user, {"system.roles.manage"})
-    return envelope(
-        {"items": _authorization_repository(request).list_roles()},
-        get_trace_id(request),
+    require_any_permission(user, {"system.roles.read", "system.roles.manage"})
+    ensure_list_enum(category, ROLE_CATEGORIES, "role category")
+    ensure_list_enum(status, ROLE_STATUSES, "role status")
+    ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
+    if sort_by is not None:
+        ensure_list_enum(sort_by, ROLE_LIST_SORT_FIELDS, "sort_by")
+    started_at = perf_counter()
+    filters = {
+        "business_role": business_role,
+        "category": category,
+        "menu_scope": menu_scope,
+        "permission": permission,
+        "role": role,
+        "status": status,
+    }
+    items = [
+        item
+        for item in _authorization_repository(request).list_roles()
+        if list_text_matches(item, role, ("code", "name", "description"))
+        and list_text_matches(item, business_role, ("business_roles",))
+        and list_text_matches(item, menu_scope, ("menu_codes", "menu_scope"))
+        and list_text_matches(item, permission, ("permission_codes", "permissions"))
+        and (not category or item.get("category") == category)
+        and (not status or item.get("status") == status)
+    ]
+    sorted_items = sort_list_items(
+        items,
+        allowed_fields=ROLE_LIST_SORT_FIELDS,
+        default_sort_by="sort_order",
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return paginated_list_payload(
+        sorted_items,
+        filters=filters,
+        list_name="roles",
+        observed=True,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        started_at=started_at,
+        trace_id=get_trace_id(request),
     )
 
 
