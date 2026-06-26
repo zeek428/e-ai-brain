@@ -359,6 +359,16 @@ describe('ExecutionTracesPage', () => {
         ),
     ).toBe(true);
     expect(within(dialog).getAllByRole('link', { name: /问 AI/ }).length).toBeGreaterThan(0);
+    const traceAnalysisLink = within(dialog).getByRole('link', { name: /问 AI 分析链路/ });
+    const traceAnalysisHref = traceAnalysisLink.getAttribute('href') ?? '';
+    const traceAnalysisParams = new URLSearchParams(traceAnalysisHref.split('?')[1] ?? '');
+    expect(traceAnalysisHref.startsWith('/assistant?')).toBe(true);
+    expect(traceAnalysisParams.get('reference_type')).toBe('assistant_chat_run');
+    expect(traceAnalysisParams.get('reference_id')).toBe('assistant_chat_run_trace');
+    expect(traceAnalysisParams.get('prompt')).toContain('执行诊断链路「AI 助手运行 assistant_chat_run_trace」');
+    expect(traceAnalysisParams.get('prompt')).toContain('model_gateway_log_assistant_trace');
+    expect(traceAnalysisParams.get('prompt')).toContain('最可能原因');
+    expect(within(dialog).getByRole('button', { name: /复制诊断包/ })).toBeInTheDocument();
     expect(within(dialog).getAllByText('AI 助手运行').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('model_gateway_log_assistant_trace').length).toBeGreaterThan(0);
     expect(fetchMock).toHaveBeenCalledWith(

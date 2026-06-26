@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.715 |
+| 功能版本 | v1.1.716 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.716 | 2026-06-26 | 补充执行诊断整条链路诊断包验收：详情页需提供“问 AI 分析链路”和“复制诊断包”，助手链接按根对象携带 prompt，包含失败节点和建议输出结构；`ExecutionTracesPage.test.tsx` 覆盖 | Codex |
 | v1.1.715 | 2026-06-26 | 补充定时作业工作台数据加载 hook 化验收：作业/运行/模板/插件/产品/AI/知识/模型网关/catalog 加载从主页面拆出后，`ScheduledJobsPage.test.tsx`、typecheck、lint 和真实 `/tasks/scheduled-jobs` 页面 smoke 必须通过 | Codex |
 | v1.1.714 | 2026-06-26 | 补充定时作业运行详情状态 hook 化验收：运行详情路由深链、结果写入记录聚焦、生成模板和复制本次配置继续由 `ScheduledJobsPage.test.tsx` 覆盖，typecheck、lint 和真实 `/tasks/scheduled-jobs` 页面 smoke 必须通过 | Codex |
 | v1.1.713 | 2026-06-26 | 补充插件管理 Runner 运维 hook 化验收：Runner 新增/编辑、安装包下载、测试诊断、Token 轮换、日志查看和取消任务由 `PluginsPage.test.tsx` 覆盖，typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |

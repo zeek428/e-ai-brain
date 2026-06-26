@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 执行诊断整条链路诊断包：详情页新增“问 AI 分析链路”和“复制诊断包”，按根对象携带脱敏链路摘要、关联 ID 和诊断节点进入 AI 助手，减少人工拼接失败上下文。
 - 执行诊断节点诊断摘要：列表和详情新增 `diagnostic_nodes`，从失败、取消、运行中或排队节点派生安全摘要，供页面诊断建议和 AI 助手共享，不返回节点 metadata。
 - 菜单资源与前端路由一致性门禁：新增 `test_menu_route_consistency.py`，校验 active 可导航菜单 path 均存在于前端静态 routes，并锁定研发任务、定时作业、插件管理、执行诊断等关键入口不回退旧路径。
 - DB-first 兼容层扫描：新增 `scripts/audit_memory_store_usage.py`，按读路径、写路径和 helper 对 `current_store.*` 残留输出 P0/P1/P2 分级，便于持续清理 MemoryStore 生产兼容路径。

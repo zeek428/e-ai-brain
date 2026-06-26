@@ -1,5 +1,5 @@
-import { LinkOutlined, RobotOutlined } from '@ant-design/icons';
-import { Alert, Button, Descriptions, Space, Table, Tag, Typography } from 'antd';
+import { CopyOutlined, LinkOutlined, RobotOutlined } from '@ant-design/icons';
+import { Alert, Button, Descriptions, Space, Table, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useMemo, type ReactNode } from 'react';
 
@@ -13,6 +13,7 @@ import { formatDisplayDateTime } from '../../../utils/dateTime';
 const { Text } = Typography;
 
 const ATTENTION_NODE_STATUSES = new Set(['cancelled', 'failed', 'pending', 'queued', 'running']);
+const DIAGNOSTIC_NODE_LIMIT = 5;
 const FAILED_NODE_STATUSES = new Set(['cancelled', 'failed']);
 
 type ExecutionTraceDetailContentProps = {
@@ -86,6 +87,104 @@ function assistantDiagnosticHref(
   return `/assistant?${params.toString()}`;
 }
 
+function attentionNodesForDetail(detail: ExecutionTraceDetailRecord) {
+  return detail.diagnostic_nodes?.length
+    ? detail.diagnostic_nodes
+    : detail.nodes.filter((node) => ATTENTION_NODE_STATUSES.has(node.status));
+}
+
+function buildDiagnosticPackage(
+  detail: ExecutionTraceDetailRecord,
+  attentionNodes: ExecutionTraceNodeRecord[],
+  sourceTypeLabel: (value?: string | null) => string,
+) {
+  return {
+    duration_ms: detail.duration_ms,
+    failed_node_count: detail.failed_node_count,
+    node_count: detail.node_count,
+    related_ids: detail.related_ids ?? {},
+    root_id: detail.root_id,
+    root_type: detail.root_type,
+    root_type_label: sourceTypeLabel(detail.root_type),
+    started_at: detail.started_at,
+    status: detail.status,
+    summary: detail.summary,
+    title: detail.title,
+    trace_id: detail.id,
+    updated_at: detail.updated_at,
+    diagnostic_nodes: attentionNodes.slice(0, DIAGNOSTIC_NODE_LIMIT).map((node) => ({
+      duration_ms: node.duration_ms,
+      error_code: node.error_code,
+      error_message: node.error_message,
+      label: node.label,
+      source_id: node.source_id,
+      source_type: node.source_type,
+      source_type_label: sourceTypeLabel(node.source_type),
+      status: node.status,
+      summary: node.summary,
+    })),
+  };
+}
+
+function buildTraceDiagnosticPrompt(
+  detail: ExecutionTraceDetailRecord,
+  attentionNodes: ExecutionTraceNodeRecord[],
+  sourceTypeLabel: (value?: string | null) => string,
+) {
+  const diagnosticPackage = buildDiagnosticPackage(detail, attentionNodes, sourceTypeLabel);
+  const relatedSummary = Object.entries(detail.related_ids ?? {})
+    .filter(([, ids]) => ids.length > 0)
+    .slice(0, 8)
+    .map(([sourceType, ids]) => `${sourceTypeLabel(sourceType)}: ${ids.slice(0, 5).join(', ')}`)
+    .join('\n');
+  const nodeLines = diagnosticPackage.diagnostic_nodes.length
+    ? diagnosticPackage.diagnostic_nodes.map((node, index) => (
+        [
+          `${index + 1}. ${node.source_type_label} ${node.source_id}`,
+          `状态: ${node.status}`,
+          node.error_code ? `错误码: ${node.error_code}` : '',
+          node.error_message ? `错误: ${node.error_message}` : '',
+          node.summary ? `摘要: ${node.summary}` : '',
+        ].filter(Boolean).join('；')
+      )).join('\n')
+    : '未发现失败、取消、运行中或排队节点。';
+  return [
+    `请基于执行诊断链路「${detail.title}」分析运行问题。`,
+    `链路: ${detail.id}，根对象: ${sourceTypeLabel(detail.root_type)} ${detail.root_id}，状态: ${detail.status}。`,
+    `节点统计: ${detail.node_count} 个节点，${detail.failed_node_count} 个失败，耗时 ${detail.duration_ms ?? '-'} ms。`,
+    detail.summary ? `链路摘要: ${detail.summary}` : '',
+    relatedSummary ? `关联对象:\n${relatedSummary}` : '',
+    `重点诊断节点:\n${nodeLines}`,
+    '请按“最可能原因 / 需要查看的证据 / 修复步骤 / 是否可重试”输出建议。',
+  ].filter(Boolean).join('\n\n');
+}
+
+function assistantTraceDiagnosticHref(
+  detail: ExecutionTraceDetailRecord,
+  attentionNodes: ExecutionTraceNodeRecord[],
+  sourceTypeLabel: (value?: string | null) => string,
+) {
+  const params = new URLSearchParams();
+  params.set('reference_type', detail.root_type);
+  params.set('reference_id', detail.root_id);
+  params.set('prompt', buildTraceDiagnosticPrompt(detail, attentionNodes, sourceTypeLabel));
+  return `/assistant?${params.toString()}`;
+}
+
+async function copyDiagnosticPackage(
+  detail: ExecutionTraceDetailRecord,
+  attentionNodes: ExecutionTraceNodeRecord[],
+  sourceTypeLabel: (value?: string | null) => string,
+) {
+  const clipboard = navigator.clipboard;
+  if (!clipboard?.writeText) {
+    message.warning('当前浏览器不支持剪贴板写入');
+    return;
+  }
+  await clipboard.writeText(JSON.stringify(buildDiagnosticPackage(detail, attentionNodes, sourceTypeLabel), null, 2));
+  message.success('已复制执行诊断包');
+}
+
 function TraceDiagnostics({
   detail,
   multilineText,
@@ -97,16 +196,31 @@ function TraceDiagnostics({
   sourceTypeLabel: (value?: string | null) => string;
   statusTag: (status?: string | null) => ReactNode;
 }) {
-  const attentionNodes = (detail.diagnostic_nodes?.length
-    ? detail.diagnostic_nodes
-    : detail.nodes.filter((node) => ATTENTION_NODE_STATUSES.has(node.status))
-  );
+  const attentionNodes = attentionNodesForDetail(detail);
   const failedNodes = attentionNodes.filter((node) => FAILED_NODE_STATUSES.has(node.status));
   if (attentionNodes.length === 0) {
     return (
       <Alert
+        action={(
+          <Space size={6} wrap>
+            <Button
+              href={assistantTraceDiagnosticHref(detail, attentionNodes, sourceTypeLabel)}
+              icon={<RobotOutlined />}
+              size="small"
+            >
+              问 AI 分析链路
+            </Button>
+            <Button
+              icon={<CopyOutlined />}
+              onClick={() => void copyDiagnosticPackage(detail, attentionNodes, sourceTypeLabel)}
+              size="small"
+            >
+              复制诊断包
+            </Button>
+          </Space>
+        )}
         title="诊断建议"
-        description="当前链路没有失败或运行中节点，可继续查看关联对象、节点关系和脱敏元数据确认写入结果。"
+        description="当前链路没有失败或运行中节点，可继续查看关联对象、节点关系和脱敏元数据确认写入结果，也可以将整条链路诊断包带入 AI 助手继续分析。"
         showIcon
         type="success"
       />
@@ -120,10 +234,29 @@ function TraceDiagnostics({
 
   return (
     <Alert
+      action={(
+        <Space size={6} wrap>
+          <Button
+            href={assistantTraceDiagnosticHref(detail, attentionNodes, sourceTypeLabel)}
+            icon={<RobotOutlined />}
+            size="small"
+            type="primary"
+          >
+            问 AI 分析链路
+          </Button>
+          <Button
+            icon={<CopyOutlined />}
+            onClick={() => void copyDiagnosticPackage(detail, attentionNodes, sourceTypeLabel)}
+            size="small"
+          >
+            复制诊断包
+          </Button>
+        </Space>
+      )}
       title="诊断建议"
       description={(
         <Space orientation="vertical" size={8} style={{ width: '100%' }}>
-          <Text>{alertSummary}，建议优先从下面的节点继续排查。</Text>
+          <Text>{alertSummary}，建议优先从下面的节点继续排查；诊断包只包含链路摘要、关联 ID 和脱敏节点信息。</Text>
           {attentionNodes.slice(0, 5).map((node) => (
             <Space
               align="start"
