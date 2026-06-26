@@ -28,6 +28,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 定时作业页面继续拆深：新增/编辑弹窗的执行链路节点构建抽到 `scheduledJobOrchestrationNodeBuilder`，主页面继续聚焦表单状态、数据加载和保存/试运行编排。
 - 插件管理删除保护继续收口：删除插件、连接或动作前同时识别定时作业旧单值字段和 `plugin_connection_ids` / `plugin_action_ids` 多选数组引用，并将占用聚合 helper 从主页面抽出。
 - 执行诊断筛选文案从“根类型”调整为“来源类型”，与 `source_type` 可定位根节点或任一执行节点的 API 语义保持一致。
 - 执行诊断深链契约继续收紧：可复用 `ExecutionTraceLink` 缺少 `source_type` 时不再生成仅按 ID 定位的歧义链接，API 与验收示例统一使用 `source_id + source_type`。
