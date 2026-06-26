@@ -6,7 +6,6 @@ import {
   Modal,
   Select,
   Space,
-  Tabs,
   Typography,
   message,
 } from 'antd';
@@ -62,12 +61,11 @@ import { ScheduledJobActionConfigSection } from './components/ScheduledJobAction
 import { ScheduledJobAiExecutionSection } from './components/ScheduledJobAiExecutionSection';
 import { ScheduledJobBasicInfoSection } from './components/ScheduledJobBasicInfoSection';
 import { ScheduledJobCodeRepositorySection } from './components/ScheduledJobCodeRepositorySection';
-import { ScheduledJobConfigTable } from './components/ScheduledJobConfigTable';
 import { ScheduledJobDataConnectionSection } from './components/ScheduledJobDataConnectionSection';
 import { ScheduledJobDryRunResultPanel } from './components/ScheduledJobDryRunResultPanel';
+import { ScheduledJobManagementTabs } from './components/ScheduledJobManagementTabs';
 import { ScheduledJobScheduleConfigSection } from './components/ScheduledJobScheduleConfigSection';
 import { ScheduledJobRunDetailModal } from './components/ScheduledJobRunDetailModal';
-import { ScheduledJobRunTable } from './components/ScheduledJobRunTable';
 import {
   ScheduledJobOrchestrationFlow,
   type ScheduledJobOrchestrationNode,
@@ -1336,59 +1334,38 @@ export default function ScheduledJobsPage() {
 
   return (
     <PageContainer title="定时作业">
-      <Tabs
-        activeKey={activeTab}
-        onChange={(key) => setActiveTab(key === 'runs' ? 'runs' : 'jobs')}
-        items={[
-          {
-            key: 'jobs',
-            label: '作业配置',
-            children: (
-              <ScheduledJobConfigTable
-                agentById={agentById}
-                confirmDeleteJob={confirmDeleteJob}
-                executionModeLabelMap={executionModeLabelMap}
-                formatResultActionLabels={formatResultActionLabels}
-                jobTypeLabelMap={jobTypeLabelMap}
-                jobs={jobs}
-                loading={loading}
-                modelGatewayConfigById={modelGatewayConfigById}
-                onCopyJob={openCopyJobModal}
-                onCreateJob={openCreateJobModal}
-                onEditJob={openEditJobModal}
-                onReload={reload}
-                onRunJob={triggerJob}
-                pluginActionById={pluginActionById}
-                pluginConnectionById={pluginConnectionById}
-                runningJobId={runningJobId}
-                scheduleTypeLabelMap={scheduleTypeLabelMap}
-              />
-            ),
-          },
-          {
-            key: 'runs',
-            label: '运行记录',
-            children: (
-              <ScheduledJobRunTable
-                loading={loading}
-                observability={runObservability}
-                onCopyRun={openCopyRunModal}
-                onOpenRunDetail={(row) => {
-                  setLinkedResultWriteRecordId(undefined);
-                  setSelectedRun(row);
-                }}
-                onReload={reload}
-                onRerun={(row) => {
-                  if (row.scheduled_job_id) {
-                    void triggerJobRun(row.scheduled_job_id, 'manual_rerun', row.id);
-                  }
-                }}
-                runningJobId={runningJobId}
-                runs={runs}
-              />
-            ),
-          },
-        ]}
+      <ScheduledJobManagementTabs
+        activeTab={activeTab}
+        agentById={agentById}
+        confirmDeleteJob={confirmDeleteJob}
+        executionModeLabelMap={executionModeLabelMap}
+        formatResultActionLabels={formatResultActionLabels}
+        jobTypeLabelMap={jobTypeLabelMap}
+        jobs={jobs}
+        loading={loading}
+        modelGatewayConfigById={modelGatewayConfigById}
+        pluginActionById={pluginActionById}
+        pluginConnectionById={pluginConnectionById}
+        runObservability={runObservability}
+        runningJobId={runningJobId}
+        runs={runs}
+        scheduleTypeLabelMap={scheduleTypeLabelMap}
+        onCopyJob={openCopyJobModal}
+        onCopyRun={openCopyRunModal}
+        onCreateJob={openCreateJobModal}
+        onEditJob={openEditJobModal}
+        onOpenRunDetail={(row) => {
+          setLinkedResultWriteRecordId(undefined);
+          setSelectedRun(row);
+        }}
+        onReload={reload}
+        onRerun={(row) => {
+          if (row.scheduled_job_id) {
+            void triggerJobRun(row.scheduled_job_id, 'manual_rerun', row.id);
+          }
+        }}
+        onRunJob={triggerJob}
+        onTabChange={setActiveTab}
       />
 
       <Modal
