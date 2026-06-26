@@ -13,47 +13,28 @@ import {
   createScheduledJob,
   deleteScheduledJob,
   dryRunScheduledJob,
-  fetchActiveProductOptions,
-  fetchAiAgents,
-  fetchAiSkills,
-  fetchManagementKnowledge,
-  fetchModelGatewayConfigs,
-  fetchPluginActions,
-  fetchPluginConnections,
   fetchProductGitRepositories,
-  fetchScheduledJobCatalog,
-  fetchScheduledJobTemplates,
-  fetchScheduledJobRunObservability,
-  fetchScheduledJobRuns,
-  fetchScheduledJobs,
   generateScheduledJobTemplateFromRun,
   rememberAssistantDraftResolution,
   runScheduledJob,
   testPluginConnection,
   updateScheduledJob,
   updateAssistantActionDraft,
-  type AiAgentRecord,
-  type AiSkillRecord,
   type AssistantScheduledJobDraft,
   type PluginActionRecord,
   type PluginConnectionTestResult,
-  type PluginConnectionRecord,
-  type ProductFilterOption,
   type ProductGitRepositoryOption,
   type ScheduledJobRecord,
   type ScheduledJobDryRunResult,
-  type ScheduledJobCatalogRecord,
-  type ScheduledJobRunObservability,
   type ScheduledJobRunRecord,
   type ScheduledJobTemplateRecord,
 } from '../../services/aiBrain';
-import type { ModelGatewayConfigRecord } from '../../data/management';
-import type { KnowledgeRecord } from '../../data/management';
 import { ScheduledJobFormModal } from './components/ScheduledJobFormModal';
 import { ScheduledJobManagementTabs } from './components/ScheduledJobManagementTabs';
 import { ScheduledJobRunDetailModal } from './components/ScheduledJobRunDetailModal';
 import { useScheduledJobCatalogOptions } from './components/scheduledJobCatalogOptions';
 import { buildScheduledJobOrchestrationNodes } from './components/scheduledJobOrchestrationNodeBuilder';
+import { useScheduledJobWorkspaceData } from './components/useScheduledJobWorkspaceData';
 import {
   cloneResultActions,
   codeInspectionUsesNativeScan,
@@ -97,20 +78,24 @@ function writeStrategyLabelFromAction(action: PluginActionRecord): string {
 
 export default function ScheduledJobsPage() {
   const [form] = Form.useForm<ScheduledJobFormValues>();
-  const [jobs, setJobs] = useState<ScheduledJobRecord[]>([]);
-  const [runs, setRuns] = useState<ScheduledJobRunRecord[]>([]);
-  const [runObservability, setRunObservability] = useState<ScheduledJobRunObservability | undefined>();
-  const [jobTemplates, setJobTemplates] = useState<ScheduledJobTemplateRecord[]>([]);
-  const [pluginActions, setPluginActions] = useState<PluginActionRecord[]>([]);
-  const [pluginConnections, setPluginConnections] = useState<PluginConnectionRecord[]>([]);
-  const [products, setProducts] = useState<ProductFilterOption[]>([]);
+  const {
+    agents,
+    jobCatalog,
+    jobTemplates,
+    jobs,
+    knowledgeDocuments,
+    loading,
+    modelGatewayConfigs,
+    pluginActions,
+    pluginConnections,
+    products,
+    reload,
+    runObservability,
+    runs,
+    skills,
+  } = useScheduledJobWorkspaceData();
   const [productRepositories, setProductRepositories] = useState<ProductGitRepositoryOption[]>([]);
   const [productRepositoriesLoading, setProductRepositoriesLoading] = useState(false);
-  const [agents, setAgents] = useState<AiAgentRecord[]>([]);
-  const [skills, setSkills] = useState<AiSkillRecord[]>([]);
-  const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeRecord[]>([]);
-  const [modelGatewayConfigs, setModelGatewayConfigs] = useState<ModelGatewayConfigRecord[]>([]);
-  const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<ScheduledJobRecord | undefined>();
   const [assistantDraftPayload, setAssistantDraftPayload] = useState<Record<string, unknown> | undefined>();
@@ -128,7 +113,6 @@ export default function ScheduledJobsPage() {
   const [testingConnectionId, setTestingConnectionId] = useState<string | undefined>();
   const [dryRunResult, setDryRunResult] = useState<ScheduledJobDryRunResult | undefined>();
   const [dryRunning, setDryRunning] = useState(false);
-  const [jobCatalog, setJobCatalog] = useState<ScheduledJobCatalogRecord | undefined>();
   const selectedConnectionEnvironment = Form.useWatch('connection_environment', form);
   const selectedPluginConnectionIds = Form.useWatch('plugin_connection_ids', form);
   const selectedPluginActionIds = Form.useWatch('plugin_action_ids', form);
@@ -660,68 +644,6 @@ export default function ScheduledJobsPage() {
       skills,
     ],
   );
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [
-        nextJobs,
-        nextRuns,
-        nextRunObservability,
-        nextJobTemplates,
-        nextJobCatalog,
-        nextPluginActions,
-        nextPluginConnections,
-        nextProducts,
-        nextAgents,
-        nextSkills,
-        nextKnowledgeDocuments,
-        nextModelGatewayConfigs,
-      ] =
-        await Promise.all([
-          fetchScheduledJobs(),
-          fetchScheduledJobRuns(),
-          fetchScheduledJobRunObservability(),
-          fetchScheduledJobTemplates(),
-          fetchScheduledJobCatalog().catch(() => undefined),
-          fetchPluginActions(),
-          fetchPluginConnections(),
-          fetchActiveProductOptions(),
-          fetchAiAgents(),
-          fetchAiSkills(),
-          fetchManagementKnowledge(),
-          fetchModelGatewayConfigs(),
-        ]);
-      setJobs(nextJobs);
-      setRuns(nextRuns);
-      setRunObservability(nextRunObservability);
-      setJobTemplates(nextJobTemplates);
-      if (nextJobCatalog) {
-        setJobCatalog(nextJobCatalog);
-      }
-      setPluginActions(nextPluginActions);
-      setPluginConnections(nextPluginConnections);
-      setProducts(nextProducts);
-      setAgents(nextAgents.filter((agent) => agent.status === 'active'));
-      setSkills(nextSkills.filter((skill) => skill.status === 'active'));
-      setKnowledgeDocuments(
-        nextKnowledgeDocuments.filter((document) =>
-          ['indexed', 'text_indexed', 'vector_indexed'].includes(document.status),
-        ),
-      );
-      setModelGatewayConfigs(nextModelGatewayConfigs.filter((config) => config.status === 'active'));
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : '定时作业加载失败');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    queueMicrotask(() => {
-      void reload();
-    });
-  }, [reload]);
 
   useEffect(() => {
     const routeParams = scheduledJobRouteParams();
