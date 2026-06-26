@@ -1,5 +1,5 @@
 import { PageContainer } from '@ant-design/pro-components';
-import { Form, Modal, Space, Tabs, Typography, message } from 'antd';
+import { Form, Modal, Space, Typography, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
@@ -63,12 +63,8 @@ import {
   type PluginActionFormValues,
 } from './components/PluginActionModal';
 import { PluginModal, type PluginFormValues } from './components/PluginModal';
-import { PluginActionTable } from './components/PluginActionTable';
-import { PluginConnectionTable } from './components/PluginConnectionTable';
-import { PluginMarketplaceTable } from './components/PluginMarketplaceTable';
-import { PluginRunnerTable } from './components/PluginRunnerTable';
+import { PluginManagementTabs } from './components/PluginManagementTabs';
 import { PluginRunnerModal } from './components/PluginRunnerModal';
-import { PluginTable } from './components/PluginTable';
 import {
   PluginConnectionTestDiagnosticsContent,
   RunnerTestDiagnosticsContent,
@@ -1518,101 +1514,49 @@ export default function PluginsPage() {
   return (
     <PageContainer title="插件管理">
       <PluginWorkspaceGuide />
-      <Tabs
-        defaultActiveKey="plugins"
-        items={[
-          {
-            key: 'marketplace',
-            label: '插件市场',
-            children: (
-              <PluginMarketplaceTable
-                items={marketplaceItems}
-                loading={loading}
-                onCreateAction={openCreateActionForMarketplacePlugin}
-                onCreateConnection={openCreateConnectionForPlugin}
-                onReload={reload}
-              />
-            ),
-          },
-          {
-            key: 'plugins',
-            label: '插件',
-            children: (
-              <PluginTable
-                loading={loading}
-                plugins={plugins}
-                onCopyOfficialPlugin={(plugin) => void copyOfficialPlugin(plugin)}
-                onCreatePlugin={openCreatePluginModal}
-                onDeletePlugin={confirmDeletePlugin}
-                onEditPlugin={openEditPluginModal}
-                onReload={reload}
-              />
-            ),
-          },
-          {
-            key: 'connections',
-            label: '连接',
-            children: (
-              <PluginConnectionTable
-                connections={connections}
-                environmentFilter={connectionEnvironmentFilter}
-                environmentLabels={connectionEnvironmentLabelByValue}
-                environmentOptions={connectionEnvironmentOptions}
-                loading={loading}
-                pluginById={pluginById}
-                testingConnectionId={testingConnectionId}
-                onCreateConnection={openCreateConnectionModal}
-                onDeleteConnection={confirmDeleteConnection}
-                onEditConnection={openEditConnectionModal}
-                onEnvironmentFilterChange={setConnectionEnvironmentFilter}
-                onReload={reload}
-                onTestConnection={runConnectionTest}
-              />
-            ),
-          },
-          {
-            key: 'runners',
-            label: '执行器',
-            children: (
-              <PluginRunnerTable
-                loading={loading}
-                runners={runners}
-                testingRunnerId={testingRunnerId}
-                onCopySetupCommand={copyRunnerSetupCommand}
-                onCreateRunner={openCreateRunnerModal}
-                onDeleteRunner={confirmDeleteRunner}
-                onDownloadInstallPackage={(runner) => void downloadRunnerInstallPackage(runner)}
-                onEditRunner={openEditRunnerModal}
-                onOpenLogs={(runner) => void openRunnerLogs(runner)}
-                onReload={reload}
-                onRotateToken={rotateRunnerToken}
-                onTestRunner={(runner) => void runRunnerTest(runner)}
-              />
-            ),
-          },
-          {
-            key: 'actions',
-            label: '动作',
-            children: (
-              <PluginActionTable
-                actions={actions}
-                connectionById={connectionById}
-                formatWriteTarget={(writeTarget) => resultWriteTargetLabel(
-                  writeTarget ?? DEFAULT_RESULT_WRITE_TARGET,
-                  resultWriteTargets,
-                )}
-                loading={loading}
-                pluginById={pluginById}
-                onCreateAction={openCreateActionModal}
-                onDeleteAction={confirmDeleteAction}
-                onEditAction={openEditActionModal}
-                onReload={reload}
-                onRunAction={runAction}
-                onTrialAction={openTrialModal}
-              />
-            ),
-          },
-        ]}
+      <PluginManagementTabs
+        actions={actions}
+        connectionById={connectionById}
+        connectionEnvironmentFilter={connectionEnvironmentFilter}
+        connectionEnvironmentLabels={connectionEnvironmentLabelByValue}
+        connectionEnvironmentOptions={connectionEnvironmentOptions}
+        connections={connections}
+        formatWriteTarget={(writeTarget) => resultWriteTargetLabel(
+          writeTarget ?? DEFAULT_RESULT_WRITE_TARGET,
+          resultWriteTargets,
+        )}
+        loading={loading}
+        marketplaceItems={marketplaceItems}
+        pluginById={pluginById}
+        plugins={plugins}
+        runners={runners}
+        testingConnectionId={testingConnectionId}
+        testingRunnerId={testingRunnerId}
+        onCopyOfficialPlugin={(plugin) => void copyOfficialPlugin(plugin)}
+        onCopyRunnerSetupCommand={copyRunnerSetupCommand}
+        onCreateAction={openCreateActionModal}
+        onCreateActionForMarketplacePlugin={openCreateActionForMarketplacePlugin}
+        onCreateConnection={openCreateConnectionModal}
+        onCreateConnectionForPlugin={openCreateConnectionForPlugin}
+        onCreatePlugin={openCreatePluginModal}
+        onCreateRunner={openCreateRunnerModal}
+        onDeleteAction={confirmDeleteAction}
+        onDeleteConnection={confirmDeleteConnection}
+        onDeletePlugin={confirmDeletePlugin}
+        onDeleteRunner={confirmDeleteRunner}
+        onDownloadRunnerInstallPackage={(runner) => void downloadRunnerInstallPackage(runner)}
+        onEditAction={openEditActionModal}
+        onEditConnection={openEditConnectionModal}
+        onEditPlugin={openEditPluginModal}
+        onEditRunner={openEditRunnerModal}
+        onEnvironmentFilterChange={setConnectionEnvironmentFilter}
+        onOpenRunnerLogs={(runner) => void openRunnerLogs(runner)}
+        onReload={reload}
+        onRotateRunnerToken={rotateRunnerToken}
+        onRunAction={runAction}
+        onTestConnection={runConnectionTest}
+        onTestRunner={(runner) => void runRunnerTest(runner)}
+        onTrialAction={openTrialModal}
       />
 
       <RunnerTokenRotationNotice

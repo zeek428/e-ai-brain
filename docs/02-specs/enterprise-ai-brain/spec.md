@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.581 |
+| 功能版本 | v1.1.582 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.582 | 2026-06-26 | 插件管理前端页签装配继续组件化：插件市场、插件、连接、执行器、动作五个页签收口到 `PluginManagementTabs`，主页面继续聚焦数据加载、弹窗状态和操作编排 | Codex |
 | v1.1.581 | 2026-06-26 | DB-first 兼容层专项扫描升级为回归门禁：`audit_memory_store_usage.py` 新增 `--fail-on-p1`，测试直接扫描当前 `apps/api/app` 并要求 P0/P1 残留为 0，确保生产路径不再回退到直接 `current_store` 读写 | Codex |
 | v1.1.580 | 2026-06-26 | 角色治理列表补齐服务端管理列表契约：`GET /api/system/roles` 支持分页、筛选、排序和 `query/performance` 观测，前端角色管理页不再拉取全量角色后本地分页过滤；查询权限对齐为 `system.roles.read` 或 `system.roles.manage` | Codex |
 | v1.1.579 | 2026-06-26 | AI 助手草案任务台继续组件化：摘要指标条、草案详情弹窗和草案展示 helper 分别收口到 `AssistantDraftSummaryStrip`、`AssistantDraftDetailModal` 与 `assistantDraftWorkbenchPresentation`，主页面只保留远程查询、确认/取消和详情打开编排 | Codex |

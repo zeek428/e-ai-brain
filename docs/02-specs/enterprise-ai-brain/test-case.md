@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.688 |
+| 功能版本 | v1.1.689 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.689 | 2026-06-26 | 补充插件管理页签组件化验收：`PluginManagementTabs` 承载插件市场、插件、连接、执行器和动作五个页签装配，插件页主文件继续保留数据加载、弹窗和事件编排；`PluginsPage.test.tsx`、typecheck 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.688 | 2026-06-26 | 补充 DB-first 兼容层持续门禁验收：`test_memory_store_usage_audit.py` 必须扫描当前 `apps/api/app` 并确认 P0/P1 为 0；扫描脚本提供 `--fail-on-p1`，用于 CI 同时阻断直接写/helper 和直接读 `current_store` 残留 | Codex |
 | v1.1.687 | 2026-06-26 | 补充角色治理列表服务端查询验收：`GET /api/system/roles` 必须支持分页、筛选、排序、非法排序字段校验和 `query/performance` 观测；角色管理页请求必须携带远程分页参数，不得退回前端全量过滤 | Codex |
 | v1.1.686 | 2026-06-26 | 补充 AI 助手草案任务台组件化验收：摘要指标条、详情弹窗和草案状态/风险/校验展示 helper 必须从页面主文件拆出，页面继续保留待确认、失败、已采纳、采纳率、处理率、用户修改率、来源链路、继续编辑、确认和取消能力；`AssistantDraftsPage.test.tsx`、typecheck、lint 和真实 `/assistant/drafts` 页面 smoke 必须通过 | Codex |
