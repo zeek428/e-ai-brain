@@ -42,7 +42,7 @@ function RelatedIds({
           <Tag>{sourceTypeLabel(sourceType)}</Tag>
           {ids.slice(0, 8).map((id) => (
             <Tag key={id}>
-              <Typography.Link href={executionTraceSourceHref(id)}>{id}</Typography.Link>
+              <Typography.Link href={executionTraceSourceHref(id, sourceType)}>{id}</Typography.Link>
             </Tag>
           ))}
           {ids.length > 8 ? <Text type="secondary">等 {ids.length} 个</Text> : null}
@@ -56,9 +56,12 @@ function jsonPreview(value?: Record<string, unknown>) {
   return <pre className="audit-json">{JSON.stringify(value ?? {}, null, 2)}</pre>;
 }
 
-function executionTraceSourceHref(sourceId?: string | null) {
+function executionTraceSourceHref(sourceId?: string | null, sourceType?: string | null) {
   const params = new URLSearchParams();
   params.set('source_id', String(sourceId || ''));
+  if (sourceType) {
+    params.set('source_type', sourceType);
+  }
   return `/governance/execution-traces?${params.toString()}`;
 }
 
@@ -130,7 +133,7 @@ function TraceDiagnostics({
                 <Space size={6} wrap>
                   <Tag>{sourceTypeLabel(node.source_type)}</Tag>
                   {statusTag(node.status)}
-                  <Typography.Link href={executionTraceSourceHref(node.source_id)}>
+                  <Typography.Link href={executionTraceSourceHref(node.source_id, node.source_type)}>
                     {node.source_id}
                   </Typography.Link>
                 </Space>
@@ -138,7 +141,7 @@ function TraceDiagnostics({
               </Space>
               <Space size={6} wrap>
                 <Button
-                  href={executionTraceSourceHref(node.source_id)}
+                  href={executionTraceSourceHref(node.source_id, node.source_type)}
                   icon={<LinkOutlined />}
                   size="small"
                 >
@@ -195,7 +198,7 @@ export function ExecutionTraceDetailContent({
         render: (_, row) => (
           <Typography.Link
             ellipsis
-            href={executionTraceSourceHref(row.source_id)}
+            href={executionTraceSourceHref(row.source_id, row.source_type)}
             title={row.source_id}
             style={{ display: 'block', maxWidth: '100%' }}
           >

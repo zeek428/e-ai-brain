@@ -287,6 +287,14 @@ describe('ExecutionTracesPage', () => {
     expect(within(dialog).getAllByText('plugin_invocation_log_trace').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('model_gateway_log_trace').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('result_write_record_scheduled_job_run_trace').length).toBeGreaterThan(0);
+    expect(
+      within(dialog)
+        .getAllByRole('link', { name: 'plugin_invocation_log_trace' })
+        .some((link) =>
+          link.getAttribute('href') ===
+          '/governance/execution-traces?source_id=plugin_invocation_log_trace&source_type=plugin_invocation_log',
+        ),
+    ).toBe(true);
     expect(within(dialog).getByText('dispatches')).toBeInTheDocument();
     expect(within(dialog).getByText('writes_result')).toBeInTheDocument();
     expect(within(dialog).queryByText('secret-run-token')).not.toBeInTheDocument();
@@ -308,6 +316,14 @@ describe('ExecutionTracesPage', () => {
 
     expect(within(dialog).getByText(/发现 2 个失败节点/)).toBeInTheDocument();
     expect(within(dialog).getAllByRole('link', { name: 'model_gateway_log_assistant_trace' }).length).toBeGreaterThan(0);
+    expect(
+      within(dialog)
+        .getAllByRole('link', { name: 'model_gateway_log_assistant_trace' })
+        .some((link) =>
+          link.getAttribute('href') ===
+          '/governance/execution-traces?source_id=model_gateway_log_assistant_trace&source_type=model_gateway_log',
+        ),
+    ).toBe(true);
     expect(within(dialog).getAllByRole('link', { name: /问 AI/ }).length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('AI 助手运行').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('model_gateway_log_assistant_trace').length).toBeGreaterThan(0);
