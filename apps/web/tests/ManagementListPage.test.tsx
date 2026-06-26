@@ -115,4 +115,36 @@ describe('ManagementListPage', () => {
       ]);
     });
   });
+
+  it('shows remote query performance and slow query warnings', () => {
+    render(
+      <ManagementListPage
+        breadcrumbGroup="系统管理"
+        columns={[{ dataIndex: 'name', title: '名称' }]}
+        dataSource={[{ id: 'row_1', name: '研发任务' }]}
+        filters={[]}
+        remote={{
+          onChange: () => {},
+          page: 1,
+          pageSize: 10,
+          performance: {
+            duration_ms: 620,
+            p95_target_ms: 300,
+            result_count: 1,
+            slow: true,
+            slow_threshold_ms: 300,
+            total: 1,
+          },
+          total: 1,
+        }}
+        rowKey="id"
+        tableTitle="测试列表"
+        title="测试管理"
+      />,
+    );
+
+    expect(screen.getByText('查询 620ms')).toBeInTheDocument();
+    expect(screen.getByText('列表查询较慢')).toBeInTheDocument();
+    expect(screen.getByText(/当前查询耗时 620ms，慢查询阈值 300ms/)).toBeInTheDocument();
+  });
 });

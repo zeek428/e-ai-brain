@@ -32,6 +32,7 @@ import {
   fetchSystemPermissionDiagnostics,
   fetchSystemRoleList,
   setSystemRoleStatus,
+  type RemoteListPerformance,
   updateSystemRole,
   updateSystemRoleMenus,
   updateSystemRolePermissions,
@@ -485,6 +486,7 @@ export default function RolesPage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: RoleManagementRow[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -519,6 +521,7 @@ export default function RolesPage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows.map(mapRoleRow),
         status: 'ready',
         total: result.total,
@@ -541,6 +544,7 @@ export default function RolesPage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows.map(mapRoleRow),
             status: 'ready',
             total: result.total,
@@ -983,6 +987,7 @@ export default function RolesPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="code"

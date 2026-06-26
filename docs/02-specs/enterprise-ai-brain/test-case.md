@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.695 |
+| 功能版本 | v1.1.696 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.696 | 2026-06-26 | 补充管理列表性能观测验收：统一列表底座必须展示远程分页查询耗时，`performance.slow=true` 时显示慢查询阈值和排查提示；需求、任务、Bug、用户洞察、代码巡检和角色列表需透传服务端 `performance` 元数据，`ManagementListPage.test.tsx` 覆盖查询耗时标签和慢查询提示 | Codex |
 | v1.1.695 | 2026-06-26 | 补充 AI 助手页草案详情弹窗组件化验收：`AssistantDraftDetailModal` 承载 Payload、对比来源、字段差异和校验问题展示，草案卡主体继续保留确认、取消、详情打开和资源追踪编排；`AssistantPage.test.tsx`、typecheck、lint 和真实 `/assistant` 页面 smoke 必须通过 | Codex |
 | v1.1.694 | 2026-06-26 | 补充 AI 助手草案应用前预检组件化验收：`AssistantDraftPreviewBlock` 承载字段差异、校验问题和修复动作入口，`assistantDraftPreviewHelpers` 统一卡片与详情中的差异值格式化；`AssistantPage.test.tsx`、typecheck、lint 和真实 `/assistant` 页面 smoke 必须通过 | Codex |
 | v1.1.693 | 2026-06-26 | 补充 AI 助手草案配置向导组件化验收：`AssistantDraftWizardBlock` 承载向导步骤、AI 生成步骤草案、前置草案和手动调整入口；`AssistantPage.test.tsx`、typecheck、lint 和真实 `/assistant` 页面 smoke 必须通过 | Codex |

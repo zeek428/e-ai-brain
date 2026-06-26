@@ -11,6 +11,7 @@ import {
   fetchProductContextOptions,
   fetchUserInsightList,
   updateUserFeedback,
+  type RemoteListPerformance,
   type UserInsightListQuery,
   type UserFeedbackCreatePayload,
   type UserInsightRecord,
@@ -256,6 +257,7 @@ export default function InsightsPage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: UserInsightRecord[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -273,6 +275,7 @@ export default function InsightsPage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -301,6 +304,7 @@ export default function InsightsPage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -428,6 +432,7 @@ export default function InsightsPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

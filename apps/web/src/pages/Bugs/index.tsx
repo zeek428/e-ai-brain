@@ -18,6 +18,7 @@ import {
   fetchManagementBugs,
   fetchManagementBugList,
   type BugListQuery,
+  type RemoteListPerformance,
   updateManagementBug,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
@@ -173,6 +174,7 @@ export default function BugsPage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: BugRecord[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -241,6 +243,7 @@ export default function BugsPage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -264,6 +267,7 @@ export default function BugsPage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -582,6 +586,7 @@ export default function BugsPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

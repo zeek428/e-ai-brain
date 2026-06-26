@@ -57,6 +57,7 @@ import {
   type GitLabMergeRequestSnapshot,
   type GitLabMergeRequestPreview,
   type ProductGitRepositoryOption,
+  type RemoteListPerformance,
   type TaskWritebackResultRecord,
   startTaskCenterTask,
   submitTaskCenterMoreInfo,
@@ -136,6 +137,7 @@ type TaskRowsState = {
   error?: RemoteRowsError;
   page: number;
   pageSize: number;
+  performance?: RemoteListPerformance;
   rows: TaskCenterTaskRecord[];
   status: 'error' | 'loading' | 'ready';
   total: number;
@@ -392,6 +394,7 @@ export default function TaskCenterPage() {
           setTaskRowsState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -444,6 +447,7 @@ export default function TaskCenterPage() {
       setTaskRowsState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -1269,6 +1273,7 @@ export default function TaskCenterPage() {
           onChange: handleTaskQueryChange,
           page: taskRowsState.page,
           pageSize: taskRowsState.pageSize,
+          performance: taskRowsState.performance,
           total: taskRowsState.total,
         }}
         rowKey="id"

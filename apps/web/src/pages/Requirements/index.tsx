@@ -29,6 +29,7 @@ import {
   fetchRequirementProductContextOptions,
   generateRequirementTask,
   rejectManagementRequirement,
+  type RemoteListPerformance,
   type RequirementFullChainRecord,
   type RequirementListQuery,
   updateManagementRequirement,
@@ -193,6 +194,7 @@ export default function RequirementsPage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: RequirementRecord[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -230,6 +232,7 @@ export default function RequirementsPage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -253,6 +256,7 @@ export default function RequirementsPage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -949,6 +953,7 @@ export default function RequirementsPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

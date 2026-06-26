@@ -41,7 +41,27 @@ type ListResponse<T> = {
   next_cursor?: string | null;
   page?: number;
   page_size?: number;
+  performance?: RemoteListPerformance;
+  query?: RemoteListQueryEcho;
   total: number;
+};
+
+export type RemoteListPerformance = {
+  duration_ms?: number;
+  p95_target_ms?: number;
+  result_count?: number;
+  slow?: boolean;
+  slow_threshold_ms?: number;
+  total?: number;
+};
+
+export type RemoteListQueryEcho = {
+  filters?: Record<string, unknown>;
+  name?: string;
+  page?: number;
+  page_size?: number;
+  sort_by?: string;
+  sort_order?: string;
 };
 
 const PRODUCT_CONTEXT_PAGE_SIZE = 100;
@@ -1282,6 +1302,7 @@ export type PluginActionListQuery = RemoteListQuery & {
 export type RemoteListResult<Row> = {
   page: number;
   pageSize: number;
+  performance?: RemoteListPerformance;
   rows: Row[];
   total: number;
 };
@@ -1289,6 +1310,7 @@ export type RemoteListResult<Row> = {
 export type TaskCenterTaskListResult = {
   page: number;
   pageSize: number;
+  performance?: RemoteListPerformance;
   rows: TaskCenterTaskRecord[];
   total: number;
 };
@@ -4762,6 +4784,7 @@ export async function fetchSystemRoleList(
   return {
     page: roles.page ?? query.page ?? 1,
     pageSize: roles.page_size ?? query.pageSize ?? 10,
+    performance: roles.performance,
     rows: roles.items.map(mapSystemRole),
     total: roles.total,
   };
@@ -5994,6 +6017,7 @@ export async function fetchPluginConnectionsPage(
   return {
     page: response.page ?? query.page ?? 1,
     pageSize: response.page_size ?? query.pageSize ?? 10,
+    performance: response.performance,
     rows: response.items,
     total: response.total,
   };
@@ -6583,7 +6607,9 @@ function appendCodeInspectionQuery(params: URLSearchParams, query: CodeInspectio
   appendQueryParam(params, 'title', query.title);
 }
 
-export async function fetchCodeInspectionReports(query: CodeInspectionListQuery = {}) {
+export async function fetchCodeInspectionReports(
+  query: CodeInspectionListQuery = {},
+): Promise<RemoteListResult<CodeInspectionReportRecord>> {
   const token = requireAccessToken();
   const params = new URLSearchParams();
   appendQueryParam(params, 'page', query.page ?? 1);
@@ -6806,6 +6832,7 @@ export async function fetchManagementRequirementList(
   return {
     page: requirements.page ?? query.page ?? 1,
     pageSize: requirements.page_size ?? query.pageSize ?? 10,
+    performance: requirements.performance,
     rows: requirements.items.map(mapRequirementRecord),
     total: requirements.total,
   };
@@ -7562,6 +7589,7 @@ export async function fetchManagementBugList(
   return {
     page: bugs.page ?? query.page ?? 1,
     pageSize: bugs.page_size ?? query.pageSize ?? 10,
+    performance: bugs.performance,
     rows: bugs.items.map(mapBugRecord),
     total: bugs.total,
   };
@@ -7660,6 +7688,7 @@ export async function fetchTaskCenterTasks(
   return {
     page: tasks.page ?? query.page ?? 1,
     pageSize: tasks.page_size ?? query.pageSize ?? 10,
+    performance: tasks.performance,
     rows: tasks.items.map(mapTaskRecord),
     total: tasks.total,
   };
@@ -8790,6 +8819,7 @@ export async function fetchUserInsightList(
   return {
     page: insights.page ?? query.page ?? 1,
     pageSize: insights.page_size ?? query.pageSize ?? 10,
+    performance: insights.performance,
     rows: insights.items.map(mapUserInsightRecord),
     total: insights.total,
   };

@@ -16,6 +16,7 @@ import {
   type CodeInspectionListQuery,
   type CodeInspectionNotificationRecord,
   type CodeInspectionReportRecord,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 import { formatDisplayDateTime } from '../../utils/dateTime';
 import { formatMutationError } from '../../utils/managementCrud';
@@ -673,6 +674,7 @@ export default function CodeInspectionsPage() {
   const [listState, setListState] = useState<{
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: CodeInspectionReportRecord[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -700,6 +702,7 @@ export default function CodeInspectionsPage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -898,6 +901,7 @@ export default function CodeInspectionsPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

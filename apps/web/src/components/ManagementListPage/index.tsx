@@ -30,6 +30,7 @@ type ManagementListPageProps<Row extends Record<string, unknown>> = {
     onChange: (query: ManagementListQuery) => void;
     page: number;
     pageSize: number;
+    performance?: ManagementListPerformance;
     total: number;
   };
   rowKey: keyof Row & string;
@@ -50,6 +51,15 @@ export type ManagementListQuery = {
   pageSize: number;
   sortField?: string;
   sortOrder?: 'ascend' | 'descend';
+};
+
+export type ManagementListPerformance = {
+  duration_ms?: number;
+  p95_target_ms?: number;
+  result_count?: number;
+  slow?: boolean;
+  slow_threshold_ms?: number;
+  total?: number;
 };
 
 const DEFAULT_ACTION_COLUMN_WIDTH = 220;
@@ -244,6 +254,10 @@ function toValueEnum(options?: Array<{ label: string; value: string }>) {
   }, {});
 }
 
+function formatDuration(value?: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? `${Math.max(0, value)}ms` : '-';
+}
+
 export function ManagementListPage<Row extends Record<string, unknown>>({
   beforeTable,
   breadcrumbGroup,
@@ -280,6 +294,8 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
   const [tableFormVersion, setTableFormVersion] = useState(0);
   const resolvedTableLayout = tableLayout ?? 'fixed';
   const selectedSavedView = savedFilterViews.find((view) => view.id === selectedSavedViewId);
+  const queryPerformance = remote?.performance;
+  const isSlowListQuery = Boolean(queryPerformance?.slow);
 
   const proTableColumns = useMemo<ProColumns<Row>[]>(
     () => [
@@ -477,10 +493,25 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
       </Button>
     </Space>
   ) : null;
+  const queryPerformanceToolbar =
+    queryPerformance && queryPerformance.duration_ms !== undefined ? (
+      <Tag color={isSlowListQuery ? 'orange' : 'default'} key="query-performance">
+        查询 {formatDuration(queryPerformance.duration_ms)}
+      </Tag>
+    ) : null;
 
   const listContent = (
     <>
       {notice ? <Alert className="management-list-alert" showIcon title={notice} type="warning" /> : null}
+      {isSlowListQuery ? (
+        <Alert
+          className="management-list-alert"
+          description={`当前查询耗时 ${formatDuration(queryPerformance?.duration_ms)}，慢查询阈值 ${formatDuration(queryPerformance?.slow_threshold_ms ?? queryPerformance?.p95_target_ms)}。可结合接口 trace_id、筛选条件和数据库慢查询日志排查。`}
+          showIcon
+          title="列表查询较慢"
+          type="warning"
+        />
+      ) : null}
       {beforeTable}
       <ProTable<Row>
         cardBordered
@@ -530,6 +561,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
         tableLayout={resolvedTableLayout}
         toolBarRender={() => [
           ...(savedFilterViewToolbar ? [savedFilterViewToolbar] : []),
+          ...(queryPerformanceToolbar ? [queryPerformanceToolbar] : []),
           ...toolbarActions,
           ...(primaryAction
             ? [
