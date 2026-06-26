@@ -15,7 +15,7 @@
 - 定时作业服务端 catalog/注册中心：新增 `/api/system/scheduled-job-catalog`，统一返回作业类型、必填规则、执行/调度模式、连接环境和代码巡检选项，前端新增/编辑弹窗优先使用服务端配置并保留静态降级。
 - 插件管理表单转换继续减重：连接/动作/Runner payload、请求预览、结果映射、schema 回填和助手草案回填抽到 `pluginFormTransformHelpers`，主页面只保留插件、连接、动作和 Runner 编排。
 - 执行诊断详情排障建议：详情页自动汇总失败、取消、运行中或排队节点，提供来源 ID 深链和“问 AI”入口，成功链路展示无失败节点提示。
-- 执行诊断来源 ID 深链：`GET /api/governance/execution-traces` 支持 `source_id` 按任一节点来源 ID 精准定位，前端 `/governance/execution-traces?source_id=...` 命中唯一链路时自动打开详情。
+- 执行诊断来源 ID 深链：`GET /api/governance/execution-traces` 支持 `source_id + source_type` 按任一节点来源精准定位，前端 `/governance/execution-traces?source_id=...&source_type=...` 命中唯一链路时自动打开详情。
 - 执行诊断 AI 助手运行链路：`assistant_chat_run` 可作为 `/api/governance/execution-traces` 的根类型，关联模型网关日志和审计事件，详情元数据继续脱敏且不返回完整对话或 Prompt。
 - RBAC 策略矩阵：新增 `GET /api/system/permissions/matrix`，按角色聚合权限点、菜单入口、数据范围、高风险权限和菜单权限缺口；角色管理页新增“权限审计矩阵”用于授权排障。
 - 执行诊断持久化读模型：新增 `execution_trace_snapshots` 可重建快照表，PostgreSQL 运行时统一刷新定时作业、插件调用、Runner、模型网关、代码巡检和审计链路快照，列表和详情优先从快照分页/过滤/排序读取。
@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 执行诊断筛选文案从“根类型”调整为“来源类型”，与 `source_type` 可定位根节点或任一执行节点的 API 语义保持一致。
 - 执行诊断深链契约继续收紧：可复用 `ExecutionTraceLink` 缺少 `source_type` 时不再生成仅按 ID 定位的歧义链接，API 与验收示例统一使用 `source_id + source_type`。
 - 执行诊断详情页的关联对象、诊断建议节点和节点表来源 ID 深链补齐 `source_type`，避免只按 `source_id` 下钻造成跨来源歧义。
 - 产品/迭代版本共享上下文选项改为按服务端分页拉全，需求、Bug、任务、用户洞察、日志监控和迭代版本等表单不再只依赖前 100 条产品或版本。

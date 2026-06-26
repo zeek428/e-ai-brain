@@ -262,6 +262,7 @@ describe('ExecutionTracesPage', () => {
 
     render(<ExecutionTracesPage />);
 
+    expect(screen.getByText('来源类型')).toBeInTheDocument();
     await screen.findByText('定时作业运行 scheduled_job_run_trace');
     expect(screen.getByText('AI 助手运行 assistant_chat_run_trace')).toBeInTheDocument();
     expect(screen.getAllByText('AI 助手运行').length).toBeGreaterThan(0);

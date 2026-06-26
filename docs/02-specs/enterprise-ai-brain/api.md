@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.396 |
+| 功能版本 | v1.1.397 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.397 | 2026-06-26 | 执行诊断查询语义澄清：`source_type` 是来源类型，可筛选根或节点来源；前端筛选项展示为“来源类型”，不再称为“根类型” | Codex |
 | v1.1.396 | 2026-06-26 | 执行诊断深链契约收紧：前端和文档示例统一使用 `source_id + source_type` 定位来源节点，避免仅按 ID 下钻造成跨来源歧义 | Codex |
 | v1.1.395 | 2026-06-26 | `GET /api/system/roles` 补齐管理列表查询契约，支持 `page/page_size`、角色、分类、业务角色、可见入口、权限点、状态、白名单排序和 `query/performance` 观测；角色管理页改为调用远程分页接口 | Codex |
 | v1.1.394 | 2026-06-24 | 执行诊断快照刷新收口为单事务：`execution_trace_snapshots` 的 upsert 与过期快照删除必须原子提交，避免列表/详情读到半刷新诊断链路 | Codex |
@@ -4232,7 +4233,7 @@ Runner 聚合规则：`ai_executor_task.runner_id` 必须解析为 `ai_executor_
 |------|------|------|
 | keyword | string | 按链路 ID、根 ID、根类型、标题、摘要或关联 ID 搜索。 |
 | source_id | string | 按任一链路节点来源 ID 精准定位，例如 `scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_runner`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report`、`result_write_record` 或 `audit_event` 的 ID；前端深链必须同时携带 `source_type`，命中唯一记录时自动打开详情。 |
-| source_type | enum | 根类型或节点类型：`scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_runner`、`ai_executor_task`、`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`code_inspection_report`、`result_write_record`、`audit_event`。 |
+| source_type | enum | 来源类型，可是根类型或任一节点类型；前端筛选文案统一展示为“来源类型”：`scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_runner`、`ai_executor_task`、`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`code_inspection_report`、`result_write_record`、`audit_event`。 |
 | status | enum | 聚合状态：`succeeded`、`failed`、`running`、`queued`、`partial`、`skipped`、`cancelled`、`unknown`。 |
 | created_from / created_to | ISO datetime | 按链路开始时间或更新时间过滤，未带时区时按 UTC 处理。 |
 | sort_by | enum | `started_at`、`updated_at`、`duration_ms`、`node_count`、`failed_node_count`、`root_type`、`status`、`id`。 |

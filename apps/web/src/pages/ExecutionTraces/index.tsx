@@ -366,7 +366,7 @@ export default function ExecutionTracesPage() {
           { label: '关键词', name: 'keyword', type: 'text' },
           { label: '来源 ID', name: 'sourceId', type: 'text' },
           {
-            label: '根类型',
+            label: '来源类型',
             name: 'sourceType',
             options: sourceTypeOptions,
             type: 'select',
