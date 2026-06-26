@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.395 |
+| 功能版本 | v1.1.396 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.396 | 2026-06-26 | 执行诊断深链契约收紧：前端和文档示例统一使用 `source_id + source_type` 定位来源节点，避免仅按 ID 下钻造成跨来源歧义 | Codex |
 | v1.1.395 | 2026-06-26 | `GET /api/system/roles` 补齐管理列表查询契约，支持 `page/page_size`、角色、分类、业务角色、可见入口、权限点、状态、白名单排序和 `query/performance` 观测；角色管理页改为调用远程分页接口 | Codex |
 | v1.1.394 | 2026-06-24 | 执行诊断快照刷新收口为单事务：`execution_trace_snapshots` 的 upsert 与过期快照删除必须原子提交，避免列表/详情读到半刷新诊断链路 | Codex |
 | v1.1.393 | 2026-06-24 | 执行诊断 `source_type` 新增 `ai_executor_runner`，Runner 节点会随 AI 执行器任务进入同一 Trace，可按 Runner ID 过滤或下钻排查接单、心跳和工作区配置 | Codex |
@@ -4215,7 +4216,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 ```http
 GET /api/governance/execution-traces?keyword=scheduled_job_run_001&source_type=scheduled_job_run&status=failed&page=1&page_size=10&sort_by=started_at&sort_order=desc
-GET /api/governance/execution-traces?source_id=model_gateway_log_001&source_type=assistant_chat_run
+GET /api/governance/execution-traces?source_id=model_gateway_log_001&source_type=model_gateway_log
 GET /api/governance/execution-traces/{trace_id}
 ```
 
@@ -4230,7 +4231,7 @@ Runner 聚合规则：`ai_executor_task.runner_id` 必须解析为 `ai_executor_
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | keyword | string | 按链路 ID、根 ID、根类型、标题、摘要或关联 ID 搜索。 |
-| source_id | string | 按任一链路节点来源 ID 精准定位，例如 `scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_runner`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report`、`result_write_record` 或 `audit_event` 的 ID；前端深链命中唯一记录时自动打开详情。 |
+| source_id | string | 按任一链路节点来源 ID 精准定位，例如 `scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_runner`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report`、`result_write_record` 或 `audit_event` 的 ID；前端深链必须同时携带 `source_type`，命中唯一记录时自动打开详情。 |
 | source_type | enum | 根类型或节点类型：`scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_runner`、`ai_executor_task`、`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`code_inspection_report`、`result_write_record`、`audit_event`。 |
 | status | enum | 聚合状态：`succeeded`、`failed`、`running`、`queued`、`partial`、`skipped`、`cancelled`、`unknown`。 |
 | created_from / created_to | ISO datetime | 按链路开始时间或更新时间过滤，未带时区时按 UTC 处理。 |
