@@ -55,16 +55,14 @@ import {
   type ScheduledJobRecord,
 } from '../../services/aiBrain';
 import {
-  PluginConnectionModal,
   type PluginConnectionFormValues,
 } from './components/PluginConnectionModal';
 import {
-  PluginActionModal,
   type PluginActionFormValues,
 } from './components/PluginActionModal';
-import { PluginModal, type PluginFormValues } from './components/PluginModal';
+import type { PluginFormValues } from './components/PluginModal';
+import { PluginManagementModals } from './components/PluginManagementModals';
 import { PluginManagementTabs } from './components/PluginManagementTabs';
-import { PluginRunnerModal } from './components/PluginRunnerModal';
 import {
   PluginConnectionTestDiagnosticsContent,
   RunnerTestDiagnosticsContent,
@@ -109,12 +107,6 @@ import {
   stableJson,
   stringValue,
 } from './components/pluginFormTransformHelpers';
-import {
-  PluginActionTrialModal,
-  RunnerLogModal,
-  RunnerTokenRotationModal,
-  RunnerTokenRotationNotice,
-} from './components/PluginUtilityModals';
 import { PluginWorkspaceGuide } from './components/PluginWorkspaceGuide';
 import { SYSTEM_VARIABLE_OPTIONS } from './components/pluginSystemVariableOptions';
 
@@ -1479,6 +1471,55 @@ export default function PluginsPage() {
     }
   };
 
+  const syncConnectionAuthJsonFromVisual = () => {
+    const values = connectionForm.getFieldsValue();
+    connectionForm.setFieldValue('auth_config', stableJson(buildConnectionAuthConfig(values)));
+  };
+
+  const handleConnectionValuesChange = (
+    changedValues: Partial<ConnectionFormValues>,
+    allValues: ConnectionFormValues,
+  ) => {
+    if (
+      selectedConnectionIsGitlab
+      && Object.prototype.hasOwnProperty.call(changedValues, 'schema_values')
+    ) {
+      const nextEndpointUrl = endpointUrlFromSchemaValues(allValues, selectedConnectionSchema);
+      if (nextEndpointUrl && nextEndpointUrl !== allValues.endpoint_url) {
+        connectionForm.setFieldValue('endpoint_url', nextEndpointUrl);
+      }
+    }
+    if (
+      advancedConnectionRequestJsonOpen
+      && !Object.prototype.hasOwnProperty.call(changedValues, 'request_config')
+    ) {
+      connectionForm.setFieldValue(
+        'request_config',
+        stableJson(buildConnectionRequestConfig(allValues, selectedConnectionSchema)),
+      );
+    }
+  };
+
+  const handleActionValuesChange = (
+    changedValues: Partial<ActionFormValues>,
+    allValues: ActionFormValues,
+  ) => {
+    if (
+      advancedActionJsonOpen
+      && !Object.prototype.hasOwnProperty.call(changedValues, 'request_config')
+      && !Object.prototype.hasOwnProperty.call(changedValues, 'result_mapping')
+    ) {
+      const requestConfig =
+        allValues.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
+          ? buildMaxComputeRequestConfig(allValues)
+          : buildVisualRequestConfig(allValues);
+      actionForm.setFieldsValue({
+        request_config: stableJson(requestConfig),
+        result_mapping: stableJson(buildVisualResultMapping(allValues, resultWriteTargets)),
+      });
+    }
+  };
+
   const openTrialModal = (action: PluginActionRecord) => {
     setTrialAction(action);
     setTrialConnectionId(action.connection_id ?? undefined);
@@ -1559,146 +1600,87 @@ export default function PluginsPage() {
         onTrialAction={openTrialModal}
       />
 
-      <RunnerTokenRotationNotice
-        onClose={() => setRotatedRunnerToken(undefined)}
-        token={rotatedRunnerToken}
-      />
-
-      <RunnerTokenRotationModal
-        loading={rotatingRunnerLoading}
-        onCancel={() => setRotatingRunner(undefined)}
-        onSubmit={submitRotateRunnerToken}
-        runner={rotatingRunner}
-      />
-
-      <RunnerLogModal
-        loading={runnerLogLoading}
-        onCancelTask={cancelRunnerTask}
-        onClose={() => setRunnerLogModalOpen(false)}
-        open={runnerLogModalOpen}
-        rows={runnerLogRows}
-        task={runnerLogTask}
-      />
-
-      <PluginModal
-        form={pluginForm}
-        isEditing={Boolean(editingPlugin)}
-        onCancel={closePluginModal}
-        onSubmit={submitPlugin}
-        open={pluginModalOpen}
-      />
-
-      <PluginRunnerModal
-        form={runnerForm}
-        isEditing={Boolean(editingRunner)}
-        onCancel={closeRunnerModal}
-        onSubmit={submitRunner}
-        open={runnerModalOpen}
-      />
-
-      <PluginConnectionModal
-        advancedAuthJsonOpen={advancedConnectionJsonOpen}
-        advancedRequestJsonOpen={advancedConnectionRequestJsonOpen}
-        authType={typeof selectedConnectionAuthType === 'string' ? selectedConnectionAuthType : undefined}
+      <PluginManagementModals
+        actionForm={actionForm}
+        actionModalOpen={actionModalOpen}
+        actionScenario={actionScenario}
+        actionTemplateOptions={actionTemplateOptions}
+        advancedActionJsonOpen={advancedActionJsonOpen}
+        advancedConnectionJsonOpen={advancedConnectionJsonOpen}
+        advancedConnectionRequestJsonOpen={advancedConnectionRequestJsonOpen}
+        connectionEnvironmentOptions={connectionEnvironmentOptions}
+        connectionForm={connectionForm}
+        connectionModalOpen={connectionModalOpen}
+        connectionOptions={connectionOptions}
         connectionSubmitAction={connectionSubmitAction}
-        environmentOptions={connectionEnvironmentOptions}
-        form={connectionForm}
-        isEditing={Boolean(editingConnection)}
-        isGithubConnection={selectedConnectionIsGithub}
-        onApplyAuthJsonToVisual={applyConnectionJsonToVisual}
-        onApplyRequestJsonToVisual={applyConnectionRequestJsonToVisual}
-        onCancel={closeConnectionModal}
-        onPluginChange={applyConnectionPluginDefaults}
-        onSubmit={() => submitConnection()}
-        onSubmitAndTest={() => submitConnection({ testAfterSave: true })}
-        onSyncAuthJsonFromVisual={() => {
-          const values = connectionForm.getFieldsValue();
-          connectionForm.setFieldValue('auth_config', stableJson(buildConnectionAuthConfig(values)));
-        }}
-        onSyncRequestJsonFromVisual={syncConnectionRequestJsonFromVisual}
-        onToggleAdvancedAuthJson={toggleAdvancedConnectionJson}
-        onToggleAdvancedRequestJson={toggleAdvancedConnectionRequestJson}
-        onValuesChange={(changedValues, allValues) => {
-          if (
-            selectedConnectionIsGitlab
-            && Object.prototype.hasOwnProperty.call(changedValues, 'schema_values')
-          ) {
-            const nextEndpointUrl = endpointUrlFromSchemaValues(allValues, selectedConnectionSchema);
-            if (nextEndpointUrl && nextEndpointUrl !== allValues.endpoint_url) {
-              connectionForm.setFieldValue('endpoint_url', nextEndpointUrl);
-            }
-          }
-          if (
-            advancedConnectionRequestJsonOpen
-            && !Object.prototype.hasOwnProperty.call(changedValues, 'request_config')
-          ) {
-            connectionForm.setFieldValue(
-              'request_config',
-              stableJson(buildConnectionRequestConfig(allValues, selectedConnectionSchema)),
-            );
-          }
-        }}
-        open={connectionModalOpen}
+        defaultWriteTarget={DEFAULT_RESULT_WRITE_TARGET}
+        editingAction={editingAction}
+        editingConnection={Boolean(editingConnection)}
+        editingPlugin={Boolean(editingPlugin)}
+        editingRunner={Boolean(editingRunner)}
+        maxComputeScenario={MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO}
         pluginCode={
           typeof selectedConnectionPluginCode === 'string' ? selectedConnectionPluginCode : undefined
         }
-        pluginOptions={pluginOptions}
-        schema={selectedConnectionSchema}
-        systemVariableOptions={SYSTEM_VARIABLE_OPTIONS}
-      />
-
-      <PluginActionModal
-        actionScenario={actionScenario}
-        advancedJsonOpen={advancedActionJsonOpen}
-        connectionOptions={connectionOptions}
-        defaultWriteTarget={DEFAULT_RESULT_WRITE_TARGET}
-        form={actionForm}
-        isEditing={Boolean(editingAction)}
-        maxComputeScenario={MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO}
-        onApplyJsonToVisual={applyActionJsonToVisual}
-        onCancel={closeActionModal}
-        onScenarioChange={applyActionScenario}
-        onSubmit={submitAction}
-        onSyncJsonFromVisual={syncActionJsonFromVisual}
-        onToggleAdvancedJson={toggleAdvancedActionJson}
-        onValuesChange={(changedValues, allValues) => {
-          if (
-            advancedActionJsonOpen
-            && !Object.prototype.hasOwnProperty.call(changedValues, 'request_config')
-            && !Object.prototype.hasOwnProperty.call(changedValues, 'result_mapping')
-          ) {
-            const requestConfig =
-              allValues.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
-                ? buildMaxComputeRequestConfig(allValues)
-                : buildVisualRequestConfig(allValues);
-            actionForm.setFieldsValue({
-              request_config: stableJson(requestConfig),
-              result_mapping: stableJson(buildVisualResultMapping(allValues, resultWriteTargets)),
-            });
-          }
-        }}
-        onWriteTargetChange={applyWriteTargetDefaults}
-        open={actionModalOpen}
+        pluginForm={pluginForm}
+        pluginModalOpen={pluginModalOpen}
         pluginOptions={pluginOptions}
         requestPreview={requestPreview}
         resultWriteTargetOptions={resultWriteTargetOptions}
         resultWriteTargets={resultWriteTargets}
-        scenarioOptions={actionTemplateOptions}
+        rotatedRunnerToken={rotatedRunnerToken}
+        rotatingRunner={rotatingRunner}
+        rotatingRunnerLoading={rotatingRunnerLoading}
+        runnerForm={runnerForm}
+        runnerLogLoading={runnerLogLoading}
+        runnerLogModalOpen={runnerLogModalOpen}
+        runnerLogRows={runnerLogRows}
+        runnerLogTask={runnerLogTask}
+        runnerModalOpen={runnerModalOpen}
+        selectedConnectionAuthType={
+          typeof selectedConnectionAuthType === 'string' ? selectedConnectionAuthType : undefined
+        }
+        selectedConnectionIsGithub={selectedConnectionIsGithub}
+        selectedConnectionSchema={selectedConnectionSchema}
         systemVariableOptions={SYSTEM_VARIABLE_OPTIONS}
-      />
-
-      <PluginActionTrialModal
-        action={trialAction}
-        connectionId={trialConnectionId}
-        connectionOptions={connectionOptions}
-        inputJson={trialInputJson}
-        onClose={() => setTrialModalOpen(false)}
-        onConnectionChange={setTrialConnectionId}
-        onInputJsonChange={setTrialInputJson}
-        onRun={runActionTrial}
-        open={trialModalOpen}
-        result={trialResult}
-        running={trialRunning}
+        trialAction={trialAction}
+        trialConnectionId={trialConnectionId}
+        trialInputJson={trialInputJson}
+        trialModalOpen={trialModalOpen}
+        trialResult={trialResult}
+        trialRunning={trialRunning}
+        onActionValuesChange={handleActionValuesChange}
+        onApplyActionJsonToVisual={applyActionJsonToVisual}
+        onApplyActionScenario={applyActionScenario}
+        onApplyConnectionAuthJsonToVisual={applyConnectionJsonToVisual}
+        onApplyConnectionPluginDefaults={applyConnectionPluginDefaults}
+        onApplyConnectionRequestJsonToVisual={applyConnectionRequestJsonToVisual}
+        onCancelRunnerTask={cancelRunnerTask}
+        onCloseActionModal={closeActionModal}
+        onCloseConnectionModal={closeConnectionModal}
+        onClosePluginModal={closePluginModal}
+        onCloseRotatedRunnerToken={() => setRotatedRunnerToken(undefined)}
+        onCloseRunnerLogModal={() => setRunnerLogModalOpen(false)}
+        onCloseRunnerModal={closeRunnerModal}
+        onConnectionValuesChange={handleConnectionValuesChange}
+        onRotateRunnerTokenCancel={() => setRotatingRunner(undefined)}
+        onRotateRunnerTokenSubmit={submitRotateRunnerToken}
+        onRunActionTrial={runActionTrial}
+        onSubmitAction={submitAction}
+        onSubmitConnection={() => submitConnection()}
+        onSubmitConnectionAndTest={() => submitConnection({ testAfterSave: true })}
+        onSubmitPlugin={submitPlugin}
+        onSubmitRunner={submitRunner}
+        onSyncActionJsonFromVisual={syncActionJsonFromVisual}
+        onSyncConnectionAuthJsonFromVisual={syncConnectionAuthJsonFromVisual}
+        onSyncConnectionRequestJsonFromVisual={syncConnectionRequestJsonFromVisual}
+        onToggleActionAdvancedJson={toggleAdvancedActionJson}
+        onToggleConnectionAdvancedAuthJson={toggleAdvancedConnectionJson}
+        onToggleConnectionAdvancedRequestJson={toggleAdvancedConnectionRequestJson}
+        onTrialConnectionChange={setTrialConnectionId}
+        onTrialInputJsonChange={setTrialInputJson}
+        onTrialModalClose={() => setTrialModalOpen(false)}
+        onWriteTargetChange={applyWriteTargetDefaults}
       />
     </PageContainer>
   );
