@@ -2,6 +2,7 @@ import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Descriptions, Modal, Space, Tag, Typography, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { ExecutionTraceLink } from '../../components/ExecutionTraceLink';
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type { AuditRecord } from '../../data/management';
 import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
@@ -240,6 +241,9 @@ export default function AuditPage() {
             <Button onClick={() => void openTraceDialog(row)} type="link">
               链路追踪
             </Button>
+            <ExecutionTraceLink asButton sourceId={row.id} sourceType="audit_event">
+              执行诊断
+            </ExecutionTraceLink>
           </Space>
         ),
       },

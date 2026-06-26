@@ -220,6 +220,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(await screen.findByText('requirement.approved')).toBeInTheDocument();
     const auditRow = screen.getByText('requirement.approved').closest('tr');
     expect(auditRow).not.toBeNull();
+    expect(within(auditRow as HTMLElement).getByRole('link', { name: '执行诊断' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=audit_api&source_type=audit_event',
+    );
     fireEvent.click(within(auditRow as HTMLElement).getByRole('button', { name: '详情' }));
     expect(await screen.findByText('审计详情')).toBeInTheDocument();
     expect(screen.getAllByText('requirement: requirement_api')).not.toHaveLength(0);
