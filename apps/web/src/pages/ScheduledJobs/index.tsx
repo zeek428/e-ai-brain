@@ -20,7 +20,6 @@ import {
   fetchModelGatewayConfigs,
   fetchPluginActions,
   fetchPluginConnections,
-  fetchResultWriteRecords,
   fetchProductGitRepositories,
   fetchScheduledJobCatalog,
   fetchScheduledJobTemplates,
@@ -41,7 +40,6 @@ import {
   type PluginConnectionRecord,
   type ProductFilterOption,
   type ProductGitRepositoryOption,
-  type ResultWriteRecord,
   type ScheduledJobRecord,
   type ScheduledJobDryRunResult,
   type ScheduledJobCatalogRecord,
@@ -74,8 +72,6 @@ import {
   scheduledJobRunIdFromAssistantResult,
   scheduledJobTemplateValuesFromRecord,
   scheduledJobValuesFromAssistantDraft,
-  snapshotStringListValue,
-  snapshotStringValue,
   stringArrayFromUnknown,
   templatePayloadBoolean,
   templatePayloadList,
@@ -89,6 +85,7 @@ import {
   type ScheduledJobPageTab,
   type ScheduledJobTemplateSource,
 } from './components/scheduledJobFormTransformHelpers';
+import { useScheduledJobRunDetailState } from './components/useScheduledJobRunDetailState';
 
 function writeStrategyLabelFromAction(action: PluginActionRecord): string {
   const mapping = action.result_mapping ?? {};
@@ -124,12 +121,7 @@ export default function ScheduledJobsPage() {
     Pick<AssistantScheduledJobDraft, 'draftId' | 'title'> | undefined
   >();
   const [activeTab, setActiveTab] = useState<ScheduledJobPageTab>(initialScheduledJobPageTab);
-  const [handledRouteRunKey, setHandledRouteRunKey] = useState<string | undefined>();
   const [templateSource, setTemplateSource] = useState<ScheduledJobTemplateSource | undefined>();
-  const [selectedRun, setSelectedRun] = useState<ScheduledJobRunRecord | undefined>();
-  const [linkedResultWriteRecordId, setLinkedResultWriteRecordId] = useState<string | undefined>();
-  const [selectedRunResultWriteRecords, setSelectedRunResultWriteRecords] = useState<ResultWriteRecord[]>([]);
-  const [selectedRunResultWriteRecordsLoading, setSelectedRunResultWriteRecordsLoading] = useState(false);
   const [generatedRunTemplate, setGeneratedRunTemplate] = useState<ScheduledJobTemplateRecord | undefined>();
   const [runningJobId, setRunningJobId] = useState<string | undefined>();
   const [connectionTestResult, setConnectionTestResult] = useState<PluginConnectionTestResult | undefined>();
@@ -308,32 +300,23 @@ export default function ScheduledJobsPage() {
     () => new Map(knowledgeDocuments.map((document) => [document.id, document])),
     [knowledgeDocuments],
   );
-  const selectedRunConfigSnapshot = selectedRun?.config_snapshot;
-  const selectedRunAgentId = snapshotStringValue(selectedRunConfigSnapshot, 'agent_id');
-  const selectedRunModelGatewayConfigId = snapshotStringValue(selectedRunConfigSnapshot, 'model_gateway_config_id');
-  const selectedRunSkillIds = snapshotStringListValue(selectedRunConfigSnapshot, 'skill_ids');
-  const selectedRunJobType = snapshotStringValue(selectedRunConfigSnapshot, 'job_type');
-  const selectedRunExecutionMode = snapshotStringValue(selectedRunConfigSnapshot, 'execution_mode');
-  const selectedRunJobTypeLabel = selectedRunJobType
-    ? jobTypeLabelMap.get(selectedRunJobType) ?? selectedRunJobType
-    : '-';
-  const selectedRunExecutionModeLabel = selectedRunExecutionMode
-    ? executionModeLabelMap.get(selectedRunExecutionMode) ?? selectedRunExecutionMode
-    : '-';
-  const selectedRunAgentLabel =
-    snapshotStringValue(selectedRun?.resolved_agent_snapshot, 'name')
-    ?? (selectedRunAgentId ? agentById.get(selectedRunAgentId)?.name ?? selectedRunAgentId : '-');
-  const selectedRunModelLabel =
-    selectedRunModelGatewayConfigId
-      ? modelGatewayConfigById.get(selectedRunModelGatewayConfigId)?.name ?? selectedRunModelGatewayConfigId
-      : '-';
-  const selectedRunSkillLabels =
-    selectedRun?.resolved_skill_snapshots
-      ?.map((skill) => String(skill.name ?? skill.code ?? skill.id ?? ''))
-      .filter(Boolean)
-      .join('、')
-    || selectedRunSkillIds.map((skillId) => skillById.get(skillId)?.name ?? skillId).join('、')
-    || '-';
+  const {
+    closeRunDetail,
+    focusedResultWriteRecordId,
+    labels: selectedRunLabels,
+    openRunDetail,
+    resultWriteRecords: selectedRunResultWriteRecords,
+    resultWriteRecordsLoading: selectedRunResultWriteRecordsLoading,
+    selectedRun,
+  } = useScheduledJobRunDetailState({
+    agentById,
+    executionModeLabelMap,
+    jobTypeLabelMap,
+    modelGatewayConfigById,
+    runs,
+    skillById,
+    onRouteTabChange: setActiveTab,
+  });
 
   useEffect(() => {
     if (normalizedSelectedPluginConnectionIds.length === 0) {
@@ -748,57 +731,7 @@ export default function ScheduledJobsPage() {
         setActiveTab(routeTab);
       });
     }
-    const routeRunKey = routeParams.runId
-      ? `${routeParams.runId}:${routeParams.resultWriteRecordId ?? ''}`
-      : undefined;
-    if (!routeParams.runId || handledRouteRunKey === routeRunKey) {
-      return;
-    }
-    const routeRun = runs.find((run) => run.id === routeParams.runId);
-    if (!routeRun) {
-      return;
-    }
-    queueMicrotask(() => {
-      setActiveTab('runs');
-      setLinkedResultWriteRecordId(routeParams.resultWriteRecordId);
-      setSelectedRun(routeRun);
-      setHandledRouteRunKey(routeRunKey);
-    });
-  }, [handledRouteRunKey, runs]);
-
-  useEffect(() => {
-    if (!selectedRun?.id) {
-      queueMicrotask(() => {
-        setSelectedRunResultWriteRecords([]);
-        setSelectedRunResultWriteRecordsLoading(false);
-      });
-      return;
-    }
-    let ignore = false;
-    queueMicrotask(() => {
-      setSelectedRunResultWriteRecordsLoading(true);
-    });
-    fetchResultWriteRecords({ scheduledJobRunId: selectedRun.id })
-      .then((records) => {
-        if (!ignore) {
-          setSelectedRunResultWriteRecords(records);
-        }
-      })
-      .catch((error) => {
-        if (!ignore) {
-          setSelectedRunResultWriteRecords([]);
-          message.error(error instanceof Error ? error.message : '结果写入记录加载失败');
-        }
-      })
-      .finally(() => {
-        if (!ignore) {
-          setSelectedRunResultWriteRecordsLoading(false);
-        }
-      });
-    return () => {
-      ignore = true;
-    };
-  }, [selectedRun?.id]);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || modalOpen || editingJob) {
@@ -890,8 +823,7 @@ export default function ScheduledJobsPage() {
       nameSuffix: '运行快照副本',
       pluginConnectionById,
     });
-    setSelectedRun(undefined);
-    setLinkedResultWriteRecordId(undefined);
+    closeRunDetail();
     setEditingJob(undefined);
     setAssistantDraftPayload(undefined);
     setAssistantDraftInitialValues(undefined);
@@ -937,8 +869,7 @@ export default function ScheduledJobsPage() {
               ? [skills[0].id]
               : [],
       };
-      setSelectedRun(undefined);
-      setLinkedResultWriteRecordId(undefined);
+      closeRunDetail();
       setEditingJob(undefined);
       setAssistantDraftPayload(undefined);
       setAssistantDraftInitialValues(undefined);
@@ -1195,8 +1126,7 @@ export default function ScheduledJobsPage() {
     setRunningJobId(jobId);
     try {
       const run = await runScheduledJob(jobId, triggerType, sourceRunId);
-      setLinkedResultWriteRecordId(undefined);
-      setSelectedRun(run);
+      openRunDetail(run);
       if (run.status === 'succeeded') {
         message.success('作业运行完成');
       } else if (run.status === 'running' || run.status === 'queued') {
@@ -1292,10 +1222,7 @@ export default function ScheduledJobsPage() {
         onCopyRun={openCopyRunModal}
         onCreateJob={openCreateJobModal}
         onEditJob={openEditJobModal}
-        onOpenRunDetail={(row) => {
-          setLinkedResultWriteRecordId(undefined);
-          setSelectedRun(row);
-        }}
+        onOpenRunDetail={(row) => openRunDetail(row)}
         onReload={reload}
         onRerun={(row) => {
           if (row.scheduled_job_id) {
@@ -1358,21 +1285,18 @@ export default function ScheduledJobsPage() {
       />
 
       <ScheduledJobRunDetailModal
-        agentLabel={selectedRunAgentLabel}
-        executionModeLabel={selectedRunExecutionModeLabel}
-        focusedResultWriteRecordId={linkedResultWriteRecordId}
-        jobTypeLabel={selectedRunJobTypeLabel}
-        modelLabel={selectedRunModelLabel}
-        onClose={() => {
-          setSelectedRun(undefined);
-          setLinkedResultWriteRecordId(undefined);
-        }}
+        agentLabel={selectedRunLabels.agentLabel}
+        executionModeLabel={selectedRunLabels.executionModeLabel}
+        focusedResultWriteRecordId={focusedResultWriteRecordId}
+        jobTypeLabel={selectedRunLabels.jobTypeLabel}
+        modelLabel={selectedRunLabels.modelLabel}
+        onClose={closeRunDetail}
         onCopyRun={openCopyRunModal}
         onGenerateTemplate={generateTemplateFromRun}
         resultWriteRecords={selectedRunResultWriteRecords}
         resultWriteRecordsLoading={selectedRunResultWriteRecordsLoading}
         run={selectedRun}
-        skillLabels={selectedRunSkillLabels}
+        skillLabels={selectedRunLabels.skillLabels}
       />
     </PageContainer>
   );

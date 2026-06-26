@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.713 |
+| 功能版本 | v1.1.714 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.714 | 2026-06-26 | 补充定时作业运行详情状态 hook 化验收：运行详情路由深链、结果写入记录聚焦、生成模板和复制本次配置继续由 `ScheduledJobsPage.test.tsx` 覆盖，typecheck、lint 和真实 `/tasks/scheduled-jobs` 页面 smoke 必须通过 | Codex |
 | v1.1.713 | 2026-06-26 | 补充插件管理 Runner 运维 hook 化验收：Runner 新增/编辑、安装包下载、测试诊断、Token 轮换、日志查看和取消任务由 `PluginsPage.test.tsx` 覆盖，typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.712 | 2026-06-26 | 补充代码巡检治理概览组件化验收：治理概览和通用展示 helper 拆出后，`CodeInspectionsPage.test.tsx`、typecheck、lint 和真实 `/governance/code-inspections` 页面 smoke 必须通过 | Codex |
 | v1.1.711 | 2026-06-26 | 补充执行诊断列表异常节点预览验收：列表需展示首个 `diagnostic_nodes` 来源、状态和错误摘要，成功链路展示无异常节点；`ExecutionTracesPage.test.tsx` 覆盖 | Codex |
