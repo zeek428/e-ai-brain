@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.701 |
+| 功能版本 | v1.1.702 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.702 | 2026-06-26 | 补充 AI 助手运行状态时间格式验收：检测时间必须使用统一展示时区格式 `YYYY-MM-DD HH:mm`，不得回退到浏览器本地 `toLocaleTimeString()`；`AssistantRuntimeStatus.test.tsx` 覆盖 UTC 到北京时间展示 | Codex |
 | v1.1.701 | 2026-06-26 | 补充审计列表执行诊断入口验收：审计行需提供 `/governance/execution-traces?source_id=<audit_id>&source_type=audit_event` 深链，并保留原生命周期链路追踪动作；`App.test.tsx` 覆盖链接生成 | Codex |
 | v1.1.700 | 2026-06-26 | 补充 AI 助手执行诊断深链验收：运行状态最近失败需按 `assistant_chat_run`、`model_gateway_log`、`scheduled_job_run` 跳统一执行诊断；运行诊断卡片中的 `plugin_invocation_log` 和 `model_gateway_log` 关联日志 ID 必须可点击到 `/governance/execution-traces?source_id=...&source_type=...`，`AssistantPage.test.tsx` 覆盖链接生成 | Codex |
 | v1.1.699 | 2026-06-26 | 补充模型网关调用日志诊断入口验收：模型网关页需展示最近模型调用日志，并为每条日志提供 `/governance/execution-traces?source_id=...&source_type=model_gateway_log` 调用诊断链接；`ModelGatewayPage.test.tsx` 覆盖链接生成 | Codex |

@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 
 import { ExecutionTraceLink } from '../../../components/ExecutionTraceLink';
 import type { AssistantRuntimeStatus as AssistantRuntimeStatusRecord } from '../../../services/aiBrain';
+import { formatDisplayDateTime } from '../../../utils/dateTime';
 
 const { Text } = Typography;
 
@@ -77,7 +78,7 @@ export function AssistantRuntimeStatus({
         <Text strong>{title}</Text>
         <Text type="secondary">{description}</Text>
         {checkedAt ? (
-          <Text type="secondary">{`检测于 ${new Date(checkedAt).toLocaleTimeString()}`}</Text>
+          <Text type="secondary">{`检测于 ${formatDisplayDateTime(checkedAt)}`}</Text>
         ) : null}
         {onRefresh ? (
           <Button
