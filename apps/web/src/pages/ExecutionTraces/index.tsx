@@ -158,6 +158,29 @@ function compactText(value?: string | null) {
   );
 }
 
+function diagnosticNodePreview(row: ExecutionTraceListItem) {
+  const nodes = row.diagnostic_nodes ?? [];
+  if (!nodes.length) {
+    return <Typography.Text type="secondary">无异常节点</Typography.Text>;
+  }
+  const firstNode = nodes[0];
+  const text = firstNode.error_message || firstNode.summary || firstNode.label || firstNode.source_id;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={{ alignItems: 'center', display: 'flex', gap: 6, minWidth: 0 }}>
+        {statusTag(firstNode.status)}
+        <Typography.Text type="secondary">{sourceTypeLabel(firstNode.source_type)}</Typography.Text>
+      </div>
+      <Typography.Text ellipsis={{ tooltip: text }} style={{ display: 'block', maxWidth: '100%' }}>
+        {text}
+      </Typography.Text>
+      {nodes.length > 1 ? (
+        <Typography.Text type="secondary">另有 {nodes.length - 1} 个诊断节点</Typography.Text>
+      ) : null}
+    </div>
+  );
+}
+
 function multilineText(value?: string | null) {
   const text = value || '-';
   return (
@@ -300,6 +323,12 @@ export default function ExecutionTracesPage() {
         title: '状态',
         width: 120,
         render: (_, row) => statusTag(row.status),
+      },
+      {
+        dataIndex: 'diagnostic_nodes',
+        title: '诊断节点',
+        width: 260,
+        render: (_, row) => diagnosticNodePreview(row),
       },
       {
         dataIndex: 'summary',

@@ -8,6 +8,7 @@ import ExecutionTracesPage from '../src/pages/ExecutionTraces';
 
 function installExecutionTracesFetchMock() {
   const trace = {
+    diagnostic_nodes: [],
     duration_ms: 8000,
     failed_node_count: 0,
     id: 'scheduled_job_run_trace',
@@ -32,6 +33,34 @@ function installExecutionTracesFetchMock() {
     updated_at: '2026-06-20T01:00:08Z',
   };
   const assistantTrace = {
+    diagnostic_nodes: [
+      {
+        duration_ms: 5000,
+        error_code: 'MODEL_GATEWAY_FAILED',
+        error_message: '模型网关调用失败',
+        finished_at: '2026-06-20T02:00:05Z',
+        id: 'assistant_chat_run:assistant_chat_run_trace',
+        label: 'AI 助手运行',
+        source_id: 'assistant_chat_run_trace',
+        source_type: 'assistant_chat_run',
+        started_at: '2026-06-20T02:00:00Z',
+        status: 'failed',
+        summary: '模型网关调用失败。',
+      },
+      {
+        duration_ms: 1800,
+        error_code: null,
+        error_message: 'upstream failed',
+        finished_at: '2026-06-20T02:00:03Z',
+        id: 'model_gateway_log:model_gateway_log_assistant_trace',
+        label: '模型网关调用',
+        source_id: 'model_gateway_log_assistant_trace',
+        source_type: 'model_gateway_log',
+        started_at: '2026-06-20T02:00:01Z',
+        status: 'failed',
+        summary: 'upstream failed',
+      },
+    ],
     duration_ms: 5000,
     failed_node_count: 1,
     id: 'assistant_chat_run_trace',
@@ -268,6 +297,10 @@ describe('ExecutionTracesPage', () => {
     expect(screen.getAllByText('AI 助手运行').length).toBeGreaterThan(0);
     expect(screen.getAllByText('成功').length).toBeGreaterThan(0);
     expect(screen.getAllByText('定时作业运行').length).toBeGreaterThan(0);
+    expect(screen.getByText('诊断节点')).toBeInTheDocument();
+    expect(screen.getByText('无异常节点')).toBeInTheDocument();
+    expect(screen.getAllByText('模型网关调用失败').length).toBeGreaterThan(0);
+    expect(screen.getByText('另有 1 个诊断节点')).toBeInTheDocument();
     expect(screen.getAllByText('2026-06-20 09:00').length).toBeGreaterThan(0);
     expect(screen.getByText('8.00 s')).toBeInTheDocument();
     expect(screen.getByText('查询 214ms')).toBeInTheDocument();
