@@ -2,11 +2,7 @@ import { PageContainer } from '@ant-design/pro-components';
 import {
   Button,
   Form,
-  Input,
   Modal,
-  Select,
-  Space,
-  Typography,
   message,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -57,22 +53,12 @@ import {
 } from '../../services/aiBrain';
 import type { ModelGatewayConfigRecord } from '../../data/management';
 import type { KnowledgeRecord } from '../../data/management';
-import { ScheduledJobActionConfigSection } from './components/ScheduledJobActionConfigSection';
-import { ScheduledJobAiExecutionSection } from './components/ScheduledJobAiExecutionSection';
-import { ScheduledJobBasicInfoSection } from './components/ScheduledJobBasicInfoSection';
-import { ScheduledJobCodeRepositorySection } from './components/ScheduledJobCodeRepositorySection';
-import { ScheduledJobDataConnectionSection } from './components/ScheduledJobDataConnectionSection';
-import { ScheduledJobDryRunResultPanel } from './components/ScheduledJobDryRunResultPanel';
+import { ScheduledJobFormModal } from './components/ScheduledJobFormModal';
 import { ScheduledJobManagementTabs } from './components/ScheduledJobManagementTabs';
-import { ScheduledJobScheduleConfigSection } from './components/ScheduledJobScheduleConfigSection';
 import { ScheduledJobRunDetailModal } from './components/ScheduledJobRunDetailModal';
 import {
-  ScheduledJobOrchestrationFlow,
   type ScheduledJobOrchestrationNode,
 } from './components/ScheduledJobOrchestrationFlow';
-import {
-  TemplateSourceSummary,
-} from './components/ScheduledJobRunTraceDetails';
 import { useScheduledJobCatalogOptions } from './components/scheduledJobCatalogOptions';
 import {
   cloneResultActions,
@@ -1332,6 +1318,44 @@ export default function ScheduledJobsPage() {
     });
   };
 
+  const handleJobTypeChange = (value?: string) => {
+    if (value === 'code_repository_inspection') {
+      form.setFieldsValue({
+        config_json: {
+          ...(recordValue(form.getFieldValue('config_json')) ?? {}),
+          scan_mode: nativeCodeInspectionScanMode,
+        },
+        execution_mode: 'deterministic',
+        plugin_action_id: undefined,
+        plugin_action_ids: [],
+        plugin_connection_id: undefined,
+        plugin_connection_ids: [],
+        result_actions: form.getFieldValue('result_actions')?.length
+          ? form.getFieldValue('result_actions')
+          : cloneResultActions(defaultCodeInspectionActions),
+      });
+    }
+  };
+
+  const handleProductChange = () => {
+    if (selectedJobType === 'code_repository_inspection') {
+      form.setFieldValue(['config_json', 'repository_id'], undefined);
+      form.setFieldValue(['config_json', 'branch'], undefined);
+    }
+  };
+
+  const handleScanModeChange = (value?: string) => {
+    if (value === nativeCodeInspectionScanMode) {
+      form.setFieldValue('plugin_connection_id', undefined);
+      form.setFieldValue('plugin_connection_ids', []);
+      form.setFieldValue('plugin_action_id', undefined);
+      form.setFieldValue('plugin_action_ids', []);
+      form.setFieldValue(['config_json', 'async_execution'], true);
+      form.setFieldValue(['config_json', 'scanner_engines'], ['builtin']);
+      form.setFieldValue(['config_json', 'scan_rules'], ['secrets', 'internal_addresses']);
+    }
+  };
+
   return (
     <PageContainer title="定时作业">
       <ScheduledJobManagementTabs
@@ -1368,163 +1392,56 @@ export default function ScheduledJobsPage() {
         onTabChange={setActiveTab}
       />
 
-      <Modal
-        aria-label={editingJob ? '编辑定时作业' : '新增定时作业'}
-        destroyOnHidden
-        footer={(
-          <Space>
-            <Button htmlType="button" onClick={closeJobModal}>取消</Button>
-            <Button
-              htmlType="button"
-              loading={dryRunning}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                void dryRunJob();
-              }}
-            >
-              全链路试运行
-            </Button>
-            <Button htmlType="button" type="primary" onClick={() => void submitJob()}>
-              确定
-            </Button>
-          </Space>
-        )}
-        open={modalOpen}
-        title={editingJob ? '编辑定时作业' : '新增定时作业'}
-        width={820}
-        onCancel={closeJobModal}
-      >
-        {templateSource ? (
-          <div
-            aria-label="当前复制来源"
-            style={{
-              background: '#f8fafc',
-              border: '1px solid #e5e7eb',
-              borderRadius: 6,
-              marginBottom: 16,
-              padding: '10px 12px',
-            }}
-          >
-            <Space wrap>
-              <Typography.Text type="secondary">复制来源</Typography.Text>
-              <TemplateSourceSummary source={templateSource} />
-            </Space>
-          </div>
-        ) : null}
-        <Form
-          form={form}
-          layout="vertical"
-          initialValues={{
-            enabled: true,
-            execution_mode: 'ai_generated',
-            job_type: 'user_feedback_insight_extract',
-            schedule_type: 'manual',
-            source_system: 'ai-brain',
-          }}
-        >
-          {!editingJob ? (
-            <Form.Item label="作业模板" name="template">
-              <Select
-                allowClear
-                options={jobTemplateOptions}
-                placeholder="请选择场景模板快速生成配置"
-                onChange={applyJobTemplate}
-              />
-            </Form.Item>
-          ) : null}
-          <ScheduledJobOrchestrationFlow
-            nodes={orchestrationNodes}
-            wizardSteps={selectedJobTemplate?.wizard_steps}
-          />
-          <Form.Item hidden name="source_system">
-            <Input />
-          </Form.Item>
-          <ScheduledJobBasicInfoSection
-            jobTypeOptions={jobTypeSelectOptions}
-            onJobTypeChange={(value) => {
-              if (value === 'code_repository_inspection') {
-                form.setFieldsValue({
-                  config_json: {
-                    ...(recordValue(form.getFieldValue('config_json')) ?? {}),
-                    scan_mode: nativeCodeInspectionScanMode,
-                  },
-                  execution_mode: 'deterministic',
-                  plugin_action_id: undefined,
-                  plugin_action_ids: [],
-                  plugin_connection_id: undefined,
-                  plugin_connection_ids: [],
-                  result_actions: form.getFieldValue('result_actions')?.length
-                    ? form.getFieldValue('result_actions')
-                    : cloneResultActions(defaultCodeInspectionActions),
-                });
-              }
-            }}
-            onProductChange={() => {
-              if (selectedJobType === 'code_repository_inspection') {
-                form.setFieldValue(['config_json', 'repository_id'], undefined);
-                form.setFieldValue(['config_json', 'branch'], undefined);
-              }
-            }}
-            productOptions={products.map((product) => ({
-              label: `${product.name} (${product.code})`,
-              value: product.id,
-            }))}
-            productRequiredRule={productRequiredRuleFactory('请选择产品')}
-          />
-          <ScheduledJobDataConnectionSection
-            connectionEnvironmentOptions={connectionEnvironmentSelectOptions}
-            filteredPluginConnections={filteredPluginConnections}
-            onConnectionEnvironmentChange={handleConnectionEnvironmentChange}
-            onPluginConnectionChange={handlePluginConnectionChange}
-            requiredForPluginResource={pluginResourceRuleFactory}
-            usesNativeScan={selectedCodeInspectionUsesNativeScan}
-          />
-          {selectedJobType === 'code_repository_inspection' ? (
-            <ScheduledJobCodeRepositorySection
-              builtinRuleOptions={codeInspectionBuiltinRuleSelectOptions}
-              ignoreRuleOptions={codeInspectionIgnoreRuleSelectOptions}
-              loadingRepositories={productRepositoriesLoading}
-              onRepositoryChange={handleCodeInspectionRepositoryChange}
-              onScanModeChange={(value) => {
-                if (value === nativeCodeInspectionScanMode) {
-                  form.setFieldValue('plugin_connection_id', undefined);
-                  form.setFieldValue('plugin_connection_ids', []);
-                  form.setFieldValue('plugin_action_id', undefined);
-                  form.setFieldValue('plugin_action_ids', []);
-                  form.setFieldValue(['config_json', 'async_execution'], true);
-                  form.setFieldValue(['config_json', 'scanner_engines'], ['builtin']);
-                  form.setFieldValue(['config_json', 'scan_rules'], ['secrets', 'internal_addresses']);
-                }
-              }}
-              repositories={productRepositories}
-              scanModeOptions={codeInspectionScanModeSelectOptions}
-              scannerEngineOptions={codeInspectionScannerEngineSelectOptions}
-              selectedRepositoryDefaultBranch={selectedRepositoryDefaultBranch}
-              severityThresholdOptions={severityThresholdSelectOptions}
-            />
-          ) : null}
-          <ScheduledJobAiExecutionSection
-            agents={agents}
-            executionModeOptions={executionModeSelectOptions}
-            knowledgeDocuments={knowledgeDocuments}
-            modelGatewayConfigs={modelGatewayConfigs}
-            requiredForAiAssembly={aiAssemblyRuleFactory}
-            skills={skills}
-          />
-          <ScheduledJobActionConfigSection
-            codeInspectionResultActionOptions={codeInspectionResultActionSelectOptions}
-            isCodeInspectionJob={selectedJobType === 'code_repository_inspection'}
-            pluginActions={pluginActions}
-            requiredForPluginResource={pluginResourceRuleFactory}
-            severityThresholdOptions={severityThresholdSelectOptions}
-            usesNativeScan={selectedCodeInspectionUsesNativeScan}
-            writeStrategyLabelFromAction={writeStrategyLabelFromAction}
-          />
-          <ScheduledJobScheduleConfigSection scheduleTypeOptions={scheduleTypeSelectOptions} />
-          {dryRunResult ? <ScheduledJobDryRunResultPanel result={dryRunResult} /> : null}
-        </Form>
-      </Modal>
+      <ScheduledJobFormModal
+        agents={agents}
+        aiAssemblyRuleFactory={aiAssemblyRuleFactory}
+        codeInspectionBuiltinRuleSelectOptions={codeInspectionBuiltinRuleSelectOptions}
+        codeInspectionIgnoreRuleSelectOptions={codeInspectionIgnoreRuleSelectOptions}
+        codeInspectionResultActionOptions={codeInspectionResultActionSelectOptions}
+        codeInspectionScanModeSelectOptions={codeInspectionScanModeSelectOptions}
+        codeInspectionScannerEngineSelectOptions={codeInspectionScannerEngineSelectOptions}
+        connectionEnvironmentSelectOptions={connectionEnvironmentSelectOptions}
+        dryRunResult={dryRunResult}
+        dryRunning={dryRunning}
+        editingJob={editingJob}
+        executionModeSelectOptions={executionModeSelectOptions}
+        filteredPluginConnections={filteredPluginConnections}
+        form={form}
+        jobTemplateOptions={jobTemplateOptions}
+        jobTypeSelectOptions={jobTypeSelectOptions}
+        knowledgeDocuments={knowledgeDocuments}
+        loadingRepositories={productRepositoriesLoading}
+        modalOpen={modalOpen}
+        modelGatewayConfigs={modelGatewayConfigs}
+        orchestrationNodes={orchestrationNodes}
+        pluginActions={pluginActions}
+        productOptions={products.map((product) => ({
+          label: `${product.name} (${product.code})`,
+          value: product.id,
+        }))}
+        productRepositories={productRepositories}
+        productRequiredRule={productRequiredRuleFactory('请选择产品')}
+        requiredForPluginResource={pluginResourceRuleFactory}
+        scheduleTypeSelectOptions={scheduleTypeSelectOptions}
+        selectedJobTemplate={selectedJobTemplate}
+        selectedJobType={selectedJobType}
+        selectedRepositoryDefaultBranch={selectedRepositoryDefaultBranch}
+        severityThresholdSelectOptions={severityThresholdSelectOptions}
+        skills={skills}
+        templateSource={templateSource}
+        usesNativeScan={selectedCodeInspectionUsesNativeScan}
+        writeStrategyLabelFromAction={writeStrategyLabelFromAction}
+        onApplyJobTemplate={applyJobTemplate}
+        onClose={closeJobModal}
+        onConnectionEnvironmentChange={handleConnectionEnvironmentChange}
+        onDryRun={dryRunJob}
+        onJobTypeChange={handleJobTypeChange}
+        onPluginConnectionChange={handlePluginConnectionChange}
+        onProductChange={handleProductChange}
+        onRepositoryChange={handleCodeInspectionRepositoryChange}
+        onScanModeChange={handleScanModeChange}
+        onSubmit={submitJob}
+      />
 
       <ScheduledJobRunDetailModal
         agentLabel={selectedRunAgentLabel}
