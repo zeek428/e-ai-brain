@@ -17,6 +17,7 @@ import {
   type AssistantActionDraftWorkbenchItem,
   type AssistantActionDraftWorkbenchQuery,
   type AssistantActionDraftWorkbenchSummary,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 import { formatDisplayDateTime } from '../../utils/dateTime';
 import { formatMutationError } from '../../utils/managementCrud';
@@ -96,6 +97,7 @@ export default function AssistantDraftsPage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: AssistantActionDraftWorkbenchItem[];
     status: 'error' | 'loading' | 'ready';
     summary?: AssistantActionDraftWorkbenchSummary;
@@ -113,6 +115,7 @@ export default function AssistantDraftsPage() {
     setListState({
       page: result.page,
       pageSize: result.pageSize,
+      performance: result.performance,
       rows: result.rows,
       status: 'ready',
       summary: result.summary,
@@ -143,6 +146,7 @@ export default function AssistantDraftsPage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             summary: result.summary,
@@ -344,6 +348,7 @@ export default function AssistantDraftsPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

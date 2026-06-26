@@ -18,6 +18,7 @@ import {
   fetchRoleDefinitions,
   fetchManagementUserList,
   updateManagementUser,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 import type { UserListQuery } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
@@ -72,6 +73,7 @@ export default function UsersPage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: UserRecord[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -103,6 +105,7 @@ export default function UsersPage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -135,6 +138,7 @@ export default function UsersPage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -318,6 +322,7 @@ export default function UsersPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

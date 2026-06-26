@@ -40,6 +40,7 @@ import {
   type ProductModuleMutationPayload,
   type ProductRelatedSystemMutationPayload,
   type ProductVersionMutationPayload,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
 
@@ -163,6 +164,7 @@ export default function ProductsPage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: ProductRecord[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -180,6 +182,7 @@ export default function ProductsPage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -203,6 +206,7 @@ export default function ProductsPage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -741,6 +745,7 @@ export default function ProductsPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

@@ -10,6 +10,7 @@ import {
   type ExecutionTraceDetailRecord,
   type ExecutionTraceListItem,
   type ExecutionTraceListQuery,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 import { formatDisplayDateTime } from '../../utils/dateTime';
 import { formatMutationError } from '../../utils/managementCrud';
@@ -188,6 +189,7 @@ export default function ExecutionTracesPage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: ExecutionTraceListItem[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -206,6 +208,7 @@ export default function ExecutionTracesPage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -229,6 +232,7 @@ export default function ExecutionTracesPage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -382,6 +386,7 @@ export default function ExecutionTracesPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

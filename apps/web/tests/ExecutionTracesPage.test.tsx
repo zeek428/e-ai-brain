@@ -206,6 +206,13 @@ function installExecutionTracesFetchMock() {
             items: [assistantTrace],
             page: 1,
             page_size: 10,
+            performance: {
+              duration_ms: 88,
+              result_count: 1,
+              slow: false,
+              slow_threshold_ms: 500,
+              total: 1,
+            },
             total: 1,
           },
         });
@@ -215,6 +222,13 @@ function installExecutionTracesFetchMock() {
           items: [trace, assistantTrace],
           page: 1,
           page_size: 10,
+          performance: {
+            duration_ms: 214,
+            result_count: 2,
+            slow: false,
+            slow_threshold_ms: 500,
+            total: 2,
+          },
           total: 2,
         },
       });
@@ -255,6 +269,7 @@ describe('ExecutionTracesPage', () => {
     expect(screen.getAllByText('定时作业运行').length).toBeGreaterThan(0);
     expect(screen.getAllByText('2026-06-20 09:00').length).toBeGreaterThan(0);
     expect(screen.getByText('8.00 s')).toBeInTheDocument();
+    expect(screen.getByText('查询 214ms')).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole('button', { name: '详情' })[0]);
 

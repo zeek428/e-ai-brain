@@ -23,6 +23,7 @@ import {
   type OperationalMetricRecord,
   type OperationalMetricListQuery,
   type ProductGitRepositoryOption,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 
 type GitLabMetricFormValues = {
@@ -317,6 +318,7 @@ export default function DevopsPage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: OperationalMetricRecord[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -334,6 +336,7 @@ export default function DevopsPage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -379,6 +382,7 @@ export default function DevopsPage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -534,6 +538,7 @@ export default function DevopsPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

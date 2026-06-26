@@ -35,6 +35,7 @@ import {
   type ProductVersionAdvanceStatusResult,
   type ProductVersionBranchConfigMutationPayload,
   type ProductVersionListQuery,
+  type RemoteListPerformance,
   updateProductVersionBranchConfig,
   updateProductVersion,
 } from '../../services/aiBrain';
@@ -194,6 +195,7 @@ export default function IterationVersionsPage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: ProductVersionRecord[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -231,6 +233,7 @@ export default function IterationVersionsPage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -254,6 +257,7 @@ export default function IterationVersionsPage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -693,6 +697,7 @@ export default function IterationVersionsPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

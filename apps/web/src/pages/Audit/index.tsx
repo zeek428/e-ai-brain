@@ -10,6 +10,7 @@ import {
   fetchManagementAuditList,
   type AuditListQuery,
   type LifecycleContextRecord,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 import { formatMutationError } from '../../utils/managementCrud';
 
@@ -109,6 +110,7 @@ export default function AuditPage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: AuditRecord[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -126,6 +128,7 @@ export default function AuditPage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -149,6 +152,7 @@ export default function AuditPage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -271,6 +275,7 @@ export default function AuditPage() {
           onChange: setListQuery,
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

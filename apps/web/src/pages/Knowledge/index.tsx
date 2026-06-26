@@ -62,6 +62,7 @@ import {
   type KnowledgeDepositRecord,
   type KnowledgeSearchResultRecord,
   type KnowledgeSpaceRecord,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 import { formatMutationError, joinTextList, splitCommaText } from '../../utils/managementCrud';
 
@@ -242,6 +243,7 @@ export default function KnowledgePage() {
     error?: RemoteRowsError;
     page: number;
     pageSize: number;
+    performance?: RemoteListPerformance;
     rows: KnowledgeRecord[];
     status: 'error' | 'loading' | 'ready';
     total: number;
@@ -284,6 +286,7 @@ export default function KnowledgePage() {
       setListState({
         page: result.page,
         pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -348,6 +351,7 @@ export default function KnowledgePage() {
           setListState({
             page: result.page,
             pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -1215,6 +1219,7 @@ export default function KnowledgePage() {
           },
           page: listState.page,
           pageSize: listState.pageSize,
+          performance: listState.performance,
           total: listState.total,
         }}
         rowKey="id"

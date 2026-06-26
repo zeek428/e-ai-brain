@@ -3375,6 +3375,7 @@ export async function fetchAssistantActionDraftWorkbench(
   return {
     page: response.page ?? query.page ?? 1,
     pageSize: response.page_size ?? query.pageSize ?? 10,
+    performance: response.performance,
     rows: response.items,
     summary: response.summary,
     total: response.total,
@@ -4091,6 +4092,7 @@ export async function fetchManagementProductList(
   return {
     page: products.page ?? query.page ?? 1,
     pageSize: products.page_size ?? query.pageSize ?? 10,
+    performance: products.performance,
     rows: products.items.map((product) => mapProductRecord(product)),
     total: products.total,
   };
@@ -4292,6 +4294,7 @@ export async function fetchDeliveryIterationVersionList(
   return {
     page: versions.page ?? query.page ?? 1,
     pageSize: versions.page_size ?? query.pageSize ?? 10,
+    performance: versions.performance,
     rows: versions.items.map(mapProductVersionRecord),
     total: versions.total,
   };
@@ -4934,6 +4937,7 @@ export async function fetchManagementUserList(
   return {
     page: users.page ?? query.page ?? 1,
     pageSize: users.page_size ?? query.pageSize ?? 10,
+    performance: users.performance,
     rows: users.items.map((user) => {
       const roles = user.roles ?? [];
       return {
@@ -5022,6 +5026,7 @@ export async function fetchModelGatewayConfigList(
   return {
     page: configs.page ?? query.page ?? 1,
     pageSize: configs.page_size ?? query.pageSize ?? 10,
+    performance: configs.performance,
     rows: configs.items.map(mapModelGatewayConfig),
     total: configs.total,
   };
@@ -7053,6 +7058,7 @@ export async function fetchManagementKnowledgeList(
   return {
     page: documents.page ?? query.page ?? 1,
     pageSize: documents.page_size ?? query.pageSize ?? 10,
+    performance: documents.performance,
     rows: documents.items.map(mapKnowledgeRecord),
     total: documents.total,
   };
@@ -7427,6 +7433,7 @@ export async function fetchManagementAuditList(
   return {
     page: events.page ?? query.page ?? 1,
     pageSize: events.page_size ?? query.pageSize ?? 10,
+    performance: events.performance,
     rows: events.items.map(mapAuditRecord),
     total: events.total,
   };
@@ -7455,6 +7462,7 @@ export async function fetchExecutionTraces(
   return {
     page: traces.page ?? query.page ?? 1,
     pageSize: traces.page_size ?? query.pageSize ?? 10,
+    performance: traces.performance,
     rows: traces.items,
     total: traces.total,
   };
@@ -8528,6 +8536,7 @@ export async function fetchDevopsMetricList(
   return {
     page: metrics.page ?? query.page ?? 1,
     pageSize: metrics.page_size ?? query.pageSize ?? 10,
+    performance: metrics.performance,
     rows: metrics.items.map(mapOperationalMetricRecord),
     total: metrics.total,
   };
