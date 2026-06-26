@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.685 |
+| 功能版本 | v1.1.686 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.686 | 2026-06-26 | 补充 AI 助手草案任务台组件化验收：摘要指标条、详情弹窗和草案状态/风险/校验展示 helper 必须从页面主文件拆出，页面继续保留待确认、失败、已采纳、采纳率、处理率、用户修改率、来源链路、继续编辑、确认和取消能力；`AssistantDraftsPage.test.tsx`、typecheck、lint 和真实 `/assistant/drafts` 页面 smoke 必须通过 | Codex |
 | v1.1.685 | 2026-06-26 | 补充插件管理工作区指南组件化验收：系统变量预览、全部变量弹窗入口和通用调用链路说明必须从主页面拆到 `PluginWorkspaceGuide`，连接/动作弹窗继续复用同一系统变量选项；`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.684 | 2026-06-25 | 补充定时作业表格组件化验收：作业配置表格与运行记录表格必须从主页面拆到 `ScheduledJobConfigTable` / `ScheduledJobRunTable`，保留新增、刷新、编辑、复制、运行、删除、详情、复制配置、复跑、横向滚动和表格设置能力；`ScheduledJobsPage.test.tsx`、typecheck、lint 和真实 `/tasks/scheduled-jobs` 页面 smoke 必须通过 | Codex |
 | v1.1.683 | 2026-06-25 | 补充 AI 能力配置页列表标准化验收：AI角色与 Skill 管理页签必须复用统一管理列表底座，保留新增/编辑/停用和 Skill 包上传，同时支持关键词、状态、模型网关、来源、人工确认筛选、本地筛选视图保存、横向滚动和表格设置；`AiCapabilitiesPage.test.tsx` 必须覆盖统一查询入口和保存视图入口 | Codex |
