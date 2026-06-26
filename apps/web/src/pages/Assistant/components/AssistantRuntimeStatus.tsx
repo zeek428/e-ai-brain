@@ -2,9 +2,21 @@ import { LinkOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons
 import { Button, Space, Tag, Typography } from 'antd';
 import { useMemo } from 'react';
 
+import { ExecutionTraceLink } from '../../../components/ExecutionTraceLink';
 import type { AssistantRuntimeStatus as AssistantRuntimeStatusRecord } from '../../../services/aiBrain';
 
 const { Text } = Typography;
+
+const RUNTIME_FAILURE_TRACE_SOURCE_TYPES = new Set([
+  'assistant_chat_run',
+  'model_gateway_log',
+  'scheduled_job_run',
+]);
+
+function runtimeFailureTraceSourceType(kind?: string | null) {
+  const normalizedKind = String(kind ?? '').trim();
+  return RUNTIME_FAILURE_TRACE_SOURCE_TYPES.has(normalizedKind) ? normalizedKind : undefined;
+}
 
 export function AssistantRuntimeStatus({
   checkedAt,
@@ -105,23 +117,41 @@ export function AssistantRuntimeStatus({
         {recentFailures.length ? (
           <div className="assistant-runtime-section" aria-label="助手最近失败">
             <Text strong>最近失败</Text>
-            {recentFailures.map((item) => (
-              <div className="assistant-runtime-check" key={`${item.kind}:${item.id}`}>
-                <Space size={6} wrap>
-                  <Tag color={item.kind === 'model_gateway_log' ? 'orange' : 'red'}>
-                    {item.label ?? item.kind}
-                  </Tag>
-                  <Text>{item.title || item.id}</Text>
-                  {item.error_code ? <Tag>{item.error_code}</Tag> : null}
-                  <Text type="secondary">{item.error_message}</Text>
-                  {item.url ? (
-                    <Button href={item.url} icon={<LinkOutlined />} size="small" type="link">
-                      查看
-                    </Button>
-                  ) : null}
-                </Space>
-              </div>
-            ))}
+            {recentFailures.map((item) => {
+              const traceSourceType = runtimeFailureTraceSourceType(item.kind);
+              const label = item.label ?? item.kind;
+              return (
+                <div className="assistant-runtime-check" key={`${item.kind}:${item.id}`}>
+                  <Space size={6} wrap>
+                    <Tag color={item.kind === 'model_gateway_log' ? 'orange' : 'red'}>
+                      {label}
+                    </Tag>
+                    <Text>{item.title || item.id}</Text>
+                    {item.error_code ? <Tag>{item.error_code}</Tag> : null}
+                    <Text type="secondary">{item.error_message}</Text>
+                    <ExecutionTraceLink
+                      asButton
+                      buttonProps={{
+                        'aria-label': `${label}执行诊断`,
+                        icon: <LinkOutlined />,
+                        size: 'small',
+                      }}
+                      fallback={
+                        item.url ? (
+                          <Button href={item.url} icon={<LinkOutlined />} size="small" type="link">
+                            查看
+                          </Button>
+                        ) : null
+                      }
+                      sourceId={item.id}
+                      sourceType={traceSourceType ?? ''}
+                    >
+                      执行诊断
+                    </ExecutionTraceLink>
+                  </Space>
+                </div>
+              );
+            })}
           </div>
         ) : null}
         {queueNeedsAttention && executorQueue ? (

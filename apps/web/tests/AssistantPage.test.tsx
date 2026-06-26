@@ -1866,6 +1866,16 @@ describe('AssistantPage', () => {
     expect(runtimeStatus).toHaveTextContent('排队 2');
     expect(runtimeStatus).toHaveTextContent('执行中 1');
     expect(runtimeStatus).toHaveTextContent('离线 Runner 1');
+    expect(within(runtimeStatus).getByRole('link', { name: '模型网关失败执行诊断' }))
+      .toHaveAttribute(
+        'href',
+        '/governance/execution-traces?source_id=model_gateway_log_failed&source_type=model_gateway_log',
+      );
+    expect(within(runtimeStatus).getByRole('link', { name: '定时作业失败执行诊断' }))
+      .toHaveAttribute(
+        'href',
+        '/governance/execution-traces?source_id=scheduled_job_run_failed&source_type=scheduled_job_run',
+      );
   });
 
   it('keeps recent conversations visible before collapsed role quick tasks', async () => {
@@ -4054,9 +4064,21 @@ describe('AssistantPage', () => {
     expect(screen.getByText('AI处理是否成功：成功')).toBeInTheDocument();
     expect(screen.getByText('结果动作是否写入成功：失败')).toBeInTheDocument();
     expect(screen.getByText('写入反馈洞察表失败。')).toBeInTheDocument();
-    expect(screen.getByText('关联日志：plugin_invocation_log_feedback_fetch')).toBeInTheDocument();
-    expect(screen.getByText('关联日志：model_gateway_log_feedback_failed')).toBeInTheDocument();
-    expect(screen.getByText('关联日志：plugin_invocation_log_feedback_failed')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'plugin_invocation_log_feedback_fetch' }))
+      .toHaveAttribute(
+        'href',
+        '/governance/execution-traces?source_id=plugin_invocation_log_feedback_fetch&source_type=plugin_invocation_log',
+      );
+    expect(screen.getByRole('link', { name: 'model_gateway_log_feedback_failed' }))
+      .toHaveAttribute(
+        'href',
+        '/governance/execution-traces?source_id=model_gateway_log_feedback_failed&source_type=model_gateway_log',
+      );
+    expect(screen.getByRole('link', { name: 'plugin_invocation_log_feedback_failed' }))
+      .toHaveAttribute(
+        'href',
+        '/governance/execution-traces?source_id=plugin_invocation_log_feedback_failed&source_type=plugin_invocation_log',
+      );
     expect(screen.getByText('写入目标：用户洞察表')).toBeInTheDocument();
     expect(screen.getByText('错误：HTTP 500: downstream write failed')).toBeInTheDocument();
     expect(screen.getByRole('link', {

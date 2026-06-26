@@ -1,8 +1,10 @@
 import { Button, Typography } from 'antd';
+import type { ButtonProps } from 'antd';
 import type { CSSProperties, ReactNode } from 'react';
 
 type ExecutionTraceLinkProps = {
   asButton?: boolean;
+  buttonProps?: Omit<ButtonProps, 'href'>;
   children?: ReactNode;
   fallback?: ReactNode;
   sourceId?: string | null;
@@ -25,6 +27,7 @@ function executionTraceHref(sourceId?: string | null, sourceType?: string | null
 
 export function ExecutionTraceLink({
   asButton = false,
+  buttonProps,
   children,
   fallback = '-',
   sourceId,
@@ -39,7 +42,7 @@ export function ExecutionTraceLink({
   const label = children ?? sourceId;
   if (asButton) {
     return (
-      <Button href={href} type="link">
+      <Button {...buttonProps} href={href} type={buttonProps?.type ?? 'link'}>
         {label}
       </Button>
     );

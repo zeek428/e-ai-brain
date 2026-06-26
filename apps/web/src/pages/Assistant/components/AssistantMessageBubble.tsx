@@ -25,6 +25,7 @@ import {
   scheduledJobRunStatusLabel,
 } from '../assistantRunPresentation';
 import { type ChatMessage } from '../hooks/useAssistantConversation';
+import { ExecutionTraceLink } from '../../../components/ExecutionTraceLink';
 import { AssistantActionDraftCards } from './AssistantDraftCards';
 import { actionDraftItems } from './assistantMessageHelpers';
 
@@ -110,6 +111,23 @@ function diagnosticStageOutcome(status: string) {
     warning: '有告警',
   };
   return labels[status] ?? (status === '-' ? '未记录' : status);
+}
+
+function diagnosticStageLogSourceType(stage: string, logId: string) {
+  if (!logId || logId === '-') {
+    return undefined;
+  }
+  if (stage === 'ai_processing' || logId.startsWith('model_gateway_log')) {
+    return 'model_gateway_log';
+  }
+  if (
+    stage === 'data_connection'
+    || stage === 'result_action'
+    || logId.startsWith('plugin_invocation_log')
+  ) {
+    return 'plugin_invocation_log';
+  }
+  return undefined;
 }
 
 function pluginConnectionDiagnosticStageLabel(stage: string) {
@@ -430,6 +448,7 @@ function AssistantScheduledJobDiagnosticCards({
                 const resultWriteRecordUrl = diagnosticResultWriteRecordUrl(item, stage);
                 const stageName = itemText(stage, 'stage');
                 const stageStatus = itemText(stage, 'status');
+                const logSourceType = diagnosticStageLogSourceType(stageName, logId);
                 return (
                   <div className="assistant-diagnostic-stage" key={stageName}>
                     <Text strong>
@@ -443,7 +462,16 @@ function AssistantScheduledJobDiagnosticCards({
                     </Space>
                     <Text>{itemText(stage, 'summary')}</Text>
                     {logId !== '-' ? (
-                      <Text type="secondary">关联日志：{logId}</Text>
+                      <Text type="secondary">
+                        关联日志：
+                        <ExecutionTraceLink
+                          fallback={logId}
+                          sourceId={logId}
+                          sourceType={logSourceType ?? ''}
+                        >
+                          {logId}
+                        </ExecutionTraceLink>
+                      </Text>
                     ) : null}
                     {writeTargetLabel !== '-' || writeTarget !== '-' ? (
                       <Text type="secondary">
