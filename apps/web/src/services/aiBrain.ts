@@ -1276,6 +1276,12 @@ export type ModelGatewayConfigListQuery = RemoteListQuery & {
   status?: string;
 };
 
+export type ModelGatewayLogQuery = {
+  aiTaskId?: string;
+  purpose?: string;
+  status?: string;
+};
+
 export type ScheduledJobListQuery = RemoteListQuery & {
   enabled?: boolean;
   jobType?: string;
@@ -2703,6 +2709,21 @@ type ModelGatewayConfigListItem = {
   provider?: string;
   status?: string;
   timeout_seconds?: number;
+};
+
+type ModelGatewayLogListItem = {
+  ai_task_id?: string | null;
+  created_at?: string;
+  error?: string | null;
+  id: string;
+  latency_ms?: number | null;
+  model?: string;
+  model_gateway_config_id?: string | null;
+  provider?: string;
+  purpose?: string;
+  status?: string;
+  tokens?: Record<string, unknown>;
+  updated_at?: string;
 };
 
 type GitLabMergeRequestPreviewResponse = {
@@ -5005,6 +5026,38 @@ function mapModelGatewayConfig(config: ModelGatewayConfigListItem): ModelGateway
   };
 }
 
+export type ModelGatewayLogRecord = {
+  aiTaskId?: string | null;
+  createdAt?: string;
+  error?: string | null;
+  id: string;
+  latencyMs?: number | null;
+  model: string;
+  modelGatewayConfigId?: string | null;
+  provider: string;
+  purpose: string;
+  status: string;
+  tokens: Record<string, unknown>;
+  updatedAt?: string;
+};
+
+function mapModelGatewayLog(log: ModelGatewayLogListItem): ModelGatewayLogRecord {
+  return {
+    aiTaskId: log.ai_task_id ?? null,
+    createdAt: log.created_at,
+    error: log.error ?? null,
+    id: log.id,
+    latencyMs: log.latency_ms ?? null,
+    model: log.model ?? '-',
+    modelGatewayConfigId: log.model_gateway_config_id ?? null,
+    provider: log.provider ?? '-',
+    purpose: log.purpose ?? '-',
+    status: log.status ?? '-',
+    tokens: log.tokens && typeof log.tokens === 'object' ? log.tokens : {},
+    updatedAt: log.updated_at,
+  };
+}
+
 export async function fetchModelGatewayConfigList(
   query: ModelGatewayConfigListQuery = {},
 ): Promise<RemoteListResult<ModelGatewayConfigRecord>> {
@@ -5039,6 +5092,25 @@ export async function fetchModelGatewayConfigs(): Promise<ModelGatewayConfigReco
     { token },
   );
   return configs.items.map(mapModelGatewayConfig);
+}
+
+export async function fetchModelGatewayLogs(
+  query: ModelGatewayLogQuery = {},
+): Promise<{ rows: ModelGatewayLogRecord[]; total: number }> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'ai_task_id', query.aiTaskId);
+  appendQueryParam(params, 'purpose', query.purpose);
+  appendQueryParam(params, 'status', query.status);
+  const queryString = params.toString();
+  const logs = await apiRequest<ListResponse<ModelGatewayLogListItem>>(
+    queryString ? `/api/model-gateway/logs?${queryString}` : '/api/model-gateway/logs',
+    { token },
+  );
+  return {
+    rows: logs.items.map(mapModelGatewayLog),
+    total: logs.total,
+  };
 }
 
 export async function createModelGatewayConfig(payload: ModelGatewayConfigMutationPayload) {

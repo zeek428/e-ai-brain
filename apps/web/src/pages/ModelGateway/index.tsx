@@ -1,5 +1,6 @@
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
+import type { ColumnsType } from 'antd/es/table';
 import {
   Alert,
   AutoComplete,
@@ -14,10 +15,13 @@ import {
   Select,
   Space,
   Switch,
+  Table,
+  Typography,
   message,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { ExecutionTraceLink } from '../../components/ExecutionTraceLink';
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { ManagementListQuery } from '../../components/ManagementListPage';
 import type { ModelGatewayConfigRecord } from '../../data/management';
@@ -30,12 +34,15 @@ import {
   createModelGatewayConfig,
   deleteModelGatewayConfig,
   fetchModelGatewayConfigList,
+  fetchModelGatewayLogs,
   testModelGatewayConfig,
   updateModelGatewayConfig,
   type ModelGatewayConfigListQuery,
+  type ModelGatewayLogRecord,
   type ModelGatewayConfigTestResult,
   type RemoteListPerformance,
 } from '../../services/aiBrain';
+import { formatDisplayDateTime } from '../../utils/dateTime';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
 
 type ModelGatewayFormValues = {
@@ -130,6 +137,20 @@ function formatTestStatus(result: ModelGatewayConfigTestResult['chat'] | ModelGa
   return result.ok ? '成功' : '失败';
 }
 
+function formatTokenSummary(tokens: Record<string, unknown>) {
+  const preferredKeys = ['total_tokens', 'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens'];
+  const values = preferredKeys
+    .map((key) => [key, tokens[key]] as const)
+    .filter(([, value]) => typeof value === 'number' || typeof value === 'string');
+  if (values.length > 0) {
+    return values.map(([key, value]) => `${key}: ${value}`).join(' / ');
+  }
+  const fallback = Object.entries(tokens)
+    .filter(([, value]) => typeof value === 'number' || typeof value === 'string')
+    .slice(0, 3);
+  return fallback.length > 0 ? fallback.map(([key, value]) => `${key}: ${value}`).join(' / ') : '-';
+}
+
 export default function ModelGatewayPage() {
   const [form] = Form.useForm<ModelGatewayFormValues>();
   const embeddingMode = Form.useWatch('embedding_connection_mode', form) ?? 'disabled';
@@ -160,6 +181,16 @@ export default function ModelGatewayPage() {
     status: 'loading',
     total: 0,
   });
+  const [logState, setLogState] = useState<{
+    error?: RemoteRowsError;
+    rows: ModelGatewayLogRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
   const reload = useCallback(async () => {
     setListState((current) => ({ ...current, status: 'loading' }));
     try {
@@ -181,6 +212,25 @@ export default function ModelGatewayPage() {
       }));
     }
   }, [listQuery]);
+  const reloadLogs = useCallback(async () => {
+    setLogState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchModelGatewayLogs();
+      setLogState({
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setLogState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+        total: 0,
+      }));
+    }
+  }, []);
   useEffect(() => {
     let isCurrent = true;
     setListState((current) => ({ ...current, status: 'loading' }));
@@ -211,6 +261,34 @@ export default function ModelGatewayPage() {
       isCurrent = false;
     };
   }, [listQuery]);
+  useEffect(() => {
+    let isCurrent = true;
+    setLogState((current) => ({ ...current, status: 'loading' }));
+    fetchModelGatewayLogs()
+      .then((result) => {
+        if (isCurrent) {
+          setLogState({
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setLogState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+            total: 0,
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
   const dataSource = listState.rows;
 
   const openCreateModal = () => {
@@ -415,6 +493,111 @@ export default function ModelGatewayPage() {
     ],
     [handleDelete, openEditModal],
   );
+  const logColumns = useMemo<ColumnsType<ModelGatewayLogRecord>>(
+    () => [
+      {
+        dataIndex: 'id',
+        fixed: 'left',
+        title: '日志 ID',
+        width: 220,
+        render: (_, row) => (
+          <Space orientation="vertical" size={2}>
+            <Typography.Text copyable ellipsis style={{ maxWidth: 200 }}>
+              {row.id}
+            </Typography.Text>
+            <ExecutionTraceLink sourceId={row.id} sourceType="model_gateway_log">
+              调用诊断
+            </ExecutionTraceLink>
+          </Space>
+        ),
+      },
+      {
+        dataIndex: 'purpose',
+        title: '用途',
+        width: 150,
+      },
+      {
+        dataIndex: 'model',
+        title: '模型',
+        width: 170,
+      },
+      {
+        dataIndex: 'status',
+        title: '状态',
+        width: 110,
+        render: (_, row) => (
+          <StatusTag
+            color={row.status === 'succeeded' ? 'green' : row.status === 'failed' ? 'red' : 'default'}
+            label={row.status}
+          />
+        ),
+      },
+      {
+        dataIndex: 'latencyMs',
+        title: '耗时',
+        width: 100,
+        render: (_, row) => (typeof row.latencyMs === 'number' ? `${row.latencyMs}ms` : '-'),
+      },
+      {
+        dataIndex: 'tokens',
+        ellipsis: true,
+        title: 'Token',
+        width: 240,
+        render: (_, row) => formatTokenSummary(row.tokens),
+      },
+      {
+        dataIndex: 'aiTaskId',
+        title: 'AI 任务',
+        width: 180,
+        render: (_, row) => row.aiTaskId || '-',
+      },
+      {
+        dataIndex: 'error',
+        ellipsis: true,
+        title: '错误',
+        width: 220,
+        render: (_, row) => row.error || '-',
+      },
+      {
+        dataIndex: 'createdAt',
+        title: '创建时间',
+        width: 180,
+        render: (_, row) => formatDisplayDateTime(row.createdAt),
+      },
+    ],
+    [],
+  );
+
+  const modelGatewayLogPanel = (
+    <div style={{ marginBottom: 16 }}>
+      <Space align="center" style={{ justifyContent: 'space-between', marginBottom: 12, width: '100%' }}>
+        <Space align="baseline" size={12}>
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            最近模型调用日志
+          </Typography.Title>
+          <Typography.Text type="secondary">共 {logState.total} 条</Typography.Text>
+        </Space>
+        <Button onClick={() => void reloadLogs()}>刷新日志</Button>
+      </Space>
+      {logState.error ? (
+        <Alert
+          showIcon
+          style={{ marginBottom: 12 }}
+          title={formatRemoteRowsError(logState.error)}
+          type="warning"
+        />
+      ) : null}
+      <Table<ModelGatewayLogRecord>
+        columns={logColumns}
+        dataSource={logState.rows}
+        loading={logState.status === 'loading'}
+        pagination={{ pageSize: 5, showSizeChanger: false, showTotal: (total) => `共 ${total} 条` }}
+        rowKey="id"
+        scroll={{ x: 1400 }}
+        tableLayout="fixed"
+      />
+    </div>
+  );
 
   return (
     <>
@@ -458,6 +641,7 @@ export default function ModelGatewayPage() {
         ]}
         loading={listState.status === 'loading'}
         notice={formatRemoteRowsError(listState.error)}
+        beforeTable={modelGatewayLogPanel}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="新增配置"

@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.698 |
+| 功能版本 | v1.1.699 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.699 | 2026-06-26 | 补充模型网关调用日志诊断入口验收：模型网关页需展示最近模型调用日志，并为每条日志提供 `/governance/execution-traces?source_id=...&source_type=model_gateway_log` 调用诊断链接；`ModelGatewayPage.test.tsx` 覆盖链接生成 | Codex |
 | v1.1.698 | 2026-06-26 | 补充 Runner 执行日志诊断入口验收：插件管理 Runner 日志弹窗必须提供任务诊断、Runner 诊断和来源运行诊断链接，分别跳转 `/governance/execution-traces?source_id=...&source_type=ai_executor_task|ai_executor_runner|scheduled_job_run`；`PluginsPage.test.tsx` 覆盖链接生成 | Codex |
 | v1.1.697 | 2026-06-26 | 补充管理列表性能观测扩展验收：产品、迭代版本、知识、审计、模型网关、执行诊断、日志监控、用户和 AI 助手草案任务台必须透传远程分页 `performance` 元数据；`ExecutionTracesPage.test.tsx` 覆盖执行诊断页查询耗时展示 | Codex |
 | v1.1.696 | 2026-06-26 | 补充管理列表性能观测验收：统一列表底座必须展示远程分页查询耗时，`performance.slow=true` 时显示慢查询阈值和排查提示；需求、任务、Bug、用户洞察、代码巡检和角色列表需透传服务端 `performance` 元数据，`ManagementListPage.test.tsx` 覆盖查询耗时标签和慢查询提示 | Codex |

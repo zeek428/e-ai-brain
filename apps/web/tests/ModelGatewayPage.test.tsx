@@ -53,6 +53,28 @@ describe('ModelGatewayPage', () => {
           },
         });
       }
+      if (input === '/api/model-gateway/logs' && init?.method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                ai_task_id: 'task_model_gateway_001',
+                created_at: '2026-06-26T07:01:02+00:00',
+                error: null,
+                id: 'model_gateway_log_001',
+                latency_ms: 42,
+                model: 'gpt-4.1',
+                model_gateway_config_id: 'model_config_default',
+                provider: 'openai_compatible',
+                purpose: 'assistant_chat',
+                status: 'succeeded',
+                tokens: { completion_tokens: 8, prompt_tokens: 13, total_tokens: 21 },
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
       if (input === '/api/system/model-gateway-configs') {
         if (init?.method === 'POST') {
           expect(JSON.parse(String(init.body))).toMatchObject({
@@ -152,6 +174,11 @@ describe('ModelGatewayPage', () => {
     render(<ModelGatewayPage />);
 
     expect(await screen.findByText('默认模型网关')).toBeInTheDocument();
+    expect(await screen.findByText('model_gateway_log_001')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '调用诊断' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=model_gateway_log_001&source_type=model_gateway_log',
+    );
     expect(screen.getByText('模型网关配置')).toBeInTheDocument();
     expect(screen.getByText('已配置')).toBeInTheDocument();
     expect(screen.queryByText('sk-live-secret')).not.toBeInTheDocument();
