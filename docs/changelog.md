@@ -33,6 +33,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 执行诊断到 AI 助手深链补齐上下文解析：`assistant_chat_run`、`model_gateway_log`、`plugin_invocation_log`、`ai_executor_task`、`ai_executor_runner`、`code_inspection_report` 和 `audit_event` 等来源类型可作为助手引用候选带入“本次上下文”，并在候选解析和最终引用注入时统一校验执行诊断读权限。
 - 研发执行器策略列表改为服务端分页、筛选和排序：`GET /api/delivery/rd-task-executor-policies` 带分页参数时走 PostgreSQL read model，支持策略名称、产品名称、执行器、任务类型和状态筛选，并返回 `query/performance` 观测信息。
 - 执行诊断列表查询性能优化：普通列表默认复用已有 PostgreSQL 快照，页面刷新按钮或 `refresh=true` 才同步重建快照，避免每隔数秒浏览列表触发全量 Trace 刷新慢查询。
 - 任务中心配置页头部去重：定时作业、AI 能力配置和插件管理移除外层独立页标题，仅保留面包屑、页签和内容区标题。

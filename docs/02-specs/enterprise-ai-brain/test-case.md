@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.725 |
+| 功能版本 | v1.1.726 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.726 | 2026-06-27 | 补充执行诊断到 AI 助手深链上下文验收：`assistant_chat_run` 等执行诊断来源必须能通过助手引用候选解析为本次上下文，未知引用类型仍只保留 route prompt；`test_assistant_chat.py` 与 `AssistantPage.test.tsx` 覆盖 | Codex |
 | v1.1.725 | 2026-06-27 | 补充 AI 助手草案任务台 read model 验收：PostgreSQL 外层仓储必须暴露草案分页 read model，列表服务优先使用数据库侧当前用户、动作、状态、时间、关键词、排序和分页查询；`test_assistant_draft_workbench.py` 与 `test_persistence_repository_boundaries.py` 覆盖 | Codex |
 | v1.1.724 | 2026-06-27 | 补充受控运维接口权限验收：定时作业、运行记录、插件、连接、动作、调用日志和 AI 执行器列表必须服务端校验专项权限，定时作业执行权限用户只能看到或运行产品 scope 内对象；`test_security_boundaries.py` 覆盖 | Codex |
 | v1.1.723 | 2026-06-27 | 补充知识沉淀审核全链路入口验收：知识中心“沉淀审核”列表每条候选提供 `knowledge_deposit` 主体全链路链接，审核表格保持固定列宽和横向滚动；`KnowledgePage.test.tsx` 覆盖 | Codex |

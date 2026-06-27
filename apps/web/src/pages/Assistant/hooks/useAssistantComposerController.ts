@@ -24,16 +24,26 @@ const ASSISTANT_ADD_ACTION_LIMIT = 20;
 const queryReferenceTypes = new Set([
   'ai_agent',
   'ai_skill',
+  'ai_executor_runner',
+  'ai_executor_task',
   'ai_task',
+  'assistant_chat_run',
+  'assistant_message',
+  'audit_event',
+  'code_inspection_report',
   'knowledge_chunk',
   'knowledge_document',
   'knowledge_folder',
   'knowledge_space',
+  'model_gateway_log',
   'plugin_action',
   'plugin_connection',
+  'plugin_invocation_log',
   'requirement',
+  'result_write_record',
   'scheduled_job',
   'scheduled_job_run',
+  'scheduled_job_stage',
 ]);
 
 type AssistantComposerSubmitCallbacks = {
@@ -342,6 +352,9 @@ export function useAssistantComposerController({
           setCommittedActionCommand(command);
           setInputValue(inputWithAssistantActionCommand(queryReference.prompt ?? '', reference));
           return;
+        }
+        if (queryReference.prompt) {
+          setInputValue(queryReference.prompt);
         }
         setSelectedReferences((currentItems) => (
           currentItems.some((item) => item.id === reference.id && item.type === reference.type)

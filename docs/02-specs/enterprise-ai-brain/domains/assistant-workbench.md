@@ -25,6 +25,7 @@
 ## 当前落地要求
 
 - 助手回答系统问题时先使用 read-model 工具生成 `tool_results`，覆盖产品、迭代、需求、任务、Review、Bug、代码评审、模型网关和执行诊断。
+- 执行诊断来源深链进入助手时必须同时带入 `prompt` 和可解析引用上下文；`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`plugin_invocation_log`、`ai_executor_task`、`ai_executor_runner`、`code_inspection_report`、`audit_event` 等来源类型仅在用户具备 `diagnostics.execution_traces.read` 或系统管理员权限时可解析和注入。
 - 每次助手聊天运行写入 `assistant_chat_runs` 后，可在执行诊断中心按 `assistant_chat_run` 查看模型网关日志和审计事件链路；用户消息和助手消息仅以 `assistant_message` 节点形式暴露 ID、角色、会话和 run 归属，草案任务台使用 `source_message_id` 跳转来源链路；助手运行状态最近失败和运行诊断卡片中的 `model_gateway_log`、`plugin_invocation_log` 与 `scheduled_job_run` ID 必须跳转统一执行诊断中心；运行状态检测时间必须使用全局统一展示时区和 `YYYY-MM-DD HH:mm` 格式，不得直接使用浏览器本地 `toLocaleTimeString()`；诊断元数据不得包含完整对话、Prompt 或知识正文。
 - 聊天运行开始、完成、取消、失败和模型网关调用审计属于 DB-first 写路径：服务层不得直接写 `current_store.assistant_chat_runs` 或调用 `current_store.audit()`，也不得通过 `current_store.audit_events` 切片收集本次审计。聊天运行、会话、消息、模型日志和审计必须通过 `save_assistant_chat_records` 统一写入，MemoryStore 仅作为测试 fallback，PostgreSQL 运行态使用 repository 事务提交。
 - 草案卡片必须展示风险、差异、前置依赖、预检状态和确认/取消入口。

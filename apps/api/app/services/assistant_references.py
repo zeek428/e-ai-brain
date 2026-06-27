@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
+from urllib.parse import urlencode
 
 from app.api.deps import api_error
 from app.services.knowledge_documents import (
@@ -12,6 +13,10 @@ from app.services.knowledge_documents import (
     user_can_read_roles,
 )
 from app.services.knowledge_search import KNOWLEDGE_SEARCHABLE_STATUSES
+from app.services.plugins import (
+    result_write_record_from_invocation_log,
+    result_write_record_from_scheduled_run,
+)
 
 OPERATIONAL_REFERENCE_TYPES = {
     "ai_agent",
@@ -20,6 +25,18 @@ OPERATIONAL_REFERENCE_TYPES = {
     "plugin_connection",
     "scheduled_job",
     "scheduled_job_run",
+}
+EXECUTION_TRACE_REFERENCE_TYPES = {
+    "ai_executor_runner",
+    "ai_executor_task",
+    "assistant_chat_run",
+    "assistant_message",
+    "audit_event",
+    "code_inspection_report",
+    "model_gateway_log",
+    "plugin_invocation_log",
+    "result_write_record",
+    "scheduled_job_stage",
 }
 ASSISTANT_ACTION_REFERENCE_TYPE = "assistant_action"
 ASSISTANT_ACTION_QUERY_TRIGGERS = (
@@ -173,10 +190,16 @@ OPERATIONAL_REFERENCE_PERMISSION_LABEL_BY_PERMISSION = {
 }
 REFERENCE_SOURCE_MODULES = {
     "assistant_action": "动作",
+    "ai_executor_runner": "执行诊断",
+    "ai_executor_task": "执行诊断",
     "ai_agent": "AI能力配置",
     "ai_skill": "AI能力配置",
+    "assistant_chat_run": "执行诊断",
+    "assistant_message": "执行诊断",
+    "audit_event": "审计与诊断",
     "ai_task": "需求交付",
     "bug": "需求交付",
+    "code_inspection_report": "执行诊断",
     "code_review_report": "需求交付",
     "human_review": "需求交付",
     "iteration_version": "需求交付",
@@ -187,10 +210,14 @@ REFERENCE_SOURCE_MODULES = {
     "knowledge_space": "知识库",
     "plugin_action": "插件管理",
     "plugin_connection": "插件管理",
+    "plugin_invocation_log": "执行诊断",
     "product": "产品资产",
     "requirement": "需求交付",
+    "model_gateway_log": "执行诊断",
+    "result_write_record": "执行诊断",
     "scheduled_job": "任务中心",
     "scheduled_job_run": "任务中心",
+    "scheduled_job_stage": "执行诊断",
 }
 DEFAULT_REFERENCE_TYPE_ORDER = (
     "assistant_action",
@@ -202,6 +229,15 @@ DEFAULT_REFERENCE_TYPE_ORDER = (
     "ai_task",
     "scheduled_job",
     "scheduled_job_run",
+    "assistant_chat_run",
+    "model_gateway_log",
+    "plugin_invocation_log",
+    "ai_executor_task",
+    "ai_executor_runner",
+    "code_inspection_report",
+    "result_write_record",
+    "audit_event",
+    "assistant_message",
     "plugin_action",
     "plugin_connection",
     "ai_agent",
@@ -219,6 +255,12 @@ REFERENCE_TYPE_QUERY_ALIASES = {
     "ai_skill": ("skill", "能力", "ai能力", "ai 能力"),
     "ai_task": ("研发任务", "ai任务", "任务", "task"),
     "bug": ("bug", "缺陷", "阻塞"),
+    "ai_executor_runner": ("runner", "执行器", "ai 执行器", "ai执行器"),
+    "ai_executor_task": ("runner task", "执行器任务", "runner任务"),
+    "assistant_chat_run": ("助手运行", "ai助手运行", "assistant run", "assistant_chat_run"),
+    "assistant_message": ("助手消息", "assistant message", "assistant_message"),
+    "audit_event": ("审计", "audit", "audit_event"),
+    "code_inspection_report": ("代码巡检", "巡检报告", "inspection"),
     "code_review_report": ("代码评审", "代码巡检", "code review", "pr"),
     "human_review": ("确认", "待确认", "评审", "review"),
     "iteration_version": ("迭代", "版本", "version"),
@@ -229,8 +271,12 @@ REFERENCE_TYPE_QUERY_ALIASES = {
     "knowledge_space": ("知识空间", "空间", "knowledge space"),
     "plugin_action": ("插件动作", "动作", "plugin action"),
     "plugin_connection": ("插件连接", "连接", "connection"),
+    "plugin_invocation_log": ("插件调用", "调用日志", "plugin invocation"),
     "product": ("产品", "product"),
     "requirement": ("需求", "requirement"),
+    "model_gateway_log": ("模型调用", "模型网关", "model gateway", "model_gateway_log"),
+    "result_write_record": ("结果写入", "写入记录", "result write"),
+    "scheduled_job_stage": ("作业阶段", "执行阶段", "scheduled_job_stage"),
     "scheduled_job": (
         "定时作业",
         "定时任务",
@@ -274,6 +320,167 @@ class AssistantReferenceError(Exception):
 def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if isinstance(collection, dict):
+        return [item for item in collection.values() if isinstance(item, dict)]
+    if isinstance(collection, list):
+        return [item for item in collection if isinstance(item, dict)]
+    return []
+
+
+def _read_memory_record(
+    current_store: Any,
+    collection_name: str,
+    item_id: str,
+) -> dict[str, Any] | None:
+    collection = getattr(current_store, collection_name, None)
+    if isinstance(collection, dict):
+        item = collection.get(item_id)
+        return item if isinstance(item, dict) else None
+    if isinstance(collection, list):
+        for item in collection:
+            if isinstance(item, dict) and str(item.get("id") or "") == item_id:
+                return item
+    return None
+
+
+def _read_repository_records(
+    current_store: Any,
+    method_name: str,
+    collection_name: str,
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    repository = getattr(current_store, "repository", None)
+    method = getattr(repository, method_name, None)
+    if callable(method):
+        try:
+            items = method(**kwargs)
+        except TypeError:
+            items = method()
+        return [dict(item) for item in items or [] if isinstance(item, dict)]
+    return _read_memory_records(current_store, collection_name)
+
+
+def _read_repository_assistant_messages(current_store: Any) -> list[dict[str, Any]]:
+    repository = getattr(current_store, "repository", None)
+    load_assistant_chat = getattr(repository, "load_assistant_chat", None)
+    if callable(load_assistant_chat):
+        payload = load_assistant_chat() or {}
+        messages = payload.get("assistant_messages")
+        if isinstance(messages, dict):
+            return [dict(item) for item in messages.values() if isinstance(item, dict)]
+        if isinstance(messages, list):
+            return [dict(item) for item in messages if isinstance(item, dict)]
+    return _read_memory_records(current_store, "assistant_messages")
+
+
+def _execution_trace_reference_records(
+    current_store: Any,
+    entity_type: str,
+) -> list[dict[str, Any]]:
+    if entity_type == "assistant_chat_run":
+        return _read_repository_records(
+            current_store,
+            "list_execution_trace_assistant_chat_runs",
+            "assistant_chat_runs",
+        )
+    if entity_type == "assistant_message":
+        return _read_repository_assistant_messages(current_store)
+    if entity_type == "model_gateway_log":
+        return _read_repository_records(
+            current_store,
+            "list_model_gateway_logs",
+            "model_gateway_logs",
+            ai_task_id=None,
+            purpose=None,
+            status=None,
+        )
+    if entity_type == "plugin_invocation_log":
+        return _read_repository_records(
+            current_store,
+            "list_plugin_invocation_logs",
+            "plugin_invocation_logs",
+            action_id=None,
+            scheduled_job_id=None,
+            scheduled_job_run_id=None,
+            status=None,
+        )
+    if entity_type == "ai_executor_runner":
+        return _read_repository_records(
+            current_store,
+            "list_ai_executor_runners",
+            "ai_executor_runners",
+            status=None,
+        )
+    if entity_type == "ai_executor_task":
+        return _read_repository_records(
+            current_store,
+            "list_ai_executor_tasks",
+            "ai_executor_tasks",
+            ai_task_id=None,
+            runner_id=None,
+            scheduled_job_run_id=None,
+            status=None,
+        )
+    if entity_type == "code_inspection_report":
+        return _read_repository_records(
+            current_store,
+            "list_code_inspection_reports",
+            "code_inspection_reports",
+            product_id=None,
+            repository_id=None,
+            risk_level=None,
+            status=None,
+        )
+    if entity_type == "audit_event":
+        return _read_repository_records(
+            current_store,
+            "list_audit_events",
+            "audit_events",
+            ai_task_id=None,
+            actor_id=None,
+            subject_type=None,
+            subject_id=None,
+            event_type=None,
+            created_from=None,
+            created_to=None,
+        )
+    if entity_type == "result_write_record":
+        plugin_logs = _execution_trace_reference_records(current_store, "plugin_invocation_log")
+        scheduled_runs = _read_repository_records(
+            current_store,
+            "list_scheduled_job_runs",
+            "scheduled_job_runs",
+            scheduled_job_id=None,
+            status=None,
+        )
+        records: list[dict[str, Any]] = []
+        for run in scheduled_runs:
+            record = result_write_record_from_scheduled_run(current_store, run)
+            if record is not None:
+                records.append(record)
+        for log in plugin_logs:
+            record = result_write_record_from_invocation_log(current_store, log)
+            if record is not None:
+                records.append(record)
+        return [*records, *_read_memory_records(current_store, "result_write_records")]
+    if entity_type == "scheduled_job_stage":
+        return _read_memory_records(current_store, "scheduled_job_stages")
+    return []
+
+
+def _execution_trace_reference_record(
+    current_store: Any,
+    entity_type: str,
+    item_id: str,
+) -> dict[str, Any] | None:
+    for item in _execution_trace_reference_records(current_store, entity_type):
+        if str(item.get("id") or "") == item_id:
+            return item
+    return None
 
 
 def assistant_reference_audit_event(
@@ -593,6 +800,47 @@ def assistant_reference_candidates(
         for entity_type, items in operational_pools
         if _user_can_reference_operational_type(current_user, entity_type)
     )
+    if _user_can_reference_execution_trace_type(current_user):
+        pools.extend(
+            [
+                (
+                    "assistant_chat_run",
+                    _execution_trace_reference_records(current_store, "assistant_chat_run"),
+                ),
+                (
+                    "assistant_message",
+                    _execution_trace_reference_records(current_store, "assistant_message"),
+                ),
+                (
+                    "model_gateway_log",
+                    _execution_trace_reference_records(current_store, "model_gateway_log"),
+                ),
+                (
+                    "plugin_invocation_log",
+                    _execution_trace_reference_records(current_store, "plugin_invocation_log"),
+                ),
+                (
+                    "ai_executor_runner",
+                    _execution_trace_reference_records(current_store, "ai_executor_runner"),
+                ),
+                (
+                    "ai_executor_task",
+                    _execution_trace_reference_records(current_store, "ai_executor_task"),
+                ),
+                (
+                    "code_inspection_report",
+                    _execution_trace_reference_records(current_store, "code_inspection_report"),
+                ),
+                (
+                    "result_write_record",
+                    _execution_trace_reference_records(current_store, "result_write_record"),
+                ),
+                (
+                    "audit_event",
+                    _execution_trace_reference_records(current_store, "audit_event"),
+                ),
+            ]
+        )
     references: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     preferred_types = _assistant_reference_type_preferences(message)
@@ -655,6 +903,8 @@ def assistant_reference_candidates_response(
         user,
         normalized_type,
     ):
+        return {"items": [], "total": 0}
+    if normalized_type in EXECUTION_TRACE_REFERENCE_TYPES and not _user_can_reference_execution_trace_type(user):
         return {"items": [], "total": 0}
     if normalized_type == "knowledge_document":
         items = _knowledge_document_reference_candidates(
@@ -853,6 +1103,11 @@ def resolve_assistant_references(
             )
         ):
             entity_reference = None
+        if (
+            reference_type in EXECUTION_TRACE_REFERENCE_TYPES
+            and not _user_can_reference_execution_trace_type(user)
+        ):
+            entity_reference = None
         if entity_reference is None:
             raise AssistantReferenceError(
                 404,
@@ -977,8 +1232,14 @@ def _entity_for_reference(
     collection_map = {
         "ai_agent": "ai_agents",
         "ai_skill": "ai_skills",
+        "ai_executor_runner": "ai_executor_runners",
+        "ai_executor_task": "ai_executor_tasks",
+        "assistant_chat_run": "assistant_chat_runs",
+        "assistant_message": "assistant_messages",
+        "audit_event": "audit_events",
         "ai_task": "ai_tasks",
         "bug": "bugs",
+        "code_inspection_report": "code_inspection_reports",
         "code_review_report": "code_review_reports",
         "human_review": "human_reviews",
         "iteration_version": "product_versions",
@@ -986,18 +1247,23 @@ def _entity_for_reference(
         "knowledge_document": "knowledge_documents",
         "knowledge_folder": "knowledge_folders",
         "knowledge_space": "knowledge_spaces",
+        "model_gateway_log": "model_gateway_logs",
         "plugin_action": "plugin_actions",
         "plugin_connection": "plugin_connections",
+        "plugin_invocation_log": "plugin_invocation_logs",
         "product": "products",
         "requirement": "requirements",
+        "result_write_record": "result_write_records",
         "scheduled_job": "scheduled_jobs",
         "scheduled_job_run": "scheduled_job_runs",
     }
     collection_name = collection_map.get(entity_type)
     if collection_name is None:
         return None
-    item = getattr(current_store, collection_name, {}).get(item_id)
-    return item if isinstance(item, dict) else None
+    item = _read_memory_record(current_store, collection_name, item_id)
+    if item is None and entity_type in EXECUTION_TRACE_REFERENCE_TYPES:
+        return _execution_trace_reference_record(current_store, entity_type, item_id)
+    return item
 
 
 def _refresh_knowledge_scope_collections_from_repository(current_store: Any) -> None:
@@ -2166,24 +2432,37 @@ def _summary_excerpt(value: str) -> str:
     return normalized
 
 
+def _execution_trace_href(source_id: Any, source_type: str) -> str:
+    return f"/governance/execution-traces?{urlencode({'source_id': str(source_id), 'source_type': source_type})}"
+
+
 def _entity_reference_for_id(
     current_store: Any,
     entity_type: str,
     item_id: str,
 ) -> dict[str, str] | None:
     collection_map = {
+        "ai_executor_runner": "ai_executor_runners",
+        "ai_executor_task": "ai_executor_tasks",
         "ai_task": "ai_tasks",
+        "assistant_chat_run": "assistant_chat_runs",
+        "assistant_message": "assistant_messages",
+        "audit_event": "audit_events",
         "bug": "bugs",
+        "code_inspection_report": "code_inspection_reports",
         "code_review_report": "code_review_reports",
         "human_review": "human_reviews",
         "iteration_version": "product_versions",
         "knowledge_deposit": "knowledge_deposits",
         "knowledge_folder": "knowledge_folders",
         "knowledge_space": "knowledge_spaces",
+        "model_gateway_log": "model_gateway_logs",
         "plugin_action": "plugin_actions",
         "plugin_connection": "plugin_connections",
+        "plugin_invocation_log": "plugin_invocation_logs",
         "product": "products",
         "requirement": "requirements",
+        "result_write_record": "result_write_records",
         "scheduled_job": "scheduled_jobs",
         "scheduled_job_run": "scheduled_job_runs",
         "ai_agent": "ai_agents",
@@ -2192,7 +2471,9 @@ def _entity_reference_for_id(
     collection_name = collection_map.get(entity_type)
     if collection_name is None:
         return None
-    item = getattr(current_store, collection_name, {}).get(item_id)
+    item = _read_memory_record(current_store, collection_name, item_id)
+    if item is None and entity_type in EXECUTION_TRACE_REFERENCE_TYPES:
+        item = _execution_trace_reference_record(current_store, entity_type, item_id)
     if item is None:
         return None
     return _assistant_reference_for_entity(entity_type, item, current_store=current_store)
@@ -2329,16 +2610,22 @@ def _assistant_reference_for_entity(
     item: dict[str, Any],
     *,
     current_store: Any | None = None,
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     item_id = item.get("id")
     if item_id is None:
         return None
     title = _assistant_reference_title(entity_type, item, current_store=current_store)
     route_map = {
-        "ai_task": f"/delivery/rd-tasks?task_id={item_id}",
         "ai_agent": f"/tasks/ai-capabilities?agent_id={item_id}",
+        "ai_executor_runner": _execution_trace_href(item_id, "ai_executor_runner"),
+        "ai_executor_task": _execution_trace_href(item_id, "ai_executor_task"),
         "ai_skill": f"/tasks/ai-capabilities?skill_id={item_id}",
+        "ai_task": f"/delivery/rd-tasks?task_id={item_id}",
+        "assistant_chat_run": _execution_trace_href(item_id, "assistant_chat_run"),
+        "assistant_message": _execution_trace_href(item_id, "assistant_message"),
+        "audit_event": _execution_trace_href(item_id, "audit_event"),
         "bug": f"/delivery/bugs?bug_id={item_id}",
+        "code_inspection_report": _execution_trace_href(item_id, "code_inspection_report"),
         "code_review_report": f"/delivery/rd-tasks?code_review_report_id={item_id}",
         "human_review": f"/delivery/rd-tasks?review_id={item_id}",
         "iteration_version": f"/delivery/versions?version_id={item_id}",
@@ -2348,19 +2635,30 @@ def _assistant_reference_for_entity(
             f"&folder_id={item_id}"
         ),
         "knowledge_space": f"/knowledge/documents?knowledge_space_id={item_id}",
+        "model_gateway_log": _execution_trace_href(item_id, "model_gateway_log"),
         "plugin_action": f"/tasks/plugins?action_id={item_id}",
         "plugin_connection": f"/tasks/plugins?connection_id={item_id}",
+        "plugin_invocation_log": _execution_trace_href(item_id, "plugin_invocation_log"),
         "product": f"/assets/products?product_id={item_id}",
         "requirement": f"/delivery/requirements?requirement_id={item_id}",
+        "result_write_record": _execution_trace_href(item_id, "result_write_record"),
         "scheduled_job": f"/tasks/scheduled-jobs?job_id={item_id}",
         "scheduled_job_run": f"/tasks/scheduled-jobs?run_id={item_id}",
+        "scheduled_job_stage": _execution_trace_href(item_id, "scheduled_job_stage"),
     }
-    return {
+    url = route_map.get(entity_type)
+    if url is None:
+        return None
+    reference: dict[str, Any] = {
         "id": str(item_id),
         "title": str(title),
         "type": entity_type,
-        "url": route_map[entity_type],
+        "url": url,
     }
+    summary = _assistant_reference_summary(entity_type, item)
+    if summary:
+        reference["summary"] = summary
+    return reference
 
 
 def _assistant_reference_title(
@@ -2371,6 +2669,32 @@ def _assistant_reference_title(
 ) -> str:
     if entity_type == "knowledge_folder":
         return str(item.get("path") or item.get("name") or item.get("id") or "")
+    if entity_type == "ai_executor_runner":
+        title = item.get("name") or item.get("runner_name") or item.get("id")
+        status = item.get("status")
+        return f"AI 执行器 Runner {title} / {status}" if status else f"AI 执行器 Runner {title}"
+    if entity_type == "ai_executor_task":
+        return f"AI 执行器任务 {item.get('id')} / {item.get('status') or 'unknown'}"
+    if entity_type == "assistant_chat_run":
+        return f"AI 助手运行 {item.get('id')} / {item.get('status') or 'unknown'}"
+    if entity_type == "assistant_message":
+        return f"AI 助手消息 {item.get('id')}"
+    if entity_type == "audit_event":
+        return f"审计事件 {item.get('event_type') or item.get('id')}"
+    if entity_type == "code_inspection_report":
+        return str(
+            item.get("summary")
+            or item.get("title")
+            or f"代码巡检报告 {item.get('id')}"
+        )
+    if entity_type == "model_gateway_log":
+        return f"模型网关调用 {item.get('id')} / {item.get('status') or 'unknown'}"
+    if entity_type == "plugin_invocation_log":
+        return f"插件调用 {item.get('id')} / {item.get('status') or 'unknown'}"
+    if entity_type == "result_write_record":
+        return f"结果写入记录 {item.get('id')} / {item.get('status') or 'unknown'}"
+    if entity_type == "scheduled_job_stage":
+        return f"作业阶段 {item.get('id')} / {item.get('status') or 'unknown'}"
     if entity_type == "scheduled_job_run":
         job_id = item.get("scheduled_job_id")
         job = (
@@ -2390,6 +2714,26 @@ def _assistant_reference_title(
     )
 
 
+def _assistant_reference_summary(entity_type: str, item: dict[str, Any]) -> str | None:
+    summary_fields_by_type = {
+        "ai_executor_runner": ("last_error", "health_message", "summary"),
+        "ai_executor_task": ("error_message", "summary", "result_summary"),
+        "assistant_chat_run": ("error_message", "summary", "status"),
+        "assistant_message": ("summary", "role", "content_preview"),
+        "audit_event": ("summary", "event_type", "action"),
+        "code_inspection_report": ("summary", "repository", "branch"),
+        "model_gateway_log": ("error", "error_message", "purpose", "model"),
+        "plugin_invocation_log": ("error_message", "summary", "action_id"),
+        "result_write_record": ("error_message", "summary", "write_target"),
+        "scheduled_job_stage": ("error_message", "summary", "stage"),
+    }
+    for field in summary_fields_by_type.get(entity_type, ("summary",)):
+        value = str(item.get(field) or "").strip()
+        if value:
+            return _summary_excerpt(value)
+    return None
+
+
 def _assistant_reference_matches_query(
     entity_type: str,
     item: dict[str, Any],
@@ -2406,12 +2750,24 @@ def _assistant_reference_matches_query(
         for value in (
             item.get("id"),
             item.get("code"),
+            item.get("conversation_id"),
             item.get("description"),
+            item.get("error"),
+            item.get("error_code"),
+            item.get("error_message"),
+            item.get("event_type"),
             item.get("name"),
             item.get("path"),
+            item.get("provider"),
+            item.get("purpose"),
+            item.get("model"),
+            item.get("result_id"),
+            item.get("result_type"),
+            item.get("runner_id"),
             item.get("status"),
             item.get("summary"),
             item.get("title"),
+            item.get("write_target"),
             title,
         )
     ).lower()
@@ -2491,6 +2847,16 @@ def _user_can_reference_operational_type(
     )
 
 
+def _user_can_reference_execution_trace_type(user: dict[str, Any] | None) -> bool:
+    roles = set(user.get("roles") or []) if isinstance(user, dict) else set()
+    permissions = set(user.get("permissions") or []) if isinstance(user, dict) else set()
+    return (
+        "admin" in roles
+        or "system.admin" in permissions
+        or "diagnostics.execution_traces.read" in permissions
+    )
+
+
 def _reference_products_for_user(
     products: list[dict[str, Any]],
     user: dict[str, Any] | None,
@@ -2544,6 +2910,14 @@ def _reference_permission_label(
     user: dict[str, Any] | None,
     reference_type: str,
 ) -> str:
+    if reference_type in EXECUTION_TRACE_REFERENCE_TYPES:
+        roles = set(user.get("roles") or []) if isinstance(user, dict) else set()
+        permissions = set(user.get("permissions") or []) if isinstance(user, dict) else set()
+        if "admin" in roles or "system.admin" in permissions:
+            return "管理员可引用"
+        if "diagnostics.execution_traces.read" in permissions:
+            return "执行诊断权限可引用"
+        return "需授权"
     if reference_type not in OPERATIONAL_REFERENCE_TYPES:
         return "可引用"
     roles = set(user.get("roles") or []) if isinstance(user, dict) else set()

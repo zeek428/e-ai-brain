@@ -1759,6 +1759,86 @@ def test_ai_assistant_reference_candidates_include_admin_operational_objects():
     assert reviewer_response.json()["data"] == {"items": [], "total": 0}
 
 
+def test_ai_assistant_reference_candidates_include_execution_trace_sources():
+    app.state.store.reset()
+    app.state.store.assistant_chat_runs["assistant_chat_run_trace"] = {
+        "conversation_id": "assistant_conversation_trace",
+        "created_at": "2026-06-20T02:00:00+00:00",
+        "error_message": "模型网关调用失败",
+        "finished_at": "2026-06-20T02:00:05+00:00",
+        "id": "assistant_chat_run_trace",
+        "status": "failed",
+        "updated_at": "2026-06-20T02:00:05+00:00",
+        "user_id": "user_admin",
+    }
+
+    payload = assistant_reference_candidates_response(
+        app.state.store,
+        limit=5,
+        message="assistant_chat_run_trace",
+        product_id=None,
+        reference_type="assistant_chat_run",
+        user={"id": "user_admin", "permissions": ["diagnostics.execution_traces.read"], "roles": ["admin"]},
+    )
+
+    assert payload["items"] == [
+        {
+            "id": "assistant_chat_run_trace",
+            "permission_label": "管理员可引用",
+            "source_module": "执行诊断",
+            "summary": "模型网关调用失败",
+            "title": "AI 助手运行 assistant_chat_run_trace / failed",
+            "type": "assistant_chat_run",
+            "updated_at": "2026-06-20T02:00:05+00:00",
+            "url": "/governance/execution-traces?source_id=assistant_chat_run_trace&source_type=assistant_chat_run",
+        }
+    ]
+
+
+def test_ai_assistant_reference_candidates_read_execution_trace_sources_from_repository():
+    class ExecutionTraceReferenceRepository:
+        def list_execution_trace_assistant_chat_runs(self):
+            return [
+                {
+                    "created_at": "2026-06-20T02:00:00+00:00",
+                    "error_message": "仓储读取到模型网关失败",
+                    "id": "assistant_chat_run_repo",
+                    "status": "failed",
+                    "updated_at": "2026-06-20T02:00:05+00:00",
+                    "user_id": "user_admin",
+                }
+            ]
+
+    payload = assistant_reference_candidates_response(
+        SimpleNamespace(repository=ExecutionTraceReferenceRepository()),
+        limit=5,
+        message="assistant_chat_run_repo",
+        product_id=None,
+        reference_type="assistant_chat_run",
+        user={
+            "id": "user_admin",
+            "permissions": ["diagnostics.execution_traces.read"],
+            "roles": [],
+        },
+    )
+
+    assert payload == {
+        "items": [
+            {
+                "id": "assistant_chat_run_repo",
+                "permission_label": "执行诊断权限可引用",
+                "source_module": "执行诊断",
+                "summary": "仓储读取到模型网关失败",
+                "title": "AI 助手运行 assistant_chat_run_repo / failed",
+                "type": "assistant_chat_run",
+                "updated_at": "2026-06-20T02:00:05+00:00",
+                "url": "/governance/execution-traces?source_id=assistant_chat_run_repo&source_type=assistant_chat_run",
+            }
+        ],
+        "total": 1,
+    }
+
+
 def test_ai_assistant_default_reference_candidates_are_balanced_across_types():
     headers = auth_headers()
     app.state.store.reset()
