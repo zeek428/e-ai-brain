@@ -136,6 +136,21 @@ describe('scheduled AI job service mappings', () => {
         });
       }
       if (
+        input ===
+          '/api/system/scheduled-job-runs?status=failed&page=2&page_size=20&sort_by=finished_at&sort_order=asc'
+        && init?.method === 'GET'
+      ) {
+        return jsonResponse({
+          data: {
+            items: [{ id: 'scheduled_job_run_failed', status: 'failed' }],
+            page: 2,
+            page_size: 20,
+            performance: { duration_ms: 12, p95_target_ms: 400 },
+            total: 21,
+          },
+        });
+      }
+      if (
         input === '/api/system/scheduled-job-runs?run_id=scheduled_job_run_001&run_id=scheduled_job_run_002'
         && init?.method === 'GET'
       ) {
@@ -212,6 +227,21 @@ describe('scheduled AI job service mappings', () => {
       expect.objectContaining({ id: 'scheduled_job_run_001' }),
       expect.objectContaining({ id: 'scheduled_job_run_002' }),
     ]);
+    await expect(
+      fetchScheduledJobRuns({
+        page: 2,
+        pageSize: 20,
+        sortField: 'finished_at',
+        sortOrder: 'ascend',
+        status: 'failed',
+      }),
+    ).resolves.toMatchObject({
+      page: 2,
+      pageSize: 20,
+      performance: { duration_ms: 12 },
+      rows: [expect.objectContaining({ id: 'scheduled_job_run_failed' })],
+      total: 21,
+    });
   });
 
   it('passes code inspection result actions and reads inspection reports', async () => {

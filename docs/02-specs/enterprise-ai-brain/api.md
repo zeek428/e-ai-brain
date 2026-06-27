@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.407 |
+| 功能版本 | v1.1.408 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.408 | 2026-06-27 | `GET /api/system/scheduled-job-runs` 补齐远程分页契约：支持 `page/page_size/sort_by/sort_order`、运行 ID、作业 ID、状态和产品 scope 过滤，定时作业页面运行记录页签默认请求服务端分页结果并展示可排序开始/完成时间 | Codex |
 | v1.1.407 | 2026-06-27 | 插件管理连接和动作页签已接入分页读模型：页面主表默认调用 `GET /api/system/plugin-connections` 与 `GET /api/system/plugin-actions` 的 `page/page_size/sort_by/sort_order` 查询，不再以旧全量返回做主表分页和排序 | Codex |
 | v1.1.406 | 2026-06-27 | AI 助手引用候选支持执行诊断来源类型：`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`plugin_invocation_log`、`ai_executor_task`、`ai_executor_runner`、`code_inspection_report`、`audit_event` 等可通过 `GET /api/assistant/reference-candidates?type=&query=` 解析为脱敏引用；助手深链 `/assistant?reference_type=&reference_id=&prompt=` 会带入问题和上下文，解析和最终引用注入均要求执行诊断读权限 | Codex |
 | v1.1.405 | 2026-06-27 | `GET /api/assistant/action-drafts` PostgreSQL 运行态改为优先使用草案任务台 read model 完成当前用户、动作、状态、时间、关键词、排序和分页查询，并返回状态/采纳/处理/修改率汇总与性能观测 | Codex |
@@ -3515,6 +3516,8 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 `GET /api/system/scheduled-job-catalog` 是定时作业配置的服务端注册中心，要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`。响应字段包括：`job_types[]`（`value/label/category/default_execution_mode/requires_product/requires_plugin_resource/requires_ai_assembly`）、`required_job_types.product/plugin_resource/ai_processing`、`execution_modes[]`、`schedule_types[]`、`connection_environments[]`，以及 `code_inspection.native_scan_mode/default_scan_mode/scan_modes/scanner_engines/builtin_rules/ignore_rules/result_actions/severity_thresholds/default_result_actions`。前端新增/编辑弹窗、AI 助手定时作业草案和测试 mock 必须以该响应为首选来源；只有接口不可用时才允许使用本地静态选项降级，且降级不得覆盖服务端校验。
 
 `GET /api/system/scheduled-jobs` 支持 `page/page_size/sort_by/sort_order` 服务端分页排序，`page_size` 最大 100，`sort_order` 为 `asc|desc`，`sort_by` 允许 `next_run_at/created_at/updated_at/name/job_type/status/enabled/last_run_at/last_success_at/last_failure_at`；筛选参数包括 `enabled`、`job_type`、`status`、`product_id`、`source_system`、`name` 和 `keyword`。传入分页参数时生产路径必须通过 PostgreSQL read model 返回 `items/page/page_size/total/query/performance`，避免前端全量拉取后本地过滤；未传分页参数时保留旧 `items/total` 全量返回兼容，但不作为新增管理页面默认读路径。
+
+`GET /api/system/scheduled-job-runs` 支持 `page/page_size/sort_by/sort_order` 服务端分页排序，`page_size` 最大 100，`sort_order` 为 `asc|desc`，`sort_by` 允许 `started_at/finished_at/created_at/updated_at/status/trigger_type/records_imported`；筛选参数包括 `run_id`（可重复传多个）、`scheduled_job_id` 和 `status`。传入分页参数时生产路径必须通过 PostgreSQL read model 返回 `items/page/page_size/total/query/performance`，并按当前用户产品 scope 通过运行所属作业过滤；未传分页参数时保留旧 `items/total` 全量返回兼容，用于助手按 runId 拉运行详情或旧测试 helper，不作为定时作业页面运行记录主表默认读路径。
 
 创建定时作业示例：
 

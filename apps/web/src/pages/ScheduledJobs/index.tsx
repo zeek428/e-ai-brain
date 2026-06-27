@@ -81,6 +81,7 @@ export default function ScheduledJobsPage() {
   const {
     agents,
     jobCatalog,
+    jobListMeta,
     jobTemplates,
     jobs,
     knowledgeDocuments,
@@ -91,7 +92,10 @@ export default function ScheduledJobsPage() {
     products,
     reload,
     runObservability,
+    runListMeta,
     runs,
+    onJobListChange,
+    onRunListChange,
     skills,
   } = useScheduledJobWorkspaceData();
   const [productRepositories, setProductRepositories] = useState<ProductGitRepositoryOption[]>([]);
@@ -1130,12 +1134,14 @@ export default function ScheduledJobsPage() {
         confirmDeleteJob={confirmDeleteJob}
         executionModeLabelMap={executionModeLabelMap}
         formatResultActionLabels={formatResultActionLabels}
+        jobListMeta={jobListMeta}
         jobTypeLabelMap={jobTypeLabelMap}
         jobs={jobs}
         loading={loading}
         modelGatewayConfigById={modelGatewayConfigById}
         pluginActionById={pluginActionById}
         pluginConnectionById={pluginConnectionById}
+        runListMeta={runListMeta}
         runObservability={runObservability}
         runningJobId={runningJobId}
         runs={runs}
@@ -1144,6 +1150,7 @@ export default function ScheduledJobsPage() {
         onCopyRun={openCopyRunModal}
         onCreateJob={openCreateJobModal}
         onEditJob={openEditJobModal}
+        onJobListChange={onJobListChange}
         onOpenRunDetail={(row) => openRunDetail(row)}
         onReload={reload}
         onRerun={(row) => {
@@ -1151,6 +1158,7 @@ export default function ScheduledJobsPage() {
             void triggerJobRun(row.scheduled_job_id, 'manual_rerun', row.id);
           }
         }}
+        onRunListChange={onRunListChange}
         onRunJob={triggerJob}
         onTabChange={setActiveTab}
       />

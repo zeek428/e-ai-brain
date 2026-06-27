@@ -149,6 +149,43 @@ def test_scheduled_job_repository_supports_paged_filtered_queries():
     assert "LIMIT %s OFFSET %s" in page_query
     assert page_params[-2:] == (10, 20)
 
+    run_total = repository.count_scheduled_job_runs(
+        product_scope_ids=["product_ai_brain"],
+        run_ids=["scheduled_job_run_001", "scheduled_job_run_002"],
+        scheduled_job_id="scheduled_job_001",
+        status="failed",
+    )
+    run_page_items = repository.list_scheduled_job_runs_page(
+        limit=20,
+        offset=40,
+        product_scope_ids=["product_ai_brain"],
+        run_ids=["scheduled_job_run_001", "scheduled_job_run_002"],
+        scheduled_job_id="scheduled_job_001",
+        sort_by="finished_at",
+        sort_order="asc",
+        status="failed",
+    )
+
+    assert run_total == 4
+    assert run_page_items == []
+    run_count_query, run_count_params = cursor.calls[2]
+    run_page_query, run_page_params = cursor.calls[3]
+    assert "SELECT count(*) FROM scheduled_job_runs run" in run_count_query
+    assert "JOIN scheduled_jobs job ON job.id = run.scheduled_job_id" in run_count_query
+    assert "run.scheduled_job_id = %s" in run_count_query
+    assert "run.status = %s" in run_count_query
+    assert "run.id = ANY(%s)" in run_count_query
+    assert "job.product_id = ANY(%s)" in run_count_query
+    assert run_count_params == (
+        "scheduled_job_001",
+        "failed",
+        ["scheduled_job_run_001", "scheduled_job_run_002"],
+        ["product_ai_brain"],
+    )
+    assert "ORDER BY run.finished_at ASC NULLS FIRST, run.id ASC" in run_page_query
+    assert "LIMIT %s OFFSET %s" in run_page_query
+    assert run_page_params[-2:] == (20, 40)
+
 
 def test_scheduled_job_list_uses_repository_pagination_when_requested():
     class PagedRepository:

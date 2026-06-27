@@ -5,14 +5,17 @@ import type {
   AiAgentRecord,
   PluginActionRecord,
   PluginConnectionRecord,
+  ScheduledJobListQuery,
   ScheduledJobRecord,
   ScheduledJobResultAction,
   ScheduledJobRunObservability,
+  ScheduledJobRunListQuery,
   ScheduledJobRunRecord,
 } from '../../../services/aiBrain';
 import { ScheduledJobConfigTable } from './ScheduledJobConfigTable';
 import { ScheduledJobRunTable } from './ScheduledJobRunTable';
 import type { ScheduledJobPageTab } from './scheduledJobFormTransformHelpers';
+import type { ScheduledJobRemoteTableMeta } from './useScheduledJobWorkspaceData';
 
 type ScheduledJobManagementTabsProps = {
   activeTab: ScheduledJobPageTab;
@@ -20,6 +23,7 @@ type ScheduledJobManagementTabsProps = {
   confirmDeleteJob: (job: ScheduledJobRecord) => void;
   executionModeLabelMap: Map<string, string>;
   formatResultActionLabels: (actions?: ScheduledJobResultAction[]) => string;
+  jobListMeta: ScheduledJobRemoteTableMeta;
   jobTypeLabelMap: Map<string, string>;
   jobs: ScheduledJobRecord[];
   loading: boolean;
@@ -28,13 +32,16 @@ type ScheduledJobManagementTabsProps = {
   onCopyRun: (run: ScheduledJobRunRecord) => void;
   onCreateJob: () => void;
   onEditJob: (job: ScheduledJobRecord) => void;
+  onJobListChange: (query: ScheduledJobListQuery) => void;
   onOpenRunDetail: (run: ScheduledJobRunRecord) => void;
   onReload: () => void;
   onRerun: (run: ScheduledJobRunRecord) => void;
+  onRunListChange: (query: ScheduledJobRunListQuery) => void;
   onRunJob: (job: ScheduledJobRecord) => void;
   onTabChange: (tab: ScheduledJobPageTab) => void;
   pluginActionById: Map<string, PluginActionRecord>;
   pluginConnectionById: Map<string, PluginConnectionRecord>;
+  runListMeta: ScheduledJobRemoteTableMeta;
   runObservability?: ScheduledJobRunObservability;
   runningJobId?: string;
   runs: ScheduledJobRunRecord[];
@@ -47,6 +54,7 @@ export function ScheduledJobManagementTabs({
   confirmDeleteJob,
   executionModeLabelMap,
   formatResultActionLabels,
+  jobListMeta,
   jobTypeLabelMap,
   jobs,
   loading,
@@ -55,13 +63,16 @@ export function ScheduledJobManagementTabs({
   onCopyRun,
   onCreateJob,
   onEditJob,
+  onJobListChange,
   onOpenRunDetail,
   onReload,
   onRerun,
+  onRunListChange,
   onRunJob,
   onTabChange,
   pluginActionById,
   pluginConnectionById,
+  runListMeta,
   runObservability,
   runningJobId,
   runs,
@@ -84,9 +95,11 @@ export function ScheduledJobManagementTabs({
               jobs={jobs}
               loading={loading}
               modelGatewayConfigById={modelGatewayConfigById}
+              remote={jobListMeta}
               onCopyJob={onCopyJob}
               onCreateJob={onCreateJob}
               onEditJob={onEditJob}
+              onRemoteChange={onJobListChange}
               onReload={onReload}
               onRunJob={onRunJob}
               pluginActionById={pluginActionById}
@@ -105,8 +118,10 @@ export function ScheduledJobManagementTabs({
               observability={runObservability}
               onCopyRun={onCopyRun}
               onOpenRunDetail={onOpenRunDetail}
+              onRemoteChange={onRunListChange}
               onReload={onReload}
               onRerun={onRerun}
+              remote={runListMeta}
               runningJobId={runningJobId}
               runs={runs}
             />

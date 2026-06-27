@@ -1315,6 +1315,16 @@ export type ScheduledJobListQuery = RemoteListQuery & {
   status?: string;
 };
 
+export type ScheduledJobRunFilterQuery = Partial<RemoteListQuery> & {
+  runIds?: string[];
+  scheduledJobId?: string;
+  status?: string;
+};
+
+export type ScheduledJobRunListQuery = ScheduledJobRunFilterQuery & {
+  page: number;
+};
+
 export type PluginConnectionListQuery = RemoteListQuery & {
   environment?: string;
   keyword?: string;
@@ -6484,6 +6494,7 @@ export async function fetchScheduledJobs(
     return {
       page: response.page ?? query.page ?? 1,
       pageSize: response.page_size ?? query.pageSize ?? 10,
+      performance: response.performance,
       rows: response.items,
       total: response.total,
     };
@@ -6561,9 +6572,16 @@ export async function runScheduledJob(
   });
 }
 
+export async function fetchScheduledJobRuns(): Promise<ScheduledJobRunRecord[]>;
 export async function fetchScheduledJobRuns(
-  query: { runIds?: string[]; scheduledJobId?: string; status?: string } = {},
-): Promise<ScheduledJobRunRecord[]> {
+  query: ScheduledJobRunListQuery,
+): Promise<RemoteListResult<ScheduledJobRunRecord>>;
+export async function fetchScheduledJobRuns(
+  query: ScheduledJobRunFilterQuery,
+): Promise<ScheduledJobRunRecord[]>;
+export async function fetchScheduledJobRuns(
+  query: ScheduledJobRunFilterQuery | ScheduledJobRunListQuery = {},
+): Promise<ScheduledJobRunRecord[] | RemoteListResult<ScheduledJobRunRecord>> {
   const token = requireAccessToken();
   const params = new URLSearchParams();
   query.runIds?.forEach((runId) => {
@@ -6573,11 +6591,28 @@ export async function fetchScheduledJobRuns(
   });
   appendQueryParam(params, 'scheduled_job_id', query.scheduledJobId);
   appendQueryParam(params, 'status', query.status);
+  const remoteListRequested =
+    query.page !== undefined
+    || query.pageSize !== undefined
+    || query.sortField !== undefined
+    || query.sortOrder !== undefined;
+  if (remoteListRequested) {
+    appendRemoteListParams(params, query);
+  }
   const queryString = params.toString();
   const response = await apiRequest<ListResponse<ScheduledJobRunRecord>>(
     queryString ? `/api/system/scheduled-job-runs?${queryString}` : '/api/system/scheduled-job-runs',
     { token },
   );
+  if (remoteListRequested) {
+    return {
+      page: response.page ?? query.page ?? 1,
+      pageSize: response.page_size ?? query.pageSize ?? 10,
+      performance: response.performance,
+      rows: response.items,
+      total: response.total,
+    };
+  }
   return response.items;
 }
 

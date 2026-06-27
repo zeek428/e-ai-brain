@@ -407,16 +407,25 @@ def run_scheduled_job(
 @router.get("/api/system/scheduled-job-runs")
 def list_scheduled_job_runs(
     request: Request,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
     run_id: Annotated[list[str] | None, Query()] = None,
     scheduled_job_id: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     return envelope(
         list_scheduled_job_runs_response(
             current_store=store(request),
+            page=page,
+            page_size=page_size,
             run_ids=run_id,
             scheduled_job_id=scheduled_job_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            started_at=perf_counter(),
             status=status,
             user=user,
         ),

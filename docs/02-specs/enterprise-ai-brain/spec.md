@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.620 |
+| 功能版本 | v1.1.621 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.621 | 2026-06-27 | 定时作业配置和运行记录主表统一接入服务端分页、排序和产品 scope 过滤：作业配置默认请求 `/api/system/scheduled-jobs?page=1&page_size=10&sort_by=next_run_at&sort_order=desc`，运行记录默认请求 `/api/system/scheduled-job-runs?page=1&page_size=10&sort_by=started_at&sort_order=desc`，旧全量返回仅保留兼容用途 | Codex |
 | v1.1.620 | 2026-06-27 | 插件管理连接和动作主表接入服务端分页、排序和筛选：连接页签默认携带分页/排序和环境筛选请求 `/api/system/plugin-connections`，动作页签默认携带分页/排序请求 `/api/system/plugin-actions`，旧全量接口仅保留下拉和测试兼容用途 | Codex |
 | v1.1.619 | 2026-06-27 | 执行诊断到 AI 助手深链补齐上下文解析：`assistant_chat_run`、`model_gateway_log`、`plugin_invocation_log`、`ai_executor_task`、`ai_executor_runner`、`code_inspection_report`、`audit_event` 等执行诊断来源可作为助手引用候选，`/assistant?reference_type=&reference_id=&prompt=` 会带入 prompt 和本次上下文，并继续受执行诊断读权限控制 | Codex |
 | v1.1.618 | 2026-06-27 | AI 助手草案任务台列表收口到 PostgreSQL read model：当前用户草案按动作、状态、时间、关键词、排序和分页在数据库侧完成，返回状态/采纳/处理/修改率汇总与列表性能观测；实时预检校验状态筛选保留兼容路径 | Codex |
@@ -1565,6 +1566,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 **核心规则**:
 - `scheduled_jobs` 是调度定义，`scheduled_job_runs` 是每次执行实例，`collector_runs` 是采集/导入台账；定时作业不得直接绕过现有业务 service 写表。
 - 定时作业配置列表属于管理型列表，`GET /api/system/scheduled-jobs` 必须优先走 PostgreSQL read model 完成名称/关键字、产品、来源系统、作业类型、启停和状态筛选，以及 `next_run_at/created_at/updated_at/name/job_type/status/enabled/last_*` 服务端排序与分页；未带分页参数的全量返回仅作为旧客户端和测试 helper 兼容，不能作为新增页面默认读路径。
+- 定时作业运行记录列表也属于管理型列表，`GET /api/system/scheduled-job-runs` 传入 `page/page_size` 时必须优先走 PostgreSQL read model，支持按运行 ID、作业 ID、状态和当前用户产品 scope 过滤，并允许 `started_at/finished_at/created_at/updated_at/status/trigger_type/records_imported` 白名单排序；未带分页参数的全量返回仅用于旧客户端、助手按 runId 拉详情和测试 helper 兼容。
 - `job_type` 首批支持 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`code_repository_inspection`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。
 - 作业类型、执行方式、调度方式、连接环境、代码巡检扫描方式、扫描引擎、内置规则、忽略规则、结果动作、严重级别阈值和作业必填规则以 `ScheduledJobCatalog` 服务端注册中心为准，通过 `GET /api/system/scheduled-job-catalog` 输出给任务中心页面和 AI 助手草案；前端 `scheduledJobFormTransformHelpers` 中的静态常量只能作为接口不可用时的降级，不得作为新增作业类型或规则扩展的权威来源。
 - `execution_mode` 分为 `deterministic`、`ai_assisted`、`ai_generated`：确定性作业可写真实指标；AI 辅助作业可写摘要、风险信号或看板派生结果；AI 生成作业只能写候选建议或待确认结果。前端和服务端都必须按执行模式识别 AI 装配要求，任一作业选择 `ai_assisted` 或 `ai_generated` 时均需 active AI 模型、AI角色和 Skill。

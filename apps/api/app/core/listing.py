@@ -29,6 +29,7 @@ LIST_P95_TARGETS_MS = {
     "rd_task_executor_policies": 300,
     "roles": 300,
     "requirements": 300,
+    "scheduled_job_runs": 400,
     "scheduled_jobs": 400,
     "users": 300,
     "user_insights": 400,

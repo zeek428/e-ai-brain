@@ -8,12 +8,15 @@ import {
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import { Button, Space, Tag, Typography } from 'antd';
+import type { TablePaginationConfig } from 'antd';
+import type { SorterResult } from 'antd/es/table/interface';
 
 import type { ModelGatewayConfigRecord } from '../../../data/management';
 import type {
   AiAgentRecord,
   PluginActionRecord,
   PluginConnectionRecord,
+  ScheduledJobListQuery,
   ScheduledJobRecord,
   ScheduledJobResultAction,
 } from '../../../services/aiBrain';
@@ -24,6 +27,7 @@ import {
   statusLabelByValue,
 } from './scheduledJobFormTransformHelpers';
 import { templateSourceFromConfig } from './scheduledJobRunTraceHelpers';
+import type { ScheduledJobRemoteTableMeta } from './useScheduledJobWorkspaceData';
 
 type ScheduledJobConfigTableProps = {
   agentById: Map<string, AiAgentRecord>;
@@ -33,10 +37,12 @@ type ScheduledJobConfigTableProps = {
   jobTypeLabelMap: Map<string, string>;
   jobs: ScheduledJobRecord[];
   loading: boolean;
+  remote: ScheduledJobRemoteTableMeta;
   modelGatewayConfigById: Map<string, ModelGatewayConfigRecord>;
   onCreateJob: () => void;
   onCopyJob: (job: ScheduledJobRecord) => void;
   onEditJob: (job: ScheduledJobRecord) => void;
+  onRemoteChange: (query: ScheduledJobListQuery) => void;
   onReload: () => void;
   onRunJob: (job: ScheduledJobRecord) => void;
   pluginActionById: Map<string, PluginActionRecord>;
@@ -54,6 +60,31 @@ function ellipsisText(value: string | undefined) {
   );
 }
 
+function normalizeJobSorter(
+  sorter: SorterResult<ScheduledJobRecord> | SorterResult<ScheduledJobRecord>[],
+) {
+  const activeSorter = Array.isArray(sorter)
+    ? sorter.find((item) => item.order)
+    : sorter.order
+      ? sorter
+      : undefined;
+  if (!activeSorter) {
+    return {};
+  }
+  const field =
+    typeof activeSorter.field === 'string'
+      ? activeSorter.field
+      : typeof activeSorter.columnKey === 'string'
+        ? activeSorter.columnKey
+        : undefined;
+  return {
+    sortField: field,
+    sortOrder: activeSorter.order === 'ascend' || activeSorter.order === 'descend'
+      ? activeSorter.order
+      : undefined,
+  };
+}
+
 export function ScheduledJobConfigTable({
   agentById,
   confirmDeleteJob,
@@ -62,10 +93,12 @@ export function ScheduledJobConfigTable({
   jobTypeLabelMap,
   jobs,
   loading,
+  remote,
   modelGatewayConfigById,
   onCreateJob,
   onCopyJob,
   onEditJob,
+  onRemoteChange,
   onReload,
   onRunJob,
   pluginActionById,
@@ -78,7 +111,13 @@ export function ScheduledJobConfigTable({
       cardBordered
       className="management-list-table"
       columns={[
-        { dataIndex: 'name', title: '名称', width: 220, render: (value) => ellipsisText(String(value ?? '')) },
+        {
+          dataIndex: 'name',
+          sorter: true,
+          title: '名称',
+          width: 220,
+          render: (value) => ellipsisText(String(value ?? '')),
+        },
         {
           key: 'template_source',
           title: '模板来源',
@@ -87,6 +126,7 @@ export function ScheduledJobConfigTable({
         },
         {
           dataIndex: 'job_type',
+          sorter: true,
           title: '类型',
           width: 190,
           render: (value) => ellipsisText(jobTypeLabelMap.get(String(value)) ?? String(value ?? '')),
@@ -153,12 +193,14 @@ export function ScheduledJobConfigTable({
         },
         {
           dataIndex: 'next_run_at',
+          sorter: true,
           title: '下次运行',
           width: 180,
           render: (_, row) => ellipsisText(formatDisplayDateTime(row.next_run_at)),
         },
         {
           dataIndex: 'status',
+          sorter: true,
           title: '状态',
           width: 100,
           render: (value, row) => (
@@ -218,6 +260,17 @@ export function ScheduledJobConfigTable({
       dateFormatter="string"
       headerTitle="作业配置"
       loading={loading}
+      onChange={(
+        pagination: TablePaginationConfig,
+        _filters,
+        sorter,
+      ) => {
+        onRemoteChange({
+          page: pagination.current ?? remote.page,
+          pageSize: pagination.pageSize ?? remote.pageSize,
+          ...normalizeJobSorter(sorter),
+        });
+      }}
       options={{
         density: true,
         fullScreen: true,
@@ -225,8 +278,11 @@ export function ScheduledJobConfigTable({
         setting: true,
       }}
       pagination={{
+        current: remote.page,
+        pageSize: remote.pageSize,
         showSizeChanger: true,
         showTotal: (total) => `共 ${total} 条`,
+        total: remote.total,
       }}
       rowKey="id"
       scroll={{ x: 1540 }}

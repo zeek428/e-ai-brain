@@ -29,6 +29,29 @@ SCHEDULED_JOB_SORT_COLUMNS = {
     "updated_at": "updated_at",
 }
 
+SCHEDULED_JOB_RUN_SELECT = """
+run.id, run.scheduled_job_id, run.collector_run_id, run.source_run_id,
+run.trigger_type, run.status,
+run.scheduled_for, run.started_at, run.finished_at, run.records_imported,
+run.error_code, run.error_message, run.config_snapshot,
+run.resolved_agent_snapshot, run.resolved_skill_snapshots,
+run.resolved_prompt_snapshot, run.tool_policy_snapshot, run.result_summary,
+run.created_at, run.updated_at, run.resolved_plugin_snapshot,
+run.plugin_invocation_log_id, run.assistant_action_run_id,
+run.assistant_action_draft_id, run.assistant_source_message_id,
+run.triggered_by_assistant
+"""
+
+SCHEDULED_JOB_RUN_SORT_COLUMNS = {
+    "created_at": "run.created_at",
+    "finished_at": "run.finished_at",
+    "records_imported": "run.records_imported",
+    "started_at": "run.started_at",
+    "status": "run.status",
+    "trigger_type": "run.trigger_type",
+    "updated_at": "run.updated_at",
+}
+
 
 def _json(value: Any, default: Any) -> str:
     if value is None:
@@ -270,6 +293,66 @@ class ScheduledAiJobReadRepository:
                     FROM scheduled_job_runs
                     {where}
                     ORDER BY started_at DESC NULLS LAST, id DESC
+                    """,
+                    tuple(params),
+                )
+                return [self._run_from_row(row) for row in cursor.fetchall()]
+
+    def count_scheduled_job_runs(
+        self,
+        *,
+        product_scope_ids: list[str] | None = None,
+        run_ids: list[str] | None = None,
+        scheduled_job_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        join_clause, where, params = self._run_where(
+            product_scope_ids=product_scope_ids,
+            run_ids=run_ids,
+            scheduled_job_id=scheduled_job_id,
+            status=status,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM scheduled_job_runs run {join_clause} {where}",
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_scheduled_job_runs_page(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        product_scope_ids: list[str] | None = None,
+        run_ids: list[str] | None = None,
+        scheduled_job_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        join_clause, where, params = self._run_where(
+            product_scope_ids=product_scope_ids,
+            run_ids=run_ids,
+            scheduled_job_id=scheduled_job_id,
+            status=status,
+        )
+        sort_column = SCHEDULED_JOB_RUN_SORT_COLUMNS.get(sort_by, "run.started_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT {SCHEDULED_JOB_RUN_SELECT}
+                    FROM scheduled_job_runs run
+                    {join_clause}
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, run.id {direction}
+                    LIMIT %s OFFSET %s
                     """,
                     tuple(params),
                 )
@@ -731,6 +814,41 @@ class ScheduledAiJobReadRepository:
             )
             params.extend([probe, probe, probe, probe, probe])
         return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def _run_where(
+        self,
+        *,
+        product_scope_ids: list[str] | None,
+        run_ids: list[str] | None,
+        scheduled_job_id: str | None,
+        status: str | None,
+    ) -> tuple[str, str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        join_clause = ""
+        if scheduled_job_id is not None:
+            clauses.append("run.scheduled_job_id = %s")
+            params.append(scheduled_job_id)
+        if status is not None:
+            clauses.append("run.status = %s")
+            params.append(status)
+        normalized_run_ids = sorted(
+            {str(run_id).strip() for run_id in (run_ids or []) if str(run_id).strip()}
+        )
+        if normalized_run_ids:
+            clauses.append("run.id = ANY(%s)")
+            params.append(normalized_run_ids)
+        if product_scope_ids is not None:
+            normalized_scope_ids = sorted(
+                {str(product_id) for product_id in product_scope_ids if str(product_id).strip()}
+            )
+            join_clause = "JOIN scheduled_jobs job ON job.id = run.scheduled_job_id"
+            if normalized_scope_ids:
+                clauses.append("job.product_id = ANY(%s)")
+                params.append(normalized_scope_ids)
+            else:
+                clauses.append("FALSE")
+        return join_clause, (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
 
     def _skill_from_row(self, row: Any) -> dict[str, Any]:
         return {

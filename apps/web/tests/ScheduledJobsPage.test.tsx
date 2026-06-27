@@ -23,6 +23,7 @@ function installScheduledJobsFetchMock(
   const jobCreateBodies: unknown[] = [];
   const jobDeleteIds: string[] = [];
   const jobDryRunBodies: unknown[] = [];
+  const jobListCalls: string[] = [];
   const jobUpdateBodies: unknown[] = [];
   const assistantDraftConfirmIds: string[] = [];
   const assistantDraftModificationBodies: unknown[] = [];
@@ -31,6 +32,7 @@ function installScheduledJobsFetchMock(
   const generatedTemplateRequests: string[] = [];
   const runJobBodies: unknown[] = [];
   const runJobIds: string[] = [];
+  const runListCalls: string[] = [];
   const resultWriteRecordCalls: string[] = [];
   const jobs: Array<Record<string, unknown>> = options.jobs ?? [];
   const resultWriteRecords = options.resultWriteRecords ?? [];
@@ -68,7 +70,12 @@ function installScheduledJobsFetchMock(
     });
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-    if (input === '/api/system/scheduled-jobs' && init?.method === 'GET') {
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/system/scheduled-jobs')
+      && init?.method === 'GET'
+    ) {
+      jobListCalls.push(input);
       return jsonResponse({ data: { items: jobs, total: jobs.length } });
     }
     if (input === '/api/system/scheduled-job-catalog' && init?.method === 'GET') {
@@ -457,9 +464,6 @@ function installScheduledJobsFetchMock(
         },
       });
     }
-    if (input === '/api/system/scheduled-job-runs' && init?.method === 'GET') {
-      return jsonResponse({ data: { items: runs, total: runs.length } });
-    }
     if (
       input === '/api/system/scheduled-job-runs/scheduled_job_run_weekly_feedback/template'
       && init?.method === 'POST'
@@ -501,6 +505,14 @@ function installScheduledJobsFetchMock(
     }
     if (input === '/api/system/scheduled-job-runs/observability' && init?.method === 'GET') {
       return jsonResponse({ data: observability });
+    }
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/system/scheduled-job-runs')
+      && init?.method === 'GET'
+    ) {
+      runListCalls.push(input);
+      return jsonResponse({ data: { items: runs, total: runs.length } });
     }
     if (
       typeof input === 'string'
@@ -730,10 +742,12 @@ function installScheduledJobsFetchMock(
     jobCreateBodies,
     jobDeleteIds,
     jobDryRunBodies,
+    jobListCalls,
     jobUpdateBodies,
     resultWriteRecordCalls,
     runJobBodies,
     runJobIds,
+    runListCalls,
   };
 }
 
@@ -748,6 +762,23 @@ describe('ScheduledJobsPage', () => {
     window.sessionStorage.clear();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('loads scheduled job tables through server-side pagination', async () => {
+    const { jobListCalls, runListCalls } = installScheduledJobsFetchMock();
+
+    render(<ScheduledJobsPage />);
+
+    await waitFor(() =>
+      expect(jobListCalls).toContain(
+        '/api/system/scheduled-jobs?page=1&page_size=10&sort_by=next_run_at&sort_order=desc',
+      ),
+    );
+    await waitFor(() =>
+      expect(runListCalls).toContain(
+        '/api/system/scheduled-job-runs?page=1&page_size=10&sort_by=started_at&sort_order=desc',
+      ),
+    );
   });
 
   it('uses selectable references instead of requiring raw ids in the create dialog', async () => {

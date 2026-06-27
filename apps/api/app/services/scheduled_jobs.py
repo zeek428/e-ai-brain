@@ -81,6 +81,15 @@ AI_AGENT_STATUSES = {"active", "disabled"}
 SCHEDULED_JOB_RUN_STATUSES = {"cancelled", "failed", "queued", "running", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TERMINAL_STATUSES = {"cancelled", "failed", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TRIGGER_TYPES = {"manual", "manual_rerun", "scheduler"}
+SCHEDULED_JOB_RUN_SORT_FIELDS = {
+    "created_at",
+    "finished_at",
+    "records_imported",
+    "started_at",
+    "status",
+    "trigger_type",
+    "updated_at",
+}
 SCHEDULED_JOB_SORT_FIELDS = {
     "created_at",
     "enabled",
@@ -190,7 +199,10 @@ def scheduled_job_run_matches_product_scope(
     run: dict[str, Any],
     user: dict[str, Any],
 ) -> bool:
-    return user_can_access_scheduled_job_product(user, scheduled_job_run_product_id(current_store, run))
+    return user_can_access_scheduled_job_product(
+        user,
+        scheduled_job_run_product_id(current_store, run),
+    )
 
 
 def scheduled_job_plugin_invocation_user(user: dict[str, Any]) -> dict[str, Any]:
@@ -1157,7 +1169,11 @@ def list_scheduled_jobs_response(
     resolved_page = page or 1
     resolved_page_size = page_size or 10
     product_scope_ids = scheduled_job_product_scope_filter(user)
-    if product_id is not None and product_scope_ids is not None and product_id not in product_scope_ids:
+    if (
+        product_id is not None
+        and product_scope_ids is not None
+        and product_id not in product_scope_ids
+    ):
         return add_list_observability(
             {
                 "items": [],
@@ -3878,24 +3894,113 @@ def run_scheduled_job_response(
 def list_scheduled_job_runs_response(
     *,
     current_store: Any,
-    run_ids: list[str] | None = None,
     scheduled_job_id: str | None,
     status: str | None,
     user: dict[str, Any],
+    page: int | None = None,
+    page_size: int | None = None,
+    run_ids: list[str] | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    started_at: float | None = None,
 ) -> dict[str, Any]:
     require_scheduled_job_runner(user)
     if status is not None:
         ensure_enum(status, SCHEDULED_JOB_RUN_STATUSES, "status")
+    if sort_order not in {"asc", "desc"}:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_order")
+    resolved_sort_by = sort_by or "started_at"
+    if resolved_sort_by not in SCHEDULED_JOB_RUN_SORT_FIELDS:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+    resolved_started_at = started_at or perf_counter()
+    with_pagination = page is not None or page_size is not None
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    product_scope_ids = scheduled_job_product_scope_filter(user)
     sync_scheduled_job_store(current_store)
     if scheduled_job_id is not None:
         job = _read_memory_dict(current_store, "scheduled_jobs").get(scheduled_job_id)
         if job is None or not scheduled_job_matches_product_scope(job, user):
-            return {"items": [], "total": 0}
+            return add_list_observability(
+                {
+                    "items": [],
+                    "page": resolved_page,
+                    "page_size": resolved_page_size,
+                    "total": 0,
+                }
+                if with_pagination
+                else {"items": [], "total": 0},
+                filters={
+                    "run_ids": run_ids,
+                    "scheduled_job_id": scheduled_job_id,
+                    "status": status,
+                },
+                list_name="scheduled_job_runs",
+                page=resolved_page if with_pagination else None,
+                page_size=resolved_page_size if with_pagination else None,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+                started_at=resolved_started_at,
+            )
     normalized_run_ids = {
         str(run_id).strip()
         for run_id in (run_ids or [])
         if str(run_id).strip()
     }
+    filters = {
+        "run_ids": sorted(normalized_run_ids) if normalized_run_ids else None,
+        "scheduled_job_id": scheduled_job_id,
+        "status": status,
+    }
+    repository = scheduled_jobs_query_repository(current_store)
+    if (
+        repository is not None
+        and with_pagination
+        and callable(getattr(repository, "count_scheduled_job_runs", None))
+        and callable(getattr(repository, "list_scheduled_job_runs_page", None))
+    ):
+        total = repository.count_scheduled_job_runs(
+            product_scope_ids=product_scope_ids,
+            run_ids=sorted(normalized_run_ids) if normalized_run_ids else None,
+            scheduled_job_id=scheduled_job_id,
+            status=status,
+        )
+        page_items = repository.list_scheduled_job_runs_page(
+            limit=resolved_page_size,
+            offset=(resolved_page - 1) * resolved_page_size,
+            product_scope_ids=product_scope_ids,
+            run_ids=sorted(normalized_run_ids) if normalized_run_ids else None,
+            scheduled_job_id=scheduled_job_id,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
+        source_run_ids = sorted(
+            {
+                str(item.get("source_run_id"))
+                for item in page_items
+                if item.get("source_run_id")
+            }
+        )
+        if source_run_ids:
+            sync_scheduled_job_run_store(current_store, run_ids=source_run_ids)
+        return add_list_observability(
+            {
+                "items": [
+                    public_scheduled_job_run(run, current_store=current_store) for run in page_items
+                ],
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="scheduled_job_runs",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=resolved_started_at,
+        )
     sync_scheduled_job_run_store(
         current_store,
         run_ids=sorted(normalized_run_ids) if normalized_run_ids else None,
@@ -3913,8 +4018,34 @@ def list_scheduled_job_runs_response(
         if not scheduled_job_run_matches_product_scope(current_store, run, user):
             continue
         items.append(public_scheduled_job_run(run, current_store=current_store))
-    items.sort(key=lambda item: (item.get("started_at") or "", item["id"]), reverse=True)
-    return {"items": items, "total": len(items)}
+    items = sort_list_items(
+        items,
+        allowed_fields=SCHEDULED_JOB_RUN_SORT_FIELDS,
+        default_sort_by="started_at",
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+    )
+    total = len(items)
+    payload: dict[str, Any] = {"items": items, "total": total}
+    if with_pagination:
+        payload = {
+            "items": items[
+                (resolved_page - 1) * resolved_page_size : resolved_page * resolved_page_size
+            ],
+            "page": resolved_page,
+            "page_size": resolved_page_size,
+            "total": total,
+        }
+    return add_list_observability(
+        payload,
+        filters=filters,
+        list_name="scheduled_job_runs",
+        page=resolved_page if with_pagination else None,
+        page_size=resolved_page_size if with_pagination else None,
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+        started_at=resolved_started_at,
+    )
 
 
 def cancel_scheduled_job_run_response(
