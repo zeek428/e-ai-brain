@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.632 |
+| 功能版本 | v1.1.633 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.633 | 2026-06-28 | 知识沉淀候选审核权限从固定角色名收口到 `knowledge.deposit.decide` 权限点，支持自定义审核角色并阻止仅具备 `knowledge.read` 的只读用户访问审核列表或执行采纳/驳回 | Codex |
 | v1.1.632 | 2026-06-28 | 角色治理列表生产查询路径收口：`GET /api/system/roles` 在 PostgreSQL 运行时必须优先走 `count_role_summaries` / `list_role_summaries_page` read model，不得先全量 `list_roles()` 后在接口层过滤分页 | Codex |
 | v1.1.631 | 2026-06-28 | 知识沉淀候选列表补齐服务端分页、筛选、排序和性能观测契约：`GET /api/knowledge/deposits` 传入 `page/page_size` 时必须优先走 PostgreSQL read model 的 count/page 查询，支持按状态过滤和白名单排序 | Codex |
 | v1.1.630 | 2026-06-28 | 插件调用日志排障兼容 API 补齐服务端分页、筛选、排序和性能观测契约：`GET /api/system/plugin-invocation-logs` 传入 `page/page_size` 时必须优先走 PostgreSQL read model 的 count/page 查询，支持按动作、定时作业、运行实例和状态过滤 | Codex |
@@ -792,7 +793,7 @@ AI 执行器任务列表属于 Runner 运维管理列表，前端或诊断页需
 
 需求全链路详情在需求已归属迭代版本时必须展示“版本内需求对比”，通过需求列表 SQL read model 按 `version_id` 读取同版本需求摘要，展示同版本需求总数、状态分布和当前需求位置；该对比区只作为只读辅助视图，加载失败不得影响主 full-chain 链路展示。
 
-知识中心“沉淀审核”弹窗中的每条知识沉淀候选必须提供“全链路”入口，按 `subject_type=knowledge_deposit`、`subject_id=<deposit_id>` 进入 `/delivery/full-chain`，由统一 full-chain API 解析回所属需求交付链路；审核表格需使用固定列宽和横向滚动，避免沉淀内容、任务编号或操作按钮撑开弹窗。知识沉淀候选列表属于管理型审核列表，`GET /api/knowledge/deposits` 传入 `page/page_size` 时必须优先走 PostgreSQL read model 的 count/page 查询，支持 `status` 筛选、`id/ai_task_id/deposit_type/title/status/created_at/updated_at` 白名单排序，并返回 `query/performance` 观测信息；未带分页的全量返回仅用于旧审核弹窗兼容和测试 helper。
+知识中心“沉淀审核”弹窗中的每条知识沉淀候选必须提供“全链路”入口，按 `subject_type=knowledge_deposit`、`subject_id=<deposit_id>` 进入 `/delivery/full-chain`，由统一 full-chain API 解析回所属需求交付链路；审核表格需使用固定列宽和横向滚动，避免沉淀内容、任务编号或操作按钮撑开弹窗。知识沉淀候选查询、采纳和驳回统一校验 `knowledge.deposit.decide` 权限点，不得再绑定固定角色名；具备自定义审核权限的角色可访问，只有 `knowledge.read` 的只读用户不可进入审核列表。知识沉淀候选列表属于管理型审核列表，`GET /api/knowledge/deposits` 传入 `page/page_size` 时必须优先走 PostgreSQL read model 的 count/page 查询，支持 `status` 筛选、`id/ai_task_id/deposit_type/title/status/created_at/updated_at` 白名单排序，并返回 `query/performance` 观测信息；未带分页的全量返回仅用于旧审核弹窗兼容和测试 helper。
 
 当前补充实现：迭代规划建议已作为真实业务主体接入 `iteration_plan_suggestions` 与 `iteration_plan_decisions`。生成接口只基于真实用户反馈和 Bug 证据生成建议；无证据时返回空集合，不生成占位建议。确认接口支持采纳、修改后采纳、驳回和显式转需求，只有确认且 `convert_to_requirement=true` 时才创建真实 `requirements` 记录，需求来源为 `product_planning`。用户反馈也支持从洞察列表直接转需求，转需求事务同时写入 `requirements`、更新 `user_feedback.related_requirement_id/status/product_id` 并记录审计，需求来源为 `user_feedback`。
 
@@ -1461,7 +1462,7 @@ AI 助手聊天生成必须以 `assistant_chat_runs` 作为服务端运行真相
 | 知识文档 | GET/POST/PATCH/DELETE | /api/knowledge/documents, /api/knowledge/documents/{document_id} | 查询、导入、更新和删除知识文档；列表必须校验 `knowledge.read`，并继续在知识空间和角色权限层过滤可读文档。 |
 | 知识索引重试 | POST | /api/knowledge/documents/{document_id}/retry-index | 对 `index_failed` 重建索引，或对 `text_indexed` 补建向量索引。 |
 | 知识搜索 | POST | /api/knowledge/search | 权限过滤后的混合检索。 |
-| 知识沉淀 | GET/POST | /api/knowledge/deposits, /api/knowledge/deposits/{deposit_id}/approve, /api/knowledge/deposits/{deposit_id}/reject | 查询、采纳或驳回知识候选；列表带分页参数时必须走 PostgreSQL read model count/page，并返回查询性能观测。 |
+| 知识沉淀 | GET/POST | /api/knowledge/deposits, /api/knowledge/deposits/{deposit_id}/approve, /api/knowledge/deposits/{deposit_id}/reject | 查询、采纳或驳回知识候选；统一校验 `knowledge.deposit.decide`，列表带分页参数时必须走 PostgreSQL read model count/page，并返回查询性能观测。 |
 | Markdown 导出 | GET | /api/export/tasks/{task_id}/markdown | 导出已完成任务方案，权限与任务读取权限一致。 |
 | 审计事件 | GET | /api/audit/events | 查询审计事件。 |
 | GitLab 代码质量 | GET/POST | /api/devops/gitlab/daily-code-metrics | 登记或查询按产品归属的每日提交和代码质量。 |

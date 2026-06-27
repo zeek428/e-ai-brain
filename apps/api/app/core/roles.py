@@ -107,6 +107,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "code_inspection.read",
             "knowledge.read",
             "knowledge.manage",
+            "knowledge.deposit.decide",
             "bug.read",
             "bug.manage",
             "system.scheduled_jobs.run",

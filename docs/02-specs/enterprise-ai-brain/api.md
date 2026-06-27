@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.416 |
+| 功能版本 | v1.1.417 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.417 | 2026-06-28 | 知识沉淀候选审核接口权限收口：`GET/POST /api/knowledge/deposits...` 统一校验 `knowledge.deposit.decide` 权限点，具备自定义审核权限的角色可访问，单纯 `knowledge.read` 不可审核候选 | Codex |
 | v1.1.416 | 2026-06-28 | `GET /api/system/roles` 生产查询路径收口：PostgreSQL 运行时分页请求必须优先调用角色 summary count/page read model，支持现有筛选和排序白名单，不得先全量 `list_roles()` 后本地分页 | Codex |
 | v1.1.415 | 2026-06-28 | `GET /api/knowledge/deposits` 补齐远程分页契约：支持 `page/page_size/sort_by/sort_order`，按状态过滤知识沉淀候选，并返回 `query/performance` 观测 | Codex |
 | v1.1.414 | 2026-06-28 | `GET /api/system/plugin-invocation-logs` 补齐远程分页契约：支持 `page/page_size/sort_by/sort_order`，按动作、定时作业、运行实例和状态过滤，并返回 `query/performance` 观测 | Codex |
@@ -738,9 +739,9 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Knowledge | POST | `/api/knowledge/documents/{document_id}/reparse` | 基于原始资产创建新的 queued 重解析任务。 |
 | Knowledge | POST | `/api/knowledge/documents/batch-move` | 批量移动知识文档目录，返回 updated/skipped 明细。 |
 | Knowledge | POST | `/api/knowledge/search` | 知识检索。 |
-| Knowledge | GET | `/api/knowledge/deposits?status=&page=&page_size=&sort_by=&sort_order=` | 知识沉淀候选列表。传入 `page/page_size` 时优先走 PostgreSQL read model 的 count/page 查询，支持按 `status` 过滤，支持 `sort_by=id/ai_task_id/deposit_type/title/status/created_at/updated_at` 与 `sort_order=asc/desc`，响应补充 `page/page_size/query/performance`；未带分页时保留旧全量返回兼容旧审核弹窗和测试 helper。 |
-| Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/approve` | 采纳知识沉淀。 |
-| Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/reject` | 驳回知识沉淀。 |
+| Knowledge | GET | `/api/knowledge/deposits?status=&page=&page_size=&sort_by=&sort_order=` | 知识沉淀候选列表；校验 `knowledge.deposit.decide`。传入 `page/page_size` 时优先走 PostgreSQL read model 的 count/page 查询，支持按 `status` 过滤，支持 `sort_by=id/ai_task_id/deposit_type/title/status/created_at/updated_at` 与 `sort_order=asc/desc`，响应补充 `page/page_size/query/performance`；未带分页时保留旧全量返回兼容旧审核弹窗和测试 helper。 |
+| Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/approve` | 采纳知识沉淀；校验 `knowledge.deposit.decide`。 |
+| Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/reject` | 驳回知识沉淀；校验 `knowledge.deposit.decide`。 |
 | Output | GET | `/api/writeback/results/{task_id}` | 查询模拟回写结果。 |
 | Output | POST | `/api/writeback/results/{task_id}` | 显式生成或复用模拟回写结果，使用幂等键避免重复 Issue。 |
 | Output | GET | `/api/export/tasks/{task_id}/markdown` | 导出 Markdown 方案。 |

@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import CurrentUser, require_roles, store
+from app.api.deps import CurrentUser, require_permissions, require_roles, store
 from app.core.config import get_settings
 from app.core.trace import envelope, get_trace_id
 from app.services.knowledge_deposit_decisions import (
@@ -49,6 +49,7 @@ from app.services.knowledge_search import knowledge_search_response
 
 router = APIRouter(tags=["knowledge"])
 settings = get_settings()
+KNOWLEDGE_DEPOSIT_DECIDE_PERMISSION = "knowledge.deposit.decide"
 
 
 def _request_started_at(request: Request) -> float | None:
@@ -595,7 +596,7 @@ def list_knowledge_deposits(
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"knowledge_owner", "rd_owner"})
+    require_permissions(user, {KNOWLEDGE_DEPOSIT_DECIDE_PERMISSION})
     return knowledge_deposit_list_response(
         current_store=store(request),
         page=page,
@@ -615,7 +616,7 @@ def approve_knowledge_deposit(
     payload: KnowledgeDepositApproveRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"knowledge_owner", "rd_owner"})
+    require_permissions(user, {KNOWLEDGE_DEPOSIT_DECIDE_PERMISSION})
     deposit = approve_knowledge_deposit_result(
         current_store=knowledge_write_store(store(request)),
         deposit_id=deposit_id,
@@ -633,7 +634,7 @@ def reject_knowledge_deposit(
     payload: KnowledgeDepositRejectRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"knowledge_owner", "rd_owner"})
+    require_permissions(user, {KNOWLEDGE_DEPOSIT_DECIDE_PERMISSION})
     deposit = reject_knowledge_deposit_result(
         current_store=knowledge_write_store(store(request)),
         deposit_id=deposit_id,

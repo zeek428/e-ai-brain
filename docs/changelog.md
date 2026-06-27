@@ -33,6 +33,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 知识沉淀审核权限点收口：候选查询、采纳和驳回统一校验 `knowledge.deposit.decide`，支持自定义审核角色，单纯 `knowledge.read` 不再能访问审核列表。
 - 角色治理列表生产路径收口：`GET /api/system/roles` 在 PostgreSQL 运行时走角色 summary count/page read model 完成筛选、排序和分页，不再先全量 `list_roles()` 后本地过滤。
 - 知识沉淀候选列表补齐服务端分页、筛选、排序和性能观测：`GET /api/knowledge/deposits` 带 `page/page_size` 时走 PostgreSQL count/page read model，支持按状态过滤，并返回 `query/performance`。
 - 插件调用日志列表补齐服务端分页、筛选、排序和性能观测：`GET /api/system/plugin-invocation-logs` 带 `page/page_size` 时走 PostgreSQL count/page read model，支持按动作、定时作业、运行实例和状态过滤，并返回 `query/performance`。

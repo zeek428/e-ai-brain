@@ -309,6 +309,74 @@ def test_core_management_lists_require_menu_declared_read_permissions():
         assert response.json()["detail"]["code"] == "FORBIDDEN"
 
 
+def test_knowledge_deposit_review_uses_permission_point_not_role_name():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    suffix = len(getattr(app.state.user_repository, "users", {})) + 1
+    role_code = f"knowledge_deposit_decider_{suffix}"
+    viewer_username = f"knowledge-deposit-viewer-{suffix}@example.com"
+    username = f"knowledge-deposit-decider-{suffix}@example.com"
+
+    role = client.post(
+        "/api/system/roles",
+        json={"code": role_code, "name": "Knowledge Deposit Decider"},
+        headers=admin_headers,
+    )
+    assert role.status_code == 200, role.text
+    role_id = role.json()["data"]["id"]
+    granted = client.put(
+        f"/api/system/roles/{role_id}/permissions",
+        json={"permission_codes": ["knowledge.deposit.decide"]},
+        headers=admin_headers,
+    )
+    assert granted.status_code == 200, granted.text
+    created_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Knowledge Deposit Decider",
+            "password": "password123",
+            "roles": ["viewer"],
+            "status": "active",
+            "username": username,
+        },
+        headers=admin_headers,
+    )
+    assert created_user.status_code == 200, created_user.text
+    user_id = created_user.json()["data"]["id"]
+    assigned = client.put(
+        f"/api/users/{user_id}/roles",
+        json={"role_codes": [role_code]},
+        headers=admin_headers,
+    )
+    assert assigned.status_code == 200, assigned.text
+    viewer_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Knowledge Deposit Viewer",
+            "password": "password123",
+            "roles": ["viewer"],
+            "status": "active",
+            "username": viewer_username,
+        },
+        headers=admin_headers,
+    )
+    assert viewer_user.status_code == 200, viewer_user.text
+
+    viewer_response = client.get(
+        "/api/knowledge/deposits?page=1&page_size=10",
+        headers=auth_headers(viewer_username, "password123"),
+    )
+    assert viewer_response.status_code == 403
+    assert viewer_response.json()["detail"]["code"] == "FORBIDDEN"
+
+    decider_response = client.get(
+        "/api/knowledge/deposits?page=1&page_size=10",
+        headers=auth_headers(username, "password123"),
+    )
+    assert decider_response.status_code == 200, decider_response.text
+    assert "items" in decider_response.json()["data"]
+
+
 def test_product_scoped_management_lists_filter_business_records():
     app.state.store.reset()
     admin_headers = auth_headers()
