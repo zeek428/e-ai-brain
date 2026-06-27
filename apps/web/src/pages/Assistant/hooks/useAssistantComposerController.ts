@@ -56,14 +56,21 @@ function assistantQueryReferenceParams() {
     return undefined;
   }
   return {
-    prompt: params.get('prompt')?.trim() || undefined,
+    prompt: assistantQueryPromptParam(),
     referenceId,
     referenceType,
   };
 }
 
+function assistantQueryPromptParam() {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+  return new URLSearchParams(window.location.search).get('prompt')?.trim() || undefined;
+}
+
 function assistantInitialInputValue() {
-  return assistantQueryReferenceParams()?.prompt ?? '';
+  return assistantQueryPromptParam() ?? '';
 }
 
 function assistantReferenceEmptyState(value: string): AssistantReferenceEmptyState {

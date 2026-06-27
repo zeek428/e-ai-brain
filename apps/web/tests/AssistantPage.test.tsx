@@ -4463,6 +4463,35 @@ describe('AssistantPage', () => {
     });
   });
 
+  it('keeps route prompt when the execution trace reference type is not an assistant reference', async () => {
+    const prompt = '请基于执行诊断链路分析运行问题';
+    window.history.pushState(
+      {},
+      '',
+      `/assistant?reference_type=assistant_chat_run&reference_id=assistant_chat_run_trace&prompt=${encodeURIComponent(prompt)}`,
+    );
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    await screen.findByText('我在，直接问我当前进展。');
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(prompt);
+    expect(screen.queryByLabelText('本次上下文')).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith('/api/assistant/conversations', expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('preselects knowledge space references from route query parameters', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
     window.history.pushState(

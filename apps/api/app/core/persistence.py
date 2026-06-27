@@ -582,6 +582,7 @@ class PostgresSnapshotRepository:
         return {
             "audit_events": list(audit_payload.get("audit_events") or []),
             "bugs": list((bugs_payload.get("bugs") or {}).values()),
+            "code_inspection_reports": self.list_code_inspection_reports(),
             "code_review_reports": list(
                 (review_payload.get("code_review_reports") or {}).values()
             ),
@@ -1116,6 +1117,52 @@ class PostgresSnapshotRepository:
     ) -> list[dict[str, Any]]:
         return self._task_read_repository.list_rd_task_executor_policies(
             product_id=product_id,
+            status=status,
+            task_type=task_type,
+        )
+
+    def count_rd_task_executor_policies(
+        self,
+        *,
+        executor_type: str | None = None,
+        name: str | None = None,
+        product_id: str | None = None,
+        product_name: str | None = None,
+        status: str | None = None,
+        task_type: str | None = None,
+    ) -> int:
+        return self._task_read_repository.count_rd_task_executor_policies(
+            executor_type=executor_type,
+            name=name,
+            product_id=product_id,
+            product_name=product_name,
+            status=status,
+            task_type=task_type,
+        )
+
+    def list_rd_task_executor_policy_page(
+        self,
+        *,
+        executor_type: str | None = None,
+        limit: int,
+        name: str | None = None,
+        offset: int,
+        product_id: str | None = None,
+        product_name: str | None = None,
+        sort_by: str | None = None,
+        sort_order: str | None = None,
+        status: str | None = None,
+        task_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._task_read_repository.list_rd_task_executor_policy_page(
+            executor_type=executor_type,
+            limit=limit,
+            name=name,
+            offset=offset,
+            product_id=product_id,
+            product_name=product_name,
+            sort_by=sort_by,
+            sort_order=sort_order,
             status=status,
             task_type=task_type,
         )

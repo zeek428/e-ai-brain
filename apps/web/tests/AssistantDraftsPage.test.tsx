@@ -139,6 +139,10 @@ describe('AssistantDraftsPage', () => {
     render(<AssistantDraftsPage />);
 
     await screen.findByText('每周用户反馈洞察草案');
+    const summaryStrip = screen.getByRole('list', { name: '草案任务台指标' });
+    expect(summaryStrip).toHaveStyle('display: grid');
+    expect(summaryStrip).toHaveStyle('width: 100%');
+    expect(within(summaryStrip).getAllByRole('listitem')).toHaveLength(6);
     expect(screen.getByText('待确认草案')).toBeInTheDocument();
     expect(screen.getByText('失败草案')).toBeInTheDocument();
     expect(screen.getByText('已采纳草案')).toBeInTheDocument();

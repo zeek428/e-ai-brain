@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.399 |
+| 功能版本 | v1.1.403 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,10 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.403 | 2026-06-27 | 需求全链路响应补齐 `branch_configs` 与 `audit_events`，阶段摘要和时间线覆盖版本级代码分支配置、主体审计事件 | Codex |
+| v1.1.402 | 2026-06-27 | `GET /api/delivery/rd-task-executor-policies` 补齐服务端分页、筛选、排序和 `query/performance` 观测；需求全链路接口统一校验 `requirement.read/task.read/workspace.read` 与产品 scope | Codex |
+| v1.1.401 | 2026-06-27 | 新增 `GET /api/lifecycle/full-chain` 统一主体入口，支持从 Bug、迭代版本和代码巡检报告解析到需求全链路，并在响应中返回 `anchor` 与 `code_inspection_reports` | Codex |
+| v1.1.400 | 2026-06-27 | 执行诊断列表新增 `refresh=true` 强制刷新参数；默认列表优先读取已有 `execution_trace_snapshots` 快照，避免普通分页查询同步重建全量 Trace 导致慢查询 | Codex |
 | v1.1.399 | 2026-06-26 | 代码巡检治理概览新增 `quality_gate_violations[]`，按门禁指标或规则聚合失败原因、严重级别、触发次数、报告数、实际值/阈值和最近报告摘要 | Codex |
 | v1.1.398 | 2026-06-26 | 执行诊断列表和详情响应补充 `diagnostic_nodes[]`，服务端从异常/运行中节点派生安全摘要，避免前端和 AI 助手自行解析完整节点 metadata | Codex |
 | v1.1.397 | 2026-06-26 | 执行诊断查询语义澄清：`source_type` 是来源类型，可筛选根或节点来源；前端筛选项展示为“来源类型”，不再称为“根类型” | Codex |
@@ -674,7 +678,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Requirement | POST | `/api/requirements/batch-schedule` | 批量归集同产品需求到迭代版本。 |
 | Requirement | POST | `/api/requirements/batch-generate-tasks` | 批量为同产品已排期需求生成产品详细设计任务。 |
 | Requirement | GET | `/api/requirements/{requirement_id}` | 需求详情。 |
-| Requirement | GET | `/api/requirements/{requirement_id}/full-chain` | 需求全链路详情，按时间线聚合需求、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、Bug、发布和知识沉淀；`git_snapshots` 可包含风险摘要、diff 文件树和 Review Checklist。 |
+| Requirement | GET | `/api/requirements/{requirement_id}/full-chain`, `/api/lifecycle/full-chain` | 需求全链路详情，按时间线聚合需求、迭代版本、版本代码分支、AI 任务、Review、PR/MR 快照、代码评审、代码巡检报告、Bug、发布、知识沉淀和审计事件；统一主体入口可按 Bug、迭代版本或代码巡检报告解析到同一链路，并返回 `anchor`；接口要求 `requirement.read`、`task.read` 或 `workspace.read` 任一读权限，并按需求或入口主体所属产品 scope 校验，缺权限返回 403，产品范围不匹配返回 404。 |
 | Requirement | PATCH | `/api/requirements/{requirement_id}` | 更新待审批或已驳回需求。 |
 | Requirement | DELETE | `/api/requirements/{requirement_id}` | 删除未生成任务的需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/approve` | 审批通过需求。 |
@@ -685,7 +689,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | AI Task | POST | `/api/ai-tasks` | 低层任务创建接口。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/start` | 启动任务；停在 `model_gateway_failed` 或 `code_review_executor_failed` 的失败任务可用同一 task_id 重试。 |
 | AI Task | GET | `/api/ai-tasks/{task_id}` | 任务详情；PostgreSQL 运行时读取 task workflow source rows，并返回脱敏产品上下文、输入输出、待确认 Review、Review 列表、Graph Run、知识沉淀和 Mock Issue 回写状态。 |
-| AI Task | GET/POST/PATCH/DELETE | `/api/delivery/rd-task-executor-policies`, `/api/delivery/rd-task-executor-policies/{policy_id}` | 管理研发执行器策略；按任务类型、产品和优先级匹配插件管理下的 Codex、Claude Code 或 OpenClaw Runner，不接收 Agent/Skill/模型网关字段。前端任务类型选项覆盖 PRD/原型/产品详细设计（`product_detail_design`）、技术方案设计（`technical_solution`）、代码实现/开发计划（`development_planning`）、代码评审（`code_review`）、自动化测试（`automated_testing`）、代码整改（`code_inspection_remediation`）、发布上线评估（`release_readiness`）和上线后分析（`post_release_analysis`）。 |
+| AI Task | GET/POST/PATCH/DELETE | `/api/delivery/rd-task-executor-policies`, `/api/delivery/rd-task-executor-policies/{policy_id}` | 管理研发执行器策略；按任务类型、产品和优先级匹配插件管理下的 Codex、Claude Code 或 OpenClaw Runner，不接收 Agent/Skill/模型网关字段。前端任务类型选项覆盖 PRD/原型/产品详细设计（`product_detail_design`）、技术方案设计（`technical_solution`）、代码实现/开发计划（`development_planning`）、代码评审（`code_review`）、自动化测试（`automated_testing`）、代码整改（`code_inspection_remediation`）、发布上线评估（`release_readiness`）和上线后分析（`post_release_analysis`）。带 `page/page_size` 的管理列表请求走服务端分页，支持策略名称、产品名称、执行器、任务类型、状态筛选，白名单排序，并返回 `query/performance`。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/more-info` | 提交补充信息。 |
 | AI Task | POST | `/api/ai-tasks/batch-cancel` | 批量取消任务，逐条校验状态并返回 updated/skipped 明细。 |
 | AI Task | POST | `/api/ai-tasks/batch-retry` | 批量重试失败任务，逐条校验 `model_gateway_failed` / `code_review_executor_failed` 并返回 retried/updated/skipped 明细。 |
@@ -3956,6 +3960,21 @@ GET /api/lifecycle/context?subject_type=requirement&subject_id=requirement_001&d
 
 持久化规则：PostgreSQL 运行时聚合前直接读取 repository source rows；接口会把当前查询范围内计算出的上下游关系边同步到 `lifecycle_context_edges`，把风险信号同步到 `lifecycle_risk_signals`；无关系或无风险时保持真实空集合，不生成兜底记录。
 
+统一需求全链路入口：
+
+```http
+GET /api/lifecycle/full-chain?subject_type=bug&subject_id=bug_001
+```
+
+查询参数：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| subject_type | string | 链路入口主体类型。当前支持 `requirement`、`bug`、`product_version`、`code_inspection_report`，以及可通过生命周期上下文解析到任务或需求的主体；未支持类型返回 `VALIDATION_ERROR` 或明确的未找到错误。 |
+| subject_id | string | 链路入口主体 ID。 |
+
+响应规则：接口先校验当前用户具备 `requirement.read`、`task.read` 或 `workspace.read` 任一读权限，并按入口主体可解析出的 `product_id` 校验产品 scope；缺少读权限返回 403，产品 scope 不匹配返回 404。校验通过后解析入口主体到需求 ID，再复用 `/api/requirements/{requirement_id}/full-chain` 的同一响应结构，并额外返回 `anchor={type,id}`。当代码巡检报告的 `created_task_ids` 或 `created_bug_ids` 命中当前需求链路内任务/Bug 时，响应 `code_inspection_reports[]` 和 `summary.code_inspection_reports` 必须包含对应报告，时间线增加 `type=code_inspection_report` 事件。需求归属迭代版本时，响应还必须返回该版本的 `branch_configs[]`、`summary.branch_configs` 和 `type=branch_config` 时间线事件；和需求、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、代码巡检、Bug、发布或知识沉淀直接相关的审计事件以脱敏 `audit_events[]`、`summary.audit_events` 和 `type=audit_event` 时间线事件返回，不暴露审计 payload。前端统一使用 `/delivery/full-chain?subject_type=<type>&subject_id=<id>` 深链承载 Bug、迭代版本、代码巡检和执行诊断入口。
+
 响应摘要：
 
 ```json
@@ -4219,6 +4238,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 ```http
 GET /api/governance/execution-traces?keyword=scheduled_job_run_001&source_type=scheduled_job_run&status=failed&page=1&page_size=10&sort_by=started_at&sort_order=desc
+GET /api/governance/execution-traces?refresh=true&page=1&page_size=10
 GET /api/governance/execution-traces?source_id=model_gateway_log_001&source_type=model_gateway_log
 GET /api/governance/execution-traces/{trace_id}
 ```
@@ -4238,6 +4258,7 @@ Runner 聚合规则：`ai_executor_task.runner_id` 必须解析为 `ai_executor_
 | source_type | enum | 来源类型，可是根类型或任一节点类型；前端筛选文案统一展示为“来源类型”：`scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_runner`、`ai_executor_task`、`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`code_inspection_report`、`result_write_record`、`audit_event`。 |
 | status | enum | 聚合状态：`succeeded`、`failed`、`running`、`queued`、`partial`、`skipped`、`cancelled`、`unknown`。 |
 | created_from / created_to | ISO datetime | 按链路开始时间或更新时间过滤，未带时区时按 UTC 处理。 |
+| refresh | boolean | 可选。`true` 时先同步重建 `execution_trace_snapshots` 再分页返回，适用于页面刷新按钮或排障时主动拉最新链路；默认 `false`，列表优先读取已有快照，避免普通分页查询被全量 Trace 重建阻塞。 |
 | sort_by | enum | `started_at`、`updated_at`、`duration_ms`、`node_count`、`failed_node_count`、`root_type`、`status`、`id`。 |
 | sort_order | enum | `asc` 或 `desc`。 |
 | page / page_size | number | 页码与每页数量，`page_size` 最大 100。 |

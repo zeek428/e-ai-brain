@@ -493,3 +493,105 @@ def test_product_version_list_uses_repository_read_model_for_sql_pagination():
         ]
     finally:
         _restore_repository(original_store, original_users)
+
+
+def test_rd_task_executor_policy_list_uses_repository_read_model_for_sql_pagination():
+    class ReadModelOnlyRdExecutorPolicyRepository(FakeSnapshotRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.count_reads: list[dict] = []
+            self.page_reads: list[dict] = []
+
+        def list_rd_task_executor_policies(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("RD executor policies should not load all policies")
+
+        def save_rd_task_executor_policy_record(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("list test should not write RD executor policies")
+
+        def delete_rd_task_executor_policy_record(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("list test should not delete RD executor policies")
+
+        def count_rd_task_executor_policies(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.count_reads.append(dict(kwargs))
+            return 3
+
+        def list_rd_task_executor_policy_page(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.page_reads.append(dict(kwargs))
+            return [
+                {
+                    "brain_app_id": "rd_brain",
+                    "branch": "feature/runner",
+                    "created_at": "2026-06-27T08:00:00+00:00",
+                    "created_by": "user_admin",
+                    "executor_type": "codex",
+                    "id": "rd_executor_policy_read_model",
+                    "instruction_template": "处理 {{task_id}}",
+                    "name": "Codex 开发实现策略",
+                    "output_contract": {"summary": "string"},
+                    "priority": 20,
+                    "product_id": "product_ai_brain",
+                    "product_name": "AI Brain",
+                    "repository_default_branch": "master",
+                    "repository_id": "repo_ai_brain",
+                    "repository_name": "AI Brain Web",
+                    "runner_id": "runner_codex",
+                    "runner_name": "Codex Runner",
+                    "status": "active",
+                    "task_type": "development_planning",
+                    "timeout_seconds": 1800,
+                    "updated_at": "2026-06-27T08:10:00+00:00",
+                    "workspace_root": "/workspace/e-ai-brain",
+                }
+            ]
+
+    repository = ReadModelOnlyRdExecutorPolicyRepository()
+    original_store, original_users = _use_repository(repository)
+
+    try:
+        response = client.get(
+            (
+                "/api/delivery/rd-task-executor-policies"
+                "?name=Codex"
+                "&executor_type=codex"
+                "&product_name=AI"
+                "&status=active"
+                "&task_type=development_planning"
+                "&page=1&page_size=1"
+                "&sort_by=priority&sort_order=desc"
+            ),
+            headers=auth_headers(),
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["total"] == 3
+        assert data["page"] == 1
+        assert data["page_size"] == 1
+        assert data["items"][0]["id"] == "rd_executor_policy_read_model"
+        assert data["items"][0]["product_name"] == "AI Brain"
+        assert data["performance"]["result_count"] == 1
+        assert repository.count_reads == [
+            {
+                "executor_type": "codex",
+                "name": "Codex",
+                "product_id": None,
+                "product_name": "AI",
+                "status": "active",
+                "task_type": "development_planning",
+            }
+        ]
+        assert repository.page_reads == [
+            {
+                "executor_type": "codex",
+                "limit": 1,
+                "name": "Codex",
+                "offset": 0,
+                "product_id": None,
+                "product_name": "AI",
+                "sort_by": "priority",
+                "sort_order": "desc",
+                "status": "active",
+                "task_type": "development_planning",
+            }
+        ]
+    finally:
+        _restore_repository(original_store, original_users)

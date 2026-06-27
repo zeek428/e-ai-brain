@@ -16,8 +16,13 @@ function jsonResponse(body: unknown) {
 function installFetchMock() {
   const createBodies: unknown[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const url = new URL(String(input), 'http://localhost');
+    const method = init?.method ?? 'GET';
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-    if (input === '/api/delivery/rd-task-executor-policies' && init?.method === 'GET') {
+    if (url.pathname === '/api/delivery/rd-task-executor-policies' && method === 'GET') {
+      expect(url.searchParams.get('page')).toBe('1');
+      expect(url.searchParams.get('page_size')).toBe('10');
+      expect(url.searchParams.get('sort_by')).toBe('priority');
       return jsonResponse({
         data: {
           items: [
@@ -45,7 +50,7 @@ function installFetchMock() {
         },
       });
     }
-    if (input === '/api/products' && init?.method === 'GET') {
+    if (url.pathname === '/api/products' && method === 'GET') {
       return jsonResponse({
         data: {
           items: [{ code: 'rd-platform', id: 'product_001', name: '研发大脑平台', status: 'active' }],
@@ -53,10 +58,11 @@ function installFetchMock() {
         },
       });
     }
-    if (input === '/api/product-versions' && init?.method === 'GET') {
+    if (url.pathname === '/api/product-versions' && method === 'GET') {
       return jsonResponse({ data: { items: [], total: 0 } });
     }
-    if (input === '/api/system/ai-executor-runners?status=active' && init?.method === 'GET') {
+    if (url.pathname === '/api/system/ai-executor-runners' && method === 'GET') {
+      expect(url.searchParams.get('status')).toBe('active');
       return jsonResponse({
         data: {
           items: [
@@ -78,7 +84,7 @@ function installFetchMock() {
         },
       });
     }
-    if (input === '/api/products/product_001/git-repositories' && init?.method === 'GET') {
+    if (url.pathname === '/api/products/product_001/git-repositories' && method === 'GET') {
       return jsonResponse({
         data: {
           items: [
@@ -95,7 +101,7 @@ function installFetchMock() {
         },
       });
     }
-    if (input === '/api/delivery/rd-task-executor-policies' && init?.method === 'POST') {
+    if (url.pathname === '/api/delivery/rd-task-executor-policies' && method === 'POST') {
       createBodies.push(JSON.parse(String(init?.body)));
       return jsonResponse({
         data: {

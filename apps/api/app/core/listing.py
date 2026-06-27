@@ -26,6 +26,7 @@ LIST_P95_TARGETS_MS = {
     "plugin_connections": 400,
     "product_versions": 300,
     "products": 300,
+    "rd_task_executor_policies": 300,
     "roles": 300,
     "requirements": 300,
     "scheduled_jobs": 400,

@@ -1,5 +1,5 @@
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Modal, Typography, message } from 'antd';
+import { Button, Modal, Space, Typography, message } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
@@ -7,6 +7,7 @@ import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError }
 import {
   fetchExecutionTraceDetail,
   fetchExecutionTraces,
+  fullChainSubjectHref,
   type ExecutionTraceDetailRecord,
   type ExecutionTraceListItem,
   type ExecutionTraceListQuery,
@@ -227,7 +228,7 @@ export default function ExecutionTracesPage() {
   const reload = useCallback(async () => {
     setListState((current) => ({ ...current, status: 'loading' }));
     try {
-      const result = await fetchExecutionTraces(buildTraceQuery(listQuery));
+      const result = await fetchExecutionTraces({ ...buildTraceQuery(listQuery), refresh: true });
       setListState({
         page: result.page,
         pageSize: result.pageSize,
@@ -373,11 +374,16 @@ export default function ExecutionTracesPage() {
         key: 'actions',
         title: '操作',
         valueType: 'option',
-        width: 120,
+        width: 160,
         render: (_, row) => (
-          <Button onClick={() => void openDetail(row)} type="link">
-            详情
-          </Button>
+          <Space size={4}>
+            <Button href={fullChainSubjectHref(row.root_type, row.root_id)} type="link">
+              全链路
+            </Button>
+            <Button onClick={() => void openDetail(row)} type="link">
+              详情
+            </Button>
+          </Space>
         ),
       },
     ],

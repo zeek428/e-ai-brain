@@ -1123,7 +1123,7 @@ export default function ScheduledJobsPage() {
   };
 
   return (
-    <PageContainer title="定时作业">
+    <PageContainer title={false}>
       <ScheduledJobManagementTabs
         activeTab={activeTab}
         agentById={agentById}

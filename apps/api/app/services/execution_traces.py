@@ -1548,6 +1548,7 @@ def list_execution_traces_response(
     keyword: str | None,
     page: int | None,
     page_size: int | None,
+    refresh: bool = False,
     sort_by: str | None,
     sort_order: str,
     source_id: str | None,
@@ -1563,18 +1564,40 @@ def list_execution_traces_response(
         ensure_list_enum(sort_by, EXECUTION_TRACE_SORT_FIELDS, "sort_by")
     from_at = parse_trace_datetime(created_from, "created_from") if created_from else None
     to_at = parse_trace_datetime(created_to, "created_to") if created_to else None
-    repository = _refresh_trace_snapshots(current_store)
+    repository = _trace_snapshot_repository(current_store)
     if repository is not None:
+        has_filters = any([from_at, to_at, keyword, source_id, source_type, status])
+        snapshot_total: int | None = None
+        if refresh:
+            _refresh_trace_snapshots(current_store, force=True)
+        else:
+            snapshot_total = repository.count_execution_trace_snapshots()
+            if snapshot_total == 0:
+                _refresh_trace_snapshots(current_store, force=True)
+                snapshot_total = None
         resolved_sort_by = sort_by or "started_at"
         with_pagination = page is not None or page_size is not None
-        total = repository.count_execution_trace_snapshots(
-            created_from=from_at,
-            created_to=to_at,
-            keyword=keyword,
-            source_id=source_id,
-            source_type=source_type,
-            status=status,
-        )
+        if not has_filters and snapshot_total is not None:
+            total = snapshot_total
+        else:
+            total = repository.count_execution_trace_snapshots(
+                created_from=from_at,
+                created_to=to_at,
+                keyword=keyword,
+                source_id=source_id,
+                source_type=source_type,
+                status=status,
+            )
+        if total == 0 and source_id and not refresh:
+            _refresh_trace_snapshots(current_store, force=True)
+            total = repository.count_execution_trace_snapshots(
+                created_from=from_at,
+                created_to=to_at,
+                keyword=keyword,
+                source_id=source_id,
+                source_type=source_type,
+                status=status,
+            )
         resolved_page = page or 1
         resolved_page_size = page_size or 10
         limit = resolved_page_size if with_pagination else max(total, 1)

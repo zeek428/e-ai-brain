@@ -1082,9 +1082,22 @@ export type RequirementFullChainTimelineItem = {
   type: string;
 };
 
+export type RequirementFullChainAuditEvent = {
+  actorId?: string;
+  aiTaskId?: string;
+  createdAt: string;
+  eventType: string;
+  id: string;
+  subjectId?: string;
+  subjectType?: string;
+};
+
 export type RequirementFullChainSummary = {
   aiTasks: number;
+  auditEvents: number;
+  branchConfigs: number;
   bugs: number;
+  codeInspectionReports: number;
   codeReviewReports: number;
   gitSnapshots: number;
   jenkinsReleases: number;
@@ -1095,7 +1108,15 @@ export type RequirementFullChainSummary = {
 
 export type RequirementFullChainRecord = {
   aiTasks: TaskCenterTaskRecord[];
+  anchor?: {
+    resolvedRequirementId?: string;
+    subjectId?: string;
+    subjectType?: string;
+  };
   bugs: BugRecord[];
+  auditEvents: RequirementFullChainAuditEvent[];
+  branchConfigs: ProductVersionBranchConfigRecord[];
+  codeInspectionReports: CodeInspectionReportRecord[];
   codeReviewReports: CodeReviewReportRecord[];
   gitSnapshots: GitLabMergeRequestSnapshot[];
   iterationVersion?: {
@@ -1234,6 +1255,7 @@ export type ExecutionTraceListQuery = RemoteListQuery & {
   createdFrom?: string;
   createdTo?: string;
   keyword?: string;
+  refresh?: boolean;
   sourceId?: string;
   sourceType?: string;
   status?: string;
@@ -1304,6 +1326,15 @@ export type PluginActionListQuery = RemoteListQuery & {
   keyword?: string;
   pluginId?: string;
   status?: string;
+};
+
+export type RdTaskExecutorPolicyListQuery = RemoteListQuery & {
+  executorType?: string;
+  name?: string;
+  productId?: string;
+  productName?: string;
+  status?: string;
+  taskType?: string;
 };
 
 export type RemoteListResult<Row> = {
@@ -2593,7 +2624,15 @@ type RequirementFullChainTimelineItemResponse = {
 
 type RequirementFullChainResponse = {
   ai_tasks?: TaskListItem[];
+  audit_events?: FlexibleListItem[];
+  anchor?: {
+    resolved_requirement_id?: string;
+    subject_id?: string;
+    subject_type?: string;
+  };
   bugs?: BugListItem[];
+  branch_configs?: ProductVersionBranchConfigListItem[];
+  code_inspection_reports?: CodeInspectionReportRecord[];
   code_review_reports?: CodeReviewReportResponse[];
   git_snapshots?: GitLabMergeRequestSnapshotResponse[];
   iteration_version?: ProductVersionListItem | null;
@@ -2605,7 +2644,10 @@ type RequirementFullChainResponse = {
   status?: string;
   summary?: Partial<{
     ai_tasks: number;
+    audit_events: number;
+    branch_configs: number;
     bugs: number;
+    code_inspection_reports: number;
     code_review_reports: number;
     git_snapshots: number;
     jenkins_releases: number;
@@ -5981,11 +6023,9 @@ export async function fetchAiExecutorTaskLogs(taskId: string): Promise<AiExecuto
   });
 }
 
-export async function fetchRdTaskExecutorPolicies(query: {
-  productId?: string;
-  status?: string;
-  taskType?: string;
-} = {}): Promise<RdTaskExecutorPolicyRecord[]> {
+export async function fetchRdTaskExecutorPolicies(
+  query: Pick<RdTaskExecutorPolicyListQuery, 'productId' | 'status' | 'taskType'> = {},
+): Promise<RdTaskExecutorPolicyRecord[]> {
   const token = requireAccessToken();
   const params = new URLSearchParams();
   appendQueryParam(params, 'product_id', query.productId);
@@ -5997,6 +6037,31 @@ export async function fetchRdTaskExecutorPolicies(query: {
     { token },
   );
   return response.items;
+}
+
+export async function fetchRdTaskExecutorPolicyList(
+  query: RdTaskExecutorPolicyListQuery,
+): Promise<RemoteListResult<RdTaskExecutorPolicyRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'executor_type', query.executorType);
+  appendQueryParam(params, 'name', query.name);
+  appendQueryParam(params, 'product_id', query.productId);
+  appendQueryParam(params, 'product_name', query.productName);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'task_type', query.taskType);
+  appendRemoteListParams(params, query);
+  const response = await apiRequest<ListResponse<RdTaskExecutorPolicyRecord>>(
+    `/api/delivery/rd-task-executor-policies?${params.toString()}`,
+    { token },
+  );
+  return {
+    page: response.page ?? query.page ?? 1,
+    pageSize: response.page_size ?? query.pageSize ?? 10,
+    performance: response.performance,
+    rows: response.items,
+    total: response.total,
+  };
 }
 
 export async function createRdTaskExecutorPolicy(payload: RdTaskExecutorPolicyPayload) {
@@ -6859,7 +6924,25 @@ function mapRequirementFullChain(
   const summary = chain.summary ?? {};
   return {
     aiTasks: (chain.ai_tasks ?? []).map(mapTaskRecord),
+    anchor: chain.anchor
+      ? {
+          resolvedRequirementId: chain.anchor.resolved_requirement_id,
+          subjectId: chain.anchor.subject_id,
+          subjectType: chain.anchor.subject_type,
+        }
+      : undefined,
     bugs: (chain.bugs ?? []).map(mapBugRecord),
+    auditEvents: (chain.audit_events ?? []).map((event) => ({
+      actorId: emptyToUndefined(formatUnknownValue(event.actor_id)),
+      aiTaskId: emptyToUndefined(formatUnknownValue(event.ai_task_id)),
+      createdAt: formatListDate(formatUnknownValue(event.created_at)),
+      eventType: formatUnknownValue(event.event_type),
+      id: formatUnknownValue(event.id),
+      subjectId: emptyToUndefined(formatUnknownValue(event.subject_id)),
+      subjectType: emptyToUndefined(formatUnknownValue(event.subject_type)),
+    })),
+    branchConfigs: (chain.branch_configs ?? []).map(mapProductVersionBranchConfigRecord),
+    codeInspectionReports: chain.code_inspection_reports ?? [],
     codeReviewReports: (chain.code_review_reports ?? []).map((report) => ({
       executor: report.executor,
       findings: report.findings ?? [],
@@ -6914,7 +6997,10 @@ function mapRequirementFullChain(
     status: chain.status ?? 'available',
     summary: {
       aiTasks: normalizeDashboardCount(summary.ai_tasks),
+      auditEvents: normalizeDashboardCount(summary.audit_events),
+      branchConfigs: normalizeDashboardCount(summary.branch_configs),
       bugs: normalizeDashboardCount(summary.bugs),
+      codeInspectionReports: normalizeDashboardCount(summary.code_inspection_reports),
       codeReviewReports: normalizeDashboardCount(summary.code_review_reports),
       gitSnapshots: normalizeDashboardCount(summary.git_snapshots),
       jenkinsReleases: normalizeDashboardCount(summary.jenkins_releases),
@@ -6980,6 +7066,31 @@ export async function fetchRequirementFullChain(
   );
 
   return mapRequirementFullChain(chain);
+}
+
+export async function fetchLifecycleFullChain(
+  subjectType: string,
+  subjectId: string,
+): Promise<RequirementFullChainRecord> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams({
+    subject_id: subjectId,
+    subject_type: subjectType,
+  });
+  const chain = await apiRequest<RequirementFullChainResponse>(
+    `/api/lifecycle/full-chain?${params.toString()}`,
+    { token },
+  );
+
+  return mapRequirementFullChain(chain);
+}
+
+export function fullChainSubjectHref(subjectType: string, subjectId: string) {
+  const params = new URLSearchParams({
+    subject_id: subjectId,
+    subject_type: subjectType,
+  });
+  return `/delivery/full-chain?${params.toString()}`;
 }
 
 export async function createManagementRequirement(payload: RequirementMutationPayload) {
@@ -7574,6 +7685,7 @@ export async function fetchExecutionTraces(
   appendQueryParam(params, 'created_from', query.createdFrom);
   appendQueryParam(params, 'created_to', query.createdTo);
   appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'refresh', query.refresh);
   appendQueryParam(params, 'source_id', query.sourceId);
   appendQueryParam(params, 'source_type', query.sourceType);
   appendQueryParam(params, 'status', query.status);

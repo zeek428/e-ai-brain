@@ -1144,6 +1144,7 @@ describe('PluginsPage', () => {
 
     render(<PluginsPage />);
 
+    expect(screen.queryByRole('heading', { name: '插件管理' })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: '新增插件' }));
 
     const dialog = await findDialogByTitle('新增插件');

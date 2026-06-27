@@ -100,6 +100,9 @@ const assetTypeLabels: Record<string, string> = {
   table_json: '表格数据',
 };
 
+const KNOWLEDGE_TABLE_SCROLL_X = 2000;
+const KNOWLEDGE_ACTION_COLUMN_WIDTH = 420;
+
 function formatAssetSize(sizeBytes: number) {
   if (sizeBytes < 1024) {
     return `${sizeBytes} B`;
@@ -999,31 +1002,37 @@ export default function KnowledgePage() {
         dataIndex: 'id',
         sorter: true,
         title: '知识编号',
+        width: 170,
       },
       {
         dataIndex: 'title',
         sorter: true,
         title: '知识标题',
+        width: 220,
       },
       {
         dataIndex: 'knowledgeSpaceId',
         title: '知识空间',
         render: (_, row) => (row.knowledgeSpaceId ? spaceNameById.get(row.knowledgeSpaceId) ?? row.knowledgeSpaceId : '-'),
+        width: 220,
       },
       {
         dataIndex: 'folderPath',
         title: '目录',
         render: (_, row) => row.folderPath ?? '-',
+        width: 180,
       },
       {
         dataIndex: 'documentType',
         sorter: true,
         title: '类型',
+        width: 120,
       },
       {
         dataIndex: 'ownerRole',
         sorter: true,
         title: '权限角色',
+        width: 140,
       },
       {
         dataIndex: 'status',
@@ -1033,23 +1042,28 @@ export default function KnowledgePage() {
           const statusLabel = statusLabels[row.status];
           return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
         },
+        width: 120,
       },
       {
         dataIndex: 'indexError',
         title: '索引错误',
         render: (_, row) => row.indexError || row.vectorIndexError || '-',
+        width: 240,
       },
       {
         dataIndex: 'updatedAt',
         sorter: true,
         title: '更新时间',
+        width: 170,
       },
       {
+        fixed: 'right',
         key: 'actions',
         title: '操作',
         valueType: 'option',
+        width: KNOWLEDGE_ACTION_COLUMN_WIDTH,
         render: (_, row) => (
-          <Space size={4}>
+          <Space className="knowledge-document-actions" size={4} wrap={false}>
             <Button aria-label="资产" icon={<FileSearchOutlined />} onClick={() => void openAssetsModal(row)} type="link">
               资产
             </Button>
@@ -1227,6 +1241,8 @@ export default function KnowledgePage() {
           onChange: (keys) => setSelectedRowKeys(keys),
           selectedRowKeys,
         }}
+        tableLayout="fixed"
+        tableScroll={{ x: KNOWLEDGE_TABLE_SCROLL_X }}
         tableTitle="知识列表"
         title="知识中心"
         toolbarActions={[

@@ -39,6 +39,63 @@ afterEach(() => {
 });
 
 describe('KnowledgePage', () => {
+  it('keeps the knowledge document list in a fixed-width scrollable table', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (String(input) === '/api/knowledge/documents' || String(input).startsWith('/api/knowledge/documents?')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                doc_type: 'manual',
+                folder_path: '研发手册',
+                id: 'knowledge_layout',
+                index_status: 'text_indexed',
+                knowledge_space_id: 'space_layout',
+                permission_roles: ['admin'],
+                title: '知识中心布局验证',
+                vector_index_error: 'embedding provider unavailable',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/knowledge/spaces') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'layout', id: 'space_layout', name: '布局知识空间' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/auth/roles') {
+        return jsonResponse(roleCatalogEnvelope);
+      }
+      if (input === '/api/knowledge/spaces/space_layout/folders') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<KnowledgePage />);
+
+    expect(await screen.findByText('知识中心布局验证')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '知识列表' })).toBeInTheDocument();
+    const mainTable = document.querySelector('table[data-table-scroll-x="2000"]');
+    expect(mainTable).not.toBeNull();
+    expect(mainTable).toHaveAttribute('data-table-layout', 'fixed');
+    expect(within(mainTable as HTMLElement).getByText('操作')).toHaveAttribute('data-width', '420');
+    expect(screen.getByRole('button', { name: /补向量索引/ })).toBeInTheDocument();
+  });
+
   it('opens knowledge deposit review and approves a pending deposit', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

@@ -254,6 +254,119 @@ describe('IterationVersionsPage', () => {
     expect(screen.queryByText('其他版本需求')).not.toBeInTheDocument();
   });
 
+  it('opens version branch configs from a full-chain branch deep link', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-09',
+                id: 'version_branch',
+                name: '分支配置迭代',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_api',
+                product_name: 'AI Brain',
+                status: 'active',
+              },
+            ],
+            page: 1,
+            page_size: 100,
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'AI-BRAIN', id: 'product_api', name: 'AI Brain', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions?active_only=true&page_size=100'
+      ) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/products/product_api/git-repositories' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                default_branch: 'main',
+                git_provider: 'github',
+                id: 'repo_web',
+                name: 'AI Brain Web',
+                project_path: 'zeek428/e-ai-brain',
+                remote_url: 'git@github.com:zeek428/e-ai-brain.git',
+                repo_type: 'code',
+                root_path: '/',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions/version_branch/branch-configs' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                base_branch: 'main',
+                branch_status: 'active',
+                creation_source: 'manual',
+                id: 'version_branch_config_001',
+                product_id: 'product_api',
+                repository_id: 'repo_web',
+                repository_name: 'AI Brain Web',
+                version_id: 'version_branch',
+                working_branch: 'release/2026-09',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.history.pushState(
+      {},
+      '',
+      '/delivery/versions?branch_config_id=version_branch_config_001&version_id=version_branch',
+    );
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<IterationVersionsPage />);
+
+    expect(await screen.findByText('代码分支 · 2026-09')).toBeInTheDocument();
+    expect(await screen.findByText('release/2026-09')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
+      '/api/product-versions?page=1&page_size=100&sort_by=code&sort_order=asc',
+    );
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+      '/api/product-versions/version_branch/branch-configs',
+      'GET',
+    ]);
+  });
+
   it('manages version branch configs from the iteration version row', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

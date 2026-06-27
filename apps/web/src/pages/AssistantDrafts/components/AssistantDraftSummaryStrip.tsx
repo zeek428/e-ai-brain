@@ -1,9 +1,34 @@
 import { Typography } from 'antd';
+import type { CSSProperties } from 'react';
 
 import type { AssistantActionDraftWorkbenchSummary } from '../../../services/aiBrain';
 import { percent } from './assistantDraftWorkbenchPresentation';
 
 const { Text } = Typography;
+
+const summaryStripStyle: CSSProperties = {
+  display: 'grid',
+  gap: 12,
+  gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+  marginBottom: 16,
+  width: '100%',
+};
+
+const summaryItemStyle: CSSProperties = {
+  background: '#ffffff',
+  border: '1px solid #edf1f7',
+  borderRadius: 8,
+  boxSizing: 'border-box',
+  display: 'grid',
+  gap: 6,
+  minWidth: 0,
+  padding: '12px 14px',
+};
+
+const summaryValueStyle: CSSProperties = {
+  fontSize: 20,
+  lineHeight: 1.2,
+};
 
 export function AssistantDraftSummaryStrip({
   summary,
@@ -20,11 +45,11 @@ export function AssistantDraftSummaryStrip({
     { label: '用户修改率', value: percent(summary?.user_modified_rate) },
   ];
   return (
-    <div className="assistant-draft-summary-strip">
+    <div aria-label="草案任务台指标" className="assistant-draft-summary-strip" role="list" style={summaryStripStyle}>
       {metrics.map((metric) => (
-        <div className="assistant-draft-summary-item" key={metric.label}>
+        <div className="assistant-draft-summary-item" key={metric.label} role="listitem" style={summaryItemStyle}>
           <Text type="secondary">{metric.label}</Text>
-          <strong>{metric.value}</strong>
+          <strong style={summaryValueStyle}>{metric.value}</strong>
         </div>
       ))}
     </div>

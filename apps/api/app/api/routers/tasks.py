@@ -108,14 +108,28 @@ class ReviewDecisionRequest(BaseModel):
 @router.get("/api/delivery/rd-task-executor-policies")
 def list_rd_task_executor_policies(
     request: Request,
+    executor_type: str | None = None,
+    name: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
     product_id: str | None = None,
+    product_name: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str | None = "asc",
     status: str | None = None,
     task_type: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     payload = list_rd_task_executor_policies_response(
         current_store=store(request),
+        executor_type=executor_type,
+        name=name,
+        page=page,
+        page_size=page_size,
         product_id=product_id,
+        product_name=product_name,
+        sort_by=sort_by,
+        sort_order=sort_order,
         status=status,
         task_type=task_type,
         user=user,

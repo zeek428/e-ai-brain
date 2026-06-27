@@ -1,12 +1,76 @@
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from gitlab_fakes import install_real_gitlab_api_stub
 
 from app.main import app
+from app.services.requirement_full_chain import (
+    get_requirement_full_chain_by_subject_response,
+    get_requirement_full_chain_response,
+)
 from app.services.lifecycle_risks import sync_lifecycle_context_records
+from app.services.task_workflow_context import TaskWorkflowSourceStore
 
 client = TestClient(app)
+
+
+def build_minimal_full_chain_store() -> TaskWorkflowSourceStore:
+    store = TaskWorkflowSourceStore()
+    store.products["product_alpha"] = {
+        "code": "ALPHA",
+        "id": "product_alpha",
+        "name": "Alpha Product",
+    }
+    store.product_versions["version_alpha"] = {
+        "code": "v1",
+        "id": "version_alpha",
+        "name": "Alpha v1",
+        "product_id": "product_alpha",
+        "status": "active",
+    }
+    store.requirements["requirement_alpha"] = {
+        "content": "Alpha full-chain access check.",
+        "created_at": "2026-06-27T01:00:00+00:00",
+        "created_by": "user_admin",
+        "id": "requirement_alpha",
+        "priority": "P1",
+        "product_id": "product_alpha",
+        "source": "product_planning",
+        "status": "approved",
+        "title": "Alpha 全链路访问控制",
+        "updated_at": "2026-06-27T01:10:00+00:00",
+        "version_id": "version_alpha",
+    }
+    store.ai_tasks["task_alpha"] = {
+        "created_at": "2026-06-27T01:15:00+00:00",
+        "created_by": "user_admin",
+        "id": "task_alpha",
+        "product_id": "product_alpha",
+        "requirement_id": "requirement_alpha",
+        "status": "completed",
+        "task_type": "technical_solution",
+        "title": "Alpha 技术方案",
+        "updated_at": "2026-06-27T01:20:00+00:00",
+        "version_id": "version_alpha",
+    }
+    return store
+
+
+def scoped_reader(product_id: str) -> dict[str, object]:
+    return {
+        "id": "user_scoped_reader",
+        "permissions": ["requirement.read"],
+        "roles": ["product_owner"],
+        "scope_summary": [
+            {
+                "access_level": "read",
+                "scope_id": product_id,
+                "scope_type": "product",
+            }
+        ],
+    }
 
 
 def auth_headers() -> dict[str, str]:
@@ -38,6 +102,17 @@ def build_mvp_lifecycle(headers: dict[str, str]) -> dict[str, str]:
             "git_provider": "gitlab",
             "project_path": "platform/ai-brain",
             "credential_ref": "env:GITLAB_READONLY_TOKEN",
+        },
+        headers=headers,
+    ).json()["data"]
+    branch_config = client.post(
+        f"/api/product-versions/{version['id']}/branch-configs",
+        json={
+            "base_branch": "main",
+            "branch_status": "active",
+            "creation_source": "manual",
+            "repository_id": repository["id"],
+            "working_branch": "feature/full-chain-mvp",
         },
         headers=headers,
     ).json()["data"]
@@ -135,6 +210,7 @@ def build_mvp_lifecycle(headers: dict[str, str]) -> dict[str, str]:
         "requirement_id": requirement["id"],
         "product_id": product["id"],
         "version_id": version["id"],
+        "branch_config_id": branch_config["id"],
         "design_task_id": design_task["task_id"],
         "design_review_id": design_started["review_id"],
         "solution_task_id": solution_task["id"],
@@ -509,6 +585,9 @@ def test_requirement_full_chain_returns_requirement_timeline_and_related_subject
     assert {snapshot["id"] for snapshot in full_chain["git_snapshots"]} == {
         lifecycle["snapshot_id"]
     }
+    assert {branch["id"] for branch in full_chain["branch_configs"]} == {
+        lifecycle["branch_config_id"]
+    }
     assert {bug["id"] for bug in full_chain["bugs"]} == {evidence["bug_id"]}
     assert {release["id"] for release in full_chain["jenkins_releases"]} == {
         evidence["jenkins_release_id"]
@@ -516,11 +595,15 @@ def test_requirement_full_chain_returns_requirement_timeline_and_related_subject
     assert lifecycle["knowledge_deposit_id"] in {
         deposit["id"] for deposit in full_chain["knowledge_deposits"]
     }
+    assert lifecycle["audit_event_id"] in {
+        audit_event["id"] for audit_event in full_chain["audit_events"]
+    }
 
     timeline = full_chain["timeline"]
     assert {item["type"] for item in timeline} >= {
         "requirement",
         "iteration_version",
+        "branch_config",
         "ai_task",
         "review",
         "git_snapshot",
@@ -528,6 +611,7 @@ def test_requirement_full_chain_returns_requirement_timeline_and_related_subject
         "bug",
         "jenkins_release",
         "knowledge_deposit",
+        "audit_event",
     }
     assert [item["occurred_at"] for item in timeline] == sorted(
         item["occurred_at"] for item in timeline
@@ -544,12 +628,124 @@ def test_requirement_full_chain_returns_requirement_timeline_and_related_subject
         "ai_tasks": len(full_chain["ai_tasks"]),
         "reviews": len(full_chain["reviews"]),
         "git_snapshots": len(full_chain["git_snapshots"]),
+        "branch_configs": len(full_chain["branch_configs"]),
         "code_review_reports": len(full_chain["code_review_reports"]),
+        "code_inspection_reports": len(full_chain["code_inspection_reports"]),
         "bugs": len(full_chain["bugs"]),
         "jenkins_releases": len(full_chain["jenkins_releases"]),
         "knowledge_deposits": len(full_chain["knowledge_deposits"]),
+        "audit_events": len(full_chain["audit_events"]),
         "timeline_events": len(timeline),
     }
+
+
+def test_lifecycle_full_chain_resolves_subjects_to_requirement_chain(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
+    headers = auth_headers()
+    lifecycle = build_mvp_lifecycle(headers)
+    evidence = add_v1_2_lifecycle_evidence(headers, lifecycle)
+    report_id = "code_inspection_report_lifecycle"
+    app.state.store.code_inspection_reports[report_id] = {
+        "branch": "main",
+        "created_at": "2026-06-01T03:00:00+00:00",
+        "created_bug_ids": [evidence["bug_id"]],
+        "created_task_ids": [],
+        "finding_count": 3,
+        "id": report_id,
+        "product_id": lifecycle["product_id"],
+        "repository_id": "repo_lifecycle",
+        "risk_level": "high",
+        "scan_finished_at": "2026-06-01T03:05:00+00:00",
+        "severe_finding_count": 1,
+        "status": "completed",
+        "summary": "生命周期链路代码巡检",
+    }
+
+    response = client.get(
+        f"/api/lifecycle/full-chain?subject_type=code_inspection_report&subject_id={report_id}",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    full_chain = response.json()["data"]
+    assert full_chain["anchor"] == {
+        "resolved_requirement_id": lifecycle["requirement_id"],
+        "subject_id": report_id,
+        "subject_type": "code_inspection_report",
+    }
+    assert full_chain["requirement"]["id"] == lifecycle["requirement_id"]
+    assert {report["id"] for report in full_chain["code_inspection_reports"]} == {report_id}
+    assert any(
+        item["type"] == "code_inspection_report" and item["subject_id"] == report_id
+        for item in full_chain["timeline"]
+    )
+
+    bug_response = client.get(
+        f"/api/lifecycle/full-chain?subject_type=bug&subject_id={evidence['bug_id']}",
+        headers=headers,
+    )
+    assert bug_response.status_code == 200
+    assert bug_response.json()["data"]["requirement"]["id"] == lifecycle["requirement_id"]
+
+    version_response = client.get(
+        f"/api/lifecycle/full-chain?subject_type=product_version&subject_id={lifecycle['version_id']}",
+        headers=headers,
+    )
+    assert version_response.status_code == 200
+    assert version_response.json()["data"]["requirement"]["id"] == lifecycle["requirement_id"]
+
+
+def test_requirement_full_chain_enforces_product_scope():
+    store = build_minimal_full_chain_store()
+
+    with pytest.raises(HTTPException) as blocked:
+        get_requirement_full_chain_response(
+            current_store=store,
+            requirement_id="requirement_alpha",
+            user=scoped_reader("product_beta"),
+        )
+
+    assert blocked.value.status_code == 404
+    assert blocked.value.detail["code"] == "NOT_FOUND"
+
+    allowed = get_requirement_full_chain_response(
+        current_store=store,
+        requirement_id="requirement_alpha",
+        user=scoped_reader("product_alpha"),
+    )
+
+    assert allowed["requirement"]["id"] == "requirement_alpha"
+    assert allowed["product"]["id"] == "product_alpha"
+    assert {task["id"] for task in allowed["ai_tasks"]} == {"task_alpha"}
+
+
+def test_lifecycle_full_chain_subject_anchor_enforces_product_scope():
+    store = build_minimal_full_chain_store()
+
+    with pytest.raises(HTTPException) as blocked:
+        get_requirement_full_chain_by_subject_response(
+            current_store=store,
+            subject_id="version_alpha",
+            subject_type="product_version",
+            user=scoped_reader("product_beta"),
+        )
+
+    assert blocked.value.status_code == 404
+    assert blocked.value.detail["code"] == "NOT_FOUND"
+
+    allowed = get_requirement_full_chain_by_subject_response(
+        current_store=store,
+        subject_id="version_alpha",
+        subject_type="product_version",
+        user=scoped_reader("product_alpha"),
+    )
+
+    assert allowed["anchor"] == {
+        "resolved_requirement_id": "requirement_alpha",
+        "subject_id": "version_alpha",
+        "subject_type": "product_version",
+    }
+    assert allowed["requirement"]["id"] == "requirement_alpha"
 
 
 def test_lifecycle_context_requires_query_anchor():

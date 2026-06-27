@@ -77,6 +77,11 @@ const routes = [
         hideInMenu: true,
       },
       {
+        path: '/delivery/full-chain',
+        component: './RequirementFullChain',
+        hideInMenu: true,
+      },
+      {
         path: '/delivery/rd-tasks',
         name: '研发任务',
         icon: 'UnorderedListOutlined',

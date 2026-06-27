@@ -107,6 +107,9 @@ def subject_product_id(
     if subject_type == "code_review_report":
         report = _record(current_store, "code_review_reports", normalized_id)
         return task_product_id(current_store, report.get("task_id") if report else None)
+    if subject_type == "code_inspection_report":
+        report = _record(current_store, "code_inspection_reports", normalized_id)
+        return str(report["product_id"]) if report is not None and report.get("product_id") else None
     if subject_type == "gitlab_mr_snapshot":
         snapshot = _record(current_store, "gitlab_mr_snapshots", normalized_id)
         return str(snapshot["product_id"]) if snapshot is not None else None
@@ -157,6 +160,35 @@ def lifecycle_subject_tasks(
         if report is None:
             raise api_error(404, "NOT_FOUND", "Code review report not found")
         return [lifecycle_require_task(current_store, report.get("task_id"))]
+    if subject_type == "code_inspection_report":
+        report = _record(current_store, "code_inspection_reports", subject_id)
+        if report is None:
+            raise api_error(404, "NOT_FOUND", "Code inspection report not found")
+        tasks = [
+            task
+            for task_id in report.get("created_task_ids", [])
+            if (task := _task(current_store, str(task_id))) is not None
+        ]
+        for bug_id in report.get("created_bug_ids", []):
+            bug = _record(current_store, "bugs", str(bug_id))
+            if bug is None:
+                continue
+            if bug.get("related_task_id"):
+                task = _task(current_store, bug.get("related_task_id"))
+                if task is not None:
+                    tasks.append(task)
+            elif bug.get("requirement_id"):
+                tasks.extend(
+                    lifecycle_require_tasks_by_requirement(current_store, bug["requirement_id"])
+                )
+        if tasks:
+            unique_tasks = {str(task["id"]): task for task in tasks}
+            return list(unique_tasks.values())
+        return [
+            task
+            for task in _tasks(current_store)
+            if task.get("product_id") == report.get("product_id")
+        ]
     if subject_type == "gitlab_mr_snapshot":
         snapshot = _record(current_store, "gitlab_mr_snapshots", subject_id)
         if snapshot is None:
@@ -294,6 +326,9 @@ def lifecycle_subject(
         elif subject_type == "gitlab_mr_snapshot":
             snapshot = _record(current_store, "gitlab_mr_snapshots", normalized_subject_id)
             resolved_product_id = snapshot["product_id"] if snapshot is not None else None
+        elif subject_type == "code_inspection_report":
+            report = _record(current_store, "code_inspection_reports", normalized_subject_id)
+            resolved_product_id = report["product_id"] if report is not None else None
         elif subject_type == "bug":
             bug = _record(current_store, "bugs", normalized_subject_id)
             resolved_product_id = bug["product_id"] if bug is not None else None

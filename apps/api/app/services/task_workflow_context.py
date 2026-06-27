@@ -9,6 +9,7 @@ from app.core.store import default_brain_apps
 TASK_WORKFLOW_COLLECTION_KEYS = {
     "ai_tasks": "tasks",
     "bugs": "bugs",
+    "code_inspection_reports": "code_inspection_reports",
     "code_review_reports": "code_review_reports",
     "gitlab_daily_code_metrics": "gitlab_daily_code_metrics",
     "gitlab_mr_snapshots": "gitlab_mr_snapshots",
@@ -52,6 +53,7 @@ class TaskWorkflowSourceStore:
         self.knowledge_deposits: dict[str, dict[str, Any]] = {}
         self.mock_writebacks: dict[str, dict[str, Any]] = {}
         self.bugs: dict[str, dict[str, Any]] = {}
+        self.code_inspection_reports: dict[str, dict[str, Any]] = {}
         self.gitlab_daily_code_metrics: dict[str, dict[str, Any]] = {}
         self.jenkins_release_records: dict[str, dict[str, Any]] = {}
         self.online_log_metrics: dict[str, dict[str, Any]] = {}

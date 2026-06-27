@@ -15,6 +15,7 @@ import {
   createManagementBug,
   deleteManagementBug,
   fetchBugProductContextOptions,
+  fullChainSubjectHref,
   fetchManagementBugs,
   fetchManagementBugList,
   type BugListQuery,
@@ -524,6 +525,9 @@ export default function BugsPage() {
         valueType: 'option',
         render: (_, row) => (
           <Space size={4}>
+            <Button href={fullChainSubjectHref('bug', row.id)} type="link">
+              全链路
+            </Button>
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>

@@ -7,6 +7,7 @@ import { ExecutionTraceLink } from '../../components/ExecutionTraceLink';
 import {
   fetchCodeInspectionDetail,
   fetchCodeInspectionDashboard,
+  fullChainSubjectHref,
   type CodeInspectionDashboardRecord,
   fetchCodeInspectionReports,
   requestCodeInspectionFindingSuppression,
@@ -415,7 +416,7 @@ export default function CodeInspectionsPage() {
         dataIndex: 'severeFindingCount',
         sorter: true,
         title: '严重问题',
-        width: 110,
+        width: 160,
         render: (_, row) => row.severe_finding_count,
       },
       {
@@ -450,9 +451,14 @@ export default function CodeInspectionsPage() {
         valueType: 'option',
         width: 110,
         render: (_, row) => (
-          <Button onClick={() => void openDetail(row)} type="link">
-            详情
-          </Button>
+          <Space size={4}>
+            <Button href={fullChainSubjectHref('code_inspection_report', row.id)} type="link">
+              全链路
+            </Button>
+            <Button onClick={() => void openDetail(row)} type="link">
+              详情
+            </Button>
+          </Space>
         ),
       },
     ],

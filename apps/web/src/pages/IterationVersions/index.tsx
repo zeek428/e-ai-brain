@@ -32,6 +32,7 @@ import {
   fetchProductContextOptions,
   fetchProductGitRepositoryRecords,
   fetchProductVersionBranchConfigs,
+  fullChainSubjectHref,
   type ProductVersionAdvanceStatusResult,
   type ProductVersionBranchConfigMutationPayload,
   type ProductVersionListQuery,
@@ -162,7 +163,16 @@ function buildVersionListQuery(query: ManagementListQuery): ProductVersionListQu
   };
 }
 
+function readIterationVersionDeepLinkParams() {
+  const searchParams = new URLSearchParams(window.location.search);
+  return {
+    branchConfigId: searchParams.get('branch_config_id') ?? undefined,
+    versionId: searchParams.get('version_id') ?? undefined,
+  };
+}
+
 export default function IterationVersionsPage() {
+  const deepLinkParams = useMemo(() => readIterationVersionDeepLinkParams(), []);
   const [form] = Form.useForm<IterationVersionFormValues>();
   const [branchForm] = Form.useForm<BranchConfigFormValues>();
   const [collectForm] = Form.useForm<CollectRequirementsFormValues>();
@@ -184,10 +194,11 @@ export default function IterationVersionsPage() {
   const [isBranchConfigLoading, setIsBranchConfigLoading] = useState(false);
   const [isBranchConfigSaving, setIsBranchConfigSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isBranchDeepLinkHandled, setIsBranchDeepLinkHandled] = useState(false);
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
     filters: {},
     page: 1,
-    pageSize: 10,
+    pageSize: deepLinkParams.versionId ? 100 : 10,
     sortField: 'code',
     sortOrder: 'ascend',
   });
@@ -326,12 +337,6 @@ export default function IterationVersionsPage() {
       const activeRepositories = repositories.filter((repository) => repository.status === 'active');
       setBranchRepositories(activeRepositories);
       setBranchConfigs(configs);
-      if (activeRepositories.length === 1) {
-        branchForm.setFieldsValue({
-          base_branch: activeRepositories[0].defaultBranch,
-          repository_id: activeRepositories[0].id,
-        });
-      }
     } catch (loadError) {
       message.error(formatMutationError(loadError));
       setBranchRepositories([]);
@@ -339,14 +344,52 @@ export default function IterationVersionsPage() {
     } finally {
       setIsBranchConfigLoading(false);
     }
-  }, [branchForm]);
+  }, []);
 
   const openBranchConfigModal = useCallback((row: ProductVersionRecord) => {
     setBranchConfigVersion(row);
     setEditingBranchConfig(null);
-    branchForm.resetFields();
     void loadBranchConfigs(row);
-  }, [branchForm, loadBranchConfigs]);
+  }, [loadBranchConfigs]);
+
+  useEffect(() => {
+    if (!branchConfigVersion || editingBranchConfig) {
+      return;
+    }
+    branchForm.resetFields();
+  }, [branchConfigVersion, branchForm, editingBranchConfig]);
+
+  useEffect(() => {
+    if (!branchConfigVersion || editingBranchConfig || branchRepositories.length !== 1) {
+      return;
+    }
+    branchForm.setFieldsValue({
+      base_branch: branchRepositories[0].defaultBranch,
+      repository_id: branchRepositories[0].id,
+    });
+  }, [branchConfigVersion, branchForm, branchRepositories, editingBranchConfig]);
+
+  useEffect(() => {
+    if (
+      isBranchDeepLinkHandled ||
+      listState.status !== 'ready' ||
+      !deepLinkParams.versionId
+    ) {
+      return;
+    }
+    const targetVersion = listState.rows.find((row) => row.id === deepLinkParams.versionId);
+    if (!targetVersion) {
+      return;
+    }
+    setIsBranchDeepLinkHandled(true);
+    openBranchConfigModal(targetVersion);
+  }, [
+    deepLinkParams.versionId,
+    isBranchDeepLinkHandled,
+    listState.rows,
+    listState.status,
+    openBranchConfigModal,
+  ]);
 
   const openEditBranchConfig = useCallback((row: ProductVersionBranchConfigRecord) => {
     setEditingBranchConfig(row);
@@ -639,6 +682,9 @@ export default function IterationVersionsPage() {
             <Button icon={<EyeOutlined />} onClick={() => setViewingVersion(row)} type="link">
               查看需求
             </Button>
+            <Button href={fullChainSubjectHref('product_version', row.id)} type="link">
+              全链路
+            </Button>
             <Button
               disabled={!versionStatusAdvanceTargets[row.status]}
               icon={<ArrowRightOutlined />}
@@ -707,6 +753,7 @@ export default function IterationVersionsPage() {
       <Modal
         destroyOnHidden
         footer={null}
+        forceRender
         onCancel={() => {
           setBranchConfigVersion(null);
           setEditingBranchConfig(null);

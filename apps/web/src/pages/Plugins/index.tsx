@@ -1247,7 +1247,7 @@ export default function PluginsPage() {
   };
 
   return (
-    <PageContainer title="插件管理">
+    <PageContainer title={false}>
       <PluginWorkspaceGuide />
       <PluginManagementTabs
         actions={actions}

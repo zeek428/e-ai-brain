@@ -132,6 +132,7 @@ describe('AI capabilities page', () => {
 
     render(<AiCapabilitiesPage />);
 
+    expect(screen.queryByRole('heading', { name: 'AI 能力配置' })).not.toBeInTheDocument();
     expect(await screen.findByRole('tab', { name: 'AI角色' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Agent 管理' })).not.toBeInTheDocument();
     expect(await screen.findByText('洞察 Agent')).toBeInTheDocument();

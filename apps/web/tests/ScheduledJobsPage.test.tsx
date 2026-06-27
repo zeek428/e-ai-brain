@@ -756,6 +756,7 @@ describe('ScheduledJobsPage', () => {
 
     render(<ScheduledJobsPage />);
 
+    expect(screen.queryByRole('heading', { name: '定时作业' })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
 
     const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });

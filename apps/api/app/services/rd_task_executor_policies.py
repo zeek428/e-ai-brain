@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import Any
 
 from app.api.deps import api_error, require_roles
+from app.core.listing import (
+    add_list_observability,
+    ensure_list_enum,
+    list_text_matches,
+    sort_list_items,
+)
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.ai_executor_runners import (
     create_ai_executor_task,
@@ -16,6 +23,18 @@ from app.services.operational_records import record_audit_event
 RD_TASK_EXECUTOR_POLICY_MANAGE_PERMISSION = "delivery.rd_executor_policies.manage"
 RD_TASK_EXECUTOR_TYPES = {"claude", "codex", "openclaw"}
 RD_TASK_EXECUTOR_POLICY_STATUSES = {"active", "disabled"}
+RD_TASK_EXECUTOR_POLICY_SORT_FIELDS = {
+    "executor_type",
+    "name",
+    "priority",
+    "product_name",
+    "repository_name",
+    "runner_name",
+    "status",
+    "task_type",
+    "updated_at",
+    "workspace_root",
+}
 TOKEN_PATTERN = re.compile(r"\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}")
 
 
@@ -69,6 +88,17 @@ def _repository(current_store: Any) -> Any | None:
     )
     if repository is not None and all(
         callable(getattr(repository, name, None)) for name in required
+    ):
+        return repository
+    return None
+
+
+def _policy_page_repository(current_store: Any) -> Any | None:
+    repository = _repository(current_store)
+    if repository is None:
+        return None
+    if callable(getattr(repository, "count_rd_task_executor_policies", None)) and callable(
+        getattr(repository, "list_rd_task_executor_policy_page", None)
     ):
         return repository
     return None
@@ -172,10 +202,14 @@ def _policy_public(current_store: Any, policy: dict[str, Any]) -> dict[str, Any]
         policy.get("repository_id")
     )
     product = _read_memory_dict(current_store, "products").get(policy.get("product_id"))
-    public["runner_name"] = runner.get("name") if runner else None
-    public["repository_name"] = repository.get("name") if repository else None
-    public["repository_default_branch"] = repository.get("default_branch") if repository else None
-    public["product_name"] = product.get("name") if product else None
+    public["runner_name"] = runner.get("name") if runner else public.get("runner_name")
+    public["repository_name"] = repository.get("name") if repository else public.get("repository_name")
+    public["repository_default_branch"] = (
+        repository.get("default_branch")
+        if repository
+        else public.get("repository_default_branch")
+    )
+    public["product_name"] = product.get("name") if product else public.get("product_name")
     return public
 
 
@@ -212,12 +246,79 @@ def sync_policy_resource_store(current_store: Any, policy: dict[str, Any]) -> No
 def list_rd_task_executor_policies_response(
     *,
     current_store: Any,
-    product_id: str | None,
-    status: str | None,
-    task_type: str | None,
+    executor_type: str | None = None,
+    name: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    product_id: str | None = None,
+    product_name: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+    status: str | None = None,
+    task_type: str | None = None,
     user: dict[str, Any],
 ) -> dict[str, Any]:
     _ensure_policy_manager(user)
+    started_at = perf_counter()
+    if executor_type is not None:
+        ensure_list_enum(executor_type, RD_TASK_EXECUTOR_TYPES, "executor_type")
+    if status is not None:
+        ensure_list_enum(status, RD_TASK_EXECUTOR_POLICY_STATUSES, "status")
+    if sort_by is not None:
+        ensure_list_enum(sort_by, RD_TASK_EXECUTOR_POLICY_SORT_FIELDS, "sort_by")
+    if sort_order is not None:
+        ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
+    with_pagination = page is not None or page_size is not None
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    repository = _policy_page_repository(current_store)
+    if with_pagination and repository is not None:
+        total = repository.count_rd_task_executor_policies(
+            executor_type=executor_type,
+            name=name,
+            product_id=product_id,
+            product_name=product_name,
+            status=status,
+            task_type=task_type,
+        )
+        policies = [
+            _policy_public(current_store, policy)
+            for policy in repository.list_rd_task_executor_policy_page(
+                executor_type=executor_type,
+                limit=resolved_page_size,
+                name=name,
+                offset=(resolved_page - 1) * resolved_page_size,
+                product_id=product_id,
+                product_name=product_name,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                status=status,
+                task_type=task_type,
+            )
+        ]
+        return add_list_observability(
+            {
+                "items": policies,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters={
+                "executor_type": executor_type,
+                "name": name,
+                "product_id": product_id,
+                "product_name": product_name,
+                "status": status,
+                "task_type": task_type,
+            },
+            list_name="rd_task_executor_policies",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+
     sync_rd_task_executor_policy_store(
         current_store,
         product_id=product_id,
@@ -230,15 +331,56 @@ def list_rd_task_executor_policies_response(
         if (product_id is None or policy.get("product_id") == product_id)
         and (status is None or policy.get("status") == status)
         and (task_type is None or policy.get("task_type") == task_type)
+        and (executor_type is None or policy.get("executor_type") == executor_type)
     ]
-    policies.sort(
-        key=lambda item: (
-            int(item.get("priority") or 100),
-            item.get("task_type") or "",
-            item.get("id") or "",
+    policies = [
+        policy
+        for policy in policies
+        if list_text_matches(policy, name, ("name",))
+        and list_text_matches(policy, product_name, ("product_name",))
+    ]
+    if sort_by:
+        policies = sort_list_items(
+            policies,
+            allowed_fields=RD_TASK_EXECUTOR_POLICY_SORT_FIELDS,
+            default_sort_by="priority",
+            sort_by=sort_by,
+            sort_order=sort_order or "asc",
         )
+    else:
+        policies.sort(
+            key=lambda item: (
+                int(item.get("priority") or 100),
+                item.get("task_type") or "",
+                item.get("id") or "",
+            )
+        )
+    total = len(policies)
+    if with_pagination:
+        policies = policies[
+            (resolved_page - 1) * resolved_page_size : resolved_page * resolved_page_size
+        ]
+    payload: dict[str, Any] = {"items": policies, "total": total}
+    if with_pagination:
+        payload["page"] = resolved_page
+        payload["page_size"] = resolved_page_size
+    return add_list_observability(
+        payload,
+        filters={
+            "executor_type": executor_type,
+            "name": name,
+            "product_id": product_id,
+            "product_name": product_name,
+            "status": status,
+            "task_type": task_type,
+        },
+        list_name="rd_task_executor_policies",
+        page=resolved_page if with_pagination else None,
+        page_size=resolved_page_size if with_pagination else None,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        started_at=started_at,
     )
-    return {"items": policies, "total": len(policies)}
 
 
 def _validate_resource_scope(current_store: Any, policy: dict[str, Any]) -> None:

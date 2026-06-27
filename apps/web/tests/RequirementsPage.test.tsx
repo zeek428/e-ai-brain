@@ -764,15 +764,16 @@ describe('RequirementsPage', () => {
     expect(within(stageProgress).getByText('阶段进度')).toBeInTheDocument();
     expect(within(stageProgress).getByText('需求')).toBeInTheDocument();
     expect(within(stageProgress).getByText('迭代版本')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('代码分支')).toBeInTheDocument();
     expect(within(stageProgress).getByText('AI 任务')).toBeInTheDocument();
     expect(within(stageProgress).getByText('Review')).toBeInTheDocument();
-    expect(within(stageProgress).getByText('PR/代码评审')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('PR/代码评审/巡检')).toBeInTheDocument();
     expect(within(stageProgress).getByText('Bug')).toBeInTheDocument();
     expect(within(stageProgress).getByText('发布')).toBeInTheDocument();
     expect(within(stageProgress).getByText('知识沉淀')).toBeInTheDocument();
     expect(within(stageProgress).getByText('测试中 · 1 项')).toBeInTheDocument();
     expect(within(stageProgress).getByText('开发中 · 2026-06-assistant-history')).toBeInTheDocument();
-    expect(within(stageProgress).getByText('1 快照 / 1 报告')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('1 快照 / 1 评审 / 0 巡检')).toBeInTheDocument();
     expect(within(stageProgress).getByRole('list', { name: '阶段进度清单' })).toBeInTheDocument();
     const stageDetails = screen.getByLabelText('全链路阶段明细');
     expect(within(stageDetails).getByText('阶段明细')).toBeInTheDocument();

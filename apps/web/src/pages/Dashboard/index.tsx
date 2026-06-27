@@ -13,9 +13,9 @@ import {
   SafetyCertificateOutlined,
   UserSwitchOutlined,
 } from '@ant-design/icons';
-import { PageContainer, StatisticCard } from '@ant-design/pro-components';
-import { Alert, Button, Empty, Space, Tag, Typography } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PageContainer } from '@ant-design/pro-components';
+import { Alert, Button, Empty, Select, Space, Tag, Typography } from 'antd';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { formatRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
@@ -154,6 +154,26 @@ function MetricSummary({
           </Text>
         </div>
       ))}
+    </div>
+  );
+}
+
+function DashboardStatCard({
+  icon,
+  title,
+  value,
+}: {
+  icon: ReactNode;
+  title: string;
+  value: number | string;
+}) {
+  return (
+    <div className="dashboard-stat-card" role="listitem">
+      <div className="dashboard-stat-card-title">
+        <span className="dashboard-stat-card-icon">{icon}</span>
+        <Text type="secondary">{title}</Text>
+      </div>
+      <strong className="dashboard-stat-card-value">{value}</strong>
     </div>
   );
 }
@@ -334,6 +354,21 @@ export default function DashboardPage() {
   }, []);
 
   const generatedAtText = formatDashboardGeneratedAt(dashboard?.cacheMetadata.generatedAt);
+  const summaryCards = [
+    { icon: <FileDoneOutlined />, title: '需求总数', value: dashboard?.summary.requirements ?? 0 },
+    { icon: <ProjectOutlined />, title: 'AI 任务', value: dashboard?.summary.aiTasks ?? 0 },
+    { icon: <CheckCircleOutlined />, title: '待确认', value: dashboard?.summary.pendingReviews ?? 0 },
+    { icon: <BookOutlined />, title: '知识文档', value: dashboard?.summary.knowledgeDocuments ?? 0 },
+    { icon: <SafetyCertificateOutlined />, title: '知识沉淀', value: dashboard?.summary.knowledgeDeposits ?? 0 },
+    { icon: <AuditOutlined />, title: '审计事件', value: dashboard?.summary.auditEvents ?? 0 },
+    { icon: <BugOutlined />, title: '开放 Bug', value: dashboard?.summary.openBugs ?? 0 },
+    { icon: <SafetyCertificateOutlined />, title: '严重 Bug', value: dashboard?.summary.highSeverityBugs ?? 0 },
+    { icon: <BarChartOutlined />, title: 'GitLab 提交', value: dashboard?.summary.gitlabCommits ?? 0 },
+    { icon: <CloudServerOutlined />, title: '发布记录', value: dashboard?.summary.jenkinsReleases ?? 0 },
+    { icon: <UserSwitchOutlined />, title: '用户反馈', value: dashboard?.summary.userFeedback ?? 0 },
+    { icon: <LineChartOutlined />, title: '使用事件', value: dashboard?.summary.usageEvents ?? 0 },
+    { icon: <RobotOutlined />, title: '迭代建议', value: dashboard?.summary.iterationSuggestions ?? 0 },
+  ];
 
   return (
     <PageContainer title={false}>
@@ -343,33 +378,22 @@ export default function DashboardPage() {
           <Text type="secondary">生成时间：{generatedAtText}</Text>
         </div>
         <div className="dashboard-actions">
-          <select
+          <Select
             aria-label="产品筛选"
             className="dashboard-product-select"
-            onChange={(event) => {
-              const { value } = event.currentTarget;
+            onChange={(value) => {
               setSelectedProductId(value === allProductsValue ? undefined : value);
             }}
+            options={productOptions}
             value={selectedProductId ?? allProductsValue}
-          >
-            {productOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <select
+          />
+          <Select
             aria-label="时间范围"
             className="dashboard-product-select"
-            onChange={(event) => setSelectedTimeRange(event.currentTarget.value)}
+            onChange={setSelectedTimeRange}
+            options={timeRangeOptions}
             value={selectedTimeRange}
-          >
-            {timeRangeOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          />
           <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void reload()}>
             刷新
           </Button>
@@ -378,99 +402,16 @@ export default function DashboardPage() {
       {error ? (
         <Alert className="management-list-alert" showIcon title={formatRemoteRowsError(error)} type="error" />
       ) : null}
-      <StatisticCard.Group className="dashboard-stat-grid">
-        <StatisticCard
-          statistic={{
-            prefix: <FileDoneOutlined />,
-            title: '需求总数',
-            value: dashboard?.summary.requirements ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <ProjectOutlined />,
-            title: 'AI 任务',
-            value: dashboard?.summary.aiTasks ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <CheckCircleOutlined />,
-            title: '待确认',
-            value: dashboard?.summary.pendingReviews ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <BookOutlined />,
-            title: '知识文档',
-            value: dashboard?.summary.knowledgeDocuments ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <SafetyCertificateOutlined />,
-            title: '知识沉淀',
-            value: dashboard?.summary.knowledgeDeposits ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <AuditOutlined />,
-            title: '审计事件',
-            value: dashboard?.summary.auditEvents ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <BugOutlined />,
-            title: '开放 Bug',
-            value: dashboard?.summary.openBugs ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <SafetyCertificateOutlined />,
-            title: '严重 Bug',
-            value: dashboard?.summary.highSeverityBugs ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <BarChartOutlined />,
-            title: 'GitLab 提交',
-            value: dashboard?.summary.gitlabCommits ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <CloudServerOutlined />,
-            title: '发布记录',
-            value: dashboard?.summary.jenkinsReleases ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <UserSwitchOutlined />,
-            title: '用户反馈',
-            value: dashboard?.summary.userFeedback ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <LineChartOutlined />,
-            title: '使用事件',
-            value: dashboard?.summary.usageEvents ?? 0,
-          }}
-        />
-        <StatisticCard
-          statistic={{
-            prefix: <RobotOutlined />,
-            title: '迭代建议',
-            value: dashboard?.summary.iterationSuggestions ?? 0,
-          }}
-        />
-      </StatisticCard.Group>
+      <div aria-label="团队看板指标" className="dashboard-stat-grid" role="list">
+        {summaryCards.map((card) => (
+          <DashboardStatCard
+            icon={card.icon}
+            key={card.title}
+            title={card.title}
+            value={card.value}
+          />
+        ))}
+      </div>
       <div className="dashboard-grid">
         <section className="dashboard-panel">
           <Title level={4}>需求状态</Title>

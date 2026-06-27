@@ -8,6 +8,8 @@
 ## [Unreleased]
 
 ### Added
+- 需求全链路证据补齐：full-chain 响应和前端详情页新增版本级代码分支配置、脱敏审计事件、阶段明细、时间线和 Markdown 导出覆盖，便于从需求、迭代版本、Bug、代码巡检入口统一核对交付证据。
+- 需求全链路统一主体入口：新增 `GET /api/lifecycle/full-chain?subject_type=&subject_id=` 与前端 `/delivery/full-chain`，支持从 Bug、迭代版本和代码巡检报告解析到需求链路；需求全链路聚合结果补充代码巡检报告摘要，Bug、代码巡检、执行诊断和迭代版本列表提供统一“全链路”入口。
 - 执行诊断整条链路诊断包：详情页新增“问 AI 分析链路”和“复制诊断包”，按根对象携带脱敏链路摘要、关联 ID 和诊断节点进入 AI 助手，减少人工拼接失败上下文。
 - 执行诊断节点诊断摘要：列表和详情新增 `diagnostic_nodes`，从失败、取消、运行中或排队节点派生安全摘要，供页面诊断建议和 AI 助手共享，不返回节点 metadata。
 - 菜单资源与前端路由一致性门禁：新增 `test_menu_route_consistency.py`，校验 active 可导航菜单 path 均存在于前端静态 routes，并锁定研发任务、定时作业、插件管理、执行诊断等关键入口不回退旧路径。
@@ -29,6 +31,12 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 研发执行器策略列表改为服务端分页、筛选和排序：`GET /api/delivery/rd-task-executor-policies` 带分页参数时走 PostgreSQL read model，支持策略名称、产品名称、执行器、任务类型和状态筛选，并返回 `query/performance` 观测信息。
+- 执行诊断列表查询性能优化：普通列表默认复用已有 PostgreSQL 快照，页面刷新按钮或 `refresh=true` 才同步重建快照，避免每隔数秒浏览列表触发全量 Trace 刷新慢查询。
+- 任务中心配置页头部去重：定时作业、AI 能力配置和插件管理移除外层独立页标题，仅保留面包屑、页签和内容区标题。
+- IT 团队看板布局优化：顶部筛选切换为 Ant Design Select，核心指标改为自有全宽 KPI 网格，避免指标卡被默认统计卡组挤成窄竖列。
+- 草案任务台指标区布局加固：摘要指标条改为组件自带全宽网格和指标卡样式，避免待确认/失败/采纳率等指标退化为左侧纵向文本。
+- 知识中心列表布局优化：主表补齐固定列宽、横向滚动和更宽的右侧操作列，通用管理列表标题保持横排显示，避免“知识列表”竖排和操作按钮截断。
 - 代码巡检治理概览增强：`/api/governance/code-inspections/dashboard` 新增 `quality_gate_violations` 门禁失败原因聚合，页面在质量门禁趋势旁展示指标/规则、级别、触发次数、报告数和实际/阈值。
 - 定时作业页面继续拆深：作业、运行、模板、插件资源、产品、AI 资源、知识文档、模型网关和作业 catalog 的工作台数据加载收口到 `useScheduledJobWorkspaceData`。
 - 定时作业页面继续拆深：运行详情打开、路由深链、结果写入记录加载和运行标签计算收口到 `useScheduledJobRunDetailState`，主页面保留作业列表、表单和运行触发编排。
@@ -155,6 +163,8 @@
 - 执行诊断中心详情继续减重：链路概要、关联对象、节点表、关系表和元数据预览抽到 `ExecutionTraceDetailContent`，主页面从详情渲染细节中解耦，为后续 Trace DAG 钻取和诊断建议扩展预留组件边界。
 
 ### Fixed
+- 需求全链路读权限边界收紧：`/api/requirements/{requirement_id}/full-chain` 和 `/api/lifecycle/full-chain` 统一校验 `requirement.read`、`task.read` 或 `workspace.read` 任一读权限，并按入口主体或需求所属产品 scope 校验，缺权限返回 403，产品范围不匹配返回 404。
+- 执行诊断问 AI 跳转修复：AI 助手独立读取路由 `prompt`，即使 `reference_type` 是 `assistant_chat_run`、`model_gateway_log` 等诊断来源类型且无法解析为助手引用，也会把链路分析问题带入输入框。
 - AI 助手页面样式隔离：将 `.assistant-*` 规则从全局样式迁移到助手页面级 `Assistant.css`，并保留多视口真实页面 smoke 覆盖，降低其它页面样式变更影响助手布局的风险。
 - AI 助手升级文档对齐：工作台升级方案、API 文档和测试用例同步补齐 hooks 拆分、意图 registry、运行诊断、指标维度/趋势/导出和 scoped CSS 的当前落地状态。
 - AI 助手知识引用指标明细按 `limit` 构造展示记录，同时独立统计 total，避免知识引用明细钻取为少量展示项全量展开历史引用。

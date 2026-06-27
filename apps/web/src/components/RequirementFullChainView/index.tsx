@@ -7,7 +7,10 @@ import type { RequirementFullChainRecord } from '../../services/aiBrain';
 
 const fullChainTypeLabels: Record<string, string> = {
   ai_task: 'AI 任务',
+  audit_event: '审计事件',
+  branch_config: '代码分支',
   bug: 'Bug',
+  code_inspection_report: '代码巡检',
   code_review_report: '代码评审',
   git_snapshot: 'PR/MR 快照',
   iteration_version: '迭代版本',
@@ -28,8 +31,11 @@ const taskTypeLabels: Record<string, string> = {
 };
 
 const fullChainTypeColors: Record<string, string> = {
+  audit_event: 'default',
+  branch_config: 'gold',
   bug: 'red',
   code_review_report: 'purple',
+  code_inspection_report: 'magenta',
   git_snapshot: 'blue',
   jenkins_release: 'orange',
   knowledge_deposit: 'green',
@@ -61,6 +67,15 @@ const iterationVersionStatusLabels: Record<string, { color: string; label: strin
   planning: { color: 'gold', label: '规划中' },
   released: { color: 'green', label: '已发布' },
   testing: { color: 'purple', label: '测试中' },
+};
+
+const branchStatusLabels: Record<string, { color: string; label: string }> = {
+  active: { color: 'blue', label: '使用中' },
+  archived: { color: 'default', label: '已归档' },
+  merged: { color: 'purple', label: '已合并' },
+  not_created: { color: 'default', label: '未创建' },
+  released: { color: 'green', label: '已发布' },
+  testing: { color: 'volcano', label: '测试中' },
 };
 
 const { Link, Text } = Typography;
@@ -123,6 +138,11 @@ function buildFullChainStageItems(fullChain: RequirementFullChainRecord) {
       title: '迭代版本',
     },
     {
+      count: summary.branchConfigs,
+      detail: `${summary.branchConfigs} 条`,
+      title: '代码分支',
+    },
+    {
       count: summary.aiTasks,
       detail: `${summary.aiTasks} 项`,
       title: 'AI 任务',
@@ -133,9 +153,9 @@ function buildFullChainStageItems(fullChain: RequirementFullChainRecord) {
       title: 'Review',
     },
     {
-      count: summary.gitSnapshots + summary.codeReviewReports,
-      detail: `${summary.gitSnapshots} 快照 / ${summary.codeReviewReports} 报告`,
-      title: 'PR/代码评审',
+      count: summary.gitSnapshots + summary.codeReviewReports + summary.codeInspectionReports,
+      detail: `${summary.gitSnapshots} 快照 / ${summary.codeReviewReports} 评审 / ${summary.codeInspectionReports} 巡检`,
+      title: 'PR/代码评审/巡检',
     },
     {
       count: summary.bugs,
@@ -151,6 +171,11 @@ function buildFullChainStageItems(fullChain: RequirementFullChainRecord) {
       count: summary.knowledgeDeposits,
       detail: `${summary.knowledgeDeposits} 项`,
       title: '知识沉淀',
+    },
+    {
+      count: summary.auditEvents,
+      detail: `${summary.auditEvents} 条`,
+      title: '审计事件',
     },
   ];
 
@@ -225,15 +250,27 @@ function buildFullChainMarkdownReport(fullChain: RequirementFullChainRecord) {
     `- 状态：${requirementStatus}`,
     `- 产品：${productName}`,
     `- 迭代版本：${versionName}`,
+    `- 代码分支：${fullChain.summary.branchConfigs}`,
     `- AI 任务：${fullChain.summary.aiTasks}`,
     `- Review：${fullChain.summary.reviews}`,
     `- PR/MR 快照：${fullChain.summary.gitSnapshots}`,
     `- 代码评审：${fullChain.summary.codeReviewReports}`,
+    `- 代码巡检：${fullChain.summary.codeInspectionReports}`,
     `- Bug：${fullChain.summary.bugs}`,
     `- 发布记录：${fullChain.summary.jenkinsReleases}`,
     `- 知识沉淀：${fullChain.summary.knowledgeDeposits}`,
+    `- 审计事件：${fullChain.summary.auditEvents}`,
     '',
     '## 阶段明细',
+    '',
+    '### 代码分支',
+    markdownList(
+      fullChain.branchConfigs,
+      (branch) =>
+        `- ${branch.repositoryName ?? branch.repositoryId} · ${branch.baseBranch} -> ${branch.workingBranch} · ${
+          branchStatusLabels[branch.branchStatus]?.label ?? branch.branchStatus
+        }`,
+    ),
     '',
     '### AI 任务',
     markdownList(
@@ -259,6 +296,15 @@ function buildFullChainMarkdownReport(fullChain: RequirementFullChainRecord) {
       (report) => `- ${report.summary || `代码评审：${report.id}`} (${report.id}) · ${report.status} · ${formatRiskLevel(report.riskLevel)}风险`,
     ),
     '',
+    '### 代码巡检',
+    markdownList(
+      fullChain.codeInspectionReports,
+      (report) =>
+        `- ${report.summary || `代码巡检：${report.id}`} (${report.id}) · ${report.status} · ${formatRiskLevel(
+          report.risk_level,
+        )}风险`,
+    ),
+    '',
     '### Bug',
     markdownList(fullChain.bugs, (bug) => `- ${bug.title} (${bug.id}) · ${bug.severity} · ${bug.status}`),
     '',
@@ -273,6 +319,15 @@ function buildFullChainMarkdownReport(fullChain: RequirementFullChainRecord) {
     markdownList(
       fullChain.knowledgeDeposits,
       (deposit) => `- ${deposit.title} (${deposit.id}) · ${deposit.status}`,
+    ),
+    '',
+    '### 审计事件',
+    markdownList(
+      fullChain.auditEvents,
+      (event) =>
+        `- ${event.eventType} (${event.id}) · ${event.actorId ?? '-'} · ${event.subjectType ?? '-'}:${
+          event.subjectId ?? '-'
+        } · ${event.createdAt}`,
     ),
     '',
     '## 时间线',
@@ -311,6 +366,17 @@ function buildVersionRequirementStats(requirements: RequirementRecord[]) {
 
 function withQuery(path: string, key: string, value: string) {
   return `${path}?${key}=${encodeURIComponent(value)}`;
+}
+
+function withQueryParams(path: string, params: Record<string, string | undefined>) {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) {
+      searchParams.set(key, value);
+    }
+  });
+  const queryString = searchParams.toString();
+  return queryString ? `${path}?${queryString}` : path;
 }
 
 function renderEntityDetail({
@@ -366,6 +432,29 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
       label: '迭代版本',
     },
     {
+      children: fullChain.branchConfigs.length ? (
+        <Space orientation="vertical" size={10}>
+          {fullChain.branchConfigs.map((branch) =>
+            renderEntityDetail({
+              href: withQueryParams('/delivery/versions', {
+                branch_config_id: branch.id,
+                version_id: branch.versionId,
+              }),
+              linkLabel: `查看分支 ${branch.id}`,
+              meta: `${branch.baseBranch} -> ${branch.workingBranch} · ${
+                branchStatusLabels[branch.branchStatus]?.label ?? branch.branchStatus
+              }`,
+              title: `${branch.repositoryName ?? branch.repositoryId} · ${branch.workingBranch}`,
+            }),
+          )}
+        </Space>
+      ) : (
+        renderEmptyStage()
+      ),
+      key: 'branch_configs',
+      label: `代码分支 (${fullChain.branchConfigs.length})`,
+    },
+    {
       children: fullChain.aiTasks.length ? (
         <Space orientation="vertical" size={10}>
           {fullChain.aiTasks.map((task) =>
@@ -402,7 +491,7 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
       label: `Review (${fullChain.reviews.length})`,
     },
     {
-      children: fullChain.gitSnapshots.length || fullChain.codeReviewReports.length ? (
+      children: fullChain.gitSnapshots.length || fullChain.codeReviewReports.length || fullChain.codeInspectionReports.length ? (
         <Space orientation="vertical" size={10}>
           {fullChain.gitSnapshots.map((snapshot) =>
             renderEntityDetail({
@@ -420,12 +509,22 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
               title: report.summary || `代码评审：${report.id}`,
             }),
           )}
+          {fullChain.codeInspectionReports.map((report) =>
+            renderEntityDetail({
+              href: withQuery('/governance/code-inspections', 'source_id', report.id),
+              linkLabel: `查看代码巡检 ${report.id}`,
+              meta: `${report.status} · ${formatRiskLevel(report.risk_level)}风险 · ${report.branch ?? '-'}`,
+              title: report.summary || `代码巡检：${report.id}`,
+            }),
+          )}
         </Space>
       ) : (
         renderEmptyStage()
       ),
       key: 'code_review',
-      label: `PR/代码评审 (${fullChain.gitSnapshots.length + fullChain.codeReviewReports.length})`,
+      label: `PR/代码评审/巡检 (${
+        fullChain.gitSnapshots.length + fullChain.codeReviewReports.length + fullChain.codeInspectionReports.length
+      })`,
     },
     {
       children: fullChain.bugs.length ? (
@@ -480,6 +579,26 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
       ),
       key: 'knowledge_deposits',
       label: `知识沉淀 (${fullChain.knowledgeDeposits.length})`,
+    },
+    {
+      children: fullChain.auditEvents.length ? (
+        <Space orientation="vertical" size={10}>
+          {fullChain.auditEvents.map((event) =>
+            renderEntityDetail({
+              href: withQuery('/governance/audit', 'audit_id', event.id),
+              linkLabel: `查看审计 ${event.id}`,
+              meta: `${event.actorId ?? '-'} · ${event.subjectType ?? '-'}:${event.subjectId ?? '-'} · ${
+                event.createdAt
+              }`,
+              title: event.eventType,
+            }),
+          )}
+        </Space>
+      ) : (
+        renderEmptyStage()
+      ),
+      key: 'audit_events',
+      label: `审计事件 (${fullChain.auditEvents.length})`,
     },
   ];
   return items;
@@ -549,11 +668,14 @@ export function RequirementFullChainView({
           <Space size={[4, 4]} wrap>
             {renderSummaryTag('AI 任务', fullChain.summary.aiTasks, 'blue')}
             {renderSummaryTag('Review', fullChain.summary.reviews, 'cyan')}
+            {renderSummaryTag('代码分支', fullChain.summary.branchConfigs, 'gold')}
             {renderSummaryTag('PR/MR 快照', fullChain.summary.gitSnapshots, 'geekblue')}
             {renderSummaryTag('代码评审', fullChain.summary.codeReviewReports, 'purple')}
+            {renderSummaryTag('代码巡检', fullChain.summary.codeInspectionReports, 'magenta')}
             {renderSummaryTag('Bug', fullChain.summary.bugs, 'red')}
             {renderSummaryTag('发布记录', fullChain.summary.jenkinsReleases, 'orange')}
             {renderSummaryTag('知识沉淀', fullChain.summary.knowledgeDeposits, 'green')}
+            {renderSummaryTag('审计事件', fullChain.summary.auditEvents)}
           </Space>
         </div>
       </section>
@@ -627,12 +749,14 @@ export function RequirementFullChainView({
             defaultActiveKey={[
               'requirement',
               'iteration_version',
+              'branch_configs',
               'ai_tasks',
               'reviews',
               'code_review',
               'bugs',
               'jenkins_releases',
               'knowledge_deposits',
+              'audit_events',
             ]}
             items={buildStageDetailItems(fullChain)}
             size="small"

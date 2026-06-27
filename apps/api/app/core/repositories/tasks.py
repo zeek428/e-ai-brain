@@ -90,6 +90,146 @@ class TaskReadRepository:
                 )
                 return [self._rd_task_executor_policy_from_row(row) for row in cursor.fetchall()]
 
+    def count_rd_task_executor_policies(
+        self,
+        *,
+        executor_type: str | None = None,
+        name: str | None = None,
+        product_id: str | None = None,
+        product_name: str | None = None,
+        status: str | None = None,
+        task_type: str | None = None,
+    ) -> int:
+        where, params = self._rd_task_executor_policy_where(
+            executor_type=executor_type,
+            name=name,
+            product_id=product_id,
+            product_name=product_name,
+            status=status,
+            task_type=task_type,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM rd_task_executor_policies AS policy
+                    LEFT JOIN products AS product ON product.id = policy.product_id
+                    {where}
+                    """,
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def list_rd_task_executor_policy_page(
+        self,
+        *,
+        executor_type: str | None = None,
+        limit: int,
+        name: str | None = None,
+        offset: int,
+        product_id: str | None = None,
+        product_name: str | None = None,
+        sort_by: str | None = None,
+        sort_order: str | None = None,
+        status: str | None = None,
+        task_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._rd_task_executor_policy_where(
+            executor_type=executor_type,
+            name=name,
+            product_id=product_id,
+            product_name=product_name,
+            status=status,
+            task_type=task_type,
+        )
+        order_by = self._rd_task_executor_policy_order_by(
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT policy.id, policy.name, policy.brain_app_id, policy.product_id,
+                           policy.task_type, policy.executor_type, policy.runner_id,
+                           policy.repository_id, policy.workspace_root, policy.branch,
+                           policy.instruction_template, policy.output_contract,
+                           policy.timeout_seconds, policy.priority, policy.status,
+                           policy.created_by, policy.created_at, policy.updated_at,
+                           product.name AS product_name,
+                           repository.name AS repository_name,
+                           repository.default_branch AS repository_default_branch,
+                           runner.name AS runner_name
+                    FROM rd_task_executor_policies AS policy
+                    LEFT JOIN products AS product ON product.id = policy.product_id
+                    LEFT JOIN product_git_repositories AS repository
+                      ON repository.id = policy.repository_id
+                    LEFT JOIN ai_executor_runners AS runner ON runner.id = policy.runner_id
+                    {where}
+                    {order_by}
+                    LIMIT %s OFFSET %s
+                    """,
+                    tuple([*params, limit, offset]),
+                )
+                return [self._rd_task_executor_policy_from_row(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def _rd_task_executor_policy_where(
+        *,
+        executor_type: str | None = None,
+        name: str | None = None,
+        product_id: str | None = None,
+        product_name: str | None = None,
+        status: str | None = None,
+        task_type: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            clauses.append("policy.product_id = %s")
+            params.append(product_id)
+        if status is not None:
+            clauses.append("policy.status = %s")
+            params.append(status)
+        if task_type is not None:
+            clauses.append("policy.task_type = %s")
+            params.append(task_type)
+        if executor_type is not None:
+            clauses.append("policy.executor_type = %s")
+            params.append(executor_type)
+        if name:
+            clauses.append("LOWER(policy.name) LIKE %s")
+            params.append(f"%{name.strip().lower()}%")
+        if product_name:
+            clauses.append("LOWER(COALESCE(product.name, '')) LIKE %s")
+            params.append(f"%{product_name.strip().lower()}%")
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else "", params)
+
+    @staticmethod
+    def _rd_task_executor_policy_order_by(
+        *,
+        sort_by: str | None = None,
+        sort_order: str | None = None,
+    ) -> str:
+        sort_columns = {
+            "executor_type": "policy.executor_type",
+            "name": "LOWER(policy.name)",
+            "priority": "policy.priority",
+            "product_name": "LOWER(COALESCE(product.name, ''))",
+            "repository_name": "LOWER(COALESCE(repository.name, ''))",
+            "runner_name": "LOWER(COALESCE(runner.name, ''))",
+            "status": "policy.status",
+            "task_type": "policy.task_type",
+            "updated_at": "policy.updated_at",
+            "workspace_root": "LOWER(policy.workspace_root)",
+        }
+        if sort_by and sort_by in sort_columns:
+            direction = "DESC" if sort_order == "desc" else "ASC"
+            return f"ORDER BY {sort_columns[sort_by]} {direction}, policy.id ASC"
+        return "ORDER BY policy.priority ASC, policy.task_type ASC, policy.product_id NULLS FIRST, policy.id ASC"
+
     def save_rd_task_executor_policy_record(
         self,
         policy: dict[str, Any],
@@ -180,7 +320,7 @@ class TaskReadRepository:
 
     @staticmethod
     def _rd_task_executor_policy_from_row(row) -> dict[str, Any]:
-        return {
+        policy = {
             "brain_app_id": row[2] or DEFAULT_BRAIN_APP_ID,
             "branch": row[9],
             "created_at": row[16].isoformat() if row[16] else None,
@@ -200,6 +340,12 @@ class TaskReadRepository:
             "updated_at": row[17].isoformat() if row[17] else None,
             "workspace_root": row[8] or "",
         }
+        if len(row) > 18:
+            policy["product_name"] = row[18]
+            policy["repository_name"] = row[19]
+            policy["repository_default_branch"] = row[20]
+            policy["runner_name"] = row[21]
+        return policy
 
     def load_workflow_runtime(self) -> dict[str, Any]:
         with self._connect() as connection:

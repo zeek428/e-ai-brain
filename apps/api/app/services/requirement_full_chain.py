@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.api.deps import api_error
+from app.api.deps import api_error, require_any_permission
 from app.services.bugs import bug_summary_projection
+from app.services.code_inspections import user_can_read_product
+from app.services.lifecycle_subjects import lifecycle_subject_tasks, subject_product_id
 from app.services.requirements import requirement_summary_projection
 from app.services.task_access import can_read_task
 from app.services.task_listing import task_summary_projection
 from app.services.task_workflow_context import task_workflow_read_store
+
+FULL_CHAIN_READ_PERMISSIONS = {"requirement.read", "task.read", "workspace.read"}
 
 
 def first_present_value(item: dict[str, Any], fields: tuple[str, ...]) -> str:
@@ -57,8 +61,54 @@ def full_chain_event(
     }
 
 
+def audit_event_title(event: dict[str, Any]) -> str:
+    event_type = str(event.get("event_type") or "audit")
+    actor_id = str(event.get("actor_id") or "-")
+    return f"审计：{event_type} · {actor_id}"
+
+
+def audit_event_public(event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "actor_id": event.get("actor_id"),
+        "ai_task_id": event.get("ai_task_id"),
+        "created_at": event.get("created_at"),
+        "event_type": event.get("event_type"),
+        "id": event.get("id"),
+        "subject_id": event.get("subject_id"),
+        "subject_type": event.get("subject_type"),
+    }
+
+
 def requirement_read_store(current_store: Any) -> Any:
     return task_workflow_read_store(current_store)
+
+
+def _ensure_full_chain_read_permission(user: dict[str, Any]) -> None:
+    require_any_permission(user, FULL_CHAIN_READ_PERMISSIONS)
+
+
+def _ensure_requirement_full_chain_access(
+    requirement: dict[str, Any],
+    *,
+    user: dict[str, Any],
+) -> None:
+    _ensure_full_chain_read_permission(user)
+    product_id = requirement.get("product_id")
+    if product_id and not user_can_read_product(user, product_id):
+        raise api_error(404, "NOT_FOUND", "Requirement not found")
+
+
+def _ensure_subject_product_access(
+    current_store: Any,
+    *,
+    subject_id: str,
+    subject_type: str,
+    user: dict[str, Any],
+) -> None:
+    _ensure_full_chain_read_permission(user)
+    product_id = subject_product_id(current_store, subject_type, subject_id)
+    if product_id and not user_can_read_product(user, product_id):
+        raise api_error(404, "NOT_FOUND", "Subject is not linked to a requirement full chain")
 
 
 def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
@@ -84,7 +134,100 @@ def get_requirement_full_chain_response(
     requirement = read_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
+    _ensure_requirement_full_chain_access(requirement, user=user)
     return requirement_full_chain_payload(read_store, requirement, user=user)
+
+
+def _requirement_id_from_subject(
+    current_store: Any,
+    *,
+    subject_type: str,
+    subject_id: str,
+) -> str:
+    normalized_type = subject_type.strip()
+    normalized_id = subject_id.strip()
+    if not normalized_type or not normalized_id:
+        raise api_error(400, "VALIDATION_ERROR", "subject_type and subject_id are required")
+    if normalized_type == "requirement":
+        if _read_memory_dict(current_store, "requirements").get(normalized_id) is None:
+            raise api_error(404, "NOT_FOUND", "Requirement not found")
+        return normalized_id
+    if normalized_type == "product_version":
+        if _read_memory_dict(current_store, "product_versions").get(normalized_id) is None:
+            raise api_error(404, "NOT_FOUND", "Iteration version not found")
+        version_requirements = sort_by_lifecycle_time(
+            [
+                requirement
+                for requirement in _read_memory_dict(current_store, "requirements").values()
+                if str(requirement.get("version_id")) == normalized_id
+            ],
+            "updated_at",
+            "created_at",
+        )
+        if not version_requirements:
+            raise api_error(
+                404,
+                "NO_REQUIREMENT_CONTEXT",
+                "Iteration version has no requirements to display in full chain",
+            )
+        return str(version_requirements[-1]["id"])
+    if normalized_type == "code_inspection_report":
+        report = _read_memory_dict(current_store, "code_inspection_reports").get(normalized_id)
+        if report is None:
+            raise api_error(404, "NOT_FOUND", "Code inspection report not found")
+        for bug_id in report.get("created_bug_ids") or []:
+            bug = _read_memory_dict(current_store, "bugs").get(str(bug_id))
+            if bug is not None and bug.get("requirement_id"):
+                return str(bug["requirement_id"])
+        for task_id in report.get("created_task_ids") or []:
+            task = _read_memory_dict(current_store, "ai_tasks").get(str(task_id))
+            if task is not None and task.get("requirement_id"):
+                return str(task["requirement_id"])
+    tasks = lifecycle_subject_tasks(
+        current_store,
+        subject_type=normalized_type,
+        subject_id=normalized_id,
+    )
+    for task in tasks:
+        if task.get("requirement_id"):
+            return str(task["requirement_id"])
+    raise api_error(
+        404,
+        "NO_REQUIREMENT_CONTEXT",
+        "Subject is not linked to a requirement full chain",
+    )
+
+
+def get_requirement_full_chain_by_subject_response(
+    *,
+    current_store: Any,
+    subject_id: str,
+    subject_type: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    read_store = requirement_read_store(current_store)
+    _ensure_subject_product_access(
+        read_store,
+        subject_id=subject_id,
+        subject_type=subject_type,
+        user=user,
+    )
+    requirement_id = _requirement_id_from_subject(
+        read_store,
+        subject_id=subject_id,
+        subject_type=subject_type,
+    )
+    requirement = read_store.requirements.get(requirement_id)
+    if requirement is None:
+        raise api_error(404, "NOT_FOUND", "Requirement not found")
+    _ensure_requirement_full_chain_access(requirement, user=user)
+    payload = requirement_full_chain_payload(read_store, requirement, user=user)
+    payload["anchor"] = {
+        "resolved_requirement_id": requirement_id,
+        "subject_id": subject_id,
+        "subject_type": subject_type,
+    }
+    return payload
 
 
 def requirement_full_chain_payload(
@@ -165,6 +308,35 @@ def requirement_full_chain_payload(
         "created_at",
         "updated_at",
     )
+    bug_ids = {str(bug["id"]) for bug in bugs}
+    code_inspection_reports = sort_by_lifecycle_time(
+        [
+            report
+            for report in _read_memory_dict(current_store, "code_inspection_reports").values()
+            if set(str(task_id) for task_id in report.get("created_task_ids", [])).intersection(
+                task_ids
+            )
+            or set(str(bug_id) for bug_id in report.get("created_bug_ids", [])).intersection(
+                bug_ids
+            )
+        ],
+        "scan_finished_at",
+        "created_at",
+        "updated_at",
+    )
+    branch_configs = sort_by_lifecycle_time(
+        [
+            branch_config
+            for branch_config in _read_memory_dict(
+                current_store,
+                "product_version_branch_configs",
+            ).values()
+            if iteration_version is not None
+            and str(branch_config.get("version_id")) == str(iteration_version.get("id"))
+        ],
+        "updated_at",
+        "created_at",
+    )
     knowledge_deposits = sort_by_lifecycle_time(
         [
             deposit
@@ -191,6 +363,45 @@ def requirement_full_chain_payload(
         "deployed_at",
         "created_at",
         "updated_at",
+    )
+    linked_subjects: set[tuple[str, str]] = {
+        ("requirement", requirement_id),
+    }
+    if iteration_version is not None:
+        linked_subjects.add(("product_version", str(iteration_version["id"])))
+        linked_subjects.add(("iteration_version", str(iteration_version["id"])))
+    for task in tasks:
+        linked_subjects.add(("ai_task", str(task["id"])))
+        linked_subjects.add(("task", str(task["id"])))
+    for review in reviews:
+        linked_subjects.add(("human_review", str(review["id"])))
+        linked_subjects.add(("review", str(review["id"])))
+    for snapshot in git_snapshots:
+        linked_subjects.add(("gitlab_mr_snapshot", str(snapshot["id"])))
+        linked_subjects.add(("git_snapshot", str(snapshot["id"])))
+    for report in code_review_reports:
+        linked_subjects.add(("code_review_report", str(report["id"])))
+    for report in code_inspection_reports:
+        linked_subjects.add(("code_inspection_report", str(report["id"])))
+    for branch_config in branch_configs:
+        linked_subjects.add(("product_version_branch_config", str(branch_config["id"])))
+        linked_subjects.add(("branch_config", str(branch_config["id"])))
+    for bug in bugs:
+        linked_subjects.add(("bug", str(bug["id"])))
+    for release in jenkins_releases:
+        linked_subjects.add(("jenkins_release_record", str(release["id"])))
+        linked_subjects.add(("jenkins_release", str(release["id"])))
+    for deposit in knowledge_deposits:
+        linked_subjects.add(("knowledge_deposit", str(deposit["id"])))
+    audit_events = sort_by_lifecycle_time(
+        [
+            audit_event_public(event)
+            for event in current_store.snapshot(getattr(current_store, "audit_events", []))
+            if (str(event.get("subject_type") or ""), str(event.get("subject_id") or ""))
+            in linked_subjects
+            or (event.get("ai_task_id") and ("ai_task", str(event.get("ai_task_id"))) in linked_subjects)
+        ],
+        "created_at",
     )
 
     timeline = [
@@ -253,6 +464,27 @@ def requirement_full_chain_payload(
     )
     timeline.extend(
         full_chain_event(
+            event_type="branch_config",
+            occurred_at=first_present_value(branch_config, ("updated_at", "created_at"))
+            or first_present_value(iteration_version or {}, ("updated_at", "created_at"))
+            or first_present_value(requirement, ("created_at", "updated_at")),
+            subject_id=str(branch_config["id"]),
+            status=branch_config.get("branch_status"),
+            title=compact_lifecycle_title(
+                "代码分支",
+                str(branch_config["id"]),
+                branch_config.get("working_branch"),
+            ),
+            metadata={
+                "base_branch": branch_config.get("base_branch"),
+                "repository_id": branch_config.get("repository_id"),
+                "working_branch": branch_config.get("working_branch"),
+            },
+        )
+        for branch_config in branch_configs
+    )
+    timeline.extend(
+        full_chain_event(
             event_type="code_review_report",
             occurred_at=first_present_value(report, ("archived_at", "created_at", "updated_at")),
             subject_id=str(report["id"]),
@@ -297,6 +529,28 @@ def requirement_full_chain_payload(
     )
     timeline.extend(
         full_chain_event(
+            event_type="code_inspection_report",
+            occurred_at=first_present_value(
+                report,
+                ("scan_finished_at", "created_at", "updated_at"),
+            ),
+            subject_id=str(report["id"]),
+            status=report.get("status"),
+            title=compact_lifecycle_title(
+                "代码巡检",
+                str(report["id"]),
+                report.get("summary"),
+            ),
+            metadata={
+                "branch": report.get("branch"),
+                "repository_id": report.get("repository_id"),
+                "risk_level": report.get("risk_level"),
+            },
+        )
+        for report in code_inspection_reports
+    )
+    timeline.extend(
+        full_chain_event(
             event_type="knowledge_deposit",
             occurred_at=first_present_value(deposit, ("created_at", "updated_at")),
             subject_id=str(deposit["id"]),
@@ -305,6 +559,22 @@ def requirement_full_chain_payload(
             metadata={"ai_task_id": deposit.get("ai_task_id")},
         )
         for deposit in knowledge_deposits
+    )
+    timeline.extend(
+        full_chain_event(
+            event_type="audit_event",
+            occurred_at=first_present_value(event, ("created_at",))
+            or first_present_value(requirement, ("created_at", "updated_at")),
+            subject_id=str(event["id"]),
+            status=event.get("event_type"),
+            title=audit_event_title(event),
+            metadata={
+                "actor_id": event.get("actor_id"),
+                "subject_id": event.get("subject_id"),
+                "subject_type": event.get("subject_type"),
+            },
+        )
+        for event in audit_events
     )
     timeline.sort(key=lambda item: (item["occurred_at"], item["type"], item["subject_id"]))
 
@@ -320,19 +590,25 @@ def requirement_full_chain_payload(
         "ai_tasks": [task_summary_projection(task, current_store) for task in tasks],
         "reviews": current_store.snapshot(reviews),
         "git_snapshots": current_store.snapshot(git_snapshots),
+        "branch_configs": current_store.snapshot(branch_configs),
         "code_review_reports": current_store.snapshot(code_review_reports),
+        "code_inspection_reports": current_store.snapshot(code_inspection_reports),
         "bugs": current_store.snapshot(bugs),
         "jenkins_releases": current_store.snapshot(jenkins_releases),
         "knowledge_deposits": current_store.snapshot(knowledge_deposits),
+        "audit_events": current_store.snapshot(audit_events),
         "timeline": timeline,
         "summary": {
             "ai_tasks": len(tasks),
             "reviews": len(reviews),
             "git_snapshots": len(git_snapshots),
+            "branch_configs": len(branch_configs),
             "code_review_reports": len(code_review_reports),
+            "code_inspection_reports": len(code_inspection_reports),
             "bugs": len(bugs),
             "jenkins_releases": len(jenkins_releases),
             "knowledge_deposits": len(knowledge_deposits),
+            "audit_events": len(audit_events),
             "timeline_events": len(timeline),
         },
     }

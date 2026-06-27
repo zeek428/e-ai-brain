@@ -552,7 +552,7 @@ export default function AiCapabilitiesPage() {
   );
 
   return (
-    <PageContainer title="AI 能力配置">
+    <PageContainer title={false}>
       <Tabs
         items={[
           {

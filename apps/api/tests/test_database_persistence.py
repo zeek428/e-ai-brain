@@ -16,6 +16,7 @@ class FakeSnapshotRepository:
         self.knowledge_payload: dict | None = None
         self.audit_events_payload: dict | None = None
         self.bugs_payload: dict | None = None
+        self.code_inspection_payload: dict | None = None
         self.model_gateway_payload: dict | None = None
         self.assistant_chat_payload: dict | None = None
         self.gitlab_review_payload: dict | None = None
@@ -559,6 +560,12 @@ class FakeSnapshotRepository:
         return {
             "audit_events": [dict(item) for item in audit_payload.get("audit_events", [])],
             "bugs": [dict(item) for item in bugs_payload.get("bugs", {}).values()],
+            "code_inspection_reports": [
+                dict(item)
+                for item in (self.code_inspection_payload or {})
+                .get("code_inspection_reports", {})
+                .values()
+            ],
             "code_review_reports": [
                 dict(item)
                 for item in review_payload.get("code_review_reports", {}).values()

@@ -166,6 +166,9 @@ describe('Dashboard page', () => {
     expect(screen.queryByText(/真实数据窗口/)).not.toBeInTheDocument();
     expect(screen.queryByText(/实时刷新/)).not.toBeInTheDocument();
     expect(screen.queryByText(/57ms/)).not.toBeInTheDocument();
+    const dashboardMetrics = screen.getByRole('list', { name: '团队看板指标' });
+    expect(dashboardMetrics).toHaveClass('dashboard-stat-grid');
+    expect(dashboardMetrics.querySelectorAll('.dashboard-stat-card')).toHaveLength(13);
     expect(screen.getByText('需求总数')).toBeInTheDocument();
     expect(screen.getByText('5')).toBeInTheDocument();
     expect(screen.getByText('首页看板任务')).toBeInTheDocument();
@@ -336,18 +339,16 @@ describe('Dashboard page', () => {
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/products?active_only=true&page_size=100'),
     );
-    fireEvent.change(await screen.findByLabelText('产品筛选'), {
-      target: { value: 'product_api' },
-    });
+    fireEvent.mouseDown(await screen.findByLabelText('产品筛选'));
+    fireEvent.click(await screen.findByText('研发平台'));
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
         '/api/dashboard/it-team?product_id=product_api',
       ),
     );
-    fireEvent.change(screen.getByLabelText('时间范围'), {
-      target: { value: '7d' },
-    });
+    fireEvent.mouseDown(screen.getByLabelText('时间范围'));
+    fireEvent.click(await screen.findByText('近 7 天'));
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
         '/api/dashboard/it-team?product_id=product_api&time_range=7d',

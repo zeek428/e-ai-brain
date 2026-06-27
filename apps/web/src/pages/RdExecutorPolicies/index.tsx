@@ -3,6 +3,7 @@ import { Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Tag
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import type { ManagementListQuery } from '../../components/ManagementListPage';
 import type { ProductGitRepositoryRecord, ProductRecord } from '../../data/management';
 import {
   createRdTaskExecutorPolicy,
@@ -10,10 +11,11 @@ import {
   fetchAiExecutorRunners,
   fetchManagementProducts,
   fetchProductGitRepositoryRecords,
-  fetchRdTaskExecutorPolicies,
+  fetchRdTaskExecutorPolicyList,
   updateRdTaskExecutorPolicy,
   type AiExecutorRunnerRecord,
   type RdTaskExecutorPolicyRecord,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 import { formatDisplayDateTime } from '../../utils/dateTime';
 import { formatMutationError } from '../../utils/managementCrud';
@@ -96,42 +98,116 @@ function parseJsonObject(value: string | undefined, field: string) {
   }
 }
 
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildPolicyListQuery(query: ManagementListQuery) {
+  return {
+    executorType: normalizeFilterText(query.filters.executor_type),
+    name: normalizeFilterText(query.filters.name),
+    page: query.page,
+    pageSize: query.pageSize,
+    productName: normalizeFilterText(query.filters.product_name),
+    sortField: query.sortField,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(query.filters.status),
+    taskType: normalizeFilterText(query.filters.task_type),
+  };
+}
+
 export default function RdExecutorPoliciesPage() {
   const [form] = Form.useForm<PolicyFormValues>();
   const [editingPolicy, setEditingPolicy] = useState<RdTaskExecutorPolicyRecord | undefined>();
-  const [loading, setLoading] = useState(false);
+  const [referenceLoading, setReferenceLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [policies, setPolicies] = useState<RdTaskExecutorPolicyRecord[]>([]);
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [repositories, setRepositories] = useState<ProductGitRepositoryRecord[]>([]);
   const [runners, setRunners] = useState<AiExecutorRunnerRecord[]>([]);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'priority',
+    sortOrder: 'ascend',
+  });
+  const [listState, setListState] = useState<{
+    page: number;
+    pageSize: number;
+    performance?: RemoteListPerformance;
+    rows: RdTaskExecutorPolicyRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
   const selectedExecutorType = Form.useWatch('executor_type', form);
 
-  const reload = useCallback(async () => {
-    await Promise.resolve();
-    setLoading(true);
+  const loadReferences = useCallback(async () => {
+    setReferenceLoading(true);
     try {
-      const [nextPolicies, nextProducts, nextRunners] = await Promise.all([
-        fetchRdTaskExecutorPolicies(),
+      const [nextProducts, nextRunners] = await Promise.all([
         fetchManagementProducts(),
         fetchAiExecutorRunners({ status: 'active' }),
       ]);
-      setPolicies(nextPolicies);
       setProducts(nextProducts);
       setRunners(nextRunners.filter((runner) => runner.id !== 'ai_executor_runner_system_default'));
     } catch (error) {
-      message.error(mutationError(error, '加载研发执行器策略失败'));
+      message.error(mutationError(error, '加载研发执行器策略配置资源失败'));
     } finally {
-      setLoading(false);
+      setReferenceLoading(false);
     }
   }, []);
 
+  const loadPolicies = useCallback(async (query: ManagementListQuery) => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchRdTaskExecutorPolicyList(buildPolicyListQuery(query));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        performance: result.performance,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (error) {
+      setListState((current) => ({ ...current, rows: [], status: 'error' }));
+      message.error(mutationError(error, '加载研发执行器策略失败'));
+    }
+  }, []);
+
+  const reload = useCallback(async () => {
+    await Promise.all([loadPolicies(listQuery), loadReferences()]);
+  }, [listQuery, loadPolicies, loadReferences]);
+
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void reload();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [reload]);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        void loadReferences();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadReferences]);
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        void loadPolicies(listQuery);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [listQuery, loadPolicies]);
 
   const productOptions = useMemo(
     () => [
@@ -240,7 +316,7 @@ export default function RdExecutorPoliciesPage() {
         message.success('研发执行器策略已创建');
       }
       setModalOpen(false);
-      await reload();
+      await loadPolicies(listQuery);
     } catch (error) {
       message.error(mutationError(error, '保存研发执行器策略失败'));
     }
@@ -250,7 +326,7 @@ export default function RdExecutorPoliciesPage() {
     try {
       await deleteRdTaskExecutorPolicy(policy.id);
       message.success('研发执行器策略已删除');
-      await reload();
+      await loadPolicies(listQuery);
     } catch (error) {
       message.error(mutationError(error, '删除研发执行器策略失败'));
     }
@@ -343,7 +419,7 @@ export default function RdExecutorPoliciesPage() {
       <ManagementListPage<RdTaskExecutorPolicyRow>
         breadcrumbGroup="需求交付"
         columns={columns}
-        dataSource={policies as RdTaskExecutorPolicyRow[]}
+        dataSource={listState.rows as RdTaskExecutorPolicyRow[]}
         viewStorageKey="delivery.rd_executor_policies"
         filters={[
           { label: '策略名称', name: 'name', type: 'text' },
@@ -352,10 +428,17 @@ export default function RdExecutorPoliciesPage() {
           { label: '产品', name: 'product_name', type: 'text' },
           { label: '状态', name: 'status', options: STATUS_OPTIONS, type: 'select' },
         ]}
-        loading={loading}
+        loading={referenceLoading || listState.status === 'loading'}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="新增策略"
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          performance: listState.performance,
+          total: listState.total,
+        }}
         rowKey="id"
         tableLayout="fixed"
         tableScroll={{ x: 1810 }}
