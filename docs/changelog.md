@@ -590,6 +590,7 @@
 - 前端管理列表统一表格规范增强：`ManagementListPage` 默认固定布局、按显示列宽自动计算横向滚动宽度、默认长文本省略和操作列右固定；角色页入口/权限以数量摘要展示并在详情查看；DevOps 采集运行/待归属子表补齐固定列宽、横向滚动和操作列固定。
 
 ### Changed
+- AI 助手草案任务台列表收口到 PostgreSQL read model：`GET /api/assistant/action-drafts` 在持久化运行态优先由数据库完成当前用户、动作、状态、时间、关键词、排序和分页，并返回状态/采纳/处理/修改率汇总和列表性能观测；实时预检 `validation_status` 筛选保留服务层兼容路径。
 - 受控运维接口权限边界收紧：定时作业列表、运行记录和手动运行按 `system.scheduled_jobs.run` 或 `system.scheduled_jobs.manage` 校验并按产品 scope 过滤，运行健康概览仅限管理权限；插件定义、连接、动作、调用日志和 AI 执行器管理列表统一要求 `system.plugins.manage`。
 - 后端定时作业模块继续收口：执行期节点追踪、插件写入预览、代码巡检节点摘要和 AI 处理判断迁移到独立 `scheduled_job_execution_engine` service，`scheduled_jobs.py` 保留运行事务、插件/模型/结果动作编排、审计和持久化职责。
 - 后端助手模块继续收口：插件连接、动作、定时作业和代码巡检配置草案构造迁移到独立 `assistant_draft_builder` service，`assistant_tools.py` 保留意图识别、读模型工具和结果汇总职责。

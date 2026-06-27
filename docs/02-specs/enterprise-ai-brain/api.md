@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.404 |
+| 功能版本 | v1.1.405 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.405 | 2026-06-27 | `GET /api/assistant/action-drafts` PostgreSQL 运行态改为优先使用草案任务台 read model 完成当前用户、动作、状态、时间、关键词、排序和分页查询，并返回状态/采纳/处理/修改率汇总与性能观测 | Codex |
 | v1.1.404 | 2026-06-27 | AI 助手引用对可解析交付主体新增“全链路”入口；`/api/lifecycle/full-chain` 接受 `iteration_version` 作为 `product_version` 兼容别名并沿用产品 scope 校验 | Codex |
 | v1.1.403 | 2026-06-27 | 需求全链路响应补齐 `branch_configs` 与 `audit_events`，阶段摘要和时间线覆盖版本级代码分支配置、主体审计事件 | Codex |
 | v1.1.402 | 2026-06-27 | `GET /api/delivery/rd-task-executor-policies` 补齐服务端分页、筛选、排序和 `query/performance` 观测；需求全链路接口统一校验 `requirement.read/task.read/workspace.read` 与产品 scope | Codex |
@@ -660,7 +661,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 使用的候选；覆盖引用类业务对象、可读知识空间/知识目录/知识文档/知识片段、管理员或专项权限可见的定时作业/运行/插件动作/插件连接/AI角色/Skill，以及 `assistant_action` 动作入口；运营类定时作业和运行记录必须再按当前用户产品 scope 过滤，未指定 type 的默认候选按类型均衡合并。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
 | Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持研发任务、AI Skill、AI角色、定时作业、插件连接、动作配置和分析草案。 |
-| Assistant | GET | `/api/assistant/action-drafts` | 查询当前登录用户草案任务台列表，支持 `action/status/validation_status/keyword/created_from/created_to/page/page_size/sort_by/sort_order`，返回草案行、分页元数据和状态/采纳/处理/修改率汇总。 |
+| Assistant | GET | `/api/assistant/action-drafts` | 查询当前登录用户草案任务台列表，支持 `action/status/validation_status/keyword/created_from/created_to/page/page_size/sort_by/sort_order`，返回草案行、分页元数据、`query/performance` 和状态/采纳/处理/修改率汇总；PostgreSQL 运行态优先由 read model 在数据库侧完成当前用户、动作、状态、时间、关键词、排序和分页，`validation_status` 因依赖实时预检可保留服务层兼容过滤。 |
 | Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情；`preview.validation.issues[]` 可返回 `repair_action={action,label,field,resource_type,resource_id}`，用于前端展示修正字段、生成前置草案或打开连接测试等操作。 |
 | Assistant | PATCH | `/api/assistant/action-drafts/{draft_id}` | 在 pending 草案确认前更新草案 payload，并写入 `modified_fields/user_modified/modified_at/modified_by` 元数据和 `assistant_action_draft.updated` 审计；表单页从助手草案进入后保存必须走该接口再调用 confirm，不得直接绕过服务端草案生命周期创建领域对象。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/view` | 记录当前用户查看草案详情或深链加载草案，`surface=detail_modal` 写入 `detail_viewed_at`，`surface=deeplink` 写入 `deeplink_viewed_at`，并统一写入 `viewed_at/last_viewed_at/view_count/viewed_by/last_view_surface` 和 `assistant_action_draft.viewed` 审计，用于区分“查看详情”和“深链打开”。 |

@@ -417,7 +417,7 @@
 **测试步骤**:
 | 步骤 | 操作 | 预期结果 |
 |------|------|----------|
-| 1 | 进入 `/assistant/drafts` 草案任务台 | 页面调用 `GET /api/assistant/action-drafts`，按 `updated_at desc` 展示当前用户草案，不展示其它用户草案。 |
+| 1 | 进入 `/assistant/drafts` 草案任务台 | 页面调用 `GET /api/assistant/action-drafts`，PostgreSQL 运行态通过草案任务台 read model 按 `updated_at desc` 分页展示当前用户草案，不展示其它用户草案。 |
 | 2 | 查看顶部汇总 | 展示待确认草案、失败草案、已采纳草案、采纳率、处理率和用户修改率。 |
 | 3 | 按草案类型、状态、校验状态、关键词和创建时间筛选 | API 接收相同筛选参数并返回分页结果，列表不会前端拼装跨页数据。 |
 | 4 | 点击某条草案“详情” | 页面调用 `POST /api/assistant/action-drafts/{draft_id}/view` 且 `surface=detail_modal`，弹窗展示 payload、校验问题、状态、风险和来源消息。 |
@@ -425,7 +425,7 @@
 | 6 | 对 pending 草案点击确认或取消 | 页面调用对应 confirm/cancel API，完成后刷新任务台；终态草案不展示确认或取消入口。 |
 
 **预期结果**:
-1. 草案任务台是用户级 read model，不从聊天历史或前端本地缓存拼装主列表。
+1. 草案任务台是用户级 read model，PostgreSQL 运行态不得读取当前用户全量草案后再分页，不从聊天历史或前端本地缓存拼装主列表。
 2. 查看详情、确认、取消仍复用草案生命周期接口并写入审计。
 3. 列表 summary 与行字段能支撑草案采纳率、处理率、用户修改率和来源链路追踪。
 

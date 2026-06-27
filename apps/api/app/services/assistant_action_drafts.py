@@ -9,11 +9,13 @@ from fastapi import HTTPException
 
 from app.api.deps import api_error
 from app.core.listing import (
+    add_list_observability,
     ensure_list_enum,
     list_text_matches,
     paginated_list_payload,
     sort_list_items,
 )
+from app.core.trace import envelope
 from app.services.plugins import (
     create_plugin_action_response,
     create_plugin_connection_response,
@@ -258,6 +260,66 @@ def list_assistant_action_drafts_response(
     if sort_by is not None:
         ensure_list_enum(sort_by, ASSISTANT_ACTION_DRAFT_SORT_FIELDS, "sort_by")
 
+    resolved_sort_by = sort_by or "updated_at"
+    repository = assistant_action_repository(current_store)
+    list_workbench_page = getattr(
+        repository,
+        "list_assistant_action_draft_workbench_page",
+        None,
+    )
+    if callable(list_workbench_page) and validation_status is None:
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        page_payload = list_workbench_page(
+            action=action,
+            created_from=created_from,
+            created_to=created_to,
+            keyword=keyword,
+            limit=resolved_page_size,
+            offset=(resolved_page - 1) * resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            status=status,
+            user_id=user["id"],
+        )
+        items = [
+            _assistant_action_draft_workbench_item(
+                public_assistant_action_draft(
+                    draft,
+                    current_store=current_store,
+                    user=user,
+                )
+            )
+            for draft in (page_payload.get("items") or [])
+            if isinstance(draft, dict)
+        ]
+        data = add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": int(page_payload.get("total") or 0),
+            },
+            filters={
+                "action": action,
+                "created_from": created_from,
+                "created_to": created_to,
+                "keyword": keyword,
+                "status": status,
+                "validation_status": validation_status,
+            },
+            list_name="assistant_action_drafts",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+        data["summary"] = page_payload.get("summary") or _assistant_action_draft_workbench_summary(
+            items
+        )
+        return envelope(data, trace_id)
+
     from_at = _parse_draft_datetime(created_from)
     to_at = _parse_draft_datetime(created_to)
     visible_drafts = [
@@ -327,7 +389,7 @@ def list_assistant_action_drafts_response(
         observed=True,
         page=page,
         page_size=page_size,
-        sort_by=sort_by or "updated_at",
+        sort_by=resolved_sort_by,
         sort_order=sort_order,
         started_at=started_at,
         trace_id=trace_id,

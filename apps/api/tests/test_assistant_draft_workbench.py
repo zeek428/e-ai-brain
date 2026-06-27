@@ -1,6 +1,9 @@
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.assistant_action_drafts import list_assistant_action_drafts_response
 
 client = TestClient(app)
 
@@ -43,6 +46,111 @@ def _draft(
         "title": title,
         "updated_at": updated_at,
     }
+
+
+def _empty_draft_summary(total: int = 0) -> dict:
+    return {
+        "adoption_rate": 0.0,
+        "draft_total": total,
+        "resolution_rate": 0.0,
+        "status_counts": {
+            "cancelled": 0,
+            "confirmed": 0,
+            "expired": 0,
+            "failed": 0,
+            "pending": total,
+        },
+        "user_modified_count": 0,
+        "user_modified_rate": 0.0,
+        "validation_counts": {
+            "blocked": 0,
+            "passed": total,
+            "unknown": 0,
+            "warning": 0,
+        },
+    }
+
+
+class FakeAssistantDraftPagingRepository:
+    def __init__(self) -> None:
+        self.page_calls: list[dict] = []
+
+    def list_assistant_action_draft_workbench_page(self, **kwargs) -> dict:
+        self.page_calls.append(kwargs)
+        return {
+            "items": [
+                _draft(
+                    "assistant_action_draft_repo_page",
+                    action="create_analysis_draft",
+                    payload={"analysis_type": "diagnosis", "title": "仓储分页草案"},
+                    title="仓储分页草案",
+                )
+            ],
+            "summary": _empty_draft_summary(total=7),
+            "total": 7,
+        }
+
+    def list_assistant_action_drafts(self, **_kwargs) -> list[dict]:
+        raise AssertionError("草案任务台列表应使用分页 read model，不能退回全量草案读取")
+
+
+def test_assistant_action_draft_workbench_uses_repository_pagination_when_available():
+    repository = FakeAssistantDraftPagingRepository()
+    current_store = SimpleNamespace(
+        ai_agents={},
+        ai_skills={},
+        assistant_action_drafts={},
+        assistant_action_runs={},
+        audit_events=[],
+        model_gateway_configs={},
+        plugin_actions={},
+        plugin_connections={},
+        product_versions={},
+        products={},
+        repository=repository,
+        scheduled_job_runs={},
+        scheduled_jobs={},
+        new_id=lambda prefix: f"{prefix}_001",
+    )
+
+    response = list_assistant_action_drafts_response(
+        action="create_analysis_draft",
+        created_from="2026-06-01T00:00:00+00:00",
+        created_to="2026-06-30T23:59:59+00:00",
+        current_store=current_store,
+        keyword="仓储",
+        page=2,
+        page_size=1,
+        sort_by="updated_at",
+        sort_order="desc",
+        started_at=None,
+        status="pending",
+        trace_id="trace_draft_repo_page",
+        user={"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]},
+        validation_status=None,
+    )
+
+    assert response["trace_id"] == "trace_draft_repo_page"
+    payload = response["data"]
+    assert payload["total"] == 7
+    assert payload["page"] == 2
+    assert payload["page_size"] == 1
+    assert payload["summary"]["draft_total"] == 7
+    assert payload["items"][0]["id"] == "assistant_action_draft_repo_page"
+    assert repository.page_calls == [
+        {
+            "action": "create_analysis_draft",
+            "created_from": "2026-06-01T00:00:00+00:00",
+            "created_to": "2026-06-30T23:59:59+00:00",
+            "keyword": "仓储",
+            "limit": 1,
+            "offset": 1,
+            "sort_by": "updated_at",
+            "sort_order": "desc",
+            "status": "pending",
+            "user_id": "user_admin",
+        }
+    ]
 
 
 def test_assistant_action_draft_workbench_lists_current_user_drafts_with_summary():

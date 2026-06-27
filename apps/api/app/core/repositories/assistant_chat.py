@@ -5,6 +5,33 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Any
 
+ASSISTANT_ACTION_DRAFT_SORT_EXPRESSIONS = {
+    "action": "d.action",
+    "created_at": "d.created_at",
+    "expires_at": "d.expires_at",
+    "id": "d.id",
+    "modified_field_count": (
+        "jsonb_array_length(CASE WHEN jsonb_typeof(d.metadata_json -> 'modified_fields') = 'array' "
+        "THEN d.metadata_json -> 'modified_fields' ELSE '[]'::jsonb END)"
+    ),
+    "result_status": "r.status",
+    "risk_level": "d.risk_level",
+    "status": "d.status",
+    "title": "d.title",
+    "updated_at": "d.updated_at",
+    "validation_issue_count": (
+        "jsonb_array_length(CASE WHEN jsonb_typeof(d.metadata_json #> '{preview,validation,issues}') = 'array' "
+        "THEN d.metadata_json #> '{preview,validation,issues}' ELSE '[]'::jsonb END)"
+    ),
+    "validation_status": (
+        "COALESCE(NULLIF(d.metadata_json #>> '{preview,validation,status}', ''), 'unknown')"
+    ),
+    "view_count": (
+        "CASE WHEN COALESCE(d.metadata_json ->> 'view_count', '') ~ '^[0-9]+$' "
+        "THEN (d.metadata_json ->> 'view_count')::int ELSE 0 END"
+    ),
+}
+
 
 class AssistantChatReadRepository:
     def __init__(
@@ -219,6 +246,95 @@ class AssistantChatReadRepository:
                     (user_id,),
                 )
                 return [self._assistant_action_draft_from_row(row) for row in cursor.fetchall()]
+
+    def list_assistant_action_draft_workbench_page(
+        self,
+        *,
+        action: str | None,
+        created_from: str | None,
+        created_to: str | None,
+        keyword: str | None,
+        limit: int,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+        user_id: str,
+    ) -> dict[str, Any]:
+        where, params = self._assistant_action_draft_workbench_where(
+            action=action,
+            created_from=created_from,
+            created_to=created_to,
+            keyword=keyword,
+            status=status,
+            user_id=user_id,
+        )
+        sort_expression = ASSISTANT_ACTION_DRAFT_SORT_EXPRESSIONS.get(
+            sort_by,
+            ASSISTANT_ACTION_DRAFT_SORT_EXPRESSIONS["updated_at"],
+        )
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT d.id, d.user_id, d.source_message_id, d.client_draft_id,
+                           d.title, d.action, d.risk_level, d.status, d.payload,
+                           d.metadata_json, d.result_run_id, d.cancel_reason,
+                           d.cancelled_by, d.cancelled_at, d.confirmed_by,
+                           d.confirmed_at, d.created_at, d.updated_at, d.expires_at
+                    FROM assistant_action_drafts d
+                    LEFT JOIN assistant_action_runs r ON r.id = d.result_run_id
+                    {where}
+                    ORDER BY {sort_expression} {direction} NULLS LAST, d.id ASC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*params, limit, offset],
+                )
+                items = [self._assistant_action_draft_from_row(row) for row in cursor.fetchall()]
+                cursor.execute(
+                    f"""
+                    SELECT
+                      COUNT(*)::int AS total,
+                      COUNT(*) FILTER (WHERE d.status = 'cancelled')::int AS cancelled_count,
+                      COUNT(*) FILTER (WHERE d.status = 'confirmed')::int AS confirmed_count,
+                      COUNT(*) FILTER (WHERE d.status = 'expired')::int AS expired_count,
+                      COUNT(*) FILTER (WHERE d.status = 'failed')::int AS failed_count,
+                      COUNT(*) FILTER (WHERE d.status = 'pending')::int AS pending_count,
+                      COUNT(*) FILTER (
+                        WHERE COALESCE(d.metadata_json ->> 'user_modified', 'false') = 'true'
+                           OR jsonb_array_length(
+                                CASE
+                                  WHEN jsonb_typeof(d.metadata_json -> 'modified_fields') = 'array'
+                                  THEN d.metadata_json -> 'modified_fields'
+                                  ELSE '[]'::jsonb
+                                END
+                              ) > 0
+                      )::int AS modified_count,
+                      COUNT(*) FILTER (
+                        WHERE COALESCE(NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''), 'unknown') = 'blocked'
+                      )::int AS validation_blocked_count,
+                      COUNT(*) FILTER (
+                        WHERE COALESCE(NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''), 'unknown') = 'passed'
+                      )::int AS validation_passed_count,
+                      COUNT(*) FILTER (
+                        WHERE COALESCE(NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''), 'unknown') = 'unknown'
+                      )::int AS validation_unknown_count,
+                      COUNT(*) FILTER (
+                        WHERE COALESCE(NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''), 'unknown') = 'warning'
+                      )::int AS validation_warning_count
+                    FROM assistant_action_drafts d
+                    LEFT JOIN assistant_action_runs r ON r.id = d.result_run_id
+                    {where}
+                    """,
+                    params,
+                )
+                summary_row = cursor.fetchone()
+        return {
+            "items": items,
+            "summary": self._assistant_action_draft_workbench_summary_from_row(summary_row),
+            "total": int(summary_row[0] if summary_row else 0),
+        }
 
     def get_assistant_action_draft(self, *, draft_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
@@ -1013,6 +1129,103 @@ class AssistantChatReadRepository:
             if draft[optional_key] is None:
                 draft.pop(optional_key)
         return draft
+
+    def _assistant_action_draft_workbench_where(
+        self,
+        *,
+        action: str | None,
+        created_from: str | None,
+        created_to: str | None,
+        keyword: str | None,
+        status: str | None,
+        user_id: str,
+    ) -> tuple[str, list[Any]]:
+        clauses = ["d.user_id = %s"]
+        params: list[Any] = [user_id]
+        if action is not None:
+            clauses.append("d.action = %s")
+            params.append(action)
+        if status is not None:
+            clauses.append("d.status = %s")
+            params.append(status)
+        if created_from is not None:
+            clauses.append("d.created_at >= %s::timestamptz")
+            params.append(created_from)
+        if created_to is not None:
+            clauses.append("d.created_at <= %s::timestamptz")
+            params.append(created_to)
+        normalized_keyword = str(keyword or "").strip().lower()
+        if normalized_keyword:
+            probe = f"%{normalized_keyword}%"
+            clauses.append(
+                """
+                (
+                  lower(d.action) LIKE %s
+                  OR lower(d.id) LIKE %s
+                  OR lower(COALESCE(r.result_id, '')) LIKE %s
+                  OR lower(COALESCE(r.result_type, '')) LIKE %s
+                  OR lower(COALESCE(d.source_message_id, '')) LIKE %s
+                  OR lower(d.status) LIKE %s
+                  OR lower(d.title) LIKE %s
+                  OR lower(COALESCE(NULLIF(d.metadata_json #>> '{preview,validation,status}', ''), 'unknown')) LIKE %s
+                )
+                """
+            )
+            params.extend([probe] * 8)
+        return f"WHERE {' AND '.join(clauses)}", params
+
+    def _assistant_action_draft_workbench_summary_from_row(self, row) -> dict[str, Any]:
+        if row is None:
+            total = 0
+            status_counts = {
+                "cancelled": 0,
+                "confirmed": 0,
+                "expired": 0,
+                "failed": 0,
+                "pending": 0,
+            }
+            modified_count = 0
+            validation_counts = {
+                "blocked": 0,
+                "passed": 0,
+                "unknown": 0,
+                "warning": 0,
+            }
+        else:
+            total = int(row[0] or 0)
+            status_counts = {
+                "cancelled": int(row[1] or 0),
+                "confirmed": int(row[2] or 0),
+                "expired": int(row[3] or 0),
+                "failed": int(row[4] or 0),
+                "pending": int(row[5] or 0),
+            }
+            modified_count = int(row[6] or 0)
+            validation_counts = {
+                "blocked": int(row[7] or 0),
+                "passed": int(row[8] or 0),
+                "unknown": int(row[9] or 0),
+                "warning": int(row[10] or 0),
+            }
+        terminal_count = sum(
+            status_counts[status] for status in ("cancelled", "confirmed", "expired", "failed")
+        )
+        confirmed_count = status_counts["confirmed"]
+        return {
+            "adoption_rate": self._ratio(confirmed_count, total),
+            "draft_total": total,
+            "resolution_rate": self._ratio(terminal_count, total),
+            "status_counts": status_counts,
+            "user_modified_count": modified_count,
+            "user_modified_rate": self._ratio(modified_count, total),
+            "validation_counts": validation_counts,
+        }
+
+    @staticmethod
+    def _ratio(numerator: int, denominator: int) -> float:
+        if denominator <= 0:
+            return 0.0
+        return round(numerator / denominator, 4)
 
     def _assistant_action_run_from_row(self, row) -> dict[str, Any]:
         run = {

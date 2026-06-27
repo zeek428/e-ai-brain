@@ -2662,6 +2662,15 @@ def test_postgres_assistant_chat_read_models_delegate_to_domain_repository(monke
     )
     monkeypatch.setattr(
         AssistantChatReadRepository,
+        "list_assistant_action_draft_workbench_page",
+        record_call(
+            "list_assistant_action_draft_workbench_page",
+            {"source": "list_assistant_action_draft_workbench_page"},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        AssistantChatReadRepository,
         "get_assistant_action_draft",
         record_call("get_assistant_action_draft", {"source": "get_assistant_action_draft"}),
         raising=False,
@@ -2690,6 +2699,18 @@ def test_postgres_assistant_chat_read_models_delegate_to_domain_repository(monke
     assert repository.list_assistant_action_drafts(user_id="user_admin")[0]["source"] == (
         "list_assistant_action_drafts"
     )
+    assert repository.list_assistant_action_draft_workbench_page(
+        action="create_analysis_draft",
+        created_from=None,
+        created_to=None,
+        keyword="草案",
+        limit=10,
+        offset=0,
+        sort_by="updated_at",
+        sort_order="desc",
+        status="pending",
+        user_id="user_admin",
+    ) == {"source": "list_assistant_action_draft_workbench_page"}
     assert repository.get_assistant_action_draft(draft_id="assistant_action_draft_001") == {
         "source": "get_assistant_action_draft"
     }
@@ -2704,6 +2725,21 @@ def test_postgres_assistant_chat_read_models_delegate_to_domain_repository(monke
             {"conversation_id": "conversation_001", "user_id": "user_admin"},
         ),
         ("list_assistant_action_drafts", {"user_id": "user_admin"}),
+        (
+            "list_assistant_action_draft_workbench_page",
+            {
+                "action": "create_analysis_draft",
+                "created_from": None,
+                "created_to": None,
+                "keyword": "草案",
+                "limit": 10,
+                "offset": 0,
+                "sort_by": "updated_at",
+                "sort_order": "desc",
+                "status": "pending",
+                "user_id": "user_admin",
+            },
+        ),
         ("get_assistant_action_draft", {"draft_id": "assistant_action_draft_001"}),
     ]
 

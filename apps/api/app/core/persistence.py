@@ -1640,6 +1640,33 @@ class PostgresSnapshotRepository:
             user_id=user_id,
         )
 
+    def list_assistant_action_draft_workbench_page(
+        self,
+        *,
+        action: str | None,
+        created_from: str | None,
+        created_to: str | None,
+        keyword: str | None,
+        limit: int,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+        user_id: str,
+    ) -> dict[str, Any]:
+        return self._assistant_chat_read_repository.list_assistant_action_draft_workbench_page(
+            action=action,
+            created_from=created_from,
+            created_to=created_to,
+            keyword=keyword,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            status=status,
+            user_id=user_id,
+        )
+
     def get_assistant_action_draft(self, *, draft_id: str) -> dict[str, Any] | None:
         return self._assistant_chat_read_repository.get_assistant_action_draft(
             draft_id=draft_id,
