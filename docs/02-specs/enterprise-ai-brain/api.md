@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.408 |
+| 功能版本 | v1.1.409 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.409 | 2026-06-27 | `GET /api/system/ai-skills` 与 `GET /api/system/ai-agents` 补齐远程分页契约：带 `page/page_size` 时支持关键字、状态和专项筛选、白名单排序，并返回 `query/performance` 观测；AI 能力配置页默认请求服务端分页结果 | Codex |
 | v1.1.408 | 2026-06-27 | `GET /api/system/scheduled-job-runs` 补齐远程分页契约：支持 `page/page_size/sort_by/sort_order`、运行 ID、作业 ID、状态和产品 scope 过滤，定时作业页面运行记录页签默认请求服务端分页结果并展示可排序开始/完成时间 | Codex |
 | v1.1.407 | 2026-06-27 | 插件管理连接和动作页签已接入分页读模型：页面主表默认调用 `GET /api/system/plugin-connections` 与 `GET /api/system/plugin-actions` 的 `page/page_size/sort_by/sort_order` 查询，不再以旧全量返回做主表分页和排序 | Codex |
 | v1.1.406 | 2026-06-27 | AI 助手引用候选支持执行诊断来源类型：`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`plugin_invocation_log`、`ai_executor_task`、`ai_executor_runner`、`code_inspection_report`、`audit_event` 等可通过 `GET /api/assistant/reference-candidates?type=&query=` 解析为脱敏引用；助手深链 `/assistant?reference_type=&reference_id=&prompt=` 会带入问题和上下文，解析和最终引用注入均要求执行诊断读权限 | Codex |
@@ -743,11 +744,11 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Collectors | GET | `/api/collectors/runs` | 查询 DevOps/洞察采集运行记录。 |
 | Collectors | POST | `/api/collectors/runs` | 登记一次真实采集或导入运行。 |
 | Collectors | PATCH | `/api/collectors/runs/{run_id}` | 更新采集运行状态、导入数量、错误说明或摘要。 |
-| AI Capability | GET | `/api/system/ai-skills` | 查询 Skill 配置列表。 |
+| AI Capability | GET | `/api/system/ai-skills` | 查询 Skill 配置列表；带 `page/page_size` 时走 PostgreSQL read model，支持 `code`、`keyword`、`requires_human_review`、`risk_level`、`source_type`、`status` 筛选，`sort_by` 白名单为 `code/name/version/source_type/requires_human_review/risk_level/status/created_at/updated_at`，返回 `page/page_size/total/query/performance`；未带分页时保留旧全量返回供下拉和兼容调用使用。 |
 | AI Capability | POST | `/api/system/ai-skills` | 创建 Skill 配置。 |
 | AI Capability | POST | `/api/system/ai-skills/upload` | 上传 zip Skill 文件包，服务端校验后保存本地文件并创建 package 类型 Skill。 |
 | AI Capability | PATCH | `/api/system/ai-skills/{skill_id}` | 更新 Skill Prompt、Schema、工具策略或启停状态。 |
-| AI Capability | GET | `/api/system/ai-agents` | 查询 AI角色（Agent）配置列表；接口路径和 `agent_id` 字段保持兼容。 |
+| AI Capability | GET | `/api/system/ai-agents` | 查询 AI角色（Agent）配置列表；接口路径和 `agent_id` 字段保持兼容。带 `page/page_size` 时走 PostgreSQL read model，支持 `brain_app_id`、`keyword`、`model_gateway_config_id`、`status` 筛选，`sort_by` 白名单为 `code/name/brain_app_id/model_gateway_config_id/status/created_at/updated_at`，返回 `page/page_size/total/query/performance`；未带分页时保留旧全量返回供下拉和兼容调用使用。 |
 | AI Capability | POST | `/api/system/ai-agents` | 创建 AI角色（Agent）配置。 |
 | AI Capability | PATCH | `/api/system/ai-agents/{agent_id}` | 更新 AI角色（Agent）模型网关、默认 Skill、系统提示词、执行策略或启停状态。 |
 | Plugins | GET | `/api/system/plugin-marketplace` | 查询官方插件市场只读目录；返回 GitLab/GitHub/邮箱/AI 执行器标准插件的 `publisher/summary/recommended_scenarios/connection_defaults/connection_template_version/connection_schema/action_templates/installed/plugin_id/connection_count/action_count/template_version/latest_template_version/version_status/upgrade_available`，其中 `connection_defaults` 是可直接带入新增连接表单和 AI 助手连接草案的默认 payload，包含 `auth_type/auth_config/endpoint_url/environment/request_config/status/timeout_seconds/max_retries/name`；`version_status=latest/custom/upgrade_available` 用于前端展示模板状态，官方插件默认 `latest`；`connection_schema.sections[].fields[]` 声明官方插件连接可视化表单字段，包括 `key/label/path/type/required/options/supports_system_variables/description/managed_query_keys`，JSON 仅作为高级修改；MaxCompute 不再作为官方标准插件返回，历史官方 MaxCompute 插件会降级为普通 HTTP 插件，连接编辑只展示通用 Endpoint、认证、Params/Headers 和高级 JSON；GitLab 默认连接提供“GitLab 地址”字段，支持本地自建 GitLab 项目 URL 并自动同步 Endpoint 与项目路径；邮箱默认参数覆盖邮件网关/API endpoint、SMTP/IMAP/POP3 收发主机端口、默认发件人/收件人和 `poll_since` 时间窗口；AI 执行器默认参数覆盖 `model-gateway://default` endpoint、`executor_type=model_gateway`、`runner_id=ai_executor_runner_system_default`、`supported_executor_types=model_gateway/codex/claude/hermes/openclaw`、workspace、超时和结果回写地址，本地 Runner 场景可改选 codex/claude/hermes/openclaw；前端可据此引导新增连接或打开 GitHub/GitLab/邮箱/AI 执行器官方动作模板，并在响应前确保官方插件种子存在。 |

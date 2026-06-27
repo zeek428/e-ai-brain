@@ -1347,6 +1347,22 @@ export type RdTaskExecutorPolicyListQuery = RemoteListQuery & {
   taskType?: string;
 };
 
+export type AiSkillListQuery = RemoteListQuery & {
+  code?: string;
+  keyword?: string;
+  requiresHumanReview?: boolean;
+  riskLevel?: string;
+  sourceType?: string;
+  status?: string;
+};
+
+export type AiAgentListQuery = RemoteListQuery & {
+  brainAppId?: string;
+  keyword?: string;
+  modelGatewayConfigId?: string;
+  status?: string;
+};
+
 export type RemoteListResult<Row> = {
   page: number;
   pageSize: number;
@@ -6370,11 +6386,40 @@ export async function fetchPluginInvocationLogs(
   return response.items;
 }
 
-export async function fetchAiSkills(): Promise<AiSkillRecord[]> {
+export async function fetchAiSkills(): Promise<AiSkillRecord[]>;
+export async function fetchAiSkills(
+  query: AiSkillListQuery,
+): Promise<RemoteListResult<AiSkillRecord>>;
+export async function fetchAiSkills(
+  query?: AiSkillListQuery,
+): Promise<AiSkillRecord[] | RemoteListResult<AiSkillRecord>> {
   const token = requireAccessToken();
-  const response = await apiRequest<ListResponse<AiSkillRecord>>('/api/system/ai-skills', {
-    token,
-  });
+  const params = new URLSearchParams();
+  if (query) {
+    appendQueryParam(params, 'code', query.code);
+    appendQueryParam(params, 'keyword', query.keyword);
+    appendQueryParam(params, 'requires_human_review', query.requiresHumanReview);
+    appendQueryParam(params, 'risk_level', query.riskLevel);
+    appendQueryParam(params, 'source_type', query.sourceType);
+    appendQueryParam(params, 'status', query.status);
+    appendRemoteListParams(params, query);
+  }
+  const queryString = params.toString();
+  const response = await apiRequest<ListResponse<AiSkillRecord>>(
+    queryString ? `/api/system/ai-skills?${queryString}` : '/api/system/ai-skills',
+    {
+      token,
+    },
+  );
+  if (query) {
+    return {
+      page: response.page ?? query.page ?? 1,
+      pageSize: response.page_size ?? query.pageSize ?? 10,
+      performance: response.performance,
+      rows: response.items,
+      total: response.total,
+    };
+  }
   return response.items;
 }
 
@@ -6438,11 +6483,38 @@ export async function updateAiSkill(skillId: string, payload: Partial<AiSkillRec
   });
 }
 
-export async function fetchAiAgents(): Promise<AiAgentRecord[]> {
+export async function fetchAiAgents(): Promise<AiAgentRecord[]>;
+export async function fetchAiAgents(
+  query: AiAgentListQuery,
+): Promise<RemoteListResult<AiAgentRecord>>;
+export async function fetchAiAgents(
+  query?: AiAgentListQuery,
+): Promise<AiAgentRecord[] | RemoteListResult<AiAgentRecord>> {
   const token = requireAccessToken();
-  const response = await apiRequest<ListResponse<AiAgentRecord>>('/api/system/ai-agents', {
-    token,
-  });
+  const params = new URLSearchParams();
+  if (query) {
+    appendQueryParam(params, 'brain_app_id', query.brainAppId);
+    appendQueryParam(params, 'keyword', query.keyword);
+    appendQueryParam(params, 'model_gateway_config_id', query.modelGatewayConfigId);
+    appendQueryParam(params, 'status', query.status);
+    appendRemoteListParams(params, query);
+  }
+  const queryString = params.toString();
+  const response = await apiRequest<ListResponse<AiAgentRecord>>(
+    queryString ? `/api/system/ai-agents?${queryString}` : '/api/system/ai-agents',
+    {
+      token,
+    },
+  );
+  if (query) {
+    return {
+      page: response.page ?? query.page ?? 1,
+      pageSize: response.page_size ?? query.pageSize ?? 10,
+      performance: response.performance,
+      rows: response.items,
+      total: response.total,
+    };
+  }
   return response.items;
 }
 

@@ -9,6 +9,7 @@ import AiCapabilitiesPage from '../src/pages/AiCapabilities';
 function installCapabilitiesFetchMock() {
   const agentPatchBodies: unknown[] = [];
   const skillPatchBodies: unknown[] = [];
+  const requestedPaths: string[] = [];
   const jsonResponse = (body: unknown) =>
     new Response(JSON.stringify(body), {
       headers: { 'Content-Type': 'application/json' },
@@ -16,7 +17,14 @@ function installCapabilitiesFetchMock() {
     });
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-    if (input === '/api/system/ai-skills' && init?.method === 'GET') {
+    const requestPath = String(input);
+    requestedPaths.push(requestPath);
+    if (requestPath.startsWith('/api/system/ai-skills?') && init?.method === 'GET') {
+      const params = new URLSearchParams(requestPath.split('?')[1] ?? '');
+      expect(params.get('page')).toBe('1');
+      expect(params.get('page_size')).toBe('10');
+      expect(params.get('sort_by')).toBe('code');
+      expect(params.get('sort_order')).toBe('asc');
       return jsonResponse({
         data: {
           items: [
@@ -42,42 +50,64 @@ function installCapabilitiesFetchMock() {
             },
           ],
           total: 1,
+          page: 1,
+          page_size: 10,
+          performance: { duration_ms: 12, result_count: 1, total: 1 },
         },
       });
     }
-    if (input === '/api/system/ai-agents' && init?.method === 'GET') {
+    if (requestPath.startsWith('/api/system/ai-agents?') && init?.method === 'GET') {
+      const params = new URLSearchParams(requestPath.split('?')[1] ?? '');
+      expect(params.get('page')).toBe('1');
+      expect(params.get('page_size')).toBe('10');
+      expect(params.get('sort_by')).toBe('code');
+      expect(params.get('sort_order')).toBe('asc');
+      const agentItems = [
+        {
+          code: 'insight_agent',
+          default_skill_ids: ['skill_001'],
+          id: 'agent_001',
+          model_gateway_config_id: 'gateway_default',
+          name: '洞察 Agent',
+          status: 'active',
+          system_prompt: '分析用户反馈',
+        },
+        {
+          code: 'feedback_agent',
+          default_skill_ids: ['skill_001'],
+          id: 'agent_object_gateway',
+          model_gateway_config_id: {
+            default_chat_model: 'gpt-4.1-mini',
+            id: 'gateway_default',
+            is_default: true,
+            name: '默认模型网关',
+          },
+          name: '反馈 Agent',
+          status: 'active',
+          system_prompt: '分析反馈数据',
+        },
+      ];
+      const keyword = params.get('keyword')?.toLowerCase() ?? '';
+      const filteredAgentItems = keyword
+        ? agentItems.filter((item) =>
+            [item.code, item.name, item.status, item.system_prompt].join(' ').toLowerCase().includes(keyword),
+          )
+        : agentItems;
       return jsonResponse({
         data: {
-          items: [
-            {
-              code: 'insight_agent',
-              default_skill_ids: ['skill_001'],
-              id: 'agent_001',
-              model_gateway_config_id: 'gateway_default',
-              name: '洞察 Agent',
-              status: 'active',
-              system_prompt: '分析用户反馈',
-            },
-            {
-              code: 'feedback_agent',
-              default_skill_ids: ['skill_001'],
-              id: 'agent_object_gateway',
-              model_gateway_config_id: {
-                default_chat_model: 'gpt-4.1-mini',
-                id: 'gateway_default',
-                is_default: true,
-                name: '默认模型网关',
-              },
-              name: '反馈 Agent',
-              status: 'active',
-              system_prompt: '分析反馈数据',
-            },
-          ],
-          total: 2,
+          items: filteredAgentItems,
+          total: filteredAgentItems.length,
+          page: 1,
+          page_size: 10,
+          performance: {
+            duration_ms: 10,
+            result_count: filteredAgentItems.length,
+            total: filteredAgentItems.length,
+          },
         },
       });
     }
-    if (input === '/api/system/model-gateway-configs' && init?.method === 'GET') {
+    if (requestPath === '/api/system/model-gateway-configs' && init?.method === 'GET') {
       return jsonResponse({
         data: {
           items: [
@@ -101,11 +131,11 @@ function installCapabilitiesFetchMock() {
         },
       });
     }
-    if (input === '/api/system/ai-agents/agent_001' && init?.method === 'PATCH') {
+    if (requestPath === '/api/system/ai-agents/agent_001' && init?.method === 'PATCH') {
       agentPatchBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({ data: { id: 'agent_001', status: 'disabled' } });
     }
-    if (input === '/api/system/ai-skills/skill_001' && init?.method === 'PATCH') {
+    if (requestPath === '/api/system/ai-skills/skill_001' && init?.method === 'PATCH') {
       skillPatchBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({ data: { id: 'skill_001', status: 'disabled' } });
     }
@@ -113,7 +143,7 @@ function installCapabilitiesFetchMock() {
   });
   window.localStorage.setItem('ai_brain_access_token', 'token-admin');
   vi.stubGlobal('fetch', fetchMock);
-  return { agentPatchBodies, skillPatchBodies };
+  return { agentPatchBodies, requestedPaths, skillPatchBodies };
 }
 
 describe('AI capabilities page', () => {
@@ -164,12 +194,18 @@ describe('AI capabilities page', () => {
   });
 
   it('uses the unified management list filters and saved views for AI roles', async () => {
-    installCapabilitiesFetchMock();
+    const { requestedPaths } = installCapabilitiesFetchMock();
 
     render(<AiCapabilitiesPage />);
 
     expect(await screen.findByText('洞察 Agent')).toBeInTheDocument();
     expect(screen.getByText('反馈 Agent')).toBeInTheDocument();
+    expect(requestedPaths).toContain(
+      '/api/system/ai-agents?page=1&page_size=10&sort_by=code&sort_order=asc',
+    );
+    expect(requestedPaths).toContain(
+      '/api/system/ai-skills?page=1&page_size=10&sort_by=code&sort_order=asc',
+    );
 
     fireEvent.change(screen.getByLabelText('关键词'), { target: { value: 'feedback_agent' } });
     fireEvent.click(screen.getByRole('button', { name: '查询' }));

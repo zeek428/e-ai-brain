@@ -154,11 +154,32 @@ class ScheduledJobRunRequest(BaseModel):
 def list_ai_skills(
     request: Request,
     code: str | None = None,
+    keyword: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    requires_human_review: bool | None = None,
+    risk_level: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "asc",
+    source_type: str | None = None,
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     return envelope(
-        list_ai_skills_response(code=code, current_store=store(request), status=status),
+        list_ai_skills_response(
+            code=code,
+            current_store=store(request),
+            keyword=keyword,
+            page=page,
+            page_size=page_size,
+            requires_human_review=requires_human_review,
+            risk_level=risk_level,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            source_type=source_type,
+            started_at=perf_counter(),
+            status=status,
+        ),
         get_trace_id(request),
     )
 
@@ -225,6 +246,12 @@ def patch_ai_skill(
 def list_ai_agents(
     request: Request,
     brain_app_id: str | None = None,
+    keyword: str | None = None,
+    model_gateway_config_id: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "asc",
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
@@ -232,6 +259,13 @@ def list_ai_agents(
         list_ai_agents_response(
             brain_app_id=brain_app_id,
             current_store=store(request),
+            keyword=keyword,
+            model_gateway_config_id=model_gateway_config_id,
+            page=page,
+            page_size=page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            started_at=perf_counter(),
             status=status,
         ),
         get_trace_id(request),

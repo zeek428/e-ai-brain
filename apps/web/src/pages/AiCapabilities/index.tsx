@@ -1,9 +1,10 @@
 import { PageContainer, type ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Tabs, Tag, Switch, Upload, message } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import type { ManagementListQuery } from '../../components/ManagementListPage';
 import type { ModelGatewayConfigRecord } from '../../data/management';
 import {
   createAiAgent,
@@ -14,8 +15,11 @@ import {
   updateAiAgent,
   updateAiSkill,
   uploadAiSkillPackage,
+  type AiAgentListQuery,
   type AiAgentRecord,
+  type AiSkillListQuery,
   type AiSkillRecord,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 
 type SkillFormValues = {
@@ -59,6 +63,21 @@ type AiSkillRow = AiSkillRecord & {
   searchText: string;
 } & Record<string, unknown>;
 
+type RemotePageState = {
+  page: number;
+  pageSize: number;
+  performance?: RemoteListPerformance;
+  total: number;
+};
+
+const DEFAULT_LIST_QUERY: ManagementListQuery = {
+  filters: {},
+  page: 1,
+  pageSize: 10,
+  sortField: 'code',
+  sortOrder: 'ascend',
+};
+
 const SKILL_STATUS_OPTIONS = [
   { label: '启用', value: 'active' },
   { label: '草稿', value: 'draft' },
@@ -100,6 +119,61 @@ const stringValue = (value: unknown) => {
     return String(value);
   }
   return undefined;
+};
+
+const filterText = (filters: Record<string, unknown>, key: string) => stringValue(filters[key]);
+
+const agentSortField = (field?: string) => {
+  if (field === 'name' || field === 'status') {
+    return field;
+  }
+  if (field === 'modelGatewayText') {
+    return 'model_gateway_config_id';
+  }
+  return 'code';
+};
+
+const skillSortField = (field?: string) => {
+  if (
+    field === 'name' ||
+    field === 'version' ||
+    field === 'source_type' ||
+    field === 'requires_human_review' ||
+    field === 'status'
+  ) {
+    return field;
+  }
+  return 'code';
+};
+
+const agentListQuery = (query: ManagementListQuery): AiAgentListQuery => {
+  const keyword = [
+    filterText(query.filters, 'searchText'),
+    filterText(query.filters, 'modelGatewayText'),
+  ].filter(Boolean).join(' ');
+  return {
+    keyword: keyword || undefined,
+    page: query.page,
+    pageSize: query.pageSize,
+    sortField: agentSortField(query.sortField),
+    sortOrder: query.sortOrder ?? 'ascend',
+    status: filterText(query.filters, 'status'),
+  };
+};
+
+const skillListQuery = (query: ManagementListQuery): AiSkillListQuery => {
+  const reviewValue = filterText(query.filters, 'reviewValue');
+  return {
+    keyword: filterText(query.filters, 'searchText'),
+    page: query.page,
+    pageSize: query.pageSize,
+    requiresHumanReview:
+      reviewValue === 'required' ? true : reviewValue === 'optional' ? false : undefined,
+    sortField: skillSortField(query.sortField),
+    sortOrder: query.sortOrder ?? 'ascend',
+    sourceType: filterText(query.filters, 'source_type'),
+    status: filterText(query.filters, 'status'),
+  };
 };
 
 const modelGatewayIdFromReference = (value: unknown): string | undefined => {
@@ -183,6 +257,18 @@ export default function AiCapabilitiesPage() {
   const [agentForm] = Form.useForm<AgentFormValues>();
   const [skills, setSkills] = useState<AiSkillRecord[]>([]);
   const [agents, setAgents] = useState<AiAgentRecord[]>([]);
+  const skillQueryRef = useRef<ManagementListQuery>(DEFAULT_LIST_QUERY);
+  const agentQueryRef = useRef<ManagementListQuery>(DEFAULT_LIST_QUERY);
+  const [skillPageState, setSkillPageState] = useState<RemotePageState>({
+    page: DEFAULT_LIST_QUERY.page,
+    pageSize: DEFAULT_LIST_QUERY.pageSize,
+    total: 0,
+  });
+  const [agentPageState, setAgentPageState] = useState<RemotePageState>({
+    page: DEFAULT_LIST_QUERY.page,
+    pageSize: DEFAULT_LIST_QUERY.pageSize,
+    total: 0,
+  });
   const [loading, setLoading] = useState(false);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [skillPackageModalOpen, setSkillPackageModalOpen] = useState(false);
@@ -192,16 +278,66 @@ export default function AiCapabilitiesPage() {
   const [editingAgent, setEditingAgent] = useState<AiAgentRecord>();
   const [modelGatewayConfigs, setModelGatewayConfigs] = useState<ModelGatewayConfigRecord[]>([]);
 
+  const loadSkills = useCallback(async (query: ManagementListQuery = skillQueryRef.current) => {
+    skillQueryRef.current = query;
+    setLoading(true);
+    try {
+      const result = await fetchAiSkills(skillListQuery(query));
+      setSkills(result.rows);
+      setSkillPageState({
+        page: result.page,
+        pageSize: result.pageSize,
+        performance: result.performance,
+        total: result.total,
+      });
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Skill 列表加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadAgents = useCallback(async (query: ManagementListQuery = agentQueryRef.current) => {
+    agentQueryRef.current = query;
+    setLoading(true);
+    try {
+      const result = await fetchAiAgents(agentListQuery(query));
+      setAgents(result.rows);
+      setAgentPageState({
+        page: result.page,
+        pageSize: result.pageSize,
+        performance: result.performance,
+        total: result.total,
+      });
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'AI角色列表加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const reload = useCallback(async () => {
     setLoading(true);
     try {
       const [nextSkills, nextAgents, nextModelGatewayConfigs] = await Promise.all([
-        fetchAiSkills(),
-        fetchAiAgents(),
+        fetchAiSkills(skillListQuery(skillQueryRef.current)),
+        fetchAiAgents(agentListQuery(agentQueryRef.current)),
         fetchModelGatewayConfigs(),
       ]);
-      setSkills(nextSkills);
-      setAgents(nextAgents);
+      setSkills(nextSkills.rows);
+      setAgents(nextAgents.rows);
+      setSkillPageState({
+        page: nextSkills.page,
+        pageSize: nextSkills.pageSize,
+        performance: nextSkills.performance,
+        total: nextSkills.total,
+      });
+      setAgentPageState({
+        page: nextAgents.page,
+        pageSize: nextAgents.pageSize,
+        performance: nextAgents.performance,
+        total: nextAgents.total,
+      });
       setModelGatewayConfigs(nextModelGatewayConfigs);
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'AI 能力配置加载失败');
@@ -588,6 +724,13 @@ export default function AiCapabilitiesPage() {
                 onPrimaryAction={openCreateAgent}
                 onReload={reload}
                 primaryAction="新增 AI角色"
+                remote={{
+                  onChange: loadAgents,
+                  page: agentPageState.page,
+                  pageSize: agentPageState.pageSize,
+                  performance: agentPageState.performance,
+                  total: agentPageState.total,
+                }}
                 rowKey="id"
                 tableScroll={{ x: 1156 }}
                 tableTitle="AI角色配置"
@@ -635,6 +778,13 @@ export default function AiCapabilitiesPage() {
                 onPrimaryAction={openCreateSkill}
                 onReload={reload}
                 primaryAction="新增 Skill"
+                remote={{
+                  onChange: loadSkills,
+                  page: skillPageState.page,
+                  pageSize: skillPageState.pageSize,
+                  performance: skillPageState.performance,
+                  total: skillPageState.total,
+                }}
                 rowKey="id"
                 tableScroll={{ x: 1056 }}
                 tableTitle="Skill 管理"

@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.728 |
+| 功能版本 | v1.1.729 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.729 | 2026-06-27 | 补充 AI 能力配置主表服务端分页验收：AI角色默认请求 `ai-agents?page=1&page_size=10&sort_by=code&sort_order=asc`，Skill 默认请求 `ai-skills?page=1&page_size=10&sort_by=code&sort_order=asc`；仓储测试覆盖 AI角色/Skill count/page SQL、筛选和排序白名单，`AiCapabilitiesPage.test.tsx` 覆盖远程筛选请求 | Codex |
 | v1.1.728 | 2026-06-27 | 补充定时作业配置/运行记录主表服务端分页验收：作业配置默认请求 `scheduled-jobs?page=1&page_size=10&sort_by=next_run_at&sort_order=desc`，运行记录默认请求 `scheduled-job-runs?page=1&page_size=10&sort_by=started_at&sort_order=desc`，仓储测试覆盖运行记录 count/page SQL、产品 scope 和排序白名单 | Codex |
 | v1.1.727 | 2026-06-27 | 补充插件管理连接/动作主表服务端分页验收：连接页签默认请求 `plugin-connections?page=1&page_size=10&sort_by=plugin_id&sort_order=asc`，环境筛选保留分页排序参数；动作页签默认请求 `plugin-actions?page=1&page_size=10&sort_by=plugin_id&sort_order=asc`，`PluginsPage.test.tsx` 覆盖 | Codex |
 | v1.1.726 | 2026-06-27 | 补充执行诊断到 AI 助手深链上下文验收：`assistant_chat_run` 等执行诊断来源必须能通过助手引用候选解析为本次上下文，未知引用类型仍只保留 route prompt；`test_assistant_chat.py` 与 `AssistantPage.test.tsx` 覆盖 | Codex |

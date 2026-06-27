@@ -187,6 +187,275 @@ def test_scheduled_job_repository_supports_paged_filtered_queries():
     assert run_page_params[-2:] == (20, 40)
 
 
+def test_ai_capability_repository_supports_paged_filtered_queries():
+    class CapturingCursor:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple | None]] = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple | None = None) -> None:
+            self.calls.append((query, params))
+
+        def fetchone(self):
+            return (7,)
+
+        def fetchall(self):
+            return []
+
+    class CapturingConnection:
+        def __init__(self, cursor: CapturingCursor) -> None:
+            self._cursor = cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        def cursor(self):
+            return self._cursor
+
+    cursor = CapturingCursor()
+    repository = ScheduledAiJobReadRepository(lambda: CapturingConnection(cursor))
+
+    skill_total = repository.count_ai_skills(
+        code="code_review",
+        keyword="review",
+        requires_human_review=True,
+        risk_level="high",
+        source_type="package",
+        status="active",
+    )
+    skill_items = repository.list_ai_skills_page(
+        code="code_review",
+        keyword="review",
+        limit=10,
+        offset=20,
+        requires_human_review=True,
+        risk_level="high",
+        sort_by="updated_at",
+        sort_order="desc",
+        source_type="package",
+        status="active",
+    )
+
+    assert skill_total == 7
+    assert skill_items == []
+    skill_count_query, skill_count_params = cursor.calls[0]
+    skill_page_query, skill_page_params = cursor.calls[1]
+    assert "SELECT count(*) FROM ai_skills" in skill_count_query
+    assert "code = %s" in skill_count_query
+    assert "requires_human_review = %s" in skill_count_query
+    assert "risk_level = %s" in skill_count_query
+    assert "source_type = %s" in skill_count_query
+    assert "status = %s" in skill_count_query
+    assert "lower(version) LIKE %s" in skill_count_query
+    assert "lower(description) LIKE %s" in skill_count_query
+    assert "lower(name) LIKE %s" in skill_count_query
+    assert "lower(prompt_template) LIKE %s" in skill_count_query
+    assert "lower(source_type) LIKE %s" in skill_count_query
+    assert "lower(risk_level) LIKE %s" in skill_count_query
+    assert skill_count_params == (
+        "code_review",
+        True,
+        "high",
+        "package",
+        "active",
+        "%review%",
+        "%review%",
+        "%review%",
+        "%review%",
+        "%review%",
+        "%review%",
+        "%review%",
+        "%review%",
+    )
+    assert "ORDER BY updated_at DESC NULLS LAST, id DESC" in skill_page_query
+    assert "LIMIT %s OFFSET %s" in skill_page_query
+    assert skill_page_params[-2:] == (10, 20)
+
+    agent_total = repository.count_ai_agents(
+        brain_app_id="rd_brain",
+        keyword="insight",
+        model_gateway_config_id="model_gateway_config_001",
+        status="active",
+    )
+    agent_items = repository.list_ai_agents_page(
+        brain_app_id="rd_brain",
+        keyword="insight",
+        limit=5,
+        model_gateway_config_id="model_gateway_config_001",
+        offset=10,
+        sort_by="name",
+        sort_order="asc",
+        status="active",
+    )
+
+    assert agent_total == 7
+    assert agent_items == []
+    agent_count_query, agent_count_params = cursor.calls[2]
+    agent_page_query, agent_page_params = cursor.calls[3]
+    assert "SELECT count(*) FROM ai_agents" in agent_count_query
+    assert "brain_app_id = %s" in agent_count_query
+    assert "model_gateway_config_id = %s" in agent_count_query
+    assert "status = %s" in agent_count_query
+    assert "lower(description) LIKE %s" in agent_count_query
+    assert "lower(model_gateway_config_id) LIKE %s" in agent_count_query
+    assert "lower(system_prompt) LIKE %s" in agent_count_query
+    assert agent_count_params == (
+        "rd_brain",
+        "model_gateway_config_001",
+        "active",
+        "%insight%",
+        "%insight%",
+        "%insight%",
+        "%insight%",
+        "%insight%",
+        "%insight%",
+        "%insight%",
+    )
+    assert "ORDER BY lower(name) ASC NULLS FIRST, id ASC" in agent_page_query
+    assert "LIMIT %s OFFSET %s" in agent_page_query
+    assert agent_page_params[-2:] == (5, 10)
+
+
+def test_ai_capability_lists_use_repository_pagination_when_requested():
+    class PagedRepository:
+        def __init__(self) -> None:
+            self.skill_count_filters: dict | None = None
+            self.skill_page_filters: dict | None = None
+            self.agent_count_filters: dict | None = None
+            self.agent_page_filters: dict | None = None
+
+        def list_ai_agents(self, **_kwargs):
+            raise AssertionError("full AI role list fallback should not be used")
+
+        def list_ai_skills(self, **_kwargs):
+            raise AssertionError("full AI skill list fallback should not be used")
+
+        def list_scheduled_job_runs(self, **_kwargs):
+            return []
+
+        def list_scheduled_jobs(self, **_kwargs):
+            return []
+
+        def count_ai_skills(self, **kwargs):
+            self.skill_count_filters = kwargs
+            return 1
+
+        def list_ai_skills_page(self, **kwargs):
+            self.skill_page_filters = kwargs
+            return [
+                {
+                    "code": "code_review",
+                    "created_at": "2026-06-27T00:00:00+00:00",
+                    "id": "skill_paged",
+                    "name": "代码评审 Skill",
+                    "prompt_template": "review code",
+                    "requires_human_review": True,
+                    "risk_level": "high",
+                    "source_type": "package",
+                    "status": "active",
+                    "updated_at": "2026-06-27T01:00:00+00:00",
+                    "version": "1.0.0",
+                }
+            ]
+
+        def count_ai_agents(self, **kwargs):
+            self.agent_count_filters = kwargs
+            return 1
+
+        def list_ai_agents_page(self, **kwargs):
+            self.agent_page_filters = kwargs
+            return [
+                {
+                    "brain_app_id": "rd_brain",
+                    "code": "review_agent",
+                    "default_skill_ids": ["skill_paged"],
+                    "id": "agent_paged",
+                    "model_gateway_config_id": "model_gateway_config_001",
+                    "name": "代码评审 AI角色",
+                    "status": "active",
+                    "system_prompt": "review code",
+                    "updated_at": "2026-06-27T01:00:00+00:00",
+                }
+            ]
+
+    repository = PagedRepository()
+    current_store = SimpleNamespace(repository=repository, ai_agents={}, ai_skills={})
+
+    skills = scheduled_jobs_service.list_ai_skills_response(
+        code="code_review",
+        current_store=current_store,
+        keyword="review",
+        page=2,
+        page_size=10,
+        requires_human_review=True,
+        risk_level="high",
+        sort_by="updated_at",
+        sort_order="desc",
+        source_type="package",
+        started_at=None,
+        status="active",
+    )
+    agents = scheduled_jobs_service.list_ai_agents_response(
+        brain_app_id="rd_brain",
+        current_store=current_store,
+        keyword="review",
+        model_gateway_config_id="model_gateway_config_001",
+        page=3,
+        page_size=5,
+        sort_by="name",
+        sort_order="asc",
+        started_at=None,
+        status="active",
+    )
+
+    assert skills["items"][0]["id"] == "skill_paged"
+    assert skills["page"] == 2
+    assert skills["page_size"] == 10
+    assert skills["query"]["name"] == "ai_skills"
+    assert skills["performance"]["p95_target_ms"] == 300
+    assert repository.skill_count_filters == {
+        "code": "code_review",
+        "keyword": "review",
+        "requires_human_review": True,
+        "risk_level": "high",
+        "source_type": "package",
+        "status": "active",
+    }
+    assert repository.skill_page_filters == {
+        **repository.skill_count_filters,
+        "limit": 10,
+        "offset": 10,
+        "sort_by": "updated_at",
+        "sort_order": "desc",
+    }
+    assert agents["items"][0]["id"] == "agent_paged"
+    assert agents["page"] == 3
+    assert agents["page_size"] == 5
+    assert agents["query"]["name"] == "ai_agents"
+    assert agents["performance"]["p95_target_ms"] == 300
+    assert repository.agent_count_filters == {
+        "brain_app_id": "rd_brain",
+        "keyword": "review",
+        "model_gateway_config_id": "model_gateway_config_001",
+        "status": "active",
+    }
+    assert repository.agent_page_filters == {
+        **repository.agent_count_filters,
+        "limit": 5,
+        "offset": 10,
+        "sort_by": "name",
+        "sort_order": "asc",
+    }
+
+
 def test_scheduled_job_list_uses_repository_pagination_when_requested():
     class PagedRepository:
         def __init__(self) -> None:

@@ -13,7 +13,7 @@ from urllib.request import urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.api.deps import api_error, require_any_permission, require_permissions
-from app.core.listing import add_list_observability, sort_list_items
+from app.core.listing import add_list_observability, list_text_matches, sort_list_items
 from app.services.code_inspections import (
     execute_code_inspection_result_actions,
     sync_product_git_repository_store,
@@ -78,6 +78,26 @@ from app.services.user_feedback import (
 
 AI_SKILL_STATUSES = {"active", "draft", "disabled"}
 AI_AGENT_STATUSES = {"active", "disabled"}
+AI_SKILL_SORT_FIELDS = {
+    "code",
+    "created_at",
+    "name",
+    "requires_human_review",
+    "risk_level",
+    "source_type",
+    "status",
+    "updated_at",
+    "version",
+}
+AI_AGENT_SORT_FIELDS = {
+    "brain_app_id",
+    "code",
+    "created_at",
+    "model_gateway_config_id",
+    "name",
+    "status",
+    "updated_at",
+}
 SCHEDULED_JOB_RUN_STATUSES = {"cancelled", "failed", "queued", "running", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TERMINAL_STATUSES = {"cancelled", "failed", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TRIGGER_TYPES = {"manual", "manual_rerun", "scheduler"}
@@ -429,10 +449,74 @@ def list_ai_skills_response(
     *,
     code: str | None,
     current_store: Any,
-    status: str | None,
+    keyword: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    requires_human_review: bool | None = None,
+    risk_level: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "asc",
+    source_type: str | None = None,
+    started_at: float | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     if status is not None:
         ensure_enum(status, AI_SKILL_STATUSES, "status")
+    if sort_order not in {"asc", "desc"}:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_order")
+    resolved_sort_by = sort_by or "code"
+    if resolved_sort_by not in AI_SKILL_SORT_FIELDS:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+    resolved_started_at = started_at or perf_counter()
+    with_pagination = page is not None or page_size is not None
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    filters = {
+        "code": code,
+        "keyword": keyword,
+        "requires_human_review": requires_human_review,
+        "risk_level": risk_level,
+        "source_type": source_type,
+        "status": status,
+    }
+    repository = scheduled_jobs_query_repository(current_store)
+    if (
+        repository is not None
+        and with_pagination
+        and callable(getattr(repository, "count_ai_skills", None))
+        and callable(getattr(repository, "list_ai_skills_page", None))
+    ):
+        count_args = {
+            "code": code,
+            "keyword": keyword,
+            "requires_human_review": requires_human_review,
+            "risk_level": risk_level,
+            "source_type": source_type,
+            "status": status,
+        }
+        total = repository.count_ai_skills(**count_args)
+        items = repository.list_ai_skills_page(
+            **count_args,
+            limit=resolved_page_size,
+            offset=(resolved_page - 1) * resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+        )
+        return add_list_observability(
+            {
+                "items": [public_skill(item) for item in items],
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="ai_skills",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=resolved_started_at,
+        )
     sync_ai_skill_store(current_store, code=code, status=status)
     items = []
     for skill in _read_memory_dict(current_store, "ai_skills").values():
@@ -440,7 +524,47 @@ def list_ai_skills_response(
             continue
         if status is not None and skill.get("status") != status:
             continue
+        if (
+            requires_human_review is not None
+            and bool(skill.get("requires_human_review")) != requires_human_review
+        ):
+            continue
+        if risk_level is not None and skill.get("risk_level") != risk_level:
+            continue
+        if source_type is not None and skill.get("source_type") != source_type:
+            continue
+        if not list_text_matches(
+            skill,
+            keyword,
+            ("id", "code", "name", "prompt_template", "source_type", "risk_level", "version"),
+        ):
+            continue
         items.append(public_skill(skill))
+    if with_pagination:
+        sorted_items = sort_list_items(
+            items,
+            allowed_fields=AI_SKILL_SORT_FIELDS,
+            default_sort_by="code",
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+        )
+        start = (resolved_page - 1) * resolved_page_size
+        page_items = sorted_items[start : start + resolved_page_size]
+        return add_list_observability(
+            {
+                "items": page_items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": len(sorted_items),
+            },
+            filters=filters,
+            list_name="ai_skills",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=resolved_started_at,
+        )
     items.sort(key=lambda item: (item.get("code") or "", item.get("version") or "", item["id"]))
     return {"items": items, "total": len(items)}
 
@@ -615,10 +739,68 @@ def list_ai_agents_response(
     *,
     brain_app_id: str | None,
     current_store: Any,
-    status: str | None,
+    keyword: str | None = None,
+    model_gateway_config_id: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "asc",
+    started_at: float | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     if status is not None:
         ensure_enum(status, AI_AGENT_STATUSES, "status")
+    if sort_order not in {"asc", "desc"}:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_order")
+    resolved_sort_by = sort_by or "code"
+    if resolved_sort_by not in AI_AGENT_SORT_FIELDS:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+    resolved_started_at = started_at or perf_counter()
+    with_pagination = page is not None or page_size is not None
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    filters = {
+        "brain_app_id": brain_app_id,
+        "keyword": keyword,
+        "model_gateway_config_id": model_gateway_config_id,
+        "status": status,
+    }
+    repository = scheduled_jobs_query_repository(current_store)
+    if (
+        repository is not None
+        and with_pagination
+        and callable(getattr(repository, "count_ai_agents", None))
+        and callable(getattr(repository, "list_ai_agents_page", None))
+    ):
+        count_args = {
+            "brain_app_id": brain_app_id,
+            "keyword": keyword,
+            "model_gateway_config_id": model_gateway_config_id,
+            "status": status,
+        }
+        total = repository.count_ai_agents(**count_args)
+        items = repository.list_ai_agents_page(
+            **count_args,
+            limit=resolved_page_size,
+            offset=(resolved_page - 1) * resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+        )
+        return add_list_observability(
+            {
+                "items": [public_agent(item) for item in items],
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="ai_agents",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=resolved_started_at,
+        )
     sync_ai_agent_store(current_store, brain_app_id=brain_app_id, status=status)
     items = []
     for agent in _read_memory_dict(current_store, "ai_agents").values():
@@ -626,7 +808,43 @@ def list_ai_agents_response(
             continue
         if status is not None and agent.get("status") != status:
             continue
+        if (
+            model_gateway_config_id is not None
+            and agent.get("model_gateway_config_id") != model_gateway_config_id
+        ):
+            continue
+        if not list_text_matches(
+            agent,
+            keyword,
+            ("id", "brain_app_id", "code", "name", "system_prompt", "model_gateway_config_id"),
+        ):
+            continue
         items.append(public_agent(agent))
+    if with_pagination:
+        sorted_items = sort_list_items(
+            items,
+            allowed_fields=AI_AGENT_SORT_FIELDS,
+            default_sort_by="code",
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+        )
+        start = (resolved_page - 1) * resolved_page_size
+        page_items = sorted_items[start : start + resolved_page_size]
+        return add_list_observability(
+            {
+                "items": page_items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": len(sorted_items),
+            },
+            filters=filters,
+            list_name="ai_agents",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=resolved_started_at,
+        )
     items.sort(
         key=lambda item: (item.get("brain_app_id") or "", item.get("code") or "", item["id"]),
     )

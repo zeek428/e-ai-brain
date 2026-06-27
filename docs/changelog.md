@@ -33,6 +33,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- AI 能力配置的 AI角色与 Skill 主表改为调用服务端分页排序接口：两个页签默认携带 `code asc` 远程分页参数，筛选、排序和查询耗时由后端 read model 返回，旧全量接口仅保留下拉和兼容用途。
 - 定时作业配置和运行记录主表改为调用服务端分页排序接口：配置列表默认携带 `next_run_at desc` 远程分页参数，运行记录默认携带 `started_at desc` 远程分页参数，并由 PostgreSQL read model 按作业、状态、运行 ID 和产品 scope 过滤。
 - 插件管理连接和动作页签改为调用服务端分页排序接口：连接列表默认携带分页、排序和环境筛选请求 `/api/system/plugin-connections`，动作列表默认携带分页和排序请求 `/api/system/plugin-actions`，避免主表继续拉全量后本地分页。
 - 执行诊断到 AI 助手深链补齐上下文解析：`assistant_chat_run`、`model_gateway_log`、`plugin_invocation_log`、`ai_executor_task`、`ai_executor_runner`、`code_inspection_report` 和 `audit_event` 等来源类型可作为助手引用候选带入“本次上下文”，并在候选解析和最终引用注入时统一校验执行诊断读权限。

@@ -52,6 +52,42 @@ SCHEDULED_JOB_RUN_SORT_COLUMNS = {
     "updated_at": "run.updated_at",
 }
 
+AI_SKILL_SELECT = """
+id, code, name, version, description, prompt_template,
+input_schema, output_schema, allowed_tools, required_context,
+source_type, package_uri, package_checksum, package_entry,
+package_files, package_size_bytes, manifest, risk_level,
+requires_human_review, status, created_by, created_at, updated_at
+"""
+
+AI_SKILL_SORT_COLUMNS = {
+    "code": "lower(code)",
+    "created_at": "created_at",
+    "name": "lower(name)",
+    "requires_human_review": "requires_human_review",
+    "risk_level": "risk_level",
+    "source_type": "source_type",
+    "status": "status",
+    "updated_at": "updated_at",
+    "version": "version",
+}
+
+AI_AGENT_SELECT = """
+id, brain_app_id, code, name, description, model_gateway_config_id,
+system_prompt, default_skill_ids, tool_policy, execution_policy,
+status, created_by, created_at, updated_at
+"""
+
+AI_AGENT_SORT_COLUMNS = {
+    "brain_app_id": "brain_app_id",
+    "code": "lower(code)",
+    "created_at": "created_at",
+    "model_gateway_config_id": "model_gateway_config_id",
+    "name": "lower(name)",
+    "status": "status",
+    "updated_at": "updated_at",
+}
+
 
 def _json(value: Any, default: Any) -> str:
     if value is None:
@@ -80,14 +116,78 @@ class ScheduledAiJobReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, code, name, version, description, prompt_template,
-                           input_schema, output_schema, allowed_tools, required_context,
-                           source_type, package_uri, package_checksum, package_entry,
-                           package_files, package_size_bytes, manifest, risk_level,
-                           requires_human_review, status, created_by, created_at, updated_at
+                    SELECT {AI_SKILL_SELECT}
                     FROM ai_skills
                     {where}
                     ORDER BY code ASC, version ASC, id ASC
+                    """,
+                    tuple(params),
+                )
+                return [self._skill_from_row(row) for row in cursor.fetchall()]
+
+    def count_ai_skills(
+        self,
+        *,
+        code: str | None = None,
+        keyword: str | None = None,
+        requires_human_review: bool | None = None,
+        risk_level: str | None = None,
+        source_type: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where, params = self._skill_where(
+            {
+                "code": code,
+                "requires_human_review": requires_human_review,
+                "risk_level": risk_level,
+                "source_type": source_type,
+                "status": status,
+            },
+            keyword=keyword,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(f"SELECT count(*) FROM ai_skills {where}", tuple(params))
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_ai_skills_page(
+        self,
+        *,
+        code: str | None = None,
+        keyword: str | None = None,
+        limit: int,
+        offset: int,
+        requires_human_review: bool | None = None,
+        risk_level: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        source_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._skill_where(
+            {
+                "code": code,
+                "requires_human_review": requires_human_review,
+                "risk_level": risk_level,
+                "source_type": source_type,
+                "status": status,
+            },
+            keyword=keyword,
+        )
+        sort_column = AI_SKILL_SORT_COLUMNS.get(sort_by, "updated_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT {AI_SKILL_SELECT}
+                    FROM ai_skills
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
                     """,
                     tuple(params),
                 )
@@ -115,12 +215,70 @@ class ScheduledAiJobReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, brain_app_id, code, name, description, model_gateway_config_id,
-                           system_prompt, default_skill_ids, tool_policy, execution_policy,
-                           status, created_by, created_at, updated_at
+                    SELECT {AI_AGENT_SELECT}
                     FROM ai_agents
                     {where}
                     ORDER BY brain_app_id ASC, code ASC, id ASC
+                    """,
+                    tuple(params),
+                )
+                return [self._agent_from_row(row) for row in cursor.fetchall()]
+
+    def count_ai_agents(
+        self,
+        *,
+        brain_app_id: str | None = None,
+        keyword: str | None = None,
+        model_gateway_config_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where, params = self._agent_where(
+            {
+                "brain_app_id": brain_app_id,
+                "model_gateway_config_id": model_gateway_config_id,
+                "status": status,
+            },
+            keyword=keyword,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(f"SELECT count(*) FROM ai_agents {where}", tuple(params))
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_ai_agents_page(
+        self,
+        *,
+        brain_app_id: str | None = None,
+        keyword: str | None = None,
+        limit: int,
+        model_gateway_config_id: str | None = None,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._agent_where(
+            {
+                "brain_app_id": brain_app_id,
+                "model_gateway_config_id": model_gateway_config_id,
+                "status": status,
+            },
+            keyword=keyword,
+        )
+        sort_column = AI_AGENT_SORT_COLUMNS.get(sort_by, "updated_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT {AI_AGENT_SELECT}
+                    FROM ai_agents
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
                     """,
                     tuple(params),
                 )
@@ -813,6 +971,59 @@ class ScheduledAiJobReadRepository:
                 ")"
             )
             params.extend([probe, probe, probe, probe, probe])
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def _skill_where(
+        self,
+        values: dict[str, Any],
+        *,
+        keyword: str | None,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for field, value in values.items():
+            if value is None:
+                continue
+            clauses.append(f"{field} = %s")
+            params.append(value)
+        normalized_keyword = str(keyword or "").strip().lower()
+        if normalized_keyword:
+            probe = f"%{normalized_keyword}%"
+            clauses.append(
+                "("
+                "lower(id) LIKE %s OR lower(code) LIKE %s OR lower(name) LIKE %s "
+                "OR lower(version) LIKE %s OR lower(description) LIKE %s "
+                "OR lower(prompt_template) LIKE %s OR lower(source_type) LIKE %s "
+                "OR lower(risk_level) LIKE %s"
+                ")"
+            )
+            params.extend([probe, probe, probe, probe, probe, probe, probe, probe])
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def _agent_where(
+        self,
+        values: dict[str, Any],
+        *,
+        keyword: str | None,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for field, value in values.items():
+            if value is None:
+                continue
+            clauses.append(f"{field} = %s")
+            params.append(value)
+        normalized_keyword = str(keyword or "").strip().lower()
+        if normalized_keyword:
+            probe = f"%{normalized_keyword}%"
+            clauses.append(
+                "("
+                "lower(id) LIKE %s OR lower(brain_app_id) LIKE %s OR lower(code) LIKE %s "
+                "OR lower(name) LIKE %s OR lower(description) LIKE %s "
+                "OR lower(model_gateway_config_id) LIKE %s OR lower(system_prompt) LIKE %s"
+                ")"
+            )
+            params.extend([probe, probe, probe, probe, probe, probe, probe])
         return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
 
     def _run_where(
