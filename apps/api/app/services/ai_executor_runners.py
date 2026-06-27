@@ -14,6 +14,7 @@ from fastapi import Request
 from app.api.deps import api_error, require_permissions
 from app.core.listing import add_list_observability, sort_list_items
 from app.services.operational_records import record_audit_event, save_single_repository_record
+from app.services.product_scope import product_scope_filter, user_can_read_product
 
 SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID = "ai_executor_runner_system_default"
 SYSTEM_DEFAULT_AI_EXECUTOR_TYPE = "model_gateway"
@@ -1079,6 +1080,7 @@ def sync_ai_executor_task_store(
     current_store: Any,
     *,
     ai_task_id: str | None = None,
+    product_scope_ids: list[str] | None = None,
     runner_id: str | None = None,
     scheduled_job_run_id: str | None = None,
     status: str | None = None,
@@ -1091,6 +1093,7 @@ def sync_ai_executor_task_store(
         "ai_executor_tasks",
         repository.list_ai_executor_tasks(
             ai_task_id=ai_task_id,
+            product_scope_ids=product_scope_ids,
             runner_id=runner_id,
             scheduled_job_run_id=scheduled_job_run_id,
             status=status,
@@ -1210,6 +1213,35 @@ def _load_ai_task(current_store: Any, ai_task_id: str | None) -> dict[str, Any] 
                 return candidate
         return _read_record(current_store, "ai_tasks", ai_task_id)
     return None
+
+
+def _ai_executor_task_product_id(current_store: Any, task: dict[str, Any]) -> Any:
+    if task.get("product_id") is not None:
+        return task.get("product_id")
+    job = _load_scheduled_job(current_store, task.get("scheduled_job_id"))
+    if job is not None and job.get("product_id") is not None:
+        return job.get("product_id")
+    run = _load_scheduled_job_run(current_store, task)
+    if run is not None:
+        config_snapshot = run.get("config_snapshot")
+        if isinstance(config_snapshot, dict) and config_snapshot.get("product_id") is not None:
+            return config_snapshot.get("product_id")
+        run_job = _load_scheduled_job(current_store, run.get("scheduled_job_id"))
+        if run_job is not None and run_job.get("product_id") is not None:
+            return run_job.get("product_id")
+    ai_task = _load_ai_task(current_store, task.get("ai_task_id"))
+    if ai_task is not None:
+        return ai_task.get("product_id")
+    return None
+
+
+def _ai_executor_task_visible_to_user(
+    current_store: Any,
+    *,
+    task: dict[str, Any],
+    user: dict[str, Any],
+) -> bool:
+    return user_can_read_product(user, _ai_executor_task_product_id(current_store, task))
 
 
 def _runner_node_from_task(task: dict[str, Any]) -> dict[str, Any]:
@@ -1698,6 +1730,7 @@ def list_ai_executor_tasks_response(
     list_page = getattr(repository, "list_ai_executor_tasks_page", None)
     filters = {
         "ai_task_id": ai_task_id,
+        "product_scope_ids": product_scope_filter(user),
         "runner_id": runner_id,
         "scheduled_job_run_id": scheduled_job_run_id,
         "status": status,
@@ -1732,6 +1765,7 @@ def list_ai_executor_tasks_response(
     sync_ai_executor_task_store(
         current_store,
         ai_task_id=ai_task_id,
+        product_scope_ids=filters["product_scope_ids"],
         runner_id=runner_id,
         scheduled_job_run_id=scheduled_job_run_id,
         status=status,
@@ -1740,6 +1774,10 @@ def list_ai_executor_tasks_response(
         _task_public(task)
         for task in _read_collection(current_store, "ai_executor_tasks").values()
         if (ai_task_id is None or task.get("ai_task_id") == ai_task_id)
+        and (
+            filters["product_scope_ids"] is None
+            or _ai_executor_task_visible_to_user(current_store, task=task, user=user)
+        )
         and (runner_id is None or task.get("runner_id") == runner_id)
         and (
             scheduled_job_run_id is None
@@ -2329,6 +2367,18 @@ def _sync_ai_executor_task_by_id(current_store: Any, task_id: str) -> dict[str, 
     return task
 
 
+def _sync_visible_ai_executor_task_by_id(
+    current_store: Any,
+    *,
+    task_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    task = _sync_ai_executor_task_by_id(current_store, task_id)
+    if not _ai_executor_task_visible_to_user(current_store, task=task, user=user):
+        raise api_error(404, "NOT_FOUND", "AI executor task not found")
+    return task
+
+
 def _log_timestamp() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -2359,7 +2409,7 @@ def list_ai_executor_task_logs_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     _ensure_admin(user)
-    task = _sync_ai_executor_task_by_id(current_store, task_id)
+    task = _sync_visible_ai_executor_task_by_id(current_store, task_id=task_id, user=user)
     return {"logs": list(task.get("logs") or []), "task": _task_public(task)}
 
 
@@ -2415,7 +2465,7 @@ def cancel_ai_executor_task_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     _ensure_admin(user)
-    task = _sync_ai_executor_task_by_id(current_store, task_id)
+    task = _sync_visible_ai_executor_task_by_id(current_store, task_id=task_id, user=user)
     if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
         raise api_error(409, "AI_EXECUTOR_TASK_TERMINAL", "Terminal task cannot be cancelled")
     now = datetime.now(UTC).isoformat()
@@ -2479,9 +2529,16 @@ def timeout_ai_executor_tasks_response(
 ) -> dict[str, Any]:
     _ensure_admin(user)
     now = _datetime_value(getattr(payload, "now", None)) or datetime.now(UTC)
-    sync_ai_executor_task_store(current_store)
+    task_product_scope_ids = product_scope_filter(user)
+    sync_ai_executor_task_store(current_store, product_scope_ids=task_product_scope_ids)
     timed_out: list[dict[str, Any]] = []
     for task in list(_read_collection(current_store, "ai_executor_tasks").values()):
+        if task_product_scope_ids is not None and not _ai_executor_task_visible_to_user(
+            current_store,
+            task=task,
+            user=user,
+        ):
+            continue
         if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
             continue
         reference_at = (

@@ -22,6 +22,14 @@ from app.services.scheduled_jobs import resolve_plugin_input_mapping
 
 client = TestClient(app)
 ADMIN_SERVICE_USER = {"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]}
+SCOPED_PLUGIN_MANAGER_USER = {
+    "id": "user_scoped_plugin_manager",
+    "permissions": ["system.plugins.manage"],
+    "roles": [],
+    "scope_summary": [
+        {"access_level": "read", "scope_id": "product_sql", "scope_type": "product"},
+    ],
+}
 
 
 class FakePluginPagingRepository:
@@ -1933,7 +1941,7 @@ def test_ai_executor_task_list_uses_repository_pagination_when_requested():
         sort_order="desc",
         started_at=None,
         status="queued",
-        user=ADMIN_SERVICE_USER,
+        user=SCOPED_PLUGIN_MANAGER_USER,
     )
 
     assert response["total"] == 3
@@ -1944,6 +1952,7 @@ def test_ai_executor_task_list_uses_repository_pagination_when_requested():
     assert response["performance"]["p95_target_ms"] == 400
     assert repository.ai_executor_task_count_kwargs == {
         "ai_task_id": "ai_task_001",
+        "product_scope_ids": ["product_sql"],
         "runner_id": "runner_sql",
         "scheduled_job_run_id": "scheduled_run_sql",
         "status": "queued",
@@ -1952,6 +1961,7 @@ def test_ai_executor_task_list_uses_repository_pagination_when_requested():
         "ai_task_id": "ai_task_001",
         "limit": 1,
         "offset": 1,
+        "product_scope_ids": ["product_sql"],
         "runner_id": "runner_sql",
         "scheduled_job_run_id": "scheduled_run_sql",
         "sort_by": "created_at",

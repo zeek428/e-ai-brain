@@ -274,6 +274,33 @@ def add_code_inspection_report(*, report_id: str, product_id: str, title: str) -
     }
 
 
+def add_ai_executor_task(job: dict, *, run_id: str, task_id: str) -> None:
+    app.state.store.ai_executor_tasks[task_id] = {
+        "ai_task_id": None,
+        "claimed_at": None,
+        "created_at": "2026-06-27T10:00:00+00:00",
+        "created_by": "user_admin",
+        "error_code": None,
+        "error_message": None,
+        "executor_type": "codex",
+        "finished_at": None,
+        "id": task_id,
+        "input_payload": {},
+        "instruction": f"Run {job['name']}",
+        "logs": [{"level": "info", "message": job["name"], "sequence": 1}],
+        "plugin_invocation_log_id": None,
+        "request_config": {},
+        "result_json": {},
+        "runner_id": "runner_scope_contract",
+        "scheduled_job_id": job["id"],
+        "scheduled_job_run_id": run_id,
+        "status": "queued",
+        "timeout_seconds": 300,
+        "updated_at": "2026-06-27T10:00:00+00:00",
+        "workspace_root": "/workspace",
+    }
+
+
 def test_gitlab_review_api_surface_has_no_writeback_routes():
     paths = client.get("/openapi.json").json()["paths"]
     gitlab_paths = {
@@ -537,6 +564,16 @@ def test_operational_config_lists_require_permissions_and_scheduled_jobs_filter_
     )
     add_scheduled_job_run(job_a, run_id="scheduled_run_scope_a")
     add_failed_scheduled_job_run(job_b, run_id="scheduled_run_scope_b")
+    add_ai_executor_task(
+        job_a,
+        run_id="scheduled_run_scope_a",
+        task_id="ai_executor_task_scope_a",
+    )
+    add_ai_executor_task(
+        job_b,
+        run_id="scheduled_run_scope_b",
+        task_id="ai_executor_task_scope_b",
+    )
 
     scoped_headers = create_scoped_test_owner(admin_headers, product_id=product_a["id"])
     scoped_jobs = client.get("/api/system/scheduled-jobs", headers=scoped_headers)
@@ -578,6 +615,71 @@ def test_operational_config_lists_require_permissions_and_scheduled_jobs_filter_
     )
     assert hidden_run.status_code == 404
     assert hidden_run.json()["detail"]["code"] == "NOT_FOUND"
+
+    suffix = len(getattr(app.state.user_repository, "users", {})) + 1
+    role_code = f"runner_task_scope_operator_{suffix}"
+    role = client.post(
+        "/api/system/roles",
+        json={"code": role_code, "name": "Runner Task Scope Operator"},
+        headers=admin_headers,
+    )
+    assert role.status_code == 200, role.text
+    granted = client.put(
+        f"/api/system/roles/{role.json()['data']['id']}/permissions",
+        json={"permission_codes": ["system.plugins.manage"]},
+        headers=admin_headers,
+    )
+    assert granted.status_code == 200, granted.text
+    username = f"{role_code}-scope@example.com"
+    created_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Runner Task Scope Operator",
+            "password": "password123",
+            "roles": ["viewer"],
+            "status": "active",
+            "username": username,
+        },
+        headers=admin_headers,
+    )
+    assert created_user.status_code == 200, created_user.text
+    user_id = created_user.json()["data"]["id"]
+    assigned = client.put(
+        f"/api/users/{user_id}/roles",
+        json={"role_codes": [role_code]},
+        headers=admin_headers,
+    )
+    assert assigned.status_code == 200, assigned.text
+    scoped = client.put(
+        f"/api/users/{user_id}/scopes",
+        json={
+            "scopes": [
+                {
+                    "access_level": "read",
+                    "scope_id": product_a["id"],
+                    "scope_type": "product",
+                }
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert scoped.status_code == 200, scoped.text
+    scoped_plugin_headers = auth_headers(username, "password123")
+    scoped_tasks = client.get(
+        "/api/system/ai-executor-tasks?page=1&page_size=20",
+        headers=scoped_plugin_headers,
+    )
+    assert scoped_tasks.status_code == 200, scoped_tasks.text
+    task_ids = {item["id"] for item in scoped_tasks.json()["data"]["items"]}
+    assert "ai_executor_task_scope_a" in task_ids
+    assert "ai_executor_task_scope_b" not in task_ids
+
+    hidden_task_logs = client.get(
+        "/api/system/ai-executor-tasks/ai_executor_task_scope_b/logs",
+        headers=scoped_plugin_headers,
+    )
+    assert hidden_task_logs.status_code == 404
+    assert hidden_task_logs.json()["detail"]["code"] == "NOT_FOUND"
 
 
 def test_audit_events_filter_by_actor_and_time_range():

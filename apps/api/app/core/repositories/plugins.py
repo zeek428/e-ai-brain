@@ -468,17 +468,17 @@ class PluginReadRepository:
         self,
         *,
         ai_task_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         runner_id: str | None = None,
         scheduled_job_run_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
-        where, params = self._where(
-            {
-                "ai_task_id": ai_task_id,
-                "runner_id": runner_id,
-                "scheduled_job_run_id": scheduled_job_run_id,
-                "status": status,
-            },
+        where, params = self._ai_executor_task_where(
+            ai_task_id=ai_task_id,
+            product_scope_ids=product_scope_ids,
+            runner_id=runner_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
         )
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -501,17 +501,17 @@ class PluginReadRepository:
         self,
         *,
         ai_task_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         runner_id: str | None = None,
         scheduled_job_run_id: str | None = None,
         status: str | None = None,
     ) -> int:
-        where, params = self._where(
-            {
-                "ai_task_id": ai_task_id,
-                "runner_id": runner_id,
-                "scheduled_job_run_id": scheduled_job_run_id,
-                "status": status,
-            },
+        where, params = self._ai_executor_task_where(
+            ai_task_id=ai_task_id,
+            product_scope_ids=product_scope_ids,
+            runner_id=runner_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
         )
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -528,19 +528,19 @@ class PluginReadRepository:
         ai_task_id: str | None = None,
         limit: int,
         offset: int,
+        product_scope_ids: list[str] | None = None,
         runner_id: str | None = None,
         scheduled_job_run_id: str | None = None,
         sort_by: str,
         sort_order: str,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
-        where, params = self._where(
-            {
-                "ai_task_id": ai_task_id,
-                "runner_id": runner_id,
-                "scheduled_job_run_id": scheduled_job_run_id,
-                "status": status,
-            },
+        where, params = self._ai_executor_task_where(
+            ai_task_id=ai_task_id,
+            product_scope_ids=product_scope_ids,
+            runner_id=runner_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
         )
         sort_column = AI_EXECUTOR_TASK_SORT_COLUMNS.get(sort_by, "updated_at")
         direction = "ASC" if sort_order == "asc" else "DESC"
@@ -913,6 +913,64 @@ class PluginReadRepository:
                 continue
             clauses.append(f"{field} = %s")
             params.append(value)
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def _ai_executor_task_where(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        runner_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        where, params = self._where(
+            {
+                "ai_task_id": ai_task_id,
+                "runner_id": runner_id,
+                "scheduled_job_run_id": scheduled_job_run_id,
+                "status": status,
+            },
+        )
+        clauses = [where.removeprefix("WHERE ")] if where else []
+        if product_scope_ids is not None:
+            normalized_product_ids = [
+                str(product_id)
+                for product_id in product_scope_ids
+                if str(product_id).strip()
+            ]
+            if not normalized_product_ids:
+                clauses.append("FALSE")
+            else:
+                clauses.append(
+                    """
+                    (
+                      EXISTS (
+                        SELECT 1
+                        FROM scheduled_jobs scoped_job
+                        WHERE scoped_job.id = ai_executor_tasks.scheduled_job_id
+                          AND scoped_job.product_id = ANY(%s)
+                      )
+                      OR EXISTS (
+                        SELECT 1
+                        FROM scheduled_job_runs scoped_run
+                        JOIN scheduled_jobs scoped_run_job
+                          ON scoped_run_job.id = scoped_run.scheduled_job_id
+                        WHERE scoped_run.id = ai_executor_tasks.scheduled_job_run_id
+                          AND scoped_run_job.product_id = ANY(%s)
+                      )
+                      OR EXISTS (
+                        SELECT 1
+                        FROM ai_tasks scoped_task
+                        WHERE scoped_task.id = ai_executor_tasks.ai_task_id
+                          AND scoped_task.product_id = ANY(%s)
+                      )
+                    )
+                    """,
+                )
+                params.extend(
+                    [normalized_product_ids, normalized_product_ids, normalized_product_ids],
+                )
         return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
 
     def _plugin_connection_where(
