@@ -10,6 +10,85 @@ from app.main import app
 client = TestClient(app)
 
 
+class FakeRoleSummaryPagingRepository(CompatibilityAuthorizationRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.count_kwargs: dict[str, object] | None = None
+        self.page_kwargs: dict[str, object] | None = None
+
+    def list_roles(self) -> list[dict[str, object]]:  # pragma: no cover - failure path
+        raise AssertionError("roles list should use repository count/page read model")
+
+    def count_role_summaries(
+        self,
+        *,
+        business_role: str | None,
+        category: str | None,
+        menu_scope: str | None,
+        permission: str | None,
+        role: str | None,
+        status: str | None,
+    ) -> int:
+        self.count_kwargs = {
+            "business_role": business_role,
+            "category": category,
+            "menu_scope": menu_scope,
+            "permission": permission,
+            "role": role,
+            "status": status,
+        }
+        return 2
+
+    def list_role_summaries_page(
+        self,
+        *,
+        business_role: str | None,
+        category: str | None,
+        limit: int,
+        menu_scope: str | None,
+        offset: int,
+        permission: str | None,
+        role: str | None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+    ) -> list[dict[str, object]]:
+        self.page_kwargs = {
+            "business_role": business_role,
+            "category": category,
+            "limit": limit,
+            "menu_scope": menu_scope,
+            "offset": offset,
+            "permission": permission,
+            "role": role,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "status": status,
+        }
+        return [
+            {
+                "id": "role_delivery_operator",
+                "code": "delivery_operator",
+                "name": "Delivery Operator",
+                "description": "Operate delivery.",
+                "category": "delivery",
+                "is_system": False,
+                "is_assignable": True,
+                "status": "active",
+                "sort_order": 30,
+                "permission_codes": ["task.read"],
+                "menu_codes": ["task.center"],
+                "scopes": [],
+                "business_roles": ["交付负责人"],
+                "responsibilities": "Operate delivery workflows.",
+                "data_scope": "product",
+                "decision_scope": "task",
+                "menu_scope": ["任务中心"],
+                "boundary": "No system config changes.",
+            }
+        ]
+
+
 @pytest.fixture(autouse=True)
 def reset_rbac_repositories():
     original_user_repository = app.state.user_repository
@@ -117,6 +196,70 @@ def test_system_roles_list_supports_remote_pagination_filters_sort_and_observabi
     assert business_role_data["total"] == 1
     assert business_role_data["items"][0]["code"] == "admin"
     assert business_role_data["items"][0]["business_roles"] == ["平台管理员"]
+
+
+def test_system_roles_list_uses_repository_pagination_when_available():
+    repository = FakeRoleSummaryPagingRepository()
+    original_authorization_repository = app.state.authorization_repository
+    app.state.authorization_repository = repository
+    try:
+        response = client.get(
+            "/api/system/roles",
+            headers=auth_headers(),
+            params={
+                "business_role": "交付",
+                "category": "delivery",
+                "menu_scope": "任务",
+                "page": 2,
+                "page_size": 1,
+                "permission": "task.read",
+                "role": "Delivery",
+                "sort_by": "code",
+                "sort_order": "desc",
+                "status": "active",
+            },
+        )
+    finally:
+        app.state.authorization_repository = original_authorization_repository
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["page"] == 2
+    assert data["page_size"] == 1
+    assert data["total"] == 2
+    assert data["items"][0]["code"] == "delivery_operator"
+    assert data["query"]["name"] == "roles"
+    assert data["query"]["filters"] == {
+        "business_role": "交付",
+        "category": "delivery",
+        "menu_scope": "任务",
+        "permission": "task.read",
+        "role": "Delivery",
+        "status": "active",
+    }
+    assert data["query"]["sort_by"] == "code"
+    assert data["query"]["sort_order"] == "desc"
+    assert data["performance"]["p95_target_ms"] == 300
+    assert repository.count_kwargs == {
+        "business_role": "交付",
+        "category": "delivery",
+        "menu_scope": "任务",
+        "permission": "task.read",
+        "role": "Delivery",
+        "status": "active",
+    }
+    assert repository.page_kwargs == {
+        "business_role": "交付",
+        "category": "delivery",
+        "limit": 1,
+        "menu_scope": "任务",
+        "offset": 1,
+        "permission": "task.read",
+        "role": "Delivery",
+        "sort_by": "code",
+        "sort_order": "desc",
+        "status": "active",
+    }
 
 
 def test_system_roles_list_rejects_unsupported_sort_field():

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, api_error, require_any_permission, require_permissions
 from app.core.listing import (
+    add_list_observability,
     ensure_list_enum,
     list_text_matches,
     paginated_list_payload,
@@ -397,9 +398,54 @@ def list_roles(
         "role": role,
         "status": status,
     }
+    repository = _authorization_repository(request)
+    count_role_summaries = getattr(repository, "count_role_summaries", None)
+    list_role_summaries_page = getattr(repository, "list_role_summaries_page", None)
+    resolved_sort_by = sort_by or "sort_order"
+    if callable(count_role_summaries) and callable(list_role_summaries_page):
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        total = count_role_summaries(
+            business_role=business_role,
+            category=category,
+            menu_scope=menu_scope,
+            permission=permission,
+            role=role,
+            status=status,
+        )
+        items = list_role_summaries_page(
+            business_role=business_role,
+            category=category,
+            limit=resolved_page_size,
+            menu_scope=menu_scope,
+            offset=(resolved_page - 1) * resolved_page_size,
+            permission=permission,
+            role=role,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
+        return envelope(
+            add_list_observability(
+                {
+                    "items": items,
+                    "page": resolved_page,
+                    "page_size": resolved_page_size,
+                    "total": int(total),
+                },
+                filters=filters,
+                list_name="roles",
+                page=resolved_page,
+                page_size=resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+                started_at=started_at,
+            ),
+            get_trace_id(request),
+        )
     items = [
         item
-        for item in _authorization_repository(request).list_roles()
+        for item in repository.list_roles()
         if list_text_matches(item, role, ("code", "name", "description"))
         and list_text_matches(item, business_role, ("business_roles",))
         and list_text_matches(item, menu_scope, ("menu_codes", "menu_scope"))
@@ -421,7 +467,7 @@ def list_roles(
         observed=True,
         page=page,
         page_size=page_size,
-        sort_by=sort_by,
+        sort_by=resolved_sort_by,
         sort_order=sort_order,
         started_at=started_at,
         trace_id=get_trace_id(request),

@@ -22,6 +22,13 @@ ROLE_METADATA_FIELDS = (
     "responsibilities",
 )
 ROLE_METADATA_LIST_FIELDS = {"business_roles", "limitations", "menu_scope", "responsibilities"}
+ROLE_SUMMARY_SORT_COLUMNS = {
+    "category": "r.category",
+    "code": "lower(r.code)",
+    "name": "lower(r.name)",
+    "sort_order": "r.sort_order",
+    "status": "r.status",
+}
 VALID_SCOPE_TYPES = {
     "department",
     "global",
@@ -1672,6 +1679,163 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
                 )
                 rows = cursor.fetchall()
         return [self._postgres_role_detail_from_row(row) for row in rows]
+
+    def count_role_summaries(
+        self,
+        *,
+        business_role: str | None,
+        category: str | None,
+        menu_scope: str | None,
+        permission: str | None,
+        role: str | None,
+        status: str | None,
+    ) -> int:
+        where_sql, params = self._role_summary_where(
+            business_role=business_role,
+            category=category,
+            menu_scope=menu_scope,
+            permission=permission,
+            role=role,
+            status=status,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM roles r WHERE {where_sql}",
+                    params,
+                )
+                row = cursor.fetchone()
+        return int(row[0] if row else 0)
+
+    def list_role_summaries_page(
+        self,
+        *,
+        business_role: str | None,
+        category: str | None,
+        limit: int,
+        menu_scope: str | None,
+        offset: int,
+        permission: str | None,
+        role: str | None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+    ) -> list[dict[str, Any]]:
+        where_sql, params = self._role_summary_where(
+            business_role=business_role,
+            category=category,
+            menu_scope=menu_scope,
+            permission=permission,
+            role=role,
+            status=status,
+        )
+        sort_expression = ROLE_SUMMARY_SORT_COLUMNS.get(
+            sort_by,
+            ROLE_SUMMARY_SORT_COLUMNS["sort_order"],
+        )
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT r.id, r.code, r.name, r.description, r.category, r.is_system,
+                           r.is_assignable, r.status, r.sort_order
+                    FROM roles r
+                    WHERE {where_sql}
+                    ORDER BY {sort_expression} {direction}, r.code ASC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*params, limit, offset],
+                )
+                rows = cursor.fetchall()
+                return [self._postgres_role_detail_from_row(row, cursor=cursor) for row in rows]
+
+    def _role_summary_where(
+        self,
+        *,
+        business_role: str | None,
+        category: str | None,
+        menu_scope: str | None,
+        permission: str | None,
+        role: str | None,
+        status: str | None,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = ["TRUE"]
+        params: list[Any] = []
+        if category:
+            clauses.append("r.category = %s")
+            params.append(category)
+        if status:
+            clauses.append("r.status = %s")
+            params.append(status)
+        if role:
+            pattern = f"%{role}%"
+            clauses.append("(r.code ILIKE %s OR r.name ILIKE %s OR r.description ILIKE %s)")
+            params.extend([pattern, pattern, pattern])
+        if business_role:
+            business_role_codes = self._role_metadata_matching_codes(
+                "business_roles",
+                business_role,
+            )
+            self._append_role_code_filter(clauses, params, business_role_codes)
+        if menu_scope:
+            pattern = f"%{menu_scope}%"
+            menu_scope_codes = self._role_metadata_matching_codes("menu_scope", menu_scope)
+            menu_clauses = [
+                (
+                    "EXISTS (SELECT 1 FROM role_menu_grants rmg "
+                    "WHERE rmg.role_id = r.id AND rmg.menu_code ILIKE %s)"
+                ),
+                (
+                    "r.code = 'admin' AND EXISTS (SELECT 1 FROM menu_resources mr "
+                    "WHERE mr.code ILIKE %s)"
+                ),
+            ]
+            menu_params: list[Any] = [pattern, pattern]
+            if menu_scope_codes:
+                placeholders = ", ".join(["%s"] * len(menu_scope_codes))
+                menu_clauses.append(f"r.code IN ({placeholders})")
+                menu_params.extend(menu_scope_codes)
+            clauses.append(f"({' OR '.join(menu_clauses)})")
+            params.extend(menu_params)
+        if permission:
+            pattern = f"%{permission}%"
+            clauses.append(
+                "("
+                "EXISTS (SELECT 1 FROM role_permissions rp "
+                "WHERE rp.role_id = r.id AND rp.permission_code ILIKE %s) "
+                "OR (r.code = 'admin' AND EXISTS (SELECT 1 FROM permissions p "
+                "WHERE p.status = 'active' AND p.code ILIKE %s))"
+                ")"
+            )
+            params.extend([pattern, pattern])
+        return " AND ".join(clauses), params
+
+    def _role_metadata_matching_codes(self, field: str, keyword: str) -> list[str]:
+        normalized = str(keyword or "").strip().lower()
+        if not normalized:
+            return []
+        codes: list[str] = []
+        for code, metadata in ROLE_METADATA_BY_CODE.items():
+            value = metadata.get(field)
+            values = value if isinstance(value, list) else [value]
+            haystack = " ".join(str(item or "").lower() for item in values)
+            if normalized in haystack:
+                codes.append(code)
+        return sorted(codes)
+
+    def _append_role_code_filter(
+        self,
+        clauses: list[str],
+        params: list[Any],
+        role_codes: list[str],
+    ) -> None:
+        if not role_codes:
+            clauses.append("FALSE")
+            return
+        placeholders = ", ".join(["%s"] * len(role_codes))
+        clauses.append(f"r.code IN ({placeholders})")
+        params.extend(role_codes)
 
     def get_role(self, role_id_or_code: str) -> dict[str, Any] | None:
         with self._connect() as connection:
