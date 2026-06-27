@@ -299,6 +299,7 @@ def list_scheduled_jobs(
             source_system=source_system,
             started_at=perf_counter(),
             status=status,
+            user=user,
         ),
         get_trace_id(request),
     )
@@ -417,6 +418,7 @@ def list_scheduled_job_runs(
             run_ids=run_id,
             scheduled_job_id=scheduled_job_id,
             status=status,
+            user=user,
         ),
         get_trace_id(request),
     )
@@ -428,7 +430,7 @@ def scheduled_job_run_observability(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     return envelope(
-        scheduled_job_run_observability_response(current_store=store(request)),
+        scheduled_job_run_observability_response(current_store=store(request), user=user),
         get_trace_id(request),
     )
 

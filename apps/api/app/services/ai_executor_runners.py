@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import Request
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_permissions
 from app.services.operational_records import record_audit_event, save_single_repository_record
 
 SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID = "ai_executor_runner_system_default"
@@ -55,7 +55,7 @@ AI_EXECUTOR_TASK_TERMINAL_STATUSES = {"cancelled", "failed", "succeeded", "timed
 
 
 def _ensure_admin(user: dict[str, Any]) -> None:
-    require_roles(user, {"admin"})
+    require_permissions(user, {"system.plugins.manage"})
 
 
 def _ensure_non_blank(value: str | None, field: str) -> str:

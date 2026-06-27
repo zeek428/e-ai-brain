@@ -19,6 +19,7 @@ from app.services.plugins import (
 from app.services.scheduled_jobs import resolve_plugin_input_mapping
 
 client = TestClient(app)
+ADMIN_SERVICE_USER = {"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]}
 
 
 class FakePluginPagingRepository:
@@ -1695,6 +1696,7 @@ def test_plugin_connection_and_action_lists_use_repository_pagination_when_reque
         sort_order="asc",
         started_at=None,
         status="active",
+        user=ADMIN_SERVICE_USER,
     )
 
     assert connection_response["total"] == 2
@@ -1731,6 +1733,7 @@ def test_plugin_connection_and_action_lists_use_repository_pagination_when_reque
         sort_order="desc",
         started_at=None,
         status="active",
+        user=ADMIN_SERVICE_USER,
     )
 
     assert action_response["total"] == 3

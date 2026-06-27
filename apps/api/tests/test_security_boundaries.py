@@ -79,6 +79,88 @@ def create_product_detail_design_task_context(headers: dict[str, str]) -> dict[s
     }
 
 
+def create_scoped_test_owner(headers: dict[str, str], *, product_id: str) -> dict[str, str]:
+    suffix = len(getattr(app.state.user_repository, "users", {})) + 1
+    username = f"scheduled-scope-{suffix}@example.com"
+    created = client.post(
+        "/api/users",
+        json={
+            "display_name": f"Scheduled Scope {suffix}",
+            "password": "password123",
+            "roles": ["test_owner"],
+            "status": "active",
+            "username": username,
+        },
+        headers=headers,
+    )
+    assert created.status_code == 200, created.text
+    user = created.json()["data"]
+    scoped = client.put(
+        f"/api/users/{user['id']}/scopes",
+        json={
+            "scopes": [
+                {
+                    "access_level": "read",
+                    "scope_id": product_id,
+                    "scope_type": "product",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert scoped.status_code == 200, scoped.text
+    return auth_headers(username, "password123")
+
+
+def create_manual_scheduled_job(
+    headers: dict[str, str],
+    *,
+    name: str,
+    product_id: str,
+) -> dict:
+    response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "dashboard_snapshot_refresh",
+            "name": name,
+            "product_id": product_id,
+            "schedule_type": "manual",
+            "source_system": "ai-brain",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def add_scheduled_job_run(job: dict, *, run_id: str) -> None:
+    app.state.store.scheduled_job_runs[run_id] = {
+        "collector_run_id": None,
+        "config_snapshot": dict(job),
+        "created_at": "2026-06-27T10:00:00+00:00",
+        "error_code": None,
+        "error_message": None,
+        "finished_at": "2026-06-27T10:01:00+00:00",
+        "id": run_id,
+        "records_imported": 0,
+        "resolved_agent_snapshot": {},
+        "resolved_plugin_snapshot": {},
+        "resolved_prompt_snapshot": {},
+        "resolved_skill_snapshots": [],
+        "result_summary": {},
+        "scheduled_for": "2026-06-27T10:00:00+00:00",
+        "scheduled_job_id": job["id"],
+        "source_run_id": None,
+        "started_at": "2026-06-27T10:00:00+00:00",
+        "status": "succeeded",
+        "tool_policy_snapshot": {},
+        "trigger_type": "manual",
+        "updated_at": "2026-06-27T10:01:00+00:00",
+    }
+
+
 def test_gitlab_review_api_surface_has_no_writeback_routes():
     paths = client.get("/openapi.json").json()["paths"]
     gitlab_paths = {
@@ -147,6 +229,76 @@ def test_role_boundaries_for_product_audit_and_gitlab_preview(monkeypatch):
     assert len(filtered_audit) == 1
     assert filtered_audit[0]["event_type"] == "product.created"
     assert filtered_audit[0]["created_at"].startswith("20")
+
+
+def test_operational_config_lists_require_permissions_and_scheduled_jobs_filter_product_scope():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+
+    forbidden_paths = [
+        "/api/system/scheduled-jobs",
+        "/api/system/scheduled-job-runs",
+        "/api/system/scheduled-job-runs/observability",
+        "/api/system/plugins",
+        "/api/system/plugin-connections",
+        "/api/system/plugin-actions",
+        "/api/system/plugin-invocation-logs",
+        "/api/system/ai-executor-runners",
+    ]
+    for path in forbidden_paths:
+        response = client.get(path, headers=reviewer_headers)
+        assert response.status_code == 403, path
+        assert response.json()["detail"]["code"] == "FORBIDDEN"
+
+    product_a = client.post(
+        "/api/products",
+        json={"code": "scheduled-scope-a", "name": "定时作业范围 A"},
+        headers=admin_headers,
+    ).json()["data"]
+    product_b = client.post(
+        "/api/products",
+        json={"code": "scheduled-scope-b", "name": "定时作业范围 B"},
+        headers=admin_headers,
+    ).json()["data"]
+    job_a = create_manual_scheduled_job(
+        admin_headers,
+        name="A 产品作业",
+        product_id=product_a["id"],
+    )
+    job_b = create_manual_scheduled_job(
+        admin_headers,
+        name="B 产品作业",
+        product_id=product_b["id"],
+    )
+    add_scheduled_job_run(job_a, run_id="scheduled_run_scope_a")
+    add_scheduled_job_run(job_b, run_id="scheduled_run_scope_b")
+
+    scoped_headers = create_scoped_test_owner(admin_headers, product_id=product_a["id"])
+    scoped_jobs = client.get("/api/system/scheduled-jobs", headers=scoped_headers)
+    assert scoped_jobs.status_code == 200, scoped_jobs.text
+    scoped_job_ids = {item["id"] for item in scoped_jobs.json()["data"]["items"]}
+    assert job_a["id"] in scoped_job_ids
+    assert job_b["id"] not in scoped_job_ids
+
+    scoped_runs = client.get("/api/system/scheduled-job-runs", headers=scoped_headers)
+    assert scoped_runs.status_code == 200, scoped_runs.text
+    scoped_run_ids = {item["id"] for item in scoped_runs.json()["data"]["items"]}
+    assert scoped_run_ids == {"scheduled_run_scope_a"}
+
+    hidden_runs = client.get(
+        f"/api/system/scheduled-job-runs?scheduled_job_id={job_b['id']}",
+        headers=scoped_headers,
+    )
+    assert hidden_runs.status_code == 200
+    assert hidden_runs.json()["data"]["items"] == []
+
+    hidden_run = client.post(
+        f"/api/system/scheduled-jobs/{job_b['id']}/run",
+        headers=scoped_headers,
+    )
+    assert hidden_run.status_code == 404
+    assert hidden_run.json()["detail"]["code"] == "NOT_FOUND"
 
 
 def test_audit_events_filter_by_actor_and_time_range():

@@ -1221,6 +1221,7 @@ class PostgresSnapshotRepository:
         keyword: str | None = None,
         name: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         source_system: str | None = None,
         status: str | None = None,
     ) -> int:
@@ -1230,6 +1231,7 @@ class PostgresSnapshotRepository:
             keyword=keyword,
             name=name,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             source_system=source_system,
             status=status,
         )
@@ -1244,6 +1246,7 @@ class PostgresSnapshotRepository:
         name: str | None = None,
         offset: int,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         sort_by: str,
         sort_order: str,
         source_system: str | None = None,
@@ -1257,6 +1260,7 @@ class PostgresSnapshotRepository:
             name=name,
             offset=offset,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             sort_by=sort_by,
             sort_order=sort_order,
             source_system=source_system,

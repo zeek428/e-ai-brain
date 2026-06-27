@@ -14,6 +14,7 @@ from app.services.dynamic_parameters import dynamic_time_parameters
 from app.services.scheduled_job_execution_engine import ScheduledJobExecutionEngine
 
 client = TestClient(app)
+ADMIN_SERVICE_USER = {"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]}
 
 
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
@@ -208,6 +209,7 @@ def test_scheduled_job_list_uses_repository_pagination_when_requested():
         source_system="ai-brain",
         started_at=None,
         status="active",
+        user=ADMIN_SERVICE_USER,
     )
 
     assert payload["total"] == 1
@@ -222,6 +224,7 @@ def test_scheduled_job_list_uses_repository_pagination_when_requested():
         "keyword": "quality",
         "name": "巡检",
         "product_id": "product_ai_brain",
+        "product_scope_ids": None,
         "source_system": "ai-brain",
         "status": "active",
     }

@@ -591,7 +591,9 @@ def list_plugins_response(
     current_store: Any,
     protocol: str | None,
     status: str | None,
+    user: dict[str, Any],
 ) -> dict[str, Any]:
+    require_admin(user)
     if protocol is not None:
         ensure_enum(protocol, PLUGIN_PROTOCOLS, "protocol")
     if status is not None:
@@ -1260,7 +1262,9 @@ def list_plugin_connections_response(
     sort_order: str = "asc",
     started_at: float | None = None,
     status: str | None,
+    user: dict[str, Any],
 ) -> dict[str, Any]:
+    require_admin(user)
     if environment is not None:
         ensure_enum(environment, PLUGIN_CONNECTION_ENVIRONMENTS, "environment")
     if status is not None:
@@ -1829,7 +1833,9 @@ def list_plugin_actions_response(
     sort_order: str = "asc",
     started_at: float | None = None,
     status: str | None,
+    user: dict[str, Any],
 ) -> dict[str, Any]:
+    require_admin(user)
     if status is not None:
         ensure_enum(status, PLUGIN_STATUSES, "status")
     ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
@@ -3017,7 +3023,9 @@ def list_plugin_invocation_logs_response(
     scheduled_job_id: str | None,
     scheduled_job_run_id: str | None,
     status: str | None,
+    user: dict[str, Any],
 ) -> dict[str, Any]:
+    require_admin(user)
     if status is not None:
         ensure_enum(status, PLUGIN_INVOCATION_STATUSES, "status")
     sync_plugin_invocation_log_store(

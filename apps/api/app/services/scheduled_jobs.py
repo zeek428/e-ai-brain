@@ -127,6 +127,72 @@ def require_scheduled_job_runner(user: dict[str, Any]) -> None:
     )
 
 
+def user_product_access(user: dict[str, Any]) -> tuple[bool, set[str]]:
+    roles = set(user.get("roles") or [])
+    permissions = set(user.get("permissions") or [])
+    if "admin" in roles or "system.admin" in permissions:
+        return True, set()
+    scope_summary = user.get("scope_summary") or []
+    if not scope_summary:
+        return True, set()
+    product_ids: set[str] = set()
+    has_product_scope = False
+    for scope in scope_summary:
+        if not isinstance(scope, dict):
+            continue
+        if scope.get("access_level") not in {"admin", "read", "write"}:
+            continue
+        scope_type = scope.get("scope_type")
+        scope_id = scope.get("scope_id")
+        if scope_type == "global" and scope_id == "*":
+            return True, set()
+        if scope_type == "product" and scope_id:
+            has_product_scope = True
+            product_ids.add(str(scope_id))
+    if not has_product_scope:
+        return True, set()
+    return False, product_ids
+
+
+def user_can_access_scheduled_job_product(user: dict[str, Any], product_id: Any) -> bool:
+    global_access, product_ids = user_product_access(user)
+    if global_access:
+        return True
+    return product_id is not None and str(product_id) in product_ids
+
+
+def scheduled_job_product_scope_filter(user: dict[str, Any]) -> list[str] | None:
+    global_access, product_ids = user_product_access(user)
+    return None if global_access else sorted(product_ids)
+
+
+def scheduled_job_matches_product_scope(job: dict[str, Any], user: dict[str, Any]) -> bool:
+    return user_can_access_scheduled_job_product(user, job.get("product_id"))
+
+
+def scheduled_job_run_product_id(
+    current_store: Any,
+    run: dict[str, Any],
+) -> Any:
+    job_id = run.get("scheduled_job_id")
+    if job_id:
+        job = _read_memory_dict(current_store, "scheduled_jobs").get(str(job_id))
+        if isinstance(job, dict) and job.get("product_id") is not None:
+            return job.get("product_id")
+    config_snapshot = run.get("config_snapshot")
+    if isinstance(config_snapshot, dict):
+        return config_snapshot.get("product_id")
+    return None
+
+
+def scheduled_job_run_matches_product_scope(
+    current_store: Any,
+    run: dict[str, Any],
+    user: dict[str, Any],
+) -> bool:
+    return user_can_access_scheduled_job_product(user, scheduled_job_run_product_id(current_store, run))
+
+
 def scheduled_job_plugin_invocation_user(user: dict[str, Any]) -> dict[str, Any]:
     permissions = set(user.get("permissions") or [])
     permissions.add("system.plugins.manage")
@@ -1074,7 +1140,9 @@ def list_scheduled_jobs_response(
     source_system: str | None = None,
     started_at: float | None = None,
     status: str | None = None,
+    user: dict[str, Any],
 ) -> dict[str, Any]:
+    require_scheduled_job_runner(user)
     if job_type is not None:
         ensure_enum(job_type, SCHEDULED_JOB_TYPES, "job_type")
     if status is not None:
@@ -1088,12 +1156,40 @@ def list_scheduled_jobs_response(
     with_pagination = page is not None or page_size is not None
     resolved_page = page or 1
     resolved_page_size = page_size or 10
+    product_scope_ids = scheduled_job_product_scope_filter(user)
+    if product_id is not None and product_scope_ids is not None and product_id not in product_scope_ids:
+        return add_list_observability(
+            {
+                "items": [],
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": 0,
+            }
+            if with_pagination
+            else {"items": [], "total": 0},
+            filters={
+                "enabled": enabled,
+                "job_type": job_type,
+                "keyword": keyword,
+                "name": name,
+                "product_id": product_id,
+                "source_system": source_system,
+                "status": status,
+            },
+            list_name="scheduled_jobs",
+            page=resolved_page if with_pagination else None,
+            page_size=resolved_page_size if with_pagination else None,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=resolved_started_at,
+        )
     filters = {
         "enabled": enabled,
         "job_type": job_type,
         "keyword": keyword,
         "name": name,
         "product_id": product_id,
+        "product_scope_ids": product_scope_ids,
         "source_system": source_system,
         "status": status,
     }
@@ -1103,6 +1199,7 @@ def list_scheduled_jobs_response(
         "keyword": keyword,
         "name": name,
         "product_id": product_id,
+        "product_scope_ids": product_scope_ids,
         "source_system": source_system,
         "status": status,
     }
@@ -1154,6 +1251,8 @@ def list_scheduled_jobs_response(
         if job_type is not None and job.get("job_type") != job_type:
             continue
         if product_id is not None and job.get("product_id") != product_id:
+            continue
+        if product_scope_ids is not None and str(job.get("product_id")) not in product_scope_ids:
             continue
         if source_system is not None and job.get("source_system") != source_system:
             continue
@@ -3245,6 +3344,8 @@ def run_scheduled_job_response(
     job = _read_memory_dict(current_store, "scheduled_jobs").get(job_id)
     if job is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
+    if not scheduled_job_matches_product_scope(job, user):
+        raise api_error(404, "NOT_FOUND", "Scheduled job not found")
     source_run = None
     if source_run_id:
         sync_scheduled_job_run_store(current_store, scheduled_job_id=job_id)
@@ -3780,9 +3881,16 @@ def list_scheduled_job_runs_response(
     run_ids: list[str] | None = None,
     scheduled_job_id: str | None,
     status: str | None,
+    user: dict[str, Any],
 ) -> dict[str, Any]:
+    require_scheduled_job_runner(user)
     if status is not None:
         ensure_enum(status, SCHEDULED_JOB_RUN_STATUSES, "status")
+    sync_scheduled_job_store(current_store)
+    if scheduled_job_id is not None:
+        job = _read_memory_dict(current_store, "scheduled_jobs").get(scheduled_job_id)
+        if job is None or not scheduled_job_matches_product_scope(job, user):
+            return {"items": [], "total": 0}
     normalized_run_ids = {
         str(run_id).strip()
         for run_id in (run_ids or [])
@@ -3801,6 +3909,8 @@ def list_scheduled_job_runs_response(
         if scheduled_job_id is not None and run.get("scheduled_job_id") != scheduled_job_id:
             continue
         if status is not None and run.get("status") != status:
+            continue
+        if not scheduled_job_run_matches_product_scope(current_store, run, user):
             continue
         items.append(public_scheduled_job_run(run, current_store=current_store))
     items.sort(key=lambda item: (item.get("started_at") or "", item["id"]), reverse=True)

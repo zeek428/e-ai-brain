@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.723 |
+| 功能版本 | v1.1.724 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.724 | 2026-06-27 | 补充受控运维接口权限验收：定时作业、运行记录、插件、连接、动作、调用日志和 AI 执行器列表必须服务端校验专项权限，定时作业执行权限用户只能看到或运行产品 scope 内对象；`test_security_boundaries.py` 覆盖 | Codex |
 | v1.1.723 | 2026-06-27 | 补充知识沉淀审核全链路入口验收：知识中心“沉淀审核”列表每条候选提供 `knowledge_deposit` 主体全链路链接，审核表格保持固定列宽和横向滚动；`KnowledgePage.test.tsx` 覆盖 | Codex |
 | v1.1.722 | 2026-06-27 | 补充 AI 助手引用全链路入口验收：助手上下文和消息引用对可解析交付主体展示“全链路”，`iteration_version` 可通过 `/api/lifecycle/full-chain` 解析回需求链路；`AssistantFullChainLinks.test.tsx` 与 `test_lifecycle_context.py` 覆盖 | Codex |
 | v1.1.721 | 2026-06-27 | 补充需求全链路版本分支和审计事件验收：full-chain 响应、阶段明细、时间线和导出报告必须展示 `branch_configs` 与脱敏 `audit_events`；`test_lifecycle_context.py` 与 `RequirementFullChainPage.test.tsx` 覆盖 | Codex |

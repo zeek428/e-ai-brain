@@ -143,6 +143,7 @@ class ScheduledAiJobReadRepository:
         keyword: str | None = None,
         name: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         source_system: str | None = None,
         status: str | None = None,
     ) -> int:
@@ -156,6 +157,7 @@ class ScheduledAiJobReadRepository:
             },
             keyword=keyword,
             name=name,
+            product_scope_ids=product_scope_ids,
         )
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -173,6 +175,7 @@ class ScheduledAiJobReadRepository:
         name: str | None = None,
         offset: int,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         sort_by: str,
         sort_order: str,
         source_system: str | None = None,
@@ -188,6 +191,7 @@ class ScheduledAiJobReadRepository:
             },
             keyword=keyword,
             name=name,
+            product_scope_ids=product_scope_ids,
         )
         sort_column = SCHEDULED_JOB_SORT_COLUMNS.get(sort_by, "next_run_at")
         direction = "ASC" if sort_order == "asc" else "DESC"
@@ -694,6 +698,7 @@ class ScheduledAiJobReadRepository:
         *,
         keyword: str | None,
         name: str | None,
+        product_scope_ids: list[str] | None = None,
     ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -703,6 +708,15 @@ class ScheduledAiJobReadRepository:
             clauses.append(f"{field} = %s")
             params.append(value)
         normalized_name = str(name or "").strip().lower()
+        if product_scope_ids is not None:
+            normalized_scope_ids = sorted(
+                {str(product_id) for product_id in product_scope_ids if str(product_id).strip()}
+            )
+            if normalized_scope_ids:
+                clauses.append("product_id = ANY(%s)")
+                params.append(normalized_scope_ids)
+            else:
+                clauses.append("FALSE")
         if normalized_name:
             clauses.append("lower(name) LIKE %s")
             params.append(f"%{normalized_name}%")

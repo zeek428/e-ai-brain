@@ -487,7 +487,12 @@ def list_plugins(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     return envelope(
-        list_plugins_response(current_store=store(request), protocol=protocol, status=status),
+        list_plugins_response(
+            current_store=store(request),
+            protocol=protocol,
+            status=status,
+            user=user,
+        ),
         get_trace_id(request),
     )
 
@@ -638,6 +643,7 @@ def list_plugin_connections(
             sort_order=sort_order,
             started_at=_request_started_at(request),
             status=status,
+            user=user,
         ),
         get_trace_id(request),
     )
@@ -732,6 +738,7 @@ def list_plugin_actions(
             sort_order=sort_order,
             started_at=_request_started_at(request),
             status=status,
+            user=user,
         ),
         get_trace_id(request),
     )
@@ -851,6 +858,7 @@ def list_plugin_invocation_logs(
             scheduled_job_id=scheduled_job_id,
             scheduled_job_run_id=scheduled_job_run_id,
             status=status,
+            user=user,
         ),
         get_trace_id(request),
     )

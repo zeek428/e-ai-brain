@@ -4,6 +4,8 @@ from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
+from app.services.scheduled_jobs import require_admin
+
 
 def _scheduled_jobs_repository(current_store: Any) -> Any | None:
     repository = getattr(current_store, "repository", None)
@@ -144,7 +146,12 @@ def _percentage(part: int, total: int) -> float:
     return round(part / total * 100, 2)
 
 
-def scheduled_job_run_observability_response(*, current_store: Any) -> dict[str, Any]:
+def scheduled_job_run_observability_response(
+    *,
+    current_store: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
     runs = _scheduled_job_run_rows(current_store)
     jobs_by_id = {
         str(job["id"]): job
