@@ -732,6 +732,30 @@ class PostgresSnapshotRepository:
     ) -> list[dict[str, Any]]:
         return self._knowledge_read_repository.list_knowledge_deposits(status=status)
 
+    def count_knowledge_deposits(
+        self,
+        *,
+        status: str | None = None,
+    ) -> int:
+        return self._knowledge_read_repository.count_knowledge_deposits(status=status)
+
+    def list_knowledge_deposits_page(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._knowledge_read_repository.list_knowledge_deposits_page(
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
+
     def get_knowledge_deposit(self, deposit_id: str) -> dict[str, Any] | None:
         return self._knowledge_read_repository.get_knowledge_deposit(deposit_id=deposit_id)
 

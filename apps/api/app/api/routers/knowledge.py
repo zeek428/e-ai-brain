@@ -51,6 +51,10 @@ router = APIRouter(tags=["knowledge"])
 settings = get_settings()
 
 
+def _request_started_at(request: Request) -> float | None:
+    return getattr(request.state, "started_at", None)
+
+
 class KnowledgeDocumentRequest(BaseModel):
     title: str
     content: str
@@ -584,12 +588,21 @@ def search_knowledge(
 @router.get("/api/knowledge/deposits")
 def list_knowledge_deposits(
     request: Request,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = Query(default="desc"),
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"knowledge_owner", "rd_owner"})
     return knowledge_deposit_list_response(
         current_store=store(request),
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        started_at=_request_started_at(request),
         status=status,
         trace_id=get_trace_id(request),
     )

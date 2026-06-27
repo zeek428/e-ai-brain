@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.414 |
+| 功能版本 | v1.1.415 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.415 | 2026-06-28 | `GET /api/knowledge/deposits` 补齐远程分页契约：支持 `page/page_size/sort_by/sort_order`，按状态过滤知识沉淀候选，并返回 `query/performance` 观测 | Codex |
 | v1.1.414 | 2026-06-28 | `GET /api/system/plugin-invocation-logs` 补齐远程分页契约：支持 `page/page_size/sort_by/sort_order`，按动作、定时作业、运行实例和状态过滤，并返回 `query/performance` 观测 | Codex |
 | v1.1.413 | 2026-06-28 | `GET /api/system/ai-executor-tasks` 补齐远程分页契约：支持 `page/page_size/sort_by/sort_order`，按研发 AI 任务、Runner、定时作业运行和任务状态过滤，并返回 `query/performance` 观测 | Codex |
 | v1.1.412 | 2026-06-27 | 核心管理列表读权限与产品 scope 收口：`GET /api/requirements`、`GET /api/bugs`、`GET /api/knowledge/documents`、`GET /api/governance/code-inspections` 分别校验 `requirement.read`、`bug.read`、`knowledge.read`、`code_inspection.read`，需求/Bug/代码巡检列表按产品 scope 过滤 | Codex |
@@ -736,7 +737,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Knowledge | POST | `/api/knowledge/documents/{document_id}/reparse` | 基于原始资产创建新的 queued 重解析任务。 |
 | Knowledge | POST | `/api/knowledge/documents/batch-move` | 批量移动知识文档目录，返回 updated/skipped 明细。 |
 | Knowledge | POST | `/api/knowledge/search` | 知识检索。 |
-| Knowledge | GET | `/api/knowledge/deposits` | 知识沉淀候选列表。 |
+| Knowledge | GET | `/api/knowledge/deposits?status=&page=&page_size=&sort_by=&sort_order=` | 知识沉淀候选列表。传入 `page/page_size` 时优先走 PostgreSQL read model 的 count/page 查询，支持按 `status` 过滤，支持 `sort_by=id/ai_task_id/deposit_type/title/status/created_at/updated_at` 与 `sort_order=asc/desc`，响应补充 `page/page_size/query/performance`；未带分页时保留旧全量返回兼容旧审核弹窗和测试 helper。 |
 | Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/approve` | 采纳知识沉淀。 |
 | Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/reject` | 驳回知识沉淀。 |
 | Output | GET | `/api/writeback/results/{task_id}` | 查询模拟回写结果。 |

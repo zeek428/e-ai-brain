@@ -2289,6 +2289,19 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
     )
     monkeypatch.setattr(
         KnowledgeReadRepository,
+        "count_knowledge_deposits",
+        record_call("count_knowledge_deposits", 5),
+    )
+    monkeypatch.setattr(
+        KnowledgeReadRepository,
+        "list_knowledge_deposits_page",
+        record_call(
+            "list_knowledge_deposits_page",
+            [{"source": "list_knowledge_deposits_page"}],
+        ),
+    )
+    monkeypatch.setattr(
+        KnowledgeReadRepository,
         "get_knowledge_deposit",
         record_call("get_knowledge_deposit", {"source": "get_knowledge_deposit"}),
     )
@@ -2328,6 +2341,14 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
     assert repository.list_knowledge_deposits(status="pending")[0]["source"] == (
         "list_knowledge_deposits"
     )
+    assert repository.count_knowledge_deposits(status="pending") == 5
+    assert repository.list_knowledge_deposits_page(
+        limit=10,
+        offset=20,
+        sort_by="updated_at",
+        sort_order="desc",
+        status="pending",
+    )[0]["source"] == "list_knowledge_deposits_page"
     assert repository.get_knowledge_deposit("deposit_001") == {
         "source": "get_knowledge_deposit"
     }
@@ -2359,6 +2380,17 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
                 },
             ),
         ("list_knowledge_deposits", {"status": "pending"}),
+        ("count_knowledge_deposits", {"status": "pending"}),
+        (
+            "list_knowledge_deposits_page",
+            {
+                "limit": 10,
+                "offset": 20,
+                "sort_by": "updated_at",
+                "sort_order": "desc",
+                "status": "pending",
+            },
+        ),
         ("get_knowledge_deposit", {"deposit_id": "deposit_001"}),
         (
             "has_readable_vector_chunks",

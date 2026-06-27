@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.api.deps import api_error
+from app.core.listing import add_list_observability, ensure_list_enum, sort_list_items
 from app.core.roles import ASSIGNABLE_ROLE_CODES
 from app.core.store import MemoryStore
 from app.core.trace import envelope
@@ -26,6 +27,15 @@ KNOWLEDGE_INDEX_STATUSES = {
     "pending_index",
     "text_indexed",
     "vector_indexed",
+}
+KNOWLEDGE_DEPOSIT_SORT_FIELDS = {
+    "ai_task_id",
+    "created_at",
+    "deposit_type",
+    "id",
+    "status",
+    "title",
+    "updated_at",
 }
 
 __all__ = [
@@ -82,17 +92,88 @@ def knowledge_query_repository(current_store: Any) -> Any | None:
 def knowledge_deposit_list_response(
     *,
     current_store: Any,
+    page: int | None = None,
+    page_size: int | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    started_at: float | None = None,
     status: str | None,
     trace_id: str,
 ) -> dict[str, Any]:
+    ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
+    resolved_sort_by = sort_by or "created_at"
+    ensure_list_enum(resolved_sort_by, KNOWLEDGE_DEPOSIT_SORT_FIELDS, "sort_by")
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    with_pagination = page is not None or page_size is not None
+    filters = {"status": status}
     repository = knowledge_query_repository(current_store)
-    if repository is not None:
-        items = repository.list_knowledge_deposits(status=status)
-    else:
-        items = list(_read_memory_dict(current_store, "knowledge_deposits").values())
-        if status:
-            items = [item for item in items if item["status"] == status]
-    return envelope({"items": items, "total": len(items)}, trace_id)
+    count_page = getattr(repository, "count_knowledge_deposits", None)
+    list_page = getattr(repository, "list_knowledge_deposits_page", None)
+    if with_pagination and callable(count_page) and callable(list_page):
+        total = count_page(status=status)
+        items = list_page(
+            limit=resolved_page_size,
+            offset=(resolved_page - 1) * resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
+        return envelope(
+            add_list_observability(
+                {
+                    "items": items,
+                    "page": resolved_page,
+                    "page_size": resolved_page_size,
+                    "total": total,
+                },
+                filters=filters,
+                list_name="knowledge_deposits",
+                page=resolved_page,
+                page_size=resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+                started_at=started_at,
+            ),
+            trace_id,
+        )
+    items = (
+        repository.list_knowledge_deposits(status=status)
+        if repository is not None
+        else list(_read_memory_dict(current_store, "knowledge_deposits").values())
+    )
+    if status:
+        items = [item for item in items if item["status"] == status]
+    items = sort_list_items(
+        items,
+        allowed_fields=KNOWLEDGE_DEPOSIT_SORT_FIELDS,
+        default_sort_by=resolved_sort_by,
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+    )
+    total = len(items)
+    if with_pagination:
+        start = (resolved_page - 1) * resolved_page_size
+        items = items[start : start + resolved_page_size]
+        return envelope(
+            add_list_observability(
+                {
+                    "items": items,
+                    "page": resolved_page,
+                    "page_size": resolved_page_size,
+                    "total": total,
+                },
+                filters=filters,
+                list_name="knowledge_deposits",
+                page=resolved_page,
+                page_size=resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+                started_at=started_at,
+            ),
+            trace_id,
+        )
+    return envelope({"items": items, "total": total}, trace_id)
 
 
 def knowledge_write_store(current_store: Any) -> Any:

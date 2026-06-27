@@ -1,12 +1,45 @@
 import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 import app.main as main
 import app.services.model_gateway as model_gateway_service
 from app.main import app
+from app.services.knowledge_deposits import knowledge_deposit_list_response
 
 client = TestClient(app)
+
+
+class FakeKnowledgeDepositPagingRepository:
+    def __init__(self) -> None:
+        self.count_kwargs: dict | None = None
+        self.page_kwargs: dict | None = None
+
+    def list_knowledge_deposits(self, **_kwargs):
+        raise AssertionError("knowledge deposit list should use count/page read model")
+
+    def count_knowledge_deposits(self, **kwargs):
+        self.count_kwargs = kwargs
+        return 3
+
+    def list_knowledge_deposits_page(self, **kwargs):
+        self.page_kwargs = kwargs
+        return [
+            {
+                "ai_task_id": "task_sql",
+                "content": "候选知识内容",
+                "content_hash": "hash_sql",
+                "created_at": "2026-06-28T01:00:00+00:00",
+                "deposit_type": "task_output",
+                "id": "deposit_sql",
+                "knowledge_document_id": None,
+                "rejection_reason": None,
+                "status": "pending",
+                "title": "候选知识",
+                "updated_at": "2026-06-28T02:00:00+00:00",
+            }
+        ]
 
 
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
@@ -51,6 +84,38 @@ def create_completed_design_task(headers: dict[str, str]) -> str:
     return task["task_id"]
 
 
+def test_knowledge_deposit_list_uses_repository_pagination_when_requested():
+    repository = FakeKnowledgeDepositPagingRepository()
+
+    response = knowledge_deposit_list_response(
+        current_store=SimpleNamespace(repository=repository),
+        page=2,
+        page_size=1,
+        sort_by="updated_at",
+        sort_order="desc",
+        started_at=None,
+        status="pending",
+        trace_id="trace_knowledge_deposit_page",
+    )
+
+    payload = response["data"]
+    assert payload["items"][0]["id"] == "deposit_sql"
+    assert payload["page"] == 2
+    assert payload["page_size"] == 1
+    assert payload["total"] == 3
+    assert payload["query"]["name"] == "knowledge_deposits"
+    assert payload["query"]["filters"] == {"status": "pending"}
+    assert payload["performance"]["p95_target_ms"] == 500
+    assert repository.count_kwargs == {"status": "pending"}
+    assert repository.page_kwargs == {
+        "limit": 1,
+        "offset": 1,
+        "sort_by": "updated_at",
+        "sort_order": "desc",
+        "status": "pending",
+    }
+
+
 def test_knowledge_search_filters_permissions_and_deposits_are_reviewable():
     app.state.store.reset()
     admin_headers = auth_headers()
@@ -89,6 +154,16 @@ def test_knowledge_search_filters_permissions_and_deposits_are_reviewable():
     ]["items"]
     assert deposits[0]["ai_task_id"] == task_id
     assert deposits[0]["status"] == "pending"
+
+    paged_deposits = client.get(
+        "/api/knowledge/deposits"
+        "?status=pending&page=1&page_size=1&sort_by=created_at&sort_order=desc",
+        headers=admin_headers,
+    ).json()["data"]
+    assert paged_deposits["page"] == 1
+    assert paged_deposits["page_size"] == 1
+    assert paged_deposits["query"]["name"] == "knowledge_deposits"
+    assert paged_deposits["performance"]["p95_target_ms"] == 500
 
     approved = client.post(
         f"/api/knowledge/deposits/{deposits[0]['id']}/approve",

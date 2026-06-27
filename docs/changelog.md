@@ -33,6 +33,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 知识沉淀候选列表补齐服务端分页、筛选、排序和性能观测：`GET /api/knowledge/deposits` 带 `page/page_size` 时走 PostgreSQL count/page read model，支持按状态过滤，并返回 `query/performance`。
 - 插件调用日志列表补齐服务端分页、筛选、排序和性能观测：`GET /api/system/plugin-invocation-logs` 带 `page/page_size` 时走 PostgreSQL count/page read model，支持按动作、定时作业、运行实例和状态过滤，并返回 `query/performance`。
 - 定时作业运行观测权限与产品范围收口：运行健康概览允许 `system.scheduled_jobs.run` 或 `system.scheduled_jobs.manage` 访问，并在聚合总数、失败分布、最近失败和慢运行前按当前用户产品 scope 过滤，避免受限用户看到无权产品运行信息。
 - AI 执行器任务列表补齐服务端分页、筛选、排序和性能观测：`GET /api/system/ai-executor-tasks` 带 `page/page_size` 时走 PostgreSQL count/page read model，支持按研发任务、Runner、定时作业运行和状态过滤，并返回 `query/performance`。

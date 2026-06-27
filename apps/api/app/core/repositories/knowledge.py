@@ -38,6 +38,15 @@ KNOWLEDGE_DOCUMENT_SORT_COLUMNS = {
     "title": "lower(d.title)",
     "updated_at": "d.updated_at",
 }
+KNOWLEDGE_DEPOSIT_SORT_COLUMNS = {
+    "ai_task_id": "ai_task_id",
+    "created_at": "created_at",
+    "deposit_type": "deposit_type",
+    "id": "id",
+    "status": "status",
+    "title": "lower(title)",
+    "updated_at": "updated_at",
+}
 
 
 def _parse_vector_text(value: Any) -> list[float] | None:
@@ -374,6 +383,52 @@ class KnowledgeReadRepository:
                     ORDER BY created_at, id
                     """,
                     params,
+                )
+                return [self.knowledge_deposit_from_row(row) for row in cursor.fetchall()]
+
+    def count_knowledge_deposits(
+        self,
+        *,
+        status: str | None = None,
+    ) -> int:
+        where_clause = "WHERE status = %s" if status is not None else ""
+        params: tuple[Any, ...] = (status,) if status is not None else ()
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM knowledge_deposits {where_clause}",
+                    params,
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_knowledge_deposits_page(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause = "WHERE status = %s" if status is not None else ""
+        params: list[Any] = [status] if status is not None else []
+        sort_column = KNOWLEDGE_DEPOSIT_SORT_COLUMNS.get(sort_by, "created_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, ai_task_id, deposit_type, title, content, content_hash, status,
+                           knowledge_document_id, rejection_reason, created_at, updated_at
+                    FROM knowledge_deposits
+                    {where_clause}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
+                    """,
+                    tuple(params),
                 )
                 return [self.knowledge_deposit_from_row(row) for row in cursor.fetchall()]
 
