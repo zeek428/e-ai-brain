@@ -13,9 +13,12 @@ const fullChainTypeLabels: Record<string, string> = {
   code_inspection_report: '代码巡检',
   code_review_report: '代码评审',
   git_snapshot: 'PR/MR 快照',
+  gitlab_mr_snapshot: 'PR/MR 快照',
+  human_review: '人工确认',
   iteration_version: '迭代版本',
   jenkins_release: '发布',
   knowledge_deposit: '知识沉淀',
+  product_version: '迭代版本',
   requirement: '需求',
   review: '人工确认',
 };
@@ -630,9 +633,24 @@ export function RequirementFullChainView({
   const visibleTimeline = timelineTypeFilters.length
     ? fullChain.timeline.filter((item) => timelineTypeFilters.includes(item.type))
     : fullChain.timeline;
+  const anchor = fullChain.anchor;
+  const anchorSubjectType = anchor?.subjectType;
+  const anchorSubjectId = anchor?.subjectId;
+  const showAnchor =
+    anchorSubjectId &&
+    anchorSubjectType &&
+    (anchorSubjectType !== 'requirement' || anchorSubjectId !== fullChain.requirement.id);
 
   return (
     <Space className="requirement-full-chain-view" orientation="vertical" size={16} style={{ width: '100%' }}>
+      {showAnchor ? (
+        <Space aria-label="全链路入口主体" size={8} wrap>
+          <Text>
+            入口主体：{fullChainTypeLabel(anchorSubjectType)} · {anchorSubjectId}
+          </Text>
+          {anchor.resolvedRequirementId ? <Tag>已解析需求 {anchor.resolvedRequirementId}</Tag> : null}
+        </Space>
+      ) : null}
       <section aria-label="需求链路摘要" className="requirement-full-chain-summary">
         <div className="requirement-full-chain-summary-label">需求</div>
         <div className="requirement-full-chain-summary-value requirement-full-chain-summary-wide">

@@ -27,6 +27,7 @@
 - 迭代版本：`/delivery/versions`
 - 研发任务：`/delivery/rd-tasks`
 - 需求全链路：`/delivery/requirements/:requirementId/full-chain`
+- 统一需求全链路工作台：`/delivery/full-chain?subject_type=<type>&subject_id=<id>`
 - 核心接口见 [../api.md](../api.md) 的 requirement、task、review、product config、git review 和 export 章节。
 
 ## 当前落地要求
@@ -36,7 +37,7 @@
 - 迭代版本推进到开发中、测试中、已发布等阶段时，必须按规则同步包含需求的状态，并提供影响预览。
 - 迭代版本代码分支配置属于产品配置子资源；在 PostgreSQL runtime 下，分支配置更新和删除必须按 `branch_config_id` 从 repository 单记录读取源记录，再通过产品配置仓储边界写入变更和审计，不能依赖运行时内存全量集合。
 - 需求、任务、版本和 Review 的列表型接口优先在 SQL/repository/read model 层完成筛选、排序和分页；其中需求列表必须校验 `requirement.read`，并按当前用户产品 scope 在服务端过滤，PostgreSQL 运行态需将产品 scope 下推到 read model，不能由前端或本地内存二次过滤兜底。
-- 需求全链路必须聚合需求、产品、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、Bug、发布和知识沉淀。
+- 需求全链路必须聚合需求、产品、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、Bug、发布和知识沉淀；从 Bug、迭代版本、代码巡检、AI 助手或执行诊断等主体进入统一工作台时，页面必须展示入口主体和已解析需求 ID，避免跨页面跳转后丢失上下文。
 - 任务启动、Graph run/checkpoint、代码评审报告和 Review 决策产物属于 DB-first 写路径：Graph、报告、派生 Bug、知识沉淀和审计事件不得直接操作 `current_store` 业务集合或调用 `current_store.audit()`；MemoryStore 仅作为测试 fallback，PostgreSQL 运行态必须通过任务启动/评审决策 repository 事务提交完整产物链路。
 - Mock Issue 写回必须通过 `save_mock_writeback_record` 写入结果和审计事件；PostgreSQL 运行态写回结果和审计在同一 repository 事务中提交，并刷新本地读缓存以保持幂等重复提交，MemoryStore 仅作为测试 fallback，不得由服务层直接写 `current_store.mock_writebacks` 或调用 `current_store.audit()`。
 - GitLab MR / GitHub PR 快照成功、复用和失败审计必须通过 `save_git_review_snapshot_record` 统一写入；PostgreSQL 运行态快照和审计在同一事务提交，MemoryStore 仅作为测试 fallback，不得由服务层直接写 `current_store.gitlab_mr_snapshots` 或追加 `current_store.audit_events`。

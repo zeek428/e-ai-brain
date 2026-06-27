@@ -388,6 +388,8 @@ describe('RequirementFullChainPage', () => {
 
     expect(await screen.findByRole('heading', { name: '需求全链路详情' })).toBeInTheDocument();
     expect(await screen.findByText('需求：AI 助手历史记录')).toBeInTheDocument();
+    expect(await screen.findByText('入口主体：Bug · bug_history')).toBeInTheDocument();
+    expect(screen.getByText('已解析需求 requirement_084')).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
       '/api/lifecycle/full-chain?subject_id=bug_history&subject_type=bug',
     );
