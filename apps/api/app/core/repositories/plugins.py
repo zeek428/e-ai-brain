@@ -34,6 +34,18 @@ PLUGIN_ACTION_SORT_COLUMNS = {
     "updated_at": "updated_at",
 }
 
+AI_EXECUTOR_TASK_SORT_COLUMNS = {
+    "claimed_at": "claimed_at",
+    "created_at": "created_at",
+    "executor_type": "executor_type",
+    "finished_at": "finished_at",
+    "id": "id",
+    "runner_id": "runner_id",
+    "scheduled_job_run_id": "scheduled_job_run_id",
+    "status": "status",
+    "updated_at": "updated_at",
+}
+
 
 class PluginReadRepository:
     def __init__(
@@ -401,6 +413,73 @@ class PluginReadRepository:
                     FROM ai_executor_tasks
                     {where}
                     ORDER BY created_at ASC, id ASC
+                    """,
+                    tuple(params),
+                )
+                return [self._ai_executor_task_from_row(row) for row in cursor.fetchall()]
+
+    def count_ai_executor_tasks(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        runner_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where, params = self._where(
+            {
+                "ai_task_id": ai_task_id,
+                "runner_id": runner_id,
+                "scheduled_job_run_id": scheduled_job_run_id,
+                "status": status,
+            },
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM ai_executor_tasks {where}",
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_ai_executor_tasks_page(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        limit: int,
+        offset: int,
+        runner_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._where(
+            {
+                "ai_task_id": ai_task_id,
+                "runner_id": runner_id,
+                "scheduled_job_run_id": scheduled_job_run_id,
+                "status": status,
+            },
+        )
+        sort_column = AI_EXECUTOR_TASK_SORT_COLUMNS.get(sort_by, "updated_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, runner_id, plugin_invocation_log_id, scheduled_job_id,
+                           scheduled_job_run_id, executor_type, instruction, workspace_root,
+                           timeout_seconds, input_payload, request_config, result_json, logs,
+                           status, error_code, error_message, claimed_at, finished_at,
+                           created_by, created_at, updated_at, ai_task_id
+                    FROM ai_executor_tasks
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
                     """,
                     tuple(params),
                 )

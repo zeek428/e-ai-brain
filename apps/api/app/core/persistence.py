@@ -1591,6 +1591,44 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def count_ai_executor_tasks(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        runner_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        return self._plugin_read_repository.count_ai_executor_tasks(
+            ai_task_id=ai_task_id,
+            runner_id=runner_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
+        )
+
+    def list_ai_executor_tasks_page(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        limit: int,
+        offset: int,
+        runner_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_ai_executor_tasks_page(
+            ai_task_id=ai_task_id,
+            limit=limit,
+            offset=offset,
+            runner_id=runner_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
+
     def list_model_gateway_logs(
         self,
         *,

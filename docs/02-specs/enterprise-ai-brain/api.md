@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.412 |
+| 功能版本 | v1.1.413 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.413 | 2026-06-28 | `GET /api/system/ai-executor-tasks` 补齐远程分页契约：支持 `page/page_size/sort_by/sort_order`，按研发 AI 任务、Runner、定时作业运行和任务状态过滤，并返回 `query/performance` 观测 | Codex |
 | v1.1.412 | 2026-06-27 | 核心管理列表读权限与产品 scope 收口：`GET /api/requirements`、`GET /api/bugs`、`GET /api/knowledge/documents`、`GET /api/governance/code-inspections` 分别校验 `requirement.read`、`bug.read`、`knowledge.read`、`code_inspection.read`，需求/Bug/代码巡检列表按产品 scope 过滤 | Codex |
 | v1.1.411 | 2026-06-27 | `GET /api/assistant/reference-candidates` 裸 `@` 默认候选顺序收紧：优先保留知识文档、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI 角色和 Skill，执行诊断来源仍可引用但不挤占常用对象首屏 | Codex |
 | v1.1.410 | 2026-06-27 | `GET /api/knowledge/documents` 补齐知识中心主列表远程分页契约：带 `page/page_size` 时在 PostgreSQL read model 侧完成权限过滤、关键字、空间、目录、类型、索引状态、权限角色筛选、白名单排序，并返回 `query/performance` 观测 | Codex |
@@ -777,7 +778,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Plugins | GET | `/api/system/ai-executor-runners/{runner_id}/install-package?target_os=&arch=&install_mode=` | 下载 Runner 安装包 ZIP。仅管理员可下载本地 Runner 安装包，系统默认执行器返回锁定错误。`target_os` 支持 `linux/macos/windows/docker/manual`，`arch` 支持 `amd64/arm64/universal`，`install_mode` 按目标系统校验：Linux 支持 `systemd/shell`，macOS 支持 `launchd/shell`，Windows 支持 `service/powershell`，Docker 固定 `docker`，通用手动固定 `manual`；未传时使用 Runner `metadata.target_os/package_arch/install_mode`，不兼容组合回退到该系统默认安装模式。响应 `Content-Type=application/zip`，`Content-Disposition` 使用 `ai-brain-runner-<runner_id>-<target_os>-<arch>-<install_mode>.zip`；包内公共文件包含 `README.md`、`START_STOP.md`、`ai-brain-runner.env`、`manifest.json`、`runner_config.json` 和 `skills/ai-brain-runner/SKILL.md`，其中 `START_STOP.md` 必须按目标系统说明启动、停止、状态查看、重启、禁用自启以及 AI Brain 页面停用不等于关闭本机进程。Linux 包含 `install.sh` 与可选 `systemd/ai-brain-runner.service`；macOS 包含 `install.sh` 与可选 `launchd/com.ai-brain.runner.plist`；Windows 包含 `install.ps1` 与可选 `windows/ai-brain-runner-service.xml`；Docker 包含 `Dockerfile` 和 `docker-compose.runner.yml`；通用手动包包含 `scripts/start-runner.sh` 和 `scripts/start-runner.ps1`。安装包写入 Runner ID、AI Brain 地址、支持的执行器、工作区白名单、命令模板、目标系统、架构和安装模式；由于服务端只保存 token hash，包内 `AI_BRAIN_RUNNER_TOKEN` 必须使用 `<runner_token>` 占位，用户需填入创建或轮换时返回的一次性 token。 |
 | Plugins | POST | `/api/system/ai-executor-runners/{runner_id}/rotate-token` | 管理员轮换 Runner token；请求可传 `runner_token`，未传则服务端生成新 token。成功后 `token_version` 递增、`token_rotated_at` 更新，响应只返回本次一次性明文 token，旧 token 立即失效。 |
 | Plugins | POST | `/api/system/ai-executor-runners/{runner_id}/heartbeat` | Runner 心跳接口。调用方必须通过 `X-Runner-Token` 或 Bearer Token 提交 Runner token；请求体可带 `metadata`，服务端更新 `last_heartbeat_at/status/metadata` 并返回脱敏 Runner 信息。 |
-| Plugins | GET | `/api/system/ai-executor-tasks?ai_task_id=&runner_id=&scheduled_job_run_id=&status=` | 管理员查询 AI 执行器任务列表；支持按研发 AI 任务、Runner、定时作业运行和任务状态过滤，研发任务详情可通过 `ai_task_id` 反查关联 Runner 执行任务。 |
+| Plugins | GET | `/api/system/ai-executor-tasks?ai_task_id=&runner_id=&scheduled_job_run_id=&status=&page=&page_size=&sort_by=&sort_order=` | 管理员查询 AI 执行器任务列表；支持按研发 AI 任务、Runner、定时作业运行和任务状态过滤，研发任务详情可通过 `ai_task_id` 反查关联 Runner 执行任务。传入 `page/page_size` 时优先走 PostgreSQL read model 的 count/page 查询，支持 `sort_by=id/runner_id/scheduled_job_run_id/status/executor_type/claimed_at/finished_at/created_at/updated_at` 与 `sort_order=asc/desc`，响应补充 `page/page_size/query/performance`；不传分页时保留旧全量返回兼容 Runner 日志弹窗、单任务下钻和测试 helper。 |
 | Plugins | POST | `/api/system/ai-executor-tasks/claim` | Runner 认领任务接口。调用方必须携带 Runner token，并提交 `runner_id` 和可选 `executor_type`；服务端只返回该 Runner 支持且处于 `queued` 的最早任务，任务进入 `claimed`，响应包含 `instruction/workspace_root/input_payload/request_config/timeout_seconds/scheduled_job_run_id/ai_task_id` 等执行上下文。 |
 | Plugins | POST | `/api/system/ai-executor-tasks/{task_id}/complete` | Runner 完成回写接口。调用方必须携带 Runner token，并提交 `runner_id/status/result_json/logs/error_code/error_message`；`status` 支持 `running/succeeded/failed/cancelled/timed_out`，完成回写会更新 `ai_executor_tasks`，并同步插件调用日志、定时作业运行的 `runner_execution` 节点、结果动作反馈、collector run 和作业最近运行状态。 |
 | Plugins | GET/POST | `/api/system/ai-executor-tasks/{task_id}/logs` | 查询或追加 AI 执行器任务日志。Runner 追加日志时必须携带 Runner token 和 `runner_id`，服务端按时间顺序保留日志行并同步任务 `updated_at`；管理员查询返回 `task_id/status/logs[]`，页面可作为流式日志查看的轮询数据源。 |

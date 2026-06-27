@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import app.services.plugins as plugin_services
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.main import app
+from app.services.ai_executor_runners import list_ai_executor_tasks_response
 from app.services.plugins import (
     list_plugin_actions_response,
     list_plugin_connections_response,
@@ -28,6 +29,8 @@ class FakePluginPagingRepository:
         self.connection_page_kwargs: dict | None = None
         self.action_count_kwargs: dict | None = None
         self.action_page_kwargs: dict | None = None
+        self.ai_executor_task_count_kwargs: dict | None = None
+        self.ai_executor_task_page_kwargs: dict | None = None
 
     def list_plugins(self, **_kwargs):
         return []
@@ -40,6 +43,9 @@ class FakePluginPagingRepository:
 
     def list_plugin_invocation_logs(self, **_kwargs):
         return []
+
+    def list_ai_executor_tasks(self, **_kwargs):
+        raise AssertionError("full AI executor task list should not be used")
 
     def count_plugin_connections(self, **kwargs):
         self.connection_count_kwargs = kwargs
@@ -91,6 +97,39 @@ class FakePluginPagingRepository:
                 "status": "active",
                 "updated_at": "2026-06-24T01:00:00+00:00",
             }
+        ]
+
+    def count_ai_executor_tasks(self, **kwargs):
+        self.ai_executor_task_count_kwargs = kwargs
+        return 3
+
+    def list_ai_executor_tasks_page(self, **kwargs):
+        self.ai_executor_task_page_kwargs = kwargs
+        return [
+            {
+                "ai_task_id": "ai_task_001",
+                "claimed_at": None,
+                "created_at": "2026-06-24T01:00:00+00:00",
+                "created_by": "user_admin",
+                "error_code": None,
+                "error_message": None,
+                "executor_type": "codex",
+                "finished_at": None,
+                "id": "ai_executor_task_sql",
+                "input_payload": {},
+                "instruction": "run tests",
+                "logs": [],
+                "plugin_invocation_log_id": None,
+                "request_config": {},
+                "result_json": {},
+                "runner_id": "runner_sql",
+                "scheduled_job_id": None,
+                "scheduled_job_run_id": "scheduled_run_sql",
+                "status": "queued",
+                "timeout_seconds": 300,
+                "updated_at": "2026-06-24T01:00:00+00:00",
+                "workspace_root": "/workspace",
+            },
         ]
 
 
@@ -802,6 +841,98 @@ def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
     assert listed_runner["health_status"] == "online"
     assert isinstance(listed_runner["heartbeat_age_seconds"], int)
     assert "ai-brain-runner" in listed_runner["setup_command"]
+
+
+def test_ai_executor_task_list_supports_remote_pagination_sort_and_observability():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    client.get("/api/system/plugin-marketplace", headers=admin_headers)
+
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["openclaw"],
+            "name": "OpenClaw 分页执行器",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "runner://ai-executor",
+            "name": "OpenClaw 分页连接",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "query": {
+                    "executor_type": "openclaw",
+                    "runner_id": runner["id"],
+                    "workspace_root": "/Users/zeek/source/e-ai-brain",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "openclaw_task_page",
+            "connection_id": connection["id"],
+            "name": "OpenClaw 任务分页",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "instruction": "输出分页测试任务。",
+                "tool_name": "ai_executor.run_instruction",
+            },
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    first_task = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"sequence": 1}},
+        headers=admin_headers,
+    ).json()["data"]["response_summary"]["json"]["runner_task_id"]
+    second_task = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"sequence": 2}},
+        headers=admin_headers,
+    ).json()["data"]["response_summary"]["json"]["runner_task_id"]
+
+    response = client.get(
+        "/api/system/ai-executor-tasks"
+        f"?runner_id={runner['id']}&page=1&page_size=1"
+        "&sort_by=created_at&sort_order=desc",
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["total"] == 2
+    assert payload["page"] == 1
+    assert payload["page_size"] == 1
+    assert payload["items"][0]["id"] == second_task
+    assert payload["items"][0]["id"] != first_task
+    assert payload["query"]["name"] == "ai_executor_tasks"
+    assert payload["query"]["sort_by"] == "created_at"
+    assert payload["performance"]["p95_target_ms"] == 400
+
+
+def test_ai_executor_task_list_rejects_unknown_sort_field():
+    app.state.store.reset()
+    response = client.get(
+        "/api/system/ai-executor-tasks?page=1&page_size=10&sort_by=instruction",
+        headers=auth_headers(),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
 
 
 def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_assets():
@@ -1753,6 +1884,48 @@ def test_plugin_connection_and_action_lists_use_repository_pagination_when_reque
         "sort_by": "code",
         "sort_order": "desc",
         "status": "active",
+    }
+
+
+def test_ai_executor_task_list_uses_repository_pagination_when_requested():
+    repository = FakePluginPagingRepository()
+    store = SimpleNamespace(repository=repository)
+
+    response = list_ai_executor_tasks_response(
+        ai_task_id="ai_task_001",
+        current_store=store,
+        page=2,
+        page_size=1,
+        runner_id="runner_sql",
+        scheduled_job_run_id="scheduled_run_sql",
+        sort_by="created_at",
+        sort_order="desc",
+        started_at=None,
+        status="queued",
+        user=ADMIN_SERVICE_USER,
+    )
+
+    assert response["total"] == 3
+    assert response["page"] == 2
+    assert response["page_size"] == 1
+    assert response["items"][0]["id"] == "ai_executor_task_sql"
+    assert response["query"]["name"] == "ai_executor_tasks"
+    assert response["performance"]["p95_target_ms"] == 400
+    assert repository.ai_executor_task_count_kwargs == {
+        "ai_task_id": "ai_task_001",
+        "runner_id": "runner_sql",
+        "scheduled_job_run_id": "scheduled_run_sql",
+        "status": "queued",
+    }
+    assert repository.ai_executor_task_page_kwargs == {
+        "ai_task_id": "ai_task_001",
+        "limit": 1,
+        "offset": 1,
+        "runner_id": "runner_sql",
+        "scheduled_job_run_id": "scheduled_run_sql",
+        "sort_by": "created_at",
+        "sort_order": "desc",
+        "status": "queued",
     }
 
 

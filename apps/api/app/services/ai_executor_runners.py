@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import Request
 
 from app.api.deps import api_error, require_permissions
+from app.core.listing import add_list_observability, sort_list_items
 from app.services.operational_records import record_audit_event, save_single_repository_record
 
 SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID = "ai_executor_runner_system_default"
@@ -52,6 +53,17 @@ AI_EXECUTOR_TASK_STATUSES = {
     "timed_out",
 }
 AI_EXECUTOR_TASK_TERMINAL_STATUSES = {"cancelled", "failed", "succeeded", "timed_out"}
+AI_EXECUTOR_TASK_SORT_FIELDS = {
+    "claimed_at",
+    "created_at",
+    "executor_type",
+    "finished_at",
+    "id",
+    "runner_id",
+    "scheduled_job_run_id",
+    "status",
+    "updated_at",
+}
 
 
 def _ensure_admin(user: dict[str, Any]) -> None:
@@ -1661,14 +1673,62 @@ def list_ai_executor_tasks_response(
     *,
     ai_task_id: str | None,
     current_store: Any,
+    page: int | None = None,
+    page_size: int | None = None,
     runner_id: str | None,
     scheduled_job_run_id: str | None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    started_at: float | None = None,
     status: str | None,
     user: dict[str, Any],
 ) -> dict[str, Any]:
     _ensure_admin(user)
     if status is not None:
         _ensure_enum(status, AI_EXECUTOR_TASK_STATUSES, "status")
+    sort_order = _ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
+    if sort_by is not None:
+        _ensure_enum(sort_by, AI_EXECUTOR_TASK_SORT_FIELDS, "sort_by")
+    resolved_sort_by = sort_by or "updated_at"
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    with_pagination = page is not None or page_size is not None
+    repository = getattr(current_store, "repository", None)
+    count_page = getattr(repository, "count_ai_executor_tasks", None)
+    list_page = getattr(repository, "list_ai_executor_tasks_page", None)
+    filters = {
+        "ai_task_id": ai_task_id,
+        "runner_id": runner_id,
+        "scheduled_job_run_id": scheduled_job_run_id,
+        "status": status,
+    }
+    if with_pagination and callable(count_page) and callable(list_page):
+        total = count_page(**filters)
+        items = [
+            _task_public(task)
+            for task in list_page(
+                **filters,
+                limit=resolved_page_size,
+                offset=(resolved_page - 1) * resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+            )
+        ]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="ai_executor_tasks",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
     sync_ai_executor_task_store(
         current_store,
         ai_task_id=ai_task_id,
@@ -1687,14 +1747,33 @@ def list_ai_executor_tasks_response(
         )
         and (status is None or task.get("status") == status)
     ]
-    items.sort(
-        key=lambda task: (
-            task.get("updated_at") or task.get("created_at") or "",
-            task.get("id") or "",
-        ),
-        reverse=True,
+    items = sort_list_items(
+        items,
+        allowed_fields=AI_EXECUTOR_TASK_SORT_FIELDS,
+        default_sort_by=resolved_sort_by,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
-    return {"items": items, "total": len(items)}
+    total = len(items)
+    if with_pagination:
+        start_index = (resolved_page - 1) * resolved_page_size
+        items = items[start_index : start_index + resolved_page_size]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="ai_executor_tasks",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+    return {"items": items, "total": total}
 
 
 def _runner_test_diagnostic(

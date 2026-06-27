@@ -630,6 +630,67 @@ def test_requirement_record_writes_use_single_transaction():
     assert "DELETE FROM requirements WHERE id = %s" in executed_sql[-1]
 
 
+def test_postgres_ai_executor_task_page_read_delegates_to_plugin_repository(monkeypatch):
+    repository = PostgresSnapshotRepository("postgresql://unused")
+    calls: list[tuple[str, dict]] = []
+
+    def record_count(self, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(("count_ai_executor_tasks", kwargs))
+        return 7
+
+    def record_page(self, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(("list_ai_executor_tasks_page", kwargs))
+        return [{"id": "ai_executor_task_sql"}]
+
+    monkeypatch.setattr(PluginReadRepository, "count_ai_executor_tasks", record_count)
+    monkeypatch.setattr(PluginReadRepository, "list_ai_executor_tasks_page", record_page)
+
+    assert (
+        repository.count_ai_executor_tasks(
+            ai_task_id="ai_task_001",
+            runner_id="runner_001",
+            scheduled_job_run_id="scheduled_run_001",
+            status="queued",
+        )
+        == 7
+    )
+    assert repository.list_ai_executor_tasks_page(
+        ai_task_id="ai_task_001",
+        limit=10,
+        offset=20,
+        runner_id="runner_001",
+        scheduled_job_run_id="scheduled_run_001",
+        sort_by="created_at",
+        sort_order="desc",
+        status="queued",
+    ) == [{"id": "ai_executor_task_sql"}]
+
+    assert calls == [
+        (
+            "count_ai_executor_tasks",
+            {
+                "ai_task_id": "ai_task_001",
+                "runner_id": "runner_001",
+                "scheduled_job_run_id": "scheduled_run_001",
+                "status": "queued",
+            },
+        ),
+        (
+            "list_ai_executor_tasks_page",
+            {
+                "ai_task_id": "ai_task_001",
+                "limit": 10,
+                "offset": 20,
+                "runner_id": "runner_001",
+                "scheduled_job_run_id": "scheduled_run_001",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "status": "queued",
+            },
+        ),
+    ]
+
+
 def test_runner_related_record_writes_use_single_transaction(monkeypatch):
     connect_calls: list[dict] = []
     executed_sql: list[str] = []

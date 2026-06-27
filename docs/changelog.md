@@ -34,6 +34,7 @@
 
 ### Changed
 - 定时作业运行观测权限与产品范围收口：运行健康概览允许 `system.scheduled_jobs.run` 或 `system.scheduled_jobs.manage` 访问，并在聚合总数、失败分布、最近失败和慢运行前按当前用户产品 scope 过滤，避免受限用户看到无权产品运行信息。
+- AI 执行器任务列表补齐服务端分页、筛选、排序和性能观测：`GET /api/system/ai-executor-tasks` 带 `page/page_size` 时走 PostgreSQL count/page read model，支持按研发任务、Runner、定时作业运行和状态过滤，并返回 `query/performance`。
 - 统一需求全链路工作台展示入口上下文：从 Bug、迭代版本、代码巡检、AI 助手等主体进入 `/delivery/full-chain` 时，页面顶部显示入口主体和已解析需求 ID，避免用户跨页面跳转后丢失上下文。
 - 核心管理列表权限与产品范围收口：需求、Bug、知识中心和代码巡检列表统一校验菜单声明的 read 权限；需求/Bug/代码巡检列表按当前用户产品 scope 在服务端过滤，并在 PostgreSQL read model 查询中下推 scope 条件。
 - AI 助手裸 `@` 默认引用候选顺序恢复常用对象优先：知识文档、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI 角色和 Skill 不再被执行诊断来源挤出首屏，模型网关日志等诊断来源仍可在后续候选中引用。

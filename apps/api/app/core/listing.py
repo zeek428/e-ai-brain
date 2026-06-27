@@ -15,6 +15,7 @@ DEFAULT_LIST_SLOW_THRESHOLD_MS = DEFAULT_LIST_P95_TARGET_MS
 LIST_P95_TARGETS_MS = {
     "ai_agents": 300,
     "ai_skills": 300,
+    "ai_executor_tasks": 400,
     "ai_tasks": 300,
     "audit_events": 500,
     "assistant_action_drafts": 400,

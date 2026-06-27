@@ -361,8 +361,12 @@ def ai_executor_runner_heartbeat(
 def list_ai_executor_tasks(
     request: Request,
     ai_task_id: str | None = Query(default=None),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
     runner_id: str | None = Query(default=None),
     scheduled_job_run_id: str | None = Query(default=None),
+    sort_by: str | None = Query(default=None),
+    sort_order: str = Query(default="desc"),
     status: str | None = Query(default=None),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
@@ -370,8 +374,13 @@ def list_ai_executor_tasks(
         list_ai_executor_tasks_response(
             ai_task_id=ai_task_id,
             current_store=store(request),
+            page=page,
+            page_size=page_size,
             runner_id=runner_id,
             scheduled_job_run_id=scheduled_job_run_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            started_at=_request_started_at(request),
             status=status,
             user=user,
         ),
