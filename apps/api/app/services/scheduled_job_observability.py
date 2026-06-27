@@ -4,7 +4,10 @@ from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
-from app.services.scheduled_jobs import require_admin
+from app.services.scheduled_jobs import (
+    require_scheduled_job_runner,
+    scheduled_job_product_scope_filter,
+)
 
 
 def _scheduled_jobs_repository(current_store: Any) -> Any | None:
@@ -34,6 +37,32 @@ def _scheduled_job_run_rows(current_store: Any) -> list[dict[str, Any]]:
     if repository is not None:
         return repository.list_scheduled_job_runs(scheduled_job_id=None, status=None)
     return list(_memory_dict(current_store, "scheduled_job_runs").values())
+
+
+def _scheduled_job_run_product_id(
+    run: dict[str, Any],
+    jobs_by_id: dict[str, dict[str, Any]],
+) -> Any:
+    scheduled_job_id = run.get("scheduled_job_id")
+    if scheduled_job_id:
+        job = jobs_by_id.get(str(scheduled_job_id))
+        if isinstance(job, dict) and job.get("product_id") is not None:
+            return job.get("product_id")
+    config_snapshot = run.get("config_snapshot")
+    if isinstance(config_snapshot, dict):
+        return config_snapshot.get("product_id")
+    return None
+
+
+def _scheduled_job_run_matches_product_scope(
+    run: dict[str, Any],
+    jobs_by_id: dict[str, dict[str, Any]],
+    product_scope_ids: set[str] | None,
+) -> bool:
+    if product_scope_ids is None:
+        return True
+    product_id = _scheduled_job_run_product_id(run, jobs_by_id)
+    return product_id is not None and str(product_id) in product_scope_ids
 
 
 def _scheduled_job_run_datetime(value: Any) -> datetime | None:
@@ -151,13 +180,19 @@ def scheduled_job_run_observability_response(
     current_store: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_admin(user)
-    runs = _scheduled_job_run_rows(current_store)
+    require_scheduled_job_runner(user)
     jobs_by_id = {
         str(job["id"]): job
         for job in _scheduled_job_rows(current_store)
         if job.get("id") is not None
     }
+    product_scope_filter = scheduled_job_product_scope_filter(user)
+    product_scope_ids = set(product_scope_filter) if product_scope_filter is not None else None
+    runs = [
+        run
+        for run in _scheduled_job_run_rows(current_store)
+        if _scheduled_job_run_matches_product_scope(run, jobs_by_id, product_scope_ids)
+    ]
     model_logs_by_id = _model_gateway_log_index(current_store)
 
     status_counter: Counter[str] = Counter()

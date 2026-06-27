@@ -199,6 +199,19 @@ def add_scheduled_job_run(job: dict, *, run_id: str) -> None:
     }
 
 
+def add_failed_scheduled_job_run(job: dict, *, run_id: str) -> None:
+    add_scheduled_job_run(job, run_id=run_id)
+    app.state.store.scheduled_job_runs[run_id].update(
+        {
+            "error_code": "HIDDEN_PRODUCT_FAILURE",
+            "error_message": "隐藏产品作业失败",
+            "finished_at": "2026-06-27T10:03:00+00:00",
+            "status": "failed",
+            "updated_at": "2026-06-27T10:03:00+00:00",
+        },
+    )
+
+
 def create_product(headers: dict[str, str], *, code: str, name: str) -> dict:
     response = client.post(
         "/api/products",
@@ -455,7 +468,7 @@ def test_operational_config_lists_require_permissions_and_scheduled_jobs_filter_
         product_id=product_b["id"],
     )
     add_scheduled_job_run(job_a, run_id="scheduled_run_scope_a")
-    add_scheduled_job_run(job_b, run_id="scheduled_run_scope_b")
+    add_failed_scheduled_job_run(job_b, run_id="scheduled_run_scope_b")
 
     scoped_headers = create_scoped_test_owner(admin_headers, product_id=product_a["id"])
     scoped_jobs = client.get("/api/system/scheduled-jobs", headers=scoped_headers)
@@ -468,6 +481,21 @@ def test_operational_config_lists_require_permissions_and_scheduled_jobs_filter_
     assert scoped_runs.status_code == 200, scoped_runs.text
     scoped_run_ids = {item["id"] for item in scoped_runs.json()["data"]["items"]}
     assert scoped_run_ids == {"scheduled_run_scope_a"}
+
+    scoped_observability = client.get(
+        "/api/system/scheduled-job-runs/observability",
+        headers=scoped_headers,
+    )
+    assert scoped_observability.status_code == 200, scoped_observability.text
+    scoped_observability_data = scoped_observability.json()["data"]
+    assert scoped_observability_data["summary"]["total_runs"] == 1
+    assert scoped_observability_data["summary"]["succeeded_runs"] == 1
+    assert scoped_observability_data["summary"]["failed_runs"] == 0
+    assert scoped_observability_data["error_distribution"] == []
+    assert scoped_observability_data["recent_failures"] == []
+    assert [item["id"] for item in scoped_observability_data["slow_runs"]] == [
+        "scheduled_run_scope_a",
+    ]
 
     hidden_runs = client.get(
         f"/api/system/scheduled-job-runs?scheduled_job_id={job_b['id']}",
