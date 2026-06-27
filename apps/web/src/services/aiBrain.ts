@@ -6670,6 +6670,16 @@ export type CodeInspectionDashboardRecord = {
     suppressed_finding_count?: number;
     suppression_distribution?: Array<{ count: number; reason: string }>;
   };
+  quality_gate_violations?: Array<{
+    actual?: number | string | null;
+    latest_report_id?: string | null;
+    latest_report_summary?: string | null;
+    limit?: number | string | null;
+    metric: string;
+    report_count: number;
+    severity: string;
+    violation_count: number;
+  }>;
   severity_distribution: Array<{ count: number; severity: string }>;
   sla: {
     bug_coverage_rate: number;

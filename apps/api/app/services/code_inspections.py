@@ -1334,6 +1334,15 @@ def highest_risk_level(current: str | None, candidate: str | None) -> str:
     return str(candidate or "low") if candidate_rank > current_rank else str(current or "low")
 
 
+def report_recency_key(report: dict[str, Any]) -> str:
+    return str(
+        report.get("scan_finished_at")
+        or report.get("updated_at")
+        or report.get("created_at")
+        or ""
+    )
+
+
 def code_inspection_dashboard_response(
     *,
     committer: str | None,
@@ -1378,6 +1387,7 @@ def code_inspection_dashboard_response(
     repository_stats: dict[str, dict[str, Any]] = {}
     branch_stats: dict[str, dict[str, Any]] = {}
     committer_stats: dict[str, dict[str, Any]] = {}
+    quality_gate_violation_stats: dict[str, dict[str, Any]] = {}
     rule_version_counts: Counter[str] = Counter()
     scanner_version_counts: Counter[str] = Counter()
     suppression_counts: Counter[str] = Counter()
@@ -1432,6 +1442,52 @@ def code_inspection_dashboard_response(
             trend["quality_gate_skipped_count"] += 1
         else:
             trend["quality_gate_unknown_count"] += 1
+        quality_gate = report.get("quality_gate")
+        if isinstance(quality_gate, dict):
+            violations = quality_gate.get("violations")
+            if isinstance(violations, list):
+                for violation in violations:
+                    if not isinstance(violation, dict):
+                        continue
+                    metric = str(
+                        violation.get("metric")
+                        or violation.get("rule_id")
+                        or violation.get("code")
+                        or "unknown"
+                    ).strip() or "unknown"
+                    violation_severity = normalize_severity(
+                        violation.get("severity") or violation.get("level"),
+                        fallback=risk_level_value,
+                    )
+                    violation_entry = quality_gate_violation_stats.setdefault(
+                        metric,
+                        {
+                            "_report_ids": set(),
+                            "actual": None,
+                            "latest_report_id": None,
+                            "_latest_report_recency_key": "",
+                            "latest_report_summary": None,
+                            "limit": None,
+                            "metric": metric,
+                            "report_count": 0,
+                            "severity": violation_severity,
+                            "violation_count": 0,
+                        },
+                    )
+                    violation_entry["violation_count"] += 1
+                    violation_entry["_report_ids"].add(report_id)
+                    violation_entry["report_count"] = len(violation_entry["_report_ids"])
+                    violation_entry["severity"] = highest_risk_level(
+                        str(violation_entry.get("severity") or "low"),
+                        violation_severity,
+                    )
+                    report_key = report_recency_key(report)
+                    if report_key >= str(violation_entry.get("_latest_report_recency_key") or ""):
+                        violation_entry["_latest_report_recency_key"] = report_key
+                        violation_entry["actual"] = violation.get("actual", violation.get("value"))
+                        violation_entry["limit"] = violation.get("limit")
+                        violation_entry["latest_report_id"] = report_id
+                        violation_entry["latest_report_summary"] = report.get("summary")
 
         repository_key = str(report.get("repository_id") or report.get("repository_name") or "-")
         repository_entry = repository_stats.setdefault(
@@ -1576,6 +1632,21 @@ def code_inspection_dashboard_response(
             str(item["rule_id"]),
         ),
     )[:10]
+    quality_gate_violations = sorted(
+        (
+            {
+                key: value
+                for key, value in entry.items()
+                if key not in {"_latest_report_recency_key", "_report_ids"}
+            }
+            for entry in quality_gate_violation_stats.values()
+        ),
+        key=lambda item: (
+            -severity_rank(str(item.get("severity") or "low")),
+            -int(item.get("violation_count") or 0),
+            str(item.get("metric") or ""),
+        ),
+    )[:10]
     trend = sorted(trend_stats.values(), key=lambda item: str(item["date"]))[
         -DEFAULT_DASHBOARD_TREND_DAYS:
     ]
@@ -1615,6 +1686,7 @@ def code_inspection_dashboard_response(
             "risk_level": risk_level,
             "status": status,
         },
+        "quality_gate_violations": quality_gate_violations,
         "repository_ranking": repository_ranking,
         "risk_distribution": counter_rows(risk_counts, key_name="risk_level"),
         "rule_distribution": rule_distribution,

@@ -29,6 +29,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 代码巡检治理概览增强：`/api/governance/code-inspections/dashboard` 新增 `quality_gate_violations` 门禁失败原因聚合，页面在质量门禁趋势旁展示指标/规则、级别、触发次数、报告数和实际/阈值。
 - 定时作业页面继续拆深：作业、运行、模板、插件资源、产品、AI 资源、知识文档、模型网关和作业 catalog 的工作台数据加载收口到 `useScheduledJobWorkspaceData`。
 - 定时作业页面继续拆深：运行详情打开、路由深链、结果写入记录加载和运行标签计算收口到 `useScheduledJobRunDetailState`，主页面保留作业列表、表单和运行触发编排。
 - 插件管理页面继续拆深：Runner 新增/编辑、安装包、测试诊断、Token 轮换、日志查看和取消任务操作收口到 `usePluginRunnerOperations`，主页面只负责工作台装配。

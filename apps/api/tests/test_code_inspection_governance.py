@@ -1724,6 +1724,18 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["trend"][0]["quality_gate_failed_count"] == 1
     assert payload["trend"][0]["quality_gate_skipped_count"] == 0
     assert payload["trend"][0]["quality_gate_unknown_count"] == 0
+    assert payload["quality_gate_violations"] == [
+        {
+            "actual": 1,
+            "latest_report_id": report_id,
+            "latest_report_summary": "2 issues found, including 1 critical security issue.",
+            "limit": 0,
+            "metric": "critical",
+            "report_count": 1,
+            "severity": "critical",
+            "violation_count": 1,
+        }
+    ]
     assert payload["rule_governance"]["latest_report_rules_version"] == "builtin-2026.06.16"
     assert payload["rule_governance"]["latest_report_scanner_version"] == "2026.06.16"
     assert payload["rule_governance"]["mixed_rules_version"] is False
@@ -1745,6 +1757,76 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     )
     assert filtered.status_code == 200
     assert filtered.json()["data"]["summary"]["report_count"] == 0
+
+
+def test_code_inspection_dashboard_quality_gate_latest_report_uses_report_recency():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, code="repo-quality-product-gate-latest")
+    repository = create_repository(headers, product["id"])
+    _, connection, action = create_scanner_plugin(headers, repository["id"])
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {"branch": "main", "repository_id": repository["id"]},
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Dashboard gate recency inspection",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "repo-quality-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+    run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers)
+    assert run.status_code == 200
+    latest_report_id = run.json()["data"]["result_summary"]["report_id"]
+    latest_report = app.state.store.code_inspection_reports[latest_report_id]
+    latest_report["quality_gate"] = {
+        "status": "failed",
+        "violations": [
+            {"actual": 1, "limit": 0, "metric": "critical", "severity": "critical"}
+        ],
+    }
+    latest_report["scan_finished_at"] = "2026-06-26T10:00:00+00:00"
+    latest_report["summary"] = "Latest gate failure summary"
+
+    older_report_id = "code_inspection_report_older_gate"
+    app.state.store.code_inspection_reports[older_report_id] = {
+        **latest_report,
+        "created_at": "2026-06-20T10:00:00+00:00",
+        "id": older_report_id,
+        "quality_gate": {
+            "status": "failed",
+            "violations": [
+                {"actual": 3, "limit": 0, "metric": "critical", "severity": "high"}
+            ],
+        },
+        "scan_finished_at": "2026-06-20T10:00:00+00:00",
+        "summary": "Older gate failure summary",
+        "updated_at": "2026-06-20T10:00:00+00:00",
+    }
+
+    dashboard = client.get(
+        f"/api/governance/code-inspections/dashboard?product_id={product['id']}",
+        headers=headers,
+    )
+
+    assert dashboard.status_code == 200
+    violations = dashboard.json()["data"]["quality_gate_violations"]
+    assert violations[0]["metric"] == "critical"
+    assert violations[0]["violation_count"] == 2
+    assert violations[0]["report_count"] == 2
+    assert violations[0]["severity"] == "critical"
+    assert violations[0]["actual"] == 1
+    assert violations[0]["limit"] == 0
+    assert violations[0]["latest_report_id"] == latest_report_id
+    assert violations[0]["latest_report_summary"] == "Latest gate failure summary"
 
 
 def test_ai_generated_repository_inspection_calls_model_before_writing_report(monkeypatch):

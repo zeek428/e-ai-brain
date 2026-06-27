@@ -49,7 +49,7 @@ function installCodeInspectionsFetchMock() {
       counts: { critical: 1, high: 0, medium: 0, total: 1 },
       enabled: true,
       status: 'failed',
-      violations: [{ limit: 0, severity: 'critical', value: 1 }],
+      violations: [{ actual: 1, limit: 0, metric: 'critical', severity: 'critical' }],
     },
     risk_level: 'critical',
     rules_loaded: ['secrets', 'internal_addresses'],
@@ -157,6 +157,18 @@ function installCodeInspectionsFetchMock() {
               { count: 1, reason: 'baseline' },
             ],
           },
+          quality_gate_violations: [
+            {
+              actual: 1,
+              latest_report_id: 'code_inspection_report_001',
+              latest_report_summary: '发现 1 个 critical 安全问题。',
+              limit: 0,
+              metric: 'critical',
+              report_count: 1,
+              severity: 'critical',
+              violation_count: 1,
+            },
+          ],
           severity_distribution: [{ count: 1, severity: 'critical' }],
           sla: {
             bug_coverage_rate: 1,
@@ -370,11 +382,14 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getByText('仓库风险排行')).toBeInTheDocument();
     expect(screen.getByText('提交人风险排行')).toBeInTheDocument();
     expect(screen.getByText('质量门禁趋势')).toBeInTheDocument();
+    expect(screen.getByText('门禁失败原因')).toBeInTheDocument();
     expect(screen.getByText('严重问题 SLA')).toBeInTheDocument();
     expect(screen.getByText('整改任务覆盖率')).toBeInTheDocument();
     expect(screen.getByText('已生成整改任务')).toBeInTheDocument();
     expect(screen.getAllByText('整体 healthy').length).toBeGreaterThan(0);
     expect(screen.getAllByText('SEC001').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('实际/阈值').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('1 / 0').length).toBeGreaterThan(0);
     expect(screen.getByText('2026-06-12')).toBeInTheDocument();
     expect(screen.getAllByText('100%').length).toBeGreaterThan(0);
 

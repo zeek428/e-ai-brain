@@ -253,21 +253,56 @@ export function CodeInspectionGovernanceOverview({
           </Card>
         </Col>
       </Row>
-      <Card loading={loading} size="small" title="质量门禁趋势">
-        {compactMetricTable({
-          columns: [
-            { dataIndex: 'date', title: '日期', width: 140 },
-            { dataIndex: 'report_count', title: '报告', width: 90 },
-            { dataIndex: 'quality_gate_failed_count', title: '失败', width: 90 },
-            { dataIndex: 'quality_gate_passed_count', title: '通过', width: 90 },
-            { dataIndex: 'quality_gate_skipped_count', title: '跳过', width: 90 },
-            { dataIndex: 'severe_finding_count', title: '严重问题', width: 110 },
-            { dataIndex: 'bug_count', title: 'Bug', width: 90 },
-          ],
-          dataSource: dashboard?.trend ?? [],
-          rowKey: 'date',
-        })}
-      </Card>
+      <Row gutter={[12, 12]}>
+        <Col lg={14} xs={24}>
+          <Card loading={loading} size="small" title="质量门禁趋势">
+            {compactMetricTable({
+              columns: [
+                { dataIndex: 'date', title: '日期', width: 140 },
+                { dataIndex: 'report_count', title: '报告', width: 90 },
+                { dataIndex: 'quality_gate_failed_count', title: '失败', width: 90 },
+                { dataIndex: 'quality_gate_passed_count', title: '通过', width: 90 },
+                { dataIndex: 'quality_gate_skipped_count', title: '跳过', width: 90 },
+                { dataIndex: 'severe_finding_count', title: '严重问题', width: 110 },
+                { dataIndex: 'bug_count', title: 'Bug', width: 90 },
+              ],
+              dataSource: dashboard?.trend ?? [],
+              rowKey: 'date',
+            })}
+          </Card>
+        </Col>
+        <Col lg={10} xs={24}>
+          <Card loading={loading} size="small" title="门禁失败原因">
+            {compactMetricTable({
+              columns: [
+                { dataIndex: 'metric', title: '指标/规则', width: 170 },
+                {
+                  dataIndex: 'severity',
+                  render: (value) => severityTag(String(value ?? '')),
+                  title: '级别',
+                  width: 100,
+                },
+                { dataIndex: 'violation_count', title: '触发', width: 90 },
+                { dataIndex: 'report_count', title: '报告', width: 90 },
+                {
+                  dataIndex: 'actual',
+                  render: (_, row) => `${row.actual ?? '-'} / ${row.limit ?? '-'}`,
+                  title: '实际/阈值',
+                  width: 120,
+                },
+                {
+                  dataIndex: 'latest_report_summary',
+                  render: (_, row) => compactText(String(row.latest_report_summary ?? row.latest_report_id ?? '-')),
+                  title: '最近报告',
+                  width: 220,
+                },
+              ],
+              dataSource: dashboard?.quality_gate_violations ?? [],
+              rowKey: 'metric',
+            })}
+          </Card>
+        </Col>
+      </Row>
       <Card loading={loading} size="small" title="严重问题 SLA">
         <Descriptions
           column={{ lg: 4, md: 2, xs: 1 }}
