@@ -28,6 +28,7 @@ import { type ChatMessage } from '../hooks/useAssistantConversation';
 import { ExecutionTraceLink } from '../../../components/ExecutionTraceLink';
 import { AssistantActionDraftCards } from './AssistantDraftCards';
 import { actionDraftItems } from './assistantMessageHelpers';
+import { assistantReferenceFullChainHref } from './referencePresentation';
 
 const { Text } = Typography;
 
@@ -795,17 +796,26 @@ export function AssistantBubble({
         ) : null}
         {message.references?.length ? (
           <div className="assistant-reference-list">
-            {message.references.map((reference) => (
-              <Button
-                href={reference.url}
-                icon={<LinkOutlined />}
-                key={`${reference.type}:${reference.id}`}
-                size="small"
-                type="link"
-              >
-                {reference.title}
-              </Button>
-            ))}
+            {message.references.map((reference) => {
+              const fullChainHref = assistantReferenceFullChainHref(reference);
+              return (
+                <Space key={`${reference.type}:${reference.id}`} size={4} wrap>
+                  <Button
+                    href={reference.url}
+                    icon={<LinkOutlined />}
+                    size="small"
+                    type="link"
+                  >
+                    {reference.title}
+                  </Button>
+                  {fullChainHref ? (
+                    <Button href={fullChainHref} size="small" type="link">
+                      全链路
+                    </Button>
+                  ) : null}
+                </Space>
+              );
+            })}
           </div>
         ) : null}
         <AssistantActionDraftCards

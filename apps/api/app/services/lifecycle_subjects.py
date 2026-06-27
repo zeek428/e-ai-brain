@@ -87,7 +87,7 @@ def subject_product_id(
     normalized_id = str(subject_id)
     if subject_type == "product":
         return normalized_id if _record(current_store, "products", normalized_id) else None
-    if subject_type == "product_version":
+    if subject_type in {"product_version", "iteration_version"}:
         version = _record(current_store, "product_versions", normalized_id)
         return str(version["product_id"]) if version is not None else None
     if subject_type == "product_module":

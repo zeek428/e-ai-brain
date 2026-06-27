@@ -694,6 +694,19 @@ def test_lifecycle_full_chain_resolves_subjects_to_requirement_chain(monkeypatch
     assert version_response.status_code == 200
     assert version_response.json()["data"]["requirement"]["id"] == lifecycle["requirement_id"]
 
+    assistant_alias_response = client.get(
+        f"/api/lifecycle/full-chain?subject_type=iteration_version&subject_id={lifecycle['version_id']}",
+        headers=headers,
+    )
+    assert assistant_alias_response.status_code == 200
+    assistant_alias_full_chain = assistant_alias_response.json()["data"]
+    assert assistant_alias_full_chain["requirement"]["id"] == lifecycle["requirement_id"]
+    assert assistant_alias_full_chain["anchor"] == {
+        "resolved_requirement_id": lifecycle["requirement_id"],
+        "subject_id": lifecycle["version_id"],
+        "subject_type": "iteration_version",
+    }
+
 
 def test_requirement_full_chain_enforces_product_scope():
     store = build_minimal_full_chain_store()

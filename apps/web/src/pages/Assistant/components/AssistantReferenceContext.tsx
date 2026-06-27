@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { type AssistantReference } from '../../../services/aiBrain';
 import {
+  assistantReferenceFullChainHref,
   referenceInjectionText,
   referenceMetaText,
   referenceSourceModule,
@@ -51,6 +52,7 @@ function AssistantReferenceDetailModal({
   reference?: AssistantReference;
   onClose: () => void;
 }) {
+  const fullChainHref = reference ? assistantReferenceFullChainHref(reference) : undefined;
   return (
     <Modal
       footer={null}
@@ -90,6 +92,11 @@ function AssistantReferenceDetailModal({
           <Button href={reference.url} size="small" type="link">
             查看来源
           </Button>
+          {fullChainHref ? (
+            <Button href={fullChainHref} size="small" type="link">
+              查看全链路
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </Modal>
@@ -172,57 +179,65 @@ export function AssistantReferenceContext({
       {isExpanded ? (
         selectedReferences.length ? (
           <div className="assistant-selected-reference-tags">
-            {selectedReferences.map((reference) => (
-              <div
-                className="assistant-selected-reference-card"
-                key={`${reference.type}:${reference.id}`}
-              >
-                <div className="assistant-selected-reference-card-header">
+            {selectedReferences.map((reference) => {
+              const fullChainHref = assistantReferenceFullChainHref(reference);
+              return (
+                <div
+                  className="assistant-selected-reference-card"
+                  key={`${reference.type}:${reference.id}`}
+                >
+                  <div className="assistant-selected-reference-card-header">
+                    <Space size={6} wrap>
+                      <Tag color="blue">{referenceTypeLabel(reference.type)}</Tag>
+                      <Text strong>{reference.title}</Text>
+                    </Space>
+                    <Button
+                      aria-label={`移除 ${reference.title}`}
+                      size="small"
+                      type="text"
+                      onClick={() => onRemoveReference(reference)}
+                    >
+                      移除
+                    </Button>
+                  </div>
+                  <Text className="assistant-selected-reference-meta" type="secondary">
+                    {referenceMetaText(reference)}
+                  </Text>
+                  <Text className="assistant-selected-reference-summary">
+                    {referenceSummaryText(reference)}
+                  </Text>
                   <Space size={6} wrap>
-                    <Tag color="blue">{referenceTypeLabel(reference.type)}</Tag>
-                    <Text strong>{reference.title}</Text>
+                    <Tag
+                      color={
+                        reference.type === 'knowledge_document'
+                        || reference.type === 'knowledge_chunk'
+                        || reference.type === 'knowledge_folder'
+                        || reference.type === 'knowledge_space'
+                          ? 'green'
+                          : 'default'
+                      }
+                    >
+                      {referenceInjectionText(reference)}
+                    </Tag>
+                    <Button
+                      aria-label={`查看摘要 ${reference.title}`}
+                      size="small"
+                      onClick={() => setDetailReference(reference)}
+                    >
+                      查看摘要
+                    </Button>
+                    <Button href={reference.url} size="small" type="link">
+                      查看来源
+                    </Button>
+                    {fullChainHref ? (
+                      <Button href={fullChainHref} size="small" type="link">
+                        全链路
+                      </Button>
+                    ) : null}
                   </Space>
-                  <Button
-                    aria-label={`移除 ${reference.title}`}
-                    size="small"
-                    type="text"
-                    onClick={() => onRemoveReference(reference)}
-                  >
-                    移除
-                  </Button>
                 </div>
-                <Text className="assistant-selected-reference-meta" type="secondary">
-                  {referenceMetaText(reference)}
-                </Text>
-                <Text className="assistant-selected-reference-summary">
-                  {referenceSummaryText(reference)}
-                </Text>
-                <Space size={6} wrap>
-                  <Tag
-                    color={
-                      reference.type === 'knowledge_document'
-                      || reference.type === 'knowledge_chunk'
-                      || reference.type === 'knowledge_folder'
-                      || reference.type === 'knowledge_space'
-                        ? 'green'
-                        : 'default'
-                    }
-                  >
-                    {referenceInjectionText(reference)}
-                  </Tag>
-                  <Button
-                    aria-label={`查看摘要 ${reference.title}`}
-                    size="small"
-                    onClick={() => setDetailReference(reference)}
-                  >
-                    查看摘要
-                  </Button>
-                  <Button href={reference.url} size="small" type="link">
-                    查看来源
-                  </Button>
-                </Space>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : null
       ) : null}

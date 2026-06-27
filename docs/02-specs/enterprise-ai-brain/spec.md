@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.614 |
+| 功能版本 | v1.1.615 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.615 | 2026-06-27 | AI 助手引用补齐统一全链路入口，需求、迭代版本、研发任务、Review、代码评审、Bug、代码巡检、知识沉淀和审计事件等可解析主体可直接进入需求交付链路；`iteration_version` 兼容映射到版本主体解析 | Codex |
 | v1.1.614 | 2026-06-27 | 需求全链路聚合补齐版本级代码分支配置和脱敏审计事件，阶段进度、阶段明细、导出报告和时间线统一展示 | Codex |
 | v1.1.613 | 2026-06-27 | 研发执行器策略列表改为服务端分页、筛选、排序和查询性能观测；需求全链路入口补齐读权限和产品 scope 校验 | Codex |
 | v1.1.612 | 2026-06-27 | 需求全链路补齐统一主体入口：`/api/lifecycle/full-chain` 支持从 Bug、迭代版本和代码巡检报告解析回需求链路，链路摘要纳入代码巡检报告 | Codex |
@@ -1453,7 +1454,7 @@ AI 助手聊天生成必须以 `assistant_chat_runs` 作为服务端运行真相
 | 定时作业运行 | GET/POST(cancel/template) | /api/system/scheduled-job-runs, /api/system/scheduled-job-runs/observability, /api/system/scheduled-job-runs/{run_id}/cancel, /api/system/scheduled-job-runs/{run_id}/template | 查询定时作业运行实例、AI 配置快照、collector run 关联、结果摘要和失败原因；运行可观测性接口聚合成功率、失败率、平均耗时、AI/Token/插件调用、动作写入成功率、失败原因、最近失败和慢运行，供运行记录页签顶部概览展示；前端运行记录必须提供详情、复跑和“问 AI”入口，详情展示作业类型、AI执行、AI 模型、AI角色、Skills、运行链路、结果摘要、插件调用、Skill/Prompt 快照、作业配置快照、Trace DAG 和错误信息，复跑使用记录中的 `scheduled_job_id` 调用作业运行接口并传入 `trigger_type=manual_rerun` 与 `source_run_id=<当前运行 ID>` 后打开新运行详情；失败运行详情必须额外提供“生成修复草案”和“对比上次成功”快捷入口，跳转 AI 助手时携带 `reference_type=scheduled_job_run`、`reference_id=<当前运行 ID>` 和对应 prompt，让用户不需要手工复制运行 ID；若响应包含 `source_run_summary`，详情页必须展示“复跑对比”，对比来源运行与本次运行的状态、导入数和错误码；成功运行可生成新作业模板草稿，保留运行来源；手动触发或复跑期间必须显示执行中状态并禁用重复触发；运行中作业可由管理员取消。 |
 | 待归属数据队列 | GET/POST/POST | /api/attribution/pending-items, /api/attribution/pending-items/{item_id}/resolve | 历史兼容 API：查询、登记、归属或忽略无法映射产品/模块/需求的数据，不自动生成业务指标；当前前端不提供入口。 |
 | Bug 管理 | GET/POST/PATCH/DELETE | /api/bugs, /api/bugs/batch-update, /api/bugs/{bug_id} | 查询、登记、批量处理、更新和删除 Bug；端点由 `app.api.routers.bugs` 单一路由承载，列表优先使用 SQL read model 分页、筛选、排序和查询观测。 |
-| 需求全链路 | GET | /api/requirements/{requirement_id}/full-chain, /api/lifecycle/full-chain | 需求级聚合时间线，返回需求到版本代码分支、发布、代码巡检、知识沉淀和审计事件的关联主体；统一主体入口支持按 Bug、迭代版本或代码巡检报告跳转并回显 anchor。 |
+| 需求全链路 | GET | /api/requirements/{requirement_id}/full-chain, /api/lifecycle/full-chain | 需求级聚合时间线，返回需求到版本代码分支、发布、代码巡检、知识沉淀和审计事件的关联主体；统一主体入口支持按 Bug、迭代版本、代码巡检报告或 AI 助手引用跳转并回显 anchor，`iteration_version` 作为 `product_version` 兼容别名处理。 |
 | 全流程感知 | GET | /api/lifecycle/context | 查询研发上下文关系、上下游影响和风险信号。 |
 | 首页看板 | GET | /api/dashboard/it-team | 查询 IT 团队首页指标。 |
 | 用户洞察列表 | GET | /api/insights/items | 聚合用户使用、用户反馈和迭代建议，支持服务端分页、排序和筛选。 |
@@ -1711,7 +1712,7 @@ Git Review API 入口已收口到独立 `app.api.routers.git_review`：GitLab MR
 - 风险信号必须保留来源主体和影响摘要，不得只在看板中展示无法追溯的聚合数字。
 - 当前实现会在 PostgreSQL 运行时读取 repository source rows，再把 `/api/lifecycle/context` 计算出的上下游关系边和风险信号同步到 `lifecycle_context_edges` 与 `lifecycle_risk_signals`；API 响应仍返回当前查询范围内的真实关系和真实空状态。
 - MVP 查询必须支持从 `product`、`product_version`、`requirement`、`ai_task`、`human_review`、`code_review_report`、`gitlab_mr_snapshot`、`code_inspection_report`、`mock_issue`、`knowledge_deposit`、`audit_event` 和 `bug` 解析到对应需求或任务链路；审计主体无法解析时返回空关系或明确错误，不得退化为全量任务。
-- `/api/lifecycle/full-chain` 是跨主体进入需求全链路的统一只读入口：`subject_type=requirement` 等价于需求详情链路，`bug`、`product_version`、`code_inspection_report` 等主体需先解析到需求链路再复用同一 payload，并在 `anchor` 中返回入口主体；代码巡检报告通过 `created_task_ids` 或 `created_bug_ids` 与当前需求链路内任务/Bug 匹配后进入 `code_inspection_reports` 和时间线。归属迭代版本的需求必须把版本级 `product_version_branch_configs` 纳入 `branch_configs`、阶段进度和 `branch_config` 时间线；与链路主体直接相关的审计事件必须以脱敏摘要纳入 `audit_events` 与 `audit_event` 时间线，禁止在 full-chain 响应暴露审计 payload。
+- `/api/lifecycle/full-chain` 是跨主体进入需求全链路的统一只读入口：`subject_type=requirement` 等价于需求详情链路，`bug`、`product_version`、`iteration_version`、`code_inspection_report` 等主体需先解析到需求链路再复用同一 payload，并在 `anchor` 中返回入口主体；其中 `iteration_version` 是 AI 助手引用和前端语义使用的版本兼容别名，必须按 `product_version` 的产品归属做 scope 校验。代码巡检报告通过 `created_task_ids` 或 `created_bug_ids` 与当前需求链路内任务/Bug 匹配后进入 `code_inspection_reports` 和时间线。归属迭代版本的需求必须把版本级 `product_version_branch_configs` 纳入 `branch_configs`、阶段进度和 `branch_config` 时间线；与链路主体直接相关的审计事件必须以脱敏摘要纳入 `audit_events` 与 `audit_event` 时间线，禁止在 full-chain 响应暴露审计 payload。AI 助手引用卡片和消息引用对需求、迭代版本、研发任务、Review、代码评审、Bug、代码巡检、知识沉淀、审计事件等可解析交付主体展示“全链路”入口。
 - `/api/requirements/{requirement_id}/full-chain` 与 `/api/lifecycle/full-chain` 必须统一校验当前用户至少具备 `requirement.read`、`task.read` 或 `workspace.read` 之一，并按需求或入口主体所属 `product_id` 校验产品 scope。缺少读权限返回 403；产品范围不匹配按 404 处理，避免暴露其他产品需求或版本链路是否存在。
 - 后续阶段查询扩展到发布、提交、自动化测试、线上日志、用户反馈、用户使用指标或迭代规划建议等任一主体向上游和下游追溯。
 

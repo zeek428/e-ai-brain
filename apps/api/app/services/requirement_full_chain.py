@@ -152,7 +152,7 @@ def _requirement_id_from_subject(
         if _read_memory_dict(current_store, "requirements").get(normalized_id) is None:
             raise api_error(404, "NOT_FOUND", "Requirement not found")
         return normalized_id
-    if normalized_type == "product_version":
+    if normalized_type in {"product_version", "iteration_version"}:
         if _read_memory_dict(current_store, "product_versions").get(normalized_id) is None:
             raise api_error(404, "NOT_FOUND", "Iteration version not found")
         version_requirements = sort_by_lifecycle_time(

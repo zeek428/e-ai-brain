@@ -1,4 +1,4 @@
-import { type AssistantReference } from '../../../services/aiBrain';
+import { fullChainSubjectHref, type AssistantReference } from '../../../services/aiBrain';
 import { formatDisplayDate } from '../../../utils/dateTime';
 
 export const ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT = 8;
@@ -126,4 +126,26 @@ export function selectedReferenceInjectionSummary(references: AssistantReference
 export function referenceSummaryText(reference: AssistantReference) {
   const summary = String(reference.summary ?? '').trim();
   return summary || '暂无摘要，仅注入引用元数据。';
+}
+
+const fullChainReferenceSubjectTypes: Record<string, string> = {
+  ai_task: 'ai_task',
+  audit_event: 'audit_event',
+  bug: 'bug',
+  code_inspection_report: 'code_inspection_report',
+  code_review_report: 'code_review_report',
+  gitlab_mr_snapshot: 'gitlab_mr_snapshot',
+  human_review: 'human_review',
+  iteration_version: 'iteration_version',
+  knowledge_deposit: 'knowledge_deposit',
+  product_version: 'product_version',
+  requirement: 'requirement',
+};
+
+export function assistantReferenceFullChainHref(reference: AssistantReference) {
+  const subjectType = fullChainReferenceSubjectTypes[reference.type];
+  if (!subjectType) {
+    return undefined;
+  }
+  return fullChainSubjectHref(subjectType, reference.id);
 }

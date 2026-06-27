@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.403 |
+| 功能版本 | v1.1.404 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.404 | 2026-06-27 | AI 助手引用对可解析交付主体新增“全链路”入口；`/api/lifecycle/full-chain` 接受 `iteration_version` 作为 `product_version` 兼容别名并沿用产品 scope 校验 | Codex |
 | v1.1.403 | 2026-06-27 | 需求全链路响应补齐 `branch_configs` 与 `audit_events`，阶段摘要和时间线覆盖版本级代码分支配置、主体审计事件 | Codex |
 | v1.1.402 | 2026-06-27 | `GET /api/delivery/rd-task-executor-policies` 补齐服务端分页、筛选、排序和 `query/performance` 观测；需求全链路接口统一校验 `requirement.read/task.read/workspace.read` 与产品 scope | Codex |
 | v1.1.401 | 2026-06-27 | 新增 `GET /api/lifecycle/full-chain` 统一主体入口，支持从 Bug、迭代版本和代码巡检报告解析到需求全链路，并在响应中返回 `anchor` 与 `code_inspection_reports` | Codex |
@@ -438,7 +439,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、AI 助手、产品上下文、研发全链路 AI 任务、GitLab MR / GitHub PR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、AI 助手、产品/需求/任务/Review/知识/审计/导出/GitLab MR 与 GitHub PR 只读预览、diff 快照、code_review 报告闭环。AI 助手通过模型网关 Chat 能力回答 AI Brain 系统相关问题，请求会携带脱敏系统上下文摘要，包括产品、迭代版本进度、需求、AI 任务、待确认 Review、最近代码评审结论、Bug 分布、高风险 Bug、知识沉淀、Git 仓库和模型网关配置状态；服务端会先按用户问题生成 `tool_results`，覆盖 delivery progress、pending reviews、code review、iteration、bugs、model gateway 等 read-model 工具结果，并和 `reference_candidates` 一起注入模型请求。聊天响应和历史消息返回 `references` 与 `tool_results`，用于跳转到产品、迭代、需求、任务、Review、Bug、代码评审报告或知识沉淀并解释回答依据。模型日志只记录 `purpose=assistant_chat` 元数据，不保存完整用户消息、系统上下文或助手回答；完整对话内容按当前登录用户写入助手会话与消息结构表，并且历史查询只返回本人会话。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
+当前源码实现说明：MVP 骨架已实现认证、AI 助手、产品/需求/任务/Review/知识/审计/导出/GitLab MR 与 GitHub PR 只读预览、diff 快照、code_review 报告闭环。AI 助手通过模型网关 Chat 能力回答 AI Brain 系统相关问题，请求会携带脱敏系统上下文摘要，包括产品、迭代版本进度、需求、AI 任务、待确认 Review、最近代码评审结论、Bug 分布、高风险 Bug、知识沉淀、Git 仓库和模型网关配置状态；服务端会先按用户问题生成 `tool_results`，覆盖 delivery progress、pending reviews、code review、iteration、bugs、model gateway 等 read-model 工具结果，并和 `reference_candidates` 一起注入模型请求。聊天响应和历史消息返回 `references` 与 `tool_results`，用于跳转到产品、迭代、需求、任务、Review、Bug、代码评审报告或知识沉淀并解释回答依据；当引用主体可解析为需求交付链路时，前端还必须展示统一“全链路”入口，`iteration_version` 引用按 `/api/lifecycle/full-chain` 的版本兼容别名处理。模型日志只记录 `purpose=assistant_chat` 元数据，不保存完整用户消息、系统上下文或助手回答；完整对话内容按当前登录用户写入助手会话与消息结构表，并且历史查询只返回本人会话。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
 
 产品管理页面可维护产品、模块、Git 资源和产品相关系统；需求交付下的迭代版本页面维护 `product_versions`，用于需求排期和任务版本上下文。`GET /api/product-versions` 支持批量查询版本并返回 `product_code`、`product_name` 投影，`active_only=true` 只返回 active 版本；`GET /api/requirements` 返回需求主体同时带 `product_code`、`product_name`、`version_code`、`version_name` 和 `assignee`；`POST /api/requirements/batch-assign-owner` 支持将非关闭/非取消需求批量分配负责人，并返回 updated/skipped 明细；`POST /api/requirements/batch-schedule` 支持将多条同产品 `approved/planned` 需求批量归集到 `planning` 或 `active` 迭代版本，并返回 updated/skipped 明细；`POST /api/requirements/batch-generate-tasks` 支持将多条同产品 `planned` 需求批量生成产品详细设计任务，并返回 generated/skipped 明细；`GET /api/ai-tasks` 在 PostgreSQL 模式按产品表 SQL join 返回 `product_name`，并支持 `product_id`、`created_from`、`created_to` 等筛选；`POST /api/ai-tasks/batch-cancel` 支持任务管理多选批量取消，逐条校验任务状态并返回 updated/skipped 明细；`POST /api/ai-tasks/batch-retry` 支持任务管理多选批量重试，逐条校验失败步骤并返回 retried/updated/skipped 明细。产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置、模型调用元数据、AI 助手会话和助手消息会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`、`assistant_conversations`、`assistant_messages`。所有 PostgreSQL 结构表必须包含 `created_at` 与 `updated_at` 标准时间字段；新增表必须在建表 SQL 中定义这两个字段，既有环境通过 `018_standard_timestamps.sql` 可重复迁移补齐。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
 
@@ -678,7 +679,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Requirement | POST | `/api/requirements/batch-schedule` | 批量归集同产品需求到迭代版本。 |
 | Requirement | POST | `/api/requirements/batch-generate-tasks` | 批量为同产品已排期需求生成产品详细设计任务。 |
 | Requirement | GET | `/api/requirements/{requirement_id}` | 需求详情。 |
-| Requirement | GET | `/api/requirements/{requirement_id}/full-chain`, `/api/lifecycle/full-chain` | 需求全链路详情，按时间线聚合需求、迭代版本、版本代码分支、AI 任务、Review、PR/MR 快照、代码评审、代码巡检报告、Bug、发布、知识沉淀和审计事件；统一主体入口可按 Bug、迭代版本或代码巡检报告解析到同一链路，并返回 `anchor`；接口要求 `requirement.read`、`task.read` 或 `workspace.read` 任一读权限，并按需求或入口主体所属产品 scope 校验，缺权限返回 403，产品范围不匹配返回 404。 |
+| Requirement | GET | `/api/requirements/{requirement_id}/full-chain`, `/api/lifecycle/full-chain` | 需求全链路详情，按时间线聚合需求、迭代版本、版本代码分支、AI 任务、Review、PR/MR 快照、代码评审、代码巡检报告、Bug、发布、知识沉淀和审计事件；统一主体入口可按 Bug、迭代版本、代码巡检报告或 AI 助手引用解析到同一链路，并返回 `anchor`，其中 `iteration_version` 作为 `product_version` 兼容别名处理；接口要求 `requirement.read`、`task.read` 或 `workspace.read` 任一读权限，并按需求或入口主体所属产品 scope 校验，缺权限返回 403，产品范围不匹配返回 404。 |
 | Requirement | PATCH | `/api/requirements/{requirement_id}` | 更新待审批或已驳回需求。 |
 | Requirement | DELETE | `/api/requirements/{requirement_id}` | 删除未生成任务的需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/approve` | 审批通过需求。 |
