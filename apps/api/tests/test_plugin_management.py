@@ -13,6 +13,7 @@ from app.services.ai_executor_runners import list_ai_executor_tasks_response
 from app.services.plugins import (
     list_plugin_actions_response,
     list_plugin_connections_response,
+    list_plugin_invocation_logs_response,
     records_imported_from_mapping,
     resolve_action_request_config,
     resolve_plugin_request_config,
@@ -29,6 +30,8 @@ class FakePluginPagingRepository:
         self.connection_page_kwargs: dict | None = None
         self.action_count_kwargs: dict | None = None
         self.action_page_kwargs: dict | None = None
+        self.invocation_log_count_kwargs: dict | None = None
+        self.invocation_log_page_kwargs: dict | None = None
         self.ai_executor_task_count_kwargs: dict | None = None
         self.ai_executor_task_page_kwargs: dict | None = None
 
@@ -42,7 +45,7 @@ class FakePluginPagingRepository:
         raise AssertionError("full plugin action list should not be used")
 
     def list_plugin_invocation_logs(self, **_kwargs):
-        return []
+        raise AssertionError("full plugin invocation log list should not be used")
 
     def list_ai_executor_tasks(self, **_kwargs):
         raise AssertionError("full AI executor task list should not be used")
@@ -95,6 +98,34 @@ class FakePluginPagingRepository:
                 "requires_human_review": False,
                 "result_mapping": {},
                 "status": "active",
+                "updated_at": "2026-06-24T01:00:00+00:00",
+            }
+        ]
+
+    def count_plugin_invocation_logs(self, **kwargs):
+        self.invocation_log_count_kwargs = kwargs
+        return 4
+
+    def list_plugin_invocation_logs_page(self, **kwargs):
+        self.invocation_log_page_kwargs = kwargs
+        return [
+            {
+                "action_id": "plugin_action_sql",
+                "connection_id": "plugin_connection_sql",
+                "created_at": "2026-06-24T01:00:00+00:00",
+                "created_by": "user_admin",
+                "error_code": None,
+                "error_message": None,
+                "id": "plugin_invocation_log_sql",
+                "latency_ms": 42,
+                "plugin_id": "plugin_gitlab",
+                "request_summary": {"request_preview": {"headers": {"Authorization": "***"}}},
+                "response_summary": {"json": {"rows": 1}},
+                "scheduled_job_id": "scheduled_job_sql",
+                "scheduled_job_run_id": "scheduled_run_sql",
+                "status": "succeeded",
+                "trace_id": "trace_sql",
+                "trigger_type": "scheduled_job",
                 "updated_at": "2026-06-24T01:00:00+00:00",
             }
         ]
@@ -1929,6 +1960,51 @@ def test_ai_executor_task_list_uses_repository_pagination_when_requested():
     }
 
 
+def test_plugin_invocation_log_list_uses_repository_pagination_when_requested():
+    repository = FakePluginPagingRepository()
+    store = SimpleNamespace(repository=repository)
+
+    response = list_plugin_invocation_logs_response(
+        action_id="plugin_action_sql",
+        current_store=store,
+        page=2,
+        page_size=1,
+        scheduled_job_id="scheduled_job_sql",
+        scheduled_job_run_id="scheduled_run_sql",
+        sort_by="created_at",
+        sort_order="desc",
+        started_at=None,
+        status="succeeded",
+        user=ADMIN_SERVICE_USER,
+    )
+
+    assert response["total"] == 4
+    assert response["page"] == 2
+    assert response["page_size"] == 1
+    assert response["items"][0]["id"] == "plugin_invocation_log_sql"
+    assert response["items"][0]["request_summary"]["request_preview"]["headers"] == {
+        "Authorization": "***",
+    }
+    assert response["query"]["name"] == "plugin_invocation_logs"
+    assert response["performance"]["p95_target_ms"] == 500
+    assert repository.invocation_log_count_kwargs == {
+        "action_id": "plugin_action_sql",
+        "scheduled_job_id": "scheduled_job_sql",
+        "scheduled_job_run_id": "scheduled_run_sql",
+        "status": "succeeded",
+    }
+    assert repository.invocation_log_page_kwargs == {
+        "action_id": "plugin_action_sql",
+        "limit": 1,
+        "offset": 1,
+        "scheduled_job_id": "scheduled_job_sql",
+        "scheduled_job_run_id": "scheduled_run_sql",
+        "sort_by": "created_at",
+        "sort_order": "desc",
+        "status": "succeeded",
+    }
+
+
 def test_plugin_lists_return_observability_metadata_when_paginated():
     app.state.store.reset()
     admin_headers = auth_headers()
@@ -1961,6 +2037,30 @@ def test_plugin_lists_return_observability_metadata_when_paginated():
     assert action_payload["items"][0]["id"] == action["id"]
     assert action_payload["query"]["name"] == "plugin_actions"
     assert action_payload["performance"]["p95_target_ms"] == 400
+
+    run_response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"connection_id": connection["id"], "input_payload": {"timezone": "Asia/Shanghai"}},
+        headers=admin_headers,
+    )
+    assert run_response.status_code == 200
+    log_id = run_response.json()["data"]["id"]
+
+    invocation_response = client.get(
+        "/api/system/plugin-invocation-logs"
+        f"?action_id={action['id']}&page=1&page_size=1"
+        "&sort_by=created_at&sort_order=desc",
+        headers=admin_headers,
+    )
+    invocation_payload = invocation_response.json()["data"]
+
+    assert invocation_response.status_code == 200
+    assert invocation_payload["total"] == 1
+    assert invocation_payload["page"] == 1
+    assert invocation_payload["page_size"] == 1
+    assert invocation_payload["items"][0]["id"] == log_id
+    assert invocation_payload["query"]["name"] == "plugin_invocation_logs"
+    assert invocation_payload["performance"]["p95_target_ms"] == 500
 
 
 def test_plugin_connection_can_be_tested_with_structured_result_and_audit():

@@ -1569,6 +1569,44 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def count_plugin_invocation_logs(
+        self,
+        *,
+        action_id: str | None = None,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        return self._plugin_read_repository.count_plugin_invocation_logs(
+            action_id=action_id,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
+        )
+
+    def list_plugin_invocation_logs_page(
+        self,
+        *,
+        action_id: str | None = None,
+        limit: int,
+        offset: int,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_plugin_invocation_logs_page(
+            action_id=action_id,
+            limit=limit,
+            offset=offset,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
+
     def list_ai_executor_runners(
         self,
         *,

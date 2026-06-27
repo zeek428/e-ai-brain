@@ -855,8 +855,12 @@ def plugin_system_variables(
 def list_plugin_invocation_logs(
     request: Request,
     action_id: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
     scheduled_job_id: str | None = None,
     scheduled_job_run_id: str | None = None,
+    sort_by: str | None = Query(default=None),
+    sort_order: str = Query(default="desc"),
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
@@ -864,8 +868,13 @@ def list_plugin_invocation_logs(
         list_plugin_invocation_logs_response(
             action_id=action_id,
             current_store=store(request),
+            page=page,
+            page_size=page_size,
             scheduled_job_id=scheduled_job_id,
             scheduled_job_run_id=scheduled_job_run_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            started_at=_request_started_at(request),
             status=status,
             user=user,
         ),

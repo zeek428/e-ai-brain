@@ -87,6 +87,18 @@ PLUGIN_ACTION_SORT_FIELDS = {
     "status",
     "updated_at",
 }
+PLUGIN_INVOCATION_LOG_SORT_FIELDS = {
+    "action_id",
+    "connection_id",
+    "created_at",
+    "id",
+    "latency_ms",
+    "plugin_id",
+    "scheduled_job_id",
+    "scheduled_job_run_id",
+    "status",
+    "updated_at",
+}
 
 
 def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
@@ -3020,14 +3032,62 @@ def list_plugin_invocation_logs_response(
     *,
     action_id: str | None,
     current_store: Any,
+    page: int | None = None,
+    page_size: int | None = None,
     scheduled_job_id: str | None,
     scheduled_job_run_id: str | None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    started_at: float | None = None,
     status: str | None,
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_admin(user)
     if status is not None:
         ensure_enum(status, PLUGIN_INVOCATION_STATUSES, "status")
+    ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
+    if sort_by is not None:
+        ensure_enum(sort_by, PLUGIN_INVOCATION_LOG_SORT_FIELDS, "sort_by")
+    resolved_sort_by = sort_by or "created_at"
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    with_pagination = page is not None or page_size is not None
+    filters = {
+        "action_id": action_id,
+        "scheduled_job_id": scheduled_job_id,
+        "scheduled_job_run_id": scheduled_job_run_id,
+        "status": status,
+    }
+    repository = plugin_query_repository(current_store)
+    count_page = getattr(repository, "count_plugin_invocation_logs", None)
+    list_page = getattr(repository, "list_plugin_invocation_logs_page", None)
+    if with_pagination and callable(count_page) and callable(list_page):
+        total = count_page(**filters)
+        items = [
+            public_invocation_log(log)
+            for log in list_page(
+                **filters,
+                limit=resolved_page_size,
+                offset=(resolved_page - 1) * resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+            )
+        ]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="plugin_invocation_logs",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
     sync_plugin_invocation_log_store(
         current_store,
         action_id=action_id,
@@ -3049,5 +3109,30 @@ def list_plugin_invocation_logs_response(
         if status is not None and log.get("status") != status:
             continue
         items.append(public_invocation_log(log))
-    items.sort(key=lambda item: (item.get("created_at") or "", item["id"]), reverse=True)
-    return {"items": items, "total": len(items)}
+    items = sort_list_items(
+        items,
+        allowed_fields=PLUGIN_INVOCATION_LOG_SORT_FIELDS,
+        default_sort_by=resolved_sort_by,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    total = len(items)
+    if with_pagination:
+        start_index = (resolved_page - 1) * resolved_page_size
+        items = items[start_index : start_index + resolved_page_size]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="plugin_invocation_logs",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+    return {"items": items, "total": total}

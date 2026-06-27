@@ -46,6 +46,19 @@ AI_EXECUTOR_TASK_SORT_COLUMNS = {
     "updated_at": "updated_at",
 }
 
+PLUGIN_INVOCATION_LOG_SORT_COLUMNS = {
+    "action_id": "action_id",
+    "connection_id": "connection_id",
+    "created_at": "created_at",
+    "id": "id",
+    "latency_ms": "latency_ms",
+    "plugin_id": "plugin_id",
+    "scheduled_job_id": "scheduled_job_id",
+    "scheduled_job_run_id": "scheduled_job_run_id",
+    "status": "status",
+    "updated_at": "updated_at",
+}
+
 
 class PluginReadRepository:
     def __init__(
@@ -336,6 +349,72 @@ class PluginReadRepository:
                     FROM plugin_invocation_logs
                     {where}
                     ORDER BY created_at DESC, id DESC
+                    """,
+                    tuple(params),
+                )
+                return [self._invocation_log_from_row(row) for row in cursor.fetchall()]
+
+    def count_plugin_invocation_logs(
+        self,
+        *,
+        action_id: str | None = None,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where, params = self._where(
+            {
+                "action_id": action_id,
+                "scheduled_job_id": scheduled_job_id,
+                "scheduled_job_run_id": scheduled_job_run_id,
+                "status": status,
+            },
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM plugin_invocation_logs {where}",
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_plugin_invocation_logs_page(
+        self,
+        *,
+        action_id: str | None = None,
+        limit: int,
+        offset: int,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._where(
+            {
+                "action_id": action_id,
+                "scheduled_job_id": scheduled_job_id,
+                "scheduled_job_run_id": scheduled_job_run_id,
+                "status": status,
+            },
+        )
+        sort_column = PLUGIN_INVOCATION_LOG_SORT_COLUMNS.get(sort_by, "created_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, plugin_id, connection_id, action_id, scheduled_job_id,
+                           scheduled_job_run_id, trigger_type, status, request_summary,
+                           response_summary, latency_ms, error_code, error_message,
+                           trace_id, created_by, created_at, updated_at
+                    FROM plugin_invocation_logs
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
                     """,
                     tuple(params),
                 )
