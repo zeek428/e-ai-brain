@@ -5,8 +5,13 @@ from typing import Any
 from fastapi import Request
 
 from app.api.deps import api_error
-from app.core.listing import list_text_matches, paginated_list_payload, sort_list_items
-from app.core.trace import get_trace_id
+from app.core.listing import (
+    add_list_observability,
+    list_text_matches,
+    paginated_list_payload,
+    sort_list_items,
+)
+from app.core.trace import envelope, get_trace_id
 
 KNOWLEDGE_INDEX_STATUSES = {
     "archived",
@@ -25,6 +30,7 @@ KNOWLEDGE_DOCUMENT_SORT_FIELDS = {
     "id",
     "index_status",
     "knowledge_space_id",
+    "permission_roles",
     "title",
     "updated_at",
 }
@@ -136,11 +142,68 @@ def knowledge_document_list_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     ensure_knowledge_index_status(index_status)
+    if sort_order not in {"asc", "desc"}:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_order")
+    resolved_sort_by = sort_by or "id"
+    if resolved_sort_by not in KNOWLEDGE_DOCUMENT_SORT_FIELDS:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
     repository = knowledge_query_repository(current_store)
+    access_args = knowledge_repository_access_args(user)
+    filters = {
+        "doc_type": doc_type,
+        "folder_id": folder_id,
+        "index_status": index_status,
+        "keyword": keyword,
+        "knowledge_space_id": knowledge_space_id,
+        "permission_role": permission_role,
+    }
+    if (
+        repository is not None
+        and (page is not None or page_size is not None)
+        and callable(getattr(repository, "count_knowledge_document_summaries", None))
+        and callable(getattr(repository, "list_knowledge_document_summaries_page", None))
+    ):
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        count_args = {
+            **access_args,
+            "doc_type": doc_type,
+            "folder_id": folder_id,
+            "index_status": index_status,
+            "keyword": keyword,
+            "knowledge_space_id": knowledge_space_id,
+            "permission_role": permission_role,
+        }
+        total = repository.count_knowledge_document_summaries(**count_args)
+        items = repository.list_knowledge_document_summaries_page(
+            **count_args,
+            limit=resolved_page_size,
+            offset=(resolved_page - 1) * resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+        )
+        return envelope(
+            add_list_observability(
+                {
+                    "items": items,
+                    "page": resolved_page,
+                    "page_size": resolved_page_size,
+                    "total": total,
+                },
+                filters=filters,
+                list_name="knowledge_documents",
+                page=resolved_page,
+                page_size=resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+                started_at=request_started_at(request),
+            ),
+            get_trace_id(request),
+        )
     if repository is not None:
         try:
             items = repository.list_knowledge_documents(
-                **knowledge_repository_access_args(user),
+                **access_args,
                 keyword=keyword,
                 doc_type=doc_type,
                 index_status=index_status,
@@ -173,24 +236,17 @@ def knowledge_document_list_response(
         items,
         allowed_fields=KNOWLEDGE_DOCUMENT_SORT_FIELDS,
         default_sort_by="id",
-        sort_by=sort_by,
+        sort_by=resolved_sort_by,
         sort_order=sort_order,
     )
     return paginated_list_payload(
         items,
-        filters={
-            "doc_type": doc_type,
-            "folder_id": folder_id,
-            "index_status": index_status,
-            "keyword": keyword,
-            "knowledge_space_id": knowledge_space_id,
-            "permission_role": permission_role,
-        },
+        filters=filters,
         list_name="knowledge_documents",
         observed=True,
         page=page,
         page_size=page_size,
-        sort_by=sort_by or "id",
+        sort_by=resolved_sort_by,
         sort_order=sort_order,
         started_at=request_started_at(request),
         trace_id=get_trace_id(request),

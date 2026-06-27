@@ -595,3 +595,103 @@ def test_rd_task_executor_policy_list_uses_repository_read_model_for_sql_paginat
         ]
     finally:
         _restore_repository(original_store, original_users)
+
+
+def test_knowledge_document_list_uses_repository_read_model_for_sql_pagination():
+    class ReadModelOnlyKnowledgeRepository(FakeSnapshotRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.document_counts: list[dict] = []
+            self.document_reads: list[dict] = []
+
+        def list_knowledge_documents(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("knowledge list should not load all documents")
+
+        def count_knowledge_document_summaries(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.document_counts.append(dict(kwargs))
+            return 5
+
+        def list_knowledge_document_summaries_page(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.document_reads.append(dict(kwargs))
+            return [
+                {
+                    "active_chunk_set_id": "chunk_set_read_model",
+                    "brain_app_id": "rd_brain",
+                    "chunk_count": 3,
+                    "chunk_strategy": "parent_child",
+                    "content": "read model knowledge",
+                    "created_at": "2026-06-05T09:00:00+00:00",
+                    "created_by": "user_admin",
+                    "doc_type": "runbook",
+                    "document_version": 2,
+                    "folder_id": "folder_read_model",
+                    "folder_path": "研发规范",
+                    "id": "knowledge_read_model",
+                    "index_error": None,
+                    "index_status": "indexed",
+                    "knowledge_space_id": "space_read_model",
+                    "parsed_asset_id": "asset_parsed",
+                    "parser_engine": "markdown",
+                    "permission_roles": ["admin"],
+                    "permission_scope": "role",
+                    "product_id": "product_read_model",
+                    "source_asset_id": "asset_original",
+                    "source_type": "manual",
+                    "tags": ["read-model"],
+                    "title": "SQL read model knowledge",
+                    "updated_at": "2026-06-05T09:30:00+00:00",
+                    "vector_index_error": None,
+                    "version_id": "version_read_model",
+                }
+            ]
+
+    repository = ReadModelOnlyKnowledgeRepository()
+    original_store, original_users = _use_repository(repository)
+
+    try:
+        response = client.get(
+            (
+                "/api/knowledge/documents"
+                "?keyword=SQL"
+                "&doc_type=runbook"
+                "&index_status=indexed"
+                "&permission_role=admin"
+                "&knowledge_space_id=space_read_model"
+                "&folder_id=folder_read_model"
+                "&page=2&page_size=2"
+                "&sort_by=updated_at&sort_order=desc"
+            ),
+            headers=auth_headers(),
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["total"] == 5
+        assert data["page"] == 2
+        assert data["page_size"] == 2
+        assert data["items"][0]["id"] == "knowledge_read_model"
+        expected_query = {
+            "doc_type": "runbook",
+            "folder_id": "folder_read_model",
+            "global_knowledge_access": True,
+            "index_status": "indexed",
+            "keyword": "SQL",
+            "knowledge_space_id": "space_read_model",
+            "knowledge_space_scope_ids": [],
+            "permission_role": "admin",
+            "user_id": "user_admin",
+            "user_roles": ["admin"],
+        }
+        assert repository.document_counts == [expected_query]
+        assert repository.document_reads == [
+            {
+                **expected_query,
+                "limit": 2,
+                "offset": 2,
+                "sort_by": "updated_at",
+                "sort_order": "desc",
+            }
+        ]
+        assert data["query"]["name"] == "knowledge_documents"
+        assert data["performance"]["result_count"] == 1
+    finally:
+        _restore_repository(original_store, original_users)

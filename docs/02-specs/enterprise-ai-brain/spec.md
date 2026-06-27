@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.622 |
+| 功能版本 | v1.1.624 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.624 | 2026-06-27 | AI 助手裸 `@` 默认引用候选顺序恢复常用对象优先：知识/需求/研发任务/作业/插件/AI 角色与 Skill 不被执行诊断来源挤出首屏，执行诊断来源仍保留权限校验后的可引用能力 | Codex |
+| v1.1.623 | 2026-06-27 | 知识中心知识文档主列表收口到 PostgreSQL read model：带分页参数时在数据库侧完成权限过滤、关键字、知识空间、目录、类型、索引状态、权限角色筛选和白名单排序，旧全量返回仅保留兼容用途 | Codex |
 | v1.1.622 | 2026-06-27 | AI 能力配置的 AI角色与 Skill 主表接入服务端分页、筛选和排序：页面默认请求 `/api/system/ai-agents?page=1&page_size=10&sort_by=code&sort_order=asc` 与 `/api/system/ai-skills?page=1&page_size=10&sort_by=code&sort_order=asc`，旧全量返回仅保留兼容下拉和测试 helper 用途 | Codex |
 | v1.1.621 | 2026-06-27 | 定时作业配置和运行记录主表统一接入服务端分页、排序和产品 scope 过滤：作业配置默认请求 `/api/system/scheduled-jobs?page=1&page_size=10&sort_by=next_run_at&sort_order=desc`，运行记录默认请求 `/api/system/scheduled-job-runs?page=1&page_size=10&sort_by=started_at&sort_order=desc`，旧全量返回仅保留兼容用途 | Codex |
 | v1.1.620 | 2026-06-27 | 插件管理连接和动作主表接入服务端分页、排序和筛选：连接页签默认携带分页/排序和环境筛选请求 `/api/system/plugin-connections`，动作页签默认携带分页/排序请求 `/api/system/plugin-actions`，旧全量接口仅保留下拉和测试兼容用途 | Codex |

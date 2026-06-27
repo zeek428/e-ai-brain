@@ -659,6 +659,68 @@ class PostgresSnapshotRepository:
             knowledge_space_id=knowledge_space_id,
         )
 
+    def count_knowledge_document_summaries(
+        self,
+        *,
+        user_roles: list[str],
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_scope_ids: list[str] | None = None,
+        keyword: str | None = None,
+        doc_type: str | None = None,
+        folder_id: str | None = None,
+        index_status: str | None = None,
+        knowledge_space_id: str | None = None,
+        permission_role: str | None = None,
+    ) -> int:
+        return self._knowledge_read_repository.count_knowledge_document_summaries(
+            user_roles=user_roles,
+            user_id=user_id,
+            global_knowledge_access=global_knowledge_access,
+            knowledge_space_scope_ids=knowledge_space_scope_ids,
+            keyword=keyword,
+            doc_type=doc_type,
+            folder_id=folder_id,
+            index_status=index_status,
+            knowledge_space_id=knowledge_space_id,
+            permission_role=permission_role,
+        )
+
+    def list_knowledge_document_summaries_page(
+        self,
+        *,
+        user_roles: list[str],
+        limit: int,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_scope_ids: list[str] | None = None,
+        keyword: str | None = None,
+        doc_type: str | None = None,
+        folder_id: str | None = None,
+        index_status: str | None = None,
+        knowledge_space_id: str | None = None,
+        permission_role: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._knowledge_read_repository.list_knowledge_document_summaries_page(
+            user_roles=user_roles,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            user_id=user_id,
+            global_knowledge_access=global_knowledge_access,
+            knowledge_space_scope_ids=knowledge_space_scope_ids,
+            keyword=keyword,
+            doc_type=doc_type,
+            folder_id=folder_id,
+            index_status=index_status,
+            knowledge_space_id=knowledge_space_id,
+            permission_role=permission_role,
+        )
+
     def list_knowledge_deposits(
         self,
         *,

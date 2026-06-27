@@ -5,13 +5,15 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.729 |
+| 功能版本 | v1.1.731 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.731 | 2026-06-27 | 补充 AI 助手裸 `@` 默认候选均衡验收：执行诊断来源加入后不得挤掉知识文档、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI 角色和 Skill，模型网关日志等诊断引用仍可在后续候选中出现 | Codex |
+| v1.1.730 | 2026-06-27 | 补充知识中心主列表服务端分页验收：`GET /api/knowledge/documents?page=1&page_size=10` 必须优先调用知识文档 PostgreSQL count/page read model，在数据库侧完成权限、空间/目录、类型、索引状态、权限角色、关键字筛选和白名单排序；外层 Postgres repository 委托和 `KnowledgePage.test.tsx` 远程请求覆盖 | Codex |
 | v1.1.729 | 2026-06-27 | 补充 AI 能力配置主表服务端分页验收：AI角色默认请求 `ai-agents?page=1&page_size=10&sort_by=code&sort_order=asc`，Skill 默认请求 `ai-skills?page=1&page_size=10&sort_by=code&sort_order=asc`；仓储测试覆盖 AI角色/Skill count/page SQL、筛选和排序白名单，`AiCapabilitiesPage.test.tsx` 覆盖远程筛选请求 | Codex |
 | v1.1.728 | 2026-06-27 | 补充定时作业配置/运行记录主表服务端分页验收：作业配置默认请求 `scheduled-jobs?page=1&page_size=10&sort_by=next_run_at&sort_order=desc`，运行记录默认请求 `scheduled-job-runs?page=1&page_size=10&sort_by=started_at&sort_order=desc`，仓储测试覆盖运行记录 count/page SQL、产品 scope 和排序白名单 | Codex |
 | v1.1.727 | 2026-06-27 | 补充插件管理连接/动作主表服务端分页验收：连接页签默认请求 `plugin-connections?page=1&page_size=10&sort_by=plugin_id&sort_order=asc`，环境筛选保留分页排序参数；动作页签默认请求 `plugin-actions?page=1&page_size=10&sort_by=plugin_id&sort_order=asc`，`PluginsPage.test.tsx` 覆盖 | Codex |

@@ -7,6 +7,37 @@ from typing import Any
 from app.core.repositories.knowledge_writes import KnowledgeWriteRepository
 
 READ_SPACE_ROLES = ["admin", "contributor", "maintainer", "reader"]
+KNOWLEDGE_DOCUMENT_SELECT = """
+d.id, d.brain_app_id, d.product_id, d.version_id, d.title,
+d.content, d.source_type, d.doc_type, d.permission_scope,
+d.permission_roles, d.index_status, d.index_error,
+d.vector_index_error, d.tags, d.created_by, d.created_at,
+d.updated_at, d.knowledge_space_id, d.folder_id,
+d.source_asset_id, d.parsed_asset_id, d.active_chunk_set_id,
+d.parser_engine, d.chunk_strategy, d.document_version,
+f.name AS folder_path, COUNT(c.id)
+"""
+KNOWLEDGE_DOCUMENT_GROUP_BY = """
+d.id, d.brain_app_id, d.product_id, d.version_id, d.title,
+d.content, d.source_type, d.doc_type, d.permission_scope,
+d.permission_roles, d.index_status, d.index_error,
+d.vector_index_error, d.tags, d.created_by, d.created_at,
+d.updated_at, d.knowledge_space_id, d.folder_id,
+d.source_asset_id, d.parsed_asset_id, d.active_chunk_set_id,
+d.parser_engine, d.chunk_strategy, d.document_version,
+f.name
+"""
+KNOWLEDGE_DOCUMENT_SORT_COLUMNS = {
+    "created_at": "d.created_at",
+    "doc_type": "d.doc_type",
+    "folder_id": "d.folder_id",
+    "id": "d.id",
+    "index_status": "d.index_status",
+    "knowledge_space_id": "d.knowledge_space_id",
+    "permission_roles": "d.permission_roles::text",
+    "title": "lower(d.title)",
+    "updated_at": "d.updated_at",
+}
 
 
 def _parse_vector_text(value: Any) -> list[float] | None:
@@ -207,103 +238,123 @@ class KnowledgeReadRepository:
         index_status: str | None = None,
         knowledge_space_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        where_clauses = [
-            """
-            (
-              %s IS TRUE
-              OR (
-                d.knowledge_space_id IS NULL
-                AND EXISTS (
-                  SELECT 1
-                  FROM jsonb_array_elements_text(d.permission_roles) AS role(value)
-                  WHERE role.value = ANY(%s::text[])
-                )
-              )
-              OR (
-                d.knowledge_space_id IS NOT NULL
-                AND (
-                  d.knowledge_space_id = ANY(%s::text[])
-                  OR EXISTS (
-                    SELECT 1
-                    FROM knowledge_spaces ks
-                    WHERE ks.id = d.knowledge_space_id
-                      AND ks.status = 'active'
-                      AND ks.owner_user_id = %s
-                  )
-                  OR EXISTS (
-                    SELECT 1
-                    FROM knowledge_space_members ksm
-                    WHERE ksm.knowledge_space_id = d.knowledge_space_id
-                      AND ksm.user_id = %s
-                      AND ksm.status = 'active'
-                      AND ksm.space_role = ANY(%s::text[])
-                  )
-                )
-              )
-            )
-            """
-        ]
-        params: list[Any] = [
-            global_knowledge_access,
-            user_roles,
-            knowledge_space_scope_ids or [],
-            user_id,
-            user_id,
-            READ_SPACE_ROLES,
-        ]
-        if keyword is not None:
-            where_clauses.append("lower(d.title || ' ' || d.content) LIKE %s")
-            params.append(f"%{keyword.lower()}%")
-        if doc_type is not None:
-            where_clauses.append("d.doc_type = %s")
-            params.append(doc_type)
-        if folder_id is not None:
-            where_clauses.append("d.folder_id = %s")
-            params.append(folder_id)
-        if index_status is not None:
-            where_clauses.append("d.index_status = %s")
-            params.append(index_status)
-        if knowledge_space_id is not None:
-            where_clauses.append("d.knowledge_space_id = %s")
-            params.append(knowledge_space_id)
+        where_clause, params = self._knowledge_document_where(
+            doc_type=doc_type,
+            folder_id=folder_id,
+            global_knowledge_access=global_knowledge_access,
+            index_status=index_status,
+            keyword=keyword,
+            knowledge_space_id=knowledge_space_id,
+            knowledge_space_scope_ids=knowledge_space_scope_ids,
+            permission_role=None,
+            user_id=user_id,
+            user_roles=user_roles,
+        )
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT d.id, d.brain_app_id, d.product_id, d.version_id, d.title,
-                           d.content, d.source_type, d.doc_type, d.permission_scope,
-                           d.permission_roles, d.index_status, d.index_error,
-                           d.vector_index_error, d.tags, d.created_by, d.created_at,
-                           d.updated_at, d.knowledge_space_id, d.folder_id,
-                           d.source_asset_id, d.parsed_asset_id, d.active_chunk_set_id,
-                           d.parser_engine, d.chunk_strategy, d.document_version,
-                           f.name AS folder_path, COUNT(c.id)
+                    SELECT {KNOWLEDGE_DOCUMENT_SELECT}
                     FROM knowledge_documents d
                     LEFT JOIN knowledge_folders f ON f.id = d.folder_id
                     LEFT JOIN knowledge_chunks c
                       ON c.document_id = d.id
                      AND (d.active_chunk_set_id IS NULL OR c.chunk_set_id = d.active_chunk_set_id)
-                    WHERE {' AND '.join(where_clauses)}
-                    GROUP BY d.id, d.brain_app_id, d.product_id, d.version_id, d.title,
-                             d.content, d.source_type, d.doc_type, d.permission_scope,
-                             d.permission_roles, d.index_status, d.index_error,
-                             d.vector_index_error, d.tags, d.created_by, d.created_at,
-                             d.updated_at, d.knowledge_space_id, d.folder_id,
-                             d.source_asset_id, d.parsed_asset_id, d.active_chunk_set_id,
-                             d.parser_engine, d.chunk_strategy, d.document_version,
-                             f.name
+                    WHERE {where_clause}
+                    GROUP BY {KNOWLEDGE_DOCUMENT_GROUP_BY}
                     ORDER BY d.id
                     """,
                     tuple(params),
                 )
-                documents = []
-                for row in cursor.fetchall():
-                    document = self._knowledge_document_from_row(row[:25])
-                    document["chunk_count"] = int(row[26] or 0)
-                    if row[25]:
-                        document["folder_path"] = row[25]
-                    documents.append(document)
-                return documents
+                return [self._knowledge_document_summary_from_row(row) for row in cursor.fetchall()]
+
+    def count_knowledge_document_summaries(
+        self,
+        *,
+        user_roles: list[str],
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_scope_ids: list[str] | None = None,
+        keyword: str | None = None,
+        doc_type: str | None = None,
+        folder_id: str | None = None,
+        index_status: str | None = None,
+        knowledge_space_id: str | None = None,
+        permission_role: str | None = None,
+    ) -> int:
+        where_clause, params = self._knowledge_document_where(
+            doc_type=doc_type,
+            folder_id=folder_id,
+            global_knowledge_access=global_knowledge_access,
+            index_status=index_status,
+            keyword=keyword,
+            knowledge_space_id=knowledge_space_id,
+            knowledge_space_scope_ids=knowledge_space_scope_ids,
+            permission_role=permission_role,
+            user_id=user_id,
+            user_roles=user_roles,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM knowledge_documents d WHERE {where_clause}",
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_knowledge_document_summaries_page(
+        self,
+        *,
+        user_roles: list[str],
+        limit: int,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_scope_ids: list[str] | None = None,
+        keyword: str | None = None,
+        doc_type: str | None = None,
+        folder_id: str | None = None,
+        index_status: str | None = None,
+        knowledge_space_id: str | None = None,
+        permission_role: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = self._knowledge_document_where(
+            doc_type=doc_type,
+            folder_id=folder_id,
+            global_knowledge_access=global_knowledge_access,
+            index_status=index_status,
+            keyword=keyword,
+            knowledge_space_id=knowledge_space_id,
+            knowledge_space_scope_ids=knowledge_space_scope_ids,
+            permission_role=permission_role,
+            user_id=user_id,
+            user_roles=user_roles,
+        )
+        sort_column = KNOWLEDGE_DOCUMENT_SORT_COLUMNS.get(sort_by, "d.id")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT {KNOWLEDGE_DOCUMENT_SELECT}
+                    FROM knowledge_documents d
+                    LEFT JOIN knowledge_folders f ON f.id = d.folder_id
+                    LEFT JOIN knowledge_chunks c
+                      ON c.document_id = d.id
+                     AND (d.active_chunk_set_id IS NULL OR c.chunk_set_id = d.active_chunk_set_id)
+                    WHERE {where_clause}
+                    GROUP BY {KNOWLEDGE_DOCUMENT_GROUP_BY}
+                    ORDER BY {sort_column} {direction} {nulls}, d.id {direction}
+                    LIMIT %s OFFSET %s
+                    """,
+                    tuple(params),
+                )
+                return [self._knowledge_document_summary_from_row(row) for row in cursor.fetchall()]
 
     def list_knowledge_deposits(
         self,
@@ -640,6 +691,100 @@ class KnowledgeReadRepository:
         if not document["permission_scope"]:
             document.pop("permission_scope")
         return document
+
+    def _knowledge_document_summary_from_row(self, row: tuple[Any, ...]) -> dict[str, Any]:
+        document = self._knowledge_document_from_row(row[:25])
+        if len(row) > 26:
+            document["chunk_count"] = int(row[26] or 0)
+        if len(row) > 25 and row[25]:
+            document["folder_path"] = row[25]
+        return document
+
+    def _knowledge_document_where(
+        self,
+        *,
+        user_roles: list[str],
+        user_id: str | None,
+        global_knowledge_access: bool,
+        knowledge_space_scope_ids: list[str] | None,
+        keyword: str | None,
+        doc_type: str | None,
+        folder_id: str | None,
+        index_status: str | None,
+        knowledge_space_id: str | None,
+        permission_role: str | None,
+    ) -> tuple[str, list[Any]]:
+        where_clauses = [
+            """
+            (
+              %s IS TRUE
+              OR (
+                d.knowledge_space_id IS NULL
+                AND EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements_text(d.permission_roles) AS role(value)
+                  WHERE role.value = ANY(%s::text[])
+                )
+              )
+              OR (
+                d.knowledge_space_id IS NOT NULL
+                AND (
+                  d.knowledge_space_id = ANY(%s::text[])
+                  OR EXISTS (
+                    SELECT 1
+                    FROM knowledge_spaces ks
+                    WHERE ks.id = d.knowledge_space_id
+                      AND ks.status = 'active'
+                      AND ks.owner_user_id = %s
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM knowledge_space_members ksm
+                    WHERE ksm.knowledge_space_id = d.knowledge_space_id
+                      AND ksm.user_id = %s
+                      AND ksm.status = 'active'
+                      AND ksm.space_role = ANY(%s::text[])
+                  )
+                )
+              )
+            )
+            """
+        ]
+        params: list[Any] = [
+            global_knowledge_access,
+            user_roles,
+            knowledge_space_scope_ids or [],
+            user_id,
+            user_id,
+            READ_SPACE_ROLES,
+        ]
+        if keyword is not None:
+            where_clauses.append("lower(d.title || ' ' || d.content) LIKE %s")
+            params.append(f"%{keyword.lower()}%")
+        if doc_type is not None:
+            where_clauses.append("d.doc_type = %s")
+            params.append(doc_type)
+        if folder_id is not None:
+            where_clauses.append("d.folder_id = %s")
+            params.append(folder_id)
+        if index_status is not None:
+            where_clauses.append("d.index_status = %s")
+            params.append(index_status)
+        if knowledge_space_id is not None:
+            where_clauses.append("d.knowledge_space_id = %s")
+            params.append(knowledge_space_id)
+        if permission_role is not None:
+            where_clauses.append(
+                """
+                EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements_text(d.permission_roles) AS filter_role(value)
+                  WHERE filter_role.value = %s
+                )
+                """
+            )
+            params.append(permission_role)
+        return " AND ".join(where_clauses), params
 
     @staticmethod
     def _knowledge_chunk_from_row(row: tuple[Any, ...]) -> dict[str, Any]:

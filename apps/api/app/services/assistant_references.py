@@ -221,14 +221,18 @@ REFERENCE_SOURCE_MODULES = {
 }
 DEFAULT_REFERENCE_TYPE_ORDER = (
     "assistant_action",
-    "knowledge_space",
-    "knowledge_folder",
     "knowledge_document",
     "knowledge_chunk",
     "requirement",
     "ai_task",
     "scheduled_job",
     "scheduled_job_run",
+    "plugin_action",
+    "plugin_connection",
+    "ai_agent",
+    "ai_skill",
+    "knowledge_space",
+    "knowledge_folder",
     "assistant_chat_run",
     "model_gateway_log",
     "plugin_invocation_log",
@@ -238,10 +242,6 @@ DEFAULT_REFERENCE_TYPE_ORDER = (
     "result_write_record",
     "audit_event",
     "assistant_message",
-    "plugin_action",
-    "plugin_connection",
-    "ai_agent",
-    "ai_skill",
     "human_review",
     "bug",
     "iteration_version",
@@ -904,7 +904,10 @@ def assistant_reference_candidates_response(
         normalized_type,
     ):
         return {"items": [], "total": 0}
-    if normalized_type in EXECUTION_TRACE_REFERENCE_TYPES and not _user_can_reference_execution_trace_type(user):
+    if (
+        normalized_type in EXECUTION_TRACE_REFERENCE_TYPES
+        and not _user_can_reference_execution_trace_type(user)
+    ):
         return {"items": [], "total": 0}
     if normalized_type == "knowledge_document":
         items = _knowledge_document_reference_candidates(
@@ -2433,7 +2436,9 @@ def _summary_excerpt(value: str) -> str:
 
 
 def _execution_trace_href(source_id: Any, source_type: str) -> str:
-    return f"/governance/execution-traces?{urlencode({'source_id': str(source_id), 'source_type': source_type})}"
+    return "/governance/execution-traces?" + urlencode(
+        {"source_id": str(source_id), "source_type": source_type}
+    )
 
 
 def _entity_reference_for_id(

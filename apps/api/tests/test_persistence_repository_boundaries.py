@@ -2331,6 +2331,89 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
     ]
 
 
+def test_postgres_knowledge_document_page_read_model_delegates_to_domain_repository(
+    monkeypatch,
+):
+    repository = PostgresSnapshotRepository("postgresql://unused")
+    calls: list[tuple[str, dict]] = []
+
+    def record_call(name: str, result):  # type: ignore[no-untyped-def]
+        def _call(self, **kwargs):  # type: ignore[no-untyped-def]
+            calls.append((name, kwargs))
+            return result
+
+        return _call
+
+    monkeypatch.setattr(
+        KnowledgeReadRepository,
+        "count_knowledge_document_summaries",
+        record_call("count_knowledge_document_summaries", 9),
+    )
+    monkeypatch.setattr(
+        KnowledgeReadRepository,
+        "list_knowledge_document_summaries_page",
+        record_call(
+            "list_knowledge_document_summaries_page",
+            [{"source": "list_knowledge_document_summaries_page"}],
+        ),
+    )
+
+    assert repository.count_knowledge_document_summaries(
+        user_roles=["knowledge_owner"],
+        user_id="user_knowledge",
+        global_knowledge_access=False,
+        knowledge_space_scope_ids=["space_001"],
+        keyword="规范",
+        doc_type="runbook",
+        folder_id="folder_001",
+        index_status="text_indexed",
+        knowledge_space_id="space_001",
+        permission_role="knowledge_owner",
+    ) == 9
+    assert repository.list_knowledge_document_summaries_page(
+        user_roles=["knowledge_owner"],
+        user_id="user_knowledge",
+        global_knowledge_access=False,
+        knowledge_space_scope_ids=["space_001"],
+        keyword="规范",
+        doc_type="runbook",
+        folder_id="folder_001",
+        index_status="text_indexed",
+        knowledge_space_id="space_001",
+        permission_role="knowledge_owner",
+        limit=20,
+        offset=40,
+        sort_by="updated_at",
+        sort_order="desc",
+    )[0]["source"] == "list_knowledge_document_summaries_page"
+
+    expected_filters = {
+        "doc_type": "runbook",
+        "folder_id": "folder_001",
+        "global_knowledge_access": False,
+        "index_status": "text_indexed",
+        "keyword": "规范",
+        "knowledge_space_id": "space_001",
+        "knowledge_space_scope_ids": ["space_001"],
+        "permission_role": "knowledge_owner",
+        "user_id": "user_knowledge",
+        "user_roles": ["knowledge_owner"],
+    }
+    assert calls == [
+        ("count_knowledge_document_summaries", expected_filters),
+        (
+            "list_knowledge_document_summaries_page",
+            {
+                **expected_filters,
+                "limit": 20,
+                "offset": 40,
+                "sort_by": "updated_at",
+                "sort_order": "desc",
+            },
+        ),
+    ]
+
+
 def test_postgres_knowledge_writes_delegate_to_domain_repository(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
     calls: list[tuple[str, dict]] = []

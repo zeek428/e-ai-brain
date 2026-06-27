@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.409 |
+| 功能版本 | v1.1.411 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.411 | 2026-06-27 | `GET /api/assistant/reference-candidates` 裸 `@` 默认候选顺序收紧：优先保留知识文档、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI 角色和 Skill，执行诊断来源仍可引用但不挤占常用对象首屏 | Codex |
+| v1.1.410 | 2026-06-27 | `GET /api/knowledge/documents` 补齐知识中心主列表远程分页契约：带 `page/page_size` 时在 PostgreSQL read model 侧完成权限过滤、关键字、空间、目录、类型、索引状态、权限角色筛选、白名单排序，并返回 `query/performance` 观测 | Codex |
 | v1.1.409 | 2026-06-27 | `GET /api/system/ai-skills` 与 `GET /api/system/ai-agents` 补齐远程分页契约：带 `page/page_size` 时支持关键字、状态和专项筛选、白名单排序，并返回 `query/performance` 观测；AI 能力配置页默认请求服务端分页结果 | Codex |
 | v1.1.408 | 2026-06-27 | `GET /api/system/scheduled-job-runs` 补齐远程分页契约：支持 `page/page_size/sort_by/sort_order`、运行 ID、作业 ID、状态和产品 scope 过滤，定时作业页面运行记录页签默认请求服务端分页结果并展示可排序开始/完成时间 | Codex |
 | v1.1.407 | 2026-06-27 | 插件管理连接和动作页签已接入分页读模型：页面主表默认调用 `GET /api/system/plugin-connections` 与 `GET /api/system/plugin-actions` 的 `page/page_size/sort_by/sort_order` 查询，不再以旧全量返回做主表分页和排序 | Codex |
@@ -3125,6 +3127,8 @@ POST /api/knowledge/documents/batch-move
 ```http
 GET /api/knowledge/documents?keyword=研发&knowledge_space_id=knowledge_space_001&folder_id=knowledge_folder_001&doc_type=system&index_status=text_indexed
 ```
+
+该接口支持 `keyword`、`knowledge_space_id`、`folder_id`、`doc_type`、`index_status`、`permission_role`、`page`、`page_size`、`sort_by` 和 `sort_order`。`sort_by` 白名单为 `id/title/doc_type/folder_id/index_status/knowledge_space_id/permission_roles/created_at/updated_at`，`sort_order` 只允许 `asc|desc`，`page_size` 最大 100。传入 `page` 或 `page_size` 时，PostgreSQL 运行态必须通过知识文档 read model 在数据库侧完成知识空间权限、角色权限、关键字、空间、目录、类型、索引状态、权限角色筛选和排序分页，并返回 `items/page/page_size/total/query/performance`；未传分页参数时保留旧全量返回兼容用途，不作为知识中心主表默认读路径。
 
 知识文档索引状态支持：`importing | pending_index | text_indexed | vector_indexed | indexed | index_failed | archived`，其中 `indexed` 为历史兼容状态。Embedding 不可用但文本 chunk 成功时进入 `text_indexed`，响应包含 `vector_index_error` 和兼容展示用 `index_error`；基础文本索引失败时进入 `index_failed`。
 

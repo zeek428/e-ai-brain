@@ -1778,7 +1778,11 @@ def test_ai_assistant_reference_candidates_include_execution_trace_sources():
         message="assistant_chat_run_trace",
         product_id=None,
         reference_type="assistant_chat_run",
-        user={"id": "user_admin", "permissions": ["diagnostics.execution_traces.read"], "roles": ["admin"]},
+        user={
+            "id": "user_admin",
+            "permissions": ["diagnostics.execution_traces.read"],
+            "roles": ["admin"],
+        },
     )
 
     assert payload["items"] == [
@@ -1790,7 +1794,10 @@ def test_ai_assistant_reference_candidates_include_execution_trace_sources():
             "title": "AI 助手运行 assistant_chat_run_trace / failed",
             "type": "assistant_chat_run",
             "updated_at": "2026-06-20T02:00:05+00:00",
-            "url": "/governance/execution-traces?source_id=assistant_chat_run_trace&source_type=assistant_chat_run",
+            "url": (
+                "/governance/execution-traces?"
+                "source_id=assistant_chat_run_trace&source_type=assistant_chat_run"
+            ),
         }
     ]
 
@@ -1832,7 +1839,10 @@ def test_ai_assistant_reference_candidates_read_execution_trace_sources_from_rep
                 "title": "AI 助手运行 assistant_chat_run_repo / failed",
                 "type": "assistant_chat_run",
                 "updated_at": "2026-06-20T02:00:05+00:00",
-                "url": "/governance/execution-traces?source_id=assistant_chat_run_repo&source_type=assistant_chat_run",
+                "url": (
+                    "/governance/execution-traces?"
+                    "source_id=assistant_chat_run_repo&source_type=assistant_chat_run"
+                ),
             }
         ],
         "total": 1,
@@ -1843,6 +1853,7 @@ def test_ai_assistant_default_reference_candidates_are_balanced_across_types():
     headers = auth_headers()
     app.state.store.reset()
     seed_assistant_knowledge_reference_documents()
+    seed_assistant_knowledge_space_references()
     seed_assistant_operational_references()
     for index in range(8):
         doc_id = f"knowledge_extra_runbook_{index}"
@@ -1904,6 +1915,9 @@ def test_ai_assistant_default_reference_candidates_are_balanced_across_types():
         "ai_agent",
         "ai_skill",
     ]
+    item_types = [item["type"] for item in items]
+    assert "model_gateway_log" in item_types
+    assert item_types.index("model_gateway_log") > item_types.index("ai_skill")
 
 
 def test_ai_assistant_reference_candidates_match_weekly_feedback_alias():
