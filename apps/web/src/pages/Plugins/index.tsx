@@ -15,9 +15,9 @@ import {
   deletePluginAction,
   deletePluginConnection,
   fetchAiExecutorRunners,
-  fetchPluginActions,
+  fetchPluginActionsPage,
   fetchPluginActionTemplates,
-  fetchPluginConnections,
+  fetchPluginConnectionsPage,
   fetchPluginMarketplace,
   fetchPlugins,
   fetchResultWriteTargets,
@@ -34,8 +34,10 @@ import {
   type AssistantPluginConnectionDraft,
   type AiExecutorRunnerRecord,
   type PluginActionTrialResult,
+  type PluginActionListQuery,
   type PluginActionRecord,
   type PluginActionTemplateRecord,
+  type PluginConnectionListQuery,
   type PluginConnectionRecord,
   type PluginConnectionTestResult,
   type PluginMarketplaceItem,
@@ -107,6 +109,19 @@ type ConnectionFormValues = PluginConnectionFormValues;
 
 type ActionFormValues = PluginActionFormValues;
 
+type RemoteTableMeta = {
+  page: number;
+  pageSize: number;
+  total: number;
+};
+
+const defaultPluginChildListQuery = {
+  page: 1,
+  pageSize: 10,
+  sortField: 'plugin_id',
+  sortOrder: 'ascend' as const,
+};
+
 const connectionEnvironmentOptions = [
   { label: '默认', value: 'default' },
   { label: '开发', value: 'dev' },
@@ -132,6 +147,22 @@ export default function PluginsPage() {
   const [runners, setRunners] = useState<AiExecutorRunnerRecord[]>([]);
   const [connections, setConnections] = useState<PluginConnectionRecord[]>([]);
   const [actions, setActions] = useState<PluginActionRecord[]>([]);
+  const [connectionListQuery, setConnectionListQuery] = useState<PluginConnectionListQuery>({
+    ...defaultPluginChildListQuery,
+  });
+  const [actionListQuery, setActionListQuery] = useState<PluginActionListQuery>({
+    ...defaultPluginChildListQuery,
+  });
+  const [connectionListMeta, setConnectionListMeta] = useState<RemoteTableMeta>({
+    page: 1,
+    pageSize: 10,
+    total: 0,
+  });
+  const [actionListMeta, setActionListMeta] = useState<RemoteTableMeta>({
+    page: 1,
+    pageSize: 10,
+    total: 0,
+  });
   const [scheduledJobs, setScheduledJobs] = useState<ScheduledJobRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [pluginModalOpen, setPluginModalOpen] = useState(false);
@@ -154,7 +185,7 @@ export default function PluginsPage() {
   const [trialResult, setTrialResult] = useState<PluginActionTrialResult | undefined>();
   const [trialRunning, setTrialRunning] = useState(false);
   const [actionScenario, setActionScenario] = useState<string | undefined>();
-  const [connectionEnvironmentFilter, setConnectionEnvironmentFilter] = useState<string | undefined>();
+  const connectionEnvironmentFilter = connectionListQuery.environment;
   const [advancedConnectionJsonOpen, setAdvancedConnectionJsonOpen] = useState(false);
   const [advancedConnectionRequestJsonOpen, setAdvancedConnectionRequestJsonOpen] = useState(false);
   const [advancedActionJsonOpen, setAdvancedActionJsonOpen] = useState(false);
@@ -234,8 +265,8 @@ export default function PluginsPage() {
         nextActionTemplates,
         nextResultWriteTargets,
         nextRunners,
-        nextConnections,
-        nextActions,
+        nextConnectionsPage,
+        nextActionsPage,
         nextJobs,
       ] = await Promise.all([
         fetchPlugins(),
@@ -243,8 +274,8 @@ export default function PluginsPage() {
         fetchPluginActionTemplates(),
         fetchResultWriteTargets(),
         fetchAiExecutorRunners(),
-        fetchPluginConnections({ environment: connectionEnvironmentFilter }),
-        fetchPluginActions(),
+        fetchPluginConnectionsPage(connectionListQuery),
+        fetchPluginActionsPage(actionListQuery),
         fetchScheduledJobs(),
       ]);
       setPlugins(nextPlugins);
@@ -252,15 +283,25 @@ export default function PluginsPage() {
       setActionTemplates(nextActionTemplates);
       setResultWriteTargets(nextResultWriteTargets);
       setRunners(nextRunners);
-      setConnections(nextConnections);
-      setActions(nextActions);
+      setConnections(nextConnectionsPage.rows);
+      setActions(nextActionsPage.rows);
+      setConnectionListMeta({
+        page: nextConnectionsPage.page,
+        pageSize: nextConnectionsPage.pageSize,
+        total: nextConnectionsPage.total,
+      });
+      setActionListMeta({
+        page: nextActionsPage.page,
+        pageSize: nextActionsPage.pageSize,
+        total: nextActionsPage.total,
+      });
       setScheduledJobs(nextJobs);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '插件配置加载失败');
     } finally {
       setLoading(false);
     }
-  }, [connectionEnvironmentFilter]);
+  }, [actionListQuery, connectionListQuery]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -296,6 +337,28 @@ export default function PluginsPage() {
     submitRunner,
     testingRunnerId,
   } = usePluginRunnerOperations({ reload, runnerForm });
+
+  const handleConnectionListChange = useCallback((query: PluginConnectionListQuery) => {
+    setConnectionListQuery((currentQuery) => ({
+      ...currentQuery,
+      ...query,
+    }));
+  }, []);
+
+  const handleActionListChange = useCallback((query: PluginActionListQuery) => {
+    setActionListQuery((currentQuery) => ({
+      ...currentQuery,
+      ...query,
+    }));
+  }, []);
+
+  const handleConnectionEnvironmentFilterChange = useCallback((environment?: string) => {
+    setConnectionListQuery((currentQuery) => ({
+      ...currentQuery,
+      environment,
+      page: 1,
+    }));
+  }, []);
 
   const openCreatePluginModal = () => {
     setEditingPlugin(undefined);
@@ -1251,10 +1314,12 @@ export default function PluginsPage() {
       <PluginWorkspaceGuide />
       <PluginManagementTabs
         actions={actions}
+        actionListMeta={actionListMeta}
         connectionById={connectionById}
         connectionEnvironmentFilter={connectionEnvironmentFilter}
         connectionEnvironmentLabels={connectionEnvironmentLabelByValue}
         connectionEnvironmentOptions={connectionEnvironmentOptions}
+        connectionListMeta={connectionListMeta}
         connections={connections}
         formatWriteTarget={(writeTarget) => resultWriteTargetLabel(
           writeTarget ?? DEFAULT_RESULT_WRITE_TARGET,
@@ -1280,11 +1345,13 @@ export default function PluginsPage() {
         onDeletePlugin={confirmDeletePlugin}
         onDeleteRunner={confirmDeleteRunner}
         onDownloadRunnerInstallPackage={(runner) => void downloadRunnerInstallPackage(runner)}
+        onActionListChange={handleActionListChange}
+        onConnectionListChange={handleConnectionListChange}
         onEditAction={openEditActionModal}
         onEditConnection={openEditConnectionModal}
         onEditPlugin={openEditPluginModal}
         onEditRunner={openEditRunnerModal}
-        onEnvironmentFilterChange={setConnectionEnvironmentFilter}
+        onEnvironmentFilterChange={handleConnectionEnvironmentFilterChange}
         onOpenRunnerLogs={(runner) => void openRunnerLogs(runner)}
         onReload={reload}
         onRotateRunnerToken={rotateRunnerToken}

@@ -7,9 +7,21 @@ import {
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import { Button, Select, Space, Typography } from 'antd';
+import type { TablePaginationConfig } from 'antd';
+import type { SorterResult } from 'antd/es/table/interface';
 
-import type { PluginConnectionRecord, PluginRecord } from '../../../services/aiBrain';
+import type {
+  PluginConnectionListQuery,
+  PluginConnectionRecord,
+  PluginRecord,
+} from '../../../services/aiBrain';
 import { ConnectionLastTestSummary } from './PluginDiagnostics';
+
+type PluginConnectionRemoteMeta = {
+  page: number;
+  pageSize: number;
+  total: number;
+};
 
 type PluginConnectionTableProps = {
   connections: PluginConnectionRecord[];
@@ -18,14 +30,41 @@ type PluginConnectionTableProps = {
   environmentOptions: Array<{ label: string; value: string }>;
   loading: boolean;
   pluginById: Map<string, PluginRecord>;
+  remote: PluginConnectionRemoteMeta;
   testingConnectionId?: string;
   onCreateConnection: () => void;
   onDeleteConnection: (connection: PluginConnectionRecord) => void;
   onEditConnection: (connection: PluginConnectionRecord) => void;
   onEnvironmentFilterChange: (value?: string) => void;
+  onRemoteChange: (query: PluginConnectionListQuery) => void;
   onReload: () => void;
   onTestConnection: (connection: PluginConnectionRecord) => void | Promise<void>;
 };
+
+function normalizeConnectionSorter(
+  sorter: SorterResult<PluginConnectionRecord> | SorterResult<PluginConnectionRecord>[],
+) {
+  const activeSorter = Array.isArray(sorter)
+    ? sorter.find((item) => item.order)
+    : sorter.order
+      ? sorter
+      : undefined;
+  if (!activeSorter) {
+    return {};
+  }
+  const field =
+    typeof activeSorter.field === 'string'
+      ? activeSorter.field
+      : typeof activeSorter.columnKey === 'string'
+        ? activeSorter.columnKey
+        : undefined;
+  return {
+    sortField: field,
+    sortOrder: activeSorter.order === 'ascend' || activeSorter.order === 'descend'
+      ? activeSorter.order
+      : undefined,
+  };
+}
 
 export function PluginConnectionTable({
   connections,
@@ -34,11 +73,13 @@ export function PluginConnectionTable({
   environmentOptions,
   loading,
   pluginById,
+  remote,
   testingConnectionId,
   onCreateConnection,
   onDeleteConnection,
   onEditConnection,
   onEnvironmentFilterChange,
+  onRemoteChange,
   onReload,
   onTestConnection,
 }: PluginConnectionTableProps) {
@@ -71,9 +112,10 @@ export function PluginConnectionTable({
         cardBordered
         className="management-list-table"
         columns={[
-          { dataIndex: 'name', title: '名称', ellipsis: true, width: 220 },
+          { dataIndex: 'name', sorter: true, title: '名称', ellipsis: true, width: 220 },
           {
             dataIndex: 'plugin_id',
+            sorter: true,
             title: '插件',
             ellipsis: true,
             width: 220,
@@ -81,19 +123,20 @@ export function PluginConnectionTable({
           },
           {
             dataIndex: 'environment',
+            sorter: true,
             title: '环境',
             width: 130,
             render: (value) => environmentLabels.get(String(value)) ?? String(value ?? '-'),
           },
           { dataIndex: 'auth_type', title: '认证', width: 130 },
-          { dataIndex: 'endpoint_url', title: 'Endpoint', ellipsis: true, width: 320 },
+          { dataIndex: 'endpoint_url', sorter: true, title: 'Endpoint', ellipsis: true, width: 320 },
           {
             dataIndex: 'last_test_summary',
             title: '最近测试',
             width: 180,
             render: (_, row) => <ConnectionLastTestSummary connection={row} />,
           },
-          { dataIndex: 'status', title: '状态', width: 110 },
+          { dataIndex: 'status', sorter: true, title: '状态', width: 110 },
           {
             fixed: 'right',
             key: 'actions',
@@ -147,6 +190,17 @@ export function PluginConnectionTable({
         dateFormatter="string"
         headerTitle="连接"
         loading={loading}
+        onChange={(
+          pagination: TablePaginationConfig,
+          _filters,
+          sorter,
+        ) => {
+          onRemoteChange({
+            page: pagination.current ?? remote.page,
+            pageSize: pagination.pageSize ?? remote.pageSize,
+            ...normalizeConnectionSorter(sorter),
+          });
+        }}
         options={{
           density: true,
           fullScreen: true,
@@ -154,8 +208,11 @@ export function PluginConnectionTable({
           setting: true,
         }}
         pagination={{
+          current: remote.page,
+          pageSize: remote.pageSize,
           showSizeChanger: true,
           showTotal: (total) => `共 ${total} 条`,
+          total: remote.total,
         }}
         rowKey="id"
         scroll={{ x: 1600 }}

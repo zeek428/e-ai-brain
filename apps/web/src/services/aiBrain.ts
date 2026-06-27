@@ -6288,6 +6288,7 @@ export async function fetchPluginActionsPage(
   return {
     page: response.page ?? query.page ?? 1,
     pageSize: response.page_size ?? query.pageSize ?? 10,
+    performance: response.performance,
     rows: response.items,
     total: response.total,
   };

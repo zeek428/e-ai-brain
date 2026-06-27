@@ -148,6 +148,7 @@ function installPluginsFetchMock(
 ) {
   const actionBodies: unknown[] = [];
   const actionDeleteIds: string[] = [];
+  const actionListCalls: string[] = [];
   const actionTrialBodies: unknown[] = [];
   const actionUpdateBodies: unknown[] = [];
   const assistantDraftConfirmIds: string[] = [];
@@ -905,7 +906,12 @@ function installPluginsFetchMock(
         },
       });
     }
-    if (input === '/api/system/plugin-actions' && init?.method === 'GET') {
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/system/plugin-actions')
+      && init?.method === 'GET'
+    ) {
+      actionListCalls.push(input);
       const officialActions = options.includeOfficialActions
         ? [
             {
@@ -1101,6 +1107,7 @@ function installPluginsFetchMock(
   return {
     actionBodies,
     actionDeleteIds,
+    actionListCalls,
     actionTrialBodies,
     actionUpdateBodies,
     assistantDraftConfirmIds,
@@ -1886,7 +1893,24 @@ describe('PluginsPage', () => {
     fireEvent.click(prodOptions.at(-1)!);
 
     await waitFor(() =>
-      expect(connectionListCalls).toContain('/api/system/plugin-connections?environment=prod'),
+      expect(connectionListCalls).toContain(
+        '/api/system/plugin-connections?environment=prod&page=1&page_size=10&sort_by=plugin_id&sort_order=asc',
+      ),
+    );
+  });
+
+  it('loads plugin connections and actions through server-side pagination', async () => {
+    const { actionListCalls, connectionListCalls } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    await waitFor(() =>
+      expect(connectionListCalls).toContain(
+        '/api/system/plugin-connections?page=1&page_size=10&sort_by=plugin_id&sort_order=asc',
+      ),
+    );
+    expect(actionListCalls).toContain(
+      '/api/system/plugin-actions?page=1&page_size=10&sort_by=plugin_id&sort_order=asc',
     );
   });
 

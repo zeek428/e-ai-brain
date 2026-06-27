@@ -2,7 +2,9 @@ import { Tabs } from 'antd';
 
 import type {
   AiExecutorRunnerRecord,
+  PluginActionListQuery,
   PluginActionRecord,
+  PluginConnectionListQuery,
   PluginConnectionRecord,
   PluginMarketplaceItem,
   PluginRecord,
@@ -20,10 +22,20 @@ type SelectOption = {
 
 type PluginManagementTabsProps = {
   actions: PluginActionRecord[];
+  actionListMeta: {
+    page: number;
+    pageSize: number;
+    total: number;
+  };
   connectionById: Map<string, PluginConnectionRecord>;
   connectionEnvironmentFilter?: string;
   connectionEnvironmentLabels: Map<string, string>;
   connectionEnvironmentOptions: SelectOption[];
+  connectionListMeta: {
+    page: number;
+    pageSize: number;
+    total: number;
+  };
   connections: PluginConnectionRecord[];
   formatWriteTarget: (writeTarget?: string | null) => string;
   loading: boolean;
@@ -41,6 +53,8 @@ type PluginManagementTabsProps = {
   onDeletePlugin: (plugin: PluginRecord) => void;
   onDeleteRunner: (runner: AiExecutorRunnerRecord) => void;
   onDownloadRunnerInstallPackage: (runner: AiExecutorRunnerRecord) => void;
+  onActionListChange: (query: PluginActionListQuery) => void;
+  onConnectionListChange: (query: PluginConnectionListQuery) => void;
   onEditAction: (action: PluginActionRecord) => void;
   onEditConnection: (connection: PluginConnectionRecord) => void;
   onEditPlugin: (plugin: PluginRecord) => void;
@@ -62,10 +76,12 @@ type PluginManagementTabsProps = {
 
 export function PluginManagementTabs({
   actions,
+  actionListMeta,
   connectionById,
   connectionEnvironmentFilter,
   connectionEnvironmentLabels,
   connectionEnvironmentOptions,
+  connectionListMeta,
   connections,
   formatWriteTarget,
   loading,
@@ -83,6 +99,8 @@ export function PluginManagementTabs({
   onDeletePlugin,
   onDeleteRunner,
   onDownloadRunnerInstallPackage,
+  onActionListChange,
+  onConnectionListChange,
   onEditAction,
   onEditConnection,
   onEditPlugin,
@@ -144,11 +162,13 @@ export function PluginManagementTabs({
               environmentOptions={connectionEnvironmentOptions}
               loading={loading}
               pluginById={pluginById}
+              remote={connectionListMeta}
               testingConnectionId={testingConnectionId}
               onCreateConnection={onCreateConnection}
               onDeleteConnection={onDeleteConnection}
               onEditConnection={onEditConnection}
               onEnvironmentFilterChange={onEnvironmentFilterChange}
+              onRemoteChange={onConnectionListChange}
               onReload={onReload}
               onTestConnection={onTestConnection}
             />
@@ -184,9 +204,11 @@ export function PluginManagementTabs({
               formatWriteTarget={formatWriteTarget}
               loading={loading}
               pluginById={pluginById}
+              remote={actionListMeta}
               onCreateAction={onCreateAction}
               onDeleteAction={onDeleteAction}
               onEditAction={onEditAction}
+              onRemoteChange={onActionListChange}
               onReload={onReload}
               onRunAction={onRunAction}
               onTrialAction={onTrialAction}

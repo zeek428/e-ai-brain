@@ -7,36 +7,74 @@ import {
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import { Button, Space } from 'antd';
+import type { TablePaginationConfig } from 'antd';
+import type { SorterResult } from 'antd/es/table/interface';
 
 import type {
+  PluginActionListQuery,
   PluginActionRecord,
   PluginConnectionRecord,
   PluginRecord,
 } from '../../../services/aiBrain';
+
+type PluginActionRemoteMeta = {
+  page: number;
+  pageSize: number;
+  total: number;
+};
 
 type PluginActionTableProps = {
   actions: PluginActionRecord[];
   connectionById: Map<string, PluginConnectionRecord>;
   loading: boolean;
   pluginById: Map<string, PluginRecord>;
+  remote: PluginActionRemoteMeta;
   formatWriteTarget: (writeTarget?: string | null) => string;
   onCreateAction: () => void;
   onDeleteAction: (action: PluginActionRecord) => void;
   onEditAction: (action: PluginActionRecord) => void;
+  onRemoteChange: (query: PluginActionListQuery) => void;
   onReload: () => void;
   onRunAction: (action: PluginActionRecord) => void | Promise<void>;
   onTrialAction: (action: PluginActionRecord) => void;
 };
+
+function normalizeActionSorter(
+  sorter: SorterResult<PluginActionRecord> | SorterResult<PluginActionRecord>[],
+) {
+  const activeSorter = Array.isArray(sorter)
+    ? sorter.find((item) => item.order)
+    : sorter.order
+      ? sorter
+      : undefined;
+  if (!activeSorter) {
+    return {};
+  }
+  const field =
+    typeof activeSorter.field === 'string'
+      ? activeSorter.field
+      : typeof activeSorter.columnKey === 'string'
+        ? activeSorter.columnKey
+        : undefined;
+  return {
+    sortField: field,
+    sortOrder: activeSorter.order === 'ascend' || activeSorter.order === 'descend'
+      ? activeSorter.order
+      : undefined,
+  };
+}
 
 export function PluginActionTable({
   actions,
   connectionById,
   loading,
   pluginById,
+  remote,
   formatWriteTarget,
   onCreateAction,
   onDeleteAction,
   onEditAction,
+  onRemoteChange,
   onReload,
   onRunAction,
   onTrialAction,
@@ -46,11 +84,12 @@ export function PluginActionTable({
       cardBordered
       className="management-list-table"
       columns={[
-        { dataIndex: 'name', title: '名称', ellipsis: true, width: 220 },
-        { dataIndex: 'code', title: '编码', ellipsis: true, width: 200 },
-        { dataIndex: 'action_type', title: '类型', width: 130 },
+        { dataIndex: 'name', sorter: true, title: '名称', ellipsis: true, width: 220 },
+        { dataIndex: 'code', sorter: true, title: '编码', ellipsis: true, width: 200 },
+        { dataIndex: 'action_type', sorter: true, title: '类型', width: 130 },
         {
           dataIndex: 'plugin_id',
+          sorter: true,
           title: '插件',
           ellipsis: true,
           width: 200,
@@ -78,7 +117,7 @@ export function PluginActionTable({
               : formatWriteTarget();
           },
         },
-        { dataIndex: 'status', title: '状态', width: 100 },
+        { dataIndex: 'status', sorter: true, title: '状态', width: 100 },
         {
           fixed: 'right',
           key: 'actions',
@@ -118,6 +157,17 @@ export function PluginActionTable({
       dateFormatter="string"
       headerTitle="动作"
       loading={loading}
+      onChange={(
+        pagination: TablePaginationConfig,
+        _filters,
+        sorter,
+      ) => {
+        onRemoteChange({
+          page: pagination.current ?? remote.page,
+          pageSize: pagination.pageSize ?? remote.pageSize,
+          ...normalizeActionSorter(sorter),
+        });
+      }}
       options={{
         density: true,
         fullScreen: true,
@@ -125,8 +175,11 @@ export function PluginActionTable({
         setting: true,
       }}
       pagination={{
+        current: remote.page,
+        pageSize: remote.pageSize,
         showSizeChanger: true,
         showTotal: (total) => `共 ${total} 条`,
+        total: remote.total,
       }}
       rowKey="id"
       scroll={{ x: 1570 }}

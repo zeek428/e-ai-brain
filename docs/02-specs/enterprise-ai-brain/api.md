@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.406 |
+| 功能版本 | v1.1.407 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.407 | 2026-06-27 | 插件管理连接和动作页签已接入分页读模型：页面主表默认调用 `GET /api/system/plugin-connections` 与 `GET /api/system/plugin-actions` 的 `page/page_size/sort_by/sort_order` 查询，不再以旧全量返回做主表分页和排序 | Codex |
 | v1.1.406 | 2026-06-27 | AI 助手引用候选支持执行诊断来源类型：`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`plugin_invocation_log`、`ai_executor_task`、`ai_executor_runner`、`code_inspection_report`、`audit_event` 等可通过 `GET /api/assistant/reference-candidates?type=&query=` 解析为脱敏引用；助手深链 `/assistant?reference_type=&reference_id=&prompt=` 会带入问题和上下文，解析和最终引用注入均要求执行诊断读权限 | Codex |
 | v1.1.405 | 2026-06-27 | `GET /api/assistant/action-drafts` PostgreSQL 运行态改为优先使用草案任务台 read model 完成当前用户、动作、状态、时间、关键词、排序和分页查询，并返回状态/采纳/处理/修改率汇总与性能观测 | Codex |
 | v1.1.404 | 2026-06-27 | AI 助手引用对可解析交付主体新增“全链路”入口；`/api/lifecycle/full-chain` 接受 `iteration_version` 作为 `product_version` 兼容别名并沿用产品 scope 校验 | Codex |
