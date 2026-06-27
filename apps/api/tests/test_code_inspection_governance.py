@@ -318,6 +318,7 @@ def test_code_inspection_report_list_uses_repository_pagination_and_product_scop
         trace_id="trace_code_inspection_list",
         user={
             "id": "user_product_owner",
+            "permissions": ["code_inspection.read"],
             "roles": ["product_owner"],
             "scope_summary": [
                 {

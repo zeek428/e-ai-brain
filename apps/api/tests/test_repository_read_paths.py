@@ -84,11 +84,8 @@ def test_knowledge_document_list_uses_repository_when_runtime_store_is_stale():
             "/api/knowledge/documents",
             headers=auth_headers("reviewer@example.com", "reviewer123"),
         )
-        assert reviewer_response.status_code == 200
-        reviewer_items = reviewer_response.json()["data"]["items"]
-        assert [item["id"] for item in reviewer_items] == ["knowledge_repo_reviewer"]
-        assert reviewer_items[0]["chunk_count"] == 1
-        assert reviewer_items[0]["index_error"] == "人工失败"
+        assert reviewer_response.status_code == 403
+        assert reviewer_response.json()["detail"]["code"] == "FORBIDDEN"
     finally:
         _restore_store(original_store, original_users)
 

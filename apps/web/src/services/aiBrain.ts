@@ -696,6 +696,8 @@ export const ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY =
   'ai_brain_assistant_draft_resolution';
 export const ASSISTANT_RECENT_REFERENCES_STORAGE_KEY =
   'ai_brain_assistant_recent_references';
+export const ASSISTANT_ROUTE_PROMPT_STORAGE_KEY =
+  'ai_brain_assistant_route_prompt';
 
 const ASSISTANT_SCOPED_STORAGE_KEYS = [
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
@@ -703,11 +705,103 @@ const ASSISTANT_SCOPED_STORAGE_KEYS = [
   ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
   ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
   ASSISTANT_RECENT_REFERENCES_STORAGE_KEY,
+  ASSISTANT_ROUTE_PROMPT_STORAGE_KEY,
 ];
+
+const ASSISTANT_ROUTE_PROMPT_TTL_MS = 10 * 60 * 1000;
 
 export function assistantScopedStorageKey(baseKey: string) {
   const userId = getStoredCurrentUser()?.id;
   return userId ? `${baseKey}:${userId}` : `${baseKey}:anonymous`;
+}
+
+export type AssistantRoutePromptRecord = {
+  created_at: number;
+  prompt: string;
+  reference_id?: string;
+  reference_type?: string;
+};
+
+function normalizeAssistantRoutePromptRecord(value: unknown): AssistantRoutePromptRecord | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Partial<AssistantRoutePromptRecord>;
+  const prompt = String(record.prompt ?? '').trim();
+  if (!prompt) {
+    return undefined;
+  }
+  const createdAt = Number(record.created_at ?? Date.now());
+  if (Number.isFinite(createdAt) && Date.now() - createdAt > ASSISTANT_ROUTE_PROMPT_TTL_MS) {
+    return undefined;
+  }
+  const referenceId = String(record.reference_id ?? '').trim();
+  const referenceType = String(record.reference_type ?? '').trim();
+  return {
+    created_at: Number.isFinite(createdAt) ? createdAt : Date.now(),
+    prompt,
+    ...(referenceId ? { reference_id: referenceId } : {}),
+    ...(referenceType ? { reference_type: referenceType } : {}),
+  };
+}
+
+export function rememberAssistantRoutePrompt(params: {
+  prompt?: string | null;
+  referenceId?: string | null;
+  referenceType?: string | null;
+}) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const prompt = String(params.prompt ?? '').trim();
+  if (!prompt) {
+    return;
+  }
+  const record: AssistantRoutePromptRecord = {
+    created_at: Date.now(),
+    prompt,
+  };
+  const referenceId = String(params.referenceId ?? '').trim();
+  const referenceType = String(params.referenceType ?? '').trim();
+  if (referenceId) {
+    record.reference_id = referenceId;
+  }
+  if (referenceType) {
+    record.reference_type = referenceType;
+  }
+  window.sessionStorage.setItem(
+    assistantScopedStorageKey(ASSISTANT_ROUTE_PROMPT_STORAGE_KEY),
+    JSON.stringify(record),
+  );
+}
+
+export function consumeAssistantRoutePrompt(params: {
+  referenceId?: string | null;
+  referenceType?: string | null;
+} = {}) {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+  const storageKey = assistantScopedStorageKey(ASSISTANT_ROUTE_PROMPT_STORAGE_KEY);
+  let record: AssistantRoutePromptRecord | undefined;
+  try {
+    record = normalizeAssistantRoutePromptRecord(
+      JSON.parse(window.sessionStorage.getItem(storageKey) ?? 'null'),
+    );
+  } catch {
+    record = undefined;
+  }
+  if (!record) {
+    window.sessionStorage.removeItem(storageKey);
+    return undefined;
+  }
+  const referenceId = String(params.referenceId ?? '').trim();
+  const referenceType = String(params.referenceType ?? '').trim();
+  const isMismatchedReference =
+    (referenceId && record.reference_id && record.reference_id !== referenceId)
+    || (referenceType && record.reference_type && record.reference_type !== referenceType);
+  window.sessionStorage.removeItem(storageKey);
+  return isMismatchedReference ? undefined : record;
 }
 
 function clearAssistantLocalCachesForCurrentUser() {

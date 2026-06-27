@@ -2,6 +2,7 @@ import { message as toast } from 'antd';
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  consumeAssistantRoutePrompt,
   fetchAssistantReferenceCandidates,
   getStoredCurrentUser,
   type AssistantReference,
@@ -51,36 +52,47 @@ type AssistantComposerSubmitCallbacks = {
   stopGenerating: () => void;
 };
 
+type AssistantRouteContext = {
+  prompt?: string;
+  referenceId?: string;
+  referenceType?: string;
+};
+
 function referenceKey(reference: Pick<AssistantReference, 'id' | 'type'>) {
   return `${reference.type}:${reference.id}`;
 }
 
-function assistantQueryReferenceParams() {
+function assistantRouteContext(): AssistantRouteContext {
   if (typeof window === 'undefined') {
-    return undefined;
+    return {};
   }
   const params = new URLSearchParams(window.location.search);
   const referenceType = params.get('reference_type')?.trim();
   const referenceId = params.get('reference_id')?.trim();
-  if (!referenceType || !referenceId || !queryReferenceTypes.has(referenceType)) {
-    return undefined;
-  }
+  const pendingRoutePrompt = referenceType && referenceId
+    ? consumeAssistantRoutePrompt({ referenceId, referenceType })
+    : undefined;
   return {
-    prompt: assistantQueryPromptParam(),
+    prompt: params.get('prompt')?.trim() || pendingRoutePrompt?.prompt,
     referenceId,
     referenceType,
   };
 }
 
-function assistantQueryPromptParam() {
-  if (typeof window === 'undefined') {
+function assistantQueryReferenceParams(routeContext: AssistantRouteContext) {
+  const { referenceId, referenceType } = routeContext;
+  if (!referenceType || !referenceId || !queryReferenceTypes.has(referenceType)) {
     return undefined;
   }
-  return new URLSearchParams(window.location.search).get('prompt')?.trim() || undefined;
+  return {
+    prompt: routeContext.prompt,
+    referenceId,
+    referenceType,
+  };
 }
 
-function assistantInitialInputValue() {
-  return assistantQueryPromptParam() ?? '';
+function assistantInitialInputValue(routeContext: AssistantRouteContext) {
+  return routeContext.prompt ?? '';
 }
 
 function assistantReferenceEmptyState(value: string): AssistantReferenceEmptyState {
@@ -190,7 +202,8 @@ export function useAssistantComposerController({
   } = useAssistantReferences();
   const [activeAddActionIndex, setActiveAddActionIndex] = useState(-1);
   const [addActionQuery, setAddActionQuery] = useState('');
-  const [inputValue, setInputValue] = useState(assistantInitialInputValue);
+  const [routeContext] = useState(assistantRouteContext);
+  const [inputValue, setInputValue] = useState(() => assistantInitialInputValue(routeContext));
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isContextExpanded, setIsContextExpanded] = useState(false);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
@@ -308,7 +321,7 @@ export function useAssistantComposerController({
     if (queryReferenceHydratedRef.current) {
       return undefined;
     }
-    const queryReference = assistantQueryReferenceParams();
+    const queryReference = assistantQueryReferenceParams(routeContext);
     if (!queryReference) {
       return undefined;
     }
@@ -383,6 +396,7 @@ export function useAssistantComposerController({
     setCommittedActionCommand,
     setQueryReferenceResolution,
     setSelectedReferences,
+    routeContext,
   ]);
 
   useEffect(() => {

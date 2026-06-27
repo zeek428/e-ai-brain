@@ -35,7 +35,7 @@
 - 需求、Bug、任务、用户洞察、日志监控和迭代版本等表单复用的产品/迭代版本上下文选项必须按服务端分页 `total` 拉取完整可选集合；不得只读取第一页或固定前 100 条，避免产品、目标版本或版本归集入口在数据量增长后不可选。
 - 迭代版本推进到开发中、测试中、已发布等阶段时，必须按规则同步包含需求的状态，并提供影响预览。
 - 迭代版本代码分支配置属于产品配置子资源；在 PostgreSQL runtime 下，分支配置更新和删除必须按 `branch_config_id` 从 repository 单记录读取源记录，再通过产品配置仓储边界写入变更和审计，不能依赖运行时内存全量集合。
-- 需求、任务、版本和 Review 的列表型接口优先在 SQL/repository/read model 层完成筛选、排序和分页。
+- 需求、任务、版本和 Review 的列表型接口优先在 SQL/repository/read model 层完成筛选、排序和分页；其中需求列表必须校验 `requirement.read`，并按当前用户产品 scope 在服务端过滤，PostgreSQL 运行态需将产品 scope 下推到 read model，不能由前端或本地内存二次过滤兜底。
 - 需求全链路必须聚合需求、产品、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、Bug、发布和知识沉淀。
 - 任务启动、Graph run/checkpoint、代码评审报告和 Review 决策产物属于 DB-first 写路径：Graph、报告、派生 Bug、知识沉淀和审计事件不得直接操作 `current_store` 业务集合或调用 `current_store.audit()`；MemoryStore 仅作为测试 fallback，PostgreSQL 运行态必须通过任务启动/评审决策 repository 事务提交完整产物链路。
 - Mock Issue 写回必须通过 `save_mock_writeback_record` 写入结果和审计事件；PostgreSQL 运行态写回结果和审计在同一 repository 事务中提交，并刷新本地读缓存以保持幂等重复提交，MemoryStore 仅作为测试 fallback，不得由服务层直接写 `current_store.mock_writebacks` 或调用 `current_store.audit()`。

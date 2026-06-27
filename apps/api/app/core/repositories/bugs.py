@@ -169,6 +169,7 @@ class BugReadRepository:
         *,
         module: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         severity: str | None = None,
         source: str | None = None,
         status: str | None = None,
@@ -184,6 +185,12 @@ class BugReadRepository:
         if product_id is not None:
             where_clauses.append("b.product_id = %s")
             params.append(product_id)
+        if product_scope_ids is not None:
+            if product_scope_ids:
+                where_clauses.append("b.product_id = ANY(%s)")
+                params.append(product_scope_ids)
+            else:
+                where_clauses.append("FALSE")
         if severity is not None:
             where_clauses.append("b.severity = %s")
             params.append(severity)
@@ -212,6 +219,7 @@ class BugReadRepository:
         *,
         module: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         severity: str | None = None,
         source: str | None = None,
         status: str | None = None,
@@ -222,6 +230,7 @@ class BugReadRepository:
         where_clause, params = self._bug_summary_where(
             module=module,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             severity=severity,
             source=source,
             status=status,
@@ -248,6 +257,7 @@ class BugReadRepository:
         *,
         module: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         severity: str | None = None,
         source: str | None = None,
         status: str | None = None,
@@ -262,6 +272,7 @@ class BugReadRepository:
         where_clause, params = self._bug_summary_where(
             module=module,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             severity=severity,
             source=source,
             status=status,

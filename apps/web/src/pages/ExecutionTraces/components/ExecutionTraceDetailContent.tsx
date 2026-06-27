@@ -7,6 +7,7 @@ import {
   type ExecutionTraceDetailRecord,
   type ExecutionTraceEdgeRecord,
   type ExecutionTraceNodeRecord,
+  rememberAssistantRoutePrompt,
 } from '../../../services/aiBrain';
 import { formatDisplayDateTime } from '../../../utils/dateTime';
 
@@ -74,17 +75,22 @@ function assistantDiagnosticHref(
   const params = new URLSearchParams();
   params.set('reference_type', node.source_type);
   params.set('reference_id', node.source_id);
-  params.set(
-    'prompt',
-    [
-      `请基于执行诊断链路「${detail.title}」继续排查。`,
-      `重点分析节点：${sourceTypeLabel(node.source_type)} ${node.source_id}，当前状态 ${node.status}。`,
-      node.error_message ? `错误信息：${node.error_message}` : '',
-      node.summary ? `摘要：${node.summary}` : '',
-      '请给出可能原因、需要查看的证据和修复步骤。',
-    ].filter(Boolean).join('\n'),
-  );
+  params.set('prompt', buildNodeDiagnosticPrompt(detail, node, sourceTypeLabel));
   return `/assistant?${params.toString()}`;
+}
+
+function buildNodeDiagnosticPrompt(
+  detail: ExecutionTraceDetailRecord,
+  node: ExecutionTraceNodeRecord,
+  sourceTypeLabel: (value?: string | null) => string,
+) {
+  return [
+    `请基于执行诊断链路「${detail.title}」继续排查。`,
+    `重点分析节点：${sourceTypeLabel(node.source_type)} ${node.source_id}，当前状态 ${node.status}。`,
+    node.error_message ? `错误信息：${node.error_message}` : '',
+    node.summary ? `摘要：${node.summary}` : '',
+    '请给出可能原因、需要查看的证据和修复步骤。',
+  ].filter(Boolean).join('\n');
 }
 
 function attentionNodesForDetail(detail: ExecutionTraceDetailRecord) {
@@ -171,6 +177,30 @@ function assistantTraceDiagnosticHref(
   return `/assistant?${params.toString()}`;
 }
 
+function rememberTraceDiagnosticPrompt(
+  detail: ExecutionTraceDetailRecord,
+  attentionNodes: ExecutionTraceNodeRecord[],
+  sourceTypeLabel: (value?: string | null) => string,
+) {
+  rememberAssistantRoutePrompt({
+    prompt: buildTraceDiagnosticPrompt(detail, attentionNodes, sourceTypeLabel),
+    referenceId: detail.root_id,
+    referenceType: detail.root_type,
+  });
+}
+
+function rememberNodeDiagnosticPrompt(
+  detail: ExecutionTraceDetailRecord,
+  node: ExecutionTraceNodeRecord,
+  sourceTypeLabel: (value?: string | null) => string,
+) {
+  rememberAssistantRoutePrompt({
+    prompt: buildNodeDiagnosticPrompt(detail, node, sourceTypeLabel),
+    referenceId: node.source_id,
+    referenceType: node.source_type,
+  });
+}
+
 async function copyDiagnosticPackage(
   detail: ExecutionTraceDetailRecord,
   attentionNodes: ExecutionTraceNodeRecord[],
@@ -207,6 +237,7 @@ function TraceDiagnostics({
               href={assistantTraceDiagnosticHref(detail, attentionNodes, sourceTypeLabel)}
               icon={<RobotOutlined />}
               size="small"
+              onClick={() => rememberTraceDiagnosticPrompt(detail, attentionNodes, sourceTypeLabel)}
             >
               问 AI 分析链路
             </Button>
@@ -241,6 +272,7 @@ function TraceDiagnostics({
             icon={<RobotOutlined />}
             size="small"
             type="primary"
+            onClick={() => rememberTraceDiagnosticPrompt(detail, attentionNodes, sourceTypeLabel)}
           >
             问 AI 分析链路
           </Button>
@@ -288,6 +320,7 @@ function TraceDiagnostics({
                   icon={<RobotOutlined />}
                   size="small"
                   type="primary"
+                  onClick={() => rememberNodeDiagnosticPrompt(detail, node, sourceTypeLabel)}
                 >
                   问 AI
                 </Button>

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.624 |
+| 功能版本 | v1.1.626 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.626 | 2026-06-27 | 核心管理列表权限与产品范围收口：需求、Bug、知识文档和代码巡检列表必须校验菜单声明的 read 权限，需求/Bug/代码巡检在服务端按当前用户产品 scope 过滤并下推到 PostgreSQL read model | Codex |
+| v1.1.625 | 2026-06-27 | 执行诊断“问 AI 分析链路”深链增加同标签页待带入 prompt 兜底：详情页点击时写入短期 sessionStorage，上游 URL prompt 被浏览器、路由或复制过程截断时，助手页仍可恢复诊断问题并继续解析 `reference_type/reference_id` 上下文 | Codex |
 | v1.1.624 | 2026-06-27 | AI 助手裸 `@` 默认引用候选顺序恢复常用对象优先：知识/需求/研发任务/作业/插件/AI 角色与 Skill 不被执行诊断来源挤出首屏，执行诊断来源仍保留权限校验后的可引用能力 | Codex |
 | v1.1.623 | 2026-06-27 | 知识中心知识文档主列表收口到 PostgreSQL read model：带分页参数时在数据库侧完成权限过滤、关键字、知识空间、目录、类型、索引状态、权限角色筛选和白名单排序，旧全量返回仅保留兼容用途 | Codex |
 | v1.1.622 | 2026-06-27 | AI 能力配置的 AI角色与 Skill 主表接入服务端分页、筛选和排序：页面默认请求 `/api/system/ai-agents?page=1&page_size=10&sort_by=code&sort_order=asc` 与 `/api/system/ai-skills?page=1&page_size=10&sort_by=code&sort_order=asc`，旧全量返回仅保留兼容下拉和测试 helper 用途 | Codex |
@@ -1420,7 +1422,7 @@ RBAC 策略矩阵为只读聚合能力，不新增生产写表；服务端基于
 AI 助手前端发送包含 `执行一次/立即运行` 等意图的 `@定时作业` 命令时，若用户在候选请求返回前点击发送或按 Enter，客户端必须在提交 `/api/assistant/chat` 前用当前 `@` 文本按 `type=scheduled_job` 补查一次引用候选，并把唯一可用的 `scheduled_job` 引用随请求提交；候选补查失败时仍允许后端显式 @ 名称解析兜底。后端必须优先使用请求中的结构化 `references[]` 作为可控上下文，文本 `@...执行一次` 只作为无结构化作业引用时的兜底解析；若结构化定时作业引用不可运行，必须返回明确的不可执行、权限不足或草案兜底结果，不得被文本别名或官方周反馈消歧覆盖。后端解析无结构化作业引用的 `@提取每周用户反馈有价值信息 执行一次` 等周反馈命令时，必须按官方模板标记、`job_type=user_feedback_insight_extract`、名称中的用户反馈/洞察/提取/每周语义和可执行状态评分，`source_system=aliyun-maxcompute` 只能作为弱辅助信号；分数唯一最高且 `enabled=true/status=active` 时执行官方周反馈洞察作业，无法区分时要求用户点选或生成草案。`@` 引用候选面板必须分组展示候选，并在每个候选项中显式展示引用类型、权限状态、来源模块、更新时间和轻量摘要；候选加载完成但无匹配对象时，面板不得静默消失，必须提示用户更换关键词或检查访问权限。对 AI 类长链路作业，聊天响应可先返回 `running/queued` 运行记录，但前端运行卡片必须持续轮询同一运行，running/queued 期间从 `result_summary.execution_nodes` 提取当前未完成节点并展示“执行进度：数据连接/AI 执行器/AI处理/结果动作（状态）”，即使运行状态仍是 `running/queued`、只更新了执行节点摘要，也必须刷新卡片；终态后显示最新状态、导入记录，并额外标注“已刷新到最新状态：成功/失败”，避免气泡初始 `running` 文案让用户误以为命令没有真正执行。
 
 AI 助手聊天生成必须以 `assistant_chat_runs` 作为服务端运行真相：前端刷新或重新进入页面时通过 `GET /api/assistant/chat-runs?status=running,cancelled` 恢复未完成或最近停止的生成，并允许用户打开所属会话继续处理；用户点击停止或发送停止类命令时，服务端必须先写入运行取消状态，再尝试中断模型网关请求，后续模型返回不得把已取消消息改写为完成态。`GET /api/assistant/metrics` 必须把聊天运行成功率、取消率、失败率、平均耗时和模型失败率纳入助手效果指标，且只按当前登录用户归因。
-| 需求列表 | GET | /api/requirements | 查询需求台账；端点由 `app.api.routers.requirements` 单一路由承载，列表优先使用 SQL read model 分页、筛选、排序和查询观测。 |
+| 需求列表 | GET | /api/requirements | 查询需求台账；端点由 `app.api.routers.requirements` 单一路由承载，列表必须校验 `requirement.read`，优先使用 SQL read model 完成产品 scope、分页、筛选、排序和查询观测。 |
 | 需求详情 | GET | /api/requirements/{id} | 查询单条需求详情和任务引用；端点由 `app.api.routers.requirements` 单一路由承载。 |
 | 需求维护 | POST/PATCH/DELETE | /api/requirements, /api/requirements/{id} | 创建、更新待审批/已驳回需求，删除未生成任务的需求；端点由 `app.api.routers.requirements` 单一路由承载。 |
 | 需求批量分配负责人 | POST | /api/requirements/batch-assign-owner | 为非关闭/非取消需求批量更新 `assignee`，逐条返回 updated/skipped 明细并记录批次级与逐需求审计；端点由 `app.api.routers.requirements` 单一路由承载。静态路径必须先于 `/api/requirements/{id}` 动态路由注册。 |
@@ -1444,7 +1446,7 @@ AI 助手聊天生成必须以 `assistant_chat_runs` 作为服务端运行真相
 | 修改后采纳 | POST | /api/reviews/{id}/edit-approve | 使用人工修改继续；端点由 `app.api.routers.tasks` 单一路由承载。 |
 | 驳回重跑 | POST | /api/reviews/{id}/reject | 标记为失败，等待人工重新启动；端点由 `app.api.routers.tasks` 单一路由承载。 |
 | 要求补充信息 | POST | /api/reviews/{id}/request-more-info | 将任务退回补充信息状态；端点由 `app.api.routers.tasks` 单一路由承载。 |
-| 知识文档 | GET/POST/PATCH/DELETE | /api/knowledge/documents, /api/knowledge/documents/{document_id} | 查询、导入、更新和删除知识文档。 |
+| 知识文档 | GET/POST/PATCH/DELETE | /api/knowledge/documents, /api/knowledge/documents/{document_id} | 查询、导入、更新和删除知识文档；列表必须校验 `knowledge.read`，并继续在知识空间和角色权限层过滤可读文档。 |
 | 知识索引重试 | POST | /api/knowledge/documents/{document_id}/retry-index | 对 `index_failed` 重建索引，或对 `text_indexed` 补建向量索引。 |
 | 知识搜索 | POST | /api/knowledge/search | 权限过滤后的混合检索。 |
 | 知识沉淀 | GET/POST | /api/knowledge/deposits, /api/knowledge/deposits/{deposit_id}/approve, /api/knowledge/deposits/{deposit_id}/reject | 查询、采纳或驳回知识候选。 |
@@ -1458,7 +1460,7 @@ AI 助手聊天生成必须以 `assistant_chat_runs` 作为服务端运行真相
 | GitHub PR 预览 | GET | /api/devops/github/pull-requests/{repository_id}/{pr_number}/preview | 读取 GitHub PR 标题、作者、分支、变更文件数、文件摘要和只读权限诊断；端点由 `app.api.routers.git_review` 单一路由承载。 |
 | GitHub PR diff 快照 | POST | /api/devops/github/pull-requests/{repository_id}/{pr_number}/snapshot | 拉取 PR 元信息和文件摘要，生成 code_review 任务输入快照，并在响应中返回上一快照引用、diff 对比摘要和复用标记；端点由 `app.api.routers.git_review` 单一路由承载。 |
 | Code Review 报告 | GET | /api/ai-tasks/{id}/code-review-report | 查询 GitLab MR / GitHub PR 代码 Review 报告、执行器信息、确认状态和只读 Review 结论回写模板。 |
-| 代码巡检报告 | GET | /api/governance/code-inspections, /api/governance/code-inspections/{report_id} | 查询周期性代码仓库巡检报告列表和详情，列表优先使用 PostgreSQL read model 完成产品 scope、仓库、风险、状态、摘要、提交人筛选以及排序分页，返回仓库、分支、提交人、风险级别、finding 统计、问题明细和通知反馈；端点由 `app.api.routers.code_inspections` 单一路由承载。 |
+| 代码巡检报告 | GET | /api/governance/code-inspections, /api/governance/code-inspections/{report_id} | 查询周期性代码仓库巡检报告列表和详情，列表必须校验 `code_inspection.read`，优先使用 PostgreSQL read model 完成产品 scope、仓库、风险、状态、摘要、提交人筛选以及排序分页，返回仓库、分支、提交人、风险级别、finding 统计、问题明细和通知反馈；端点由 `app.api.routers.code_inspections` 单一路由承载。 |
 | Jenkins 发布 | GET/POST | /api/devops/jenkins/releases | 登记或查询按产品和版本归属的发布记录。 |
 | 线上运行日志 | GET/POST | /api/ops/online-log-metrics | 登记或查询按产品、模块、环境和时间窗口归属的线上运行日志指标。 |
 | 采集运行记录 | GET/POST/PATCH | /api/collectors/runs, /api/collectors/runs/{run_id} | 历史兼容 API：查询、登记和结束 DevOps/洞察采集运行台账，不自动生成指标；当前前端不提供入口。 |
@@ -1468,7 +1470,7 @@ AI 助手聊天生成必须以 `assistant_chat_runs` 作为服务端运行真相
 | 定时系统作业 | GET/POST/PATCH/DELETE/POST(run/dry-run) | /api/system/scheduled-jobs, /api/system/scheduled-jobs/dry-run, /api/system/scheduled-jobs/{job_id}, /api/system/scheduled-jobs/{job_id}/run | 管理采集、AI 分析、动作调用、迭代建议、看板刷新等作业计划；列表和手动运行必须由服务端校验 `system.scheduled_jobs.run`、`system.scheduled_jobs.manage` 或系统管理员权限，并按当前用户产品 scope 过滤作业，用户不得查看或运行 scope 外产品作业；支持手动触发、从运行记录复跑、编辑、删除、启停、重试策略、动作和 AI角色/Skill 装配；新增/编辑配置可先执行 dry-run 预览数据连接、AI 契约校验和写入策略；删除作业定义时必须写审计。 |
 | 定时作业运行 | GET/POST(cancel/template) | /api/system/scheduled-job-runs, /api/system/scheduled-job-runs/observability, /api/system/scheduled-job-runs/{run_id}/cancel, /api/system/scheduled-job-runs/{run_id}/template | 查询定时作业运行实例、AI 配置快照、collector run 关联、结果摘要和失败原因；运行列表必须由服务端校验 `system.scheduled_jobs.run`、`system.scheduled_jobs.manage` 或系统管理员权限，并按所属作业产品 scope 过滤；运行可观测性接口仅允许 `system.scheduled_jobs.manage` 或系统管理员访问，聚合成功率、失败率、平均耗时、AI/Token/插件调用、动作写入成功率、失败原因、最近失败和慢运行，供运行记录页签顶部概览展示；前端运行记录必须提供详情、复跑和“问 AI”入口，详情展示作业类型、AI执行、AI 模型、AI角色、Skills、运行链路、结果摘要、插件调用、Skill/Prompt 快照、作业配置快照、Trace DAG 和错误信息，复跑使用记录中的 `scheduled_job_id` 调用作业运行接口并传入 `trigger_type=manual_rerun` 与 `source_run_id=<当前运行 ID>` 后打开新运行详情；失败运行详情必须额外提供“生成修复草案”和“对比上次成功”快捷入口，跳转 AI 助手时携带 `reference_type=scheduled_job_run`、`reference_id=<当前运行 ID>` 和对应 prompt，让用户不需要手工复制运行 ID；若响应包含 `source_run_summary`，详情页必须展示“复跑对比”，对比来源运行与本次运行的状态、导入数和错误码；成功运行可生成新作业模板草稿，保留运行来源；手动触发或复跑期间必须显示执行中状态并禁用重复触发；运行中作业可由具备管理权限的用户取消。 |
 | 待归属数据队列 | GET/POST/POST | /api/attribution/pending-items, /api/attribution/pending-items/{item_id}/resolve | 历史兼容 API：查询、登记、归属或忽略无法映射产品/模块/需求的数据，不自动生成业务指标；当前前端不提供入口。 |
-| Bug 管理 | GET/POST/PATCH/DELETE | /api/bugs, /api/bugs/batch-update, /api/bugs/{bug_id} | 查询、登记、批量处理、更新和删除 Bug；端点由 `app.api.routers.bugs` 单一路由承载，列表优先使用 SQL read model 分页、筛选、排序和查询观测。 |
+| Bug 管理 | GET/POST/PATCH/DELETE | /api/bugs, /api/bugs/batch-update, /api/bugs/{bug_id} | 查询、登记、批量处理、更新和删除 Bug；端点由 `app.api.routers.bugs` 单一路由承载，列表必须校验 `bug.read`，优先使用 SQL read model 完成产品 scope、分页、筛选、排序和查询观测。 |
 | 需求全链路 | GET | /api/requirements/{requirement_id}/full-chain, /api/lifecycle/full-chain | 需求级聚合时间线，返回需求到版本代码分支、发布、代码巡检、知识沉淀和审计事件的关联主体；统一主体入口支持按 Bug、迭代版本、代码巡检报告或 AI 助手引用跳转并回显 anchor，`iteration_version` 作为 `product_version` 兼容别名处理。 |
 | 全流程感知 | GET | /api/lifecycle/context | 查询研发上下文关系、上下游影响和风险信号。 |
 | 首页看板 | GET | /api/dashboard/it-team | 查询 IT 团队首页指标。 |

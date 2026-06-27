@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.411 |
+| 功能版本 | v1.1.412 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.412 | 2026-06-27 | 核心管理列表读权限与产品 scope 收口：`GET /api/requirements`、`GET /api/bugs`、`GET /api/knowledge/documents`、`GET /api/governance/code-inspections` 分别校验 `requirement.read`、`bug.read`、`knowledge.read`、`code_inspection.read`，需求/Bug/代码巡检列表按产品 scope 过滤 | Codex |
 | v1.1.411 | 2026-06-27 | `GET /api/assistant/reference-candidates` 裸 `@` 默认候选顺序收紧：优先保留知识文档、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI 角色和 Skill，执行诊断来源仍可引用但不挤占常用对象首屏 | Codex |
 | v1.1.410 | 2026-06-27 | `GET /api/knowledge/documents` 补齐知识中心主列表远程分页契约：带 `page/page_size` 时在 PostgreSQL read model 侧完成权限过滤、关键字、空间、目录、类型、索引状态、权限角色筛选、白名单排序，并返回 `query/performance` 观测 | Codex |
 | v1.1.409 | 2026-06-27 | `GET /api/system/ai-skills` 与 `GET /api/system/ai-agents` 补齐远程分页契约：带 `page/page_size` 时支持关键字、状态和专项筛选、白名单排序，并返回 `query/performance` 观测；AI 能力配置页默认请求服务端分页结果 | Codex |
@@ -460,9 +461,9 @@ API 面向 React 工作台，覆盖认证、业务大脑、AI 助手、产品上
 
 DB-first 迁移补充：`app_state_snapshots` 仅作为历史迁移表保留，当前 PostgreSQL 运行时启动恢复只读取结构表，不再从 app_state JSONB 快照恢复业务集合；手动 `PersistentMemoryStore.persist()` 也不再写入 app_state JSONB 快照。
 
-需求列表 DB-first 补充：`GET /api/requirements` 属于管理主列表，PostgreSQL 运行时必须通过需求台账 SQL read model 完成 `priority/product/product_id/source/status/title/version/version_id` 筛选、`created_at/id/priority/product_code/product_name/source/status/title/updated_at/version_code/version_name` 排序和 `page/page_size` 分页；不得为列表页先加载 task workflow source rows 再由接口层本地过滤或切片。需求详情、需求全链路、任务运行态、Review、回写和导出仍可读取 task workflow source rows 聚合上下文。
+需求列表 DB-first 补充：`GET /api/requirements` 属于管理主列表，必须先校验 `requirement.read`，并按当前用户产品 scope 收口；PostgreSQL 运行时必须通过需求台账 SQL read model 完成产品 scope、`priority/product/product_id/source/status/title/version/version_id` 筛选、`created_at/id/priority/product_code/product_name/source/status/title/updated_at/version_code/version_name` 排序和 `page/page_size` 分页；不得为列表页先加载 task workflow source rows 再由接口层本地过滤或切片。需求详情、需求全链路、任务运行态、Review、回写和导出仍可读取 task workflow source rows 聚合上下文。
 
-Bug 列表 DB-first 补充：`GET /api/bugs` 属于管理主列表，PostgreSQL 运行时必须通过 Bug SQL read model 完成 `module/product_id/severity/source/status/title/version/version_id` 筛选、`assignee/created_at/id/module_code/severity/source/status/title/updated_at/version_code/version_name` 排序和 `page/page_size` 分页；不得为列表页先加载全部 Bug 记录再由接口层本地过滤、排序或切片。
+Bug 列表 DB-first 补充：`GET /api/bugs` 属于管理主列表，必须先校验 `bug.read`，并按当前用户产品 scope 收口；PostgreSQL 运行时必须通过 Bug SQL read model 完成产品 scope、`module/product_id/severity/source/status/title/version/version_id` 筛选、`assignee/created_at/id/module_code/severity/source/status/title/updated_at/version_code/version_name` 排序和 `page/page_size` 分页；不得为列表页先加载全部 Bug 记录再由接口层本地过滤、排序或切片。
 
 产品和迭代版本列表 DB-first 补充：`GET /api/products` 属于管理主列表，PostgreSQL 运行时必须通过产品 SQL read model 完成 `active_only/code/name/owner_team/status` 筛选、当前版本与模块数投影、列表排序和 `page/page_size` 分页；`GET /api/product-versions` 必须通过迭代版本 SQL read model 完成 `active_only/code/name/product/product_id/status` 筛选、所属产品投影、列表排序和分页。产品详情、产品上下文下拉和单产品版本/模块/Git 资源配置接口仍可使用对应轻量 repository 查询。
 
@@ -679,7 +680,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/metrics` | 查询当前登录用户的 AI 助手效果指标，支持 `window_days/date_from/date_to/product_id/role/action` 过滤；返回草案采纳、运行成功、用户修改、显式引用使用、AI 生成质量、`funnel.stages[]`、`dimensions.products[]/roles[]`、`trends.daily[]/drafts_by_action_daily[]` 和 `instrumentation`。 |
 | Assistant | GET | `/api/assistant/metrics/details` | 按 `metric`、`window_days/date_from/date_to/product_id/role/action` 和 `limit` 返回当前用户指标明细列表，支持从草案生成、草案状态、动作运行、聊天运行、定时作业运行、失败修复、引用使用和知识命中钻取到脱敏来源记录。 |
 | Assistant | GET | `/api/assistant/metrics/export` | 按同一指标过滤口径导出助手效果指标，`format=csv` 返回 `content/content_type/filename`，`format=json` 返回结构化指标 payload；导出不得包含完整对话正文、知识正文、密钥、Header、完整 Prompt 或外部调用明文。 |
-| Requirement | GET | `/api/requirements` | 需求列表。 |
+| Requirement | GET | `/api/requirements` | 需求列表；校验 `requirement.read`，分页、排序、筛选和产品 scope 过滤由 SQL read model 完成。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/batch-assign-owner` | 批量分配需求负责人。 |
 | Requirement | POST | `/api/requirements/batch-advance-status` | 按研发流程批量推进需求状态。 |
@@ -709,7 +710,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Review | POST | `/api/reviews/{review_id}/edit-approve` | 修改后采纳。 |
 | Review | POST | `/api/reviews/{review_id}/reject` | 驳回重跑。 |
 | Review | POST | `/api/reviews/{review_id}/request-more-info` | 要求补充信息。 |
-| Knowledge | GET | `/api/knowledge/documents` | 知识文档列表。 |
+| Knowledge | GET | `/api/knowledge/documents` | 知识文档列表；校验 `knowledge.read`，带分页参数时由 PostgreSQL read model 完成权限过滤、筛选、排序和分页。 |
 | Knowledge | POST | `/api/knowledge/documents` | 导入知识文档。 |
 | Knowledge | GET | `/api/knowledge/spaces` | 查询当前用户可访问的知识空间。 |
 | Knowledge | POST | `/api/knowledge/spaces` | 创建知识空间。 |
@@ -794,7 +795,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Scheduler | POST | `/api/system/scheduled-job-runs/{run_id}/cancel` | 取消仍处于 queued/running 的运行实例。 |
 | Scheduler | POST | `/api/system/scheduled-job-runs/{run_id}/template` | 从一次成功运行反向生成定时作业模板草稿。仅管理员可用，非 succeeded 运行返回 `409 SCHEDULED_JOB_RUN_TEMPLATE_SOURCE_INVALID`；响应包含 `code/name/template_version/wizard_steps/payload_defaults/source_run_id`，其中 `payload_defaults` 来自运行 `config_snapshot` 并写入 `config_json.template_source={source_type: scheduled_job_run, source_id, title}`，前端可直接打开新增作业弹窗供用户确认保存。 |
 | Governance | GET | `/api/governance/code-inspections/dashboard` | 查询代码巡检治理概览，支持与列表一致的产品、仓库、提交人、风险级别、状态和标题筛选，并按当前用户产品 scope 过滤；响应返回 `summary`、`trend`、`rule_distribution`、`rule_governance`、`quality_gate_violations`、`repository_ranking`、`branch_ranking`、`committer_ranking`、`severity_distribution`、`risk_distribution` 和 `sla`。`trend[]` 按日期返回报告数、问题数、严重问题数、Bug 数以及 `quality_gate_passed_count/failed_count/skipped_count/unknown_count`，用于展示质量门禁趋势；`quality_gate_violations[]` 按门禁 `metric/rule_id/code` 聚合失败原因，返回 `metric/severity/violation_count/report_count/actual/limit/latest_report_id/latest_report_summary`，用于展示门禁失败原因分布；`rule_governance` 返回 `latest_report_rules_version/latest_report_scanner_version/mixed_rules_version/mixed_scanner_version/rule_version_distribution/scanner_version_distribution/suppressed_finding_count/report_with_suppression_count/suppression_distribution`，用于识别规则包版本漂移和 baseline、已接受风险、忽略项、严重级别阈值等过滤原因；`sla` 同时返回 `bug_coverage_rate/covered_by_bug_count/uncovered_severe_finding_count/oldest_uncovered_at` 与 `task_coverage_rate/covered_by_task_count/uncovered_task_finding_count/oldest_without_task_at`，整体 `status` 需同时满足 Bug 和整改任务覆盖阈值才为 healthy。 |
-| Governance | GET | `/api/governance/code-inspections` | 查询定期代码仓库巡检报告列表，支持产品、仓库、提交人、风险级别、状态、分页和排序，并按当前用户产品 scope 过滤；报告项返回 `scheduled_job_id`、`scheduled_job_run_id`、`plugin_connection_id`、`plugin_action_id` 和 `plugin_invocation_log_id`，用于定位来源作业、运行、连接、动作和插件调用。 |
+| Governance | GET | `/api/governance/code-inspections` | 查询定期代码仓库巡检报告列表；校验 `code_inspection.read`，支持产品、仓库、提交人、风险级别、状态、分页和排序，并按当前用户产品 scope 过滤；报告项返回 `scheduled_job_id`、`scheduled_job_run_id`、`plugin_connection_id`、`plugin_action_id` 和 `plugin_invocation_log_id`，用于定位来源作业、运行、连接、动作和插件调用。 |
 | Governance | GET | `/api/governance/code-inspections/{report_id}` | 查询单次代码巡检报告详情，返回报告、finding 列表和通知记录；详情报告必须包含来源链路字段，前端在详情弹窗固定展示，并把 `scheduled_job_id`、`scheduled_job_run_id` 渲染为跳转到任务中心 / 定时作业的链接。本地扫描报告还必须返回并展示 `remote_url_summary`、`remote_url_hash`、`artifact_ref`、`checkout_path`、`checkout_path_retained`、`scan_started_at`、`scan_finished_at`、`scanner_version` 和 `rules_version`，用于审计本次扫描实际代码快照。 |
 | Attribution | GET | `/api/attribution/pending-items` | 查询待归属数据队列。 |
 | Attribution | POST | `/api/attribution/pending-items` | 登记无法映射产品、模块、需求或导入主体的真实数据。 |
@@ -809,7 +810,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | DevOps | POST | `/api/devops/jenkins/releases` | 登记真实 Jenkins 发布记录。 |
 | Ops | GET | `/api/ops/online-log-metrics` | 查询线上运行日志运营指标。 |
 | Ops | POST | `/api/ops/online-log-metrics` | 登记真实线上运行日志聚合指标。 |
-| Bug | GET | `/api/bugs` | 查询 Bug 列表，支持产品、迭代版本、状态、严重程度和来源过滤。 |
+| Bug | GET | `/api/bugs` | 查询 Bug 列表；校验 `bug.read`，支持产品、迭代版本、状态、严重程度和来源过滤，并按当前用户产品 scope 过滤。 |
 | Bug | POST | `/api/bugs` | v1.1 基础接口，登记 AI 自动测试或人工测试 Bug。 |
 | Bug | POST | `/api/bugs/batch-update` | 批量更新 Bug 状态、严重级别或处理人，返回 updated/skipped 明细并写入批次审计。 |
 | Bug | PATCH | `/api/bugs/{bug_id}` | v1.1 基础接口，更新 Bug 状态、分派人、复现信息或重复归并关系。 |
@@ -3128,7 +3129,7 @@ POST /api/knowledge/documents/batch-move
 GET /api/knowledge/documents?keyword=研发&knowledge_space_id=knowledge_space_001&folder_id=knowledge_folder_001&doc_type=system&index_status=text_indexed
 ```
 
-该接口支持 `keyword`、`knowledge_space_id`、`folder_id`、`doc_type`、`index_status`、`permission_role`、`page`、`page_size`、`sort_by` 和 `sort_order`。`sort_by` 白名单为 `id/title/doc_type/folder_id/index_status/knowledge_space_id/permission_roles/created_at/updated_at`，`sort_order` 只允许 `asc|desc`，`page_size` 最大 100。传入 `page` 或 `page_size` 时，PostgreSQL 运行态必须通过知识文档 read model 在数据库侧完成知识空间权限、角色权限、关键字、空间、目录、类型、索引状态、权限角色筛选和排序分页，并返回 `items/page/page_size/total/query/performance`；未传分页参数时保留旧全量返回兼容用途，不作为知识中心主表默认读路径。
+该接口必须先校验 `knowledge.read`，再支持 `keyword`、`knowledge_space_id`、`folder_id`、`doc_type`、`index_status`、`permission_role`、`page`、`page_size`、`sort_by` 和 `sort_order`。`sort_by` 白名单为 `id/title/doc_type/folder_id/index_status/knowledge_space_id/permission_roles/created_at/updated_at`，`sort_order` 只允许 `asc|desc`，`page_size` 最大 100。传入 `page` 或 `page_size` 时，PostgreSQL 运行态必须通过知识文档 read model 在数据库侧完成知识空间权限、角色权限、关键字、空间、目录、类型、索引状态、权限角色筛选和排序分页，并返回 `items/page/page_size/total/query/performance`；未传分页参数时保留旧全量返回兼容用途，不作为知识中心主表默认读路径。
 
 知识文档索引状态支持：`importing | pending_index | text_indexed | vector_indexed | indexed | index_failed | archived`，其中 `indexed` 为历史兼容状态。Embedding 不可用但文本 chunk 成功时进入 `text_indexed`，响应包含 `vector_index_error` 和兼容展示用 `index_error`；基础文本索引失败时进入 `index_failed`。
 
@@ -3905,7 +3906,7 @@ PATCH /api/bugs/{bug_id}
 | severity | string | 可选，按严重程度过滤。 |
 | source | string | 可选，按来源过滤。 |
 
-列表响应中的每条 Bug 除 `product_id`、`version_id` 外，还返回 `version_code`、`version_name` 作为页面展示投影；未关联版本时这两个字段为空。
+列表接口必须先校验 `bug.read`，并按当前用户产品 scope 过滤；PostgreSQL 运行态必须在 Bug SQL read model 中完成筛选、排序和分页，不得回退为接口层全量过滤。列表响应中的每条 Bug 除 `product_id`、`version_id` 外，还返回 `version_code`、`version_name` 作为页面展示投影；未关联版本时这两个字段为空。
 
 批量处理请求体：
 

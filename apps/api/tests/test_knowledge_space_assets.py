@@ -111,8 +111,9 @@ def test_knowledge_space_folder_asset_upload_and_search_are_permission_filtered(
     reviewer_documents = client.get(
         f"/api/knowledge/documents?knowledge_space_id={space['id']}",
         headers=reviewer_headers,
-    ).json()["data"]["items"]
-    assert reviewer_documents == []
+    )
+    assert reviewer_documents.status_code == 403
+    assert reviewer_documents.json()["detail"]["code"] == "FORBIDDEN"
 
     viewer_results = client.post(
         "/api/knowledge/search",

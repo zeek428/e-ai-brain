@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.731 |
+| 功能版本 | v1.1.732 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.732 | 2026-06-27 | 补充核心管理列表权限和产品 scope 验收：需求、Bug、知识中心和代码巡检列表必须服务端校验 read 权限；受限产品用户查询需求/Bug/代码巡检只能返回 scope 内业务记录 | Codex |
 | v1.1.731 | 2026-06-27 | 补充 AI 助手裸 `@` 默认候选均衡验收：执行诊断来源加入后不得挤掉知识文档、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI 角色和 Skill，模型网关日志等诊断引用仍可在后续候选中出现 | Codex |
 | v1.1.730 | 2026-06-27 | 补充知识中心主列表服务端分页验收：`GET /api/knowledge/documents?page=1&page_size=10` 必须优先调用知识文档 PostgreSQL count/page read model，在数据库侧完成权限、空间/目录、类型、索引状态、权限角色、关键字筛选和白名单排序；外层 Postgres repository 委托和 `KnowledgePage.test.tsx` 远程请求覆盖 | Codex |
 | v1.1.729 | 2026-06-27 | 补充 AI 能力配置主表服务端分页验收：AI角色默认请求 `ai-agents?page=1&page_size=10&sort_by=code&sort_order=asc`，Skill 默认请求 `ai-skills?page=1&page_size=10&sort_by=code&sort_order=asc`；仓储测试覆盖 AI角色/Skill count/page SQL、筛选和排序白名单，`AiCapabilitiesPage.test.tsx` 覆盖远程筛选请求 | Codex |

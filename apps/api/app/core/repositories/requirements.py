@@ -118,6 +118,7 @@ class RequirementReadRepository:
         priority: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         title: str | None = None,
         source: str | None = None,
@@ -136,6 +137,12 @@ class RequirementReadRepository:
         if product_id is not None:
             where_clauses.append("r.product_id = %s")
             params.append(product_id)
+        if product_scope_ids is not None:
+            if product_scope_ids:
+                where_clauses.append("r.product_id = ANY(%s)")
+                params.append(product_scope_ids)
+            else:
+                where_clauses.append("FALSE")
         if status is not None:
             where_clauses.append(
                 """
@@ -170,6 +177,7 @@ class RequirementReadRepository:
         priority: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         title: str | None = None,
         source: str | None = None,
@@ -180,6 +188,7 @@ class RequirementReadRepository:
             priority=priority,
             product=product,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             status=status,
             title=title,
             source=source,
@@ -207,6 +216,7 @@ class RequirementReadRepository:
         priority: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         title: str | None = None,
         source: str | None = None,
@@ -221,6 +231,7 @@ class RequirementReadRepository:
             priority=priority,
             product=product,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             status=status,
             title=title,
             source=source,

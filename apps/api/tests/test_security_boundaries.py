@@ -112,6 +112,44 @@ def create_scoped_test_owner(headers: dict[str, str], *, product_id: str) -> dic
     return auth_headers(username, "password123")
 
 
+def create_scoped_role_user(
+    headers: dict[str, str],
+    *,
+    product_id: str,
+    role_code: str,
+) -> dict[str, str]:
+    suffix = len(getattr(app.state.user_repository, "users", {})) + 1
+    username = f"{role_code}-scope-{suffix}@example.com"
+    created = client.post(
+        "/api/users",
+        json={
+            "display_name": f"{role_code} Scope {suffix}",
+            "password": "password123",
+            "roles": [role_code],
+            "status": "active",
+            "username": username,
+        },
+        headers=headers,
+    )
+    assert created.status_code == 200, created.text
+    user = created.json()["data"]
+    scoped = client.put(
+        f"/api/users/{user['id']}/scopes",
+        json={
+            "scopes": [
+                {
+                    "access_level": "read",
+                    "scope_id": product_id,
+                    "scope_type": "product",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert scoped.status_code == 200, scoped.text
+    return auth_headers(username, "password123")
+
+
 def create_manual_scheduled_job(
     headers: dict[str, str],
     *,
@@ -161,6 +199,68 @@ def add_scheduled_job_run(job: dict, *, run_id: str) -> None:
     }
 
 
+def create_product(headers: dict[str, str], *, code: str, name: str) -> dict:
+    response = client.post(
+        "/api/products",
+        json={"code": code, "name": name},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def create_requirement(headers: dict[str, str], *, product_id: str, title: str) -> dict:
+    response = client.post(
+        "/api/requirements",
+        json={
+            "content": f"{title} content",
+            "product_id": product_id,
+            "title": title,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def create_bug(headers: dict[str, str], *, product_id: str, title: str) -> dict:
+    response = client.post(
+        "/api/bugs",
+        json={
+            "description": f"{title} description",
+            "product_id": product_id,
+            "severity": "major",
+            "source": "manual_test",
+            "title": title,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def add_code_inspection_report(*, report_id: str, product_id: str, title: str) -> None:
+    app.state.store.code_inspection_reports[report_id] = {
+        "branch": "main",
+        "commit_sha": "abc123",
+        "committer_summary": [{"email": "alice@example.com"}],
+        "created_at": "2026-06-27T10:00:00+00:00",
+        "created_by": "user_admin",
+        "finding_count": 1,
+        "id": report_id,
+        "product_id": product_id,
+        "repository": {"name": title, "project_path": f"example/{report_id}"},
+        "repository_id": f"repo_{report_id}",
+        "risk_level": "medium",
+        "scan_mode": "native_full_scan",
+        "severe_finding_count": 0,
+        "source_system": "native-code-scanner",
+        "status": "completed",
+        "summary": title,
+        "updated_at": "2026-06-27T10:00:00+00:00",
+    }
+
+
 def test_gitlab_review_api_surface_has_no_writeback_routes():
     paths = client.get("/openapi.json").json()["paths"]
     gitlab_paths = {
@@ -178,6 +278,89 @@ def test_gitlab_review_api_surface_has_no_writeback_routes():
         assert "/approvals" not in path
         assert "/request-changes" not in path
         assert not path.endswith("/merge")
+
+
+def test_core_management_lists_require_menu_declared_read_permissions():
+    app.state.store.reset()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+
+    forbidden_paths = [
+        "/api/requirements",
+        "/api/bugs",
+        "/api/knowledge/documents",
+        "/api/governance/code-inspections",
+    ]
+    for path in forbidden_paths:
+        response = client.get(path, headers=reviewer_headers)
+        assert response.status_code == 403, path
+        assert response.json()["detail"]["code"] == "FORBIDDEN"
+
+
+def test_product_scoped_management_lists_filter_business_records():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product_a = create_product(
+        admin_headers,
+        code="scope-contract-a",
+        name="Scope Contract A",
+    )
+    product_b = create_product(
+        admin_headers,
+        code="scope-contract-b",
+        name="Scope Contract B",
+    )
+    requirement_a = create_requirement(
+        admin_headers,
+        product_id=product_a["id"],
+        title="A 产品需求",
+    )
+    requirement_b = create_requirement(
+        admin_headers,
+        product_id=product_b["id"],
+        title="B 产品需求",
+    )
+    bug_a = create_bug(admin_headers, product_id=product_a["id"], title="A 产品 Bug")
+    bug_b = create_bug(admin_headers, product_id=product_b["id"], title="B 产品 Bug")
+    add_code_inspection_report(
+        report_id="code_inspection_scope_a",
+        product_id=product_a["id"],
+        title="A 产品巡检",
+    )
+    add_code_inspection_report(
+        report_id="code_inspection_scope_b",
+        product_id=product_b["id"],
+        title="B 产品巡检",
+    )
+
+    scoped_headers = create_scoped_role_user(
+        admin_headers,
+        product_id=product_a["id"],
+        role_code="product_owner",
+    )
+
+    scoped_requirements = client.get(
+        "/api/requirements?page=1&page_size=20",
+        headers=scoped_headers,
+    )
+    assert scoped_requirements.status_code == 200, scoped_requirements.text
+    requirement_ids = {item["id"] for item in scoped_requirements.json()["data"]["items"]}
+    assert requirement_a["id"] in requirement_ids
+    assert requirement_b["id"] not in requirement_ids
+
+    scoped_bugs = client.get("/api/bugs?page=1&page_size=20", headers=scoped_headers)
+    assert scoped_bugs.status_code == 200, scoped_bugs.text
+    bug_ids = {item["id"] for item in scoped_bugs.json()["data"]["items"]}
+    assert bug_a["id"] in bug_ids
+    assert bug_b["id"] not in bug_ids
+
+    scoped_code_inspections = client.get(
+        "/api/governance/code-inspections?page=1&page_size=20",
+        headers=scoped_headers,
+    )
+    assert scoped_code_inspections.status_code == 200, scoped_code_inspections.text
+    report_ids = {item["id"] for item in scoped_code_inspections.json()["data"]["items"]}
+    assert "code_inspection_scope_a" in report_ids
+    assert "code_inspection_scope_b" not in report_ids
 
 
 def test_role_boundaries_for_product_audit_and_gitlab_preview(monkeypatch):

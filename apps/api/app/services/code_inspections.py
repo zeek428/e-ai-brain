@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_permissions
 from app.core.listing import (
     add_list_observability,
     ensure_list_enum,
@@ -18,6 +18,7 @@ from app.core.listing import (
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.bugs import create_bug_result
 from app.services.plugins import json_path_value
+from app.services.product_scope import user_can_read_product, user_product_access
 
 CODE_INSPECTION_ACTION_TYPES = {
     "create_bug_for_severe_findings",
@@ -131,7 +132,7 @@ def ensure_enum(value: str | None, allowed_values: set[str], field: str) -> None
 
 
 def require_code_inspection_read(user: dict[str, Any]) -> None:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_permissions(user, {"code_inspection.read"})
 
 
 def severity_rank(value: str | None) -> int:
@@ -179,30 +180,6 @@ def normalize_risk_level(
     highest = max(findings, key=lambda item: severity_rank(item.get("severity")))
     highest_severity = str(highest.get("severity") or "medium")
     return highest_severity if highest_severity in CODE_INSPECTION_RISK_LEVELS else "medium"
-
-
-def user_product_access(user: dict[str, Any]) -> tuple[bool, set[str]]:
-    roles = set(user.get("roles") or [])
-    if "admin" in roles:
-        return True, set()
-    product_ids: set[str] = set()
-    for scope in user.get("scope_summary") or []:
-        if scope.get("access_level") not in {"admin", "read", "write"}:
-            continue
-        scope_type = scope.get("scope_type")
-        scope_id = scope.get("scope_id")
-        if scope_type == "global" and scope_id == "*":
-            return True, set()
-        if scope_type == "product" and scope_id:
-            product_ids.add(str(scope_id))
-    return False, product_ids
-
-
-def user_can_read_product(user: dict[str, Any], product_id: Any) -> bool:
-    global_access, product_ids = user_product_access(user)
-    if global_access:
-        return True
-    return product_id is not None and str(product_id) in product_ids
 
 
 def validate_code_inspection_result_actions(actions: Any) -> list[dict[str, Any]]:

@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import Request
 
-from app.api.deps import api_error
+from app.api.deps import api_error, require_permissions
 from app.core.listing import (
     add_list_observability,
     list_text_matches,
@@ -141,6 +141,7 @@ def knowledge_document_list_response(
     sort_order: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    require_permissions(user, {"knowledge.read"})
     ensure_knowledge_index_status(index_status)
     if sort_order not in {"asc", "desc"}:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_order")

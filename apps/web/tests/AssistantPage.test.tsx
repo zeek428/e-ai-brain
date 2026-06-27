@@ -4548,6 +4548,63 @@ describe('AssistantPage', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('restores execution trace prompt from pending route context when query prompt is stripped', async () => {
+    const prompt = '请基于执行诊断链路「AI 助手运行 assistant_chat_run_trace」分析运行问题。';
+    window.history.pushState(
+      {},
+      '',
+      '/assistant?reference_type=assistant_chat_run&reference_id=assistant_chat_run_trace',
+    );
+    window.sessionStorage.setItem(
+      'ai_brain_assistant_route_prompt:anonymous',
+      JSON.stringify({
+        created_at: Date.now(),
+        prompt,
+        reference_id: 'assistant_chat_run_trace',
+        reference_type: 'assistant_chat_run',
+      }),
+    );
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('assistant_chat_run_trace');
+        expect(params.get('type')).toBe('assistant_chat_run');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'assistant_chat_run_trace',
+                  title: 'AI 助手运行 assistant_chat_run_trace',
+                  type: 'assistant_chat_run',
+                  url: '/governance/execution-traces?source_id=assistant_chat_run_trace&source_type=assistant_chat_run',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    expect(await screen.findByLabelText('本次上下文')).toHaveTextContent('已从链接带入AI 助手运行');
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(prompt);
+    expect(window.sessionStorage.getItem('ai_brain_assistant_route_prompt:anonymous')).toBeNull();
+  });
+
   it('preselects knowledge space references from route query parameters', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
     window.history.pushState(

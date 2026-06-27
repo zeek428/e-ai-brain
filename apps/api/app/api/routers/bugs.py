@@ -86,6 +86,7 @@ def list_bugs(
         status=status,
         title=title,
         trace_id=get_trace_id(request),
+        user=user,
         version=version,
         version_id=version_id,
     )

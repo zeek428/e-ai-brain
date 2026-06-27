@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.api.deps import api_error
+from app.api.deps import api_error, require_permissions
 from app.core.listing import (
     add_list_observability,
     ensure_list_enum,
@@ -11,6 +11,7 @@ from app.core.listing import (
     sort_list_items,
 )
 from app.services.bug_lifecycle import validate_bug_enums
+from app.services.product_scope import product_scope_filter, user_can_read_product
 
 BUG_SORT_FIELDS = {
     "assignee",
@@ -87,9 +88,11 @@ def list_bugs_response(
     status: str | None,
     title: str | None,
     trace_id: str,
+    user: dict[str, Any],
     version: str | None,
     version_id: str | None,
 ) -> dict[str, Any]:
+    require_permissions(user, {"bug.read"})
     validate_bug_enums(source=source, severity=severity, status=status)
     ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
     resolved_sort_by = sort_by or "created_at"
@@ -106,13 +109,41 @@ def list_bugs_response(
         "version": version,
         "version_id": version_id,
     }
+    product_scope_ids = product_scope_filter(user)
+    if product_id is not None and not user_can_read_product(user, product_id):
+        empty_payload = paginated_list_payload(
+            [],
+            filters=filters,
+            list_name="bugs",
+            observed=True,
+            page=page,
+            page_size=page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+            trace_id=trace_id,
+        )["data"]
+        return add_list_observability(
+            empty_payload,
+            filters=filters,
+            list_name="bugs",
+            page=empty_payload.get("page"),
+            page_size=empty_payload.get("page_size"),
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+    query_filters = dict(filters)
+    if product_scope_ids is not None:
+        query_filters["product_scope_ids"] = product_scope_ids
+
     list_repository = bug_list_query_repository(current_store)
     if list_repository is not None:
         resolved_page = page or 1
         resolved_page_size = page_size or 10
-        total = list_repository.count_bug_summaries(**filters)
+        total = list_repository.count_bug_summaries(**query_filters)
         items = list_repository.list_bug_summaries(
-            **filters,
+            **query_filters,
             limit=resolved_page_size,
             offset=(resolved_page - 1) * resolved_page_size,
             sort_by=resolved_sort_by,
@@ -143,8 +174,22 @@ def list_bugs_response(
             severity=severity,
             source=source,
         )
+        if product_scope_ids is not None:
+            items = [
+                item
+                for item in items
+                if item.get("product_id") is not None
+                and str(item.get("product_id")) in product_scope_ids
+            ]
     else:
         items = list(_read_memory_dict(current_store, "bugs").values())
+        if product_scope_ids is not None:
+            items = [
+                item
+                for item in items
+                if item.get("product_id") is not None
+                and str(item.get("product_id")) in product_scope_ids
+            ]
         if product_id:
             items = [item for item in items if item["product_id"] == product_id]
         if version_id:

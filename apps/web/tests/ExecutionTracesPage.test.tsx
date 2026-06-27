@@ -368,6 +368,16 @@ describe('ExecutionTracesPage', () => {
     expect(traceAnalysisParams.get('prompt')).toContain('执行诊断链路「AI 助手运行 assistant_chat_run_trace」');
     expect(traceAnalysisParams.get('prompt')).toContain('model_gateway_log_assistant_trace');
     expect(traceAnalysisParams.get('prompt')).toContain('最可能原因');
+    traceAnalysisLink.addEventListener('click', (event) => event.preventDefault(), { once: true });
+    fireEvent.click(traceAnalysisLink);
+    const storedAssistantPrompt = JSON.parse(
+      window.sessionStorage.getItem('ai_brain_assistant_route_prompt:anonymous') ?? '{}',
+    ) as Record<string, unknown>;
+    expect(storedAssistantPrompt).toMatchObject({
+      prompt: expect.stringContaining('执行诊断链路「AI 助手运行 assistant_chat_run_trace」'),
+      reference_id: 'assistant_chat_run_trace',
+      reference_type: 'assistant_chat_run',
+    });
     expect(within(dialog).getByRole('button', { name: /复制诊断包/ })).toBeInTheDocument();
     expect(within(dialog).getAllByText('AI 助手运行').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('model_gateway_log_assistant_trace').length).toBeGreaterThan(0);
