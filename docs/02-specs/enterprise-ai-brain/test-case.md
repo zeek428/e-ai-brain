@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.722 |
+| 功能版本 | v1.1.723 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.723 | 2026-06-27 | 补充知识沉淀审核全链路入口验收：知识中心“沉淀审核”列表每条候选提供 `knowledge_deposit` 主体全链路链接，审核表格保持固定列宽和横向滚动；`KnowledgePage.test.tsx` 覆盖 | Codex |
 | v1.1.722 | 2026-06-27 | 补充 AI 助手引用全链路入口验收：助手上下文和消息引用对可解析交付主体展示“全链路”，`iteration_version` 可通过 `/api/lifecycle/full-chain` 解析回需求链路；`AssistantFullChainLinks.test.tsx` 与 `test_lifecycle_context.py` 覆盖 | Codex |
 | v1.1.721 | 2026-06-27 | 补充需求全链路版本分支和审计事件验收：full-chain 响应、阶段明细、时间线和导出报告必须展示 `branch_configs` 与脱敏 `audit_events`；`test_lifecycle_context.py` 与 `RequirementFullChainPage.test.tsx` 覆盖 | Codex |
 | v1.1.720 | 2026-06-27 | 补充 P0 优化验收：研发执行器策略列表必须走服务端分页/筛选/排序并返回性能观测；需求全链路接口必须校验读权限和产品 scope；`test_management_list_read_models.py`、`test_rd_task_executor_policies.py`、`test_lifecycle_context.py` 覆盖 | Codex |

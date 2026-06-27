@@ -168,6 +168,14 @@ describe('KnowledgePage', () => {
 
     expect(await screen.findByText('技术方案知识沉淀')).toBeInTheDocument();
     expect(screen.getByText('沉淀内容摘要')).toBeInTheDocument();
+    const depositTable = document.querySelector('table[data-table-scroll-x="1120"]');
+    expect(depositTable).not.toBeNull();
+    expect(depositTable).toHaveAttribute('data-table-layout', 'fixed');
+    const fullChainLink = screen.getByRole('link', { name: '全链路' });
+    expect(fullChainLink).toHaveAttribute(
+      'href',
+      '/delivery/full-chain?subject_id=deposit_api&subject_type=knowledge_deposit',
+    );
     fireEvent.click(screen.getByRole('button', { name: '批准入库' }));
 
     await waitFor(() =>

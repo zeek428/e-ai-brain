@@ -158,15 +158,15 @@
 | 2 | MVP-C: 在任务中心打开已完成任务的“模拟 Issue”弹窗，GET `/api/writeback/results/{task_id}` | 未写回时页面展示 `not_written`/未写回、幂等键和空 issues，不创建 mock issue。 |
 | 3 | MVP-C: 在弹窗中点击生成，POST `/api/writeback/results/{task_id}` | 页面展示模拟 Issue、`completed`/已生成和 idempotency_key。 |
 | 4 | MVP-C: 重复 POST 模拟输出 | 不产生重复 mock issue。 |
-| 5 | MVP-C: 在知识中心打开“沉淀审核”弹窗查询知识沉淀候选 | 返回 pending deposits。 |
-| 6 | MVP-C: 批准或拒绝知识沉淀候选 | 候选状态正确流转，未批准内容不进入正式知识库。 |
+| 5 | MVP-C: 在知识中心打开“沉淀审核”弹窗查询知识沉淀候选 | 返回 pending deposits，列表固定列宽并提供按 `knowledge_deposit` 主体进入统一需求全链路的入口。 |
+| 6 | MVP-C: 批准或拒绝知识沉淀候选 | 候选状态正确流转，未批准内容不进入正式知识库，全链路入口仍可用于追溯候选来源任务和需求链路。 |
 
 **预期结果**:
 1. MVP-A 只阻塞 Markdown 导出。
 2. MVP-C 阻塞模拟 Issue 幂等生成和知识沉淀候选审核。
 3. mock_issues 幂等键唯一，knowledge_deposits 按 `ai_task_id + deposit_type + content_hash` 去重。
 
-**状态**: 已自动化覆盖。Markdown 导出见 `apps/api/tests/test_technical_solution_export.py`，export router 不回调 legacy main 的边界回归见 `apps/api/tests/test_router_boundaries.py::test_export_router_does_not_call_legacy_main`；模拟 Issue 幂等和知识沉淀审核见 `apps/api/tests/test_knowledge_governance.py` 与 `apps/web/tests/App.test.tsx::sends MVP-C writeback and knowledge deposit mutations to backend APIs`；Mock Writeback handler 级 DB-first 写入与 task workflow source rows 恢复见 `apps/api/tests/test_database_persistence.py::test_mock_writeback_writes_repository_without_request_persist`，writeback router 不回调 legacy main 的边界回归见 `apps/api/tests/test_router_boundaries.py::test_writeback_router_does_not_call_legacy_main`。
+**状态**: 已自动化覆盖。Markdown 导出见 `apps/api/tests/test_technical_solution_export.py`，export router 不回调 legacy main 的边界回归见 `apps/api/tests/test_router_boundaries.py::test_export_router_does_not_call_legacy_main`；模拟 Issue 幂等和知识沉淀审核见 `apps/api/tests/test_knowledge_governance.py` 与 `apps/web/tests/App.test.tsx::sends MVP-C writeback and knowledge deposit mutations to backend APIs`；知识沉淀审核列表全链路入口和固定表格布局见 `apps/web/tests/KnowledgePage.test.tsx::opens knowledge deposit review and approves a pending deposit`；Mock Writeback handler 级 DB-first 写入与 task workflow source rows 恢复见 `apps/api/tests/test_database_persistence.py::test_mock_writeback_writes_repository_without_request_persist`，writeback router 不回调 legacy main 的边界回归见 `apps/api/tests/test_router_boundaries.py::test_writeback_router_does_not_call_legacy_main`。
 
 ---
 

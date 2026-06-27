@@ -44,6 +44,7 @@ import {
   fetchKnowledgeSpaces,
   fetchManagementKnowledgeList,
   fetchRoleDefinitions,
+  fullChainSubjectHref,
   rejectKnowledgeDeposit,
   reparseKnowledgeDocument,
   retryKnowledgeImportJob,
@@ -102,6 +103,7 @@ const assetTypeLabels: Record<string, string> = {
 
 const KNOWLEDGE_TABLE_SCROLL_X = 2000;
 const KNOWLEDGE_ACTION_COLUMN_WIDTH = 420;
+const KNOWLEDGE_DEPOSIT_TABLE_SCROLL_X = 1120;
 
 function formatAssetSize(sizeBytes: number) {
   if (sizeBytes < 1024) {
@@ -1105,19 +1107,27 @@ export default function KnowledgePage() {
     () => [
       {
         dataIndex: 'id',
+        ellipsis: true,
         title: '沉淀编号',
+        width: 160,
       },
       {
         dataIndex: 'title',
+        ellipsis: true,
         title: '沉淀标题',
+        width: 220,
       },
       {
         dataIndex: 'aiTaskId',
+        ellipsis: true,
         title: '任务编号',
+        width: 180,
       },
       {
         dataIndex: 'content',
+        ellipsis: true,
         title: '内容摘要',
+        width: 260,
       },
       {
         dataIndex: 'status',
@@ -1126,22 +1136,31 @@ export default function KnowledgePage() {
           const label = depositStatusLabels[row.status] ?? { color: 'default', label: row.status };
           return <StatusTag color={label.color} label={label.label} />;
         },
+        width: 110,
       },
       {
+        fixed: 'right',
         key: 'actions',
         title: '操作',
         valueType: 'option',
-        render: (_, row) =>
-          row.status === 'pending' ? (
-            <Space size={4}>
-              <Button onClick={() => handleApproveDeposit(row)} type="link">
-                批准入库
-              </Button>
-              <Button danger onClick={() => openRejectDepositModal(row)} type="link">
-                拒绝
-              </Button>
-            </Space>
-          ) : null,
+        width: 190,
+        render: (_, row) => (
+          <Space size={4} wrap={false}>
+            <Button href={fullChainSubjectHref('knowledge_deposit', row.id)} type="link">
+              全链路
+            </Button>
+            {row.status === 'pending' ? (
+              <>
+                <Button onClick={() => handleApproveDeposit(row)} type="link">
+                  批准入库
+                </Button>
+                <Button danger onClick={() => openRejectDepositModal(row)} type="link">
+                  拒绝
+                </Button>
+              </>
+            ) : null}
+          </Space>
+        ),
       },
     ],
     [handleApproveDeposit, openRejectDepositModal],
@@ -1445,6 +1464,8 @@ export default function KnowledgePage() {
           pagination={false}
           rowKey="id"
           search={false}
+          scroll={{ x: KNOWLEDGE_DEPOSIT_TABLE_SCROLL_X }}
+          tableLayout="fixed"
         />
         {depositRows.length === 0 && !depositsLoading ? (
           <Text type="secondary">当前没有待审核知识沉淀。</Text>
