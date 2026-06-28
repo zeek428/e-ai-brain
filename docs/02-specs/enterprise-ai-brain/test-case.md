@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.758 |
+| 功能版本 | v1.1.759 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.759 | 2026-06-28 | 补充 AI 动作确认中心治理摘要验收：`GET /api/assistant/action-drafts` 和详情响应必须展示影响对象、权限状态、执行前后差异、失败重试和审计链路；`test_assistant_draft_workbench.py` 与 `AssistantDraftsPage.test.tsx` 覆盖 | Codex |
 | v1.1.758 | 2026-06-28 | 补充真实全链路回归脚本验收：`scripts/full_chain_regression.py` 通过公开 API 串联用户反馈、需求、迭代版本、AI 任务、Review、知识沉淀、版本分支、代码巡检、Bug/整改任务、版本驾驶舱、full-chain、团队看板和 AI 助手引用；任务启动 deterministic 模式仅允许管理员显式验收，跳过 Runner/模型网关并写审计 | Codex |
 | v1.1.757 | 2026-06-28 | 补充 AI 助手失败草案重新打开验收：`POST /api/assistant/action-drafts/{draft_id}/retry` 仅允许 failed 草案回到 pending，保留失败历史、清空失败 run、写审计；草案任务台展示“重新打开”入口；`test_assistant_draft_workbench.py` 与 `AssistantDraftsPage.test.tsx` 覆盖 | Codex |
 | v1.1.756 | 2026-06-28 | 补充模型网关配置列表生产查询路径验收：分页请求必须调用模型网关配置 count/page read model，筛选和排序下推到仓储层，响应仍脱敏密钥并返回 `query/performance`；`test_model_gateway.py` 覆盖 | Codex |
@@ -860,6 +861,8 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 角色快捷任务配置管理列表补充验收口径：`GET /api/assistant/role-quick-task-configs?page=1&page_size=...` 必须在 PostgreSQL 运行态调用快捷任务配置 count/page read model，支持 `keyword/status/group_status/role/permission/enterprise_id/target_draft_type/template_version/sort_by/sort_order` 下推并返回 `query/performance`；`/system/assistant-role-quick-tasks` 主表默认请求服务端分页结果，展示查询耗时并保留启停、灰度、审计操作。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_role_quick_task_configs_support_remote_list_query` 和 `apps/web/tests/AssistantRoleQuickTasksPage.test.tsx::lists, toggles, and updates rollout for assistant quick task configs`。
 
 失败草案重试补充验收口径：`POST /api/assistant/action-drafts/{draft_id}/retry` 只允许当前用户的 `failed` 草案重新打开为 `pending`，必须把当前失败信息追加到 `metadata_json.failure_history`、递增 `retry_count`、记录 `retry_reason/retry_requested_by/retry_requested_at`、清空当前失败 `result_run_id` 并写入 `assistant_action_draft.retry_requested` 审计；非 failed 草案返回 `DRAFT_NOT_FAILED`，重新打开后仍需显式 confirm 才能写业务配置。草案任务台对 failed 行展示“重新打开”按钮，确认后调用 retry 接口并刷新列表。回归见 `apps/api/tests/test_assistant_draft_workbench.py::test_assistant_action_draft_retry_reopens_failed_draft_with_audit` 和 `apps/web/tests/AssistantDraftsPage.test.tsx::reopens failed drafts from the workbench`。
+
+草案治理摘要补充验收口径：`GET /api/assistant/action-drafts` 列表行必须返回影响对象、字段差异数、权限状态、权限问题数、审计事件数、失败次数和重试次数；`GET/POST /api/assistant/action-drafts/{draft_id}`、`/view`、`/retry` 等详情型响应必须返回 `governance.risk/impact/permissions/diff/retries/audit`，并由草案 payload、预检 diff、动作确认权限、失败历史、动作运行和 `assistant_action_draft.*` 审计事件派生。草案任务台详情弹窗必须展示“执行治理摘要”和“执行前后差异”，包含必需/缺失权限、最新审计、失败/重试和 diff 表格；确认前不得要求用户跳转到审计或执行诊断页面才能判断写入影响。回归见 `apps/api/tests/test_assistant_draft_workbench.py::test_assistant_action_draft_workbench_lists_current_user_drafts_with_summary`、`apps/api/tests/test_assistant_draft_workbench.py::test_assistant_action_draft_retry_reopens_failed_draft_with_audit` 和 `apps/web/tests/AssistantDraftsPage.test.tsx::loads draft workbench metrics and opens draft detail`。
 
 本轮补充验收口径：最近对话列表必须支持 `cursor/limit` 分页并在前端提供“加载更多”，重复折叠后的翻页不得重复或漏会话，回归见 `apps/api/tests/test_assistant_chat_service.py::test_assistant_history_paginates_conversations_with_cursor` 和 `apps/web/tests/AssistantPage.test.tsx::fetches paginated assistant conversation summaries with cursor metadata`；历史消息恢复草案时必须移除或脱敏 `api_key/auth_config/Authorization/token/secret/password` 等敏感字段，敏感 preview diff 只返回 `***`，回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_history_redacts_sensitive_action_draft_payload_fields`；`/api/assistant/metrics/details` 必须按 `limit` 构造明细并返回同口径 total，避免指标详情页扫描或展开全部历史；草案深链 `/assistant?draft_id=...` 加载成功后必须滚动到草案链接状态区域，运行状态异常提示必须支持手动重新检测，回归见 `apps/web/tests/AssistantPage.test.tsx` 中草案深链和运行状态自检用例。助手页面主文件应把输入框/引用、草案生命周期和运行轮询编排拆到 `useAssistantComposerController`、`useAssistantDraftLifecycle`、`useAssistantRunPolling`；助手专属 `.assistant-*` 样式不得继续放在 `global.css`，必须由页面级样式文件引入；真实页面 smoke 必须覆盖桌面、窄屏和移动视口，验证输入框、`@` 候选、`+` 浮层、历史列表和指标弹窗不溢出、不遮挡关键操作。
 

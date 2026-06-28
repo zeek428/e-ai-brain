@@ -29,6 +29,8 @@ import {
   actionOptions,
   assistantDraftEditHref,
   compactText,
+  operationText,
+  permissionTag,
   riskTag,
   statusOptions,
   statusTag,
@@ -261,6 +263,41 @@ export default function AssistantDraftsPage() {
         title: '风险',
         width: 100,
         render: (_, row) => riskTag(row.risk_level),
+      },
+      {
+        dataIndex: 'impact_resource_type',
+        title: '影响对象',
+        width: 180,
+        render: (_, row) => (
+          <Space orientation="vertical" size={0} style={{ width: '100%' }}>
+            <Text>{operationText(row.impact_operation)} · {row.impact_resource_type ?? '-'}</Text>
+            <Text type="secondary">{row.impact_changed_field_count ?? 0} 项差异</Text>
+          </Space>
+        ),
+      },
+      {
+        dataIndex: 'permission_status',
+        title: '权限',
+        width: 120,
+        render: (_, row) => (
+          <Space size={4}>
+            {permissionTag(row.permission_status)}
+            {row.permission_issue_count ? <Text type="secondary">{row.permission_issue_count}</Text> : null}
+          </Space>
+        ),
+      },
+      {
+        dataIndex: 'audit_event_count',
+        title: '审计/重试',
+        width: 150,
+        render: (_, row) => (
+          <Space orientation="vertical" size={0} style={{ width: '100%' }}>
+            <Text>{row.audit_event_count ?? 0} 条审计</Text>
+            <Text type="secondary">
+              {row.failure_count ?? 0} 失败 / {row.retry_count ?? 0} 重试
+            </Text>
+          </Space>
+        ),
       },
       {
         dataIndex: 'result_status',

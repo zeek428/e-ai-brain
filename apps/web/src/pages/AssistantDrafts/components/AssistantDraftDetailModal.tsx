@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 
 import { ExecutionTraceLink } from '../../../components/ExecutionTraceLink';
 import type {
+  AssistantActionDraftPreviewDiff,
   AssistantActionDraftPreviewIssue,
   AssistantActionDraftRecord,
 } from '../../../services/aiBrain';
@@ -13,6 +14,8 @@ import {
   assistantDraftEditHref,
   compactText,
   jsonPreview,
+  operationText,
+  permissionTag,
   riskTag,
   statusTag,
   validationTag,
@@ -39,7 +42,35 @@ export function AssistantDraftDetailModal({
     ],
     [],
   );
+  const diffColumns = useMemo<ColumnsType<AssistantActionDraftPreviewDiff>>(
+    () => [
+      { dataIndex: 'label', title: '字段', width: 150, render: (_, row) => compactText(row.label ?? row.field) },
+      { dataIndex: 'change_type', title: '变更', width: 90, render: (_, row) => operationText(row.change_type) },
+      {
+        dataIndex: 'current',
+        title: '当前值',
+        width: 240,
+        render: (_, row) => compactText(JSON.stringify(row.current ?? '-')),
+      },
+      {
+        dataIndex: 'proposed',
+        title: '草案值',
+        width: 280,
+        render: (_, row) => compactText(JSON.stringify(row.proposed ?? '-')),
+      },
+    ],
+    [],
+  );
   const detailIssues = detail?.preview?.validation?.issues ?? [];
+  const detailDiffs = detail?.preview?.diffs ?? [];
+  const governance = detail?.governance;
+  const impact = governance?.impact;
+  const permissions = governance?.permissions;
+  const retries = governance?.retries;
+  const audit = governance?.audit;
+  const requiredPermissions = permissions?.required_permissions?.join(', ') || '-';
+  const missingPermissions = permissions?.missing_permissions?.join(', ') || '-';
+  const sourceResource = impact?.source_resource;
 
   return (
     <Modal
@@ -78,6 +109,59 @@ export function AssistantDraftDetailModal({
               </ExecutionTraceLink>
             </Descriptions.Item>
           </Descriptions>
+          <Descriptions column={3} size="small" title="执行治理摘要">
+            <Descriptions.Item label="影响对象">
+              {operationText(impact?.operation)} · {impact?.resource_type ?? '-'}
+              {impact?.resource_id ? ` · ${impact.resource_id}` : ''}
+            </Descriptions.Item>
+            <Descriptions.Item label="来源对象" span={2}>
+              {sourceResource
+                ? `${sourceResource.resource_type ?? '-'} · ${sourceResource.title ?? sourceResource.resource_id ?? '-'}`
+                : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="字段差异">
+              {governance?.diff?.count ?? detailDiffs.length} 项
+            </Descriptions.Item>
+            <Descriptions.Item label="Payload 字段">
+              {impact?.payload_field_count ?? Object.keys(detail.payload ?? {}).length} 项
+            </Descriptions.Item>
+            <Descriptions.Item label="权限校验">
+              <Space size={4}>
+                {permissionTag(permissions?.status)}
+                {permissions?.issue_count ? <Text type="secondary">{permissions.issue_count}</Text> : null}
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="必需权限" span={2}>
+              {requiredPermissions}
+            </Descriptions.Item>
+            <Descriptions.Item label="缺失权限">
+              {missingPermissions}
+            </Descriptions.Item>
+            <Descriptions.Item label="审计事件">
+              {audit?.event_count ?? 0} 条
+            </Descriptions.Item>
+            <Descriptions.Item label="最新审计" span={2}>
+              {audit?.latest_event_type
+                ? `${audit.latest_event_type} · ${formatDisplayDateTime(audit.latest_event_at)}`
+                : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="失败/重试">
+              {retries?.failure_count ?? 0} 次失败 · {retries?.retry_count ?? 0} 次重试
+            </Descriptions.Item>
+            <Descriptions.Item label="最近失败" span={2}>
+              {retries?.last_failure_message ?? retries?.last_failure_code ?? '-'}
+            </Descriptions.Item>
+          </Descriptions>
+          <Table<AssistantActionDraftPreviewDiff>
+            columns={diffColumns}
+            dataSource={detailDiffs}
+            pagination={false}
+            rowKey={(row) => `${row.field}-${row.change_type}`}
+            scroll={{ x: 760 }}
+            size="small"
+            tableLayout="fixed"
+            title={() => '执行前后差异'}
+          />
           <Table<AssistantActionDraftPreviewIssue>
             columns={issueColumns}
             dataSource={detailIssues}

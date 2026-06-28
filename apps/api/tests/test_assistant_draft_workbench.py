@@ -189,6 +189,18 @@ def test_assistant_action_draft_workbench_lists_current_user_drafts_with_summary
             updated_at="2026-06-20T13:00:00+00:00",
         ),
     }
+    app.state.store.audit_events = [
+        {
+            "actor_id": "user_admin",
+            "created_at": "2026-06-20T10:00:00+00:00",
+            "event_type": "assistant_action_draft.created",
+            "id": "audit_assistant_action_draft_pending_created",
+            "payload": {"action": "create_scheduled_job"},
+            "sequence": 1,
+            "subject_id": "assistant_action_draft_pending",
+            "subject_type": "assistant_action_draft",
+        }
+    ]
     app.state.store.assistant_action_runs = {
         "assistant_action_run_confirmed": {
             "action": "create_scheduled_job",
@@ -229,7 +241,15 @@ def test_assistant_action_draft_workbench_lists_current_user_drafts_with_summary
         item for item in payload["items"] if item["id"] == "assistant_action_draft_pending"
     )
     assert pending["modified_field_count"] == 1
+    assert pending["audit_event_count"] == 1
+    assert pending["failure_count"] == 0
+    assert pending["impact_changed_field_count"] == 5
+    assert pending["impact_operation"] == "create"
+    assert pending["impact_resource_type"] == "scheduled_job"
+    assert pending["latest_audit_event_type"] == "assistant_action_draft.created"
     assert pending["view_count"] == 3
+    assert pending["permission_status"] == "passed"
+    assert pending["retry_count"] == 0
     assert pending["wizard_step_count"] == 1
     assert pending["source_link"] == "/assistant?draft_id=assistant_action_draft_pending"
     confirmed = next(
@@ -359,6 +379,18 @@ def test_assistant_action_draft_retry_reopens_failed_draft_with_audit():
             "run_id": "assistant_action_run_failed",
         }
     ]
+    assert payload["governance"]["retries"] == {
+        "can_retry": False,
+        "failure_count": 1,
+        "last_failure_code": "DRAFT_CONFIRM_FAILED",
+        "last_failure_message": "模拟确认失败",
+        "retry_count": 1,
+        "retry_reason": "修正字段后重试",
+    }
+    assert payload["governance"]["audit"]["event_count"] == 1
+    assert payload["governance"]["audit"]["latest_event_type"] == (
+        "assistant_action_draft.retry_requested"
+    )
     stored_draft = app.state.store.assistant_action_drafts["assistant_action_draft_failed"]
     assert stored_draft["status"] == "pending"
     assert stored_draft["result_run_id"] is None

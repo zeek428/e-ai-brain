@@ -14,7 +14,18 @@ function installAssistantDraftsFetchMock(options: { includeFailed?: boolean } = 
     created_by: 'user_admin',
     expires_at: null,
     id: 'assistant_action_draft_001',
+    audit_event_count: 1,
+    failure_count: 0,
+    impact_changed_field_count: 3,
+    impact_operation: 'create',
+    impact_resource_id: null,
+    impact_resource_type: 'scheduled_job',
+    latest_audit_event_at: '2026-06-20T02:20:00Z',
+    latest_audit_event_type: 'assistant_action_draft.created',
     modified_field_count: 2,
+    permission_issue_count: 0,
+    permission_status: 'passed',
+    retry_count: 0,
     result_id: null,
     result_run_id: null,
     result_status: null,
@@ -58,6 +69,44 @@ function installAssistantDraftsFetchMock(options: { includeFailed?: boolean } = 
       modified_fields: ['cron_expression', 'plugin_action_id'],
       view_count: 4,
     },
+    governance: {
+      audit: {
+        event_count: 1,
+        event_types: ['assistant_action_draft.created'],
+        latest_actor_id: 'user_admin',
+        latest_event_at: '2026-06-20T02:20:00Z',
+        latest_event_id: 'audit_001',
+        latest_event_type: 'assistant_action_draft.created',
+      },
+      diff: {
+        changed_fields: [
+          { change_type: 'create', field: 'cron_expression', label: 'Cron 表达式' },
+        ],
+        count: 1,
+      },
+      impact: {
+        changed_field_count: 1,
+        operation: 'create',
+        payload_field_count: 3,
+        resource_id: null,
+        resource_type: 'scheduled_job',
+      },
+      permissions: {
+        issue_count: 0,
+        issues: [],
+        missing_permissions: [],
+        required_permissions: ['system.scheduled_jobs.manage'],
+        status: 'passed',
+      },
+      retries: {
+        can_retry: false,
+        failure_count: 0,
+        retry_count: 0,
+      },
+      risk: {
+        level: 'medium',
+      },
+    },
     payload: {
       config_json: {
         assistant_run_once_request: {
@@ -68,6 +117,15 @@ function installAssistantDraftsFetchMock(options: { includeFailed?: boolean } = 
       name: '每周用户反馈洞察',
     },
     preview: {
+      diffs: [
+        {
+          change_type: 'create',
+          current: null,
+          field: 'cron_expression',
+          label: 'Cron 表达式',
+          proposed: '0 9 * * MON',
+        },
+      ],
       target: {
         operation: 'create',
         resource_type: 'scheduled_job',
@@ -184,6 +242,10 @@ describe('AssistantDraftsPage', () => {
     expect(screen.getAllByText('25%').length).toBeGreaterThan(0);
     expect(screen.getAllByText('待确认').length).toBeGreaterThan(0);
     expect(screen.getAllByText('警告').length).toBeGreaterThan(0);
+    expect(screen.getByText('新增 · scheduled_job')).toBeInTheDocument();
+    expect(screen.getByText('3 项差异')).toBeInTheDocument();
+    expect(screen.getByText('1 条审计')).toBeInTheDocument();
+    expect(screen.getByText('0 失败 / 0 重试')).toBeInTheDocument();
     expect(screen.getByText('2026-06-20 10:30')).toBeInTheDocument();
 
     const continueEditLink = screen.getByRole('link', { name: '继续编辑' });
@@ -200,6 +262,12 @@ describe('AssistantDraftsPage', () => {
 
     const dialog = await screen.findByRole('dialog', { name: '草案详情' });
     await waitFor(() => expect(within(dialog).getByText('草案 Payload')).toBeInTheDocument());
+    expect(within(dialog).getByText('执行治理摘要')).toBeInTheDocument();
+    expect(within(dialog).getByText('执行前后差异')).toBeInTheDocument();
+    expect(within(dialog).getByText('system.scheduled_jobs.manage')).toBeInTheDocument();
+    expect(within(dialog).getByText(/assistant_action_draft.created/)).toBeInTheDocument();
+    expect(within(dialog).getByText('Cron 表达式')).toBeInTheDocument();
+    expect(within(dialog).getByText(JSON.stringify('0 9 * * MON'))).toBeInTheDocument();
     expect(within(dialog).getByRole('link', { name: '继续编辑' })).toHaveAttribute(
       'href',
       '/assistant?draft_id=assistant_action_draft_001',

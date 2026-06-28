@@ -1291,6 +1291,21 @@ def _assistant_action_draft_workbench_item(public_draft: dict[str, Any]) -> dict
     result_run = (
         public_draft.get("result_run") if isinstance(public_draft.get("result_run"), dict) else {}
     )
+    governance = (
+        public_draft.get("governance")
+        if isinstance(public_draft.get("governance"), dict)
+        else {}
+    )
+    impact = governance.get("impact") if isinstance(governance.get("impact"), dict) else {}
+    permissions = (
+        governance.get("permissions")
+        if isinstance(governance.get("permissions"), dict)
+        else {}
+    )
+    retries = (
+        governance.get("retries") if isinstance(governance.get("retries"), dict) else {}
+    )
+    audit = governance.get("audit") if isinstance(governance.get("audit"), dict) else {}
     modified_fields = (
         metadata_json.get("modified_fields")
         if isinstance(metadata_json.get("modified_fields"), list)
@@ -1307,7 +1322,18 @@ def _assistant_action_draft_workbench_item(public_draft: dict[str, Any]) -> dict
         "created_by": public_draft["created_by"],
         "expires_at": public_draft.get("expires_at"),
         "id": public_draft["id"],
+        "audit_event_count": _safe_int(audit.get("event_count")),
+        "failure_count": _safe_int(retries.get("failure_count")),
+        "impact_changed_field_count": _safe_int(impact.get("changed_field_count")),
+        "impact_operation": impact.get("operation"),
+        "impact_resource_id": impact.get("resource_id"),
+        "impact_resource_type": impact.get("resource_type"),
+        "latest_audit_event_at": audit.get("latest_event_at"),
+        "latest_audit_event_type": audit.get("latest_event_type"),
         "modified_field_count": len(modified_fields),
+        "permission_issue_count": _safe_int(permissions.get("issue_count")),
+        "permission_status": permissions.get("status"),
+        "retry_count": _safe_int(retries.get("retry_count")),
         "result_id": result_run.get("result_id"),
         "result_run_id": public_draft.get("result_run_id"),
         "result_status": result_status,
@@ -2383,6 +2409,179 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _assistant_action_required_permissions(action: str) -> list[str]:
+    if action in {"create_ai_agent", "create_ai_skill"}:
+        return ["system.ai_capabilities.manage"]
+    if action == "create_scheduled_job":
+        return ["system.scheduled_jobs.manage"]
+    if action in {"create_plugin_action", "create_plugin_connection"}:
+        return ["system.plugins.manage"]
+    if action == "create_rd_task":
+        return ["role:product_owner_or_rd_owner"]
+    return []
+
+
+def _assistant_action_missing_permissions(
+    *,
+    action: str,
+    required_permissions: list[str],
+    user: dict[str, Any] | None,
+) -> list[str]:
+    if user is None:
+        return []
+    if action == "create_rd_task":
+        roles = set(user.get("roles") or [])
+        if "admin" in roles or roles.intersection({"product_owner", "rd_owner"}):
+            return []
+        return required_permissions
+    return [
+        permission
+        for permission in required_permissions
+        if not _user_has_permission(user, permission)
+    ]
+
+
+def _assistant_action_draft_audit_events(
+    current_store: Any,
+    *,
+    draft_id: str,
+) -> list[dict[str, Any]]:
+    repository = assistant_action_repository(current_store)
+    list_events = getattr(repository, "list_audit_events", None)
+    if callable(list_events):
+        try:
+            events = list_events(
+                ai_task_id=None,
+                actor_id=None,
+                created_from=None,
+                created_to=None,
+                event_type=None,
+                subject_id=draft_id,
+                subject_type="assistant_action_draft",
+            )
+        except TypeError:
+            events = list_events(
+                subject_id=draft_id,
+                subject_type="assistant_action_draft",
+            )
+    else:
+        events = [
+            event
+            for event in _memory_audit_events(current_store)
+            if event.get("subject_type") == "assistant_action_draft"
+            and event.get("subject_id") == draft_id
+        ]
+    return sorted(
+        [dict(event) for event in events or [] if isinstance(event, dict)],
+        key=lambda item: (
+            str(item.get("created_at") or ""),
+            _safe_int(item.get("sequence")),
+            str(item.get("id") or ""),
+        ),
+    )
+
+
+def _assistant_action_draft_governance(
+    current_store: Any,
+    draft: dict[str, Any],
+    *,
+    preview: dict[str, Any],
+    user: dict[str, Any] | None,
+) -> dict[str, Any]:
+    metadata_json = draft.get("metadata_json") if isinstance(draft.get("metadata_json"), dict) else {}
+    validation = preview.get("validation") if isinstance(preview.get("validation"), dict) else {}
+    validation_issues = (
+        validation.get("issues") if isinstance(validation.get("issues"), list) else []
+    )
+    permission_issues = [
+        dict(issue)
+        for issue in validation_issues
+        if isinstance(issue, dict) and str(issue.get("field") or "") == "permission"
+    ]
+    required_permissions = _assistant_action_required_permissions(str(draft.get("action") or ""))
+    missing_permissions = _assistant_action_missing_permissions(
+        action=str(draft.get("action") or ""),
+        required_permissions=required_permissions,
+        user=user,
+    )
+    permission_status = "blocked" if missing_permissions or permission_issues else "passed"
+    target = preview.get("target") if isinstance(preview.get("target"), dict) else {}
+    diffs = preview.get("diffs") if isinstance(preview.get("diffs"), list) else []
+    payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+    normalized_diffs = [
+        {
+            "change_type": str(diff.get("change_type") or ""),
+            "field": str(diff.get("field") or ""),
+            "label": str(diff.get("label") or diff.get("field") or ""),
+        }
+        for diff in diffs
+        if isinstance(diff, dict)
+    ]
+    failure_history = metadata_json.get("failure_history")
+    if not isinstance(failure_history, list):
+        failure_history = []
+    current_failure = metadata_json.get("failure")
+    failure_sources = list(failure_history)
+    if isinstance(current_failure, dict):
+        failure_sources.append({"failure": current_failure})
+    last_failure = failure_sources[-1] if failure_sources else {}
+    last_failure_payload = (
+        last_failure.get("failure") if isinstance(last_failure.get("failure"), dict) else {}
+    )
+    audit_events = _assistant_action_draft_audit_events(
+        current_store,
+        draft_id=str(draft.get("id") or ""),
+    )
+    latest_event = audit_events[-1] if audit_events else {}
+    return {
+        "audit": {
+            "event_count": len(audit_events),
+            "event_types": sorted(
+                {
+                    str(event.get("event_type") or "")
+                    for event in audit_events
+                    if str(event.get("event_type") or "")
+                }
+            ),
+            "latest_actor_id": latest_event.get("actor_id"),
+            "latest_event_at": latest_event.get("created_at"),
+            "latest_event_id": latest_event.get("id"),
+            "latest_event_type": latest_event.get("event_type"),
+        },
+        "diff": {
+            "changed_fields": normalized_diffs,
+            "count": len(normalized_diffs),
+        },
+        "impact": {
+            "changed_field_count": len(normalized_diffs),
+            "operation": target.get("operation") or "create",
+            "payload_field_count": len(payload),
+            "resource_id": target.get("resource_id"),
+            "resource_type": target.get("resource_type") or draft.get("action"),
+            "source_resource": target.get("source_resource"),
+        },
+        "permissions": {
+            "issue_count": len(permission_issues) + len(missing_permissions),
+            "issues": permission_issues,
+            "missing_permissions": missing_permissions,
+            "required_permissions": required_permissions,
+            "status": permission_status,
+        },
+        "retries": {
+            "can_retry": draft.get("status") == "failed",
+            "failure_count": len(failure_sources),
+            "last_failure_code": last_failure_payload.get("code"),
+            "last_failure_message": last_failure_payload.get("message"),
+            "retry_count": _safe_int(metadata_json.get("retry_count")),
+            "retry_reason": metadata_json.get("retry_reason"),
+        },
+        "risk": {
+            "level": draft.get("risk_level", "medium"),
+            "reason": metadata_json.get("risk_reason"),
+        },
+    }
+
+
 def public_assistant_action_draft(
     draft: dict[str, Any],
     *,
@@ -2418,9 +2617,16 @@ def public_assistant_action_draft(
     if result_run is not None:
         public["result_run"] = result_run
     preview_draft = _draft_with_resolved_prerequisites(current_store, draft)
-    public["preview"] = assistant_action_draft_preview(
+    preview = assistant_action_draft_preview(
         current_store,
         preview_draft,
+        user=user,
+    )
+    public["preview"] = preview
+    public["governance"] = _assistant_action_draft_governance(
+        current_store,
+        draft,
+        preview=preview,
         user=user,
     )
     return {key: value for key, value in public.items() if value is not None}

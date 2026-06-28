@@ -46,6 +46,20 @@ const validationColors = new Map([
   ['warning', 'orange'],
 ]);
 
+const permissionLabels = new Map([
+  ['blocked', '阻塞'],
+  ['passed', '通过'],
+  ['unknown', '未知'],
+  ['warning', '警告'],
+]);
+
+const permissionColors = new Map([
+  ['blocked', 'red'],
+  ['passed', 'green'],
+  ['unknown', 'default'],
+  ['warning', 'orange'],
+]);
+
 const riskColors = new Map([
   ['critical', 'red'],
   ['high', 'volcano'],
@@ -67,12 +81,31 @@ export function validationTag(status?: string | null) {
   return <StatusTag color={validationColors.get(value) ?? 'default'} label={validationLabels.get(value) ?? value} />;
 }
 
+export function permissionTag(status?: string | null) {
+  const value = String(status ?? 'unknown');
+  return <StatusTag color={permissionColors.get(value) ?? 'default'} label={permissionLabels.get(value) ?? value} />;
+}
+
 export function riskTag(risk?: string | null) {
   const value = String(risk ?? '-');
   if (value === '-') {
     return '-';
   }
   return <StatusTag color={riskColors.get(value) ?? 'default'} label={value} />;
+}
+
+export function operationText(operation?: string | null) {
+  const value = String(operation ?? '').trim();
+  if (value === 'create') {
+    return '新增';
+  }
+  if (value === 'update') {
+    return '更新';
+  }
+  if (value === 'delete') {
+    return '删除';
+  }
+  return value || '-';
 }
 
 export function compactText(value?: string | null) {

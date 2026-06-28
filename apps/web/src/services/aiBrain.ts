@@ -1033,6 +1033,7 @@ export type AssistantActionDraftRecord = {
   created_by?: string;
   expires_at?: string;
   id: string;
+  governance?: AssistantActionDraftGovernance;
   metadata_json?: Record<string, unknown>;
   payload: Record<string, unknown>;
   preview?: AssistantActionDraftPreview;
@@ -1065,7 +1066,18 @@ export type AssistantActionDraftWorkbenchItem = {
   created_by?: string | null;
   expires_at?: string | null;
   id: string;
+  audit_event_count?: number;
+  failure_count?: number;
+  impact_changed_field_count?: number;
+  impact_operation?: string | null;
+  impact_resource_id?: string | null;
+  impact_resource_type?: string | null;
+  latest_audit_event_at?: string | null;
+  latest_audit_event_type?: string | null;
   modified_field_count: number;
+  permission_issue_count?: number;
+  permission_status?: string | null;
+  retry_count?: number;
   result_id?: string | null;
   result_run_id?: string | null;
   result_status?: string | null;
@@ -1135,6 +1147,56 @@ export type AssistantActionDraftPreview = {
   validation?: {
     issues?: AssistantActionDraftPreviewIssue[];
     status?: 'blocked' | 'passed' | 'warning' | string;
+  };
+};
+
+export type AssistantActionDraftGovernance = {
+  audit?: {
+    event_count?: number;
+    event_types?: string[];
+    latest_actor_id?: string | null;
+    latest_event_at?: string | null;
+    latest_event_id?: string | null;
+    latest_event_type?: string | null;
+  };
+  diff?: {
+    changed_fields?: Array<{
+      change_type?: string;
+      field?: string;
+      label?: string;
+    }>;
+    count?: number;
+  };
+  impact?: {
+    changed_field_count?: number;
+    operation?: string | null;
+    payload_field_count?: number;
+    resource_id?: string | null;
+    resource_type?: string | null;
+    source_resource?: {
+      resource_id?: string | null;
+      resource_type?: string | null;
+      title?: string | null;
+    } | null;
+  };
+  permissions?: {
+    issue_count?: number;
+    issues?: AssistantActionDraftPreviewIssue[];
+    missing_permissions?: string[];
+    required_permissions?: string[];
+    status?: string | null;
+  };
+  retries?: {
+    can_retry?: boolean;
+    failure_count?: number;
+    last_failure_code?: string | null;
+    last_failure_message?: string | null;
+    retry_count?: number;
+    retry_reason?: string | null;
+  };
+  risk?: {
+    level?: string | null;
+    reason?: string | null;
   };
 };
 

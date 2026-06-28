@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 动作确认中心治理摘要：草案公开响应新增 `governance`，列表展示影响对象、权限状态、审计事件数、失败和重试次数，详情弹窗集中展示风险、影响、权限、执行前后差异、失败重试和审计链路。
 - 真实全链路回归脚本：新增 `scripts/full_chain_regression.py`，通过公开 API 串联用户反馈、需求、迭代版本、AI 任务、Review、知识沉淀、版本代码分支、本地完整代码巡检、Bug/整改任务、版本驾驶舱、统一 full-chain、团队看板和 AI 助手引用，便于本地 PostgreSQL 运行态一键验收业务闭环。
 - AI 任务显式验收启动模式：`POST /api/ai-tasks/{task_id}/start` 支持管理员传入 `execution_mode=deterministic` 和 `reason`，用于本地全链路回归跳过研发执行器 Runner 和外部模型网关波动；该模式写入 `ai_task.deterministic_execution_used` 审计，不生成模型调用日志，生产默认路径仍走研发执行器策略或模型网关。
 - full-chain 代码巡检聚合补齐：需求归属迭代版本且版本维护代码分支配置时，代码巡检报告可按同代码库和工作分支进入该需求链路；AI 助手引用解析补齐 `product_version` 和仓储上下文中的 `code_inspection_report`。
