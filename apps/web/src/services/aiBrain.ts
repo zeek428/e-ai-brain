@@ -33,6 +33,7 @@ import {
 } from './authClient';
 import type { ScopeGrant } from './authClient';
 import type { AssistantActionDraftPreview } from './assistantDraftClient';
+import { mapBugRecord, type BugListItem } from './bugClient';
 import type { CodeInspectionReportRecord } from './codeInspectionClient';
 
 export { ApiRequestError, apiRequest };
@@ -156,6 +157,20 @@ export type {
   AssistantRoleQuickTaskConfigListQuery,
   AssistantRoleQuickTaskGroup,
 } from './assistantConfigClient';
+export {
+  batchUpdateManagementBugs,
+  createManagementBug,
+  deleteManagementBug,
+  fetchManagementBugList,
+  fetchManagementBugs,
+  updateManagementBug,
+} from './bugClient';
+export type {
+  BugBatchUpdatePayload,
+  BugBatchUpdateResult,
+  BugListQuery,
+  BugMutationPayload,
+} from './bugClient';
 export {
   fetchCodeInspectionDashboard,
   fetchCodeInspectionDetail,
@@ -747,30 +762,6 @@ export type ProductListQuery = RemoteListQuery & {
   name?: string;
   ownerTeam?: string;
   status?: string;
-};
-
-export type BugListQuery = RemoteListQuery & {
-  module?: string;
-  severity?: string;
-  status?: string;
-  title?: string;
-  version?: string;
-};
-
-export type BugBatchUpdatePayload = {
-  assignee?: string;
-  bug_ids: string[];
-  reason?: string;
-  severity?: string;
-  status?: string;
-};
-
-export type BugBatchUpdateResult = {
-  batchId: string;
-  skipped: Array<{ code: string; id: string; message: string }>;
-  skippedCount: number;
-  updated: BugRecord[];
-  updatedCount: number;
 };
 
 export type ProductVersionListQuery = RemoteListQuery & {
@@ -1832,23 +1823,6 @@ export type ProductRelatedSystemMutationPayload = {
   status?: string;
 };
 
-export type BugMutationPayload = {
-  assignee?: string;
-  description?: string;
-  duplicate_of_bug_id?: string | null;
-  evidence?: Record<string, unknown>;
-  module_code?: string;
-  product_id?: string;
-  related_task_id?: string;
-  requirement_id?: string;
-  reproduce_steps?: string[];
-  severity?: string;
-  source?: string;
-  status?: string;
-  title?: string;
-  version_id?: string;
-};
-
 export type KnowledgeDocumentMutationPayload = {
   content?: string;
   doc_type?: string;
@@ -2075,27 +2049,6 @@ type RequirementFullChainResponse = {
     timeline_events: number;
   }>;
   timeline?: RequirementFullChainTimelineItemResponse[];
-};
-
-type BugListItem = {
-  assignee?: string | null;
-  created_at?: string;
-  description?: string;
-  duplicate_of_bug_id?: string | null;
-  evidence?: unknown;
-  id: string;
-  module_code?: string | null;
-  product_id?: string;
-  related_task_id?: string | null;
-  reproduce_steps?: unknown;
-  requirement_id?: string | null;
-  severity?: string;
-  source?: string;
-  status?: string;
-  title: string;
-  version_code?: string | null;
-  version_id?: string | null;
-  version_name?: string | null;
 };
 
 type TaskListItem = {
@@ -2630,46 +2583,6 @@ function normalizeKnowledgeStatus(status?: string): KnowledgeRecord['status'] {
     return 'index_failed';
   }
   return 'pending_index';
-}
-
-function normalizeBugSeverity(severity?: string): BugRecord['severity'] {
-  if (severity === 'blocker' || severity === 'critical' || severity === 'minor') {
-    return severity;
-  }
-  return 'major';
-}
-
-function normalizeBugStatus(status?: string): BugRecord['status'] {
-  if (
-    status === 'assigned' ||
-    status === 'closed' ||
-    status === 'fixed' ||
-    status === 'needs_info' ||
-    status === 'open' ||
-    status === 'reopened' ||
-    status === 'triaged' ||
-    status === 'verified'
-  ) {
-    return status;
-  }
-  return 'open';
-}
-
-function normalizeBugSource(source?: string): BugRecord['source'] {
-  if (source === 'ai_auto_test' || source === 'ai_post_release' || source === 'code_inspection') {
-    return source;
-  }
-  return 'manual_test';
-}
-
-function normalizeStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .map((item) => (typeof item === 'string' ? item : JSON.stringify(item) ?? ''))
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 function normalizeObjectRecord(value: unknown): Record<string, unknown> | undefined {
@@ -6022,138 +5935,6 @@ export async function fetchLifecycleContext(params: {
     },
     upstream: (context.upstream ?? []).map(mapLifecycleRelation),
   };
-}
-
-export async function fetchManagementBugs(): Promise<BugRecord[]> {
-  const token = requireAccessToken();
-  const bugs = await apiRequest<ListResponse<BugListItem>>('/api/bugs', { token });
-
-  return bugs.items.map((bug) => ({
-    assignee: bug.assignee ?? '-',
-    createdAt: formatListDate(bug.created_at),
-    description: bug.description,
-    duplicateOfBugId: bug.duplicate_of_bug_id ?? undefined,
-    evidence: normalizeObjectRecord(bug.evidence),
-    id: bug.id,
-    module: bug.module_code ?? '-',
-    productId: bug.product_id,
-    relatedTaskId: bug.related_task_id ?? undefined,
-    reproduceSteps: normalizeStringList(bug.reproduce_steps),
-    requirementId: bug.requirement_id ?? undefined,
-    severity: normalizeBugSeverity(bug.severity),
-    source: normalizeBugSource(bug.source),
-    status: normalizeBugStatus(bug.status),
-    title: bug.title,
-    versionId: bug.version_id ?? undefined,
-    versionName: bug.version_id
-      ? formatUnknownValue(bug.version_name ?? bug.version_code ?? bug.version_id)
-      : '未关联',
-  }));
-}
-
-function mapBugRecord(bug: BugListItem): BugRecord {
-  return {
-    assignee: bug.assignee ?? '-',
-    createdAt: formatListDate(bug.created_at),
-    description: bug.description,
-    duplicateOfBugId: bug.duplicate_of_bug_id ?? undefined,
-    evidence: normalizeObjectRecord(bug.evidence),
-    id: bug.id,
-    module: bug.module_code ?? '-',
-    productId: bug.product_id,
-    relatedTaskId: bug.related_task_id ?? undefined,
-    reproduceSteps: normalizeStringList(bug.reproduce_steps),
-    requirementId: bug.requirement_id ?? undefined,
-    severity: normalizeBugSeverity(bug.severity),
-    source: normalizeBugSource(bug.source),
-    status: normalizeBugStatus(bug.status),
-    title: bug.title,
-    versionId: bug.version_id ?? undefined,
-    versionName: bug.version_id
-      ? formatUnknownValue(bug.version_name ?? bug.version_code ?? bug.version_id)
-      : '未关联',
-  };
-}
-
-export async function fetchManagementBugList(
-  query: BugListQuery = {},
-): Promise<RemoteListResult<BugRecord>> {
-  const token = requireAccessToken();
-  const params = new URLSearchParams();
-  appendQueryParam(params, 'module', query.module);
-  appendQueryParam(params, 'severity', query.severity);
-  appendQueryParam(params, 'status', query.status);
-  appendQueryParam(params, 'title', query.title);
-  appendQueryParam(params, 'version', query.version);
-  appendRemoteListParams(params, query);
-  const queryString = params.toString();
-  const bugs = await apiRequest<ListResponse<BugListItem>>(
-    queryString ? `/api/bugs?${queryString}` : '/api/bugs',
-    { token },
-  );
-
-  return {
-    page: bugs.page ?? query.page ?? 1,
-    pageSize: bugs.page_size ?? query.pageSize ?? 10,
-    performance: bugs.performance,
-    rows: bugs.items.map(mapBugRecord),
-    total: bugs.total,
-  };
-}
-
-export async function createManagementBug(payload: BugMutationPayload) {
-  const token = requireAccessToken();
-  return apiRequest<{ id: string }>('/api/bugs', {
-    body: payload,
-    method: 'POST',
-    token,
-  });
-}
-
-export async function updateManagementBug(bugId: string, payload: BugMutationPayload) {
-  const token = requireAccessToken();
-  return apiRequest<{ id: string }>(`/api/bugs/${bugId}`, {
-    body: payload,
-    method: 'PATCH',
-    token,
-  });
-}
-
-export async function batchUpdateManagementBugs(
-  payload: BugBatchUpdatePayload,
-): Promise<BugBatchUpdateResult> {
-  const token = requireAccessToken();
-  const result = await apiRequest<{
-    batch_id: string;
-    skipped?: Array<{ code?: string; id?: string; message?: string }>;
-    skipped_count?: number;
-    updated?: BugListItem[];
-    updated_count?: number;
-  }>('/api/bugs/batch-update', {
-    body: payload,
-    method: 'POST',
-    token,
-  });
-
-  return {
-    batchId: result.batch_id,
-    skipped: (result.skipped ?? []).map((item) => ({
-      code: item.code ?? 'UNKNOWN',
-      id: item.id ?? '-',
-      message: item.message ?? '-',
-    })),
-    skippedCount: normalizeDashboardCount(result.skipped_count),
-    updated: (result.updated ?? []).map(mapBugRecord),
-    updatedCount: normalizeDashboardCount(result.updated_count),
-  };
-}
-
-export async function deleteManagementBug(bugId: string) {
-  const token = requireAccessToken();
-  return apiRequest<{ deleted: boolean; id: string }>(`/api/bugs/${bugId}`, {
-    method: 'DELETE',
-    token,
-  });
 }
 
 export async function fetchTaskCenterTasks(
