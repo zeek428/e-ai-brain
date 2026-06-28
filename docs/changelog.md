@@ -50,6 +50,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 前端团队看板 client 拆分：新增 `apps/web/src/services/dashboardClient.ts`，将 IT 团队看板响应类型、读模型映射和 `fetchItTeamDashboard` 从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
 - 前端认证客户端拆分：新增 `apps/web/src/services/authClient.ts` 统一维护访问令牌、当前用户缓存、登录/退出、认证状态事件和 401 跳转，`services/aiBrain.ts` 保持兼容导出并继续向领域 client 拆分，减少单一服务文件膨胀。
 - 前端 API 请求基础设施拆分：新增 `apps/web/src/services/apiClient.ts` 统一维护 API base URL、envelope、错误解析、401 处理回调和远程分页参数拼装，`services/aiBrain.ts` 保持原导出兼容并开始向领域 client 拆分。
 - 代码巡检列表操作列宽度与横向滚动宽度对齐真实列宽，避免 fixed right 操作区被表格容器遮挡导致“详情”无法点击。
