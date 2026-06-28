@@ -414,21 +414,6 @@ def requirement_full_chain_payload(
         "updated_at",
     )
     bug_ids = {str(bug["id"]) for bug in bugs}
-    code_inspection_reports = sort_by_lifecycle_time(
-        [
-            report
-            for report in _read_memory_dict(current_store, "code_inspection_reports").values()
-            if set(str(task_id) for task_id in report.get("created_task_ids", [])).intersection(
-                task_ids
-            )
-            or set(str(bug_id) for bug_id in report.get("created_bug_ids", [])).intersection(
-                bug_ids
-            )
-        ],
-        "scan_finished_at",
-        "created_at",
-        "updated_at",
-    )
     branch_configs = sort_by_lifecycle_time(
         [
             branch_config
@@ -441,6 +426,32 @@ def requirement_full_chain_payload(
         ],
         "updated_at",
         "created_at",
+    )
+    version_branch_report_keys = {
+        (str(branch_config.get("repository_id")), str(branch_config.get("working_branch")))
+        for branch_config in branch_configs
+        if branch_config.get("repository_id") and branch_config.get("working_branch")
+    }
+    code_inspection_reports = sort_by_lifecycle_time(
+        [
+            report
+            for report in _read_memory_dict(current_store, "code_inspection_reports").values()
+            if set(str(task_id) for task_id in report.get("created_task_ids", [])).intersection(
+                task_ids
+            )
+            or set(str(bug_id) for bug_id in report.get("created_bug_ids", [])).intersection(
+                bug_ids
+            )
+            or (
+                version_branch_report_keys
+                and str(report.get("product_id")) == str(requirement.get("product_id"))
+                and (str(report.get("repository_id")), str(report.get("branch")))
+                in version_branch_report_keys
+            )
+        ],
+        "scan_finished_at",
+        "created_at",
+        "updated_at",
     )
     knowledge_deposits = sort_by_lifecycle_time(
         [

@@ -656,6 +656,8 @@ def test_lifecycle_full_chain_resolves_subjects_to_requirement_chain(monkeypatch
     lifecycle = build_mvp_lifecycle(headers)
     evidence = add_v1_2_lifecycle_evidence(headers, lifecycle)
     report_id = "code_inspection_report_lifecycle"
+    branch_config = app.state.store.product_version_branch_configs[lifecycle["branch_config_id"]]
+    version_branch_report_id = "code_inspection_report_version_branch"
     app.state.store.code_inspection_reports[report_id] = {
         "branch": "main",
         "created_at": "2026-06-01T03:00:00+00:00",
@@ -671,6 +673,21 @@ def test_lifecycle_full_chain_resolves_subjects_to_requirement_chain(monkeypatch
         "scheduled_job_run_id": "scheduled_job_run_full_chain",
         "status": "completed",
         "summary": "生命周期链路代码巡检",
+    }
+    app.state.store.code_inspection_reports[version_branch_report_id] = {
+        "branch": branch_config["working_branch"],
+        "created_at": "2026-06-01T03:10:00+00:00",
+        "created_bug_ids": [],
+        "created_task_ids": [],
+        "finding_count": 1,
+        "id": version_branch_report_id,
+        "product_id": lifecycle["product_id"],
+        "repository_id": branch_config["repository_id"],
+        "risk_level": "medium",
+        "scan_finished_at": "2026-06-01T03:12:00+00:00",
+        "severe_finding_count": 0,
+        "status": "completed",
+        "summary": "版本分支代码巡检",
     }
     app.state.store.scheduled_job_runs["scheduled_job_run_full_chain"] = {
         "created_at": "2026-06-01T02:58:00+00:00",
@@ -718,7 +735,10 @@ def test_lifecycle_full_chain_resolves_subjects_to_requirement_chain(monkeypatch
         "subject_type": "code_inspection_report",
     }
     assert full_chain["requirement"]["id"] == lifecycle["requirement_id"]
-    assert {report["id"] for report in full_chain["code_inspection_reports"]} == {report_id}
+    assert {report["id"] for report in full_chain["code_inspection_reports"]} == {
+        report_id,
+        version_branch_report_id,
+    }
     execution_trace_ids = {trace["id"] for trace in full_chain["execution_traces"]}
     execution_trace_root_types = {trace["root_type"] for trace in full_chain["execution_traces"]}
     assert "scheduled_job_run_full_chain" in execution_trace_ids

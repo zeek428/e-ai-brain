@@ -266,3 +266,124 @@ def test_direct_version_status_patch_requires_advance_endpoint():
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "PRODUCT_VERSION_STATUS_ADVANCE_REQUIRED"
+
+
+def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, "version-dashboard-product")
+    version = create_version(headers, product["id"], "2026-dashboard", status="active")
+    requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "驾驶舱需求", version["id"])["id"],
+    )
+    set_requirement_status(requirement["id"], "developing")
+    app.state.store.product_git_repositories["repo_dashboard"] = {
+        "default_branch": "main",
+        "git_provider": "github",
+        "id": "repo_dashboard",
+        "name": "Dashboard Repo",
+        "product_id": product["id"],
+        "project_path": "zeek428/e-ai-brain",
+        "remote_url": "git@github.com:zeek428/e-ai-brain.git",
+        "repo_type": "code",
+        "root_path": "/",
+        "status": "active",
+    }
+    app.state.store.product_version_branch_configs["version_branch_dashboard"] = {
+        "base_branch": "main",
+        "branch_status": "not_created",
+        "creation_source": "manual",
+        "id": "version_branch_dashboard",
+        "product_id": product["id"],
+        "repository_id": "repo_dashboard",
+        "version_id": version["id"],
+        "working_branch": "release/2026-dashboard",
+    }
+    app.state.store.ai_tasks["task_version_dashboard"] = {
+        "created_at": "2026-06-04T08:00:00+00:00",
+        "created_by": "user_admin",
+        "id": "task_version_dashboard",
+        "product_id": product["id"],
+        "requirement_id": requirement["id"],
+        "status": "running",
+        "task_type": "implementation",
+        "title": "实现版本驾驶舱",
+        "updated_at": "2026-06-04T09:00:00+00:00",
+        "version_id": version["id"],
+    }
+    app.state.store.bugs["bug_version_dashboard"] = {
+        "assignee": "qa_owner",
+        "created_at": "2026-06-04T09:10:00+00:00",
+        "description": "严重缺陷",
+        "id": "bug_version_dashboard",
+        "module_code": "delivery",
+        "product_id": product["id"],
+        "related_task_id": "task_version_dashboard",
+        "requirement_id": requirement["id"],
+        "severity": "critical",
+        "source": "manual_test",
+        "status": "open",
+        "title": "发布阻塞 Bug",
+        "updated_at": "2026-06-04T09:20:00+00:00",
+        "version_id": version["id"],
+    }
+    app.state.store.code_inspection_reports["code_inspection_report_dashboard"] = {
+        "branch": "release/2026-dashboard",
+        "created_at": "2026-06-04T09:30:00+00:00",
+        "finding_count": 3,
+        "id": "code_inspection_report_dashboard",
+        "product_id": product["id"],
+        "quality_gate": {"status": "failed"},
+        "repository_id": "repo_dashboard",
+        "repository_name": "Dashboard Repo",
+        "risk_level": "high",
+        "severe_finding_count": 1,
+        "status": "completed",
+        "summary": "存在高风险问题",
+    }
+    app.state.store.jenkins_release_records["release_dashboard"] = {
+        "build_id": "42",
+        "created_at": "2026-06-04T10:00:00+00:00",
+        "id": "release_dashboard",
+        "job_name": "deploy-dashboard",
+        "product_id": product["id"],
+        "status": "failed",
+        "version_id": version["id"],
+    }
+
+    response = client.get(f"/api/product-versions/{version['id']}/dashboard", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["version"]["id"] == version["id"]
+    assert data["summary"] == {
+        "blockers": 4,
+        "branch_configs": 1,
+        "bugs": 1,
+        "code_inspection_reports": 1,
+        "open_bugs": 1,
+        "releases": 1,
+        "requirements": 1,
+        "severe_bugs": 1,
+        "severe_code_inspection_reports": 1,
+        "tasks": 1,
+    }
+    assert data["status_impact"]["target_status"] == "testing"
+    assert data["status_impact"]["updated_requirements"] == [
+        {
+            "from_status": "developing",
+            "id": requirement["id"],
+            "title": "驾驶舱需求",
+            "to_status": "testing",
+        }
+    ]
+    assert {item["source_type"] for item in data["blockers"]} == {
+        "bug",
+        "code_inspection_report",
+        "jenkins_release",
+        "product_version_branch_config",
+    }
+    assert data["branch_configs"][0]["repository_name"] == "Dashboard Repo"
+    assert data["code_inspection_reports"][0]["id"] == "code_inspection_report_dashboard"
+    assert data["bugs"][0]["id"] == "bug_version_dashboard"

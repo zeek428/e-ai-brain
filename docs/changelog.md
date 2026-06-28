@@ -8,6 +8,10 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本：新增 `scripts/full_chain_regression.py`，通过公开 API 串联用户反馈、需求、迭代版本、AI 任务、Review、知识沉淀、版本代码分支、本地完整代码巡检、Bug/整改任务、版本驾驶舱、统一 full-chain、团队看板和 AI 助手引用，便于本地 PostgreSQL 运行态一键验收业务闭环。
+- AI 任务显式验收启动模式：`POST /api/ai-tasks/{task_id}/start` 支持管理员传入 `execution_mode=deterministic` 和 `reason`，用于本地全链路回归跳过研发执行器 Runner 和外部模型网关波动；该模式写入 `ai_task.deterministic_execution_used` 审计，不生成模型调用日志，生产默认路径仍走研发执行器策略或模型网关。
+- full-chain 代码巡检聚合补齐：需求归属迭代版本且版本维护代码分支配置时，代码巡检报告可按同代码库和工作分支进入该需求链路；AI 助手引用解析补齐 `product_version` 和仓储上下文中的 `code_inspection_report`。
+- 迭代版本驾驶舱：版本列表新增“驾驶舱”入口和 `GET /api/product-versions/{version_id}/dashboard`，按版本聚合需求、AI 任务、代码分支、Bug、代码巡检、发布记录、状态推进影响和阻塞项；接口按 `product.read` 与产品 scope 校验，Bug/代码巡检明细按子权限降级隐藏。
 - AI 助手失败草案重新打开：新增 `POST /api/assistant/action-drafts/{draft_id}/retry`，failed 草案可回到待确认状态，保留失败历史和重试元数据、清空失败 run、写入重试审计；草案任务台 failed 行新增“重新打开”入口，重新确认前不写业务配置。
 - 任务中心待确认 Review 子列表补齐服务端分页、排序、按 AI 任务筛选和性能观测：`GET /api/reviews/pending` 支持 `ai_task_id/page/page_size/sort_by/sort_order` 并优先调用 PostgreSQL count/page read model，任务操作进入确认弹窗时不再全量拉取后前端过滤。
 - 版本代码分支进入需求全链路：迭代版本“代码分支”列表新增“全链路”入口，AI 助手引用支持 `product_version_branch_config` / `branch_config`，统一解析到同版本需求链路并继续按产品 scope 校验。

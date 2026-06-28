@@ -390,6 +390,34 @@
 
 ---
 
+### TC-AIBRAIN-CONFIG-FUNC-008E: 迭代版本驾驶舱
+
+| 项目 | 内容 |
+|------|------|
+| 用例编号 | TC-AIBRAIN-CONFIG-FUNC-008E |
+| 用例名称 | 迭代版本驾驶舱 |
+| 优先级 | P1 |
+| 模块 | PRODUCT_CONFIG / REQUIREMENT / BUG / CODE_INSPECTION |
+| 创建人 | Codex |
+| 创建日期 | 2026-06-28 |
+
+**前置条件**:
+1. 用户已登录并具备 `product.read`，且产品 scope 覆盖目标迭代版本。
+2. 系统存在至少一个迭代版本，版本下关联需求、AI 任务、版本代码分支、Bug、代码巡检报告和发布记录。
+
+**测试步骤**:
+| 步骤 | 操作 | 预期结果 |
+|------|------|----------|
+| 1 | 在迭代版本列表点击目标版本“驾驶舱” | 页面调用 `GET /api/product-versions/{version_id}/dashboard`，弹窗展示版本名称、当前阶段、下一阶段、需求数、任务数、分支数、Bug 数、代码巡检数和发布记录数。 |
+| 2 | 查看阻塞项和阶段影响 | 未完成需求、发布阻塞 Bug、高风险代码巡检、缺少版本分支或缺少发布记录会进入阻塞项；状态推进影响展示目标阶段和会被同步推进的需求数。 |
+| 3 | 查看明细表格 | 需求、AI 任务、Bug、代码巡检、版本分支和发布记录均使用固定列宽和横向滚动，长标题、仓库地址或建议文本不会挤压操作区。 |
+| 4 | 使用只有 `product.read`、无 `bug.read` 或 `code_inspection.read` 的角色访问驾驶舱 | 版本摘要、需求、任务和分支仍可展示；Bug 或代码巡检明细为空，并在 `access_issues` 中提示对应能力缺少权限。 |
+| 5 | 使用产品 scope 外用户访问驾驶舱接口 | 返回 404，不泄露 scope 外版本是否存在。 |
+
+**状态**: 已自动化覆盖。接口聚合用例见 `apps/api/tests/test_iteration_version_status_flow.py::test_product_version_dashboard_aggregates_delivery_health_and_blockers`，页面弹窗用例见 `apps/web/tests/IterationVersionsPage.test.tsx`；真实网页验证作为提交前门禁执行。
+
+---
+
 ### TC-AIBRAIN-KNOWLEDGE-FUNC-012: 知识中心独立运营
 
 | 项目 | 内容 |

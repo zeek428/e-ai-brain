@@ -2481,6 +2481,62 @@ type ProductVersionAdvanceStatusResponse = {
   version: ProductVersionListItem;
 };
 
+type ProductVersionDashboardBlockerItem = {
+  id?: string;
+  reason?: string;
+  severity?: string;
+  source_type?: string;
+  title?: string;
+};
+
+type ProductVersionDashboardAccessIssue = {
+  code?: string;
+  message?: string;
+  section?: string;
+};
+
+type ProductVersionDashboardSummary = {
+  blockers: number;
+  branch_configs: number;
+  bugs: number;
+  code_inspection_reports: number;
+  open_bugs: number;
+  releases: number;
+  requirements: number;
+  severe_bugs: number;
+  severe_code_inspection_reports: number;
+  tasks: number;
+};
+
+type ProductVersionDashboardStatusCount = {
+  count: number;
+  status: string;
+};
+
+type ProductVersionDashboardStatusImpactResponse = {
+  blocked_requirements?: ProductVersionAdvanceRequirementImpact[];
+  target_status: string;
+  unchanged_requirements?: ProductVersionAdvanceRequirementImpact[];
+  updated_requirements?: ProductVersionAdvanceRequirementImpact[];
+};
+
+type ProductVersionDashboardResponse = {
+  access_issues?: ProductVersionDashboardAccessIssue[];
+  blockers?: ProductVersionDashboardBlockerItem[];
+  branch_configs?: ProductVersionBranchConfigListItem[];
+  bug_status_counts?: ProductVersionDashboardStatusCount[];
+  bugs?: BugListItem[];
+  code_inspection_reports?: CodeInspectionReportRecord[];
+  releases?: FlexibleListItem[];
+  requirement_status_counts?: ProductVersionDashboardStatusCount[];
+  requirements?: RequirementListItem[];
+  status_impact?: ProductVersionDashboardStatusImpactResponse | null;
+  summary?: Partial<ProductVersionDashboardSummary>;
+  task_status_counts?: ProductVersionDashboardStatusCount[];
+  tasks?: TaskListItem[];
+  version: ProductVersionListItem;
+};
+
 export type ProductVersionAdvanceStatusResult = {
   blockedRequirements: ProductVersionAdvanceRequirementImpact[];
   force: boolean;
@@ -2489,6 +2545,44 @@ export type ProductVersionAdvanceStatusResult = {
   targetStatus: ProductVersionRecord['status'];
   unchangedRequirements: ProductVersionAdvanceRequirementImpact[];
   updatedRequirements: ProductVersionAdvanceRequirementImpact[];
+  version: ProductVersionRecord;
+};
+
+export type ProductVersionDashboard = {
+  accessIssues: Array<{
+    code: string;
+    message: string;
+    section: string;
+  }>;
+  blockers: Array<{
+    id?: string;
+    reason: string;
+    severity: string;
+    sourceType: string;
+    title: string;
+  }>;
+  branchConfigs: ProductVersionBranchConfigRecord[];
+  bugStatusCounts: ProductVersionDashboardStatusCount[];
+  bugs: BugRecord[];
+  codeInspectionReports: CodeInspectionReportRecord[];
+  releases: Array<{
+    buildId?: string;
+    createdAt: string;
+    id: string;
+    jobName?: string;
+    status: string;
+  }>;
+  requirementStatusCounts: ProductVersionDashboardStatusCount[];
+  requirements: RequirementRecord[];
+  statusImpact?: {
+    blockedRequirements: ProductVersionAdvanceRequirementImpact[];
+    targetStatus: ProductVersionRecord['status'];
+    unchangedRequirements: ProductVersionAdvanceRequirementImpact[];
+    updatedRequirements: ProductVersionAdvanceRequirementImpact[];
+  };
+  summary: ProductVersionDashboardSummary;
+  taskStatusCounts: ProductVersionDashboardStatusCount[];
+  tasks: TaskCenterTaskRecord[];
   version: ProductVersionRecord;
 };
 
@@ -4068,7 +4162,7 @@ function normalizeBugStatus(status?: string): BugRecord['status'] {
 }
 
 function normalizeBugSource(source?: string): BugRecord['source'] {
-  if (source === 'ai_auto_test' || source === 'ai_post_release') {
+  if (source === 'ai_auto_test' || source === 'ai_post_release' || source === 'code_inspection') {
     return source;
   }
   return 'manual_test';
@@ -4707,6 +4801,74 @@ export async function fetchProductVersionBranchConfigs(
     { token },
   );
   return branchConfigs.items.map(mapProductVersionBranchConfigRecord);
+}
+
+function mapProductVersionDashboard(
+  dashboard: ProductVersionDashboardResponse,
+): ProductVersionDashboard {
+  const summary = dashboard.summary ?? {};
+  const statusImpact = dashboard.status_impact
+    ? {
+        blockedRequirements: dashboard.status_impact.blocked_requirements ?? [],
+        targetStatus: normalizeProductVersionStatus(dashboard.status_impact.target_status),
+        unchangedRequirements: dashboard.status_impact.unchanged_requirements ?? [],
+        updatedRequirements: dashboard.status_impact.updated_requirements ?? [],
+      }
+    : undefined;
+  return {
+    accessIssues: (dashboard.access_issues ?? []).map((issue) => ({
+      code: issue.code ?? '-',
+      message: issue.message ?? '-',
+      section: issue.section ?? '-',
+    })),
+    blockers: (dashboard.blockers ?? []).map((blocker) => ({
+      id: blocker.id,
+      reason: blocker.reason ?? '-',
+      severity: blocker.severity ?? 'medium',
+      sourceType: blocker.source_type ?? '-',
+      title: blocker.title ?? blocker.id ?? '-',
+    })),
+    branchConfigs: (dashboard.branch_configs ?? []).map(mapProductVersionBranchConfigRecord),
+    bugStatusCounts: dashboard.bug_status_counts ?? [],
+    bugs: (dashboard.bugs ?? []).map(mapBugRecord),
+    codeInspectionReports: dashboard.code_inspection_reports ?? [],
+    releases: (dashboard.releases ?? []).map((release) => ({
+      buildId: formatUnknownValue(release.build_id),
+      createdAt: formatListDate(formatUnknownValue(release.deployed_at ?? release.started_at ?? release.created_at)),
+      id: formatUnknownValue(release.id),
+      jobName: formatUnknownValue(release.job_name),
+      status: formatUnknownValue(release.status),
+    })),
+    requirementStatusCounts: dashboard.requirement_status_counts ?? [],
+    requirements: (dashboard.requirements ?? []).map(mapRequirementRecord),
+    statusImpact,
+    summary: {
+      blockers: normalizeDashboardCount(summary.blockers),
+      branch_configs: normalizeDashboardCount(summary.branch_configs),
+      bugs: normalizeDashboardCount(summary.bugs),
+      code_inspection_reports: normalizeDashboardCount(summary.code_inspection_reports),
+      open_bugs: normalizeDashboardCount(summary.open_bugs),
+      releases: normalizeDashboardCount(summary.releases),
+      requirements: normalizeDashboardCount(summary.requirements),
+      severe_bugs: normalizeDashboardCount(summary.severe_bugs),
+      severe_code_inspection_reports: normalizeDashboardCount(summary.severe_code_inspection_reports),
+      tasks: normalizeDashboardCount(summary.tasks),
+    },
+    taskStatusCounts: dashboard.task_status_counts ?? [],
+    tasks: (dashboard.tasks ?? []).map(mapTaskRecord),
+    version: mapProductVersionRecord(dashboard.version),
+  };
+}
+
+export async function fetchProductVersionDashboard(
+  versionId: string,
+): Promise<ProductVersionDashboard> {
+  const token = requireAccessToken();
+  const dashboard = await apiRequest<ProductVersionDashboardResponse>(
+    `/api/product-versions/${versionId}/dashboard`,
+    { token },
+  );
+  return mapProductVersionDashboard(dashboard);
 }
 
 export async function createProductVersionBranchConfig(

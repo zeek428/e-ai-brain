@@ -32,6 +32,7 @@ from app.services.product_config_context import (
     save_requirement_record,
 )
 from app.services.product_scope import product_scope_filter, user_can_read_product
+from app.services.product_version_dashboard import product_version_dashboard_response
 from app.services.product_version_listing import list_all_product_versions_response
 from app.services.version_status import (
     VERSION_STATUSES,
@@ -239,6 +240,29 @@ def list_product_version_branch_configs(
     _ensure_version_scope(user, version)
     items = _list_branch_configs(current_store, version_id)
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@router.get("/api/product-versions/{version_id}/dashboard")
+def get_product_version_dashboard(
+    version_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {PRODUCT_READ_PERMISSION})
+    current_store = store(request)
+    version = get_product_version_record(current_store, version_id)
+    if version is None:
+        raise api_error(404, "NOT_FOUND", "Product version not found")
+    _ensure_version_scope(user, version)
+    dashboard = product_version_dashboard_response(
+        current_store=current_store,
+        user=user,
+        version_id=version_id,
+    )
+    if dashboard is None:
+        raise api_error(404, "NOT_FOUND", "Product version not found")
+    _ensure_product_scope(user, dashboard["version"].get("product_id"))
+    return envelope(dashboard, get_trace_id(request))
 
 
 @router.post("/api/product-versions/{version_id}/branch-configs")

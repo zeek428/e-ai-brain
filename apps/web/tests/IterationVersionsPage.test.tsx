@@ -661,4 +661,223 @@ describe('IterationVersionsPage', () => {
     });
   });
 
+  it('opens the product version dashboard with delivery blockers and linked records', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-dashboard',
+                id: 'version_dashboard',
+                name: '驾驶舱迭代',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_api',
+                product_name: 'AI Brain',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'AI-BRAIN', id: 'product_api', name: 'AI Brain', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions?active_only=true&page_size=100'
+      ) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/product-versions/version_dashboard/dashboard' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            access_issues: [],
+            blockers: [
+              {
+                id: 'bug_dashboard',
+                reason: 'critical Bug 仍未关闭',
+                severity: 'high',
+                source_type: 'bug',
+                title: '发布阻塞 Bug',
+              },
+              {
+                id: 'version_branch_dashboard',
+                reason: '分支状态 not_created 不满足版本推进到 testing 的要求',
+                severity: 'medium',
+                source_type: 'product_version_branch_config',
+                title: 'release/2026-dashboard',
+              },
+            ],
+            branch_configs: [
+              {
+                base_branch: 'main',
+                branch_status: 'not_created',
+                creation_source: 'manual',
+                id: 'version_branch_dashboard',
+                product_id: 'product_api',
+                repository_id: 'repo_dashboard',
+                repository_name: 'Dashboard Repo',
+                version_id: 'version_dashboard',
+                working_branch: 'release/2026-dashboard',
+              },
+            ],
+            bugs: [
+              {
+                assignee: 'qa_owner',
+                created_at: '2026-06-04T09:10:00+00:00',
+                id: 'bug_dashboard',
+                module_code: 'delivery',
+                product_id: 'product_api',
+                severity: 'critical',
+                source: 'code_inspection',
+                status: 'open',
+                title: '发布阻塞 Bug',
+                version_id: 'version_dashboard',
+                version_name: '驾驶舱迭代',
+              },
+            ],
+            bug_status_counts: [{ count: 1, status: 'open' }],
+            code_inspection_reports: [
+              {
+                branch: 'release/2026-dashboard',
+                created_at: '2026-06-04T09:30:00+00:00',
+                finding_count: 3,
+                id: 'code_inspection_report_dashboard',
+                product_id: 'product_api',
+                repository_id: 'repo_dashboard',
+                repository_name: 'Dashboard Repo',
+                risk_level: 'high',
+                severe_finding_count: 1,
+                status: 'completed',
+                summary: '存在高风险问题',
+              },
+            ],
+            releases: [
+              {
+                build_id: '42',
+                created_at: '2026-06-04T10:00:00+00:00',
+                id: 'release_dashboard',
+                job_name: 'deploy-dashboard',
+                status: 'failed',
+              },
+            ],
+            requirement_status_counts: [{ count: 1, status: 'developing' }],
+            requirements: [
+              {
+                content: '驾驶舱需求内容',
+                created_at: '2026-06-04T08:00:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_dashboard',
+                priority: 'P1',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_api',
+                product_name: 'AI Brain',
+                status: 'developing',
+                title: '驾驶舱需求',
+                updated_at: '2026-06-04T09:00:00+00:00',
+                version_id: 'version_dashboard',
+                version_name: '驾驶舱迭代',
+              },
+            ],
+            status_impact: {
+              blocked_requirements: [],
+              target_status: 'testing',
+              unchanged_requirements: [],
+              updated_requirements: [
+                {
+                  from_status: 'developing',
+                  id: 'requirement_dashboard',
+                  title: '驾驶舱需求',
+                  to_status: 'testing',
+                },
+              ],
+            },
+            summary: {
+              blockers: 2,
+              branch_configs: 1,
+              bugs: 1,
+              code_inspection_reports: 1,
+              open_bugs: 1,
+              releases: 1,
+              requirements: 1,
+              severe_bugs: 1,
+              severe_code_inspection_reports: 1,
+              tasks: 1,
+            },
+            task_status_counts: [{ count: 1, status: 'running' }],
+            tasks: [
+              {
+                created_at: '2026-06-04T08:20:00+00:00',
+                created_by: 'user_admin',
+                id: 'task_dashboard',
+                product_id: 'product_api',
+                product_name: 'AI Brain',
+                requirement_id: 'requirement_dashboard',
+                status: 'running',
+                task_type: 'implementation',
+                title: '实现版本驾驶舱',
+                version_id: 'version_dashboard',
+              },
+            ],
+            version: {
+              code: '2026-dashboard',
+              id: 'version_dashboard',
+              name: '驾驶舱迭代',
+              product_code: 'AI-BRAIN',
+              product_id: 'product_api',
+              product_name: 'AI Brain',
+              status: 'active',
+            },
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<IterationVersionsPage />);
+
+    const [versionRowText] = await screen.findAllByText('2026-dashboard');
+    fireEvent.click(
+      within(versionRowText.closest('tr') as HTMLElement).getByRole('button', {
+        name: /驾驶舱/,
+      }),
+    );
+
+    expect(await screen.findByText('版本驾驶舱 · 2026-dashboard')).toBeInTheDocument();
+    expect(screen.getByText('下一阶段：测试中')).toBeInTheDocument();
+    expect(screen.getAllByText('发布阻塞 Bug').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('release/2026-dashboard').length).toBeGreaterThan(0);
+    expect(screen.getByText('驾驶舱需求')).toBeInTheDocument();
+    expect(screen.getByText('实现版本驾驶舱')).toBeInTheDocument();
+    expect(screen.getAllByText('Dashboard Repo').length).toBeGreaterThan(0);
+    expect(screen.getByText('deploy-dashboard')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+      '/api/product-versions/version_dashboard/dashboard',
+      'GET',
+    ]);
+  });
+
 });

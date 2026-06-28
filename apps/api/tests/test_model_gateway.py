@@ -101,6 +101,91 @@ def test_missing_model_gateway_configuration_does_not_generate_local_output(monk
     assert detail["output"] is None
 
 
+def test_ai_task_explicit_deterministic_start_bypasses_model_gateway(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    monkeypatch.setattr(main.settings, "model_gateway_base_url", "")
+    monkeypatch.setattr(main.settings, "model_gateway_api_key", "")
+    task = create_draft_design_task(headers)
+
+    response = client.post(
+        f"/api/ai-tasks/{task['task_id']}/start",
+        json={
+            "execution_mode": "deterministic",
+            "reason": "full-chain regression",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "waiting_review"
+    detail = client.get(f"/api/ai-tasks/{task['task_id']}", headers=headers).json()["data"]
+    assert detail["output"]["generated_by"] == "ai_brain_deterministic_execution"
+    assert detail["output"]["kind"] == "product_detail_design"
+    logs = client.get(
+        f"/api/model-gateway/logs?ai_task_id={task['task_id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert logs == []
+    audit_events = client.get(
+        f"/api/audit/events?ai_task_id={task['task_id']}&event_type=ai_task.deterministic_execution_used",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert audit_events[0]["payload"]["reason"] == "full-chain regression"
+
+
+def test_ai_task_explicit_deterministic_start_bypasses_executor_policy(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    monkeypatch.setattr(main.settings, "model_gateway_base_url", "")
+    monkeypatch.setattr(main.settings, "model_gateway_api_key", "")
+    task = create_draft_design_task(headers)
+    product_id = app.state.store.ai_tasks[task["task_id"]]["product_id"]
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["codex"],
+            "name": "全链路回归 Runner",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": ["/tmp"],
+        },
+        headers=headers,
+    ).json()["data"]
+    policy = client.post(
+        "/api/delivery/rd-task-executor-policies",
+        json={
+            "executor_type": "codex",
+            "instruction_template": "处理任务 {{task_id}}",
+            "name": "产品设计任务走 Runner",
+            "output_contract": {"summary": "string"},
+            "priority": 1,
+            "product_id": product_id,
+            "runner_id": runner["id"],
+            "status": "active",
+            "task_type": "product_detail_design",
+            "timeout_seconds": 600,
+            "workspace_root": "/tmp",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    response = client.post(
+        f"/api/ai-tasks/{task['task_id']}/start",
+        json={"execution_mode": "deterministic", "reason": "full-chain regression"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["status"] == "waiting_review"
+    assert "executor_task_id" not in payload
+    assert not app.state.store.ai_executor_tasks
+    detail = client.get(f"/api/ai-tasks/{task['task_id']}", headers=headers).json()["data"]
+    assert detail["output"]["generated_by"] == "ai_brain_deterministic_execution"
+    assert policy["id"] not in str(detail["input"])
+
+
 def test_model_gateway_logs_are_admin_only():
     admin_headers = auth_headers()
     create_started_design_task(admin_headers)

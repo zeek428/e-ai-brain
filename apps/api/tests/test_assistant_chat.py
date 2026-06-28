@@ -18,7 +18,11 @@ from app.services.assistant_metrics import (
     assistant_metric_details_response,
     assistant_metrics_response,
 )
-from app.services.assistant_references import assistant_reference_candidates_response
+from app.services.assistant_references import (
+    assistant_reference_candidates_response,
+    resolve_assistant_references,
+)
+from app.services.assistant_request_context import assistant_task_source_store
 
 client = TestClient(app)
 
@@ -1602,6 +1606,69 @@ def test_ai_assistant_reference_candidates_filter_readable_knowledge_documents()
             "type": "knowledge_document",
             "updated_at": "2026-06-14T08:00:00+00:00",
             "url": "/knowledge/documents?document_id=knowledge_payment_runbook",
+        }
+    ]
+
+
+def test_ai_assistant_resolves_code_inspection_report_from_repository_context():
+    source_store = assistant_task_source_store(
+        {
+            "code_inspection_reports": [
+                {
+                    "branch": "release/full-chain",
+                    "created_at": "2026-06-28T10:00:00+00:00",
+                    "id": "code_inspection_report_assistant",
+                    "product_id": "product_assistant",
+                    "repository_id": "repo_assistant",
+                    "risk_level": "critical",
+                    "status": "completed",
+                    "summary": "全链路回归代码巡检报告",
+                }
+            ],
+            "product_versions": [
+                {
+                    "code": "v-full-chain",
+                    "id": "version_assistant",
+                    "name": "全链路回归版本",
+                    "product_id": "product_assistant",
+                    "status": "active",
+                }
+            ],
+        },
+        repository=SimpleNamespace(),
+    )
+
+    resolved = resolve_assistant_references(
+        source_store,
+        references=[
+            {
+                "id": "version_assistant",
+                "type": "product_version",
+            },
+            {
+                "id": "code_inspection_report_assistant",
+                "type": "code_inspection_report",
+            }
+        ],
+        user={"id": "user_admin", "roles": ["admin"]},
+    )
+
+    assert resolved["items"] == [
+        {
+            "id": "version_assistant",
+            "title": "全链路回归版本",
+            "type": "product_version",
+            "url": "/delivery/versions?version_id=version_assistant",
+        },
+        {
+            "id": "code_inspection_report_assistant",
+            "summary": "全链路回归代码巡检报告",
+            "title": "全链路回归代码巡检报告",
+            "type": "code_inspection_report",
+            "url": (
+                "/governance/execution-traces?"
+                "source_id=code_inspection_report_assistant&source_type=code_inspection_report"
+            ),
         }
     ]
 

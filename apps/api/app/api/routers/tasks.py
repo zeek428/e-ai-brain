@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from time import perf_counter
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -103,6 +103,13 @@ class ReviewDecisionRequest(BaseModel):
     edited_content: dict[str, Any] | None = None
     decision_reason: str | None = None
     questions: list[str] = Field(default_factory=list)
+
+
+class StartAiTaskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    execution_mode: Literal["model_gateway", "deterministic"] | None = None
+    reason: str | None = None
 
 
 @router.get("/api/delivery/rd-task-executor-policies")
@@ -271,11 +278,14 @@ def batch_retry_ai_tasks(
 def start_ai_task(
     task_id: str,
     request: Request,
+    body: StartAiTaskRequest | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     payload = start_ai_task_response(
         code_review_executor=getattr(request.app.state, "code_review_executor", None),
         current_store=store(request),
+        execution_mode=body.execution_mode if body is not None else None,
+        execution_reason=body.reason if body is not None else None,
         task_id=task_id,
         user=user,
     )

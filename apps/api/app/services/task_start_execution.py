@@ -35,10 +35,42 @@ RETRYABLE_TASK_FAILURE_STEPS = {
 }
 
 
+def deterministic_task_output(task: dict[str, Any]) -> dict[str, Any]:
+    task_type = str(task.get("task_type") or "unknown")
+    requirement = task.get("requirement_snapshot") or {}
+    title = str(task.get("title") or requirement.get("title") or task_type)
+    requirement_title = str(requirement.get("title") or title)
+    output = {
+        "acceptance_points": [
+            "需求、迭代版本、任务、Review 和知识沉淀链路可被回归脚本验证。",
+            "该输出由显式 deterministic 执行模式生成，不代表模型网关真实生成结果。",
+        ],
+        "generated_by": "ai_brain_deterministic_execution",
+        "kind": task_type,
+        "summary": f"确定性验收输出：{requirement_title}",
+        "title": title,
+    }
+    if task_type == "code_review":
+        output.update(
+            {
+                "executor": {
+                    "executor_name": "deterministic",
+                    "executor_type": "local",
+                    "stage": "execute",
+                },
+                "findings": [],
+                "risk_level": "low",
+            }
+        )
+    return output
+
+
 def start_ai_task_response(
     *,
     code_review_executor: Any | None = None,
     current_store: Any,
+    execution_mode: str | None = None,
+    execution_reason: str | None = None,
     opener: Any | None = None,
     task_id: str,
     user: dict[str, Any],
@@ -65,7 +97,11 @@ def start_ai_task_response(
             payload={"previous_step": task.get("current_step")},
         )
 
-    executor_policy = resolve_rd_task_executor_policy(write_store, task)
+    executor_policy = (
+        None
+        if execution_mode == "deterministic"
+        else resolve_rd_task_executor_policy(write_store, task)
+    )
     if executor_policy is not None:
         executor_task = queue_rd_task_executor_task(
             current_store=write_store,
@@ -119,7 +155,30 @@ def start_ai_task_response(
             "status": task["status"],
         }
 
-    if task["task_type"] == "code_review":
+    if execution_mode == "deterministic":
+        require_roles(user, {"admin"})
+        task["output_json"] = deterministic_task_output(task)
+        model_log = None
+        executor_meta = {
+            "executor_name": "deterministic",
+            "executor_type": "local",
+            "retryable": False,
+        }
+        audit_payload: dict[str, Any] = {
+            "execution_mode": "deterministic",
+            "task_type": task["task_type"],
+        }
+        if execution_reason:
+            audit_payload["reason"] = execution_reason
+        write_store.audit(
+            event_type="ai_task.deterministic_execution_used",
+            actor_id=user["id"],
+            ai_task_id=task_id,
+            subject_type="ai_task",
+            subject_id=task_id,
+            payload=audit_payload,
+        )
+    elif task["task_type"] == "code_review":
         try:
             executor_result = call_configured_code_review_executor(
                 write_store,

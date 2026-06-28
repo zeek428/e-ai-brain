@@ -131,7 +131,7 @@ export type BugRecord = {
   reproduceSteps?: string[];
   requirementId?: string;
   severity: 'blocker' | 'critical' | 'major' | 'minor';
-  source: 'ai_auto_test' | 'ai_post_release' | 'manual_test';
+  source: 'ai_auto_test' | 'ai_post_release' | 'code_inspection' | 'manual_test';
   status:
     | 'assigned'
     | 'closed'

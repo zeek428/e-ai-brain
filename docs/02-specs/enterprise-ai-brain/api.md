@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.438 |
+| 功能版本 | v1.1.440 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.440 | 2026-06-28 | `POST /api/ai-tasks/{task_id}/start` 支持管理员显式 `execution_mode=deterministic` 验收模式，跳过研发执行器策略和模型网关并记录审计；统一 full-chain 在需求归属版本时可按版本分支配置匹配代码巡检报告；AI 助手引用解析补齐 `product_version` 和仓储上下文中的代码巡检报告 | Codex |
+| v1.1.439 | 2026-06-28 | 新增 `GET /api/product-versions/{version_id}/dashboard`，迭代版本页可查看需求、任务、Bug、代码分支、代码巡检、发布记录、状态推进影响和阻塞项聚合；接口要求 `product.read` 并按产品 scope 校验，Bug 和代码巡检明细按对应 read 权限降级隐藏 | Codex |
 | v1.1.438 | 2026-06-28 | 新增 `POST /api/assistant/action-drafts/{draft_id}/retry`，失败草案可重新打开为待确认状态，保留失败历史、清空失败 run 绑定并记录 `assistant_action_draft.retry_requested` 审计；重新确认前不写入业务配置 | Codex |
 | v1.1.437 | 2026-06-28 | `GET /api/system/ai-executor-runners` 补齐 AI 执行器 Runner 主表远程分页契约：带 `page/page_size` 时支持 `executor_type/keyword/protocol/status` 筛选、白名单排序和 `query/performance` 观测；插件管理执行器页主表默认请求服务端分页结果 | Codex |
 | v1.1.436 | 2026-06-28 | `GET /api/system/model-gateway-configs` 分页查询生产路径收口：带 `page/page_size` 时优先调用模型网关配置 count/page read model，筛选和排序下推到 PostgreSQL，避免先全量读取配置后服务层切片 | Codex |
@@ -473,7 +475,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、AI 助手、产品上下文、研发全链路 AI 任务、GitLab MR / GitHub PR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、AI 助手、产品/需求/任务/Review/知识/审计/导出/GitLab MR 与 GitHub PR 只读预览、diff 快照、code_review 报告闭环。AI 助手通过模型网关 Chat 能力回答 AI Brain 系统相关问题，请求会携带脱敏系统上下文摘要，包括产品、迭代版本进度、需求、AI 任务、待确认 Review、最近代码评审结论、Bug 分布、高风险 Bug、知识沉淀、Git 仓库和模型网关配置状态；服务端会先按用户问题生成 `tool_results`，覆盖 delivery progress、pending reviews、code review、iteration、bugs、model gateway 等 read-model 工具结果，并和 `reference_candidates` 一起注入模型请求。聊天响应和历史消息返回 `references` 与 `tool_results`，用于跳转到产品、迭代、需求、任务、Review、Bug、代码评审报告或知识沉淀并解释回答依据；当引用主体可解析为需求交付链路时，前端还必须展示统一“全链路”入口，`iteration_version` 引用按 `/api/lifecycle/full-chain` 的版本兼容别名处理。模型日志只记录 `purpose=assistant_chat` 元数据，不保存完整用户消息、系统上下文或助手回答；完整对话内容按当前登录用户写入助手会话与消息结构表，并且历史查询只返回本人会话。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
+当前源码实现说明：MVP 骨架已实现认证、AI 助手、产品/需求/任务/Review/知识/审计/导出/GitLab MR 与 GitHub PR 只读预览、diff 快照、code_review 报告闭环。AI 助手通过模型网关 Chat 能力回答 AI Brain 系统相关问题，请求会携带脱敏系统上下文摘要，包括产品、迭代版本进度、需求、AI 任务、待确认 Review、最近代码评审结论、Bug 分布、高风险 Bug、知识沉淀、Git 仓库和模型网关配置状态；服务端会先按用户问题生成 `tool_results`，覆盖 delivery progress、pending reviews、code review、iteration、bugs、model gateway 等 read-model 工具结果，并和 `reference_candidates` 一起注入模型请求。聊天响应和历史消息返回 `references` 与 `tool_results`，用于跳转到产品、迭代、需求、任务、Review、Bug、代码评审报告或知识沉淀并解释回答依据；当引用主体可解析为需求交付链路时，前端还必须展示统一“全链路”入口，`iteration_version` 和 `product_version` 引用均按 `/api/lifecycle/full-chain` 的版本主体处理，`code_inspection_report` 引用可从助手仓储上下文解析并进入代码巡检报告详情或统一 full-chain。模型日志只记录 `purpose=assistant_chat` 元数据，不保存完整用户消息、系统上下文或助手回答；完整对话内容按当前登录用户写入助手会话与消息结构表，并且历史查询只返回本人会话。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
 
 产品管理页面可维护产品、模块、Git 资源和产品相关系统；需求交付下的迭代版本页面维护 `product_versions`，用于需求排期和任务版本上下文。`GET /api/product-versions` 支持批量查询版本并返回 `product_code`、`product_name` 投影，`active_only=true` 只返回 active 版本；`GET /api/requirements` 返回需求主体同时带 `product_code`、`product_name`、`version_code`、`version_name` 和 `assignee`；`POST /api/requirements/batch-assign-owner` 支持将非关闭/非取消需求批量分配负责人，并返回 updated/skipped 明细；`POST /api/requirements/batch-schedule` 支持将多条同产品 `approved/planned` 需求批量归集到 `planning` 或 `active` 迭代版本，并返回 updated/skipped 明细；`POST /api/requirements/batch-generate-tasks` 支持将多条同产品 `planned` 需求批量生成产品详细设计任务，并返回 generated/skipped 明细；`GET /api/ai-tasks` 在 PostgreSQL 模式按产品表 SQL join 返回 `product_name`，并支持 `product_id`、`created_from`、`created_to` 等筛选；`POST /api/ai-tasks/batch-cancel` 支持任务管理多选批量取消，逐条校验任务状态并返回 updated/skipped 明细；`POST /api/ai-tasks/batch-retry` 支持任务管理多选批量重试，逐条校验失败步骤并返回 retried/updated/skipped 明细。产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置、模型调用元数据、AI 助手会话和助手消息会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`、`assistant_conversations`、`assistant_messages`。所有 PostgreSQL 结构表必须包含 `created_at` 与 `updated_at` 标准时间字段；新增表必须在建表 SQL 中定义这两个字段，既有环境通过 `018_standard_timestamps.sql` 可重复迁移补齐。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
 
@@ -648,6 +650,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Product | PATCH | `/api/products/{product_id}` | 更新产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404。 |
 | Product | DELETE | `/api/products/{product_id}` | 删除未被需求、AI 任务或 Bug 占用的产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404；无业务依赖时级联清理该产品的版本、模块和 Git 资源配置。 |
 | Product Version | GET | `/api/product-versions`, `/api/products/{product_id}/versions` | 产品迭代版本列表，前端主入口位于需求交付/迭代版本；要求 `product.read`，批量列表按当前用户产品 scope 过滤，指定 scope 外产品返回 404。 |
+| Product Version | GET | `/api/product-versions/{version_id}/dashboard` | 查询迭代版本驾驶舱，聚合版本需求、AI 任务、版本代码分支、Bug、代码巡检、发布记录、状态推进影响和阻塞项；要求 `product.read` 并按版本归属产品校验 scope，Bug 明细需 `bug.read`，代码巡检明细需 `code_inspection.read`，缺少子权限时返回 `access_issues` 并隐藏对应明细。 |
 | Product Version | POST | `/api/products/{product_id}/versions` | 创建产品迭代版本；要求 `product.manage`，并按当前用户产品 scope 校验产品可见性。 |
 | Product Version | PATCH | `/api/product-versions/{version_id}` | 更新产品迭代版本非状态字段；要求 `product.manage`，按版本归属产品校验当前用户产品 scope，状态变更必须走推进接口。 |
 | Product Version | POST | `/api/product-versions/{version_id}/advance-status` | 预览或推进迭代版本状态，并同步符合条件的需求状态；要求 `product.manage`，按版本归属产品校验当前用户产品 scope。 |
@@ -723,7 +726,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Requirement | POST | `/api/requirements/{requirement_id}/generate-task` | 需求排期后生成 AI 任务。 |
 | AI Task | GET | `/api/ai-tasks` | 任务列表，支持按状态、任务类型、产品、需求、创建时间、关键词、创建人筛选，并返回分页结果。 |
 | AI Task | POST | `/api/ai-tasks` | 低层任务创建接口。 |
-| AI Task | POST | `/api/ai-tasks/{task_id}/start` | 启动任务；停在 `model_gateway_failed` 或 `code_review_executor_failed` 的失败任务可用同一 task_id 重试。 |
+| AI Task | POST | `/api/ai-tasks/{task_id}/start` | 启动任务；停在 `model_gateway_failed` 或 `code_review_executor_failed` 的失败任务可用同一 task_id 重试；管理员可显式传 `execution_mode=deterministic` 做受控验收。 |
 | AI Task | GET | `/api/ai-tasks/{task_id}` | 任务详情；PostgreSQL 运行时读取 task workflow source rows，并返回脱敏产品上下文、输入输出、待确认 Review、Review 列表、Graph Run、知识沉淀和 Mock Issue 回写状态。 |
 | AI Task | GET/POST/PATCH/DELETE | `/api/delivery/rd-task-executor-policies`, `/api/delivery/rd-task-executor-policies/{policy_id}` | 管理研发执行器策略；按任务类型、产品和优先级匹配插件管理下的 Codex、Claude Code 或 OpenClaw Runner，不接收 Agent/Skill/模型网关字段。前端任务类型选项覆盖 PRD/原型/产品详细设计（`product_detail_design`）、技术方案设计（`technical_solution`）、代码实现/开发计划（`development_planning`）、代码评审（`code_review`）、自动化测试（`automated_testing`）、代码整改（`code_inspection_remediation`）、发布上线评估（`release_readiness`）和上线后分析（`post_release_analysis`）。带 `page/page_size` 的管理列表请求走服务端分页，支持策略名称、产品名称、执行器、任务类型、状态筛选，白名单排序，并返回 `query/performance`。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/more-info` | 提交补充信息。 |
@@ -1150,6 +1153,7 @@ PATCH /api/products/{product_id}
 POST /api/products/{product_id}/versions
 PATCH /api/product-versions/{version_id}
 POST /api/product-versions/{version_id}/advance-status
+GET /api/product-versions/{version_id}/dashboard
 DELETE /api/product-versions/{version_id}
 GET /api/product-versions/{version_id}/branch-configs
 POST /api/product-versions/{version_id}/branch-configs
@@ -1298,6 +1302,60 @@ POST /api/product-versions/version_001/branch-configs
 ```
 
 `repository_id` 必须指向同产品 Git 资源；同一 `version_id + repository_id` 只能存在一条配置。`branch_status` 可取 `not_created / active / testing / merged / released / archived`，`creation_source` 可取 `manual / ai_task / github_sync / gitlab_sync`。
+
+迭代版本驾驶舱请求：
+
+```http
+GET /api/product-versions/version_001/dashboard
+```
+
+响应按版本聚合交付健康：
+
+```json
+{
+  "data": {
+    "version": {
+      "id": "version_001",
+      "code": "2026-06",
+      "name": "2026-06 迭代",
+      "product_id": "product_001",
+      "product_name": "AI Brain",
+      "status": "active"
+    },
+    "summary": {
+      "requirements": 7,
+      "tasks": 3,
+      "branch_configs": 2,
+      "bugs": 4,
+      "open_bugs": 2,
+      "severe_bugs": 1,
+      "code_inspection_reports": 1,
+      "severe_code_inspection_reports": 1,
+      "releases": 1,
+      "blockers": 3
+    },
+    "status_impact": {
+      "target_status": "testing",
+      "updated_requirements": [],
+      "blocked_requirements": [],
+      "unchanged_requirements": []
+    },
+    "blockers": [
+      {
+        "source_type": "bug",
+        "id": "bug_001",
+        "title": "发布阻塞 Bug",
+        "severity": "high",
+        "reason": "critical Bug 仍未关闭"
+      }
+    ],
+    "access_issues": []
+  },
+  "trace_id": "trace_xxx"
+}
+```
+
+规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、status impact 和 blockers，再展示可读明细表。
 
 ### 平台配置
 
@@ -2572,7 +2630,17 @@ GET /api/ai-tasks?status=waiting_review&task_type=code_review&product_id=product
 POST /api/ai-tasks/{task_id}/start
 ```
 
+可选请求体：
+
+```json
+{
+  "execution_mode": "model_gateway | deterministic",
+  "reason": "本次全链路回归使用确定性输出，避免外部模型网关波动"
+}
+```
+
 当前实现会先匹配 active 研发执行器策略：若命中 `rd_task_executor_policies`，任务不会装配 Agent/Skill，也不会走模型网关，而是创建关联 `ai_executor_tasks(ai_task_id=<task_id>)`，把任务置为 `running/current_step=waiting_ai_executor`，并返回 `executor_policy_id/executor_task_id/runner_id`；后续由插件管理下的 Codex、Claude Code 或 OpenClaw Runner 认领执行，成功回写后任务进入 `waiting_review/current_step=executor_completed` 并创建待确认 Review，失败/取消/超时进入 `failed` 或 `cancelled`。未命中研发执行器策略时，当前实现会同步运行到下一个人工确认点或失败状态。`draft` 任务可启动；已失败且 `current_step` 为 `model_gateway_failed`、`code_review_executor_failed` 或 `executor_failed` 的任务可用同一 `task_id` 再次调用 start 重试，并记录 `ai_task.retry_started` 审计事件。非 code_review 任务若存在 active/default 的 OpenAI-compatible 模型网关配置且已配置 API Key，启动时调用 `{base_url}/chat/completions` 并要求 `response_format={"type":"json_object"}`；若没有结构化默认配置但设置了 `MODEL_GATEWAY_BASE_URL` 和 `MODEL_GATEWAY_API_KEY`，则使用环境模型网关。缺少可用模型网关或 active/default 配置缺失 API Key 返回 `MODEL_GATEWAY_CONFIG_INVALID`；provider 调用、响应解析或网络失败返回 `MODEL_GATEWAY_FAILED`。code_review 任务通过 `code_review_executor` 执行：默认 `claude_code_skill/code-review` 命令适配器由 `CODE_REVIEW_EXECUTOR_COMMAND` 配置，输入 JSON 通过 stdin 提供，输出必须是包含 `summary`、`risk_level` 和 `findings` 的 JSON 对象，系统会补齐并持久化 executor 元数据；显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 时复用模型网关适配器；默认外部命令为空且存在 active/default 或环境模型网关时，系统会自动使用 `model_gateway` 适配器，并以 MR/PR 快照、技术方案、需求和产品上下文作为 Review 输入。执行器配置缺失、调用失败、超时、响应解析或结构化报告校验失败返回 `CODE_REVIEW_EXECUTOR_FAILED`。这些失败都会把任务置为 `failed`；使用模型网关适配器时保留模型调用元数据日志；任务启动不得生成本地 fallback 输出。
+`execution_mode` 为空或 `model_gateway` 时保持上述生产默认路径；显式 `deterministic` 仅允许管理员用于本地/验收回归，会跳过研发执行器策略匹配和模型网关，必须写入 `ai_task.deterministic_execution_used` 审计事件并记录 `reason`，不会创建模型调用日志，也不会作为模型网关失败时的自动兜底。
 典型响应：
 启动权限按任务类型收敛：`product_detail_design` 和 `technical_solution` 仅允许 `product_owner`/`rd_owner`，`code_review` 仅允许 `reviewer`/`rd_owner`；`admin` 可执行全部本地管理操作。
 
@@ -4015,7 +4083,7 @@ GET /api/lifecycle/full-chain?subject_type=bug&subject_id=bug_001
 | subject_type | string | 链路入口主体类型。当前支持 `requirement`、`bug`、`product_version`/`iteration_version`、`product_version_branch_config`/`branch_config`、`code_inspection_report`、`knowledge_deposit`、`audit_event`，以及执行诊断主体 `scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`model_gateway_log`、`execution_trace` 等可通过 Trace `related_ids`、节点 `metadata.ai_task_id`、代码巡检报告或审计事件解析到任务/需求的主体；未支持类型返回 `VALIDATION_ERROR` 或明确的未找到错误。 |
 | subject_id | string | 链路入口主体 ID。 |
 
-响应规则：接口先校验当前用户具备 `requirement.read`、`task.read` 或 `workspace.read` 任一读权限，并按入口主体可解析出的 `product_id` 校验产品 scope；缺少读权限返回 403，产品 scope 不匹配返回 404。校验通过后解析入口主体到需求 ID，再复用 `/api/requirements/{requirement_id}/full-chain` 的同一响应结构，并额外返回 `anchor={subject_type,subject_id,resolved_requirement_id}`；前端必须展示入口主体和已解析需求 ID，避免用户从 Bug、迭代版本、版本代码分支配置、代码巡检、AI 助手或执行诊断入口进入后丢失上下文。当入口为 `product_version_branch_config` 或 `branch_config` 时，服务端按分支配置所属版本解析同版本最新需求链路，分支不存在返回 404，同版本无需求返回 `NO_REQUIREMENT_CONTEXT`。当代码巡检报告的 `created_task_ids` 或 `created_bug_ids` 命中当前需求链路内任务/Bug 时，响应 `code_inspection_reports[]` 和 `summary.code_inspection_reports` 必须包含对应报告，时间线增加 `type=code_inspection_report` 事件。需求归属迭代版本时，响应还必须返回该版本的 `branch_configs[]`、`summary.branch_configs` 和 `type=branch_config` 时间线事件；和需求、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、代码巡检、Bug、发布或知识沉淀直接相关的审计事件以脱敏 `audit_events[]`、`summary.audit_events` 和 `type=audit_event` 时间线事件返回，不暴露审计 payload。与链路主体、审计事件或链路内 AI 任务相关的执行诊断以 `execution_traces[]`、`summary.execution_traces` 和 `type=execution_trace` 时间线事件返回，只暴露 Trace ID、根来源、状态、标题/摘要、节点计数、失败节点数、运行中节点数、耗时和时间字段，不返回完整节点 metadata 或敏感调用参数；前端阶段明细必须按 `source_id=<trace.root_id || trace.id>&source_type=<trace.root_type>` 跳转执行诊断中心。前端统一使用 `/delivery/full-chain?subject_type=<type>&subject_id=<id>` 深链承载 Bug、迭代版本、版本代码分支配置、代码巡检和执行诊断入口。
+响应规则：接口先校验当前用户具备 `requirement.read`、`task.read` 或 `workspace.read` 任一读权限，并按入口主体可解析出的 `product_id` 校验产品 scope；缺少读权限返回 403，产品 scope 不匹配返回 404。校验通过后解析入口主体到需求 ID，再复用 `/api/requirements/{requirement_id}/full-chain` 的同一响应结构，并额外返回 `anchor={subject_type,subject_id,resolved_requirement_id}`；前端必须展示入口主体和已解析需求 ID，避免用户从 Bug、迭代版本、版本代码分支配置、代码巡检、AI 助手或执行诊断入口进入后丢失上下文。当入口为 `product_version_branch_config` 或 `branch_config` 时，服务端按分支配置所属版本解析同版本最新需求链路，分支不存在返回 404，同版本无需求返回 `NO_REQUIREMENT_CONTEXT`。当代码巡检报告的 `created_task_ids` 或 `created_bug_ids` 命中当前需求链路内任务/Bug 时，响应 `code_inspection_reports[]` 和 `summary.code_inspection_reports` 必须包含对应报告，时间线增加 `type=code_inspection_report` 事件；需求归属迭代版本且版本存在分支配置时，若代码巡检报告的 `repository_id` 与 `branch` 命中该版本分支配置的代码库和工作分支，也必须纳入同一需求链路。需求归属迭代版本时，响应还必须返回该版本的 `branch_configs[]`、`summary.branch_configs` 和 `type=branch_config` 时间线事件；和需求、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、代码巡检、Bug、发布或知识沉淀直接相关的审计事件以脱敏 `audit_events[]`、`summary.audit_events` 和 `type=audit_event` 时间线事件返回，不暴露审计 payload。与链路主体、审计事件或链路内 AI 任务相关的执行诊断以 `execution_traces[]`、`summary.execution_traces` 和 `type=execution_trace` 时间线事件返回，只暴露 Trace ID、根来源、状态、标题/摘要、节点计数、失败节点数、运行中节点数、耗时和时间字段，不返回完整节点 metadata 或敏感调用参数；前端阶段明细必须按 `source_id=<trace.root_id || trace.id>&source_type=<trace.root_type>` 跳转执行诊断中心。前端统一使用 `/delivery/full-chain?subject_type=<type>&subject_id=<id>` 深链承载 Bug、迭代版本、版本代码分支配置、代码巡检和执行诊断入口。
 
 响应摘要：
 

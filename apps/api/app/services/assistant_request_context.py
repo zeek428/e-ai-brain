@@ -34,6 +34,7 @@ class AssistantRepositoryRequestContext:
         self.assistant_action_runs: dict[str, dict[str, Any]] = {}
         self.gitlab_mr_snapshots: dict[str, dict[str, Any]] = {}
         self.code_review_reports: dict[str, dict[str, Any]] = {}
+        self.code_inspection_reports: dict[str, dict[str, Any]] = {}
         self.knowledge_deposits: dict[str, dict[str, Any]] = {}
         self.mock_writebacks: dict[str, dict[str, Any]] = {}
         self.bugs: dict[str, dict[str, Any]] = {}
@@ -199,6 +200,7 @@ def assistant_task_source_store(rows: dict[str, Any], *, repository: Any) -> Any
     collection_keys = {
         "ai_tasks": "tasks",
         "bugs": "bugs",
+        "code_inspection_reports": "code_inspection_reports",
         "code_review_reports": "code_review_reports",
         "gitlab_mr_snapshots": "gitlab_mr_snapshots",
         "graph_checkpoints": "graph_checkpoints",

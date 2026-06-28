@@ -2,12 +2,29 @@ import {
   ArrowRightOutlined,
   CalendarOutlined,
   CodeOutlined,
+  DashboardOutlined,
   DeleteOutlined,
   EditOutlined,
   EyeOutlined,
 } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table, message } from 'antd';
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Empty,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Spin,
+  Table,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DateStringPicker } from '../../components/DateStringPicker';
@@ -31,8 +48,10 @@ import {
   fetchManagementRequirements,
   fetchProductContextOptions,
   fetchProductGitRepositoryRecords,
+  fetchProductVersionDashboard,
   fetchProductVersionBranchConfigs,
   fullChainSubjectHref,
+  type ProductVersionDashboard,
   type ProductVersionAdvanceStatusResult,
   type ProductVersionBranchConfigMutationPayload,
   type ProductVersionListQuery,
@@ -41,6 +60,8 @@ import {
   updateProductVersion,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
+
+const { Text } = Typography;
 
 type IterationVersionFormValues = {
   code: string;
@@ -118,6 +139,13 @@ const branchCreationSourceLabels: Record<ProductVersionBranchConfigRecord['creat
   gitlab_sync: 'GitLab 同步',
   manual: '手工登记',
 };
+const dashboardBlockerSourceLabels: Record<string, string> = {
+  bug: 'Bug',
+  code_inspection_report: '代码巡检',
+  jenkins_release: '发布记录',
+  product_version_branch_config: '代码分支',
+  requirement: '需求',
+};
 
 const versionStatusOptions = [
   { label: '规划中', value: 'planning' },
@@ -146,8 +174,58 @@ const versionSortFieldMap: Record<string, string> = {
   status: 'status',
 };
 
+const dashboardStatusLabelMap: Record<string, { color: string; label: string }> = {
+  ...versionStatusLabels,
+  ...requirementStatusLabels,
+  active: { color: 'blue', label: '开发中' },
+  assigned: { color: 'blue', label: '已分派' },
+  closed: { color: 'default', label: '已关闭' },
+  completed: { color: 'green', label: '已完成' },
+  failed: { color: 'red', label: '失败' },
+  fixed: { color: 'cyan', label: '已修复' },
+  high: { color: 'orange', label: '高风险' },
+  low: { color: 'green', label: '低风险' },
+  medium: { color: 'gold', label: '中风险' },
+  open: { color: 'red', label: '打开' },
+  passed: { color: 'green', label: '通过' },
+  ready_for_release: { color: 'orange', label: '待发布' },
+  reopened: { color: 'volcano', label: '重新打开' },
+  running: { color: 'blue', label: '运行中' },
+  succeeded: { color: 'green', label: '成功' },
+  triaged: { color: 'gold', label: '已分诊' },
+  verified: { color: 'green', label: '已验证' },
+  waiting_review: { color: 'gold', label: '待确认' },
+};
+
 function normalizeFilterText(value: unknown) {
   return String(value ?? '').trim() || undefined;
+}
+
+function statusTag(value?: string | null) {
+  const key = String(value ?? '-');
+  const item = dashboardStatusLabelMap[key] ?? { color: 'default', label: key };
+  return <Tag color={item.color}>{item.label}</Tag>;
+}
+
+function dashboardMetric(label: string, value: number, color?: string) {
+  return (
+    <div
+      key={label}
+      style={{
+        border: '1px solid #f0f0f0',
+        borderRadius: 6,
+        minWidth: 112,
+        padding: '8px 12px',
+      }}
+    >
+      <Text type="secondary">{label}</Text>
+      <div style={{ color, fontSize: 20, fontWeight: 600, lineHeight: 1.4 }}>{value}</div>
+    </div>
+  );
+}
+
+function dashboardDate(value?: string | null) {
+  return value || '-';
 }
 
 function buildVersionListQuery(query: ManagementListQuery): ProductVersionListQuery {
@@ -180,6 +258,11 @@ export default function IterationVersionsPage() {
   const [editingVersion, setEditingVersion] = useState<ProductVersionRecord | null>(null);
   const [collectingVersion, setCollectingVersion] = useState<ProductVersionRecord | null>(null);
   const [advancingVersion, setAdvancingVersion] = useState<ProductVersionRecord | null>(null);
+  const [dashboardState, setDashboardState] = useState<{
+    dashboard?: ProductVersionDashboard;
+    loading: boolean;
+    version?: ProductVersionRecord;
+  }>();
   const [viewingVersion, setViewingVersion] = useState<ProductVersionRecord | null>(null);
   const [branchConfigVersion, setBranchConfigVersion] = useState<ProductVersionRecord | null>(null);
   const [editingBranchConfig, setEditingBranchConfig] = useState<ProductVersionBranchConfigRecord | null>(null);
@@ -322,6 +405,17 @@ export default function IterationVersionsPage() {
       })),
     [branchRepositories],
   );
+
+  const openDashboardModal = useCallback(async (row: ProductVersionRecord) => {
+    setDashboardState({ loading: true, version: row });
+    try {
+      const dashboard = await fetchProductVersionDashboard(row.id);
+      setDashboardState({ dashboard, loading: false, version: row });
+    } catch (loadError) {
+      setDashboardState(undefined);
+      message.error(formatMutationError(loadError));
+    }
+  }, []);
 
   const loadBranchConfigs = useCallback(async (version: ProductVersionRecord) => {
     if (!version.productId) {
@@ -682,6 +776,9 @@ export default function IterationVersionsPage() {
             <Button icon={<EyeOutlined />} onClick={() => setViewingVersion(row)} type="link">
               查看需求
             </Button>
+            <Button icon={<DashboardOutlined />} onClick={() => void openDashboardModal(row)} type="link">
+              驾驶舱
+            </Button>
             <Button href={fullChainSubjectHref('product_version', row.id)} type="link">
               全链路
             </Button>
@@ -713,8 +810,18 @@ export default function IterationVersionsPage() {
         ),
       },
     ],
-    [handleDelete, openAdvanceModal, openBranchConfigModal, openCollectModal, openEditModal],
+    [
+      handleDelete,
+      openAdvanceModal,
+      openBranchConfigModal,
+      openCollectModal,
+      openDashboardModal,
+      openEditModal,
+    ],
   );
+
+  const dashboard = dashboardState?.dashboard;
+  const dashboardVersion = dashboard?.version ?? dashboardState?.version;
 
   return (
     <>
@@ -750,6 +857,250 @@ export default function IterationVersionsPage() {
         tableTitle="迭代版本列表"
         title="迭代版本"
       />
+      <Modal
+        destroyOnHidden
+        footer={null}
+        onCancel={() => setDashboardState(undefined)}
+        open={Boolean(dashboardState)}
+        title={dashboardVersion ? `版本驾驶舱 · ${dashboardVersion.code}` : '版本驾驶舱'}
+        width={1180}
+      >
+        <Spin spinning={dashboardState?.loading ?? false}>
+          {dashboard ? (
+            <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+              <Alert
+                title={`${dashboard.version.productName ?? dashboard.version.productId ?? '-'} · ${
+                  dashboard.version.name
+                } · ${versionStatusLabels[dashboard.version.status].label}`}
+                description={`开始时间：${dashboardDate(dashboard.version.startDate)}；计划发布时间：${dashboardDate(
+                  dashboard.version.releaseDate,
+                )}`}
+                type={dashboard.summary.blockers ? 'warning' : 'success'}
+              />
+              {dashboard.accessIssues.map((issue) => (
+                <Alert key={`${issue.section}-${issue.code}`} showIcon title={issue.message} type="warning" />
+              ))}
+              <Space size={12} wrap>
+                {dashboardMetric('需求', dashboard.summary.requirements)}
+                {dashboardMetric('AI 任务', dashboard.summary.tasks)}
+                {dashboardMetric('代码分支', dashboard.summary.branch_configs)}
+                {dashboardMetric('Bug', dashboard.summary.bugs, dashboard.summary.open_bugs ? '#cf1322' : undefined)}
+                {dashboardMetric('未关闭 Bug', dashboard.summary.open_bugs, dashboard.summary.open_bugs ? '#cf1322' : undefined)}
+                {dashboardMetric(
+                  '严重风险',
+                  dashboard.summary.severe_bugs + dashboard.summary.severe_code_inspection_reports,
+                  dashboard.summary.severe_bugs + dashboard.summary.severe_code_inspection_reports
+                    ? '#cf1322'
+                    : undefined,
+                )}
+                {dashboardMetric('代码巡检', dashboard.summary.code_inspection_reports)}
+                {dashboardMetric('发布记录', dashboard.summary.releases)}
+                {dashboardMetric('阻塞项', dashboard.summary.blockers, dashboard.summary.blockers ? '#cf1322' : undefined)}
+              </Space>
+              {dashboard.statusImpact ? (
+                <Alert
+                  description={`将同步 ${dashboard.statusImpact.updatedRequirements.length} 条需求，阻塞 ${dashboard.statusImpact.blockedRequirements.length} 条，保持不变 ${dashboard.statusImpact.unchangedRequirements.length} 条。`}
+                  showIcon
+                  title={`下一阶段：${versionStatusLabels[dashboard.statusImpact.targetStatus].label}`}
+                  type={dashboard.statusImpact.blockedRequirements.length ? 'warning' : 'info'}
+                />
+              ) : (
+                <Alert showIcon title="当前版本状态没有可推进的下一阶段" type="info" />
+              )}
+              <div>
+                <Text strong>阻塞项</Text>
+                <Table<ProductVersionDashboard['blockers'][number]>
+                  columns={[
+                    {
+                      dataIndex: 'sourceType',
+                      render: (value) => dashboardBlockerSourceLabels[String(value)] ?? String(value ?? '-'),
+                      title: '来源',
+                      width: 120,
+                    },
+                    {
+                      dataIndex: 'title',
+                      render: (value) => (
+                        <Text ellipsis style={{ maxWidth: 220 }}>
+                          {String(value ?? '-')}
+                        </Text>
+                      ),
+                      title: '标题',
+                      width: 240,
+                    },
+                    {
+                      dataIndex: 'severity',
+                      render: (value) => statusTag(String(value)),
+                      title: '级别',
+                      width: 120,
+                    },
+                    {
+                      dataIndex: 'reason',
+                      render: (value) => (
+                        <Text ellipsis style={{ maxWidth: 460 }}>
+                          {String(value ?? '-')}
+                        </Text>
+                      ),
+                      title: '原因',
+                    },
+                  ]}
+                  dataSource={dashboard.blockers}
+                  locale={{ emptyText: <Empty description="暂无阻塞项" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+                  pagination={false}
+                  rowKey={(row) => `${row.sourceType}-${row.id ?? row.title}`}
+                  scroll={{ x: 860 }}
+                  size="small"
+                />
+              </div>
+              <div>
+                <Text strong>需求与任务</Text>
+                <Table<RequirementRecord>
+                  columns={[
+                    { dataIndex: 'id', title: '需求编号', width: 160 },
+                    {
+                      dataIndex: 'title',
+                      render: (value) => (
+                        <Text ellipsis style={{ maxWidth: 260 }}>
+                          {String(value ?? '-')}
+                        </Text>
+                      ),
+                      title: '需求标题',
+                      width: 280,
+                    },
+                    { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
+                    { dataIndex: 'priority', title: '优先级', width: 100 },
+                    { dataIndex: 'updatedAt', title: '更新时间', width: 170 },
+                  ]}
+                  dataSource={dashboard.requirements}
+                  locale={{ emptyText: '当前版本暂无需求' }}
+                  pagination={dashboard.requirements.length > 5 ? { pageSize: 5 } : false}
+                  rowKey="id"
+                  scroll={{ x: 830 }}
+                  size="small"
+                />
+                <Table<ProductVersionDashboard['tasks'][number]>
+                  columns={[
+                    { dataIndex: 'id', title: '任务编号', width: 160 },
+                    {
+                      dataIndex: 'label',
+                      render: (value) => (
+                        <Text ellipsis style={{ maxWidth: 260 }}>
+                          {String(value ?? '-')}
+                        </Text>
+                      ),
+                      title: '任务标题',
+                      width: 280,
+                    },
+                    { dataIndex: 'type', title: '类型', width: 130 },
+                    { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
+                    { dataIndex: 'owner', title: '负责人', width: 120 },
+                  ]}
+                  dataSource={dashboard.tasks}
+                  locale={{ emptyText: '当前版本暂无 AI 任务' }}
+                  pagination={dashboard.tasks.length > 5 ? { pageSize: 5 } : false}
+                  rowKey="id"
+                  scroll={{ x: 810 }}
+                  size="small"
+                />
+              </div>
+              <div>
+                <Text strong>质量与交付</Text>
+                <Table<ProductVersionDashboard['bugs'][number]>
+                  columns={[
+                    { dataIndex: 'id', title: 'Bug 编号', width: 150 },
+                    {
+                      dataIndex: 'title',
+                      render: (value) => (
+                        <Text ellipsis style={{ maxWidth: 240 }}>
+                          {String(value ?? '-')}
+                        </Text>
+                      ),
+                      title: 'Bug 标题',
+                      width: 260,
+                    },
+                    { dataIndex: 'severity', render: (value) => statusTag(String(value)), title: '严重级别', width: 120 },
+                    { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
+                    { dataIndex: 'assignee', title: '负责人', width: 120 },
+                  ]}
+                  dataSource={dashboard.bugs}
+                  locale={{ emptyText: '当前版本暂无 Bug' }}
+                  pagination={dashboard.bugs.length > 5 ? { pageSize: 5 } : false}
+                  rowKey="id"
+                  scroll={{ x: 790 }}
+                  size="small"
+                />
+                <Table<ProductVersionDashboard['codeInspectionReports'][number]>
+                  columns={[
+                    { dataIndex: 'repository_name', title: '代码库', width: 180 },
+                    { dataIndex: 'branch', title: '分支', width: 170 },
+                    { dataIndex: 'risk_level', render: (value) => statusTag(String(value)), title: '风险', width: 120 },
+                    { dataIndex: 'finding_count', title: '问题数', width: 100 },
+                    {
+                      dataIndex: 'summary',
+                      render: (value) => (
+                        <Text ellipsis style={{ maxWidth: 300 }}>
+                          {String(value ?? '-')}
+                        </Text>
+                      ),
+                      title: '摘要',
+                      width: 320,
+                    },
+                    { dataIndex: 'created_at', render: (value) => dashboardDate(String(value ?? '')), title: '创建时间', width: 170 },
+                  ]}
+                  dataSource={dashboard.codeInspectionReports}
+                  locale={{ emptyText: '当前版本暂无代码巡检报告' }}
+                  pagination={dashboard.codeInspectionReports.length > 5 ? { pageSize: 5 } : false}
+                  rowKey="id"
+                  scroll={{ x: 1060 }}
+                  size="small"
+                />
+                <Table<ProductVersionDashboard['branchConfigs'][number]>
+                  columns={[
+                    { dataIndex: 'repositoryName', title: '代码库', width: 180 },
+                    { dataIndex: 'baseBranch', title: '基准分支', width: 150 },
+                    { dataIndex: 'workingBranch', title: '开发分支', width: 200 },
+                    {
+                      dataIndex: 'branchStatus',
+                      render: (_, row) => {
+                        const statusLabel = branchStatusLabels[row.branchStatus];
+                        return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
+                      },
+                      title: '状态',
+                      width: 120,
+                    },
+                    {
+                      dataIndex: 'creationSource',
+                      render: (_, row) => branchCreationSourceLabels[row.creationSource],
+                      title: '来源',
+                      width: 140,
+                    },
+                  ]}
+                  dataSource={dashboard.branchConfigs}
+                  locale={{ emptyText: '当前版本暂无代码分支配置' }}
+                  pagination={false}
+                  rowKey="id"
+                  scroll={{ x: 790 }}
+                  size="small"
+                />
+                <Table<ProductVersionDashboard['releases'][number]>
+                  columns={[
+                    { dataIndex: 'id', title: '发布编号', width: 180 },
+                    { dataIndex: 'jobName', title: '作业', width: 200 },
+                    { dataIndex: 'buildId', title: '构建号', width: 130 },
+                    { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
+                    { dataIndex: 'createdAt', title: '时间', width: 170 },
+                  ]}
+                  dataSource={dashboard.releases}
+                  locale={{ emptyText: '当前版本暂无发布记录' }}
+                  pagination={dashboard.releases.length > 5 ? { pageSize: 5 } : false}
+                  rowKey="id"
+                  scroll={{ x: 800 }}
+                  size="small"
+                />
+              </div>
+            </Space>
+          ) : null}
+        </Spin>
+      </Modal>
       <Modal
         destroyOnHidden
         footer={null}

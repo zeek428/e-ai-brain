@@ -29,3 +29,27 @@ def test_web_page_smoke_fails_on_network_4xx_or_5xx_responses():
     assert "--viewport WIDTHxHEIGHT" in content
     assert "Emulation.setDeviceMetricsOverride" in content
     assert "route viewport check" in content
+
+
+def test_full_chain_regression_script_covers_public_api_workflow():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    assert script_path.exists()
+    assert script_path.stat().st_mode & 0o111
+
+    content = script_path.read_text(encoding="utf-8")
+    for marker in [
+        "http.client",
+        "/api/insights/user-feedback",
+        "convert-requirement",
+        "/api/requirements/batch-schedule",
+        "/api/ai-tasks/{task_id}/start",
+        "execution_mode",
+        "deterministic",
+        "native_full_scan",
+        "/api/product-versions/",
+        "/dashboard",
+        "/api/lifecycle/full-chain",
+        "/api/dashboard/it-team",
+        "/api/assistant/chat",
+    ]:
+        assert marker in content
