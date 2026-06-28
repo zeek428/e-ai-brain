@@ -13,6 +13,14 @@ from fastapi import Request
 
 from app.api.deps import api_error, require_permissions
 from app.core.listing import add_list_observability, sort_list_items
+from app.services.ai_executor_task_reliability import (
+    apply_task_claim_lease,
+    apply_task_dead_letter,
+    apply_task_lease_requeue,
+    refresh_task_lease,
+    should_dead_letter_after_lease,
+    task_lease_expired,
+)
 from app.services.operational_records import record_audit_event, save_single_repository_record
 from app.services.product_scope import product_scope_filter, user_can_read_product
 
@@ -47,13 +55,20 @@ AI_EXECUTOR_RUNNER_DEFAULT_INSTALL_MODE_BY_OS = {
 AI_EXECUTOR_TASK_STATUSES = {
     "cancelled",
     "claimed",
+    "dead_letter",
     "failed",
     "queued",
     "running",
     "succeeded",
     "timed_out",
 }
-AI_EXECUTOR_TASK_TERMINAL_STATUSES = {"cancelled", "failed", "succeeded", "timed_out"}
+AI_EXECUTOR_TASK_TERMINAL_STATUSES = {
+    "cancelled",
+    "dead_letter",
+    "failed",
+    "succeeded",
+    "timed_out",
+}
 AI_EXECUTOR_TASK_SORT_FIELDS = {
     "claimed_at",
     "created_at",
@@ -1514,7 +1529,7 @@ def _status_for_runner_task(task_status: str) -> str:
         return "succeeded"
     if task_status == "cancelled":
         return "cancelled"
-    if task_status in {"failed", "timed_out"}:
+    if task_status in {"dead_letter", "failed", "timed_out"}:
         return "failed"
     return "running"
 
@@ -1569,7 +1584,7 @@ def _sync_runner_completion_to_scheduled_run(
         )
         response_summary["json"] = json_payload
         log_status = log.get("status") or "succeeded"
-        if task.get("status") in {"failed", "cancelled", "timed_out"}:
+        if task.get("status") in {"dead_letter", "failed", "cancelled", "timed_out"}:
             log_status = "failed"
         updated_log = {
             **log,
@@ -1739,7 +1754,11 @@ def list_ai_executor_runners_response(
     if status is not None:
         _ensure_enum(status, AI_EXECUTOR_RUNNER_STATUSES, "status")
     if protocol is not None:
-        _ensure_enum(protocol, AI_EXECUTOR_RUNNER_PROTOCOLS | {SYSTEM_DEFAULT_AI_EXECUTOR_TYPE}, "protocol")
+        _ensure_enum(
+            protocol,
+            AI_EXECUTOR_RUNNER_PROTOCOLS | {SYSTEM_DEFAULT_AI_EXECUTOR_TYPE},
+            "protocol",
+        )
     if executor_type is not None:
         _ensure_enum(executor_type, AI_EXECUTOR_TYPES, "executor_type")
     sort_order = _ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
@@ -2482,8 +2501,19 @@ def claim_ai_executor_task_response(
             "AI_EXECUTOR_TASK_UNSUPPORTED",
             "Runner does not support task executor",
         )
-    now = datetime.now(UTC).isoformat()
-    task = {**task, "claimed_at": now, "status": "claimed", "updated_at": now}
+    now_dt = datetime.now(UTC)
+    now = now_dt.isoformat()
+    task = apply_task_claim_lease(
+        {
+            **task,
+            "claimed_at": now,
+            "error_code": None,
+            "error_message": None,
+            "status": "claimed",
+            "updated_at": now,
+        },
+        now=now_dt,
+    )
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_task.claimed",
@@ -2583,13 +2613,15 @@ def append_ai_executor_task_logs_response(
     status = str(getattr(payload, "status", None) or task.get("status") or "running")
     if status not in {"claimed", "running"}:
         raise api_error(400, "VALIDATION_ERROR", "Log append status is invalid")
-    now = datetime.now(UTC).isoformat()
+    now_dt = datetime.now(UTC)
+    now = now_dt.isoformat()
     task = {
         **task,
         "logs": _append_task_logs(task, list(getattr(payload, "logs", None) or [])),
         "status": status,
         "updated_at": now,
     }
+    task = refresh_task_lease(task, now=now_dt)
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_task.logs_appended",
@@ -2683,6 +2715,8 @@ def timeout_ai_executor_tasks_response(
     now = _datetime_value(getattr(payload, "now", None)) or datetime.now(UTC)
     task_product_scope_ids = product_scope_filter(user)
     sync_ai_executor_task_store(current_store, product_scope_ids=task_product_scope_ids)
+    dead_lettered: list[dict[str, Any]] = []
+    requeued: list[dict[str, Any]] = []
     timed_out: list[dict[str, Any]] = []
     for task in list(_read_collection(current_store, "ai_executor_tasks").values()):
         if task_product_scope_ids is not None and not _ai_executor_task_visible_to_user(
@@ -2692,6 +2726,97 @@ def timeout_ai_executor_tasks_response(
         ):
             continue
         if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
+            continue
+        if task_lease_expired(task, now=now):
+            now_iso = now.isoformat()
+            reason = "AI executor task lease expired"
+            if should_dead_letter_after_lease(task):
+                updated_task = apply_task_dead_letter(task, now=now, reason=reason)
+                updated_task = {
+                    **updated_task,
+                    "logs": _append_task_logs(
+                        task,
+                        [
+                            {
+                                "level": "error",
+                                "message": "Task moved to dead letter after lease expired",
+                                "timestamp": now_iso,
+                            }
+                        ],
+                    ),
+                }
+                audit_event = record_audit_event(
+                    current_store,
+                    event_type="ai_executor_task.dead_lettered",
+                    actor_id=user["id"],
+                    subject_type="ai_executor_task",
+                    subject_id=updated_task["id"],
+                    payload={
+                        "runner_id": updated_task.get("runner_id"),
+                        "reason": reason,
+                    },
+                )
+                _persist_record(
+                    current_store,
+                    "save_ai_executor_task_record",
+                    updated_task,
+                    audit_event=audit_event,
+                )
+                _sync_runner_completion_to_scheduled_run(
+                    current_store,
+                    task=updated_task,
+                    runner_id=str(updated_task.get("runner_id") or user["id"]),
+                )
+                _sync_runner_completion_to_ai_task(
+                    current_store,
+                    task=updated_task,
+                    runner_id=str(updated_task.get("runner_id") or user["id"]),
+                )
+                dead_lettered.append(updated_task)
+                continue
+
+            updated_task = apply_task_lease_requeue(task, now=now, reason=reason)
+            updated_task = {
+                **updated_task,
+                "logs": _append_task_logs(
+                    task,
+                    [
+                        {
+                            "level": "warning",
+                            "message": "Task lease expired; requeued for another claim",
+                            "timestamp": now_iso,
+                        }
+                    ],
+                ),
+            }
+            audit_event = record_audit_event(
+                current_store,
+                event_type="ai_executor_task.lease_requeued",
+                actor_id=user["id"],
+                subject_type="ai_executor_task",
+                subject_id=updated_task["id"],
+                payload={
+                    "runner_id": updated_task.get("runner_id"),
+                    "reason": reason,
+                },
+            )
+            _persist_record(
+                current_store,
+                "save_ai_executor_task_record",
+                updated_task,
+                audit_event=audit_event,
+            )
+            _sync_runner_completion_to_scheduled_run(
+                current_store,
+                task=updated_task,
+                runner_id=str(updated_task.get("runner_id") or user["id"]),
+            )
+            _sync_runner_completion_to_ai_task(
+                current_store,
+                task=updated_task,
+                runner_id=str(updated_task.get("runner_id") or user["id"]),
+            )
+            requeued.append(updated_task)
             continue
         reference_at = (
             _datetime_value(task.get("claimed_at"))
@@ -2750,8 +2875,10 @@ def timeout_ai_executor_tasks_response(
         )
         timed_out.append(updated_task)
     return {
+        "dead_letter_task_ids": [task["id"] for task in dead_lettered],
+        "requeued_task_ids": [task["id"] for task in requeued],
         "timed_out_task_ids": [task["id"] for task in timed_out],
-        "tasks": [_task_public(task) for task in timed_out],
+        "tasks": [_task_public(task) for task in [*timed_out, *requeued, *dead_lettered]],
     }
 
 

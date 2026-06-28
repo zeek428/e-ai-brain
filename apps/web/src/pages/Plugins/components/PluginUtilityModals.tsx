@@ -59,7 +59,13 @@ type RunnerTokenRotationModalProps = {
   runner?: AiExecutorRunnerRecord;
 };
 
-const TERMINAL_RUNNER_TASK_STATUSES = new Set(['cancelled', 'failed', 'succeeded', 'timed_out']);
+const TERMINAL_RUNNER_TASK_STATUSES = new Set([
+  'cancelled',
+  'dead_letter',
+  'failed',
+  'succeeded',
+  'timed_out',
+]);
 
 export function SystemVariableModal({
   columns,

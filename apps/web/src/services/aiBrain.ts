@@ -6248,12 +6248,16 @@ export type AiExecutorTaskRecord = {
   ai_task_id?: string | null;
   assigned_at?: string | null;
   cancelled_at?: string | null;
+  claimed_at?: string | null;
   completed_at?: string | null;
   created_at?: string | null;
+  error_code?: string | null;
   error_message?: string | null;
   executor_type?: string | null;
+  finished_at?: string | null;
   id: string;
   logs?: AiExecutorTaskLogRecord[];
+  request_config?: Record<string, unknown>;
   result?: Record<string, unknown>;
   runner_id?: string | null;
   scheduled_job_run_id?: string | null;

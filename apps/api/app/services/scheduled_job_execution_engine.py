@@ -472,7 +472,9 @@ class ScheduledJobExecutionEngine:
         error_code = node.get("error_code")
         error = (
             {"code": error_code, "message": error_message}
-            if error_code or error_message or status in {"failed", "timed_out", "cancelled"}
+            if error_code
+            or error_message
+            or status in {"failed", "timed_out", "cancelled", "dead_letter"}
             else None
         )
         return {

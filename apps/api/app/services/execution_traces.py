@@ -311,7 +311,7 @@ def _status(value: Any) -> str:
         return "succeeded"
     if normalized in {"failure", "failed", "error"}:
         return "failed"
-    if normalized in {"offline", "never_connected", "timed_out"}:
+    if normalized in {"offline", "never_connected", "timed_out", "dead_letter"}:
         return "failed"
     if normalized in {"cancelled", "canceled"}:
         return "cancelled"

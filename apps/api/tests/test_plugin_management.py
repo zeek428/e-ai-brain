@@ -1392,6 +1392,133 @@ def test_ai_executor_runner_token_rotation_logs_cancel_and_timeout_controls():
     assert timeout_logs["task"]["error_code"] == "AI_EXECUTOR_TASK_TIMEOUT"
 
 
+def test_ai_executor_task_lease_requeue_and_dead_letter_controls():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    client.get("/api/system/plugin-marketplace", headers=admin_headers)
+
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["openclaw"],
+            "heartbeat_timeout_seconds": 30,
+            "name": "OpenClaw Lease Runner",
+            "protocol": "runner_polling",
+            "runner_token": "runner-lease-secret",
+            "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
+        json={"metadata": {"pid": 456}},
+        headers={"X-Runner-Token": "runner-lease-secret"},
+    )
+
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "runner://ai-executor",
+            "environment": "dev",
+            "name": "OpenClaw Lease Runner 连接",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "query": {
+                    "executor_type": "openclaw",
+                    "instruction_timeout_seconds": 3600,
+                    "lease_timeout_seconds": 1,
+                    "max_reclaim_count": 1,
+                    "runner_id": runner["id"],
+                    "workspace_root": "/Users/zeek/source/e-ai-brain",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "openclaw_lease_recovery",
+            "connection_id": connection["id"],
+            "name": "OpenClaw 租约恢复",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "instruction": "执行仓库扫描并通过租约检测异常中断。",
+                "tool_name": "ai_executor.run_instruction",
+            },
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    invoked = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"source": "lease-test"}},
+        headers=admin_headers,
+    ).json()["data"]
+    task_id = invoked["response_summary"]["json"]["runner_task_id"]
+
+    first_claim = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-lease-secret"},
+    )
+    assert first_claim.status_code == 200
+    first_claim_task = first_claim.json()["data"]["task"]
+    assert first_claim_task["id"] == task_id
+    assert first_claim_task["request_config"]["reliability"]["lease_timeout_seconds"] == 1
+
+    requeue_scan = client.post(
+        "/api/system/ai-executor-tasks/timeout-scan",
+        json={"now": "2099-01-01T00:00:00+00:00"},
+        headers=admin_headers,
+    )
+    assert requeue_scan.status_code == 200
+    requeue_data = requeue_scan.json()["data"]
+    assert task_id in requeue_data["requeued_task_ids"]
+    assert task_id not in requeue_data["timed_out_task_ids"]
+    requeued_task = next(task for task in requeue_data["tasks"] if task["id"] == task_id)
+    assert requeued_task["status"] == "queued"
+    assert requeued_task["claimed_at"] is None
+    assert requeued_task["request_config"]["reliability"]["reclaim_count"] == 1
+
+    second_claim = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-lease-secret"},
+    )
+    assert second_claim.status_code == 200
+    assert second_claim.json()["data"]["task"]["id"] == task_id
+
+    dead_letter_scan = client.post(
+        "/api/system/ai-executor-tasks/timeout-scan",
+        json={"now": "2099-01-01T00:00:00+00:00"},
+        headers=admin_headers,
+    )
+    assert dead_letter_scan.status_code == 200
+    dead_letter_data = dead_letter_scan.json()["data"]
+    assert task_id in dead_letter_data["dead_letter_task_ids"]
+    dead_letter_task = next(task for task in dead_letter_data["tasks"] if task["id"] == task_id)
+    assert dead_letter_task["status"] == "dead_letter"
+    assert dead_letter_task["error_code"] == "AI_EXECUTOR_TASK_LEASE_EXPIRED"
+
+    listed = client.get(
+        "/api/system/ai-executor-tasks?status=dead_letter&page=1&page_size=10",
+        headers=admin_headers,
+    )
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["data"]["items"]] == [task_id]
+
+    logs = client.get(
+        f"/api/system/ai-executor-tasks/{task_id}/logs",
+        headers=admin_headers,
+    ).json()["data"]["logs"]
+    assert [entry["level"] for entry in logs] == ["warning", "error"]
+
+
 def test_scheduled_ai_executor_runner_completion_updates_run_detail():
     app.state.store.reset()
     admin_headers = auth_headers()

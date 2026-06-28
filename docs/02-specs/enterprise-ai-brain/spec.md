@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.658 |
+| 功能版本 | v1.1.659 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.659 | 2026-06-28 | AI 执行器 Runner 任务补齐租约重派和死信队列：任务认领写入租约过期时间，日志追加刷新租约，超时扫描优先将租约过期任务按 `max_reclaim_count` 重派或置为 `dead_letter`，并同步上游定时作业和研发任务失败态 | Codex |
 | v1.1.658 | 2026-06-28 | 角色管理新增权限与范围预览：复用 RBAC 策略矩阵在列表前展示全局/产品范围覆盖、未配置范围、高风险角色和菜单权限缺口，并在角色列表与详情中展示 scope 授权，便于权限分配前快速排查风险 | Codex |
 | v1.1.657 | 2026-06-28 | 知识中心新增索引健康视图：基于当前远程分页结果聚合可检索、向量就绪、关键词兜底、索引失败、处理中和分块版本状态，暴露索引失败重试、向量补建、导入任务和分块查看入口，帮助在 Embedding 可选/降级场景下识别知识检索健康度 | Codex |
 | v1.1.656 | 2026-06-28 | 代码巡检报告详情新增治理闭环摘要：详情响应返回 `governance_summary`，按严重 finding 计算 Bug 覆盖、整改任务覆盖、待审批忽略、已接受风险和治理待办；详情页展示闭环状态并在 finding 列表暴露整改任务链接 | Codex |
@@ -1419,6 +1420,8 @@ RBAC 策略矩阵为只读聚合能力，不新增生产写表；服务端基于
 
 `066_rd_task_executor_policies.sql` 新增 `rd_task_executor_policies`，并为 `ai_executor_tasks` 补齐可空 `ai_task_id` 反链。研发任务启动时先按任务类型、产品和优先级解析 active 策略；命中策略后只向插件管理下的 Codex、Claude Code 或 OpenClaw Runner 投递工程执行任务，不装配 Agent/Skill。Runner 认领、追加日志、完成、取消或超时回写时必须同步 `ai_tasks.input_json.executor/output_json.executor`、任务状态和审计；成功结果进入 `waiting_review` 并创建待确认 `human_reviews`，失败或超时进入可排障失败态。
 
+`071_ai_executor_task_dead_letter.sql` 扩展 `ai_executor_tasks.status`，新增 `dead_letter` 终态。Runner 认领任务时服务端在 `request_config.reliability` 内写入租约开始、过期、租约秒数和最大重派次数；Runner 追加日志视为执行心跳并刷新租约。后台或管理员触发 `timeout-scan` 时优先处理租约过期任务：未超过 `max_reclaim_count` 的任务回到 `queued` 并累加 `reclaim_count`，超过后进入 `dead_letter`，同步插件调用日志、定时作业运行和研发 AI 任务失败态。
+
 `050_code_inspection_remediation_tasks.sql` 为代码巡检闭环补齐整改任务反链：`code_inspection_reports.created_task_ids` 保存本次巡检派生的整改 AI 任务 ID 列表，`code_inspection_findings.created_task_id` 反向关联具体 finding 派生任务。该迁移配合 `create_task_for_severe_findings` 结果写入动作使用，任务写入 `ai_tasks` 并保留报告、finding、仓库、文件、行号、规则和修复建议上下文。
 
 `055_code_inspection_native_scan.sql` 为 `code_inspection_reports` 增加 `scan_mode`、`scanner_name`、`is_full_scan`、`files_scanned`、`lines_scanned`、`rules_loaded` 和 `coverage_warning`，用于区分本地完整扫描、外部告警同步和平台触发扫描，并让报告详情可展示扫描覆盖率与规则版本。
@@ -1642,7 +1645,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 | `ScheduledJobTemplateCatalog` | 提供官方定时作业模板目录，声明模板版本、默认 payload、推荐场景和资源选择规则；任务中心页面与 AI 助手草案共用该目录生成周反馈洞察、代码巡检和邮件摘要作业配置。 |
 | `ScheduledJobCatalog` | 提供作业配置注册中心，声明作业类型、必填资源规则、执行/调度枚举、连接环境和代码巡检扫描/规则/结果动作选项；定时作业 service 复用该 catalog 做后端校验，前端仅消费 catalog 渲染选项和校验提示。 |
 | `ScheduledJobExecutionEngine` | 构造执行期节点追踪和摘要，包括数据连接、Skill/AI 处理、结果动作、代码巡检报告写入、插件写入预览和是否需要 AI 处理判断；作业运行事务、审计和持久化仍由定时作业服务编排。 |
-| `AiExecutorRunnerService` | 管理系统默认执行器与隔离 Runner：系统默认执行器 `ai_executor_runner_system_default` 使用 `model_gateway` 执行类型，直接调用平台默认 AI 大模型并返回结构化执行结果，不参与 Runner Token、心跳或任务认领；本地 Runner 负责注册、心跳、Token 校验和轮换、任务队列、OpenClaw/Codex/Claude/Hermes 执行类型校验、任务认领、日志追加、管理员取消、超时熔断和完成回写；管理员侧测试接口只读取 Runner 配置与健康投影，返回诊断项并写轻量审计，不下发真实任务；完成回写不得执行外部命令，只更新任务状态、插件日志、定时作业运行、collector run 和作业最近运行字段。 |
+| `AiExecutorRunnerService` | 管理系统默认执行器与隔离 Runner：系统默认执行器 `ai_executor_runner_system_default` 使用 `model_gateway` 执行类型，直接调用平台默认 AI 大模型并返回结构化执行结果，不参与 Runner Token、心跳或任务认领；本地 Runner 负责注册、心跳、Token 校验和轮换、任务队列、OpenClaw/Codex/Claude/Hermes 执行类型校验、任务认领、租约写入、日志续租、租约过期重派、死信、管理员取消、超时熔断和完成回写；管理员侧测试接口只读取 Runner 配置与健康投影，返回诊断项并写轻量审计，不下发真实任务；完成回写不得执行外部命令，只更新任务状态、插件日志、定时作业运行、collector run 和作业最近运行字段。 |
 | `ScheduledJobObservabilityService` | 聚合运行健康概览、失败原因、慢运行和 AI/插件/动作写入指标；只读取运行实例、作业定义和模型日志元数据，不参与作业执行。 |
 | `ConnectionDiagnosticsService` | 构造插件连接测试诊断步骤、请求回放 cURL、动作模板草案、失败修复建议、最近测试历史和轻量测试摘要；真实网络请求、审计和连接记录持久化仍由插件服务编排。 |
 | `AssistantDraftBuilder` | 构造 AI 助手确认式配置草案，包括研发任务、AI Skill、AI角色、插件连接、动作、每周反馈洞察作业、代码巡检作业、邮件摘要收取作业和分析类草案；研发任务草案使用 `create_rd_task`，优先从显式 `@需求` 解析 `requirement_id`，只生成 `product_detail_design` 任务草案，并同样返回“数据来源、AI处理、结果动作、调度策略、确认执行”五步 `wizard_steps[]`，其中调度策略为 `skipped`，用于说明研发任务是一次性确认动作；复用插件连接默认模板、动作模板目录和定时作业模板目录，代码巡检 AI 模式在缺少可用代码巡检 Skill 或 AI角色时必须先生成 `create_ai_skill` / `create_ai_agent` 前置草案，再生成依赖前置草案的 `create_scheduled_job`；所有助手生成的 `create_scheduled_job` 草案必须返回 `wizard_steps[]`，按数据来源、AI处理、结果动作、调度策略、确认执行给出 `ready/needs_prerequisite/pending/skipped/blocked` 状态、摘要和依赖，确定性插件任务的 AI处理步骤展示为 `skipped`，前端对 `needs_prerequisite/blocked` 步骤提供生成前置草案提示回填入口；配置向导每个步骤还必须提供“AI生成<步骤>草案”和“手动调整<步骤>”入口，ready/pending/skipped 步骤也可一键回填 AI 调整提示，数据来源和结果动作手动跳转任务中心 / 插件管理，AI处理跳转 AI 能力配置，调度策略和确认执行跳转任务中心 / 定时作业，让用户可在 AI 生成草案与人工调整之间切换；邮件摘要意图必须使用 `scheduled_job_templates.email_digest` 默认 payload，并绑定可用 `receive_email_messages` 动作和同插件邮箱连接生成 `create_scheduled_job` 草案；发布风险分析和知识库巡检生成 `create_analysis_draft`，草案同样返回“数据来源、AI处理、结果动作、调度策略、确认执行”五步 `wizard_steps[]`，其中调度策略为 `skipped`，确认后只生成可追踪 `assistant_analysis` 结果，不写业务配置表；`assistant_tools` 保留意图识别、读模型工具、插件连接失败诊断和结果汇总；泛化“新增任务”或未指定场景的“新增 AI能力配置”由 AI 助手确定性返回任务类型向导，引导用户选择草案路径后再生成具体配置，建议按钮与向导卡片均覆盖研发任务、定时作业、AI能力配置、插件动作、代码巡检和反馈洞察，且每个任务项都使用统一五步闭环；插件连接失败诊断必须只读取 `last_test_summary/test_history.repair_suggestions` 等脱敏摘要，不注入认证配置、完整 Header、完整请求体或密钥。 |
@@ -1666,7 +1669,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 - 策略可选绑定 `product_id`、`repository_id`、`branch`，必须配置 `workspace_root`、`instruction_template`、`output_contract`、`timeout_seconds` 和 `status`。`workspace_root` 必须落在 Runner 的 `workspace_roots` 白名单内。
 - 策略管理列表必须优先使用 PostgreSQL read model 完成分页、筛选、排序和查询性能观测；`GET /api/delivery/rd-task-executor-policies` 传入 `page/page_size` 时支持 `name/product_name/executor_type/task_type/status` 筛选和 `priority/name/product_name/repository_name/runner_name/executor_type/task_type/status/updated_at/workspace_root` 白名单排序，并返回 `query/performance`。未传分页参数的兼容读取只用于老调用方和测试 fallback，不作为管理页面主路径。
 - 研发任务启动时先解析 active 策略；命中后创建 `ai_executor_tasks(ai_task_id=当前任务)`，任务状态进入 `running`，`current_step=waiting_ai_executor`，并在 `input_json.executor` 冻结策略 ID、执行器类型、Runner、Runner 任务 ID 和工作区。
-- Runner 认领、追加日志、完成、取消或超时回写时，服务端同步 `ai_tasks`：运行中保持 `running/waiting_ai_executor`；成功时写入 `output_json.executor/result`、生成 `human_reviews(pending)` 并进入 `waiting_review`；失败、取消或超时写入错误码和错误信息，任务进入 `failed/cancelled`。
+- Runner 认领、追加日志、租约重派、完成、取消、超时或死信回写时，服务端同步 `ai_tasks`：运行中和重派保持 `running/waiting_ai_executor`；成功时写入 `output_json.executor/result`、生成 `human_reviews(pending)` 并进入 `waiting_review`；失败、取消、超时或死信写入错误码和错误信息，任务进入 `failed/cancelled`。
 - 执行器输入只包含研发任务摘要、需求快照、产品上下文、仓库/分支和输出契约，不下发产品 Git 凭据、插件连接密钥、模型网关密钥或 Agent/Skill 配置。Runner 可在受控工作区中使用本机 Codex/Claude Code/OpenClaw 完成工程分析或生成补丁草案，但业务终态仍必须经过 AI Brain 人工确认。
 - 页面入口位于需求交付 / 研发执行器策略；插件管理 / AI 执行器继续维护 Runner 本体、Token、心跳、安装包、日志和健康检测。
 
