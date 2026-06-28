@@ -714,3 +714,137 @@ def test_knowledge_deposit_can_be_rejected_once_with_reason():
         headers=headers,
     ).json()["data"]["items"]
     assert [item["id"] for item in rejected_items] == [deposit["id"]]
+
+
+def test_knowledge_index_health_summarizes_full_scope_and_actions():
+    app.state.store.reset()
+    headers = auth_headers()
+    store = app.state.store
+
+    def put_document(
+        document_id: str,
+        *,
+        active_chunk_set_id: str | None = None,
+        index_error: str | None = None,
+        status: str,
+        title: str,
+        vector_index_error: str | None = None,
+    ) -> None:
+        store.knowledge_documents[document_id] = {
+            "active_chunk_set_id": active_chunk_set_id,
+            "content": f"{title} content",
+            "created_at": "2026-06-29T01:00:00+00:00",
+            "created_by": "user_admin",
+            "doc_type": "manual",
+            "id": document_id,
+            "index_error": index_error,
+            "index_status": status,
+            "permission_roles": ["admin"],
+            "source_type": "manual",
+            "tags": [],
+            "title": title,
+            "updated_at": "2026-06-29T02:00:00+00:00",
+            "vector_index_error": vector_index_error,
+        }
+
+    put_document(
+        "knowledge_health_vector",
+        active_chunk_set_id="chunk_set_vector",
+        status="vector_indexed",
+        title="向量就绪知识",
+    )
+    put_document(
+        "knowledge_health_text",
+        active_chunk_set_id="chunk_set_text",
+        status="text_indexed",
+        title="关键词兜底知识",
+        vector_index_error="Embedding disabled",
+    )
+    put_document("knowledge_health_missing", status="indexed", title="分块缺失知识")
+    put_document(
+        "knowledge_health_failed",
+        index_error="parser failed",
+        status="index_failed",
+        title="索引失败知识",
+    )
+    put_document("knowledge_health_pending", status="pending_index", title="处理中知识")
+    store.knowledge_chunk_sets["chunk_set_vector"] = {
+        "chunk_count": 1,
+        "document_id": "knowledge_health_vector",
+        "embedding_dimension": 1536,
+        "embedding_model": "text-embedding-test",
+        "id": "chunk_set_vector",
+        "index_status": "vector_indexed",
+        "is_active": True,
+        "status": "active",
+    }
+    store.knowledge_chunk_sets["chunk_set_text"] = {
+        "chunk_count": 1,
+        "document_id": "knowledge_health_text",
+        "id": "chunk_set_text",
+        "index_status": "text_indexed",
+        "is_active": True,
+        "status": "active",
+    }
+    store.knowledge_chunks["chunk_vector"] = {
+        "chunk_index": 1,
+        "chunk_set_id": "chunk_set_vector",
+        "content": "vector content",
+        "document_id": "knowledge_health_vector",
+        "embedding": [0.1, 0.2],
+        "id": "chunk_vector",
+    }
+    store.knowledge_chunks["chunk_text"] = {
+        "chunk_index": 1,
+        "chunk_set_id": "chunk_set_text",
+        "content": "keyword content",
+        "document_id": "knowledge_health_text",
+        "id": "chunk_text",
+    }
+    store.knowledge_import_jobs["import_pending"] = {
+        "created_at": "2026-06-29T02:00:00+00:00",
+        "document_id": "knowledge_health_pending",
+        "id": "import_pending",
+        "progress": 20,
+        "status": "queued",
+    }
+
+    response = client.get("/api/knowledge/index-health?doc_type=manual", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["summary"] == {
+        "chunk_ready_documents": 2,
+        "embedding_ready_chunks": 1,
+        "index_failed_documents": 1,
+        "keyword_only_chunks": 1,
+        "keyword_only_documents": 1,
+        "missing_chunk_documents": 1,
+        "processing_documents": 1,
+        "searchable_documents": 3,
+        "total_chunks": 2,
+        "total_documents": 5,
+        "vector_ready_documents": 2,
+    }
+    assert {item["status"]: item["count"] for item in data["status_counts"]} == {
+        "index_failed": 1,
+        "indexed": 1,
+        "pending_index": 1,
+        "text_indexed": 1,
+        "vector_indexed": 1,
+    }
+    assert {item["status"]: item["count"] for item in data["import_job_counts"]} == {"queued": 1}
+    assert data["retrieval_modes"] == {
+        "hybrid_ready": 2,
+        "keyword_fallback": 1,
+        "unavailable": 2,
+    }
+    assert any(item["model"] == "text-embedding-test" for item in data["embedding_models"])
+    assert {issue["label"] for issue in data["issues"]} >= {
+        "分块缺失",
+        "向量待补",
+        "处理中",
+        "索引失败",
+    }
+    assert data["query"]["name"] == "knowledge_index_health"
+    assert data["performance"]["result_count"] == 4

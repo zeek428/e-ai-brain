@@ -25,6 +25,7 @@ from app.services.knowledge_import_worker import (
     enqueue_knowledge_import_job,
     knowledge_import_worker_status,
 )
+from app.services.knowledge_index_health import knowledge_index_health_response
 from app.services.knowledge_management import (
     activate_knowledge_chunk_set_result,
     asset_preview_result,
@@ -173,6 +174,32 @@ def list_knowledge_documents(
         request=request,
         sort_by=sort_by,
         sort_order=sort_order,
+        user=user,
+    )
+
+
+@router.get("/api/knowledge/index-health")
+def knowledge_index_health(
+    request: Request,
+    keyword: str | None = None,
+    doc_type: str | None = None,
+    index_status: str | None = None,
+    permission_role: str | None = None,
+    knowledge_space_id: str | None = None,
+    folder_id: str | None = None,
+    issue_limit: int = Query(default=10, ge=1, le=50),
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return knowledge_index_health_response(
+        current_store=store(request),
+        doc_type=doc_type,
+        folder_id=folder_id,
+        index_status=index_status,
+        issue_limit=issue_limit,
+        knowledge_space_id=knowledge_space_id,
+        keyword=keyword,
+        permission_role=permission_role,
+        request=request,
         user=user,
     )
 

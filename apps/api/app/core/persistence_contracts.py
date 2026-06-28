@@ -381,6 +381,22 @@ class KnowledgeRepository(Protocol):
         permission_role: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    def knowledge_index_health(
+        self,
+        *,
+        user_roles: list[str],
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_scope_ids: list[str] | None = None,
+        keyword: str | None = None,
+        doc_type: str | None = None,
+        folder_id: str | None = None,
+        index_status: str | None = None,
+        knowledge_space_id: str | None = None,
+        permission_role: str | None = None,
+        issue_limit: int = 10,
+    ) -> dict[str, Any]: ...
+
     def list_knowledge_deposits(
         self,
         *,

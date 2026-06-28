@@ -741,6 +741,35 @@ class PostgresSnapshotRepository:
             permission_role=permission_role,
         )
 
+    def knowledge_index_health(
+        self,
+        *,
+        user_roles: list[str],
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_scope_ids: list[str] | None = None,
+        keyword: str | None = None,
+        doc_type: str | None = None,
+        folder_id: str | None = None,
+        index_status: str | None = None,
+        knowledge_space_id: str | None = None,
+        permission_role: str | None = None,
+        issue_limit: int = 10,
+    ) -> dict[str, Any]:
+        return self._knowledge_read_repository.knowledge_index_health(
+            user_roles=user_roles,
+            user_id=user_id,
+            global_knowledge_access=global_knowledge_access,
+            knowledge_space_scope_ids=knowledge_space_scope_ids,
+            keyword=keyword,
+            doc_type=doc_type,
+            folder_id=folder_id,
+            index_status=index_status,
+            knowledge_space_id=knowledge_space_id,
+            permission_role=permission_role,
+            issue_limit=issue_limit,
+        )
+
     def list_knowledge_deposits(
         self,
         *,

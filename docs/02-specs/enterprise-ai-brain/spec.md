@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.661 |
+| 功能版本 | v1.1.662 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,11 +13,12 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.662 | 2026-06-29 | 知识中心索引健康升级为后端聚合中心：新增 `GET /api/knowledge/index-health`，按当前用户知识权限和筛选条件在 PostgreSQL read model 聚合全量文档、chunk、embedding、导入任务和可操作问题，前端不再只基于当前分页结果推断健康度 | Codex |
 | v1.1.661 | 2026-06-28 | 真实全链路回归脚本验收强度增强：在原公开 API 主链路基础上，新增代码巡检 finding/提交人/治理覆盖率、Bug/整改任务回写、版本驾驶舱状态分布、full-chain 主体解析、团队看板计数和 AI 助手会话历史引用的硬校验；版本驾驶舱补齐同版本巡检报告派生 Bug 聚合 | Codex |
 | v1.1.660 | 2026-06-28 | 迭代版本驾驶舱总览增强：弹窗集中展示需求/任务/Bug 状态分布和版本推进影响明细，用户可直接识别同步推进、阻塞和保持不变的需求，减少跨页面拼接版本健康上下文 | Codex |
 | v1.1.659 | 2026-06-28 | AI 执行器 Runner 任务补齐租约重派和死信队列：任务认领写入租约过期时间，日志追加刷新租约，超时扫描优先将租约过期任务按 `max_reclaim_count` 重派或置为 `dead_letter`，并同步上游定时作业和研发任务失败态 | Codex |
 | v1.1.658 | 2026-06-28 | 角色管理新增权限与范围预览：复用 RBAC 策略矩阵在列表前展示全局/产品范围覆盖、未配置范围、高风险角色和菜单权限缺口，并在角色列表与详情中展示 scope 授权，便于权限分配前快速排查风险 | Codex |
-| v1.1.657 | 2026-06-28 | 知识中心新增索引健康视图：基于当前远程分页结果聚合可检索、向量就绪、关键词兜底、索引失败、处理中和分块版本状态，暴露索引失败重试、向量补建、导入任务和分块查看入口，帮助在 Embedding 可选/降级场景下识别知识检索健康度 | Codex |
+| v1.1.657 | 2026-06-28 | 知识中心新增索引健康视图：基于后端权限过滤后的筛选范围聚合可检索、向量就绪、关键词兜底、索引失败、处理中和分块版本状态，暴露索引失败重试、向量补建、导入任务和分块查看入口，帮助在 Embedding 可选/降级场景下识别知识检索健康度 | Codex |
 | v1.1.656 | 2026-06-28 | 代码巡检报告详情新增治理闭环摘要：详情响应返回 `governance_summary`，按严重 finding 计算 Bug 覆盖、整改任务覆盖、待审批忽略、已接受风险和治理待办；详情页展示闭环状态并在 finding 列表暴露整改任务链接 | Codex |
 | v1.1.655 | 2026-06-28 | AI 动作确认中心增强治理摘要：草案详情和任务台统一展示风险等级、影响对象、权限校验、执行前后差异、失败重试和审计链路；`public_assistant_action_draft.governance` 由草案、预检、动作运行和审计事件派生，确认前帮助用户判断写入影响 | Codex |
 | v1.1.654 | 2026-06-28 | 固化真实全链路回归脚本：通过公开 API 串联用户反馈、需求、迭代版本、AI 任务、Review、知识沉淀、版本分支、代码巡检、Bug/整改任务、版本驾驶舱、full-chain、团队看板和 AI 助手引用；AI 任务启动新增管理员显式 `deterministic` 验收模式并记录审计，可跳过研发执行器策略和模型网关，生产默认仍走模型网关或研发执行器策略 | Codex |
@@ -1582,6 +1583,7 @@ KnowledgeRetriever.search(query, brain_app_code, user_id, filters, top_k)
 - 知识文档创建、内容更新、权限更新和沉淀采纳会先重建文本 chunk；如 Embedding 网关的 OpenAI-compatible `/embeddings` 可用，则生成 `knowledge_chunks.embedding` 并进入 `vector_indexed`。模型网关配置通过 `embedding_connection_mode=disabled|reuse_chat|custom` 明确 Chat 与 Embedding 能力边界，Chat-only 配置不得阻断 AI 助手或任务生成。
 - Embedding 维度必须等于 `VECTOR_DIMENSION`；provider 失败或维度异常时文档保持 `text_indexed`，保留 `vector_index_error`，关键词检索仍可用；只有无法切片等基础索引失败才进入 `index_failed`。
 - 检索必须先过滤用户无权读取的文档和 chunk，再对有 embedding 且 `embedding_config_id`、`embedding_model`、`embedding_dimension` 兼容的 chunk 使用 cosine 相似度排序；没有可读兼容向量 chunk 时不得额外混用旧模型向量，直接关键词检索。返回结果包含 `retrieval_mode`，向量命中包含 `score`，关键词命中 `score=null`。
+- `GET /api/knowledge/index-health` 是知识索引健康中心的后端聚合入口，必须校验 `knowledge.read`，并复用知识文档权限和空间 scope 过滤；PostgreSQL 运行态优先在 read model 层按 keyword、doc_type、knowledge_space_id、folder_id、permission_role 和 index_status 聚合全量健康，不得只基于当前分页结果推断。响应需包含文档状态分布、可检索/向量就绪/关键词兜底/处理中/失败/分块缺失统计、chunk embedding 覆盖、导入任务状态、embedding model 分布、可操作问题列表和 `query/performance` 观测。
 - 导入 worker 必须通过 repository 原子 claim queued 任务并写入锁租约，成功、失败、取消和 retry 都要释放锁；重解析失败不得归档旧 active chunk set，历史 chunk set 激活时按版本保存的 `index_status` 恢复文档状态。
 - 目录归档按子树生效，归档父目录下的子目录不得继续出现在目录树，也不得作为上传、创建子目录或批量移动目标。
 - 模型调用日志以 `purpose=knowledge_embedding` 记录 provider、model、tokens、latency 和状态，不记录完整知识正文或查询文本。

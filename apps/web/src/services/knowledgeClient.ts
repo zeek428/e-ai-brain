@@ -112,6 +112,50 @@ export type KnowledgeImportWorkerStatusRecord = {
   workerId?: string | null;
 };
 
+export type KnowledgeIndexHealthIssueRecord = {
+  action: 'open_chunks' | 'open_import_jobs' | 'retry_index';
+  description: string;
+  documentId: string;
+  indexError?: string | null;
+  knowledgeSpaceId?: string | null;
+  label: string;
+  severity: 'error' | 'processing' | 'warning';
+  status: KnowledgeRecord['status'];
+  title: string;
+  updatedAt?: string;
+  vectorIndexError?: string | null;
+};
+
+export type KnowledgeIndexHealthRecord = {
+  embeddingModels: Array<{
+    count: number;
+    dimension?: number | null;
+    model: string;
+  }>;
+  importJobCounts: Array<{ count: number; status: string }>;
+  issues: KnowledgeIndexHealthIssueRecord[];
+  performance?: RemoteListPerformance;
+  retrievalModes: {
+    hybridReady: number;
+    keywordFallback: number;
+    unavailable: number;
+  };
+  statusCounts: Array<{ count: number; status: string }>;
+  summary: {
+    chunkReadyDocuments: number;
+    embeddingReadyChunks: number;
+    indexFailedDocuments: number;
+    keywordOnlyChunks: number;
+    keywordOnlyDocuments: number;
+    missingChunkDocuments: number;
+    processingDocuments: number;
+    searchableDocuments: number;
+    totalChunks: number;
+    totalDocuments: number;
+    vectorReadyDocuments: number;
+  };
+};
+
 export type KnowledgeChunkSetRecord = {
   activatedAt?: string;
   chunkCount: number;
@@ -299,6 +343,50 @@ type KnowledgeSearchResultItem = {
   title?: string;
 };
 
+type KnowledgeIndexHealthIssueItem = {
+  action?: string;
+  description?: string;
+  document_id: string;
+  index_error?: string | null;
+  knowledge_space_id?: string | null;
+  label?: string;
+  severity?: string;
+  status?: string;
+  title?: string;
+  updated_at?: string;
+  vector_index_error?: string | null;
+};
+
+type KnowledgeIndexHealthItem = {
+  embedding_models?: Array<{
+    count?: number;
+    dimension?: number | null;
+    model?: string;
+  }>;
+  import_job_counts?: Array<{ count?: number; status?: string }>;
+  issues?: KnowledgeIndexHealthIssueItem[];
+  performance?: RemoteListPerformance;
+  retrieval_modes?: {
+    hybrid_ready?: number;
+    keyword_fallback?: number;
+    unavailable?: number;
+  };
+  status_counts?: Array<{ count?: number; status?: string }>;
+  summary?: {
+    chunk_ready_documents?: number;
+    embedding_ready_chunks?: number;
+    index_failed_documents?: number;
+    keyword_only_chunks?: number;
+    keyword_only_documents?: number;
+    missing_chunk_documents?: number;
+    processing_documents?: number;
+    searchable_documents?: number;
+    total_chunks?: number;
+    total_documents?: number;
+    vector_ready_documents?: number;
+  };
+};
+
 function formatListDate(value?: string) {
   return formatDisplayDateTime(value);
 }
@@ -473,6 +561,75 @@ function mapKnowledgeSearchResult(
   };
 }
 
+function normalizeKnowledgeHealthAction(
+  action?: string,
+): KnowledgeIndexHealthIssueRecord['action'] {
+  if (action === 'open_chunks' || action === 'open_import_jobs' || action === 'retry_index') {
+    return action;
+  }
+  return 'retry_index';
+}
+
+function normalizeKnowledgeHealthSeverity(
+  severity?: string,
+): KnowledgeIndexHealthIssueRecord['severity'] {
+  if (severity === 'error' || severity === 'processing' || severity === 'warning') {
+    return severity;
+  }
+  return 'warning';
+}
+
+function mapKnowledgeIndexHealth(item: KnowledgeIndexHealthItem): KnowledgeIndexHealthRecord {
+  const summary = item.summary ?? {};
+  return {
+    embeddingModels: (item.embedding_models ?? []).map((model) => ({
+      count: Number(model.count ?? 0),
+      dimension: model.dimension,
+      model: model.model ?? 'not_configured',
+    })),
+    importJobCounts: (item.import_job_counts ?? []).map((count) => ({
+      count: Number(count.count ?? 0),
+      status: count.status ?? 'unknown',
+    })),
+    issues: (item.issues ?? []).map((issue) => ({
+      action: normalizeKnowledgeHealthAction(issue.action),
+      description: issue.description ?? '-',
+      documentId: issue.document_id,
+      indexError: issue.index_error,
+      knowledgeSpaceId: issue.knowledge_space_id,
+      label: issue.label ?? '-',
+      severity: normalizeKnowledgeHealthSeverity(issue.severity),
+      status: normalizeKnowledgeStatus(issue.status),
+      title: issue.title ?? issue.document_id,
+      updatedAt: formatListDate(issue.updated_at),
+      vectorIndexError: issue.vector_index_error,
+    })),
+    performance: item.performance,
+    retrievalModes: {
+      hybridReady: Number(item.retrieval_modes?.hybrid_ready ?? 0),
+      keywordFallback: Number(item.retrieval_modes?.keyword_fallback ?? 0),
+      unavailable: Number(item.retrieval_modes?.unavailable ?? 0),
+    },
+    statusCounts: (item.status_counts ?? []).map((count) => ({
+      count: Number(count.count ?? 0),
+      status: count.status ?? 'unknown',
+    })),
+    summary: {
+      chunkReadyDocuments: Number(summary.chunk_ready_documents ?? 0),
+      embeddingReadyChunks: Number(summary.embedding_ready_chunks ?? 0),
+      indexFailedDocuments: Number(summary.index_failed_documents ?? 0),
+      keywordOnlyChunks: Number(summary.keyword_only_chunks ?? 0),
+      keywordOnlyDocuments: Number(summary.keyword_only_documents ?? 0),
+      missingChunkDocuments: Number(summary.missing_chunk_documents ?? 0),
+      processingDocuments: Number(summary.processing_documents ?? 0),
+      searchableDocuments: Number(summary.searchable_documents ?? 0),
+      totalChunks: Number(summary.total_chunks ?? 0),
+      totalDocuments: Number(summary.total_documents ?? 0),
+      vectorReadyDocuments: Number(summary.vector_ready_documents ?? 0),
+    },
+  };
+}
+
 export async function fetchManagementKnowledge(): Promise<KnowledgeRecord[]> {
   const token = requireAccessToken();
   const documents = await apiRequest<ListResponse<KnowledgeDocumentListItem>>(
@@ -508,6 +665,26 @@ export async function fetchManagementKnowledgeList(
     rows: documents.items.map(mapKnowledgeRecord),
     total: documents.total,
   };
+}
+
+export async function fetchKnowledgeIndexHealth(
+  query: KnowledgeListQuery = {},
+): Promise<KnowledgeIndexHealthRecord> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'doc_type', query.documentType);
+  appendQueryParam(params, 'knowledge_space_id', query.knowledgeSpaceId);
+  appendQueryParam(params, 'folder_id', query.folderId);
+  appendQueryParam(params, 'permission_role', query.ownerRole);
+  appendQueryParam(params, 'index_status', query.status);
+  appendQueryParam(params, 'issue_limit', 8);
+  const queryString = params.toString();
+  const health = await apiRequest<KnowledgeIndexHealthItem>(
+    queryString ? `/api/knowledge/index-health?${queryString}` : '/api/knowledge/index-health',
+    { token },
+  );
+  return mapKnowledgeIndexHealth(health);
 }
 
 export async function fetchKnowledgeSpaces(): Promise<KnowledgeSpaceRecord[]> {

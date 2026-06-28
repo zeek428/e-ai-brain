@@ -38,6 +38,7 @@ import {
   fetchKnowledgeDeposits,
   fetchKnowledgeDocumentAssets,
   fetchKnowledgeFolders,
+  fetchKnowledgeIndexHealth,
   fetchKnowledgeImportJobs,
   fetchKnowledgeImportWorkerStatus,
   fetchKnowledgeSearchResults,
@@ -59,6 +60,7 @@ import {
   type KnowledgeAssetRecord,
   type KnowledgeImportJobRecord,
   type KnowledgeImportWorkerStatusRecord,
+  type KnowledgeIndexHealthRecord,
   type KnowledgeListQuery,
   type KnowledgeDepositRecord,
   type KnowledgeSearchResultRecord,
@@ -179,6 +181,56 @@ function buildKnowledgeHealthSummary(rows: KnowledgeRecord[]) {
     searchableCount: searchableDocuments.length,
     total: rows.length,
     vectorReadyCount: vectorReadyDocuments.length,
+  };
+}
+
+type KnowledgeHealthSummary = ReturnType<typeof buildKnowledgeHealthSummary>;
+
+function remoteIssueDocument(
+  issue: KnowledgeIndexHealthRecord['issues'][number],
+  rowsById: Map<string, KnowledgeRecord>,
+): KnowledgeRecord {
+  const currentPageDocument = rowsById.get(issue.documentId);
+  if (currentPageDocument) {
+    return currentPageDocument;
+  }
+  return {
+    documentType: '-',
+    id: issue.documentId,
+    indexError: issue.indexError,
+    knowledgeSpaceId: issue.knowledgeSpaceId ?? undefined,
+    ownerRole: '-',
+    permissionRoles: [],
+    status: issue.status,
+    title: issue.title,
+    updatedAt: issue.updatedAt ?? '-',
+    vectorIndexError: issue.vectorIndexError,
+  };
+}
+
+function buildRemoteKnowledgeHealthSummary(
+  health: KnowledgeIndexHealthRecord,
+  rows: KnowledgeRecord[],
+): KnowledgeHealthSummary {
+  const rowsById = new Map(rows.map((row) => [row.id, row]));
+  return {
+    chunkReadyCount: health.summary.chunkReadyDocuments,
+    failedCount: health.summary.indexFailedDocuments,
+    healthIssues: health.issues.map((issue) => ({
+      action: issue.action,
+      description: issue.description,
+      document: remoteIssueDocument(issue, rowsById),
+      key: `health-${issue.documentId}-${issue.label}`,
+      label: issue.label,
+      severity: issue.severity,
+      title: issue.title,
+    })),
+    keywordOnlyCount: health.summary.keywordOnlyDocuments,
+    missingChunkCount: health.summary.missingChunkDocuments,
+    pendingCount: health.summary.processingDocuments,
+    searchableCount: health.summary.searchableDocuments,
+    total: health.summary.totalDocuments,
+    vectorReadyCount: health.summary.vectorReadyDocuments,
   };
 }
 
@@ -336,6 +388,13 @@ export default function KnowledgePage() {
     status: 'loading',
     total: 0,
   });
+  const [knowledgeHealthState, setKnowledgeHealthState] = useState<{
+    error?: string;
+    record?: KnowledgeIndexHealthRecord;
+    status: 'error' | 'loading' | 'ready';
+  }>({
+    status: 'loading',
+  });
   const [assetsDocument, setAssetsDocument] = useState<KnowledgeRecord | null>(null);
   const [chunksDocument, setChunksDocument] = useState<KnowledgeRecord | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
@@ -352,9 +411,16 @@ export default function KnowledgePage() {
     () => new Map(spaces.map((space) => [space.id, space.name])),
     [spaces],
   );
-  const knowledgeHealthSummary = useMemo(
+  const localKnowledgeHealthSummary = useMemo(
     () => buildKnowledgeHealthSummary(listState.rows),
     [listState.rows],
+  );
+  const knowledgeHealthSummary = useMemo(
+    () =>
+      knowledgeHealthState.record
+        ? buildRemoteKnowledgeHealthSummary(knowledgeHealthState.record, listState.rows)
+        : localKnowledgeHealthSummary,
+    [knowledgeHealthState.record, listState.rows, localKnowledgeHealthSummary],
   );
 
   const reloadSpaces = useCallback(async () => {
@@ -367,8 +433,10 @@ export default function KnowledgePage() {
 
   const reload = useCallback(async () => {
     setListState((current) => ({ ...current, status: 'loading' }));
+    setKnowledgeHealthState((current) => ({ ...current, status: 'loading' }));
     try {
-      const result = await fetchManagementKnowledgeList(buildKnowledgeListQuery(listQuery));
+      const query = buildKnowledgeListQuery(listQuery);
+      const result = await fetchManagementKnowledgeList(query);
       setListState({
         page: result.page,
         pageSize: result.pageSize,
@@ -377,6 +445,11 @@ export default function KnowledgePage() {
         status: 'ready',
         total: result.total,
       });
+      const health = await fetchKnowledgeIndexHealth(query);
+      setKnowledgeHealthState({
+        record: health,
+        status: 'ready',
+      });
     } catch (loadError: unknown) {
       setListState((current) => ({
         ...current,
@@ -384,6 +457,10 @@ export default function KnowledgePage() {
         rows: [],
         status: 'error',
       }));
+      setKnowledgeHealthState({
+        error: formatMutationError(loadError),
+        status: 'error',
+      });
     }
   }, [listQuery]);
 
@@ -431,8 +508,13 @@ export default function KnowledgePage() {
   useEffect(() => {
     let isCurrent = true;
     setListState((current) => ({ ...current, status: 'loading' }));
-    fetchManagementKnowledgeList(buildKnowledgeListQuery(listQuery))
-      .then((result) => {
+    setKnowledgeHealthState((current) => ({ ...current, status: 'loading' }));
+    const query = buildKnowledgeListQuery(listQuery);
+    Promise.all([
+      fetchManagementKnowledgeList(query),
+      fetchKnowledgeIndexHealth(query),
+    ])
+      .then(([result, health]) => {
         if (isCurrent) {
           setListState({
             page: result.page,
@@ -441,6 +523,10 @@ export default function KnowledgePage() {
             rows: result.rows,
             status: 'ready',
             total: result.total,
+          });
+          setKnowledgeHealthState({
+            record: health,
+            status: 'ready',
           });
         }
       })
@@ -452,6 +538,10 @@ export default function KnowledgePage() {
             rows: [],
             status: 'error',
           }));
+          setKnowledgeHealthState({
+            error: formatMutationError(loadError),
+            status: 'error',
+          });
         }
       });
     return () => {
@@ -1271,7 +1361,7 @@ export default function KnowledgePage() {
   );
 
   const knowledgeHealthMetrics = [
-    { key: 'total', label: '当前页文档', value: knowledgeHealthSummary.total },
+    { key: 'total', label: '范围文档', value: knowledgeHealthSummary.total },
     { key: 'searchable', label: '可检索', value: knowledgeHealthSummary.searchableCount },
     { key: 'vector_ready', label: '向量就绪', value: knowledgeHealthSummary.vectorReadyCount },
     { key: 'keyword_only', label: '关键词兜底', value: knowledgeHealthSummary.keywordOnlyCount },
@@ -1327,7 +1417,16 @@ export default function KnowledgePage() {
             label={knowledgeHealthSummary.failedCount > 0 ? '需处理' : knowledgeHealthSummary.keywordOnlyCount > 0 ? '可优化' : '正常'}
           />
         </Space>
-        <Text type="secondary">当前筛选页 · {listState.total} 条结果</Text>
+        <Space size={8} wrap>
+          {knowledgeHealthState.status === 'loading' ? <StatusTag color="blue" label="刷新中" /> : null}
+          {knowledgeHealthState.status === 'error' ? <StatusTag color="red" label="健康统计失败" /> : null}
+          <Text type="secondary">
+            当前筛选范围 · 列表 {listState.total} 条
+            {knowledgeHealthState.record?.performance?.duration_ms !== undefined
+              ? ` · 健康统计 ${knowledgeHealthState.record.performance.duration_ms}ms`
+              : ''}
+          </Text>
+        </Space>
       </div>
       <div className="knowledge-health-metrics" role="list">
         {knowledgeHealthMetrics.map((metric) => (
@@ -1359,7 +1458,9 @@ export default function KnowledgePage() {
             </div>
           ))
         ) : (
-          <Text type="secondary">当前页没有索引失败、向量待补或分块缺失文档。</Text>
+          <Text type="secondary">
+            {knowledgeHealthState.error ?? '当前筛选范围没有索引失败、向量待补或分块缺失文档。'}
+          </Text>
         )}
       </div>
     </section>

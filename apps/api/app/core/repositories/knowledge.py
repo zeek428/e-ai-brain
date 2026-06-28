@@ -365,6 +365,237 @@ class KnowledgeReadRepository:
                 )
                 return [self._knowledge_document_summary_from_row(row) for row in cursor.fetchall()]
 
+    def knowledge_index_health(
+        self,
+        *,
+        user_roles: list[str],
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_scope_ids: list[str] | None = None,
+        keyword: str | None = None,
+        doc_type: str | None = None,
+        folder_id: str | None = None,
+        index_status: str | None = None,
+        knowledge_space_id: str | None = None,
+        permission_role: str | None = None,
+        issue_limit: int = 10,
+    ) -> dict[str, Any]:
+        where_clause, params = self._knowledge_document_where(
+            doc_type=doc_type,
+            folder_id=folder_id,
+            global_knowledge_access=global_knowledge_access,
+            index_status=index_status,
+            keyword=keyword,
+            knowledge_space_id=knowledge_space_id,
+            knowledge_space_scope_ids=knowledge_space_scope_ids,
+            permission_role=permission_role,
+            user_id=user_id,
+            user_roles=user_roles,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    WITH visible_docs AS (
+                        SELECT d.id, d.title, d.index_status, d.index_error,
+                               d.vector_index_error, d.knowledge_space_id,
+                               d.active_chunk_set_id, d.updated_at
+                        FROM knowledge_documents d
+                        WHERE {where_clause}
+                    ),
+                    doc_chunks AS (
+                        SELECT d.id AS document_id,
+                               COUNT(c.id) AS chunk_count,
+                               COUNT(c.id) FILTER (
+                                   WHERE c.embedding IS NOT NULL
+                               ) AS embedding_chunk_count,
+                               COUNT(c.id) FILTER (
+                                   WHERE c.embedding IS NULL
+                               ) AS keyword_chunk_count
+                        FROM visible_docs d
+                        LEFT JOIN knowledge_chunks c
+                          ON c.document_id = d.id
+                         AND (
+                             d.active_chunk_set_id IS NULL
+                             OR c.chunk_set_id = d.active_chunk_set_id
+                         )
+                        GROUP BY d.id
+                    )
+                    SELECT
+                        COUNT(d.id) AS total_documents,
+                        COUNT(d.id) FILTER (
+                            WHERE d.index_status IN ('indexed', 'text_indexed', 'vector_indexed')
+                        ) AS searchable_documents,
+                        COUNT(d.id) FILTER (
+                            WHERE d.index_status IN ('indexed', 'vector_indexed')
+                        ) AS vector_ready_documents,
+                        COUNT(d.id) FILTER (
+                            WHERE d.index_status = 'text_indexed'
+                        ) AS keyword_only_documents,
+                        COUNT(d.id) FILTER (
+                            WHERE d.index_status = 'index_failed'
+                        ) AS index_failed_documents,
+                        COUNT(d.id) FILTER (
+                            WHERE d.index_status IN ('importing', 'pending_index')
+                        ) AS processing_documents,
+                        COUNT(d.id) FILTER (
+                            WHERE COALESCE(c.chunk_count, 0) > 0
+                        ) AS chunk_ready_documents,
+                        COUNT(d.id) FILTER (
+                            WHERE d.index_status IN ('indexed', 'text_indexed', 'vector_indexed')
+                              AND COALESCE(c.chunk_count, 0) = 0
+                        ) AS missing_chunk_documents,
+                        COALESCE(SUM(c.chunk_count), 0) AS total_chunks,
+                        COALESCE(SUM(c.embedding_chunk_count), 0) AS embedding_ready_chunks,
+                        COALESCE(SUM(c.keyword_chunk_count), 0) AS keyword_only_chunks
+                    FROM visible_docs d
+                    LEFT JOIN doc_chunks c ON c.document_id = d.id
+                    """,
+                    tuple(params),
+                )
+                summary_row = cursor.fetchone()
+
+                cursor.execute(
+                    f"""
+                    SELECT COALESCE(d.index_status, 'pending_index') AS status, COUNT(*)
+                    FROM knowledge_documents d
+                    WHERE {where_clause}
+                    GROUP BY COALESCE(d.index_status, 'pending_index')
+                    ORDER BY status
+                    """,
+                    tuple(params),
+                )
+                status_counts = [
+                    {"count": int(row[1] or 0), "status": str(row[0])}
+                    for row in cursor.fetchall()
+                ]
+
+                cursor.execute(
+                    f"""
+                    WITH visible_docs AS (
+                        SELECT d.id, d.active_chunk_set_id
+                        FROM knowledge_documents d
+                        WHERE {where_clause}
+                    )
+                    SELECT COALESCE(cs.embedding_model, 'not_configured') AS embedding_model,
+                           cs.embedding_dimension,
+                           COUNT(*)
+                    FROM visible_docs d
+                    JOIN knowledge_chunk_sets cs ON cs.id = d.active_chunk_set_id
+                    GROUP BY COALESCE(cs.embedding_model, 'not_configured'), cs.embedding_dimension
+                    ORDER BY COUNT(*) DESC, embedding_model
+                    """,
+                    tuple(params),
+                )
+                embedding_models = [
+                    {
+                        "count": int(row[2] or 0),
+                        "dimension": int(row[1]) if row[1] is not None else None,
+                        "model": str(row[0]),
+                    }
+                    for row in cursor.fetchall()
+                ]
+
+                cursor.execute(
+                    f"""
+                    WITH visible_docs AS (
+                        SELECT d.id
+                        FROM knowledge_documents d
+                        WHERE {where_clause}
+                    )
+                    SELECT COALESCE(j.status, 'unknown') AS status, COUNT(*)
+                    FROM knowledge_import_jobs j
+                    JOIN visible_docs d ON d.id = j.document_id
+                    GROUP BY COALESCE(j.status, 'unknown')
+                    ORDER BY status
+                    """,
+                    tuple(params),
+                )
+                import_job_counts = [
+                    {"count": int(row[1] or 0), "status": str(row[0])}
+                    for row in cursor.fetchall()
+                ]
+
+                cursor.execute(
+                    f"""
+                    WITH visible_docs AS (
+                        SELECT d.id, d.title, d.index_status, d.index_error,
+                               d.vector_index_error, d.knowledge_space_id,
+                               d.active_chunk_set_id, d.updated_at
+                        FROM knowledge_documents d
+                        WHERE {where_clause}
+                    ),
+                    doc_chunks AS (
+                        SELECT d.id AS document_id, COUNT(c.id) AS chunk_count
+                        FROM visible_docs d
+                        LEFT JOIN knowledge_chunks c
+                          ON c.document_id = d.id
+                         AND (
+                             d.active_chunk_set_id IS NULL
+                             OR c.chunk_set_id = d.active_chunk_set_id
+                         )
+                        GROUP BY d.id
+                    )
+                    SELECT d.id, d.title, d.index_status, d.index_error,
+                           d.vector_index_error, d.knowledge_space_id,
+                           d.updated_at, COALESCE(c.chunk_count, 0) AS chunk_count
+                    FROM visible_docs d
+                    LEFT JOIN doc_chunks c ON c.document_id = d.id
+                    WHERE d.index_status IN (
+                        'index_failed', 'text_indexed', 'importing', 'pending_index'
+                    )
+                       OR (
+                           d.index_status IN ('indexed', 'text_indexed', 'vector_indexed')
+                           AND COALESCE(c.chunk_count, 0) = 0
+                       )
+                    ORDER BY
+                        CASE
+                          WHEN d.index_status = 'index_failed' THEN 0
+                          WHEN d.index_status = 'text_indexed' THEN 1
+                          WHEN COALESCE(c.chunk_count, 0) = 0 THEN 2
+                          ELSE 3
+                        END,
+                        d.updated_at DESC NULLS LAST,
+                        d.id
+                    LIMIT %s
+                    """,
+                    tuple([*params, issue_limit]),
+                )
+                issues = [
+                    {
+                        "chunk_count": int(row[7] or 0),
+                        "document_id": str(row[0]),
+                        "index_error": row[3],
+                        "knowledge_space_id": row[5],
+                        "status": row[2] or "pending_index",
+                        "title": row[1],
+                        "updated_at": _iso(row[6]),
+                        "vector_index_error": row[4],
+                    }
+                    for row in cursor.fetchall()
+                ]
+
+        summary_values = tuple(summary_row or ())
+        return {
+            "embedding_models": embedding_models,
+            "import_job_counts": import_job_counts,
+            "issues": issues,
+            "status_counts": status_counts,
+            "summary": {
+                "chunk_ready_documents": int(summary_values[6] or 0) if summary_values else 0,
+                "embedding_ready_chunks": int(summary_values[9] or 0) if summary_values else 0,
+                "index_failed_documents": int(summary_values[4] or 0) if summary_values else 0,
+                "keyword_only_chunks": int(summary_values[10] or 0) if summary_values else 0,
+                "keyword_only_documents": int(summary_values[3] or 0) if summary_values else 0,
+                "missing_chunk_documents": int(summary_values[7] or 0) if summary_values else 0,
+                "processing_documents": int(summary_values[5] or 0) if summary_values else 0,
+                "searchable_documents": int(summary_values[1] or 0) if summary_values else 0,
+                "total_chunks": int(summary_values[8] or 0) if summary_values else 0,
+                "total_documents": int(summary_values[0] or 0) if summary_values else 0,
+                "vector_ready_documents": int(summary_values[2] or 0) if summary_values else 0,
+            },
+        }
+
     def list_knowledge_deposits(
         self,
         *,

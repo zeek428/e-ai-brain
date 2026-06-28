@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.445 |
+| 功能版本 | v1.1.446 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,9 +13,10 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.446 | 2026-06-29 | 新增 `GET /api/knowledge/index-health`，按当前用户 `knowledge.read` 权限、知识空间 scope 和筛选条件聚合全量索引健康、chunk/embedding 覆盖、导入任务状态和可操作健康问题，响应包含 `query/performance` | Codex |
 | v1.1.445 | 2026-06-28 | AI 执行器任务超时扫描新增租约重派和死信队列响应：任务状态支持 `dead_letter`，`POST /api/system/ai-executor-tasks/timeout-scan` 返回 `requeued_task_ids/dead_letter_task_ids/timed_out_task_ids`，认领和日志追加会维护 `request_config.reliability` 租约元数据 | Codex |
 | v1.1.444 | 2026-06-28 | 角色管理页面新增权限与范围预览，复用 `GET /api/system/permissions/matrix` 响应中的 `rows/scopes/high_risk_permission_codes/missing_menu_permission_codes` 展示范围覆盖和授权风险；API 契约无需新增端点 | Codex |
-| v1.1.443 | 2026-06-28 | 知识中心页面新增索引健康视图：复用 `GET /api/knowledge/documents` 分页响应中的 `index_status`、`active_chunk_set_id`、`index_error` 和 `vector_index_error`，展示当前页健康汇总和可操作问题入口；API 契约无需新增端点 | Codex |
+| v1.1.443 | 2026-06-28 | 知识中心页面新增索引健康视图：最初复用 `GET /api/knowledge/documents` 分页响应中的 `index_status`、`active_chunk_set_id`、`index_error` 和 `vector_index_error` 展示当前页健康汇总；v1.1.446 已升级为独立后端健康端点 | Codex |
 | v1.1.442 | 2026-06-28 | `GET /api/governance/code-inspections/{report_id}` 详情响应新增 `governance_summary`，返回闭环状态、严重问题 Bug/整改任务覆盖、待审批忽略、已接受风险和治理待办；前端报告详情展示治理闭环与整改任务链接 | Codex |
 | v1.1.441 | 2026-06-28 | AI 动作草案详情响应新增 `governance` 治理摘要，草案任务台列表行补充影响对象、权限状态、审计事件数、失败次数和重试次数；详情页需展示风险、影响、权限、执行前后差异、失败重试和审计链路 | Codex |
 | v1.1.440 | 2026-06-28 | `POST /api/ai-tasks/{task_id}/start` 支持管理员显式 `execution_mode=deterministic` 验收模式，跳过研发执行器策略和模型网关并记录审计；统一 full-chain 在需求归属版本时可按版本分支配置匹配代码巡检报告；AI 助手引用解析补齐 `product_version` 和仓储上下文中的代码巡检报告 | Codex |
@@ -746,6 +747,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Review | POST | `/api/reviews/{review_id}/reject` | 驳回重跑。 |
 | Review | POST | `/api/reviews/{review_id}/request-more-info` | 要求补充信息。 |
 | Knowledge | GET | `/api/knowledge/documents` | 知识文档列表；校验 `knowledge.read`，带分页参数时由 PostgreSQL read model 完成权限过滤、筛选、排序和分页。 |
+| Knowledge | GET | `/api/knowledge/index-health` | 知识索引健康中心；校验 `knowledge.read`，支持 `keyword/doc_type/knowledge_space_id/folder_id/permission_role/index_status/issue_limit`，按当前用户知识空间和角色权限在 PostgreSQL read model 聚合全量状态分布、可检索/向量/关键词兜底/失败/处理中/分块缺失统计、chunk embedding 覆盖、导入任务状态、embedding model 分布和健康问题列表，并返回 `query/performance`。 |
 | Knowledge | POST | `/api/knowledge/documents` | 导入知识文档。 |
 | Knowledge | GET | `/api/knowledge/spaces` | 查询当前用户可访问的知识空间。 |
 | Knowledge | POST | `/api/knowledge/spaces` | 创建知识空间。 |

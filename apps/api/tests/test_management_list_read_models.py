@@ -697,3 +697,88 @@ def test_knowledge_document_list_uses_repository_read_model_for_sql_pagination()
         assert data["performance"]["result_count"] == 1
     finally:
         _restore_repository(original_store, original_users)
+
+
+def test_knowledge_index_health_uses_repository_read_model():
+    class IndexHealthOnlyKnowledgeRepository(FakeSnapshotRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.health_reads: list[dict] = []
+
+        def list_knowledge_documents(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("knowledge index health should not load all documents")
+
+        def knowledge_index_health(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.health_reads.append(dict(kwargs))
+            return {
+                "embedding_models": [
+                    {"count": 2, "dimension": 1536, "model": "text-embedding-test"}
+                ],
+                "import_job_counts": [{"count": 1, "status": "failed"}],
+                "issues": [
+                    {
+                        "chunk_count": 0,
+                        "document_id": "knowledge_health_sql",
+                        "index_error": "parser failed",
+                        "knowledge_space_id": "space_health_sql",
+                        "status": "index_failed",
+                        "title": "SQL 健康文档",
+                        "updated_at": "2026-06-29T02:00:00+00:00",
+                        "vector_index_error": None,
+                    }
+                ],
+                "status_counts": [{"count": 1, "status": "index_failed"}],
+                "summary": {
+                    "chunk_ready_documents": 0,
+                    "embedding_ready_chunks": 0,
+                    "index_failed_documents": 1,
+                    "keyword_only_chunks": 0,
+                    "keyword_only_documents": 0,
+                    "missing_chunk_documents": 0,
+                    "processing_documents": 0,
+                    "searchable_documents": 0,
+                    "total_chunks": 0,
+                    "total_documents": 1,
+                    "vector_ready_documents": 0,
+                },
+            }
+
+    repository = IndexHealthOnlyKnowledgeRepository()
+    original_store, original_users = _use_repository(repository)
+
+    try:
+        response = client.get(
+            (
+                "/api/knowledge/index-health"
+                "?keyword=SQL"
+                "&doc_type=runbook"
+                "&index_status=index_failed"
+                "&permission_role=admin"
+                "&knowledge_space_id=space_health_sql"
+                "&folder_id=folder_health_sql"
+            ),
+            headers=auth_headers(),
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        expected_query = {
+            "doc_type": "runbook",
+            "folder_id": "folder_health_sql",
+            "global_knowledge_access": True,
+            "index_status": "index_failed",
+            "issue_limit": 10,
+            "keyword": "SQL",
+            "knowledge_space_id": "space_health_sql",
+            "knowledge_space_scope_ids": [],
+            "permission_role": "admin",
+            "user_id": "user_admin",
+            "user_roles": ["admin"],
+        }
+        assert repository.health_reads == [expected_query]
+        assert data["summary"]["total_documents"] == 1
+        assert data["issues"][0]["label"] == "索引失败"
+        assert data["items"][0]["document_id"] == "knowledge_health_sql"
+        assert data["query"]["name"] == "knowledge_index_health"
+        assert data["performance"]["total"] == 1
+    finally:
+        _restore_repository(original_store, original_users)
