@@ -104,6 +104,83 @@ const assetTypeLabels: Record<string, string> = {
 const KNOWLEDGE_TABLE_SCROLL_X = 2000;
 const KNOWLEDGE_ACTION_COLUMN_WIDTH = 420;
 const KNOWLEDGE_DEPOSIT_TABLE_SCROLL_X = 1120;
+const searchableKnowledgeStatuses = new Set<KnowledgeRecord['status']>([
+  'indexed',
+  'text_indexed',
+  'vector_indexed',
+]);
+
+type KnowledgeHealthIssue = {
+  action: 'open_chunks' | 'open_import_jobs' | 'retry_index';
+  description: string;
+  document: KnowledgeRecord;
+  key: string;
+  label: string;
+  severity: 'error' | 'processing' | 'warning';
+  title: string;
+};
+
+function buildKnowledgeHealthSummary(rows: KnowledgeRecord[]) {
+  const failedDocuments = rows.filter((row) => row.status === 'index_failed');
+  const pendingDocuments = rows.filter((row) => row.status === 'importing' || row.status === 'pending_index');
+  const keywordOnlyDocuments = rows.filter((row) => row.status === 'text_indexed');
+  const vectorReadyDocuments = rows.filter((row) => row.status === 'indexed' || row.status === 'vector_indexed');
+  const chunkReadyDocuments = rows.filter((row) => Boolean(row.activeChunkSetId));
+  const missingChunkDocuments = rows.filter(
+    (row) => searchableKnowledgeStatuses.has(row.status) && !row.activeChunkSetId,
+  );
+  const searchableDocuments = rows.filter((row) => searchableKnowledgeStatuses.has(row.status));
+  const healthIssues: KnowledgeHealthIssue[] = [
+    ...failedDocuments.map<KnowledgeHealthIssue>((document) => ({
+      action: 'retry_index',
+      description: document.indexError || document.vectorIndexError || '索引任务失败，需重试或检查模型网关。',
+      document,
+      key: `failed-${document.id}`,
+      label: '索引失败',
+      severity: 'error',
+      title: document.title,
+    })),
+    ...keywordOnlyDocuments.map<KnowledgeHealthIssue>((document) => ({
+      action: 'retry_index',
+      description: document.vectorIndexError || '当前可通过关键词检索，向量索引未完成。',
+      document,
+      key: `keyword-only-${document.id}`,
+      label: '向量待补',
+      severity: 'warning',
+      title: document.title,
+    })),
+    ...missingChunkDocuments.map<KnowledgeHealthIssue>((document) => ({
+      action: 'open_chunks',
+      description: '文档处于可检索状态，但没有生效分块版本。',
+      document,
+      key: `missing-chunks-${document.id}`,
+      label: '分块缺失',
+      severity: 'warning',
+      title: document.title,
+    })),
+    ...pendingDocuments.map<KnowledgeHealthIssue>((document) => ({
+      action: 'open_import_jobs',
+      description: '导入或索引任务仍在排队/处理中。',
+      document,
+      key: `pending-${document.id}`,
+      label: '处理中',
+      severity: 'processing',
+      title: document.title,
+    })),
+  ].slice(0, 6);
+
+  return {
+    chunkReadyCount: chunkReadyDocuments.length,
+    failedCount: failedDocuments.length,
+    healthIssues,
+    keywordOnlyCount: keywordOnlyDocuments.length,
+    missingChunkCount: missingChunkDocuments.length,
+    pendingCount: pendingDocuments.length,
+    searchableCount: searchableDocuments.length,
+    total: rows.length,
+    vectorReadyCount: vectorReadyDocuments.length,
+  };
+}
 
 function formatAssetSize(sizeBytes: number) {
   if (sizeBytes < 1024) {
@@ -274,6 +351,10 @@ export default function KnowledgePage() {
   const spaceNameById = useMemo(
     () => new Map(spaces.map((space) => [space.id, space.name])),
     [spaces],
+  );
+  const knowledgeHealthSummary = useMemo(
+    () => buildKnowledgeHealthSummary(listState.rows),
+    [listState.rows],
   );
 
   const reloadSpaces = useCallback(async () => {
@@ -1189,9 +1270,105 @@ export default function KnowledgePage() {
     [],
   );
 
+  const knowledgeHealthMetrics = [
+    { key: 'total', label: '当前页文档', value: knowledgeHealthSummary.total },
+    { key: 'searchable', label: '可检索', value: knowledgeHealthSummary.searchableCount },
+    { key: 'vector_ready', label: '向量就绪', value: knowledgeHealthSummary.vectorReadyCount },
+    { key: 'keyword_only', label: '关键词兜底', value: knowledgeHealthSummary.keywordOnlyCount },
+    { key: 'failed', label: '索引失败', value: knowledgeHealthSummary.failedCount },
+    { key: 'pending', label: '处理中', value: knowledgeHealthSummary.pendingCount },
+    { key: 'chunk_ready', label: '分块版本', value: knowledgeHealthSummary.chunkReadyCount },
+  ];
+
+  const renderKnowledgeHealthAction = (issue: KnowledgeHealthIssue) => {
+    if (issue.action === 'retry_index') {
+      return (
+        <Button
+          aria-label={`处理索引健康问题 ${issue.document.title}`}
+          onClick={() => void handleRetryIndex(issue.document)}
+          size="small"
+          type="link"
+        >
+          处理
+        </Button>
+      );
+    }
+    if (issue.action === 'open_chunks') {
+      return (
+        <Button
+          aria-label={`查看分块健康问题 ${issue.document.title}`}
+          onClick={() => void openChunksModal(issue.document)}
+          size="small"
+          type="link"
+        >
+          分块
+        </Button>
+      );
+    }
+    return (
+      <Button
+        aria-label={`查看导入任务 ${issue.document.title}`}
+        onClick={openImportJobsModal}
+        size="small"
+        type="link"
+      >
+        导入任务
+      </Button>
+    );
+  };
+
+  const knowledgeHealthPanel = (
+    <section aria-label="知识索引健康" className="knowledge-health-panel">
+      <div className="knowledge-health-header">
+        <Space size={8} wrap>
+          <Text strong>索引健康</Text>
+          <StatusTag
+            color={knowledgeHealthSummary.failedCount > 0 ? 'red' : knowledgeHealthSummary.keywordOnlyCount > 0 ? 'gold' : 'green'}
+            label={knowledgeHealthSummary.failedCount > 0 ? '需处理' : knowledgeHealthSummary.keywordOnlyCount > 0 ? '可优化' : '正常'}
+          />
+        </Space>
+        <Text type="secondary">当前筛选页 · {listState.total} 条结果</Text>
+      </div>
+      <div className="knowledge-health-metrics" role="list">
+        {knowledgeHealthMetrics.map((metric) => (
+          <div className="knowledge-health-metric" key={metric.key} role="listitem">
+            <span>{metric.label}</span>
+            <strong>{metric.value}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="knowledge-health-issues">
+        {knowledgeHealthSummary.healthIssues.length > 0 ? (
+          knowledgeHealthSummary.healthIssues.map((issue) => (
+            <div className="knowledge-health-issue" key={issue.key}>
+              <StatusTag
+                color={
+                  issue.severity === 'error'
+                    ? 'red'
+                    : issue.severity === 'processing'
+                      ? 'blue'
+                      : 'gold'
+                }
+                label={issue.label}
+              />
+              <div className="knowledge-health-issue-content">
+                <Text strong>{issue.title}</Text>
+                <Text type="secondary">{issue.description}</Text>
+              </div>
+              {renderKnowledgeHealthAction(issue)}
+            </div>
+          ))
+        ) : (
+          <Text type="secondary">当前页没有索引失败、向量待补或分块缺失文档。</Text>
+        )}
+      </div>
+    </section>
+  );
+
   return (
     <>
       <ManagementListPage<KnowledgeRecord>
+        beforeTable={knowledgeHealthPanel}
         breadcrumbGroup="产品资产"
         columns={columns}
         dataSource={listState.rows}

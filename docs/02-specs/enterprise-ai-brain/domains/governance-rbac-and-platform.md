@@ -40,6 +40,7 @@
 - 执行诊断列表的 `source_type` 筛选面向任一来源节点，前端统一展示为“来源类型”，不得误标为“根类型”；所有来源深链必须同时携带 `source_id` 和 `source_type`。
 - 管理列表型接口必须在 SQL/repository/read model 层完成分页、排序和筛选，并返回查询性能元数据；前端统一列表底座需展示查询耗时，`performance.slow=true` 时显示慢查询阈值提示并指引结合接口 trace、筛选条件和数据库慢查询日志排查。需求、任务、Bug、用户洞察、代码巡检、角色、产品、迭代版本、知识、审计、模型网关、执行诊断、日志监控、用户和 AI 助手草案任务台等远程分页列表必须透传该性能元数据，不得在页面侧静默丢弃。
 - 知识中心知识文档主列表属于管理型列表；`GET /api/knowledge/documents` 必须先校验 `knowledge.read`，传入 `page/page_size` 时必须在 PostgreSQL read model 层完成知识空间权限、角色权限、关键字、知识空间、目录、类型、索引状态、权限角色筛选和白名单排序，并返回 `query/performance`；未分页全量返回仅用于兼容旧调用或下拉类轻量场景。
+- 知识中心页面需要在主列表上方展示索引健康视图，基于当前分页结果聚合 `index_status`、`active_chunk_set_id`、`index_error` 和 `vector_index_error`，区分可检索、向量就绪、关键词兜底、索引失败、处理中和分块版本状态；索引失败与文本索引文档应复用 `retry-index` 入口处理，分块缺失文档应可直接打开分块版本，导入中/待索引文档应可进入导入任务排查。
 - 知识沉淀候选审核列表也属于管理型审核列表；查询、采纳和驳回必须校验 `knowledge.deposit.decide` 权限点，不得绑定固定角色名，只有 `knowledge.read` 的只读用户不能访问审核候选；`GET /api/knowledge/deposits` 传入 `page/page_size` 时必须优先走 PostgreSQL read model 完成状态筛选、白名单排序和 count/page 查询，并返回 `query/performance`；未分页全量返回仅用于旧审核弹窗兼容和测试 helper。
 - 启用统一 `ManagementListPage` 的管理页面可通过页面级 `viewStorageKey` 保存、应用和删除本地筛选视图；该能力仅作为当前浏览器偏好保存筛选/排序组合，不进入业务数据库，也不替代服务端权限或查询条件校验。存在页签的配置页可使用 `ManagementListPage` 嵌入模式，例如 AI 能力配置页的 AI角色和 Skill 管理页签分别保存独立筛选视图。
 - 单记录创建、更新、状态流转和跨表写入不得为了兼容旧客户端而依赖运行时内存全量集合；例如迭代版本、产品模块、产品 Git 仓库和相关系统创建应按产品 ID 从 repository 读取产品存在性并使用轻量冲突校验；迭代版本编辑/删除、产品模块编辑/删除、产品 Git 仓库/相关系统更新删除、迭代版本分支配置更新删除、用户反馈更新/转需求应按业务 ID 从 repository 读取源记录，再在同一仓储边界写入业务记录和审计。

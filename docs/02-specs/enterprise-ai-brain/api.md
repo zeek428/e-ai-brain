@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.442 |
+| 功能版本 | v1.1.443 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.443 | 2026-06-28 | 知识中心页面新增索引健康视图：复用 `GET /api/knowledge/documents` 分页响应中的 `index_status`、`active_chunk_set_id`、`index_error` 和 `vector_index_error`，展示当前页健康汇总和可操作问题入口；API 契约无需新增端点 | Codex |
 | v1.1.442 | 2026-06-28 | `GET /api/governance/code-inspections/{report_id}` 详情响应新增 `governance_summary`，返回闭环状态、严重问题 Bug/整改任务覆盖、待审批忽略、已接受风险和治理待办；前端报告详情展示治理闭环与整改任务链接 | Codex |
 | v1.1.441 | 2026-06-28 | AI 动作草案详情响应新增 `governance` 治理摘要，草案任务台列表行补充影响对象、权限状态、审计事件数、失败次数和重试次数；详情页需展示风险、影响、权限、执行前后差异、失败重试和审计链路 | Codex |
 | v1.1.440 | 2026-06-28 | `POST /api/ai-tasks/{task_id}/start` 支持管理员显式 `execution_mode=deterministic` 验收模式，跳过研发执行器策略和模型网关并记录审计；统一 full-chain 在需求归属版本时可按版本分支配置匹配代码巡检报告；AI 助手引用解析补齐 `product_version` 和仓储上下文中的代码巡检报告 | Codex |
@@ -3231,6 +3232,8 @@ GET /api/knowledge/documents?keyword=研发&knowledge_space_id=knowledge_space_0
 该接口必须先校验 `knowledge.read`，再支持 `keyword`、`knowledge_space_id`、`folder_id`、`doc_type`、`index_status`、`permission_role`、`page`、`page_size`、`sort_by` 和 `sort_order`。`sort_by` 白名单为 `id/title/doc_type/folder_id/index_status/knowledge_space_id/permission_roles/created_at/updated_at`，`sort_order` 只允许 `asc|desc`，`page_size` 最大 100。传入 `page` 或 `page_size` 时，PostgreSQL 运行态必须通过知识文档 read model 在数据库侧完成知识空间权限、角色权限、关键字、空间、目录、类型、索引状态、权限角色筛选和排序分页，并返回 `items/page/page_size/total/query/performance`；未传分页参数时保留旧全量返回兼容用途，不作为知识中心主表默认读路径。
 
 知识文档索引状态支持：`importing | pending_index | text_indexed | vector_indexed | indexed | index_failed | archived`，其中 `indexed` 为历史兼容状态。Embedding 不可用但文本 chunk 成功时进入 `text_indexed`，响应包含 `vector_index_error` 和兼容展示用 `index_error`；基础文本索引失败时进入 `index_failed`。
+
+前端知识中心必须基于当前分页响应展示“索引健康”视图，汇总当前筛选页的可检索文档、向量就绪文档、关键词兜底文档、索引失败文档、处理中任务和已生效分块版本数；`index_failed` 行提供重试索引入口，`text_indexed` 行提供补建向量索引入口，缺少 `active_chunk_set_id` 的可检索文档提供分块查看入口，`importing/pending_index` 文档提供导入任务入口。该视图只表示当前远程分页结果，不替代服务端权限、索引状态或全库健康统计。
 
 重试失败索引：
 

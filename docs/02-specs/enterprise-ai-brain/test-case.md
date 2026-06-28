@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.760 |
+| 功能版本 | v1.1.761 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.761 | 2026-06-28 | 补充知识中心索引健康视图验收：页面基于当前远程分页结果展示可检索、向量就绪、关键词兜底、索引失败、处理中和分块版本指标，并为索引失败、向量待补、分块缺失和导入中状态提供处理入口；`KnowledgePage.test.tsx` 覆盖 | Codex |
 | v1.1.760 | 2026-06-28 | 补充代码巡检报告详情治理闭环验收：详情响应 `governance_summary` 必须返回闭环状态、Bug/整改任务覆盖率、待审批忽略和治理待办；详情页展示治理闭环和 finding 整改任务链接；`test_code_inspection_governance.py` 与 `CodeInspectionsPage.test.tsx` 覆盖 | Codex |
 | v1.1.759 | 2026-06-28 | 补充 AI 动作确认中心治理摘要验收：`GET /api/assistant/action-drafts` 和详情响应必须展示影响对象、权限状态、执行前后差异、失败重试和审计链路；`test_assistant_draft_workbench.py` 与 `AssistantDraftsPage.test.tsx` 覆盖 | Codex |
 | v1.1.758 | 2026-06-28 | 补充真实全链路回归脚本验收：`scripts/full_chain_regression.py` 通过公开 API 串联用户反馈、需求、迭代版本、AI 任务、Review、知识沉淀、版本分支、代码巡检、Bug/整改任务、版本驾驶舱、full-chain、团队看板和 AI 助手引用；任务启动 deterministic 模式仅允许管理员显式验收，跳过 Runner/模型网关并写审计 | Codex |

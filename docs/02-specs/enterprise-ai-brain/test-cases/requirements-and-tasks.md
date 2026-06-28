@@ -441,12 +441,14 @@
 | 3 | POST `/api/knowledge/search` | 仅返回有权限的知识结果；文本兜底结果 `retrieval_mode=keyword`，向量结果 `retrieval_mode=vector`。 |
 | 4 | 审核知识沉淀候选 | 可批准或拒绝，状态正确流转。 |
 | 5 | 模拟 Embedding 不可用后调用 `POST /api/knowledge/documents/{document_id}/retry-index` | 文档先保持 `text_indexed` 且关键词检索可用；Embedding 恢复后重试升级为 `vector_indexed`。 |
+| 6 | 进入知识中心主列表并查看“索引健康”视图 | 当前分页结果展示可检索、向量就绪、关键词兜底、索引失败、处理中和分块版本指标；`text_indexed` 文档显示向量待补并可处理，`index_failed` 文档可重试索引，缺少 `active_chunk_set_id` 的可检索文档可进入分块版本。 |
 
 **预期结果**:
 1. 知识中心不依赖 AI 任务完成也可以主动导入和检索。
 2. 知识沉淀必须审核后才能进入正式知识库。
+3. 知识负责人能够在主列表直接识别 Embedding 降级、索引失败和分块缺失，不需要逐条打开资产或分块弹窗排查。
 
-**状态**: 已自动化覆盖。知识导入、索引、检索、沉淀审核和失败重试见 `apps/api/tests/test_knowledge_governance.py` 与 `apps/web/tests/KnowledgePage.test.tsx` 知识中心用例。
+**状态**: 已自动化覆盖。知识导入、索引、检索、沉淀审核、失败重试和索引健康视图见 `apps/api/tests/test_knowledge_governance.py` 与 `apps/web/tests/KnowledgePage.test.tsx` 知识中心用例。
 
 ---
 

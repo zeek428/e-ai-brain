@@ -87,7 +87,13 @@ describe('KnowledgePage', () => {
 
     render(<KnowledgePage />);
 
-    expect(await screen.findByText('知识中心布局验证')).toBeInTheDocument();
+    expect((await screen.findAllByText('知识中心布局验证')).length).toBeGreaterThan(0);
+    const healthPanel = screen.getByLabelText('知识索引健康');
+    expect(within(healthPanel).getByText('索引健康')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('关键词兜底')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('向量待补')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('分块缺失')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('embedding provider unavailable')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '知识列表' })).toBeInTheDocument();
     const mainTable = document.querySelector('table[data-table-scroll-x="2000"]');
     expect(mainTable).not.toBeNull();
@@ -163,7 +169,7 @@ describe('KnowledgePage', () => {
 
     render(<KnowledgePage />);
 
-    expect(await screen.findByText('接口知识')).toBeInTheDocument();
+    expect((await screen.findAllByText('接口知识')).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: '沉淀审核' }));
 
     expect(await screen.findByText('技术方案知识沉淀')).toBeInTheDocument();
@@ -244,7 +250,7 @@ describe('KnowledgePage', () => {
 
     render(<KnowledgePage />);
 
-    expect(await screen.findByText('需求评估规则')).toBeInTheDocument();
+    expect((await screen.findAllByText('需求评估规则')).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: '知识检索' }));
     fireEvent.change(screen.getByLabelText('检索关键词'), { target: { value: '需求评估' } });
     fireEvent.click(screen.getByRole('button', { name: '检索' }));
@@ -311,8 +317,8 @@ describe('KnowledgePage', () => {
 
     render(<KnowledgePage />);
 
-    expect(await screen.findByText('失败知识')).toBeInTheDocument();
-    expect(screen.getByText('embedding provider timeout')).toBeInTheDocument();
+    expect((await screen.findAllByText('失败知识')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('embedding provider timeout').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: /重试索引/ }));
 
     await waitFor(() =>
