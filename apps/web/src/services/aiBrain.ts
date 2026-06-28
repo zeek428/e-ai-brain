@@ -1,13 +1,11 @@
 import type {
   AuditRecord,
-  BugRecord,
   ProductGitRepositoryRecord,
   ProductModuleRecord,
   ProductRecord,
   ProductRelatedSystemRecord,
   ProductVersionBranchConfigRecord,
   ProductVersionRecord,
-  RequirementRecord,
   UserRecord,
 } from '../data/management';
 import { formatUserRoles, type UserRoleDefinition } from '../data/roles';
@@ -31,18 +29,9 @@ import {
 } from './authClient';
 import type { ScopeGrant } from './authClient';
 import type { AssistantActionDraftPreview } from './assistantDraftClient';
-import { mapBugRecord, type BugListItem } from './bugClient';
-import type { CodeInspectionReportRecord } from './codeInspectionClient';
+import type { RequirementListItem } from './requirementClient';
 import {
-  mapKnowledgeDeposit,
-  type KnowledgeDepositListItem,
-  type KnowledgeDepositRecord,
-} from './knowledgeClient';
-import { mapRequirementRecord, type RequirementListItem } from './requirementClient';
-import {
-  mapTaskRecord,
   type TaskCenterTaskRecord,
-  type TaskListItem,
 } from './taskCenterClient';
 
 export { ApiRequestError, apiRequest };
@@ -314,6 +303,17 @@ export type {
   KnowledgeSearchResultRecord,
   KnowledgeSpaceRecord,
 } from './knowledgeClient';
+export {
+  fetchLifecycleFullChain,
+  fetchRequirementFullChain,
+  fullChainSubjectHref,
+} from './lifecycleClient';
+export type {
+  RequirementFullChainAuditEvent,
+  RequirementFullChainRecord,
+  RequirementFullChainSummary,
+  RequirementFullChainTimelineItem,
+} from './lifecycleClient';
 export { fetchItTeamDashboard } from './dashboardClient';
 export type {
   DashboardAuditSummary,
@@ -752,85 +752,6 @@ export type ProductResponse = {
   name?: string;
   owner_team?: string | null;
   status?: string;
-};
-
-export type RequirementFullChainTimelineItem = {
-  occurredAt: string;
-  occurredAtValue?: string;
-  status?: string;
-  subjectId: string;
-  title: string;
-  type: string;
-};
-
-export type RequirementFullChainAuditEvent = {
-  actorId?: string;
-  aiTaskId?: string;
-  createdAt: string;
-  eventType: string;
-  id: string;
-  subjectId?: string;
-  subjectType?: string;
-};
-
-export type RequirementFullChainSummary = {
-  aiTasks: number;
-  auditEvents: number;
-  branchConfigs: number;
-  bugs: number;
-  codeInspectionReports: number;
-  codeReviewReports: number;
-  executionTraces: number;
-  gitSnapshots: number;
-  jenkinsReleases: number;
-  knowledgeDeposits: number;
-  reviews: number;
-  timelineEvents: number;
-};
-
-export type RequirementFullChainRecord = {
-  aiTasks: TaskCenterTaskRecord[];
-  anchor?: {
-    resolvedRequirementId?: string;
-    subjectId?: string;
-    subjectType?: string;
-  };
-  bugs: BugRecord[];
-  auditEvents: RequirementFullChainAuditEvent[];
-  branchConfigs: ProductVersionBranchConfigRecord[];
-  codeInspectionReports: CodeInspectionReportRecord[];
-  codeReviewReports: CodeReviewReportRecord[];
-  executionTraces: ExecutionTraceListItem[];
-  gitSnapshots: GitLabMergeRequestSnapshot[];
-  iterationVersion?: {
-    code?: string;
-    id: string;
-    name?: string;
-    status?: string;
-  };
-  jenkinsReleases: Array<{
-    buildId?: string;
-    createdAt: string;
-    id: string;
-    jobName?: string;
-    status: string;
-  }>;
-  knowledgeDeposits: KnowledgeDepositRecord[];
-  product?: {
-    code?: string;
-    id: string;
-    name?: string;
-  };
-  requirement: RequirementRecord;
-  reviews: Array<{
-    aiTaskId?: string;
-    createdAt: string;
-    id: string;
-    status: string;
-  }>;
-  status: string;
-  summary: RequirementFullChainSummary;
-  timeline: RequirementFullChainTimelineItem[];
 };
 
 type RemoteSortOrder = 'ascend' | 'descend';
@@ -1577,52 +1498,6 @@ type LifecycleContextResponse = {
   upstream?: LifecycleRelationItem[];
 };
 
-type RequirementFullChainTimelineItemResponse = {
-  occurred_at?: string;
-  status?: string | null;
-  subject_id?: string;
-  title?: string;
-  type?: string;
-};
-
-type RequirementFullChainResponse = {
-  ai_tasks?: TaskListItem[];
-  audit_events?: FlexibleListItem[];
-  anchor?: {
-    resolved_requirement_id?: string;
-    subject_id?: string;
-    subject_type?: string;
-  };
-  bugs?: BugListItem[];
-  branch_configs?: ProductVersionBranchConfigListItem[];
-  code_inspection_reports?: CodeInspectionReportRecord[];
-  code_review_reports?: CodeReviewReportResponse[];
-  execution_traces?: ExecutionTraceListItem[];
-  git_snapshots?: GitLabMergeRequestSnapshotResponse[];
-  iteration_version?: ProductVersionListItem | null;
-  jenkins_releases?: FlexibleListItem[];
-  knowledge_deposits?: KnowledgeDepositListItem[];
-  product?: ProductResponse | null;
-  requirement: RequirementListItem;
-  reviews?: PendingReviewListItem[];
-  status?: string;
-  summary?: Partial<{
-    ai_tasks: number;
-    audit_events: number;
-    branch_configs: number;
-    bugs: number;
-    code_inspection_reports: number;
-    code_review_reports: number;
-    execution_traces: number;
-    git_snapshots: number;
-    jenkins_releases: number;
-    knowledge_deposits: number;
-    reviews: number;
-    timeline_events: number;
-  }>;
-  timeline?: RequirementFullChainTimelineItemResponse[];
-};
-
 type ProductGitRepositoryListItem = {
   credential_ref_configured?: boolean;
   default_branch?: string;
@@ -1740,17 +1615,6 @@ type CodeReviewReportResponse = {
     writeback_allowed?: boolean;
     writeback_reason?: string;
   };
-};
-
-type PendingReviewListItem = {
-  ai_task_id: string;
-  content?: Record<string, unknown>;
-  created_at?: string;
-  id: string;
-  stage?: string;
-  status?: string;
-  updated_at?: string;
-  version: number;
 };
 
 type FlexibleListItem = Record<string, unknown> & {
@@ -4494,146 +4358,6 @@ export async function fetchScheduledJobRunObservability(): Promise<ScheduledJobR
   return apiRequest<ScheduledJobRunObservability>('/api/system/scheduled-job-runs/observability', {
     token,
   });
-}
-
-function mapRequirementFullChain(
-  chain: RequirementFullChainResponse,
-): RequirementFullChainRecord {
-  const summary = chain.summary ?? {};
-  return {
-    aiTasks: (chain.ai_tasks ?? []).map(mapTaskRecord),
-    anchor: chain.anchor
-      ? {
-          resolvedRequirementId: chain.anchor.resolved_requirement_id,
-          subjectId: chain.anchor.subject_id,
-          subjectType: chain.anchor.subject_type,
-        }
-      : undefined,
-    bugs: (chain.bugs ?? []).map(mapBugRecord),
-    auditEvents: (chain.audit_events ?? []).map((event) => ({
-      actorId: emptyToUndefined(formatUnknownValue(event.actor_id)),
-      aiTaskId: emptyToUndefined(formatUnknownValue(event.ai_task_id)),
-      createdAt: formatListDate(formatUnknownValue(event.created_at)),
-      eventType: formatUnknownValue(event.event_type),
-      id: formatUnknownValue(event.id),
-      subjectId: emptyToUndefined(formatUnknownValue(event.subject_id)),
-      subjectType: emptyToUndefined(formatUnknownValue(event.subject_type)),
-    })),
-    branchConfigs: (chain.branch_configs ?? []).map(mapProductVersionBranchConfigRecord),
-    codeInspectionReports: chain.code_inspection_reports ?? [],
-    codeReviewReports: (chain.code_review_reports ?? []).map((report) => ({
-      executor: report.executor,
-      findings: report.findings ?? [],
-      gitlabWritebackPerformed: report.gitlab_writeback_performed ?? false,
-      id: report.id,
-      riskLevel: report.risk_level ?? '-',
-      status: report.status ?? '-',
-      summary: report.summary ?? report.id,
-    })),
-    executionTraces: chain.execution_traces ?? [],
-    gitSnapshots: (chain.git_snapshots ?? []).map((snapshot) => ({
-      changedFilesSummary: snapshot.changed_files_summary ?? [],
-      createdAt: formatListDate(snapshot.created_at),
-      diffLimitBytes: snapshot.diff_limit_bytes,
-      diffFileTree: normalizeDiffFileTree(snapshot.diff_file_tree),
-      diffSizeBytes: snapshot.diff_size_bytes,
-      id: snapshot.id,
-      mrIid: snapshot.mr_iid,
-      reviewChecklist: snapshot.review_checklist ?? [],
-      repositoryId: snapshot.repository_id,
-      riskSummary: normalizeRiskSummary(snapshot.risk_summary),
-    })),
-    iterationVersion: chain.iteration_version
-      ? {
-          code: chain.iteration_version.code,
-          id: chain.iteration_version.id,
-          name: chain.iteration_version.name,
-          status: chain.iteration_version.status,
-        }
-      : undefined,
-    jenkinsReleases: (chain.jenkins_releases ?? []).map((release) => ({
-      buildId: formatUnknownValue(release.build_id),
-      createdAt: formatListDate(formatUnknownValue(release.deployed_at ?? release.started_at ?? release.created_at)),
-      id: formatUnknownValue(release.id),
-      jobName: formatUnknownValue(release.job_name),
-      status: formatUnknownValue(release.status),
-    })),
-    knowledgeDeposits: (chain.knowledge_deposits ?? []).map(mapKnowledgeDeposit),
-    product: chain.product
-      ? {
-          code: chain.product.code,
-          id: chain.product.id,
-          name: chain.product.name,
-        }
-      : undefined,
-    requirement: mapRequirementRecord(chain.requirement),
-    reviews: (chain.reviews ?? []).map((review) => ({
-      aiTaskId: review.ai_task_id,
-      createdAt: formatListDate(formatUnknownValue(review.created_at)),
-      id: review.id,
-      status: review.status ?? '-',
-    })),
-    status: chain.status ?? 'available',
-    summary: {
-      aiTasks: normalizeDashboardCount(summary.ai_tasks),
-      auditEvents: normalizeDashboardCount(summary.audit_events),
-      branchConfigs: normalizeDashboardCount(summary.branch_configs),
-      bugs: normalizeDashboardCount(summary.bugs),
-      codeInspectionReports: normalizeDashboardCount(summary.code_inspection_reports),
-      codeReviewReports: normalizeDashboardCount(summary.code_review_reports),
-      executionTraces: normalizeDashboardCount(summary.execution_traces),
-      gitSnapshots: normalizeDashboardCount(summary.git_snapshots),
-      jenkinsReleases: normalizeDashboardCount(summary.jenkins_releases),
-      knowledgeDeposits: normalizeDashboardCount(summary.knowledge_deposits),
-      reviews: normalizeDashboardCount(summary.reviews),
-      timelineEvents: normalizeDashboardCount(summary.timeline_events),
-    },
-    timeline: (chain.timeline ?? []).map((item) => ({
-      occurredAt: formatListDate(item.occurred_at),
-      occurredAtValue: item.occurred_at,
-      status: item.status ?? undefined,
-      subjectId: item.subject_id ?? '-',
-      title: item.title ?? item.subject_id ?? '-',
-      type: item.type ?? '-',
-    })),
-  };
-}
-
-export async function fetchRequirementFullChain(
-  requirementId: string,
-): Promise<RequirementFullChainRecord> {
-  const token = requireAccessToken();
-  const chain = await apiRequest<RequirementFullChainResponse>(
-    `/api/requirements/${requirementId}/full-chain`,
-    { token },
-  );
-
-  return mapRequirementFullChain(chain);
-}
-
-export async function fetchLifecycleFullChain(
-  subjectType: string,
-  subjectId: string,
-): Promise<RequirementFullChainRecord> {
-  const token = requireAccessToken();
-  const params = new URLSearchParams({
-    subject_id: subjectId,
-    subject_type: subjectType,
-  });
-  const chain = await apiRequest<RequirementFullChainResponse>(
-    `/api/lifecycle/full-chain?${params.toString()}`,
-    { token },
-  );
-
-  return mapRequirementFullChain(chain);
-}
-
-export function fullChainSubjectHref(subjectType: string, subjectId: string) {
-  const params = new URLSearchParams({
-    subject_id: subjectId,
-    subject_type: subjectType,
-  });
-  return `/delivery/full-chain?${params.toString()}`;
 }
 
 export async function fetchManagementAudit(): Promise<AuditRecord[]> {
