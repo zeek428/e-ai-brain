@@ -6,6 +6,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   EyeOutlined,
+  LinkOutlined,
 } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import {
@@ -255,6 +256,30 @@ function dashboardStatusCountStrip(
 
 function dashboardDate(value?: string | null) {
   return value || '-';
+}
+
+function internalHref(path: string, params: Record<string, string | undefined>) {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) {
+      searchParams.set(key, value);
+    }
+  });
+  const queryString = searchParams.toString();
+  return queryString ? `${path}?${queryString}` : path;
+}
+
+function blockerSubjectType(sourceType: string) {
+  if (
+    sourceType === 'bug' ||
+    sourceType === 'code_inspection_report' ||
+    sourceType === 'jenkins_release' ||
+    sourceType === 'product_version_branch_config' ||
+    sourceType === 'requirement'
+  ) {
+    return sourceType;
+  }
+  return undefined;
 }
 
 function buildStatusImpactRows(statusImpact?: ProductVersionDashboard['statusImpact']) {
@@ -1020,6 +1045,15 @@ export default function IterationVersionsPage() {
           {dashboard ? (
             <Space orientation="vertical" size={16} style={{ width: '100%' }}>
               <Alert
+                action={
+                  <Button
+                    href={fullChainSubjectHref('product_version', dashboard.version.id)}
+                    icon={<LinkOutlined />}
+                    size="small"
+                  >
+                    版本全链路
+                  </Button>
+                }
                 title={`${dashboard.version.productName ?? dashboard.version.productId ?? '-'} · ${
                   dashboard.version.name
                 } · ${versionStatusLabels[dashboard.version.status].label}`}
@@ -1109,7 +1143,20 @@ export default function IterationVersionsPage() {
                         title: '影响',
                         width: 120,
                       },
-                      { dataIndex: 'id', title: '需求编号', width: 160 },
+                      {
+                        dataIndex: 'id',
+                        render: (value) => (
+                          <Typography.Link
+                            href={internalHref('/delivery/requirements', {
+                              requirement_id: String(value),
+                            })}
+                          >
+                            {String(value)}
+                          </Typography.Link>
+                        ),
+                        title: '需求编号',
+                        width: 160,
+                      },
                       {
                         dataIndex: 'title',
                         render: (value) => (
@@ -1141,12 +1188,27 @@ export default function IterationVersionsPage() {
                         ),
                         title: '说明',
                       },
+                      {
+                        key: 'action',
+                        render: (_, row) => (
+                          <Button
+                            href={fullChainSubjectHref('requirement', row.id)}
+                            icon={<LinkOutlined />}
+                            size="small"
+                            type="link"
+                          >
+                            全链路
+                          </Button>
+                        ),
+                        title: '操作',
+                        width: 110,
+                      },
                     ]}
                     dataSource={dashboardStatusImpactRows}
                     locale={{ emptyText: '下一阶段暂无需求状态影响' }}
                     pagination={dashboardStatusImpactRows.length > 5 ? { pageSize: 5 } : false}
                     rowKey={(row) => `${row.impact}-${row.id}`}
-                    scroll={{ x: 980 }}
+                    scroll={{ x: 1090 }}
                     size="small"
                   />
                 </div>
@@ -1186,12 +1248,32 @@ export default function IterationVersionsPage() {
                       ),
                       title: '原因',
                     },
+                    {
+                      key: 'action',
+                      render: (_, row) => {
+                        const subjectType = blockerSubjectType(String(row.sourceType ?? ''));
+                        return subjectType && row.id ? (
+                          <Button
+                            href={fullChainSubjectHref(subjectType, row.id)}
+                            icon={<LinkOutlined />}
+                            size="small"
+                            type="link"
+                          >
+                            全链路
+                          </Button>
+                        ) : (
+                          <Text type="secondary">-</Text>
+                        );
+                      },
+                      title: '操作',
+                      width: 110,
+                    },
                   ]}
                   dataSource={dashboard.blockers}
                   locale={{ emptyText: <Empty description="暂无阻塞项" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
                   pagination={false}
                   rowKey={(row) => `${row.sourceType}-${row.id ?? row.title}`}
-                  scroll={{ x: 860 }}
+                  scroll={{ x: 970 }}
                   size="small"
                 />
               </div>
@@ -1199,7 +1281,20 @@ export default function IterationVersionsPage() {
                 <Text strong>需求与任务</Text>
                 <Table<RequirementRecord>
                   columns={[
-                    { dataIndex: 'id', title: '需求编号', width: 160 },
+                    {
+                      dataIndex: 'id',
+                      render: (value) => (
+                        <Typography.Link
+                          href={internalHref('/delivery/requirements', {
+                            requirement_id: String(value),
+                          })}
+                        >
+                          {String(value)}
+                        </Typography.Link>
+                      ),
+                      title: '需求编号',
+                      width: 160,
+                    },
                     {
                       dataIndex: 'title',
                       render: (value) => (
@@ -1213,17 +1308,45 @@ export default function IterationVersionsPage() {
                     { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
                     { dataIndex: 'priority', title: '优先级', width: 100 },
                     { dataIndex: 'updatedAt', title: '更新时间', width: 170 },
+                    {
+                      key: 'action',
+                      render: (_, row) => (
+                        <Button
+                          href={fullChainSubjectHref('requirement', row.id)}
+                          icon={<LinkOutlined />}
+                          size="small"
+                          type="link"
+                        >
+                          全链路
+                        </Button>
+                      ),
+                      title: '操作',
+                      width: 110,
+                    },
                   ]}
                   dataSource={dashboard.requirements}
                   locale={{ emptyText: '当前版本暂无需求' }}
                   pagination={dashboard.requirements.length > 5 ? { pageSize: 5 } : false}
                   rowKey="id"
-                  scroll={{ x: 830 }}
+                  scroll={{ x: 940 }}
                   size="small"
                 />
                 <Table<ProductVersionDashboard['tasks'][number]>
                   columns={[
-                    { dataIndex: 'id', title: '任务编号', width: 160 },
+                    {
+                      dataIndex: 'id',
+                      render: (value) => (
+                        <Typography.Link
+                          href={internalHref('/delivery/rd-tasks', {
+                            task_id: String(value),
+                          })}
+                        >
+                          {String(value)}
+                        </Typography.Link>
+                      ),
+                      title: '任务编号',
+                      width: 160,
+                    },
                     {
                       dataIndex: 'label',
                       render: (value) => (
@@ -1237,12 +1360,27 @@ export default function IterationVersionsPage() {
                     { dataIndex: 'type', title: '类型', width: 130 },
                     { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
                     { dataIndex: 'owner', title: '负责人', width: 120 },
+                    {
+                      key: 'action',
+                      render: (_, row) => (
+                        <Button
+                          href={fullChainSubjectHref('ai_task', row.id)}
+                          icon={<LinkOutlined />}
+                          size="small"
+                          type="link"
+                        >
+                          全链路
+                        </Button>
+                      ),
+                      title: '操作',
+                      width: 110,
+                    },
                   ]}
                   dataSource={dashboard.tasks}
                   locale={{ emptyText: '当前版本暂无 AI 任务' }}
                   pagination={dashboard.tasks.length > 5 ? { pageSize: 5 } : false}
                   rowKey="id"
-                  scroll={{ x: 810 }}
+                  scroll={{ x: 920 }}
                   size="small"
                 />
               </div>
@@ -1250,7 +1388,20 @@ export default function IterationVersionsPage() {
                 <Text strong>质量与交付</Text>
                 <Table<ProductVersionDashboard['bugs'][number]>
                   columns={[
-                    { dataIndex: 'id', title: 'Bug 编号', width: 150 },
+                    {
+                      dataIndex: 'id',
+                      render: (value) => (
+                        <Typography.Link
+                          href={internalHref('/delivery/bugs', {
+                            bug_id: String(value),
+                          })}
+                        >
+                          {String(value)}
+                        </Typography.Link>
+                      ),
+                      title: 'Bug 编号',
+                      width: 150,
+                    },
                     {
                       dataIndex: 'title',
                       render: (value) => (
@@ -1264,17 +1415,41 @@ export default function IterationVersionsPage() {
                     { dataIndex: 'severity', render: (value) => statusTag(String(value)), title: '严重级别', width: 120 },
                     { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
                     { dataIndex: 'assignee', title: '负责人', width: 120 },
+                    {
+                      key: 'action',
+                      render: (_, row) => (
+                        <Button
+                          href={fullChainSubjectHref('bug', row.id)}
+                          icon={<LinkOutlined />}
+                          size="small"
+                          type="link"
+                        >
+                          全链路
+                        </Button>
+                      ),
+                      title: '操作',
+                      width: 110,
+                    },
                   ]}
                   dataSource={dashboard.bugs}
                   locale={{ emptyText: '当前版本暂无 Bug' }}
                   pagination={dashboard.bugs.length > 5 ? { pageSize: 5 } : false}
                   rowKey="id"
-                  scroll={{ x: 790 }}
+                  scroll={{ x: 900 }}
                   size="small"
                 />
                 <Table<ProductVersionDashboard['codeInspectionReports'][number]>
                   columns={[
-                    { dataIndex: 'repository_name', title: '代码库', width: 180 },
+                    {
+                      dataIndex: 'repository_name',
+                      render: (value, row) => (
+                        <Typography.Link href={fullChainSubjectHref('code_inspection_report', row.id)}>
+                          {String(value ?? row.id)}
+                        </Typography.Link>
+                      ),
+                      title: '代码库',
+                      width: 180,
+                    },
                     { dataIndex: 'branch', title: '分支', width: 170 },
                     { dataIndex: 'risk_level', render: (value) => statusTag(String(value)), title: '风险', width: 120 },
                     { dataIndex: 'finding_count', title: '问题数', width: 100 },
@@ -1289,19 +1464,57 @@ export default function IterationVersionsPage() {
                       width: 320,
                     },
                     { dataIndex: 'created_at', render: (value) => dashboardDate(String(value ?? '')), title: '创建时间', width: 170 },
+                    {
+                      key: 'action',
+                      render: (_, row) => (
+                        <Space size={4}>
+                          <Button
+                            href={internalHref('/governance/code-inspections', { source_id: row.id })}
+                            icon={<LinkOutlined />}
+                            size="small"
+                            type="link"
+                          >
+                            详情
+                          </Button>
+                          <Button
+                            href={fullChainSubjectHref('code_inspection_report', row.id)}
+                            size="small"
+                            type="link"
+                          >
+                            全链路
+                          </Button>
+                        </Space>
+                      ),
+                      title: '操作',
+                      width: 150,
+                    },
                   ]}
                   dataSource={dashboard.codeInspectionReports}
                   locale={{ emptyText: '当前版本暂无代码巡检报告' }}
                   pagination={dashboard.codeInspectionReports.length > 5 ? { pageSize: 5 } : false}
                   rowKey="id"
-                  scroll={{ x: 1060 }}
+                  scroll={{ x: 1210 }}
                   size="small"
                 />
                 <Table<ProductVersionDashboard['branchConfigs'][number]>
                   columns={[
                     { dataIndex: 'repositoryName', title: '代码库', width: 180 },
                     { dataIndex: 'baseBranch', title: '基准分支', width: 150 },
-                    { dataIndex: 'workingBranch', title: '开发分支', width: 200 },
+                    {
+                      dataIndex: 'workingBranch',
+                      render: (value, row) => (
+                        <Typography.Link
+                          href={internalHref('/delivery/versions', {
+                            branch_config_id: row.id,
+                            version_id: row.versionId,
+                          })}
+                        >
+                          {String(value ?? '-')}
+                        </Typography.Link>
+                      ),
+                      title: '开发分支',
+                      width: 200,
+                    },
                     {
                       dataIndex: 'branchStatus',
                       render: (_, row) => {
@@ -1317,27 +1530,70 @@ export default function IterationVersionsPage() {
                       title: '来源',
                       width: 140,
                     },
+                    {
+                      key: 'action',
+                      render: (_, row) => (
+                        <Button
+                          href={fullChainSubjectHref('product_version_branch_config', row.id)}
+                          icon={<LinkOutlined />}
+                          size="small"
+                          type="link"
+                        >
+                          全链路
+                        </Button>
+                      ),
+                      title: '操作',
+                      width: 110,
+                    },
                   ]}
                   dataSource={dashboard.branchConfigs}
                   locale={{ emptyText: '当前版本暂无代码分支配置' }}
                   pagination={false}
                   rowKey="id"
-                  scroll={{ x: 790 }}
+                  scroll={{ x: 900 }}
                   size="small"
                 />
                 <Table<ProductVersionDashboard['releases'][number]>
                   columns={[
-                    { dataIndex: 'id', title: '发布编号', width: 180 },
+                    {
+                      dataIndex: 'id',
+                      render: (value) => (
+                        <Typography.Link
+                          href={internalHref('/governance/devops', {
+                            version_id: dashboard.version.id,
+                          })}
+                        >
+                          {String(value ?? '-')}
+                        </Typography.Link>
+                      ),
+                      title: '发布编号',
+                      width: 180,
+                    },
                     { dataIndex: 'jobName', title: '作业', width: 200 },
                     { dataIndex: 'buildId', title: '构建号', width: 130 },
                     { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
                     { dataIndex: 'createdAt', title: '时间', width: 170 },
+                    {
+                      key: 'action',
+                      render: (_, row) => (
+                        <Button
+                          href={fullChainSubjectHref('jenkins_release', row.id)}
+                          icon={<LinkOutlined />}
+                          size="small"
+                          type="link"
+                        >
+                          全链路
+                        </Button>
+                      ),
+                      title: '操作',
+                      width: 110,
+                    },
                   ]}
                   dataSource={dashboard.releases}
                   locale={{ emptyText: '当前版本暂无发布记录' }}
                   pagination={dashboard.releases.length > 5 ? { pageSize: 5 } : false}
                   rowKey="id"
-                  scroll={{ x: 800 }}
+                  scroll={{ x: 910 }}
                   size="small"
                 />
               </div>

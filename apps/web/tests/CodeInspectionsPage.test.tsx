@@ -402,6 +402,7 @@ describe('CodeInspectionsPage', () => {
     Modal.destroyAll();
     message.destroy();
     cleanup();
+    window.history.pushState({}, '', '/');
     window.localStorage.clear();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -505,6 +506,21 @@ describe('CodeInspectionsPage', () => {
     );
     expect(within(dialog).getAllByText('inspection.incomplete_source_data').length).toBeGreaterThan(1);
     expect(within(dialog).getByText('src/config.py')).toBeInTheDocument();
+  });
+
+  it('opens the report detail dialog from a source_id deep link', async () => {
+    const { fetchMock } = installCodeInspectionsFetchMock();
+    window.history.pushState({}, '', '/governance/code-inspections?source_id=code_inspection_report_001');
+
+    render(<CodeInspectionsPage />);
+
+    const dialog = await screen.findByRole('dialog', { name: '代码巡检详情' });
+    await waitFor(() => expect(within(dialog).getByText('来源链路')).toBeInTheDocument());
+    expect(within(dialog).getByText('code_inspection_report_001')).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/governance/code-inspections/code_inspection_report_001',
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 
   it('keeps long finding text readable in the detail dialog', async () => {

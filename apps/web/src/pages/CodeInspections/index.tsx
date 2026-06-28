@@ -1,6 +1,6 @@
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Descriptions, Modal, Space, Table, Tag, Typography, message } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import { ExecutionTraceLink } from '../../components/ExecutionTraceLink';
@@ -88,6 +88,15 @@ function linkedTraceText(value: string | null | undefined, href: string) {
       {value}
     </Typography.Link>
   );
+}
+
+function readCodeInspectionDeepLinkReportId() {
+  const search = new URLSearchParams(window.location.search);
+  const sourceType = search.get('source_type');
+  if (sourceType && sourceType !== 'code_inspection_report') {
+    return undefined;
+  }
+  return search.get('report_id') ?? search.get('source_id') ?? undefined;
 }
 
 function sourceTraceItems(report: CodeInspectionReportRecord) {
@@ -332,6 +341,8 @@ function codeInspectionGovernanceItems(detail: CodeInspectionDetailRecord) {
 }
 
 export default function CodeInspectionsPage() {
+  const deepLinkReportId = useMemo(() => readCodeInspectionDeepLinkReportId(), []);
+  const isDeepLinkHandledRef = useRef(false);
   const [detailState, setDetailState] = useState<{
     detail?: CodeInspectionDetailRecord;
     loading: boolean;
@@ -395,16 +406,37 @@ export default function CodeInspectionsPage() {
     });
   }, [reload]);
 
-  const openDetail = useCallback(async (report: CodeInspectionReportRecord) => {
-    setDetailState({ loading: true, report });
+  const openDetailById = useCallback(async (reportId: string, report?: CodeInspectionReportRecord) => {
+    setDetailState({
+      loading: true,
+      report: report ?? {
+        finding_count: 0,
+        id: reportId,
+        risk_level: '-',
+        severe_finding_count: 0,
+        status: '-',
+      },
+    });
     try {
-      const detail = await fetchCodeInspectionDetail(report.id);
-      setDetailState({ detail, loading: false, report });
+      const detail = await fetchCodeInspectionDetail(reportId);
+      setDetailState({ detail, loading: false, report: detail.report });
     } catch (error) {
       setDetailState(undefined);
       message.error(formatMutationError(error));
     }
   }, []);
+
+  const openDetail = useCallback((report: CodeInspectionReportRecord) => {
+    void openDetailById(report.id, report);
+  }, [openDetailById]);
+
+  useEffect(() => {
+    if (!deepLinkReportId || isDeepLinkHandledRef.current) {
+      return;
+    }
+    isDeepLinkHandledRef.current = true;
+    void openDetailById(deepLinkReportId);
+  }, [deepLinkReportId, openDetailById]);
 
   const handleSuppressionAction = useCallback(
     async (finding: CodeInspectionFindingRecord, action: 'approve' | 'reject' | 'request') => {

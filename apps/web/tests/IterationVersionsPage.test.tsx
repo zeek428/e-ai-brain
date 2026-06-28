@@ -913,6 +913,23 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('实现版本驾驶舱')).toBeInTheDocument();
     expect(screen.getAllByText('Dashboard Repo').length).toBeGreaterThan(0);
     expect(screen.getByText('deploy-dashboard')).toBeInTheDocument();
+    const cockpitLinks = screen
+      .getAllByRole('link')
+      .map((link) => link.getAttribute('href'))
+      .filter(Boolean);
+    expect(cockpitLinks).toContain(
+      '/delivery/full-chain?subject_id=version_dashboard&subject_type=product_version',
+    );
+    expect(cockpitLinks).toContain('/delivery/requirements?requirement_id=requirement_dashboard');
+    expect(cockpitLinks).toContain('/delivery/rd-tasks?task_id=task_dashboard');
+    expect(cockpitLinks).toContain('/delivery/bugs?bug_id=bug_dashboard');
+    expect(cockpitLinks).toContain(
+      '/governance/code-inspections?source_id=code_inspection_report_dashboard',
+    );
+    expect(cockpitLinks).toContain(
+      '/delivery/versions?branch_config_id=version_branch_dashboard&version_id=version_dashboard',
+    );
+    expect(cockpitLinks).toContain('/governance/devops?version_id=version_dashboard');
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
       '/api/product-versions/version_dashboard/dashboard',
       'GET',
