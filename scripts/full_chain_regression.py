@@ -292,10 +292,53 @@ def run_regression(
         {"permission_roles": ["admin", "product_owner", "rd_owner"], "title": f"全链路回归知识沉淀 {slug}"},
     )
     _assert(approved_deposit.get("status") == "approved", f"Knowledge deposit was not approved: {approved_deposit}")
+    knowledge_document_id = str(approved_deposit.get("knowledge_document_id") or "")
+    _assert(knowledge_document_id, f"Knowledge deposit did not return a knowledge_document_id: {approved_deposit}")
     results.append(
         StepResult(
             "knowledge_deposit",
-            f"{deposit['id']} -> {approved_deposit.get('knowledge_document_id')}",
+            f"{deposit['id']} -> {knowledge_document_id}",
+        )
+    )
+
+    knowledge_health = client.get(
+        "/api/knowledge/index-health",
+        {"issue_limit": 20, "keyword": slug, "permission_role": "admin"},
+    )
+    knowledge_health_summary = knowledge_health.get("summary") or {}
+    _assert(
+        int(knowledge_health_summary.get("total_documents") or 0) >= 1,
+        f"Knowledge index health missed the approved deposit document: {knowledge_health}",
+    )
+    _assert(
+        int(knowledge_health_summary.get("searchable_documents") or 0) >= 1,
+        f"Knowledge index health did not mark the deposit document searchable: {knowledge_health_summary}",
+    )
+    _assert(
+        int(knowledge_health_summary.get("total_chunks") or 0) >= 1,
+        f"Knowledge index health did not report chunks for the deposit document: {knowledge_health_summary}",
+    )
+    retrieval_modes = knowledge_health.get("retrieval_modes") or {}
+    _assert(
+        int(retrieval_modes.get("hybrid_ready") or 0) + int(retrieval_modes.get("keyword_fallback") or 0) >= 1,
+        f"Knowledge index health did not expose a usable retrieval mode: {retrieval_modes}",
+    )
+    knowledge_search = client.post("/api/knowledge/search", {"query": slug, "top_k": 5})
+    search_items = knowledge_search.get("items", [])
+    search_document_ids = {str(item.get("document_id")) for item in search_items}
+    _assert_contains(
+        search_document_ids,
+        knowledge_document_id,
+        "Knowledge search did not retrieve the approved deposit document",
+    )
+    _assert(
+        any(item.get("retrieval_mode") in {"keyword", "vector"} for item in search_items),
+        f"Knowledge search did not return a retrieval mode: {search_items}",
+    )
+    results.append(
+        StepResult(
+            "knowledge_index_health",
+            f"{knowledge_document_id} / chunks={knowledge_health_summary.get('total_chunks')}",
         )
     )
 
@@ -479,7 +522,7 @@ def run_regression(
         _assert_contains(_ids(team_dashboard.get("latest_high_severity_bugs", [])), bug_id, "Dashboard missed severe Bug")
     _assert_contains(
         _ids(team_dashboard.get("recent_knowledge_documents", [])),
-        approved_deposit["knowledge_document_id"],
+        knowledge_document_id,
         "Dashboard missed approved knowledge document",
     )
     results.append(StepResult("team_dashboard", f"keys={','.join(sorted(team_dashboard.keys())[:6])}"))

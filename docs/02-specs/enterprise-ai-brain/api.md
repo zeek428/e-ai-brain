@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.446 |
+| 功能版本 | v1.1.447 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.447 | 2026-06-29 | 明确真实全链路回归脚本需在知识沉淀采纳后调用 `GET /api/knowledge/index-health` 和 `POST /api/knowledge/search`，验证索引健康与检索可用性 | Codex |
 | v1.1.446 | 2026-06-29 | 新增 `GET /api/knowledge/index-health`，按当前用户 `knowledge.read` 权限、知识空间 scope 和筛选条件聚合全量索引健康、chunk/embedding 覆盖、导入任务状态和可操作健康问题，响应包含 `query/performance` | Codex |
 | v1.1.445 | 2026-06-28 | AI 执行器任务超时扫描新增租约重派和死信队列响应：任务状态支持 `dead_letter`，`POST /api/system/ai-executor-tasks/timeout-scan` 返回 `requeued_task_ids/dead_letter_task_ids/timed_out_task_ids`，认领和日志追加会维护 `request_config.reliability` 租约元数据 | Codex |
 | v1.1.444 | 2026-06-28 | 角色管理页面新增权限与范围预览，复用 `GET /api/system/permissions/matrix` 响应中的 `rows/scopes/high_risk_permission_codes/missing_menu_permission_codes` 展示范围覆盖和授权风险；API 契约无需新增端点 | Codex |
@@ -3237,7 +3238,7 @@ GET /api/knowledge/documents?keyword=研发&knowledge_space_id=knowledge_space_0
 
 知识文档索引状态支持：`importing | pending_index | text_indexed | vector_indexed | indexed | index_failed | archived`，其中 `indexed` 为历史兼容状态。Embedding 不可用但文本 chunk 成功时进入 `text_indexed`，响应包含 `vector_index_error` 和兼容展示用 `index_error`；基础文本索引失败时进入 `index_failed`。
 
-前端知识中心必须基于当前分页响应展示“索引健康”视图，汇总当前筛选页的可检索文档、向量就绪文档、关键词兜底文档、索引失败文档、处理中任务和已生效分块版本数；`index_failed` 行提供重试索引入口，`text_indexed` 行提供补建向量索引入口，缺少 `active_chunk_set_id` 的可检索文档提供分块查看入口，`importing/pending_index` 文档提供导入任务入口。该视图只表示当前远程分页结果，不替代服务端权限、索引状态或全库健康统计。
+前端知识中心必须调用 `GET /api/knowledge/index-health` 展示“索引健康”视图，并复用当前筛选条件汇总可检索文档、向量就绪文档、关键词兜底文档、索引失败文档、处理中任务和已生效分块版本数；`index_failed` 行提供重试索引入口，`text_indexed` 行提供补建向量索引入口，缺少 `active_chunk_set_id` 的可检索文档提供分块查看入口，`importing/pending_index` 文档提供导入任务入口。该视图代表服务端按当前用户知识权限和筛选范围聚合的全量健康结果，不得再只用当前分页列表推断全库健康。
 
 重试失败索引：
 
