@@ -111,6 +111,7 @@ def _version_tasks(
 def _version_bugs(
     current_store: Any,
     *,
+    code_inspection_reports: list[dict[str, Any]],
     requirement_ids: set[str],
     task_ids: set[str],
     user: dict[str, Any],
@@ -124,12 +125,19 @@ def _version_bugs(
                 "section": "bugs",
             }
         ]
+    report_bug_ids = {
+        str(bug_id)
+        for report in code_inspection_reports
+        for bug_id in (report.get("created_bug_ids") or [])
+        if bug_id
+    }
     bugs = [
         bug_summary_projection(bug, current_store)
         for bug in _memory_records(current_store, "bugs")
         if bug.get("version_id") == version_id
         or bug.get("requirement_id") in requirement_ids
         or bug.get("related_task_id") in task_ids
+        or str(bug.get("id") or "") in report_bug_ids
     ]
     bugs.sort(key=lambda item: (item.get("updated_at") or item.get("created_at") or ""), reverse=True)
     return bugs, []
@@ -296,18 +304,19 @@ def product_version_dashboard_response(
     )
     task_ids = {str(task["id"]) for task in tasks}
     branch_configs = _branch_configs_for_version(read_store, version_id)
-    bugs, bug_access_issues = _version_bugs(
-        read_store,
-        requirement_ids=requirement_ids,
-        task_ids=task_ids,
-        user=user,
-        version_id=version_id,
-    )
     code_inspection_reports, code_access_issues = _version_code_inspection_reports(
         read_store,
         branch_configs=branch_configs,
         product_id=product_id,
         user=user,
+    )
+    bugs, bug_access_issues = _version_bugs(
+        read_store,
+        code_inspection_reports=code_inspection_reports,
+        requirement_ids=requirement_ids,
+        task_ids=task_ids,
+        user=user,
+        version_id=version_id,
     )
     releases = _version_releases(read_store, version_id)
     next_status = VERSION_NEXT_STATUS.get(str(version.get("status") or ""))

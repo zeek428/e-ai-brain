@@ -143,6 +143,23 @@ def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dic
     return collection if isinstance(collection, dict) else {}
 
 
+def _latest_requirement_id_for_version(current_store: Any, version_id: Any) -> str | None:
+    if version_id is None:
+        return None
+    version_requirements = sort_by_lifecycle_time(
+        [
+            requirement
+            for requirement in _read_memory_dict(current_store, "requirements").values()
+            if str(requirement.get("version_id")) == str(version_id)
+        ],
+        "updated_at",
+        "created_at",
+    )
+    if not version_requirements:
+        return None
+    return str(version_requirements[-1]["id"])
+
+
 def _trace_matches_full_chain_subjects(
     trace: dict[str, Any],
     *,
@@ -236,22 +253,14 @@ def _requirement_id_from_subject(
     if normalized_type in {"product_version", "iteration_version"}:
         if _read_memory_dict(current_store, "product_versions").get(normalized_id) is None:
             raise api_error(404, "NOT_FOUND", "Iteration version not found")
-        version_requirements = sort_by_lifecycle_time(
-            [
-                requirement
-                for requirement in _read_memory_dict(current_store, "requirements").values()
-                if str(requirement.get("version_id")) == normalized_id
-            ],
-            "updated_at",
-            "created_at",
-        )
-        if not version_requirements:
+        requirement_id = _latest_requirement_id_for_version(current_store, normalized_id)
+        if requirement_id is None:
             raise api_error(
                 404,
                 "NO_REQUIREMENT_CONTEXT",
                 "Iteration version has no requirements to display in full chain",
             )
-        return str(version_requirements[-1]["id"])
+        return requirement_id
     if normalized_type in {"branch_config", "product_version_branch_config"}:
         branch_config = _read_memory_dict(
             current_store,
@@ -259,23 +268,14 @@ def _requirement_id_from_subject(
         ).get(normalized_id)
         if branch_config is None:
             raise api_error(404, "NOT_FOUND", "Branch config not found")
-        version_id = branch_config.get("version_id")
-        version_requirements = sort_by_lifecycle_time(
-            [
-                requirement
-                for requirement in _read_memory_dict(current_store, "requirements").values()
-                if version_id is not None and str(requirement.get("version_id")) == str(version_id)
-            ],
-            "updated_at",
-            "created_at",
-        )
-        if not version_requirements:
+        requirement_id = _latest_requirement_id_for_version(current_store, branch_config.get("version_id"))
+        if requirement_id is None:
             raise api_error(
                 404,
                 "NO_REQUIREMENT_CONTEXT",
                 "Branch config version has no requirements to display in full chain",
             )
-        return str(version_requirements[-1]["id"])
+        return requirement_id
     if normalized_type == "code_inspection_report":
         report = _read_memory_dict(current_store, "code_inspection_reports").get(normalized_id)
         if report is None:
@@ -288,6 +288,20 @@ def _requirement_id_from_subject(
             task = _read_memory_dict(current_store, "ai_tasks").get(str(task_id))
             if task is not None and task.get("requirement_id"):
                 return str(task["requirement_id"])
+        report_key = (str(report.get("repository_id") or ""), str(report.get("branch") or ""))
+        if all(report_key):
+            for branch_config in _read_memory_dict(current_store, "product_version_branch_configs").values():
+                if str(branch_config.get("product_id") or "") != str(report.get("product_id") or ""):
+                    continue
+                branch_key = (
+                    str(branch_config.get("repository_id") or ""),
+                    str(branch_config.get("working_branch") or ""),
+                )
+                if branch_key != report_key:
+                    continue
+                requirement_id = _latest_requirement_id_for_version(current_store, branch_config.get("version_id"))
+                if requirement_id is not None:
+                    return requirement_id
     tasks = lifecycle_subject_tasks(
         current_store,
         subject_type=normalized_type,

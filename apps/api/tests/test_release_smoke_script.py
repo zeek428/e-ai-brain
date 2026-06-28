@@ -51,5 +51,11 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         "/api/lifecycle/full-chain",
         "/api/dashboard/it-team",
         "/api/assistant/chat",
+        "committer_distribution",
+        "covered_by_bug_count",
+        "covered_by_task_count",
+        "user_feedback_status_counts",
+        "latest_high_severity_bugs",
+        "/api/assistant/conversations/{conversation_id}/messages",
     ]:
         assert marker in content

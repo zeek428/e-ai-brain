@@ -328,9 +328,25 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "updated_at": "2026-06-04T09:20:00+00:00",
         "version_id": version["id"],
     }
+    app.state.store.bugs["bug_version_dashboard_from_inspection"] = {
+        "created_at": "2026-06-04T09:35:00+00:00",
+        "description": "巡检派生缺陷",
+        "evidence": {
+            "code_inspection_report_id": "code_inspection_report_dashboard",
+            "rule_id": "secrets.hardcoded_credential",
+        },
+        "id": "bug_version_dashboard_from_inspection",
+        "product_id": product["id"],
+        "severity": "critical",
+        "source": "code_inspection",
+        "status": "open",
+        "title": "巡检派生阻塞 Bug",
+        "updated_at": "2026-06-04T09:40:00+00:00",
+    }
     app.state.store.code_inspection_reports["code_inspection_report_dashboard"] = {
         "branch": "release/2026-dashboard",
         "created_at": "2026-06-04T09:30:00+00:00",
+        "created_bug_ids": ["bug_version_dashboard_from_inspection"],
         "finding_count": 3,
         "id": "code_inspection_report_dashboard",
         "product_id": product["id"],
@@ -358,14 +374,14 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     data = response.json()["data"]
     assert data["version"]["id"] == version["id"]
     assert data["summary"] == {
-        "blockers": 4,
+        "blockers": 5,
         "branch_configs": 1,
-        "bugs": 1,
+        "bugs": 2,
         "code_inspection_reports": 1,
-        "open_bugs": 1,
+        "open_bugs": 2,
         "releases": 1,
         "requirements": 1,
-        "severe_bugs": 1,
+        "severe_bugs": 2,
         "severe_code_inspection_reports": 1,
         "tasks": 1,
     }
@@ -386,4 +402,8 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     }
     assert data["branch_configs"][0]["repository_name"] == "Dashboard Repo"
     assert data["code_inspection_reports"][0]["id"] == "code_inspection_report_dashboard"
-    assert data["bugs"][0]["id"] == "bug_version_dashboard"
+    assert {bug["id"] for bug in data["bugs"]} == {
+        "bug_version_dashboard",
+        "bug_version_dashboard_from_inspection",
+    }
+    assert data["bug_status_counts"] == [{"count": 2, "status": "open"}]

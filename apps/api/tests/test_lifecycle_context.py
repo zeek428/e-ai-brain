@@ -753,6 +753,22 @@ def test_lifecycle_full_chain_resolves_subjects_to_requirement_chain(monkeypatch
         for item in full_chain["timeline"]
     )
 
+    version_branch_report_response = client.get(
+        "/api/lifecycle/full-chain"
+        f"?subject_type=code_inspection_report&subject_id={version_branch_report_id}",
+        headers=headers,
+    )
+    assert version_branch_report_response.status_code == 200
+    version_branch_report_full_chain = version_branch_report_response.json()["data"]
+    assert version_branch_report_full_chain["anchor"] == {
+        "resolved_requirement_id": lifecycle["requirement_id"],
+        "subject_id": version_branch_report_id,
+        "subject_type": "code_inspection_report",
+    }
+    assert version_branch_report_full_chain["requirement"]["id"] == lifecycle[
+        "requirement_id"
+    ]
+
     bug_response = client.get(
         f"/api/lifecycle/full-chain?subject_type=bug&subject_id={evidence['bug_id']}",
         headers=headers,

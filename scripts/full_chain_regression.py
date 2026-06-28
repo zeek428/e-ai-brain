@@ -119,6 +119,21 @@ def _assert(condition: bool, message: str) -> None:
         raise RegressionError(message)
 
 
+def _ids(items: list[dict[str, Any]]) -> set[str]:
+    return {str(item["id"]) for item in items if item.get("id")}
+
+
+def _status_count(items: list[dict[str, Any]], status: str) -> int:
+    for item in items:
+        if item.get("status") == status:
+            return int(item.get("count") or 0)
+    return 0
+
+
+def _assert_contains(container: set[str], expected: str, message: str) -> None:
+    _assert(expected in container, f"{message}: expected {expected}, got {sorted(container)}")
+
+
 def _git(args: list[str], cwd: Path, *, env: dict[str, str] | None = None) -> None:
     merged_env = os.environ.copy()
     if env:
@@ -339,25 +354,84 @@ def run_regression(
     report_id = scan_run.get("result_summary", {}).get("report_id")
     _assert(bool(report_id), f"Code inspection run did not return report_id: {scan_run}")
     report_detail = client.get(f"/api/governance/code-inspections/{report_id}")
-    _assert(report_detail["report"]["scan_mode"] == "native_full_scan", "Report is not native_full_scan.")
-    _assert(report_detail["report"]["branch"] == version_branch, "Report branch does not match version branch.")
-    results.append(StepResult("code_inspection", f"{report_id} / {scan_run['id']}"))
+    report = report_detail["report"]
+    findings = report_detail.get("findings", [])
+    scan_summary = report_detail.get("scan_summary", {})
+    governance_summary = report_detail.get("governance_summary", {})
+    _assert(report["scan_mode"] == "native_full_scan", "Report is not native_full_scan.")
+    _assert(report["branch"] == version_branch, "Report branch does not match version branch.")
+    _assert(report["repository_id"] == repository["id"], "Report repository does not match version repository.")
+    _assert(len(findings) >= 2, f"Native scan did not return expected findings: {findings}")
+    _assert(
+        any(finding.get("rule_id") == "secrets.hardcoded_credential" for finding in findings),
+        "Native scan did not detect the hardcoded credential finding.",
+    )
+    _assert(
+        any(finding.get("rule_id") == "metadata.internal_address_exposure" for finding in findings),
+        "Native scan did not detect the internal address finding.",
+    )
+    coverage = scan_summary.get("coverage") or {}
+    _assert(int(coverage.get("files_scanned") or 0) >= 2, f"Scan coverage is incomplete: {coverage}")
+    _assert(
+        any(item.get("email") == "full-chain@example.com" for item in scan_summary.get("committer_distribution", [])),
+        f"Scan did not preserve committer attribution: {scan_summary.get('committer_distribution')}",
+    )
+    _assert(
+        int(governance_summary.get("covered_by_bug_count") or 0) >= 1,
+        f"Governance summary did not count Bug coverage: {governance_summary}",
+    )
+    _assert(
+        int(governance_summary.get("covered_by_task_count") or 0) >= 1,
+        f"Governance summary did not count remediation task coverage: {governance_summary}",
+    )
+    report_bug_ids = {str(item) for item in report.get("created_bug_ids") or []}
+    report_task_ids = {str(item) for item in report.get("created_task_ids") or []}
+    _assert(report_bug_ids, f"Code inspection report did not record created Bug ids: {report}")
+    _assert(report_task_ids, f"Code inspection report did not record created remediation task ids: {report}")
+    results.append(StepResult("code_inspection", f"{report_id} / findings={len(findings)} / {scan_run['id']}"))
 
     bugs = client.get("/api/bugs", {"product_id": product["id"], "source": "code_inspection"})
     bug_items = bugs.get("items", [])
     _assert(len(bug_items) >= 1, "Code inspection did not create a Bug.")
+    bug_ids = _ids(bug_items)
+    for bug_id in report_bug_ids:
+        _assert_contains(bug_ids, bug_id, "Code inspection Bug writeback missing from Bug list")
+    _assert(
+        all(item.get("evidence", {}).get("code_inspection_report_id") == report_id for item in bug_items if item["id"] in report_bug_ids),
+        "Code inspection Bug evidence did not point back to the report.",
+    )
     remediation_tasks = client.get(
         "/api/ai-tasks",
         {"product_id": product["id"], "task_type": "code_inspection_remediation"},
     )
     remediation_items = remediation_tasks.get("items", [])
     _assert(len(remediation_items) >= 1, "Code inspection did not create a remediation task.")
-    results.append(StepResult("inspection_writeback", f"bugs={len(bug_items)}, tasks={len(remediation_items)}"))
+    remediation_task_ids = _ids(remediation_items)
+    for remediation_task_id in report_task_ids:
+        _assert_contains(
+            remediation_task_ids,
+            remediation_task_id,
+            "Code inspection remediation task writeback missing from AI task list",
+        )
+    results.append(
+        StepResult(
+            "inspection_writeback",
+            f"bugs={len(report_bug_ids)}, tasks={len(report_task_ids)}",
+        )
+    )
 
     dashboard = client.get(f"/api/product-versions/{version['id']}/dashboard")
     _assert(dashboard["summary"]["requirements"] >= 1, "Version dashboard missed requirement summary.")
     _assert(dashboard["summary"]["code_inspection_reports"] >= 1, "Version dashboard missed code inspection report.")
     _assert(dashboard["summary"]["branch_configs"] >= 1, "Version dashboard missed branch config.")
+    _assert_contains(_ids(dashboard.get("branch_configs", [])), branch_config["id"], "Version dashboard missed branch config row")
+    _assert_contains(
+        _ids(dashboard.get("code_inspection_reports", [])),
+        report_id,
+        "Version dashboard missed code inspection report row",
+    )
+    _assert(report_bug_ids.intersection(_ids(dashboard.get("bugs", []))), "Version dashboard missed code-inspection Bug row.")
+    _assert(_status_count(dashboard.get("bug_status_counts", []), "open") >= 1, "Version dashboard missed open Bug count.")
     results.append(StepResult("version_dashboard", f"blockers={dashboard['summary']['blockers']}"))
 
     full_chain = client.get(
@@ -367,10 +441,47 @@ def run_regression(
     _assert(full_chain["requirement"]["id"] == requirement["id"], "Full-chain did not resolve to requirement.")
     report_ids = {item["id"] for item in full_chain.get("code_inspection_reports", [])}
     _assert(report_id in report_ids, "Full-chain did not include code inspection report.")
+    _assert_contains(_ids(full_chain.get("branch_configs", [])), branch_config["id"], "Full-chain missed version branch config")
+    _assert_contains(
+        _ids(full_chain.get("knowledge_deposits", [])),
+        deposit["id"],
+        "Full-chain missed approved knowledge deposit",
+    )
+    _assert(full_chain.get("anchor", {}).get("subject_id") == version["id"], "Full-chain anchor did not preserve version entry.")
+    timeline_types = {item.get("type") for item in full_chain.get("timeline", [])}
+    for expected_type in {"requirement", "ai_task", "review", "knowledge_deposit", "branch_config", "code_inspection_report"}:
+        _assert(expected_type in timeline_types, f"Full-chain timeline missed {expected_type}: {timeline_types}")
+    report_full_chain = client.get(
+        "/api/lifecycle/full-chain",
+        {"subject_id": report_id, "subject_type": "code_inspection_report"},
+    )
+    _assert(
+        report_full_chain["requirement"]["id"] == requirement["id"],
+        "Code inspection report subject did not resolve back to the requirement full-chain.",
+    )
     results.append(StepResult("full_chain", f"timeline={len(full_chain.get('timeline', []))}"))
 
     team_dashboard = client.get("/api/dashboard/it-team", {"product_id": product["id"], "refresh": "true", "time_range": "all"})
-    _assert("summary" in team_dashboard or "metrics" in team_dashboard, "IT team dashboard response missing summary/metrics.")
+    dashboard_summary = team_dashboard.get("summary") or {}
+    _assert(int(dashboard_summary.get("requirements") or 0) >= 1, f"IT team dashboard missed requirements: {dashboard_summary}")
+    _assert(int(dashboard_summary.get("ai_tasks") or 0) >= 2, f"IT team dashboard missed AI tasks: {dashboard_summary}")
+    _assert(int(dashboard_summary.get("bugs") or 0) >= 1, f"IT team dashboard missed Bugs: {dashboard_summary}")
+    _assert(
+        int(dashboard_summary.get("knowledge_documents") or 0) >= 1,
+        f"IT team dashboard missed knowledge documents: {dashboard_summary}",
+    )
+    _assert(_status_count(team_dashboard.get("user_feedback_status_counts", []), "linked") >= 1, "Dashboard missed linked feedback count.")
+    _assert(_status_count(team_dashboard.get("bug_status_counts", []), "open") >= 1, "Dashboard missed open Bug count.")
+    _assert_contains(_ids(team_dashboard.get("latest_tasks", [])), task_id, "Dashboard missed completed AI task")
+    for remediation_task_id in report_task_ids:
+        _assert_contains(_ids(team_dashboard.get("latest_tasks", [])), remediation_task_id, "Dashboard missed remediation task")
+    for bug_id in report_bug_ids:
+        _assert_contains(_ids(team_dashboard.get("latest_high_severity_bugs", [])), bug_id, "Dashboard missed severe Bug")
+    _assert_contains(
+        _ids(team_dashboard.get("recent_knowledge_documents", [])),
+        approved_deposit["knowledge_document_id"],
+        "Dashboard missed approved knowledge document",
+    )
     results.append(StepResult("team_dashboard", f"keys={','.join(sorted(team_dashboard.keys())[:6])}"))
 
     assistant = client.post(
@@ -386,8 +497,41 @@ def run_regression(
             ],
         },
     )
-    _assert(assistant.get("message", {}).get("id"), f"Assistant chat response missing message: {assistant}")
-    results.append(StepResult("assistant_qa", assistant["message"]["id"]))
+    assistant_message = assistant.get("message", {})
+    assistant_message_id = assistant_message.get("id")
+    _assert(assistant_message_id, f"Assistant chat response missing message: {assistant}")
+    assistant_reference_keys = {
+        (reference.get("type"), reference.get("id")) for reference in assistant_message.get("references", [])
+    }
+    for expected_reference in [
+        ("requirement", requirement["id"]),
+        ("product_version", version["id"]),
+        ("code_inspection_report", report_id),
+    ]:
+        _assert(
+            expected_reference in assistant_reference_keys,
+            f"Assistant response missed reference {expected_reference}: {assistant_message.get('references')}",
+        )
+    conversation_id = assistant.get("conversation_id") or assistant.get("run", {}).get("conversation_id")
+    _assert(conversation_id, f"Assistant response missing conversation_id: {assistant}")
+    conversation_messages = client.get(f"/api/assistant/conversations/{conversation_id}/messages")
+    message_items = conversation_messages.get("items", [])
+    _assert(len(message_items) >= 2, f"Assistant conversation history was not persisted: {conversation_messages}")
+    persisted_assistant_messages = [item for item in message_items if item.get("id") == assistant_message_id]
+    _assert(persisted_assistant_messages, f"Assistant message {assistant_message_id} was not found in conversation history.")
+    persisted_reference_keys = {
+        (reference.get("type"), reference.get("id"))
+        for reference in persisted_assistant_messages[0].get("references", [])
+    }
+    _assert(
+        ("code_inspection_report", report_id) in persisted_reference_keys,
+        f"Persisted assistant message missed code inspection reference: {persisted_assistant_messages[0]}",
+    )
+    _assert(
+        persisted_assistant_messages[0].get("tool_results"),
+        f"Persisted assistant message missed tool results: {persisted_assistant_messages[0]}",
+    )
+    results.append(StepResult("assistant_qa", f"{assistant_message_id} / conversation={conversation_id}"))
 
     results.append(StepResult("fixture_repository", str(repo_path)))
     return results
