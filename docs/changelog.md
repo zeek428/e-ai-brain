@@ -51,6 +51,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 前端任务中心 client 拆分：新增 `apps/web/src/services/taskCenterClient.ts`，将任务列表/详情、待确认 Review、批量取消/重试、更多信息补充、派生研发任务、写回结果和 Markdown 导出从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
 - 前端知识中心 client 拆分：新增 `apps/web/src/services/knowledgeClient.ts`，将知识列表、空间/目录、资产、导入任务、分块、索引重试、沉淀审核和知识检索从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
 - 前端需求管理 client 拆分：新增 `apps/web/src/services/requirementClient.ts`，将需求列表、CRUD、审批/驳回、生成任务和批量处理从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
 - 前端 Bug 管理 client 拆分：新增 `apps/web/src/services/bugClient.ts`，将 Bug 列表、CRUD、批量处理和字段归一化从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
