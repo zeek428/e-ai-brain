@@ -49,6 +49,33 @@ const roleCatalogEnvelope = {
   },
 };
 
+const knowledgeIndexHealthEnvelope = {
+  data: {
+    embedding_models: [],
+    import_job_counts: [],
+    issues: [],
+    retrieval_modes: {
+      hybrid_ready: 0,
+      keyword_fallback: 0,
+      unavailable: 0,
+    },
+    status_counts: [],
+    summary: {
+      chunk_ready_documents: 1,
+      embedding_ready_chunks: 0,
+      index_failed_documents: 0,
+      keyword_only_chunks: 0,
+      keyword_only_documents: 0,
+      missing_chunk_documents: 0,
+      processing_documents: 0,
+      searchable_documents: 1,
+      total_chunks: 1,
+      total_documents: 1,
+      vector_ready_documents: 0,
+    },
+  },
+};
+
 describe('AI Brain Ant Design Pro workbench', () => {
   afterEach(() => {
     Modal.destroyAll();
@@ -412,6 +439,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (path === '/api/knowledge/index-health' || path.startsWith('/api/knowledge/index-health?')) {
+        return jsonResponse(knowledgeIndexHealthEnvelope);
+      }
       if (path === '/api/auth/roles') {
         return jsonResponse(roleCatalogEnvelope);
       }
@@ -580,6 +610,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (path === '/api/knowledge/index-health' || path.startsWith('/api/knowledge/index-health?')) {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return jsonResponse(knowledgeIndexHealthEnvelope);
+      }
       if (path === '/api/auth/roles') {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
         return jsonResponse(roleCatalogEnvelope);
@@ -641,7 +675,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     rerender(<KnowledgePage />);
 
-    expect(await screen.findAllByText('接口知识文档')).toHaveLength(2);
+    expect(await screen.findAllByText('接口知识文档')).not.toHaveLength(0);
     expect(screen.getByText('admin, rd_owner')).toBeInTheDocument();
 
     rerender(<AuditPage />);

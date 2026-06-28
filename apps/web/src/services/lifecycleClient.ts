@@ -8,6 +8,7 @@ import { apiRequest } from './apiClient';
 import { requireAccessToken } from './authClient';
 import { mapBugRecord, type BugListItem } from './bugClient';
 import type { CodeInspectionReportRecord } from './codeInspectionClient';
+import type { ExecutionTraceListItem } from './diagnosticsClient';
 import {
   mapKnowledgeDeposit,
   type KnowledgeDepositListItem,
@@ -84,38 +85,6 @@ type CodeReviewReportRecord = {
     writebackAllowed: boolean;
     writebackReason: string;
   };
-};
-
-type ExecutionTraceNodeRecord = {
-  duration_ms?: number | null;
-  error_code?: string | null;
-  error_message?: string | null;
-  finished_at?: string | null;
-  id: string;
-  label: string;
-  metadata?: Record<string, unknown>;
-  source_id: string;
-  source_type: string;
-  started_at?: string | null;
-  status: string;
-  summary?: string | null;
-};
-
-type ExecutionTraceListItem = {
-  diagnostic_nodes?: ExecutionTraceNodeRecord[];
-  duration_ms?: number | null;
-  failed_node_count: number;
-  id: string;
-  node_count: number;
-  related_ids?: Record<string, string[]>;
-  root_id: string;
-  root_type: string;
-  running_node_count: number;
-  started_at?: string | null;
-  status: string;
-  summary: string;
-  title: string;
-  updated_at?: string | null;
 };
 
 export type RequirementFullChainTimelineItem = {
