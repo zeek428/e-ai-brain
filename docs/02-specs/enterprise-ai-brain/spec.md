@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.659 |
+| 功能版本 | v1.1.660 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.660 | 2026-06-28 | 迭代版本驾驶舱总览增强：弹窗集中展示需求/任务/Bug 状态分布和版本推进影响明细，用户可直接识别同步推进、阻塞和保持不变的需求，减少跨页面拼接版本健康上下文 | Codex |
 | v1.1.659 | 2026-06-28 | AI 执行器 Runner 任务补齐租约重派和死信队列：任务认领写入租约过期时间，日志追加刷新租约，超时扫描优先将租约过期任务按 `max_reclaim_count` 重派或置为 `dead_letter`，并同步上游定时作业和研发任务失败态 | Codex |
 | v1.1.658 | 2026-06-28 | 角色管理新增权限与范围预览：复用 RBAC 策略矩阵在列表前展示全局/产品范围覆盖、未配置范围、高风险角色和菜单权限缺口，并在角色列表与详情中展示 scope 授权，便于权限分配前快速排查风险 | Codex |
 | v1.1.657 | 2026-06-28 | 知识中心新增索引健康视图：基于当前远程分页结果聚合可检索、向量就绪、关键词兜底、索引失败、处理中和分块版本状态，暴露索引失败重试、向量补建、导入任务和分块查看入口，帮助在 Embedding 可选/降级场景下识别知识检索健康度 | Codex |
@@ -781,7 +782,7 @@ DB-first 迁移状态：上述结构化持久化不代表所有 API 已经直连
 
 产品主体 CRUD API 已收口到独立 `app.api.routers.products`：`GET/POST /api/products` 和 `GET/PATCH/DELETE /api/products/{product_id}` 列表和详情要求 `product.read`，创建、更新、删除要求 `product.manage`；列表 SQL read model 下推 `product_scope_ids`，创建产品要求全局产品范围，受限产品 scope 用户返回 403，单产品详情、更新和删除按当前用户产品 scope 校验，scope 外返回 404；同时保持产品编码唯一性、SQL read model 分页筛选排序、`query/performance` 观测元数据、repository-first 读取、handler 级 repository 写入、删除前业务依赖校验和无业务依赖时级联清理版本/模块/Git 资源/相关系统配置的契约。迭代版本 API 已收口到独立 `app.api.routers.product_versions`：`GET /api/product-versions`、`GET/POST /api/products/{product_id}/versions`、`POST /api/product-versions/{version_id}/advance-status` 和 `PATCH/DELETE /api/product-versions/{version_id}` 读接口要求 `product.read`，创建、更新、状态推进和删除要求 `product.manage`；批量列表 SQL read model 下推 `product_scope_ids`，嵌套产品和单版本资源均按当前用户产品 scope 校验，scope 外返回 404；同时保持 SQL read model 分页筛选排序、产品内版本编码唯一、版本状态专用推进、需求状态同步、阻塞校验、repository-first 读取、handler 级版本/需求/审计写入和删除依赖校验契约。版本分支配置接口要求读接口 `product.read`、写接口 `product.manage`；新增分支时版本和仓库均必须在当前用户产品 scope 内，更新和删除按分支配置归属产品校验，scope 外统一返回 404。产品模块 API 已收口到独立 `app.api.routers.product_modules`：`GET/POST /api/products/{product_id}/modules` 和 `PATCH/DELETE /api/product-modules/{module_id}` 列表要求 `product.read`，创建、更新、删除要求 `product.manage`；嵌套产品和单模块资源均按当前用户产品 scope 校验，scope 外返回 404；同时保持产品内模块编码唯一、repository-first 读取、handler 级模块/审计写入和删除前需求/任务/Bug 依赖校验契约。产品 Git 仓库 API 已收口到独立 `app.api.routers.product_git_repositories`：`GET/POST /api/products/{product_id}/git-repositories` 和 `PATCH/DELETE /api/product-git-repositories/{repo_id}` 读接口要求 `product.read`，创建、更新和删除要求 `product.manage`，并按当前用户产品 scope 校验 URL 产品或仓库归属产品；同时保持 GitLab/GitHub provider 绑定校验、repository-first 读取、handler 级 Git 资源/审计写入和 `credential_ref_configured` 脱敏响应契约。相关系统 API 已收口到独立 `app.api.routers.related_systems`：`GET/POST /api/system/related-systems` 和 `PATCH/DELETE /api/system/related-systems/{system_id}` 列表要求 `product.read` 并按产品 scope 过滤，创建、更新、删除和产品改绑要求 `product.manage`，scope 外返回 404，同时保持可选产品归属校验、全局系统编码唯一、repository-first 读取和 handler 级相关系统/审计写入契约。产品主体、迭代版本、产品模块、产品 Git 仓库和相关系统 router 共用 `app.services.product_config_context` 承载产品配置 source rows、repository 上下文、唯一性校验、审计事件构造和单记录写入/删除；产品配置域端点已完成 router 收口。路由边界测试必须保证产品主体、迭代版本、产品模块、产品 Git 仓库和相关系统端点只有单一 router 归属。
 
-迭代版本驾驶舱由 `GET /api/product-versions/{version_id}/dashboard` 提供版本级交付健康聚合，入口位于需求交付/迭代版本列表行操作。接口先校验 `product.read` 和当前用户产品 scope，再聚合同版本需求、AI 任务、版本代码分支、Bug、代码巡检报告、发布记录、下一阶段状态影响和阻塞项；Bug 明细要求 `bug.read`，代码巡检明细要求 `code_inspection.read`，缺少子权限时对应明细降级为空并返回 `access_issues`，但不影响版本摘要、需求、任务和分支展示。阻塞项至少覆盖未完成需求、发布阻塞 Bug、高风险代码巡检、缺少版本代码分支和缺少发布记录，前端必须用固定列宽与横向滚动承载明细，避免长标题、仓库 URL 或建议文本挤压操作区。
+迭代版本驾驶舱由 `GET /api/product-versions/{version_id}/dashboard` 提供版本级交付健康聚合，入口位于需求交付/迭代版本列表行操作。接口先校验 `product.read` 和当前用户产品 scope，再聚合同版本需求、AI 任务、版本代码分支、Bug、代码巡检报告、发布记录、下一阶段状态影响和阻塞项；Bug 明细要求 `bug.read`，代码巡检明细要求 `code_inspection.read`，缺少子权限时对应明细降级为空并返回 `access_issues`，但不影响版本摘要、需求、任务和分支展示。页面必须在摘要指标外展示需求、任务、Bug 状态分布，并把状态推进影响拆成“同步推进 / 阻塞 / 保持不变”明细，包含需求编号、标题、当前状态、目标状态和阻塞说明。阻塞项至少覆盖未完成需求、发布阻塞 Bug、高风险代码巡检、缺少版本代码分支和缺少发布记录，前端必须用固定列宽与横向滚动承载明细，避免长标题、仓库 URL 或建议文本挤压操作区。
 
 平台状态 API 已收口到独立 `app.api.routers.platform`，平台健康检查、TCP 依赖探测、运行数据访问模式、模型网关健康状态和 GBrain 长期记忆脱敏状态由 `app.services.platform_status` 统一构造。`/health` 保持免登录访问并返回 `status/postgres/redis/model_gateway/chat_gateway/embedding_gateway/data_access_mode/long_memory/trace_id`；`/api/long-memory/status` 保持登录访问并返回 GBrain 是否配置、能力列表和 `postgres_pgvector` 兜底检索器，不返回 URL、API Key 或密钥片段。路由边界测试必须保证这两个平台状态端点只有单一 router 归属。
 

@@ -224,8 +224,60 @@ function dashboardMetric(label: string, value: number, color?: string) {
   );
 }
 
+function dashboardStatusCountStrip(
+  title: string,
+  counts: ProductVersionDashboard['requirementStatusCounts'],
+) {
+  return (
+    <div
+      style={{
+        border: '1px solid #f0f0f0',
+        borderRadius: 6,
+        minWidth: 260,
+        padding: '8px 12px',
+      }}
+    >
+      <Text strong>{title}</Text>
+      <Space size={6} style={{ marginTop: 8 }} wrap>
+        {counts.length ? (
+          counts.map((item) => (
+            <Tag key={`${title}-${item.status}`} color={dashboardStatusLabelMap[item.status]?.color ?? 'default'}>
+              {dashboardStatusLabelMap[item.status]?.label ?? item.status} {item.count}
+            </Tag>
+          ))
+        ) : (
+          <Text type="secondary">暂无数据</Text>
+        )}
+      </Space>
+    </div>
+  );
+}
+
 function dashboardDate(value?: string | null) {
   return value || '-';
+}
+
+function buildStatusImpactRows(statusImpact?: ProductVersionDashboard['statusImpact']) {
+  if (!statusImpact) {
+    return [];
+  }
+  return [
+    ...statusImpact.updatedRequirements.map((item) => ({
+      ...item,
+      impact: 'updated',
+      impactLabel: '同步推进',
+    })),
+    ...statusImpact.blockedRequirements.map((item) => ({
+      ...item,
+      impact: 'blocked',
+      impactLabel: '阻塞',
+    })),
+    ...statusImpact.unchangedRequirements.map((item) => ({
+      ...item,
+      impact: 'unchanged',
+      impactLabel: '保持不变',
+    })),
+  ];
 }
 
 function buildVersionListQuery(query: ManagementListQuery): ProductVersionListQuery {
@@ -822,6 +874,7 @@ export default function IterationVersionsPage() {
 
   const dashboard = dashboardState?.dashboard;
   const dashboardVersion = dashboard?.version ?? dashboardState?.version;
+  const dashboardStatusImpactRows = buildStatusImpactRows(dashboard?.statusImpact);
 
   return (
     <>
@@ -897,6 +950,14 @@ export default function IterationVersionsPage() {
                 {dashboardMetric('发布记录', dashboard.summary.releases)}
                 {dashboardMetric('阻塞项', dashboard.summary.blockers, dashboard.summary.blockers ? '#cf1322' : undefined)}
               </Space>
+              <div>
+                <Text strong>状态分布</Text>
+                <Space size={12} style={{ display: 'flex', marginTop: 8 }} wrap>
+                  {dashboardStatusCountStrip('需求状态', dashboard.requirementStatusCounts)}
+                  {dashboardStatusCountStrip('任务状态', dashboard.taskStatusCounts)}
+                  {dashboardStatusCountStrip('Bug 状态', dashboard.bugStatusCounts)}
+                </Space>
+              </div>
               {dashboard.statusImpact ? (
                 <Alert
                   description={`将同步 ${dashboard.statusImpact.updatedRequirements.length} 条需求，阻塞 ${dashboard.statusImpact.blockedRequirements.length} 条，保持不变 ${dashboard.statusImpact.unchangedRequirements.length} 条。`}
@@ -907,6 +968,62 @@ export default function IterationVersionsPage() {
               ) : (
                 <Alert showIcon title="当前版本状态没有可推进的下一阶段" type="info" />
               )}
+              {dashboard.statusImpact ? (
+                <div>
+                  <Text strong>推进影响明细</Text>
+                  <Table<(typeof dashboardStatusImpactRows)[number]>
+                    columns={[
+                      {
+                        dataIndex: 'impact',
+                        render: (value, row) => {
+                          const color = value === 'blocked' ? 'red' : value === 'updated' ? 'blue' : 'default';
+                          return <Tag color={color}>{row.impactLabel}</Tag>;
+                        },
+                        title: '影响',
+                        width: 120,
+                      },
+                      { dataIndex: 'id', title: '需求编号', width: 160 },
+                      {
+                        dataIndex: 'title',
+                        render: (value) => (
+                          <Text ellipsis style={{ maxWidth: 260 }}>
+                            {String(value ?? '-')}
+                          </Text>
+                        ),
+                        title: '需求标题',
+                        width: 280,
+                      },
+                      {
+                        dataIndex: 'from_status',
+                        render: (value) => statusTag(String(value ?? '-')),
+                        title: '当前状态',
+                        width: 130,
+                      },
+                      {
+                        dataIndex: 'to_status',
+                        render: (value) => (value ? statusTag(String(value)) : <Text type="secondary">-</Text>),
+                        title: '目标状态',
+                        width: 130,
+                      },
+                      {
+                        dataIndex: 'block_reason',
+                        render: (value) => (
+                          <Text ellipsis style={{ maxWidth: 280 }}>
+                            {String(value ?? '-')}
+                          </Text>
+                        ),
+                        title: '说明',
+                      },
+                    ]}
+                    dataSource={dashboardStatusImpactRows}
+                    locale={{ emptyText: '下一阶段暂无需求状态影响' }}
+                    pagination={dashboardStatusImpactRows.length > 5 ? { pageSize: 5 } : false}
+                    rowKey={(row) => `${row.impact}-${row.id}`}
+                    scroll={{ x: 980 }}
+                    size="small"
+                  />
+                </div>
+              ) : null}
               <div>
                 <Text strong>阻塞项</Text>
                 <Table<ProductVersionDashboard['blockers'][number]>

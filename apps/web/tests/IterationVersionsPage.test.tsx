@@ -782,7 +782,10 @@ describe('IterationVersionsPage', () => {
                 status: 'failed',
               },
             ],
-            requirement_status_counts: [{ count: 1, status: 'developing' }],
+            requirement_status_counts: [
+              { count: 1, status: 'developing' },
+              { count: 1, status: 'submitted' },
+            ],
             requirements: [
               {
                 content: '驾驶舱需求内容',
@@ -801,9 +804,22 @@ describe('IterationVersionsPage', () => {
               },
             ],
             status_impact: {
-              blocked_requirements: [],
+              blocked_requirements: [
+                {
+                  block_reason: '需求仍待评审，不能进入测试',
+                  id: 'requirement_blocked',
+                  status: 'submitted',
+                  title: '待评审需求',
+                },
+              ],
               target_status: 'testing',
-              unchanged_requirements: [],
+              unchanged_requirements: [
+                {
+                  id: 'requirement_unchanged',
+                  status: 'cancelled',
+                  title: '已取消需求',
+                },
+              ],
               updated_requirements: [
                 {
                   from_status: 'developing',
@@ -868,9 +884,22 @@ describe('IterationVersionsPage', () => {
 
     expect(await screen.findByText('版本驾驶舱 · 2026-dashboard')).toBeInTheDocument();
     expect(screen.getByText('下一阶段：测试中')).toBeInTheDocument();
+    expect(screen.getByText('状态分布')).toBeInTheDocument();
+    expect(screen.getByText('需求状态')).toBeInTheDocument();
+    expect(screen.getByText('开发中 1')).toBeInTheDocument();
+    expect(screen.getByText('待评审 1')).toBeInTheDocument();
+    expect(screen.getByText('任务状态')).toBeInTheDocument();
+    expect(screen.getByText('运行中 1')).toBeInTheDocument();
+    expect(screen.getByText('Bug 状态')).toBeInTheDocument();
+    expect(screen.getByText('打开 1')).toBeInTheDocument();
+    expect(screen.getByText('推进影响明细')).toBeInTheDocument();
+    expect(screen.getByText('同步推进')).toBeInTheDocument();
+    expect(screen.getByText('阻塞')).toBeInTheDocument();
+    expect(screen.getByText('保持不变')).toBeInTheDocument();
+    expect(screen.getByText('需求仍待评审，不能进入测试')).toBeInTheDocument();
     expect(screen.getAllByText('发布阻塞 Bug').length).toBeGreaterThan(0);
     expect(screen.getAllByText('release/2026-dashboard').length).toBeGreaterThan(0);
-    expect(screen.getByText('驾驶舱需求')).toBeInTheDocument();
+    expect(screen.getAllByText('驾驶舱需求').length).toBeGreaterThan(0);
     expect(screen.getByText('实现版本驾驶舱')).toBeInTheDocument();
     expect(screen.getAllByText('Dashboard Repo').length).toBeGreaterThan(0);
     expect(screen.getByText('deploy-dashboard')).toBeInTheDocument();
