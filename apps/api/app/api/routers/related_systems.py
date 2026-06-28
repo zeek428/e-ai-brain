@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from app.api.deps import CurrentUser, api_error, require_roles, store
+from app.api.deps import CurrentUser, api_error, require_permissions, store
 from app.core.trace import envelope, get_trace_id
 from app.services.product_config_context import (
     delete_product_config_record,
@@ -19,11 +19,14 @@ from app.services.product_config_context import (
     record_audit_event,
     save_product_config_record,
 )
+from app.services.product_scope import product_scope_filter, user_can_read_product
 from app.services.related_system_listing import list_related_systems_response
 
 router = APIRouter(tags=["related_systems"])
 
 RELATED_SYSTEM_STATUSES = {"active", "inactive"}
+PRODUCT_READ_PERMISSION = "product.read"
+PRODUCT_MANAGE_PERMISSION = "product.manage"
 
 
 class RelatedSystemRequest(BaseModel):
@@ -46,6 +49,15 @@ class RelatedSystemPatchRequest(BaseModel):
     display_order: int | None = None
 
 
+def _ensure_product_scope(user: dict[str, Any], product_id: Any) -> None:
+    if not user_can_read_product(user, product_id):
+        raise api_error(404, "NOT_FOUND", "Product not found")
+
+
+def _ensure_related_system_scope(user: dict[str, Any], related_system: dict[str, Any]) -> None:
+    _ensure_product_scope(user, related_system.get("product_id"))
+
+
 @router.get("/api/system/related-systems")
 def list_related_systems(
     request: Request,
@@ -53,11 +65,15 @@ def list_related_systems(
     product_id: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    require_permissions(user, {PRODUCT_READ_PERMISSION})
+    if product_id is not None:
+        _ensure_product_scope(user, product_id)
     current_store = store(request)
     return list_related_systems_response(
         active_only=active_only,
         current_store=current_store,
         product_id=product_id,
+        product_scope_ids=None if product_id is not None else product_scope_filter(user),
         trace_id=get_trace_id(request),
     )
 
@@ -68,15 +84,16 @@ def create_related_system(
     payload: RelatedSystemRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
     current_store = product_config_record_write_store(store(request))
     name = ensure_non_blank(payload.name, "name")
     ensure_enum(payload.status, RELATED_SYSTEM_STATUSES, "related system status")
-    if (
-        payload.product_id is not None
-        and get_product_record(current_store, payload.product_id) is None
-    ):
-        raise api_error(404, "NOT_FOUND", "Product not found")
+    if payload.product_id is not None:
+        _ensure_product_scope(user, payload.product_id)
+        if get_product_record(current_store, payload.product_id) is None:
+            raise api_error(404, "NOT_FOUND", "Product not found")
+    elif product_scope_filter(user) is not None:
+        raise api_error(403, "FORBIDDEN", "Global related system requires global scope")
     system_id = current_store.new_id("system")
     code = ensure_non_blank(payload.code or system_id, "code")
     if get_related_system_by_code(current_store, code) is not None:
@@ -114,11 +131,12 @@ def patch_related_system(
     payload: RelatedSystemPatchRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
     current_store = product_config_record_write_store(store(request))
     related_system = get_related_system_record(current_store, system_id)
     if related_system is None:
         raise api_error(404, "NOT_FOUND", "Related system not found")
+    _ensure_related_system_scope(user, related_system)
     updates = payload_updates(payload)
     if "name" in updates:
         updates["name"] = ensure_non_blank(updates["name"], "name")
@@ -129,8 +147,13 @@ def patch_related_system(
             raise api_error(409, "RELATED_SYSTEM_CODE_EXISTS", "Related system code already exists")
     if "status" in updates:
         ensure_enum(updates["status"], RELATED_SYSTEM_STATUSES, "related system status")
-    if "product_id" in updates and updates["product_id"] is not None:
-        if get_product_record(current_store, updates["product_id"]) is None:
+    if "product_id" in updates:
+        next_product_id = updates["product_id"]
+        _ensure_product_scope(user, next_product_id)
+        if (
+            next_product_id is not None
+            and get_product_record(current_store, next_product_id) is None
+        ):
             raise api_error(404, "NOT_FOUND", "Product not found")
     related_system = {**related_system, **updates}
     audit_event = record_audit_event(
@@ -155,10 +178,12 @@ def delete_related_system(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
     current_store = product_config_record_write_store(store(request))
-    if get_related_system_record(current_store, system_id) is None:
+    related_system = get_related_system_record(current_store, system_id)
+    if related_system is None:
         raise api_error(404, "NOT_FOUND", "Related system not found")
+    _ensure_related_system_scope(user, related_system)
     audit_event = record_audit_event(
         current_store,
         event_type="related_system.deleted",

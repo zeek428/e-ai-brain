@@ -228,7 +228,10 @@ class TaskReadRepository:
         if sort_by and sort_by in sort_columns:
             direction = "DESC" if sort_order == "desc" else "ASC"
             return f"ORDER BY {sort_columns[sort_by]} {direction}, policy.id ASC"
-        return "ORDER BY policy.priority ASC, policy.task_type ASC, policy.product_id NULLS FIRST, policy.id ASC"
+        return (
+            "ORDER BY policy.priority ASC, policy.task_type ASC, "
+            "policy.product_id NULLS FIRST, policy.id ASC"
+        )
 
     def save_rd_task_executor_policy_record(
         self,
@@ -818,14 +821,76 @@ class TaskReadRepository:
             human_reviews[row[0]] = review
         return human_reviews
 
+    def _pending_review_summary_where(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        read_scope: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        where_clauses = ["r.status = 'pending'"]
+        params: list[Any] = []
+        if ai_task_id is not None:
+            where_clauses.append("r.ai_task_id = %s")
+            params.append(ai_task_id)
+        self._append_ai_task_read_scope(where_clauses, read_scope=read_scope, table_alias="t")
+        where_clause = f"WHERE {' AND '.join(where_clauses)}"
+        return where_clause, params
+
+    def count_pending_review_summaries(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        read_scope: str | None = None,
+    ) -> int:
+        where_clause, params = self._pending_review_summary_where(
+            ai_task_id=ai_task_id,
+            read_scope=read_scope,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM human_reviews r
+                    JOIN ai_tasks t ON t.id = r.ai_task_id
+                    {where_clause}
+                    """,
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+        return int(row[0] if row else 0)
+
     def list_pending_review_summaries(
         self,
         *,
+        ai_task_id: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
         read_scope: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
     ) -> list[dict[str, Any]]:
-        where_clauses = ["r.status = 'pending'"]
-        self._append_ai_task_read_scope(where_clauses, read_scope=read_scope, table_alias="t")
-        where_clause = f"WHERE {' AND '.join(where_clauses)}"
+        where_clause, params = self._pending_review_summary_where(
+            ai_task_id=ai_task_id,
+            read_scope=read_scope,
+        )
+        sort_columns = {
+            "ai_task_id": "r.ai_task_id",
+            "created_at": "COALESCE(r.created_at, r.updated_at)",
+            "id": "r.id",
+            "stage": "r.stage",
+            "status": "r.status",
+            "updated_at": "COALESCE(r.updated_at, r.created_at)",
+        }
+        order_column = sort_columns.get(sort_by, sort_columns["created_at"])
+        order_direction = "ASC" if sort_order == "asc" else "DESC"
+        paging_clause = ""
+        if limit is not None:
+            paging_clause += " LIMIT %s"
+            params.append(limit)
+        if offset is not None:
+            paging_clause += " OFFSET %s"
+            params.append(offset)
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -835,8 +900,10 @@ class TaskReadRepository:
                     FROM human_reviews r
                     JOIN ai_tasks t ON t.id = r.ai_task_id
                     {where_clause}
-                    ORDER BY r.created_at DESC, r.id
-                    """
+                    ORDER BY {order_column} {order_direction}, r.id ASC
+                    {paging_clause}
+                    """,
+                    tuple(params),
                 )
                 return [
                     {

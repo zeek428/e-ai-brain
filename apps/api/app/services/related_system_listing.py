@@ -24,20 +24,26 @@ def list_related_systems_response(
     active_only: bool,
     current_store: Any,
     product_id: str | None,
+    product_scope_ids: list[str] | None = None,
     trace_id: str,
 ) -> dict[str, Any]:
     repository = product_config_query_repository(current_store)
     if repository is not None:
-        items = repository.list_related_systems(
-            active_only=active_only,
-            product_id=product_id,
-        )
+        list_kwargs: dict[str, Any] = {
+            "active_only": active_only,
+            "product_id": product_id,
+        }
+        if product_scope_ids is not None:
+            list_kwargs["product_scope_ids"] = product_scope_ids
+        items = repository.list_related_systems(**list_kwargs)
         return envelope({"items": items, "total": len(items)}, trace_id)
+    product_scope_set = set(product_scope_ids) if product_scope_ids is not None else None
     items = sorted(
         (
             item
             for item in _memory_records(current_store, "related_systems")
             if product_id is None or item.get("product_id") == product_id
+            if product_scope_set is None or str(item.get("product_id")) in product_scope_set
         ),
         key=lambda item: (item.get("display_order", 0), item["code"]),
     )

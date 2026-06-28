@@ -14,6 +14,7 @@ export function referenceTypeLabel(type: string) {
     assistant_chat_run: 'AI 助手运行',
     assistant_message: 'AI 助手消息',
     audit_event: '审计事件',
+    branch_config: '代码分支',
     bug: '缺陷',
     code_inspection_report: '代码巡检',
     code_review_report: '代码评审',
@@ -29,6 +30,7 @@ export function referenceTypeLabel(type: string) {
     plugin_connection: '插件连接',
     plugin_invocation_log: '插件调用',
     product: '产品',
+    product_version_branch_config: '代码分支',
     requirement: '需求',
     result_write_record: '结果写入',
     scheduled_job: '定时作业',
@@ -49,6 +51,7 @@ export function referenceSourceModule(type: string) {
     assistant_chat_run: '执行诊断',
     assistant_message: '执行诊断',
     audit_event: '审计与诊断',
+    branch_config: '需求交付',
     bug: '需求交付',
     code_inspection_report: '执行诊断',
     code_review_report: '需求交付',
@@ -64,6 +67,7 @@ export function referenceSourceModule(type: string) {
     plugin_connection: '插件管理',
     plugin_invocation_log: '执行诊断',
     product: '产品资产',
+    product_version_branch_config: '需求交付',
     requirement: '需求交付',
     result_write_record: '执行诊断',
     scheduled_job: '任务中心',
@@ -151,6 +155,7 @@ export function referenceSummaryText(reference: AssistantReference) {
 const fullChainReferenceSubjectTypes: Record<string, string> = {
   ai_task: 'ai_task',
   audit_event: 'audit_event',
+  branch_config: 'branch_config',
   bug: 'bug',
   code_inspection_report: 'code_inspection_report',
   code_review_report: 'code_review_report',
@@ -159,6 +164,7 @@ const fullChainReferenceSubjectTypes: Record<string, string> = {
   iteration_version: 'iteration_version',
   knowledge_deposit: 'knowledge_deposit',
   product_version: 'product_version',
+  product_version_branch_config: 'product_version_branch_config',
   requirement: 'requirement',
 };
 

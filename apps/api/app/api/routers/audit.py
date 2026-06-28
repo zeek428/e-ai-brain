@@ -4,11 +4,12 @@ from typing import Any
 
 from fastapi import APIRouter, Query, Request
 
-from app.api.deps import CurrentUser, require_roles, store
+from app.api.deps import CurrentUser, require_permissions, store
 from app.core.trace import get_trace_id
 from app.services.audit_events import audit_events_response
 
 router = APIRouter(tags=["audit"])
+AUDIT_READ_PERMISSION = "audit.read"
 
 
 def _request_started_at(request: Request) -> float | None:
@@ -35,7 +36,7 @@ def audit_events(
     sort_order: str = "desc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {AUDIT_READ_PERMISSION})
     return audit_events_response(
         store(request),
         actor=actor,

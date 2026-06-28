@@ -6,6 +6,12 @@ from typing import Any
 from urllib.parse import urlencode
 
 from app.api.deps import api_error
+from app.core.listing import (
+    add_list_observability,
+    ensure_list_enum,
+    list_text_matches,
+    sort_list_items,
+)
 from app.services.knowledge_documents import (
     knowledge_document_chunks,
     knowledge_query_repository,
@@ -174,6 +180,18 @@ ASSISTANT_ACTION_CANDIDATES = (
     },
 )
 ASSISTANT_ACTION_STANDARD_SORT_STEP = 10
+ASSISTANT_ACTION_REFERENCE_CONFIG_LIST_NAME = "assistant_action_reference_configs"
+ASSISTANT_ACTION_REFERENCE_CONFIG_SORT_FIELDS = {
+    "action_key",
+    "created_at",
+    "enabled",
+    "enterprise_id",
+    "sort_order",
+    "template_version",
+    "title",
+    "updated_at",
+}
+ASSISTANT_ACTION_REFERENCE_CONFIG_STATUSES = {"disabled", "enabled"}
 OPERATIONAL_REFERENCE_PERMISSIONS_BY_TYPE = {
     "ai_agent": ("system.ai_capabilities.manage",),
     "ai_skill": ("system.ai_capabilities.manage",),
@@ -508,11 +526,118 @@ def assistant_reference_audit_event(
 def list_assistant_action_reference_configs_response(
     *,
     current_store: Any | None = None,
+    enterprise_id: str | None = None,
+    keyword: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    permission: str | None = None,
+    role: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "asc",
+    started_at: float | None = None,
+    status: str | None = None,
+    template_version: str | None = None,
 ) -> dict[str, Any]:
+    ensure_list_enum(status, ASSISTANT_ACTION_REFERENCE_CONFIG_STATUSES, "status")
+    ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
+    resolved_sort_by = sort_by or "sort_order"
+    if resolved_sort_by not in ASSISTANT_ACTION_REFERENCE_CONFIG_SORT_FIELDS:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+    filters = {
+        "enterprise_id": enterprise_id,
+        "keyword": keyword,
+        "permission": permission,
+        "role": role,
+        "status": status,
+        "template_version": template_version,
+    }
+    paged = page is not None or page_size is not None
+    repository = getattr(current_store, "repository", None) if current_store is not None else None
+    count_page = getattr(repository, "count_assistant_action_reference_configs", None)
+    list_page = getattr(repository, "list_assistant_action_reference_configs_page", None)
+    if paged and callable(count_page) and callable(list_page):
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        query_filters = {
+            "enterprise_id": enterprise_id,
+            "keyword": keyword,
+            "permission": permission,
+            "role": role,
+            "status": status,
+            "template_version": template_version,
+        }
+        total = count_page(**query_filters)
+        items = [
+            _public_assistant_action_config(row)
+            for row in list_page(
+                **query_filters,
+                limit=resolved_page_size,
+                offset=(resolved_page - 1) * resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+            )
+        ]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name=ASSISTANT_ACTION_REFERENCE_CONFIG_LIST_NAME,
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+
     items = [
         _public_assistant_action_config(row)
         for row in _assistant_action_config_rows(current_store)
     ]
+    items = [
+        item
+        for item in items
+        if _assistant_action_config_matches(
+            item,
+            enterprise_id=enterprise_id,
+            keyword=keyword,
+            permission=permission,
+            role=role,
+            status=status,
+            template_version=template_version,
+        )
+    ]
+    items = sort_list_items(
+        items,
+        allowed_fields=ASSISTANT_ACTION_REFERENCE_CONFIG_SORT_FIELDS,
+        default_sort_by="sort_order",
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+    )
+    if paged:
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        total = len(items)
+        start = (resolved_page - 1) * resolved_page_size
+        page_items = items[start : start + resolved_page_size]
+        return add_list_observability(
+            {
+                "items": page_items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name=ASSISTANT_ACTION_REFERENCE_CONFIG_LIST_NAME,
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
     return {"items": items, "total": len(items)}
 
 
@@ -1579,6 +1704,52 @@ def _assistant_action_config_rows(current_store: Any | None) -> list[dict[str, A
     if isinstance(configured, list):
         return [dict(row) for row in configured if isinstance(row, dict)]
     return []
+
+
+def _assistant_action_config_matches(
+    item: dict[str, Any],
+    *,
+    enterprise_id: str | None,
+    keyword: str | None,
+    permission: str | None,
+    role: str | None,
+    status: str | None,
+    template_version: str | None,
+) -> bool:
+    enabled = bool(item.get("enabled", True))
+    if status == "enabled" and not enabled:
+        return False
+    if status == "disabled" and enabled:
+        return False
+    search_item = {
+        **item,
+        "aliases_text": " ".join(_clean_string_list(item.get("aliases"))),
+        "permissions_text": " ".join(_clean_string_list(item.get("permissions"))),
+        "roles_text": " ".join(_clean_string_list(item.get("roles"))),
+    }
+    return (
+        list_text_matches(
+            search_item,
+            keyword,
+            (
+                "action_key",
+                "aliases_text",
+                "enterprise_id",
+                "id",
+                "permissions_text",
+                "prompt",
+                "roles_text",
+                "summary",
+                "template_version",
+                "title",
+                "url",
+            ),
+        )
+        and list_text_matches(search_item, role, ("roles_text",))
+        and list_text_matches(search_item, permission, ("permissions_text",))
+        and list_text_matches(search_item, enterprise_id, ("enterprise_id",))
+        and list_text_matches(search_item, template_version, ("template_version",))
+    )
 
 
 def _normalized_assistant_action_config(payload: dict[str, Any]) -> dict[str, Any]:

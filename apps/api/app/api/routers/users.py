@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import CurrentUser, api_error, require_roles
+from app.api.deps import CurrentUser, api_error, require_permissions
 from app.core.listing import (
     add_list_observability,
     ensure_list_enum,
@@ -18,6 +18,7 @@ from app.core.roles import ASSIGNABLE_ROLE_CODES
 from app.core.trace import envelope, get_trace_id
 
 router = APIRouter(prefix="/api/users", tags=["users"])
+USER_MANAGE_PERMISSION = "system.users.manage"
 USER_STATUSES = {"active", "inactive"}
 USER_LIST_SORT_FIELDS = {"created_at", "display_name", "id", "status", "username"}
 
@@ -71,7 +72,7 @@ def list_users(
     username: str | None = Query(default=None),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {USER_MANAGE_PERMISSION})
     ensure_list_enum(status, USER_STATUSES, "user status")
     ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
     if sort_by is not None:
@@ -147,7 +148,7 @@ def create_user(
     payload: UserCreateRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {USER_MANAGE_PERMISSION})
     username = _ensure_non_blank(payload.username, "username")
     display_name = _ensure_non_blank(payload.display_name, "display_name")
     password = _ensure_non_blank(payload.password, "password")
@@ -175,7 +176,7 @@ def patch_user(
     payload: UserPatchRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {USER_MANAGE_PERMISSION})
     updates = payload.model_dump(exclude_unset=True)
     if "display_name" in updates:
         updates["display_name"] = _ensure_non_blank(updates["display_name"], "display_name")
@@ -197,7 +198,7 @@ def delete_user(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {USER_MANAGE_PERMISSION})
     if user_id == user["id"]:
         raise api_error(409, "RESOURCE_IN_USE", "Current user cannot be deleted")
     deleted = request.app.state.user_repository.delete_user(user_id)

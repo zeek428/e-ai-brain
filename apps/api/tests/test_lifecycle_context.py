@@ -6,11 +6,11 @@ from fastapi.testclient import TestClient
 from gitlab_fakes import install_real_gitlab_api_stub
 
 from app.main import app
+from app.services.lifecycle_risks import sync_lifecycle_context_records
 from app.services.requirement_full_chain import (
     get_requirement_full_chain_by_subject_response,
     get_requirement_full_chain_response,
 )
-from app.services.lifecycle_risks import sync_lifecycle_context_records
 from app.services.task_workflow_context import TaskWorkflowSourceStore
 
 client = TestClient(app)
@@ -29,6 +29,16 @@ def build_minimal_full_chain_store() -> TaskWorkflowSourceStore:
         "name": "Alpha v1",
         "product_id": "product_alpha",
         "status": "active",
+    }
+    store.product_version_branch_configs["branch_config_alpha"] = {
+        "base_branch": "main",
+        "branch_status": "active",
+        "creation_source": "manual",
+        "id": "branch_config_alpha",
+        "product_id": "product_alpha",
+        "repository_id": "repo_alpha",
+        "version_id": "version_alpha",
+        "working_branch": "feature/alpha",
     }
     store.requirements["requirement_alpha"] = {
         "content": "Alpha full-chain access check.",
@@ -634,6 +644,7 @@ def test_requirement_full_chain_returns_requirement_timeline_and_related_subject
         "bugs": len(full_chain["bugs"]),
         "jenkins_releases": len(full_chain["jenkins_releases"]),
         "knowledge_deposits": len(full_chain["knowledge_deposits"]),
+        "execution_traces": len(full_chain["execution_traces"]),
         "audit_events": len(full_chain["audit_events"]),
         "timeline_events": len(timeline),
     }
@@ -657,9 +668,42 @@ def test_lifecycle_full_chain_resolves_subjects_to_requirement_chain(monkeypatch
         "risk_level": "high",
         "scan_finished_at": "2026-06-01T03:05:00+00:00",
         "severe_finding_count": 1,
+        "scheduled_job_run_id": "scheduled_job_run_full_chain",
         "status": "completed",
         "summary": "生命周期链路代码巡检",
     }
+    app.state.store.scheduled_job_runs["scheduled_job_run_full_chain"] = {
+        "created_at": "2026-06-01T02:58:00+00:00",
+        "finished_at": "2026-06-01T03:06:00+00:00",
+        "id": "scheduled_job_run_full_chain",
+        "result_summary": {"summary": "代码巡检全链路运行"},
+        "scheduled_job_id": "scheduled_job_full_chain",
+        "started_at": "2026-06-01T02:58:00+00:00",
+        "status": "succeeded",
+        "updated_at": "2026-06-01T03:06:00+00:00",
+    }
+    app.state.store.ai_executor_tasks["ai_executor_task_full_chain"] = {
+        "ai_task_id": lifecycle["review_task_id"],
+        "created_at": "2026-06-01T03:01:00+00:00",
+        "executor_type": "codex",
+        "id": "ai_executor_task_full_chain",
+        "runner_id": "runner_full_chain",
+        "scheduled_job_run_id": "scheduled_job_run_full_chain",
+        "status": "completed",
+        "updated_at": "2026-06-01T03:05:00+00:00",
+    }
+    app.state.store.model_gateway_logs.append(
+        {
+            "ai_task_id": lifecycle["review_task_id"],
+            "created_at": "2026-06-01T03:02:00+00:00",
+            "id": "model_gateway_log_full_chain",
+            "model": "gpt-test",
+            "provider": "openai",
+            "purpose": "execution_trace_full_chain",
+            "status": "succeeded",
+            "updated_at": "2026-06-01T03:03:00+00:00",
+        }
+    )
 
     response = client.get(
         f"/api/lifecycle/full-chain?subject_type=code_inspection_report&subject_id={report_id}",
@@ -675,8 +719,17 @@ def test_lifecycle_full_chain_resolves_subjects_to_requirement_chain(monkeypatch
     }
     assert full_chain["requirement"]["id"] == lifecycle["requirement_id"]
     assert {report["id"] for report in full_chain["code_inspection_reports"]} == {report_id}
+    execution_trace_ids = {trace["id"] for trace in full_chain["execution_traces"]}
+    execution_trace_root_types = {trace["root_type"] for trace in full_chain["execution_traces"]}
+    assert "scheduled_job_run_full_chain" in execution_trace_ids
+    assert "audit_event" not in execution_trace_root_types
     assert any(
         item["type"] == "code_inspection_report" and item["subject_id"] == report_id
+        for item in full_chain["timeline"]
+    )
+    assert any(
+        item["type"] == "execution_trace"
+        and item["subject_id"] == "scheduled_job_run_full_chain"
         for item in full_chain["timeline"]
     )
 
@@ -694,6 +747,30 @@ def test_lifecycle_full_chain_resolves_subjects_to_requirement_chain(monkeypatch
     assert version_response.status_code == 200
     assert version_response.json()["data"]["requirement"]["id"] == lifecycle["requirement_id"]
 
+    branch_config_response = client.get(
+        "/api/lifecycle/full-chain"
+        f"?subject_type=product_version_branch_config&subject_id={lifecycle['branch_config_id']}",
+        headers=headers,
+    )
+    assert branch_config_response.status_code == 200
+    branch_config_full_chain = branch_config_response.json()["data"]
+    assert branch_config_full_chain["requirement"]["id"] == lifecycle["requirement_id"]
+    assert branch_config_full_chain["anchor"] == {
+        "resolved_requirement_id": lifecycle["requirement_id"],
+        "subject_id": lifecycle["branch_config_id"],
+        "subject_type": "product_version_branch_config",
+    }
+
+    branch_alias_response = client.get(
+        "/api/lifecycle/full-chain"
+        f"?subject_type=branch_config&subject_id={lifecycle['branch_config_id']}",
+        headers=headers,
+    )
+    assert branch_alias_response.status_code == 200
+    assert branch_alias_response.json()["data"]["requirement"]["id"] == lifecycle[
+        "requirement_id"
+    ]
+
     assistant_alias_response = client.get(
         f"/api/lifecycle/full-chain?subject_type=iteration_version&subject_id={lifecycle['version_id']}",
         headers=headers,
@@ -706,6 +783,50 @@ def test_lifecycle_full_chain_resolves_subjects_to_requirement_chain(monkeypatch
         "subject_id": lifecycle["version_id"],
         "subject_type": "iteration_version",
     }
+
+    scheduled_run_response = client.get(
+        "/api/lifecycle/full-chain"
+        "?subject_type=scheduled_job_run&subject_id=scheduled_job_run_full_chain",
+        headers=headers,
+    )
+    assert scheduled_run_response.status_code == 200
+    scheduled_run_full_chain = scheduled_run_response.json()["data"]
+    assert scheduled_run_full_chain["requirement"]["id"] == lifecycle["requirement_id"]
+    assert scheduled_run_full_chain["anchor"] == {
+        "resolved_requirement_id": lifecycle["requirement_id"],
+        "subject_id": "scheduled_job_run_full_chain",
+        "subject_type": "scheduled_job_run",
+    }
+
+    execution_trace_response = client.get(
+        "/api/lifecycle/full-chain"
+        "?subject_type=execution_trace&subject_id=scheduled_job_run_full_chain",
+        headers=headers,
+    )
+    assert execution_trace_response.status_code == 200
+    assert execution_trace_response.json()["data"]["requirement"]["id"] == lifecycle[
+        "requirement_id"
+    ]
+
+    executor_task_response = client.get(
+        "/api/lifecycle/full-chain"
+        "?subject_type=ai_executor_task&subject_id=ai_executor_task_full_chain",
+        headers=headers,
+    )
+    assert executor_task_response.status_code == 200
+    assert executor_task_response.json()["data"]["requirement"]["id"] == lifecycle[
+        "requirement_id"
+    ]
+
+    model_log_response = client.get(
+        "/api/lifecycle/full-chain"
+        "?subject_type=model_gateway_log&subject_id=model_gateway_log_full_chain",
+        headers=headers,
+    )
+    assert model_log_response.status_code == 200
+    assert model_log_response.json()["data"]["requirement"]["id"] == lifecycle[
+        "requirement_id"
+    ]
 
 
 def test_requirement_full_chain_enforces_product_scope():
@@ -734,6 +855,15 @@ def test_requirement_full_chain_enforces_product_scope():
 
 def test_lifecycle_full_chain_subject_anchor_enforces_product_scope():
     store = build_minimal_full_chain_store()
+    store.ai_executor_tasks["ai_executor_task_alpha"] = {
+        "ai_task_id": "task_alpha",
+        "created_at": "2026-06-27T01:16:00+00:00",
+        "executor_type": "codex",
+        "id": "ai_executor_task_alpha",
+        "runner_id": "runner_alpha",
+        "status": "completed",
+        "updated_at": "2026-06-27T01:18:00+00:00",
+    }
 
     with pytest.raises(HTTPException) as blocked:
         get_requirement_full_chain_by_subject_response(
@@ -759,6 +889,56 @@ def test_lifecycle_full_chain_subject_anchor_enforces_product_scope():
         "subject_type": "product_version",
     }
     assert allowed["requirement"]["id"] == "requirement_alpha"
+
+    with pytest.raises(HTTPException) as blocked_branch_config:
+        get_requirement_full_chain_by_subject_response(
+            current_store=store,
+            subject_id="branch_config_alpha",
+            subject_type="product_version_branch_config",
+            user=scoped_reader("product_beta"),
+        )
+
+    assert blocked_branch_config.value.status_code == 404
+    assert blocked_branch_config.value.detail["code"] == "NOT_FOUND"
+
+    allowed_branch_config = get_requirement_full_chain_by_subject_response(
+        current_store=store,
+        subject_id="branch_config_alpha",
+        subject_type="product_version_branch_config",
+        user=scoped_reader("product_alpha"),
+    )
+
+    assert allowed_branch_config["anchor"] == {
+        "resolved_requirement_id": "requirement_alpha",
+        "subject_id": "branch_config_alpha",
+        "subject_type": "product_version_branch_config",
+    }
+    assert allowed_branch_config["requirement"]["id"] == "requirement_alpha"
+
+    with pytest.raises(HTTPException) as blocked_executor_task:
+        get_requirement_full_chain_by_subject_response(
+            current_store=store,
+            subject_id="ai_executor_task_alpha",
+            subject_type="ai_executor_task",
+            user=scoped_reader("product_beta"),
+        )
+
+    assert blocked_executor_task.value.status_code == 404
+    assert blocked_executor_task.value.detail["code"] == "NOT_FOUND"
+
+    allowed_executor_task = get_requirement_full_chain_by_subject_response(
+        current_store=store,
+        subject_id="ai_executor_task_alpha",
+        subject_type="ai_executor_task",
+        user=scoped_reader("product_alpha"),
+    )
+
+    assert allowed_executor_task["anchor"] == {
+        "resolved_requirement_id": "requirement_alpha",
+        "subject_id": "ai_executor_task_alpha",
+        "subject_type": "ai_executor_task",
+    }
+    assert allowed_executor_task["requirement"]["id"] == "requirement_alpha"
 
 
 def test_lifecycle_context_requires_query_anchor():

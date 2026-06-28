@@ -7,6 +7,7 @@ import {
   type ExecutionTraceDetailRecord,
   type ExecutionTraceEdgeRecord,
   type ExecutionTraceNodeRecord,
+  fullChainSubjectHref,
   rememberAssistantRoutePrompt,
 } from '../../../services/aiBrain';
 import { formatDisplayDateTime } from '../../../utils/dateTime';
@@ -16,6 +17,7 @@ const { Text } = Typography;
 const ATTENTION_NODE_STATUSES = new Set(['cancelled', 'failed', 'pending', 'queued', 'running']);
 const DIAGNOSTIC_NODE_LIMIT = 5;
 const FAILED_NODE_STATUSES = new Set(['cancelled', 'failed']);
+type MessageApi = ReturnType<typeof message.useMessage>[0];
 
 type ExecutionTraceDetailContentProps = {
   compactText: (value?: string | null) => ReactNode;
@@ -204,15 +206,16 @@ function rememberNodeDiagnosticPrompt(
 async function copyDiagnosticPackage(
   detail: ExecutionTraceDetailRecord,
   attentionNodes: ExecutionTraceNodeRecord[],
+  messageApi: MessageApi,
   sourceTypeLabel: (value?: string | null) => string,
 ) {
   const clipboard = navigator.clipboard;
   if (!clipboard?.writeText) {
-    message.warning('当前浏览器不支持剪贴板写入');
+    messageApi.warning('当前浏览器不支持剪贴板写入');
     return;
   }
   await clipboard.writeText(JSON.stringify(buildDiagnosticPackage(detail, attentionNodes, sourceTypeLabel), null, 2));
-  message.success('已复制执行诊断包');
+  messageApi.success('已复制执行诊断包');
 }
 
 function TraceDiagnostics({
@@ -226,35 +229,39 @@ function TraceDiagnostics({
   sourceTypeLabel: (value?: string | null) => string;
   statusTag: (status?: string | null) => ReactNode;
 }) {
+  const [messageApi, messageContextHolder] = message.useMessage();
   const attentionNodes = attentionNodesForDetail(detail);
   const failedNodes = attentionNodes.filter((node) => FAILED_NODE_STATUSES.has(node.status));
   if (attentionNodes.length === 0) {
     return (
-      <Alert
-        action={(
-          <Space size={6} wrap>
-            <Button
-              href={assistantTraceDiagnosticHref(detail, attentionNodes, sourceTypeLabel)}
-              icon={<RobotOutlined />}
-              size="small"
-              onClick={() => rememberTraceDiagnosticPrompt(detail, attentionNodes, sourceTypeLabel)}
-            >
-              问 AI 分析链路
-            </Button>
-            <Button
-              icon={<CopyOutlined />}
-              onClick={() => void copyDiagnosticPackage(detail, attentionNodes, sourceTypeLabel)}
-              size="small"
-            >
-              复制诊断包
-            </Button>
-          </Space>
-        )}
-        title="诊断建议"
-        description="当前链路没有失败或运行中节点，可继续查看关联对象、节点关系和脱敏元数据确认写入结果，也可以将整条链路诊断包带入 AI 助手继续分析。"
-        showIcon
-        type="success"
-      />
+      <>
+        {messageContextHolder}
+        <Alert
+          action={(
+            <Space size={6} wrap>
+              <Button
+                href={assistantTraceDiagnosticHref(detail, attentionNodes, sourceTypeLabel)}
+                icon={<RobotOutlined />}
+                size="small"
+                onClick={() => rememberTraceDiagnosticPrompt(detail, attentionNodes, sourceTypeLabel)}
+              >
+                问 AI 分析链路
+              </Button>
+              <Button
+                icon={<CopyOutlined />}
+                onClick={() => void copyDiagnosticPackage(detail, attentionNodes, messageApi, sourceTypeLabel)}
+                size="small"
+              >
+                复制诊断包
+              </Button>
+            </Space>
+          )}
+          title="诊断建议"
+          description="当前链路没有失败或运行中节点，可继续查看关联对象、节点关系和脱敏元数据确认写入结果，也可以将整条链路诊断包带入 AI 助手继续分析。"
+          showIcon
+          type="success"
+        />
+      </>
     );
   }
 
@@ -264,77 +271,80 @@ function TraceDiagnostics({
     : `发现 ${attentionNodes.length} 个运行中或排队节点`;
 
   return (
-    <Alert
-      action={(
-        <Space size={6} wrap>
-          <Button
-            href={assistantTraceDiagnosticHref(detail, attentionNodes, sourceTypeLabel)}
-            icon={<RobotOutlined />}
-            size="small"
-            type="primary"
-            onClick={() => rememberTraceDiagnosticPrompt(detail, attentionNodes, sourceTypeLabel)}
-          >
-            问 AI 分析链路
-          </Button>
-          <Button
-            icon={<CopyOutlined />}
-            onClick={() => void copyDiagnosticPackage(detail, attentionNodes, sourceTypeLabel)}
-            size="small"
-          >
-            复制诊断包
-          </Button>
-        </Space>
-      )}
-      title="诊断建议"
-      description={(
-        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
-          <Text>{alertSummary}，建议优先从下面的节点继续排查；诊断包只包含链路摘要、关联 ID 和脱敏节点信息。</Text>
-          {attentionNodes.slice(0, 5).map((node) => (
-            <Space
-              align="start"
-              key={node.id}
-              size={8}
-              style={{ justifyContent: 'space-between', width: '100%' }}
-              wrap
+    <>
+      {messageContextHolder}
+      <Alert
+        action={(
+          <Space size={6} wrap>
+            <Button
+              href={assistantTraceDiagnosticHref(detail, attentionNodes, sourceTypeLabel)}
+              icon={<RobotOutlined />}
+              size="small"
+              type="primary"
+              onClick={() => rememberTraceDiagnosticPrompt(detail, attentionNodes, sourceTypeLabel)}
             >
-              <Space orientation="vertical" size={4} style={{ flex: 1, minWidth: 260 }}>
-                <Space size={6} wrap>
-                  <Tag>{sourceTypeLabel(node.source_type)}</Tag>
-                  {statusTag(node.status)}
-                  <Typography.Link href={executionTraceSourceHref(node.source_id, node.source_type)}>
-                    {node.source_id}
-                  </Typography.Link>
+              问 AI 分析链路
+            </Button>
+            <Button
+              icon={<CopyOutlined />}
+              onClick={() => void copyDiagnosticPackage(detail, attentionNodes, messageApi, sourceTypeLabel)}
+              size="small"
+            >
+              复制诊断包
+            </Button>
+          </Space>
+        )}
+        title="诊断建议"
+        description={(
+          <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+            <Text>{alertSummary}，建议优先从下面的节点继续排查；诊断包只包含链路摘要、关联 ID 和脱敏节点信息。</Text>
+            {attentionNodes.slice(0, 5).map((node) => (
+              <Space
+                align="start"
+                key={node.id}
+                size={8}
+                style={{ justifyContent: 'space-between', width: '100%' }}
+                wrap
+              >
+                <Space orientation="vertical" size={4} style={{ flex: 1, minWidth: 260 }}>
+                  <Space size={6} wrap>
+                    <Tag>{sourceTypeLabel(node.source_type)}</Tag>
+                    {statusTag(node.status)}
+                    <Typography.Link href={executionTraceSourceHref(node.source_id, node.source_type)}>
+                      {node.source_id}
+                    </Typography.Link>
+                  </Space>
+                  {multilineText(node.error_message || node.summary || node.label)}
                 </Space>
-                {multilineText(node.error_message || node.summary || node.label)}
+                <Space size={6} wrap>
+                  <Button
+                    href={executionTraceSourceHref(node.source_id, node.source_type)}
+                    icon={<LinkOutlined />}
+                    size="small"
+                  >
+                    打开诊断链接
+                  </Button>
+                  <Button
+                    href={assistantDiagnosticHref(detail, node, sourceTypeLabel)}
+                    icon={<RobotOutlined />}
+                    size="small"
+                    type="primary"
+                    onClick={() => rememberNodeDiagnosticPrompt(detail, node, sourceTypeLabel)}
+                  >
+                    问 AI
+                  </Button>
+                </Space>
               </Space>
-              <Space size={6} wrap>
-                <Button
-                  href={executionTraceSourceHref(node.source_id, node.source_type)}
-                  icon={<LinkOutlined />}
-                  size="small"
-                >
-                  打开诊断链接
-                </Button>
-                <Button
-                  href={assistantDiagnosticHref(detail, node, sourceTypeLabel)}
-                  icon={<RobotOutlined />}
-                  size="small"
-                  type="primary"
-                  onClick={() => rememberNodeDiagnosticPrompt(detail, node, sourceTypeLabel)}
-                >
-                  问 AI
-                </Button>
-              </Space>
-            </Space>
-          ))}
-          {attentionNodes.length > 5 ? (
-            <Text type="secondary">还有 {attentionNodes.length - 5} 个节点可在下方节点表继续查看。</Text>
-          ) : null}
-        </Space>
-      )}
-      showIcon
-      type={alertType}
-    />
+            ))}
+            {attentionNodes.length > 5 ? (
+              <Text type="secondary">还有 {attentionNodes.length - 5} 个节点可在下方节点表继续查看。</Text>
+            ) : null}
+          </Space>
+        )}
+        showIcon
+        type={alertType}
+      />
+    </>
   );
 }
 
@@ -418,7 +428,18 @@ export function ExecutionTraceDetailContent({
         <Descriptions.Item label="链路标题" span={2}>
           {detail.title}
         </Descriptions.Item>
-        <Descriptions.Item label="状态">{statusTag(detail.status)}</Descriptions.Item>
+        <Descriptions.Item label="状态">
+          <Space size={8} wrap>
+            {statusTag(detail.status)}
+            <Button
+              href={fullChainSubjectHref(detail.root_type, detail.root_id)}
+              icon={<LinkOutlined />}
+              size="small"
+            >
+              全链路
+            </Button>
+          </Space>
+        </Descriptions.Item>
         <Descriptions.Item label="根类型">{sourceTypeLabel(detail.root_type)}</Descriptions.Item>
         <Descriptions.Item label="根 ID">{detail.root_id}</Descriptions.Item>
         <Descriptions.Item label="耗时">{formatDuration(detail.duration_ms)}</Descriptions.Item>

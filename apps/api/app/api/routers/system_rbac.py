@@ -30,6 +30,17 @@ ROLE_CATEGORIES = {
 }
 ROLE_LIST_SORT_FIELDS = {"category", "code", "name", "sort_order", "status"}
 ROLE_STATUSES = {"active", "inactive"}
+MENU_LIST_SORT_FIELDS = {
+    "code",
+    "menu_type",
+    "name",
+    "parent_code",
+    "path",
+    "sort_order",
+    "status",
+}
+MENU_RESOURCE_STATUSES = {"active", "inactive"}
+MENU_RESOURCE_TYPES = {"group", "hidden_page", "page"}
 
 
 class RoleCreateRequest(BaseModel):
@@ -239,15 +250,132 @@ def get_permission_diagnostics(
 @router.get("/api/system/menus")
 def list_menus(
     request: Request,
+    menu: str | None = Query(default=None),
+    menu_type: str | None = Query(default=None),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    parent: str | None = Query(default=None),
+    path: str | None = Query(default=None),
+    permission: str | None = Query(default=None),
+    sort_by: str | None = Query(default=None),
+    sort_order: str = Query(default="asc"),
+    status: str | None = Query(default=None),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_any_permission(
         user,
         {"system.menus.read", "system.menus.manage", "system.roles.manage"},
     )
-    return envelope(
-        {"items": _authorization_repository(request).menu_resources()},
-        get_trace_id(request),
+    ensure_list_enum(menu_type, MENU_RESOURCE_TYPES, "menu_type")
+    ensure_list_enum(status, MENU_RESOURCE_STATUSES, "status")
+    ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
+    if sort_by is not None:
+        ensure_list_enum(sort_by, MENU_LIST_SORT_FIELDS, "sort_by")
+    started_at = perf_counter()
+    filters = {
+        "menu": menu,
+        "menu_type": menu_type,
+        "parent": parent,
+        "path": path,
+        "permission": permission,
+        "status": status,
+    }
+    repository = _authorization_repository(request)
+    resolved_sort_by = sort_by or "sort_order"
+    paged = page is not None or page_size is not None
+    count_menu_resources = getattr(repository, "count_menu_resources", None)
+    list_menu_resources_page = getattr(repository, "list_menu_resources_page", None)
+    if paged and callable(count_menu_resources) and callable(list_menu_resources_page):
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        total = count_menu_resources(
+            menu=menu,
+            menu_type=menu_type,
+            parent=parent,
+            path=path,
+            permission=permission,
+            status=status,
+        )
+        items = list_menu_resources_page(
+            limit=resolved_page_size,
+            menu=menu,
+            menu_type=menu_type,
+            offset=(resolved_page - 1) * resolved_page_size,
+            parent=parent,
+            path=path,
+            permission=permission,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
+        return envelope(
+            add_list_observability(
+                {
+                    "items": items,
+                    "page": resolved_page,
+                    "page_size": resolved_page_size,
+                    "total": int(total),
+                },
+                filters=filters,
+                list_name="menus",
+                page=resolved_page,
+                page_size=resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+                started_at=started_at,
+            ),
+            get_trace_id(request),
+        )
+    parent_names = {
+        item["code"]: item.get("name", "")
+        for item in repository.menu_resources()
+    }
+    items = [
+        item
+        for item in repository.menu_resources()
+        if list_text_matches(item, menu, ("code", "name"))
+        and list_text_matches(
+            {
+                **item,
+                "parent_text": " ".join(
+                    str(value or "")
+                    for value in (
+                        item.get("parent_code"),
+                        parent_names.get(str(item.get("parent_code") or ""), ""),
+                    )
+                ),
+                "permission_text": " ".join(item.get("required_permissions") or []),
+            },
+            parent,
+            ("parent_text",),
+        )
+        and list_text_matches(item, path, ("path",))
+        and list_text_matches(
+            {"permission_text": " ".join(item.get("required_permissions") or [])},
+            permission,
+            ("permission_text",),
+        )
+        and (not menu_type or item.get("menu_type") == menu_type)
+        and (not status or item.get("status") == status)
+    ]
+    sorted_items = sort_list_items(
+        items,
+        allowed_fields=MENU_LIST_SORT_FIELDS,
+        default_sort_by="sort_order",
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return paginated_list_payload(
+        sorted_items,
+        filters=filters,
+        list_name="menus",
+        observed=paged,
+        page=page,
+        page_size=page_size,
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+        started_at=started_at,
+        trace_id=get_trace_id(request),
     )
 
 

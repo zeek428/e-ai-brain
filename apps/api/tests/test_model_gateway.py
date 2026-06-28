@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 import app.main as main
 import app.services.model_gateway as model_gateway_service
 from app.main import app
+from app.services.model_gateway_listing import list_model_gateway_configs_response
 
 client = TestClient(app)
 
@@ -145,6 +146,73 @@ def test_model_gateway_logs_filter_ignores_logs_without_ai_task_id():
     assert response.status_code == 200
     items = response.json()["data"]["items"]
     assert [item["id"] for item in items] == ["model_log_task"]
+
+
+def test_model_gateway_log_list_supports_server_pagination_sort_filters_and_observability():
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.model_gateway_logs.extend(
+        [
+            {
+                "created_at": "2026-06-02T00:03:00+00:00",
+                "id": "model_log_latest_success",
+                "latency_ms": 30,
+                "model": "gpt-4.1",
+                "provider": "openai_compatible",
+                "purpose": "assistant_chat",
+                "status": "succeeded",
+                "tokens": {"total": 3},
+            },
+            {
+                "created_at": "2026-06-02T00:01:00+00:00",
+                "error": "failed",
+                "id": "model_log_failed",
+                "latency_ms": 10,
+                "model": "gpt-4.1",
+                "provider": "openai_compatible",
+                "purpose": "assistant_chat",
+                "status": "failed",
+                "tokens": {"total": 1},
+            },
+            {
+                "created_at": "2026-06-02T00:02:00+00:00",
+                "id": "model_log_old_success",
+                "latency_ms": 20,
+                "model": "gpt-4.1",
+                "provider": "openai_compatible",
+                "purpose": "assistant_chat",
+                "status": "succeeded",
+                "tokens": {"total": 2},
+            },
+        ]
+    )
+
+    response = client.get(
+        "/api/model-gateway/logs"
+        "?page=1&page_size=1&purpose=assistant_chat&status=succeeded"
+        "&sort_by=created_at&sort_order=asc",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert [item["id"] for item in body["items"]] == ["model_log_old_success"]
+    assert body["page"] == 1
+    assert body["page_size"] == 1
+    assert body["total"] == 2
+    assert body["query"]["name"] == "model_gateway_logs"
+    assert body["query"]["filters"]["purpose"] == "assistant_chat"
+    assert body["query"]["filters"]["status"] == "succeeded"
+    assert body["performance"]["result_count"] == 1
+    assert body["performance"]["total"] == 2
+    assert body["performance"]["p95_target_ms"] == 400
+
+    invalid = client.get(
+        "/api/model-gateway/logs?page=1&page_size=10&sort_by=unsupported",
+        headers=headers,
+    )
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"]["code"] == "VALIDATION_ERROR"
 
 
 def test_active_model_gateway_config_calls_openai_compatible_chat_completion(monkeypatch):
@@ -498,6 +566,99 @@ def test_model_gateway_config_list_supports_server_pagination_sort_filters_and_o
     )
     assert invalid.status_code == 400
     assert invalid.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
+def test_model_gateway_config_list_prefers_count_page_repository_for_paged_query():
+    calls: list[tuple[str, dict]] = []
+
+    class FakeRepository:
+        def list_model_gateway_configs(self) -> list[dict]:
+            calls.append(("full_configs", {}))
+            return []
+
+        def list_model_gateway_logs(self) -> list[dict]:
+            return []
+
+        def count_model_gateway_configs(self, **kwargs) -> int:
+            calls.append(("count_configs", kwargs))
+            return 2
+
+        def list_model_gateway_configs_page(self, **kwargs) -> list[dict]:
+            calls.append(("page_configs", kwargs))
+            return [
+                {
+                    "api_key": "sk-secret",
+                    "base_url": "https://llm-a.example.com/v1",
+                    "default_chat_model": "gpt-a",
+                    "embedding_connection_mode": "reuse_chat",
+                    "id": "model_gateway_config_a",
+                    "is_default": True,
+                    "max_retries": 1,
+                    "name": "A 默认模型网关",
+                    "provider": "openai_compatible",
+                    "status": "active",
+                    "timeout_seconds": 60,
+                }
+            ]
+
+    class FakeStore:
+        repository = FakeRepository()
+
+    response = list_model_gateway_configs_response(
+        current_store=FakeStore(),
+        default_chat_model="gpt",
+        default_embedding_model=None,
+        embedding_connection_mode="reuse_chat",
+        is_default="true",
+        name="默认",
+        page=1,
+        page_size=1,
+        provider="openai_compatible",
+        sort_by="name",
+        sort_order="asc",
+        status="active",
+        trace_id="trace_config_page",
+    )
+
+    body = response["data"]
+    assert body["items"][0]["id"] == "model_gateway_config_a"
+    assert body["items"][0]["api_key_configured"] is True
+    assert "api_key" not in body["items"][0]
+    assert body["page"] == 1
+    assert body["page_size"] == 1
+    assert body["total"] == 2
+    assert body["query"]["name"] == "model_gateway_configs"
+    assert body["performance"]["total"] == 2
+    assert calls == [
+        (
+            "count_configs",
+            {
+                "default_chat_model": "gpt",
+                "default_embedding_model": None,
+                "embedding_connection_mode": "reuse_chat",
+                "is_default": True,
+                "name": "默认",
+                "provider": "openai_compatible",
+                "status": "active",
+            },
+        ),
+        (
+            "page_configs",
+            {
+                "default_chat_model": "gpt",
+                "default_embedding_model": None,
+                "embedding_connection_mode": "reuse_chat",
+                "is_default": True,
+                "limit": 1,
+                "name": "默认",
+                "offset": 0,
+                "provider": "openai_compatible",
+                "sort_by": "name",
+                "sort_order": "asc",
+                "status": "active",
+            },
+        ),
+    ]
 
 
 def test_model_gateway_config_test_checks_chat_and_embedding_without_persisting_key(monkeypatch):

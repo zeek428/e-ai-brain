@@ -29,6 +29,16 @@ describe('AI assistant full-chain links', () => {
     ).toBe('/delivery/full-chain?subject_id=version_product&subject_type=product_version');
     expect(
       assistantReferenceFullChainHref({
+        id: 'branch_config_assistant',
+        title: 'AI 助手分支',
+        type: 'product_version_branch_config',
+        url: '/delivery/versions?branch_config_id=branch_config_assistant',
+      }),
+    ).toBe(
+      '/delivery/full-chain?subject_id=branch_config_assistant&subject_type=product_version_branch_config',
+    );
+    expect(
+      assistantReferenceFullChainHref({
         id: 'scheduled_job_001',
         title: '每周反馈抽取',
         type: 'scheduled_job',

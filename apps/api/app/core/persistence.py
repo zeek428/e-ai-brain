@@ -264,6 +264,7 @@ class PostgresSnapshotRepository:
         code: str | None = None,
         name: str | None = None,
         owner_team: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
     ) -> int:
         return self._product_config_read_repository.count_product_summaries(
@@ -271,6 +272,7 @@ class PostgresSnapshotRepository:
             code=code,
             name=name,
             owner_team=owner_team,
+            product_scope_ids=product_scope_ids,
             status=status,
         )
 
@@ -281,6 +283,7 @@ class PostgresSnapshotRepository:
         code: str | None = None,
         name: str | None = None,
         owner_team: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
@@ -292,6 +295,7 @@ class PostgresSnapshotRepository:
             code=code,
             name=name,
             owner_team=owner_team,
+            product_scope_ids=product_scope_ids,
             status=status,
             limit=limit,
             offset=offset,
@@ -380,11 +384,15 @@ class PostgresSnapshotRepository:
         *,
         active_only: bool = False,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        return self._product_config_read_repository.list_related_systems(
-            active_only=active_only,
-            product_id=product_id,
-        )
+        list_kwargs: dict[str, Any] = {
+            "active_only": active_only,
+            "product_id": product_id,
+        }
+        if product_scope_ids is not None:
+            list_kwargs["product_scope_ids"] = product_scope_ids
+        return self._product_config_read_repository.list_related_systems(**list_kwargs)
 
     def load_requirements(self) -> dict[str, Any]:
         return self._requirement_read_repository.load_requirements()
@@ -402,6 +410,7 @@ class PostgresSnapshotRepository:
         name: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
     ) -> int:
         return self._product_config_read_repository.count_product_version_summaries(
@@ -410,6 +419,7 @@ class PostgresSnapshotRepository:
             name=name,
             product=product,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             status=status,
         )
 
@@ -421,6 +431,7 @@ class PostgresSnapshotRepository:
         name: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
@@ -433,6 +444,7 @@ class PostgresSnapshotRepository:
             name=name,
             product=product,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             status=status,
             limit=limit,
             offset=offset,
@@ -1188,6 +1200,56 @@ class PostgresSnapshotRepository:
     def list_model_gateway_configs(self) -> list[dict[str, Any]]:
         return self._model_gateway_read_repository.list_model_gateway_configs()
 
+    def count_model_gateway_configs(
+        self,
+        *,
+        default_chat_model: str | None = None,
+        default_embedding_model: str | None = None,
+        embedding_connection_mode: str | None = None,
+        is_default: bool | None = None,
+        name: str | None = None,
+        provider: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        return self._model_gateway_read_repository.count_model_gateway_configs(
+            default_chat_model=default_chat_model,
+            default_embedding_model=default_embedding_model,
+            embedding_connection_mode=embedding_connection_mode,
+            is_default=is_default,
+            name=name,
+            provider=provider,
+            status=status,
+        )
+
+    def list_model_gateway_configs_page(
+        self,
+        *,
+        default_chat_model: str | None = None,
+        default_embedding_model: str | None = None,
+        embedding_connection_mode: str | None = None,
+        is_default: bool | None = None,
+        limit: int,
+        name: str | None = None,
+        offset: int,
+        provider: str | None = None,
+        sort_by: str = "name",
+        sort_order: str = "asc",
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._model_gateway_read_repository.list_model_gateway_configs_page(
+            default_chat_model=default_chat_model,
+            default_embedding_model=default_embedding_model,
+            embedding_connection_mode=embedding_connection_mode,
+            is_default=is_default,
+            limit=limit,
+            name=name,
+            offset=offset,
+            provider=provider,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
+
     def get_model_gateway_config(self, config_id: str) -> dict[str, Any] | None:
         return self._model_gateway_read_repository.get_model_gateway_config(config_id)
 
@@ -1582,12 +1644,14 @@ class PostgresSnapshotRepository:
         self,
         *,
         action_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         scheduled_job_id: str | None = None,
         scheduled_job_run_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         return self._plugin_read_repository.list_plugin_invocation_logs(
             action_id=action_id,
+            product_scope_ids=product_scope_ids,
             scheduled_job_id=scheduled_job_id,
             scheduled_job_run_id=scheduled_job_run_id,
             status=status,
@@ -1597,12 +1661,14 @@ class PostgresSnapshotRepository:
         self,
         *,
         action_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         scheduled_job_id: str | None = None,
         scheduled_job_run_id: str | None = None,
         status: str | None = None,
     ) -> int:
         return self._plugin_read_repository.count_plugin_invocation_logs(
             action_id=action_id,
+            product_scope_ids=product_scope_ids,
             scheduled_job_id=scheduled_job_id,
             scheduled_job_run_id=scheduled_job_run_id,
             status=status,
@@ -1614,6 +1680,7 @@ class PostgresSnapshotRepository:
         action_id: str | None = None,
         limit: int,
         offset: int,
+        product_scope_ids: list[str] | None = None,
         scheduled_job_id: str | None = None,
         scheduled_job_run_id: str | None = None,
         sort_by: str,
@@ -1624,6 +1691,7 @@ class PostgresSnapshotRepository:
             action_id=action_id,
             limit=limit,
             offset=offset,
+            product_scope_ids=product_scope_ids,
             scheduled_job_id=scheduled_job_id,
             scheduled_job_run_id=scheduled_job_run_id,
             sort_by=sort_by,
@@ -1634,9 +1702,55 @@ class PostgresSnapshotRepository:
     def list_ai_executor_runners(
         self,
         *,
+        executor_type: str | None = None,
+        keyword: str | None = None,
+        protocol: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._plugin_read_repository.list_ai_executor_runners(status=status)
+        return self._plugin_read_repository.list_ai_executor_runners(
+            executor_type=executor_type,
+            keyword=keyword,
+            protocol=protocol,
+            status=status,
+        )
+
+    def count_ai_executor_runners(
+        self,
+        *,
+        executor_type: str | None = None,
+        keyword: str | None = None,
+        protocol: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        return self._plugin_read_repository.count_ai_executor_runners(
+            executor_type=executor_type,
+            keyword=keyword,
+            protocol=protocol,
+            status=status,
+        )
+
+    def list_ai_executor_runners_page(
+        self,
+        *,
+        executor_type: str | None = None,
+        keyword: str | None = None,
+        limit: int,
+        offset: int,
+        protocol: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_ai_executor_runners_page(
+            executor_type=executor_type,
+            keyword=keyword,
+            limit=limit,
+            offset=offset,
+            protocol=protocol,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
 
     def list_ai_executor_tasks(
         self,
@@ -1707,6 +1821,40 @@ class PostgresSnapshotRepository:
         return self._model_gateway_read_repository.list_model_gateway_logs(
             ai_task_id=ai_task_id,
             purpose=purpose,
+            status=status,
+        )
+
+    def count_model_gateway_logs(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        purpose: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        return self._model_gateway_read_repository.count_model_gateway_logs(
+            ai_task_id=ai_task_id,
+            purpose=purpose,
+            status=status,
+        )
+
+    def list_model_gateway_logs_page(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        limit: int,
+        offset: int,
+        purpose: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._model_gateway_read_repository.list_model_gateway_logs_page(
+            ai_task_id=ai_task_id,
+            limit=limit,
+            offset=offset,
+            purpose=purpose,
+            sort_by=sort_by,
+            sort_order=sort_order,
             status=status,
         )
 
@@ -1829,6 +1977,7 @@ class PostgresSnapshotRepository:
         sort_order: str,
         status: str | None,
         user_id: str,
+        validation_status: str | None,
     ) -> dict[str, Any]:
         return self._assistant_chat_read_repository.list_assistant_action_draft_workbench_page(
             action=action,
@@ -1841,6 +1990,7 @@ class PostgresSnapshotRepository:
             sort_order=sort_order,
             status=status,
             user_id=user_id,
+            validation_status=validation_status,
         )
 
     def get_assistant_action_draft(self, *, draft_id: str) -> dict[str, Any] | None:

@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
-from app.api.deps import CurrentUser, api_error, require_roles, store
+from app.api.deps import CurrentUser, api_error, require_permissions, store
 from app.core.listing import list_payload
 from app.core.trace import envelope, get_trace_id
 from app.services.product_config_context import (
@@ -31,6 +31,7 @@ from app.services.product_config_context import (
     save_product_config_record,
     save_requirement_record,
 )
+from app.services.product_scope import product_scope_filter, user_can_read_product
 from app.services.product_version_listing import list_all_product_versions_response
 from app.services.version_status import (
     VERSION_STATUSES,
@@ -39,6 +40,8 @@ from app.services.version_status import (
 )
 
 router = APIRouter(tags=["product_versions"])
+PRODUCT_READ_PERMISSION = "product.read"
+PRODUCT_MANAGE_PERMISSION = "product.manage"
 
 BRANCH_CONFIG_STATUSES = {
     "not_created",
@@ -93,6 +96,19 @@ class ProductVersionBranchConfigPatchRequest(BaseModel):
     description: str | None = None
 
 
+def _ensure_product_scope(user: dict[str, Any], product_id: Any) -> None:
+    if not user_can_read_product(user, product_id):
+        raise api_error(404, "NOT_FOUND", "Product not found")
+
+
+def _ensure_version_scope(user: dict[str, Any], version: dict[str, Any]) -> None:
+    _ensure_product_scope(user, version.get("product_id"))
+
+
+def _ensure_branch_config_scope(user: dict[str, Any], branch_config: dict[str, Any]) -> None:
+    _ensure_product_scope(user, branch_config.get("product_id"))
+
+
 def _public_branch_config(
     branch_config: dict[str, Any],
     current_store: Any,
@@ -139,11 +155,14 @@ def _list_branch_configs(
 
 def _ensure_branch_config_repository(
     current_store: Any,
+    user: dict[str, Any],
     version: dict[str, Any],
     repository_id: str,
 ) -> dict[str, Any]:
     repository = get_product_git_repository_record(current_store, repository_id)
     if repository is None:
+        raise api_error(404, "NOT_FOUND", "Product Git repository not found")
+    if not user_can_read_product(user, repository.get("product_id")):
         raise api_error(404, "NOT_FOUND", "Product Git repository not found")
     if repository["product_id"] != version["product_id"]:
         raise api_error(
@@ -169,6 +188,9 @@ def list_all_product_versions(
     sort_order: str = "asc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    require_permissions(user, {PRODUCT_READ_PERMISSION})
+    if product_id is not None:
+        _ensure_product_scope(user, product_id)
     return list_all_product_versions_response(
         active_only=active_only,
         code=code,
@@ -178,6 +200,7 @@ def list_all_product_versions(
         page_size=page_size,
         product=product,
         product_id=product_id,
+        product_scope_ids=product_scope_filter(user),
         request=request,
         sort_by=sort_by,
         sort_order=sort_order,
@@ -192,6 +215,8 @@ def list_product_versions(
     active_only: bool = False,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    require_permissions(user, {PRODUCT_READ_PERMISSION})
+    _ensure_product_scope(user, product_id)
     current_store = store(request)
     if get_product_record(current_store, product_id) is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
@@ -206,11 +231,12 @@ def list_product_version_branch_configs(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_permissions(user, {PRODUCT_READ_PERMISSION})
     current_store = product_config_record_write_store(store(request))
     version = get_product_version_record(current_store, version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
+    _ensure_version_scope(user, version)
     items = _list_branch_configs(current_store, version_id)
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
@@ -222,12 +248,18 @@ def create_product_version_branch_config(
     payload: ProductVersionBranchConfigRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
     current_store = product_config_record_write_store(store(request))
     version = get_product_version_record(current_store, version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
-    repository = _ensure_branch_config_repository(current_store, version, payload.repository_id)
+    _ensure_version_scope(user, version)
+    repository = _ensure_branch_config_repository(
+        current_store,
+        user,
+        version,
+        payload.repository_id,
+    )
     working_branch = ensure_non_blank(payload.working_branch, "working_branch")
     base_branch = ensure_non_blank(
         payload.base_branch or repository.get("default_branch") or "main",
@@ -282,11 +314,12 @@ def patch_product_version_branch_config(
     payload: ProductVersionBranchConfigPatchRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
     current_store = product_config_record_write_store(store(request))
     branch_config = get_product_version_branch_config_record(current_store, branch_config_id)
     if branch_config is None:
         raise api_error(404, "NOT_FOUND", "Product version branch config not found")
+    _ensure_branch_config_scope(user, branch_config)
     updates = payload_updates(payload)
     if "working_branch" in updates:
         updates["working_branch"] = ensure_non_blank(updates["working_branch"], "working_branch")
@@ -319,10 +352,12 @@ def delete_product_version_branch_config(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
     current_store = product_config_record_write_store(store(request))
-    if get_product_version_branch_config_record(current_store, branch_config_id) is None:
+    branch_config = get_product_version_branch_config_record(current_store, branch_config_id)
+    if branch_config is None:
         raise api_error(404, "NOT_FOUND", "Product version branch config not found")
+    _ensure_branch_config_scope(user, branch_config)
     audit_event = record_audit_event(
         current_store,
         event_type="product_version_branch_config.deleted",
@@ -346,7 +381,8 @@ def create_product_version(
     payload: ProductVersionRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
+    _ensure_product_scope(user, product_id)
     current_store = product_config_record_write_store(store(request))
     if get_product_record(current_store, product_id) is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
@@ -404,11 +440,12 @@ def advance_product_version_status(
     payload: ProductVersionAdvanceStatusRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
     current_store = product_config_write_store(store(request))
     version = get_product_version_record(current_store, version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
+    _ensure_version_scope(user, version)
     from_status = version.get("status", "planning")
     target_status = payload.target_status
     validate_version_status_transition(from_status, target_status)
@@ -511,11 +548,12 @@ def patch_product_version(
     payload: ProductVersionPatchRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
     current_store = product_config_record_write_store(store(request))
     version = get_product_version_record(current_store, version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
+    _ensure_version_scope(user, version)
     updates = payload_updates(payload)
     if "name" in updates:
         updates["name"] = ensure_non_blank(updates["name"], "name")
@@ -570,11 +608,12 @@ def delete_product_version(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
     current_store = product_config_record_write_store(store(request))
     version = get_product_version_record(current_store, version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
+    _ensure_version_scope(user, version)
     if product_version_has_related_records(current_store, version_id):
         raise api_error(409, "RESOURCE_IN_USE", "Product version still has related records")
     audit_event = record_audit_event(

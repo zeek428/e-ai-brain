@@ -400,6 +400,7 @@ def test_product_list_uses_repository_read_model_for_sql_pagination():
             "code": "AI",
             "name": "Brain",
             "owner_team": "platform",
+            "product_scope_ids": None,
             "status": "active",
         }
         assert repository.product_counts == [expected_query]
@@ -479,6 +480,7 @@ def test_product_version_list_uses_repository_read_model_for_sql_pagination():
             "name": "v1",
             "product": "AI",
             "product_id": "product_read_model",
+            "product_scope_ids": None,
             "status": "active",
         }
         assert repository.version_counts == [expected_query]

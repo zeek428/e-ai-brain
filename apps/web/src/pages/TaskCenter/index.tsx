@@ -26,6 +26,7 @@ import {
 } from '../../components/ManagementListPage';
 import {
   formatRemoteRowsError,
+  normalizeRemoteRowsError,
   type RemoteRowsError,
   useRemoteRows,
 } from '../../hooks/useRemoteRows';
@@ -45,6 +46,7 @@ import {
   fetchProductContextOptions,
   fetchProductGitRepositories,
   fetchTaskMarkdown,
+  fetchTaskCenterPendingReviewList,
   fetchTaskCenterPendingReviews,
   fetchTaskCenterTaskDetail,
   fetchTaskCenterTasks,
@@ -141,6 +143,12 @@ type TaskRowsState = {
   rows: TaskCenterTaskRecord[];
   status: 'error' | 'loading' | 'ready';
   total: number;
+};
+
+type ReviewRowsState = {
+  error?: RemoteRowsError;
+  rows: TaskCenterReviewRecord[];
+  status: 'error' | 'loading' | 'ready';
 };
 
 function normalizeQueryValue(value: unknown) {
@@ -375,6 +383,20 @@ export default function TaskCenterPage() {
     total: 0,
   });
   const [selectedTaskRowKeys, setSelectedTaskRowKeys] = useState<Key[]>([]);
+  const [taskReviewRowsState, setTaskReviewRowsState] = useState<ReviewRowsState>({
+    rows: [],
+    status: 'ready',
+  });
+  const loadPendingReviews = useCallback(
+    () =>
+      fetchTaskCenterPendingReviews({
+        page: 1,
+        pageSize: 20,
+        sortField: 'created_at',
+        sortOrder: 'descend',
+      }),
+    [],
+  );
   const {
     error: productOptionsError,
     rows: productOptions,
@@ -384,7 +406,7 @@ export default function TaskCenterPage() {
     reload: reloadReviews,
     rows: reviewRows,
     status: reviewsStatus,
-  } = useRemoteRows(fetchTaskCenterPendingReviews);
+  } = useRemoteRows(loadPendingReviews);
 
   useEffect(() => {
     let isCurrent = true;
@@ -476,6 +498,26 @@ export default function TaskCenterPage() {
     await Promise.all([reloadTasks(), reloadReviews()]);
   }, [reloadReviews, reloadTasks]);
 
+  const loadTaskPendingReviews = useCallback(async (task: TaskCenterTaskRecord) => {
+    setTaskReviewRowsState({ rows: [], status: 'loading' });
+    try {
+      const result = await fetchTaskCenterPendingReviewList({
+        aiTaskId: task.id,
+        page: 1,
+        pageSize: 20,
+        sortField: 'created_at',
+        sortOrder: 'descend',
+      });
+      setTaskReviewRowsState({ rows: result.rows, status: 'ready' });
+    } catch (reviewError: unknown) {
+      setTaskReviewRowsState({
+        error: normalizeRemoteRowsError(reviewError),
+        rows: [],
+        status: 'error',
+      });
+    }
+  }, []);
+
   const selectedTasks = useMemo(
     () => taskRowsState.rows.filter((row) => selectedTaskRowKeys.includes(row.id)),
     [selectedTaskRowKeys, taskRowsState.rows],
@@ -497,13 +539,9 @@ export default function TaskCenterPage() {
     [selectedTasks],
   );
 
-  const visibleReviewRows = useMemo(
-    () =>
-      reviewDialog?.task
-        ? reviewRows.filter((review) => review.aiTaskId === reviewDialog.task?.id)
-        : reviewRows,
-    [reviewDialog, reviewRows],
-  );
+  const visibleReviewRows = reviewDialog?.task ? taskReviewRowsState.rows : reviewRows;
+  const effectiveReviewsError = reviewDialog?.task ? taskReviewRowsState.error : reviewsError;
+  const effectiveReviewsStatus = reviewDialog?.task ? taskReviewRowsState.status : reviewsStatus;
   const productFilterOptions = useMemo(
     () =>
       productOptions.map((product) => ({
@@ -522,8 +560,12 @@ export default function TaskCenterPage() {
 
   const openReviewDialog = useCallback((task?: TaskCenterTaskRecord) => {
     setReviewDialog({ task });
+    if (task) {
+      void loadTaskPendingReviews(task);
+      return;
+    }
     void reloadReviews();
-  }, [reloadReviews]);
+  }, [loadTaskPendingReviews, reloadReviews]);
 
   const handleStartTask = useCallback(async (task: TaskCenterTaskRecord) => {
     try {
@@ -1341,13 +1383,18 @@ export default function TaskCenterPage() {
         title={reviewDialog?.task ? `确认输出：${reviewDialog.task.label}` : '待确认'}
         width={860}
       >
-        {reviewsError ? (
-          <Alert className="management-list-alert" showIcon title={formatRemoteRowsError(reviewsError)} type="error" />
+        {effectiveReviewsError ? (
+          <Alert
+            className="management-list-alert"
+            showIcon
+            title={formatRemoteRowsError(effectiveReviewsError)}
+            type="error"
+          />
         ) : null}
         <ProTable<TaskCenterReviewRecord>
           columns={reviewColumns}
           dataSource={visibleReviewRows}
-          loading={reviewsStatus === 'loading'}
+          loading={effectiveReviewsStatus === 'loading'}
           options={false}
           pagination={false}
           rowKey="id"
@@ -1355,7 +1402,7 @@ export default function TaskCenterPage() {
           scroll={PENDING_REVIEW_TABLE_SCROLL}
           tableLayout="fixed"
         />
-        {visibleReviewRows.length === 0 && reviewsStatus === 'ready' ? (
+        {visibleReviewRows.length === 0 && effectiveReviewsStatus === 'ready' ? (
           <Text type="secondary">当前没有待确认项。</Text>
         ) : null}
       </Modal>

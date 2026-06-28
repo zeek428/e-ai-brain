@@ -12,6 +12,7 @@ const fullChainTypeLabels: Record<string, string> = {
   bug: 'Bug',
   code_inspection_report: '代码巡检',
   code_review_report: '代码评审',
+  execution_trace: '执行诊断',
   git_snapshot: 'PR/MR 快照',
   gitlab_mr_snapshot: 'PR/MR 快照',
   human_review: '人工确认',
@@ -38,6 +39,7 @@ const fullChainTypeColors: Record<string, string> = {
   branch_config: 'gold',
   bug: 'red',
   code_review_report: 'purple',
+  execution_trace: 'geekblue',
   code_inspection_report: 'magenta',
   git_snapshot: 'blue',
   jenkins_release: 'orange',
@@ -166,6 +168,11 @@ function buildFullChainStageItems(fullChain: RequirementFullChainRecord) {
       title: 'Bug',
     },
     {
+      count: summary.executionTraces,
+      detail: `${summary.executionTraces} 条`,
+      title: '执行诊断',
+    },
+    {
       count: summary.jenkinsReleases,
       detail: `${summary.jenkinsReleases} 项`,
       title: '发布',
@@ -201,6 +208,16 @@ function formatRiskLevel(level?: string) {
     return '低';
   }
   return level || '-';
+}
+
+function formatTraceDuration(value?: number | null) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '-';
+  }
+  if (value < 1000) {
+    return `${Math.max(0, value)}ms`;
+  }
+  return `${(value / 1000).toFixed(1)}s`;
 }
 
 function formatSnapshotRisk(snapshot: RequirementFullChainRecord['gitSnapshots'][number]) {
@@ -260,6 +277,7 @@ function buildFullChainMarkdownReport(fullChain: RequirementFullChainRecord) {
     `- 代码评审：${fullChain.summary.codeReviewReports}`,
     `- 代码巡检：${fullChain.summary.codeInspectionReports}`,
     `- Bug：${fullChain.summary.bugs}`,
+    `- 执行诊断：${fullChain.summary.executionTraces}`,
     `- 发布记录：${fullChain.summary.jenkinsReleases}`,
     `- 知识沉淀：${fullChain.summary.knowledgeDeposits}`,
     `- 审计事件：${fullChain.summary.auditEvents}`,
@@ -310,6 +328,15 @@ function buildFullChainMarkdownReport(fullChain: RequirementFullChainRecord) {
     '',
     '### Bug',
     markdownList(fullChain.bugs, (bug) => `- ${bug.title} (${bug.id}) · ${bug.severity} · ${bug.status}`),
+    '',
+    '### 执行诊断',
+    markdownList(
+      fullChain.executionTraces,
+      (trace) =>
+        `- ${trace.title || `执行诊断：${trace.id}`} (${trace.id}) · ${trace.status} · ${trace.node_count} 节点 · ${trace.failed_node_count} 失败 · ${formatTraceDuration(
+          trace.duration_ms,
+        )}`,
+    ),
     '',
     '### 发布记录',
     markdownList(
@@ -548,6 +575,29 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
       label: `Bug (${fullChain.bugs.length})`,
     },
     {
+      children: fullChain.executionTraces.length ? (
+        <Space orientation="vertical" size={10}>
+          {fullChain.executionTraces.map((trace) =>
+            renderEntityDetail({
+              href: withQueryParams('/governance/execution-traces', {
+                source_id: trace.root_id || trace.id,
+                source_type: trace.root_type,
+              }),
+              linkLabel: `查看执行诊断 ${trace.id}`,
+              meta: `${trace.status} · ${trace.node_count} 节点 · ${trace.failed_node_count} 失败 · ${formatTraceDuration(
+                trace.duration_ms,
+              )}`,
+              title: trace.title || trace.summary || `执行诊断：${trace.id}`,
+            }),
+          )}
+        </Space>
+      ) : (
+        renderEmptyStage()
+      ),
+      key: 'execution_traces',
+      label: `执行诊断 (${fullChain.executionTraces.length})`,
+    },
+    {
       children: fullChain.jenkinsReleases.length ? (
         <Space orientation="vertical" size={10}>
           {fullChain.jenkinsReleases.map((release) =>
@@ -691,6 +741,7 @@ export function RequirementFullChainView({
             {renderSummaryTag('代码评审', fullChain.summary.codeReviewReports, 'purple')}
             {renderSummaryTag('代码巡检', fullChain.summary.codeInspectionReports, 'magenta')}
             {renderSummaryTag('Bug', fullChain.summary.bugs, 'red')}
+            {renderSummaryTag('执行诊断', fullChain.summary.executionTraces, 'geekblue')}
             {renderSummaryTag('发布记录', fullChain.summary.jenkinsReleases, 'orange')}
             {renderSummaryTag('知识沉淀', fullChain.summary.knowledgeDeposits, 'green')}
             {renderSummaryTag('审计事件', fullChain.summary.auditEvents)}
@@ -772,6 +823,7 @@ export function RequirementFullChainView({
               'reviews',
               'code_review',
               'bugs',
+              'execution_traces',
               'jenkins_releases',
               'knowledge_deposits',
               'audit_events',

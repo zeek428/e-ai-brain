@@ -26,7 +26,7 @@ describe('TaskCenterPage', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (path === '/api/reviews/pending') {
+      if (path.startsWith('/api/reviews/pending')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (
@@ -115,7 +115,7 @@ describe('TaskCenterPage', () => {
   it('renders the task center from backend tasks without a demo workflow', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/reviews/pending') {
+      if (String(input).startsWith('/api/reviews/pending')) {
         return new Response(
           JSON.stringify({
             data: {
@@ -138,7 +138,10 @@ describe('TaskCenterPage', () => {
           },
         );
       }
-      if (input === '/api/products?active_only=true') {
+      if (
+        input === '/api/products?active_only=true' ||
+        input === '/api/products?active_only=true&page_size=100'
+      ) {
         return new Response(
           JSON.stringify({
             data: {
@@ -152,7 +155,10 @@ describe('TaskCenterPage', () => {
           },
         );
       }
-      if (input === '/api/product-versions?active_only=true') {
+      if (
+        input === '/api/product-versions?active_only=true' ||
+        input === '/api/product-versions?active_only=true&page_size=100'
+      ) {
         return new Response(
           JSON.stringify({ data: { items: [], total: 0 } }),
           {
@@ -418,7 +424,96 @@ describe('TaskCenterPage', () => {
     );
     expect(screen.getByRole('button', { name: '确认通过' })).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
-      '/api/reviews/pending',
+      expect.stringMatching(/^\/api\/reviews\/pending\?.*page=1.*page_size=20/),
+      'GET',
+    ]);
+  });
+
+  it('loads task-scoped pending reviews from row operations without local filtering', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path.startsWith('/api/reviews/pending')) {
+        return jsonResponse({
+          data: path.includes('ai_task_id=task_scoped')
+            ? {
+                items: [
+                  {
+                    ai_task_id: 'task_scoped',
+                    content: { summary: '任务级输出摘要' },
+                    id: 'review_scoped',
+                    stage: 'technical_solution',
+                    status: 'pending',
+                    version: 1,
+                  },
+                ],
+                page: 1,
+                page_size: 20,
+                total: 1,
+              }
+            : {
+                items: [],
+                page: 1,
+                page_size: 20,
+                total: 0,
+              },
+        });
+      }
+      if (
+        path === '/api/products?active_only=true' ||
+        path === '/api/products?active_only=true&page_size=100'
+      ) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions?active_only=true&page_size=100'
+      ) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path.startsWith('/api/ai-tasks')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_by: 'user_admin',
+                id: 'task_scoped',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'waiting_review',
+                task_type: 'technical_solution',
+                title: '任务级确认任务',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    expect(await screen.findByText('任务级确认任务')).toBeInTheDocument();
+    const taskRow = screen.getByText('任务级确认任务').closest('tr');
+    expect(taskRow).not.toBeNull();
+    fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
+    const operationDialog = await screen.findByTestId('task-operation-dialog');
+    fireEvent.click(within(operationDialog).getByRole('button', { name: '确认输出' }));
+
+    expect(await screen.findByText('确认输出：任务级确认任务')).toBeInTheDocument();
+    expect(await screen.findByText('任务级输出摘要')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+      expect.stringMatching(/^\/api\/reviews\/pending\?.*ai_task_id=task_scoped/),
       'GET',
     ]);
   });
@@ -432,7 +527,7 @@ describe('TaskCenterPage', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (path === '/api/reviews/pending') {
+      if (path.startsWith('/api/reviews/pending')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (
@@ -560,7 +655,7 @@ describe('TaskCenterPage', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/reviews/pending') {
+      if (String(input).startsWith('/api/reviews/pending')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/products?active_only=true') {
@@ -640,12 +735,16 @@ describe('TaskCenterPage', () => {
     expect(screen.getByDisplayValue(/任务详情输出摘要/)).toBeInTheDocument();
     await waitFor(() => {
       const relevantCalls = fetchMock.mock.calls
-          .map(([path, init]) => [
-            String(path).startsWith('/api/ai-tasks?') ? '/api/ai-tasks' : path,
-            init?.method ?? 'GET',
-          ])
-          .filter(([path]) => !String(path).startsWith('/api/products'))
-          .filter(([path]) => !String(path).startsWith('/api/product-versions'));
+        .map(([path, init]) => [
+          String(path).startsWith('/api/ai-tasks?')
+            ? '/api/ai-tasks'
+            : String(path).startsWith('/api/reviews/pending')
+              ? '/api/reviews/pending'
+              : path,
+          init?.method ?? 'GET',
+        ])
+        .filter(([path]) => !String(path).startsWith('/api/products'))
+        .filter(([path]) => !String(path).startsWith('/api/product-versions'));
       expect(relevantCalls).toHaveLength(3);
       expect(relevantCalls).toContainEqual(['/api/ai-tasks', 'GET']);
       expect(relevantCalls).toContainEqual(['/api/reviews/pending', 'GET']);
@@ -661,7 +760,7 @@ describe('TaskCenterPage', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/reviews/pending') {
+      if (String(input).startsWith('/api/reviews/pending')) {
         return jsonResponse({
           data: {
             items: [
@@ -738,7 +837,7 @@ describe('TaskCenterPage', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/reviews/pending') {
+      if (String(input).startsWith('/api/reviews/pending')) {
         return jsonResponse({
           data: {
             items: [
@@ -815,7 +914,7 @@ describe('TaskCenterPage', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/reviews/pending') {
+      if (String(input).startsWith('/api/reviews/pending')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/products?active_only=true') {
@@ -946,7 +1045,7 @@ describe('TaskCenterPage', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/reviews/pending') {
+      if (String(input).startsWith('/api/reviews/pending')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       expect(String(input).startsWith('/api/ai-tasks')).toBe(true);
@@ -990,7 +1089,7 @@ describe('TaskCenterPage', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/reviews/pending') {
+      if (String(input).startsWith('/api/reviews/pending')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/ai-tasks' || (typeof input === 'string' && input.startsWith('/api/ai-tasks?'))) {
@@ -1064,12 +1163,16 @@ describe('TaskCenterPage', () => {
     expect(await screen.findByText('已生成')).toBeInTheDocument();
     expect(screen.getByText('mock_issue_api')).toBeInTheDocument();
     const relevantWritebackCalls = fetchMock.mock.calls
-        .map(([path, init]) => [
-          String(path).startsWith('/api/ai-tasks?') ? '/api/ai-tasks' : path,
-          init?.method,
-        ])
-        .filter(([path]) => !String(path).startsWith('/api/products'))
-        .filter(([path]) => !String(path).startsWith('/api/product-versions'));
+      .map(([path, init]) => [
+        String(path).startsWith('/api/ai-tasks?')
+          ? '/api/ai-tasks'
+          : String(path).startsWith('/api/reviews/pending')
+            ? '/api/reviews/pending'
+            : path,
+        init?.method,
+      ])
+      .filter(([path]) => !String(path).startsWith('/api/products'))
+      .filter(([path]) => !String(path).startsWith('/api/product-versions'));
     expect(relevantWritebackCalls).toHaveLength(4);
     expect(relevantWritebackCalls).toContainEqual(['/api/ai-tasks', 'GET']);
     expect(relevantWritebackCalls).toContainEqual(['/api/reviews/pending', 'GET']);
@@ -1109,7 +1212,7 @@ describe('TaskCenterPage', () => {
           },
         });
       }
-      if (input === '/api/reviews/pending') {
+      if (String(input).startsWith('/api/reviews/pending')) {
         return jsonResponse({
           data: {
             items: [

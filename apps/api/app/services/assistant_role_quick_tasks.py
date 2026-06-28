@@ -6,6 +6,12 @@ from hashlib import sha256
 from typing import Any
 
 from app.api.deps import api_error
+from app.core.listing import (
+    add_list_observability,
+    ensure_list_enum,
+    list_text_matches,
+    sort_list_items,
+)
 
 STANDARD_ASSISTANT_ROLE_QUICK_TASK_GROUPS = [
     {
@@ -232,6 +238,24 @@ STANDARD_ASSISTANT_ROLE_QUICK_TASK_GROUPS = [
         ],
     },
 ]
+ASSISTANT_ROLE_QUICK_TASK_CONFIG_LIST_NAME = "assistant_role_quick_task_configs"
+ASSISTANT_ROLE_QUICK_TASK_CONFIG_SORT_FIELDS = (
+    "analytics_key",
+    "created_at",
+    "enabled",
+    "enterprise_id",
+    "group_enabled",
+    "group_key",
+    "group_label",
+    "group_sort_order",
+    "sort_order",
+    "target_draft_type",
+    "task_key",
+    "template_version",
+    "title",
+    "updated_at",
+)
+ASSISTANT_ROLE_QUICK_TASK_CONFIG_STATUSES = {"disabled", "enabled"}
 
 
 def assistant_role_quick_task_audit_event(
@@ -259,12 +283,187 @@ def assistant_role_quick_task_audit_event(
 def list_assistant_role_quick_task_configs_response(
     *,
     current_store: Any | None = None,
+    enterprise_id: str | None = None,
+    group_status: str | None = None,
+    keyword: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    permission: str | None = None,
+    role: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "asc",
+    started_at: float | None = None,
+    status: str | None = None,
+    target_draft_type: str | None = None,
+    template_version: str | None = None,
 ) -> dict[str, Any]:
+    ensure_list_enum(status, ASSISTANT_ROLE_QUICK_TASK_CONFIG_STATUSES, "status")
+    ensure_list_enum(group_status, ASSISTANT_ROLE_QUICK_TASK_CONFIG_STATUSES, "group_status")
+    ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
+    resolved_sort_by = sort_by or "group_sort_order"
+    if resolved_sort_by not in ASSISTANT_ROLE_QUICK_TASK_CONFIG_SORT_FIELDS:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+    filters = {
+        "enterprise_id": enterprise_id,
+        "group_status": group_status,
+        "keyword": keyword,
+        "permission": permission,
+        "role": role,
+        "status": status,
+        "target_draft_type": target_draft_type,
+        "template_version": template_version,
+    }
+    paged = page is not None or page_size is not None
+    repository = getattr(current_store, "repository", None) if current_store is not None else None
+    count_page = getattr(repository, "count_assistant_role_quick_task_configs", None)
+    list_page = getattr(repository, "list_assistant_role_quick_task_configs_page", None)
+    if paged and callable(count_page) and callable(list_page):
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        query_filters = {
+            "enterprise_id": enterprise_id,
+            "group_status": group_status,
+            "keyword": keyword,
+            "permission": permission,
+            "role": role,
+            "status": status,
+            "target_draft_type": target_draft_type,
+            "template_version": template_version,
+        }
+        total = count_page(**query_filters)
+        items = [
+            _public_role_quick_task_config(row)
+            for row in list_page(
+                **query_filters,
+                limit=resolved_page_size,
+                offset=(resolved_page - 1) * resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+            )
+        ]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name=ASSISTANT_ROLE_QUICK_TASK_CONFIG_LIST_NAME,
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+
     items = [
         _public_role_quick_task_config(row)
         for row in _role_quick_task_config_rows(current_store)
     ]
+    items = [
+        item
+        for item in items
+        if _role_quick_task_config_matches(
+            item,
+            enterprise_id=enterprise_id,
+            group_status=group_status,
+            keyword=keyword,
+            permission=permission,
+            role=role,
+            status=status,
+            target_draft_type=target_draft_type,
+            template_version=template_version,
+        )
+    ]
+    items = sort_list_items(
+        items,
+        allowed_fields=ASSISTANT_ROLE_QUICK_TASK_CONFIG_SORT_FIELDS,
+        default_sort_by="group_sort_order",
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+    )
+    if paged:
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        total = len(items)
+        start = (resolved_page - 1) * resolved_page_size
+        page_items = items[start : start + resolved_page_size]
+        return add_list_observability(
+            {
+                "items": page_items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name=ASSISTANT_ROLE_QUICK_TASK_CONFIG_LIST_NAME,
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
     return {"items": items, "total": len(items)}
+
+
+def _role_quick_task_config_matches(
+    item: dict[str, Any],
+    *,
+    enterprise_id: str | None,
+    group_status: str | None,
+    keyword: str | None,
+    permission: str | None,
+    role: str | None,
+    status: str | None,
+    target_draft_type: str | None,
+    template_version: str | None,
+) -> bool:
+    if status == "enabled" and not item.get("enabled"):
+        return False
+    if status == "disabled" and item.get("enabled"):
+        return False
+    if group_status == "enabled" and not item.get("group_enabled"):
+        return False
+    if group_status == "disabled" and item.get("group_enabled"):
+        return False
+    for field, expected in (
+        ("enterprise_id", enterprise_id),
+        ("target_draft_type", target_draft_type),
+        ("template_version", template_version),
+    ):
+        normalized_expected = str(expected or "").strip().lower()
+        if normalized_expected and normalized_expected not in str(item.get(field) or "").lower():
+            return False
+    for field, expected in (("group_roles", role), ("permissions", permission)):
+        normalized_expected = str(expected or "").strip().lower()
+        if normalized_expected and not any(
+            normalized_expected in str(value or "").lower() for value in item.get(field) or []
+        ):
+            return False
+    if not list_text_matches(
+        item,
+        keyword,
+        (
+            "analytics_key",
+            "enterprise_id",
+            "group_key",
+            "group_label",
+            "id",
+            "prompt",
+            "target_draft_type",
+            "task_key",
+            "template_version",
+            "title",
+        ),
+    ):
+        normalized_keyword = str(keyword or "").strip().lower()
+        return any(
+            normalized_keyword in str(value or "").lower()
+            for field in ("group_roles", "permissions")
+            for value in item.get(field) or []
+        )
+    return True
 
 
 def create_assistant_role_quick_task_config_response(

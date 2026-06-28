@@ -54,6 +54,7 @@ def list_products_response(
     owner_team: str | None,
     page: int | None,
     page_size: int | None,
+    product_scope_ids: list[str] | None,
     request: Request,
     sort_by: str | None,
     sort_order: str,
@@ -69,6 +70,7 @@ def list_products_response(
         "code": code,
         "name": name,
         "owner_team": owner_team,
+        "product_scope_ids": product_scope_ids,
         "status": status,
     }
     list_repository = product_list_query_repository(current_store)
@@ -111,6 +113,9 @@ def list_products_response(
         )
         if active_only:
             items = [item for item in items if item.get("status") == "active"]
+    if product_scope_ids is not None:
+        product_scope_set = set(product_scope_ids)
+        items = [item for item in items if str(item.get("id")) in product_scope_set]
     items = [product_list_projection(item, current_store) for item in items]
     if status:
         items = [item for item in items if item.get("status") == status]

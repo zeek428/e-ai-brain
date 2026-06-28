@@ -15,11 +15,13 @@ import {
   Select,
   Space,
   Switch,
+  Tag,
   Table,
   Typography,
   message,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { SorterResult } from 'antd/es/table/interface';
 
 import { ExecutionTraceLink } from '../../components/ExecutionTraceLink';
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
@@ -39,6 +41,7 @@ import {
   updateModelGatewayConfig,
   type ModelGatewayConfigListQuery,
   type ModelGatewayLogRecord,
+  type ModelGatewayLogQuery,
   type ModelGatewayConfigTestResult,
   type RemoteListPerformance,
 } from '../../services/aiBrain';
@@ -104,6 +107,20 @@ const modelGatewaySortFieldMap: Record<string, string> = {
   provider: 'provider',
   status: 'status',
 };
+const modelGatewayLogSortFieldMap: Record<string, string> = {
+  aiTaskId: 'ai_task_id',
+  createdAt: 'created_at',
+  id: 'id',
+  latencyMs: 'latency_ms',
+  model: 'model',
+  provider: 'provider',
+  purpose: 'purpose',
+  status: 'status',
+};
+
+function formatDuration(value?: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? `${Math.max(0, value)}ms` : '-';
+}
 
 function normalizeFilterText(value: unknown): string | undefined {
   if (typeof value !== 'string') {
@@ -151,6 +168,23 @@ function formatTokenSummary(tokens: Record<string, unknown>) {
   return fallback.length > 0 ? fallback.map(([key, value]) => `${key}: ${value}`).join(' / ') : '-';
 }
 
+function resolveModelGatewayLogSorter(
+  sorter: SorterResult<ModelGatewayLogRecord> | SorterResult<ModelGatewayLogRecord>[],
+) {
+  const activeSorter = Array.isArray(sorter) ? sorter.find((item) => item.order) : sorter;
+  if (!activeSorter?.order) {
+    return {
+      sortField: 'created_at',
+      sortOrder: 'descend' as const,
+    };
+  }
+  const rawField = String(activeSorter.columnKey ?? activeSorter.field ?? '');
+  return {
+    sortField: modelGatewayLogSortFieldMap[rawField] ?? rawField,
+    sortOrder: activeSorter.order,
+  };
+}
+
 export default function ModelGatewayPage() {
   const [form] = Form.useForm<ModelGatewayFormValues>();
   const embeddingMode = Form.useWatch('embedding_connection_mode', form) ?? 'disabled';
@@ -181,12 +215,23 @@ export default function ModelGatewayPage() {
     status: 'loading',
     total: 0,
   });
+  const [logQuery, setLogQuery] = useState<ModelGatewayLogQuery>({
+    page: 1,
+    pageSize: 5,
+    sortField: 'created_at',
+    sortOrder: 'descend',
+  });
   const [logState, setLogState] = useState<{
     error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    performance?: RemoteListPerformance;
     rows: ModelGatewayLogRecord[];
     status: 'error' | 'loading' | 'ready';
     total: number;
   }>({
+    page: 1,
+    pageSize: 5,
     rows: [],
     status: 'loading',
     total: 0,
@@ -215,8 +260,11 @@ export default function ModelGatewayPage() {
   const reloadLogs = useCallback(async () => {
     setLogState((current) => ({ ...current, status: 'loading' }));
     try {
-      const result = await fetchModelGatewayLogs();
+      const result = await fetchModelGatewayLogs(logQuery);
       setLogState({
+        page: result.page,
+        pageSize: result.pageSize,
+        performance: result.performance,
         rows: result.rows,
         status: 'ready',
         total: result.total,
@@ -225,12 +273,14 @@ export default function ModelGatewayPage() {
       setLogState((current) => ({
         ...current,
         error: normalizeRemoteRowsError(loadError),
+        page: current.page,
+        pageSize: current.pageSize,
         rows: [],
         status: 'error',
         total: 0,
       }));
     }
-  }, []);
+  }, [logQuery]);
   useEffect(() => {
     let isCurrent = true;
     setListState((current) => ({ ...current, status: 'loading' }));
@@ -264,10 +314,13 @@ export default function ModelGatewayPage() {
   useEffect(() => {
     let isCurrent = true;
     setLogState((current) => ({ ...current, status: 'loading' }));
-    fetchModelGatewayLogs()
+    fetchModelGatewayLogs(logQuery)
       .then((result) => {
         if (isCurrent) {
           setLogState({
+            page: result.page,
+            pageSize: result.pageSize,
+            performance: result.performance,
             rows: result.rows,
             status: 'ready',
             total: result.total,
@@ -279,6 +332,8 @@ export default function ModelGatewayPage() {
           setLogState((current) => ({
             ...current,
             error: normalizeRemoteRowsError(loadError),
+            page: current.page,
+            pageSize: current.pageSize,
             rows: [],
             status: 'error',
             total: 0,
@@ -288,7 +343,7 @@ export default function ModelGatewayPage() {
     return () => {
       isCurrent = false;
     };
-  }, []);
+  }, [logQuery]);
   const dataSource = listState.rows;
 
   const openCreateModal = () => {
@@ -498,6 +553,8 @@ export default function ModelGatewayPage() {
       {
         dataIndex: 'id',
         fixed: 'left',
+        key: 'id',
+        sorter: true,
         title: '日志 ID',
         width: 220,
         render: (_, row) => (
@@ -513,16 +570,22 @@ export default function ModelGatewayPage() {
       },
       {
         dataIndex: 'purpose',
+        key: 'purpose',
+        sorter: true,
         title: '用途',
         width: 150,
       },
       {
         dataIndex: 'model',
+        key: 'model',
+        sorter: true,
         title: '模型',
         width: 170,
       },
       {
         dataIndex: 'status',
+        key: 'status',
+        sorter: true,
         title: '状态',
         width: 110,
         render: (_, row) => (
@@ -534,6 +597,8 @@ export default function ModelGatewayPage() {
       },
       {
         dataIndex: 'latencyMs',
+        key: 'latencyMs',
+        sorter: true,
         title: '耗时',
         width: 100,
         render: (_, row) => (typeof row.latencyMs === 'number' ? `${row.latencyMs}ms` : '-'),
@@ -547,6 +612,8 @@ export default function ModelGatewayPage() {
       },
       {
         dataIndex: 'aiTaskId',
+        key: 'aiTaskId',
+        sorter: true,
         title: 'AI 任务',
         width: 180,
         render: (_, row) => row.aiTaskId || '-',
@@ -560,6 +627,9 @@ export default function ModelGatewayPage() {
       },
       {
         dataIndex: 'createdAt',
+        defaultSortOrder: 'descend',
+        key: 'createdAt',
+        sorter: true,
         title: '创建时间',
         width: 180,
         render: (_, row) => formatDisplayDateTime(row.createdAt),
@@ -576,6 +646,11 @@ export default function ModelGatewayPage() {
             最近模型调用日志
           </Typography.Title>
           <Typography.Text type="secondary">共 {logState.total} 条</Typography.Text>
+          {logState.performance?.duration_ms !== undefined ? (
+            <Tag color={logState.performance.slow ? 'orange' : 'default'}>
+              查询 {formatDuration(logState.performance.duration_ms)}
+            </Tag>
+          ) : null}
         </Space>
         <Button onClick={() => void reloadLogs()}>刷新日志</Button>
       </Space>
@@ -591,7 +666,23 @@ export default function ModelGatewayPage() {
         columns={logColumns}
         dataSource={logState.rows}
         loading={logState.status === 'loading'}
-        pagination={{ pageSize: 5, showSizeChanger: false, showTotal: (total) => `共 ${total} 条` }}
+        onChange={(pagination, _filters, sorter) => {
+          const nextSorter = resolveModelGatewayLogSorter(sorter);
+          setLogQuery((current) => ({
+            ...current,
+            page: pagination.current ?? 1,
+            pageSize: pagination.pageSize ?? current.pageSize,
+            sortField: nextSorter.sortField,
+            sortOrder: nextSorter.sortOrder,
+          }));
+        }}
+        pagination={{
+          current: logState.page,
+          pageSize: logState.pageSize,
+          showSizeChanger: false,
+          showTotal: (total) => `共 ${total} 条`,
+          total: logState.total,
+        }}
         rowKey="id"
         scroll={{ x: 1400 }}
         tableLayout="fixed"

@@ -40,6 +40,7 @@ from app.services.plugin_templates import (
     standard_plugin_connection_defaults,
     standard_plugin_connection_schema,
 )
+from app.services.product_scope import product_scope_filter
 from app.services.result_write_targets import (
     result_write_target_default_mapping,
     result_write_target_label,
@@ -98,6 +99,19 @@ PLUGIN_INVOCATION_LOG_SORT_FIELDS = {
     "scheduled_job_run_id",
     "status",
     "updated_at",
+}
+RESULT_WRITE_RECORD_SORT_FIELDS = {
+    "created_at",
+    "id",
+    "plugin_action_id",
+    "plugin_invocation_log_id",
+    "records_imported",
+    "scheduled_job_id",
+    "scheduled_job_run_id",
+    "source_type",
+    "status",
+    "updated_at",
+    "write_target",
 }
 
 
@@ -260,6 +274,7 @@ def sync_plugin_invocation_log_store(
     current_store: Any,
     *,
     action_id: str | None = None,
+    product_scope_ids: list[str] | None = None,
     scheduled_job_id: str | None = None,
     scheduled_job_run_id: str | None = None,
     status: str | None = None,
@@ -272,6 +287,7 @@ def sync_plugin_invocation_log_store(
         "plugin_invocation_logs",
         repository.list_plugin_invocation_logs(
             action_id=action_id,
+            product_scope_ids=product_scope_ids,
             scheduled_job_id=scheduled_job_id,
             scheduled_job_run_id=scheduled_job_run_id,
             status=status,
@@ -884,12 +900,51 @@ def result_write_record_from_invocation_log(
     }
 
 
+def _record_product_id_from_job_reference(
+    current_store: Any,
+    *,
+    scheduled_job_id: Any = None,
+    scheduled_job_run_id: Any = None,
+) -> str | None:
+    job_id = scheduled_job_id
+    if not job_id and scheduled_job_run_id:
+        run = _read_memory_record(
+            current_store,
+            "scheduled_job_runs",
+            str(scheduled_job_run_id),
+        )
+        job_id = run.get("scheduled_job_id") if isinstance(run, dict) else None
+    job = _read_memory_record(current_store, "scheduled_jobs", str(job_id))
+    product_id = job.get("product_id") if isinstance(job, dict) else None
+    return str(product_id) if product_id else None
+
+
+def _result_write_record_matches_product_scope(
+    current_store: Any,
+    record: dict[str, Any],
+    product_scope_ids: set[str] | None,
+) -> bool:
+    if product_scope_ids is None:
+        return True
+    product_id = _record_product_id_from_job_reference(
+        current_store,
+        scheduled_job_id=record.get("scheduled_job_id"),
+        scheduled_job_run_id=record.get("scheduled_job_run_id"),
+    )
+    return product_id is not None and product_id in product_scope_ids
+
+
 def list_result_write_records_response(
     *,
     current_store: Any,
+    page: int | None = None,
+    page_size: int | None = None,
     plugin_action_id: str | None,
     scheduled_job_id: str | None,
     scheduled_job_run_id: str | None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    started_at: float | None = None,
     status: str | None,
     user: dict[str, Any],
     write_target: str | None,
@@ -897,6 +952,15 @@ def list_result_write_records_response(
     require_admin(user)
     if status is not None:
         ensure_enum(status, RESULT_WRITE_RECORD_STATUSES, "status")
+    ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
+    if sort_by is not None:
+        ensure_enum(sort_by, RESULT_WRITE_RECORD_SORT_FIELDS, "sort_by")
+    resolved_sort_by = sort_by or "created_at"
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    with_pagination = page is not None or page_size is not None
+    scoped_product_ids = product_scope_filter(user)
+    scoped_product_id_set = set(scoped_product_ids) if scoped_product_ids is not None else None
     sync_result_write_record_store(current_store)
     records: list[dict[str, Any]] = []
     for run in _read_memory_dict(current_store, "scheduled_job_runs").values():
@@ -910,6 +974,12 @@ def list_result_write_records_response(
 
     filtered = []
     for record in records:
+        if not _result_write_record_matches_product_scope(
+            current_store,
+            record,
+            scoped_product_id_set,
+        ):
+            continue
         if write_target is not None and record.get("write_target") != write_target:
             continue
         if status is not None and record.get("status") != status:
@@ -924,8 +994,39 @@ def list_result_write_records_response(
         if plugin_action_id is not None and record.get("plugin_action_id") != plugin_action_id:
             continue
         filtered.append(record)
-    filtered.sort(key=lambda item: (item.get("created_at") or "", item["id"]), reverse=True)
-    return {"items": filtered, "total": len(filtered)}
+    sorted_records = sort_list_items(
+        filtered,
+        allowed_fields=RESULT_WRITE_RECORD_SORT_FIELDS,
+        default_sort_by="created_at",
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+    )
+    if with_pagination:
+        start_index = (resolved_page - 1) * resolved_page_size
+        paged_records = sorted_records[start_index : start_index + resolved_page_size]
+        return add_list_observability(
+            {
+                "items": paged_records,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": len(sorted_records),
+            },
+            filters={
+                "plugin_action_id": plugin_action_id,
+                "product_scope_ids": scoped_product_ids,
+                "scheduled_job_id": scheduled_job_id,
+                "scheduled_job_run_id": scheduled_job_run_id,
+                "status": status,
+                "write_target": write_target,
+            },
+            list_name="result_write_records",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+    return {"items": sorted_records, "total": len(sorted_records)}
 
 
 def create_plugin_response(
@@ -3052,8 +3153,10 @@ def list_plugin_invocation_logs_response(
     resolved_page = page or 1
     resolved_page_size = page_size or 10
     with_pagination = page is not None or page_size is not None
+    scoped_product_ids = product_scope_filter(user)
     filters = {
         "action_id": action_id,
+        "product_scope_ids": scoped_product_ids,
         "scheduled_job_id": scheduled_job_id,
         "scheduled_job_run_id": scheduled_job_run_id,
         "status": status,
@@ -3091,12 +3194,25 @@ def list_plugin_invocation_logs_response(
     sync_plugin_invocation_log_store(
         current_store,
         action_id=action_id,
+        product_scope_ids=scoped_product_ids,
         scheduled_job_id=scheduled_job_id,
         scheduled_job_run_id=scheduled_job_run_id,
         status=status,
     )
     items = []
     for log in _read_memory_dict(current_store, "plugin_invocation_logs").values():
+        if scoped_product_ids is not None:
+            job_id = log.get("scheduled_job_id")
+            if not job_id and log.get("scheduled_job_run_id"):
+                run = _read_memory_record(
+                    current_store,
+                    "scheduled_job_runs",
+                    str(log.get("scheduled_job_run_id")),
+                )
+                job_id = run.get("scheduled_job_id") if run else None
+            job = _read_memory_record(current_store, "scheduled_jobs", str(job_id))
+            if job is None or str(job.get("product_id")) not in scoped_product_ids:
+                continue
         if action_id is not None and log.get("action_id") != action_id:
             continue
         if scheduled_job_id is not None and log.get("scheduled_job_id") != scheduled_job_id:

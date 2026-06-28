@@ -203,6 +203,7 @@ function formatDuration(value?: number | null) {
 
 export default function ExecutionTracesPage() {
   const autoOpenedSourceIdRef = useRef<string | undefined>(undefined);
+  const [messageApi, messageContextHolder] = message.useMessage();
   const [detailState, setDetailState] = useState<{
     detail?: ExecutionTraceDetailRecord;
     loading: boolean;
@@ -285,9 +286,9 @@ export default function ExecutionTracesPage() {
       setDetailState({ detail, loading: false, row });
     } catch (detailError) {
       setDetailState(undefined);
-      message.error(formatMutationError(detailError));
+      messageApi.error(formatMutationError(detailError));
     }
-  }, []);
+  }, [messageApi]);
 
   const deepLinkSourceId = normalizeFilterText(listQuery.filters.sourceId);
 
@@ -392,6 +393,7 @@ export default function ExecutionTracesPage() {
 
   return (
     <>
+      {messageContextHolder}
       <ManagementListPage<ExecutionTraceListItem>
         breadcrumbGroup="运营治理"
         columns={columns}

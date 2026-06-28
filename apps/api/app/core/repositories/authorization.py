@@ -29,6 +29,15 @@ ROLE_SUMMARY_SORT_COLUMNS = {
     "sort_order": "r.sort_order",
     "status": "r.status",
 }
+MENU_RESOURCE_SORT_COLUMNS = {
+    "code": "lower(m.code)",
+    "menu_type": "m.menu_type",
+    "name": "lower(m.name)",
+    "parent_code": "lower(COALESCE(parent.name, m.parent_code, ''))",
+    "path": "lower(m.path)",
+    "sort_order": "m.sort_order",
+    "status": "m.status",
+}
 VALID_SCOPE_TYPES = {
     "department",
     "global",
@@ -604,6 +613,108 @@ class CompatibilityAuthorizationRepository:
                 key=lambda item: (item.get("sort_order", 0), item["code"]),
             )
         )
+
+    def count_menu_resources(
+        self,
+        *,
+        menu: str | None,
+        menu_type: str | None,
+        parent: str | None,
+        path: str | None,
+        permission: str | None,
+        status: str | None,
+    ) -> int:
+        return len(
+            self._filter_menu_resources(
+                menu=menu,
+                menu_type=menu_type,
+                parent=parent,
+                path=path,
+                permission=permission,
+                status=status,
+            )
+        )
+
+    def list_menu_resources_page(
+        self,
+        *,
+        limit: int,
+        menu: str | None,
+        menu_type: str | None,
+        offset: int,
+        parent: str | None,
+        path: str | None,
+        permission: str | None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+    ) -> list[dict[str, Any]]:
+        items = self._filter_menu_resources(
+            menu=menu,
+            menu_type=menu_type,
+            parent=parent,
+            path=path,
+            permission=permission,
+            status=status,
+        )
+        reverse = sort_order == "desc"
+        sorted_items = sorted(
+            items,
+            key=lambda item: self._menu_resource_sort_value(item, sort_by),
+            reverse=reverse,
+        )
+        return deepcopy(sorted_items[offset : offset + limit])
+
+    def _filter_menu_resources(
+        self,
+        *,
+        menu: str | None,
+        menu_type: str | None,
+        parent: str | None,
+        path: str | None,
+        permission: str | None,
+        status: str | None,
+    ) -> list[dict[str, Any]]:
+        parent_names = {
+            item["code"]: item.get("name", "")
+            for item in self._menu_resources
+        }
+
+        def contains(value: Any, keyword: str | None) -> bool:
+            normalized = str(keyword or "").strip().lower()
+            return not normalized or normalized in str(value or "").lower()
+
+        filtered: list[dict[str, Any]] = []
+        for item in self._menu_resources:
+            parent_code = item.get("parent_code")
+            parent_text = " ".join(
+                str(value or "")
+                for value in (parent_code, parent_names.get(str(parent_code or ""), ""))
+            )
+            permission_text = " ".join(str(code) for code in item.get("required_permissions") or [])
+            if (
+                contains(f"{item.get('code', '')} {item.get('name', '')}", menu)
+                and contains(parent_text, parent)
+                and contains(item.get("path"), path)
+                and contains(permission_text, permission)
+                and (not menu_type or item.get("menu_type") == menu_type)
+                and (not status or item.get("status") == status)
+            ):
+                filtered.append(deepcopy(item))
+        return filtered
+
+    def _menu_resource_sort_value(
+        self,
+        item: dict[str, Any],
+        sort_by: str,
+    ) -> tuple[int, str | int]:
+        if sort_by == "parent_code":
+            value = item.get("parent_code") or ""
+        elif sort_by == "sort_order":
+            return (0, int(item.get("sort_order") or 0))
+        else:
+            value = item.get(sort_by) or ""
+        return (1, str(value).lower())
 
     def create_menu_resource(
         self,
@@ -1410,6 +1521,126 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
                 )
                 rows = cursor.fetchall()
         return [self._postgres_menu_resource_from_row(row) for row in rows]
+
+    def count_menu_resources(
+        self,
+        *,
+        menu: str | None,
+        menu_type: str | None,
+        parent: str | None,
+        path: str | None,
+        permission: str | None,
+        status: str | None,
+    ) -> int:
+        where_sql, params = self._menu_resource_where(
+            menu=menu,
+            menu_type=menu_type,
+            parent=parent,
+            path=path,
+            permission=permission,
+            status=status,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT count(*)
+                    FROM menu_resources m
+                    LEFT JOIN menu_resources parent ON parent.code = m.parent_code
+                    WHERE {where_sql}
+                    """,
+                    params,
+                )
+                row = cursor.fetchone()
+        return int(row[0] if row else 0)
+
+    def list_menu_resources_page(
+        self,
+        *,
+        limit: int,
+        menu: str | None,
+        menu_type: str | None,
+        offset: int,
+        parent: str | None,
+        path: str | None,
+        permission: str | None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+    ) -> list[dict[str, Any]]:
+        where_sql, params = self._menu_resource_where(
+            menu=menu,
+            menu_type=menu_type,
+            parent=parent,
+            path=path,
+            permission=permission,
+            status=status,
+        )
+        sort_expression = MENU_RESOURCE_SORT_COLUMNS.get(
+            sort_by,
+            MENU_RESOURCE_SORT_COLUMNS["sort_order"],
+        )
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT m.code, m.name, m.path, m.parent_code, m.menu_type, m.icon,
+                           m.sort_order, m.required_permissions, m.is_system, m.status
+                    FROM menu_resources m
+                    LEFT JOIN menu_resources parent ON parent.code = m.parent_code
+                    WHERE {where_sql}
+                    ORDER BY {sort_expression} {direction}, m.code ASC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*params, limit, offset],
+                )
+                rows = cursor.fetchall()
+        return [self._postgres_menu_resource_from_row(row) for row in rows]
+
+    def _menu_resource_where(
+        self,
+        *,
+        menu: str | None,
+        menu_type: str | None,
+        parent: str | None,
+        path: str | None,
+        permission: str | None,
+        status: str | None,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = ["TRUE"]
+        params: list[Any] = []
+        if menu:
+            pattern = f"%{menu}%"
+            clauses.append("(m.code ILIKE %s OR m.name ILIKE %s)")
+            params.extend([pattern, pattern])
+        if parent:
+            pattern = f"%{parent}%"
+            clauses.append("(m.parent_code ILIKE %s OR parent.name ILIKE %s)")
+            params.extend([pattern, pattern])
+        if path:
+            clauses.append("m.path ILIKE %s")
+            params.append(f"%{path}%")
+        if permission:
+            clauses.append(
+                """
+                EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements_text(
+                    COALESCE(m.required_permissions, '[]'::jsonb)
+                  ) AS permission_code(value)
+                  WHERE permission_code.value ILIKE %s
+                )
+                """
+            )
+            params.append(f"%{permission}%")
+        if menu_type:
+            clauses.append("m.menu_type = %s")
+            params.append(menu_type)
+        if status:
+            clauses.append("m.status = %s")
+            params.append(status)
+        return " AND ".join(clauses), params
 
     def create_menu_resource(
         self,

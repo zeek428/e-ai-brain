@@ -16,16 +16,25 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import type { ManagementListQuery } from '../../components/ManagementListPage';
+import {
+  formatRemoteRowsError,
+  normalizeRemoteRowsError,
+  type RemoteRowsError,
+} from '../../hooks/useRemoteRows';
 import {
   createSystemMenu,
   deleteSystemMenu,
+  fetchSystemMenuList,
   fetchSystemMenus,
   fetchSystemPermissions,
   setSystemMenuStatus,
   updateSystemMenu,
+  type MenuListQuery,
   type MenuResourceMutationPayload,
   type MenuResourceRecord,
   type PermissionRecord,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
 
@@ -66,6 +75,33 @@ const STATUS_OPTIONS = [
 ];
 
 const { Text } = Typography;
+
+const menuSortFieldMap: Record<string, string> = {
+  menu_type: 'menu_type',
+  parentText: 'parent_code',
+  routeText: 'path',
+  statusText: 'status',
+};
+
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildMenuListQuery(query: ManagementListQuery): MenuListQuery {
+  const filters = query.filters;
+  return {
+    menu: normalizeFilterText(filters.menu),
+    menuType: normalizeFilterText(filters.menu_type),
+    page: query.page,
+    pageSize: query.pageSize,
+    parent: normalizeFilterText(filters.parent),
+    path: normalizeFilterText(filters.path),
+    permission: normalizeFilterText(filters.permission),
+    sortField: query.sortField ? menuSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(filters.status),
+  };
+}
 
 function renderPermissionTags(codes: string[]) {
   if (!codes.length) {
@@ -113,48 +149,124 @@ export default function MenusPage() {
   const [form] = Form.useForm<MenuFormValues>();
   const [editingMenu, setEditingMenu] = useState<MenuManagementRow>();
   const [formOpen, setFormOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [menus, setMenus] = useState<MenuResourceRecord[]>([]);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'sort_order',
+    sortOrder: 'ascend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    performance?: RemoteListPerformance;
+    rows: MenuResourceRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
+  const [menuCatalog, setMenuCatalog] = useState<MenuResourceRecord[]>([]);
   const [notice, setNotice] = useState<string>();
   const [permissions, setPermissions] = useState<PermissionRecord[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [supportLoading, setSupportLoading] = useState(false);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
+  const reloadSupportData = useCallback(async () => {
+    setSupportLoading(true);
     setNotice(undefined);
     try {
       const [menuRows, permissionRows] = await Promise.all([fetchSystemMenus(), fetchSystemPermissions()]);
-      setMenus(menuRows);
+      setMenuCatalog(menuRows);
       setPermissions(permissionRows);
     } catch (loadError: unknown) {
-      setMenus([]);
+      setMenuCatalog([]);
       setNotice(formatMutationError(loadError));
     } finally {
-      setLoading(false);
+      setSupportLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      void reload();
-    });
-  }, [reload]);
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchSystemMenuList(buildMenuListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        performance: result.performance,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery]);
 
-  const menuNameByCode = useMemo(() => new Map(menus.map((menu) => [menu.code, menu.name])), [menus]);
+  useEffect(() => {
+    void reloadSupportData();
+  }, [reloadSupportData]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchSystemMenuList(buildMenuListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            performance: result.performance,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
+
+  const menuNameByCode = useMemo(
+    () => new Map(menuCatalog.map((menu) => [menu.code, menu.name])),
+    [menuCatalog],
+  );
   const rows = useMemo(
-    () => menus.map((menu) => mapMenuRow(menu, menuNameByCode)),
-    [menuNameByCode, menus],
+    () => listState.rows.map((menu) => mapMenuRow(menu, menuNameByCode)),
+    [listState.rows, menuNameByCode],
   );
 
   const parentOptions = useMemo(
     () =>
-      rows
+      menuCatalog
         .filter((menu) => !editingMenu || menu.code !== editingMenu.code)
         .map((menu) => ({
           label: `${menu.name} (${menu.code})`,
           value: menu.code,
         })),
-    [editingMenu, rows],
+    [editingMenu, menuCatalog],
   );
 
   const permissionOptions = useMemo(
@@ -215,7 +327,7 @@ export default function MenusPage() {
       }
       setFormOpen(false);
       setEditingMenu(undefined);
-      await reload();
+      await Promise.all([reload(), reloadSupportData()]);
     } catch (saveError: unknown) {
       message.error(formatMutationError(saveError));
     } finally {
@@ -229,32 +341,33 @@ export default function MenusPage() {
       const nextStatus = row.status === 'inactive' ? 'active' : 'inactive';
       await setSystemMenuStatus(row.code, nextStatus);
       message.success(nextStatus === 'active' ? '菜单已启用' : '菜单已停用');
-      await reload();
+      await Promise.all([reload(), reloadSupportData()]);
     } catch (statusError: unknown) {
       message.error(formatMutationError(statusError));
     } finally {
       setSubmitting(false);
     }
-  }, [reload]);
+  }, [reload, reloadSupportData]);
 
   const removeMenu = useCallback(async (row: MenuManagementRow) => {
     setSubmitting(true);
     try {
       await deleteSystemMenu(row.code);
       message.success('菜单已删除');
-      await reload();
+      await Promise.all([reload(), reloadSupportData()]);
     } catch (deleteError: unknown) {
       message.error(formatMutationError(deleteError));
     } finally {
       setSubmitting(false);
     }
-  }, [reload]);
+  }, [reload, reloadSupportData]);
 
   const columns = useMemo<ProColumns<MenuManagementRow>[]>(
     () => [
       {
         dataIndex: 'name',
         fixed: 'left',
+        sorter: true,
         title: '菜单',
         width: 220,
         render: (_, row) => (
@@ -266,16 +379,19 @@ export default function MenusPage() {
       },
       {
         dataIndex: 'typeText',
+        sorter: true,
         title: '类型',
         width: 120,
       },
       {
         dataIndex: 'parentText',
+        sorter: true,
         title: '父级菜单',
         width: 180,
       },
       {
         dataIndex: 'routeText',
+        sorter: true,
         title: '路由路径',
         width: 180,
         render: (_, row) => row.path || <Text type="secondary">无</Text>,
@@ -288,12 +404,13 @@ export default function MenusPage() {
       },
       {
         dataIndex: 'sort_order',
-        sorter: (left, right) => (left.sort_order ?? 0) - (right.sort_order ?? 0),
+        sorter: true,
         title: '排序',
         width: 100,
       },
       {
         dataIndex: 'statusText',
+        sorter: true,
         title: '状态',
         width: 110,
         render: (_, row) =>
@@ -341,24 +458,41 @@ export default function MenusPage() {
         dataSource={rows}
         viewStorageKey="system.menus"
         filters={[
-          { label: '菜单', name: 'name', type: 'text' },
-          { label: '父级菜单', name: 'parentText', type: 'text' },
-          { label: '路由路径', name: 'routeText', type: 'text' },
+          { label: '菜单', name: 'menu', type: 'text' },
+          { label: '父级菜单', name: 'parent', type: 'text' },
+          { label: '路由路径', name: 'path', type: 'text' },
+          { label: '权限点', name: 'permission', type: 'text' },
+          {
+            label: '类型',
+            name: 'menu_type',
+            options: MENU_TYPE_OPTIONS,
+            type: 'select',
+          },
           {
             label: '状态',
-            name: 'statusText',
+            name: 'status',
             options: [
-              { label: '启用', value: '启用' },
-              { label: '停用', value: '停用' },
+              { label: '启用', value: 'active' },
+              { label: '停用', value: 'inactive' },
             ],
             type: 'select',
           },
         ]}
-        loading={loading}
-        notice={notice}
+        loading={listState.status === 'loading' || supportLoading}
+        notice={notice ?? formatRemoteRowsError(listState.error)}
         onPrimaryAction={openCreate}
-        onReload={() => void reload()}
+        onReload={() => {
+          void reload();
+          void reloadSupportData();
+        }}
         primaryAction="新增菜单"
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          performance: listState.performance,
+          total: listState.total,
+        }}
         rowKey="code"
         tableLayout="fixed"
         tableTitle="菜单资源"

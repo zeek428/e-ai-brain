@@ -89,6 +89,77 @@ class FakeRoleSummaryPagingRepository(CompatibilityAuthorizationRepository):
         ]
 
 
+class FakeMenuResourcePagingRepository(CompatibilityAuthorizationRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.count_kwargs: dict[str, object] | None = None
+        self.page_kwargs: dict[str, object] | None = None
+
+    def menu_resources(self) -> list[dict[str, object]]:  # pragma: no cover - failure path
+        raise AssertionError("menu list should use repository count/page read model")
+
+    def count_menu_resources(
+        self,
+        *,
+        menu: str | None,
+        menu_type: str | None,
+        parent: str | None,
+        path: str | None,
+        permission: str | None,
+        status: str | None,
+    ) -> int:
+        self.count_kwargs = {
+            "menu": menu,
+            "menu_type": menu_type,
+            "parent": parent,
+            "path": path,
+            "permission": permission,
+            "status": status,
+        }
+        return 2
+
+    def list_menu_resources_page(
+        self,
+        *,
+        limit: int,
+        menu: str | None,
+        menu_type: str | None,
+        offset: int,
+        parent: str | None,
+        path: str | None,
+        permission: str | None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+    ) -> list[dict[str, object]]:
+        self.page_kwargs = {
+            "limit": limit,
+            "menu": menu,
+            "menu_type": menu_type,
+            "offset": offset,
+            "parent": parent,
+            "path": path,
+            "permission": permission,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "status": status,
+        }
+        return [
+            {
+                "code": "system.menus",
+                "icon": "MenuOutlined",
+                "is_system": True,
+                "menu_type": "page",
+                "name": "菜单管理",
+                "parent_code": "system",
+                "path": "/system/menus",
+                "required_permissions": ["system.menus.manage"],
+                "sort_order": 64,
+                "status": "active",
+            }
+        ]
+
+
 @pytest.fixture(autouse=True)
 def reset_rbac_repositories():
     original_user_repository = app.state.user_repository
@@ -440,6 +511,53 @@ def test_task_center_contains_ai_jobs_and_plugin_menus():
     assert menus["system.users"]["parent_code"] == "system"
     assert menus["system.roles"]["parent_code"] == "system"
     assert menus["system.model_gateway"]["parent_code"] == "system"
+
+
+def test_system_menus_list_uses_repository_pagination_when_requested():
+    repository = FakeMenuResourcePagingRepository()
+    app.state.authorization_repository = repository
+
+    response = client.get(
+        "/api/system/menus",
+        headers=auth_headers(),
+        params={
+            "menu": "菜单",
+            "menu_type": "page",
+            "page": 2,
+            "page_size": 5,
+            "parent": "系统",
+            "path": "/system",
+            "permission": "system.menus",
+            "sort_by": "name",
+            "sort_order": "desc",
+            "status": "active",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["items"][0]["code"] == "system.menus"
+    assert data["page"] == 2
+    assert data["page_size"] == 5
+    assert data["total"] == 2
+    assert data["query"]["name"] == "menus"
+    assert data["query"]["sort_by"] == "name"
+    assert data["performance"]["total"] == 2
+    assert repository.count_kwargs == {
+        "menu": "菜单",
+        "menu_type": "page",
+        "parent": "系统",
+        "path": "/system",
+        "permission": "system.menus",
+        "status": "active",
+    }
+    assert repository.page_kwargs == {
+        **repository.count_kwargs,
+        "limit": 5,
+        "offset": 5,
+        "sort_by": "name",
+        "sort_order": "desc",
+    }
 
 
 def test_admin_can_manage_menu_resources_and_reorder():

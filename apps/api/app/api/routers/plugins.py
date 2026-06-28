@@ -219,12 +219,27 @@ class AiExecutorTaskTimeoutScanRequest(BaseModel):
 @router.get("/api/system/ai-executor-runners")
 def list_ai_executor_runners(
     request: Request,
+    executor_type: str | None = None,
+    keyword: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    protocol: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     return envelope(
         list_ai_executor_runners_response(
             current_store=store(request),
+            executor_type=executor_type,
+            keyword=keyword,
+            page=page,
+            page_size=page_size,
+            protocol=protocol,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            started_at=_request_started_at(request),
             status=status,
             user=user,
         ),
@@ -542,9 +557,13 @@ def list_result_write_targets(
 @router.get("/api/system/result-write-records")
 def list_result_write_records(
     request: Request,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
     plugin_action_id: str | None = None,
     scheduled_job_id: str | None = None,
     scheduled_job_run_id: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
     write_target: str | None = None,
@@ -552,9 +571,14 @@ def list_result_write_records(
     return envelope(
         list_result_write_records_response(
             current_store=store(request),
+            page=page,
+            page_size=page_size,
             plugin_action_id=plugin_action_id,
             scheduled_job_id=scheduled_job_id,
             scheduled_job_run_id=scheduled_job_run_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            started_at=_request_started_at(request),
             status=status,
             user=user,
             write_target=write_target,

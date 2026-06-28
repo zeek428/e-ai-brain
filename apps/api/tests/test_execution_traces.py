@@ -95,7 +95,7 @@ class FakeExecutionTraceRepository:
     def list_model_gateway_logs(self) -> list[dict[str, Any]]:
         return list(self.store.model_gateway_logs)
 
-    def list_plugin_invocation_logs(self) -> list[dict[str, Any]]:
+    def list_plugin_invocation_logs(self, **_filters: Any) -> list[dict[str, Any]]:
         return list(self.store.plugin_invocation_logs.values())
 
     def list_ai_executor_tasks(self) -> list[dict[str, Any]]:

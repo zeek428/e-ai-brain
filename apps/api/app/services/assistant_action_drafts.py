@@ -267,7 +267,7 @@ def list_assistant_action_drafts_response(
         "list_assistant_action_draft_workbench_page",
         None,
     )
-    if callable(list_workbench_page) and validation_status is None:
+    if callable(list_workbench_page):
         resolved_page = page or 1
         resolved_page_size = page_size or 10
         page_payload = list_workbench_page(
@@ -281,6 +281,7 @@ def list_assistant_action_drafts_response(
             sort_order=sort_order,
             status=status,
             user_id=user["id"],
+            validation_status=validation_status,
         )
         items = [
             _assistant_action_draft_workbench_item(
@@ -627,6 +628,69 @@ def cancel_assistant_action_draft_response(
         subject_type="assistant_action_draft",
         subject_id=draft["id"],
         payload={"reason": draft.get("cancel_reason")},
+    )
+    save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
+    return public_assistant_action_draft(draft, current_store=current_store, user=user)
+
+
+def retry_assistant_action_draft_response(
+    *,
+    current_store: Any,
+    draft_id: str,
+    reason: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    ensure_action_collections(current_store)
+    draft = get_assistant_action_draft(current_store, draft_id=draft_id)
+    ensure_draft_access(draft, user=user)
+    if _draft_is_expired(draft):
+        raise api_error(409, "DRAFT_EXPIRED", "Assistant action draft has expired")
+    if draft.get("status") != "failed":
+        raise api_error(409, "DRAFT_NOT_FAILED", "Assistant action draft is not failed")
+    now = now_iso()
+    previous_run_id = draft.get("result_run_id")
+    metadata_json = deepcopy(draft.get("metadata_json") or {})
+    failure_history = metadata_json.get("failure_history")
+    if not isinstance(failure_history, list):
+        failure_history = []
+    failure = metadata_json.get("failure")
+    if isinstance(failure, dict) or metadata_json.get("failed_at") or previous_run_id:
+        failure_history.append(
+            {
+                "failed_at": metadata_json.get("failed_at"),
+                "failed_by": metadata_json.get("failed_by"),
+                "failure": deepcopy(failure) if isinstance(failure, dict) else None,
+                "run_id": previous_run_id,
+            }
+        )
+    metadata_json["failure_history"] = failure_history
+    metadata_json["retry_count"] = _safe_int(metadata_json.get("retry_count")) + 1
+    metadata_json["retry_reason"] = (reason or "").strip() or None
+    metadata_json["retry_requested_at"] = now
+    metadata_json["retry_requested_by"] = user["id"]
+    metadata_json.pop("failure", None)
+    metadata_json.pop("failed_at", None)
+    metadata_json.pop("failed_by", None)
+    draft.update(
+        {
+            "metadata_json": metadata_json,
+            "result_run_id": None,
+            "status": "pending",
+            "updated_at": now,
+        }
+    )
+    audit_event = assistant_action_audit_event(
+        current_store,
+        event_type="assistant_action_draft.retry_requested",
+        actor_id=user["id"],
+        subject_type="assistant_action_draft",
+        subject_id=draft["id"],
+        payload={
+            "action": draft["action"],
+            "previous_run_id": previous_run_id,
+            "reason": metadata_json.get("retry_reason"),
+            "retry_count": metadata_json["retry_count"],
+        },
     )
     save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
     return public_assistant_action_draft(draft, current_store=current_store, user=user)

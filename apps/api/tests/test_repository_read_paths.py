@@ -189,8 +189,8 @@ def test_knowledge_deposit_list_uses_repository_when_runtime_store_is_stale():
         assert [item["id"] for item in pending["items"]] == ["deposit_repo_pending"]
         assert pending["total"] == 1
         assert [item["id"] for item in all_deposits["items"]] == [
-            "deposit_repo_pending",
             "deposit_repo_rejected",
+            "deposit_repo_pending",
         ]
         assert all_deposits["total"] == 2
     finally:

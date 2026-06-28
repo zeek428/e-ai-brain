@@ -343,9 +343,24 @@ def list_graph_runs(
 @router.get("/api/reviews/pending")
 def pending_reviews(
     request: Request,
+    ai_task_id: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "desc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    payload = pending_reviews_response(current_store=store(request), user=user)
+    started_at = getattr(request.state, "started_at", None)
+    payload = pending_reviews_response(
+        ai_task_id=ai_task_id,
+        current_store=store(request),
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        started_at=started_at if isinstance(started_at, float) else perf_counter(),
+        user=user,
+    )
     return envelope(payload, get_trace_id(request))
 
 

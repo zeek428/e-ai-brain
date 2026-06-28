@@ -6,7 +6,7 @@ import './proComponentsMock';
 
 import AssistantDraftsPage from '../src/pages/AssistantDrafts';
 
-function installAssistantDraftsFetchMock() {
+function installAssistantDraftsFetchMock(options: { includeFailed?: boolean } = {}) {
   const draftRow = {
     action: 'create_scheduled_job',
     confirmed_at: null,
@@ -31,6 +31,24 @@ function installAssistantDraftsFetchMock() {
     view_count: 3,
     wizard_step_count: 5,
   };
+  const failedDraftRow = {
+    ...draftRow,
+    id: 'assistant_action_draft_failed',
+    modified_field_count: 0,
+    result_run_id: 'assistant_action_run_failed',
+    result_status: 'failed',
+    source_link: '/assistant?draft_id=assistant_action_draft_failed',
+    source_message_id: 'assistant_message_failed',
+    status: 'failed',
+    title: '失败草案',
+    updated_at: '2026-06-20T03:00:00Z',
+    user_modified: false,
+    validation_issue_count: 0,
+    validation_status: 'passed',
+    view_count: 1,
+    wizard_step_count: 1,
+  };
+  const rows = options.includeFailed ? [draftRow, failedDraftRow] : [draftRow];
   const detail = {
     action: 'create_scheduled_job',
     created_at: '2026-06-20T02:00:00Z',
@@ -83,7 +101,7 @@ function installAssistantDraftsFetchMock() {
     if (url.startsWith('/api/assistant/action-drafts?') && init?.method === 'GET') {
       return jsonResponse({
         data: {
-          items: [draftRow],
+          items: rows,
           page: 1,
           page_size: 10,
           summary: {
@@ -106,7 +124,23 @@ function installAssistantDraftsFetchMock() {
               warning: 1,
             },
           },
-          total: 1,
+          total: rows.length,
+        },
+      });
+    }
+    if (
+      input === '/api/assistant/action-drafts/assistant_action_draft_failed/retry'
+      && init?.method === 'POST'
+    ) {
+      expect(JSON.parse(String(init.body))).toEqual({
+        reason: '从草案任务台重新打开失败草案',
+      });
+      return jsonResponse({
+        data: {
+          ...failedDraftRow,
+          result_run_id: null,
+          result_status: null,
+          status: 'pending',
         },
       });
     }
@@ -176,6 +210,29 @@ describe('AssistantDraftsPage', () => {
       expect(link).toHaveAttribute(
         'href',
         '/governance/execution-traces?source_id=assistant_message_001&source_type=assistant_message',
+      );
+    });
+  });
+
+  it('reopens failed drafts from the workbench', async () => {
+    const { fetchMock } = installAssistantDraftsFetchMock({ includeFailed: true });
+
+    render(<AssistantDraftsPage />);
+
+    await screen.findByText('失败草案');
+    fireEvent.click(screen.getByRole('button', { name: '重新打开' }));
+
+    const popconfirm = await screen.findByText(
+      '将失败草案重新打开为待确认状态，重新确认前不会写入业务配置。是否继续？',
+    );
+    const popover = popconfirm.closest('.ant-popover');
+    expect(popover).not.toBeNull();
+    fireEvent.click(within(popover as HTMLElement).getByRole('button', { name: '重新打开' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/assistant/action-drafts/assistant_action_draft_failed/retry',
+        expect.objectContaining({ method: 'POST' }),
       );
     });
   });

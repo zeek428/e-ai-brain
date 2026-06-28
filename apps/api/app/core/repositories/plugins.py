@@ -46,6 +46,17 @@ AI_EXECUTOR_TASK_SORT_COLUMNS = {
     "updated_at": "updated_at",
 }
 
+AI_EXECUTOR_RUNNER_SORT_COLUMNS = {
+    "created_at": "created_at",
+    "endpoint_url": "lower(endpoint_url)",
+    "id": "id",
+    "last_heartbeat_at": "last_heartbeat_at",
+    "name": "lower(name)",
+    "protocol": "protocol",
+    "status": "status",
+    "updated_at": "updated_at",
+}
+
 PLUGIN_INVOCATION_LOG_SORT_COLUMNS = {
     "action_id": "action_id",
     "connection_id": "connection_id",
@@ -326,17 +337,17 @@ class PluginReadRepository:
         self,
         *,
         action_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         scheduled_job_id: str | None = None,
         scheduled_job_run_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
-        where, params = self._where(
-            {
-                "action_id": action_id,
-                "scheduled_job_id": scheduled_job_id,
-                "scheduled_job_run_id": scheduled_job_run_id,
-                "status": status,
-            },
+        where, params = self._plugin_invocation_log_where(
+            action_id=action_id,
+            product_scope_ids=product_scope_ids,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
         )
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -358,17 +369,17 @@ class PluginReadRepository:
         self,
         *,
         action_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         scheduled_job_id: str | None = None,
         scheduled_job_run_id: str | None = None,
         status: str | None = None,
     ) -> int:
-        where, params = self._where(
-            {
-                "action_id": action_id,
-                "scheduled_job_id": scheduled_job_id,
-                "scheduled_job_run_id": scheduled_job_run_id,
-                "status": status,
-            },
+        where, params = self._plugin_invocation_log_where(
+            action_id=action_id,
+            product_scope_ids=product_scope_ids,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
         )
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -385,19 +396,19 @@ class PluginReadRepository:
         action_id: str | None = None,
         limit: int,
         offset: int,
+        product_scope_ids: list[str] | None = None,
         scheduled_job_id: str | None = None,
         scheduled_job_run_id: str | None = None,
         sort_by: str,
         sort_order: str,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
-        where, params = self._where(
-            {
-                "action_id": action_id,
-                "scheduled_job_id": scheduled_job_id,
-                "scheduled_job_run_id": scheduled_job_run_id,
-                "status": status,
-            },
+        where, params = self._plugin_invocation_log_where(
+            action_id=action_id,
+            product_scope_ids=product_scope_ids,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
         )
         sort_column = PLUGIN_INVOCATION_LOG_SORT_COLUMNS.get(sort_by, "created_at")
         direction = "ASC" if sort_order == "asc" else "DESC"
@@ -423,9 +434,17 @@ class PluginReadRepository:
     def list_ai_executor_runners(
         self,
         *,
+        executor_type: str | None = None,
+        keyword: str | None = None,
+        protocol: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
-        where, params = self._where({"status": status})
+        where, params = self._ai_executor_runner_where(
+            executor_type=executor_type,
+            keyword=keyword,
+            protocol=protocol,
+            status=status,
+        )
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -437,6 +456,68 @@ class PluginReadRepository:
                     FROM ai_executor_runners
                     {where}
                     ORDER BY updated_at DESC, id ASC
+                    """,
+                    tuple(params),
+                )
+                return [self._ai_executor_runner_from_row(row) for row in cursor.fetchall()]
+
+    def count_ai_executor_runners(
+        self,
+        *,
+        executor_type: str | None = None,
+        keyword: str | None = None,
+        protocol: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where, params = self._ai_executor_runner_where(
+            executor_type=executor_type,
+            keyword=keyword,
+            protocol=protocol,
+            status=status,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM ai_executor_runners {where}",
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_ai_executor_runners_page(
+        self,
+        *,
+        executor_type: str | None = None,
+        keyword: str | None = None,
+        limit: int,
+        offset: int,
+        protocol: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._ai_executor_runner_where(
+            executor_type=executor_type,
+            keyword=keyword,
+            protocol=protocol,
+            status=status,
+        )
+        sort_column = AI_EXECUTOR_RUNNER_SORT_COLUMNS.get(sort_by, "updated_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, name, protocol, endpoint_url, executor_types, workspace_roots,
+                           token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
+                           last_heartbeat_at, metadata, created_by, created_at, updated_at,
+                           token_rotated_at, token_version
+                    FROM ai_executor_runners
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
                     """,
                     tuple(params),
                 )
@@ -913,6 +994,86 @@ class PluginReadRepository:
                 continue
             clauses.append(f"{field} = %s")
             params.append(value)
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def _plugin_invocation_log_where(
+        self,
+        *,
+        action_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        where, params = self._where(
+            {
+                "action_id": action_id,
+                "scheduled_job_id": scheduled_job_id,
+                "scheduled_job_run_id": scheduled_job_run_id,
+                "status": status,
+            },
+        )
+        clauses = [where.removeprefix("WHERE ")] if where else []
+        if product_scope_ids is not None:
+            normalized_product_ids = [
+                str(product_id)
+                for product_id in product_scope_ids
+                if str(product_id).strip()
+            ]
+            if not normalized_product_ids:
+                clauses.append("FALSE")
+            else:
+                clauses.append(
+                    """
+                    (
+                      EXISTS (
+                        SELECT 1
+                        FROM scheduled_jobs scoped_job
+                        WHERE scoped_job.id = plugin_invocation_logs.scheduled_job_id
+                          AND scoped_job.product_id = ANY(%s)
+                      )
+                      OR EXISTS (
+                        SELECT 1
+                        FROM scheduled_job_runs scoped_run
+                        JOIN scheduled_jobs scoped_run_job
+                          ON scoped_run_job.id = scoped_run.scheduled_job_id
+                        WHERE scoped_run.id = plugin_invocation_logs.scheduled_job_run_id
+                          AND scoped_run_job.product_id = ANY(%s)
+                      )
+                    )
+                    """,
+                )
+                params.extend([normalized_product_ids, normalized_product_ids])
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def _ai_executor_runner_where(
+        self,
+        *,
+        executor_type: str | None = None,
+        keyword: str | None = None,
+        protocol: str | None = None,
+        status: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        where, params = self._where({"protocol": protocol, "status": status})
+        clauses = [where.removeprefix("WHERE ")] if where else []
+        normalized_keyword = str(keyword or "").strip().lower()
+        if normalized_keyword:
+            clauses.append(
+                """
+                (
+                  lower(id) LIKE %s
+                  OR lower(name) LIKE %s
+                  OR lower(endpoint_url) LIKE %s
+                  OR lower(protocol) LIKE %s
+                )
+                """,
+            )
+            pattern = f"%{normalized_keyword}%"
+            params.extend([pattern, pattern, pattern, pattern])
+        normalized_executor_type = str(executor_type or "").strip()
+        if normalized_executor_type:
+            clauses.append("executor_types ? %s")
+            params.append(normalized_executor_type)
         return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
 
     def _ai_executor_task_where(

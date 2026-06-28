@@ -12,6 +12,16 @@ from app.services.task_listing import task_summary_projection
 from app.services.task_workflow_context import task_workflow_read_store
 
 FULL_CHAIN_READ_PERMISSIONS = {"requirement.read", "task.read", "workspace.read"}
+FULL_CHAIN_EXECUTION_TRACE_ROOT_TYPES = {
+    "ai_executor_runner",
+    "ai_executor_task",
+    "assistant_chat_run",
+    "code_inspection_report",
+    "model_gateway_log",
+    "plugin_invocation_log",
+    "result_write_record",
+    "scheduled_job_run",
+}
 
 
 def first_present_value(item: dict[str, Any], fields: tuple[str, ...]) -> str:
@@ -79,6 +89,23 @@ def audit_event_public(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def execution_trace_public(trace: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "duration_ms": trace.get("duration_ms"),
+        "failed_node_count": trace.get("failed_node_count", 0),
+        "id": trace.get("id"),
+        "node_count": trace.get("node_count", 0),
+        "root_id": trace.get("root_id"),
+        "root_type": trace.get("root_type"),
+        "running_node_count": trace.get("running_node_count", 0),
+        "started_at": trace.get("started_at"),
+        "status": trace.get("status"),
+        "summary": trace.get("summary"),
+        "title": trace.get("title"),
+        "updated_at": trace.get("updated_at"),
+    }
+
+
 def requirement_read_store(current_store: Any) -> Any:
     return task_workflow_read_store(current_store)
 
@@ -114,6 +141,60 @@ def _ensure_subject_product_access(
 def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     return collection if isinstance(collection, dict) else {}
+
+
+def _trace_matches_full_chain_subjects(
+    trace: dict[str, Any],
+    *,
+    linked_subjects: set[tuple[str, str]],
+    task_ids: set[str],
+) -> bool:
+    root_type = str(trace.get("root_type") or "")
+    root_id = str(trace.get("root_id") or trace.get("id") or "")
+    if root_type not in FULL_CHAIN_EXECUTION_TRACE_ROOT_TYPES:
+        return False
+    trace_subject = ("execution_trace", str(trace.get("id") or ""))
+    if (root_type, root_id) in linked_subjects or trace_subject in linked_subjects:
+        return True
+    for source_type, related_ids in (trace.get("related_ids") or {}).items():
+        if any(
+            (str(source_type), str(related_id)) in linked_subjects
+            for related_id in related_ids
+        ):
+            return True
+    for node in trace.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_subject = (
+            str(node.get("source_type") or ""),
+            str(node.get("source_id") or ""),
+        )
+        if node_subject in linked_subjects:
+            return True
+        metadata = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+        if metadata.get("ai_task_id") and str(metadata["ai_task_id"]) in task_ids:
+            return True
+    return False
+
+
+def full_chain_execution_traces(
+    current_store: Any,
+    *,
+    linked_subjects: set[tuple[str, str]],
+    task_ids: set[str],
+) -> list[dict[str, Any]]:
+    from app.services.execution_traces import ExecutionTraceBuilder
+
+    traces = [
+        execution_trace_public(trace)
+        for trace in ExecutionTraceBuilder(current_store).traces()
+        if _trace_matches_full_chain_subjects(
+            trace,
+            linked_subjects=linked_subjects,
+            task_ids=task_ids,
+        )
+    ]
+    return sort_by_lifecycle_time(traces, "started_at", "updated_at")
 
 
 def get_requirement_response(*, current_store: Any, requirement_id: str) -> dict[str, Any]:
@@ -169,6 +250,30 @@ def _requirement_id_from_subject(
                 404,
                 "NO_REQUIREMENT_CONTEXT",
                 "Iteration version has no requirements to display in full chain",
+            )
+        return str(version_requirements[-1]["id"])
+    if normalized_type in {"branch_config", "product_version_branch_config"}:
+        branch_config = _read_memory_dict(
+            current_store,
+            "product_version_branch_configs",
+        ).get(normalized_id)
+        if branch_config is None:
+            raise api_error(404, "NOT_FOUND", "Branch config not found")
+        version_id = branch_config.get("version_id")
+        version_requirements = sort_by_lifecycle_time(
+            [
+                requirement
+                for requirement in _read_memory_dict(current_store, "requirements").values()
+                if version_id is not None and str(requirement.get("version_id")) == str(version_id)
+            ],
+            "updated_at",
+            "created_at",
+        )
+        if not version_requirements:
+            raise api_error(
+                404,
+                "NO_REQUIREMENT_CONTEXT",
+                "Branch config version has no requirements to display in full chain",
             )
         return str(version_requirements[-1]["id"])
     if normalized_type == "code_inspection_report":
@@ -399,9 +504,19 @@ def requirement_full_chain_payload(
             for event in current_store.snapshot(getattr(current_store, "audit_events", []))
             if (str(event.get("subject_type") or ""), str(event.get("subject_id") or ""))
             in linked_subjects
-            or (event.get("ai_task_id") and ("ai_task", str(event.get("ai_task_id"))) in linked_subjects)
+            or (
+                event.get("ai_task_id")
+                and ("ai_task", str(event.get("ai_task_id"))) in linked_subjects
+            )
         ],
         "created_at",
+    )
+    for event in audit_events:
+        linked_subjects.add(("audit_event", str(event["id"])))
+    execution_traces = full_chain_execution_traces(
+        current_store,
+        linked_subjects=linked_subjects,
+        task_ids=task_ids,
     )
 
     timeline = [
@@ -562,6 +677,28 @@ def requirement_full_chain_payload(
     )
     timeline.extend(
         full_chain_event(
+            event_type="execution_trace",
+            occurred_at=first_present_value(trace, ("started_at", "updated_at"))
+            or first_present_value(requirement, ("created_at", "updated_at")),
+            subject_id=str(trace["id"]),
+            status=trace.get("status"),
+            title=compact_lifecycle_title(
+                "执行诊断",
+                str(trace["id"]),
+                trace.get("title") or trace.get("summary"),
+            ),
+            metadata={
+                "duration_ms": trace.get("duration_ms"),
+                "failed_node_count": trace.get("failed_node_count"),
+                "node_count": trace.get("node_count"),
+                "root_id": trace.get("root_id"),
+                "root_type": trace.get("root_type"),
+            },
+        )
+        for trace in execution_traces
+    )
+    timeline.extend(
+        full_chain_event(
             event_type="audit_event",
             occurred_at=first_present_value(event, ("created_at",))
             or first_present_value(requirement, ("created_at", "updated_at")),
@@ -596,6 +733,7 @@ def requirement_full_chain_payload(
         "bugs": current_store.snapshot(bugs),
         "jenkins_releases": current_store.snapshot(jenkins_releases),
         "knowledge_deposits": current_store.snapshot(knowledge_deposits),
+        "execution_traces": current_store.snapshot(execution_traces),
         "audit_events": current_store.snapshot(audit_events),
         "timeline": timeline,
         "summary": {
@@ -608,6 +746,7 @@ def requirement_full_chain_payload(
             "bugs": len(bugs),
             "jenkins_releases": len(jenkins_releases),
             "knowledge_deposits": len(knowledge_deposits),
+            "execution_traces": len(execution_traces),
             "audit_events": len(audit_events),
             "timeline_events": len(timeline),
         },

@@ -16,6 +16,7 @@ class ProductConfigListRepository:
         code: str | None = None,
         name: str | None = None,
         owner_team: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
     ) -> tuple[str, list[Any]]:
         where_clauses: list[str] = []
@@ -32,6 +33,12 @@ class ProductConfigListRepository:
         if owner_team is not None:
             where_clauses.append("p.owner_team ILIKE %s")
             params.append(f"%{owner_team}%")
+        if product_scope_ids is not None:
+            if product_scope_ids:
+                where_clauses.append("p.id = ANY(%s)")
+                params.append(product_scope_ids)
+            else:
+                where_clauses.append("FALSE")
         if status is not None:
             where_clauses.append("p.status = %s")
             params.append(status)
@@ -45,6 +52,7 @@ class ProductConfigListRepository:
         code: str | None = None,
         name: str | None = None,
         owner_team: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
     ) -> int:
         where_clause, params = self._product_summary_where(
@@ -52,6 +60,7 @@ class ProductConfigListRepository:
             code=code,
             name=name,
             owner_team=owner_team,
+            product_scope_ids=product_scope_ids,
             status=status,
         )
         with self._connect() as connection:
@@ -74,6 +83,7 @@ class ProductConfigListRepository:
         code: str | None = None,
         name: str | None = None,
         owner_team: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
@@ -85,6 +95,7 @@ class ProductConfigListRepository:
             code=code,
             name=name,
             owner_team=owner_team,
+            product_scope_ids=product_scope_ids,
             status=status,
         )
         sort_columns = {
@@ -151,6 +162,7 @@ class ProductConfigListRepository:
         name: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
     ) -> tuple[str, list[Any]]:
         where_clauses: list[str] = []
@@ -170,6 +182,12 @@ class ProductConfigListRepository:
         if product_id is not None:
             where_clauses.append("v.product_id = %s")
             params.append(product_id)
+        if product_scope_ids is not None:
+            if product_scope_ids:
+                where_clauses.append("v.product_id = ANY(%s)")
+                params.append(product_scope_ids)
+            else:
+                where_clauses.append("FALSE")
         if status is not None:
             where_clauses.append("v.status = %s")
             params.append(status)
@@ -184,6 +202,7 @@ class ProductConfigListRepository:
         name: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
     ) -> int:
         where_clause, params = self._product_version_summary_where(
@@ -192,6 +211,7 @@ class ProductConfigListRepository:
             name=name,
             product=product,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             status=status,
         )
         with self._connect() as connection:
@@ -216,6 +236,7 @@ class ProductConfigListRepository:
         name: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
@@ -228,6 +249,7 @@ class ProductConfigListRepository:
             name=name,
             product=product,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             status=status,
         )
         sort_columns = {

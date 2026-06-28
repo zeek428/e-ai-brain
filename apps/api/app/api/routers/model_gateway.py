@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
-from app.api.deps import CurrentUser, api_error, require_roles, store
+from app.api.deps import CurrentUser, api_error, require_permissions, store
 from app.core.trace import envelope, get_trace_id
 from app.services.model_gateway import (
     MODEL_GATEWAY_EMBEDDING_CONNECTION_MODES,
@@ -37,6 +37,7 @@ from app.services.product_config_context import (
 )
 
 router = APIRouter(tags=["model_gateway"])
+MODEL_GATEWAY_MANAGE_PERMISSION = "system.model_gateway.manage"
 
 
 class ModelGatewayConfigRequest(BaseModel):
@@ -108,7 +109,7 @@ def list_model_gateway_configs(
     status: str | None = Query(default=None),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {MODEL_GATEWAY_MANAGE_PERMISSION})
     return list_model_gateway_configs_response(
         current_store=store(request),
         default_chat_model=default_chat_model,
@@ -132,7 +133,7 @@ def test_model_gateway_config(
     payload: ModelGatewayConfigTestRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {MODEL_GATEWAY_MANAGE_PERMISSION})
     current_store = model_gateway_write_store(store(request))
     result = run_model_gateway_config_test(
         current_store,
@@ -148,7 +149,7 @@ def create_model_gateway_config(
     payload: ModelGatewayConfigRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {MODEL_GATEWAY_MANAGE_PERMISSION})
     current_store = store(request)
     name = ensure_non_blank(payload.name, "name")
     base_url = ensure_non_blank(payload.base_url, "base_url")
@@ -207,7 +208,7 @@ def patch_model_gateway_config(
     payload: ModelGatewayConfigPatchRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {MODEL_GATEWAY_MANAGE_PERMISSION})
     current_store = store(request)
     config = get_model_gateway_config_record(current_store, config_id)
     if config is None:
@@ -303,7 +304,7 @@ def delete_model_gateway_config(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {MODEL_GATEWAY_MANAGE_PERMISSION})
     current_store = store(request)
     if get_model_gateway_config_record(current_store, config_id) is None:
         raise api_error(404, "NOT_FOUND", "Model gateway config not found")
@@ -325,15 +326,23 @@ def delete_model_gateway_config(
 def list_model_gateway_logs(
     request: Request,
     ai_task_id: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
     purpose: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {MODEL_GATEWAY_MANAGE_PERMISSION})
     return list_model_gateway_logs_response(
         ai_task_id=ai_task_id,
         current_store=store(request),
+        page=page,
+        page_size=page_size,
         purpose=purpose,
+        sort_by=sort_by,
+        sort_order=sort_order,
         status=status,
         trace_id=get_trace_id(request),
     )

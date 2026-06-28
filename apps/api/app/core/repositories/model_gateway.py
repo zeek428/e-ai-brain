@@ -5,6 +5,28 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Any
 
+MODEL_GATEWAY_CONFIG_SORT_EXPRESSIONS = {
+    "base_url": "base_url",
+    "default_chat_model": "default_chat_model",
+    "default_embedding_model": "default_embedding_model",
+    "embedding_connection_mode": "embedding_connection_mode",
+    "id": "id",
+    "is_default": "is_default",
+    "name": "name",
+    "provider": "provider",
+    "status": "status",
+}
+MODEL_GATEWAY_LOG_SORT_EXPRESSIONS = {
+    "ai_task_id": "ai_task_id",
+    "created_at": "created_at",
+    "id": "id",
+    "latency_ms": "latency_ms",
+    "model": "model",
+    "provider": "provider",
+    "purpose": "purpose",
+    "status": "status",
+}
+
 
 class ModelGatewayReadRepository:
     def __init__(
@@ -36,6 +58,123 @@ class ModelGatewayReadRepository:
                 configs = self._load_model_gateway_configs(cursor)
         return [configs[config_id] for config_id in sorted(configs)]
 
+    def count_model_gateway_configs(
+        self,
+        *,
+        default_chat_model: str | None = None,
+        default_embedding_model: str | None = None,
+        embedding_connection_mode: str | None = None,
+        is_default: bool | None = None,
+        name: str | None = None,
+        provider: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where_clause, params = self._model_gateway_config_filter_sql(
+            default_chat_model=default_chat_model,
+            default_embedding_model=default_embedding_model,
+            embedding_connection_mode=embedding_connection_mode,
+            is_default=is_default,
+            name=name,
+            provider=provider,
+            status=status,
+        )
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT count(*)
+                    FROM model_gateway_configs
+                    {where_clause}
+                    """,
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+        return int(row[0] if row else 0)
+
+    def list_model_gateway_configs_page(
+        self,
+        *,
+        default_chat_model: str | None = None,
+        default_embedding_model: str | None = None,
+        embedding_connection_mode: str | None = None,
+        is_default: bool | None = None,
+        limit: int,
+        name: str | None = None,
+        offset: int,
+        provider: str | None = None,
+        sort_by: str = "name",
+        sort_order: str = "asc",
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = self._model_gateway_config_filter_sql(
+            default_chat_model=default_chat_model,
+            default_embedding_model=default_embedding_model,
+            embedding_connection_mode=embedding_connection_mode,
+            is_default=is_default,
+            name=name,
+            provider=provider,
+            status=status,
+        )
+        sort_expression = MODEL_GATEWAY_CONFIG_SORT_EXPRESSIONS.get(sort_by, "name")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, name, provider, base_url, api_key_ref, default_chat_model,
+                           default_embedding_model, timeout_seconds, max_retries, status,
+                           is_default, created_at, updated_at, embedding_connection_mode,
+                           embedding_base_url, embedding_api_key_ref, embedding_dimension
+                    FROM model_gateway_configs
+                    {where_clause}
+                    ORDER BY {sort_expression} {direction}, id {direction}
+                    LIMIT %s OFFSET %s
+                    """,
+                    (*params, limit, offset),
+                )
+                configs = self._model_gateway_configs_from_rows(cursor.fetchall())
+        return [configs[config_id] for config_id in configs]
+
+    def _model_gateway_config_filter_sql(
+        self,
+        *,
+        default_chat_model: str | None = None,
+        default_embedding_model: str | None = None,
+        embedding_connection_mode: str | None = None,
+        is_default: bool | None = None,
+        name: str | None = None,
+        provider: str | None = None,
+        status: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if name:
+            value = f"%{name.lower()}%"
+            where_clauses.append(
+                "(lower(id) LIKE %s OR lower(name) LIKE %s OR lower(base_url) LIKE %s)"
+            )
+            params.extend([value, value, value])
+        if default_chat_model:
+            where_clauses.append("lower(default_chat_model) LIKE %s")
+            params.append(f"%{default_chat_model.lower()}%")
+        if default_embedding_model:
+            where_clauses.append("lower(COALESCE(default_embedding_model, '')) LIKE %s")
+            params.append(f"%{default_embedding_model.lower()}%")
+        if provider:
+            where_clauses.append("provider = %s")
+            params.append(provider)
+        if status:
+            where_clauses.append("status = %s")
+            params.append(status)
+        if embedding_connection_mode:
+            where_clauses.append("embedding_connection_mode = %s")
+            params.append(embedding_connection_mode)
+        if is_default is not None:
+            where_clauses.append("is_default = %s")
+            params.append(is_default)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        return where_clause, params
+
     def get_model_gateway_config(self, config_id: str) -> dict[str, Any] | None:
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
@@ -60,18 +199,11 @@ class ModelGatewayReadRepository:
         purpose: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
-        where_clauses: list[str] = []
-        params: list[Any] = []
-        if ai_task_id is not None:
-            where_clauses.append("ai_task_id = %s")
-            params.append(ai_task_id)
-        if purpose is not None:
-            where_clauses.append("purpose = %s")
-            params.append(purpose)
-        if status is not None:
-            where_clauses.append("status = %s")
-            params.append(status)
-        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        where_clause, params = self._model_gateway_log_filter_sql(
+            ai_task_id=ai_task_id,
+            purpose=purpose,
+            status=status,
+        )
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -85,6 +217,85 @@ class ModelGatewayReadRepository:
                     tuple(params),
                 )
                 return self._model_gateway_logs_from_rows(cursor.fetchall())
+
+    def count_model_gateway_logs(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        purpose: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where_clause, params = self._model_gateway_log_filter_sql(
+            ai_task_id=ai_task_id,
+            purpose=purpose,
+            status=status,
+        )
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT count(*)
+                    FROM model_gateway_logs
+                    {where_clause}
+                    """,
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+        return int(row[0] if row else 0)
+
+    def list_model_gateway_logs_page(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        limit: int,
+        offset: int,
+        purpose: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = self._model_gateway_log_filter_sql(
+            ai_task_id=ai_task_id,
+            purpose=purpose,
+            status=status,
+        )
+        sort_expression = MODEL_GATEWAY_LOG_SORT_EXPRESSIONS.get(sort_by, "created_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, ai_task_id, provider, model, purpose, tokens, latency_ms,
+                           status, error, model_gateway_config_id, created_at, updated_at
+                    FROM model_gateway_logs
+                    {where_clause}
+                    ORDER BY {sort_expression} {direction}, id {direction}
+                    LIMIT %s OFFSET %s
+                    """,
+                    (*params, limit, offset),
+                )
+                return self._model_gateway_logs_from_rows(cursor.fetchall())
+
+    def _model_gateway_log_filter_sql(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        purpose: str | None = None,
+        status: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if ai_task_id is not None:
+            where_clauses.append("ai_task_id = %s")
+            params.append(ai_task_id)
+        if purpose is not None:
+            where_clauses.append("purpose = %s")
+            params.append(purpose)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        return where_clause, params
 
     def save_model_gateway(self, payload: dict[str, Any]) -> None:
         configs = payload.get("model_gateway_configs", {})

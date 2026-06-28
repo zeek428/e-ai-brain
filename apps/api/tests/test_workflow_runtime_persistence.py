@@ -277,6 +277,72 @@ def test_pending_reviews_route_uses_direct_repository_query():
         app.state.user_repository = original_users
 
 
+def test_pending_reviews_route_uses_repository_pagination_and_task_filter():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    count_kwargs = {}
+    list_kwargs = {}
+
+    def count_pending_review_summaries(**kwargs):
+        count_kwargs.update(kwargs)
+        return 23
+
+    def list_pending_review_summaries(**kwargs):
+        list_kwargs.update(kwargs)
+        return [
+            {
+                "ai_task_id": kwargs.get("ai_task_id"),
+                "content": {"summary": "第二页确认项"},
+                "created_at": "2026-06-28T01:00:00+00:00",
+                "id": "review_page_006",
+                "stage": "technical_solution",
+                "status": "pending",
+                "updated_at": "2026-06-28T02:00:00+00:00",
+                "version": 2,
+            }
+        ]
+
+    repository.count_pending_review_summaries = count_pending_review_summaries
+    repository.list_pending_review_summaries = list_pending_review_summaries
+    app.state.store = PersistentMemoryStore.from_repository(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        response = client.get(
+            "/api/reviews/pending"
+            "?ai_task_id=task_perf_001"
+            "&page=2"
+            "&page_size=5"
+            "&sort_by=updated_at"
+            "&sort_order=asc",
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()["data"]
+
+        assert payload["items"][0]["id"] == "review_page_006"
+        assert payload["page"] == 2
+        assert payload["page_size"] == 5
+        assert payload["total"] == 23
+        assert payload["query"]["name"] == "pending_reviews"
+        assert payload["query"]["filters"] == {"ai_task_id": "task_perf_001"}
+        assert payload["performance"]["total"] == 23
+        assert count_kwargs == {"ai_task_id": "task_perf_001", "read_scope": "all"}
+        assert list_kwargs == {
+            "ai_task_id": "task_perf_001",
+            "limit": 5,
+            "offset": 5,
+            "read_scope": "all",
+            "sort_by": "updated_at",
+            "sort_order": "asc",
+        }
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
 def _create_generated_design_task(
     headers: dict[str, str],
     *,

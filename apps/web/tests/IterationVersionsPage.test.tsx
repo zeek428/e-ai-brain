@@ -357,7 +357,12 @@ describe('IterationVersionsPage', () => {
     render(<IterationVersionsPage />);
 
     expect(await screen.findByText('代码分支 · 2026-09')).toBeInTheDocument();
-    expect(await screen.findByText('release/2026-09')).toBeInTheDocument();
+    const branchText = await screen.findByText('release/2026-09');
+    expect(branchText).toBeInTheDocument();
+    expect(within(branchText.closest('tr') as HTMLElement).getByRole('link', { name: '全链路' })).toHaveAttribute(
+      'href',
+      '/delivery/full-chain?subject_id=version_branch_config_001&subject_type=product_version_branch_config',
+    );
     expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
       '/api/product-versions?page=1&page_size=100&sort_by=code&sort_order=asc',
     );

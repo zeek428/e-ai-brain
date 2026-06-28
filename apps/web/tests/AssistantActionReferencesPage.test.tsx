@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { message, Modal, notification } from 'antd';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,9 +15,15 @@ function jsonResponse(body: unknown) {
 
 function installFetchMock() {
   const bodies: unknown[] = [];
+  const listRequests: string[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-    if (input === '/api/assistant/action-reference-configs' && init?.method === 'GET') {
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/assistant/action-reference-configs?')
+      && init?.method === 'GET'
+    ) {
+      listRequests.push(input);
       return jsonResponse({
         data: {
           items: [
@@ -56,6 +62,16 @@ function installFetchMock() {
               url: '/delivery/bugs',
             },
           ],
+          page: 1,
+          page_size: 10,
+          performance: {
+            duration_ms: 12,
+            p95_target_ms: 400,
+            result_count: 2,
+            slow: false,
+            slow_threshold_ms: 400,
+            total: 2,
+          },
           total: 2,
         },
       });
@@ -120,7 +136,7 @@ function installFetchMock() {
   });
   window.localStorage.setItem('ai_brain_access_token', 'token-admin');
   vi.stubGlobal('fetch', fetchMock);
-  return { bodies, fetchMock };
+  return { bodies, fetchMock, listRequests };
 }
 
 describe('Assistant action references page', () => {
@@ -135,11 +151,16 @@ describe('Assistant action references page', () => {
   });
 
   it('loads action reference configs and supports status and rollout operations', async () => {
-    const { bodies, fetchMock } = installFetchMock();
+    const { bodies, listRequests } = installFetchMock();
 
     render(<AssistantActionReferencesPage />);
 
     await screen.findByText('新建需求');
+    expect(listRequests[0]).toContain('page=1');
+    expect(listRequests[0]).toContain('page_size=10');
+    expect(listRequests[0]).toContain('sort_by=sort_order');
+    expect(listRequests[0]).toContain('sort_order=asc');
+    expect(screen.getByText('查询 12ms')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '保存视图' })).toBeInTheDocument();
     expect(screen.getByText('create_requirement')).toBeInTheDocument();
     expect(screen.getByText('product_owner')).toBeInTheDocument();
@@ -151,9 +172,14 @@ describe('Assistant action references page', () => {
     expect((await screen.findAllByText('停用')).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByLabelText('配置灰度 新建需求'));
-    fireEvent.change(screen.getByLabelText('企业 ID'), { target: { value: 'enterprise_a' } });
-    fireEvent.change(screen.getByLabelText('模板版本'), { target: { value: '2026.07' } });
-    fireEvent.change(screen.getByLabelText('灰度比例'), { target: { value: '30' } });
+    const rolloutDialog = screen.getByRole('dialog', { name: /@ 能力灰度/ });
+    fireEvent.change(within(rolloutDialog).getByLabelText('企业 ID'), {
+      target: { value: 'enterprise_a' },
+    });
+    fireEvent.change(within(rolloutDialog).getByLabelText('模板版本'), {
+      target: { value: '2026.07' },
+    });
+    fireEvent.change(within(rolloutDialog).getByLabelText('灰度比例'), { target: { value: '30' } });
     fireEvent.click(screen.getByText('OK'));
 
     await waitFor(() => {
@@ -163,11 +189,10 @@ describe('Assistant action references page', () => {
         template_version: '2026.07',
       });
     });
-    expect(fetchMock).toHaveBeenCalledWith('/api/assistant/action-reference-configs', expect.anything());
   });
 
   it('supports search filtering and batch status operations', async () => {
-    const { bodies } = installFetchMock();
+    const { bodies, listRequests } = installFetchMock();
 
     render(<AssistantActionReferencesPage />);
 
@@ -182,7 +207,7 @@ describe('Assistant action references page', () => {
     fireEvent.click(screen.getByRole('button', { name: '查询' }));
 
     await waitFor(() => {
-      expect(screen.queryByText('新建需求')).not.toBeInTheDocument();
+      expect(listRequests.some((url) => url.includes('keyword=Bug'))).toBe(true);
     });
     expect(screen.getByText('新建 Bug')).toBeInTheDocument();
 

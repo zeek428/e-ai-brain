@@ -11,8 +11,10 @@ import {
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import { Button, Space, Tag, Typography } from 'antd';
+import type { TablePaginationConfig } from 'antd';
+import type { SorterResult } from 'antd/es/table/interface';
 
-import type { AiExecutorRunnerRecord } from '../../../services/aiBrain';
+import type { AiExecutorRunnerListQuery, AiExecutorRunnerRecord } from '../../../services/aiBrain';
 import { formatDisplayDateTime } from '../../../utils/dateTime';
 import { aiExecutorTypeOptions } from './pluginRunnerHelpers';
 import { runnerHealthStatusColor } from './pluginDiagnosticsHelpers';
@@ -25,9 +27,18 @@ type PluginRunnerTableProps = {
   onDownloadInstallPackage: (runner: AiExecutorRunnerRecord) => void;
   onEditRunner: (runner: AiExecutorRunnerRecord) => void;
   onOpenLogs: (runner: AiExecutorRunnerRecord) => void;
+  onRemoteChange: (query: AiExecutorRunnerListQuery) => void;
   onReload: () => void;
   onRotateToken: (runner: AiExecutorRunnerRecord) => void;
   onTestRunner: (runner: AiExecutorRunnerRecord) => void;
+  remote: {
+    page: number;
+    pageSize: number;
+    performance?: {
+      duration_ms?: number;
+    };
+    total: number;
+  };
   runners: AiExecutorRunnerRecord[];
   testingRunnerId?: string;
 };
@@ -60,6 +71,31 @@ function latestRunnerTaskId(runner: AiExecutorRunnerRecord): string | undefined 
   return runner.latest_task_id ?? (typeof metadataTaskId === 'string' ? metadataTaskId : undefined);
 }
 
+function normalizeRunnerSorter(
+  sorter: SorterResult<AiExecutorRunnerRecord> | SorterResult<AiExecutorRunnerRecord>[],
+) {
+  const activeSorter = Array.isArray(sorter)
+    ? sorter.find((item) => item.order)
+    : sorter.order
+      ? sorter
+      : undefined;
+  if (!activeSorter) {
+    return {};
+  }
+  const field =
+    typeof activeSorter.field === 'string'
+      ? activeSorter.field
+      : typeof activeSorter.columnKey === 'string'
+        ? activeSorter.columnKey
+        : undefined;
+  return {
+    sortField: field,
+    sortOrder: activeSorter.order === 'ascend' || activeSorter.order === 'descend'
+      ? activeSorter.order
+      : undefined,
+  };
+}
+
 export function PluginRunnerTable({
   loading,
   onCopySetupCommand,
@@ -68,9 +104,11 @@ export function PluginRunnerTable({
   onDownloadInstallPackage,
   onEditRunner,
   onOpenLogs,
+  onRemoteChange,
   onReload,
   onRotateToken,
   onTestRunner,
+  remote,
   runners,
   testingRunnerId,
 }: PluginRunnerTableProps) {
@@ -79,8 +117,8 @@ export function PluginRunnerTable({
       cardBordered
       className="management-list-table"
       columns={[
-        { dataIndex: 'name', title: '名称', ellipsis: true, width: 220 },
-        { dataIndex: 'protocol', title: '协议', width: 150 },
+        { dataIndex: 'name', sorter: true, title: '名称', ellipsis: true, width: 220 },
+        { dataIndex: 'protocol', sorter: true, title: '协议', width: 150 },
         {
           dataIndex: 'health_status',
           title: '健康状态',
@@ -116,6 +154,7 @@ export function PluginRunnerTable({
         {
           dataIndex: 'last_heartbeat_at',
           title: '最后心跳',
+          sorter: true,
           ellipsis: true,
           width: 220,
           render: (_, row) => formatDisplayDateTime(row.last_heartbeat_at),
@@ -149,6 +188,7 @@ export function PluginRunnerTable({
         {
           dataIndex: 'status',
           title: '状态',
+          sorter: true,
           width: 110,
           render: (value) => (
             <Tag color={value === 'active' ? 'green' : value === 'offline' ? 'orange' : 'default'}>
@@ -286,6 +326,17 @@ export function PluginRunnerTable({
       }}
       headerTitle="AI 执行器"
       loading={loading}
+      onChange={(
+        pagination: TablePaginationConfig,
+        _filters,
+        sorter,
+      ) => {
+        onRemoteChange({
+          page: pagination.current ?? remote.page,
+          pageSize: pagination.pageSize ?? remote.pageSize,
+          ...normalizeRunnerSorter(sorter),
+        });
+      }}
       options={{
         density: true,
         fullScreen: true,
@@ -293,14 +344,20 @@ export function PluginRunnerTable({
         setting: true,
       }}
       pagination={{
+        current: remote.page,
+        pageSize: remote.pageSize,
         showSizeChanger: true,
         showTotal: (total) => `共 ${total} 条`,
+        total: remote.total,
       }}
       rowKey="id"
       scroll={{ x: 1900 }}
       search={false}
       tableLayout="fixed"
       toolBarRender={() => [
+        remote.performance?.duration_ms !== undefined ? (
+          <Tag color="blue" key="query-performance">查询 {remote.performance.duration_ms}ms</Tag>
+        ) : null,
         <Button
           aria-label="新增执行器"
           icon={<PlusOutlined />}

@@ -4,6 +4,7 @@ from time import perf_counter
 from typing import Any
 
 from app.core.listing import (
+    add_list_observability,
     ensure_list_enum,
     list_payload,
     list_text_matches,
@@ -29,6 +30,16 @@ MODEL_GATEWAY_CONFIG_SORT_FIELDS = {
     "is_default",
     "name",
     "provider",
+    "status",
+}
+MODEL_GATEWAY_LOG_SORT_FIELDS = {
+    "ai_task_id",
+    "created_at",
+    "id",
+    "latency_ms",
+    "model",
+    "provider",
+    "purpose",
     "status",
 }
 BOOLEAN_FILTER_VALUES = {"false", "true"}
@@ -70,15 +81,6 @@ def list_model_gateway_configs_response(
         ensure_list_enum(sort_by, MODEL_GATEWAY_CONFIG_SORT_FIELDS, "sort_by")
 
     started_at = perf_counter()
-    read_store = model_gateway_write_store(current_store)
-    repository = model_gateway_query_repository(read_store)
-    if repository is not None:
-        configs = repository.list_model_gateway_configs()
-    else:
-        configs = sorted(
-            read_store.model_gateway_configs.values(),
-            key=lambda item: item["id"],
-        )
     filters = {
         "default_chat_model": default_chat_model,
         "default_embedding_model": default_embedding_model,
@@ -89,6 +91,66 @@ def list_model_gateway_configs_response(
         "status": status,
     }
     is_default_bool = None if is_default is None else is_default == "true"
+    repository = model_gateway_query_repository(current_store)
+    count_configs = getattr(repository, "count_model_gateway_configs", None)
+    list_configs_page = getattr(repository, "list_model_gateway_configs_page", None)
+    if (
+        repository is not None
+        and callable(count_configs)
+        and callable(list_configs_page)
+        and (page is not None or page_size is not None)
+    ):
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        resolved_sort_by = sort_by or "name"
+        total = count_configs(
+            default_chat_model=default_chat_model,
+            default_embedding_model=default_embedding_model,
+            embedding_connection_mode=embedding_connection_mode,
+            is_default=is_default_bool,
+            name=name,
+            provider=provider,
+            status=status,
+        )
+        configs = list_configs_page(
+            default_chat_model=default_chat_model,
+            default_embedding_model=default_embedding_model,
+            embedding_connection_mode=embedding_connection_mode,
+            is_default=is_default_bool,
+            limit=resolved_page_size,
+            name=name,
+            offset=(resolved_page - 1) * resolved_page_size,
+            provider=provider,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
+        payload = add_list_observability(
+            {
+                "items": [public_model_gateway_config(config) for config in configs],
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="model_gateway_configs",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+        return envelope(payload, trace_id)
+
+    read_store = model_gateway_write_store(current_store)
+    repository = model_gateway_query_repository(read_store)
+    if repository is not None:
+        configs = repository.list_model_gateway_configs()
+    else:
+        configs = sorted(
+            read_store.model_gateway_configs.values(),
+            key=lambda item: item["id"],
+        )
     items = [
         item
         for item in (public_model_gateway_config(config) for config in configs)
@@ -130,11 +192,63 @@ def list_model_gateway_logs_response(
     *,
     ai_task_id: str | None,
     current_store: Any,
+    page: int | None,
+    page_size: int | None,
     purpose: str | None,
+    sort_by: str | None,
+    sort_order: str,
     status: str | None,
     trace_id: str,
 ) -> dict[str, Any]:
+    ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
+    if sort_by is not None:
+        ensure_list_enum(sort_by, MODEL_GATEWAY_LOG_SORT_FIELDS, "sort_by")
+
+    started_at = perf_counter()
+    filters = {
+        "ai_task_id": ai_task_id,
+        "purpose": purpose,
+        "status": status,
+    }
+    resolved_sort_by = sort_by or "created_at"
     repository = model_gateway_query_repository(current_store)
+    count_logs = getattr(repository, "count_model_gateway_logs", None)
+    list_logs_page = getattr(repository, "list_model_gateway_logs_page", None)
+    if (
+        repository is not None
+        and callable(count_logs)
+        and callable(list_logs_page)
+        and (page is not None or page_size is not None)
+    ):
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        total = count_logs(ai_task_id=ai_task_id, purpose=purpose, status=status)
+        items = list_logs_page(
+            ai_task_id=ai_task_id,
+            limit=resolved_page_size,
+            offset=(resolved_page - 1) * resolved_page_size,
+            purpose=purpose,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
+        payload = add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="model_gateway_logs",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+        return envelope(payload, trace_id)
+
     if repository is not None:
         items = repository.list_model_gateway_logs(
             ai_task_id=ai_task_id,
@@ -150,4 +264,24 @@ def list_model_gateway_logs_response(
         if status:
             items = [item for item in items if item["status"] == status]
         items.sort(key=lambda item: item["created_at"], reverse=True)
-    return envelope({"items": items, "total": len(items)}, trace_id)
+    sorted_items = sort_list_items(
+        items,
+        allowed_fields=MODEL_GATEWAY_LOG_SORT_FIELDS,
+        default_sort_by="created_at",
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    if page is None and page_size is None:
+        return envelope({"items": sorted_items, "total": len(sorted_items)}, trace_id)
+    return paginated_list_payload(
+        sorted_items,
+        filters=filters,
+        list_name="model_gateway_logs",
+        observed=True,
+        page=page,
+        page_size=page_size,
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+        started_at=started_at,
+        trace_id=trace_id,
+    )

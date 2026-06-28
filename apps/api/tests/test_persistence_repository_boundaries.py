@@ -670,6 +670,7 @@ def test_postgres_ai_executor_task_page_read_delegates_to_plugin_repository(monk
             "count_ai_executor_tasks",
             {
                 "ai_task_id": "ai_task_001",
+                "product_scope_ids": None,
                 "runner_id": "runner_001",
                 "scheduled_job_run_id": "scheduled_run_001",
                 "status": "queued",
@@ -681,6 +682,7 @@ def test_postgres_ai_executor_task_page_read_delegates_to_plugin_repository(monk
                 "ai_task_id": "ai_task_001",
                 "limit": 10,
                 "offset": 20,
+                "product_scope_ids": None,
                 "runner_id": "runner_001",
                 "scheduled_job_run_id": "scheduled_run_001",
                 "sort_by": "created_at",
@@ -2886,6 +2888,7 @@ def test_postgres_assistant_chat_read_models_delegate_to_domain_repository(monke
         sort_order="desc",
         status="pending",
         user_id="user_admin",
+        validation_status="passed",
     ) == {"source": "list_assistant_action_draft_workbench_page"}
     assert repository.get_assistant_action_draft(draft_id="assistant_action_draft_001") == {
         "source": "get_assistant_action_draft"
@@ -2914,6 +2917,7 @@ def test_postgres_assistant_chat_read_models_delegate_to_domain_repository(monke
                 "sort_order": "desc",
                 "status": "pending",
                 "user_id": "user_admin",
+                "validation_status": "passed",
             },
         ),
         ("get_assistant_action_draft", {"draft_id": "assistant_action_draft_001"}),

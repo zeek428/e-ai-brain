@@ -20,7 +20,8 @@ ASSISTANT_ACTION_DRAFT_SORT_EXPRESSIONS = {
     "title": "d.title",
     "updated_at": "d.updated_at",
     "validation_issue_count": (
-        "jsonb_array_length(CASE WHEN jsonb_typeof(d.metadata_json #> '{preview,validation,issues}') = 'array' "
+        "jsonb_array_length(CASE WHEN jsonb_typeof("
+        "d.metadata_json #> '{preview,validation,issues}') = 'array' "
         "THEN d.metadata_json #> '{preview,validation,issues}' ELSE '[]'::jsonb END)"
     ),
     "validation_status": (
@@ -30,6 +31,32 @@ ASSISTANT_ACTION_DRAFT_SORT_EXPRESSIONS = {
         "CASE WHEN COALESCE(d.metadata_json ->> 'view_count', '') ~ '^[0-9]+$' "
         "THEN (d.metadata_json ->> 'view_count')::int ELSE 0 END"
     ),
+}
+ASSISTANT_ACTION_REFERENCE_CONFIG_SORT_EXPRESSIONS = {
+    "action_key": "lower(action_key)",
+    "created_at": "created_at",
+    "enabled": "enabled",
+    "enterprise_id": "lower(COALESCE(enterprise_id, ''))",
+    "sort_order": "sort_order",
+    "template_version": "lower(COALESCE(template_version, ''))",
+    "title": "lower(title)",
+    "updated_at": "updated_at",
+}
+ASSISTANT_ROLE_QUICK_TASK_CONFIG_SORT_EXPRESSIONS = {
+    "analytics_key": "lower(COALESCE(analytics_key, ''))",
+    "created_at": "created_at",
+    "enabled": "enabled",
+    "enterprise_id": "lower(COALESCE(enterprise_id, ''))",
+    "group_enabled": "group_enabled",
+    "group_key": "lower(group_key)",
+    "group_label": "lower(group_label)",
+    "group_sort_order": "group_sort_order",
+    "sort_order": "sort_order",
+    "target_draft_type": "lower(COALESCE(target_draft_type, ''))",
+    "task_key": "lower(task_key)",
+    "template_version": "lower(COALESCE(template_version, ''))",
+    "title": "lower(title)",
+    "updated_at": "updated_at",
 }
 
 
@@ -260,6 +287,7 @@ class AssistantChatReadRepository:
         sort_order: str,
         status: str | None,
         user_id: str,
+        validation_status: str | None,
     ) -> dict[str, Any]:
         where, params = self._assistant_action_draft_workbench_where(
             action=action,
@@ -268,6 +296,7 @@ class AssistantChatReadRepository:
             keyword=keyword,
             status=status,
             user_id=user_id,
+            validation_status=validation_status,
         )
         sort_expression = ASSISTANT_ACTION_DRAFT_SORT_EXPRESSIONS.get(
             sort_by,
@@ -312,16 +341,28 @@ class AssistantChatReadRepository:
                               ) > 0
                       )::int AS modified_count,
                       COUNT(*) FILTER (
-                        WHERE COALESCE(NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''), 'unknown') = 'blocked'
+                        WHERE COALESCE(
+                          NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''),
+                          'unknown'
+                        ) = 'blocked'
                       )::int AS validation_blocked_count,
                       COUNT(*) FILTER (
-                        WHERE COALESCE(NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''), 'unknown') = 'passed'
+                        WHERE COALESCE(
+                          NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''),
+                          'unknown'
+                        ) = 'passed'
                       )::int AS validation_passed_count,
                       COUNT(*) FILTER (
-                        WHERE COALESCE(NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''), 'unknown') = 'unknown'
+                        WHERE COALESCE(
+                          NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''),
+                          'unknown'
+                        ) = 'unknown'
                       )::int AS validation_unknown_count,
                       COUNT(*) FILTER (
-                        WHERE COALESCE(NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''), 'unknown') = 'warning'
+                        WHERE COALESCE(
+                          NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''),
+                          'unknown'
+                        ) = 'warning'
                       )::int AS validation_warning_count
                     FROM assistant_action_drafts d
                     LEFT JOIN assistant_action_runs r ON r.id = d.result_run_id
@@ -370,30 +411,96 @@ class AssistantChatReadRepository:
                     """
                 )
                 return [
-                    {
-                        "analytics_key": row[11],
-                        "created_at": row[20].isoformat() if row[20] else None,
-                        "created_by": row[18],
-                        "enabled": row[13],
-                        "enterprise_id": row[1],
-                        "group_enabled": row[5],
-                        "group_key": row[2],
-                        "group_label": row[3],
-                        "group_roles": list(row[4] or []),
-                        "group_sort_order": row[6],
-                        "id": row[0],
-                        "metadata_json": dict(row[17] or {}),
-                        "permissions": list(row[10] or []),
-                        "prompt": row[9],
-                        "rollout_json": dict(row[16] or {}),
-                        "sort_order": row[14],
-                        "target_draft_type": row[12],
-                        "task_key": row[7],
-                        "template_version": row[15],
-                        "title": row[8],
-                        "updated_at": row[21].isoformat() if row[21] else None,
-                        "updated_by": row[19],
-                    }
+                    self._assistant_role_quick_task_config_from_row(row)
+                    for row in cursor.fetchall()
+                ]
+
+    def count_assistant_role_quick_task_configs(
+        self,
+        *,
+        enterprise_id: str | None,
+        group_status: str | None,
+        keyword: str | None,
+        permission: str | None,
+        role: str | None,
+        status: str | None,
+        target_draft_type: str | None,
+        template_version: str | None,
+    ) -> int:
+        where, params = self._assistant_role_quick_task_config_where(
+            enterprise_id=enterprise_id,
+            group_status=group_status,
+            keyword=keyword,
+            permission=permission,
+            role=role,
+            status=status,
+            target_draft_type=target_draft_type,
+            template_version=template_version,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT COUNT(*)::int
+                    FROM assistant_role_quick_tasks
+                    {where}
+                    """,
+                    params,
+                )
+                row = cursor.fetchone()
+        return int(row[0] if row else 0)
+
+    def list_assistant_role_quick_task_configs_page(
+        self,
+        *,
+        enterprise_id: str | None,
+        group_status: str | None,
+        keyword: str | None,
+        limit: int,
+        offset: int,
+        permission: str | None,
+        role: str | None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+        target_draft_type: str | None,
+        template_version: str | None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._assistant_role_quick_task_config_where(
+            enterprise_id=enterprise_id,
+            group_status=group_status,
+            keyword=keyword,
+            permission=permission,
+            role=role,
+            status=status,
+            target_draft_type=target_draft_type,
+            template_version=template_version,
+        )
+        sort_expression = ASSISTANT_ROLE_QUICK_TASK_CONFIG_SORT_EXPRESSIONS.get(
+            sort_by,
+            ASSISTANT_ROLE_QUICK_TASK_CONFIG_SORT_EXPRESSIONS["group_sort_order"],
+        )
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, enterprise_id, group_key, group_label, group_roles, group_enabled,
+                           group_sort_order, task_key, title, prompt, permissions,
+                           analytics_key, target_draft_type, enabled, sort_order,
+                           template_version, rollout_json, metadata_json, created_by,
+                           updated_by, created_at, updated_at
+                    FROM assistant_role_quick_tasks
+                    {where}
+                    ORDER BY {sort_expression} {direction} NULLS LAST,
+                             group_sort_order ASC, lower(group_key) ASC,
+                             sort_order ASC, lower(task_key) ASC, id ASC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*params, limit, offset],
+                )
+                return [
+                    self._assistant_role_quick_task_config_from_row(row)
                     for row in cursor.fetchall()
                 ]
 
@@ -415,30 +522,7 @@ class AssistantChatReadRepository:
                 row = cursor.fetchone()
         if row is None:
             return None
-        return {
-            "analytics_key": row[11],
-            "created_at": row[20].isoformat() if row[20] else None,
-            "created_by": row[18],
-            "enabled": row[13],
-            "enterprise_id": row[1],
-            "group_enabled": row[5],
-            "group_key": row[2],
-            "group_label": row[3],
-            "group_roles": list(row[4] or []),
-            "group_sort_order": row[6],
-            "id": row[0],
-            "metadata_json": dict(row[17] or {}),
-            "permissions": list(row[10] or []),
-            "prompt": row[9],
-            "rollout_json": dict(row[16] or {}),
-            "sort_order": row[14],
-            "target_draft_type": row[12],
-            "task_key": row[7],
-            "template_version": row[15],
-            "title": row[8],
-            "updated_at": row[21].isoformat() if row[21] else None,
-            "updated_by": row[19],
-        }
+        return self._assistant_role_quick_task_config_from_row(row)
 
     def list_assistant_action_reference_configs(self) -> list[dict[str, Any]]:
         with self._connect() as connection:
@@ -452,6 +536,85 @@ class AssistantChatReadRepository:
                     FROM assistant_action_reference_configs
                     ORDER BY sort_order, action_key, COALESCE(template_version, ''), id
                     """
+                )
+                return [
+                    self._assistant_action_reference_config_from_row(row)
+                    for row in cursor.fetchall()
+                ]
+
+    def count_assistant_action_reference_configs(
+        self,
+        *,
+        enterprise_id: str | None,
+        keyword: str | None,
+        permission: str | None,
+        role: str | None,
+        status: str | None,
+        template_version: str | None,
+    ) -> int:
+        where, params = self._assistant_action_reference_config_where(
+            enterprise_id=enterprise_id,
+            keyword=keyword,
+            permission=permission,
+            role=role,
+            status=status,
+            template_version=template_version,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT COUNT(*)::int
+                    FROM assistant_action_reference_configs
+                    {where}
+                    """,
+                    params,
+                )
+                row = cursor.fetchone()
+        return int(row[0] if row else 0)
+
+    def list_assistant_action_reference_configs_page(
+        self,
+        *,
+        enterprise_id: str | None,
+        keyword: str | None,
+        limit: int,
+        offset: int,
+        permission: str | None,
+        role: str | None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+        template_version: str | None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._assistant_action_reference_config_where(
+            enterprise_id=enterprise_id,
+            keyword=keyword,
+            permission=permission,
+            role=role,
+            status=status,
+            template_version=template_version,
+        )
+        sort_expression = ASSISTANT_ACTION_REFERENCE_CONFIG_SORT_EXPRESSIONS.get(
+            sort_by,
+            ASSISTANT_ACTION_REFERENCE_CONFIG_SORT_EXPRESSIONS["sort_order"],
+        )
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, enterprise_id, action_key, title, summary, prompt, url,
+                           aliases, roles, permissions, enabled, sort_order,
+                           template_version, rollout_json, metadata_json, created_by,
+                           updated_by, created_at, updated_at
+                    FROM assistant_action_reference_configs
+                    {where}
+                    ORDER BY {sort_expression} {direction} NULLS LAST,
+                             lower(action_key) ASC, id ASC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*params, limit, offset],
                 )
                 return [
                     self._assistant_action_reference_config_from_row(row)
@@ -1139,6 +1302,7 @@ class AssistantChatReadRepository:
         keyword: str | None,
         status: str | None,
         user_id: str,
+        validation_status: str | None,
     ) -> tuple[str, list[Any]]:
         clauses = ["d.user_id = %s"]
         params: list[Any] = [user_id]
@@ -1148,6 +1312,14 @@ class AssistantChatReadRepository:
         if status is not None:
             clauses.append("d.status = %s")
             params.append(status)
+        if validation_status is not None:
+            clauses.append(
+                "COALESCE("
+                "NULLIF(d.metadata_json #>> '{preview,validation,status}', ''), "
+                "'unknown'"
+                ") = %s"
+            )
+            params.append(validation_status)
         if created_from is not None:
             clauses.append("d.created_at >= %s::timestamptz")
             params.append(created_from)
@@ -1167,11 +1339,166 @@ class AssistantChatReadRepository:
                   OR lower(COALESCE(d.source_message_id, '')) LIKE %s
                   OR lower(d.status) LIKE %s
                   OR lower(d.title) LIKE %s
-                  OR lower(COALESCE(NULLIF(d.metadata_json #>> '{preview,validation,status}', ''), 'unknown')) LIKE %s
+                  OR lower(COALESCE(
+                    NULLIF(d.metadata_json #>> '{preview,validation,status}', ''),
+                    'unknown'
+                  )) LIKE %s
                 )
                 """
             )
             params.extend([probe] * 8)
+        return f"WHERE {' AND '.join(clauses)}", params
+
+    def _assistant_action_reference_config_where(
+        self,
+        *,
+        enterprise_id: str | None,
+        keyword: str | None,
+        permission: str | None,
+        role: str | None,
+        status: str | None,
+        template_version: str | None,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status == "enabled":
+            clauses.append("enabled IS TRUE")
+        elif status == "disabled":
+            clauses.append("enabled IS FALSE")
+        for column, value in (
+            ("enterprise_id", enterprise_id),
+            ("template_version", template_version),
+        ):
+            normalized_value = str(value or "").strip().lower()
+            if normalized_value:
+                clauses.append(f"lower(COALESCE({column}, '')) LIKE %s")
+                params.append(f"%{normalized_value}%")
+        for column, value in (("roles", role), ("permissions", permission)):
+            normalized_value = str(value or "").strip().lower()
+            if normalized_value:
+                clauses.append(
+                    f"""
+                    EXISTS (
+                      SELECT 1
+                      FROM jsonb_array_elements_text(COALESCE({column}, '[]'::jsonb)) AS item
+                      WHERE lower(item) LIKE %s
+                    )
+                    """
+                )
+                params.append(f"%{normalized_value}%")
+        normalized_keyword = str(keyword or "").strip().lower()
+        if normalized_keyword:
+            probe = f"%{normalized_keyword}%"
+            clauses.append(
+                """
+                (
+                  lower(id) LIKE %s
+                  OR lower(COALESCE(enterprise_id, '')) LIKE %s
+                  OR lower(action_key) LIKE %s
+                  OR lower(title) LIKE %s
+                  OR lower(summary) LIKE %s
+                  OR lower(prompt) LIKE %s
+                  OR lower(url) LIKE %s
+                  OR lower(COALESCE(template_version, '')) LIKE %s
+                  OR EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements_text(COALESCE(aliases, '[]'::jsonb)) AS item
+                    WHERE lower(item) LIKE %s
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements_text(COALESCE(roles, '[]'::jsonb)) AS item
+                    WHERE lower(item) LIKE %s
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements_text(COALESCE(permissions, '[]'::jsonb)) AS item
+                    WHERE lower(item) LIKE %s
+                  )
+                )
+                """
+            )
+            params.extend([probe] * 11)
+        if not clauses:
+            return "", params
+        return f"WHERE {' AND '.join(clauses)}", params
+
+    def _assistant_role_quick_task_config_where(
+        self,
+        *,
+        enterprise_id: str | None,
+        group_status: str | None,
+        keyword: str | None,
+        permission: str | None,
+        role: str | None,
+        status: str | None,
+        target_draft_type: str | None,
+        template_version: str | None,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status == "enabled":
+            clauses.append("enabled IS TRUE")
+        elif status == "disabled":
+            clauses.append("enabled IS FALSE")
+        if group_status == "enabled":
+            clauses.append("group_enabled IS TRUE")
+        elif group_status == "disabled":
+            clauses.append("group_enabled IS FALSE")
+        for column, value in (
+            ("enterprise_id", enterprise_id),
+            ("target_draft_type", target_draft_type),
+            ("template_version", template_version),
+        ):
+            normalized_value = str(value or "").strip().lower()
+            if normalized_value:
+                clauses.append(f"lower(COALESCE({column}, '')) LIKE %s")
+                params.append(f"%{normalized_value}%")
+        for column, value in (("group_roles", role), ("permissions", permission)):
+            normalized_value = str(value or "").strip().lower()
+            if normalized_value:
+                clauses.append(
+                    f"""
+                    EXISTS (
+                      SELECT 1
+                      FROM jsonb_array_elements_text(COALESCE({column}, '[]'::jsonb)) AS item
+                      WHERE lower(item) LIKE %s
+                    )
+                    """
+                )
+                params.append(f"%{normalized_value}%")
+        normalized_keyword = str(keyword or "").strip().lower()
+        if normalized_keyword:
+            probe = f"%{normalized_keyword}%"
+            clauses.append(
+                """
+                (
+                  lower(id) LIKE %s
+                  OR lower(COALESCE(enterprise_id, '')) LIKE %s
+                  OR lower(group_key) LIKE %s
+                  OR lower(group_label) LIKE %s
+                  OR lower(task_key) LIKE %s
+                  OR lower(title) LIKE %s
+                  OR lower(prompt) LIKE %s
+                  OR lower(COALESCE(analytics_key, '')) LIKE %s
+                  OR lower(COALESCE(target_draft_type, '')) LIKE %s
+                  OR lower(COALESCE(template_version, '')) LIKE %s
+                  OR EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements_text(COALESCE(group_roles, '[]'::jsonb)) AS item
+                    WHERE lower(item) LIKE %s
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements_text(COALESCE(permissions, '[]'::jsonb)) AS item
+                    WHERE lower(item) LIKE %s
+                  )
+                )
+                """
+            )
+            params.extend([probe] * 12)
+        if not clauses:
+            return "", params
         return f"WHERE {' AND '.join(clauses)}", params
 
     def _assistant_action_draft_workbench_summary_from_row(self, row) -> dict[str, Any]:
@@ -1284,6 +1611,45 @@ class AssistantChatReadRepository:
             "created_at",
             "created_by",
             "enterprise_id",
+            "template_version",
+            "updated_at",
+            "updated_by",
+        ):
+            if config[optional_key] is None:
+                config.pop(optional_key)
+        return config
+
+    def _assistant_role_quick_task_config_from_row(self, row) -> dict[str, Any]:
+        config = {
+            "analytics_key": row[11],
+            "created_at": row[20].isoformat() if row[20] else None,
+            "created_by": row[18],
+            "enabled": row[13],
+            "enterprise_id": row[1],
+            "group_enabled": row[5],
+            "group_key": row[2],
+            "group_label": row[3],
+            "group_roles": list(row[4] or []),
+            "group_sort_order": row[6],
+            "id": row[0],
+            "metadata_json": dict(row[17] or {}),
+            "permissions": list(row[10] or []),
+            "prompt": row[9],
+            "rollout_json": dict(row[16] or {}),
+            "sort_order": row[14],
+            "target_draft_type": row[12],
+            "task_key": row[7],
+            "template_version": row[15],
+            "title": row[8],
+            "updated_at": row[21].isoformat() if row[21] else None,
+            "updated_by": row[19],
+        }
+        for optional_key in (
+            "analytics_key",
+            "created_at",
+            "created_by",
+            "enterprise_id",
+            "target_draft_type",
             "template_version",
             "updated_at",
             "updated_by",

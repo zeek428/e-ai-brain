@@ -56,6 +56,7 @@ def list_all_product_versions_response(
     page_size: int | None,
     product: str | None,
     product_id: str | None,
+    product_scope_ids: list[str] | None,
     request: Request,
     sort_by: str | None,
     sort_order: str,
@@ -72,6 +73,7 @@ def list_all_product_versions_response(
         "name": name,
         "product": product,
         "product_id": product_id,
+        "product_scope_ids": product_scope_ids,
         "status": status,
     }
     list_repository = product_version_list_query_repository(current_store)
@@ -114,6 +116,9 @@ def list_all_product_versions_response(
         ]
         if active_only:
             items = [item for item in items if item.get("status") == "active"]
+    if product_scope_ids is not None:
+        product_scope_set = set(product_scope_ids)
+        items = [item for item in items if str(item.get("product_id")) in product_scope_set]
     if product_id:
         items = [item for item in items if item.get("product_id") == product_id]
     if status:

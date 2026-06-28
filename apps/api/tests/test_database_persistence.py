@@ -265,12 +265,15 @@ class FakeSnapshotRepository:
         *,
         active_only: bool = False,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
     ) -> list[dict]:
+        product_scope_set = set(product_scope_ids) if product_scope_ids is not None else None
         systems = sorted(
             (
                 dict(item)
                 for item in self._product_config_collection("related_systems").values()
                 if product_id is None or item.get("product_id") == product_id
+                if product_scope_set is None or str(item.get("product_id")) in product_scope_set
             ),
             key=lambda item: (item.get("display_order", 0), item["code"]),
         )

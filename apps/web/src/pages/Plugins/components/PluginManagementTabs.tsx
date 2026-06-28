@@ -1,6 +1,7 @@
 import { Tabs } from 'antd';
 
 import type {
+  AiExecutorRunnerListQuery,
   AiExecutorRunnerRecord,
   PluginActionListQuery,
   PluginActionRecord,
@@ -69,7 +70,16 @@ type PluginManagementTabsProps = {
   onTrialAction: (action: PluginActionRecord) => void;
   pluginById: Map<string, PluginRecord>;
   plugins: PluginRecord[];
+  runnerListMeta: {
+    page: number;
+    pageSize: number;
+    performance?: {
+      duration_ms?: number;
+    };
+    total: number;
+  };
   runners: AiExecutorRunnerRecord[];
+  onRunnerListChange: (query: AiExecutorRunnerListQuery) => void;
   testingConnectionId?: string;
   testingRunnerId?: string;
 };
@@ -115,7 +125,9 @@ export function PluginManagementTabs({
   onTrialAction,
   pluginById,
   plugins,
+  runnerListMeta,
   runners,
+  onRunnerListChange,
   testingConnectionId,
   testingRunnerId,
 }: PluginManagementTabsProps) {
@@ -180,6 +192,7 @@ export function PluginManagementTabs({
           children: (
             <PluginRunnerTable
               loading={loading}
+              remote={runnerListMeta}
               runners={runners}
               testingRunnerId={testingRunnerId}
               onCopySetupCommand={onCopyRunnerSetupCommand}
@@ -188,6 +201,7 @@ export function PluginManagementTabs({
               onDownloadInstallPackage={onDownloadRunnerInstallPackage}
               onEditRunner={onEditRunner}
               onOpenLogs={onOpenRunnerLogs}
+              onRemoteChange={onRunnerListChange}
               onReload={onReload}
               onRotateToken={onRotateRunnerToken}
               onTestRunner={onTestRunner}

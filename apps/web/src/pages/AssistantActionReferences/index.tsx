@@ -23,14 +23,17 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import type { ManagementListQuery } from '../../components/ManagementListPage';
 import {
   createAssistantActionReferenceConfig,
   deleteAssistantActionReferenceConfig,
-  fetchAssistantActionReferenceConfigs,
+  fetchAssistantActionReferenceConfigList,
   patchAssistantActionReferenceConfig,
   setAssistantActionReferenceConfigStatus,
   updateAssistantActionReferenceConfigRollout,
   type AssistantActionReferenceConfig,
+  type AssistantActionReferenceConfigListQuery,
+  type RemoteListPerformance,
 } from '../../services/aiBrain';
 
 type ActionReferenceFormValues = {
@@ -55,12 +58,38 @@ type RolloutFormValues = {
 };
 
 type AssistantActionReferenceRow = AssistantActionReferenceConfig & {
-  roleText: string;
-  searchText: string;
   statusValue: 'disabled' | 'enabled';
 } & Record<string, unknown>;
 
 const { Text } = Typography;
+
+const actionReferenceSortFieldMap: Record<string, string> = {
+  statusValue: 'enabled',
+};
+
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildActionReferenceListQuery(
+  query: ManagementListQuery,
+): AssistantActionReferenceConfigListQuery {
+  const filters = query.filters;
+  return {
+    enterpriseId: normalizeFilterText(filters.enterprise_id),
+    keyword: normalizeFilterText(filters.keyword),
+    page: query.page,
+    pageSize: query.pageSize,
+    permission: normalizeFilterText(filters.permission),
+    role: normalizeFilterText(filters.role),
+    sortField: query.sortField
+      ? actionReferenceSortFieldMap[query.sortField] ?? query.sortField
+      : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(filters.status),
+    templateVersion: normalizeFilterText(filters.template_version),
+  };
+}
 
 function splitList(value?: string) {
   return (value ?? '')
@@ -117,12 +146,31 @@ function formValuesFromRecord(record: AssistantActionReferenceConfig): ActionRef
 
 export default function AssistantActionReferencesPage() {
   const [batchAction, setBatchAction] = useState<'disable' | 'enable'>();
-  const [configs, setConfigs] = useState<AssistantActionReferenceConfig[]>([]);
   const [configSubmitting, setConfigSubmitting] = useState(false);
   const [deletingConfigId, setDeletingConfigId] = useState<string>();
   const [editingConfig, setEditingConfig] = useState<AssistantActionReferenceConfig>();
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'sort_order',
+    sortOrder: 'ascend',
+  });
+  const [listState, setListState] = useState<{
+    page: number;
+    pageSize: number;
+    performance?: RemoteListPerformance;
+    rows: AssistantActionReferenceConfig[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
   const [mutatingConfigIds, setMutatingConfigIds] = useState<Set<string>>(() => new Set());
   const [rolloutTarget, setRolloutTarget] = useState<AssistantActionReferenceConfig>();
   const [rolloutSubmitting, setRolloutSubmitting] = useState(false);
@@ -131,21 +179,61 @@ export default function AssistantActionReferencesPage() {
   const [rolloutForm] = Form.useForm<RolloutFormValues>();
 
   const loadConfigs = useCallback(async () => {
-    setLoading(true);
+    setListState((current) => ({ ...current, status: 'loading' }));
     try {
-      setConfigs(await fetchAssistantActionReferenceConfigs());
+      const result = await fetchAssistantActionReferenceConfigList(
+        buildActionReferenceListQuery(listQuery),
+      );
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        performance: result.performance,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
     } catch (error) {
+      setListState((current) => ({
+        ...current,
+        rows: [],
+        status: 'error',
+      }));
       message.error(error instanceof Error ? error.message : '@ 能力配置加载失败');
-    } finally {
-      setLoading(false);
     }
-  }, []);
+  }, [listQuery]);
 
   useEffect(() => {
-    queueMicrotask(() => {
-      void loadConfigs();
-    });
-  }, [loadConfigs]);
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchAssistantActionReferenceConfigList(buildActionReferenceListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            performance: result.performance,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            rows: [],
+            status: 'error',
+          }));
+          message.error(error instanceof Error ? error.message : '@ 能力配置加载失败');
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
+
+  const configs = listState.rows;
 
   const enabledCount = useMemo(
     () => configs.filter((item) => item.enabled).length,
@@ -155,19 +243,6 @@ export default function AssistantActionReferencesPage() {
     () =>
       configs.map((record) => ({
         ...record,
-        roleText: record.roles.join(', '),
-        searchText: [
-          record.action_key,
-          ...record.aliases,
-          record.enterprise_id ?? '',
-          ...record.permissions,
-          record.prompt,
-          ...record.roles,
-          record.summary,
-          record.template_version ?? '',
-          record.title,
-          record.url,
-        ].join(' '),
         statusValue: record.enabled ? 'enabled' : 'disabled',
       })),
     [configs],
@@ -202,7 +277,7 @@ export default function AssistantActionReferencesPage() {
     configForm.resetFields();
     configForm.setFieldsValue({
       enabled: true,
-      sort_order: (configs.at(-1)?.sort_order ?? 0) + 10,
+      sort_order: (Math.max(0, ...configs.map((config) => config.sort_order)) || 0) + 10,
       url: '/assistant',
     });
     setIsConfigModalOpen(true);
@@ -236,14 +311,9 @@ export default function AssistantActionReferencesPage() {
       const updated = editingConfig
         ? await patchAssistantActionReferenceConfig(editingConfig.id, payload)
         : await createAssistantActionReferenceConfig(payload);
-      setConfigs((items) => {
-        const exists = items.some((item) => item.id === updated.id);
-        const nextItems = exists
-          ? items.map((item) => (item.id === updated.id ? updated : item))
-          : [...items, updated];
-        return nextItems.sort((left, right) => left.sort_order - right.sort_order);
-      });
+      void updated;
       closeConfigModal();
+      await loadConfigs();
       message.success(editingConfig ? '@ 能力已更新' : '@ 能力已创建');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '@ 能力保存失败');
@@ -256,7 +326,7 @@ export default function AssistantActionReferencesPage() {
     markMutating([record.id], true);
     try {
       const updated = await setAssistantActionReferenceConfigStatus(record.id, !record.enabled);
-      setConfigs((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      await loadConfigs();
       message.success(updated.enabled ? '@ 能力已启用' : '@ 能力已停用');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '@ 能力状态更新失败');
@@ -278,9 +348,9 @@ export default function AssistantActionReferencesPage() {
       const updatedRecords = await Promise.all(
         targets.map((record) => setAssistantActionReferenceConfigStatus(record.id, enabled)),
       );
-      const updatedById = new Map(updatedRecords.map((record) => [record.id, record]));
-      setConfigs((items) => items.map((item) => updatedById.get(item.id) ?? item));
+      void updatedRecords;
       setSelectedRowKeys([]);
+      await loadConfigs();
       message.success(enabled ? '所选 @ 能力已启用' : '所选 @ 能力已停用');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '批量更新失败');
@@ -313,9 +383,10 @@ export default function AssistantActionReferencesPage() {
         },
         template_version: values.template_version?.trim() || null,
       });
-      setConfigs((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      void updated;
       setRolloutTarget(undefined);
       rolloutForm.resetFields();
+      await loadConfigs();
       message.success('@ 能力灰度已更新');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '@ 能力灰度更新失败');
@@ -329,8 +400,8 @@ export default function AssistantActionReferencesPage() {
     markMutating([record.id], true);
     try {
       await deleteAssistantActionReferenceConfig(record.id);
-      setConfigs((items) => items.filter((item) => item.id !== record.id));
       setSelectedRowKeys((keys) => keys.filter((key) => key !== record.id));
+      await loadConfigs();
       message.success('@ 能力已删除');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '@ 能力删除失败');
@@ -344,6 +415,7 @@ export default function AssistantActionReferencesPage() {
     {
       dataIndex: 'title',
       fixed: 'left',
+      sorter: true,
       render: (_value, record) => (
         <Space orientation="vertical" size={2}>
           <Text strong>{record.title}</Text>
@@ -355,7 +427,8 @@ export default function AssistantActionReferencesPage() {
       width: 260,
     },
     {
-      dataIndex: 'enabled',
+      dataIndex: 'statusValue',
+      sorter: true,
       render: (_value, record) => (
         <StatusTag
           color={record.enabled ? 'green' : 'default'}
@@ -367,7 +440,7 @@ export default function AssistantActionReferencesPage() {
     },
     {
       dataIndex: 'sort_order',
-      sorter: (left, right) => left.sort_order - right.sort_order,
+      sorter: true,
       title: '排序',
       width: 90,
     },
@@ -391,12 +464,14 @@ export default function AssistantActionReferencesPage() {
     },
     {
       dataIndex: 'enterprise_id',
+      sorter: true,
       render: (_value, record) => record.enterprise_id || <Text type="secondary">全局</Text>,
       title: '企业',
       width: 120,
     },
     {
       dataIndex: 'template_version',
+      sorter: true,
       render: (_value, record) => record.template_version || <Text type="secondary">默认</Text>,
       title: '模板版本',
       width: 120,
@@ -474,13 +549,13 @@ export default function AssistantActionReferencesPage() {
         filters={[
           {
             label: '搜索',
-            name: 'searchText',
+            name: 'keyword',
             placeholder: '搜索标题、关键词、角色、权限或 URL',
             type: 'text',
           },
           {
             label: '状态',
-            name: 'statusValue',
+            name: 'status',
             options: [
               { label: '启用', value: 'enabled' },
               { label: '停用', value: 'disabled' },
@@ -489,15 +564,40 @@ export default function AssistantActionReferencesPage() {
           },
           {
             label: '角色',
-            name: 'roleText',
+            name: 'role',
             placeholder: '输入角色',
             type: 'text',
           },
+          {
+            label: '权限',
+            name: 'permission',
+            placeholder: '输入权限点',
+            type: 'text',
+          },
+          {
+            label: '企业',
+            name: 'enterprise_id',
+            placeholder: '输入企业 ID',
+            type: 'text',
+          },
+          {
+            label: '模板版本',
+            name: 'template_version',
+            placeholder: '输入模板版本',
+            type: 'text',
+          },
         ]}
-        loading={loading}
+        loading={listState.status === 'loading'}
         onPrimaryAction={openCreateConfig}
         onReload={() => void loadConfigs()}
         primaryAction="新增能力"
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          performance: listState.performance,
+          total: listState.total,
+        }}
         rowKey="id"
         rowSelection={{
           onChange: (keys) => setSelectedRowKeys(keys.map(String)),
@@ -509,8 +609,8 @@ export default function AssistantActionReferencesPage() {
         title="@ 能力配置"
         beforeTable={
           <Space style={{ marginBottom: 16, width: '100%' }} wrap>
-            <Tag color="blue">{configs.length} 项</Tag>
-            <Tag color="green">{enabledCount} 项启用</Tag>
+            <Tag color="blue">共 {listState.total} 项</Tag>
+            <Tag color="green">当前页 {enabledCount} 项启用</Tag>
             <Text type="secondary">已选择 {selectedConfigs.length} 项</Text>
           </Space>
         }

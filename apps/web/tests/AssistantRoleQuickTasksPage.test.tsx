@@ -24,9 +24,15 @@ describe('AssistantRoleQuickTasksPage', () => {
   });
 
   it('lists, toggles, and updates rollout for assistant quick task configs', async () => {
+    const listRequests: string[] = [];
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/assistant/role-quick-task-configs' && init?.method === 'GET') {
+      if (
+        typeof input === 'string'
+        && input.startsWith('/api/assistant/role-quick-task-configs?')
+        && init?.method === 'GET'
+      ) {
+        listRequests.push(input);
         return jsonResponse({
           data: {
             items: [
@@ -50,6 +56,16 @@ describe('AssistantRoleQuickTasksPage', () => {
                 title: '定时作业',
               },
             ],
+            page: 1,
+            page_size: 10,
+            performance: {
+              duration_ms: 13,
+              p95_target_ms: 400,
+              result_count: 1,
+              slow: false,
+              slow_threshold_ms: 400,
+              total: 1,
+            },
             total: 1,
           },
         });
@@ -109,7 +125,14 @@ describe('AssistantRoleQuickTasksPage', () => {
 
     render(<AssistantRoleQuickTasksPage />);
 
-    expect(await screen.findByText('AI助手快捷任务配置')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'AI助手快捷任务配置' })).toBeInTheDocument();
+    expect(listRequests.length).toBeGreaterThan(0);
+    expect(listRequests[0] ?? '').toContain('page=1');
+    expect(listRequests[0] ?? '').toContain('page_size=10');
+    expect(listRequests[0] ?? '').toContain('sort_by=group_sort_order');
+    expect(listRequests[0] ?? '').toContain('sort_order=asc');
+    expect(screen.getByText('查询 13ms')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存视图' })).toBeInTheDocument();
     expect(screen.getByText('管理员快捷任务')).toBeInTheDocument();
     expect(screen.getByText('定时作业')).toBeInTheDocument();
     expect(screen.getByText('enterprise_a')).toBeInTheDocument();

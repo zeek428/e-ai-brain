@@ -399,6 +399,72 @@ def test_ai_assistant_role_quick_task_configs_support_operations_rollout_and_aud
     assert "assistant_role_quick_task.rollout_changed" in audit_types
 
 
+def test_ai_assistant_role_quick_task_configs_support_remote_list_query():
+    app.state.store.reset()
+    headers = auth_headers()
+    for index, payload in enumerate(
+        [
+            {
+                "enabled": True,
+                "group_roles": ["admin"],
+                "permissions": ["system.scheduled_jobs.manage"],
+                "task_key": "enterprise_health",
+                "title": "企业运营巡检",
+            },
+            {
+                "enabled": False,
+                "group_roles": ["release_owner"],
+                "permissions": ["release.manage"],
+                "task_key": "release_risk",
+                "title": "发布风险确认",
+            },
+        ],
+        start=1,
+    ):
+        response = client.post(
+            "/api/assistant/role-quick-task-configs",
+            headers=headers,
+            json={
+                "analytics_key": f"remote.quick_task.{index}",
+                "enterprise_id": "enterprise_a",
+                "group_enabled": True,
+                "group_key": "remote_admin",
+                "group_label": "远程快捷任务",
+                "group_sort_order": 3,
+                "prompt": f"请处理{payload['title']}。",
+                "rollout_json": {},
+                "sort_order": index * 10,
+                "target_draft_type": "create_analysis_draft",
+                "template_version": "2026.07",
+                **payload,
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    response = client.get(
+        (
+            "/api/assistant/role-quick-task-configs"
+            "?keyword=发布&status=disabled&role=release_owner&page=1&page_size=1"
+            "&sort_by=sort_order&sort_order=desc"
+        ),
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["page"] == 1
+    assert data["page_size"] == 1
+    assert data["total"] == 1
+    assert data["items"][0]["title"] == "发布风险确认"
+    assert data["query"]["name"] == "assistant_role_quick_task_configs"
+    assert data["query"]["filters"] == {
+        "keyword": "发布",
+        "role": "release_owner",
+        "status": "disabled",
+    }
+    assert data["performance"]["result_count"] == 1
+
+
 def test_ai_assistant_role_quick_task_rollout_percentage_filters_candidates():
     app.state.store.reset()
     app.state.store.assistant_role_quick_tasks["assistant_role_quick_task_off"] = {
@@ -848,6 +914,55 @@ def test_ai_assistant_action_reference_config_apis_allow_permission_granted_non_
 
     assert response.status_code == 200, response.text
     assert response.json()["data"]["items"] == []
+
+
+def test_ai_assistant_action_reference_configs_support_remote_list_query():
+    app.state.store.reset()
+    headers = auth_headers()
+    for index, title in enumerate(["新建需求", "新建 Bug"], start=1):
+        response = client.post(
+            "/api/assistant/action-reference-configs",
+            headers=headers,
+            json={
+                "action_key": f"remote_action_{index}",
+                "aliases": ["远程列表", title],
+                "enabled": index == 1,
+                "enterprise_id": "enterprise_a",
+                "permissions": ["assistant.action_references.manage"],
+                "prompt": f"请生成{title}草案。",
+                "roles": ["admin"],
+                "rollout_json": {},
+                "sort_order": index * 10,
+                "summary": f"{title}远程列表验证。",
+                "template_version": "2026.07",
+                "title": title,
+                "url": "/assistant",
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    response = client.get(
+        (
+            "/api/assistant/action-reference-configs"
+            "?keyword=Bug&status=disabled&role=admin&page=1&page_size=1"
+            "&sort_by=sort_order&sort_order=desc"
+        ),
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["page"] == 1
+    assert data["page_size"] == 1
+    assert data["total"] == 1
+    assert data["items"][0]["title"] == "新建 Bug"
+    assert data["query"]["name"] == "assistant_action_reference_configs"
+    assert data["query"]["filters"] == {
+        "keyword": "Bug",
+        "role": "admin",
+        "status": "disabled",
+    }
+    assert data["performance"]["result_count"] == 1
 
 
 def test_ai_assistant_chat_returns_registered_intent_metadata(monkeypatch):

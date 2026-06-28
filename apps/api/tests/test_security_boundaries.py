@@ -150,6 +150,84 @@ def create_scoped_role_user(
     return auth_headers(username, "password123")
 
 
+def create_scoped_permission_user_for_scope(
+    headers: dict[str, str],
+    *,
+    access_level: str = "write",
+    permissions: list[str],
+    role_prefix: str,
+    scope_id: str,
+    scope_type: str,
+) -> dict[str, str]:
+    suffix = len(getattr(app.state.user_repository, "users", {})) + 1
+    role_code = f"{role_prefix}_{suffix}"
+    role = client.post(
+        "/api/system/roles",
+        json={"code": role_code, "name": role_prefix.replace("_", " ").title()},
+        headers=headers,
+    )
+    assert role.status_code == 200, role.text
+    granted = client.put(
+        f"/api/system/roles/{role.json()['data']['id']}/permissions",
+        json={"permission_codes": permissions},
+        headers=headers,
+    )
+    assert granted.status_code == 200, granted.text
+    username = f"{role_code}@example.com"
+    created = client.post(
+        "/api/users",
+        json={
+            "display_name": role_prefix.replace("_", " ").title(),
+            "password": "password123",
+            "roles": ["viewer"],
+            "status": "active",
+            "username": username,
+        },
+        headers=headers,
+    )
+    assert created.status_code == 200, created.text
+    user = created.json()["data"]
+    assigned = client.put(
+        f"/api/users/{user['id']}/roles",
+        json={"role_codes": [role_code]},
+        headers=headers,
+    )
+    assert assigned.status_code == 200, assigned.text
+    scoped = client.put(
+        f"/api/users/{user['id']}/scopes",
+        json={
+            "scopes": [
+                {
+                    "access_level": access_level,
+                    "scope_id": scope_id,
+                    "scope_type": scope_type,
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert scoped.status_code == 200, scoped.text
+    return auth_headers(username, "password123")
+
+
+def create_scoped_permission_user(
+    headers: dict[str, str],
+    *,
+    access_level: str = "write",
+    permissions: list[str],
+    product_id: str,
+    role_prefix: str,
+) -> dict[str, str]:
+    return create_scoped_permission_user_for_scope(
+        headers,
+        access_level=access_level,
+        permissions=permissions,
+        role_prefix=role_prefix,
+        scope_id=product_id,
+        scope_type="product",
+    )
+
+
 def create_manual_scheduled_job(
     headers: dict[str, str],
     *,
@@ -187,7 +265,22 @@ def add_scheduled_job_run(job: dict, *, run_id: str) -> None:
         "resolved_plugin_snapshot": {},
         "resolved_prompt_snapshot": {},
         "resolved_skill_snapshots": [],
-        "result_summary": {},
+        "result_summary": {
+            "execution_nodes": {
+                "result_action": {
+                    "feedback": {
+                        "records_imported": 1,
+                        "write_preview": {
+                            "records_imported": 1,
+                            "write_target": "scheduled_job_result",
+                        },
+                    },
+                    "records_imported": 1,
+                    "status": "succeeded",
+                    "write_target": "scheduled_job_result",
+                }
+            }
+        },
         "scheduled_for": "2026-06-27T10:00:00+00:00",
         "scheduled_job_id": job["id"],
         "source_run_id": None,
@@ -196,6 +289,28 @@ def add_scheduled_job_run(job: dict, *, run_id: str) -> None:
         "tool_policy_snapshot": {},
         "trigger_type": "manual",
         "updated_at": "2026-06-27T10:01:00+00:00",
+    }
+
+
+def add_plugin_invocation_log(job: dict, *, log_id: str, run_id: str) -> None:
+    app.state.store.plugin_invocation_logs[log_id] = {
+        "action_id": None,
+        "connection_id": None,
+        "created_at": "2026-06-27T10:00:30+00:00",
+        "created_by": "user_admin",
+        "error_code": None,
+        "error_message": None,
+        "id": log_id,
+        "latency_ms": 42,
+        "plugin_id": None,
+        "request_summary": {},
+        "response_summary": {},
+        "scheduled_job_id": job["id"],
+        "scheduled_job_run_id": run_id,
+        "status": "succeeded",
+        "trace_id": f"trace_{log_id}",
+        "trigger_type": "scheduled_job",
+        "updated_at": "2026-06-27T10:00:31+00:00",
     }
 
 
@@ -252,6 +367,101 @@ def create_bug(headers: dict[str, str], *, product_id: str, title: str) -> dict:
     return response.json()["data"]
 
 
+def create_product_git_repository(
+    headers: dict[str, str],
+    *,
+    product_id: str,
+    name: str,
+    project_path: str,
+) -> dict:
+    response = client.post(
+        f"/api/products/{product_id}/git-repositories",
+        json={
+            "git_provider": "github",
+            "name": name,
+            "project_path": project_path,
+            "remote_url": f"https://github.com/{project_path}.git",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def create_product_version(
+    headers: dict[str, str],
+    *,
+    code: str,
+    name: str,
+    product_id: str,
+) -> dict:
+    response = client.post(
+        f"/api/products/{product_id}/versions",
+        json={"code": code, "name": name},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def create_product_version_branch_config(
+    headers: dict[str, str],
+    *,
+    repository_id: str,
+    version_id: str,
+    working_branch: str,
+) -> dict:
+    response = client.post(
+        f"/api/product-versions/{version_id}/branch-configs",
+        json={
+            "repository_id": repository_id,
+            "working_branch": working_branch,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def create_related_system(
+    headers: dict[str, str],
+    *,
+    code: str,
+    name: str,
+    product_id: str,
+) -> dict:
+    response = client.post(
+        "/api/system/related-systems",
+        json={
+            "code": code,
+            "name": name,
+            "product_id": product_id,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def create_product_module(
+    headers: dict[str, str],
+    *,
+    code: str,
+    name: str,
+    product_id: str,
+) -> dict:
+    response = client.post(
+        f"/api/products/{product_id}/modules",
+        json={
+            "code": code,
+            "name": name,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
 def add_code_inspection_report(*, report_id: str, product_id: str, title: str) -> None:
     app.state.store.code_inspection_reports[report_id] = {
         "branch": "main",
@@ -299,6 +509,63 @@ def add_ai_executor_task(job: dict, *, run_id: str, task_id: str) -> None:
         "updated_at": "2026-06-27T10:00:00+00:00",
         "workspace_root": "/workspace",
     }
+
+
+def test_system_admin_pages_use_permission_points_instead_of_admin_role():
+    admin_headers = auth_headers()
+    suffix = len(getattr(app.state.store, "products", {})) + 1
+    product = client.post(
+        "/api/products",
+        json={"code": f"system-permission-scope-{suffix}", "name": "系统权限点验证产品"},
+        headers=admin_headers,
+    )
+    assert product.status_code == 200, product.text
+    permission_headers = create_scoped_permission_user(
+        admin_headers,
+        permissions=["audit.read", "system.model_gateway.manage", "system.users.manage"],
+        product_id=product.json()["data"]["id"],
+        role_prefix="system_permission",
+    )
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+
+    users_response = client.get(
+        "/api/users?page=1&page_size=10",
+        headers=permission_headers,
+    )
+    assert users_response.status_code == 200, users_response.text
+
+    model_gateway_list = client.get(
+        "/api/system/model-gateway-configs?page=1&page_size=10",
+        headers=permission_headers,
+    )
+    assert model_gateway_list.status_code == 200, model_gateway_list.text
+    model_gateway_create = client.post(
+        "/api/system/model-gateway-configs",
+        json={
+            "base_url": "http://127.0.0.1:8080/v1",
+            "default_chat_model": "gpt-5.5",
+            "embedding_connection_mode": "disabled",
+            "name": "权限点模型网关",
+            "provider": "openai_compatible",
+            "status": "active",
+        },
+        headers=permission_headers,
+    )
+    assert model_gateway_create.status_code == 200, model_gateway_create.text
+
+    audit_response = client.get(
+        "/api/audit/events?page=1&page_size=10",
+        headers=permission_headers,
+    )
+    assert audit_response.status_code == 200, audit_response.text
+
+    assert client.get("/api/users", headers=reviewer_headers).status_code == 403
+    reviewer_model_gateway = client.get(
+        "/api/system/model-gateway-configs",
+        headers=reviewer_headers,
+    )
+    assert reviewer_model_gateway.status_code == 403
+    assert client.get("/api/audit/events", headers=reviewer_headers).status_code == 403
 
 
 def test_gitlab_review_api_surface_has_no_writeback_routes():
@@ -471,6 +738,915 @@ def test_product_scoped_management_lists_filter_business_records():
     assert "code_inspection_scope_b" not in report_ids
 
 
+def test_p0_management_routes_have_permission_and_scope_contract_matrix():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+    openapi_paths = client.get("/openapi.json").json()["paths"]
+
+    product_a = create_product(
+        admin_headers,
+        code="p0-route-scope-a",
+        name="P0 Route Scope A",
+    )
+    product_b = create_product(
+        admin_headers,
+        code="p0-route-scope-b",
+        name="P0 Route Scope B",
+    )
+    requirement_a = create_requirement(
+        admin_headers,
+        product_id=product_a["id"],
+        title="P0 A 产品需求",
+    )
+    requirement_b = create_requirement(
+        admin_headers,
+        product_id=product_b["id"],
+        title="P0 B 产品需求",
+    )
+    bug_a = create_bug(admin_headers, product_id=product_a["id"], title="P0 A 产品 Bug")
+    bug_b = create_bug(admin_headers, product_id=product_b["id"], title="P0 B 产品 Bug")
+    add_code_inspection_report(
+        report_id="p0_code_inspection_scope_a",
+        product_id=product_a["id"],
+        title="P0 A 产品巡检",
+    )
+    add_code_inspection_report(
+        report_id="p0_code_inspection_scope_b",
+        product_id=product_b["id"],
+        title="P0 B 产品巡检",
+    )
+
+    knowledge_space_a = "p0_knowledge_space_scope_a"
+    knowledge_space_b = "p0_knowledge_space_scope_b"
+    app.state.store.knowledge_spaces[knowledge_space_a] = {
+        "code": "p0-knowledge-a",
+        "created_at": "2026-06-27T10:00:00+00:00",
+        "description": "A 知识空间",
+        "id": knowledge_space_a,
+        "name": "P0 A 知识空间",
+        "owner_user_id": "user_admin",
+        "status": "active",
+        "updated_at": "2026-06-27T10:00:00+00:00",
+    }
+    app.state.store.knowledge_spaces[knowledge_space_b] = {
+        "code": "p0-knowledge-b",
+        "created_at": "2026-06-27T10:00:00+00:00",
+        "description": "B 知识空间",
+        "id": knowledge_space_b,
+        "name": "P0 B 知识空间",
+        "owner_user_id": "user_admin",
+        "status": "active",
+        "updated_at": "2026-06-27T10:00:00+00:00",
+    }
+    app.state.store.knowledge_documents["p0_knowledge_document_scope_a"] = {
+        "content": "A 知识空间文档",
+        "created_at": "2026-06-27T10:00:00+00:00",
+        "doc_type": "manual",
+        "folder_id": None,
+        "id": "p0_knowledge_document_scope_a",
+        "index_error": None,
+        "index_status": "indexed",
+        "knowledge_space_id": knowledge_space_a,
+        "permission_roles": [],
+        "permission_scope": {"knowledge_space_id": knowledge_space_a},
+        "product_id": product_a["id"],
+        "source_type": "manual",
+        "title": "P0 A 知识文档",
+        "updated_at": "2026-06-27T10:00:00+00:00",
+    }
+    app.state.store.knowledge_documents["p0_knowledge_document_scope_b"] = {
+        "content": "B 知识空间文档",
+        "created_at": "2026-06-27T10:00:00+00:00",
+        "doc_type": "manual",
+        "folder_id": None,
+        "id": "p0_knowledge_document_scope_b",
+        "index_error": None,
+        "index_status": "indexed",
+        "knowledge_space_id": knowledge_space_b,
+        "permission_roles": [],
+        "permission_scope": {"knowledge_space_id": knowledge_space_b},
+        "product_id": product_b["id"],
+        "source_type": "manual",
+        "title": "P0 B 知识文档",
+        "updated_at": "2026-06-27T10:00:00+00:00",
+    }
+
+    job_a = create_manual_scheduled_job(
+        admin_headers,
+        name="P0 A 产品作业",
+        product_id=product_a["id"],
+    )
+    job_b = create_manual_scheduled_job(
+        admin_headers,
+        name="P0 B 产品作业",
+        product_id=product_b["id"],
+    )
+    add_scheduled_job_run(job_a, run_id="p0_scheduled_run_scope_a")
+    add_scheduled_job_run(job_b, run_id="p0_scheduled_run_scope_b")
+    add_plugin_invocation_log(
+        job_a,
+        log_id="p0_plugin_invocation_scope_a",
+        run_id="p0_scheduled_run_scope_a",
+    )
+    add_plugin_invocation_log(
+        job_b,
+        log_id="p0_plugin_invocation_scope_b",
+        run_id="p0_scheduled_run_scope_b",
+    )
+    add_ai_executor_task(
+        job_a,
+        run_id="p0_scheduled_run_scope_a",
+        task_id="p0_ai_executor_task_scope_a",
+    )
+    add_ai_executor_task(
+        job_b,
+        run_id="p0_scheduled_run_scope_b",
+        task_id="p0_ai_executor_task_scope_b",
+    )
+
+    delivery_headers = create_scoped_role_user(
+        admin_headers,
+        product_id=product_a["id"],
+        role_code="product_owner",
+    )
+    knowledge_headers = create_scoped_permission_user_for_scope(
+        admin_headers,
+        access_level="read",
+        permissions=["knowledge.read"],
+        role_prefix="p0_knowledge_reader",
+        scope_id=knowledge_space_a,
+        scope_type="knowledge_space",
+    )
+    scheduled_headers = create_scoped_test_owner(admin_headers, product_id=product_a["id"])
+    plugin_headers = create_scoped_permission_user(
+        admin_headers,
+        access_level="read",
+        permissions=["system.plugins.manage"],
+        product_id=product_a["id"],
+        role_prefix="p0_plugin_operator",
+    )
+
+    permission_contracts = [
+        ("requirements", "/api/requirements", "requirement.read"),
+        ("bugs", "/api/bugs", "bug.read"),
+        ("knowledge_documents", "/api/knowledge/documents", "knowledge.read"),
+        ("code_inspections", "/api/governance/code-inspections", "code_inspection.read"),
+        ("scheduled_jobs", "/api/system/scheduled-jobs", "system.scheduled_jobs.manage"),
+        ("plugins", "/api/system/plugins", "system.plugins.manage"),
+        ("plugin_connections", "/api/system/plugin-connections", "system.plugins.manage"),
+        ("plugin_actions", "/api/system/plugin-actions", "system.plugins.manage"),
+        (
+            "plugin_invocation_logs",
+            "/api/system/plugin-invocation-logs",
+            "system.plugins.manage",
+        ),
+        ("ai_executor_runners", "/api/system/ai-executor-runners", "system.plugins.manage"),
+        ("ai_executor_tasks", "/api/system/ai-executor-tasks", "system.plugins.manage"),
+    ]
+    for domain, path, permission in permission_contracts:
+        assert path in openapi_paths, domain
+        response = client.get(f"{path}?page=1&page_size=1", headers=reviewer_headers)
+        assert response.status_code == 403, f"{domain} should require {permission}"
+        assert response.json()["detail"]["code"] == "FORBIDDEN"
+
+    scope_contracts = [
+        (
+            "requirements",
+            "/api/requirements?page=1&page_size=20",
+            delivery_headers,
+            requirement_a["id"],
+            requirement_b["id"],
+            "product",
+        ),
+        (
+            "bugs",
+            "/api/bugs?page=1&page_size=20",
+            delivery_headers,
+            bug_a["id"],
+            bug_b["id"],
+            "product",
+        ),
+        (
+            "code_inspections",
+            "/api/governance/code-inspections?page=1&page_size=20",
+            delivery_headers,
+            "p0_code_inspection_scope_a",
+            "p0_code_inspection_scope_b",
+            "product",
+        ),
+        (
+            "knowledge_documents",
+            "/api/knowledge/documents?page=1&page_size=20",
+            knowledge_headers,
+            "p0_knowledge_document_scope_a",
+            "p0_knowledge_document_scope_b",
+            "knowledge_space",
+        ),
+        (
+            "scheduled_jobs",
+            "/api/system/scheduled-jobs?page=1&page_size=20",
+            scheduled_headers,
+            job_a["id"],
+            job_b["id"],
+            "product",
+        ),
+        (
+            "plugin_invocation_logs",
+            "/api/system/plugin-invocation-logs?page=1&page_size=20",
+            plugin_headers,
+            "p0_plugin_invocation_scope_a",
+            "p0_plugin_invocation_scope_b",
+            "product",
+        ),
+        (
+            "ai_executor_tasks",
+            "/api/system/ai-executor-tasks?page=1&page_size=20",
+            plugin_headers,
+            "p0_ai_executor_task_scope_a",
+            "p0_ai_executor_task_scope_b",
+            "product",
+        ),
+    ]
+    for domain, path, headers, visible_id, hidden_id, scope_kind in scope_contracts:
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200, f"{domain} {scope_kind}: {response.text}"
+        item_ids = {item["id"] for item in response.json()["data"]["items"]}
+        assert visible_id in item_ids, f"{domain} should expose scope-visible record"
+        assert hidden_id not in item_ids, f"{domain} should hide out-of-scope record"
+
+
+def test_product_git_repository_routes_use_permissions_and_product_scope():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product_a = create_product(
+        admin_headers,
+        code="repo-scope-contract-a",
+        name="Repo Scope Contract A",
+    )
+    product_b = create_product(
+        admin_headers,
+        code="repo-scope-contract-b",
+        name="Repo Scope Contract B",
+    )
+    repo_a = create_product_git_repository(
+        admin_headers,
+        product_id=product_a["id"],
+        name="A 产品代码库",
+        project_path="scope-contract/a",
+    )
+    repo_b = create_product_git_repository(
+        admin_headers,
+        product_id=product_b["id"],
+        name="B 产品代码库",
+        project_path="scope-contract/b",
+    )
+
+    suffix = len(getattr(app.state.user_repository, "users", {})) + 1
+    role_code = f"product_repo_operator_{suffix}"
+    role = client.post(
+        "/api/system/roles",
+        json={"code": role_code, "name": "Product Repo Operator"},
+        headers=admin_headers,
+    )
+    assert role.status_code == 200, role.text
+    granted = client.put(
+        f"/api/system/roles/{role.json()['data']['id']}/permissions",
+        json={"permission_codes": ["product.read", "product.manage"]},
+        headers=admin_headers,
+    )
+    assert granted.status_code == 200, granted.text
+    username = f"{role_code}@example.com"
+    created_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Product Repo Operator",
+            "password": "password123",
+            "roles": ["viewer"],
+            "status": "active",
+            "username": username,
+        },
+        headers=admin_headers,
+    )
+    assert created_user.status_code == 200, created_user.text
+    user_id = created_user.json()["data"]["id"]
+    assigned = client.put(
+        f"/api/users/{user_id}/roles",
+        json={"role_codes": [role_code]},
+        headers=admin_headers,
+    )
+    assert assigned.status_code == 200, assigned.text
+    scoped = client.put(
+        f"/api/users/{user_id}/scopes",
+        json={
+            "scopes": [
+                {
+                    "access_level": "write",
+                    "scope_id": product_a["id"],
+                    "scope_type": "product",
+                }
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert scoped.status_code == 200, scoped.text
+    scoped_headers = auth_headers(username, "password123")
+
+    visible_repositories = client.get(
+        f"/api/products/{product_a['id']}/git-repositories",
+        headers=scoped_headers,
+    )
+    assert visible_repositories.status_code == 200, visible_repositories.text
+    assert [item["id"] for item in visible_repositories.json()["data"]["items"]] == [
+        repo_a["id"]
+    ]
+
+    hidden_repositories = client.get(
+        f"/api/products/{product_b['id']}/git-repositories",
+        headers=scoped_headers,
+    )
+    assert hidden_repositories.status_code == 404
+    assert hidden_repositories.json()["detail"]["code"] == "NOT_FOUND"
+
+    created_visible_repository = client.post(
+        f"/api/products/{product_a['id']}/git-repositories",
+        json={
+            "git_provider": "github",
+            "name": "A 产品新增代码库",
+            "project_path": "scope-contract/a-extra",
+            "remote_url": "https://github.com/scope-contract/a-extra.git",
+        },
+        headers=scoped_headers,
+    )
+    assert created_visible_repository.status_code == 200, created_visible_repository.text
+
+    hidden_create = client.post(
+        f"/api/products/{product_b['id']}/git-repositories",
+        json={
+            "git_provider": "github",
+            "name": "B 产品新增代码库",
+            "project_path": "scope-contract/b-extra",
+            "remote_url": "https://github.com/scope-contract/b-extra.git",
+        },
+        headers=scoped_headers,
+    )
+    assert hidden_create.status_code == 404
+    assert hidden_create.json()["detail"]["code"] == "NOT_FOUND"
+
+    visible_patch = client.patch(
+        f"/api/product-git-repositories/{repo_a['id']}",
+        json={"default_branch": "develop"},
+        headers=scoped_headers,
+    )
+    assert visible_patch.status_code == 200, visible_patch.text
+    assert visible_patch.json()["data"]["default_branch"] == "develop"
+
+    hidden_patch = client.patch(
+        f"/api/product-git-repositories/{repo_b['id']}",
+        json={"default_branch": "develop"},
+        headers=scoped_headers,
+    )
+    assert hidden_patch.status_code == 404
+    assert hidden_patch.json()["detail"]["code"] == "NOT_FOUND"
+
+    hidden_delete = client.delete(
+        f"/api/product-git-repositories/{repo_b['id']}",
+        headers=scoped_headers,
+    )
+    assert hidden_delete.status_code == 404
+    assert hidden_delete.json()["detail"]["code"] == "NOT_FOUND"
+
+
+def test_related_system_routes_use_permissions_and_product_scope():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product_a = create_product(
+        admin_headers,
+        code="system-scope-contract-a",
+        name="System Scope Contract A",
+    )
+    product_b = create_product(
+        admin_headers,
+        code="system-scope-contract-b",
+        name="System Scope Contract B",
+    )
+    system_a = create_related_system(
+        admin_headers,
+        code="scope-system-a",
+        name="A 产品相关系统",
+        product_id=product_a["id"],
+    )
+    system_b = create_related_system(
+        admin_headers,
+        code="scope-system-b",
+        name="B 产品相关系统",
+        product_id=product_b["id"],
+    )
+
+    suffix = len(getattr(app.state.user_repository, "users", {})) + 1
+    role_code = f"related_system_operator_{suffix}"
+    role = client.post(
+        "/api/system/roles",
+        json={"code": role_code, "name": "Related System Operator"},
+        headers=admin_headers,
+    )
+    assert role.status_code == 200, role.text
+    granted = client.put(
+        f"/api/system/roles/{role.json()['data']['id']}/permissions",
+        json={"permission_codes": ["product.read", "product.manage"]},
+        headers=admin_headers,
+    )
+    assert granted.status_code == 200, granted.text
+    username = f"{role_code}@example.com"
+    created_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Related System Operator",
+            "password": "password123",
+            "roles": ["viewer"],
+            "status": "active",
+            "username": username,
+        },
+        headers=admin_headers,
+    )
+    assert created_user.status_code == 200, created_user.text
+    user_id = created_user.json()["data"]["id"]
+    assigned = client.put(
+        f"/api/users/{user_id}/roles",
+        json={"role_codes": [role_code]},
+        headers=admin_headers,
+    )
+    assert assigned.status_code == 200, assigned.text
+    scoped = client.put(
+        f"/api/users/{user_id}/scopes",
+        json={
+            "scopes": [
+                {
+                    "access_level": "write",
+                    "scope_id": product_a["id"],
+                    "scope_type": "product",
+                }
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert scoped.status_code == 200, scoped.text
+    scoped_headers = auth_headers(username, "password123")
+
+    visible_systems = client.get(
+        f"/api/system/related-systems?product_id={product_a['id']}",
+        headers=scoped_headers,
+    )
+    assert visible_systems.status_code == 200, visible_systems.text
+    assert [item["id"] for item in visible_systems.json()["data"]["items"]] == [system_a["id"]]
+
+    hidden_product_systems = client.get(
+        f"/api/system/related-systems?product_id={product_b['id']}",
+        headers=scoped_headers,
+    )
+    assert hidden_product_systems.status_code == 404
+    assert hidden_product_systems.json()["detail"]["code"] == "NOT_FOUND"
+
+    visible_all_systems = client.get("/api/system/related-systems", headers=scoped_headers)
+    assert visible_all_systems.status_code == 200, visible_all_systems.text
+    visible_ids = {item["id"] for item in visible_all_systems.json()["data"]["items"]}
+    assert system_a["id"] in visible_ids
+    assert system_b["id"] not in visible_ids
+
+    created_visible_system = client.post(
+        "/api/system/related-systems",
+        json={
+            "code": "scope-system-a-extra",
+            "name": "A 产品新增相关系统",
+            "product_id": product_a["id"],
+        },
+        headers=scoped_headers,
+    )
+    assert created_visible_system.status_code == 200, created_visible_system.text
+
+    hidden_create = client.post(
+        "/api/system/related-systems",
+        json={
+            "code": "scope-system-b-extra",
+            "name": "B 产品新增相关系统",
+            "product_id": product_b["id"],
+        },
+        headers=scoped_headers,
+    )
+    assert hidden_create.status_code == 404
+    assert hidden_create.json()["detail"]["code"] == "NOT_FOUND"
+
+    visible_patch = client.patch(
+        f"/api/system/related-systems/{system_a['id']}",
+        json={"owner_team": "A 产品团队"},
+        headers=scoped_headers,
+    )
+    assert visible_patch.status_code == 200, visible_patch.text
+    assert visible_patch.json()["data"]["owner_team"] == "A 产品团队"
+
+    hidden_rebind = client.patch(
+        f"/api/system/related-systems/{system_a['id']}",
+        json={"product_id": product_b["id"]},
+        headers=scoped_headers,
+    )
+    assert hidden_rebind.status_code == 404
+    assert hidden_rebind.json()["detail"]["code"] == "NOT_FOUND"
+
+    hidden_patch = client.patch(
+        f"/api/system/related-systems/{system_b['id']}",
+        json={"owner_team": "B 产品团队"},
+        headers=scoped_headers,
+    )
+    assert hidden_patch.status_code == 404
+    assert hidden_patch.json()["detail"]["code"] == "NOT_FOUND"
+
+    hidden_delete = client.delete(
+        f"/api/system/related-systems/{system_b['id']}",
+        headers=scoped_headers,
+    )
+    assert hidden_delete.status_code == 404
+    assert hidden_delete.json()["detail"]["code"] == "NOT_FOUND"
+
+
+def test_product_module_routes_use_permissions_and_product_scope():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product_a = create_product(
+        admin_headers,
+        code="module-scope-contract-a",
+        name="Module Scope Contract A",
+    )
+    product_b = create_product(
+        admin_headers,
+        code="module-scope-contract-b",
+        name="Module Scope Contract B",
+    )
+    module_a = create_product_module(
+        admin_headers,
+        code="scope-module-a",
+        name="A 产品模块",
+        product_id=product_a["id"],
+    )
+    module_b = create_product_module(
+        admin_headers,
+        code="scope-module-b",
+        name="B 产品模块",
+        product_id=product_b["id"],
+    )
+
+    suffix = len(getattr(app.state.user_repository, "users", {})) + 1
+    role_code = f"product_module_operator_{suffix}"
+    role = client.post(
+        "/api/system/roles",
+        json={"code": role_code, "name": "Product Module Operator"},
+        headers=admin_headers,
+    )
+    assert role.status_code == 200, role.text
+    granted = client.put(
+        f"/api/system/roles/{role.json()['data']['id']}/permissions",
+        json={"permission_codes": ["product.read", "product.manage"]},
+        headers=admin_headers,
+    )
+    assert granted.status_code == 200, granted.text
+    username = f"{role_code}@example.com"
+    created_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Product Module Operator",
+            "password": "password123",
+            "roles": ["viewer"],
+            "status": "active",
+            "username": username,
+        },
+        headers=admin_headers,
+    )
+    assert created_user.status_code == 200, created_user.text
+    user_id = created_user.json()["data"]["id"]
+    assigned = client.put(
+        f"/api/users/{user_id}/roles",
+        json={"role_codes": [role_code]},
+        headers=admin_headers,
+    )
+    assert assigned.status_code == 200, assigned.text
+    scoped = client.put(
+        f"/api/users/{user_id}/scopes",
+        json={
+            "scopes": [
+                {
+                    "access_level": "write",
+                    "scope_id": product_a["id"],
+                    "scope_type": "product",
+                }
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert scoped.status_code == 200, scoped.text
+    scoped_headers = auth_headers(username, "password123")
+
+    visible_modules = client.get(
+        f"/api/products/{product_a['id']}/modules",
+        headers=scoped_headers,
+    )
+    assert visible_modules.status_code == 200, visible_modules.text
+    assert [item["id"] for item in visible_modules.json()["data"]["items"]] == [
+        module_a["id"]
+    ]
+
+    hidden_modules = client.get(
+        f"/api/products/{product_b['id']}/modules",
+        headers=scoped_headers,
+    )
+    assert hidden_modules.status_code == 404
+    assert hidden_modules.json()["detail"]["code"] == "NOT_FOUND"
+
+    created_visible_module = client.post(
+        f"/api/products/{product_a['id']}/modules",
+        json={"code": "scope-module-a-extra", "name": "A 产品新增模块"},
+        headers=scoped_headers,
+    )
+    assert created_visible_module.status_code == 200, created_visible_module.text
+
+    hidden_create = client.post(
+        f"/api/products/{product_b['id']}/modules",
+        json={"code": "scope-module-b-extra", "name": "B 产品新增模块"},
+        headers=scoped_headers,
+    )
+    assert hidden_create.status_code == 404
+    assert hidden_create.json()["detail"]["code"] == "NOT_FOUND"
+
+    visible_patch = client.patch(
+        f"/api/product-modules/{module_a['id']}",
+        json={"owner_team": "A 产品团队"},
+        headers=scoped_headers,
+    )
+    assert visible_patch.status_code == 200, visible_patch.text
+    assert visible_patch.json()["data"]["owner_team"] == "A 产品团队"
+
+    hidden_patch = client.patch(
+        f"/api/product-modules/{module_b['id']}",
+        json={"owner_team": "B 产品团队"},
+        headers=scoped_headers,
+    )
+    assert hidden_patch.status_code == 404
+    assert hidden_patch.json()["detail"]["code"] == "NOT_FOUND"
+
+    hidden_delete = client.delete(
+        f"/api/product-modules/{module_b['id']}",
+        headers=scoped_headers,
+    )
+    assert hidden_delete.status_code == 404
+    assert hidden_delete.json()["detail"]["code"] == "NOT_FOUND"
+
+
+def test_product_and_version_routes_use_permissions_and_product_scope():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product_a = create_product(
+        admin_headers,
+        code="product-version-scope-a",
+        name="Product Version Scope A",
+    )
+    product_b = create_product(
+        admin_headers,
+        code="product-version-scope-b",
+        name="Product Version Scope B",
+    )
+    version_a = create_product_version(
+        admin_headers,
+        code="version-scope-a",
+        name="A 产品迭代",
+        product_id=product_a["id"],
+    )
+    version_b = create_product_version(
+        admin_headers,
+        code="version-scope-b",
+        name="B 产品迭代",
+        product_id=product_b["id"],
+    )
+    scoped_headers = create_scoped_permission_user(
+        admin_headers,
+        permissions=["product.read", "product.manage"],
+        product_id=product_a["id"],
+        role_prefix="product_version_operator",
+    )
+
+    scoped_products = client.get(
+        "/api/products?page=1&page_size=20",
+        headers=scoped_headers,
+    )
+    assert scoped_products.status_code == 200, scoped_products.text
+    assert [item["id"] for item in scoped_products.json()["data"]["items"]] == [
+        product_a["id"]
+    ]
+
+    visible_product = client.get(f"/api/products/{product_a['id']}", headers=scoped_headers)
+    assert visible_product.status_code == 200, visible_product.text
+    hidden_product = client.get(f"/api/products/{product_b['id']}", headers=scoped_headers)
+    assert hidden_product.status_code == 404
+    assert hidden_product.json()["detail"]["code"] == "NOT_FOUND"
+
+    visible_product_patch = client.patch(
+        f"/api/products/{product_a['id']}",
+        json={"owner_team": "A 产品团队"},
+        headers=scoped_headers,
+    )
+    assert visible_product_patch.status_code == 200, visible_product_patch.text
+    hidden_product_patch = client.patch(
+        f"/api/products/{product_b['id']}",
+        json={"owner_team": "B 产品团队"},
+        headers=scoped_headers,
+    )
+    assert hidden_product_patch.status_code == 404
+    assert hidden_product_patch.json()["detail"]["code"] == "NOT_FOUND"
+
+    scoped_product_create = client.post(
+        "/api/products",
+        json={"code": "product-version-scope-c", "name": "Scoped User Product Create"},
+        headers=scoped_headers,
+    )
+    assert scoped_product_create.status_code == 403
+    assert scoped_product_create.json()["detail"]["code"] == "FORBIDDEN"
+
+    scoped_versions = client.get(
+        "/api/product-versions?page=1&page_size=20",
+        headers=scoped_headers,
+    )
+    assert scoped_versions.status_code == 200, scoped_versions.text
+    assert [item["id"] for item in scoped_versions.json()["data"]["items"]] == [
+        version_a["id"]
+    ]
+
+    visible_versions = client.get(
+        f"/api/products/{product_a['id']}/versions",
+        headers=scoped_headers,
+    )
+    assert visible_versions.status_code == 200, visible_versions.text
+    assert [item["id"] for item in visible_versions.json()["data"]["items"]] == [
+        version_a["id"]
+    ]
+    hidden_versions = client.get(
+        f"/api/products/{product_b['id']}/versions",
+        headers=scoped_headers,
+    )
+    assert hidden_versions.status_code == 404
+    assert hidden_versions.json()["detail"]["code"] == "NOT_FOUND"
+
+    visible_create = client.post(
+        f"/api/products/{product_a['id']}/versions",
+        json={"code": "version-scope-a-extra", "name": "A 产品新增迭代"},
+        headers=scoped_headers,
+    )
+    assert visible_create.status_code == 200, visible_create.text
+    hidden_create = client.post(
+        f"/api/products/{product_b['id']}/versions",
+        json={"code": "version-scope-b-extra", "name": "B 产品新增迭代"},
+        headers=scoped_headers,
+    )
+    assert hidden_create.status_code == 404
+    assert hidden_create.json()["detail"]["code"] == "NOT_FOUND"
+
+    visible_version_patch = client.patch(
+        f"/api/product-versions/{version_a['id']}",
+        json={"description": "A 产品迭代说明"},
+        headers=scoped_headers,
+    )
+    assert visible_version_patch.status_code == 200, visible_version_patch.text
+    hidden_version_patch = client.patch(
+        f"/api/product-versions/{version_b['id']}",
+        json={"description": "B 产品迭代说明"},
+        headers=scoped_headers,
+    )
+    assert hidden_version_patch.status_code == 404
+    assert hidden_version_patch.json()["detail"]["code"] == "NOT_FOUND"
+
+    hidden_advance = client.post(
+        f"/api/product-versions/{version_b['id']}/advance-status",
+        json={"preview_only": True, "target_status": "active"},
+        headers=scoped_headers,
+    )
+    assert hidden_advance.status_code == 404
+    assert hidden_advance.json()["detail"]["code"] == "NOT_FOUND"
+
+    hidden_delete = client.delete(
+        f"/api/product-versions/{version_b['id']}",
+        headers=scoped_headers,
+    )
+    assert hidden_delete.status_code == 404
+    assert hidden_delete.json()["detail"]["code"] == "NOT_FOUND"
+
+
+def test_product_version_branch_routes_use_permissions_and_product_scope():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product_a = create_product(
+        admin_headers,
+        code="branch-scope-contract-a",
+        name="Branch Scope Contract A",
+    )
+    product_b = create_product(
+        admin_headers,
+        code="branch-scope-contract-b",
+        name="Branch Scope Contract B",
+    )
+    version_a = create_product_version(
+        admin_headers,
+        code="branch-version-a",
+        name="A 产品分支迭代",
+        product_id=product_a["id"],
+    )
+    version_b = create_product_version(
+        admin_headers,
+        code="branch-version-b",
+        name="B 产品分支迭代",
+        product_id=product_b["id"],
+    )
+    repo_a = create_product_git_repository(
+        admin_headers,
+        product_id=product_a["id"],
+        name="A 产品代码库",
+        project_path="branch-scope/a",
+    )
+    repo_b = create_product_git_repository(
+        admin_headers,
+        product_id=product_b["id"],
+        name="B 产品代码库",
+        project_path="branch-scope/b",
+    )
+    branch_b = create_product_version_branch_config(
+        admin_headers,
+        repository_id=repo_b["id"],
+        version_id=version_b["id"],
+        working_branch="feature/b-scope",
+    )
+    scoped_headers = create_scoped_permission_user(
+        admin_headers,
+        permissions=["product.read", "product.manage"],
+        product_id=product_a["id"],
+        role_prefix="product_branch_operator",
+    )
+
+    visible_branch_list = client.get(
+        f"/api/product-versions/{version_a['id']}/branch-configs",
+        headers=scoped_headers,
+    )
+    assert visible_branch_list.status_code == 200, visible_branch_list.text
+    assert visible_branch_list.json()["data"]["items"] == []
+
+    hidden_branch_list = client.get(
+        f"/api/product-versions/{version_b['id']}/branch-configs",
+        headers=scoped_headers,
+    )
+    assert hidden_branch_list.status_code == 404
+    assert hidden_branch_list.json()["detail"]["code"] == "NOT_FOUND"
+
+    branch_a = client.post(
+        f"/api/product-versions/{version_a['id']}/branch-configs",
+        json={"repository_id": repo_a["id"], "working_branch": "feature/a-scope"},
+        headers=scoped_headers,
+    )
+    assert branch_a.status_code == 200, branch_a.text
+
+    hidden_repository = client.post(
+        f"/api/product-versions/{version_a['id']}/branch-configs",
+        json={"repository_id": repo_b["id"], "working_branch": "feature/leak"},
+        headers=scoped_headers,
+    )
+    assert hidden_repository.status_code == 404
+    assert hidden_repository.json()["detail"]["code"] == "NOT_FOUND"
+
+    hidden_version = client.post(
+        f"/api/product-versions/{version_b['id']}/branch-configs",
+        json={"repository_id": repo_b["id"], "working_branch": "feature/hidden"},
+        headers=scoped_headers,
+    )
+    assert hidden_version.status_code == 404
+    assert hidden_version.json()["detail"]["code"] == "NOT_FOUND"
+
+    visible_patch = client.patch(
+        f"/api/product-version-branch-configs/{branch_a.json()['data']['id']}",
+        json={"branch_status": "active"},
+        headers=scoped_headers,
+    )
+    assert visible_patch.status_code == 200, visible_patch.text
+    assert visible_patch.json()["data"]["branch_status"] == "active"
+
+    hidden_patch = client.patch(
+        f"/api/product-version-branch-configs/{branch_b['id']}",
+        json={"branch_status": "active"},
+        headers=scoped_headers,
+    )
+    assert hidden_patch.status_code == 404
+    assert hidden_patch.json()["detail"]["code"] == "NOT_FOUND"
+
+    hidden_delete = client.delete(
+        f"/api/product-version-branch-configs/{branch_b['id']}",
+        headers=scoped_headers,
+    )
+    assert hidden_delete.status_code == 404
+    assert hidden_delete.json()["detail"]["code"] == "NOT_FOUND"
+
+
 def test_role_boundaries_for_product_audit_and_gitlab_preview(monkeypatch):
     install_real_gitlab_api_stub(monkeypatch)
     app.state.store.reset()
@@ -535,6 +1711,7 @@ def test_operational_config_lists_require_permissions_and_scheduled_jobs_filter_
         "/api/system/plugin-connections",
         "/api/system/plugin-actions",
         "/api/system/plugin-invocation-logs",
+        "/api/system/result-write-records",
         "/api/system/ai-executor-runners",
     ]
     for path in forbidden_paths:
@@ -564,6 +1741,16 @@ def test_operational_config_lists_require_permissions_and_scheduled_jobs_filter_
     )
     add_scheduled_job_run(job_a, run_id="scheduled_run_scope_a")
     add_failed_scheduled_job_run(job_b, run_id="scheduled_run_scope_b")
+    add_plugin_invocation_log(
+        job_a,
+        log_id="plugin_invocation_scope_a",
+        run_id="scheduled_run_scope_a",
+    )
+    add_plugin_invocation_log(
+        job_b,
+        log_id="plugin_invocation_scope_b",
+        run_id="scheduled_run_scope_b",
+    )
     add_ai_executor_task(
         job_a,
         run_id="scheduled_run_scope_a",
@@ -673,6 +1860,42 @@ def test_operational_config_lists_require_permissions_and_scheduled_jobs_filter_
     task_ids = {item["id"] for item in scoped_tasks.json()["data"]["items"]}
     assert "ai_executor_task_scope_a" in task_ids
     assert "ai_executor_task_scope_b" not in task_ids
+
+    scoped_invocation_logs = client.get(
+        "/api/system/plugin-invocation-logs?page=1&page_size=20",
+        headers=scoped_plugin_headers,
+    )
+    assert scoped_invocation_logs.status_code == 200, scoped_invocation_logs.text
+    invocation_log_ids = {
+        item["id"] for item in scoped_invocation_logs.json()["data"]["items"]
+    }
+    assert "plugin_invocation_scope_a" in invocation_log_ids
+    assert "plugin_invocation_scope_b" not in invocation_log_ids
+
+    hidden_invocation_logs = client.get(
+        f"/api/system/plugin-invocation-logs?scheduled_job_id={job_b['id']}",
+        headers=scoped_plugin_headers,
+    )
+    assert hidden_invocation_logs.status_code == 200, hidden_invocation_logs.text
+    assert hidden_invocation_logs.json()["data"]["items"] == []
+
+    scoped_result_write_records = client.get(
+        "/api/system/result-write-records?write_target=scheduled_job_result",
+        headers=scoped_plugin_headers,
+    )
+    assert scoped_result_write_records.status_code == 200, scoped_result_write_records.text
+    result_write_record_ids = {
+        item["id"] for item in scoped_result_write_records.json()["data"]["items"]
+    }
+    assert "result_write_record_scheduled_run_scope_a" in result_write_record_ids
+    assert "result_write_record_scheduled_run_scope_b" not in result_write_record_ids
+
+    hidden_result_write_records = client.get(
+        "/api/system/result-write-records?scheduled_job_run_id=scheduled_run_scope_b",
+        headers=scoped_plugin_headers,
+    )
+    assert hidden_result_write_records.status_code == 200, hidden_result_write_records.text
+    assert hidden_result_write_records.json()["data"]["items"] == []
 
     hidden_task_logs = client.get(
         "/api/system/ai-executor-tasks/ai_executor_task_scope_b/logs",

@@ -19,6 +19,7 @@ from app.services.assistant_action_drafts import (
     mark_assistant_action_draft_modified_response,
     mark_assistant_action_draft_viewed_response,
     patch_assistant_action_draft_response,
+    retry_assistant_action_draft_response,
 )
 from app.services.assistant_chat import (
     ASSISTANT_ACCESS_ROLES,
@@ -85,6 +86,10 @@ class AssistantActionDraftRequest(BaseModel):
 
 
 class AssistantActionDraftCancelRequest(BaseModel):
+    reason: str | None = None
+
+
+class AssistantActionDraftRetryRequest(BaseModel):
     reason: str | None = None
 
 
@@ -694,6 +699,23 @@ def cancel_assistant_action_draft(
     return envelope(result, get_trace_id(request))
 
 
+@router.post("/action-drafts/{draft_id}/retry")
+def retry_assistant_action_draft(
+    draft_id: str,
+    request: Request,
+    payload: AssistantActionDraftRetryRequest | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    result = retry_assistant_action_draft_response(
+        current_store=store(request),
+        draft_id=draft_id,
+        reason=payload.reason if payload else None,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
 @router.post("/action-drafts/{draft_id}/modification")
 def mark_assistant_action_draft_modified(
     draft_id: str,
@@ -855,11 +877,36 @@ def list_assistant_role_quick_tasks(
 @router.get("/role-quick-task-configs")
 def list_assistant_role_quick_task_configs(
     request: Request,
+    enterprise_id: str | None = Query(default=None),
+    group_status: str | None = Query(default=None),
+    keyword: str | None = Query(default=None),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    permission: str | None = Query(default=None),
+    role: str | None = Query(default=None),
+    sort_by: str | None = Query(default=None),
+    sort_order: str = Query(default="asc"),
+    status: str | None = Query(default=None),
+    target_draft_type: str | None = Query(default=None),
+    template_version: str | None = Query(default=None),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"admin"})
     payload = list_assistant_role_quick_task_configs_response(
         current_store=store(request),
+        enterprise_id=enterprise_id,
+        group_status=group_status,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+        permission=permission,
+        role=role,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        started_at=_request_started_at(request),
+        status=status,
+        target_draft_type=target_draft_type,
+        template_version=template_version,
     )
     return envelope(payload, get_trace_id(request))
 
@@ -951,11 +998,32 @@ def delete_assistant_role_quick_task_config(
 @router.get("/action-reference-configs")
 def list_assistant_action_reference_configs(
     request: Request,
+    enterprise_id: str | None = Query(default=None),
+    keyword: str | None = Query(default=None),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    permission: str | None = Query(default=None),
+    role: str | None = Query(default=None),
+    sort_by: str | None = Query(default=None),
+    sort_order: str = Query(default="asc"),
+    status: str | None = Query(default=None),
+    template_version: str | None = Query(default=None),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_permissions(user, {ASSISTANT_ACTION_REFERENCES_MANAGE_PERMISSION})
     payload = list_assistant_action_reference_configs_response(
         current_store=store(request),
+        enterprise_id=enterprise_id,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+        permission=permission,
+        role=role,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        started_at=_request_started_at(request),
+        status=status,
+        template_version=template_version,
     )
     return envelope(payload, get_trace_id(request))
 

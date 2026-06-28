@@ -53,7 +53,11 @@ describe('ModelGatewayPage', () => {
           },
         });
       }
-      if (input === '/api/model-gateway/logs' && init?.method === 'GET') {
+      if (String(input).startsWith('/api/model-gateway/logs?') && init?.method === 'GET') {
+        expect(String(input)).toContain('page=1');
+        expect(String(input)).toContain('page_size=5');
+        expect(String(input)).toContain('sort_by=created_at');
+        expect(String(input)).toContain('sort_order=desc');
         return jsonResponse({
           data: {
             items: [
@@ -71,6 +75,16 @@ describe('ModelGatewayPage', () => {
                 tokens: { completion_tokens: 8, prompt_tokens: 13, total_tokens: 21 },
               },
             ],
+            page: 1,
+            page_size: 5,
+            performance: {
+              duration_ms: 9,
+              p95_target_ms: 400,
+              result_count: 1,
+              slow: false,
+              slow_threshold_ms: 400,
+              total: 1,
+            },
             total: 1,
           },
         });
@@ -175,6 +189,7 @@ describe('ModelGatewayPage', () => {
 
     expect(await screen.findByText('默认模型网关')).toBeInTheDocument();
     expect(await screen.findByText('model_gateway_log_001')).toBeInTheDocument();
+    expect(screen.getByText('查询 9ms')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '调用诊断' })).toHaveAttribute(
       'href',
       '/governance/execution-traces?source_id=model_gateway_log_001&source_type=model_gateway_log',

@@ -103,6 +103,7 @@ class ProductConfigRepository(Protocol):
         code: str | None = None,
         name: str | None = None,
         owner_team: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
     ) -> int: ...
 
@@ -113,6 +114,7 @@ class ProductConfigRepository(Protocol):
         code: str | None = None,
         name: str | None = None,
         owner_team: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
@@ -156,6 +158,7 @@ class ProductConfigRepository(Protocol):
         name: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
     ) -> int: ...
 
@@ -167,6 +170,7 @@ class ProductConfigRepository(Protocol):
         name: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
@@ -193,6 +197,7 @@ class ProductConfigRepository(Protocol):
         *,
         active_only: bool = False,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]: ...
 
     def save_product_config_record(
@@ -766,6 +771,34 @@ class ModelGatewayRepository(Protocol):
 
     def list_model_gateway_configs(self) -> list[dict[str, Any]]: ...
 
+    def count_model_gateway_configs(
+        self,
+        *,
+        default_chat_model: str | None = None,
+        default_embedding_model: str | None = None,
+        embedding_connection_mode: str | None = None,
+        is_default: bool | None = None,
+        name: str | None = None,
+        provider: str | None = None,
+        status: str | None = None,
+    ) -> int: ...
+
+    def list_model_gateway_configs_page(
+        self,
+        *,
+        default_chat_model: str | None = None,
+        default_embedding_model: str | None = None,
+        embedding_connection_mode: str | None = None,
+        is_default: bool | None = None,
+        limit: int,
+        name: str | None = None,
+        offset: int,
+        provider: str | None = None,
+        sort_by: str = "name",
+        sort_order: str = "asc",
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def get_model_gateway_config(self, config_id: str) -> dict[str, Any] | None: ...
 
     def list_model_gateway_logs(
@@ -773,6 +806,26 @@ class ModelGatewayRepository(Protocol):
         *,
         ai_task_id: str | None = None,
         purpose: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def count_model_gateway_logs(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        purpose: str | None = None,
+        status: str | None = None,
+    ) -> int: ...
+
+    def list_model_gateway_logs_page(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        limit: int,
+        offset: int,
+        purpose: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
         status: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
@@ -833,6 +886,22 @@ class AssistantChatRepository(Protocol):
     ) -> list[dict[str, Any]] | None: ...
 
     def list_assistant_action_drafts(self, *, user_id: str) -> list[dict[str, Any]]: ...
+
+    def list_assistant_action_draft_workbench_page(
+        self,
+        *,
+        action: str | None,
+        created_from: str | None,
+        created_to: str | None,
+        keyword: str | None,
+        limit: int,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+        user_id: str,
+        validation_status: str | None,
+    ) -> dict[str, Any]: ...
 
     def get_assistant_action_draft(self, *, draft_id: str) -> dict[str, Any] | None: ...
 

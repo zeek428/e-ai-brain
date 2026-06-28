@@ -1193,6 +1193,7 @@ export type RequirementFullChainSummary = {
   bugs: number;
   codeInspectionReports: number;
   codeReviewReports: number;
+  executionTraces: number;
   gitSnapshots: number;
   jenkinsReleases: number;
   knowledgeDeposits: number;
@@ -1212,6 +1213,7 @@ export type RequirementFullChainRecord = {
   branchConfigs: ProductVersionBranchConfigRecord[];
   codeInspectionReports: CodeInspectionReportRecord[];
   codeReviewReports: CodeReviewReportRecord[];
+  executionTraces: ExecutionTraceListItem[];
   gitSnapshots: GitLabMergeRequestSnapshot[];
   iterationVersion?: {
     code?: string;
@@ -1383,6 +1385,35 @@ export type RoleListQuery = RemoteListQuery & {
   status?: string;
 };
 
+export type MenuListQuery = RemoteListQuery & {
+  menu?: string;
+  menuType?: string;
+  parent?: string;
+  path?: string;
+  permission?: string;
+  status?: string;
+};
+
+export type AssistantActionReferenceConfigListQuery = RemoteListQuery & {
+  enterpriseId?: string;
+  keyword?: string;
+  permission?: string;
+  role?: string;
+  status?: string;
+  templateVersion?: string;
+};
+
+export type AssistantRoleQuickTaskConfigListQuery = RemoteListQuery & {
+  enterpriseId?: string;
+  groupStatus?: string;
+  keyword?: string;
+  permission?: string;
+  role?: string;
+  status?: string;
+  targetDraftType?: string;
+  templateVersion?: string;
+};
+
 export type ModelGatewayConfigListQuery = RemoteListQuery & {
   defaultChatModel?: string;
   defaultEmbeddingModel?: string;
@@ -1393,7 +1424,7 @@ export type ModelGatewayConfigListQuery = RemoteListQuery & {
   status?: string;
 };
 
-export type ModelGatewayLogQuery = {
+export type ModelGatewayLogQuery = RemoteListQuery & {
   aiTaskId?: string;
   purpose?: string;
   status?: string;
@@ -1471,6 +1502,10 @@ export type TaskCenterTaskListResult = {
   performance?: RemoteListPerformance;
   rows: TaskCenterTaskRecord[];
   total: number;
+};
+
+export type TaskCenterReviewListQuery = RemoteListQuery & {
+  aiTaskId?: string;
 };
 
 export type TaskBatchCancelPayload = {
@@ -1554,9 +1589,11 @@ export type TaskCenterTaskDetailRecord = TaskCenterTaskRecord & {
 export type TaskCenterReviewRecord = {
   aiTaskId: string;
   contentSummary: string;
+  createdAt?: string;
   id: string;
   stage: string;
   status: string;
+  updatedAt?: string;
   version: number;
 };
 
@@ -2754,6 +2791,7 @@ type RequirementFullChainResponse = {
   branch_configs?: ProductVersionBranchConfigListItem[];
   code_inspection_reports?: CodeInspectionReportRecord[];
   code_review_reports?: CodeReviewReportResponse[];
+  execution_traces?: ExecutionTraceListItem[];
   git_snapshots?: GitLabMergeRequestSnapshotResponse[];
   iteration_version?: ProductVersionListItem | null;
   jenkins_releases?: FlexibleListItem[];
@@ -2769,6 +2807,7 @@ type RequirementFullChainResponse = {
     bugs: number;
     code_inspection_reports: number;
     code_review_reports: number;
+    execution_traces: number;
     git_snapshots: number;
     jenkins_releases: number;
     knowledge_deposits: number;
@@ -3030,6 +3069,7 @@ type PendingReviewListItem = {
   id: string;
   stage?: string;
   status?: string;
+  updated_at?: string;
   version: number;
 };
 
@@ -3393,6 +3433,34 @@ export async function fetchAssistantActionReferenceConfigs(): Promise<AssistantA
   return response.items;
 }
 
+export async function fetchAssistantActionReferenceConfigList(
+  query: AssistantActionReferenceConfigListQuery = {},
+): Promise<RemoteListResult<AssistantActionReferenceConfig>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'role', query.role);
+  appendQueryParam(params, 'permission', query.permission);
+  appendQueryParam(params, 'enterprise_id', query.enterpriseId);
+  appendQueryParam(params, 'template_version', query.templateVersion);
+  appendRemoteListParams(params, query);
+  const response = await apiRequest<ListResponse<AssistantActionReferenceConfig>>(
+    `/api/assistant/action-reference-configs?${params.toString()}`,
+    {
+      method: 'GET',
+      token,
+    },
+  );
+  return {
+    page: response.page ?? query.page ?? 1,
+    pageSize: response.page_size ?? query.pageSize ?? 10,
+    performance: response.performance,
+    rows: response.items,
+    total: response.total,
+  };
+}
+
 export async function createAssistantActionReferenceConfig(
   payload: Omit<AssistantActionReferenceConfig, 'created_at' | 'created_by' | 'id' | 'updated_at' | 'updated_by'> & {
     id?: string;
@@ -3486,6 +3554,36 @@ export async function fetchAssistantRoleQuickTaskConfigs(): Promise<AssistantRol
     },
   );
   return response.items;
+}
+
+export async function fetchAssistantRoleQuickTaskConfigList(
+  query: AssistantRoleQuickTaskConfigListQuery = {},
+): Promise<RemoteListResult<AssistantRoleQuickTaskConfig>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'group_status', query.groupStatus);
+  appendQueryParam(params, 'role', query.role);
+  appendQueryParam(params, 'permission', query.permission);
+  appendQueryParam(params, 'enterprise_id', query.enterpriseId);
+  appendQueryParam(params, 'target_draft_type', query.targetDraftType);
+  appendQueryParam(params, 'template_version', query.templateVersion);
+  appendRemoteListParams(params, query);
+  const response = await apiRequest<ListResponse<AssistantRoleQuickTaskConfig>>(
+    `/api/assistant/role-quick-task-configs?${params.toString()}`,
+    {
+      method: 'GET',
+      token,
+    },
+  );
+  return {
+    page: response.page ?? query.page ?? 1,
+    pageSize: response.page_size ?? query.pageSize ?? 10,
+    performance: response.performance,
+    rows: response.items,
+    total: response.total,
+  };
 }
 
 export async function setAssistantRoleQuickTaskConfigStatus(
@@ -3606,6 +3704,21 @@ export async function cancelAssistantActionDraft(
   const token = requireAccessToken();
   return apiRequest<AssistantActionDraftRecord>(
     `/api/assistant/action-drafts/${draftId}/cancel`,
+    {
+      body: { reason },
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export async function retryAssistantActionDraft(
+  draftId: string,
+  reason?: string,
+): Promise<AssistantActionDraftRecord> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionDraftRecord>(
+    `/api/assistant/action-drafts/${draftId}/retry`,
     {
       body: { reason },
       method: 'POST',
@@ -4912,6 +5025,32 @@ export async function fetchSystemMenus(): Promise<MenuResourceRecord[]> {
   return menus.items;
 }
 
+export async function fetchSystemMenuList(
+  query: MenuListQuery = {},
+): Promise<RemoteListResult<MenuResourceRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'menu', query.menu);
+  appendQueryParam(params, 'menu_type', query.menuType);
+  appendQueryParam(params, 'parent', query.parent);
+  appendQueryParam(params, 'path', query.path);
+  appendQueryParam(params, 'permission', query.permission);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const menus = await apiRequest<ListResponse<MenuResourceRecord>>(
+    queryString ? `/api/system/menus?${queryString}` : '/api/system/menus',
+    { token },
+  );
+  return {
+    page: menus.page ?? query.page ?? 1,
+    pageSize: menus.page_size ?? query.pageSize ?? 10,
+    performance: menus.performance,
+    rows: menus.items,
+    total: menus.total,
+  };
+}
+
 export async function fetchSystemPermissionMatrix(): Promise<RbacPolicyMatrix> {
   const token = requireAccessToken();
   const matrix = await apiRequest<RbacPolicyMatrix>('/api/system/permissions/matrix', { token });
@@ -5303,18 +5442,22 @@ export async function fetchModelGatewayConfigs(): Promise<ModelGatewayConfigReco
 
 export async function fetchModelGatewayLogs(
   query: ModelGatewayLogQuery = {},
-): Promise<{ rows: ModelGatewayLogRecord[]; total: number }> {
+): Promise<RemoteListResult<ModelGatewayLogRecord>> {
   const token = requireAccessToken();
   const params = new URLSearchParams();
   appendQueryParam(params, 'ai_task_id', query.aiTaskId);
   appendQueryParam(params, 'purpose', query.purpose);
   appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
   const queryString = params.toString();
   const logs = await apiRequest<ListResponse<ModelGatewayLogListItem>>(
     queryString ? `/api/model-gateway/logs?${queryString}` : '/api/model-gateway/logs',
     { token },
   );
   return {
+    page: logs.page ?? query.page ?? 1,
+    pageSize: logs.page_size ?? query.pageSize ?? 10,
+    performance: logs.performance,
     rows: logs.items.map(mapModelGatewayLog),
     total: logs.total,
   };
@@ -5869,6 +6012,13 @@ export type AiExecutorRunnerRecord = {
   workspace_roots?: string[];
 };
 
+export type AiExecutorRunnerListQuery = RemoteListQuery & {
+  executorType?: string;
+  keyword?: string;
+  protocol?: string;
+  status?: string;
+};
+
 export type AiExecutorTaskRecord = {
   action_id?: string | null;
   ai_task_id?: string | null;
@@ -6026,6 +6176,29 @@ export async function fetchAiExecutorRunners(query: { status?: string } = {}): P
   const suffix = params.toString() ? `?${params.toString()}` : '';
   const response = await apiRequest<ListResponse<AiExecutorRunnerRecord>>(`/api/system/ai-executor-runners${suffix}`, { token });
   return response.items;
+}
+
+export async function fetchAiExecutorRunnersPage(
+  query: AiExecutorRunnerListQuery = {},
+): Promise<RemoteListResult<AiExecutorRunnerRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'executor_type', query.executorType);
+  appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'protocol', query.protocol);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const response = await apiRequest<ListResponse<AiExecutorRunnerRecord>>(
+    `/api/system/ai-executor-runners?${params.toString()}`,
+    { token },
+  );
+  return {
+    page: response.page ?? query.page ?? 1,
+    pageSize: response.page_size ?? query.pageSize ?? 10,
+    performance: response.performance,
+    rows: response.items,
+    total: response.total,
+  };
 }
 
 export async function createAiExecutorRunner(payload: Partial<AiExecutorRunnerRecord>) {
@@ -6238,17 +6411,29 @@ export async function fetchResultWriteTargets(): Promise<ResultWriteTargetRecord
 }
 
 export async function fetchResultWriteRecords(query: {
+  page?: number;
+  pageSize?: number;
   pluginActionId?: string;
   scheduledJobId?: string;
   scheduledJobRunId?: string;
+  sortField?: string;
+  sortOrder?: 'ascend' | 'descend';
   status?: string;
   writeTarget?: string;
 } = {}): Promise<ResultWriteRecord[]> {
   const token = requireAccessToken();
   const params = new URLSearchParams();
+  appendQueryParam(params, 'page', query.page);
+  appendQueryParam(params, 'page_size', query.pageSize);
   appendQueryParam(params, 'plugin_action_id', query.pluginActionId);
   appendQueryParam(params, 'scheduled_job_id', query.scheduledJobId);
   appendQueryParam(params, 'scheduled_job_run_id', query.scheduledJobRunId);
+  appendQueryParam(params, 'sort_by', query.sortField);
+  appendQueryParam(
+    params,
+    'sort_order',
+    query.sortOrder === 'ascend' ? 'asc' : query.sortOrder === 'descend' ? 'desc' : undefined,
+  );
   appendQueryParam(params, 'status', query.status);
   appendQueryParam(params, 'write_target', query.writeTarget);
   const suffix = params.toString() ? `?${params.toString()}` : '';
@@ -7154,6 +7339,7 @@ function mapRequirementFullChain(
       status: report.status ?? '-',
       summary: report.summary ?? report.id,
     })),
+    executionTraces: chain.execution_traces ?? [],
     gitSnapshots: (chain.git_snapshots ?? []).map((snapshot) => ({
       changedFilesSummary: snapshot.changed_files_summary ?? [],
       createdAt: formatListDate(snapshot.created_at),
@@ -7204,6 +7390,7 @@ function mapRequirementFullChain(
       bugs: normalizeDashboardCount(summary.bugs),
       codeInspectionReports: normalizeDashboardCount(summary.code_inspection_reports),
       codeReviewReports: normalizeDashboardCount(summary.code_review_reports),
+      executionTraces: normalizeDashboardCount(summary.execution_traces),
       gitSnapshots: normalizeDashboardCount(summary.git_snapshots),
       jenkinsReleases: normalizeDashboardCount(summary.jenkins_releases),
       knowledgeDeposits: normalizeDashboardCount(summary.knowledge_deposits),
@@ -8247,20 +8434,44 @@ export async function batchRetryTaskCenterTasks(
   };
 }
 
-export async function fetchTaskCenterPendingReviews(): Promise<TaskCenterReviewRecord[]> {
-  const token = requireAccessToken();
-  const reviews = await apiRequest<ListResponse<PendingReviewListItem>>('/api/reviews/pending', {
-    token,
-  });
-
-  return reviews.items.map((review) => ({
+function mapPendingReviewRecord(review: PendingReviewListItem): TaskCenterReviewRecord {
+  return {
     aiTaskId: review.ai_task_id,
     contentSummary: formatUnknownValue(review.content?.summary),
+    createdAt: review.created_at ? formatListDate(review.created_at) : undefined,
     id: review.id,
     stage: review.stage ?? '-',
     status: review.status ?? '-',
+    updatedAt: review.updated_at ? formatListDate(review.updated_at) : undefined,
     version: review.version,
-  }));
+  };
+}
+
+export async function fetchTaskCenterPendingReviewList(
+  query: TaskCenterReviewListQuery = {},
+): Promise<RemoteListResult<TaskCenterReviewRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'ai_task_id', query.aiTaskId);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const path = queryString ? `/api/reviews/pending?${queryString}` : '/api/reviews/pending';
+  const reviews = await apiRequest<ListResponse<PendingReviewListItem>>(path, { token });
+
+  return {
+    page: reviews.page ?? query.page ?? 1,
+    pageSize: reviews.page_size ?? query.pageSize ?? 10,
+    performance: reviews.performance,
+    rows: reviews.items.map(mapPendingReviewRecord),
+    total: reviews.total,
+  };
+}
+
+export async function fetchTaskCenterPendingReviews(
+  query: TaskCenterReviewListQuery = {},
+): Promise<TaskCenterReviewRecord[]> {
+  const reviews = await fetchTaskCenterPendingReviewList(query);
+  return reviews.rows;
 }
 
 export async function approveTaskCenterReview(reviewId: string, version: number) {

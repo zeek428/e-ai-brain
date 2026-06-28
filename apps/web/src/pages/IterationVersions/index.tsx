@@ -851,6 +851,9 @@ export default function IterationVersionsPage() {
                 key: 'actions',
                 render: (_, row) => (
                   <Space size={4}>
+                    <Button href={fullChainSubjectHref('product_version_branch_config', row.id)} type="link">
+                      全链路
+                    </Button>
                     <Button icon={<EditOutlined />} onClick={() => openEditBranchConfig(row)} type="link">
                       编辑
                     </Button>

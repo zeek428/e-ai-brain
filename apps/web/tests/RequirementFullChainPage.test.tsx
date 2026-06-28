@@ -103,6 +103,22 @@ describe('RequirementFullChainPage', () => {
                 summary: '代码巡检发现历史记录隔离风险。',
               },
             ],
+            execution_traces: [
+              {
+                duration_ms: 6300,
+                failed_node_count: 1,
+                id: 'scheduled_job_run_history_trace',
+                node_count: 5,
+                root_id: 'scheduled_job_run_history_trace',
+                root_type: 'scheduled_job_run',
+                running_node_count: 0,
+                started_at: '2026-06-04T10:15:00+00:00',
+                status: 'failed',
+                summary: '代码巡检运行失败',
+                title: '定时作业运行 scheduled_job_run_history_trace',
+                updated_at: '2026-06-04T10:16:00+00:00',
+              },
+            ],
             git_snapshots: [
               {
                 changed_files_summary: [{ additions: 6, deletions: 1, path: 'apps/api/app/main.py' }],
@@ -166,11 +182,12 @@ describe('RequirementFullChainPage', () => {
               bugs: 1,
               code_inspection_reports: 1,
               code_review_reports: 1,
+              execution_traces: 1,
               git_snapshots: 1,
               jenkins_releases: 0,
               knowledge_deposits: 1,
               reviews: 1,
-              timeline_events: 5,
+              timeline_events: 6,
             },
             timeline: [
               {
@@ -207,6 +224,13 @@ describe('RequirementFullChainPage', () => {
                 subject_id: 'code_inspection_history',
                 title: '代码巡检：代码巡检发现历史记录隔离风险。',
                 type: 'code_inspection_report',
+              },
+              {
+                occurred_at: '2026-06-04T10:15:00+00:00',
+                status: 'failed',
+                subject_id: 'scheduled_job_run_history_trace',
+                title: '执行诊断：定时作业运行 scheduled_job_run_history_trace',
+                type: 'execution_trace',
               },
             ],
           },
@@ -272,6 +296,12 @@ describe('RequirementFullChainPage', () => {
       'href',
       '/governance/code-inspections?source_id=code_inspection_history',
     );
+    expect(
+      within(stageDetails).getByRole('link', { name: '查看执行诊断 scheduled_job_run_history_trace' }),
+    ).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=scheduled_job_run_history_trace&source_type=scheduled_job_run',
+    );
     expect(within(stageDetails).getByRole('link', { name: '查看分支 version_branch_history' })).toHaveAttribute(
       'href',
       '/delivery/versions?branch_config_id=version_branch_history&version_id=version_assistant_history',
@@ -286,6 +316,7 @@ describe('RequirementFullChainPage', () => {
     expect(screen.getByText('PR/MR 证据')).toBeInTheDocument();
     expect(screen.getByText('确认用户级历史记录隔离测试覆盖')).toBeInTheDocument();
     expect(screen.getAllByText('代码分支').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('执行诊断').length).toBeGreaterThan(0);
     expect(screen.getAllByText('审计事件').length).toBeGreaterThan(0);
     expect(screen.getByRole('link', { name: '返回需求管理' })).toHaveAttribute('href', '/delivery/requirements');
     expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/requirements/requirement_084/full-chain');

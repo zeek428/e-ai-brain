@@ -163,6 +163,7 @@ function installPluginsFetchMock(
   const pluginUpdateBodies: unknown[] = [];
   const runnerBodies: unknown[] = [];
   const runnerDeleteIds: string[] = [];
+  const runnerListCalls: string[] = [];
   const runnerPackageCalls: string[] = [];
   const runnerRotateBodies: unknown[] = [];
   const runnerTaskCancelBodies: unknown[] = [];
@@ -627,7 +628,11 @@ function installPluginsFetchMock(
         },
       });
     }
-    if (input === '/api/system/ai-executor-runners' && init?.method === 'GET') {
+    if (
+      input === '/api/system/ai-executor-runners?page=1&page_size=10&sort_by=updated_at&sort_order=desc'
+      && init?.method === 'GET'
+    ) {
+      runnerListCalls.push(String(input));
       return jsonResponse({
         data: {
           items: [
@@ -682,6 +687,16 @@ function installPluginsFetchMock(
               workspace_roots: ['/Users/zeek/source/e-ai-brain'],
             },
           ],
+          page: 1,
+          page_size: 10,
+          performance: {
+            duration_ms: 8,
+            p95_target_ms: 400,
+            result_count: 2,
+            slow: false,
+            slow_threshold_ms: 400,
+            total: 2,
+          },
           total: 2,
         },
       });
@@ -1126,6 +1141,7 @@ function installPluginsFetchMock(
     },
     runnerBodies,
     runnerDeleteIds,
+    runnerListCalls,
     runnerPackageCalls,
     runnerRotateBodies,
     runnerTaskCancelBodies,
@@ -1208,7 +1224,7 @@ describe('PluginsPage', () => {
   });
 
   it('manages AI executor runners with remote executor options and install packages', async () => {
-    const { runnerBodies, runnerPackageCalls } = installPluginsFetchMock();
+    const { runnerBodies, runnerListCalls, runnerPackageCalls } = installPluginsFetchMock();
     const createObjectURL = vi.fn(() => 'blob:ai-brain-runner');
     const revokeObjectURL = vi.fn();
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
@@ -1220,6 +1236,10 @@ describe('PluginsPage', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '执行器' }));
 
     expect(await screen.findByText('AI 执行器')).toBeInTheDocument();
+    expect(runnerListCalls).toEqual([
+      '/api/system/ai-executor-runners?page=1&page_size=10&sort_by=updated_at&sort_order=desc',
+    ]);
+    expect(screen.getByText('查询 8ms')).toBeInTheDocument();
     expect(screen.getByText('Zeek Mac 本地执行器')).toBeInTheDocument();
     expect(screen.getByText('online')).toBeInTheDocument();
     expect(screen.getByText('ai-brain-runner start --runner-id ai_executor_runner_001 --token <runner_token> --server http://127.0.0.1:8000')).toBeInTheDocument();

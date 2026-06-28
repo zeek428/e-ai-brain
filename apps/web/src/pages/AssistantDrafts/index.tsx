@@ -13,6 +13,7 @@ import {
   confirmAssistantActionDraft,
   fetchAssistantActionDraftWorkbench,
   markAssistantActionDraftViewed,
+  retryAssistantActionDraft,
   type AssistantActionDraftRecord,
   type AssistantActionDraftWorkbenchItem,
   type AssistantActionDraftWorkbenchQuery,
@@ -206,6 +207,19 @@ export default function AssistantDraftsPage() {
     }
   }, [reload]);
 
+  const retryDraft = useCallback(async (row: AssistantActionDraftWorkbenchItem) => {
+    setMutatingId(row.id);
+    try {
+      await retryAssistantActionDraft(row.id, '从草案任务台重新打开失败草案');
+      message.success('草案已重新打开');
+      await reload();
+    } catch (error) {
+      message.error(formatMutationError(error));
+    } finally {
+      setMutatingId(undefined);
+    }
+  }, [reload]);
+
   const columns = useMemo<ProColumns<AssistantActionDraftWorkbenchItem>[]>(
     () => [
       {
@@ -319,11 +333,22 @@ export default function AssistantDraftsPage() {
                 </Button>
               </Popconfirm>
             ) : null}
+            {row.status === 'failed' ? (
+              <Popconfirm
+                okText="重新打开"
+                onConfirm={() => void retryDraft(row)}
+                title="将失败草案重新打开为待确认状态，重新确认前不会写入业务配置。是否继续？"
+              >
+                <Button loading={mutatingId === row.id} type="link">
+                  重新打开
+                </Button>
+              </Popconfirm>
+            ) : null}
           </Space>
         ),
       },
     ],
-    [cancelDraft, confirmDraft, mutatingId, openDetail],
+    [cancelDraft, confirmDraft, mutatingId, openDetail, retryDraft],
   );
 
   return (

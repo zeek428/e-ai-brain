@@ -14,7 +14,7 @@ import {
   deletePlugin,
   deletePluginAction,
   deletePluginConnection,
-  fetchAiExecutorRunners,
+  fetchAiExecutorRunnersPage,
   fetchPluginActionsPage,
   fetchPluginActionTemplates,
   fetchPluginConnectionsPage,
@@ -32,6 +32,7 @@ import {
   updatePluginConnection,
   type AssistantPluginActionDraft,
   type AssistantPluginConnectionDraft,
+  type AiExecutorRunnerListQuery,
   type AiExecutorRunnerRecord,
   type PluginActionTrialResult,
   type PluginActionListQuery,
@@ -112,6 +113,9 @@ type ActionFormValues = PluginActionFormValues;
 type RemoteTableMeta = {
   page: number;
   pageSize: number;
+  performance?: {
+    duration_ms?: number;
+  };
   total: number;
 };
 
@@ -120,6 +124,13 @@ const defaultPluginChildListQuery = {
   pageSize: 10,
   sortField: 'plugin_id',
   sortOrder: 'ascend' as const,
+};
+
+const defaultRunnerListQuery = {
+  page: 1,
+  pageSize: 10,
+  sortField: 'updated_at',
+  sortOrder: 'descend' as const,
 };
 
 const connectionEnvironmentOptions = [
@@ -153,12 +164,20 @@ export default function PluginsPage() {
   const [actionListQuery, setActionListQuery] = useState<PluginActionListQuery>({
     ...defaultPluginChildListQuery,
   });
+  const [runnerListQuery, setRunnerListQuery] = useState<AiExecutorRunnerListQuery>({
+    ...defaultRunnerListQuery,
+  });
   const [connectionListMeta, setConnectionListMeta] = useState<RemoteTableMeta>({
     page: 1,
     pageSize: 10,
     total: 0,
   });
   const [actionListMeta, setActionListMeta] = useState<RemoteTableMeta>({
+    page: 1,
+    pageSize: 10,
+    total: 0,
+  });
+  const [runnerListMeta, setRunnerListMeta] = useState<RemoteTableMeta>({
     page: 1,
     pageSize: 10,
     total: 0,
@@ -264,7 +283,7 @@ export default function PluginsPage() {
         nextMarketplaceItems,
         nextActionTemplates,
         nextResultWriteTargets,
-        nextRunners,
+        nextRunnersPage,
         nextConnectionsPage,
         nextActionsPage,
         nextJobs,
@@ -273,7 +292,7 @@ export default function PluginsPage() {
         fetchPluginMarketplace(),
         fetchPluginActionTemplates(),
         fetchResultWriteTargets(),
-        fetchAiExecutorRunners(),
+        fetchAiExecutorRunnersPage(runnerListQuery),
         fetchPluginConnectionsPage(connectionListQuery),
         fetchPluginActionsPage(actionListQuery),
         fetchScheduledJobs(),
@@ -282,7 +301,7 @@ export default function PluginsPage() {
       setMarketplaceItems(nextMarketplaceItems);
       setActionTemplates(nextActionTemplates);
       setResultWriteTargets(nextResultWriteTargets);
-      setRunners(nextRunners);
+      setRunners(nextRunnersPage.rows);
       setConnections(nextConnectionsPage.rows);
       setActions(nextActionsPage.rows);
       setConnectionListMeta({
@@ -295,13 +314,19 @@ export default function PluginsPage() {
         pageSize: nextActionsPage.pageSize,
         total: nextActionsPage.total,
       });
+      setRunnerListMeta({
+        page: nextRunnersPage.page,
+        pageSize: nextRunnersPage.pageSize,
+        performance: nextRunnersPage.performance,
+        total: nextRunnersPage.total,
+      });
       setScheduledJobs(nextJobs);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '插件配置加载失败');
     } finally {
       setLoading(false);
     }
-  }, [actionListQuery, connectionListQuery]);
+  }, [actionListQuery, connectionListQuery, runnerListQuery]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -347,6 +372,13 @@ export default function PluginsPage() {
 
   const handleActionListChange = useCallback((query: PluginActionListQuery) => {
     setActionListQuery((currentQuery) => ({
+      ...currentQuery,
+      ...query,
+    }));
+  }, []);
+
+  const handleRunnerListChange = useCallback((query: AiExecutorRunnerListQuery) => {
+    setRunnerListQuery((currentQuery) => ({
       ...currentQuery,
       ...query,
     }));
@@ -1329,6 +1361,7 @@ export default function PluginsPage() {
         marketplaceItems={marketplaceItems}
         pluginById={pluginById}
         plugins={plugins}
+        runnerListMeta={runnerListMeta}
         runners={runners}
         testingConnectionId={testingConnectionId}
         testingRunnerId={testingRunnerId}
@@ -1353,6 +1386,7 @@ export default function PluginsPage() {
         onEditRunner={openEditRunnerModal}
         onEnvironmentFilterChange={handleConnectionEnvironmentFilterChange}
         onOpenRunnerLogs={(runner) => void openRunnerLogs(runner)}
+        onRunnerListChange={handleRunnerListChange}
         onReload={reload}
         onRotateRunnerToken={rotateRunnerToken}
         onRunAction={runAction}

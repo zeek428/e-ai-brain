@@ -2,7 +2,22 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.api.deps import api_error
+
+EXECUTION_TRACE_CHAIN_SUBJECT_TYPES = {
+    "execution_trace",
+    "scheduled_job_run",
+    "plugin_invocation_log",
+    "ai_executor_task",
+    "ai_executor_runner",
+    "assistant_chat_run",
+    "assistant_message",
+    "model_gateway_log",
+    "result_write_record",
+    "scheduled_job_stage",
+}
 
 
 def _collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
@@ -36,6 +51,106 @@ def _tasks(current_store: Any) -> list[dict[str, Any]]:
 def _audit_events(current_store: Any) -> list[dict[str, Any]]:
     events = getattr(current_store, "audit_events", [])
     return events if isinstance(events, list) else []
+
+
+def _execution_traces(current_store: Any) -> list[dict[str, Any]]:
+    from app.services.execution_traces import ExecutionTraceBuilder
+
+    return ExecutionTraceBuilder(current_store).traces()
+
+
+def _trace_matches_subject(trace: dict[str, Any], subject_type: str, subject_id: str) -> bool:
+    if subject_type == "execution_trace":
+        return trace.get("id") == subject_id
+    if trace.get("root_type") == subject_type and trace.get("root_id") == subject_id:
+        return True
+    if subject_id in trace.get("related_ids", {}).get(subject_type, []):
+        return True
+    return any(
+        node.get("source_type") == subject_type and node.get("source_id") == subject_id
+        for node in trace.get("nodes", [])
+        if isinstance(node, dict)
+    )
+
+
+def _model_gateway_log(current_store: Any, log_id: str | None) -> dict[str, Any] | None:
+    if log_id is None:
+        return None
+    normalized_id = str(log_id)
+    logs = getattr(current_store, "model_gateway_logs", [])
+    if isinstance(logs, list):
+        return next((log for log in logs if str(log.get("id")) == normalized_id), None)
+    if isinstance(logs, dict):
+        item = logs.get(normalized_id)
+        return item if isinstance(item, dict) else None
+    return None
+
+
+def _add_task_if_present(
+    current_store: Any,
+    tasks_by_id: dict[str, dict[str, Any]],
+    task_id: Any,
+) -> None:
+    if task_id is None:
+        return
+    task = _task(current_store, str(task_id))
+    if task is not None:
+        tasks_by_id[str(task["id"])] = task
+
+
+def _execution_trace_subject_tasks(
+    current_store: Any,
+    *,
+    raise_missing: bool,
+    subject_id: str,
+    subject_type: str,
+) -> list[dict[str, Any]]:
+    traces = [
+        trace
+        for trace in _execution_traces(current_store)
+        if _trace_matches_subject(trace, subject_type, subject_id)
+    ]
+    if not traces:
+        if raise_missing:
+            raise api_error(404, "NOT_FOUND", "Execution trace subject not found")
+        return []
+
+    tasks_by_id: dict[str, dict[str, Any]] = {}
+    for trace in traces:
+        for node in trace.get("nodes", []):
+            if not isinstance(node, dict):
+                continue
+            metadata = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+            _add_task_if_present(current_store, tasks_by_id, metadata.get("ai_task_id"))
+
+        for log_id in trace.get("related_ids", {}).get("model_gateway_log", []):
+            log = _model_gateway_log(current_store, str(log_id))
+            if log is not None:
+                _add_task_if_present(current_store, tasks_by_id, log.get("ai_task_id"))
+
+        for report_id in trace.get("related_ids", {}).get("code_inspection_report", []):
+            try:
+                for task in lifecycle_subject_tasks(
+                    current_store,
+                    subject_type="code_inspection_report",
+                    subject_id=str(report_id),
+                ):
+                    tasks_by_id[str(task["id"])] = task
+            except HTTPException:
+                continue
+
+        for audit_id in trace.get("related_ids", {}).get("audit_event", []):
+            try:
+                for task in lifecycle_subject_tasks(
+                    current_store,
+                    subject_type="audit_event",
+                    subject_id=str(audit_id),
+                ):
+                    tasks_by_id[str(task["id"])] = task
+            except HTTPException:
+                continue
+
+    return list(tasks_by_id.values())
 
 
 def lifecycle_mock_issue(current_store: Any, subject_id: str) -> dict[str, Any] | None:
@@ -77,6 +192,11 @@ def task_product_id(current_store: Any, task_id: str | None) -> str | None:
     return str(task["product_id"]) if task is not None and task.get("product_id") else None
 
 
+def _tasks_product_id(tasks: list[dict[str, Any]]) -> str | None:
+    task = next((item for item in tasks if item.get("product_id")), None)
+    return str(task["product_id"]) if task else None
+
+
 def subject_product_id(
     current_store: Any,
     subject_type: str | None,
@@ -96,6 +216,9 @@ def subject_product_id(
     if subject_type == "product_git_repository":
         repository = _record(current_store, "product_git_repositories", normalized_id)
         return str(repository["product_id"]) if repository is not None else None
+    if subject_type in {"branch_config", "product_version_branch_config"}:
+        branch_config = _record(current_store, "product_version_branch_configs", normalized_id)
+        return str(branch_config["product_id"]) if branch_config is not None else None
     if subject_type == "requirement":
         requirement = _record(current_store, "requirements", normalized_id)
         return str(requirement["product_id"]) if requirement is not None else None
@@ -107,9 +230,25 @@ def subject_product_id(
     if subject_type == "code_review_report":
         report = _record(current_store, "code_review_reports", normalized_id)
         return task_product_id(current_store, report.get("task_id") if report else None)
+    if subject_type == "model_gateway_log":
+        log = _model_gateway_log(current_store, normalized_id)
+        return task_product_id(current_store, log.get("ai_task_id") if log else None)
+    if subject_type in EXECUTION_TRACE_CHAIN_SUBJECT_TYPES:
+        return _tasks_product_id(
+            _execution_trace_subject_tasks(
+                current_store,
+                raise_missing=False,
+                subject_id=normalized_id,
+                subject_type=subject_type,
+            )
+        )
     if subject_type == "code_inspection_report":
         report = _record(current_store, "code_inspection_reports", normalized_id)
-        return str(report["product_id"]) if report is not None and report.get("product_id") else None
+        return (
+            str(report["product_id"])
+            if report is not None and report.get("product_id")
+            else None
+        )
     if subject_type == "gitlab_mr_snapshot":
         snapshot = _record(current_store, "gitlab_mr_snapshots", normalized_id)
         return str(snapshot["product_id"]) if snapshot is not None else None
@@ -150,6 +289,16 @@ def lifecycle_subject_tasks(
         if _record(current_store, "products", subject_id) is None:
             raise api_error(404, "NOT_FOUND", "Product not found")
         return [task for task in _tasks(current_store) if task.get("product_id") == subject_id]
+    if subject_type in {"branch_config", "product_version_branch_config"}:
+        branch_config = _record(current_store, "product_version_branch_configs", subject_id)
+        if branch_config is None:
+            raise api_error(404, "NOT_FOUND", "Branch config not found")
+        return [
+            task
+            for task in _tasks(current_store)
+            if task.get("product_id") == branch_config.get("product_id")
+            and task.get("version_id") == branch_config.get("version_id")
+        ]
     if subject_type == "human_review":
         review = _record(current_store, "human_reviews", subject_id)
         if review is None:
@@ -160,6 +309,18 @@ def lifecycle_subject_tasks(
         if report is None:
             raise api_error(404, "NOT_FOUND", "Code review report not found")
         return [lifecycle_require_task(current_store, report.get("task_id"))]
+    if subject_type == "model_gateway_log":
+        log = _model_gateway_log(current_store, subject_id)
+        if log is None:
+            raise api_error(404, "NOT_FOUND", "Model gateway log not found")
+        return [lifecycle_require_task(current_store, log.get("ai_task_id"))]
+    if subject_type in EXECUTION_TRACE_CHAIN_SUBJECT_TYPES:
+        return _execution_trace_subject_tasks(
+            current_store,
+            raise_missing=True,
+            subject_id=subject_id,
+            subject_type=subject_type,
+        )
     if subject_type == "code_inspection_report":
         report = _record(current_store, "code_inspection_reports", subject_id)
         if report is None:

@@ -345,12 +345,18 @@ class ProductConfigReadRepository:
         *,
         active_only: bool = False,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         where_clauses: list[str] = []
         params: list[Any] = []
         if product_id is not None:
             where_clauses.append("product_id = %s")
             params.append(product_id)
+        elif product_scope_ids is not None:
+            if not product_scope_ids:
+                return []
+            where_clauses.append("product_id = ANY(%s)")
+            params.append(product_scope_ids)
         if active_only:
             where_clauses.append("status = 'active'")
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
@@ -527,6 +533,7 @@ class ProductConfigReadRepository:
         code: str | None = None,
         name: str | None = None,
         owner_team: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
     ) -> int:
         return self._list_repository.count_product_summaries(
@@ -534,6 +541,7 @@ class ProductConfigReadRepository:
             code=code,
             name=name,
             owner_team=owner_team,
+            product_scope_ids=product_scope_ids,
             status=status,
         )
 
@@ -544,6 +552,7 @@ class ProductConfigReadRepository:
         code: str | None = None,
         name: str | None = None,
         owner_team: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
@@ -555,6 +564,7 @@ class ProductConfigReadRepository:
             code=code,
             name=name,
             owner_team=owner_team,
+            product_scope_ids=product_scope_ids,
             status=status,
             limit=limit,
             offset=offset,
@@ -604,6 +614,7 @@ class ProductConfigReadRepository:
         name: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
     ) -> int:
         return self._list_repository.count_product_version_summaries(
@@ -612,6 +623,7 @@ class ProductConfigReadRepository:
             name=name,
             product=product,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             status=status,
         )
 
@@ -623,6 +635,7 @@ class ProductConfigReadRepository:
         name: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
@@ -635,6 +648,7 @@ class ProductConfigReadRepository:
             name=name,
             product=product,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             status=status,
             limit=limit,
             offset=offset,

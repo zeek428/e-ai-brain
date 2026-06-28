@@ -3,12 +3,22 @@ from __future__ import annotations
 from typing import Any
 
 from app.api.deps import api_error
+from app.core.listing import add_list_observability, ensure_list_enum, sort_list_items
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.mock_writeback import writeback_idempotency_key
 from app.services.task_access import can_read_task, task_read_scope
 from app.services.task_contexts import public_product_context
 from app.services.task_graph_runtime import graph_runs_for_task
 from app.services.task_workflow_context import task_workflow_read_store
+
+PENDING_REVIEW_SORT_FIELDS = {
+    "ai_task_id",
+    "created_at",
+    "id",
+    "stage",
+    "status",
+    "updated_at",
+}
 
 
 def pending_review_query_repository(current_store: Any) -> Any | None:
@@ -113,22 +123,115 @@ def list_graph_runs_response(
 
 def pending_reviews_response(
     *,
+    ai_task_id: str | None = None,
     current_store: Any,
+    page: int | None = None,
+    page_size: int | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    started_at: float | None = None,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
+    resolved_sort_by = sort_by or "created_at"
+    if resolved_sort_by not in PENDING_REVIEW_SORT_FIELDS:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    filters = {"ai_task_id": ai_task_id}
     repository = pending_review_query_repository(current_store)
     if repository is not None:
-        items = repository.list_pending_review_summaries(read_scope=task_read_scope(user))
-        return {"items": items, "total": len(items)}
+        read_scope = task_read_scope(user)
+        count_pending_reviews = getattr(repository, "count_pending_review_summaries", None)
+        if callable(count_pending_reviews):
+            total = count_pending_reviews(ai_task_id=ai_task_id, read_scope=read_scope)
+            items = repository.list_pending_review_summaries(
+                ai_task_id=ai_task_id,
+                limit=resolved_page_size,
+                offset=(resolved_page - 1) * resolved_page_size,
+                read_scope=read_scope,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+            )
+            return add_list_observability(
+                {
+                    "items": items,
+                    "page": resolved_page,
+                    "page_size": resolved_page_size,
+                    "total": total,
+                },
+                filters=filters,
+                list_name="pending_reviews",
+                page=resolved_page,
+                page_size=resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+                started_at=started_at,
+            )
+        items = repository.list_pending_review_summaries(read_scope=read_scope)
+        if ai_task_id:
+            items = [item for item in items if item.get("ai_task_id") == ai_task_id]
+        items = sort_list_items(
+            items,
+            allowed_fields=PENDING_REVIEW_SORT_FIELDS,
+            default_sort_by="created_at",
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+        )
+        total = len(items)
+        page_items = items[
+            (resolved_page - 1) * resolved_page_size : resolved_page * resolved_page_size
+        ]
+        return add_list_observability(
+            {
+                "items": page_items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="pending_reviews",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
     read_store = task_workflow_read_store(current_store)
     items = [
         review
         for review in read_store.human_reviews.values()
         if review["status"] == "pending"
+        and (not ai_task_id or review["ai_task_id"] == ai_task_id)
         and (task := read_store.ai_tasks.get(review["ai_task_id"])) is not None
         and can_read_task(user, task)
     ]
-    return {"items": items, "total": len(items)}
+    items = sort_list_items(
+        items,
+        allowed_fields=PENDING_REVIEW_SORT_FIELDS,
+        default_sort_by="created_at",
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+    )
+    total = len(items)
+    page_items = items[
+        (resolved_page - 1) * resolved_page_size : resolved_page * resolved_page_size
+    ]
+    return add_list_observability(
+        {
+            "items": page_items,
+            "page": resolved_page,
+            "page_size": resolved_page_size,
+            "total": total,
+        },
+        filters=filters,
+        list_name="pending_reviews",
+        page=resolved_page,
+        page_size=resolved_page_size,
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+        started_at=started_at,
+    )
 
 
 def get_review_response(

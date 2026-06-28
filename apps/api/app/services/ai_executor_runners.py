@@ -65,6 +65,16 @@ AI_EXECUTOR_TASK_SORT_FIELDS = {
     "status",
     "updated_at",
 }
+AI_EXECUTOR_RUNNER_SORT_FIELDS = {
+    "created_at",
+    "endpoint_url",
+    "id",
+    "last_heartbeat_at",
+    "name",
+    "protocol",
+    "status",
+    "updated_at",
+}
 
 
 def _ensure_admin(user: dict[str, Any]) -> None:
@@ -1076,6 +1086,60 @@ def sync_ai_executor_runner_store(current_store: Any, *, status: str | None = No
     )
 
 
+def _runner_matches_filters(
+    runner: dict[str, Any],
+    *,
+    executor_type: str | None = None,
+    keyword: str | None = None,
+    protocol: str | None = None,
+    status: str | None = None,
+) -> bool:
+    if status is not None and runner.get("status") != status:
+        return False
+    if protocol is not None and runner.get("protocol") != protocol:
+        return False
+    if executor_type is not None and executor_type not in (runner.get("executor_types") or []):
+        return False
+    normalized_keyword = str(keyword or "").strip().lower()
+    if normalized_keyword:
+        searchable = " ".join(
+            str(runner.get(field) or "").lower()
+            for field in ("id", "name", "endpoint_url", "protocol")
+        )
+        if normalized_keyword not in searchable:
+            return False
+    return True
+
+
+def _latest_task_for_runner(current_store: Any, runner_id: str | None) -> dict[str, Any] | None:
+    if runner_id is None:
+        return None
+    return max(
+        (
+            task
+            for task in _read_collection(current_store, "ai_executor_tasks").values()
+            if task.get("runner_id") == runner_id
+        ),
+        key=lambda task: (
+            task.get("updated_at") or task.get("created_at") or "",
+            task.get("id") or "",
+        ),
+        default=None,
+    )
+
+
+def _runner_public_with_latest_task(
+    current_store: Any,
+    runner: dict[str, Any],
+) -> dict[str, Any]:
+    item = _runner_public(runner)
+    latest_task = _latest_task_for_runner(current_store, runner.get("id"))
+    if latest_task is not None:
+        item["latest_task_id"] = latest_task.get("id")
+        item["latest_task_status"] = latest_task.get("status")
+    return item
+
+
 def sync_ai_executor_task_store(
     current_store: Any,
     *,
@@ -1660,45 +1724,133 @@ def create_ai_executor_runner_response(
 def list_ai_executor_runners_response(
     *,
     current_store: Any,
+    executor_type: str | None = None,
+    keyword: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    protocol: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    started_at: float | None = None,
     status: str | None,
     user: dict[str, Any],
 ) -> dict[str, Any]:
     _ensure_admin(user)
     if status is not None:
         _ensure_enum(status, AI_EXECUTOR_RUNNER_STATUSES, "status")
-    sync_ai_executor_runner_store(current_store, status=status)
+    if protocol is not None:
+        _ensure_enum(protocol, AI_EXECUTOR_RUNNER_PROTOCOLS | {SYSTEM_DEFAULT_AI_EXECUTOR_TYPE}, "protocol")
+    if executor_type is not None:
+        _ensure_enum(executor_type, AI_EXECUTOR_TYPES, "executor_type")
+    sort_order = _ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
+    if sort_by is not None:
+        _ensure_enum(sort_by, AI_EXECUTOR_RUNNER_SORT_FIELDS, "sort_by")
+    resolved_sort_by = sort_by or "updated_at"
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    with_pagination = page is not None or page_size is not None
+    repository = getattr(current_store, "repository", None)
+    count_page = getattr(repository, "count_ai_executor_runners", None)
+    list_page = getattr(repository, "list_ai_executor_runners_page", None)
+    filters = {
+        "executor_type": executor_type,
+        "keyword": keyword,
+        "protocol": protocol,
+        "status": status,
+    }
     sync_ai_executor_task_store(current_store)
-    items = []
+    system_runner = system_default_ai_executor_runner()
+    system_matches = _runner_matches_filters(system_runner, **filters)
+    if with_pagination and callable(count_page) and callable(list_page):
+        repository_total = count_page(**filters)
+        system_count = 1 if system_matches else 0
+        total = repository_total + system_count
+        offset = (resolved_page - 1) * resolved_page_size
+        items: list[dict[str, Any]] = []
+        repository_limit = resolved_page_size
+        repository_offset = offset
+        if system_count:
+            if offset == 0:
+                items.append(_runner_public_with_latest_task(current_store, system_runner))
+                repository_limit = max(0, resolved_page_size - 1)
+                repository_offset = 0
+            else:
+                repository_offset = max(0, offset - 1)
+        if repository_limit > 0 and repository_offset < repository_total:
+            items.extend(
+                _runner_public_with_latest_task(current_store, runner)
+                for runner in list_page(
+                    **filters,
+                    limit=repository_limit,
+                    offset=repository_offset,
+                    sort_by=resolved_sort_by,
+                    sort_order=sort_order,
+                )
+            )
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="ai_executor_runners",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+    sync_ai_executor_runner_store(
+        current_store,
+        status=status,
+    )
     runners = [
-        system_default_ai_executor_runner(),
+        system_runner,
         *[
             runner
             for runner in _read_collection(current_store, "ai_executor_runners").values()
             if runner.get("id") != SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID
         ],
     ]
-    for runner in runners:
-        if status is not None and runner.get("status") != status:
-            continue
-        latest_task = max(
-            (
-                task
-                for task in _read_collection(current_store, "ai_executor_tasks").values()
-                if task.get("runner_id") == runner.get("id")
-            ),
-            key=lambda task: (
-                task.get("updated_at") or task.get("created_at") or "",
-                task.get("id") or "",
-            ),
-            default=None,
+    items = [
+        _runner_public_with_latest_task(current_store, runner)
+        for runner in runners
+        if _runner_matches_filters(runner, **filters)
+    ]
+    items = sort_list_items(
+        items,
+        allowed_fields=AI_EXECUTOR_RUNNER_SORT_FIELDS,
+        default_sort_by=resolved_sort_by,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    if system_matches:
+        items = sorted(
+            items,
+            key=lambda item: 0 if item.get("id") == SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID else 1,
         )
-        item = _runner_public(runner)
-        if latest_task is not None:
-            item["latest_task_id"] = latest_task.get("id")
-            item["latest_task_status"] = latest_task.get("status")
-        items.append(item)
-    items.sort(key=lambda item: (item.get("updated_at") or "", item["id"]), reverse=True)
-    return {"items": items, "total": len(items)}
+    total = len(items)
+    if with_pagination:
+        start_index = (resolved_page - 1) * resolved_page_size
+        items = items[start_index : start_index + resolved_page_size]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="ai_executor_runners",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+    return {"items": items, "total": total}
 
 
 def list_ai_executor_tasks_response(

@@ -127,7 +127,7 @@ def test_assistant_action_draft_workbench_uses_repository_pagination_when_availa
         status="pending",
         trace_id="trace_draft_repo_page",
         user={"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]},
-        validation_status=None,
+        validation_status="passed",
     )
 
     assert response["trace_id"] == "trace_draft_repo_page"
@@ -149,6 +149,7 @@ def test_assistant_action_draft_workbench_uses_repository_pagination_when_availa
             "sort_order": "desc",
             "status": "pending",
             "user_id": "user_admin",
+            "validation_status": "passed",
         }
     ]
 
@@ -293,3 +294,89 @@ def test_assistant_action_draft_workbench_refreshes_expired_drafts():
     assert app.state.store.assistant_action_drafts["assistant_action_draft_expired"]["status"] == (
         "expired"
     )
+
+
+def test_assistant_action_draft_retry_reopens_failed_draft_with_audit():
+    app.state.store.reset()
+    app.state.store.assistant_action_drafts = {
+        "assistant_action_draft_failed": _draft(
+            "assistant_action_draft_failed",
+            metadata_json={
+                "failed_at": "2026-06-20T12:00:00+00:00",
+                "failed_by": "user_admin",
+                "failure": {
+                    "code": "DRAFT_CONFIRM_FAILED",
+                    "message": "模拟确认失败",
+                },
+            },
+            result_run_id="assistant_action_run_failed",
+            status="failed",
+            title="失败草案",
+        )
+    }
+    app.state.store.assistant_action_runs = {
+        "assistant_action_run_failed": {
+            "action": "create_scheduled_job",
+            "created_at": "2026-06-20T12:00:00+00:00",
+            "draft_id": "assistant_action_draft_failed",
+            "error_code": "DRAFT_CONFIRM_FAILED",
+            "error_message": "模拟确认失败",
+            "executed_by": "user_admin",
+            "finished_at": "2026-06-20T12:00:00+00:00",
+            "id": "assistant_action_run_failed",
+            "result": None,
+            "result_id": None,
+            "result_type": None,
+            "started_at": "2026-06-20T12:00:00+00:00",
+            "status": "failed",
+            "updated_at": "2026-06-20T12:00:00+00:00",
+        }
+    }
+
+    response = client.post(
+        "/api/assistant/action-drafts/assistant_action_draft_failed/retry",
+        headers=auth_headers(),
+        json={"reason": "修正字段后重试"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["status"] == "pending"
+    assert payload.get("result_run_id") is None
+    metadata_json = payload["metadata_json"]
+    assert metadata_json["retry_count"] == 1
+    assert metadata_json["retry_reason"] == "修正字段后重试"
+    assert metadata_json["retry_requested_by"] == "user_admin"
+    assert "failure" not in metadata_json
+    assert metadata_json["failure_history"] == [
+        {
+            "failed_at": "2026-06-20T12:00:00+00:00",
+            "failed_by": "user_admin",
+            "failure": {
+                "code": "DRAFT_CONFIRM_FAILED",
+                "message": "模拟确认失败",
+            },
+            "run_id": "assistant_action_run_failed",
+        }
+    ]
+    stored_draft = app.state.store.assistant_action_drafts["assistant_action_draft_failed"]
+    assert stored_draft["status"] == "pending"
+    assert stored_draft["result_run_id"] is None
+
+    audit_event = app.state.store.audit_events[-1]
+    assert audit_event["event_type"] == "assistant_action_draft.retry_requested"
+    assert audit_event["subject_id"] == "assistant_action_draft_failed"
+    assert audit_event["payload"] == {
+        "action": "create_scheduled_job",
+        "previous_run_id": "assistant_action_run_failed",
+        "reason": "修正字段后重试",
+        "retry_count": 1,
+    }
+
+    conflict = client.post(
+        "/api/assistant/action-drafts/assistant_action_draft_failed/retry",
+        headers=auth_headers(),
+        json={"reason": "再次重试"},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "DRAFT_NOT_FAILED"

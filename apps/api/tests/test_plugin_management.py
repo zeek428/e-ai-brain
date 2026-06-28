@@ -9,7 +9,10 @@ from fastapi.testclient import TestClient
 import app.services.plugins as plugin_services
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.main import app
-from app.services.ai_executor_runners import list_ai_executor_tasks_response
+from app.services.ai_executor_runners import (
+    list_ai_executor_runners_response,
+    list_ai_executor_tasks_response,
+)
 from app.services.plugins import (
     list_plugin_actions_response,
     list_plugin_connections_response,
@@ -40,6 +43,8 @@ class FakePluginPagingRepository:
         self.action_page_kwargs: dict | None = None
         self.invocation_log_count_kwargs: dict | None = None
         self.invocation_log_page_kwargs: dict | None = None
+        self.ai_executor_runner_count_kwargs: dict | None = None
+        self.ai_executor_runner_page_kwargs: dict | None = None
         self.ai_executor_task_count_kwargs: dict | None = None
         self.ai_executor_task_page_kwargs: dict | None = None
 
@@ -57,6 +62,9 @@ class FakePluginPagingRepository:
 
     def list_ai_executor_tasks(self, **_kwargs):
         raise AssertionError("full AI executor task list should not be used")
+
+    def list_ai_executor_runners(self, **_kwargs):
+        raise AssertionError("full AI executor runner list should not be used")
 
     def count_plugin_connections(self, **kwargs):
         self.connection_count_kwargs = kwargs
@@ -135,6 +143,34 @@ class FakePluginPagingRepository:
                 "trace_id": "trace_sql",
                 "trigger_type": "scheduled_job",
                 "updated_at": "2026-06-24T01:00:00+00:00",
+            }
+        ]
+
+    def count_ai_executor_runners(self, **kwargs):
+        self.ai_executor_runner_count_kwargs = kwargs
+        return 2
+
+    def list_ai_executor_runners_page(self, **kwargs):
+        self.ai_executor_runner_page_kwargs = kwargs
+        return [
+            {
+                "created_at": "2026-06-24T01:00:00+00:00",
+                "created_by": "user_admin",
+                "endpoint_url": "runner://local",
+                "executor_types": ["codex"],
+                "heartbeat_timeout_seconds": 120,
+                "id": "ai_executor_runner_repo_page",
+                "last_heartbeat_at": "2026-06-24T01:01:00+00:00",
+                "max_concurrent_tasks": 1,
+                "metadata": {},
+                "name": "Repo Page Runner",
+                "protocol": "runner_polling",
+                "status": "active",
+                "token_hash": "token-hash",
+                "token_rotated_at": None,
+                "token_version": 1,
+                "updated_at": "2026-06-24T01:02:00+00:00",
+                "workspace_roots": ["/workspace"],
             }
         ]
 
@@ -588,6 +624,50 @@ def test_ai_executor_runners_include_system_default_model_gateway_executor():
 
     assert delete_response.status_code == 409
     assert delete_response.json()["detail"]["code"] == "AI_EXECUTOR_SYSTEM_RUNNER_LOCKED"
+
+
+def test_ai_executor_runner_list_supports_server_pagination_sort_filters_and_observability():
+    repository = FakePluginPagingRepository()
+    current_store = SimpleNamespace(repository=repository, ai_executor_tasks={})
+
+    response = list_ai_executor_runners_response(
+        current_store=current_store,
+        executor_type="codex",
+        keyword="Repo",
+        page=2,
+        page_size=1,
+        protocol="runner_polling",
+        sort_by="name",
+        sort_order="asc",
+        started_at=None,
+        status="active",
+        user=ADMIN_SERVICE_USER,
+    )
+
+    assert response["items"][0]["id"] == "ai_executor_runner_repo_page"
+    assert response["items"][0]["token_configured"] is True
+    assert "token_hash" not in response["items"][0]
+    assert response["page"] == 2
+    assert response["page_size"] == 1
+    assert response["total"] == 2
+    assert response["query"]["name"] == "ai_executor_runners"
+    assert response["performance"]["p95_target_ms"] == 400
+    assert repository.ai_executor_runner_count_kwargs == {
+        "executor_type": "codex",
+        "keyword": "Repo",
+        "protocol": "runner_polling",
+        "status": "active",
+    }
+    assert repository.ai_executor_runner_page_kwargs == {
+        "executor_type": "codex",
+        "keyword": "Repo",
+        "limit": 1,
+        "offset": 1,
+        "protocol": "runner_polling",
+        "sort_by": "name",
+        "sort_order": "asc",
+        "status": "active",
+    }
 
 
 def test_ai_executor_runner_test_endpoint_reports_managed_and_runner_health():
@@ -1985,7 +2065,7 @@ def test_plugin_invocation_log_list_uses_repository_pagination_when_requested():
         sort_order="desc",
         started_at=None,
         status="succeeded",
-        user=ADMIN_SERVICE_USER,
+        user=SCOPED_PLUGIN_MANAGER_USER,
     )
 
     assert response["total"] == 4
@@ -1999,6 +2079,7 @@ def test_plugin_invocation_log_list_uses_repository_pagination_when_requested():
     assert response["performance"]["p95_target_ms"] == 500
     assert repository.invocation_log_count_kwargs == {
         "action_id": "plugin_action_sql",
+        "product_scope_ids": ["product_sql"],
         "scheduled_job_id": "scheduled_job_sql",
         "scheduled_job_run_id": "scheduled_run_sql",
         "status": "succeeded",
@@ -2007,6 +2088,7 @@ def test_plugin_invocation_log_list_uses_repository_pagination_when_requested():
         "action_id": "plugin_action_sql",
         "limit": 1,
         "offset": 1,
+        "product_scope_ids": ["product_sql"],
         "scheduled_job_id": "scheduled_job_sql",
         "scheduled_job_run_id": "scheduled_run_sql",
         "sort_by": "created_at",
@@ -2994,6 +3076,27 @@ def test_scheduled_email_action_run_exposes_notification_write_preview():
     run_records_payload = run_records_response.json()["data"]
     assert run_records_payload["total"] == 1
     assert run_records_payload["items"][0]["id"] == f"result_write_record_{run['id']}"
+
+    paged_records_response = client.get(
+        "/api/system/result-write-records?write_target=email_notifications&page=1&page_size=1&sort_by=created_at&sort_order=desc",
+        headers=admin_headers,
+    )
+    assert paged_records_response.status_code == 200
+    paged_payload = paged_records_response.json()["data"]
+    assert paged_payload["page"] == 1
+    assert paged_payload["page_size"] == 1
+    assert paged_payload["total"] == 1
+    assert paged_payload["items"][0]["id"] == f"result_write_record_{run['id']}"
+    assert paged_payload["query"]["name"] == "result_write_records"
+    assert paged_payload["query"]["sort_by"] == "created_at"
+    assert paged_payload["performance"]["result_count"] == 1
+
+    invalid_sort_response = client.get(
+        "/api/system/result-write-records?page=1&page_size=1&sort_by=unknown",
+        headers=admin_headers,
+    )
+    assert invalid_sort_response.status_code == 400
+    assert invalid_sort_response.json()["detail"]["code"] == "VALIDATION_ERROR"
 
 
 def test_result_write_records_support_future_write_targets_from_action_logs():

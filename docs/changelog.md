@@ -8,6 +8,12 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手失败草案重新打开：新增 `POST /api/assistant/action-drafts/{draft_id}/retry`，failed 草案可回到待确认状态，保留失败历史和重试元数据、清空失败 run、写入重试审计；草案任务台 failed 行新增“重新打开”入口，重新确认前不写业务配置。
+- 任务中心待确认 Review 子列表补齐服务端分页、排序、按 AI 任务筛选和性能观测：`GET /api/reviews/pending` 支持 `ai_task_id/page/page_size/sort_by/sort_order` 并优先调用 PostgreSQL count/page read model，任务操作进入确认弹窗时不再全量拉取后前端过滤。
+- 版本代码分支进入需求全链路：迭代版本“代码分支”列表新增“全链路”入口，AI 助手引用支持 `product_version_branch_config` / `branch_config`，统一解析到同版本需求链路并继续按产品 scope 校验。
+- P0 路由-权限-数据范围契约矩阵：新增安全边界回归用例，覆盖需求、Bug、知识、代码巡检、定时作业、插件配置/调用日志和 AI 执行器 Runner/任务的 OpenAPI 路由、无权限 403 与产品/知识空间 scope 过滤。
+- 需求全链路执行诊断证据：full-chain 响应和前端详情页新增脱敏 `execution_traces`、阶段摘要、时间线和 Markdown 导出覆盖，阶段明细按 `source_id + source_type` 跳转执行诊断中心。
+- 执行诊断到需求全链路入口：`scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`model_gateway_log` 和 `execution_trace` 等执行诊断主体可通过 Trace 关联 ID、节点 AI 任务、代码巡检报告或审计事件解析回统一需求全链路；执行诊断详情同步提供“全链路”按钮。
 - 知识沉淀审核全链路入口：知识中心“沉淀审核”列表每条候选新增“全链路”链接，按 `knowledge_deposit` 主体进入统一需求交付链路；审核表格改为固定列宽和横向滚动，避免长摘要挤压操作区。
 - AI 助手引用全链路入口：助手上下文和消息引用对需求、迭代版本、研发任务、Review、代码评审、Bug、代码巡检、知识沉淀和审计事件等可解析交付主体展示“全链路”，`iteration_version` 引用通过统一 full-chain API 解析回需求链路。
 - 需求全链路证据补齐：full-chain 响应和前端详情页新增版本级代码分支配置、脱敏审计事件、阶段明细、时间线和 Markdown 导出覆盖，便于从需求、迭代版本、Bug、代码巡检入口统一核对交付证据。
@@ -33,13 +39,27 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 模型网关配置列表生产查询路径收口：`GET /api/system/model-gateway-configs` 带 `page/page_size` 时优先走配置 count/page read model，在 PostgreSQL 侧完成筛选排序，避免先全量读取后切片。
+- 模型调用日志列表改为服务端分页、筛选、排序和性能观测：`GET /api/model-gateway/logs` 带 `page/page_size` 时走模型日志 count/page read model，支持 AI 任务、用途、状态筛选和白名单排序；模型网关页“最近模型调用日志”默认请求远程分页结果并展示查询耗时。
+- AI 助手角色快捷任务配置列表改为服务端分页、筛选、排序和性能观测：`GET /api/assistant/role-quick-task-configs` 带 `page/page_size` 时走快捷任务配置 count/page read model，支持关键字、任务启停状态、分组启停状态、角色、权限、企业、草案模板和模板版本筛选；系统管理 / AI助手快捷任务配置主表默认请求远程分页结果，无参接口继续兼容快捷任务配置全量读取。
+- AI 助手 @ 能力配置列表改为服务端分页、筛选、排序和性能观测：`GET /api/assistant/action-reference-configs` 带 `page/page_size` 时走动作引用配置 count/page read model，支持关键字、启停状态、角色、权限、企业和模板版本筛选；系统管理 / @ 能力配置主表默认请求远程分页结果，无参接口继续兼容候选配置全量读取。
+- 菜单管理列表改为服务端分页、筛选、排序和性能观测：`GET /api/system/menus` 带 `page/page_size` 时走菜单资源 count/page read model，支持菜单、父级、路由、权限点、类型和状态筛选；系统管理 / 菜单管理主表默认请求远程分页结果，无参目录接口继续服务授权和下拉场景。
+- 系统管理接口权限点收口：用户管理改为校验 `system.users.manage`，模型网关配置与调用日志改为校验 `system.model_gateway.manage`，审计事件查询改为校验 `audit.read`，支持自定义治理角色访问对应页面，普通未授权角色仍返回 403。
+- AI 助手草案任务台 read model 补齐校验状态筛选：`GET /api/assistant/action-drafts` 在 PostgreSQL 运行态下按当前用户、动作、状态、`validation_status`、时间、关键词、排序和分页统一下推查询，不再因校验状态筛选退回全量草案读取。
+- 产品主体、迭代版本和版本分支配置接口权限与产品范围收口：读接口改为校验 `product.read` 并按当前用户产品 scope 过滤或隐藏，写接口改为校验 `product.manage`，创建产品要求全局产品范围，scope 外统一返回 404；产品列表和迭代版本列表 PostgreSQL read model 下推 `product_scope_ids`，补充自定义权限角色契约测试。
+- 产品模块接口权限与产品范围收口：列表改为校验 `product.read`，创建、编辑、删除改为校验 `product.manage`，并按当前用户产品 scope 校验 URL 产品或模块归属产品；scope 外统一返回 404，补充自定义权限角色契约测试。
+- 相关系统接口权限与产品范围收口：列表改为校验 `product.read` 并按当前用户产品 scope 过滤，创建、编辑、删除改为校验 `product.manage`，指定或改绑到 scope 外产品统一返回 404，PostgreSQL 相关系统读取支持下推 `product_scope_ids`。
+- 产品 Git 仓库接口权限与产品范围收口：列表改为校验 `product.read`，创建、编辑、删除改为校验 `product.manage`，并按当前用户产品 scope 校验 URL 产品或仓库归属产品；scope 外统一返回 404，补充自定义权限角色契约测试。
 - AI 执行器任务产品范围收口：任务列表、日志查询、取消和超时扫描按当前用户产品 scope 过滤，并在 PostgreSQL 分页 read model 中下推 `product_scope_ids`，避免插件管理权限用户跨产品查看 Runner 任务。
+- 插件调用日志产品范围收口：日志列表通过关联定时作业或运行实例解析产品并按当前用户产品 scope 过滤，PostgreSQL count/page read model 下推 `product_scope_ids`，兼容全量路径同样过滤 scope 外运行日志。
+- 结果写入记录产品范围收口：通用写入记录排障接口通过 `scheduled_job_id` 或 `scheduled_job_run_id` 解析定时作业产品，产品受限用户只能查看授权产品运行派生出的写入记录，scope 外记录不返回。
 - 知识沉淀审核权限点收口：候选查询、采纳和驳回统一校验 `knowledge.deposit.decide`，支持自定义审核角色，单纯 `knowledge.read` 不再能访问审核列表。
 - 角色治理列表生产路径收口：`GET /api/system/roles` 在 PostgreSQL 运行时走角色 summary count/page read model 完成筛选、排序和分页，不再先全量 `list_roles()` 后本地过滤。
 - 知识沉淀候选列表补齐服务端分页、筛选、排序和性能观测：`GET /api/knowledge/deposits` 带 `page/page_size` 时走 PostgreSQL count/page read model，支持按状态过滤，并返回 `query/performance`。
 - 插件调用日志列表补齐服务端分页、筛选、排序和性能观测：`GET /api/system/plugin-invocation-logs` 带 `page/page_size` 时走 PostgreSQL count/page read model，支持按动作、定时作业、运行实例和状态过滤，并返回 `query/performance`。
 - 定时作业运行观测权限与产品范围收口：运行健康概览允许 `system.scheduled_jobs.run` 或 `system.scheduled_jobs.manage` 访问，并在聚合总数、失败分布、最近失败和慢运行前按当前用户产品 scope 过滤，避免受限用户看到无权产品运行信息。
 - AI 执行器任务列表补齐服务端分页、筛选、排序和性能观测：`GET /api/system/ai-executor-tasks` 带 `page/page_size` 时走 PostgreSQL count/page read model，支持按研发任务、Runner、定时作业运行和状态过滤，并返回 `query/performance`。
+- 结果写入记录列表补齐可选分页、白名单排序和性能观测：`GET /api/system/result-write-records` 带 `page/page_size` 时返回统一 `query/performance` 元数据，未分页路径继续服务运行详情和诊断兼容场景。
 - 统一需求全链路工作台展示入口上下文：从 Bug、迭代版本、代码巡检、AI 助手等主体进入 `/delivery/full-chain` 时，页面顶部显示入口主体和已解析需求 ID，避免用户跨页面跳转后丢失上下文。
 - 核心管理列表权限与产品范围收口：需求、Bug、知识中心和代码巡检列表统一校验菜单声明的 read 权限；需求/Bug/代码巡检列表按当前用户产品 scope 在服务端过滤，并在 PostgreSQL read model 查询中下推 scope 条件。
 - AI 助手裸 `@` 默认引用候选顺序恢复常用对象优先：知识文档、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI 角色和 Skill 不再被执行诊断来源挤出首屏，模型网关日志等诊断来源仍可在后续候选中引用。

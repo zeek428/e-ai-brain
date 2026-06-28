@@ -433,7 +433,7 @@ describe('system management pages', () => {
           },
         );
       }
-      if (path === '/api/system/menus' && method === 'GET') {
+      if (path.startsWith('/api/system/menus') && method === 'GET') {
         return new Response(
           JSON.stringify({
             data: {
@@ -498,6 +498,15 @@ describe('system management pages', () => {
     render(<MenusPage />);
 
     expect(await screen.findByText('菜单资源')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([path]) => (
+        String(path).startsWith('/api/system/menus?')
+        && String(path).includes('page=1')
+        && String(path).includes('page_size=10')
+        && String(path).includes('sort_by=sort_order')
+        && String(path).includes('sort_order=asc')
+      ))).toBe(true),
+    );
     expect(screen.getAllByText('菜单管理').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: '新增菜单' }));
     const menuDialog = within(await screen.findByRole('dialog', { name: '新增菜单' }));

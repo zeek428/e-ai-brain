@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
-from app.api.deps import CurrentUser, api_error, require_roles, store
+from app.api.deps import CurrentUser, api_error, require_permissions, store
 from app.core.trace import envelope, get_trace_id
 from app.services.product_config_context import (
     delete_product_config_record,
@@ -22,8 +22,11 @@ from app.services.product_config_context import (
     save_product_config_record,
 )
 from app.services.product_listing import PRODUCT_STATUSES, list_products_response
+from app.services.product_scope import product_scope_filter, user_can_read_product
 
 router = APIRouter(prefix="/api/products", tags=["products"])
+PRODUCT_READ_PERMISSION = "product.read"
+PRODUCT_MANAGE_PERMISSION = "product.manage"
 
 
 class ProductRequest(BaseModel):
@@ -44,6 +47,16 @@ class ProductPatchRequest(BaseModel):
     display_order: int | None = None
 
 
+def _ensure_product_scope(user: dict[str, Any], product_id: Any) -> None:
+    if not user_can_read_product(user, product_id):
+        raise api_error(404, "NOT_FOUND", "Product not found")
+
+
+def _ensure_global_product_scope(user: dict[str, Any]) -> None:
+    if product_scope_filter(user) is not None:
+        raise api_error(403, "FORBIDDEN", "Global product scope required")
+
+
 @router.get("")
 def list_products(
     request: Request,
@@ -58,6 +71,7 @@ def list_products(
     sort_order: str = "asc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    require_permissions(user, {PRODUCT_READ_PERMISSION})
     return list_products_response(
         active_only=active_only,
         code=code,
@@ -66,6 +80,7 @@ def list_products(
         owner_team=owner_team,
         page=page,
         page_size=page_size,
+        product_scope_ids=product_scope_filter(user),
         request=request,
         sort_by=sort_by,
         sort_order=sort_order,
@@ -79,7 +94,8 @@ def create_product(
     payload: ProductRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
+    _ensure_global_product_scope(user)
     current_store = product_config_write_store(store(request))
     name = ensure_non_blank(payload.name, "name")
     ensure_enum(payload.status, PRODUCT_STATUSES, "product status")
@@ -128,6 +144,8 @@ def get_product(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    require_permissions(user, {PRODUCT_READ_PERMISSION})
+    _ensure_product_scope(user, product_id)
     current_store = store(request)
     product = get_product_record(current_store, product_id)
     if product is None:
@@ -142,7 +160,8 @@ def patch_product(
     payload: ProductPatchRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
+    _ensure_product_scope(user, product_id)
     current_store = product_config_write_store(store(request))
     product = get_product_record(current_store, product_id)
     if product is None:
@@ -190,7 +209,8 @@ def delete_product(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
+    _ensure_product_scope(user, product_id)
     current_store = product_config_write_store(store(request))
     if get_product_record(current_store, product_id) is None:
         raise api_error(404, "NOT_FOUND", "Product not found")

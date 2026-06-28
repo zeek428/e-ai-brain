@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from app.api.deps import CurrentUser, api_error, require_roles, store
+from app.api.deps import CurrentUser, api_error, require_permissions, store
 from app.core.trace import envelope, get_trace_id
 from app.services.product_config_context import (
     delete_product_config_record,
@@ -22,10 +22,13 @@ from app.services.product_config_context import (
     save_product_config_record,
 )
 from app.services.product_module_listing import list_product_modules_response
+from app.services.product_scope import user_can_read_product
 
 router = APIRouter(tags=["product_modules"])
 
 MODULE_STATUSES = {"active", "inactive"}
+PRODUCT_READ_PERMISSION = "product.read"
+PRODUCT_MANAGE_PERMISSION = "product.manage"
 
 
 class ProductModuleRequest(BaseModel):
@@ -46,6 +49,15 @@ class ProductModulePatchRequest(BaseModel):
     display_order: int | None = None
 
 
+def _ensure_product_scope(user: dict[str, Any], product_id: Any) -> None:
+    if not user_can_read_product(user, product_id):
+        raise api_error(404, "NOT_FOUND", "Product not found")
+
+
+def _ensure_module_scope(user: dict[str, Any], module: dict[str, Any]) -> None:
+    _ensure_product_scope(user, module.get("product_id"))
+
+
 @router.get("/api/products/{product_id}/modules")
 def list_product_modules(
     product_id: str,
@@ -53,6 +65,8 @@ def list_product_modules(
     active_only: bool = False,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    require_permissions(user, {PRODUCT_READ_PERMISSION})
+    _ensure_product_scope(user, product_id)
     return list_product_modules_response(
         active_only=active_only,
         current_store=store(request),
@@ -68,7 +82,8 @@ def create_product_module(
     payload: ProductModuleRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
+    _ensure_product_scope(user, product_id)
     current_store = product_config_record_write_store(store(request))
     if get_product_record(current_store, product_id) is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
@@ -126,11 +141,12 @@ def patch_product_module(
     payload: ProductModulePatchRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
     current_store = product_config_record_write_store(store(request))
     module = get_product_module_record(current_store, module_id)
     if module is None:
         raise api_error(404, "NOT_FOUND", "Product module not found")
+    _ensure_module_scope(user, module)
     updates = payload_updates(payload)
     if "name" in updates:
         updates["name"] = ensure_non_blank(updates["name"], "name")
@@ -179,11 +195,12 @@ def delete_product_module(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_permissions(user, {PRODUCT_MANAGE_PERMISSION})
     current_store = product_config_record_write_store(store(request))
     module = get_product_module_record(current_store, module_id)
     if module is None:
         raise api_error(404, "NOT_FOUND", "Product module not found")
+    _ensure_module_scope(user, module)
     if product_module_has_related_records(
         current_store,
         product_id=str(module["product_id"]),
