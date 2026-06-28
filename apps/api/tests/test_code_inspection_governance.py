@@ -606,6 +606,14 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
     )
     assert detail_payload["report"]["created_task_ids"][0].startswith("task_")
     assert detail_payload["report"]["committer_summary"][0]["email"] == "alice@example.com"
+    assert detail_payload["governance_summary"]["status"] == "healthy"
+    assert detail_payload["governance_summary"]["active_severe_finding_count"] == 1
+    assert detail_payload["governance_summary"]["covered_by_bug_count"] == 1
+    assert detail_payload["governance_summary"]["covered_by_task_count"] == 1
+    assert detail_payload["governance_summary"]["bug_coverage_rate"] == 1
+    assert detail_payload["governance_summary"]["task_coverage_rate"] == 1
+    assert detail_payload["governance_summary"]["uncovered_bug_finding_count"] == 0
+    assert detail_payload["governance_summary"]["uncovered_task_finding_count"] == 0
     assert detail_payload["findings"][0]["severity"] == "critical"
     assert detail_payload["findings"][0]["committer_email"] == "alice@example.com"
     assert detail_payload["findings"][0]["created_task_id"].startswith("task_")

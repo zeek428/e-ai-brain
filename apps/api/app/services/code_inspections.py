@@ -1971,6 +1971,93 @@ def code_inspection_scan_summary(
     }
 
 
+def code_inspection_governance_summary(
+    report: dict[str, Any],
+    findings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    severe_findings = [
+        finding
+        for finding in findings
+        if severity_rank(finding.get("severity")) >= severity_rank(SEVERE_FINDING_THRESHOLD)
+    ]
+    active_severe_findings = [
+        finding
+        for finding in severe_findings
+        if finding.get("suppression_status") != "approved"
+    ]
+    pending_suppression_findings = [
+        finding
+        for finding in findings
+        if finding.get("suppression_status") == "pending"
+    ]
+    approved_suppression_findings = [
+        finding
+        for finding in findings
+        if finding.get("suppression_status") == "approved"
+    ]
+    accepted_risk_findings = [
+        finding
+        for finding in approved_suppression_findings
+        if finding.get("suppression_reason") == "accepted_risk"
+    ]
+    bug_covered = [finding for finding in active_severe_findings if finding.get("created_bug_id")]
+    task_covered = [finding for finding in active_severe_findings if finding.get("created_task_id")]
+    uncovered_bug_findings = [
+        finding for finding in active_severe_findings if not finding.get("created_bug_id")
+    ]
+    uncovered_task_findings = [
+        finding for finding in active_severe_findings if not finding.get("created_task_id")
+    ]
+    active_count = len(active_severe_findings)
+    bug_coverage_rate = round(len(bug_covered) / active_count, 4) if active_count else 1
+    task_coverage_rate = round(len(task_covered) / active_count, 4) if active_count else 1
+    action_items = []
+    if uncovered_bug_findings:
+        action_items.append(
+            {
+                "code": "create_bug_for_uncovered_severe_findings",
+                "count": len(uncovered_bug_findings),
+                "label": "为未关联 Bug 的严重问题创建缺陷",
+            }
+        )
+    if uncovered_task_findings:
+        action_items.append(
+            {
+                "code": "create_task_for_uncovered_severe_findings",
+                "count": len(uncovered_task_findings),
+                "label": "为未派生任务的严重问题创建整改任务",
+            }
+        )
+    if pending_suppression_findings:
+        action_items.append(
+            {
+                "code": "review_pending_suppression",
+                "count": len(pending_suppression_findings),
+                "label": "审批待处理的忽略申请",
+            }
+        )
+    status = "healthy"
+    if uncovered_bug_findings or uncovered_task_findings:
+        status = "action_required"
+    elif pending_suppression_findings:
+        status = "pending_review"
+    return {
+        "accepted_risk_count": len(accepted_risk_findings),
+        "action_items": action_items,
+        "active_severe_finding_count": active_count,
+        "bug_coverage_rate": bug_coverage_rate,
+        "covered_by_bug_count": len(bug_covered),
+        "covered_by_task_count": len(task_covered),
+        "pending_suppression_count": len(pending_suppression_findings),
+        "severe_threshold": SEVERE_FINDING_THRESHOLD,
+        "status": status,
+        "suppressed_finding_count": len(approved_suppression_findings),
+        "task_coverage_rate": task_coverage_rate,
+        "uncovered_bug_finding_count": len(uncovered_bug_findings),
+        "uncovered_task_finding_count": len(uncovered_task_findings),
+    }
+
+
 def code_inspection_detail_response(
     *,
     current_store: Any,
@@ -1987,6 +2074,10 @@ def code_inspection_detail_response(
             raise api_error(404, "NOT_FOUND", "Code inspection report not found")
         detail["report"] = public_code_inspection_report(detail["report"], current_store)
         detail["scan_summary"] = code_inspection_scan_summary(
+            detail["report"],
+            detail.get("findings") or [],
+        )
+        detail["governance_summary"] = code_inspection_governance_summary(
             detail["report"],
             detail.get("findings") or [],
         )
@@ -2023,6 +2114,7 @@ def code_inspection_detail_response(
     notifications.sort(key=lambda item: (item.get("created_at") or "", item["id"]))
     return {
         "findings": findings,
+        "governance_summary": code_inspection_governance_summary(report, findings),
         "notifications": notifications,
         "report": public_code_inspection_report(report, current_store),
         "scan_summary": code_inspection_scan_summary(report, findings),

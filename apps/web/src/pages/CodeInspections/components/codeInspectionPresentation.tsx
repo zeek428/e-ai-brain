@@ -135,3 +135,14 @@ export function bugLink(value?: string | null) {
     </Typography.Link>
   );
 }
+
+export function taskLink(value?: string | null) {
+  if (!value) {
+    return '-';
+  }
+  return (
+    <Typography.Link href={`/delivery/rd-tasks?task_id=${encodeURIComponent(value)}`}>
+      {value}
+    </Typography.Link>
+  );
+}

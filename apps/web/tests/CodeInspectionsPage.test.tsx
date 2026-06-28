@@ -25,6 +25,7 @@ function installCodeInspectionsFetchMock() {
     ],
     created_at: '2026-06-12T09:00:00Z',
     created_bug_ids: ['bug_code_001'],
+    created_task_ids: ['task_code_fix_001'],
     finding_count: 1,
     id: 'code_inspection_report_001',
     notification_ids: ['code_inspection_notification_001'],
@@ -218,6 +219,7 @@ function installCodeInspectionsFetchMock() {
               committer_email: 'alice@example.com',
               committer_name: 'Alice Chen',
               created_bug_id: 'bug_code_001',
+              created_task_id: 'task_code_fix_001',
               file_path: 'src/config.py',
               id: 'code_inspection_finding_001',
               line_number: 12,
@@ -229,6 +231,21 @@ function installCodeInspectionsFetchMock() {
               title: '扫描输入数据不完整，无法进行文件级代码审计',
             },
           ],
+          governance_summary: {
+            accepted_risk_count: 1,
+            action_items: [],
+            active_severe_finding_count: 1,
+            bug_coverage_rate: 1,
+            covered_by_bug_count: 1,
+            covered_by_task_count: 1,
+            pending_suppression_count: 0,
+            severe_threshold: 'high',
+            status: 'healthy',
+            suppressed_finding_count: 2,
+            task_coverage_rate: 1,
+            uncovered_bug_finding_count: 0,
+            uncovered_task_finding_count: 0,
+          },
           notifications: [
             {
               channel: 'email',
@@ -292,6 +309,7 @@ function installCodeInspectionsFetchMock() {
               committer_email: 'alice@example.com',
               committer_name: 'Alice Chen',
               created_bug_id: 'bug_code_001',
+              created_task_id: 'task_code_fix_001',
               file_path: 'src/config.py',
               id: 'code_inspection_finding_001',
               line_number: 12,
@@ -304,6 +322,18 @@ function installCodeInspectionsFetchMock() {
               title: '扫描输入数据不完整，无法进行文件级代码审计',
             },
           ],
+          governance_summary: {
+            action_items: [{ code: 'review_pending_suppression', count: 1, label: '审批待处理的忽略申请' }],
+            active_severe_finding_count: 1,
+            bug_coverage_rate: 1,
+            covered_by_bug_count: 1,
+            covered_by_task_count: 1,
+            pending_suppression_count: 1,
+            status: 'pending_review',
+            task_coverage_rate: 1,
+            uncovered_bug_finding_count: 0,
+            uncovered_task_finding_count: 0,
+          },
           notifications: [],
           report,
           scan_summary: {},
@@ -323,6 +353,7 @@ function installCodeInspectionsFetchMock() {
               committer_email: 'alice@example.com',
               committer_name: 'Alice Chen',
               created_bug_id: 'bug_code_001',
+              created_task_id: 'task_code_fix_001',
               file_path: 'src/config.py',
               id: 'code_inspection_finding_001',
               line_number: 12,
@@ -335,6 +366,17 @@ function installCodeInspectionsFetchMock() {
               title: '扫描输入数据不完整，无法进行文件级代码审计',
             },
           ],
+          governance_summary: {
+            active_severe_finding_count: 1,
+            bug_coverage_rate: 1,
+            covered_by_bug_count: 1,
+            covered_by_task_count: 1,
+            pending_suppression_count: 0,
+            status: 'healthy',
+            task_coverage_rate: 1,
+            uncovered_bug_finding_count: 0,
+            uncovered_task_finding_count: 0,
+          },
           notifications: [],
           report: {
             ...report,
@@ -449,6 +491,18 @@ describe('CodeInspectionsPage', () => {
     expect(within(dialog).getByText('外部引擎状态')).toBeInTheDocument();
     expect(within(dialog).getByText('已执行 gitleaks')).toBeInTheDocument();
     expect(within(dialog).getByText('与上次对比')).toBeInTheDocument();
+    expect(within(dialog).getByText('治理闭环')).toBeInTheDocument();
+    expect(within(dialog).getByText('闭环状态')).toBeInTheDocument();
+    expect(within(dialog).getByText('已闭环')).toBeInTheDocument();
+    expect(within(dialog).getByText('有效严重问题')).toBeInTheDocument();
+    expect(within(dialog).getByText('Bug 覆盖')).toBeInTheDocument();
+    expect(within(dialog).getByText('整改任务覆盖')).toBeInTheDocument();
+    expect(within(dialog).getByText('未关联 Bug')).toBeInTheDocument();
+    expect(within(dialog).getByText('未派生任务')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: 'task_code_fix_001' })).toHaveAttribute(
+      'href',
+      '/delivery/rd-tasks?task_id=task_code_fix_001',
+    );
     expect(within(dialog).getAllByText('inspection.incomplete_source_data').length).toBeGreaterThan(1);
     expect(within(dialog).getByText('src/config.py')).toBeInTheDocument();
   });
@@ -490,7 +544,7 @@ describe('CodeInspectionsPage', () => {
     const requestButton = await within(dialog).findByRole('button', { name: '申请忽略' });
     fireEvent.click(requestButton);
 
-    await waitFor(() => expect(within(dialog).getByText('待审批')).toBeInTheDocument());
+    await waitFor(() => expect(within(dialog).getAllByText('待审批').length).toBeGreaterThan(0));
     expect(
       fetchMock,
     ).toHaveBeenCalledWith(

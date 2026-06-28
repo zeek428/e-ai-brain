@@ -7215,6 +7215,7 @@ export type CodeInspectionReportRecord = {
   }>;
   created_at?: string;
   created_bug_ids?: string[];
+  created_task_ids?: string[];
   finding_count: number;
   id: string;
   notification_ids?: string[];
@@ -7255,6 +7256,7 @@ export type CodeInspectionFindingRecord = {
   committer_name?: string | null;
   committer_username?: string | null;
   created_bug_id?: string | null;
+  created_task_id?: string | null;
   description?: string;
   file_path?: string;
   id: string;
@@ -7285,6 +7287,21 @@ export type CodeInspectionNotificationRecord = {
 
 export type CodeInspectionDetailRecord = {
   findings: CodeInspectionFindingRecord[];
+  governance_summary?: {
+    accepted_risk_count?: number;
+    action_items?: Array<{ code?: string; count?: number; label?: string }>;
+    active_severe_finding_count?: number;
+    bug_coverage_rate?: number;
+    covered_by_bug_count?: number;
+    covered_by_task_count?: number;
+    pending_suppression_count?: number;
+    severe_threshold?: string;
+    status?: 'action_required' | 'healthy' | 'pending_review' | string;
+    suppressed_finding_count?: number;
+    task_coverage_rate?: number;
+    uncovered_bug_finding_count?: number;
+    uncovered_task_finding_count?: number;
+  };
   notifications: CodeInspectionNotificationRecord[];
   report: CodeInspectionReportRecord & Record<string, unknown>;
   scan_summary?: {

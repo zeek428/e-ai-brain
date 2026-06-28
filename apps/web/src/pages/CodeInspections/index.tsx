@@ -33,6 +33,7 @@ import {
   severityColorByValue,
   suppressionReasonText,
   suppressionStatusTag,
+  taskLink,
 } from './components/codeInspectionPresentation';
 
 const sortFieldMap: Record<string, string> = {
@@ -260,6 +261,76 @@ function scanSummaryItems(detail: CodeInspectionDetailRecord) {
   ];
 }
 
+function percentageText(value?: number) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return '-';
+  }
+  return `${Math.round(value * 1000) / 10}%`;
+}
+
+function codeInspectionGovernanceItems(detail: CodeInspectionDetailRecord) {
+  const governance = detail.governance_summary;
+  const actionItems = governance?.action_items ?? [];
+  return [
+    {
+      key: 'status',
+      label: '闭环状态',
+      children:
+        governance?.status === 'healthy' ? (
+          <Tag color="green">已闭环</Tag>
+        ) : governance?.status === 'pending_review' ? (
+          <Tag color="gold">待审批</Tag>
+        ) : (
+          <Tag color="red">需处理</Tag>
+        ),
+    },
+    {
+      key: 'active_severe',
+      label: '有效严重问题',
+      children: `${governance?.active_severe_finding_count ?? detail.report.severe_finding_count ?? 0} 个`,
+    },
+    {
+      key: 'bug_coverage',
+      label: 'Bug 覆盖',
+      children: `${governance?.covered_by_bug_count ?? detail.report.created_bug_ids?.length ?? 0} 个 · ${percentageText(
+        governance?.bug_coverage_rate,
+      )}`,
+    },
+    {
+      key: 'task_coverage',
+      label: '整改任务覆盖',
+      children: `${governance?.covered_by_task_count ?? detail.report.created_task_ids?.length ?? 0} 个 · ${percentageText(
+        governance?.task_coverage_rate,
+      )}`,
+    },
+    {
+      key: 'uncovered_bug',
+      label: '未关联 Bug',
+      children: `${governance?.uncovered_bug_finding_count ?? 0} 个`,
+    },
+    {
+      key: 'uncovered_task',
+      label: '未派生任务',
+      children: `${governance?.uncovered_task_finding_count ?? 0} 个`,
+    },
+    {
+      key: 'pending_suppression',
+      label: '待审批忽略',
+      children: `${governance?.pending_suppression_count ?? 0} 个`,
+    },
+    {
+      key: 'accepted_risk',
+      label: '已接受风险',
+      children: `${governance?.accepted_risk_count ?? 0} 个`,
+    },
+    {
+      key: 'action_items',
+      label: '治理待办',
+      children: actionItems.length ? actionItems.map((item) => `${item.label} ${item.count ?? 0}`).join('；') : '-',
+    },
+  ];
+}
+
 export default function CodeInspectionsPage() {
   const [detailState, setDetailState] = useState<{
     detail?: CodeInspectionDetailRecord;
@@ -449,7 +520,7 @@ export default function CodeInspectionsPage() {
         key: 'actions',
         title: '操作',
         valueType: 'option',
-        width: 110,
+        width: 180,
         render: (_, row) => (
           <Space size={4}>
             <Button href={fullChainSubjectHref('code_inspection_report', row.id)} type="link">
@@ -513,7 +584,7 @@ export default function CodeInspectionsPage() {
           total: listState.total,
         }}
         rowKey="id"
-        tableScroll={{ x: 1740 }}
+        tableScroll={{ x: 2040 }}
         tableTitle="代码巡检"
         title="代码巡检"
         toolbarActions={[
@@ -552,6 +623,7 @@ export default function CodeInspectionsPage() {
                 { key: 'finding_count', label: '问题数', children: detailState.detail.report.finding_count },
                 { key: 'severe_count', label: '严重问题', children: detailState.detail.report.severe_finding_count },
                 { key: 'bugs', label: '创建 Bug', children: detailState.detail.report.created_bug_ids?.join('、') || '-' },
+                { key: 'tasks', label: '整改任务', children: detailState.detail.report.created_task_ids?.join('、') || '-' },
                 { key: 'summary', label: '摘要', children: detailState.detail.report.summary || '-' },
               ]}
             />
@@ -575,6 +647,13 @@ export default function CodeInspectionsPage() {
               items={scanSummaryItems(detailState.detail)}
               size="small"
               title="扫描摘要"
+            />
+            <Descriptions
+              bordered
+              column={3}
+              items={codeInspectionGovernanceItems(detailState.detail)}
+              size="small"
+              title="治理闭环"
             />
             <Table<Record<string, unknown>>
               columns={[
@@ -664,6 +743,12 @@ export default function CodeInspectionsPage() {
                 },
                 { dataIndex: 'created_bug_id', title: 'Bug', width: 140, render: (value) => bugLink(String(value ?? '')) },
                 {
+                  dataIndex: 'created_task_id',
+                  title: '整改任务',
+                  width: 150,
+                  render: (value) => taskLink(String(value ?? '')),
+                },
+                {
                   dataIndex: 'suppression_status',
                   title: '忽略审批',
                   width: 150,
@@ -726,7 +811,7 @@ export default function CodeInspectionsPage() {
               dataSource={detailState.detail.findings}
               pagination={false}
               rowKey="id"
-              scroll={{ x: 1900 }}
+              scroll={{ x: 2050 }}
               size="small"
               tableLayout="fixed"
             />

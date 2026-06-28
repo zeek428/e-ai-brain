@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 代码巡检报告详情治理闭环摘要：详情响应新增 `governance_summary`，按严重 finding 展示闭环状态、Bug 覆盖、整改任务覆盖、待审批忽略、已接受风险和治理待办，finding 表新增整改任务链接。
 - AI 动作确认中心治理摘要：草案公开响应新增 `governance`，列表展示影响对象、权限状态、审计事件数、失败和重试次数，详情弹窗集中展示风险、影响、权限、执行前后差异、失败重试和审计链路。
 - 真实全链路回归脚本：新增 `scripts/full_chain_regression.py`，通过公开 API 串联用户反馈、需求、迭代版本、AI 任务、Review、知识沉淀、版本代码分支、本地完整代码巡检、Bug/整改任务、版本驾驶舱、统一 full-chain、团队看板和 AI 助手引用，便于本地 PostgreSQL 运行态一键验收业务闭环。
 - AI 任务显式验收启动模式：`POST /api/ai-tasks/{task_id}/start` 支持管理员传入 `execution_mode=deterministic` 和 `reason`，用于本地全链路回归跳过研发执行器 Runner 和外部模型网关波动；该模式写入 `ai_task.deterministic_execution_used` 审计，不生成模型调用日志，生产默认路径仍走研发执行器策略或模型网关。
@@ -44,6 +45,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 代码巡检列表操作列宽度与横向滚动宽度对齐真实列宽，避免 fixed right 操作区被表格容器遮挡导致“详情”无法点击。
 - 模型网关配置列表生产查询路径收口：`GET /api/system/model-gateway-configs` 带 `page/page_size` 时优先走配置 count/page read model，在 PostgreSQL 侧完成筛选排序，避免先全量读取后切片。
 - 模型调用日志列表改为服务端分页、筛选、排序和性能观测：`GET /api/model-gateway/logs` 带 `page/page_size` 时走模型日志 count/page read model，支持 AI 任务、用途、状态筛选和白名单排序；模型网关页“最近模型调用日志”默认请求远程分页结果并展示查询耗时。
 - AI 助手角色快捷任务配置列表改为服务端分页、筛选、排序和性能观测：`GET /api/assistant/role-quick-task-configs` 带 `page/page_size` 时走快捷任务配置 count/page read model，支持关键字、任务启停状态、分组启停状态、角色、权限、企业、草案模板和模板版本筛选；系统管理 / AI助手快捷任务配置主表默认请求远程分页结果，无参接口继续兼容快捷任务配置全量读取。
