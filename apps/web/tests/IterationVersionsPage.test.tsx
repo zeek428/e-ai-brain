@@ -878,11 +878,15 @@ describe('IterationVersionsPage', () => {
     const [versionRowText] = await screen.findAllByText('2026-dashboard');
     fireEvent.click(
       within(versionRowText.closest('tr') as HTMLElement).getByRole('button', {
-        name: /驾驶舱/,
+        name: /总览/,
       }),
     );
 
-    expect(await screen.findByText('版本驾驶舱 · 2026-dashboard')).toBeInTheDocument();
+    expect(await screen.findByText('版本总览 · 2026-dashboard')).toBeInTheDocument();
+    expect(screen.getByText('下一步行动')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /推进到测试中/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /查看需求/ }).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /维护分支/ })).toBeInTheDocument();
     expect(screen.getByText('下一阶段：测试中')).toBeInTheDocument();
     expect(screen.getByText('交付健康摘要')).toBeInTheDocument();
     expect(screen.getByText('发布准入')).toBeInTheDocument();
@@ -920,6 +924,8 @@ describe('IterationVersionsPage', () => {
     expect(cockpitLinks).toContain(
       '/delivery/full-chain?subject_id=version_dashboard&subject_type=product_version',
     );
+    expect(cockpitLinks).toContain('/delivery/bugs?version_id=version_dashboard');
+    expect(cockpitLinks).toContain('/governance/code-inspections?version_id=version_dashboard');
     expect(cockpitLinks).toContain('/delivery/requirements?requirement_id=requirement_dashboard');
     expect(cockpitLinks).toContain('/delivery/rd-tasks?task_id=task_dashboard');
     expect(cockpitLinks).toContain('/delivery/bugs?bug_id=bug_dashboard');

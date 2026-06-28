@@ -951,7 +951,7 @@ export default function IterationVersionsPage() {
               查看需求
             </Button>
             <Button icon={<DashboardOutlined />} onClick={() => void openDashboardModal(row)} type="link">
-              驾驶舱
+              总览
             </Button>
             <Button href={fullChainSubjectHref('product_version', row.id)} type="link">
               全链路
@@ -1038,7 +1038,7 @@ export default function IterationVersionsPage() {
         footer={null}
         onCancel={() => setDashboardState(undefined)}
         open={Boolean(dashboardState)}
-        title={dashboardVersion ? `版本驾驶舱 · ${dashboardVersion.code}` : '版本驾驶舱'}
+        title={dashboardVersion ? `版本总览 · ${dashboardVersion.code}` : '版本总览'}
         width={1180}
       >
         <Spin spinning={dashboardState?.loading ?? false}>
@@ -1065,6 +1065,53 @@ export default function IterationVersionsPage() {
               {dashboard.accessIssues.map((issue) => (
                 <Alert key={`${issue.section}-${issue.code}`} showIcon title={issue.message} type="warning" />
               ))}
+              <div>
+                <Text strong>下一步行动</Text>
+                <Space size={8} style={{ display: 'flex', marginTop: 8 }} wrap>
+                  <Button
+                    disabled={!dashboard.statusImpact}
+                    icon={<ArrowRightOutlined />}
+                    onClick={() => {
+                      setDashboardState(undefined);
+                      openAdvanceModal(dashboard.version);
+                    }}
+                  >
+                    {dashboard.statusImpact
+                      ? `推进到${versionStatusLabels[dashboard.statusImpact.targetStatus].label}`
+                      : '推进状态'}
+                  </Button>
+                  <Button
+                    icon={<EyeOutlined />}
+                    onClick={() => {
+                      setDashboardState(undefined);
+                      setViewingVersion(dashboard.version);
+                    }}
+                  >
+                    查看需求
+                  </Button>
+                  <Button
+                    icon={<CodeOutlined />}
+                    onClick={() => {
+                      setDashboardState(undefined);
+                      openBranchConfigModal(dashboard.version);
+                    }}
+                  >
+                    维护分支
+                  </Button>
+                  <Button href={internalHref('/delivery/bugs', { version_id: dashboard.version.id })}>
+                    查看 Bug
+                  </Button>
+                  <Button href={internalHref('/governance/code-inspections', { version_id: dashboard.version.id })}>
+                    代码巡检
+                  </Button>
+                  <Button href={internalHref('/governance/devops', { version_id: dashboard.version.id })}>
+                    发布记录
+                  </Button>
+                  <Button href={fullChainSubjectHref('product_version', dashboard.version.id)} icon={<LinkOutlined />}>
+                    版本全链路
+                  </Button>
+                </Space>
+              </div>
               <Space size={12} wrap>
                 {dashboardMetric('需求', dashboard.summary.requirements)}
                 {dashboardMetric('AI 任务', dashboard.summary.tasks)}
