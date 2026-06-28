@@ -50,6 +50,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 前端 API 请求基础设施拆分：新增 `apps/web/src/services/apiClient.ts` 统一维护 API base URL、envelope、错误解析、401 处理回调和远程分页参数拼装，`services/aiBrain.ts` 保持原导出兼容并开始向领域 client 拆分。
 - 代码巡检列表操作列宽度与横向滚动宽度对齐真实列宽，避免 fixed right 操作区被表格容器遮挡导致“详情”无法点击。
 - 模型网关配置列表生产查询路径收口：`GET /api/system/model-gateway-configs` 带 `page/page_size` 时优先走配置 count/page read model，在 PostgreSQL 侧完成筛选排序，避免先全量读取后切片。
 - 模型调用日志列表改为服务端分页、筛选、排序和性能观测：`GET /api/model-gateway/logs` 带 `page/page_size` 时走模型日志 count/page read model，支持 AI 任务、用途、状态筛选和白名单排序；模型网关页“最近模型调用日志”默认请求远程分页结果并展示查询耗时。

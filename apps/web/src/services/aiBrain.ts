@@ -17,52 +17,24 @@ import type {
 import { formatUserRoles, type UserRoleDefinition } from '../data/roles';
 import { formatDisplayDateTime } from '../utils/dateTime';
 import { navigateTo } from '../utils/navigation';
+import {
+  API_BASE_URL,
+  ApiRequestError,
+  apiRequest,
+  appendQueryParam,
+  appendRemoteListParams,
+  setUnauthorizedApiResponseHandler,
+} from './apiClient';
+import type {
+  ApiEnvelope,
+  ApiErrorPayload,
+  ListResponse,
+  RemoteListPerformance,
+  RemoteListQueryEcho,
+} from './apiClient';
 
-const configuredApiBaseUrl = process.env.UMI_APP_API_BASE_URL ?? '';
-const API_BASE_URL = configuredApiBaseUrl.endsWith('/')
-  ? configuredApiBaseUrl.slice(0, -1)
-  : configuredApiBaseUrl;
-
-type ApiEnvelope<T> = {
-  data: T;
-};
-
-type ApiErrorPayload = {
-  detail?: {
-    code?: string;
-    message?: string;
-    trace_id?: string;
-  };
-};
-
-type ListResponse<T> = {
-  items: T[];
-  limit?: number;
-  next_cursor?: string | null;
-  page?: number;
-  page_size?: number;
-  performance?: RemoteListPerformance;
-  query?: RemoteListQueryEcho;
-  total: number;
-};
-
-export type RemoteListPerformance = {
-  duration_ms?: number;
-  p95_target_ms?: number;
-  result_count?: number;
-  slow?: boolean;
-  slow_threshold_ms?: number;
-  total?: number;
-};
-
-export type RemoteListQueryEcho = {
-  filters?: Record<string, unknown>;
-  name?: string;
-  page?: number;
-  page_size?: number;
-  sort_by?: string;
-  sort_order?: string;
-};
+export { ApiRequestError, apiRequest };
+export type { RemoteListPerformance, RemoteListQueryEcho };
 
 const PRODUCT_CONTEXT_PAGE_SIZE = 100;
 const VERSION_CONTEXT_PAGE_SIZE = 100;
@@ -77,30 +49,6 @@ function emitAuthStateChanged() {
     return;
   }
   globalThis.dispatchEvent(new Event(AUTH_STATE_EVENT));
-}
-
-export class ApiRequestError extends Error {
-  code?: string;
-  status: number;
-  traceId?: string;
-
-  constructor({
-    code,
-    message,
-    status,
-    traceId,
-  }: {
-    code?: string;
-    message: string;
-    status: number;
-    traceId?: string;
-  }) {
-    super(message);
-    this.name = 'ApiRequestError';
-    this.code = code;
-    this.status = status;
-    this.traceId = traceId;
-  }
 }
 
 export type LoginResponse = {
@@ -3332,46 +3280,6 @@ type RoleDefinitionListItem = {
   status?: string;
 };
 
-export async function apiRequest<T>(
-  path: string,
-  options: {
-    method?: string;
-    token?: string;
-    body?: unknown;
-    signal?: AbortSignal;
-  } = {},
-): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-    },
-    method: options.method ?? 'GET',
-    signal: options.signal,
-  });
-  if (!response.ok) {
-    let payload: ApiErrorPayload | undefined;
-    try {
-      payload = (await response.json()) as ApiErrorPayload;
-    } catch {
-      payload = undefined;
-    }
-    const requestError = new ApiRequestError({
-      code: payload?.detail?.code,
-      message: payload?.detail?.message ?? `API request failed: ${response.status}`,
-      status: response.status,
-      traceId: payload?.detail?.trace_id,
-    });
-    if (response.status === 401 && !path.startsWith('/api/auth/login')) {
-      handleUnauthorizedApiResponse();
-    }
-    throw requestError;
-  }
-  const payload = (await response.json()) as ApiEnvelope<T>;
-  return payload.data;
-}
-
 export async function chatWithAssistant(
   payload: AssistantChatPayload,
 ): Promise<AssistantChatResponse> {
@@ -4085,6 +3993,8 @@ function handleUnauthorizedApiResponse() {
   const target = `${pathname}${search}`;
   navigateTo(`/login?redirect=${encodeURIComponent(target)}`);
 }
+
+setUnauthorizedApiResponseHandler(handleUnauthorizedApiResponse);
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
   const loginResponse = await apiRequest<LoginResponse>('/api/auth/login', {
@@ -8529,24 +8439,6 @@ export async function deleteManagementBug(bugId: string) {
     method: 'DELETE',
     token,
   });
-}
-
-function appendQueryParam(params: URLSearchParams, key: string, value?: boolean | number | string) {
-  if (value === undefined || value === null || value === '') {
-    return;
-  }
-  params.set(key, String(value));
-}
-
-function appendRemoteListParams(params: URLSearchParams, query: RemoteListQuery) {
-  appendQueryParam(params, 'page', query.page ?? 1);
-  appendQueryParam(params, 'page_size', query.pageSize ?? 10);
-  appendQueryParam(params, 'sort_by', query.sortField);
-  appendQueryParam(
-    params,
-    'sort_order',
-    query.sortOrder === 'ascend' ? 'asc' : query.sortOrder === 'descend' ? 'desc' : undefined,
-  );
 }
 
 export async function fetchTaskCenterTasks(

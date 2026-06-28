@@ -641,7 +641,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     rerender(<KnowledgePage />);
 
-    expect(await screen.findByText('接口知识文档')).toBeInTheDocument();
+    expect(await screen.findAllByText('接口知识文档')).toHaveLength(2);
     expect(screen.getByText('admin, rd_owner')).toBeInTheDocument();
 
     rerender(<AuditPage />);

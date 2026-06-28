@@ -135,9 +135,13 @@ export default function AssistantRoleQuickTasksPage() {
     }
   }, [listQuery]);
 
+  const handleListQueryChange = useCallback((nextQuery: ManagementListQuery) => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    setListQuery(nextQuery);
+  }, []);
+
   useEffect(() => {
     let isCurrent = true;
-    setListState((current) => ({ ...current, status: 'loading' }));
     fetchAssistantRoleQuickTaskConfigList(buildRoleQuickTaskListQuery(listQuery))
       .then((result) => {
         if (isCurrent) {
@@ -435,7 +439,7 @@ export default function AssistantRoleQuickTasksPage() {
         loading={listState.status === 'loading'}
         onReload={() => void loadConfigs()}
         remote={{
-          onChange: setListQuery,
+          onChange: handleListQueryChange,
           page: listState.page,
           pageSize: listState.pageSize,
           performance: listState.performance,

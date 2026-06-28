@@ -202,9 +202,13 @@ export default function AssistantActionReferencesPage() {
     }
   }, [listQuery]);
 
+  const handleListQueryChange = useCallback((nextQuery: ManagementListQuery) => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    setListQuery(nextQuery);
+  }, []);
+
   useEffect(() => {
     let isCurrent = true;
-    setListState((current) => ({ ...current, status: 'loading' }));
     fetchAssistantActionReferenceConfigList(buildActionReferenceListQuery(listQuery))
       .then((result) => {
         if (isCurrent) {
@@ -592,7 +596,7 @@ export default function AssistantActionReferencesPage() {
         onReload={() => void loadConfigs()}
         primaryAction="新增能力"
         remote={{
-          onChange: setListQuery,
+          onChange: handleListQueryChange,
           page: listState.page,
           pageSize: listState.pageSize,
           performance: listState.performance,
