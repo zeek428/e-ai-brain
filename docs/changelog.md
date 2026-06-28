@@ -51,6 +51,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 前端 AI 助手指标 client 拆分：新增 `apps/web/src/services/assistantMetricsClient.ts`，将助手效果指标、指标详情和 CSV/JSON 导出请求从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
 - 前端 AI 助手配置 client 拆分：新增 `apps/web/src/services/assistantConfigClient.ts`，将 @ 能力配置和角色快捷任务配置查询、分页、启停、灰度与删除请求从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
 - 前端 AI 动作草案 client 拆分：新增 `apps/web/src/services/assistantDraftClient.ts`，将草案任务台查询、详情查看、确认、取消、失败重试、修改标记、草案路由 prompt 与草案资源解析本地状态从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
 - 前端代码巡检 client 拆分：新增 `apps/web/src/services/codeInspectionClient.ts`，将代码巡检报告列表、治理看板、详情、误报忽略申请和审批请求从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重；列表查询结果补齐 `performance` 透传。
