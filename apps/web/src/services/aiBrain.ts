@@ -35,6 +35,7 @@ import type { ScopeGrant } from './authClient';
 import type { AssistantActionDraftPreview } from './assistantDraftClient';
 import { mapBugRecord, type BugListItem } from './bugClient';
 import type { CodeInspectionReportRecord } from './codeInspectionClient';
+import { mapRequirementRecord, type RequirementListItem } from './requirementClient';
 
 export { ApiRequestError, apiRequest };
 export type { RemoteListPerformance, RemoteListQueryEcho };
@@ -171,6 +172,36 @@ export type {
   BugListQuery,
   BugMutationPayload,
 } from './bugClient';
+export {
+  approveManagementRequirement,
+  batchAdvanceRequirementStatus,
+  batchAssignRequirementOwner,
+  batchGenerateRequirementTasks,
+  batchScheduleRequirements,
+  createManagementRequirement,
+  deleteManagementRequirement,
+  fetchManagementRequirementList,
+  fetchManagementRequirements,
+  generateRequirementTask,
+  rejectManagementRequirement,
+  updateManagementRequirement,
+} from './requirementClient';
+export type {
+  RequirementBatchAdvanceStatusPayload,
+  RequirementBatchAdvanceStatusResult,
+  RequirementBatchAssignOwnerPayload,
+  RequirementBatchAssignOwnerResult,
+  RequirementBatchGeneratedTaskItem,
+  RequirementBatchGenerateTasksPayload,
+  RequirementBatchGenerateTasksResult,
+  RequirementBatchSchedulePayload,
+  RequirementBatchScheduleResult,
+  RequirementBatchSkippedItem,
+  RequirementListItem,
+  RequirementListQuery,
+  RequirementMutationPayload,
+  RequirementResponse,
+} from './requirementClient';
 export {
   fetchCodeInspectionDashboard,
   fetchCodeInspectionDetail,
@@ -626,11 +657,6 @@ export type ProductResponse = {
   status?: string;
 };
 
-export type RequirementResponse = {
-  id: string;
-  status: string;
-};
-
 export type RequirementFullChainTimelineItem = {
   occurredAt: string;
   occurredAtValue?: string;
@@ -745,16 +771,6 @@ type RemoteListQuery = {
   pageSize?: number;
   sortField?: string;
   sortOrder?: RemoteSortOrder;
-};
-
-export type RequirementListQuery = RemoteListQuery & {
-  priority?: string;
-  product?: string;
-  source?: string;
-  status?: string;
-  title?: string;
-  version?: string;
-  versionId?: string;
 };
 
 export type ProductListQuery = RemoteListQuery & {
@@ -1605,136 +1621,6 @@ export type ProductMutationPayload = {
   status?: string;
 };
 
-export type RequirementMutationPayload = {
-  content?: string;
-  module_code?: string;
-  priority?: string;
-  product_id?: string;
-  source?: string;
-  title?: string;
-  version_id?: string | null;
-};
-
-export type RequirementBatchSchedulePayload = {
-  product_id: string;
-  reason?: string;
-  requirement_ids: string[];
-  version_id: string;
-};
-
-type RequirementBatchSkippedItem = {
-  code: string;
-  id: string;
-  message: string;
-};
-
-type RequirementBatchScheduleResponse = {
-  batch_id: string;
-  product_id: string;
-  reason?: string | null;
-  skipped: RequirementBatchSkippedItem[];
-  skipped_count: number;
-  updated: RequirementListItem[];
-  updated_count: number;
-  version_id: string;
-};
-
-export type RequirementBatchScheduleResult = {
-  batchId: string;
-  productId: string;
-  reason?: string | null;
-  skipped: RequirementBatchSkippedItem[];
-  skippedCount: number;
-  updated: RequirementRecord[];
-  updatedCount: number;
-  versionId: string;
-};
-
-export type RequirementBatchAssignOwnerPayload = {
-  assignee: string;
-  reason?: string;
-  requirement_ids: string[];
-};
-
-type RequirementBatchAssignOwnerResponse = {
-  assignee: string;
-  batch_id: string;
-  reason?: string | null;
-  skipped: RequirementBatchSkippedItem[];
-  skipped_count: number;
-  updated: RequirementListItem[];
-  updated_count: number;
-};
-
-export type RequirementBatchAssignOwnerResult = {
-  assignee: string;
-  batchId: string;
-  reason?: string | null;
-  skipped: RequirementBatchSkippedItem[];
-  skippedCount: number;
-  updated: RequirementRecord[];
-  updatedCount: number;
-};
-
-export type RequirementBatchAdvanceStatusPayload = {
-  reason?: string;
-  requirement_ids: string[];
-  target_status: string;
-};
-
-type RequirementBatchAdvanceStatusResponse = {
-  batch_id: string;
-  reason?: string | null;
-  skipped: RequirementBatchSkippedItem[];
-  skipped_count: number;
-  target_status: string;
-  updated: RequirementListItem[];
-  updated_count: number;
-};
-
-export type RequirementBatchAdvanceStatusResult = {
-  batchId: string;
-  reason?: string | null;
-  skipped: RequirementBatchSkippedItem[];
-  skippedCount: number;
-  targetStatus: RequirementRecord['status'];
-  updated: RequirementRecord[];
-  updatedCount: number;
-};
-
-export type RequirementBatchGenerateTasksPayload = {
-  product_id: string;
-  reason?: string;
-  requirement_ids: string[];
-};
-
-type RequirementBatchGeneratedTaskItem = {
-  requirement_id: string;
-  task_id: string;
-  task_status: string;
-  task_type: string;
-};
-
-type RequirementBatchGenerateTasksResponse = {
-  batch_id: string;
-  generated: RequirementBatchGeneratedTaskItem[];
-  generated_count: number;
-  product_id: string;
-  reason?: string | null;
-  skipped: RequirementBatchSkippedItem[];
-  skipped_count: number;
-};
-
-export type RequirementBatchGenerateTasksResult = {
-  batchId: string;
-  generated: RequirementBatchGeneratedTaskItem[];
-  generatedCount: number;
-  productId: string;
-  reason?: string | null;
-  skipped: RequirementBatchSkippedItem[];
-  skippedCount: number;
-};
-
 export type ProductVersionMutationPayload = {
   code?: string;
   description?: string;
@@ -1841,26 +1727,6 @@ export type UserMutationPayload = {
   roles?: string[];
   status?: string;
   username?: string;
-};
-
-type RequirementListItem = {
-  assignee?: string | null;
-  content?: string;
-  created_at?: string;
-  created_by?: string;
-  id: string;
-  module_code?: string | null;
-  priority?: string;
-  product_code?: string;
-  product_id: string;
-  product_name?: string;
-  source?: string;
-  status?: string;
-  title: string;
-  updated_at?: string;
-  version_code?: string | null;
-  version_id?: string;
-  version_name?: string | null;
 };
 
 type KnowledgeDocumentListItem = {
@@ -2528,43 +2394,6 @@ function normalizeActiveInactiveStatus(
   status?: string,
 ): ProductModuleRecord['status'] | ProductGitRepositoryRecord['status'] {
   return status === 'inactive' ? 'inactive' : 'active';
-}
-
-function normalizePriority(priority?: string): RequirementRecord['priority'] {
-  if (priority === 'P0' || priority === 'P2') {
-    return priority;
-  }
-  return 'P1';
-}
-
-function normalizeRequirementStatus(status?: string): RequirementRecord['status'] {
-  if (status === 'pending_approval') {
-    return 'submitted';
-  }
-  if (status === 'task_created') {
-    return 'designing';
-  }
-  if (
-    status === 'accepted' ||
-    status === 'approved' ||
-    status === 'cancelled' ||
-    status === 'closed' ||
-    status === 'code_reviewing' ||
-    status === 'deferred' ||
-    status === 'designing' ||
-    status === 'developing' ||
-    status === 'draft' ||
-    status === 'planned' ||
-    status === 'ready_for_dev' ||
-    status === 'ready_for_release' ||
-    status === 'rejected' ||
-    status === 'released' ||
-    status === 'submitted' ||
-    status === 'testing'
-  ) {
-    return status;
-  }
-  return 'draft';
 }
 
 function normalizeKnowledgeStatus(status?: string): KnowledgeRecord['status'] {
@@ -5051,27 +4880,6 @@ export async function fetchScheduledJobRunObservability(): Promise<ScheduledJobR
   });
 }
 
-function mapRequirementRecord(requirement: RequirementListItem): RequirementRecord {
-  return {
-    content: requirement.content,
-    id: requirement.id,
-    moduleCode: requirement.module_code ?? undefined,
-    owner: requirement.assignee ?? requirement.created_by ?? '-',
-    priority: normalizePriority(requirement.priority),
-    product: requirement.product_code ?? requirement.product_name ?? requirement.product_id,
-    productId: requirement.product_id,
-    source: requirement.source ?? 'business_department',
-    status: normalizeRequirementStatus(requirement.status),
-    title: requirement.title,
-    createdAt: formatListDate(requirement.created_at),
-    updatedAt: formatListDate(requirement.updated_at ?? requirement.created_at),
-    versionId: requirement.version_id,
-    versionName: requirement.version_id
-      ? (requirement.version_name ?? requirement.version_code ?? requirement.version_id)
-      : '未排期',
-  };
-}
-
 function mapTaskRecord(task: TaskListItem): TaskCenterTaskRecord {
   return {
     createdAt: formatListDate(task.created_at ?? task.updated_at),
@@ -5191,43 +4999,6 @@ function mapRequirementFullChain(
   };
 }
 
-export async function fetchManagementRequirements(): Promise<RequirementRecord[]> {
-  const token = requireAccessToken();
-  const requirements = await apiRequest<ListResponse<RequirementListItem>>('/api/requirements', {
-    token,
-  });
-
-  return requirements.items.map(mapRequirementRecord);
-}
-
-export async function fetchManagementRequirementList(
-  query: RequirementListQuery = {},
-): Promise<RemoteListResult<RequirementRecord>> {
-  const token = requireAccessToken();
-  const params = new URLSearchParams();
-  appendQueryParam(params, 'priority', query.priority);
-  appendQueryParam(params, 'product', query.product);
-  appendQueryParam(params, 'source', query.source);
-  appendQueryParam(params, 'status', query.status);
-  appendQueryParam(params, 'title', query.title);
-  appendQueryParam(params, 'version', query.version);
-  appendQueryParam(params, 'version_id', query.versionId);
-  appendRemoteListParams(params, query);
-  const queryString = params.toString();
-  const requirements = await apiRequest<ListResponse<RequirementListItem>>(
-    queryString ? `/api/requirements?${queryString}` : '/api/requirements',
-    { token },
-  );
-
-  return {
-    page: requirements.page ?? query.page ?? 1,
-    pageSize: requirements.page_size ?? query.pageSize ?? 10,
-    performance: requirements.performance,
-    rows: requirements.items.map(mapRequirementRecord),
-    total: requirements.total,
-  };
-}
-
 export async function fetchRequirementFullChain(
   requirementId: string,
 ): Promise<RequirementFullChainRecord> {
@@ -5263,157 +5034,6 @@ export function fullChainSubjectHref(subjectType: string, subjectId: string) {
     subject_type: subjectType,
   });
   return `/delivery/full-chain?${params.toString()}`;
-}
-
-export async function createManagementRequirement(payload: RequirementMutationPayload) {
-  const token = requireAccessToken();
-  return apiRequest<RequirementResponse>('/api/requirements', {
-    body: payload,
-    method: 'POST',
-    token,
-  });
-}
-
-export async function updateManagementRequirement(
-  requirementId: string,
-  payload: RequirementMutationPayload,
-) {
-  const token = requireAccessToken();
-  return apiRequest<RequirementResponse>(`/api/requirements/${requirementId}`, {
-    body: payload,
-    method: 'PATCH',
-    token,
-  });
-}
-
-export async function batchScheduleRequirements(
-  payload: RequirementBatchSchedulePayload,
-): Promise<RequirementBatchScheduleResult> {
-  const token = requireAccessToken();
-  const result = await apiRequest<RequirementBatchScheduleResponse>(
-    '/api/requirements/batch-schedule',
-    {
-      body: payload,
-      method: 'POST',
-      token,
-    },
-  );
-  return {
-    batchId: result.batch_id,
-    productId: result.product_id,
-    reason: result.reason,
-    skipped: result.skipped,
-    skippedCount: result.skipped_count,
-    updated: result.updated.map(mapRequirementRecord),
-    updatedCount: result.updated_count,
-    versionId: result.version_id,
-  };
-}
-
-export async function batchAssignRequirementOwner(
-  payload: RequirementBatchAssignOwnerPayload,
-): Promise<RequirementBatchAssignOwnerResult> {
-  const token = requireAccessToken();
-  const result = await apiRequest<RequirementBatchAssignOwnerResponse>(
-    '/api/requirements/batch-assign-owner',
-    {
-      body: payload,
-      method: 'POST',
-      token,
-    },
-  );
-  return {
-    assignee: result.assignee,
-    batchId: result.batch_id,
-    reason: result.reason,
-    skipped: result.skipped,
-    skippedCount: result.skipped_count,
-    updated: result.updated.map(mapRequirementRecord),
-    updatedCount: result.updated_count,
-  };
-}
-
-export async function batchAdvanceRequirementStatus(
-  payload: RequirementBatchAdvanceStatusPayload,
-): Promise<RequirementBatchAdvanceStatusResult> {
-  const token = requireAccessToken();
-  const result = await apiRequest<RequirementBatchAdvanceStatusResponse>(
-    '/api/requirements/batch-advance-status',
-    {
-      body: payload,
-      method: 'POST',
-      token,
-    },
-  );
-  return {
-    batchId: result.batch_id,
-    reason: result.reason,
-    skipped: result.skipped,
-    skippedCount: result.skipped_count,
-    targetStatus: normalizeRequirementStatus(result.target_status),
-    updated: result.updated.map(mapRequirementRecord),
-    updatedCount: result.updated_count,
-  };
-}
-
-export async function batchGenerateRequirementTasks(
-  payload: RequirementBatchGenerateTasksPayload,
-): Promise<RequirementBatchGenerateTasksResult> {
-  const token = requireAccessToken();
-  const result = await apiRequest<RequirementBatchGenerateTasksResponse>(
-    '/api/requirements/batch-generate-tasks',
-    {
-      body: payload,
-      method: 'POST',
-      token,
-    },
-  );
-  return {
-    batchId: result.batch_id,
-    generated: result.generated,
-    generatedCount: result.generated_count,
-    productId: result.product_id,
-    reason: result.reason,
-    skipped: result.skipped,
-    skippedCount: result.skipped_count,
-  };
-}
-
-export async function deleteManagementRequirement(requirementId: string) {
-  const token = requireAccessToken();
-  return apiRequest<{ deleted: boolean; id: string }>(`/api/requirements/${requirementId}`, {
-    method: 'DELETE',
-    token,
-  });
-}
-
-export async function approveManagementRequirement(requirementId: string) {
-  const token = requireAccessToken();
-  return apiRequest<RequirementResponse>(`/api/requirements/${requirementId}/approve`, {
-    body: {},
-    method: 'POST',
-    token,
-  });
-}
-
-export async function rejectManagementRequirement(requirementId: string, rejectionReason: string) {
-  const token = requireAccessToken();
-  return apiRequest<RequirementResponse>(`/api/requirements/${requirementId}/reject`, {
-    body: { rejection_reason: rejectionReason },
-    method: 'POST',
-    token,
-  });
-}
-
-export async function generateRequirementTask(requirementId: string) {
-  const token = requireAccessToken();
-  return apiRequest<{ task_id: string; task_status: string; task_type: string }>(
-    `/api/requirements/${requirementId}/generate-task`,
-    {
-      method: 'POST',
-      token,
-    },
-  );
 }
 
 export async function fetchManagementKnowledge(): Promise<KnowledgeRecord[]> {
