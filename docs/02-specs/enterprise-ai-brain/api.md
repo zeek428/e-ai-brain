@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.443 |
+| 功能版本 | v1.1.444 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.444 | 2026-06-28 | 角色管理页面新增权限与范围预览，复用 `GET /api/system/permissions/matrix` 响应中的 `rows/scopes/high_risk_permission_codes/missing_menu_permission_codes` 展示范围覆盖和授权风险；API 契约无需新增端点 | Codex |
 | v1.1.443 | 2026-06-28 | 知识中心页面新增索引健康视图：复用 `GET /api/knowledge/documents` 分页响应中的 `index_status`、`active_chunk_set_id`、`index_error` 和 `vector_index_error`，展示当前页健康汇总和可操作问题入口；API 契约无需新增端点 | Codex |
 | v1.1.442 | 2026-06-28 | `GET /api/governance/code-inspections/{report_id}` 详情响应新增 `governance_summary`，返回闭环状态、严重问题 Bug/整改任务覆盖、待审批忽略、已接受风险和治理待办；前端报告详情展示治理闭环与整改任务链接 | Codex |
 | v1.1.441 | 2026-06-28 | AI 动作草案详情响应新增 `governance` 治理摘要，草案任务台列表行补充影响对象、权限状态、审计事件数、失败次数和重试次数；详情页需展示风险、影响、权限、执行前后差异、失败重试和审计链路 | Codex |

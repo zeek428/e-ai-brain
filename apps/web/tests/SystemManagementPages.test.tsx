@@ -348,6 +348,11 @@ describe('system management pages', () => {
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('系统管理');
     expect(await screen.findByText('权限审计矩阵')).toBeInTheDocument();
     expect(screen.getByText('用户权限诊断')).toBeInTheDocument();
+    expect(screen.getByText('角色权限与范围预览')).toBeInTheDocument();
+    expect(screen.getByText('全局范围 1')).toBeInTheDocument();
+    expect(screen.getByText('未配置范围 1')).toBeInTheDocument();
+    expect(screen.getByText('高风险权限：system.roles.manage')).toBeInTheDocument();
+    expect(screen.getByText('菜单权限缺口：workspace.read')).toBeInTheDocument();
     expect(screen.getByText('1 个菜单权限缺口')).toBeInTheDocument();
     expect(screen.getByText('1 个高风险角色')).toBeInTheDocument();
     expect(screen.getByText('已授权菜单缺少对应权限点')).toBeInTheDocument();
@@ -357,6 +362,8 @@ describe('system management pages', () => {
     expect(screen.getAllByText('查看者').length).toBeGreaterThan(0);
     expect(screen.getAllByText('viewer').length).toBeGreaterThan(0);
     expect(screen.getAllByText('系统管理').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('全局:* · 管理').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('产品:self · 读取').length).toBeGreaterThan(0);
     expect(screen.getAllByText('3 个入口').length).toBeGreaterThan(0);
     expect(screen.getAllByText('3 个权限点').length).toBeGreaterThan(0);
     expect(screen.getAllByText('1 个权限点').length).toBeGreaterThan(0);

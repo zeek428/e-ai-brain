@@ -28,6 +28,7 @@
 ## 当前落地要求
 
 - 角色管理页展示权限审计矩阵，按角色聚合权限点、菜单入口、数据范围、高风险权限和菜单权限缺口。
+- 角色管理页必须在权限审计矩阵前提供“角色权限与范围预览”，复用矩阵结果展示全局/产品范围覆盖、未配置范围、高风险权限和菜单权限缺口；角色列表和角色详情必须展示 `role_scope_grants` 的范围类型、范围 ID 和访问级别，便于分配前快速识别越权或漏配风险。
 - 角色管理页的角色列表属于管理型列表，`GET /api/system/roles` 必须在服务端完成分页、角色/分类/业务角色/可见入口/权限点/状态筛选、白名单排序和 `query/performance` 观测，前端不得拉全量角色后本地分页过滤。
 - 角色管理页提供用户权限诊断工具，按用户 ID、菜单路径、权限点和数据范围解释“能看/不能看”的服务端判定依据。
 - 系统管理核心 API 必须服务端校验权限点而不是固定 admin 角色：`/api/users` 需要 `system.users.manage`，`/api/system/model-gateway-configs` 和 `/api/model-gateway/logs` 需要 `system.model_gateway.manage`，`/api/audit/events` 需要 `audit.read`；`admin` 与 `system.admin` 仅作为 `require_permissions` 的兼容超级授权来源，未授予对应权限点的普通角色必须返回 403。

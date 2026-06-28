@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.761 |
+| 功能版本 | v1.1.762 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.762 | 2026-06-28 | 补充角色权限与范围预览验收：角色管理页必须基于 RBAC 策略矩阵展示全局/产品范围、未配置范围、高风险权限和菜单权限缺口，并在角色列表与详情展示 scope 授权；`SystemManagementPages.test.tsx` 覆盖 | Codex |
 | v1.1.761 | 2026-06-28 | 补充知识中心索引健康视图验收：页面基于当前远程分页结果展示可检索、向量就绪、关键词兜底、索引失败、处理中和分块版本指标，并为索引失败、向量待补、分块缺失和导入中状态提供处理入口；`KnowledgePage.test.tsx` 覆盖 | Codex |
 | v1.1.760 | 2026-06-28 | 补充代码巡检报告详情治理闭环验收：详情响应 `governance_summary` 必须返回闭环状态、Bug/整改任务覆盖率、待审批忽略和治理待办；详情页展示治理闭环和 finding 整改任务链接；`test_code_inspection_governance.py` 与 `CodeInspectionsPage.test.tsx` 覆盖 | Codex |
 | v1.1.759 | 2026-06-28 | 补充 AI 动作确认中心治理摘要验收：`GET /api/assistant/action-drafts` 和详情响应必须展示影响对象、权限状态、执行前后差异、失败重试和审计链路；`test_assistant_draft_workbench.py` 与 `AssistantDraftsPage.test.tsx` 覆盖 | Codex |

@@ -98,6 +98,26 @@ const roleSortFieldMap: Record<string, string> = {
 
 const { Paragraph, Text } = Typography;
 
+const SCOPE_TYPE_LABELS: Record<string, string> = {
+  department: '部门',
+  global: '全局',
+  knowledge_space: '知识空间',
+  product: '产品',
+  review_assignment: '评审任务',
+};
+const SCOPE_TYPE_COLORS: Record<string, string> = {
+  department: 'cyan',
+  global: 'purple',
+  knowledge_space: 'geekblue',
+  product: 'blue',
+  review_assignment: 'gold',
+};
+const ACCESS_LEVEL_LABELS: Record<string, string> = {
+  admin: '管理',
+  read: '读取',
+  write: '写入',
+};
+
 function renderTagList(items: string[], maxVisible = items.length) {
   const visibleItems = items.slice(0, maxVisible);
   return (
@@ -106,6 +126,32 @@ function renderTagList(items: string[], maxVisible = items.length) {
         <Tag key={item}>{item}</Tag>
       ))}
       {items.length > visibleItems.length ? <Tag>+{items.length - visibleItems.length}</Tag> : null}
+    </Space>
+  );
+}
+
+function formatScopeGrant(scope: ScopeGrant) {
+  const scopeType = SCOPE_TYPE_LABELS[scope.scope_type] ?? scope.scope_type;
+  const accessLevel = ACCESS_LEVEL_LABELS[scope.access_level] ?? scope.access_level;
+  return `${scopeType}:${scope.scope_id || '-'} · ${accessLevel}`;
+}
+
+function renderScopeGrantTags(scopes: ScopeGrant[], maxVisible = scopes.length) {
+  if (!scopes.length) {
+    return <Text type="secondary">未配置 scope 授权</Text>;
+  }
+  const visibleScopes = scopes.slice(0, maxVisible);
+  return (
+    <Space className="role-scope-tags" size={[4, 4]} wrap>
+      {visibleScopes.map((scope) => (
+        <Tag
+          color={SCOPE_TYPE_COLORS[scope.scope_type] ?? 'default'}
+          key={`${scope.scope_type}:${scope.scope_id}:${scope.access_level}`}
+        >
+          {formatScopeGrant(scope)}
+        </Tag>
+      ))}
+      {scopes.length > visibleScopes.length ? <Tag>+{scopes.length - visibleScopes.length}</Tag> : null}
     </Space>
   );
 }
@@ -121,6 +167,7 @@ function renderRoleScopeSummary(row: RoleManagementRow) {
         {row.data_scope ? '已配置数据范围' : '未配置数据范围'} ·{' '}
         {row.decision_scope ? '已配置决策范围' : '未配置决策范围'}
       </Text>
+      {renderScopeGrantTags(row.scopes, 2)}
     </Space>
   );
 }
@@ -140,6 +187,69 @@ function renderCompactCodes(codes: string[], maxVisible = 3) {
         <Tag key={code}>{code}</Tag>
       ))}
       {codes.length > visibleCodes.length ? <Tag>+{codes.length - visibleCodes.length}</Tag> : null}
+    </Space>
+  );
+}
+
+function roleAccessPreviewScore(row: RbacPolicyMatrixRow) {
+  return (
+    row.high_risk_permission_count * 8
+    + row.missing_menu_permission_codes.length * 4
+    + (row.scope_count === 0 ? 2 : 0)
+    + row.diagnostics.length
+  );
+}
+
+function buildRoleAccessPreview(matrix: RbacPolicyMatrix | undefined) {
+  const rows = matrix?.rows ?? [];
+  return {
+    globalScopeCount: rows.filter((row) => row.scopes.some((scope) => scope.scope_type === 'global')).length,
+    highRiskCount: rows.filter((row) => row.high_risk_permission_count > 0).length,
+    menuGapCount: rows.filter((row) => row.missing_menu_permission_codes.length > 0).length,
+    productScopeCount: rows.filter((row) => row.scopes.some((scope) => scope.scope_type === 'product')).length,
+    previewRows: [...rows]
+      .sort((left, right) => {
+        const scoreDiff = roleAccessPreviewScore(right) - roleAccessPreviewScore(left);
+        return scoreDiff || left.role_name.localeCompare(right.role_name, 'zh-Hans-CN');
+      })
+      .slice(0, 6),
+    unscopedCount: rows.filter((row) => row.scope_count === 0).length,
+  };
+}
+
+function renderMatrixScopePreview(row: RbacPolicyMatrixRow) {
+  if (row.scopes.length) {
+    return renderScopeGrantTags(row.scopes, 3);
+  }
+  return <Text type="secondary">{row.scope_summary || '未配置数据范围'}</Text>;
+}
+
+function renderRoleAccessRisks(row: RbacPolicyMatrixRow) {
+  const riskItems = [
+    ...row.high_risk_permission_codes.map((code) => ({
+      color: 'red',
+      key: `high-risk-${code}`,
+      label: `高风险权限：${code}`,
+    })),
+    ...row.missing_menu_permission_codes.map((code) => ({
+      color: 'gold',
+      key: `menu-gap-${code}`,
+      label: `菜单权限缺口：${code}`,
+    })),
+  ];
+  if (row.scope_count === 0) {
+    riskItems.push({ color: 'gold', key: 'unscoped', label: '未配置范围' });
+  }
+  if (!riskItems.length) {
+    return <StatusTag color="green" label="暂无异常" />;
+  }
+  return (
+    <Space className="role-access-preview-risk" size={[4, 4]} wrap>
+      {riskItems.map((item) => (
+        <Tag color={item.color} key={item.key}>
+          {item.label}
+        </Tag>
+      ))}
     </Space>
   );
 }
@@ -715,6 +825,65 @@ export default function RolesPage() {
   );
   const policyMatrixColumns = useMemo(() => matrixColumns(), []);
   const permissionDiagnosticColumns = useMemo(() => diagnosticCheckColumns(), []);
+  const roleAccessPreview = useMemo(() => buildRoleAccessPreview(policyMatrix), [policyMatrix]);
+  const roleAccessPreviewPanel = useMemo(
+    () => (
+      <section className="role-policy-matrix role-access-preview" aria-label="角色权限与范围预览">
+        <div className="role-policy-matrix-header">
+          <Space orientation="vertical" size={4}>
+            <Text strong>角色权限与范围预览</Text>
+            <Text type="secondary">
+              从权限矩阵中提取范围覆盖、高风险权限和菜单权限缺口，快速判断角色是否可安全分配。
+            </Text>
+          </Space>
+        </div>
+        <Space className="role-policy-matrix-summary" size={[8, 8]} wrap>
+          <Tag color="purple">全局范围 {roleAccessPreview.globalScopeCount}</Tag>
+          <Tag color="blue">产品范围 {roleAccessPreview.productScopeCount}</Tag>
+          <Tag color={roleAccessPreview.unscopedCount > 0 ? 'gold' : 'green'}>
+            未配置范围 {roleAccessPreview.unscopedCount}
+          </Tag>
+          <Tag color={roleAccessPreview.highRiskCount > 0 ? 'red' : 'green'}>
+            高风险角色 {roleAccessPreview.highRiskCount}
+          </Tag>
+          <Tag color={roleAccessPreview.menuGapCount > 0 ? 'gold' : 'green'}>
+            菜单权限缺口 {roleAccessPreview.menuGapCount}
+          </Tag>
+        </Space>
+        {roleAccessPreview.previewRows.length ? (
+          <div className="role-access-preview-grid">
+            {roleAccessPreview.previewRows.map((row) => (
+              <article className="role-access-preview-card" key={row.role_code}>
+                <div className="role-access-preview-card-header">
+                  <Space orientation="vertical" size={2}>
+                    <Text strong>{row.role_name}</Text>
+                    <Text type="secondary">{row.role_code}</Text>
+                  </Space>
+                  <StatusTag color={row.status === 'active' ? 'green' : 'default'} label={row.status} />
+                </div>
+                <Space size={[4, 4]} wrap>
+                  <Tag color="blue">{row.permission_count} 权限点</Tag>
+                  <Tag color="cyan">{row.menu_count} 菜单</Tag>
+                  <Tag>{row.scope_count} 范围</Tag>
+                </Space>
+                <div className="role-access-preview-section">
+                  <Text type="secondary">范围预览</Text>
+                  {renderMatrixScopePreview(row)}
+                </div>
+                <div className="role-access-preview-section">
+                  <Text type="secondary">风险提示</Text>
+                  {renderRoleAccessRisks(row)}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <Text type="secondary">{policyMatrixLoading ? '正在加载角色权限与范围预览' : '暂无可预览角色'}</Text>
+        )}
+      </section>
+    ),
+    [policyMatrixLoading, roleAccessPreview],
+  );
   const policyMatrixPanel = useMemo(() => {
     const summary = policyMatrix?.summary;
     return (
@@ -980,6 +1149,7 @@ export default function RolesPage() {
         beforeTable={
           <>
             {permissionDiagnosticPanel}
+            {roleAccessPreviewPanel}
             {policyMatrixPanel}
           </>
         }
@@ -1200,6 +1370,9 @@ export default function RolesPage() {
             </Descriptions.Item>
             <Descriptions.Item label="数据范围">{detailRole.data_scope || '-'}</Descriptions.Item>
             <Descriptions.Item label="决策范围">{detailRole.decision_scope || '-'}</Descriptions.Item>
+            <Descriptions.Item label="授权范围" span={2}>
+              {renderScopeGrantTags(detailRole.scopes)}
+            </Descriptions.Item>
             <Descriptions.Item label="可见入口" span={2}>
               {renderTagList(detailRole.menu_scope)}
             </Descriptions.Item>
