@@ -16,14 +16,12 @@ import type {
 } from '../data/management';
 import { formatUserRoles, type UserRoleDefinition } from '../data/roles';
 import { formatDisplayDateTime } from '../utils/dateTime';
-import { navigateTo } from '../utils/navigation';
 import {
   API_BASE_URL,
   ApiRequestError,
   apiRequest,
   appendQueryParam,
   appendRemoteListParams,
-  setUnauthorizedApiResponseHandler,
 } from './apiClient';
 import type {
   ApiEnvelope,
@@ -32,53 +30,37 @@ import type {
   RemoteListPerformance,
   RemoteListQueryEcho,
 } from './apiClient';
+import {
+  getStoredCurrentUser,
+  handleUnauthorizedApiResponse,
+  requireAccessToken,
+  setAuthLocalCacheClearHandler,
+} from './authClient';
+import type { ScopeGrant } from './authClient';
 
 export { ApiRequestError, apiRequest };
 export type { RemoteListPerformance, RemoteListQueryEcho };
+export {
+  AUTH_STATE_EVENT,
+  clearAccessToken,
+  fetchCurrentUser,
+  getAccessToken,
+  getStoredCurrentUser,
+  login,
+  logout,
+  saveAccessToken,
+  saveCurrentUser,
+} from './authClient';
+export type {
+  CurrentUserResponse,
+  LoginResponse,
+  MenuTreeNode,
+  ScopeGrant,
+} from './authClient';
 
 const PRODUCT_CONTEXT_PAGE_SIZE = 100;
 const VERSION_CONTEXT_PAGE_SIZE = 100;
 const CONTEXT_OPTION_MAX_PAGE_COUNT = 50;
-
-const ACCESS_TOKEN_STORAGE_KEY = 'ai_brain_access_token';
-const CURRENT_USER_STORAGE_KEY = 'ai_brain_current_user';
-export const AUTH_STATE_EVENT = 'ai-brain-auth-state-changed';
-
-function emitAuthStateChanged() {
-  if (typeof globalThis.dispatchEvent !== 'function' || typeof Event !== 'function') {
-    return;
-  }
-  globalThis.dispatchEvent(new Event(AUTH_STATE_EVENT));
-}
-
-export type LoginResponse = {
-  access_token: string;
-  user: CurrentUserResponse;
-};
-
-export type CurrentUserResponse = {
-  display_name: string;
-  id: string;
-  menu_tree?: MenuTreeNode[];
-  permissions?: string[];
-  route_permissions?: Record<string, string[]>;
-  roles: string[];
-  scope_summary?: ScopeGrant[];
-  username: string;
-};
-
-export type MenuTreeNode = {
-  children?: MenuTreeNode[];
-  code: string;
-  name: string;
-  path?: string | null;
-};
-
-export type ScopeGrant = {
-  access_level: string;
-  scope_id: string;
-  scope_type: string;
-};
 
 export type PermissionRecord = {
   category?: string;
@@ -764,6 +746,8 @@ function clearAssistantLocalCachesForCurrentUser() {
     globalThis.sessionStorage.removeItem(baseKey);
   });
 }
+
+setAuthLocalCacheClearHandler(clearAssistantLocalCachesForCurrentUser);
 
 export type AssistantDraftResourceType =
   | 'ai_agent'
@@ -3918,115 +3902,6 @@ export async function fetchAssistantConversationMessages(
     suggestions: item.suggestions ?? [],
     toolResults: item.tool_results ?? [],
   }));
-}
-
-export function getAccessToken() {
-  const storedToken =
-    typeof globalThis.localStorage === 'undefined'
-      ? undefined
-      : globalThis.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
-  return storedToken || process.env.UMI_APP_API_TOKEN || undefined;
-}
-
-function requireAccessToken() {
-  const token = getAccessToken();
-  if (!token) {
-    throw new ApiRequestError({
-      code: 'AUTH_REQUIRED',
-      message: '缺少访问令牌，请先登录后再加载真实数据。',
-      status: 401,
-    });
-  }
-  return token;
-}
-
-export function saveAccessToken(token: string) {
-  if (typeof globalThis.localStorage === 'undefined') {
-    return;
-  }
-  globalThis.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
-}
-
-export function saveCurrentUser(user: CurrentUserResponse) {
-  if (!user || typeof globalThis.localStorage === 'undefined') {
-    return;
-  }
-  globalThis.localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
-  emitAuthStateChanged();
-}
-
-export function getStoredCurrentUser(): CurrentUserResponse | undefined {
-  if (typeof globalThis.localStorage === 'undefined') {
-    return undefined;
-  }
-  const value = globalThis.localStorage.getItem(CURRENT_USER_STORAGE_KEY);
-  if (!value) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(value) as CurrentUserResponse;
-  } catch {
-    globalThis.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
-    return undefined;
-  }
-}
-
-export function clearAccessToken() {
-  if (typeof globalThis.localStorage === 'undefined') {
-    return;
-  }
-  clearAssistantLocalCachesForCurrentUser();
-  globalThis.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
-  globalThis.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
-  emitAuthStateChanged();
-}
-
-function handleUnauthorizedApiResponse() {
-  clearAccessToken();
-  if (typeof window === 'undefined') {
-    return;
-  }
-  const { pathname, search } = window.location;
-  if (pathname === '/login') {
-    return;
-  }
-  const target = `${pathname}${search}`;
-  navigateTo(`/login?redirect=${encodeURIComponent(target)}`);
-}
-
-setUnauthorizedApiResponseHandler(handleUnauthorizedApiResponse);
-
-export async function login(username: string, password: string): Promise<LoginResponse> {
-  const loginResponse = await apiRequest<LoginResponse>('/api/auth/login', {
-    body: { username, password },
-    method: 'POST',
-  });
-  saveAccessToken(loginResponse.access_token);
-  saveCurrentUser(loginResponse.user);
-  return loginResponse;
-}
-
-export async function fetchCurrentUser(): Promise<CurrentUserResponse> {
-  const token = requireAccessToken();
-  const user = await apiRequest<CurrentUserResponse>('/api/auth/me', { token });
-  saveCurrentUser(user);
-  return user;
-}
-
-export async function logout(): Promise<void> {
-  const token = getAccessToken();
-  clearAccessToken();
-  if (!token) {
-    return;
-  }
-  try {
-    await apiRequest<{ success: boolean }>('/api/auth/logout', {
-      method: 'POST',
-      token,
-    });
-  } catch {
-    // Local logout should still complete if the server token is already expired.
-  }
 }
 
 function formatListDate(value?: string) {
