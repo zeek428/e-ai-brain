@@ -42,7 +42,7 @@
 - `apps/web` 启动和构建脚本必须使用 `max dev`、`max build`；不得用 Vite 自建根入口、自定义 sidebar 或纯 `antd` 壳子替代 Ant Design Pro。
 - 前端布局应保留顶部 Header，菜单采用左侧单栏多级模式，不把一级菜单拆到顶部导航。团队看板作为独立一级菜单；需求交付承载需求、迭代、研发任务等研发交付入口；任务中心承载 AI 能力配置、定时作业和插件管理；产品资产、运营治理按业务域组织二级菜单并全部在左侧展开/收起。
 - 保留模板中有价值的 Layout、菜单、权限和请求约定，但业务模型、API 类型和页面内容以本项目 PRD/API 文档为准。
-- 前端服务层按“请求基础设施 + 认证客户端 + 领域客户端”拆分；`apps/web/src/services/apiClient.ts` 统一维护 API base URL、请求 envelope、错误解析、401 回调和远程列表参数拼装，`apps/web/src/services/authClient.ts` 统一维护访问令牌、当前用户缓存、登录/退出和 401 跳转，`apps/web/src/services/dashboardClient.ts` 维护团队看板读模型映射与查询，`apps/web/src/services/productContextClient.ts` 维护产品/迭代版本选择上下文分页拉取和页面可选版本过滤，`services/aiBrain.ts` 继续作为兼容导出入口并逐步按领域拆分业务 client，避免新增能力继续堆入单一大文件。
+- 前端服务层按“请求基础设施 + 认证客户端 + 领域客户端”拆分；`apps/web/src/services/apiClient.ts` 统一维护 API base URL、请求 envelope、错误解析、401 回调和远程列表参数拼装，`apps/web/src/services/authClient.ts` 统一维护访问令牌、当前用户缓存、登录/退出和 401 跳转，`apps/web/src/services/dashboardClient.ts` 维护团队看板读模型映射与查询，`apps/web/src/services/productContextClient.ts` 维护产品/迭代版本选择上下文分页拉取和页面可选版本过滤，`apps/web/src/services/productVersionDashboardClient.ts` 维护迭代版本驾驶舱响应映射与总览查询，`services/aiBrain.ts` 继续作为兼容导出入口并逐步按领域拆分业务 client，避免新增能力继续堆入单一大文件。
 - 初始化后应在本仓库锁定 package manager、依赖版本、启动脚本、构建脚本和测试脚本。
 - 不保留模板自带示例账号、示例接口、mock 数据作为正式业务逻辑。
 

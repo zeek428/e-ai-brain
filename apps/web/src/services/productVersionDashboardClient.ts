@@ -1,0 +1,523 @@
+import type {
+  BugRecord,
+  ProductVersionBranchConfigRecord,
+  ProductVersionRecord,
+  RequirementRecord,
+} from '../data/management';
+import { formatDisplayDateTime } from '../utils/dateTime';
+import { apiRequest } from './apiClient';
+import { requireAccessToken } from './authClient';
+
+type ProductVersionListItem = {
+  code?: string;
+  description?: string | null;
+  id: string;
+  name: string;
+  product_code?: string;
+  product_id: string;
+  product_name?: string;
+  release_date?: string | null;
+  start_date?: string | null;
+  status?: string;
+};
+
+type ProductVersionBranchConfigListItem = {
+  base_branch?: string | null;
+  branch_status?: string | null;
+  creation_source?: string | null;
+  description?: string | null;
+  id: string;
+  product_id: string;
+  repository_default_branch?: string | null;
+  repository_id: string;
+  repository_name?: string | null;
+  repository_path?: string | null;
+  repository_provider?: string | null;
+  version_id: string;
+  working_branch?: string | null;
+};
+
+type RequirementListItem = {
+  assignee?: string;
+  content?: string;
+  created_at?: string;
+  created_by?: string;
+  id: string;
+  module_code?: string;
+  priority?: string;
+  product_code?: string;
+  product_id?: string;
+  product_name?: string;
+  source?: string;
+  status?: string;
+  title: string;
+  updated_at?: string;
+  version_code?: string;
+  version_id?: string;
+  version_name?: string;
+};
+
+type BugListItem = {
+  assignee?: string;
+  created_at?: string;
+  description?: string;
+  duplicate_of_bug_id?: string | null;
+  evidence?: unknown;
+  id: string;
+  module_code?: string;
+  product_id?: string;
+  related_task_id?: string | null;
+  reproduce_steps?: unknown;
+  requirement_id?: string | null;
+  severity?: string;
+  source?: string;
+  status?: string;
+  title: string;
+  version_code?: string;
+  version_id?: string | null;
+  version_name?: string;
+};
+
+type ProductVersionDashboardTaskItem = {
+  created_at?: string;
+  created_by?: string;
+  current_step?: string | null;
+  id: string;
+  product_id?: string;
+  product_name?: string;
+  requirement_id?: string;
+  status?: string;
+  task_type?: string;
+  title?: string;
+  updated_at?: string;
+};
+
+type ProductVersionDashboardCodeInspectionReport = {
+  branch?: string | null;
+  created_at?: string;
+  finding_count: number;
+  id: string;
+  repository_name?: string | null;
+  risk_level: string;
+  summary?: string;
+};
+
+type ProductVersionDashboardReleaseItem = {
+  build_id?: unknown;
+  created_at?: unknown;
+  deployed_at?: unknown;
+  id?: unknown;
+  job_name?: unknown;
+  started_at?: unknown;
+  status?: unknown;
+};
+
+type ProductVersionDashboardBlockerItem = {
+  id?: string;
+  reason?: string;
+  severity?: string;
+  source_type?: string;
+  title?: string;
+};
+
+type ProductVersionDashboardAccessIssue = {
+  code?: string;
+  message?: string;
+  section?: string;
+};
+
+type ProductVersionDashboardSummary = {
+  blockers: number;
+  branch_configs: number;
+  bugs: number;
+  code_inspection_reports: number;
+  open_bugs: number;
+  releases: number;
+  requirements: number;
+  severe_bugs: number;
+  severe_code_inspection_reports: number;
+  tasks: number;
+};
+
+type ProductVersionDashboardStatusCount = {
+  count: number;
+  status: string;
+};
+
+type ProductVersionDashboardRequirementImpact = {
+  block_reason?: string;
+  from_status?: string;
+  id: string;
+  status?: string;
+  title: string;
+  to_status?: string;
+};
+
+type ProductVersionDashboardStatusImpactResponse = {
+  blocked_requirements?: ProductVersionDashboardRequirementImpact[];
+  target_status: string;
+  unchanged_requirements?: ProductVersionDashboardRequirementImpact[];
+  updated_requirements?: ProductVersionDashboardRequirementImpact[];
+};
+
+type ProductVersionDashboardResponse = {
+  access_issues?: ProductVersionDashboardAccessIssue[];
+  blockers?: ProductVersionDashboardBlockerItem[];
+  branch_configs?: ProductVersionBranchConfigListItem[];
+  bug_status_counts?: ProductVersionDashboardStatusCount[];
+  bugs?: BugListItem[];
+  code_inspection_reports?: ProductVersionDashboardCodeInspectionReport[];
+  releases?: ProductVersionDashboardReleaseItem[];
+  requirement_status_counts?: ProductVersionDashboardStatusCount[];
+  requirements?: RequirementListItem[];
+  status_impact?: ProductVersionDashboardStatusImpactResponse | null;
+  summary?: Partial<ProductVersionDashboardSummary>;
+  task_status_counts?: ProductVersionDashboardStatusCount[];
+  tasks?: ProductVersionDashboardTaskItem[];
+  version: ProductVersionListItem;
+};
+
+export type ProductVersionDashboard = {
+  accessIssues: Array<{
+    code: string;
+    message: string;
+    section: string;
+  }>;
+  blockers: Array<{
+    id?: string;
+    reason: string;
+    severity: string;
+    sourceType: string;
+    title: string;
+  }>;
+  branchConfigs: ProductVersionBranchConfigRecord[];
+  bugStatusCounts: ProductVersionDashboardStatusCount[];
+  bugs: BugRecord[];
+  codeInspectionReports: ProductVersionDashboardCodeInspectionReport[];
+  releases: Array<{
+    buildId?: string;
+    createdAt: string;
+    id: string;
+    jobName?: string;
+    status: string;
+  }>;
+  requirementStatusCounts: ProductVersionDashboardStatusCount[];
+  requirements: RequirementRecord[];
+  statusImpact?: {
+    blockedRequirements: ProductVersionDashboardRequirementImpact[];
+    targetStatus: ProductVersionRecord['status'];
+    unchangedRequirements: ProductVersionDashboardRequirementImpact[];
+    updatedRequirements: ProductVersionDashboardRequirementImpact[];
+  };
+  summary: ProductVersionDashboardSummary;
+  taskStatusCounts: ProductVersionDashboardStatusCount[];
+  tasks: Array<{
+    createdAt: string;
+    createdAtValue?: string;
+    currentStep?: string;
+    id: string;
+    label: string;
+    owner: string;
+    product: string;
+    productId?: string;
+    requirementId?: string;
+    status: string;
+    type: string;
+  }>;
+  version: ProductVersionRecord;
+};
+
+function formatListDate(value?: string) {
+  return formatDisplayDateTime(value);
+}
+
+function formatUnknownValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  if (Array.isArray(value)) {
+    return value.map(formatUnknownValue).join(', ');
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function normalizeDashboardCount(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function normalizeProductVersionStatus(status?: string): ProductVersionRecord['status'] {
+  if (
+    status === 'archived' ||
+    status === 'planning' ||
+    status === 'released' ||
+    status === 'testing'
+  ) {
+    return status;
+  }
+  return 'active';
+}
+
+function normalizeProductVersionBranchStatus(
+  status?: string | null,
+): ProductVersionBranchConfigRecord['branchStatus'] {
+  const allowed = new Set(['active', 'archived', 'merged', 'not_created', 'released', 'testing']);
+  return allowed.has(status ?? '') ? (status as ProductVersionBranchConfigRecord['branchStatus']) : 'not_created';
+}
+
+function normalizeProductVersionBranchCreationSource(
+  source?: string | null,
+): ProductVersionBranchConfigRecord['creationSource'] {
+  const allowed = new Set(['ai_task', 'github_sync', 'gitlab_sync', 'manual']);
+  return allowed.has(source ?? '') ? (source as ProductVersionBranchConfigRecord['creationSource']) : 'manual';
+}
+
+function normalizePriority(priority?: string): RequirementRecord['priority'] {
+  if (priority === 'P0' || priority === 'P2') {
+    return priority;
+  }
+  return 'P1';
+}
+
+function normalizeRequirementStatus(status?: string): RequirementRecord['status'] {
+  if (status === 'pending_approval') {
+    return 'submitted';
+  }
+  if (status === 'task_created') {
+    return 'designing';
+  }
+  if (
+    status === 'accepted' ||
+    status === 'approved' ||
+    status === 'cancelled' ||
+    status === 'closed' ||
+    status === 'code_reviewing' ||
+    status === 'deferred' ||
+    status === 'designing' ||
+    status === 'developing' ||
+    status === 'draft' ||
+    status === 'planned' ||
+    status === 'ready_for_dev' ||
+    status === 'ready_for_release' ||
+    status === 'rejected' ||
+    status === 'released' ||
+    status === 'submitted' ||
+    status === 'testing'
+  ) {
+    return status;
+  }
+  return 'draft';
+}
+
+function normalizeBugSeverity(severity?: string): BugRecord['severity'] {
+  if (severity === 'blocker' || severity === 'critical' || severity === 'minor') {
+    return severity;
+  }
+  return 'major';
+}
+
+function normalizeBugStatus(status?: string): BugRecord['status'] {
+  if (
+    status === 'assigned' ||
+    status === 'closed' ||
+    status === 'fixed' ||
+    status === 'needs_info' ||
+    status === 'open' ||
+    status === 'reopened' ||
+    status === 'triaged' ||
+    status === 'verified'
+  ) {
+    return status;
+  }
+  return 'open';
+}
+
+function normalizeBugSource(source?: string): BugRecord['source'] {
+  if (source === 'ai_auto_test' || source === 'ai_post_release' || source === 'code_inspection') {
+    return source;
+  }
+  return 'manual_test';
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => (typeof item === 'string' ? item : JSON.stringify(item) ?? ''))
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeObjectRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function mapProductVersionRecord(version: ProductVersionListItem): ProductVersionRecord {
+  return {
+    code: version.code ?? version.id,
+    description: version.description ?? undefined,
+    id: version.id,
+    name: version.name,
+    productCode: version.product_code,
+    productId: version.product_id,
+    productName: version.product_name,
+    releaseDate: version.release_date ?? undefined,
+    startDate: version.start_date ?? undefined,
+    status: normalizeProductVersionStatus(version.status),
+  };
+}
+
+function mapProductVersionBranchConfigRecord(
+  branchConfig: ProductVersionBranchConfigListItem,
+): ProductVersionBranchConfigRecord {
+  return {
+    baseBranch: branchConfig.base_branch ?? branchConfig.repository_default_branch ?? 'main',
+    branchStatus: normalizeProductVersionBranchStatus(branchConfig.branch_status),
+    creationSource: normalizeProductVersionBranchCreationSource(branchConfig.creation_source),
+    description: branchConfig.description,
+    id: branchConfig.id,
+    productId: branchConfig.product_id,
+    repositoryDefaultBranch: branchConfig.repository_default_branch,
+    repositoryId: branchConfig.repository_id,
+    repositoryName: branchConfig.repository_name,
+    repositoryPath: branchConfig.repository_path,
+    repositoryProvider: branchConfig.repository_provider,
+    versionId: branchConfig.version_id,
+    workingBranch: branchConfig.working_branch ?? '-',
+  };
+}
+
+function mapRequirementRecord(requirement: RequirementListItem): RequirementRecord {
+  return {
+    content: requirement.content,
+    createdAt: formatListDate(requirement.created_at),
+    id: requirement.id,
+    moduleCode: requirement.module_code ?? undefined,
+    owner: requirement.assignee ?? requirement.created_by ?? '-',
+    priority: normalizePriority(requirement.priority),
+    product: requirement.product_code ?? requirement.product_name ?? requirement.product_id ?? '-',
+    productId: requirement.product_id,
+    source: requirement.source ?? 'business_department',
+    status: normalizeRequirementStatus(requirement.status),
+    title: requirement.title,
+    updatedAt: formatListDate(requirement.updated_at ?? requirement.created_at),
+    versionId: requirement.version_id,
+    versionName: requirement.version_id
+      ? (requirement.version_name ?? requirement.version_code ?? requirement.version_id)
+      : '未排期',
+  };
+}
+
+function mapBugRecord(bug: BugListItem): BugRecord {
+  return {
+    assignee: bug.assignee ?? '-',
+    createdAt: formatListDate(bug.created_at),
+    description: bug.description,
+    duplicateOfBugId: bug.duplicate_of_bug_id ?? undefined,
+    evidence: normalizeObjectRecord(bug.evidence),
+    id: bug.id,
+    module: bug.module_code ?? '-',
+    productId: bug.product_id,
+    relatedTaskId: bug.related_task_id ?? undefined,
+    reproduceSteps: normalizeStringList(bug.reproduce_steps),
+    requirementId: bug.requirement_id ?? undefined,
+    severity: normalizeBugSeverity(bug.severity),
+    source: normalizeBugSource(bug.source),
+    status: normalizeBugStatus(bug.status),
+    title: bug.title,
+    versionId: bug.version_id ?? undefined,
+    versionName: bug.version_id
+      ? formatUnknownValue(bug.version_name ?? bug.version_code ?? bug.version_id)
+      : '未关联',
+  };
+}
+
+function mapTaskRecord(task: ProductVersionDashboardTaskItem): ProductVersionDashboard['tasks'][number] {
+  return {
+    createdAt: formatListDate(task.created_at ?? task.updated_at),
+    createdAtValue: task.created_at ?? task.updated_at,
+    currentStep: task.current_step ?? undefined,
+    id: task.id,
+    label: task.title ?? task.task_type ?? task.id,
+    owner: task.created_by ?? '-',
+    product: task.product_name ?? task.product_id ?? '-',
+    productId: task.product_id,
+    requirementId: task.requirement_id,
+    status: task.status ?? '-',
+    type: task.task_type ?? '-',
+  };
+}
+
+function mapProductVersionDashboard(
+  dashboard: ProductVersionDashboardResponse,
+): ProductVersionDashboard {
+  const summary = dashboard.summary ?? {};
+  const statusImpact = dashboard.status_impact
+    ? {
+        blockedRequirements: dashboard.status_impact.blocked_requirements ?? [],
+        targetStatus: normalizeProductVersionStatus(dashboard.status_impact.target_status),
+        unchangedRequirements: dashboard.status_impact.unchanged_requirements ?? [],
+        updatedRequirements: dashboard.status_impact.updated_requirements ?? [],
+      }
+    : undefined;
+  return {
+    accessIssues: (dashboard.access_issues ?? []).map((issue) => ({
+      code: issue.code ?? '-',
+      message: issue.message ?? '-',
+      section: issue.section ?? '-',
+    })),
+    blockers: (dashboard.blockers ?? []).map((blocker) => ({
+      id: blocker.id,
+      reason: blocker.reason ?? '-',
+      severity: blocker.severity ?? 'medium',
+      sourceType: blocker.source_type ?? '-',
+      title: blocker.title ?? blocker.id ?? '-',
+    })),
+    branchConfigs: (dashboard.branch_configs ?? []).map(mapProductVersionBranchConfigRecord),
+    bugStatusCounts: dashboard.bug_status_counts ?? [],
+    bugs: (dashboard.bugs ?? []).map(mapBugRecord),
+    codeInspectionReports: dashboard.code_inspection_reports ?? [],
+    releases: (dashboard.releases ?? []).map((release) => ({
+      buildId: formatUnknownValue(release.build_id),
+      createdAt: formatListDate(formatUnknownValue(release.deployed_at ?? release.started_at ?? release.created_at)),
+      id: formatUnknownValue(release.id),
+      jobName: formatUnknownValue(release.job_name),
+      status: formatUnknownValue(release.status),
+    })),
+    requirementStatusCounts: dashboard.requirement_status_counts ?? [],
+    requirements: (dashboard.requirements ?? []).map(mapRequirementRecord),
+    statusImpact,
+    summary: {
+      blockers: normalizeDashboardCount(summary.blockers),
+      branch_configs: normalizeDashboardCount(summary.branch_configs),
+      bugs: normalizeDashboardCount(summary.bugs),
+      code_inspection_reports: normalizeDashboardCount(summary.code_inspection_reports),
+      open_bugs: normalizeDashboardCount(summary.open_bugs),
+      releases: normalizeDashboardCount(summary.releases),
+      requirements: normalizeDashboardCount(summary.requirements),
+      severe_bugs: normalizeDashboardCount(summary.severe_bugs),
+      severe_code_inspection_reports: normalizeDashboardCount(summary.severe_code_inspection_reports),
+      tasks: normalizeDashboardCount(summary.tasks),
+    },
+    taskStatusCounts: dashboard.task_status_counts ?? [],
+    tasks: (dashboard.tasks ?? []).map(mapTaskRecord),
+    version: mapProductVersionRecord(dashboard.version),
+  };
+}
+
+export async function fetchProductVersionDashboard(
+  versionId: string,
+): Promise<ProductVersionDashboard> {
+  const token = requireAccessToken();
+  const dashboard = await apiRequest<ProductVersionDashboardResponse>(
+    `/api/product-versions/${versionId}/dashboard`,
+    { token },
+  );
+  return mapProductVersionDashboard(dashboard);
+}

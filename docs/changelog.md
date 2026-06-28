@@ -50,6 +50,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 前端迭代版本驾驶舱 client 拆分：新增 `apps/web/src/services/productVersionDashboardClient.ts`，将版本驾驶舱响应类型、需求/任务/Bug/分支/发布映射和 `fetchProductVersionDashboard` 从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
 - 前端产品上下文 client 拆分：新增 `apps/web/src/services/productContextClient.ts`，将产品/迭代版本选择器分页拉全、需求/Bug 可选版本过滤和 active 产品选项从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
 - 前端团队看板 client 拆分：新增 `apps/web/src/services/dashboardClient.ts`，将 IT 团队看板响应类型、读模型映射和 `fetchItTeamDashboard` 从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
 - 前端认证客户端拆分：新增 `apps/web/src/services/authClient.ts` 统一维护访问令牌、当前用户缓存、登录/退出、认证状态事件和 401 跳转，`services/aiBrain.ts` 保持兼容导出并继续向领域 client 拆分，减少单一服务文件膨胀。
