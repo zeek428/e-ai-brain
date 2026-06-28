@@ -1360,7 +1360,7 @@ GET /api/product-versions/version_001/dashboard
 }
 ```
 
-规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、status impact 和 blockers，再展示可读明细表。
+规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、交付健康摘要、status impact 和 blockers，再展示可读明细表；交付健康摘要基于阻塞项、严重 Bug/巡检、分支创建状态、代码巡检风险和发布失败记录派生发布准入、质量风险、代码分支、代码巡检和发布流水线结论，不新增后端响应字段。
 
 ### 平台配置
 

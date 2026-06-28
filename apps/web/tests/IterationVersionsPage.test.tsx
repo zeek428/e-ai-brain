@@ -884,6 +884,16 @@ describe('IterationVersionsPage', () => {
 
     expect(await screen.findByText('版本驾驶舱 · 2026-dashboard')).toBeInTheDocument();
     expect(screen.getByText('下一阶段：测试中')).toBeInTheDocument();
+    expect(screen.getByText('交付健康摘要')).toBeInTheDocument();
+    expect(screen.getByText('发布准入')).toBeInTheDocument();
+    expect(screen.getByText('2 个阻塞项')).toBeInTheDocument();
+    expect(screen.getByText('阻塞来源：Bug 1、代码分支 1。')).toBeInTheDocument();
+    expect(screen.getByText('质量风险')).toBeInTheDocument();
+    expect(screen.getByText('2 个严重风险')).toBeInTheDocument();
+    expect(screen.getByText('严重 Bug 1，严重巡检 1，未关闭 Bug 1。')).toBeInTheDocument();
+    expect(screen.getByText('1 个分支未创建')).toBeInTheDocument();
+    expect(screen.getByText('1 份高风险')).toBeInTheDocument();
+    expect(screen.getByText('1 条失败发布')).toBeInTheDocument();
     expect(screen.getByText('状态分布')).toBeInTheDocument();
     expect(screen.getByText('需求状态')).toBeInTheDocument();
     expect(screen.getByText('开发中 1')).toBeInTheDocument();

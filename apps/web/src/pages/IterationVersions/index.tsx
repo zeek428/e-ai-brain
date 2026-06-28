@@ -280,6 +280,103 @@ function buildStatusImpactRows(statusImpact?: ProductVersionDashboard['statusImp
   ];
 }
 
+type DashboardHealthItem = {
+  detail: string;
+  key: string;
+  level: 'error' | 'info' | 'success' | 'warning';
+  title: string;
+  value: string;
+};
+
+const dashboardHealthLevelLabels: Record<DashboardHealthItem['level'], { color: string; label: string }> = {
+  error: { color: 'red', label: '需处理' },
+  info: { color: 'blue', label: '关注' },
+  success: { color: 'green', label: '正常' },
+  warning: { color: 'gold', label: '有风险' },
+};
+
+function blockerSourceSummary(blockers: ProductVersionDashboard['blockers']) {
+  const sourceCounts = blockers.reduce<Record<string, number>>((accumulator, blocker) => {
+    const source = dashboardBlockerSourceLabels[blocker.sourceType] ?? blocker.sourceType;
+    accumulator[source] = (accumulator[source] ?? 0) + 1;
+    return accumulator;
+  }, {});
+  return Object.entries(sourceCounts)
+    .map(([source, count]) => `${source} ${count}`)
+    .join('、');
+}
+
+function buildDashboardHealthItems(dashboard?: ProductVersionDashboard): DashboardHealthItem[] {
+  if (!dashboard) {
+    return [];
+  }
+  const severeRiskCount = dashboard.summary.severe_bugs + dashboard.summary.severe_code_inspection_reports;
+  const notCreatedBranchCount = dashboard.branchConfigs.filter(
+    (branchConfig) => branchConfig.branchStatus === 'not_created',
+  ).length;
+  const failedReleaseCount = dashboard.releases.filter((release) => {
+    const status = release.status.toLowerCase();
+    return status === 'failed' || status === 'failure' || status === 'canceled' || status === 'cancelled';
+  }).length;
+  const highRiskInspectionCount = dashboard.codeInspectionReports.filter((report) => {
+    const riskLevel = report.risk_level.toLowerCase();
+    return riskLevel === 'blocker' || riskLevel === 'critical' || riskLevel === 'high';
+  }).length;
+  return [
+    {
+      detail: dashboard.blockers.length
+        ? `阻塞来源：${blockerSourceSummary(dashboard.blockers)}。`
+        : '需求、分支、质量和发布记录暂无阻塞项。',
+      key: 'blockers',
+      level: dashboard.blockers.length ? 'error' : 'success',
+      title: '发布准入',
+      value: dashboard.blockers.length ? `${dashboard.blockers.length} 个阻塞项` : '暂无阻塞',
+    },
+    {
+      detail: `严重 Bug ${dashboard.summary.severe_bugs}，严重巡检 ${dashboard.summary.severe_code_inspection_reports}，未关闭 Bug ${dashboard.summary.open_bugs}。`,
+      key: 'quality',
+      level: severeRiskCount || dashboard.summary.open_bugs ? 'warning' : 'success',
+      title: '质量风险',
+      value: severeRiskCount ? `${severeRiskCount} 个严重风险` : '质量风险可控',
+    },
+    {
+      detail: dashboard.branchConfigs.length
+        ? `已登记 ${dashboard.branchConfigs.length} 个代码分支配置，未创建 ${notCreatedBranchCount} 个。`
+        : '尚未登记版本代码分支，进入开发/测试前需要补齐。',
+      key: 'branches',
+      level: !dashboard.branchConfigs.length || notCreatedBranchCount ? 'warning' : 'success',
+      title: '代码分支',
+      value: notCreatedBranchCount
+        ? `${notCreatedBranchCount} 个分支未创建`
+        : dashboard.branchConfigs.length
+          ? '分支已登记'
+          : '暂无分支',
+    },
+    {
+      detail: dashboard.codeInspectionReports.length
+        ? `已有 ${dashboard.codeInspectionReports.length} 份巡检报告，高风险 ${highRiskInspectionCount} 份。`
+        : '当前版本还没有代码巡检报告，进入测试/发布前建议补齐。',
+      key: 'inspection',
+      level: highRiskInspectionCount
+        ? 'warning'
+        : dashboard.codeInspectionReports.length
+          ? 'success'
+          : 'info',
+      title: '代码巡检',
+      value: highRiskInspectionCount ? `${highRiskInspectionCount} 份高风险` : `${dashboard.codeInspectionReports.length} 份报告`,
+    },
+    {
+      detail: dashboard.releases.length
+        ? `已有 ${dashboard.releases.length} 条发布记录，失败/取消 ${failedReleaseCount} 条。`
+        : '当前版本暂无发布记录。',
+      key: 'releases',
+      level: failedReleaseCount ? 'error' : dashboard.releases.length ? 'success' : 'info',
+      title: '发布流水线',
+      value: failedReleaseCount ? `${failedReleaseCount} 条失败发布` : `${dashboard.releases.length} 条发布记录`,
+    },
+  ];
+}
+
 function buildVersionListQuery(query: ManagementListQuery): ProductVersionListQuery {
   return {
     code: normalizeFilterText(query.filters.code),
@@ -875,6 +972,7 @@ export default function IterationVersionsPage() {
   const dashboard = dashboardState?.dashboard;
   const dashboardVersion = dashboard?.version ?? dashboardState?.version;
   const dashboardStatusImpactRows = buildStatusImpactRows(dashboard?.statusImpact);
+  const dashboardHealthItems = buildDashboardHealthItems(dashboard);
 
   return (
     <>
@@ -950,6 +1048,35 @@ export default function IterationVersionsPage() {
                 {dashboardMetric('发布记录', dashboard.summary.releases)}
                 {dashboardMetric('阻塞项', dashboard.summary.blockers, dashboard.summary.blockers ? '#cf1322' : undefined)}
               </Space>
+              <div>
+                <Text strong>交付健康摘要</Text>
+                <Space size={12} style={{ display: 'flex', marginTop: 8 }} wrap>
+                  {dashboardHealthItems.map((item) => {
+                    const level = dashboardHealthLevelLabels[item.level];
+                    return (
+                      <div
+                        key={item.key}
+                        style={{
+                          border: '1px solid #f0f0f0',
+                          borderRadius: 6,
+                          minHeight: 108,
+                          padding: '10px 12px',
+                          width: 210,
+                        }}
+                      >
+                        <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
+                          <Text strong>{item.title}</Text>
+                          <Tag color={level.color}>{level.label}</Tag>
+                        </Space>
+                        <div style={{ fontSize: 18, fontWeight: 600, lineHeight: 1.5, marginTop: 8 }}>
+                          {item.value}
+                        </div>
+                        <Text type="secondary">{item.detail}</Text>
+                      </div>
+                    );
+                  })}
+                </Space>
+              </div>
               <div>
                 <Text strong>状态分布</Text>
                 <Space size={12} style={{ display: 'flex', marginTop: 8 }} wrap>
