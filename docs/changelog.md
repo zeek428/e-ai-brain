@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 工程拆大文件行数守护：新增 `apps/api/tests/test_architecture_guardrails.py`，对 `scheduled_jobs.py`、`plugins.py`、`assistant_references.py`、`assistant_chat.py` 和 `apps/web/src/services/aiBrain.ts` 固化 2800 行预算，防止已拆分领域入口重新膨胀。
 - 真实全链路回归脚本补齐代码巡检提交人治理待办：`scripts/full_chain_regression.py` 在质量门禁校验后继续校验 dashboard `committer_governance`，确保提交人闭环状态、活跃严重问题、Bug 覆盖和整改任务覆盖可被全链路自动验收。
 - 代码巡检治理概览新增提交人治理待办：`/api/governance/code-inspections/dashboard` 返回 `committer_governance`，按提交人聚合活跃严重问题、未关联 Bug、未派生整改任务、待审批忽略、已接受风险和最近报告，页面展示“提交人治理待办”。
 - 角色管理详情增加单角色访问预览：在详情弹窗集中展示该角色可见菜单路径、操作权限名称、产品/知识空间/全局数据范围和高风险/菜单权限缺口，管理员分配角色前可直接确认访问边界。
