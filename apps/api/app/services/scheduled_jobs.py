@@ -13,7 +13,7 @@ from urllib.request import urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.api.deps import api_error, require_any_permission, require_permissions
-from app.core.listing import add_list_observability, list_text_matches, sort_list_items
+from app.core.listing import add_list_observability, sort_list_items
 from app.services.code_inspections import (
     execute_code_inspection_result_actions,
     sync_product_git_repository_store,
@@ -44,7 +44,7 @@ from app.services.native_code_scanner import (
     code_inspection_uses_native_scan,
     run_native_code_scan,
 )
-from app.services.operational_records import record_audit_event, save_single_repository_record
+from app.services.operational_records import record_audit_event
 from app.services.plugin_result_mapping import (
     json_path_value,
     records_imported_from_mapping,
@@ -56,6 +56,17 @@ from app.services.plugins import (
     ensure_active_plugin_action,
     invoke_plugin_action_response,
     resolve_plugin_snapshot,
+)
+from app.services.scheduled_job_ai_capabilities import (
+    create_ai_agent_response,
+    create_ai_skill_package_response,
+    create_ai_skill_response,
+    ensure_active_model_gateway,
+    ensure_active_skills,
+    list_ai_agents_response,
+    list_ai_skills_response,
+    patch_ai_agent_response,
+    patch_ai_skill_response,
 )
 from app.services.scheduled_job_catalog import (
     AI_REQUIRED_SCHEDULED_JOB_TYPES,
@@ -71,6 +82,7 @@ from app.services.scheduled_job_audit import (
     scheduled_job_audit_payload,
     scheduled_job_run_audit_payload,
 )
+from app.services.scheduled_job_common import ensure_enum, ensure_non_blank
 from app.services.scheduled_job_execution_engine import (
     ScheduledJobExecutionEngine as JobExecutionEngine,
 )
@@ -89,36 +101,29 @@ from app.services.scheduled_job_refs import (
 from app.services.scheduled_job_run_projection import (
     public_scheduled_job_run_projection,
 )
+from app.services.scheduled_job_store import (
+    delete_memory_record as _delete_memory_record,
+    memory_dict as _memory_dict,
+    persist_record,
+    put_memory_record as _put_memory_record,
+    read_memory_dict as _read_memory_dict,
+    scheduled_jobs_query_repository,
+    snapshot,
+    sync_ai_agent_store,
+    sync_ai_skill_store,
+    sync_reference_store,
+    sync_scheduled_job_run_store,
+    sync_scheduled_job_store,
+    uses_repository_context,
+)
 from app.services.scheduled_job_templates import STANDARD_WIZARD_STEPS
-from app.services.skill_packages import load_skill_package_snapshot, store_skill_package
+from app.services.skill_packages import load_skill_package_snapshot
 from app.services.user_feedback import (
     USER_FEEDBACK_SENTIMENTS,
     USER_FEEDBACK_TYPES,
     create_user_feedback_response,
 )
 
-AI_SKILL_STATUSES = {"active", "draft", "disabled"}
-AI_AGENT_STATUSES = {"active", "disabled"}
-AI_SKILL_SORT_FIELDS = {
-    "code",
-    "created_at",
-    "name",
-    "requires_human_review",
-    "risk_level",
-    "source_type",
-    "status",
-    "updated_at",
-    "version",
-}
-AI_AGENT_SORT_FIELDS = {
-    "brain_app_id",
-    "code",
-    "created_at",
-    "model_gateway_config_id",
-    "name",
-    "status",
-    "updated_at",
-}
 SCHEDULED_JOB_RUN_STATUSES = {"cancelled", "failed", "queued", "running", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TERMINAL_STATUSES = {"cancelled", "failed", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TRIGGER_TYPES = {"manual", "manual_rerun", "scheduler"}
@@ -153,17 +158,6 @@ DEFAULT_RESULT_ACTION_POLICY = {
     "failure_policy": "continue_on_error",
     "mode": "sequential",
 }
-
-
-def ensure_non_blank(value: str | None, field: str) -> str:
-    if value is None or not value.strip():
-        raise api_error(400, "VALIDATION_ERROR", f"{field} is required")
-    return value.strip()
-
-
-def ensure_enum(value: str | None, allowed_values: set[str], field: str) -> None:
-    if value is None or value not in allowed_values:
-        raise api_error(400, "VALIDATION_ERROR", f"Unsupported {field}")
 
 
 def require_admin(user: dict[str, Any]) -> None:
@@ -254,10 +248,6 @@ def scheduled_job_plugin_invocation_user(user: dict[str, Any]) -> dict[str, Any]
     return {**user, "permissions": sorted(permissions)}
 
 
-def require_ai_capabilities_manager(user: dict[str, Any]) -> None:
-    require_permissions(user, {"system.ai_capabilities.manage"})
-
-
 def scheduled_job_timezone(job: dict[str, Any]) -> ZoneInfo:
     timezone_name = str(job.get("timezone") or "UTC")
     try:
@@ -280,163 +270,6 @@ def resolve_plugin_input_mapping(
     )
 
 
-def uses_repository_context(current_store: Any) -> bool:
-    return getattr(current_store, "repository", None) is not None
-
-
-def scheduled_jobs_query_repository(current_store: Any) -> Any | None:
-    repository = getattr(current_store, "repository", None)
-    if repository is None:
-        return None
-    required_methods = (
-        "list_ai_agents",
-        "list_ai_skills",
-        "list_scheduled_job_runs",
-        "list_scheduled_jobs",
-    )
-    if all(callable(getattr(repository, method_name, None)) for method_name in required_methods):
-        return repository
-    return None
-
-
-def replace_collection(
-    current_store: Any,
-    collection_name: str,
-    items: list[dict[str, Any]],
-) -> None:
-    setattr(
-        current_store,
-        collection_name,
-        {str(item["id"]): dict(item) for item in items if item.get("id") is not None},
-    )
-
-
-def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
-    collection = getattr(current_store, collection_name, {})
-    return collection if isinstance(collection, dict) else {}
-
-
-def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
-    collection = getattr(current_store, collection_name, None)
-    if not isinstance(collection, dict):
-        collection = {}
-        setattr(current_store, collection_name, collection)
-    return collection
-
-
-def _put_memory_record(
-    current_store: Any,
-    collection_name: str,
-    record: dict[str, Any],
-) -> None:
-    _memory_dict(current_store, collection_name)[str(record["id"])] = record
-
-
-def _delete_memory_record(current_store: Any, collection_name: str, record_id: str) -> None:
-    _memory_dict(current_store, collection_name).pop(record_id, None)
-
-
-def sync_ai_skill_store(
-    current_store: Any,
-    *,
-    code: str | None = None,
-    status: str | None = None,
-) -> None:
-    repository = scheduled_jobs_query_repository(current_store)
-    if repository is None:
-        return
-    replace_collection(
-        current_store,
-        "ai_skills",
-        repository.list_ai_skills(code=code, status=status),
-    )
-
-
-def sync_ai_agent_store(
-    current_store: Any,
-    *,
-    brain_app_id: str | None = None,
-    status: str | None = None,
-) -> None:
-    repository = scheduled_jobs_query_repository(current_store)
-    if repository is None:
-        return
-    replace_collection(
-        current_store,
-        "ai_agents",
-        repository.list_ai_agents(brain_app_id=brain_app_id, status=status),
-    )
-
-
-def sync_scheduled_job_store(
-    current_store: Any,
-    *,
-    enabled: bool | None = None,
-    job_type: str | None = None,
-    status: str | None = None,
-) -> None:
-    repository = scheduled_jobs_query_repository(current_store)
-    if repository is None:
-        return
-    replace_collection(
-        current_store,
-        "scheduled_jobs",
-        repository.list_scheduled_jobs(enabled=enabled, job_type=job_type, status=status),
-    )
-
-
-def sync_scheduled_job_run_store(
-    current_store: Any,
-    *,
-    run_ids: list[str] | None = None,
-    scheduled_job_id: str | None = None,
-    status: str | None = None,
-) -> None:
-    repository = scheduled_jobs_query_repository(current_store)
-    if repository is None:
-        return
-    replace_collection(
-        current_store,
-        "scheduled_job_runs",
-        repository.list_scheduled_job_runs(
-            run_ids=run_ids,
-            scheduled_job_id=scheduled_job_id,
-            status=status,
-        ),
-    )
-
-
-def sync_reference_store(current_store: Any) -> None:
-    repository = getattr(current_store, "repository", None)
-    if repository is None:
-        return
-    list_products = getattr(repository, "list_products", None)
-    if callable(list_products):
-        replace_collection(current_store, "products", list_products(active_only=False))
-    list_model_gateway_configs = getattr(repository, "list_model_gateway_configs", None)
-    if callable(list_model_gateway_configs):
-        replace_collection(
-            current_store,
-            "model_gateway_configs",
-            list_model_gateway_configs(),
-        )
-
-
-def persist_record(
-    current_store: Any,
-    method_name: str,
-    record: dict[str, Any],
-    *,
-    audit_event: dict[str, Any] | None = None,
-) -> None:
-    save_single_repository_record(
-        current_store,
-        method_name,
-        record,
-        audit_event=audit_event,
-    )
-
-
 def exception_error_code_and_message(exc: Exception) -> tuple[str, str]:
     error_code = exc.__class__.__name__
     error_message = str(exc)
@@ -445,545 +278,6 @@ def exception_error_code_and_message(exc: Exception) -> tuple[str, str]:
         error_code = str(detail.get("code") or error_code)
         error_message = str(detail.get("message") or error_message)
     return error_code, error_message
-
-
-def snapshot(current_store: Any, value: Any) -> Any:
-    snapshot_fn = getattr(current_store, "snapshot", None)
-    if callable(snapshot_fn) and isinstance(value, dict):
-        return snapshot_fn(value)
-    if isinstance(value, dict):
-        return {key: snapshot(current_store, item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [snapshot(current_store, item) for item in value]
-    return value
-
-
-def public_skill(skill: dict[str, Any]) -> dict[str, Any]:
-    return dict(skill)
-
-
-def public_agent(agent: dict[str, Any]) -> dict[str, Any]:
-    return dict(agent)
-
-
-def list_ai_skills_response(
-    *,
-    code: str | None,
-    current_store: Any,
-    keyword: str | None = None,
-    page: int | None = None,
-    page_size: int | None = None,
-    requires_human_review: bool | None = None,
-    risk_level: str | None = None,
-    sort_by: str | None = None,
-    sort_order: str = "asc",
-    source_type: str | None = None,
-    started_at: float | None = None,
-    status: str | None = None,
-) -> dict[str, Any]:
-    if status is not None:
-        ensure_enum(status, AI_SKILL_STATUSES, "status")
-    if sort_order not in {"asc", "desc"}:
-        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_order")
-    resolved_sort_by = sort_by or "code"
-    if resolved_sort_by not in AI_SKILL_SORT_FIELDS:
-        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
-    resolved_started_at = started_at or perf_counter()
-    with_pagination = page is not None or page_size is not None
-    resolved_page = page or 1
-    resolved_page_size = page_size or 10
-    filters = {
-        "code": code,
-        "keyword": keyword,
-        "requires_human_review": requires_human_review,
-        "risk_level": risk_level,
-        "source_type": source_type,
-        "status": status,
-    }
-    repository = scheduled_jobs_query_repository(current_store)
-    if (
-        repository is not None
-        and with_pagination
-        and callable(getattr(repository, "count_ai_skills", None))
-        and callable(getattr(repository, "list_ai_skills_page", None))
-    ):
-        count_args = {
-            "code": code,
-            "keyword": keyword,
-            "requires_human_review": requires_human_review,
-            "risk_level": risk_level,
-            "source_type": source_type,
-            "status": status,
-        }
-        total = repository.count_ai_skills(**count_args)
-        items = repository.list_ai_skills_page(
-            **count_args,
-            limit=resolved_page_size,
-            offset=(resolved_page - 1) * resolved_page_size,
-            sort_by=resolved_sort_by,
-            sort_order=sort_order,
-        )
-        return add_list_observability(
-            {
-                "items": [public_skill(item) for item in items],
-                "page": resolved_page,
-                "page_size": resolved_page_size,
-                "total": total,
-            },
-            filters=filters,
-            list_name="ai_skills",
-            page=resolved_page,
-            page_size=resolved_page_size,
-            sort_by=resolved_sort_by,
-            sort_order=sort_order,
-            started_at=resolved_started_at,
-        )
-    sync_ai_skill_store(current_store, code=code, status=status)
-    items = []
-    for skill in _read_memory_dict(current_store, "ai_skills").values():
-        if code is not None and skill.get("code") != code:
-            continue
-        if status is not None and skill.get("status") != status:
-            continue
-        if (
-            requires_human_review is not None
-            and bool(skill.get("requires_human_review")) != requires_human_review
-        ):
-            continue
-        if risk_level is not None and skill.get("risk_level") != risk_level:
-            continue
-        if source_type is not None and skill.get("source_type") != source_type:
-            continue
-        if not list_text_matches(
-            skill,
-            keyword,
-            ("id", "code", "name", "prompt_template", "source_type", "risk_level", "version"),
-        ):
-            continue
-        items.append(public_skill(skill))
-    if with_pagination:
-        sorted_items = sort_list_items(
-            items,
-            allowed_fields=AI_SKILL_SORT_FIELDS,
-            default_sort_by="code",
-            sort_by=resolved_sort_by,
-            sort_order=sort_order,
-        )
-        start = (resolved_page - 1) * resolved_page_size
-        page_items = sorted_items[start : start + resolved_page_size]
-        return add_list_observability(
-            {
-                "items": page_items,
-                "page": resolved_page,
-                "page_size": resolved_page_size,
-                "total": len(sorted_items),
-            },
-            filters=filters,
-            list_name="ai_skills",
-            page=resolved_page,
-            page_size=resolved_page_size,
-            sort_by=resolved_sort_by,
-            sort_order=sort_order,
-            started_at=resolved_started_at,
-        )
-    items.sort(key=lambda item: (item.get("code") or "", item.get("version") or "", item["id"]))
-    return {"items": items, "total": len(items)}
-
-
-def create_ai_skill_response(
-    *,
-    current_store: Any,
-    payload: Any,
-    user: dict[str, Any],
-) -> dict[str, Any]:
-    require_ai_capabilities_manager(user)
-    ensure_enum(payload.status, AI_SKILL_STATUSES, "status")
-    now = datetime.now(UTC).isoformat()
-    skill_id = current_store.new_id("skill")
-    skill = {
-        "allowed_tools": payload.allowed_tools,
-        "code": ensure_non_blank(payload.code, "code"),
-        "created_at": now,
-        "created_by": user["id"],
-        "description": payload.description,
-        "id": skill_id,
-        "input_schema": payload.input_schema,
-        "name": ensure_non_blank(payload.name, "name"),
-        "output_schema": payload.output_schema,
-        "manifest": {},
-        "package_checksum": None,
-        "package_entry": None,
-        "package_files": [],
-        "package_size_bytes": 0,
-        "package_uri": None,
-        "prompt_template": ensure_non_blank(payload.prompt_template, "prompt_template"),
-        "required_context": payload.required_context,
-        "requires_human_review": payload.requires_human_review,
-        "risk_level": payload.risk_level,
-        "source_type": "inline",
-        "status": payload.status,
-        "updated_at": now,
-        "version": payload.version,
-    }
-    _put_memory_record(current_store, "ai_skills", skill)
-    audit_event = record_audit_event(
-        current_store,
-        event_type="ai_skill.created",
-        actor_id=user["id"],
-        subject_type="ai_skill",
-        subject_id=skill_id,
-        payload={"code": skill["code"], "status": skill["status"]},
-    )
-    persist_record(
-        current_store,
-        "save_ai_skill_record",
-        skill,
-        audit_event=audit_event,
-    )
-    return public_skill(skill)
-
-
-def create_ai_skill_package_response(
-    *,
-    code: str,
-    current_store: Any,
-    name: str,
-    package_bytes: bytes,
-    requires_human_review: bool,
-    risk_level: str,
-    status: str,
-    user: dict[str, Any],
-    version: str,
-) -> dict[str, Any]:
-    require_ai_capabilities_manager(user)
-    ensure_enum(status, AI_SKILL_STATUSES, "status")
-    now = datetime.now(UTC).isoformat()
-    skill_code = ensure_non_blank(code, "code")
-    skill_version = ensure_non_blank(version, "version")
-    skill_id = current_store.new_id("skill")
-    stored_package = store_skill_package(
-        package_bytes=package_bytes,
-        skill_code=skill_code,
-        skill_id=skill_id,
-        version=skill_version,
-    )
-    manifest = dict(stored_package.manifest)
-    skill_name = ensure_non_blank(str(manifest.get("name") or name), "name")
-    skill = {
-        "allowed_tools": list(manifest.get("allowed_tools") or []),
-        "code": str(manifest.get("code") or skill_code),
-        "created_at": now,
-        "created_by": user["id"],
-        "description": manifest.get("description"),
-        "id": skill_id,
-        "input_schema": {},
-        "manifest": manifest,
-        "name": skill_name,
-        "output_schema": {},
-        "package_checksum": stored_package.checksum,
-        "package_entry": stored_package.entry,
-        "package_files": stored_package.files,
-        "package_size_bytes": stored_package.size_bytes,
-        "package_uri": stored_package.package_uri,
-        "prompt_template": stored_package.entry_content,
-        "required_context": list(manifest.get("required_context") or []),
-        "requires_human_review": bool(
-            manifest.get("requires_human_review", requires_human_review),
-        ),
-        "risk_level": str(manifest.get("risk_level") or risk_level),
-        "source_type": "package",
-        "status": status,
-        "updated_at": now,
-        "version": str(manifest.get("version") or skill_version),
-    }
-    _put_memory_record(current_store, "ai_skills", skill)
-    audit_event = record_audit_event(
-        current_store,
-        event_type="ai_skill.package_uploaded",
-        actor_id=user["id"],
-        subject_type="ai_skill",
-        subject_id=skill_id,
-        payload={
-            "checksum": skill["package_checksum"],
-            "code": skill["code"],
-            "file_count": len(skill["package_files"]),
-            "status": skill["status"],
-        },
-    )
-    persist_record(
-        current_store,
-        "save_ai_skill_record",
-        skill,
-        audit_event=audit_event,
-    )
-    return public_skill(skill)
-
-
-def patch_ai_skill_response(
-    *,
-    current_store: Any,
-    payload: Any,
-    skill_id: str,
-    user: dict[str, Any],
-) -> dict[str, Any]:
-    require_ai_capabilities_manager(user)
-    sync_ai_skill_store(current_store)
-    skill = _read_memory_dict(current_store, "ai_skills").get(skill_id)
-    if skill is None:
-        raise api_error(404, "NOT_FOUND", "AI skill not found")
-    updates = payload.model_dump(exclude_unset=True)
-    if "status" in updates:
-        ensure_enum(updates["status"], AI_SKILL_STATUSES, "status")
-    for key in ("code", "name", "prompt_template"):
-        if key in updates:
-            updates[key] = ensure_non_blank(updates[key], key)
-    skill = {**skill, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    _put_memory_record(current_store, "ai_skills", skill)
-    audit_event = record_audit_event(
-        current_store,
-        event_type="ai_skill.updated",
-        actor_id=user["id"],
-        subject_type="ai_skill",
-        subject_id=skill_id,
-        payload={"code": skill["code"], "status": skill["status"]},
-    )
-    persist_record(
-        current_store,
-        "save_ai_skill_record",
-        skill,
-        audit_event=audit_event,
-    )
-    return public_skill(skill)
-
-
-def list_ai_agents_response(
-    *,
-    brain_app_id: str | None,
-    current_store: Any,
-    keyword: str | None = None,
-    model_gateway_config_id: str | None = None,
-    page: int | None = None,
-    page_size: int | None = None,
-    sort_by: str | None = None,
-    sort_order: str = "asc",
-    started_at: float | None = None,
-    status: str | None = None,
-) -> dict[str, Any]:
-    if status is not None:
-        ensure_enum(status, AI_AGENT_STATUSES, "status")
-    if sort_order not in {"asc", "desc"}:
-        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_order")
-    resolved_sort_by = sort_by or "code"
-    if resolved_sort_by not in AI_AGENT_SORT_FIELDS:
-        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
-    resolved_started_at = started_at or perf_counter()
-    with_pagination = page is not None or page_size is not None
-    resolved_page = page or 1
-    resolved_page_size = page_size or 10
-    filters = {
-        "brain_app_id": brain_app_id,
-        "keyword": keyword,
-        "model_gateway_config_id": model_gateway_config_id,
-        "status": status,
-    }
-    repository = scheduled_jobs_query_repository(current_store)
-    if (
-        repository is not None
-        and with_pagination
-        and callable(getattr(repository, "count_ai_agents", None))
-        and callable(getattr(repository, "list_ai_agents_page", None))
-    ):
-        count_args = {
-            "brain_app_id": brain_app_id,
-            "keyword": keyword,
-            "model_gateway_config_id": model_gateway_config_id,
-            "status": status,
-        }
-        total = repository.count_ai_agents(**count_args)
-        items = repository.list_ai_agents_page(
-            **count_args,
-            limit=resolved_page_size,
-            offset=(resolved_page - 1) * resolved_page_size,
-            sort_by=resolved_sort_by,
-            sort_order=sort_order,
-        )
-        return add_list_observability(
-            {
-                "items": [public_agent(item) for item in items],
-                "page": resolved_page,
-                "page_size": resolved_page_size,
-                "total": total,
-            },
-            filters=filters,
-            list_name="ai_agents",
-            page=resolved_page,
-            page_size=resolved_page_size,
-            sort_by=resolved_sort_by,
-            sort_order=sort_order,
-            started_at=resolved_started_at,
-        )
-    sync_ai_agent_store(current_store, brain_app_id=brain_app_id, status=status)
-    items = []
-    for agent in _read_memory_dict(current_store, "ai_agents").values():
-        if brain_app_id is not None and agent.get("brain_app_id") != brain_app_id:
-            continue
-        if status is not None and agent.get("status") != status:
-            continue
-        if (
-            model_gateway_config_id is not None
-            and agent.get("model_gateway_config_id") != model_gateway_config_id
-        ):
-            continue
-        if not list_text_matches(
-            agent,
-            keyword,
-            ("id", "brain_app_id", "code", "name", "system_prompt", "model_gateway_config_id"),
-        ):
-            continue
-        items.append(public_agent(agent))
-    if with_pagination:
-        sorted_items = sort_list_items(
-            items,
-            allowed_fields=AI_AGENT_SORT_FIELDS,
-            default_sort_by="code",
-            sort_by=resolved_sort_by,
-            sort_order=sort_order,
-        )
-        start = (resolved_page - 1) * resolved_page_size
-        page_items = sorted_items[start : start + resolved_page_size]
-        return add_list_observability(
-            {
-                "items": page_items,
-                "page": resolved_page,
-                "page_size": resolved_page_size,
-                "total": len(sorted_items),
-            },
-            filters=filters,
-            list_name="ai_agents",
-            page=resolved_page,
-            page_size=resolved_page_size,
-            sort_by=resolved_sort_by,
-            sort_order=sort_order,
-            started_at=resolved_started_at,
-        )
-    items.sort(
-        key=lambda item: (item.get("brain_app_id") or "", item.get("code") or "", item["id"]),
-    )
-    return {"items": items, "total": len(items)}
-
-
-def ensure_active_model_gateway(current_store: Any, config_id: str | None) -> str | None:
-    if config_id is None:
-        return None
-    sync_reference_store(current_store)
-    config = _read_memory_dict(current_store, "model_gateway_configs").get(config_id)
-    if config is None:
-        raise api_error(404, "NOT_FOUND", "Model gateway config not found")
-    if config.get("status") != "active":
-        raise api_error(400, "MODEL_GATEWAY_CONFIG_INACTIVE", "Model gateway config is inactive")
-    return config_id
-
-
-def ensure_active_skills(current_store: Any, skill_ids: list[str]) -> list[str]:
-    sync_ai_skill_store(current_store)
-    for skill_id in skill_ids:
-        skill = _read_memory_dict(current_store, "ai_skills").get(skill_id)
-        if skill is None:
-            raise api_error(404, "NOT_FOUND", "AI skill not found")
-        if skill.get("status") != "active":
-            raise api_error(400, "AI_SKILL_INACTIVE", "AI skill is inactive")
-    return skill_ids
-
-
-def create_ai_agent_response(
-    *,
-    current_store: Any,
-    payload: Any,
-    user: dict[str, Any],
-) -> dict[str, Any]:
-    require_ai_capabilities_manager(user)
-    sync_ai_skill_store(current_store)
-    sync_reference_store(current_store)
-    ensure_enum(payload.status, AI_AGENT_STATUSES, "status")
-    ensure_active_model_gateway(current_store, payload.model_gateway_config_id)
-    ensure_active_skills(current_store, payload.default_skill_ids)
-    now = datetime.now(UTC).isoformat()
-    agent_id = current_store.new_id("agent")
-    agent = {
-        "brain_app_id": ensure_non_blank(payload.brain_app_id, "brain_app_id"),
-        "code": ensure_non_blank(payload.code, "code"),
-        "created_at": now,
-        "created_by": user["id"],
-        "default_skill_ids": list(payload.default_skill_ids),
-        "description": payload.description,
-        "execution_policy": payload.execution_policy,
-        "id": agent_id,
-        "model_gateway_config_id": payload.model_gateway_config_id,
-        "name": ensure_non_blank(payload.name, "name"),
-        "status": payload.status,
-        "system_prompt": ensure_non_blank(payload.system_prompt, "system_prompt"),
-        "tool_policy": payload.tool_policy,
-        "updated_at": now,
-    }
-    _put_memory_record(current_store, "ai_agents", agent)
-    audit_event = record_audit_event(
-        current_store,
-        event_type="ai_agent.created",
-        actor_id=user["id"],
-        subject_type="ai_agent",
-        subject_id=agent_id,
-        payload={"code": agent["code"], "status": agent["status"]},
-    )
-    persist_record(
-        current_store,
-        "save_ai_agent_record",
-        agent,
-        audit_event=audit_event,
-    )
-    return public_agent(agent)
-
-
-def patch_ai_agent_response(
-    *,
-    agent_id: str,
-    current_store: Any,
-    payload: Any,
-    user: dict[str, Any],
-) -> dict[str, Any]:
-    require_ai_capabilities_manager(user)
-    sync_ai_agent_store(current_store)
-    sync_ai_skill_store(current_store)
-    sync_reference_store(current_store)
-    agent = _read_memory_dict(current_store, "ai_agents").get(agent_id)
-    if agent is None:
-        raise api_error(404, "NOT_FOUND", "AI agent not found")
-    updates = payload.model_dump(exclude_unset=True)
-    if "status" in updates:
-        ensure_enum(updates["status"], AI_AGENT_STATUSES, "status")
-    if "model_gateway_config_id" in updates:
-        ensure_active_model_gateway(current_store, updates["model_gateway_config_id"])
-    if "default_skill_ids" in updates:
-        ensure_active_skills(current_store, updates["default_skill_ids"])
-    for key in ("brain_app_id", "code", "name", "system_prompt"):
-        if key in updates:
-            updates[key] = ensure_non_blank(updates[key], key)
-    agent = {**agent, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    _put_memory_record(current_store, "ai_agents", agent)
-    audit_event = record_audit_event(
-        current_store,
-        event_type="ai_agent.updated",
-        actor_id=user["id"],
-        subject_type="ai_agent",
-        subject_id=agent_id,
-        payload={"code": agent["code"], "status": agent["status"]},
-    )
-    persist_record(
-        current_store,
-        "save_ai_agent_record",
-        agent,
-        audit_event=audit_event,
-    )
-    return public_agent(agent)
 
 
 def validate_product(current_store: Any, product_id: str | None) -> None:
