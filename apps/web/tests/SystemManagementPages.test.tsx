@@ -20,7 +20,7 @@ const roleCatalogEnvelope = {
         menu_codes: ['system', 'system.roles', 'governance.audit'],
         name: '系统管理员',
         permission_codes: ['system.roles.read', 'system.roles.manage', 'system.users.manage'],
-        scopes: [{ access_level: 'admin', scope_id: '*', scope_type: 'global' }],
+        scopes: [{ access_level: 'admin', scope_id: '*', scope_name: '全局', scope_type: 'global' }],
         sort_order: 10,
         status: 'active',
       },
@@ -33,7 +33,14 @@ const roleCatalogEnvelope = {
         menu_codes: ['workspace.dashboard'],
         name: '查看者',
         permission_codes: ['workspace.read'],
-        scopes: [{ access_level: 'read', scope_id: 'self', scope_type: 'product' }],
+        scopes: [
+          {
+            access_level: 'read',
+            scope_id: 'product_scope_matrix',
+            scope_name: 'AI Brain',
+            scope_type: 'product',
+          },
+        ],
         sort_order: 60,
         status: 'active',
       },
@@ -208,8 +215,8 @@ describe('system management pages', () => {
                   role_id: 'role_admin',
                   role_name: '系统管理员',
                   scope_count: 1,
-                  scope_summary: 'global 1 项',
-                  scopes: [{ access_level: 'admin', scope_id: '*', scope_type: 'global' }],
+                  scope_summary: '全局 1 项',
+                  scopes: [{ access_level: 'admin', scope_id: '*', scope_name: '全局', scope_type: 'global' }],
                   standalone_permission_codes: ['system.roles.read', 'system.users.manage'],
                   status: 'active',
                 },
@@ -235,9 +242,16 @@ describe('system management pages', () => {
                   role_code: 'viewer',
                   role_id: 'role_viewer',
                   role_name: '查看者',
-                  scope_count: 0,
-                  scope_summary: '未配置数据范围',
-                  scopes: [],
+                  scope_count: 1,
+                  scope_summary: '产品 1 项',
+                  scopes: [
+                    {
+                      access_level: 'read',
+                      scope_id: 'product_scope_matrix',
+                      scope_name: 'AI Brain',
+                      scope_type: 'product',
+                    },
+                  ],
                   standalone_permission_codes: [],
                   status: 'active',
                 },
@@ -249,7 +263,7 @@ describe('system management pages', () => {
                 role_count: 2,
                 roles_with_high_risk_permissions: 1,
                 roles_with_menu_permission_gaps: 1,
-                scope_grant_count: 1,
+                scope_grant_count: 2,
               },
             },
           }),
@@ -350,7 +364,8 @@ describe('system management pages', () => {
     expect(screen.getByText('用户权限诊断')).toBeInTheDocument();
     expect(screen.getByText('角色权限与范围预览')).toBeInTheDocument();
     expect(screen.getByText('全局范围 1')).toBeInTheDocument();
-    expect(screen.getByText('未配置范围 1')).toBeInTheDocument();
+    expect(screen.getByText('产品范围 1')).toBeInTheDocument();
+    expect(screen.getByText('未配置范围 0')).toBeInTheDocument();
     expect(screen.getByText('高风险权限：system.roles.manage')).toBeInTheDocument();
     expect(screen.getByText('菜单权限缺口：workspace.read')).toBeInTheDocument();
     expect(screen.getByText('1 个菜单权限缺口')).toBeInTheDocument();
@@ -362,8 +377,8 @@ describe('system management pages', () => {
     expect(screen.getAllByText('查看者').length).toBeGreaterThan(0);
     expect(screen.getAllByText('viewer').length).toBeGreaterThan(0);
     expect(screen.getAllByText('系统管理').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('全局:* · 管理').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('产品:self · 读取').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('全局 · * · 管理').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('AI Brain · product_scope_matrix · 读取').length).toBeGreaterThan(0);
     expect(screen.getAllByText('3 个入口').length).toBeGreaterThan(0);
     expect(screen.getAllByText('3 个权限点').length).toBeGreaterThan(0);
     expect(screen.getAllByText('1 个权限点').length).toBeGreaterThan(0);
@@ -417,7 +432,7 @@ describe('system management pages', () => {
     expect(within(detailDialog).getByText('访问预览')).toBeInTheDocument();
     expect(within(detailDialog).getByText('/system/roles')).toBeInTheDocument();
     expect(within(detailDialog).getByText('角色管理 (system.roles.manage)')).toBeInTheDocument();
-    expect(within(detailDialog).getByText('* · 管理')).toBeInTheDocument();
+    expect(within(detailDialog).getAllByText('全局 · * · 管理').length).toBeGreaterThan(0);
     expect(within(detailDialog).getByText('1 个高风险权限')).toBeInTheDocument();
   });
 

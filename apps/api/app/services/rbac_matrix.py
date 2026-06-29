@@ -3,6 +3,21 @@ from __future__ import annotations
 from typing import Any
 
 HIGH_RISK_LEVELS = {"critical", "danger", "high"}
+SCOPE_TYPE_LABELS = {
+    "department": "部门",
+    "global": "全局",
+    "knowledge_space": "知识空间",
+    "product": "产品",
+    "review_assignment": "评审任务",
+}
+SCOPE_TYPE_SORT_ORDER = {
+    "global": 0,
+    "department": 1,
+    "knowledge_space": 2,
+    "product": 3,
+    "review_assignment": 4,
+}
+ScopeResourceNames = dict[str, dict[str, str]]
 
 
 def _string_list(value: Any) -> list[str]:
@@ -18,7 +33,49 @@ def _scope_summary(scopes: list[dict[str, Any]]) -> str:
     for scope in scopes:
         scope_type = str(scope.get("scope_type") or "unknown")
         grouped[scope_type] = grouped.get(scope_type, 0) + 1
-    return "，".join(f"{scope_type} {count} 项" for scope_type, count in sorted(grouped.items()))
+    return "，".join(
+        f"{_scope_type_label(scope_type)} {count} 项"
+        for scope_type, count in sorted(
+            grouped.items(),
+            key=lambda item: (SCOPE_TYPE_SORT_ORDER.get(item[0], 99), _scope_type_label(item[0])),
+        )
+    )
+
+
+def _scope_type_label(scope_type: str) -> str:
+    return SCOPE_TYPE_LABELS.get(scope_type, scope_type)
+
+
+def _scope_sort_key(scope: dict[str, Any]) -> tuple[int, str, str, str]:
+    scope_type = str(scope.get("scope_type") or "unknown")
+    return (
+        SCOPE_TYPE_SORT_ORDER.get(scope_type, 99),
+        str(scope.get("scope_name") or ""),
+        str(scope.get("scope_id") or ""),
+        str(scope.get("access_level") or ""),
+    )
+
+
+def _enrich_scopes(
+    scopes: list[dict[str, Any]],
+    *,
+    scope_resource_names: ScopeResourceNames | None = None,
+) -> list[dict[str, Any]]:
+    resource_names = scope_resource_names or {}
+    enriched_scopes: list[dict[str, Any]] = []
+    for scope in scopes:
+        enriched = dict(scope)
+        scope_type = str(enriched.get("scope_type") or "unknown")
+        scope_id = str(enriched.get("scope_id") or "")
+        scope_name = str(
+            resource_names.get(scope_type, {}).get(scope_id)
+            or enriched.get("scope_name")
+            or ""
+        ).strip()
+        if scope_name:
+            enriched["scope_name"] = scope_name
+        enriched_scopes.append(enriched)
+    return sorted(enriched_scopes, key=_scope_sort_key)
 
 
 def _role_grant_reasons(
@@ -77,6 +134,7 @@ def build_user_permission_diagnostic(
     permission_code: str | None = None,
     scope_type: str | None = None,
     scope_id: str | None = None,
+    scope_resource_names: ScopeResourceNames | None = None,
 ) -> dict[str, Any]:
     """Explain why a user can or cannot access a menu, permission, or scope."""
 
@@ -87,11 +145,14 @@ def build_user_permission_diagnostic(
     role_codes = _string_list(effective.get("role_codes") or [])
     permission_codes = _string_list(effective.get("permission_codes") or [])
     menu_codes = _string_list(effective.get("menu_codes") or [])
-    scopes = [
-        dict(scope)
-        for scope in effective.get("scopes", [])
-        if isinstance(scope, dict)
-    ]
+    scopes = _enrich_scopes(
+        [
+            dict(scope)
+            for scope in effective.get("scopes", [])
+            if isinstance(scope, dict)
+        ],
+        scope_resource_names=scope_resource_names,
+    )
     user_status = str(target_user.get("status") or "active")
 
     checks: list[dict[str, Any]] = [
@@ -306,7 +367,11 @@ def build_user_permission_diagnostic(
     }
 
 
-def build_rbac_policy_matrix(repository: Any) -> dict[str, Any]:
+def build_rbac_policy_matrix(
+    repository: Any,
+    *,
+    scope_resource_names: ScopeResourceNames | None = None,
+) -> dict[str, Any]:
     permissions = list(repository.list_permissions())
     menus = list(repository.menu_resources())
     roles = list(repository.list_roles())
@@ -321,11 +386,14 @@ def build_rbac_policy_matrix(repository: Any) -> dict[str, Any]:
             role.get("permission_codes") or role.get("permissions") or []
         )
         granted_menu_codes = _string_list(role.get("menu_codes") or role.get("menu_scope") or [])
-        scopes = [
-            dict(scope)
-            for scope in role.get("scopes", [])
-            if isinstance(scope, dict)
-        ]
+        scopes = _enrich_scopes(
+            [
+                dict(scope)
+                for scope in role.get("scopes", [])
+                if isinstance(scope, dict)
+            ],
+            scope_resource_names=scope_resource_names,
+        )
 
         required_permission_codes = sorted(
             {

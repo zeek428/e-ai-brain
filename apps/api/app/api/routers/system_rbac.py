@@ -15,6 +15,7 @@ from app.core.listing import (
     sort_list_items,
 )
 from app.core.trace import envelope, get_trace_id
+from app.services.product_config_context import list_product_records, runtime_repository
 from app.services.rbac_matrix import build_rbac_policy_matrix, build_user_permission_diagnostic
 
 router = APIRouter(tags=["system-rbac"])
@@ -124,6 +125,43 @@ def _authorization_repository(request: Request) -> Any:
     return request.app.state.authorization_repository
 
 
+def _scope_resource_label(record: dict[str, Any]) -> str:
+    return str(record.get("name") or record.get("code") or record.get("id") or "").strip()
+
+
+def _scope_resource_name_map(records: list[dict[str, Any]]) -> dict[str, str]:
+    resource_names: dict[str, str] = {}
+    for record in records:
+        resource_id = str(record.get("id") or "").strip()
+        resource_label = _scope_resource_label(record)
+        if resource_id and resource_label:
+            resource_names[resource_id] = resource_label
+    return resource_names
+
+
+def _list_knowledge_space_records(current_store: Any) -> list[dict[str, Any]]:
+    list_knowledge_spaces = getattr(runtime_repository(current_store), "list_knowledge_spaces", None)
+    if callable(list_knowledge_spaces):
+        return list_knowledge_spaces(active_only=False)
+    knowledge_spaces = getattr(current_store, "knowledge_spaces", {})
+    if not isinstance(knowledge_spaces, dict):
+        return []
+    return [dict(space) for space in knowledge_spaces.values() if isinstance(space, dict)]
+
+
+def _scope_resource_names(request: Request) -> dict[str, dict[str, str]]:
+    current_store = request.app.state.store
+    return {
+        "global": {"*": "全局"},
+        "knowledge_space": _scope_resource_name_map(
+            _list_knowledge_space_records(current_store)
+        ),
+        "product": _scope_resource_name_map(
+            list_product_records(current_store, active_only=False)
+        ),
+    }
+
+
 def _find_user(request: Request, user_id: str) -> dict[str, Any] | None:
     return next(
         (user for user in request.app.state.user_repository.list_users() if user["id"] == user_id),
@@ -212,7 +250,10 @@ def get_permission_matrix(
 ) -> dict[str, Any]:
     require_any_permission(user, {"system.roles.read", "system.roles.manage"})
     return envelope(
-        build_rbac_policy_matrix(_authorization_repository(request)),
+        build_rbac_policy_matrix(
+            _authorization_repository(request),
+            scope_resource_names=_scope_resource_names(request),
+        ),
         get_trace_id(request),
     )
 
@@ -242,6 +283,7 @@ def get_permission_diagnostics(
             permission_code=permission_code,
             scope_type=scope_type,
             scope_id=scope_id,
+            scope_resource_names=_scope_resource_names(request),
         ),
         get_trace_id(request),
     )

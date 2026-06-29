@@ -662,6 +662,9 @@ class PostgresSnapshotRepository:
     def load_knowledge(self) -> dict[str, Any]:
         return self._knowledge_read_repository.load_knowledge()
 
+    def list_knowledge_spaces(self, *, active_only: bool = False) -> list[dict[str, Any]]:
+        return self._knowledge_read_repository.list_knowledge_spaces(active_only=active_only)
+
     def list_knowledge_documents(
         self,
         *,

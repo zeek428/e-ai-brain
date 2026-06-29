@@ -133,7 +133,12 @@ function renderTagList(items: string[], maxVisible = items.length) {
 function formatScopeGrant(scope: ScopeGrant) {
   const scopeType = SCOPE_TYPE_LABELS[scope.scope_type] ?? scope.scope_type;
   const accessLevel = ACCESS_LEVEL_LABELS[scope.access_level] ?? scope.access_level;
-  return `${scopeType}:${scope.scope_id || '-'} · ${accessLevel}`;
+  const scopeId = scope.scope_id || '-';
+  const scopeName = scope.scope_name?.trim();
+  if (scopeName) {
+    return `${scopeName} · ${scopeId} · ${accessLevel}`;
+  }
+  return `${scopeType}:${scopeId} · ${accessLevel}`;
 }
 
 function renderScopeGrantTags(scopes: ScopeGrant[], maxVisible = scopes.length) {
@@ -323,7 +328,7 @@ function renderAccessPreviewScopeGroups(scopes: ScopeGrant[]) {
                 color={SCOPE_TYPE_COLORS[scope.scope_type] ?? 'default'}
                 key={`${scope.scope_type}:${scope.scope_id}:${scope.access_level}`}
               >
-                {scope.scope_id || '-'} · {ACCESS_LEVEL_LABELS[scope.access_level] ?? scope.access_level}
+                {formatScopeGrant(scope)}
               </Tag>
             ))}
           </Space>

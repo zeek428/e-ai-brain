@@ -108,6 +108,16 @@ class KnowledgeReadRepository:
             "knowledge_spaces": knowledge_spaces,
         }
 
+    def list_knowledge_spaces(self, *, active_only: bool = False) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                spaces = self._load_knowledge_spaces(cursor)
+        return [
+            dict(space)
+            for space in spaces.values()
+            if not active_only or space.get("status") == "active"
+        ]
+
     def save_knowledge(self, payload: dict[str, Any]) -> None:
         self._write_repository.save_knowledge(payload)
 

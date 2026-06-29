@@ -417,8 +417,76 @@ def test_permission_matrix_explains_role_grants_and_menu_permission_gaps():
     assert matrix_row["diagnostics"][0]["code"] == "menu_permission_gap"
 
 
+def test_permission_matrix_enriches_product_and_knowledge_scope_names():
+    headers = auth_headers()
+    app.state.store.products["product_scope_matrix"] = {
+        "code": "AIBRAIN",
+        "id": "product_scope_matrix",
+        "name": "AI Brain",
+        "status": "active",
+    }
+    app.state.store.knowledge_spaces["knowledge_space_scope_matrix"] = {
+        "id": "knowledge_space_scope_matrix",
+        "name": "研发知识空间",
+        "status": "active",
+    }
+    role = client.post(
+        "/api/system/roles",
+        headers=headers,
+        json={"code": "scope_matrix_operator", "name": "Scope Matrix Operator"},
+    ).json()["data"]
+    client.put(
+        f"/api/system/roles/{role['id']}/scopes",
+        headers=headers,
+        json={
+            "scopes": [
+                {
+                    "access_level": "read",
+                    "scope_id": "product_scope_matrix",
+                    "scope_type": "product",
+                },
+                {
+                    "access_level": "write",
+                    "scope_id": "knowledge_space_scope_matrix",
+                    "scope_type": "knowledge_space",
+                },
+            ]
+        },
+    )
+
+    response = client.get("/api/system/permissions/matrix", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    row = {
+        current["role_code"]: current
+        for current in data["rows"]
+    }["scope_matrix_operator"]
+    assert row["scope_summary"] == "知识空间 1 项，产品 1 项"
+    assert row["scopes"] == [
+        {
+            "access_level": "write",
+            "scope_id": "knowledge_space_scope_matrix",
+            "scope_name": "研发知识空间",
+            "scope_type": "knowledge_space",
+        },
+        {
+            "access_level": "read",
+            "scope_id": "product_scope_matrix",
+            "scope_name": "AI Brain",
+            "scope_type": "product",
+        },
+    ]
+
+
 def test_permission_diagnostics_explains_user_menu_permission_and_scope_blocks():
     headers = auth_headers()
+    app.state.store.products["product_alpha"] = {
+        "code": "ALPHA",
+        "id": "product_alpha",
+        "name": "Alpha 产品",
+        "status": "active",
+    }
     role = client.post(
         "/api/system/roles",
         headers=headers,
@@ -479,6 +547,14 @@ def test_permission_diagnostics_explains_user_menu_permission_and_scope_blocks()
     assert "缺少菜单权限：task.read" in data["decision"]["blocked_reasons"]
     assert "缺少权限点：task.read" in data["decision"]["blocked_reasons"]
     assert "缺少范围：product:product_beta" in data["decision"]["blocked_reasons"]
+    assert data["effective"]["scopes"] == [
+        {
+            "access_level": "read",
+            "scope_id": "product_alpha",
+            "scope_name": "Alpha 产品",
+            "scope_type": "product",
+        }
+    ]
     checks = {check["code"]: check for check in data["checks"]}
     assert checks["menu_path"]["status"] == "blocked"
     assert checks["menu_path"]["granted_menu_code"] == "task.center"

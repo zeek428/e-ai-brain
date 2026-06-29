@@ -20,6 +20,7 @@ export type MenuTreeNode = {
 export type ScopeGrant = {
   access_level: string;
   scope_id: string;
+  scope_name?: string;
   scope_type: string;
 };
 

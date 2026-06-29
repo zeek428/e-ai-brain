@@ -333,6 +333,8 @@ class WorkflowRuntimeRepository(Protocol):
 class KnowledgeRepository(Protocol):
     def load_knowledge(self) -> dict[str, Any] | None: ...
 
+    def list_knowledge_spaces(self, *, active_only: bool = False) -> list[dict[str, Any]]: ...
+
     def list_knowledge_documents(
         self,
         *,
