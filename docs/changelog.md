@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本新增 `code-inspection-governance` 快速场景：独立验收本地完整扫描、质量门禁、Bug/整改任务写回、提交人治理、趋势对比和版本总览阻塞。
 - 迭代版本总览阻塞队列补齐待确认 Code Review：后端将 `pending_review/waiting_review` 代码评审报告纳入版本阻塞项，前端可直接跳转评审处理和全链路。
 - 真实全链路回归脚本补齐 Runner 健康告警门禁：`runner-reliability` 场景验证新建 Runner 返回 `runner_never_connected`，心跳后恢复 `online` 且清除 `health_alert`。
 - AI 执行器 Runner 健康告警：`/api/system/ai-executor-runners` 和测试接口返回标准化 `health_alert`，插件管理执行器列表直接展示未连接、心跳超时、离线或停用原因和建议动作。

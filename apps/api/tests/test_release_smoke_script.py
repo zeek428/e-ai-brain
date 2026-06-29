@@ -124,9 +124,10 @@ def test_full_chain_regression_script_supports_targeted_suites():
     for marker in [
         "FULL_CHAIN_SUITE",
         "--suite",
-        'choices=["full", "runner-reliability", "version-dashboard", "assistant-draft-governance"]',
+        '"code-inspection-governance"',
         "run_regression_suite(",
         'suite == "runner-reliability"',
+        'suite == "code-inspection-governance"',
         'StepResult("suite", suite)',
     ]:
         assert marker in content
@@ -202,5 +203,25 @@ def test_full_chain_regression_script_supports_assistant_draft_governance_suite(
         "impact_changed_field_count",
         "latest_audit_event_type",
         "assistant_action_draft.confirmed",
+    ]:
+        assert marker in content
+
+
+def test_full_chain_regression_script_supports_code_inspection_governance_suite():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    content = script_path.read_text(encoding="utf-8")
+
+    for marker in [
+        '"code-inspection-governance"',
+        "validate_code_inspection_governance_quick_regression(",
+        'suite == "code-inspection-governance"',
+        "native_full_scan",
+        "quality_gate_violations",
+        "code_inspection_governance_pressure",
+        "Code inspection governance pressure did not close Bug coverage",
+        "Code inspection committer governance did not close the loop",
+        "inspection_writeback",
+        "code_inspection_trend_comparison",
+        "version_dashboard_code_inspection_governance",
     ]:
         assert marker in content
