@@ -38,6 +38,12 @@ from app.services.plugin_delete_protection import (
     ensure_not_used_for_delete,
     plugin_delete_usages,
 )
+from app.services.plugin_result_mapping import result_mapping_hits, result_write_preview
+from app.services.plugin_result_write_records import (
+    RESULT_WRITE_RECORD_SORT_FIELDS,
+    RESULT_WRITE_RECORD_STATUSES,
+    list_result_write_records_payload,
+)
 from app.services.plugin_templates import (
     STANDARD_PLUGIN_CONNECTION_TEMPLATE_VERSION,
     STANDARD_PLUGIN_MARKETPLACE_METADATA,
@@ -47,11 +53,7 @@ from app.services.plugin_templates import (
     standard_plugin_connection_schema,
 )
 from app.services.product_scope import product_scope_filter
-from app.services.result_write_targets import (
-    result_write_target_default_mapping,
-    result_write_target_label,
-    result_write_targets,
-)
+from app.services.result_write_targets import result_write_targets
 
 PLUGIN_PROTOCOLS = {"http", "mcp_http", "mcp_stdio", "runner_polling", "runner_websocket"}
 PLUGIN_CATEGORIES = {
@@ -71,7 +73,6 @@ PLUGIN_ACTION_TYPES = {"http_request", "mcp_tool"}
 PLUGIN_CONNECTION_ENVIRONMENTS = {"default", "dev", "test", "staging", "prod", "sandbox"}
 PLUGIN_INVOCATION_STATUSES = {"failed", "succeeded"}
 AI_EXECUTOR_RUNNER_PROTOCOLS = {"runner_polling", "runner_websocket"}
-RESULT_WRITE_RECORD_STATUSES = {"cancelled", "failed", "not_run", "running", "succeeded"}
 MASKED_SECRET_PLACEHOLDER = "***"
 DEPRECATED_STANDARD_PLUGIN_CODES = {"aliyun_maxcompute"}
 PLUGIN_CONNECTION_SORT_FIELDS = {
@@ -106,21 +107,6 @@ PLUGIN_INVOCATION_LOG_SORT_FIELDS = {
     "status",
     "updated_at",
 }
-RESULT_WRITE_RECORD_SORT_FIELDS = {
-    "created_at",
-    "id",
-    "plugin_action_id",
-    "plugin_invocation_log_id",
-    "records_imported",
-    "scheduled_job_id",
-    "scheduled_job_run_id",
-    "source_type",
-    "status",
-    "updated_at",
-    "write_target",
-}
-
-
 def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     if not isinstance(collection, dict):
@@ -426,18 +412,6 @@ def merge_masked_config(existing: Any, incoming: Any) -> Any:
     return incoming
 
 
-def compact_preview_value(value: Any) -> Any:
-    if isinstance(value, str):
-        return value if len(value) <= 200 else f"{value[:200]}..."
-    if isinstance(value, (int, float, bool)) or value is None:
-        return value
-    try:
-        encoded = json.dumps(value, ensure_ascii=False)
-    except TypeError:
-        return str(value)[:200]
-    return value if len(encoded) <= 400 else f"{encoded[:400]}..."
-
-
 def _is_masked_secret_placeholder(value: Any) -> bool:
     return isinstance(value, str) and value.strip() == MASKED_SECRET_PLACEHOLDER
 
@@ -630,210 +604,6 @@ def list_result_write_targets_response(
     return {"items": items, "total": len(items)}
 
 
-def result_write_record_summary_fields(
-    *,
-    feedback: dict[str, Any],
-    preview: dict[str, Any],
-) -> dict[str, Any]:
-    fields: dict[str, Any] = {}
-    for key in (
-        "candidate_count",
-        "delivery_id",
-        "delivery_status",
-        "preview_value",
-        "report_preview",
-        "sample_records",
-        "source_row_count",
-        "subject",
-    ):
-        if key in feedback:
-            fields[key] = feedback[key]
-        elif key in preview:
-            fields[key] = preview[key]
-    return fields
-
-
-def result_write_record_from_scheduled_run(
-    current_store: Any,
-    run: dict[str, Any],
-) -> dict[str, Any] | None:
-    result_summary = (
-        run.get("result_summary")
-        if isinstance(run.get("result_summary"), dict)
-        else {}
-    )
-    execution_nodes = (
-        result_summary.get("execution_nodes")
-        if isinstance(result_summary.get("execution_nodes"), dict)
-        else {}
-    )
-    result_action = (
-        execution_nodes.get("result_action")
-        if isinstance(execution_nodes.get("result_action"), dict)
-        else {}
-    )
-    if not result_action:
-        return None
-    feedback = (
-        result_action.get("feedback")
-        if isinstance(result_action.get("feedback"), dict)
-        else {}
-    )
-    preview = (
-        feedback.get("write_preview")
-        if isinstance(feedback.get("write_preview"), dict)
-        else {}
-    )
-    write_target = str(
-        result_action.get("write_target")
-        or feedback.get("write_target")
-        or preview.get("write_target")
-        or result_summary.get("write_target")
-        or "scheduled_job_result",
-    )
-    snapshot = (
-        run.get("resolved_plugin_snapshot")
-        if isinstance(run.get("resolved_plugin_snapshot"), dict)
-        else {}
-    )
-    snapshot_plugin = snapshot.get("plugin") if isinstance(snapshot.get("plugin"), dict) else {}
-    snapshot_connection = (
-        snapshot.get("connection") if isinstance(snapshot.get("connection"), dict) else {}
-    )
-    snapshot_action = snapshot.get("action") if isinstance(snapshot.get("action"), dict) else {}
-    scheduled_job_id = run.get("scheduled_job_id")
-    job = _read_memory_record(current_store, "scheduled_jobs", str(scheduled_job_id))
-    return {
-        "created_at": run.get("finished_at") or run.get("started_at"),
-        "feedback": feedback,
-        "id": f"result_write_record_{run['id']}",
-        "plugin_action_id": (
-            result_action.get("action_id")
-            or snapshot_action.get("id")
-            or run.get("plugin_action_id")
-        ),
-        "plugin_code": snapshot_plugin.get("code"),
-        "plugin_connection_id": (
-            snapshot_connection.get("id")
-            or run.get("plugin_connection_id")
-        ),
-        "plugin_id": snapshot_plugin.get("id"),
-        "plugin_invocation_log_id": (
-            feedback.get("plugin_invocation_log_id")
-            or run.get("plugin_invocation_log_id")
-        ),
-        "preview": preview,
-        "records_imported": (
-            result_action.get("records_imported")
-            or feedback.get("records_imported")
-            or preview.get("records_imported")
-            or run.get("records_imported")
-            or 0
-        ),
-        "scheduled_job_id": scheduled_job_id,
-        "scheduled_job_name": job.get("name") if isinstance(job, dict) else None,
-        "scheduled_job_run_id": run.get("id"),
-        "source_type": "scheduled_job_run",
-        "status": result_action.get("status") or run.get("status"),
-        "summary_fields": result_write_record_summary_fields(
-            feedback=feedback,
-            preview=preview,
-        ),
-        "updated_at": run.get("finished_at") or run.get("updated_at"),
-        "write_target": write_target,
-        "write_target_label": (
-            result_action.get("write_target_label")
-            or preview.get("write_target_label")
-            or result_write_target_label(write_target)
-        ),
-    }
-
-
-def result_write_record_from_invocation_log(
-    current_store: Any,
-    log: dict[str, Any],
-) -> dict[str, Any] | None:
-    if log.get("scheduled_job_run_id"):
-        return None
-    action = _read_memory_record(current_store, "plugin_actions", str(log.get("action_id")))
-    if not isinstance(action, dict):
-        return None
-    mapping = action.get("result_mapping") if isinstance(action.get("result_mapping"), dict) else {}
-    response_summary = (
-        log.get("response_summary") if isinstance(log.get("response_summary"), dict) else {}
-    )
-    preview = result_write_preview(response_summary, mapping)
-    write_target = str(
-        preview.get("write_target")
-        or mapping.get("write_target")
-        or "scheduled_job_result",
-    )
-    plugin = _read_memory_record(current_store, "integration_plugins", str(log.get("plugin_id")))
-    return {
-        "created_at": log.get("created_at"),
-        "feedback": {
-            "plugin_invocation_log_id": log.get("id"),
-            "response_summary": response_summary,
-            "write_preview": preview,
-        },
-        "id": f"result_write_record_{log['id']}",
-        "plugin_action_id": log.get("action_id"),
-        "plugin_code": plugin.get("code") if isinstance(plugin, dict) else None,
-        "plugin_connection_id": log.get("connection_id"),
-        "plugin_id": log.get("plugin_id"),
-        "plugin_invocation_log_id": log.get("id"),
-        "preview": preview,
-        "records_imported": preview.get("records_imported") or 0,
-        "scheduled_job_id": log.get("scheduled_job_id"),
-        "scheduled_job_name": None,
-        "scheduled_job_run_id": None,
-        "source_type": "plugin_invocation_log",
-        "status": log.get("status"),
-        "summary_fields": result_write_record_summary_fields(
-            feedback={},
-            preview=preview,
-        ),
-        "updated_at": log.get("updated_at") or log.get("created_at"),
-        "write_target": write_target,
-        "write_target_label": preview.get("write_target_label")
-        or result_write_target_label(write_target),
-    }
-
-
-def _record_product_id_from_job_reference(
-    current_store: Any,
-    *,
-    scheduled_job_id: Any = None,
-    scheduled_job_run_id: Any = None,
-) -> str | None:
-    job_id = scheduled_job_id
-    if not job_id and scheduled_job_run_id:
-        run = _read_memory_record(
-            current_store,
-            "scheduled_job_runs",
-            str(scheduled_job_run_id),
-        )
-        job_id = run.get("scheduled_job_id") if isinstance(run, dict) else None
-    job = _read_memory_record(current_store, "scheduled_jobs", str(job_id))
-    product_id = job.get("product_id") if isinstance(job, dict) else None
-    return str(product_id) if product_id else None
-
-
-def _result_write_record_matches_product_scope(
-    current_store: Any,
-    record: dict[str, Any],
-    product_scope_ids: set[str] | None,
-) -> bool:
-    if product_scope_ids is None:
-        return True
-    product_id = _record_product_id_from_job_reference(
-        current_store,
-        scheduled_job_id=record.get("scheduled_job_id"),
-        scheduled_job_run_id=record.get("scheduled_job_run_id"),
-    )
-    return product_id is not None and product_id in product_scope_ids
-
-
 def list_result_write_records_response(
     *,
     current_store: Any,
@@ -855,78 +625,21 @@ def list_result_write_records_response(
     ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
     if sort_by is not None:
         ensure_enum(sort_by, RESULT_WRITE_RECORD_SORT_FIELDS, "sort_by")
-    resolved_sort_by = sort_by or "created_at"
-    resolved_page = page or 1
-    resolved_page_size = page_size or 10
-    with_pagination = page is not None or page_size is not None
-    scoped_product_ids = product_scope_filter(user)
-    scoped_product_id_set = set(scoped_product_ids) if scoped_product_ids is not None else None
     sync_result_write_record_store(current_store)
-    records: list[dict[str, Any]] = []
-    for run in _read_memory_dict(current_store, "scheduled_job_runs").values():
-        record = result_write_record_from_scheduled_run(current_store, run)
-        if record is not None:
-            records.append(record)
-    for log in _read_memory_dict(current_store, "plugin_invocation_logs").values():
-        record = result_write_record_from_invocation_log(current_store, log)
-        if record is not None:
-            records.append(record)
-
-    filtered = []
-    for record in records:
-        if not _result_write_record_matches_product_scope(
-            current_store,
-            record,
-            scoped_product_id_set,
-        ):
-            continue
-        if write_target is not None and record.get("write_target") != write_target:
-            continue
-        if status is not None and record.get("status") != status:
-            continue
-        if scheduled_job_id is not None and record.get("scheduled_job_id") != scheduled_job_id:
-            continue
-        if (
-            scheduled_job_run_id is not None
-            and record.get("scheduled_job_run_id") != scheduled_job_run_id
-        ):
-            continue
-        if plugin_action_id is not None and record.get("plugin_action_id") != plugin_action_id:
-            continue
-        filtered.append(record)
-    sorted_records = sort_list_items(
-        filtered,
-        allowed_fields=RESULT_WRITE_RECORD_SORT_FIELDS,
-        default_sort_by="created_at",
-        sort_by=resolved_sort_by,
+    return list_result_write_records_payload(
+        current_store=current_store,
+        page=page,
+        page_size=page_size,
+        plugin_action_id=plugin_action_id,
+        scheduled_job_id=scheduled_job_id,
+        scheduled_job_run_id=scheduled_job_run_id,
+        sort_by=sort_by,
         sort_order=sort_order,
+        started_at=started_at,
+        status=status,
+        user=user,
+        write_target=write_target,
     )
-    if with_pagination:
-        start_index = (resolved_page - 1) * resolved_page_size
-        paged_records = sorted_records[start_index : start_index + resolved_page_size]
-        return add_list_observability(
-            {
-                "items": paged_records,
-                "page": resolved_page,
-                "page_size": resolved_page_size,
-                "total": len(sorted_records),
-            },
-            filters={
-                "plugin_action_id": plugin_action_id,
-                "product_scope_ids": scoped_product_ids,
-                "scheduled_job_id": scheduled_job_id,
-                "scheduled_job_run_id": scheduled_job_run_id,
-                "status": status,
-                "write_target": write_target,
-            },
-            list_name="result_write_records",
-            page=resolved_page,
-            page_size=resolved_page_size,
-            sort_by=resolved_sort_by,
-            sort_order=sort_order,
-            started_at=started_at,
-        )
-    return {"items": sorted_records, "total": len(sorted_records)}
 
 
 def create_plugin_response(
@@ -2134,29 +1847,6 @@ def resolve_plugin_snapshot(
     }
 
 
-def json_path_value(payload: Any, path: str | None) -> Any:
-    if path == "$":
-        return payload
-    if not path or not path.startswith("$."):
-        return None
-    current = payload
-    for part in path[2:].split("."):
-        if isinstance(current, dict):
-            current = current.get(part)
-        else:
-            return None
-    return current
-
-
-def records_imported_from_mapping(response_summary: dict[str, Any], mapping: dict[str, Any]) -> int:
-    value = json_path_value(response_summary.get("json"), mapping.get("records_imported_path"))
-    if isinstance(value, int) and value >= 0:
-        return value
-    if isinstance(value, list):
-        return len(value)
-    return 0
-
-
 def plugin_invocation_timezone(input_payload: dict[str, Any] | None) -> ZoneInfo:
     payload = input_payload or {}
     timezone_name = str(
@@ -2667,150 +2357,6 @@ def plugin_action_request_preview(
         "protocol": plugin["protocol"],
         "query": query,
         "url": url,
-    }
-
-
-def result_mapping_hits(
-    response_summary: dict[str, Any],
-    mapping: dict[str, Any],
-) -> list[dict[str, Any]]:
-    hits: list[dict[str, Any]] = []
-    for key, path in mapping.items():
-        if not isinstance(path, str) or not (path == "$" or path.startswith("$.")):
-            continue
-        value = json_path_value(response_summary.get("json"), path)
-        hits.append(
-            {
-                "key": key,
-                "matched": value is not None,
-                "path": path,
-                "value_preview": compact_preview_value(value),
-            },
-        )
-    return hits
-
-
-def result_write_preview(
-    response_summary: dict[str, Any],
-    mapping: dict[str, Any],
-) -> dict[str, Any]:
-    write_target = str(mapping.get("write_target") or "scheduled_job_result")
-    default_mapping = result_write_target_default_mapping(write_target)
-    raw_json = response_summary.get("json")
-    write_target_label = result_write_target_label(write_target)
-
-    if write_target == "code_inspection_reports":
-        findings = json_path_value(
-            raw_json,
-            str(mapping.get("findings_path") or default_mapping.get("findings_path")),
-        )
-        sample_records = findings[:3] if isinstance(findings, list) else []
-        report_preview = {
-            "branch": json_path_value(
-                raw_json,
-                str(mapping.get("branch_path") or default_mapping.get("branch_path")),
-            ),
-            "commit_sha": json_path_value(
-                raw_json,
-                str(mapping.get("commit_sha_path") or default_mapping.get("commit_sha_path")),
-            ),
-            "repository_id": json_path_value(
-                raw_json,
-                str(
-                    mapping.get("repository_id_path")
-                    or default_mapping.get("repository_id_path"),
-                ),
-            ),
-            "risk_level": json_path_value(
-                raw_json,
-                str(mapping.get("risk_level_path") or default_mapping.get("risk_level_path")),
-            ),
-            "summary": json_path_value(
-                raw_json,
-                str(mapping.get("summary_path") or default_mapping.get("summary_path")),
-            ),
-        }
-        return {
-            "candidate_count": len(findings) if isinstance(findings, list) else 0,
-            "records_imported": len(findings) if isinstance(findings, list) else 0,
-            "report_preview": {
-                key: compact_preview_value(value)
-                for key, value in report_preview.items()
-                if value is not None
-            },
-            "sample_records": [compact_preview_value(record) for record in sample_records],
-            "write_target": write_target,
-            "write_target_label": write_target_label,
-        }
-
-    if write_target == "user_feedback_insights":
-        insights = json_path_value(
-            raw_json,
-            str(mapping.get("insights_path") or default_mapping.get("insights_path")),
-        )
-        rows = json_path_value(
-            raw_json,
-            str(mapping.get("rows_path") or default_mapping.get("rows_path")),
-        )
-        sample_records = insights[:3] if isinstance(insights, list) else []
-        return {
-            "candidate_count": len(insights) if isinstance(insights, list) else 0,
-            "records_imported": records_imported_from_mapping(response_summary, mapping),
-            "sample_records": [compact_preview_value(record) for record in sample_records],
-            "source_row_count": len(rows) if isinstance(rows, list) else None,
-            "write_target": write_target,
-            "write_target_label": write_target_label,
-        }
-
-    if write_target == "email_notifications":
-        recipients = json_path_value(
-            raw_json,
-            str(mapping.get("recipients_path") or default_mapping.get("recipients_path")),
-        )
-        sample_records = recipients[:3] if isinstance(recipients, list) else []
-        if not sample_records and recipients is not None:
-            sample_records = [recipients]
-        delivery_id = json_path_value(
-            raw_json,
-            str(mapping.get("delivery_id_path") or default_mapping.get("delivery_id_path")),
-        )
-        delivery_status = json_path_value(
-            raw_json,
-            str(
-                mapping.get("delivery_status_path")
-                or default_mapping.get("delivery_status_path"),
-            ),
-        )
-        subject = json_path_value(
-            raw_json,
-            str(mapping.get("subject_path") or default_mapping.get("subject_path")),
-        )
-        records_imported = records_imported_from_mapping(response_summary, mapping)
-        if records_imported == 0 and (delivery_id is not None or delivery_status is not None):
-            records_imported = 1
-        candidate_count = len(recipients) if isinstance(recipients, list) else 0
-        if candidate_count == 0 and recipients:
-            candidate_count = 1
-        return {
-            "candidate_count": candidate_count,
-            "delivery_id": compact_preview_value(delivery_id),
-            "delivery_status": compact_preview_value(delivery_status),
-            "records_imported": records_imported,
-            "sample_records": [compact_preview_value(record) for record in sample_records],
-            "subject": compact_preview_value(subject),
-            "write_target": write_target,
-            "write_target_label": write_target_label,
-        }
-
-    preview_value = json_path_value(raw_json, mapping.get("records_imported_path"))
-    sample_records = preview_value[:3] if isinstance(preview_value, list) else []
-    return {
-        "candidate_count": len(preview_value) if isinstance(preview_value, list) else 0,
-        "preview_value": compact_preview_value(preview_value),
-        "records_imported": records_imported_from_mapping(response_summary, mapping),
-        "sample_records": [compact_preview_value(record) for record in sample_records],
-        "write_target": write_target,
-        "write_target_label": write_target_label,
     }
 
 

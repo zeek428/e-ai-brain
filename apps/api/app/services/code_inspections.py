@@ -17,7 +17,7 @@ from app.core.listing import (
 )
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.bugs import create_bug_result
-from app.services.plugins import json_path_value
+from app.services.plugin_result_mapping import json_path_value
 from app.services.product_scope import user_can_read_product, user_product_access
 
 CODE_INSPECTION_ACTION_TYPES = {

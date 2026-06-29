@@ -5,7 +5,7 @@ from typing import Any
 
 from app.services.assistant_draft_builder import AssistantDraftBuilder
 from app.services.assistant_references import normalize_assistant_references
-from app.services.plugins import result_write_record_from_scheduled_run
+from app.services.plugin_result_write_records import result_write_record_from_scheduled_run
 
 __all__ = ["assistant_tool_results"]
 

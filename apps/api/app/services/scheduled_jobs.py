@@ -45,15 +45,17 @@ from app.services.native_code_scanner import (
     run_native_code_scan,
 )
 from app.services.operational_records import record_audit_event, save_single_repository_record
+from app.services.plugin_result_mapping import (
+    json_path_value,
+    records_imported_from_mapping,
+    result_write_preview,
+)
 from app.services.plugins import (
     ensure_active_connection,
     ensure_active_plugin,
     ensure_active_plugin_action,
     invoke_plugin_action_response,
-    json_path_value,
-    records_imported_from_mapping,
     resolve_plugin_snapshot,
-    result_write_preview,
 )
 from app.services.scheduled_job_catalog import (
     AI_REQUIRED_SCHEDULED_JOB_TYPES,

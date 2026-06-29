@@ -17,7 +17,7 @@ from app.services.ai_executor_runners import (
     SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
     system_default_ai_executor_runner,
 )
-from app.services.plugins import (
+from app.services.plugin_result_write_records import (
     result_write_record_from_invocation_log,
     result_write_record_from_scheduled_run,
 )

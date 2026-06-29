@@ -57,6 +57,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 插件管理服务继续拆大文件：将结果映射/写入预览抽取到 `plugin_result_mapping`，将结果写入记录构造、分页和产品 scope 过滤抽取到 `plugin_result_write_records`，`plugins.py` 降至 2800 行以内。
 - 插件管理服务继续拆大文件：将插件/连接/动作删除保护抽取到 `plugin_delete_protection`，删除前统一识别定时作业单 ID、多 ID 和 orchestration 多引用，避免多数据源作业仍引用资源时误删。
 - 定时作业服务继续拆大文件：将本地代码巡检多仓库扫描摘要、queued native scan 摘要和仓库 ID 去重抽取到 `scheduled_job_native_scan`，主执行服务保留运行编排和仓库 read model 兼容封装。
 - 定时作业服务继续拆大文件：将多连接/多动作引用解析抽取到 `scheduled_job_refs`，将作业创建/更新与运行审计 payload 抽取到 `scheduled_job_audit`，主执行服务保留调用编排。

@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.774 |
+| 功能版本 | v1.1.775 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.775 | 2026-06-29 | 补充插件结果写入记录拆分回归：结果写入目标、future write target action log、产品 scope 过滤和结果写入记录分页观测继续覆盖 `plugin_result_mapping` 与 `plugin_result_write_records` 拆分后的契约 | Codex |
 | v1.1.774 | 2026-06-29 | 补充插件删除保护拆分回归：`plugin_delete_protection` 需识别定时作业 `plugin_action_ids`、`plugin_connection_ids` 和 orchestration 多引用，插件管理删除接口在备用动作/连接仍被多数据源作业引用时返回 409 | Codex |
 | v1.1.773 | 2026-06-29 | 补充定时作业本地代码巡检拆分回归：`scheduled_job_native_scan` 覆盖多仓库 ID 合并去重和 queued 摘要默认分支，原多仓库本地完整扫描流程继续由代码巡检治理测试兜底 | Codex |
 | v1.1.772 | 2026-06-29 | 补充定时作业审计与多引用解析拆分回归：`scheduled_job_refs` 覆盖 legacy 字段和 orchestration 多 ID 合并去重，`scheduled_job_audit` 覆盖运行审计上下文 | Codex |

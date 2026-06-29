@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.plugins import (
+from app.services.plugin_result_mapping import (
     records_imported_from_mapping,
     result_write_preview,
 )

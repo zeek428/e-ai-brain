@@ -13,11 +13,11 @@ from app.services.ai_executor_runners import (
     list_ai_executor_runners_response,
     list_ai_executor_tasks_response,
 )
+from app.services.plugin_result_mapping import records_imported_from_mapping
 from app.services.plugins import (
     list_plugin_actions_response,
     list_plugin_connections_response,
     list_plugin_invocation_logs_response,
-    records_imported_from_mapping,
     resolve_action_request_config,
     resolve_plugin_request_config,
 )

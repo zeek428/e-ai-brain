@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.670 |
+| 功能版本 | v1.1.671 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.671 | 2026-06-29 | 插件管理服务继续拆分：结果映射/写入预览抽取到 `plugin_result_mapping`，结果写入记录构造、分页和产品 scope 过滤抽取到 `plugin_result_write_records`，`plugins.py` 降低为插件配置、调用和兼容入口 | Codex |
 | v1.1.670 | 2026-06-29 | 插件管理服务继续拆分：插件/连接/动作删除保护抽取到 `plugin_delete_protection`，删除前统一识别定时作业单 ID、多 ID 和 orchestration 多引用，避免多数据源作业仍引用资源时误删 | Codex |
 | v1.1.669 | 2026-06-29 | 定时作业服务继续拆分：本地代码巡检多仓库扫描摘要、queued native scan 摘要和仓库 ID 去重抽取到 `scheduled_job_native_scan`，主执行服务仅保留运行编排和仓库 read model 兼容封装 | Codex |
 | v1.1.668 | 2026-06-29 | 定时作业服务继续拆分：多连接/多动作引用解析抽取到 `scheduled_job_refs`，作业与运行审计 payload 抽取到 `scheduled_job_audit`，降低运行可靠性改造对主执行服务的影响面 | Codex |

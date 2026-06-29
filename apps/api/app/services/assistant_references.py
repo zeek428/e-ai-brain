@@ -19,7 +19,7 @@ from app.services.knowledge_documents import (
     user_can_read_roles,
 )
 from app.services.knowledge_search import KNOWLEDGE_SEARCHABLE_STATUSES
-from app.services.plugins import (
+from app.services.plugin_result_write_records import (
     result_write_record_from_invocation_log,
     result_write_record_from_scheduled_run,
 )
