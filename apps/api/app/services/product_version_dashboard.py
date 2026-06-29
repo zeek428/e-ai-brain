@@ -452,6 +452,142 @@ def _quality_gate_failed(report: dict[str, Any]) -> bool:
     return str(quality_gate.get("status") or "").lower() == "failed"
 
 
+def _quality_gate_violation_count(report: dict[str, Any]) -> int:
+    quality_gate = report.get("quality_gate")
+    if not isinstance(quality_gate, dict):
+        return 0
+    violations = quality_gate.get("violations")
+    if not isinstance(violations, list):
+        return 0
+    return sum(1 for violation in violations if isinstance(violation, dict))
+
+
+def _report_sort_key(report: dict[str, Any]) -> str:
+    return str(
+        report.get("scan_finished_at")
+        or report.get("updated_at")
+        or report.get("created_at")
+        or ""
+    )
+
+
+def _version_branch_quality_governance(
+    *,
+    branch_configs: list[dict[str, Any]],
+    code_inspection_reports: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    branch_rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for config in branch_configs:
+        repository_id = str(config.get("repository_id") or "")
+        branch = str(config.get("working_branch") or "")
+        if not repository_id or not branch:
+            continue
+        branch_rows[(repository_id, branch)] = {
+            "_latest_report_sort_key": "",
+            "branch": branch,
+            "branch_config_id": config.get("id"),
+            "created_bug_count": 0,
+            "created_task_count": 0,
+            "finding_count": 0,
+            "id": str(config.get("id") or f"{repository_id}:{branch}"),
+            "latest_report_id": None,
+            "latest_report_summary": None,
+            "latest_report_time": None,
+            "quality_gate_failed_report_count": 0,
+            "quality_gate_violation_count": 0,
+            "report_count": 0,
+            "repository_id": repository_id,
+            "repository_name": config.get("repository_name") or repository_id,
+            "severe_finding_count": 0,
+            "status": "pending_scan",
+            "uncovered_severe_bug_count": 0,
+            "uncovered_severe_task_count": 0,
+        }
+
+    for report in code_inspection_reports:
+        repository_id = str(report.get("repository_id") or "")
+        branch = str(report.get("branch") or "")
+        if not repository_id or not branch:
+            continue
+        row = branch_rows.setdefault(
+            (repository_id, branch),
+            {
+                "_latest_report_sort_key": "",
+                "branch": branch,
+                "branch_config_id": None,
+                "created_bug_count": 0,
+                "created_task_count": 0,
+                "finding_count": 0,
+                "id": f"{repository_id}:{branch}",
+                "latest_report_id": None,
+                "latest_report_summary": None,
+                "latest_report_time": None,
+                "quality_gate_failed_report_count": 0,
+                "quality_gate_violation_count": 0,
+                "report_count": 0,
+                "repository_id": repository_id,
+                "repository_name": report.get("repository_name") or repository_id,
+                "severe_finding_count": 0,
+                "status": "pending_scan",
+                "uncovered_severe_bug_count": 0,
+                "uncovered_severe_task_count": 0,
+            },
+        )
+        finding_count = int(report.get("finding_count") or 0)
+        severe_finding_count = int(report.get("severe_finding_count") or 0)
+        created_bug_count = len(report.get("created_bug_ids") or [])
+        created_task_count = len(report.get("created_task_ids") or [])
+        row["report_count"] += 1
+        row["finding_count"] += finding_count
+        row["severe_finding_count"] += severe_finding_count
+        row["created_bug_count"] += created_bug_count
+        row["created_task_count"] += created_task_count
+        row["uncovered_severe_bug_count"] += max(severe_finding_count - created_bug_count, 0)
+        row["uncovered_severe_task_count"] += max(severe_finding_count - created_task_count, 0)
+        if _quality_gate_failed(report):
+            row["quality_gate_failed_report_count"] += 1
+        row["quality_gate_violation_count"] += _quality_gate_violation_count(report)
+        report_sort_key = _report_sort_key(report)
+        if report_sort_key >= str(row.get("_latest_report_sort_key") or ""):
+            row["_latest_report_sort_key"] = report_sort_key
+            row["latest_report_id"] = report.get("id")
+            row["latest_report_summary"] = report.get("summary") or report.get("id")
+            row["latest_report_time"] = (
+                report.get("scan_finished_at")
+                or report.get("updated_at")
+                or report.get("created_at")
+            )
+
+    rows = []
+    for row in branch_rows.values():
+        if row["report_count"] <= 0:
+            row["status"] = "pending_scan"
+        elif (
+            row["quality_gate_failed_report_count"]
+            or row["uncovered_severe_bug_count"]
+            or row["uncovered_severe_task_count"]
+        ):
+            row["status"] = "action_required"
+        else:
+            row["status"] = "healthy"
+        row.pop("_latest_report_sort_key", None)
+        rows.append(row)
+
+    rows.sort(
+        key=lambda item: (
+            {"action_required": 0, "pending_scan": 1, "healthy": 2}.get(
+                str(item.get("status") or ""),
+                99,
+            ),
+            -(int(item.get("uncovered_severe_bug_count") or 0)),
+            -(int(item.get("quality_gate_failed_report_count") or 0)),
+            str(item.get("repository_name") or ""),
+            str(item.get("branch") or ""),
+        )
+    )
+    return rows
+
+
 def _successful_release(release: dict[str, Any]) -> bool:
     return str(release.get("status") or "").lower() in {
         "deployed",
@@ -633,6 +769,14 @@ def product_version_dashboard_response(
         target_status=next_status,
         version_id=version_id,
     )
+    branch_quality_governance = (
+        []
+        if code_access_issues
+        else _version_branch_quality_governance(
+            branch_configs=branch_configs,
+            code_inspection_reports=code_inspection_reports,
+        )
+    )
     open_bug_count = sum(1 for bug in bugs if bug.get("status") in OPEN_BUG_STATUSES)
     severe_bug_count = sum(
         1
@@ -665,6 +809,7 @@ def product_version_dashboard_response(
         ],
         "blockers": blockers,
         "branch_configs": branch_configs,
+        "branch_quality_governance": branch_quality_governance[:20],
         "bugs": bugs[:20],
         "bug_status_counts": _status_counts(bugs),
         "code_inspection_reports": code_inspection_reports[:20],
@@ -677,6 +822,14 @@ def product_version_dashboard_response(
         "summary": {
             "blockers": len(blockers),
             "branch_configs": len(branch_configs),
+            "branch_quality_action_required": sum(
+                1
+                for item in branch_quality_governance
+                if item.get("status") == "action_required"
+            ),
+            "branch_quality_pending_scan": sum(
+                1 for item in branch_quality_governance if item.get("status") == "pending_scan"
+            ),
             "bugs": len(bugs),
             "code_inspection_reports": len(code_inspection_reports),
             "code_review_reports": len(code_review_reports),

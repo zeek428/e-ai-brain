@@ -553,6 +553,87 @@ export function VersionDashboardQualityDeliveryTables({
         scroll={{ x: 1210 }}
         size="small"
       />
+      <Text strong>分支质量治理</Text>
+      <Table<ProductVersionDashboard['branchQualityGovernance'][number]>
+        columns={[
+          {
+            dataIndex: 'repositoryName',
+            render: (value, row) => (
+              <Typography.Link
+                href={internalHref('/governance/code-inspections', {
+                  repository_id: row.repositoryId,
+                  version_id: dashboard.version.id,
+                })}
+              >
+                {String(value ?? '-')}
+              </Typography.Link>
+            ),
+            title: '代码库',
+            width: 180,
+          },
+          {
+            dataIndex: 'branch',
+            render: (value, row) => (
+              <Typography.Link
+                href={
+                  row.branchConfigId
+                    ? internalHref('/delivery/versions', {
+                        branch_config_id: row.branchConfigId,
+                        version_id: dashboard.version.id,
+                      })
+                    : internalHref('/governance/code-inspections', {
+                        repository_id: row.repositoryId,
+                        version_id: dashboard.version.id,
+                      })
+                }
+              >
+                {String(value ?? '-')}
+              </Typography.Link>
+            ),
+            title: '分支',
+            width: 200,
+          },
+          {
+            dataIndex: 'status',
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
+            title: '治理状态',
+            width: 120,
+          },
+          { dataIndex: 'reportCount', title: '报告数', width: 100 },
+          { dataIndex: 'findingCount', title: '问题数', width: 100 },
+          { dataIndex: 'severeFindingCount', title: '严重问题', width: 110 },
+          { dataIndex: 'uncoveredSevereBugCount', title: '缺 Bug', width: 100 },
+          { dataIndex: 'uncoveredSevereTaskCount', title: '缺整改任务', width: 120 },
+          { dataIndex: 'qualityGateFailedReportCount', title: '门禁失败报告', width: 130 },
+          { dataIndex: 'qualityGateViolationCount', title: '门禁失败项', width: 120 },
+          {
+            key: 'latestReport',
+            render: (_, row) =>
+              row.latestReportId ? (
+                <Typography.Link
+                  href={internalHref('/governance/code-inspections', {
+                    source_id: row.latestReportId,
+                  })}
+                >
+                  <Text ellipsis style={{ maxWidth: 240 }}>
+                    {row.latestReportSummary ?? row.latestReportId}
+                  </Text>
+                </Typography.Link>
+              ) : (
+                <Text type="secondary">-</Text>
+              ),
+            title: '最近报告',
+            width: 260,
+          },
+          { dataIndex: 'latestReportTime', title: '最近时间', width: 170 },
+        ]}
+        dataSource={dashboard.branchQualityGovernance}
+        locale={{ emptyText: '当前版本暂无分支质量治理数据' }}
+        pagination={dashboard.branchQualityGovernance.length > 5 ? { pageSize: 5 } : false}
+        rowKey="id"
+        scroll={{ x: 1710 }}
+        size="small"
+      />
       <Table<ProductVersionDashboard['codeReviewReports'][number]>
         columns={[
           {

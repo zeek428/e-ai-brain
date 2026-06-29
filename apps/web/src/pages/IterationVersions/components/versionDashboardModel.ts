@@ -188,6 +188,7 @@ export function buildStatusLabelMap(
     ...versionStatusLabels,
     ...requirementStatusLabels,
     active: { color: 'blue', label: '开发中' },
+    action_required: { color: 'red', label: '待治理' },
     assigned: { color: 'blue', label: '已分派' },
     closed: { color: 'default', label: '已关闭' },
     completed: { color: 'green', label: '已完成' },
@@ -198,7 +199,9 @@ export function buildStatusLabelMap(
     medium: { color: 'gold', label: '中风险' },
     open: { color: 'red', label: '打开' },
     passed: { color: 'green', label: '通过' },
+    pending_scan: { color: 'gold', label: '待巡检' },
     pending_review: { color: 'gold', label: '待确认' },
+    healthy: { color: 'green', label: '已闭环' },
     ready_for_release: { color: 'orange', label: '待发布' },
     reopened: { color: 'volcano', label: '重新打开' },
     running: { color: 'blue', label: '运行中' },
@@ -228,6 +231,8 @@ export function buildDashboardHealthItems(dashboard?: ProductVersionDashboard): 
   const notCreatedBranchCount = dashboard.branchConfigs.filter(
     (branchConfig) => branchConfig.branchStatus === 'not_created',
   ).length;
+  const actionRequiredBranchQualityCount = dashboard.summary.branch_quality_action_required;
+  const pendingScanBranchQualityCount = dashboard.summary.branch_quality_pending_scan;
   const failedReleaseCount = dashboard.releases.filter((release) => {
     const status = release.status.toLowerCase();
     return status === 'failed' || status === 'failure' || status === 'canceled' || status === 'cancelled';
@@ -260,25 +265,42 @@ export function buildDashboardHealthItems(dashboard?: ProductVersionDashboard): 
     },
     {
       detail: dashboard.branchConfigs.length
-        ? `已登记 ${dashboard.branchConfigs.length} 个代码分支配置，未创建 ${notCreatedBranchCount} 个。`
+        ? `已登记 ${dashboard.branchConfigs.length} 个代码分支配置，未创建 ${notCreatedBranchCount} 个，质量待治理 ${actionRequiredBranchQualityCount} 个，待巡检 ${pendingScanBranchQualityCount} 个。`
         : '尚未登记版本代码分支，进入开发/测试前需要补齐。',
       key: 'branches',
-      level: !dashboard.branchConfigs.length || notCreatedBranchCount ? 'warning' : 'success',
+      level:
+        !dashboard.branchConfigs.length ||
+        notCreatedBranchCount ||
+        actionRequiredBranchQualityCount ||
+        pendingScanBranchQualityCount
+          ? 'warning'
+          : 'success',
       title: '代码分支',
       value: notCreatedBranchCount
         ? `${notCreatedBranchCount} 个分支未创建`
-        : dashboard.branchConfigs.length
-          ? '分支已登记'
-          : '暂无分支',
+        : actionRequiredBranchQualityCount
+          ? `${actionRequiredBranchQualityCount} 个分支待治理`
+          : pendingScanBranchQualityCount
+            ? `${pendingScanBranchQualityCount} 个分支待巡检`
+            : dashboard.branchConfigs.length
+              ? '分支已登记'
+              : '暂无分支',
     },
     {
       detail: dashboard.codeInspectionReports.length
-        ? `已有 ${dashboard.codeInspectionReports.length} 份巡检报告，高风险 ${highRiskInspectionCount} 份。`
+        ? `已有 ${dashboard.codeInspectionReports.length} 份巡检报告，高风险 ${highRiskInspectionCount} 份，待治理分支 ${actionRequiredBranchQualityCount} 个。`
         : '当前版本还没有代码巡检报告，进入测试/发布前建议补齐。',
       key: 'inspection',
-      level: highRiskInspectionCount ? 'warning' : dashboard.codeInspectionReports.length ? 'success' : 'info',
+      level:
+        highRiskInspectionCount || actionRequiredBranchQualityCount
+          ? 'warning'
+          : dashboard.codeInspectionReports.length
+            ? 'success'
+            : 'info',
       title: '代码巡检',
-      value: highRiskInspectionCount
+      value: actionRequiredBranchQualityCount
+        ? `${actionRequiredBranchQualityCount} 个分支待治理`
+        : highRiskInspectionCount
         ? `${highRiskInspectionCount} 份高风险`
         : `${dashboard.codeInspectionReports.length} 份报告`,
     },
@@ -334,6 +356,8 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
   const notCreatedBranchCount = dashboard.branchConfigs.filter(
     (branchConfig) => branchConfig.branchStatus === 'not_created',
   ).length;
+  const actionRequiredBranchQualityCount = dashboard.summary.branch_quality_action_required;
+  const pendingScanBranchQualityCount = dashboard.summary.branch_quality_pending_scan;
   const highRiskInspectionCount = dashboard.codeInspectionReports.filter((report) => {
     const riskLevel = report.risk_level.toLowerCase();
     return riskLevel === 'blocker' || riskLevel === 'critical' || riskLevel === 'high';
@@ -362,20 +386,37 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
     {
       detail: notCreatedBranchCount
         ? `${dashboard.summary.branch_configs} 个分支 · 未创建 ${notCreatedBranchCount} 个`
-        : `${dashboard.summary.branch_configs} 个分支 · 已登记`,
+        : actionRequiredBranchQualityCount || pendingScanBranchQualityCount
+          ? `${dashboard.summary.branch_configs} 个分支 · 待治理 ${actionRequiredBranchQualityCount} 个 · 待巡检 ${pendingScanBranchQualityCount} 个`
+          : `${dashboard.summary.branch_configs} 个分支 · 已登记`,
       key: 'branches',
-      level: notCreatedBranchCount ? 'warning' : 'success',
+      level:
+        notCreatedBranchCount || actionRequiredBranchQualityCount || pendingScanBranchQualityCount
+          ? 'warning'
+          : 'success',
       title: '代码分支',
-      value: notCreatedBranchCount ? '分支待维护' : '分支就绪',
+      value: notCreatedBranchCount
+        ? '分支待维护'
+        : actionRequiredBranchQualityCount || pendingScanBranchQualityCount
+          ? '分支质量待治理'
+          : '分支就绪',
     },
     {
       detail: highRiskInspectionCount
         ? `${dashboard.summary.code_inspection_reports} 份报告 · 高风险 ${highRiskInspectionCount} 份`
-        : `${dashboard.summary.code_inspection_reports} 份报告 · 暂无高风险`,
+        : actionRequiredBranchQualityCount || pendingScanBranchQualityCount
+          ? `${dashboard.summary.code_inspection_reports} 份报告 · 待治理分支 ${actionRequiredBranchQualityCount} 个 · 待巡检 ${pendingScanBranchQualityCount} 个`
+          : `${dashboard.summary.code_inspection_reports} 份报告 · 暂无高风险`,
       key: 'inspections',
-      level: highRiskInspectionCount ? 'warning' : 'success',
+      level:
+        highRiskInspectionCount || actionRequiredBranchQualityCount || pendingScanBranchQualityCount
+          ? 'warning'
+          : 'success',
       title: '代码巡检',
-      value: highRiskInspectionCount ? '质量待治理' : '质量可控',
+      value:
+        highRiskInspectionCount || actionRequiredBranchQualityCount || pendingScanBranchQualityCount
+          ? '质量待治理'
+          : '质量可控',
     },
     {
       detail: pendingCodeReviewCount

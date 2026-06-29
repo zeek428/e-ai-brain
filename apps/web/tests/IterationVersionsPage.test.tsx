@@ -933,6 +933,28 @@ describe('IterationVersionsPage', () => {
                 working_branch: 'release/2026-dashboard',
               },
             ],
+            branch_quality_governance: [
+              {
+                branch: 'release/2026-dashboard',
+                branch_config_id: 'version_branch_dashboard',
+                created_bug_count: 1,
+                created_task_count: 0,
+                finding_count: 3,
+                id: 'version_branch_dashboard',
+                latest_report_id: 'code_inspection_report_dashboard',
+                latest_report_summary: '存在高风险问题',
+                latest_report_time: '2026-06-04T09:30:00+00:00',
+                quality_gate_failed_report_count: 1,
+                quality_gate_violation_count: 1,
+                report_count: 1,
+                repository_id: 'repo_dashboard',
+                repository_name: 'Dashboard Repo',
+                severe_finding_count: 1,
+                status: 'action_required',
+                uncovered_severe_bug_count: 0,
+                uncovered_severe_task_count: 1,
+              },
+            ],
             bugs: [
               {
                 assignee: 'qa_owner',
@@ -1054,6 +1076,8 @@ describe('IterationVersionsPage', () => {
             summary: {
               blockers: 3,
               branch_configs: 1,
+              branch_quality_action_required: 1,
+              branch_quality_pending_scan: 0,
               bugs: 1,
               code_inspection_reports: 1,
               code_review_reports: 1,
@@ -1147,7 +1171,7 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('2 个严重风险')).toBeInTheDocument();
     expect(screen.getByText('严重 Bug 1，严重巡检 1，未关闭 Bug 1。')).toBeInTheDocument();
     expect(screen.getByText('1 个分支未创建')).toBeInTheDocument();
-    expect(screen.getByText('1 份高风险')).toBeInTheDocument();
+    expect(screen.getByText('1 个分支待治理')).toBeInTheDocument();
     expect(screen.getByText('1 份待确认')).toBeInTheDocument();
     expect(screen.getAllByText('1/1 可检索').length).toBeGreaterThan(0);
     expect(screen.getByText('已有 1 条任务知识沉淀，可检索 1 条，向量就绪 0 条。')).toBeInTheDocument();
@@ -1201,6 +1225,11 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('驾驶舱需求').length).toBeGreaterThan(0);
     expect(screen.getAllByText('实现版本驾驶舱').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Dashboard Repo').length).toBeGreaterThan(0);
+    expect(screen.getByText('分支质量治理')).toBeInTheDocument();
+    expect(screen.getAllByText('待治理').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('缺整改任务').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('门禁失败报告').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('门禁失败项').length).toBeGreaterThan(0);
     expect(screen.getByText('代码评审待确认')).toBeInTheDocument();
     expect(screen.getAllByText('知识沉淀').length).toBeGreaterThan(0);
     expect(screen.getByText('版本驾驶舱知识沉淀')).toBeInTheDocument();

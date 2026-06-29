@@ -392,7 +392,10 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "finding_count": 3,
         "id": "code_inspection_report_dashboard",
         "product_id": product["id"],
-        "quality_gate": {"status": "failed"},
+        "quality_gate": {
+            "status": "failed",
+            "violations": [{"metric": "critical_findings", "severity": "high"}],
+        },
         "repository_id": "repo_dashboard",
         "repository_name": "Dashboard Repo",
         "risk_level": "high",
@@ -418,6 +421,8 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     assert data["summary"] == {
         "blockers": 5,
         "branch_configs": 1,
+        "branch_quality_action_required": 1,
+        "branch_quality_pending_scan": 0,
         "bugs": 2,
         "code_review_reports": 1,
         "code_inspection_reports": 1,
@@ -464,6 +469,28 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     assert blocker_by_source["product_version_branch_config"]["action_label"] == "维护分支"
     assert blocker_by_source["jenkins_release"]["action_label"] == "排查发布"
     assert data["branch_configs"][0]["repository_name"] == "Dashboard Repo"
+    assert data["branch_quality_governance"] == [
+        {
+            "branch": "release/2026-dashboard",
+            "branch_config_id": "version_branch_dashboard",
+            "created_bug_count": 1,
+            "created_task_count": 0,
+            "finding_count": 3,
+            "id": "version_branch_dashboard",
+            "latest_report_id": "code_inspection_report_dashboard",
+            "latest_report_summary": "存在高风险问题",
+            "latest_report_time": "2026-06-04T09:30:00+00:00",
+            "quality_gate_failed_report_count": 1,
+            "quality_gate_violation_count": 1,
+            "report_count": 1,
+            "repository_id": "repo_dashboard",
+            "repository_name": "Dashboard Repo",
+            "severe_finding_count": 1,
+            "status": "action_required",
+            "uncovered_severe_bug_count": 0,
+            "uncovered_severe_task_count": 1,
+        }
+    ]
     assert data["code_review_reports"] == [
         {
             "archived_at": None,
@@ -503,6 +530,27 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "bug_version_dashboard_from_inspection",
     }
     assert data["bug_status_counts"] == [{"count": 2, "status": "open"}]
+    limited_dashboard = product_version_dashboard_response(
+        current_store=app.state.store,
+        user={
+            "id": "limited_user",
+            "permissions": ["bug.read", "knowledge.read", "product.read"],
+            "roles": [],
+        },
+        version_id=version["id"],
+    )
+    assert limited_dashboard is not None
+    assert limited_dashboard["code_inspection_reports"] == []
+    assert limited_dashboard["branch_quality_governance"] == []
+    assert limited_dashboard["summary"]["branch_quality_action_required"] == 0
+    assert limited_dashboard["summary"]["branch_quality_pending_scan"] == 0
+    assert limited_dashboard["access_issues"] == [
+        {
+            "code": "code_inspection.read",
+            "message": "缺少代码巡检读取权限，版本驾驶舱已隐藏代码巡检明细。",
+            "section": "code_inspections",
+        }
+    ]
 
 
 def test_product_version_dashboard_loads_knowledge_index_health_from_repository_projection():

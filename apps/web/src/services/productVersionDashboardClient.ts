@@ -104,6 +104,27 @@ type ProductVersionDashboardCodeInspectionReport = {
   summary?: string;
 };
 
+type ProductVersionDashboardBranchQualityGovernanceItem = {
+  branch?: string | null;
+  branch_config_id?: string | null;
+  created_bug_count?: number;
+  created_task_count?: number;
+  finding_count?: number;
+  id: string;
+  latest_report_id?: string | null;
+  latest_report_summary?: string | null;
+  latest_report_time?: string | null;
+  quality_gate_failed_report_count?: number;
+  quality_gate_violation_count?: number;
+  report_count?: number;
+  repository_id?: string | null;
+  repository_name?: string | null;
+  severe_finding_count?: number;
+  status?: string;
+  uncovered_severe_bug_count?: number;
+  uncovered_severe_task_count?: number;
+};
+
 type ProductVersionDashboardCodeReviewReport = {
   archived_at?: string | null;
   executor?: { name?: string; type?: string } | null;
@@ -166,6 +187,8 @@ type ProductVersionDashboardAccessIssue = {
 type ProductVersionDashboardSummary = {
   blockers: number;
   branch_configs: number;
+  branch_quality_action_required: number;
+  branch_quality_pending_scan: number;
   bugs: number;
   code_inspection_reports: number;
   code_review_reports: number;
@@ -206,6 +229,7 @@ type ProductVersionDashboardResponse = {
   access_issues?: ProductVersionDashboardAccessIssue[];
   blockers?: ProductVersionDashboardBlockerItem[];
   branch_configs?: ProductVersionBranchConfigListItem[];
+  branch_quality_governance?: ProductVersionDashboardBranchQualityGovernanceItem[];
   bug_status_counts?: ProductVersionDashboardStatusCount[];
   bugs?: BugListItem[];
   code_inspection_reports?: ProductVersionDashboardCodeInspectionReport[];
@@ -239,6 +263,26 @@ export type ProductVersionDashboard = {
     title: string;
   }>;
   branchConfigs: ProductVersionBranchConfigRecord[];
+  branchQualityGovernance: Array<{
+    branch: string;
+    branchConfigId?: string;
+    createdBugCount: number;
+    createdTaskCount: number;
+    findingCount: number;
+    id: string;
+    latestReportId?: string;
+    latestReportSummary?: string;
+    latestReportTime: string;
+    qualityGateFailedReportCount: number;
+    qualityGateViolationCount: number;
+    reportCount: number;
+    repositoryId?: string;
+    repositoryName: string;
+    severeFindingCount: number;
+    status: string;
+    uncoveredSevereBugCount: number;
+    uncoveredSevereTaskCount: number;
+  }>;
   bugStatusCounts: ProductVersionDashboardStatusCount[];
   bugs: BugRecord[];
   codeInspectionReports: ProductVersionDashboardCodeInspectionReport[];
@@ -552,6 +596,26 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
       title: blocker.title ?? blocker.id ?? '-',
     })),
     branchConfigs: (dashboard.branch_configs ?? []).map(mapProductVersionBranchConfigRecord),
+    branchQualityGovernance: (dashboard.branch_quality_governance ?? []).map((item) => ({
+      branch: item.branch ?? '-',
+      branchConfigId: item.branch_config_id ?? undefined,
+      createdBugCount: normalizeDashboardCount(item.created_bug_count),
+      createdTaskCount: normalizeDashboardCount(item.created_task_count),
+      findingCount: normalizeDashboardCount(item.finding_count),
+      id: item.id,
+      latestReportId: item.latest_report_id ?? undefined,
+      latestReportSummary: item.latest_report_summary ?? undefined,
+      latestReportTime: formatListDate(item.latest_report_time ?? undefined),
+      qualityGateFailedReportCount: normalizeDashboardCount(item.quality_gate_failed_report_count),
+      qualityGateViolationCount: normalizeDashboardCount(item.quality_gate_violation_count),
+      reportCount: normalizeDashboardCount(item.report_count),
+      repositoryId: item.repository_id ?? undefined,
+      repositoryName: item.repository_name ?? item.repository_id ?? '-',
+      severeFindingCount: normalizeDashboardCount(item.severe_finding_count),
+      status: item.status ?? '-',
+      uncoveredSevereBugCount: normalizeDashboardCount(item.uncovered_severe_bug_count),
+      uncoveredSevereTaskCount: normalizeDashboardCount(item.uncovered_severe_task_count),
+    })),
     bugStatusCounts: dashboard.bug_status_counts ?? [],
     bugs: (dashboard.bugs ?? []).map(mapBugRecord),
     codeInspectionReports: dashboard.code_inspection_reports ?? [],
@@ -597,6 +661,8 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
     summary: {
       blockers: normalizeDashboardCount(summary.blockers),
       branch_configs: normalizeDashboardCount(summary.branch_configs),
+      branch_quality_action_required: normalizeDashboardCount(summary.branch_quality_action_required),
+      branch_quality_pending_scan: normalizeDashboardCount(summary.branch_quality_pending_scan),
       bugs: normalizeDashboardCount(summary.bugs),
       code_inspection_reports: normalizeDashboardCount(summary.code_inspection_reports),
       code_review_reports: normalizeDashboardCount(summary.code_review_reports),
