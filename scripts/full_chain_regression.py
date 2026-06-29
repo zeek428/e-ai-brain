@@ -1182,22 +1182,23 @@ def run_regression(
     )
     results.append(StepResult("version_branch", f"{branch_config['id']} / {version_branch}"))
 
+    scan_config = {
+        "async_execution": False,
+        "branch": version_branch,
+        "quality_gate": {
+            "critical_max": 0,
+            "enabled": True,
+            "high_max": 0,
+            "medium_max": 0,
+        },
+        "repository_id": repository["id"],
+        "scan_mode": "native_full_scan",
+        "scan_rules": ["secrets", "internal_addresses"],
+    }
     scan_job = client.post(
         "/api/system/scheduled-jobs",
         {
-            "config_json": {
-                "async_execution": False,
-                "branch": version_branch,
-                "quality_gate": {
-                    "critical_max": 0,
-                    "enabled": True,
-                    "high_max": 0,
-                    "medium_max": 0,
-                },
-                "repository_id": repository["id"],
-                "scan_mode": "native_full_scan",
-                "scan_rules": ["secrets", "internal_addresses"],
-            },
+            "config_json": scan_config,
             "enabled": True,
             "execution_mode": "deterministic",
             "job_type": "code_repository_inspection",
@@ -1381,6 +1382,73 @@ def run_regression(
             f"bugs={len(report_bug_ids)}, tasks={len(report_task_ids)}",
         )
     )
+
+    comparison_scan_job = client.post(
+        "/api/system/scheduled-jobs",
+        {
+            "config_json": scan_config,
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": f"全链路代码巡检趋势对比 {slug}",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+    )
+    comparison_scan_run = client.post(f"/api/system/scheduled-jobs/{comparison_scan_job['id']}/run")
+    _assert(
+        comparison_scan_run.get("status") == "succeeded",
+        f"Code inspection comparison run failed: {comparison_scan_run}",
+    )
+    comparison_report_id = (comparison_scan_run.get("result_summary") or {}).get("report_id")
+    _assert(
+        bool(comparison_report_id),
+        f"Code inspection comparison run did not return report_id: {comparison_scan_run}",
+    )
+    comparison_report_detail = client.get(f"/api/governance/code-inspections/{comparison_report_id}")
+    comparison_report = comparison_report_detail["report"]
+    comparison_previous = (
+        (comparison_report_detail.get("scan_summary") or {}).get("previous_comparison")
+        or comparison_report.get("previous_comparison")
+        or {}
+    )
+    _assert(
+        comparison_report.get("branch") == version_branch,
+        f"Comparison report branch does not match version branch: {comparison_report}",
+    )
+    _assert(
+        comparison_report.get("previous_report_id") == report_id,
+        f"Comparison report did not persist previous_report_id={report_id}: {comparison_report}",
+    )
+    _assert(
+        comparison_previous.get("previous_report_id") == report_id,
+        f"Comparison report missed previous comparison report id: {comparison_previous}",
+    )
+    _assert(
+        int(comparison_previous.get("previous_finding_count") or -1) == int(report.get("finding_count") or 0),
+        f"Comparison report previous finding count mismatch: {comparison_previous}",
+    )
+    _assert(
+        int(comparison_previous.get("previous_severe_finding_count") or -1)
+        == int(report.get("severe_finding_count") or 0),
+        f"Comparison report previous severe finding count mismatch: {comparison_previous}",
+    )
+    _assert(
+        int(comparison_previous.get("finding_delta") or 0) == 0,
+        f"Comparison report should have stable finding_delta for unchanged fixture: {comparison_previous}",
+    )
+    _assert(
+        int(comparison_previous.get("severe_finding_delta") or 0) == 0,
+        f"Comparison report should have stable severe_finding_delta for unchanged fixture: {comparison_previous}",
+    )
+    results.append(
+        StepResult(
+            "code_inspection_trend_comparison",
+            f"{comparison_report_id} / previous={comparison_previous.get('previous_report_id')}",
+        )
+    )
     results.extend(
         validate_ai_executor_runner_reliability(
             client,
@@ -1423,7 +1491,7 @@ def run_regression(
         branch_config_id=branch_config["id"],
         branch_name=version_branch,
         expected_status="action_required",
-        report_id=report_id,
+        report_id=comparison_report_id,
     )
     _assert_contains(
         _ids(dashboard.get("knowledge_deposits", [])),

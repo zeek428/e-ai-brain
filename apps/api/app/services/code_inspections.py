@@ -512,7 +512,20 @@ def previous_code_inspection_report(
 ) -> dict[str, Any] | None:
     if not repository_id:
         return None
-    reports = _read_memory_collection(current_store, "code_inspection_reports")
+    query_repository = code_inspection_query_repository(current_store)
+    if query_repository is not None and callable(
+        getattr(query_repository, "list_code_inspection_reports", None)
+    ):
+        reports = {
+            str(report["id"]): report
+            for report in query_repository.list_code_inspection_reports(
+                product_id=product_id,
+                repository_id=repository_id,
+            )
+            if report.get("id") is not None
+        }
+    else:
+        reports = _read_memory_collection(current_store, "code_inspection_reports")
     candidates = [
         report
         for report in reports.values()

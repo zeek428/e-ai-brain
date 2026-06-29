@@ -14,6 +14,7 @@ from app.services.code_inspections import (
     existing_code_inspection_bug_id,
     finding_fingerprint,
     list_code_inspection_reports_response,
+    previous_code_inspection_report,
 )
 
 client = TestClient(app)
@@ -270,6 +271,55 @@ def test_code_inspection_report_repository_supports_paged_filtered_queries():
     assert "ORDER BY finding_count ASC NULLS FIRST, id ASC" in page_query
     assert "LIMIT %s OFFSET %s" in page_query
     assert page_params[-2:] == (5, 10)
+
+
+def test_previous_code_inspection_report_reads_repository_before_runtime_cache():
+    class Repository:
+        def __init__(self) -> None:
+            self.filters: dict | None = None
+
+        def list_code_inspection_reports(self, **filters):
+            self.filters = filters
+            return [
+                {
+                    "branch": "release/previous",
+                    "created_at": "2026-06-20T10:00:00+00:00",
+                    "id": "code_inspection_report_old",
+                    "product_id": "product_previous",
+                    "repository_id": "repo_previous",
+                },
+                {
+                    "branch": "release/previous",
+                    "created_at": "2026-06-20T11:00:00+00:00",
+                    "id": "code_inspection_report_latest",
+                    "product_id": "product_previous",
+                    "repository_id": "repo_previous",
+                },
+                {
+                    "branch": "feature/other",
+                    "created_at": "2026-06-20T12:00:00+00:00",
+                    "id": "code_inspection_report_other_branch",
+                    "product_id": "product_previous",
+                    "repository_id": "repo_previous",
+                },
+            ]
+
+    repository = Repository()
+    store = SimpleNamespace(repository=repository, code_inspection_reports={})
+
+    previous_report = previous_code_inspection_report(
+        store,
+        branch="release/previous",
+        product_id="product_previous",
+        repository_id="repo_previous",
+    )
+
+    assert previous_report is not None
+    assert previous_report["id"] == "code_inspection_report_latest"
+    assert repository.filters == {
+        "product_id": "product_previous",
+        "repository_id": "repo_previous",
+    }
 
 
 def test_code_inspection_report_list_uses_repository_pagination_and_product_scope():
