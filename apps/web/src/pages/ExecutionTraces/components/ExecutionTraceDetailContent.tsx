@@ -10,11 +10,15 @@ import {
   fullChainSubjectHref,
   rememberAssistantRoutePrompt,
 } from '../../../services/aiBrain';
+import {
+  buildExecutionTraceDiagnosticPrompt,
+  buildExecutionTraceNodeDiagnosticPrompt,
+  executionTraceAttentionNodes,
+} from '../../../utils/executionTraceAssistantPrompts';
 import { formatDisplayDateTime } from '../../../utils/dateTime';
 
 const { Text } = Typography;
 
-const ATTENTION_NODE_STATUSES = new Set(['cancelled', 'failed', 'pending', 'queued', 'running']);
 const DIAGNOSTIC_NODE_LIMIT = 5;
 const FAILED_NODE_STATUSES = new Set(['cancelled', 'failed']);
 type MessageApi = ReturnType<typeof message.useMessage>[0];
@@ -77,6 +81,8 @@ function assistantDiagnosticHref(
   const params = new URLSearchParams();
   params.set('reference_type', node.source_type);
   params.set('reference_id', node.source_id);
+  params.set('diagnostic_trace_id', detail.id);
+  params.set('diagnostic_node_id', node.id);
   params.set('prompt', buildNodeDiagnosticPrompt(detail, node, sourceTypeLabel));
   return `/assistant?${params.toString()}`;
 }
@@ -86,19 +92,11 @@ function buildNodeDiagnosticPrompt(
   node: ExecutionTraceNodeRecord,
   sourceTypeLabel: (value?: string | null) => string,
 ) {
-  return [
-    `请基于执行诊断链路「${detail.title}」继续排查。`,
-    `重点分析节点：${sourceTypeLabel(node.source_type)} ${node.source_id}，当前状态 ${node.status}。`,
-    node.error_message ? `错误信息：${node.error_message}` : '',
-    node.summary ? `摘要：${node.summary}` : '',
-    '请给出可能原因、需要查看的证据和修复步骤。',
-  ].filter(Boolean).join('\n');
+  return buildExecutionTraceNodeDiagnosticPrompt(detail, node, sourceTypeLabel);
 }
 
 function attentionNodesForDetail(detail: ExecutionTraceDetailRecord) {
-  return detail.diagnostic_nodes?.length
-    ? detail.diagnostic_nodes
-    : detail.nodes.filter((node) => ATTENTION_NODE_STATUSES.has(node.status));
+  return executionTraceAttentionNodes(detail);
 }
 
 function buildDiagnosticPackage(
@@ -139,32 +137,7 @@ function buildTraceDiagnosticPrompt(
   attentionNodes: ExecutionTraceNodeRecord[],
   sourceTypeLabel: (value?: string | null) => string,
 ) {
-  const diagnosticPackage = buildDiagnosticPackage(detail, attentionNodes, sourceTypeLabel);
-  const relatedSummary = Object.entries(detail.related_ids ?? {})
-    .filter(([, ids]) => ids.length > 0)
-    .slice(0, 8)
-    .map(([sourceType, ids]) => `${sourceTypeLabel(sourceType)}: ${ids.slice(0, 5).join(', ')}`)
-    .join('\n');
-  const nodeLines = diagnosticPackage.diagnostic_nodes.length
-    ? diagnosticPackage.diagnostic_nodes.map((node, index) => (
-        [
-          `${index + 1}. ${node.source_type_label} ${node.source_id}`,
-          `状态: ${node.status}`,
-          node.error_code ? `错误码: ${node.error_code}` : '',
-          node.error_message ? `错误: ${node.error_message}` : '',
-          node.summary ? `摘要: ${node.summary}` : '',
-        ].filter(Boolean).join('；')
-      )).join('\n')
-    : '未发现失败、取消、运行中或排队节点。';
-  return [
-    `请基于执行诊断链路「${detail.title}」分析运行问题。`,
-    `链路: ${detail.id}，根对象: ${sourceTypeLabel(detail.root_type)} ${detail.root_id}，状态: ${detail.status}。`,
-    `节点统计: ${detail.node_count} 个节点，${detail.failed_node_count} 个失败，耗时 ${detail.duration_ms ?? '-'} ms。`,
-    detail.summary ? `链路摘要: ${detail.summary}` : '',
-    relatedSummary ? `关联对象:\n${relatedSummary}` : '',
-    `重点诊断节点:\n${nodeLines}`,
-    '请按“最可能原因 / 需要查看的证据 / 修复步骤 / 是否可重试”输出建议。',
-  ].filter(Boolean).join('\n\n');
+  return buildExecutionTraceDiagnosticPrompt(detail, attentionNodes, sourceTypeLabel);
 }
 
 function assistantTraceDiagnosticHref(
@@ -175,6 +148,7 @@ function assistantTraceDiagnosticHref(
   const params = new URLSearchParams();
   params.set('reference_type', detail.root_type);
   params.set('reference_id', detail.root_id);
+  params.set('diagnostic_trace_id', detail.id);
   params.set('prompt', buildTraceDiagnosticPrompt(detail, attentionNodes, sourceTypeLabel));
   return `/assistant?${params.toString()}`;
 }

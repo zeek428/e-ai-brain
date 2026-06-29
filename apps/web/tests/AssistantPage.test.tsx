@@ -133,6 +133,100 @@ describe('AssistantPage', () => {
     ]);
   });
 
+  it('rebuilds execution trace diagnostic prompt from trace id when route prompt is missing', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/assistant?reference_type=assistant_chat_run&reference_id=assistant_chat_run_trace&diagnostic_trace_id=assistant_chat_run_trace',
+    );
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('type')).toBe('assistant_chat_run');
+        expect(params.get('query')).toBe('assistant_chat_run_trace');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'assistant_chat_run_trace',
+                  permission_label: '可诊断',
+                  source_module: '执行诊断',
+                  summary: '模型网关调用失败。',
+                  title: 'AI 助手运行 assistant_chat_run_trace',
+                  type: 'assistant_chat_run',
+                  url: '/governance/execution-traces?source_id=assistant_chat_run_trace&source_type=assistant_chat_run',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/governance/execution-traces/assistant_chat_run_trace') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              diagnostic_nodes: [
+                {
+                  duration_ms: 1800,
+                  error_code: 'MODEL_GATEWAY_FAILED',
+                  error_message: 'upstream failed',
+                  id: 'model_gateway_log:model_gateway_log_assistant_trace',
+                  label: '模型网关调用',
+                  source_id: 'model_gateway_log_assistant_trace',
+                  source_type: 'model_gateway_log',
+                  status: 'failed',
+                  summary: '模型网关调用失败。',
+                },
+              ],
+              duration_ms: 5000,
+              edges: [],
+              failed_node_count: 1,
+              id: 'assistant_chat_run_trace',
+              node_count: 3,
+              nodes: [],
+              related_ids: {
+                assistant_chat_run: ['assistant_chat_run_trace'],
+                model_gateway_log: ['model_gateway_log_assistant_trace'],
+              },
+              root_id: 'assistant_chat_run_trace',
+              root_type: 'assistant_chat_run',
+              running_node_count: 0,
+              status: 'failed',
+              summary: '模型网关调用失败。',
+              title: 'AI 助手运行 assistant_chat_run_trace',
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    await waitFor(() => {
+      expect((screen.getByLabelText('发送给 AI 助手') as HTMLTextAreaElement).value).toContain(
+        '请基于执行诊断链路「AI 助手运行 assistant_chat_run_trace」分析运行问题。',
+      );
+    });
+    const inputValue = (screen.getByLabelText('发送给 AI 助手') as HTMLTextAreaElement).value;
+    expect(inputValue).toContain('model_gateway_log_assistant_trace');
+    expect(inputValue).toContain('最可能原因');
+    expect(await screen.findByLabelText('本次上下文')).toHaveTextContent('AI 助手运行 assistant_chat_run_trace');
+  });
+
   it('hides the current-context strip until references or deeplink state exist', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });

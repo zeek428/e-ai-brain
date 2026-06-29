@@ -3,11 +3,18 @@ import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   consumeAssistantRoutePrompt,
+  fetchExecutionTraceDetail,
   fetchAssistantReferenceCandidates,
   getStoredCurrentUser,
   type AssistantReference,
+  type ExecutionTraceDetailRecord,
 } from '../../../services/aiBrain';
 import { formatMutationError } from '../../../utils/managementCrud';
+import {
+  buildExecutionTraceDiagnosticPrompt,
+  buildExecutionTraceNodeDiagnosticPrompt,
+  executionTraceAttentionNodes,
+} from '../../../utils/executionTraceAssistantPrompts';
 import {
   activeMentionQuery,
   activeMentionRange,
@@ -53,10 +60,26 @@ type AssistantComposerSubmitCallbacks = {
 };
 
 type AssistantRouteContext = {
+  diagnosticNodeId?: string;
+  diagnosticTraceId?: string;
   prompt?: string;
   referenceId?: string;
   referenceType?: string;
 };
+
+const diagnosticSourceTypeLabels = new Map([
+  ['ai_executor_runner', 'AI 执行器 Runner'],
+  ['ai_executor_task', 'AI 执行器任务'],
+  ['assistant_chat_run', 'AI 助手运行'],
+  ['assistant_message', 'AI 助手消息'],
+  ['audit_event', '审计事件'],
+  ['code_inspection_report', '代码巡检报告'],
+  ['model_gateway_log', '模型网关调用'],
+  ['plugin_invocation_log', '插件调用'],
+  ['result_write_record', '结果写入记录'],
+  ['scheduled_job_run', '定时作业运行'],
+  ['scheduled_job_stage', '定时作业阶段'],
+]);
 
 function referenceKey(reference: Pick<AssistantReference, 'id' | 'type'>) {
   return `${reference.type}:${reference.id}`;
@@ -73,10 +96,37 @@ function assistantRouteContext(): AssistantRouteContext {
     ? consumeAssistantRoutePrompt({ referenceId, referenceType })
     : undefined;
   return {
+    diagnosticNodeId: params.get('diagnostic_node_id')?.trim() || undefined,
+    diagnosticTraceId: params.get('diagnostic_trace_id')?.trim() || params.get('trace_id')?.trim() || undefined,
     prompt: params.get('prompt')?.trim() || pendingRoutePrompt?.prompt,
     referenceId,
     referenceType,
   };
+}
+
+function assistantDiagnosticSourceTypeLabel(value?: string | null) {
+  return diagnosticSourceTypeLabels.get(String(value ?? '')) ?? value ?? '-';
+}
+
+function routeDiagnosticPromptFromDetail(
+  detail: ExecutionTraceDetailRecord,
+  diagnosticNodeId?: string,
+) {
+  const diagnosticNode = diagnosticNodeId
+    ? detail.nodes.find((node) => node.id === diagnosticNodeId)
+    : undefined;
+  if (diagnosticNode) {
+    return buildExecutionTraceNodeDiagnosticPrompt(
+      detail,
+      diagnosticNode,
+      assistantDiagnosticSourceTypeLabel,
+    );
+  }
+  return buildExecutionTraceDiagnosticPrompt(
+    detail,
+    executionTraceAttentionNodes(detail),
+    assistantDiagnosticSourceTypeLabel,
+  );
 }
 
 function assistantQueryReferenceParams(routeContext: AssistantRouteContext) {
@@ -316,6 +366,29 @@ export function useAssistantComposerController({
     setAddActionCandidates,
     setIsLoadingAddActions,
   ]);
+
+  useEffect(() => {
+    if (routeContext.prompt || !routeContext.diagnosticTraceId) {
+      return undefined;
+    }
+    let didCancel = false;
+    fetchExecutionTraceDetail(routeContext.diagnosticTraceId)
+      .then((detail) => {
+        if (didCancel) {
+          return;
+        }
+        const prompt = routeDiagnosticPromptFromDetail(detail, routeContext.diagnosticNodeId);
+        setInputValue((currentValue) => currentValue.trim() ? currentValue : prompt);
+      })
+      .catch((error) => {
+        if (!didCancel) {
+          toast.warning(`执行诊断上下文加载失败：${formatMutationError(error)}`);
+        }
+      });
+    return () => {
+      didCancel = true;
+    };
+  }, [routeContext]);
 
   useEffect(() => {
     if (queryReferenceHydratedRef.current) {

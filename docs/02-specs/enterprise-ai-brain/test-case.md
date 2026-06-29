@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.840 |
+| 功能版本 | v1.1.841 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.841 | 2026-06-30 | 补充执行诊断问 AI 链路兜底验收：链接需携带 `diagnostic_trace_id`，助手在 prompt 缺失时按 Trace 详情重建诊断问题 | Codex |
 | v1.1.840 | 2026-06-30 | 补充迭代版本总览交付链路处理入口验收：各阶段卡片必须直达需求、任务、分支、巡检、评审、Bug、知识、发布或状态推进上下文 | Codex |
 | v1.1.839 | 2026-06-30 | 补充代码巡检治理结论验收：治理概览首屏必须展示总体判断、主要风险标签和下一步动作 | Codex |
 | v1.1.838 | 2026-06-30 | 补充迭代版本总览版本治理结论验收：首屏必须展示总体推进建议、主要风险标签和下一步动作 | Codex |
@@ -136,7 +137,7 @@
 | v1.1.719 | 2026-06-27 | 补充需求全链路统一主体入口验收：`/api/lifecycle/full-chain` 需支持 Bug、迭代版本和代码巡检报告解析到需求链路，响应包含 `anchor` 和代码巡检报告摘要；`test_lifecycle_context.py` 与 `RequirementFullChainPage.test.tsx` 覆盖 | Codex |
 | v1.1.718 | 2026-06-27 | 补充执行诊断列表性能验收：普通列表查询必须复用已有快照且不触发同步重建，`refresh=true` 才强制刷新；`test_execution_traces.py` 覆盖 | Codex |
 | v1.1.717 | 2026-06-26 | 补充代码巡检门禁失败原因验收：治理概览需返回并展示 `quality_gate_violations[]`，覆盖指标、级别、触发数、报告数和实际/阈值 | Codex |
-| v1.1.716 | 2026-06-26 | 补充执行诊断整条链路诊断包验收：详情页需提供“问 AI 分析链路”和“复制诊断包”，助手链接按根对象携带 prompt，包含失败节点和建议输出结构；`ExecutionTracesPage.test.tsx` 覆盖 | Codex |
+| v1.1.716 | 2026-06-26 | 补充执行诊断整条链路诊断包验收：详情页需提供“问 AI 分析链路”和“复制诊断包”，助手链接按根对象携带 prompt、`diagnostic_trace_id` 和可选 `diagnostic_node_id`，包含失败节点和建议输出结构；当 prompt 缺失时助手需按 Trace 详情重建问题；`ExecutionTracesPage.test.tsx` 和 `AssistantPage.test.tsx` 覆盖 | Codex |
 | v1.1.715 | 2026-06-26 | 补充定时作业工作台数据加载 hook 化验收：作业/运行/模板/插件/产品/AI/知识/模型网关/catalog 加载从主页面拆出后，`ScheduledJobsPage.test.tsx`、typecheck、lint 和真实 `/tasks/scheduled-jobs` 页面 smoke 必须通过 | Codex |
 | v1.1.714 | 2026-06-26 | 补充定时作业运行详情状态 hook 化验收：运行详情路由深链、结果写入记录聚焦、生成模板和复制本次配置继续由 `ScheduledJobsPage.test.tsx` 覆盖，typecheck、lint 和真实 `/tasks/scheduled-jobs` 页面 smoke 必须通过 | Codex |
 | v1.1.713 | 2026-06-26 | 补充插件管理 Runner 运维 hook 化验收：Runner 新增/编辑、安装包下载、测试诊断、Token 轮换、日志查看和取消任务由 `PluginsPage.test.tsx` 覆盖，typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |

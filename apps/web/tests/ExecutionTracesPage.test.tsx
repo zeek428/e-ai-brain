@@ -365,6 +365,7 @@ describe('ExecutionTracesPage', () => {
     expect(traceAnalysisHref.startsWith('/assistant?')).toBe(true);
     expect(traceAnalysisParams.get('reference_type')).toBe('assistant_chat_run');
     expect(traceAnalysisParams.get('reference_id')).toBe('assistant_chat_run_trace');
+    expect(traceAnalysisParams.get('diagnostic_trace_id')).toBe('assistant_chat_run_trace');
     expect(traceAnalysisParams.get('prompt')).toContain('执行诊断链路「AI 助手运行 assistant_chat_run_trace」');
     expect(traceAnalysisParams.get('prompt')).toContain('model_gateway_log_assistant_trace');
     expect(traceAnalysisParams.get('prompt')).toContain('最可能原因');
