@@ -1731,6 +1731,77 @@ def test_plugin_resources_delete_requires_unused_dependencies():
     assert "plugin.deleted" in event_types
 
 
+def test_plugin_resource_delete_detects_scheduled_job_multi_references():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugin, primary_connection, primary_action = create_plugin_bundle(admin_headers)
+    extra_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {"header_name": "PRIVATE-TOKEN", "secret_ref": "vault/gitlab/extra"},
+            "auth_type": "api_key_header",
+            "endpoint_url": "https://gitlab-extra.example.com",
+            "environment": "test",
+            "name": "备用 GitLab",
+            "plugin_id": plugin["id"],
+            "request_config": {"headers": {}, "query": {}},
+            "status": "active",
+            "timeout_seconds": 30,
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    backup_action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_backup_metrics",
+            "connection_id": primary_connection["id"],
+            "input_schema": {"type": "object"},
+            "name": "拉取备用指标",
+            "output_schema": {"type": "object"},
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {"commits": 3},
+                "path": "/api/v4/projects/1/backup-metrics",
+            },
+            "result_mapping": {"records_imported_path": "$.commits"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "多动作删除保护作业",
+            "plugin_action_ids": [primary_action["id"], backup_action["id"]],
+            "plugin_connection_ids": [primary_connection["id"], extra_connection["id"]],
+            "schedule_type": "manual",
+            "source_system": "warehouse",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    blocked_action_delete = client.delete(
+        f"/api/system/plugin-actions/{backup_action['id']}",
+        headers=admin_headers,
+    )
+    assert blocked_action_delete.status_code == 409
+    assert job["name"] in blocked_action_delete.text
+    assert "定时作业" in blocked_action_delete.text
+
+    blocked_connection_delete = client.delete(
+        f"/api/system/plugin-connections/{extra_connection['id']}",
+        headers=admin_headers,
+    )
+    assert blocked_connection_delete.status_code == 409
+    assert job["name"] in blocked_connection_delete.text
+    assert "定时作业" in blocked_connection_delete.text
+
+
 def test_plugin_connection_patch_preserves_masked_secret_values():
     app.state.store.reset()
     admin_headers = auth_headers()

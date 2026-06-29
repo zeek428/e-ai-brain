@@ -32,6 +32,12 @@ from app.services.model_gateway import (
     save_model_gateway_records,
 )
 from app.services.operational_records import record_audit_event, save_single_repository_record
+from app.services.plugin_delete_protection import (
+    action_delete_usages,
+    connection_delete_usages,
+    ensure_not_used_for_delete,
+    plugin_delete_usages,
+)
 from app.services.plugin_templates import (
     STANDARD_PLUGIN_CONNECTION_TEMPLATE_VERSION,
     STANDARD_PLUGIN_MARKETPLACE_METADATA,
@@ -506,112 +512,6 @@ def redact_plugin_request_summary(value: Any) -> Any:
                 redacted[key_text] = redact_plugin_request_summary(item)
         return redacted
     return value
-
-
-def usage_names(items: list[dict[str, Any]], *, limit: int = 3) -> str:
-    names = [str(item.get("name") or item.get("code") or item.get("id")) for item in items[:limit]]
-    suffix = f" 等 {len(items)} 个" if len(items) > limit else f" {len(items)} 个"
-    return f"{'、'.join(names)}{suffix}" if names else f"{len(items)} 个"
-
-
-def usage_summary(usages: dict[str, list[dict[str, Any]]]) -> str:
-    labels = {
-        "actions": "动作",
-        "connections": "连接",
-        "logs": "定时作业调用记录",
-        "scheduled_jobs": "定时作业",
-    }
-    parts = [
-        f"{labels[key]}：{usage_names(items)}"
-        for key, items in usages.items()
-        if items
-    ]
-    return "；".join(parts)
-
-
-def ensure_not_used_for_delete(
-    usages: dict[str, list[dict[str, Any]]],
-    *,
-    object_label: str,
-) -> None:
-    summary = usage_summary(usages)
-    if not summary:
-        return
-    raise api_error(
-        409,
-        "PLUGIN_RESOURCE_IN_USE",
-        f"{object_label}正在被使用，不能删除。{summary}。请先解除引用、删除下级配置，或将其停用。",
-    )
-
-
-def plugin_delete_usages(current_store: Any, plugin_id: str) -> dict[str, list[dict[str, Any]]]:
-    connections = [
-        connection
-        for connection in _read_memory_dict(current_store, "plugin_connections").values()
-        if connection.get("plugin_id") == plugin_id
-    ]
-    actions = [
-        action
-        for action in _read_memory_dict(current_store, "plugin_actions").values()
-        if action.get("plugin_id") == plugin_id
-    ]
-    connection_ids = {connection["id"] for connection in connections}
-    action_ids = {action["id"] for action in actions}
-    scheduled_jobs = [
-        job
-        for job in _read_memory_dict(current_store, "scheduled_jobs").values()
-        if job.get("plugin_action_id") in action_ids
-        or job.get("plugin_connection_id") in connection_ids
-    ]
-    logs = [
-        log
-        for log in _read_memory_dict(current_store, "plugin_invocation_logs").values()
-        if log.get("plugin_id") == plugin_id
-        or log.get("action_id") in action_ids
-        or log.get("connection_id") in connection_ids
-    ]
-    return {
-        "connections": connections,
-        "actions": actions,
-        "scheduled_jobs": scheduled_jobs,
-        "logs": logs,
-    }
-
-
-def connection_delete_usages(
-    current_store: Any,
-    connection_id: str,
-) -> dict[str, list[dict[str, Any]]]:
-    actions = [
-        action
-        for action in _read_memory_dict(current_store, "plugin_actions").values()
-        if action.get("connection_id") == connection_id
-    ]
-    scheduled_jobs = [
-        job
-        for job in _read_memory_dict(current_store, "scheduled_jobs").values()
-        if job.get("plugin_connection_id") == connection_id
-    ]
-    logs = [
-        log
-        for log in _read_memory_dict(current_store, "plugin_invocation_logs").values()
-        if log.get("connection_id") == connection_id
-    ]
-    return {"actions": actions, "scheduled_jobs": scheduled_jobs, "logs": logs}
-
-
-def action_delete_usages(current_store: Any, action_id: str) -> dict[str, list[dict[str, Any]]]:
-    scheduled_jobs = [
-        job
-        for job in _read_memory_dict(current_store, "scheduled_jobs").values()
-        if job.get("plugin_action_id") == action_id
-    ]
-    logs = [
-        log
-        for log in _read_memory_dict(current_store, "plugin_invocation_logs").values()
-        if log.get("action_id") == action_id
-    ]
-    return {"scheduled_jobs": scheduled_jobs, "logs": logs}
 
 
 def list_plugins_response(
