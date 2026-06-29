@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 插件服务连接配置 helper 拆分：新增 `apps/api/app/services/plugin_connection_config.py`，承接 GitHub/GitLab 连接地址解析、请求配置规范化和 GitHub 认证校验，并将 `plugins.py` 架构守护预算收紧到 2600 行。
 - 前端系统管理 client 拆分：新增 `apps/web/src/services/systemManagementClient.ts`，承接用户、角色、菜单、权限矩阵和用户权限诊断 API，`services/aiBrain.ts` 保持兼容导出并将前端服务 barrel 守护预算收紧到 2400 行。
 - 授权仓储拆大文件：抽出 `authorization_defaults` 承接默认菜单、角色菜单授权、scope 白名单和排序字段，并把 `authorization.py` 纳入 2800 行架构守护。
 - AI 执行器 Runner 服务拆大文件：抽出 `ai_executor_runner_constants` 和 `ai_executor_runner_packages`，将 Runner 常量与安装包构造从主服务拆开，并把 `ai_executor_runners.py` 纳入 2800 行架构守护。
