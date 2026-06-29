@@ -6,10 +6,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_DOMAIN_FILE_LINES = 2800
 MAX_PLUGIN_SERVICE_LINES = 2600
 MAX_SCHEDULED_JOB_SERVICE_LINES = 2600
+MAX_ASSISTANT_ACTION_DRAFT_LINES = 2600
 MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
 
 DOMAIN_FILE_LINE_BUDGETS = {
     "apps/api/app/services/ai_executor_runners.py": MAX_DOMAIN_FILE_LINES,
+    "apps/api/app/services/assistant_action_drafts.py": MAX_ASSISTANT_ACTION_DRAFT_LINES,
     "apps/api/app/core/repositories/authorization.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/assistant_chat.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/assistant_references.py": MAX_DOMAIN_FILE_LINES,
@@ -147,6 +149,24 @@ def test_assistant_chat_uses_split_model_gateway_module():
     assert "def _read_model_gateway_response_payload(" not in entrypoint_source
     assert "def _model_gateway_chat_completions_url(" not in entrypoint_source
     assert "httpx.Client(" not in entrypoint_source
+
+
+def test_assistant_action_drafts_uses_split_common_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/assistant_action_draft_common.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/assistant_action_drafts.py"
+
+    assert helper_path.exists(), (
+        "Move assistant action draft constants, payload defaults and base validators "
+        "to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "from app.services.assistant_action_draft_common import" in entrypoint_source
+    assert "def ensure_draft_action(" in helper_source
+    assert "def valid_cron_expression(" in helper_source
+    assert "ASSISTANT_DRAFT_ACTIONS = " not in entrypoint_source
+    assert "SCHEDULED_JOB_DEFAULTS = " not in entrypoint_source
+    assert "def _valid_cron_expression(" not in entrypoint_source
 
 
 def test_code_inspections_uses_split_common_module():

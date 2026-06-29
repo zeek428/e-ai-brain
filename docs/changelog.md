@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 动作草案服务继续拆大文件：新增 `apps/api/app/services/assistant_action_draft_common.py` 承接草案状态/动作枚举、默认 payload、基础动作校验和 Cron 表达式校验，`assistant_action_drafts.py` 降至 2600 行预算内并由架构守护防止通用规则回流。
 - 代码巡检服务继续拆大文件：新增 `apps/api/app/services/code_inspection_common.py` 承接巡检枚举、严重级别归一化、提交人摘要和结果动作校验，`code_inspections.py` 降至 2600 行预算内并由架构守护防止通用规则回流。
 - 执行诊断“问 AI 分析链路”链接新增 `diagnostic_trace_id` 兜底，AI 助手在 URL prompt 缺失时可按 Trace 详情重建链路或节点诊断问题。
 - 迭代版本总览交付链路总览新增直接处理入口：需求、任务、分支、代码巡检、代码评审、Bug、知识沉淀、发布和状态推进卡片可直接进入对应处理上下文。
