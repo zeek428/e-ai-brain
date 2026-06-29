@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手定时作业 run-once helper 拆分：新增 `assistant_scheduled_job_run` 承接显式 @ 提及解析、执行权限提示、周反馈草案兜底和运行结果投影，并由架构守护防止 run-once 展示逻辑回流 `assistant_chat.py`。
 - 插件服务公开投影拆分：新增 `plugin_projection` 承接插件版本元数据、公开响应投影和调用请求摘要脱敏，并由架构守护防止展示脱敏逻辑回流 `plugins.py`。
 - 定时作业服务配置 helper 拆分：新增 `scheduled_job_config` 承接调度时间、配置编排、多数据源引用、代码巡检仓库默认分支、数据连接策略和有效作业类型推导，并由架构守护防止配置归一化逻辑回流 `scheduled_jobs.py`。
 - 迭代版本总览版本范围读模型：`GET /api/product-versions/{version_id}/dashboard` 在 PostgreSQL 运行时优先读取版本专用 source rows，避免全量加载 task workflow 源数据后再服务层过滤，响应字段保持不变。

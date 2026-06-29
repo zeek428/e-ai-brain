@@ -95,3 +95,19 @@ def test_assistant_references_uses_split_action_defaults_module():
     entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
     assert "from app.services.assistant_action_reference_defaults import" in entrypoint_source
     assert "ASSISTANT_ACTION_CANDIDATES = (" not in entrypoint_source
+
+
+def test_assistant_chat_uses_split_scheduled_job_run_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/assistant_scheduled_job_run.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/assistant_chat.py"
+
+    assert helper_path.exists(), (
+        "Move assistant scheduled job run-once mention and projection helpers to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "assistant_scheduled_job_run as scheduled_job_run_helpers" in entrypoint_source
+    assert "def scheduled_job_references_from_explicit_mentions(" in helper_source
+    assert "def scheduled_job_run_tool_result(" in helper_source
+    assert "def _scheduled_job_references_from_explicit_mentions(" not in entrypoint_source
+    assert "def _scheduled_job_run_tool_result(" not in entrypoint_source

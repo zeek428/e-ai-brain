@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -16,8 +15,42 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.store import MemoryStore
+from app.services import assistant_scheduled_job_run as scheduled_job_run_helpers
 from app.services.assistant_action_drafts import (
     persist_assistant_action_drafts_from_tool_results,
+)
+from app.services.assistant_chat_intents import (
+    assistant_metrics_explanation_output as _assistant_metrics_explanation_output,
+)
+from app.services.assistant_chat_intents import (
+    assistant_metrics_explanation_requested as _assistant_metrics_explanation_requested,
+)
+from app.services.assistant_chat_intents import (
+    merge_assistant_references as _merge_assistant_references,
+)
+from app.services.assistant_chat_intents import (
+    plugin_connection_diagnostic_output as _plugin_connection_diagnostic_output,
+)
+from app.services.assistant_chat_intents import (
+    plugin_connection_diagnostic_requested as _plugin_connection_diagnostic_requested,
+)
+from app.services.assistant_chat_intents import (
+    scheduled_job_diagnostic_output as _scheduled_job_diagnostic_output,
+)
+from app.services.assistant_chat_intents import (
+    scheduled_job_diagnostic_requested as _scheduled_job_diagnostic_requested,
+)
+from app.services.assistant_chat_intents import (
+    scheduled_job_reference_needed_output as _scheduled_job_reference_needed_output,
+)
+from app.services.assistant_chat_intents import (
+    scheduled_job_run_once_requested as _scheduled_job_run_once_requested,
+)
+from app.services.assistant_chat_intents import (
+    task_creation_guide_output as _task_creation_guide_output,
+)
+from app.services.assistant_chat_intents import (
+    task_creation_guide_requested as _task_creation_guide_requested,
 )
 from app.services.assistant_context import (
     assistant_chat_messages as assistant_context_chat_messages,
@@ -36,23 +69,8 @@ from app.services.assistant_history import (
     assistant_conversations_response,
     ensure_assistant_conversation,
 )
-from app.services.assistant_chat_intents import (
-    SCHEDULED_JOB_RUN_ONCE_KEYWORDS,
-    assistant_metrics_explanation_output as _assistant_metrics_explanation_output,
-    assistant_metrics_explanation_requested as _assistant_metrics_explanation_requested,
-    merge_assistant_references as _merge_assistant_references,
-    plugin_connection_diagnostic_output as _plugin_connection_diagnostic_output,
-    plugin_connection_diagnostic_requested as _plugin_connection_diagnostic_requested,
-    scheduled_job_diagnostic_output as _scheduled_job_diagnostic_output,
-    scheduled_job_diagnostic_requested as _scheduled_job_diagnostic_requested,
-    scheduled_job_reference_needed_output as _scheduled_job_reference_needed_output,
-    scheduled_job_run_once_requested as _scheduled_job_run_once_requested,
-    task_creation_guide_output as _task_creation_guide_output,
-    task_creation_guide_requested as _task_creation_guide_requested,
-)
 from app.services.assistant_references import (
     AssistantReferenceError,
-    assistant_reference_matches_query,
     resolve_assistant_references,
 )
 from app.services.assistant_request_context import (
@@ -88,8 +106,6 @@ ASSISTANT_ASYNC_SCHEDULED_JOB_TYPES = {
 ASSISTANT_ASYNC_RUN_START_TIMEOUT_SECONDS = 2.0
 ASSISTANT_ASYNC_RUN_POLL_SECONDS = 0.05
 ASSISTANT_TRACKED_RUN_STATUSES = {"queued", "running"}
-SCHEDULED_JOB_MANAGE_PERMISSION = "system.scheduled_jobs.manage"
-SCHEDULED_JOB_RUN_PERMISSION = "system.scheduled_jobs.run"
 _ASSISTANT_CHAT_RUN_INTERRUPTERS: dict[str, Callable[[], None]] = {}
 _ASSISTANT_CHAT_RUN_INTERRUPTERS_LOCK = threading.Lock()
 
@@ -1061,7 +1077,7 @@ def _deterministic_scheduled_job_run_once_output(
     scheduled_job_references = [
         reference for reference in selected_references if reference.get("type") == "scheduled_job"
     ]
-    mention_resolution = _scheduled_job_references_from_explicit_mentions(
+    mention_resolution = scheduled_job_run_helpers.scheduled_job_references_from_explicit_mentions(
         current_store,
         message=payload.message,
         product_id=payload.product_id,
@@ -1082,17 +1098,19 @@ def _deterministic_scheduled_job_run_once_output(
     elif not scheduled_job_references:
         if mention_resolution["attempted"]:
             if mention_resolution.get("blocked_reason") == "permission_denied":
-                return _scheduled_job_run_once_permission_denied_output(
+                return scheduled_job_run_helpers.scheduled_job_run_once_permission_denied_output(
                     attempted_queries=mention_resolution["queries"],
                     selected_references=selected_references,
                 )
-            draft_output = _scheduled_job_run_once_missing_job_draft_output(
-                current_store=current_store,
-                message=payload.message,
-                product_id=payload.product_id,
-                queries=mention_resolution["queries"],
-                selected_references=selected_references,
-                user=user,
+            draft_output = (
+                scheduled_job_run_helpers.scheduled_job_run_once_missing_job_draft_output(
+                    current_store=current_store,
+                    message=payload.message,
+                    product_id=payload.product_id,
+                    queries=mention_resolution["queries"],
+                    selected_references=selected_references,
+                    user=user,
+                )
             )
             if draft_output is not None:
                 return draft_output
@@ -1138,23 +1156,30 @@ def _deterministic_scheduled_job_run_once_output(
         job_id=job_id,
     )
     if active_run is not None:
+        job_title = scheduled_job_run_helpers.scheduled_job_title(job, job_id)
         run_id = str(active_run.get("id") or "")
         run_status = str(active_run.get("status") or "unknown")
         return {
             "answer": (
-                f"「{_scheduled_job_title(job, job_id)}」已有一次执行正在进行中，"
-                f"运行记录 {run_id} 当前状态为 {run_status}。"
+                f"「{job_title}」已有一次执行正在进行中，运行记录 {run_id} "
+                f"当前状态为 {run_status}。"
             ),
             "latency_ms": int((perf_counter() - started) * 1000),
             "model": "assistant-deterministic",
             "references": _merge_assistant_references(
                 selected_references,
-                [_scheduled_job_run_reference(job=job, job_id=job_id, run=active_run)],
+                [
+                    scheduled_job_run_helpers.scheduled_job_run_reference(
+                        job=job,
+                        job_id=job_id,
+                        run=active_run,
+                    )
+                ],
             ),
             "selected_references": selected_references,
             "suggestions": ["查看本次运行记录", "为什么这次任务失败？"],
             "tool_results": [
-                _scheduled_job_run_tool_result(
+                scheduled_job_run_helpers.scheduled_job_run_tool_result(
                     error_code=None,
                     error_message=None,
                     job=job,
@@ -1189,7 +1214,7 @@ def _deterministic_scheduled_job_run_once_output(
             "selected_references": selected_references,
             "suggestions": ["检查定时作业配置", "打开定时作业详情"],
             "tool_results": [
-                _scheduled_job_run_tool_result(
+                scheduled_job_run_helpers.scheduled_job_run_tool_result(
                     error_code=error_code,
                     error_message=error_message,
                     job=job,
@@ -1198,25 +1223,29 @@ def _deterministic_scheduled_job_run_once_output(
                 )
             ],
         }
-    run_reference = _scheduled_job_run_reference(job=job, job_id=job_id, run=run)
+    run_reference = scheduled_job_run_helpers.scheduled_job_run_reference(
+        job=job,
+        job_id=job_id,
+        run=run,
+    )
     run_status = str(run.get("status") or "unknown")
     run_id = str(run.get("id") or "")
     if run_status in {"queued", "running"}:
-        progress_text = _scheduled_job_run_progress_text(run)
+        progress_text = scheduled_job_run_helpers.scheduled_job_run_progress_text(run)
         progress_suffix = f"{progress_text}。" if progress_text else ""
         answer = (
-            f"已触发「{_scheduled_job_title(job, job_id)}」执行一次，"
+            f"已触发「{scheduled_job_run_helpers.scheduled_job_title(job, job_id)}」执行一次，"
             f"运行记录 {run_id} 当前状态为 {run_status}。{progress_suffix}"
         )
     elif run_status == "succeeded":
         answer = (
-            f"已执行「{_scheduled_job_title(job, job_id)}」一次，"
+            f"已执行「{scheduled_job_run_helpers.scheduled_job_title(job, job_id)}」一次，"
             f"运行记录 {run_id} 已成功完成。"
         )
     else:
         error_message = run.get("error_message") or "请查看运行记录详情。"
         answer = (
-            f"已执行「{_scheduled_job_title(job, job_id)}」一次，"
+            f"已执行「{scheduled_job_run_helpers.scheduled_job_title(job, job_id)}」一次，"
             f"运行记录 {run_id} 状态为 {run_status}：{error_message}"
         )
     return {
@@ -1227,7 +1256,7 @@ def _deterministic_scheduled_job_run_once_output(
         "selected_references": selected_references,
         "suggestions": ["查看本次运行记录", "为什么这次任务失败？"],
         "tool_results": [
-            _scheduled_job_run_tool_result(
+            scheduled_job_run_helpers.scheduled_job_run_tool_result(
                 error_code=None,
                 error_message=None,
                 job=job,
@@ -1778,382 +1807,6 @@ def _model_gateway_chat_completions_url(base_url: str) -> str:
     return f"{normalized}/chat/completions"
 
 
-def _scheduled_job_run_once_missing_job_draft_output(
-    *,
-    current_store: MemoryStore,
-    message: str,
-    product_id: str | None,
-    queries: list[str],
-    selected_references: list[dict[str, str]],
-    user: dict[str, Any],
-) -> dict[str, Any] | None:
-    if not _user_can_run_scheduled_job_from_assistant(user):
-        return None
-    if not _weekly_feedback_run_once_draft_requested(message, queries):
-        return None
-    started = perf_counter()
-    tool_results = assistant_tool_results(
-        current_store,
-        message="请帮我生成每周用户反馈洞察定时作业草案",
-        product_id=product_id,
-        references=selected_references,
-    )
-    draft_results = [
-        result
-        for result in tool_results
-        if result.get("tool") == "assistant.action_draft"
-        and result.get("intent") == "scheduled_job_draft"
-    ]
-    if not draft_results:
-        return None
-    for result in draft_results:
-        summary = dict(result.get("summary") or {})
-        summary["run_once_requested"] = True
-        summary["status"] = "draft_required"
-        result["summary"] = summary
-        for item in result.get("items") or []:
-            if not isinstance(item, dict):
-                continue
-            payload = dict(item.get("payload") or {})
-            config_json = dict(payload.get("config_json") or {})
-            config_json["assistant_run_once_request"] = {
-                "requested": True,
-                "source_message": message,
-            }
-            payload["config_json"] = config_json
-            item["payload"] = payload
-            item["run_once_requested"] = True
-    draft_references = [
-        reference
-        for result in draft_results
-        for reference in result.get("references", [])
-        if isinstance(reference, dict)
-    ]
-    query_text = "、".join(queries) if queries else "这个 @ 引用"
-    return {
-        "answer": (
-            f"还没有找到可执行的定时作业：{query_text}。"
-            "当前尚未执行；我先生成周反馈洞察定时作业草案，"
-            "确认并补齐校验项后再执行一次。"
-        ),
-        "latency_ms": int((perf_counter() - started) * 1000),
-        "model": "assistant-deterministic",
-        "references": _merge_assistant_references(selected_references, draft_references),
-        "selected_references": selected_references,
-        "suggestions": ["查看并确认草案", "补齐数据连接和结果动作"],
-        "tool_results": draft_results,
-    }
-
-
-def _weekly_feedback_run_once_draft_requested(message: str, queries: list[str]) -> bool:
-    normalized = f"{message} {' '.join(queries)}".lower()
-    has_feedback_context = any(
-        keyword in normalized
-        for keyword in ("用户反馈", "周反馈", "每周", "feedback", "user feedback")
-    )
-    has_insight_context = any(
-        keyword in normalized
-        for keyword in ("洞察", "提取", "抽取", "有价值", "价值", "信息", "insight", "extract")
-    )
-    return has_feedback_context and has_insight_context
-
-
-def _scheduled_job_references_from_explicit_mentions(
-    current_store: MemoryStore,
-    *,
-    message: str,
-    product_id: str | None,
-    user: dict[str, Any],
-) -> dict[str, Any]:
-    queries = _explicit_mention_queries_for_run_once(message)
-    if not queries:
-        return {"attempted": False, "queries": [], "references": []}
-    if not _user_can_run_scheduled_job_from_assistant(user):
-        return {
-            "attempted": True,
-            "blocked_reason": "permission_denied",
-            "queries": queries,
-            "references": [],
-        }
-    jobs = list(getattr(current_store, "scheduled_jobs", {}).values())
-    if product_id:
-        jobs = [job for job in jobs if job.get("product_id") == product_id]
-    references: list[dict[str, str]] = []
-    for query in queries:
-        matches = [job for job in jobs if _scheduled_job_matches_mention(job, query)]
-        preferred_matches = _scheduled_job_preferred_run_once_mention_matches(
-            matches,
-            query,
-            require_official_insight=True,
-        )
-        if len(preferred_matches) == 1:
-            matches = preferred_matches
-        if len(matches) != 1:
-            exact_matches = [
-                job for job in matches if _scheduled_job_exactly_matches_mention(job, query)
-            ]
-            if len(exact_matches) == 1:
-                matches = exact_matches
-        if len(matches) != 1:
-            preferred_matches = _scheduled_job_preferred_run_once_mention_matches(
-                matches,
-                query,
-                require_official_insight=False,
-            )
-            if len(preferred_matches) == 1:
-                matches = preferred_matches
-        if len(matches) != 1:
-            runnable_matches = [
-                job for job in matches if _scheduled_job_is_runnable_mention_match(job)
-            ]
-            if len(runnable_matches) == 1:
-                matches = runnable_matches
-        if len(matches) != 1:
-            return {"attempted": True, "queries": queries, "references": []}
-        job = matches[0]
-        job_id = str(job["id"])
-        references.append(
-            {
-                "id": job_id,
-                "title": _scheduled_job_title(job, job_id),
-                "type": "scheduled_job",
-                "url": f"/tasks/scheduled-jobs?job_id={job_id}",
-            }
-        )
-    return {
-        "attempted": True,
-        "queries": queries,
-        "references": _merge_assistant_references(references),
-    }
-
-
-def _explicit_mention_queries_for_run_once(message: str) -> list[str]:
-    queries: list[str] = []
-    seen: set[str] = set()
-    for match in re.finditer(r"[@＠]([^@＠\n]+)", message):
-        raw_tail = match.group(1).strip()
-        if not raw_tail:
-            continue
-        end_index = len(raw_tail)
-        normalized_tail = raw_tail.lower()
-        for keyword in SCHEDULED_JOB_RUN_ONCE_KEYWORDS:
-            keyword_index = normalized_tail.find(keyword)
-            if keyword_index >= 0:
-                end_index = min(end_index, keyword_index)
-        query = raw_tail[:end_index].strip(" \t，,。；;：:")
-        query = re.sub(r"(请|麻烦|帮我|帮忙)$", "", query).strip()
-        if not query:
-            continue
-        normalized_query = query.lower()
-        if normalized_query in seen:
-            continue
-        seen.add(normalized_query)
-        queries.append(query)
-    return queries
-
-
-def _scheduled_job_run_once_permission_denied_output(
-    *,
-    attempted_queries: list[str],
-    selected_references: list[dict[str, str]],
-) -> dict[str, Any]:
-    query_text = "、".join(attempted_queries) if attempted_queries else "这个 @ 引用"
-    return {
-        "answer": (
-            f"我识别到你想执行定时作业：{query_text}，"
-            "但当前账号没有执行定时作业的权限。请使用管理员账号，"
-            "或让管理员授予定时作业执行权限后再执行。"
-        ),
-        "latency_ms": 0,
-        "model": "assistant-deterministic",
-        "references": selected_references,
-        "selected_references": selected_references,
-        "suggestions": ["联系管理员授权", "生成可确认的配置草案"],
-        "tool_results": [
-            {
-                "intent": "scheduled_job_run_once",
-                "items": [],
-                "summary": {
-                    "queries": attempted_queries,
-                    "required_permission": SCHEDULED_JOB_RUN_PERMISSION,
-                    "status": "permission_denied",
-                },
-                "tool": "assistant.scheduled_job_run",
-            }
-        ],
-    }
-
-
-def _scheduled_job_matches_mention(job: dict[str, Any], query: str) -> bool:
-    normalized_query = query.lower().strip()
-    haystack = " ".join(
-        str(value or "")
-        for value in (
-            job.get("id"),
-            job.get("name"),
-            job.get("title"),
-            job.get("code"),
-            job.get("job_type"),
-        )
-    ).lower()
-    if normalized_query in haystack:
-        return True
-    return assistant_reference_matches_query(
-        "scheduled_job",
-        job,
-        query,
-        current_store=None,
-    )
-
-
-def _scheduled_job_exactly_matches_mention(job: dict[str, Any], query: str) -> bool:
-    normalized_query = _normalized_mention_token(query)
-    if not normalized_query:
-        return False
-    return any(
-        _normalized_mention_token(value) == normalized_query
-        for value in (
-            job.get("id"),
-            job.get("name"),
-            job.get("title"),
-            job.get("code"),
-        )
-    )
-
-
-def _scheduled_job_preferred_run_once_mention_matches(
-    jobs: list[dict[str, Any]],
-    query: str,
-    *,
-    require_official_insight: bool = False,
-) -> list[dict[str, Any]]:
-    if not _weekly_feedback_run_once_draft_requested(query, [query]):
-        return []
-    scored_matches = [
-        (_scheduled_job_weekly_feedback_insight_score(job), job)
-        for job in jobs
-    ]
-    preferred_matches = [
-        (score, job)
-        for score, job in scored_matches
-        if score > 0
-    ]
-    if not preferred_matches:
-        return []
-    runnable_matches = [
-        (score, job)
-        for score, job in preferred_matches
-        if _scheduled_job_is_runnable_mention_match(job)
-    ]
-    candidates = runnable_matches or preferred_matches
-    if require_official_insight:
-        candidates = [
-            (score, job)
-            for score, job in candidates
-            if _scheduled_job_is_official_weekly_feedback_insight(job)
-        ]
-        if not candidates:
-            return []
-    ranked = sorted(
-        candidates,
-        key=lambda item: (
-            item[0],
-            str(item[1].get("updated_at") or item[1].get("created_at") or ""),
-            str(item[1].get("id") or ""),
-        ),
-        reverse=True,
-    )
-    if len(ranked) == 1 or ranked[0][0] > ranked[1][0]:
-        return [ranked[0][1]]
-    return [job for _, job in ranked]
-
-
-def _scheduled_job_is_official_weekly_feedback_insight(job: dict[str, Any]) -> bool:
-    config_json = job.get("config_json")
-    assistant_template = (
-        config_json.get("assistant_template")
-        if isinstance(config_json, dict)
-        else None
-    )
-    template_code = (
-        assistant_template.get("code")
-        if isinstance(assistant_template, dict)
-        else None
-    )
-    return (
-        template_code == "weekly_feedback_insight"
-        or str(job.get("job_type") or "").strip() == "user_feedback_insight_extract"
-    )
-
-
-def _scheduled_job_weekly_feedback_insight_score(job: dict[str, Any]) -> int:
-    config_json = job.get("config_json")
-    assistant_template = (
-        config_json.get("assistant_template")
-        if isinstance(config_json, dict)
-        else None
-    )
-    template_code = (
-        assistant_template.get("code")
-        if isinstance(assistant_template, dict)
-        else None
-    )
-    code = str(job.get("code") or "").strip()
-    job_type = str(job.get("job_type") or "").strip()
-    title = _normalized_mention_token(
-        " ".join(
-            str(value or "")
-            for value in (
-                job.get("name"),
-                job.get("title"),
-                job.get("description"),
-                job.get("summary"),
-            )
-        )
-    )
-    source_system = str(job.get("source_system") or "").strip()
-    score = 0
-    if code == "weekly_feedback_insight":
-        score += 70
-    if template_code == "weekly_feedback_insight":
-        score += 65
-    if job_type == "user_feedback_insight_extract":
-        score += 60
-    if "用户反馈" in title or "feedback" in title:
-        score += 20
-    if any(
-        keyword in title
-        for keyword in ("洞察", "提取", "抽取", "有价值", "价值", "insight", "extract")
-    ):
-        score += 20
-    if "每周" in title or "weekly" in title:
-        score += 10
-    if source_system == "aliyun-maxcompute":
-        score += 5
-    if _scheduled_job_is_runnable_mention_match(job):
-        score += 5
-    return score
-
-
-def _scheduled_job_is_runnable_mention_match(job: dict[str, Any]) -> bool:
-    return bool(job.get("enabled")) and str(job.get("status") or "active") == "active"
-
-
-def _user_can_run_scheduled_job_from_assistant(user: dict[str, Any]) -> bool:
-    roles = set(user.get("roles") or [])
-    permissions = set(user.get("permissions") or [])
-    return (
-        "admin" in roles
-        or "system.admin" in permissions
-        or SCHEDULED_JOB_MANAGE_PERMISSION in permissions
-        or SCHEDULED_JOB_RUN_PERMISSION in permissions
-    )
-
-
-def _normalized_mention_token(value: Any) -> str:
-    return " ".join(str(value or "").strip().lower().split())
-
-
 def _scheduled_job_run_should_return_immediately(job: dict[str, Any]) -> bool:
     if not job.get("enabled"):
         return False
@@ -2335,108 +1988,6 @@ def _http_exception_code_and_message(exc: HTTPException) -> tuple[str, str]:
             str(detail.get("message") or "Scheduled job run failed"),
         )
     return str(exc.status_code), str(detail or "Scheduled job run failed")
-
-
-def _scheduled_job_title(job: dict[str, Any], job_id: str) -> str:
-    return str(job.get("name") or job.get("title") or job.get("code") or job_id)
-
-
-def _scheduled_job_run_reference(
-    *,
-    job: dict[str, Any],
-    job_id: str,
-    run: dict[str, Any],
-) -> dict[str, str]:
-    run_id = str(run["id"])
-    return {
-        "id": run_id,
-        "title": f"{_scheduled_job_title(job, job_id)} / {run.get('status') or 'unknown'}",
-        "type": "scheduled_job_run",
-        "url": f"/tasks/scheduled-jobs?run_id={run_id}",
-    }
-
-
-def _scheduled_job_run_tool_result(
-    *,
-    error_code: str | None,
-    error_message: str | None,
-    job: dict[str, Any],
-    job_id: str,
-    run: dict[str, Any] | None,
-) -> dict[str, Any]:
-    job_name = _scheduled_job_title(job, job_id)
-    if run is None:
-        return {
-            "intent": "scheduled_job_run_once",
-            "items": [],
-            "references": [],
-            "summary": {
-                "error_code": error_code,
-                "error_message": error_message,
-                "scheduled_job_id": job_id,
-                "scheduled_job_name": job_name,
-                "status": "failed",
-                "trigger_type": "manual",
-            },
-            "tool": "assistant.scheduled_job_run",
-        }
-    run_reference = _scheduled_job_run_reference(job=job, job_id=job_id, run=run)
-    progress_text = _scheduled_job_run_progress_text(run)
-    item = {
-        "id": run_reference["id"],
-        "records_imported": int(run.get("records_imported") or 0),
-        "scheduled_job_id": job_id,
-        "status": str(run.get("status") or "unknown"),
-        "title": run_reference["title"],
-        "trigger_type": str(run.get("trigger_type") or "manual"),
-        "type": "scheduled_job_run",
-        "url": run_reference["url"],
-    }
-    if progress_text:
-        item["progress_text"] = progress_text
-    summary = {
-        "error_code": error_code,
-        "error_message": error_message,
-        "records_imported": int(run.get("records_imported") or 0),
-        "run_id": run_reference["id"],
-        "scheduled_job_id": job_id,
-        "scheduled_job_name": job_name,
-        "status": str(run.get("status") or "unknown"),
-        "trigger_type": str(run.get("trigger_type") or "manual"),
-    }
-    if progress_text:
-        summary["progress_text"] = progress_text
-    return {
-        "intent": "scheduled_job_run_once",
-        "items": [item],
-        "references": [run_reference],
-        "summary": summary,
-        "tool": "assistant.scheduled_job_run",
-    }
-
-
-def _scheduled_job_run_progress_text(run: dict[str, Any]) -> str | None:
-    result_summary = run.get("result_summary")
-    if not isinstance(result_summary, dict):
-        return None
-    execution_nodes = result_summary.get("execution_nodes")
-    if not isinstance(execution_nodes, dict):
-        return None
-    runner_node = execution_nodes.get("runner_execution")
-    if not isinstance(runner_node, dict):
-        return None
-    runner_status = str(runner_node.get("status") or "").strip()
-    if runner_status not in {"claimed", "queued", "running"}:
-        return None
-    executor_type = str(runner_node.get("executor_type") or "AI 执行器").strip()
-    runner_task_id = str(runner_node.get("runner_task_id") or "").strip()
-    status_labels = {
-        "claimed": "等待 AI 执行器开始执行",
-        "queued": "等待 AI 执行器接单",
-        "running": "AI 执行器执行中",
-    }
-    suffix = f"{executor_type} / {runner_task_id}" if runner_task_id else executor_type
-    return f"{status_labels[runner_status]}：{suffix}"
 
 
 def _ensure_non_blank(value: str | None, field: str) -> str:
