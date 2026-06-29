@@ -67,13 +67,25 @@ class ApiClient:
         self.token = str(token)
         return payload
 
-    def get(self, path: str, query: dict[str, Any] | None = None) -> dict[str, Any]:
+    def get(
+        self,
+        path: str,
+        query: dict[str, Any] | None = None,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         if query:
             path = f"{path}?{urlencode({key: value for key, value in query.items() if value is not None})}"
-        return self.request("GET", path)
+        return self.request("GET", path, extra_headers=headers)
 
-    def post(self, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        return self.request("POST", path, body=body or {})
+    def post(
+        self,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return self.request("POST", path, body=body or {}, extra_headers=headers)
 
     def request(
         self,
@@ -82,6 +94,7 @@ class ApiClient:
         *,
         authenticated: bool = True,
         body: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         data = None if body is None else json.dumps(body).encode("utf-8")
         headers = {"Accept": "application/json", "Connection": "close"}
@@ -91,6 +104,8 @@ class ApiClient:
             if not self.token:
                 raise RegressionError("Authenticated request attempted before login.")
             headers["Authorization"] = f"Bearer {self.token}"
+        if extra_headers:
+            headers.update(extra_headers)
         connection_class = http.client.HTTPSConnection if self._scheme == "https" else http.client.HTTPConnection
         connection = connection_class(self._host, self._port, timeout=self.timeout)
         target = f"{self._base_path}{path}" if self._base_path else path
@@ -149,6 +164,138 @@ def validate_version_dashboard_blocker_actions(blockers: list[dict[str, Any]]) -
         _assert(blocker.get("action_target_type"), f"Version dashboard blocker missed action_target_type: {blocker}")
         _assert(blocker.get("action_target_id"), f"Version dashboard blocker missed action_target_id: {blocker}")
         _assert(blocker.get("resolution_hint"), f"Version dashboard blocker missed resolution_hint: {blocker}")
+
+
+def validate_ai_executor_runner_reliability(
+    client: ApiClient,
+    *,
+    repo_path: Path,
+    slug: str,
+) -> StepResult:
+    client.get("/api/system/plugin-marketplace")
+    runner_token = f"runner-lease-{slug}"
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        {
+            "executor_types": ["openclaw"],
+            "heartbeat_timeout_seconds": 30,
+            "name": f"全链路 Runner 租约 {slug}",
+            "protocol": "runner_polling",
+            "runner_token": runner_token,
+            "workspace_roots": [str(repo_path)],
+        },
+    )
+    runner_headers = {"X-Runner-Token": runner_token}
+    client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
+        {"metadata": {"source": "full_chain_regression"}},
+        headers=runner_headers,
+    )
+
+    code_suffix = slug.replace("-", "_")
+    connection = client.post(
+        "/api/system/plugin-connections",
+        {
+            "auth_type": "none",
+            "endpoint_url": "runner://ai-executor",
+            "environment": "dev",
+            "name": f"全链路 Runner 连接 {slug}",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "query": {
+                    "executor_type": "openclaw",
+                    "instruction_timeout_seconds": 3600,
+                    "lease_timeout_seconds": 1,
+                    "max_reclaim_count": 1,
+                    "runner_id": runner["id"],
+                    "workspace_root": str(repo_path),
+                }
+            },
+            "status": "active",
+        },
+    )
+    action = client.post(
+        "/api/system/plugin-actions",
+        {
+            "action_type": "mcp_tool",
+            "code": f"full_chain_runner_lease_{code_suffix}",
+            "connection_id": connection["id"],
+            "name": f"全链路 Runner 租约恢复 {slug}",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "instruction": "执行一次全链路回归 Runner 租约检测，不需要真实修改仓库。",
+                "tool_name": "ai_executor.run_instruction",
+            },
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+    )
+    invoked = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        {"input_payload": {"source": "full-chain-runner-reliability"}},
+    )
+    task_id = str(invoked["response_summary"]["json"]["runner_task_id"])
+
+    first_claim = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        {"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers=runner_headers,
+    )
+    first_claim_task = first_claim.get("task") or {}
+    _assert(first_claim_task.get("id") == task_id, f"Runner did not claim expected task: {first_claim}")
+    reliability = (first_claim_task.get("request_config") or {}).get("reliability") or {}
+    _assert(
+        int(reliability.get("lease_timeout_seconds") or 0) == 1,
+        f"Runner task lease timeout was not persisted: {first_claim_task}",
+    )
+
+    requeue_scan = client.post(
+        "/api/system/ai-executor-tasks/timeout-scan",
+        {"now": "2099-01-01T00:00:00+00:00"},
+    )
+    _assert(task_id in set(requeue_scan.get("requeued_task_ids") or []), f"Runner task was not requeued: {requeue_scan}")
+    requeued_task = next((task for task in requeue_scan.get("tasks", []) if task.get("id") == task_id), {})
+    _assert(requeued_task.get("status") == "queued", f"Requeued runner task did not return to queued: {requeued_task}")
+    requeued_reliability = (requeued_task.get("request_config") or {}).get("reliability") or {}
+    _assert(
+        int(requeued_reliability.get("reclaim_count") or 0) == 1,
+        f"Runner task reclaim count was not incremented: {requeued_task}",
+    )
+
+    second_claim = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        {"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers=runner_headers,
+    )
+    _assert(
+        (second_claim.get("task") or {}).get("id") == task_id,
+        f"Runner did not reclaim expected task: {second_claim}",
+    )
+
+    dead_letter_scan = client.post(
+        "/api/system/ai-executor-tasks/timeout-scan",
+        {"now": "2099-01-01T00:00:00+00:00"},
+    )
+    _assert(
+        task_id in set(dead_letter_scan.get("dead_letter_task_ids") or []),
+        f"Runner task was not moved to dead letter: {dead_letter_scan}",
+    )
+    dead_letter_task = next((task for task in dead_letter_scan.get("tasks", []) if task.get("id") == task_id), {})
+    _assert(dead_letter_task.get("status") == "dead_letter", f"Runner task status is not dead_letter: {dead_letter_task}")
+    _assert(
+        dead_letter_task.get("error_code") == "AI_EXECUTOR_TASK_LEASE_EXPIRED",
+        f"Runner dead letter error code is unexpected: {dead_letter_task}",
+    )
+
+    dead_letter_tasks = client.get(
+        "/api/system/ai-executor-tasks",
+        {"page": 1, "page_size": 10, "status": "dead_letter"},
+    )
+    _assert_contains(_ids(dead_letter_tasks.get("items", [])), task_id, "Runner dead letter task missing from task list")
+    task_logs = client.get(f"/api/system/ai-executor-tasks/{task_id}/logs")
+    log_levels = [entry.get("level") for entry in task_logs.get("logs", [])]
+    _assert("warning" in log_levels and "error" in log_levels, f"Runner lease logs are incomplete: {task_logs}")
+    return StepResult("runner_reliability", f"{task_id} / requeued=1 / dead_letter=1")
 
 
 def _git(args: list[str], cwd: Path, *, env: dict[str, str] | None = None) -> None:
@@ -542,6 +689,13 @@ def run_regression(
         StepResult(
             "inspection_writeback",
             f"bugs={len(report_bug_ids)}, tasks={len(report_task_ids)}",
+        )
+    )
+    results.append(
+        validate_ai_executor_runner_reliability(
+            client,
+            repo_path=repo_path,
+            slug=slug,
         )
     )
 
