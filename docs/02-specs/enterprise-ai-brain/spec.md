@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.686 |
+| 功能版本 | v1.1.687 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.687 | 2026-06-29 | AI 执行器 Runner 服务继续拆大文件：常量抽取到 `ai_executor_runner_constants`，安装包构造抽取到 `ai_executor_runner_packages`，`ai_executor_runners.py` 纳入 2800 行架构守护 | Codex |
 | v1.1.686 | 2026-06-29 | 代码巡检风险接受补齐责任人与到期治理：`accepted_risk` 申请必须携带到期时间，finding 持久化责任人和到期时间，详情页提供独立接受风险入口，过期接受风险重新进入报告详情和提交人治理待办 | Codex |
 | v1.1.685 | 2026-06-29 | 工程拆大文件增加行数守护门禁：对 `scheduled_jobs.py`、`plugins.py`、`assistant_references.py`、`assistant_chat.py` 和 `services/aiBrain.ts` 固化 2800 行预算，防止领域入口文件重新膨胀 | Codex |
 | v1.1.684 | 2026-06-29 | 真实全链路回归脚本补齐代码巡检提交人治理待办校验：同产品同仓库 dashboard 必须返回提交人闭环状态、活跃严重问题、Bug 覆盖和整改任务覆盖 | Codex |
@@ -2034,7 +2035,7 @@ suggested → rejected
 - v1 MVP 覆盖“产品配置 → GitLab/GitHub 代码库绑定 → 新增需求 → 审批通过 → 生成产品详细设计任务 → 人工确认 → 技术方案任务 → 选择 MR/PR → 拉取 diff 快照 → 生成 code_review 报告 → 人工确认并内部归档 → 知识沉淀审核 → 审计可查”的黄金路径。
 - v1.2 扩展覆盖“用户洞察采集 → AI 迭代规划建议 → 产品负责人确认 → 转正式需求”的产品迭代路径。
 - `scripts/full_chain_regression.py` 是本地 PostgreSQL 运行态的真实全链路回归入口，必须通过公开 API 串联产品、版本、用户反馈转需求、批量排期、AI 任务启动、Review、知识沉淀、知识索引健康、版本代码分支、本地完整代码巡检、Bug/整改任务写回、版本总览、统一 full-chain、团队看板和 AI 助手引用。脚本成功不应只代表接口调用返回 2xx，还必须校验知识沉淀采纳后的 `knowledge_document_id`、索引健康可检索文档/chunk/召回模式、知识检索命中结果、本地完整扫描 finding、提交人归因、治理覆盖率、派生 Bug/整改任务回写 ID、质量门禁失败在运行摘要、报告详情和治理概览 `quality_gate_violations` 中可追踪、治理概览 `committer_governance` 能按提交人返回闭环状态、活跃严重问题、Bug 覆盖和整改任务覆盖、版本总览状态分布、代码巡检报告与派生 Bug 阻塞项的动作标签/目标主体/解除条件、代码巡检报告主体解析回 full-chain、团队看板产品维度计数，以及助手会话历史中保留需求、版本和代码巡检引用与工具结果。默认使用显式 `deterministic` 任务启动模式以避免研发执行器 Runner 或外部模型网关波动；如需验收模型网关，可通过脚本参数切换为 `model_gateway`。
-- `apps/api/tests/test_architecture_guardrails.py` 固化已拆分领域入口文件的行数预算：`scheduled_jobs.py`、`plugins.py`、`assistant_references.py`、`assistant_chat.py` 和前端 `services/aiBrain.ts` 均不得超过 2800 行；超过时必须继续拆分到领域模块或组件后再合入。
+- `apps/api/tests/test_architecture_guardrails.py` 固化已拆分领域入口文件的行数预算：`ai_executor_runners.py`、`scheduled_jobs.py`、`plugins.py`、`assistant_references.py`、`assistant_chat.py` 和前端 `services/aiBrain.ts` 均不得超过 2800 行；超过时必须继续拆分到领域模块或组件后再合入。AI 执行器 Runner 的常量、安装包构造和运行任务编排应保持独立模块边界，避免 Runner 安装包文案或平台差异继续膨胀主服务。
 - 自动化测试、发布评估和上线后分析按后续阶段补充 E2E。
 
 ### 提交前真实网页界面验证门禁
