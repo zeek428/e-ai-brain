@@ -218,6 +218,87 @@ def validate_version_dashboard_blocker_actions(blockers: list[dict[str, Any]]) -
         _assert(blocker.get("resolution_hint"), f"Version dashboard blocker missed resolution_hint: {blocker}")
 
 
+def validate_version_dashboard_branch_quality(
+    dashboard: dict[str, Any],
+    *,
+    branch_config_id: str,
+    branch_name: str,
+    expected_status: str,
+    report_id: str | None = None,
+) -> dict[str, Any]:
+    summary = dashboard.get("summary") or {}
+    branch_quality_governance = dashboard.get("branch_quality_governance") or []
+    _assert(
+        isinstance(branch_quality_governance, list),
+        f"Version dashboard branch quality governance is not a list: {branch_quality_governance}",
+    )
+    branch_quality = next(
+        (
+            item
+            for item in branch_quality_governance
+            if str(item.get("branch_config_id")) == branch_config_id
+            or str(item.get("branch")) == branch_name
+        ),
+        None,
+    )
+    _assert(
+        branch_quality is not None,
+        f"Version dashboard missed branch quality governance row for {branch_name}: {branch_quality_governance}",
+    )
+    _assert(
+        branch_quality.get("branch") == branch_name,
+        f"Version dashboard branch quality row used wrong branch: {branch_quality}",
+    )
+    _assert(
+        branch_quality.get("status") == expected_status,
+        f"Version dashboard branch quality status mismatch: {branch_quality}",
+    )
+    if expected_status == "action_required":
+        _assert(
+            int(summary.get("branch_quality_action_required") or 0) >= 1,
+            f"Version dashboard missed action-required branch quality summary: {summary}",
+        )
+        _assert(
+            int(branch_quality.get("quality_gate_failed_report_count") or 0) >= 1,
+            f"Version dashboard branch quality missed failed quality gate report count: {branch_quality}",
+        )
+        _assert(
+            int(branch_quality.get("quality_gate_violation_count") or 0) >= 1,
+            f"Version dashboard branch quality missed quality gate violation count: {branch_quality}",
+        )
+    if expected_status == "pending_scan":
+        _assert(
+            int(summary.get("branch_quality_pending_scan") or 0) >= 1,
+            f"Version dashboard missed pending-scan branch quality summary: {summary}",
+        )
+        _assert(
+            int(branch_quality.get("report_count") or 0) == 0,
+            f"Version dashboard pending-scan branch unexpectedly had reports: {branch_quality}",
+        )
+    if report_id is not None:
+        _assert(
+            str(branch_quality.get("latest_report_id")) == report_id,
+            f"Version dashboard branch quality missed latest report id {report_id}: {branch_quality}",
+        )
+        _assert(
+            int(branch_quality.get("report_count") or 0) >= 1,
+            f"Version dashboard branch quality missed report count: {branch_quality}",
+        )
+    for field_name in [
+        "created_bug_count",
+        "created_task_count",
+        "finding_count",
+        "severe_finding_count",
+        "uncovered_severe_bug_count",
+        "uncovered_severe_task_count",
+    ]:
+        _assert(
+            field_name in branch_quality,
+            f"Version dashboard branch quality missed {field_name}: {branch_quality}",
+        )
+    return branch_quality
+
+
 def validate_runner_token_rotation(
     client: ApiClient,
     *,
@@ -896,6 +977,18 @@ def validate_version_dashboard_quick_regression(
         branch_blockers,
         f"Version dashboard quick check missed branch blocker: {dashboard_blockers}",
     )
+    branch_quality = validate_version_dashboard_branch_quality(
+        dashboard,
+        branch_config_id=branch_config["id"],
+        branch_name=version_branch,
+        expected_status="pending_scan",
+    )
+    results.append(
+        StepResult(
+            "version_dashboard_branch_quality",
+            f"{branch_quality['status']} / pending_scan={dashboard['summary'].get('branch_quality_pending_scan')}",
+        )
+    )
     results.append(
         StepResult(
             "version_dashboard_quick",
@@ -1325,6 +1418,13 @@ def run_regression(
         report_id,
         "Version dashboard missed code inspection report row",
     )
+    branch_quality = validate_version_dashboard_branch_quality(
+        dashboard,
+        branch_config_id=branch_config["id"],
+        branch_name=version_branch,
+        expected_status="action_required",
+        report_id=report_id,
+    )
     _assert_contains(
         _ids(dashboard.get("knowledge_deposits", [])),
         deposit["id"],
@@ -1388,7 +1488,11 @@ def run_regression(
     results.append(
         StepResult(
             "version_dashboard",
-            f"blockers={dashboard['summary']['blockers']}, blocker_actions={len(dashboard_blockers)}",
+            (
+                f"blockers={dashboard['summary']['blockers']}, "
+                f"blocker_actions={len(dashboard_blockers)}, "
+                f"branch_quality={branch_quality['status']}"
+            ),
         )
     )
 

@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本补齐迭代版本总览分支质量治理门禁：`full` 校验待治理分支质量，`version-dashboard` 快速套件校验待巡检分支质量，确保 `branch_quality_governance` 和 summary 分支治理计数不断链。
 - 迭代版本总览分支质量治理：`GET /api/product-versions/{version_id}/dashboard` 新增 `branch_quality_governance` 和 summary 分支治理计数，版本总览页面展示分支巡检报告、严重问题、Bug/整改覆盖、质量门禁失败和最近报告。
 - 代码巡检分支治理待办：`GET /api/governance/code-inspections/dashboard` 新增 `branch_governance` 和治理压力分支计数，代码巡检页展示分支闭环状态、质量门禁失败、Bug/整改覆盖、待审批忽略和最近报告。
 - AI 助手模型网关 helper 拆分：新增 `assistant_chat_gateway` 承接 Chat 模型配置选择、上下文消息组装、请求取消中断、响应解析和模型调用日志，并由架构守护防止模型网关调用逻辑回流 `assistant_chat.py`。
