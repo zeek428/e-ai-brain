@@ -64,6 +64,7 @@ export function blockerSubjectType(sourceType: string) {
     sourceType === 'bug' ||
     sourceType === 'code_inspection_report' ||
     sourceType === 'jenkins_release' ||
+    sourceType === 'product_version' ||
     sourceType === 'product_version_branch_config' ||
     sourceType === 'requirement'
   ) {
@@ -103,6 +104,9 @@ export function blockerActionHref(
       release_id: targetId,
       version_id: versionId,
     });
+  }
+  if (targetType === 'product_version') {
+    return internalHref('/governance/devops', { version_id: targetId });
   }
   return undefined;
 }

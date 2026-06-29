@@ -409,7 +409,10 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     assert blocker_by_source["bug"]["action_target_type"] == "bug"
     assert "关闭 blocker/critical Bug" in blocker_by_source["bug"]["resolution_hint"]
     assert blocker_by_source["code_inspection_report"]["action_label"] == "治理巡检"
-    assert blocker_by_source["code_inspection_report"]["action_target_id"] == "code_inspection_report_dashboard"
+    assert (
+        blocker_by_source["code_inspection_report"]["action_target_id"]
+        == "code_inspection_report_dashboard"
+    )
     assert "重新扫描" in blocker_by_source["code_inspection_report"]["resolution_hint"]
     assert blocker_by_source["product_version_branch_config"]["action_label"] == "维护分支"
     assert blocker_by_source["jenkins_release"]["action_label"] == "排查发布"
@@ -420,3 +423,56 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "bug_version_dashboard_from_inspection",
     }
     assert data["bug_status_counts"] == [{"count": 2, "status": "open"}]
+
+
+def test_product_version_dashboard_blocks_release_without_successful_release_record():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, "version-dashboard-release-evidence")
+    version = create_version(headers, product["id"], "2026-release", status="active")
+    requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "发布证据需求", version["id"])["id"],
+    )
+    set_requirement_status(requirement["id"], "ready_for_release")
+    set_version_status(version["id"], "testing")
+
+    response = client.get(f"/api/product-versions/{version['id']}/dashboard", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status_impact"]["target_status"] == "released"
+    assert data["summary"]["blockers"] == 1
+    assert data["blockers"] == [
+        {
+            "action_label": "排查发布",
+            "action_target_id": version["id"],
+            "action_target_type": "product_version",
+            "id": None,
+            "reason": "缺少成功发布记录，不能确认版本已完成发布。",
+            "resolution_hint": "登记或同步成功发布记录后解除发布阻塞。",
+            "severity": "high",
+            "source_type": "jenkins_release",
+            "title": "缺少成功发布记录",
+        }
+    ]
+
+    app.state.store.jenkins_release_records["release_success"] = {
+        "build_id": "99",
+        "created_at": "2026-06-04T10:00:00+00:00",
+        "id": "release_success",
+        "job_name": "deploy-release",
+        "product_id": product["id"],
+        "status": "success",
+        "version_id": version["id"],
+    }
+
+    response_with_release = client.get(
+        f"/api/product-versions/{version['id']}/dashboard",
+        headers=headers,
+    )
+
+    assert response_with_release.status_code == 200
+    data_with_release = response_with_release.json()["data"]
+    assert data_with_release["summary"]["blockers"] == 0
+    assert data_with_release["blockers"] == []

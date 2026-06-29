@@ -736,6 +736,17 @@ describe('IterationVersionsPage', () => {
                 source_type: 'product_version_branch_config',
                 title: 'release/2026-dashboard',
               },
+              {
+                action_label: '排查发布',
+                action_target_id: 'version_dashboard',
+                action_target_type: 'product_version',
+                id: null,
+                reason: '缺少成功发布记录，不能确认版本已完成发布。',
+                resolution_hint: '登记或同步成功发布记录后解除发布阻塞。',
+                severity: 'high',
+                source_type: 'jenkins_release',
+                title: '缺少成功发布记录',
+              },
             ],
             branch_configs: [
               {
@@ -838,7 +849,7 @@ describe('IterationVersionsPage', () => {
               ],
             },
             summary: {
-              blockers: 2,
+              blockers: 3,
               branch_configs: 1,
               bugs: 1,
               code_inspection_reports: 1,
@@ -898,8 +909,8 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('下一阶段：测试中')).toBeInTheDocument();
     expect(screen.getByText('交付健康摘要')).toBeInTheDocument();
     expect(screen.getByText('发布准入')).toBeInTheDocument();
-    expect(screen.getByText('2 个阻塞项')).toBeInTheDocument();
-    expect(screen.getByText('阻塞来源：Bug 1、代码分支 1。')).toBeInTheDocument();
+    expect(screen.getByText('3 个阻塞项')).toBeInTheDocument();
+    expect(screen.getByText('阻塞来源：Bug 1、代码分支 1、发布记录 1。')).toBeInTheDocument();
     expect(screen.getByText('质量风险')).toBeInTheDocument();
     expect(screen.getByText('2 个严重风险')).toBeInTheDocument();
     expect(screen.getByText('严重 Bug 1，严重巡检 1，未关闭 Bug 1。')).toBeInTheDocument();
@@ -922,6 +933,7 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('解除条件').length).toBeGreaterThan(0);
     expect(screen.getByText('修复、验证并关闭 blocker/critical Bug 后解除发布阻塞。')).toBeInTheDocument();
     expect(screen.getByText('创建或推进版本分支状态，使其满足测试/发布准入要求。')).toBeInTheDocument();
+    expect(screen.getByText('登记或同步成功发布记录后解除发布阻塞。')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '处理 Bug' })).toHaveAttribute(
       'href',
       '/delivery/bugs?bug_id=bug_dashboard',
@@ -929,6 +941,10 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByRole('link', { name: '维护分支' })).toHaveAttribute(
       'href',
       '/delivery/versions?branch_config_id=version_branch_dashboard&version_id=version_dashboard',
+    );
+    expect(screen.getByRole('link', { name: '排查发布' })).toHaveAttribute(
+      'href',
+      '/governance/devops?version_id=version_dashboard',
     );
     expect(screen.getAllByText('发布阻塞 Bug').length).toBeGreaterThan(0);
     expect(screen.getAllByText('release/2026-dashboard').length).toBeGreaterThan(0);

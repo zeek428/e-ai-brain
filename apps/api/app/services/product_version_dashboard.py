@@ -58,21 +58,28 @@ def _blocker_action_context(source_type: str) -> tuple[str, str]:
 
 def _dashboard_blocker(
     *,
+    action_label: str | None = None,
+    action_target_id: Any | None = None,
+    action_target_type: str | None = None,
     blocker_id: Any,
     reason: str,
+    resolution_hint: str | None = None,
     severity: str,
     source_type: str,
     title: Any,
 ) -> dict[str, Any]:
-    action_label, resolution_hint = _blocker_action_context(source_type)
+    default_action_label, default_resolution_hint = _blocker_action_context(source_type)
     blocker_id_text = str(blocker_id) if blocker_id is not None else None
+    action_target_id_text = (
+        str(action_target_id) if action_target_id is not None else blocker_id_text
+    )
     return {
-        "action_label": action_label,
-        "action_target_id": blocker_id_text,
-        "action_target_type": source_type,
+        "action_label": action_label or default_action_label,
+        "action_target_id": action_target_id_text,
+        "action_target_type": action_target_type or source_type,
         "id": blocker_id_text,
         "reason": reason,
-        "resolution_hint": resolution_hint,
+        "resolution_hint": resolution_hint or default_resolution_hint,
         "severity": severity,
         "source_type": source_type,
         "title": title,
@@ -124,7 +131,12 @@ def _branch_configs_for_version(
     else:
         items = list_product_version_branch_config_records(current_store, version_id)
     result = [_public_branch_config(item, current_store) for item in items]
-    result.sort(key=lambda item: (item.get("repository_name") or "", item.get("working_branch") or ""))
+    result.sort(
+        key=lambda item: (
+            item.get("repository_name") or "",
+            item.get("working_branch") or "",
+        )
+    )
     return result
 
 
@@ -139,7 +151,10 @@ def _version_requirements(current_store: Any, version_id: str) -> list[dict[str,
         for requirement in _memory_records(current_store, "requirements")
         if requirement.get("version_id") == version_id
     ]
-    requirements.sort(key=lambda item: (item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    requirements.sort(
+        key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+        reverse=True,
+    )
     return requirements
 
 
@@ -156,7 +171,10 @@ def _version_tasks(
             continue
         if task.get("version_id") == version_id or task.get("requirement_id") in requirement_ids:
             tasks.append(task_summary_projection(task, current_store))
-    tasks.sort(key=lambda item: (item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    tasks.sort(
+        key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+        reverse=True,
+    )
     return tasks
 
 
@@ -191,7 +209,10 @@ def _version_bugs(
         or bug.get("related_task_id") in task_ids
         or str(bug.get("id") or "") in report_bug_ids
     ]
-    bugs.sort(key=lambda item: (item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    bugs.sort(
+        key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+        reverse=True,
+    )
     return bugs, []
 
 
@@ -224,7 +245,10 @@ def _version_code_inspection_reports(
             if report_key not in branch_keys:
                 continue
         reports.append(dict(report))
-    reports.sort(key=lambda item: (item.get("created_at") or item.get("scan_finished_at") or ""), reverse=True)
+    reports.sort(
+        key=lambda item: item.get("created_at") or item.get("scan_finished_at") or "",
+        reverse=True,
+    )
     return reports, []
 
 
@@ -234,7 +258,12 @@ def _version_releases(current_store: Any, version_id: str) -> list[dict[str, Any
         for release in _memory_records(current_store, "jenkins_release_records")
         if release.get("version_id") == version_id
     ]
-    releases.sort(key=lambda item: (item.get("deployed_at") or item.get("started_at") or item.get("created_at") or ""), reverse=True)
+    releases.sort(
+        key=lambda item: (
+            item.get("deployed_at") or item.get("started_at") or item.get("created_at") or ""
+        ),
+        reverse=True,
+    )
     return releases
 
 
@@ -243,6 +272,17 @@ def _quality_gate_failed(report: dict[str, Any]) -> bool:
     if not isinstance(quality_gate, dict):
         return False
     return str(quality_gate.get("status") or "").lower() == "failed"
+
+
+def _successful_release(release: dict[str, Any]) -> bool:
+    return str(release.get("status") or "").lower() in {
+        "deployed",
+        "passed",
+        "released",
+        "success",
+        "successful",
+        "succeeded",
+    }
 
 
 def _branch_blockers(
@@ -283,6 +323,7 @@ def _build_blockers(
     releases: list[dict[str, Any]],
     status_impact: dict[str, Any] | None,
     target_status: str | None,
+    version_id: str,
 ) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     if status_impact is not None:
@@ -329,6 +370,21 @@ def _build_blockers(
                     title=release.get("job_name") or release.get("build_id") or release.get("id"),
                 )
             )
+    if target_status == "released" and not any(
+        _successful_release(release) for release in releases
+    ):
+        blockers.append(
+            _dashboard_blocker(
+                action_target_id=version_id,
+                action_target_type="product_version",
+                blocker_id=None,
+                reason="缺少成功发布记录，不能确认版本已完成发布。",
+                resolution_hint="登记或同步成功发布记录后解除发布阻塞。",
+                severity="high",
+                source_type="jenkins_release",
+                title="缺少成功发布记录",
+            )
+        )
     blockers.extend(_branch_blockers(branch_configs=branch_configs, target_status=target_status))
     return blockers
 
@@ -391,6 +447,7 @@ def product_version_dashboard_response(
         releases=releases,
         status_impact=status_impact,
         target_status=next_status,
+        version_id=version_id,
     )
     open_bug_count = sum(1 for bug in bugs if bug.get("status") in OPEN_BUG_STATUSES)
     severe_bug_count = sum(

@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 版本总览发布准入增强：测试中版本准备推进到已发布时，若缺少成功发布记录，`GET /api/product-versions/{version_id}/dashboard` 返回可处理的发布阻塞项，前端“排查发布”跳转到按版本筛选的发布记录。
 - 定时作业服务访问与运行 helper 拆分：新增 `apps/api/app/services/scheduled_job_access.py` 承接管理/运行权限、产品范围过滤和插件调用授权用户拼装，新增 `apps/api/app/services/scheduled_job_runtime.py` 承接时区解析、动态输入映射和异常摘要，并将 `scheduled_jobs.py` 架构守护预算收紧到 2600 行。
 - 插件服务连接配置 helper 拆分：新增 `apps/api/app/services/plugin_connection_config.py`，承接 GitHub/GitLab 连接地址解析、请求配置规范化和 GitHub 认证校验，并将 `plugins.py` 架构守护预算收紧到 2600 行。
 - 前端系统管理 client 拆分：新增 `apps/web/src/services/systemManagementClient.ts`，承接用户、角色、菜单、权限矩阵和用户权限诊断 API，`services/aiBrain.ts` 保持兼容导出并将前端服务 barrel 守护预算收紧到 2400 行。
