@@ -101,6 +101,10 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         'action_target_type") == "product_version"',
         "release_evidence_blockers",
         "validate_ai_executor_runner_reliability",
+        "validate_runner_health_alert_projection",
+        "runner_never_connected",
+        "runner_health_alert",
+        "health_alert",
         "/api/system/ai-executor-tasks/claim",
         "/api/system/ai-executor-tasks/timeout-scan",
         "requeued_task_ids",
@@ -176,6 +180,8 @@ def test_full_chain_regression_script_validates_runner_token_rotation():
         "old runner token was still accepted after rotation",
         "runner_token_rotation",
         "token_version",
+        "Runner heartbeat with rotated token did not restore online health",
+        "Runner heartbeat with rotated token still returned health_alert",
     ]:
         assert marker in content
 

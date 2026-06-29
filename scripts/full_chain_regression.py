@@ -352,10 +352,39 @@ def validate_runner_token_rotation(
         heartbeat.get("last_heartbeat_at"),
         f"Runner heartbeat with rotated token did not update heartbeat: {heartbeat}",
     )
+    _assert(
+        heartbeat.get("health_status") == "online",
+        f"Runner heartbeat with rotated token did not restore online health: {heartbeat}",
+    )
+    _assert(
+        heartbeat.get("health_alert") is None,
+        f"Runner heartbeat with rotated token still returned health_alert: {heartbeat}",
+    )
     return (
         new_runner_headers,
         StepResult("runner_token_rotation", f"token_version={rotated.get('token_version')}"),
     )
+
+
+def validate_runner_health_alert_projection(runner: dict[str, Any]) -> StepResult:
+    alert = runner.get("health_alert") or {}
+    _assert(
+        runner.get("health_status") == "never_connected",
+        f"New Runner did not start as never_connected: {runner}",
+    )
+    _assert(
+        alert.get("code") == "runner_never_connected",
+        f"New Runner missed never_connected health_alert: {runner}",
+    )
+    _assert(
+        alert.get("severity") == "warning",
+        f"New Runner health_alert severity is unexpected: {runner}",
+    )
+    _assert(
+        "启动本地 Runner" in str(alert.get("message") or ""),
+        f"New Runner health_alert missed remediation message: {runner}",
+    )
+    return StepResult("runner_health_alert", str(alert.get("code")))
 
 
 def validate_ai_executor_runner_reliability(
@@ -377,11 +406,20 @@ def validate_ai_executor_runner_reliability(
             "workspace_roots": [str(repo_path)],
         },
     )
+    runner_health_alert_result = validate_runner_health_alert_projection(runner)
     runner_headers = {"X-Runner-Token": runner_token}
-    client.post(
+    initial_heartbeat = client.post(
         f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
         {"metadata": {"source": "full_chain_regression"}},
         headers=runner_headers,
+    )
+    _assert(
+        initial_heartbeat.get("health_status") == "online",
+        f"Runner initial heartbeat did not restore online health: {initial_heartbeat}",
+    )
+    _assert(
+        initial_heartbeat.get("health_alert") is None,
+        f"Runner initial heartbeat still returned health_alert: {initial_heartbeat}",
     )
     runner_headers, token_rotation_result = validate_runner_token_rotation(
         client,
@@ -494,6 +532,7 @@ def validate_ai_executor_runner_reliability(
     log_levels = [entry.get("level") for entry in task_logs.get("logs", [])]
     _assert("warning" in log_levels and "error" in log_levels, f"Runner lease logs are incomplete: {task_logs}")
     return [
+        runner_health_alert_result,
         token_rotation_result,
         StepResult("runner_reliability", f"{task_id} / requeued=1 / dead_letter=1"),
     ]
