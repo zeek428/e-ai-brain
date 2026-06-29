@@ -127,3 +127,22 @@ def test_assistant_chat_uses_split_scheduled_job_run_module():
     assert "def scheduled_job_run_tool_result(" in helper_source
     assert "def _scheduled_job_references_from_explicit_mentions(" not in entrypoint_source
     assert "def _scheduled_job_run_tool_result(" not in entrypoint_source
+
+
+def test_assistant_chat_uses_split_model_gateway_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/assistant_chat_gateway.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/assistant_chat.py"
+
+    assert helper_path.exists(), (
+        "Move assistant model gateway request assembly, cancellation and logging to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "call_model_gateway_for_assistant_chat as _call_model_gateway_for_assistant_chat" in (
+        entrypoint_source
+    )
+    assert "def call_model_gateway_for_assistant_chat(" in helper_source
+    assert "def interrupt_assistant_chat_gateway_run(" in helper_source
+    assert "def _read_model_gateway_response_payload(" not in entrypoint_source
+    assert "def _model_gateway_chat_completions_url(" not in entrypoint_source
+    assert "httpx.Client(" not in entrypoint_source

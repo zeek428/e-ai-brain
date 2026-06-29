@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手模型网关 helper 拆分：新增 `assistant_chat_gateway` 承接 Chat 模型配置选择、上下文消息组装、请求取消中断、响应解析和模型调用日志，并由架构守护防止模型网关调用逻辑回流 `assistant_chat.py`。
 - AI 助手知识引用 helper 拆分：新增 `assistant_knowledge_references` 承接知识空间、目录、文档、chunk 候选、可读范围和模型注入上下文，并由架构守护防止知识注入逻辑回流 `assistant_references.py`。
 - AI 助手定时作业 run-once helper 拆分：新增 `assistant_scheduled_job_run` 承接显式 @ 提及解析、执行权限提示、周反馈草案兜底和运行结果投影，并由架构守护防止 run-once 展示逻辑回流 `assistant_chat.py`。
 - 插件服务公开投影拆分：新增 `plugin_projection` 承接插件版本元数据、公开响应投影和调用请求摘要脱敏，并由架构守护防止展示脱敏逻辑回流 `plugins.py`。
