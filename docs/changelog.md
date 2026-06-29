@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本补齐版本总览阻塞项治理动作门禁：版本总览 blockers 必须带动作标签、目标主体和解除条件，并覆盖代码巡检报告与派生 Bug 处理入口。
 - 迭代版本总览阻塞项治理动作：`GET /api/product-versions/{version_id}/dashboard` 的 blockers 增加处理动作、目标主体和解除条件，前端阻塞项表新增“解除条件”和“处理入口”，可直接跳转处理需求、Bug、代码巡检、版本分支或发布记录。
 - 代码巡检增量扫描快照闭环：报告表、详情接口和前端弹窗补齐 `incremental_from_commit`、`incremental_file_count` 与全量/增量扫描范围展示，确保质量门禁和治理结论可追溯到实际扫描范围。
 - 真实全链路回归脚本补齐知识索引健康门禁：知识沉淀采纳后验证 `knowledge_document_id`、`GET /api/knowledge/index-health` 可检索文档/chunk/召回模式，以及 `POST /api/knowledge/search` 命中沉淀文档。

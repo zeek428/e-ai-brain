@@ -475,7 +475,32 @@ def run_regression(
     )
     _assert(report_bug_ids.intersection(_ids(dashboard.get("bugs", []))), "Version dashboard missed code-inspection Bug row.")
     _assert(_status_count(dashboard.get("bug_status_counts", []), "open") >= 1, "Version dashboard missed open Bug count.")
-    results.append(StepResult("version_dashboard", f"blockers={dashboard['summary']['blockers']}"))
+    dashboard_blockers = dashboard.get("blockers", [])
+    _assert(dashboard["summary"]["blockers"] >= 1, "Version dashboard did not expose blockers.")
+    _assert(dashboard_blockers, "Version dashboard blocker list is empty.")
+    for blocker in dashboard_blockers:
+        _assert(blocker.get("action_label"), f"Version dashboard blocker missed action_label: {blocker}")
+        _assert(blocker.get("action_target_type"), f"Version dashboard blocker missed action_target_type: {blocker}")
+        _assert(blocker.get("action_target_id"), f"Version dashboard blocker missed action_target_id: {blocker}")
+        _assert(blocker.get("resolution_hint"), f"Version dashboard blocker missed resolution_hint: {blocker}")
+    inspection_blockers = [
+        blocker
+        for blocker in dashboard_blockers
+        if blocker.get("source_type") == "code_inspection_report" and str(blocker.get("action_target_id")) == report_id
+    ]
+    _assert(inspection_blockers, "Version dashboard missed actionable code inspection blocker.")
+    bug_blockers = [
+        blocker
+        for blocker in dashboard_blockers
+        if blocker.get("source_type") == "bug" and str(blocker.get("action_target_id")) in report_bug_ids
+    ]
+    _assert(bug_blockers, "Version dashboard missed actionable Bug blocker.")
+    results.append(
+        StepResult(
+            "version_dashboard",
+            f"blockers={dashboard['summary']['blockers']}, blocker_actions={len(dashboard_blockers)}",
+        )
+    )
 
     full_chain = client.get(
         "/api/lifecycle/full-chain",
