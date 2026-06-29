@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.779 |
+| 功能版本 | v1.1.780 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.780 | 2026-06-29 | 补充前端系统运维 client 拆分回归：`systemOperationsClient` / `devopsOperationsClient` 拆分后必须保持 `services/aiBrain.ts` 兼容导出；`npm run typecheck`、定时作业、插件、AI 能力配置、研发执行器策略、团队看板和日志监控页面测试覆盖 | Codex |
 | v1.1.779 | 2026-06-29 | 补充定时作业 AI 处理拆分回归：不可检索知识引用拒绝、Skill 输出映射契约 dry-run、AI 生成洞察、代码巡检 AI/结果动作和助手草案确认继续覆盖 `scheduled_job_ai_processing` 拆分后的契约 | Codex |
 | v1.1.778 | 2026-06-29 | 补充定时作业 AI 能力配置拆分回归：AI Skill/Agent 分页查询、包上传、管理员管理、草案确认 PostgreSQL runtime store 和不可检索知识引用拒绝继续覆盖 `scheduled_job_ai_capabilities`、`scheduled_job_store` 拆分后的契约 | Codex |
 | v1.1.777 | 2026-06-29 | 补充 AI 助手引用格式化拆分回归：`assistant_reference_formatting` 覆盖执行诊断链接、定时作业运行标题、定时作业语义匹配、候选按类型均衡合并和权限标签；原引用候选/解析集成测试继续覆盖接口契约 | Codex |

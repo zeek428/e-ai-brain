@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.675 |
+| 功能版本 | v1.1.676 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.676 | 2026-06-29 | 前端系统运维与研发运营 client 继续拆分：新增 `systemOperationsClient` 承接 AI Skill/Agent、定时作业、插件、AI 执行器和研发执行器策略 API，新增 `devopsOperationsClient` 承接日志监控、采集运行和待归属数据 API，`services/aiBrain.ts` 保持兼容导出并降至 2800 行以内 | Codex |
 | v1.1.675 | 2026-06-29 | 定时作业服务 AI 处理链路拆分：知识文档引用校验、Skill 输出契约校验、AI prompts 组装、模型网关 JSON 调用和模型调用审计抽取到 `scheduled_job_ai_processing`，`scheduled_jobs.py` 降至 2800 行以内并继续聚焦作业配置、执行和运行状态落库 | Codex |
 | v1.1.674 | 2026-06-29 | 定时作业服务继续拆分：通用校验抽取到 `scheduled_job_common`，仓储同步/MemoryStore 兼容 helper 抽取到 `scheduled_job_store`，AI Skill/Agent 配置 CRUD 与活跃依赖校验抽取到 `scheduled_job_ai_capabilities`，`scheduled_jobs.py` 聚焦作业配置、执行和运行记录编排 | Codex |
 | v1.1.673 | 2026-06-29 | AI 助手引用服务继续拆分：引用类型元数据、来源模块、URL/标题/摘要格式化、候选合并、语义匹配和权限标签抽取到 `assistant_reference_formatting`，`assistant_references.py` 聚焦候选读取、权限过滤和配置写接口 | Codex |
