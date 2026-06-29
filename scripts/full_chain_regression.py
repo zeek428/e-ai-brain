@@ -17,6 +17,7 @@ from urllib.parse import urlencode, urlparse
 
 DEFAULT_API_BASE_URL = "http://localhost:8000"
 FIXTURE_ROOT = Path(os.getenv("AI_BRAIN_FULL_CHAIN_FIXTURE_ROOT", "/tmp/e-ai-brain-full-chain-fixtures"))
+VERSION_DASHBOARD_BLOCKER_SEVERITIES = {"info", "low", "medium", "high", "critical", "blocker"}
 
 
 class RegressionError(RuntimeError):
@@ -132,6 +133,22 @@ def _status_count(items: list[dict[str, Any]], status: str) -> int:
 
 def _assert_contains(container: set[str], expected: str, message: str) -> None:
     _assert(expected in container, f"{message}: expected {expected}, got {sorted(container)}")
+
+
+def validate_version_dashboard_blocker_actions(blockers: list[dict[str, Any]]) -> None:
+    for blocker in blockers:
+        _assert(blocker.get("source_type"), f"Version dashboard blocker missed source_type: {blocker}")
+        _assert(blocker.get("title"), f"Version dashboard blocker missed title: {blocker}")
+        _assert(blocker.get("reason"), f"Version dashboard blocker missed reason: {blocker}")
+        severity = str(blocker.get("severity") or "").lower()
+        _assert(
+            severity in VERSION_DASHBOARD_BLOCKER_SEVERITIES,
+            f"Version dashboard blocker has unsupported severity: {blocker}",
+        )
+        _assert(blocker.get("action_label"), f"Version dashboard blocker missed action_label: {blocker}")
+        _assert(blocker.get("action_target_type"), f"Version dashboard blocker missed action_target_type: {blocker}")
+        _assert(blocker.get("action_target_id"), f"Version dashboard blocker missed action_target_id: {blocker}")
+        _assert(blocker.get("resolution_hint"), f"Version dashboard blocker missed resolution_hint: {blocker}")
 
 
 def _git(args: list[str], cwd: Path, *, env: dict[str, str] | None = None) -> None:
@@ -557,11 +574,7 @@ def run_regression(
     dashboard_blockers = dashboard.get("blockers", [])
     _assert(dashboard["summary"]["blockers"] >= 1, "Version dashboard did not expose blockers.")
     _assert(dashboard_blockers, "Version dashboard blocker list is empty.")
-    for blocker in dashboard_blockers:
-        _assert(blocker.get("action_label"), f"Version dashboard blocker missed action_label: {blocker}")
-        _assert(blocker.get("action_target_type"), f"Version dashboard blocker missed action_target_type: {blocker}")
-        _assert(blocker.get("action_target_id"), f"Version dashboard blocker missed action_target_id: {blocker}")
-        _assert(blocker.get("resolution_hint"), f"Version dashboard blocker missed resolution_hint: {blocker}")
+    validate_version_dashboard_blocker_actions(dashboard_blockers)
     inspection_blockers = [
         blocker
         for blocker in dashboard_blockers
