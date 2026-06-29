@@ -7,6 +7,7 @@ MAX_DOMAIN_FILE_LINES = 2800
 
 DOMAIN_FILE_LINE_BUDGETS = {
     "apps/api/app/services/ai_executor_runners.py": MAX_DOMAIN_FILE_LINES,
+    "apps/api/app/core/repositories/authorization.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/assistant_chat.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/assistant_references.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/plugins.py": MAX_DOMAIN_FILE_LINES,

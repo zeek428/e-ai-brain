@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 授权仓储拆大文件：抽出 `authorization_defaults` 承接默认菜单、角色菜单授权、scope 白名单和排序字段，并把 `authorization.py` 纳入 2800 行架构守护。
 - AI 执行器 Runner 服务拆大文件：抽出 `ai_executor_runner_constants` 和 `ai_executor_runner_packages`，将 Runner 常量与安装包构造从主服务拆开，并把 `ai_executor_runners.py` 纳入 2800 行架构守护。
 - 代码巡检风险接受到期治理：`accepted_risk` 忽略申请必须携带到期时间，可记录责任人，详情页新增“接受风险”弹窗并展示责任人与到期时间，过期后在详情 `governance_summary`、治理概览 `rule_governance` 和 `committer_governance` 中标记待复核。
 - 工程拆大文件行数守护：新增 `apps/api/tests/test_architecture_guardrails.py`，对 `scheduled_jobs.py`、`plugins.py`、`assistant_references.py`、`assistant_chat.py` 和 `apps/web/src/services/aiBrain.ts` 固化 2800 行预算，防止已拆分领域入口重新膨胀。
