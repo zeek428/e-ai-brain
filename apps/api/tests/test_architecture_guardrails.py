@@ -31,3 +31,14 @@ def test_split_domain_entrypoints_stay_under_line_budget():
     assert not oversized_files, "Split large domain files before merging:\n" + "\n".join(
         oversized_files
     )
+
+
+def test_scheduled_job_entrypoint_uses_split_constants_module():
+    constants_path = REPO_ROOT / "apps/api/app/services/scheduled_job_constants.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/scheduled_jobs.py"
+
+    assert constants_path.exists(), (
+        "Move scheduled job status/sort/policy constants to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    assert "from app.services.scheduled_job_constants import" in entrypoint_source

@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 定时作业服务常量拆分：新增 `apps/api/app/services/scheduled_job_constants.py`，承接运行状态、排序字段和默认编排策略常量，并用架构守护避免入口文件重新膨胀。
 - 真实全链路回归脚本补齐版本总览发布证据门禁：脚本将迭代版本推进到测试中后，校验缺少成功发布记录时版本总览返回 `product_version` 级发布阻塞项。
 - 版本总览发布准入增强：测试中版本准备推进到已发布时，若缺少成功发布记录，`GET /api/product-versions/{version_id}/dashboard` 返回可处理的发布阻塞项，前端“排查发布”跳转到按版本筛选的发布记录。
 - 定时作业服务访问与运行 helper 拆分：新增 `apps/api/app/services/scheduled_job_access.py` 承接管理/运行权限、产品范围过滤和插件调用授权用户拼装，新增 `apps/api/app/services/scheduled_job_runtime.py` 承接时区解析、动态输入映射和异常摘要，并将 `scheduled_jobs.py` 架构守护预算收紧到 2600 行。
