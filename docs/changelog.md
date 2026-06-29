@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本补齐版本总览发布证据门禁：脚本将迭代版本推进到测试中后，校验缺少成功发布记录时版本总览返回 `product_version` 级发布阻塞项。
 - 版本总览发布准入增强：测试中版本准备推进到已发布时，若缺少成功发布记录，`GET /api/product-versions/{version_id}/dashboard` 返回可处理的发布阻塞项，前端“排查发布”跳转到按版本筛选的发布记录。
 - 定时作业服务访问与运行 helper 拆分：新增 `apps/api/app/services/scheduled_job_access.py` 承接管理/运行权限、产品范围过滤和插件调用授权用户拼装，新增 `apps/api/app/services/scheduled_job_runtime.py` 承接时区解析、动态输入映射和异常摘要，并将 `scheduled_jobs.py` 架构守护预算收紧到 2600 行。
 - 插件服务连接配置 helper 拆分：新增 `apps/api/app/services/plugin_connection_config.py`，承接 GitHub/GitLab 连接地址解析、请求配置规范化和 GitHub 认证校验，并将 `plugins.py` 架构守护预算收紧到 2600 行。
@@ -264,6 +265,7 @@
 - 执行诊断中心详情继续减重：链路概要、关联对象、节点表、关系表和元数据预览抽到 `ExecutionTraceDetailContent`，主页面从详情渲染细节中解耦，为后续 Trace DAG 钻取和诊断建议扩展预留组件边界。
 
 ### Fixed
+- PostgreSQL 旧库兼容迁移补齐 `073_code_inspection_risk_acceptance_expiry.sql`，避免已有数据库缺少 `code_inspection_findings.suppression_owner` 时全链路代码巡检写入失败。
 - 插件管理动作表单的连接下拉改用完整连接清单，不再受连接列表当前分页影响，避免新增动作或套用场景模板时找不到跨页连接。
 - 需求全链路读权限边界收紧：`/api/requirements/{requirement_id}/full-chain` 和 `/api/lifecycle/full-chain` 统一校验 `requirement.read`、`task.read` 或 `workspace.read` 任一读权限，并按入口主体或需求所属产品 scope 校验，缺权限返回 403，产品范围不匹配返回 404。
 - 执行诊断问 AI 跳转修复：AI 助手独立读取路由 `prompt`，即使 `reference_type` 是 `assistant_chat_run`、`model_gateway_log` 等诊断来源类型且无法解析为助手引用，也会把链路分析问题带入输入框。

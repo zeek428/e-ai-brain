@@ -528,6 +528,20 @@ def run_regression(
         )
     )
 
+    version_testing = client.post(
+        f"/api/product-versions/{version['id']}/advance-status",
+        {
+            "force": True,
+            "reason": "full-chain regression checks release evidence blockers",
+            "target_status": "testing",
+        },
+    )
+    _assert(
+        version_testing.get("version", {}).get("status") == "testing",
+        f"Version did not advance to testing before release evidence check: {version_testing}",
+    )
+    results.append(StepResult("version_testing", f"{version['id']} -> testing"))
+
     dashboard = client.get(f"/api/product-versions/{version['id']}/dashboard")
     _assert(dashboard["summary"]["requirements"] >= 1, "Version dashboard missed requirement summary.")
     _assert(dashboard["summary"]["code_inspection_reports"] >= 1, "Version dashboard missed code inspection report.")
@@ -564,6 +578,21 @@ def run_regression(
         if blocker.get("source_type") == "bug" and str(blocker.get("action_target_id")) in report_bug_ids
     ]
     _assert(bug_blockers, "Version dashboard missed actionable Bug blocker.")
+    release_evidence_blockers = [
+        blocker
+        for blocker in dashboard_blockers
+        if blocker.get("source_type") == "jenkins_release"
+        and str(blocker.get("action_target_id")) == version["id"]
+        and blocker.get("action_target_type") == "product_version"
+    ]
+    _assert(
+        release_evidence_blockers,
+        f"Version dashboard missed release evidence blocker for product version: {dashboard_blockers}",
+    )
+    _assert(
+        any("缺少成功发布记录" in str(blocker.get("reason") or "") for blocker in release_evidence_blockers),
+        f"Version dashboard release blocker did not explain missing successful release: {release_evidence_blockers}",
+    )
     results.append(
         StepResult(
             "version_dashboard",
