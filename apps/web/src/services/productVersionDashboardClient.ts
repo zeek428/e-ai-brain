@@ -113,8 +113,12 @@ type ProductVersionDashboardReleaseItem = {
 };
 
 type ProductVersionDashboardBlockerItem = {
+  action_label?: string;
+  action_target_id?: string;
+  action_target_type?: string;
   id?: string;
   reason?: string;
+  resolution_hint?: string;
   severity?: string;
   source_type?: string;
   title?: string;
@@ -184,8 +188,12 @@ export type ProductVersionDashboard = {
     section: string;
   }>;
   blockers: Array<{
+    actionLabel: string;
+    actionTargetId?: string;
+    actionTargetType: string;
     id?: string;
     reason: string;
+    resolutionHint: string;
     severity: string;
     sourceType: string;
     title: string;
@@ -473,8 +481,12 @@ function mapProductVersionDashboard(
       section: issue.section ?? '-',
     })),
     blockers: (dashboard.blockers ?? []).map((blocker) => ({
+      actionLabel: blocker.action_label ?? '处理',
+      actionTargetId: blocker.action_target_id ?? blocker.id,
+      actionTargetType: blocker.action_target_type ?? blocker.source_type ?? '-',
       id: blocker.id,
       reason: blocker.reason ?? '-',
+      resolutionHint: blocker.resolution_hint ?? '打开关联对象并处理阻塞原因。',
       severity: blocker.severity ?? 'medium',
       sourceType: blocker.source_type ?? '-',
       title: blocker.title ?? blocker.id ?? '-',

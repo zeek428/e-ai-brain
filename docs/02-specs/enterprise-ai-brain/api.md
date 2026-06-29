@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.448 |
+| 功能版本 | v1.1.449 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.449 | 2026-06-29 | 迭代版本驾驶舱 blockers 返回 `action_label/action_target_type/action_target_id/resolution_hint`，前端阻塞项表展示解除条件和处理入口 | Codex |
 | v1.1.448 | 2026-06-29 | 代码巡检报告和详情响应明确返回增量扫描快照字段 `incremental_from_commit`、`incremental_file_count` 与 `is_full_scan`，前端详情需展示扫描范围和增量基线 | Codex |
 | v1.1.447 | 2026-06-29 | 明确真实全链路回归脚本需在知识沉淀采纳后调用 `GET /api/knowledge/index-health` 和 `POST /api/knowledge/search`，验证索引健康与检索可用性 | Codex |
 | v1.1.446 | 2026-06-29 | 新增 `GET /api/knowledge/index-health`，按当前用户 `knowledge.read` 权限、知识空间 scope 和筛选条件聚合全量索引健康、chunk/embedding 覆盖、导入任务状态和可操作健康问题，响应包含 `query/performance` | Codex |
@@ -1355,7 +1356,11 @@ GET /api/product-versions/version_001/dashboard
         "id": "bug_001",
         "title": "发布阻塞 Bug",
         "severity": "high",
-        "reason": "critical Bug 仍未关闭"
+        "reason": "critical Bug 仍未关闭",
+        "action_label": "处理 Bug",
+        "action_target_type": "bug",
+        "action_target_id": "bug_001",
+        "resolution_hint": "修复、验证并关闭 blocker/critical Bug 后解除发布阻塞。"
       }
     ],
     "access_issues": []
@@ -1364,7 +1369,7 @@ GET /api/product-versions/version_001/dashboard
 }
 ```
 
-规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、交付健康摘要、status impact 和 blockers，再展示可读明细表；交付健康摘要基于阻塞项、严重 Bug/巡检、分支创建状态、代码巡检风险和发布失败记录派生发布准入、质量风险、代码分支、代码巡检和发布流水线结论，不新增后端响应字段。
+规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态；每条 blocker 必须返回处理动作、目标主体和解除条件，前端将其映射为需求、Bug、代码巡检、版本分支或发布记录处理入口。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、交付健康摘要、status impact 和 blockers，再展示可读明细表；交付健康摘要基于阻塞项、严重 Bug/巡检、分支创建状态、代码巡检风险和发布失败记录派生发布准入、质量风险、代码分支、代码巡检和发布流水线结论。
 
 ### 平台配置
 

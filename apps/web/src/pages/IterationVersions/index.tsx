@@ -282,6 +282,39 @@ function blockerSubjectType(sourceType: string) {
   return undefined;
 }
 
+function blockerActionHref(
+  blocker: ProductVersionDashboard['blockers'][number],
+  versionId: string,
+) {
+  const targetType = blocker.actionTargetType || blocker.sourceType;
+  const targetId = blocker.actionTargetId || blocker.id;
+  if (!targetId) {
+    return undefined;
+  }
+  if (targetType === 'requirement') {
+    return internalHref('/delivery/requirements', { requirement_id: targetId });
+  }
+  if (targetType === 'bug') {
+    return internalHref('/delivery/bugs', { bug_id: targetId });
+  }
+  if (targetType === 'code_inspection_report') {
+    return internalHref('/governance/code-inspections', { source_id: targetId });
+  }
+  if (targetType === 'product_version_branch_config') {
+    return internalHref('/delivery/versions', {
+      branch_config_id: targetId,
+      version_id: versionId,
+    });
+  }
+  if (targetType === 'jenkins_release') {
+    return internalHref('/governance/devops', {
+      release_id: targetId,
+      version_id: versionId,
+    });
+  }
+  return undefined;
+}
+
 function buildStatusImpactRows(statusImpact?: ProductVersionDashboard['statusImpact']) {
   if (!statusImpact) {
     return [];
@@ -942,16 +975,17 @@ export default function IterationVersionsPage() {
         key: 'actions',
         title: '操作',
         valueType: 'option',
+        width: 560,
         render: (_, row) => (
           <Space size={4}>
+            <Button icon={<DashboardOutlined />} onClick={() => void openDashboardModal(row)} type="link">
+              总览
+            </Button>
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
             <Button icon={<EyeOutlined />} onClick={() => setViewingVersion(row)} type="link">
               查看需求
-            </Button>
-            <Button icon={<DashboardOutlined />} onClick={() => void openDashboardModal(row)} type="link">
-              总览
             </Button>
             <Button href={fullChainSubjectHref('product_version', row.id)} type="link">
               全链路
@@ -1294,33 +1328,53 @@ export default function IterationVersionsPage() {
                         </Text>
                       ),
                       title: '原因',
+                      width: 360,
+                    },
+                    {
+                      dataIndex: 'resolutionHint',
+                      render: (value) => (
+                        <Text ellipsis style={{ maxWidth: 340 }}>
+                          {String(value ?? '-')}
+                        </Text>
+                      ),
+                      title: '解除条件',
+                      width: 360,
                     },
                     {
                       key: 'action',
                       render: (_, row) => {
                         const subjectType = blockerSubjectType(String(row.sourceType ?? ''));
-                        return subjectType && row.id ? (
-                          <Button
-                            href={fullChainSubjectHref(subjectType, row.id)}
-                            icon={<LinkOutlined />}
-                            size="small"
-                            type="link"
-                          >
-                            全链路
-                          </Button>
-                        ) : (
-                          <Text type="secondary">-</Text>
+                        const actionHref = blockerActionHref(row, dashboard.version.id);
+                        return (
+                          <Space size={4}>
+                            {actionHref ? (
+                              <Button href={actionHref} size="small" type="link">
+                                {row.actionLabel}
+                              </Button>
+                            ) : null}
+                            {subjectType && row.id ? (
+                              <Button
+                                href={fullChainSubjectHref(subjectType, row.id)}
+                                icon={<LinkOutlined />}
+                                size="small"
+                                type="link"
+                              >
+                                全链路
+                              </Button>
+                            ) : null}
+                            {!actionHref && !(subjectType && row.id) ? <Text type="secondary">-</Text> : null}
+                          </Space>
                         );
                       },
                       title: '操作',
-                      width: 110,
+                      width: 180,
                     },
                   ]}
                   dataSource={dashboard.blockers}
                   locale={{ emptyText: <Empty description="暂无阻塞项" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
                   pagination={false}
                   rowKey={(row) => `${row.sourceType}-${row.id ?? row.title}`}
-                  scroll={{ x: 970 }}
+                  scroll={{ x: 1490 }}
                   size="small"
                 />
               </div>

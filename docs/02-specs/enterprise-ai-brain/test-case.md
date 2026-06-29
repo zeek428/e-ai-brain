@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.768 |
+| 功能版本 | v1.1.769 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.769 | 2026-06-29 | 补充迭代版本总览阻塞项治理动作验收：阻塞项需展示解除条件和处理入口，并可跳转需求、Bug、代码巡检、版本分支或发布记录管理页；后端和 `IterationVersionsPage.test.tsx` 覆盖 | Codex |
 | v1.1.768 | 2026-06-29 | 补充代码巡检增量扫描快照验收：本地增量扫描报告必须保留 `incremental_from_commit`、`incremental_file_count` 和 `is_full_scan=false`，详情页展示扫描范围、增量基线 Commit 和增量文件数 | Codex |
 | v1.1.767 | 2026-06-29 | 补充真实全链路回归脚本知识索引健康验收：知识沉淀采纳后必须调用 `GET /api/knowledge/index-health` 验证可检索文档、chunk 和召回模式，并通过 `POST /api/knowledge/search` 命中沉淀文档；`test_release_smoke_script.py` 覆盖脚本 marker | Codex |
 | v1.1.766 | 2026-06-29 | 补充迭代版本驾驶舱升级为版本总览验收：版本列表入口改为“总览”，弹窗顶部必须集中展示下一步行动，包括推进到下一阶段、查看需求、维护分支、查看 Bug、代码巡检、发布记录和版本全链路；`IterationVersionsPage.test.tsx` 覆盖 | Codex |

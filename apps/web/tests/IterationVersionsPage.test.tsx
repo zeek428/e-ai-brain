@@ -715,15 +715,23 @@ describe('IterationVersionsPage', () => {
             access_issues: [],
             blockers: [
               {
+                action_label: '处理 Bug',
+                action_target_id: 'bug_dashboard',
+                action_target_type: 'bug',
                 id: 'bug_dashboard',
                 reason: 'critical Bug 仍未关闭',
+                resolution_hint: '修复、验证并关闭 blocker/critical Bug 后解除发布阻塞。',
                 severity: 'high',
                 source_type: 'bug',
                 title: '发布阻塞 Bug',
               },
               {
+                action_label: '维护分支',
+                action_target_id: 'version_branch_dashboard',
+                action_target_type: 'product_version_branch_config',
                 id: 'version_branch_dashboard',
                 reason: '分支状态 not_created 不满足版本推进到 testing 的要求',
+                resolution_hint: '创建或推进版本分支状态，使其满足测试/发布准入要求。',
                 severity: 'medium',
                 source_type: 'product_version_branch_config',
                 title: 'release/2026-dashboard',
@@ -911,6 +919,17 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('阻塞')).toBeInTheDocument();
     expect(screen.getByText('保持不变')).toBeInTheDocument();
     expect(screen.getByText('需求仍待评审，不能进入测试')).toBeInTheDocument();
+    expect(screen.getAllByText('解除条件').length).toBeGreaterThan(0);
+    expect(screen.getByText('修复、验证并关闭 blocker/critical Bug 后解除发布阻塞。')).toBeInTheDocument();
+    expect(screen.getByText('创建或推进版本分支状态，使其满足测试/发布准入要求。')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '处理 Bug' })).toHaveAttribute(
+      'href',
+      '/delivery/bugs?bug_id=bug_dashboard',
+    );
+    expect(screen.getByRole('link', { name: '维护分支' })).toHaveAttribute(
+      'href',
+      '/delivery/versions?branch_config_id=version_branch_dashboard&version_id=version_dashboard',
+    );
     expect(screen.getAllByText('发布阻塞 Bug').length).toBeGreaterThan(0);
     expect(screen.getAllByText('release/2026-dashboard').length).toBeGreaterThan(0);
     expect(screen.getAllByText('驾驶舱需求').length).toBeGreaterThan(0);

@@ -400,6 +400,19 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "jenkins_release",
         "product_version_branch_config",
     }
+    blocker_by_source = {item["source_type"]: item for item in data["blockers"]}
+    assert blocker_by_source["bug"]["action_label"] == "处理 Bug"
+    assert blocker_by_source["bug"]["action_target_id"] in {
+        "bug_version_dashboard",
+        "bug_version_dashboard_from_inspection",
+    }
+    assert blocker_by_source["bug"]["action_target_type"] == "bug"
+    assert "关闭 blocker/critical Bug" in blocker_by_source["bug"]["resolution_hint"]
+    assert blocker_by_source["code_inspection_report"]["action_label"] == "治理巡检"
+    assert blocker_by_source["code_inspection_report"]["action_target_id"] == "code_inspection_report_dashboard"
+    assert "重新扫描" in blocker_by_source["code_inspection_report"]["resolution_hint"]
+    assert blocker_by_source["product_version_branch_config"]["action_label"] == "维护分支"
+    assert blocker_by_source["jenkins_release"]["action_label"] == "排查发布"
     assert data["branch_configs"][0]["repository_name"] == "Dashboard Repo"
     assert data["code_inspection_reports"][0]["id"] == "code_inspection_report_dashboard"
     assert {bug["id"] for bug in data["bugs"]} == {

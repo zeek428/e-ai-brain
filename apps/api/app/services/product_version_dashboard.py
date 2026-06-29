@@ -27,6 +27,58 @@ SEVERE_BUG_SEVERITIES = {"blocker", "critical"}
 SEVERE_CODE_RISKS = {"critical", "high"}
 
 
+def _blocker_action_context(source_type: str) -> tuple[str, str]:
+    if source_type == "requirement":
+        return (
+            "处理需求",
+            "完成需求评审或推进需求状态，使其满足版本下一阶段准入条件。",
+        )
+    if source_type == "bug":
+        return (
+            "处理 Bug",
+            "修复、验证并关闭 blocker/critical Bug 后解除发布阻塞。",
+        )
+    if source_type == "code_inspection_report":
+        return (
+            "治理巡检",
+            "查看巡检详情，完成误报处理、风险接受或整改后重新扫描。",
+        )
+    if source_type == "jenkins_release":
+        return (
+            "排查发布",
+            "排查失败或取消的发布记录，完成重新发布或登记成功发布。",
+        )
+    if source_type == "product_version_branch_config":
+        return (
+            "维护分支",
+            "创建或推进版本分支状态，使其满足测试/发布准入要求。",
+        )
+    return ("查看对象", "打开关联对象并处理阻塞原因。")
+
+
+def _dashboard_blocker(
+    *,
+    blocker_id: Any,
+    reason: str,
+    severity: str,
+    source_type: str,
+    title: Any,
+) -> dict[str, Any]:
+    action_label, resolution_hint = _blocker_action_context(source_type)
+    blocker_id_text = str(blocker_id) if blocker_id is not None else None
+    return {
+        "action_label": action_label,
+        "action_target_id": blocker_id_text,
+        "action_target_type": source_type,
+        "id": blocker_id_text,
+        "reason": reason,
+        "resolution_hint": resolution_hint,
+        "severity": severity,
+        "source_type": source_type,
+        "title": title,
+    }
+
+
 def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     return collection if isinstance(collection, dict) else {}
@@ -212,13 +264,13 @@ def _branch_blockers(
         if status in allowed:
             continue
         blockers.append(
-            {
-                "id": config.get("id"),
-                "reason": f"分支状态 {status} 不满足版本推进到 {target_status} 的要求",
-                "severity": "medium",
-                "source_type": "product_version_branch_config",
-                "title": config.get("working_branch") or config.get("id"),
-            }
+            _dashboard_blocker(
+                blocker_id=config.get("id"),
+                reason=f"分支状态 {status} 不满足版本推进到 {target_status} 的要求",
+                severity="medium",
+                source_type="product_version_branch_config",
+                title=config.get("working_branch") or config.get("id"),
+            )
         )
     return blockers
 
@@ -236,46 +288,46 @@ def _build_blockers(
     if status_impact is not None:
         for requirement in status_impact.get("blocked_requirements") or []:
             blockers.append(
-                {
-                    "id": requirement.get("id"),
-                    "reason": requirement.get("block_reason") or "需求状态阻塞版本推进",
-                    "severity": "high" if target_status == "released" else "medium",
-                    "source_type": "requirement",
-                    "title": requirement.get("title"),
-                }
+                _dashboard_blocker(
+                    blocker_id=requirement.get("id"),
+                    reason=requirement.get("block_reason") or "需求状态阻塞版本推进",
+                    severity="high" if target_status == "released" else "medium",
+                    source_type="requirement",
+                    title=requirement.get("title"),
+                )
             )
     for bug in bugs:
         if bug.get("status") in OPEN_BUG_STATUSES and bug.get("severity") in SEVERE_BUG_SEVERITIES:
             blockers.append(
-                {
-                    "id": bug.get("id"),
-                    "reason": f"{bug.get('severity')} Bug 仍未关闭",
-                    "severity": "high",
-                    "source_type": "bug",
-                    "title": bug.get("title"),
-                }
+                _dashboard_blocker(
+                    blocker_id=bug.get("id"),
+                    reason=f"{bug.get('severity')} Bug 仍未关闭",
+                    severity="high",
+                    source_type="bug",
+                    title=bug.get("title"),
+                )
             )
     for report in code_inspection_reports:
         if report.get("risk_level") in SEVERE_CODE_RISKS or _quality_gate_failed(report):
             blockers.append(
-                {
-                    "id": report.get("id"),
-                    "reason": "代码巡检存在高风险或质量门禁失败",
-                    "severity": "high" if report.get("risk_level") == "critical" else "medium",
-                    "source_type": "code_inspection_report",
-                    "title": report.get("summary") or report.get("id"),
-                }
+                _dashboard_blocker(
+                    blocker_id=report.get("id"),
+                    reason="代码巡检存在高风险或质量门禁失败",
+                    severity="high" if report.get("risk_level") == "critical" else "medium",
+                    source_type="code_inspection_report",
+                    title=report.get("summary") or report.get("id"),
+                )
             )
     for release in releases:
         if str(release.get("status") or "").lower() in {"failed", "cancelled"}:
             blockers.append(
-                {
-                    "id": release.get("id"),
-                    "reason": "发布记录失败或取消",
-                    "severity": "high",
-                    "source_type": "jenkins_release",
-                    "title": release.get("job_name") or release.get("build_id") or release.get("id"),
-                }
+                _dashboard_blocker(
+                    blocker_id=release.get("id"),
+                    reason="发布记录失败或取消",
+                    severity="high",
+                    source_type="jenkins_release",
+                    title=release.get("job_name") or release.get("build_id") or release.get("id"),
+                )
             )
     blockers.extend(_branch_blockers(branch_configs=branch_configs, target_status=target_status))
     return blockers
