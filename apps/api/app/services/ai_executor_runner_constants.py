@@ -16,6 +16,7 @@ AI_EXECUTOR_RUNNER_PROTOCOLS = {"mcp_http", "mcp_stdio", "runner_polling", "runn
 AI_EXECUTOR_RUNNER_STATUSES = {"active", "disabled", "offline"}
 AI_EXECUTOR_RUNNER_PACKAGE_OSES = {"docker", "linux", "macos", "manual", "windows"}
 AI_EXECUTOR_RUNNER_PACKAGE_ARCHES = {"amd64", "arm64", "universal"}
+AI_EXECUTOR_RUNNER_PACKAGE_VERSION = "v1"
 AI_EXECUTOR_RUNNER_INSTALL_MODES_BY_OS = {
     "docker": {"docker"},
     "linux": {"shell", "systemd"},

@@ -12,6 +12,7 @@ from app.services.ai_executor_runner_constants import (
     AI_EXECUTOR_RUNNER_INSTALL_MODES_BY_OS,
     AI_EXECUTOR_RUNNER_PACKAGE_ARCHES,
     AI_EXECUTOR_RUNNER_PACKAGE_OSES,
+    AI_EXECUTOR_RUNNER_PACKAGE_VERSION,
     SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
 )
 
@@ -79,6 +80,7 @@ def _runner_package_options(
         "arch": resolved_arch,
         "install_mode": resolved_install_mode,
         "target_os": resolved_target_os,
+        "version": AI_EXECUTOR_RUNNER_PACKAGE_VERSION,
     }
 
 
@@ -126,6 +128,7 @@ def _runner_env_text(runner: dict[str, Any], package_options: dict[str, str]) ->
             f"AI_BRAIN_TARGET_OS={package_options['target_os']}",
             f"AI_BRAIN_PACKAGE_ARCH={package_options['arch']}",
             f"AI_BRAIN_INSTALL_MODE={package_options['install_mode']}",
+            f"AI_BRAIN_RUNNER_PACKAGE_VERSION={package_options['version']}",
             "",
         ],
     )
@@ -648,6 +651,7 @@ def _runner_readme(runner: dict[str, Any], package_options: dict[str, str]) -> s
 - 目标系统: `{target_os}`
 - CPU 架构: `{package_options["arch"]}`
 - 安装方式: `{install_mode}`
+- 安装包版本: `{package_options["version"]}`
 
 ## 安装步骤
 

@@ -1131,6 +1131,7 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
         in env_text
     )
     assert "AI_BRAIN_RUNNER_TOKEN=<runner_token>" in env_text
+    assert "AI_BRAIN_RUNNER_PACKAGE_VERSION=v1" in env_text
     assert "AI_BRAIN_EXECUTORS=codex,claude,hermes,openclaw" in env_text
     assert "AI_BRAIN_WORKSPACE_ROOTS=/data/repos/e-ai-brain,/data/repos/service-a" in env_text
     assert config["executor_commands"]["codex"] == "codex"
@@ -1138,12 +1139,15 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
         "arch": "amd64",
         "install_mode": "systemd",
         "target_os": "linux",
+        "version": "v1",
     }
     assert config["runner"]["heartbeat_timeout_seconds"] == 180
     assert config["runner"]["max_concurrent_tasks"] == 2
     assert manifest["package"]["target_os"] == "linux"
     assert manifest["package"]["arch"] == "amd64"
     assert manifest["package"]["install_mode"] == "systemd"
+    assert manifest["package"]["version"] == "v1"
+    assert "安装包版本: `v1`" in readme_text
     assert "Claude Code" in skill_text
     assert "AI Brain" in skill_text
 
