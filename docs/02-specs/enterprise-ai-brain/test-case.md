@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.781 |
+| 功能版本 | v1.1.782 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.782 | 2026-06-29 | 补充版本总览组件继续细分回归：摘要行动区、状态分布、推进影响、阻塞项和质量交付明细拆到独立组件后，`IterationVersionsPage.test.tsx`、lint、typecheck 和真实 `/delivery/versions` 页面 smoke 必须继续通过 | Codex |
 | v1.1.781 | 2026-06-29 | 补充迭代版本页版本总览组件拆分回归：`VersionDashboardModal` 抽出后，版本总览弹窗仍需展示下一步行动、交付健康摘要、状态分布、推进影响、阻塞项处理入口和各明细表；`IterationVersionsPage.test.tsx`、typecheck 和真实 `/delivery/versions` 页面 smoke 必须通过 | Codex |
 | v1.1.780 | 2026-06-29 | 补充前端系统运维 client 拆分回归：`systemOperationsClient` / `devopsOperationsClient` 拆分后必须保持 `services/aiBrain.ts` 兼容导出；`npm run typecheck`、定时作业、插件、AI 能力配置、研发执行器策略、团队看板和日志监控页面测试覆盖 | Codex |
 | v1.1.779 | 2026-06-29 | 补充定时作业 AI 处理拆分回归：不可检索知识引用拒绝、Skill 输出映射契约 dry-run、AI 生成洞察、代码巡检 AI/结果动作和助手草案确认继续覆盖 `scheduled_job_ai_processing` 拆分后的契约 | Codex |
