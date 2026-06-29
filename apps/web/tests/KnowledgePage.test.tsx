@@ -127,6 +127,7 @@ describe('KnowledgePage', () => {
               keyword_fallback: 1,
               unavailable: 0,
             },
+            status_counts: [{ count: 1, status: 'text_indexed' }],
             permission_scope: {
               filter_role: null,
               global_knowledge_access: true,
@@ -180,6 +181,10 @@ describe('KnowledgePage', () => {
     expect(within(healthPanel).getByText('向量待补')).toBeInTheDocument();
     expect(within(healthPanel).getByText('分块缺失')).toBeInTheDocument();
     expect(within(healthPanel).getByText('embedding provider unavailable')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('文档状态：文本索引 1')).toBeInTheDocument();
+    expect(
+      within(healthPanel).getByText('Chunk / Embedding：分块文档 0 · 缺分块 1 · Chunk 1 · Embedding 0 · 覆盖率 0%'),
+    ).toBeInTheDocument();
     expect(within(healthPanel).getByText('召回模式：混合 0 · 关键词 1 · 不可用 0')).toBeInTheDocument();
     expect(within(healthPanel).getByText('权限命中：角色 admin 命中 1 个文档')).toBeInTheDocument();
     expect(within(healthPanel).getByText('Embedding 模型：text-embedding-3-small/1536维 0')).toBeInTheDocument();

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.458 |
+| 功能版本 | v1.1.459 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.459 | 2026-06-30 | 知识索引健康前端必须展示 `status_counts` 文档状态分布与 Chunk/Embedding 覆盖率，避免只看摘要数量无法判断解析进度 | Codex |
 | v1.1.458 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 的 `branch_quality_governance` 补齐 finding 级 suppression 治理计数，summary 返回活跃严重、误报忽略、接受风险、过期接受风险和待审批忽略统计 | Codex |
 | v1.1.457 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 新增 `branch_quality_governance` 和 summary 分支治理计数，版本总览可直接查看分支巡检、门禁、Bug/整改覆盖和最近报告 | Codex |
 | v1.1.456 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 在 PostgreSQL 运行时改为版本范围专用 read model，响应字段不变，避免先加载全量 task workflow source rows 后服务层过滤 | Codex |
@@ -759,7 +760,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Review | POST | `/api/reviews/{review_id}/reject` | 驳回重跑。 |
 | Review | POST | `/api/reviews/{review_id}/request-more-info` | 要求补充信息。 |
 | Knowledge | GET | `/api/knowledge/documents` | 知识文档列表；校验 `knowledge.read`，带分页参数时由 PostgreSQL read model 完成权限过滤、筛选、排序和分页。 |
-| Knowledge | GET | `/api/knowledge/index-health` | 知识索引健康中心；校验 `knowledge.read`，支持 `keyword/doc_type/knowledge_space_id/folder_id/permission_role/index_status/issue_limit`，按当前用户知识空间和角色权限在 PostgreSQL read model 聚合全量状态分布、可检索/向量/关键词兜底/失败/处理中/分块缺失统计、chunk embedding 覆盖、导入任务状态、embedding model 分布和健康问题列表，并返回 `query/performance`。 |
+| Knowledge | GET | `/api/knowledge/index-health` | 知识索引健康中心；校验 `knowledge.read`，支持 `keyword/doc_type/knowledge_space_id/folder_id/permission_role/index_status/issue_limit`，按当前用户知识空间和角色权限在 PostgreSQL read model 聚合全量状态分布、可检索/向量/关键词兜底/失败/处理中/分块缺失统计、chunk embedding 覆盖、导入任务状态、embedding model 分布和健康问题列表，并返回 `query/performance`；前端健康面板必须展示 `status_counts` 文档状态分布、Chunk/Embedding 覆盖率、召回模式、权限命中和可操作问题。 |
 | Knowledge | POST | `/api/knowledge/documents` | 导入知识文档。 |
 | Knowledge | GET | `/api/knowledge/spaces` | 查询当前用户可访问的知识空间。 |
 | Knowledge | POST | `/api/knowledge/spaces` | 创建知识空间。 |
@@ -3311,7 +3312,7 @@ GET /api/knowledge/documents?keyword=研发&knowledge_space_id=knowledge_space_0
 
 知识文档索引状态支持：`importing | pending_index | text_indexed | vector_indexed | indexed | index_failed | archived`，其中 `indexed` 为历史兼容状态。Embedding 不可用但文本 chunk 成功时进入 `text_indexed`，响应包含 `vector_index_error` 和兼容展示用 `index_error`；基础文本索引失败时进入 `index_failed`。
 
-前端知识中心必须调用 `GET /api/knowledge/index-health` 展示“索引健康”视图，并复用当前筛选条件汇总可检索文档、向量就绪文档、关键词兜底文档、索引失败文档、处理中任务和已生效分块版本数；`index_failed` 行提供重试索引入口，`text_indexed` 行提供补建向量索引入口，缺少 `active_chunk_set_id` 的可检索文档提供分块查看入口，`importing/pending_index` 文档提供导入任务入口。该视图代表服务端按当前用户知识权限和筛选范围聚合的全量健康结果，不得再只用当前分页列表推断全库健康。
+前端知识中心必须调用 `GET /api/knowledge/index-health` 展示“索引健康”视图，并复用当前筛选条件汇总可检索文档、向量就绪文档、关键词兜底文档、索引失败文档、处理中任务、已生效分块版本数、文档状态分布和 Chunk/Embedding 覆盖率；`index_failed` 行提供重试索引入口，`text_indexed` 行提供补建向量索引入口，缺少 `active_chunk_set_id` 的可检索文档提供分块查看入口，`importing/pending_index` 文档提供导入任务入口。该视图代表服务端按当前用户知识权限和筛选范围聚合的全量健康结果，不得再只用当前分页列表推断全库健康。
 
 重试失败索引：
 

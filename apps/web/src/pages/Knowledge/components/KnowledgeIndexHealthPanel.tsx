@@ -12,6 +12,16 @@ const searchableKnowledgeStatuses = new Set<KnowledgeRecord['status']>([
   'vector_indexed',
 ]);
 
+const knowledgeStatusLabels: Record<string, string> = {
+  archived: '已归档',
+  importing: '索引中',
+  indexed: '已索引',
+  index_failed: '索引失败',
+  pending_index: '待索引',
+  text_indexed: '文本索引',
+  vector_indexed: '向量索引',
+};
+
 type KnowledgeHealthIssue = {
   action: 'open_chunks' | 'open_import_jobs' | 'retry_index';
   description: string;
@@ -190,6 +200,36 @@ function formatImportJobs(record?: KnowledgeIndexHealthRecord) {
   return record.importJobCounts.map((job) => `${job.status} ${job.count}`).join('、');
 }
 
+function formatDocumentStatusCounts(record: KnowledgeIndexHealthRecord | undefined, rows: KnowledgeRecord[]) {
+  const counts = record?.statusCounts?.length
+    ? record.statusCounts
+    : Object.entries(
+        rows.reduce<Record<string, number>>((accumulator, row) => {
+          accumulator[row.status] = (accumulator[row.status] ?? 0) + 1;
+          return accumulator;
+        }, {}),
+      ).map(([status, count]) => ({ count, status }));
+  if (!counts.length) {
+    return record ? '无文档' : '当前页无文档';
+  }
+  return counts
+    .map((item) => `${knowledgeStatusLabels[item.status] ?? item.status} ${item.count}`)
+    .join('、');
+}
+
+function formatChunkEmbeddingCoverage(summary: KnowledgeHealthSummary, record?: KnowledgeIndexHealthRecord) {
+  const totalChunks = Number(record?.summary.totalChunks ?? 0);
+  const embeddingReadyChunks = Number(record?.summary.embeddingReadyChunks ?? 0);
+  const embeddingCoverage = totalChunks > 0 ? `${Math.round((embeddingReadyChunks / totalChunks) * 100)}%` : '-';
+  return [
+    `分块文档 ${summary.chunkReadyCount}`,
+    `缺分块 ${summary.missingChunkCount}`,
+    `Chunk ${record ? totalChunks : '-'}`,
+    `Embedding ${record ? embeddingReadyChunks : '-'}`,
+    `覆盖率 ${embeddingCoverage}`,
+  ].join(' · ');
+}
+
 function formatRetrievalModes(record?: KnowledgeIndexHealthRecord) {
   if (!record) {
     return '当前页推断';
@@ -296,6 +336,8 @@ export function KnowledgeIndexHealthPanel({
         ))}
       </div>
       <div className="knowledge-health-signals">
+        <Text type="secondary">文档状态：{formatDocumentStatusCounts(healthState.record, listRows)}</Text>
+        <Text type="secondary">Chunk / Embedding：{formatChunkEmbeddingCoverage(summary, healthState.record)}</Text>
         <Text type="secondary">召回模式：{formatRetrievalModes(healthState.record)}</Text>
         <Text type="secondary">权限命中：{formatPermissionScope(healthState.record)}</Text>
         <Text type="secondary">Embedding 模型：{formatEmbeddingModels(healthState.record)}</Text>

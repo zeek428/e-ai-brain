@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.729 |
+| 功能版本 | v1.1.730 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.730 | 2026-06-30 | 知识索引健康面板补齐文档状态分布和 Chunk/Embedding 覆盖率展示，帮助判断解析、分块和向量索引进展 | Codex |
 | v1.1.729 | 2026-06-30 | 迭代版本总览分支质量治理补齐 finding 级 suppression 指标：版本 read model 拉取轻量巡检 finding，dashboard 聚合误报忽略、接受风险、过期接受风险、待审批忽略和活跃严重问题 | Codex |
 | v1.1.728 | 2026-06-30 | 真实全链路回归脚本补齐代码巡检趋势对比门禁：完整链路同仓同分支二次扫描必须生成 `previous_comparison` 并指向前次报告 | Codex |
 | v1.1.727 | 2026-06-30 | 真实全链路回归脚本补齐迭代版本总览分支质量治理门禁：`full` 校验待治理分支质量，`version-dashboard` 快速套件校验待巡检分支质量 | Codex |
@@ -1653,7 +1654,7 @@ KnowledgeRetriever.search(query, brain_app_code, user_id, filters, top_k)
 - 知识文档创建、内容更新、权限更新和沉淀采纳会先重建文本 chunk；如 Embedding 网关的 OpenAI-compatible `/embeddings` 可用，则生成 `knowledge_chunks.embedding` 并进入 `vector_indexed`。模型网关配置通过 `embedding_connection_mode=disabled|reuse_chat|custom` 明确 Chat 与 Embedding 能力边界，Chat-only 配置不得阻断 AI 助手或任务生成。
 - Embedding 维度必须等于 `VECTOR_DIMENSION`；provider 失败或维度异常时文档保持 `text_indexed`，保留 `vector_index_error`，关键词检索仍可用；只有无法切片等基础索引失败才进入 `index_failed`。
 - 检索必须先过滤用户无权读取的文档和 chunk，再对有 embedding 且 `embedding_config_id`、`embedding_model`、`embedding_dimension` 兼容的 chunk 使用 cosine 相似度排序；没有可读兼容向量 chunk 时不得额外混用旧模型向量，直接关键词检索。返回结果包含 `retrieval_mode`，向量命中包含 `score`，关键词命中 `score=null`。
-- `GET /api/knowledge/index-health` 是知识索引健康中心的后端聚合入口，必须校验 `knowledge.read`，并复用知识文档权限和空间 scope 过滤；PostgreSQL 运行态优先在 read model 层按 keyword、doc_type、knowledge_space_id、folder_id、permission_role 和 index_status 聚合全量健康，不得只基于当前分页结果推断。响应需包含文档状态分布、可检索/向量就绪/关键词兜底/处理中/失败/分块缺失统计、chunk embedding 覆盖、导入任务状态、embedding model 分布、可操作问题列表、`permission_scope` 权限命中说明和 `query/performance` 观测。`permission_scope` 至少返回 `mode`、`matched_roles`、`readable_role_count`、`scope_labels`、`filter_role`、`global_knowledge_access` 和 `knowledge_space_scope_ids`，用于解释当前健康统计命中了哪些角色或知识空间范围。知识中心前端健康面板必须展示 chunk、Embedding、召回模式和权限命中信号，并保留索引重试、分块查看和导入任务入口；后端健康接口不可用时可降级为当前页兜底摘要。
+- `GET /api/knowledge/index-health` 是知识索引健康中心的后端聚合入口，必须校验 `knowledge.read`，并复用知识文档权限和空间 scope 过滤；PostgreSQL 运行态优先在 read model 层按 keyword、doc_type、knowledge_space_id、folder_id、permission_role 和 index_status 聚合全量健康，不得只基于当前分页结果推断。响应需包含文档状态分布、可检索/向量就绪/关键词兜底/处理中/失败/分块缺失统计、chunk embedding 覆盖、导入任务状态、embedding model 分布、可操作问题列表、`permission_scope` 权限命中说明和 `query/performance` 观测。`permission_scope` 至少返回 `mode`、`matched_roles`、`readable_role_count`、`scope_labels`、`filter_role`、`global_knowledge_access` 和 `knowledge_space_scope_ids`，用于解释当前健康统计命中了哪些角色或知识空间范围。知识中心前端健康面板必须展示文档状态分布、Chunk/Embedding 覆盖率、召回模式、Embedding 模型和权限命中信号，并保留索引重试、分块查看和导入任务入口；后端健康接口不可用时可降级为当前页兜底摘要。
 - 导入 worker 必须通过 repository 原子 claim queued 任务并写入锁租约，成功、失败、取消和 retry 都要释放锁；重解析失败不得归档旧 active chunk set，历史 chunk set 激活时按版本保存的 `index_status` 恢复文档状态。
 - 目录归档按子树生效，归档父目录下的子目录不得继续出现在目录树，也不得作为上传、创建子目录或批量移动目标。
 - 模型调用日志以 `purpose=knowledge_embedding` 记录 provider、model、tokens、latency 和状态，不记录完整知识正文或查询文本。
