@@ -42,3 +42,15 @@ def test_scheduled_job_entrypoint_uses_split_constants_module():
     )
     entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
     assert "from app.services.scheduled_job_constants import" in entrypoint_source
+
+
+def test_assistant_references_uses_split_action_defaults_module():
+    defaults_path = REPO_ROOT / "apps/api/app/services/assistant_action_reference_defaults.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/assistant_references.py"
+
+    assert defaults_path.exists(), (
+        "Move assistant action reference default candidates to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    assert "from app.services.assistant_action_reference_defaults import" in entrypoint_source
+    assert "ASSISTANT_ACTION_CANDIDATES = (" not in entrypoint_source

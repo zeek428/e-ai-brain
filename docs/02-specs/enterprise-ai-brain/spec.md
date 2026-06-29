@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.711 |
+| 功能版本 | v1.1.712 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.712 | 2026-06-29 | AI 助手引用服务继续拆大文件：新增 `assistant_action_reference_defaults` 承接动作引用默认候选和配置常量，`assistant_references.py` 聚焦引用候选读取、权限过滤和配置读写 | Codex |
 | v1.1.711 | 2026-06-29 | 迭代版本列表默认按创建时间倒序展示，并支持 `/delivery/versions?version_id=<id>&view=dashboard` 直达版本总览；原代码分支深链继续保持独立入口 | Codex |
 | v1.1.710 | 2026-06-29 | 迭代版本总览知识沉淀升级为可用性健康视图：沉淀行展示索引状态、chunk/embedding 覆盖和关键词/混合/不可用检索模式，summary 补齐可检索与向量就绪沉淀数 | Codex |
 | v1.1.709 | 2026-06-29 | 迭代版本总览补齐知识沉淀聚合：按版本内 AI 任务聚合知识沉淀候选，summary 展示沉淀数，明细按 `knowledge.read` 权限降级隐藏并提供来源任务和全链路入口 | Codex |
@@ -2059,7 +2060,7 @@ suggested → rejected
 - v1 MVP 覆盖“产品配置 → GitLab/GitHub 代码库绑定 → 新增需求 → 审批通过 → 生成产品详细设计任务 → 人工确认 → 技术方案任务 → 选择 MR/PR → 拉取 diff 快照 → 生成 code_review 报告 → 人工确认并内部归档 → 知识沉淀审核 → 审计可查”的黄金路径。
 - v1.2 扩展覆盖“用户洞察采集 → AI 迭代规划建议 → 产品负责人确认 → 转正式需求”的产品迭代路径。
 - `scripts/full_chain_regression.py` 是本地 PostgreSQL 运行态的真实全链路回归入口，必须通过公开 API 串联产品、版本、用户反馈转需求、批量排期、AI 任务启动、Review、知识沉淀、知识索引健康、版本代码分支、本地完整代码巡检、Bug/整改任务写回、AI 执行器 Runner 可靠性、AI 动作草案治理、版本总览、统一 full-chain、团队看板和 AI 助手引用。脚本成功不应只代表接口调用返回 2xx，还必须校验知识沉淀采纳后的 `knowledge_document_id`、索引健康可检索文档/chunk/召回模式、知识检索命中结果、本地完整扫描 finding、提交人归因、治理覆盖率、派生 Bug/整改任务回写 ID、质量门禁失败在运行摘要、报告详情和治理概览 `quality_gate_violations` 中可追踪、治理概览 `committer_governance` 能按提交人返回闭环状态、活跃严重问题、Bug 覆盖和整改任务覆盖、Runner Token 轮换必须拒绝旧 Token 并接受新 Token 心跳、AI 执行器短租约任务可按 `claim -> timeout-scan -> requeue -> claim -> timeout-scan -> dead_letter` 闭环验证，死信任务返回 `AI_EXECUTOR_TASK_LEASE_EXPIRED` 且 warning/error 日志可查询、AI 动作草案必须能展示风险、影响对象、权限状态、字段差异、查看/修改/确认和审计事件，版本总览状态分布、`code_review_reports` 与 `pending_code_review_reports` 聚合、`knowledge_deposits` 摘要与沉淀明细、所有版本总览阻塞项均携带 `source_type`、`severity`、`title`、`reason`、动作标签、目标主体和解除条件、发布到已发布前缺少成功发布记录时能形成可跳转的发布阻塞项、代码巡检报告主体解析回 full-chain、团队看板产品维度计数，以及助手会话历史中保留需求、版本和代码巡检引用与工具结果。默认 `--suite full` 保持完整主链路；`FULL_CHAIN_SUITE=runner-reliability` 或 `--suite runner-reliability` 可只执行登录、fixture 仓库和 AI 执行器 Runner Token 轮换、租约/死信门禁，便于日常快速验收运行可靠性；`FULL_CHAIN_SUITE=version-dashboard` 或 `--suite version-dashboard` 可只执行产品、版本、需求、任务、技术方案、本地 GitLab fixture MR 快照、Code Review 待确认报告、版本分支、状态推进影响和版本总览代码评审/发布/分支阻塞项校验，便于快速验收迭代版本页总览聚合是否断链；`FULL_CHAIN_SUITE=assistant-draft-governance` 或 `--suite assistant-draft-governance` 可只执行 AI 动作草案创建、治理摘要、查看埋点、用户修改、确认落库、列表 read model 和审计链路校验，便于快速验收动作确认中心不断链。默认使用显式 `deterministic` 任务启动模式以避免研发执行器 Runner 或外部模型网关波动；如需验收模型网关，可通过脚本参数切换为 `model_gateway`。
-- `apps/api/tests/test_architecture_guardrails.py` 固化已拆分领域入口文件的行数预算：`authorization.py`、`ai_executor_runners.py`、`assistant_references.py` 和 `assistant_chat.py` 均不得超过 2800 行，定时作业主服务 `scheduled_jobs.py` 和插件主服务 `plugins.py` 均不得超过 2600 行，前端服务兼容 barrel `services/aiBrain.ts` 不得超过 2400 行；超过时必须继续拆分到领域模块或组件后再合入。授权仓储的默认菜单/角色授权配置应保留在 `authorization_defaults`，避免 RBAC 默认数据继续膨胀仓储实现；AI 执行器 Runner 的常量、安装包构造和运行任务编排应保持独立模块边界，避免 Runner 安装包文案或平台差异继续膨胀主服务；定时作业权限/产品范围判断应保留在 `scheduled_job_access`，时区、动态输入映射和异常摘要应保留在 `scheduled_job_runtime`，避免运行时通用逻辑继续膨胀定时作业主服务；GitHub/GitLab 连接地址解析、请求配置规范化和 GitHub 认证校验应保留在 `plugin_connection_config`，避免连接平台差异继续膨胀插件主服务；系统管理用户、角色、菜单和权限诊断 API 应保留在 `systemManagementClient`，`aiBrain.ts` 只保留兼容导出。
+- `apps/api/tests/test_architecture_guardrails.py` 固化已拆分领域入口文件的行数预算：`authorization.py`、`ai_executor_runners.py`、`assistant_references.py` 和 `assistant_chat.py` 均不得超过 2800 行，定时作业主服务 `scheduled_jobs.py` 和插件主服务 `plugins.py` 均不得超过 2600 行，前端服务兼容 barrel `services/aiBrain.ts` 不得超过 2400 行；超过时必须继续拆分到领域模块或组件后再合入。授权仓储的默认菜单/角色授权配置应保留在 `authorization_defaults`，避免 RBAC 默认数据继续膨胀仓储实现；AI 执行器 Runner 的常量、安装包构造和运行任务编排应保持独立模块边界，避免 Runner 安装包文案或平台差异继续膨胀主服务；AI 助手动作引用默认候选、触发词和配置常量应保留在 `assistant_action_reference_defaults`，避免默认入口数据继续膨胀 `assistant_references.py`；定时作业权限/产品范围判断应保留在 `scheduled_job_access`，时区、动态输入映射和异常摘要应保留在 `scheduled_job_runtime`，避免运行时通用逻辑继续膨胀定时作业主服务；GitHub/GitLab 连接地址解析、请求配置规范化和 GitHub 认证校验应保留在 `plugin_connection_config`，避免连接平台差异继续膨胀插件主服务；系统管理用户、角色、菜单和权限诊断 API 应保留在 `systemManagementClient`，`aiBrain.ts` 只保留兼容导出。
 - 自动化测试、发布评估和上线后分析按后续阶段补充 E2E。
 
 ### 提交前真实网页界面验证门禁

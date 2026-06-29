@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手引用服务拆分继续推进：新增 `assistant_action_reference_defaults` 承接动作引用默认候选、触发词和配置常量，并由架构守护防止默认入口数据回流 `assistant_references.py`。
 - 迭代版本入口体验优化：版本列表默认按创建时间倒序展示并新增“创建时间”列，支持 `/delivery/versions?version_id=<id>&view=dashboard` 直接打开版本总览；原代码分支深链仍打开分支维护弹窗。
 - 迭代版本总览知识沉淀索引健康：`GET /api/product-versions/{version_id}/dashboard` 的知识沉淀行补齐知识文档标题、索引状态、chunk 数、embedding chunk 数、索引错误摘要和关键词/混合/不可用检索模式，summary 新增可检索与向量就绪沉淀数；版本总览页面在发布准备清单和知识沉淀表直接展示知识资产可用性。
 - 迭代版本总览知识沉淀聚合：`GET /api/product-versions/{version_id}/dashboard` 按版本内任务汇总知识沉淀，summary 返回 `knowledge_deposits`，页面展示沉淀标题、来源任务、知识文档 ID 和全链路入口；真实全链路脚本校验知识沉淀行不断链。
