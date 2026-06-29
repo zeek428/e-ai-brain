@@ -1430,6 +1430,7 @@ def code_inspection_dashboard_response(
     severe_finding_count = 0
     covered_by_bug_count = 0
     covered_by_task_count = 0
+    quality_gate_failed_report_count = 0
     oldest_uncovered_at: str | None = None
     oldest_without_task_at: str | None = None
 
@@ -1473,6 +1474,7 @@ def code_inspection_dashboard_response(
             trend["quality_gate_passed_count"] += 1
         elif quality_gate_status == "failed":
             trend["quality_gate_failed_count"] += 1
+            quality_gate_failed_report_count += 1
         elif quality_gate_status == "skipped":
             trend["quality_gate_skipped_count"] += 1
         else:
@@ -1750,6 +1752,60 @@ def code_inspection_dashboard_response(
             str(item.get("email") or item.get("username") or item.get("name") or ""),
         ),
     )[:10]
+    governance_pressure = {
+        "accepted_risk_count": sum(
+            int(entry.get("accepted_risk_count") or 0)
+            for entry in committer_governance_stats.values()
+        ),
+        "action_required_committer_count": sum(
+            1
+            for entry in committer_governance_stats.values()
+            if entry.get("status") == "action_required"
+        ),
+        "active_severe_finding_count": sum(
+            int(entry.get("active_severe_finding_count") or 0)
+            for entry in committer_governance_stats.values()
+        ),
+        "expired_accepted_risk_count": sum(
+            int(entry.get("expired_accepted_risk_count") or 0)
+            for entry in committer_governance_stats.values()
+        ),
+        "failed_report_count": sum(1 for report in reports if report.get("status") == "failed"),
+        "pending_review_committer_count": sum(
+            1
+            for entry in committer_governance_stats.values()
+            if entry.get("status") == "pending_review"
+        ),
+        "pending_suppression_count": sum(
+            int(entry.get("pending_suppression_count") or 0)
+            for entry in committer_governance_stats.values()
+        ),
+        "quality_gate_failed_report_count": quality_gate_failed_report_count,
+        "quality_gate_violation_count": sum(
+            int(entry.get("violation_count") or 0)
+            for entry in quality_gate_violation_stats.values()
+        ),
+        "uncovered_bug_finding_count": sum(
+            int(entry.get("uncovered_bug_finding_count") or 0)
+            for entry in committer_governance_stats.values()
+        ),
+        "uncovered_task_finding_count": sum(
+            int(entry.get("uncovered_task_finding_count") or 0)
+            for entry in committer_governance_stats.values()
+        ),
+    }
+    if (
+        governance_pressure["failed_report_count"]
+        or governance_pressure["quality_gate_failed_report_count"]
+        or governance_pressure["uncovered_bug_finding_count"]
+        or governance_pressure["uncovered_task_finding_count"]
+        or governance_pressure["expired_accepted_risk_count"]
+    ):
+        governance_pressure["status"] = "action_required"
+    elif governance_pressure["pending_suppression_count"]:
+        governance_pressure["status"] = "pending_review"
+    else:
+        governance_pressure["status"] = "healthy"
     rule_distribution = sorted(
         rule_stats.values(),
         key=lambda item: (
@@ -1807,6 +1863,7 @@ def code_inspection_dashboard_response(
         "category_distribution": counter_rows(category_counts, key_name="category"),
         "committer_governance": committer_governance,
         "committer_ranking": committer_ranking,
+        "governance_pressure": governance_pressure,
         "query": {
             "product_id": product_id,
             "repository_id": repository_id,

@@ -873,6 +873,10 @@ def test_code_inspection_accepted_risk_requires_expiry_and_surfaces_expired_gove
     assert dashboard.status_code == 200
     dashboard_payload = dashboard.json()["data"]
     assert dashboard_payload["rule_governance"]["expired_accepted_risk_count"] == 1
+    assert dashboard_payload["governance_pressure"]["status"] == "action_required"
+    assert dashboard_payload["governance_pressure"]["accepted_risk_count"] == 1
+    assert dashboard_payload["governance_pressure"]["expired_accepted_risk_count"] == 1
+    assert dashboard_payload["governance_pressure"]["action_required_committer_count"] == 1
     governance = dashboard_payload["committer_governance"][0]
     assert governance["email"] == "alice@example.com"
     assert governance["accepted_risk_count"] == 1
@@ -1867,6 +1871,20 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["sla"]["covered_by_task_count"] == 1
     assert payload["sla"]["uncovered_task_finding_count"] == 0
     assert payload["sla"]["oldest_without_task_at"] is None
+    assert payload["governance_pressure"] == {
+        "accepted_risk_count": 0,
+        "action_required_committer_count": 0,
+        "active_severe_finding_count": 1,
+        "expired_accepted_risk_count": 0,
+        "failed_report_count": 0,
+        "pending_review_committer_count": 0,
+        "pending_suppression_count": 0,
+        "quality_gate_failed_report_count": 1,
+        "quality_gate_violation_count": 1,
+        "status": "action_required",
+        "uncovered_bug_finding_count": 0,
+        "uncovered_task_finding_count": 0,
+    }
     assert payload["rule_distribution"][0]["rule_id"] == "SEC001"
     assert payload["rule_distribution"][0]["severe_finding_count"] == 1
     assert payload["repository_ranking"][0]["repository_id"] == repository["id"]
@@ -1954,7 +1972,12 @@ def test_code_inspection_dashboard_committer_governance_tracks_uncovered_actions
     )
 
     assert dashboard.status_code == 200
-    governance = dashboard.json()["data"]["committer_governance"][0]
+    payload = dashboard.json()["data"]
+    assert payload["governance_pressure"]["status"] == "action_required"
+    assert payload["governance_pressure"]["action_required_committer_count"] == 1
+    assert payload["governance_pressure"]["uncovered_bug_finding_count"] == 1
+    assert payload["governance_pressure"]["uncovered_task_finding_count"] == 1
+    governance = payload["committer_governance"][0]
     assert governance["email"] == "alice@example.com"
     assert governance["status"] == "action_required"
     assert governance["report_count"] == 1

@@ -146,6 +146,20 @@ function installCodeInspectionsFetchMock() {
               username: 'alice',
             },
           ],
+          governance_pressure: {
+            accepted_risk_count: 1,
+            action_required_committer_count: 1,
+            active_severe_finding_count: 1,
+            expired_accepted_risk_count: 1,
+            failed_report_count: 0,
+            pending_review_committer_count: 0,
+            pending_suppression_count: 0,
+            quality_gate_failed_report_count: 1,
+            quality_gate_violation_count: 1,
+            status: 'action_required',
+            uncovered_bug_finding_count: 0,
+            uncovered_task_finding_count: 0,
+          },
           repository_ranking: [
             {
               branch_count: 1,
@@ -495,11 +509,17 @@ describe('CodeInspectionsPage', () => {
     await screen.findByText('code_inspection_report_001');
     expect(screen.getAllByText('2026-06-12 17:00').length).toBeGreaterThan(0);
     expect(screen.getByText('规则维度统计')).toBeInTheDocument();
+    expect(screen.getByText('治理压力总览')).toBeInTheDocument();
+    expect(screen.getByText('闭环状态')).toBeInTheDocument();
+    expect(screen.getByText('待闭环')).toBeInTheDocument();
+    expect(screen.getByText('待闭环提交人')).toBeInTheDocument();
+    expect(screen.getByText('门禁失败报告')).toBeInTheDocument();
+    expect(screen.getByText('门禁失败项')).toBeInTheDocument();
     expect(screen.getByText('规则包与误报治理')).toBeInTheDocument();
     expect(screen.getByText('最近规则版本')).toBeInTheDocument();
     expect(screen.getByText('版本不一致')).toBeInTheDocument();
     expect(screen.getByText('已过滤问题')).toBeInTheDocument();
-    expect(screen.getByText('到期接受风险')).toBeInTheDocument();
+    expect(screen.getAllByText('到期接受风险').length).toBeGreaterThan(0);
     expect(screen.getAllByText('过滤原因').length).toBeGreaterThan(0);
     expect(screen.getByText('accepted_risk')).toBeInTheDocument();
     expect(screen.getByText('仓库风险排行')).toBeInTheDocument();

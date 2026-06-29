@@ -169,6 +169,20 @@ export type CodeInspectionDashboardRecord = {
     uncovered_task_finding_count: number;
     username?: string | null;
   }>;
+  governance_pressure?: {
+    accepted_risk_count?: number;
+    action_required_committer_count?: number;
+    active_severe_finding_count?: number;
+    expired_accepted_risk_count?: number;
+    failed_report_count?: number;
+    pending_review_committer_count?: number;
+    pending_suppression_count?: number;
+    quality_gate_failed_report_count?: number;
+    quality_gate_violation_count?: number;
+    status?: 'action_required' | 'healthy' | 'pending_review' | string;
+    uncovered_bug_finding_count?: number;
+    uncovered_task_finding_count?: number;
+  };
   repository_ranking: Array<{
     branch_count: number;
     finding_count: number;

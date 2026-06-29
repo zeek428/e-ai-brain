@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 代码巡检治理压力总览：`GET /api/governance/code-inspections/dashboard` 新增 `governance_pressure`，页面顶部集中展示闭环状态、待闭环提交人、缺 Bug、缺整改任务、门禁失败、待审批忽略和到期接受风险。
 - AI 动作确认中心列表治理压力总览：草案任务台 summary 新增风险、权限和治理计数，页面顶部展示高风险、权限阻塞、校验阻塞、失败/重试和审计事件，减少确认前逐行扫描。
 - 真实全链路回归脚本结构化报告：`scripts/full_chain_regression.py` 新增 `--json-output` / `FULL_CHAIN_JSON_OUTPUT`，成功和失败均输出 suite、耗时、步骤和失败原因，方便 CI 留存证据并定位断点。
 - 迭代版本总览交付链路视图：版本总览弹窗新增“交付链路总览”，按需求范围、研发任务、代码分支、代码巡检、代码评审、Bug、知识沉淀、发布证据和状态推进顺序展示红/黄风险环节，减少版本推进前跨表扫描。

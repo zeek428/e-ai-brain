@@ -69,6 +69,7 @@ export function CodeInspectionGovernanceOverview({
 }) {
   const summary = dashboard?.summary;
   const ruleGovernance = dashboard?.rule_governance;
+  const governancePressure = dashboard?.governance_pressure;
   const sla = dashboard?.sla;
   return (
     <Space orientation="vertical" size={12} style={{ width: '100%', marginBottom: 16 }}>
@@ -111,6 +112,54 @@ export function CodeInspectionGovernanceOverview({
           </Card>
         </Col>
       </Row>
+      <Card loading={loading} size="small" title="治理压力总览">
+        <Descriptions
+          column={{ lg: 4, md: 2, xs: 1 }}
+          items={[
+            {
+              key: 'status',
+              label: '闭环状态',
+              children: governanceStatusTag(governancePressure?.status),
+            },
+            {
+              key: 'action_required_committers',
+              label: '待闭环提交人',
+              children: governancePressure?.action_required_committer_count ?? 0,
+            },
+            {
+              key: 'uncovered_bug',
+              label: '缺 Bug',
+              children: governancePressure?.uncovered_bug_finding_count ?? 0,
+            },
+            {
+              key: 'uncovered_task',
+              label: '缺整改任务',
+              children: governancePressure?.uncovered_task_finding_count ?? 0,
+            },
+            {
+              key: 'quality_gate_failed',
+              label: '门禁失败报告',
+              children: governancePressure?.quality_gate_failed_report_count ?? 0,
+            },
+            {
+              key: 'quality_gate_violations',
+              label: '门禁失败项',
+              children: governancePressure?.quality_gate_violation_count ?? 0,
+            },
+            {
+              key: 'expired_risk',
+              label: '到期接受风险',
+              children: governancePressure?.expired_accepted_risk_count ?? 0,
+            },
+            {
+              key: 'pending_suppression',
+              label: '待审批忽略',
+              children: governancePressure?.pending_suppression_count ?? 0,
+            },
+          ]}
+          size="small"
+        />
+      </Card>
       <Card loading={loading} size="small" title="规则包与误报治理">
         <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           <Descriptions
