@@ -1323,6 +1323,7 @@ def run_native_code_scan(
         "scanner_engines": scanner_engines,
         "severity_threshold": severity_threshold,
     }
+    scan_scope_label = "本地增量扫描" if incremental_from_commit else "本地完整扫描"
     output_json = {
         "artifact_ref": artifact_ref,
         "branch": branch,
@@ -1354,7 +1355,7 @@ def run_native_code_scan(
         "suppressed_finding_count": suppressed_finding_count,
         "suppression_summary": suppression_summary,
         "summary": (
-            f"本地完整扫描完成：扫描 {files_scanned} 个文件 / "
+            f"{scan_scope_label}完成：扫描 {files_scanned} 个文件 / "
             f"{lines_scanned} 行，发现 {len(findings)} 个问题，"
             f"过滤 {suppressed_finding_count} 个历史或忽略项。"
         ),

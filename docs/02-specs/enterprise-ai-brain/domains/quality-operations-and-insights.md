@@ -33,7 +33,7 @@
 - AI 助手聊天运行可作为执行诊断根节点，关联用户消息、助手消息、模型网关日志和审计事件；`source_id` 支持按 `assistant_message_id` 反查整条助手运行链路，详情只展示排障元数据，不展示完整对话、Prompt 或知识正文。
 - 代码巡检报告列表必须优先走 PostgreSQL read model，在数据库层完成产品 scope、仓库、风险、状态、摘要、提交人、排序和分页；列表接口必须校验 `code_inspection.read` 权限，产品 scope 不能只依赖前端菜单隐藏；MemoryStore 仅作为测试和降级路径。
 - 代码巡检报告、finding、通知、误报忽略审批和整改任务派生属于 DB-first 写路径：服务层不得直接写 `current_store.code_inspection_*` 或 `current_store.ai_tasks`；MemoryStore fallback 由 `persist_code_inspection_records` / `persist_ai_task_record` 承接，PostgreSQL 运行态的报告、finding、通知和审计必须在同一数据库事务中提交。
-- 代码巡检本地完整扫描需记录仓库、分支、提交、提交人、规则版本、扫描覆盖、质量门禁和 suppression 摘要。
+- 代码巡检本地完整扫描需记录仓库、分支、提交、提交人、规则版本、扫描范围、增量基线 Commit、扫描覆盖、质量门禁和 suppression 摘要。
 - 代码巡检报告详情中的 finding 可提交误报/忽略申请，审批状态按 `none/pending/approved/rejected` 流转；审批通过后同步报告 suppression 统计、规则治理概览和审计事件，不能只在前端隐藏问题。
 - 代码巡检治理概览必须展示规则包与误报治理，包含最近报告规则/扫描器版本、版本不一致提示、规则/扫描器版本分布、suppression 总量和 baseline/已接受风险/忽略项/严重级别阈值等过滤原因分布。
 - 代码巡检治理概览必须展示质量门禁趋势，按日期聚合通过、失败、跳过和未知门禁数，便于判断规则升级或仓库质量门禁是否持续恶化。

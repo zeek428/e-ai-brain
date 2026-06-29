@@ -136,6 +136,8 @@ def test_code_inspection_report_upsert_accepts_native_scan_metadata():
                 "files_scanned": 12,
                 "finding_count": 2,
                 "id": "code_inspection_report_native",
+                "incremental_file_count": 1,
+                "incremental_from_commit": "base123",
                 "is_full_scan": True,
                 "lines_scanned": 345,
                 "repository": {"name": "Native Scan Repository"},
@@ -1396,8 +1398,8 @@ def test_native_repository_inspection_supports_incremental_commit_range(monkeypa
         name="Native Scan Incremental",
     )
     local_repo_url = create_local_git_repository(tmp_path)
-    current_commit = subprocess.run(
-        ["git", "rev-parse", "release/native-scan"],
+    base_commit = subprocess.run(
+        ["git", "rev-parse", "release/native-scan~1"],
         capture_output=True,
         check=True,
         cwd=local_repo_url,
@@ -1415,7 +1417,7 @@ def test_native_repository_inspection_supports_incremental_commit_range(monkeypa
             "config_json": {
                 "async_execution": False,
                 "branch": "release/native-scan",
-                "incremental_from_commit": current_commit,
+                "incremental_from_commit": base_commit,
                 "repository_id": repository["id"],
                 "scan_mode": "native_full_scan",
                 "scan_rules": ["secrets", "internal_addresses"],
@@ -1442,10 +1444,23 @@ def test_native_repository_inspection_supports_incremental_commit_range(monkeypa
     assert run_response.status_code == 200
     run = run_response.json()["data"]
     assert run["status"] == "succeeded"
-    assert run["records_imported"] == 0
+    assert run["records_imported"] == 2
     native_scan = run["result_summary"]["execution_nodes"]["native_scan"]
-    assert native_scan["incremental_from_commit"] == current_commit
-    assert native_scan["incremental_file_count"] == 0
+    assert native_scan["incremental_from_commit"] == base_commit
+    assert native_scan["incremental_file_count"] == 1
+
+    report_id = run["result_summary"]["report_id"]
+    detail = client.get(
+        f"/api/governance/code-inspections/{report_id}",
+        headers=headers,
+    ).json()["data"]
+    report = detail["report"]
+    assert report["is_full_scan"] is False
+    assert report["incremental_from_commit"] == base_commit
+    assert report["incremental_file_count"] == 1
+    assert detail["scan_summary"]["coverage"]["is_full_scan"] is False
+    assert detail["scan_summary"]["coverage"]["incremental_from_commit"] == base_commit
+    assert detail["scan_summary"]["coverage"]["incremental_file_count"] == 1
 
 
 def test_native_repository_inspection_applies_baseline_quality_gate_and_detail_summary(

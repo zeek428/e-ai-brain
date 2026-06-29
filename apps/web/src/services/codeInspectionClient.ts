@@ -25,6 +25,10 @@ export type CodeInspectionReportRecord = {
   created_task_ids?: string[];
   finding_count: number;
   id: string;
+  incremental_file_count?: number | null;
+  incremental_from_commit?: string | null;
+  is_full_scan?: boolean | null;
+  files_scanned?: number;
   notification_ids?: string[];
   plugin_action_id?: string | null;
   plugin_connection_id?: string | null;
@@ -44,6 +48,7 @@ export type CodeInspectionReportRecord = {
   scan_finished_at?: string | null;
   scan_mode?: string | null;
   scan_started_at?: string | null;
+  lines_scanned?: number;
   scanner_name?: string | null;
   scanner_version?: string | null;
   scan_profile?: Record<string, unknown>;

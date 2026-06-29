@@ -28,6 +28,11 @@ function installCodeInspectionsFetchMock() {
     created_task_ids: ['task_code_fix_001'],
     finding_count: 1,
     id: 'code_inspection_report_001',
+    incremental_file_count: 3,
+    incremental_from_commit: 'base1234',
+    is_full_scan: false,
+    files_scanned: 12,
+    lines_scanned: 300,
     notification_ids: ['code_inspection_notification_001'],
     plugin_action_id: 'plugin_action_github_scan',
     plugin_connection_id: 'plugin_connection_github_prod',
@@ -476,7 +481,13 @@ describe('CodeInspectionsPage', () => {
       '/governance/execution-traces?source_id=plugin_invocation_log_001&source_type=plugin_invocation_log',
     );
     expect(within(dialog).getByText('扫描快照')).toBeInTheDocument();
+    expect(within(dialog).getByText('扫描范围')).toBeInTheDocument();
+    expect(within(dialog).getByText('增量扫描')).toBeInTheDocument();
     expect(within(dialog).getByText('native_full_scan')).toBeInTheDocument();
+    expect(within(dialog).getByText('增量基线 Commit')).toBeInTheDocument();
+    expect(within(dialog).getByText('base1234')).toBeInTheDocument();
+    expect(within(dialog).getByText('增量文件数')).toBeInTheDocument();
+    expect(within(dialog).getByText('3')).toBeInTheDocument();
     expect(within(dialog).getByText('workdir://checkouts/scheduled_job_run_001__repo_ai_brain__main__abc1234')).toBeInTheDocument();
     expect(within(dialog).getByText('builtin-2026.06.16')).toBeInTheDocument();
     expect(within(dialog).getByText('未保留')).toBeInTheDocument();

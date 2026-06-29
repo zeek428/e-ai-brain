@@ -656,6 +656,12 @@ def create_code_inspection_report_records(
             if isinstance(source_json.get("files_scanned"), int)
             else 0
         ),
+        "incremental_file_count": (
+            source_json.get("incremental_file_count")
+            if isinstance(source_json.get("incremental_file_count"), int)
+            else None
+        ),
+        "incremental_from_commit": source_json.get("incremental_from_commit"),
         "scheduled_job_id": job["id"],
         "scheduled_job_run_id": run_id,
         "scan_mode": source_json.get("scan_mode"),
@@ -1949,6 +1955,9 @@ def code_inspection_scan_summary(
     return {
         "coverage": {
             "files_scanned": report.get("files_scanned") or 0,
+            "incremental_file_count": report.get("incremental_file_count"),
+            "incremental_from_commit": report.get("incremental_from_commit"),
+            "is_full_scan": bool(report.get("is_full_scan")),
             "lines_scanned": report.get("lines_scanned") or 0,
             "suppressed_finding_count": report.get("suppressed_finding_count") or 0,
         },

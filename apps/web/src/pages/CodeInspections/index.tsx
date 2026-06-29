@@ -160,8 +160,28 @@ function sourceTraceItems(report: CodeInspectionReportRecord) {
 }
 
 function scanSnapshotItems(report: CodeInspectionReportRecord) {
+  const hasIncrementalSnapshot =
+    Boolean(report.incremental_from_commit) ||
+    (report.incremental_file_count !== undefined && report.incremental_file_count !== null);
+  const scanScope =
+    hasIncrementalSnapshot
+      ? '增量扫描'
+      : report.is_full_scan === true
+        ? '全量扫描'
+        : '-';
   return [
+    { key: 'scan_scope', label: '扫描范围', children: scanScope },
     { key: 'scan_mode', label: '扫描模式', children: compactText(report.scan_mode) },
+    {
+      key: 'incremental_from_commit',
+      label: '增量基线 Commit',
+      children: compactText(report.incremental_from_commit),
+    },
+    {
+      key: 'incremental_file_count',
+      label: '增量文件数',
+      children: report.incremental_file_count ?? '-',
+    },
     { key: 'scanner_name', label: '扫描器', children: compactText(report.scanner_name) },
     { key: 'scanner_version', label: '扫描器版本', children: compactText(report.scanner_version) },
     { key: 'rules_version', label: '规则版本', children: compactText(report.rules_version) },

@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 代码巡检增量扫描快照闭环：报告表、详情接口和前端弹窗补齐 `incremental_from_commit`、`incremental_file_count` 与全量/增量扫描范围展示，确保质量门禁和治理结论可追溯到实际扫描范围。
 - 真实全链路回归脚本补齐知识索引健康门禁：知识沉淀采纳后验证 `knowledge_document_id`、`GET /api/knowledge/index-health` 可检索文档/chunk/召回模式，以及 `POST /api/knowledge/search` 命中沉淀文档。
 - 迭代版本驾驶舱升级为版本总览：版本列表入口改为“总览”，弹窗顶部新增下一步行动区，集中提供推进到下一阶段、查看需求、维护分支、查看 Bug、代码巡检、发布记录和版本全链路入口。
 - 知识索引健康中心后端化：新增 `GET /api/knowledge/index-health`，按当前用户知识权限和筛选条件在 PostgreSQL read model 聚合全量文档、chunk、embedding、导入任务和可操作健康问题；知识中心健康面板改为展示当前筛选范围全量健康，不再只基于当前分页结果推断。
