@@ -44,6 +44,19 @@ def test_scheduled_job_entrypoint_uses_split_constants_module():
     assert "from app.services.scheduled_job_constants import" in entrypoint_source
 
 
+def test_plugin_entrypoint_uses_split_constants_module():
+    constants_path = REPO_ROOT / "apps/api/app/services/plugin_constants.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/plugins.py"
+
+    assert constants_path.exists(), (
+        "Move plugin protocol/status/sort constants to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    assert "from app.services.plugin_constants import" in entrypoint_source
+    assert "PLUGIN_PROTOCOLS = " not in entrypoint_source
+    assert "PLUGIN_CONNECTION_SORT_FIELDS = " not in entrypoint_source
+
+
 def test_assistant_references_uses_split_action_defaults_module():
     defaults_path = REPO_ROOT / "apps/api/app/services/assistant_action_reference_defaults.py"
     entrypoint_path = REPO_ROOT / "apps/api/app/services/assistant_references.py"

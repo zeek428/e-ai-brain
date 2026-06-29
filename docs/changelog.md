@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 插件服务常量拆分继续推进：新增 `plugin_constants` 承接协议、分类、状态、认证类型、连接环境、调用状态和排序字段，并由架构守护防止静态配置回流 `plugins.py`。
 - AI 助手引用服务拆分继续推进：新增 `assistant_action_reference_defaults` 承接动作引用默认候选、触发词和配置常量，并由架构守护防止默认入口数据回流 `assistant_references.py`。
 - 迭代版本入口体验优化：版本列表默认按创建时间倒序展示并新增“创建时间”列，支持 `/delivery/versions?version_id=<id>&view=dashboard` 直接打开版本总览；原代码分支深链仍打开分支维护弹窗。
 - 迭代版本总览知识沉淀索引健康：`GET /api/product-versions/{version_id}/dashboard` 的知识沉淀行补齐知识文档标题、索引状态、chunk 数、embedding chunk 数、索引错误摘要和关键词/混合/不可用检索模式，summary 新增可检索与向量就绪沉淀数；版本总览页面在发布准备清单和知识沉淀表直接展示知识资产可用性。

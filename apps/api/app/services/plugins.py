@@ -37,6 +37,21 @@ from app.services.plugin_connection_config import (
     normalize_github_connection_request_config,
     normalize_gitlab_connection_config,
 )
+from app.services.plugin_constants import (
+    AI_EXECUTOR_RUNNER_PROTOCOLS,
+    DEPRECATED_STANDARD_PLUGIN_CODES,
+    MASKED_SECRET_PLACEHOLDER,
+    PLUGIN_ACTION_SORT_FIELDS,
+    PLUGIN_ACTION_TYPES,
+    PLUGIN_AUTH_TYPES,
+    PLUGIN_CATEGORIES,
+    PLUGIN_CONNECTION_ENVIRONMENTS,
+    PLUGIN_CONNECTION_SORT_FIELDS,
+    PLUGIN_INVOCATION_LOG_SORT_FIELDS,
+    PLUGIN_INVOCATION_STATUSES,
+    PLUGIN_PROTOCOLS,
+    PLUGIN_STATUSES,
+)
 from app.services.plugin_delete_protection import (
     action_delete_usages,
     connection_delete_usages,
@@ -60,58 +75,7 @@ from app.services.plugin_templates import (
 from app.services.product_scope import product_scope_filter
 from app.services.result_write_targets import result_write_targets
 
-PLUGIN_PROTOCOLS = {"http", "mcp_http", "mcp_stdio", "runner_polling", "runner_websocket"}
-PLUGIN_CATEGORIES = {
-    "ai_service",
-    "business_system",
-    "collaboration",
-    "data_warehouse",
-    "devops",
-    "general",
-    "issue_tracking",
-    "knowledge_base",
-    "observability",
-}
-PLUGIN_STATUSES = {"active", "disabled", "draft"}
-PLUGIN_AUTH_TYPES = {"none", "bearer", "api_key_header", "basic"}
-PLUGIN_ACTION_TYPES = {"http_request", "mcp_tool"}
-PLUGIN_CONNECTION_ENVIRONMENTS = {"default", "dev", "test", "staging", "prod", "sandbox"}
-PLUGIN_INVOCATION_STATUSES = {"failed", "succeeded"}
-AI_EXECUTOR_RUNNER_PROTOCOLS = {"runner_polling", "runner_websocket"}
-MASKED_SECRET_PLACEHOLDER = "***"
-DEPRECATED_STANDARD_PLUGIN_CODES = {"aliyun_maxcompute"}
-PLUGIN_CONNECTION_SORT_FIELDS = {
-    "created_at",
-    "endpoint_url",
-    "environment",
-    "id",
-    "name",
-    "plugin_id",
-    "status",
-    "updated_at",
-}
-PLUGIN_ACTION_SORT_FIELDS = {
-    "action_type",
-    "code",
-    "created_at",
-    "id",
-    "name",
-    "plugin_id",
-    "status",
-    "updated_at",
-}
-PLUGIN_INVOCATION_LOG_SORT_FIELDS = {
-    "action_id",
-    "connection_id",
-    "created_at",
-    "id",
-    "latency_ms",
-    "plugin_id",
-    "scheduled_job_id",
-    "scheduled_job_run_id",
-    "status",
-    "updated_at",
-}
+
 def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     if not isinstance(collection, dict):
