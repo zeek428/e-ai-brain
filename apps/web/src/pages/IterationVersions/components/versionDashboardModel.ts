@@ -14,6 +14,8 @@ export type DashboardHealthItem = {
   value: string;
 };
 
+export type DashboardReadinessItem = DashboardHealthItem;
+
 type DashboardRequirementImpact = NonNullable<
   ProductVersionDashboard['statusImpact']
 >['updatedRequirements'][number];
@@ -275,6 +277,110 @@ export function buildDashboardHealthItems(
       value: failedReleaseCount
         ? `${failedReleaseCount} 条失败发布`
         : `${dashboard.releases.length} 条发布记录`,
+    },
+  ];
+}
+
+function statusCount(
+  counts: ProductVersionDashboard['taskStatusCounts'],
+  status: string,
+) {
+  return counts.find((item) => item.status === status)?.count ?? 0;
+}
+
+export function buildDashboardReadinessItems(
+  dashboard?: ProductVersionDashboard,
+): DashboardReadinessItem[] {
+  if (!dashboard) {
+    return [];
+  }
+  const blockedRequirementCount =
+    dashboard.statusImpact?.blockedRequirements.length ?? 0;
+  const runningTaskCount = statusCount(dashboard.taskStatusCounts, 'running');
+  const notCreatedBranchCount = dashboard.branchConfigs.filter(
+    (branchConfig) => branchConfig.branchStatus === 'not_created',
+  ).length;
+  const highRiskInspectionCount = dashboard.codeInspectionReports.filter(
+    (report) => {
+      const riskLevel = report.risk_level.toLowerCase();
+      return (
+        riskLevel === 'blocker' ||
+        riskLevel === 'critical' ||
+        riskLevel === 'high'
+      );
+    },
+  ).length;
+  const releaseBlockerCount = dashboard.blockers.filter(
+    (blocker) => blocker.sourceType === 'jenkins_release',
+  ).length;
+  return [
+    {
+      detail: blockedRequirementCount
+        ? `${dashboard.summary.requirements} 条需求 · 阻塞 ${blockedRequirementCount} 条`
+        : `${dashboard.summary.requirements} 条需求 · 可推进`,
+      key: 'requirements',
+      level: blockedRequirementCount ? 'warning' : 'success',
+      title: '需求范围',
+      value: blockedRequirementCount ? '范围有阻塞' : '范围可推进',
+    },
+    {
+      detail: runningTaskCount
+        ? `${dashboard.summary.tasks} 个任务 · 运行中 ${runningTaskCount} 个`
+        : `${dashboard.summary.tasks} 个任务 · 暂无运行中`,
+      key: 'tasks',
+      level: runningTaskCount ? 'info' : 'success',
+      title: '研发任务',
+      value: runningTaskCount ? '任务进行中' : '任务稳定',
+    },
+    {
+      detail: notCreatedBranchCount
+        ? `${dashboard.summary.branch_configs} 个分支 · 未创建 ${notCreatedBranchCount} 个`
+        : `${dashboard.summary.branch_configs} 个分支 · 已登记`,
+      key: 'branches',
+      level: notCreatedBranchCount ? 'warning' : 'success',
+      title: '代码分支',
+      value: notCreatedBranchCount ? '分支待维护' : '分支就绪',
+    },
+    {
+      detail: highRiskInspectionCount
+        ? `${dashboard.summary.code_inspection_reports} 份报告 · 高风险 ${highRiskInspectionCount} 份`
+        : `${dashboard.summary.code_inspection_reports} 份报告 · 暂无高风险`,
+      key: 'inspections',
+      level: highRiskInspectionCount ? 'warning' : 'success',
+      title: '代码巡检',
+      value: highRiskInspectionCount ? '质量待治理' : '质量可控',
+    },
+    {
+      detail: dashboard.summary.open_bugs
+        ? `${dashboard.summary.bugs} 个 Bug · 未关闭 ${dashboard.summary.open_bugs} 个`
+        : `${dashboard.summary.bugs} 个 Bug · 已收敛`,
+      key: 'bugs',
+      level: dashboard.summary.open_bugs ? 'error' : 'success',
+      title: 'Bug 收敛',
+      value: dashboard.summary.open_bugs ? 'Bug 待关闭' : 'Bug 已收敛',
+    },
+    {
+      detail: releaseBlockerCount
+        ? `${dashboard.summary.releases} 条记录 · 发布阻塞 ${releaseBlockerCount} 个`
+        : `${dashboard.summary.releases} 条记录 · 暂无发布阻塞`,
+      key: 'releases',
+      level: releaseBlockerCount ? 'error' : 'success',
+      title: '发布证据',
+      value: releaseBlockerCount ? '发布待补证' : '发布证据可用',
+    },
+    {
+      detail: dashboard.statusImpact
+        ? `同步 ${dashboard.statusImpact.updatedRequirements.length} / 阻塞 ${dashboard.statusImpact.blockedRequirements.length} / 保持 ${dashboard.statusImpact.unchangedRequirements.length}`
+        : '当前版本没有可推进的下一阶段',
+      key: 'status-impact',
+      level:
+        dashboard.statusImpact?.blockedRequirements.length
+          ? 'warning'
+          : dashboard.statusImpact
+            ? 'success'
+            : 'info',
+      title: '状态推进',
+      value: dashboard.statusImpact ? '已预览影响' : '无需推进',
     },
   ];
 }

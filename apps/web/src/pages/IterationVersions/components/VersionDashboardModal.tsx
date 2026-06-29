@@ -14,6 +14,7 @@ import {
   VersionDashboardActions,
   VersionDashboardHealthSummary,
   VersionDashboardMetrics,
+  VersionDashboardReadinessChecklist,
   VersionDashboardStatusDistribution,
   VersionDashboardStatusImpactNotice,
 } from './VersionDashboardSummary';
@@ -25,6 +26,7 @@ import {
 } from './VersionDashboardTables';
 import {
   buildDashboardHealthItems,
+  buildDashboardReadinessItems,
   buildStatusImpactRows,
   buildStatusLabelMap,
   dashboardDate,
@@ -75,6 +77,7 @@ export function VersionDashboardModal({
     dashboard?.statusImpact,
   );
   const dashboardHealthItems = buildDashboardHealthItems(dashboard);
+  const dashboardReadinessItems = buildDashboardReadinessItems(dashboard);
 
   return (
     <Modal
@@ -127,6 +130,9 @@ export function VersionDashboardModal({
               versionStatusLabels={versionStatusLabels}
             />
             <VersionDashboardMetrics dashboard={dashboard} />
+            <VersionDashboardReadinessChecklist
+              items={dashboardReadinessItems}
+            />
             <VersionDashboardHealthSummary items={dashboardHealthItems} />
             <VersionDashboardStatusDistribution
               dashboard={dashboard}

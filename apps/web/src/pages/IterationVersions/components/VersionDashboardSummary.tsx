@@ -15,6 +15,7 @@ import {
   dashboardHealthLevelLabels,
   internalHref,
   type DashboardHealthItem,
+  type DashboardReadinessItem,
   type LabelItem,
 } from './versionDashboardModel';
 
@@ -155,6 +156,58 @@ export function VersionDashboardMetrics({
 type VersionDashboardHealthSummaryProps = {
   items: DashboardHealthItem[];
 };
+
+type VersionDashboardReadinessChecklistProps = {
+  items: DashboardReadinessItem[];
+};
+
+export function VersionDashboardReadinessChecklist({
+  items,
+}: VersionDashboardReadinessChecklistProps) {
+  return (
+    <div>
+      <Text strong>发布准备清单</Text>
+      <Space size={8} style={{ display: 'flex', marginTop: 8 }} wrap>
+        {items.map((item) => {
+          const level = dashboardHealthLevelLabels[item.level];
+          return (
+            <div
+              key={item.key}
+              style={{
+                border: '1px solid #f0f0f0',
+                borderRadius: 6,
+                minHeight: 86,
+                padding: '8px 10px',
+                width: 176,
+              }}
+            >
+              <Space
+                align="center"
+                style={{
+                  justifyContent: 'space-between',
+                  width: '100%',
+                }}
+              >
+                <Text strong>{item.title}</Text>
+                <Tag color={level.color}>{level.label}</Tag>
+              </Space>
+              <div
+                style={{
+                  fontWeight: 600,
+                  lineHeight: 1.5,
+                  marginTop: 6,
+                }}
+              >
+                {item.value}
+              </div>
+              <Text type="secondary">{item.detail}</Text>
+            </div>
+          );
+        })}
+      </Space>
+    </div>
+  );
+}
 
 export function VersionDashboardHealthSummary({
   items,
