@@ -408,11 +408,17 @@ describe('system management pages', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: '详情' })[0]);
 
-    expect(await screen.findByRole('dialog', { name: '角色详情 · 系统管理员' })).toBeInTheDocument();
+    const detailDialog = await screen.findByRole('dialog', { name: '角色详情 · 系统管理员' });
+    expect(detailDialog).toBeInTheDocument();
     expect(screen.getByText('负责用户、角色、模型网关、审计与系统级配置管理。')).toBeInTheDocument();
     expect(screen.getByText('system.roles.manage')).toBeInTheDocument();
     expect(screen.getByText('system.users.manage')).toBeInTheDocument();
     expect(screen.getByText('governance.audit')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('访问预览')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('/system/roles')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('角色管理 (system.roles.manage)')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('* · 管理')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('1 个高风险权限')).toBeInTheDocument();
   });
 
   it('manages menu resources from the system menu page', async () => {

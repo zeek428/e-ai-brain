@@ -254,6 +254,92 @@ function renderRoleAccessRisks(row: RbacPolicyMatrixRow) {
   );
 }
 
+function renderAccessPreviewMenuList(menuCodes: string[], menusByCode: Map<string, MenuResourceRecord>) {
+  if (!menuCodes.length) {
+    return <Text type="secondary">未授权可见菜单</Text>;
+  }
+  return (
+    <div className="role-detail-access-list">
+      {menuCodes.map((code) => {
+        const menu = menusByCode.get(code);
+        const label = menu?.name ?? code;
+        const path = menu?.path || code;
+        return (
+          <div className="role-detail-access-item" key={code}>
+            <Text strong>{label}</Text>
+            <Text type="secondary">{path}</Text>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderAccessPreviewPermissionList(
+  permissionCodes: string[],
+  permissionsByCode: Map<string, PermissionRecord>,
+) {
+  if (!permissionCodes.length) {
+    return <Text type="secondary">未授权操作权限</Text>;
+  }
+  return (
+    <div className="role-detail-access-list">
+      {permissionCodes.map((code) => {
+        const permission = permissionsByCode.get(code);
+        const label = permission ? `${permission.name} (${permission.code})` : code;
+        return (
+          <div className="role-detail-access-item" key={code}>
+            <Text strong>{label}</Text>
+            {permission?.risk_level ? (
+              <StatusTag
+                color={permission.risk_level === 'high' ? 'red' : 'default'}
+                label={permission.risk_level}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderAccessPreviewScopeGroups(scopes: ScopeGrant[]) {
+  if (!scopes.length) {
+    return <Text type="secondary">未配置产品、知识空间或全局数据范围</Text>;
+  }
+  const groupedScopes = scopes.reduce<Record<string, ScopeGrant[]>>((groups, scope) => {
+    const scopeType = scope.scope_type || 'unknown';
+    groups[scopeType] = [...(groups[scopeType] ?? []), scope];
+    return groups;
+  }, {});
+  return (
+    <div className="role-detail-access-list">
+      {Object.entries(groupedScopes).map(([scopeType, items]) => (
+        <div className="role-detail-access-item" key={scopeType}>
+          <Text strong>{SCOPE_TYPE_LABELS[scopeType] ?? scopeType}</Text>
+          <Space size={[4, 4]} wrap>
+            {items.map((scope) => (
+              <Tag
+                color={SCOPE_TYPE_COLORS[scope.scope_type] ?? 'default'}
+                key={`${scope.scope_type}:${scope.scope_id}:${scope.access_level}`}
+              >
+                {scope.scope_id || '-'} · {ACCESS_LEVEL_LABELS[scope.access_level] ?? scope.access_level}
+              </Tag>
+            ))}
+          </Space>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function renderDetailAccessRisks(row: RbacPolicyMatrixRow | undefined) {
+  if (!row) {
+    return <Text type="secondary">权限矩阵未加载，暂无法展示风险预览</Text>;
+  }
+  return renderRoleAccessRisks(row);
+}
+
 function matrixColumns(): ColumnsType<RbacPolicyMatrixRow> {
   return [
     {
@@ -949,6 +1035,17 @@ export default function RolesPage() {
     () => new Map(permissions.map((permission) => [permission.code, permission])),
     [permissions],
   );
+  const menuByCode = useMemo(
+    () => new Map(menus.map((menu) => [menu.code, menu])),
+    [menus],
+  );
+  const detailMatrixRow = useMemo(
+    () =>
+      detailRole
+        ? policyMatrix?.rows.find((row) => row.role_code === detailRole.code || row.role_id === detailRole.id)
+        : undefined,
+    [detailRole, policyMatrix?.rows],
+  );
   const menuPermissionCodesByMenu = useMemo(() => {
     const entries = activeMenus.map((menu) => [menu.code, getMenuPermissionCodes(menu, permissions)] as const);
     return new Map(entries);
@@ -1343,54 +1440,102 @@ export default function RolesPage() {
         width={880}
       >
         {detailRole ? (
-          <Descriptions bordered column={2} size="small">
-            <Descriptions.Item label="角色编码">{detailRole.code}</Descriptions.Item>
-            <Descriptions.Item label="分类">{detailRole.categoryText}</Descriptions.Item>
-            <Descriptions.Item label="业务角色">{renderTagList(detailRole.business_roles)}</Descriptions.Item>
-            <Descriptions.Item label="状态">
-              {detailRole.status === 'active' ? (
-                <StatusTag color="green" label="启用" />
-              ) : (
-                <StatusTag color="default" label="停用" />
-              )}
-            </Descriptions.Item>
-            <Descriptions.Item label="定位" span={2}>
-              <Paragraph>{detailRole.description || '-'}</Paragraph>
-            </Descriptions.Item>
-            <Descriptions.Item label="职责" span={2}>
-              {detailRole.responsibilities.length ? (
-                <ul>
-                  {detailRole.responsibilities.map((responsibility) => (
-                    <li key={responsibility}>{responsibility}</li>
-                  ))}
-                </ul>
-              ) : (
-                '-'
-              )}
-            </Descriptions.Item>
-            <Descriptions.Item label="数据范围">{detailRole.data_scope || '-'}</Descriptions.Item>
-            <Descriptions.Item label="决策范围">{detailRole.decision_scope || '-'}</Descriptions.Item>
-            <Descriptions.Item label="授权范围" span={2}>
-              {renderScopeGrantTags(detailRole.scopes)}
-            </Descriptions.Item>
-            <Descriptions.Item label="可见入口" span={2}>
-              {renderTagList(detailRole.menu_scope)}
-            </Descriptions.Item>
-            <Descriptions.Item label="限制边界" span={2}>
-              {detailRole.limitations.length ? (
-                <ul>
-                  {detailRole.limitations.map((limitation) => (
-                    <li key={limitation}>{limitation}</li>
-                  ))}
-                </ul>
-              ) : (
-                '-'
-              )}
-            </Descriptions.Item>
-            <Descriptions.Item label="权限点" span={2}>
-              {renderTagList(detailRole.permissions)}
-            </Descriptions.Item>
-          </Descriptions>
+          <>
+            <Descriptions bordered column={2} size="small">
+              <Descriptions.Item label="角色编码">{detailRole.code}</Descriptions.Item>
+              <Descriptions.Item label="分类">{detailRole.categoryText}</Descriptions.Item>
+              <Descriptions.Item label="业务角色">{renderTagList(detailRole.business_roles)}</Descriptions.Item>
+              <Descriptions.Item label="状态">
+                {detailRole.status === 'active' ? (
+                  <StatusTag color="green" label="启用" />
+                ) : (
+                  <StatusTag color="default" label="停用" />
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="定位" span={2}>
+                <Paragraph>{detailRole.description || '-'}</Paragraph>
+              </Descriptions.Item>
+              <Descriptions.Item label="职责" span={2}>
+                {detailRole.responsibilities.length ? (
+                  <ul>
+                    {detailRole.responsibilities.map((responsibility) => (
+                      <li key={responsibility}>{responsibility}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  '-'
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="数据范围">{detailRole.data_scope || '-'}</Descriptions.Item>
+              <Descriptions.Item label="决策范围">{detailRole.decision_scope || '-'}</Descriptions.Item>
+              <Descriptions.Item label="授权范围" span={2}>
+                {renderScopeGrantTags(detailRole.scopes)}
+              </Descriptions.Item>
+              <Descriptions.Item label="可见入口" span={2}>
+                {renderTagList(detailRole.menu_scope)}
+              </Descriptions.Item>
+              <Descriptions.Item label="限制边界" span={2}>
+                {detailRole.limitations.length ? (
+                  <ul>
+                    {detailRole.limitations.map((limitation) => (
+                      <li key={limitation}>{limitation}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  '-'
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="权限点" span={2}>
+                {renderTagList(detailRole.permissions)}
+              </Descriptions.Item>
+            </Descriptions>
+            <section className="role-detail-access-preview" aria-label="单角色访问预览">
+              <div className="role-detail-access-header">
+                <Space orientation="vertical" size={4}>
+                  <Text strong>访问预览</Text>
+                  <Text type="secondary">
+                    汇总该角色可见菜单、操作权限、产品/知识空间范围和当前风险，便于分配前确认访问边界。
+                  </Text>
+                </Space>
+              </div>
+              <Space className="role-policy-matrix-summary" size={[8, 8]} wrap>
+                <Tag color="cyan">{detailMatrixRow?.menu_count ?? detailRole.menu_codes.length} 个菜单</Tag>
+                <Tag color="blue">
+                  {detailMatrixRow?.permission_count ?? detailRole.permission_codes.length} 个操作权限
+                </Tag>
+                <Tag color={detailRole.scopes.length ? 'purple' : 'gold'}>{detailRole.scopes.length} 个数据范围</Tag>
+                {detailMatrixRow?.high_risk_permission_count ? (
+                  <Tag color="red">{detailMatrixRow.high_risk_permission_count} 个高风险权限</Tag>
+                ) : (
+                  <Tag color="green">无高风险权限</Tag>
+                )}
+              </Space>
+              <div className="role-detail-access-grid">
+                <section className="role-detail-access-section">
+                  <Text strong>可见菜单</Text>
+                  {renderAccessPreviewMenuList(
+                    detailMatrixRow?.granted_menu_codes ?? detailRole.menu_codes,
+                    menuByCode,
+                  )}
+                </section>
+                <section className="role-detail-access-section">
+                  <Text strong>操作权限</Text>
+                  {renderAccessPreviewPermissionList(
+                    detailMatrixRow?.granted_permission_codes ?? detailRole.permission_codes,
+                    permissionByCode,
+                  )}
+                </section>
+                <section className="role-detail-access-section">
+                  <Text strong>数据范围</Text>
+                  {renderAccessPreviewScopeGroups(detailRole.scopes)}
+                </section>
+                <section className="role-detail-access-section">
+                  <Text strong>风险提示</Text>
+                  {renderDetailAccessRisks(detailMatrixRow)}
+                </section>
+              </div>
+            </section>
+          </>
         ) : null}
       </Modal>
     </>
