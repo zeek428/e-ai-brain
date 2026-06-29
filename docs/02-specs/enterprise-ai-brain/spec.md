@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.717 |
+| 功能版本 | v1.1.718 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.718 | 2026-06-30 | 迭代版本总览顶部新增优先处理建议：基于阻塞处理队列在下一步行动区展示前三个最高优先级阻塞及处理入口 | Codex |
 | v1.1.717 | 2026-06-30 | 真实全链路回归脚本补齐代码巡检治理压力门禁：完整链路必须校验 `governance_pressure` 的闭环状态、质量门禁失败、严重问题和 Bug/整改任务覆盖 | Codex |
 | v1.1.716 | 2026-06-30 | 代码巡检治理概览新增治理压力总览：dashboard 返回 `governance_pressure`，集中展示待闭环提交人、缺 Bug、缺整改任务、门禁失败、待审批忽略和到期接受风险 | Codex |
 | v1.1.715 | 2026-06-30 | AI 动作确认中心补齐列表治理压力总览：草案任务台 summary 返回风险、权限和治理计数，前端顶部集中展示高风险、权限阻塞、校验阻塞、失败/重试和审计事件 | Codex |
@@ -1509,7 +1510,7 @@ RBAC 策略矩阵为只读聚合能力，不新增生产写表；服务端基于
 | 产品列表 | GET | /api/products | 查询产品配置，要求 `product.read`，支持服务端分页、排序和筛选并按当前用户产品 scope 过滤；主表响应行包含当前版本与模块数聚合字段，前端无需额外拉取全量版本/模块列表拼装。 |
 | 产品维护 | POST/PATCH/DELETE | /api/products, /api/products/{product_id} | 管理产品，创建/更新/删除要求 `product.manage`，创建产品要求全局产品范围，单产品更新和删除按当前用户产品 scope 校验；产品编码唯一；删除前校验需求、AI 任务和 Bug 业务依赖，无业务依赖时级联清理版本、模块和 Git 资源配置。 |
 | 迭代版本 | GET/POST/PATCH/DELETE | /api/product-versions, /api/products/{product_id}/versions, /api/product-versions/{version_id} | 管理产品迭代版本，前端主入口位于需求交付/迭代版本；读接口要求 `product.read` 并按产品 scope 过滤，创建、更新、推进状态和删除要求 `product.manage` 并按版本归属产品校验；同一产品内版本编码唯一，删除前校验需求、AI 任务和 Bug 依赖。 |
-| 迭代版本驾驶舱 | GET | /api/product-versions/{version_id}/dashboard | 查询单个迭代版本交付健康聚合，要求 `product.read` 并按版本归属产品校验 scope；聚合需求、AI 任务、版本分支、Bug、代码巡检、代码评审、知识沉淀、发布记录、状态推进影响和阻塞项，Bug/代码巡检/知识沉淀明细按子权限降级隐藏。 |
+| 迭代版本驾驶舱 | GET | /api/product-versions/{version_id}/dashboard | 查询单个迭代版本交付健康聚合，要求 `product.read` 并按版本归属产品校验 scope；聚合需求、AI 任务、版本分支、Bug、代码巡检、代码评审、知识沉淀、发布记录、状态推进影响和阻塞项，Bug/代码巡检/知识沉淀明细按子权限降级隐藏。前端版本总览应在“下一步行动”区域根据 blockers 排序展示前三个优先处理建议，并保留阻塞处理队列明细。 |
 | 迭代版本代码分支 | GET/POST/PATCH/DELETE | /api/product-versions/{version_id}/branch-configs, /api/product-version-branch-configs/{branch_config_id} | 在迭代版本下维护版本级代码分支；读接口要求 `product.read`，写接口要求 `product.manage`，版本和仓库均必须在当前用户产品 scope 内；同一版本可关联多个产品 Git 资源，同一仓库只能配置一条版本分支；仓库必须和版本属于同一产品。 |
 | 产品模块 | GET/POST/PATCH/DELETE | /api/products/{product_id}/modules, /api/product-modules/{module_id} | 管理产品模块；列表要求 `product.read`，创建、更新和删除要求 `product.manage`，并按当前用户产品 scope 校验嵌套产品和模块归属产品；同一产品内模块编码唯一，删除前校验需求、AI 任务和 Bug 依赖。 |
 | 产品 Git 资源 | GET/POST/PATCH/DELETE | /api/products/{product_id}/git-repositories, /api/product-git-repositories/{repo_id} | 管理产品仓库资源；列表要求 `product.read`，创建、更新和删除要求 `product.manage`，并按当前用户产品 scope 校验嵌套产品和仓库归属产品，scope 外返回 404。 |

@@ -1114,6 +1114,10 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByRole('button', { name: /推进到测试中/ })).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /查看需求/ }).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /维护分支/ })).toBeInTheDocument();
+    expect(screen.getByText('优先处理建议')).toBeInTheDocument();
+    expect(screen.getAllByText('3 个阻塞项').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Bug').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('发布记录').length).toBeGreaterThan(0);
     expect(screen.getByText('下一阶段：测试中')).toBeInTheDocument();
     expect(screen.getByText('交付链路总览')).toBeInTheDocument();
     expect(screen.getByText('版本推进前的关键环节按研发链路排序，红/黄环节优先治理。')).toBeInTheDocument();
@@ -1137,7 +1141,7 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('同步 1 / 阻塞 1 / 保持 1').length).toBeGreaterThan(0);
     expect(screen.getByText('交付健康摘要')).toBeInTheDocument();
     expect(screen.getByText('发布准入')).toBeInTheDocument();
-    expect(screen.getByText('3 个阻塞项')).toBeInTheDocument();
+    expect(screen.getAllByText('3 个阻塞项').length).toBeGreaterThan(0);
     expect(screen.getByText('阻塞来源：Bug 1、代码分支 1、发布记录 1。')).toBeInTheDocument();
     expect(screen.getByText('质量风险')).toBeInTheDocument();
     expect(screen.getByText('2 个严重风险')).toBeInTheDocument();
@@ -1150,11 +1154,11 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('1 条失败发布')).toBeInTheDocument();
     expect(screen.getByText('阻塞处理队列')).toBeInTheDocument();
     expect(screen.getByText('按严重级别、来源类型和处理入口排序，优先处理发布准入风险。')).toBeInTheDocument();
-    expect(screen.getByText('优先级 1')).toBeInTheDocument();
+    expect(screen.getAllByText('优先级 1').length).toBeGreaterThan(0);
     expect(screen.getByText('高风险 · Bug')).toBeInTheDocument();
-    expect(screen.getByText('优先级 2')).toBeInTheDocument();
+    expect(screen.getAllByText('优先级 2').length).toBeGreaterThan(0);
     expect(screen.getByText('高风险 · 发布记录')).toBeInTheDocument();
-    expect(screen.getByText('优先级 3')).toBeInTheDocument();
+    expect(screen.getAllByText('优先级 3').length).toBeGreaterThan(0);
     expect(screen.getByText('中风险 · 代码分支')).toBeInTheDocument();
     expect(screen.getByText('状态分布')).toBeInTheDocument();
     expect(screen.getByText('需求状态')).toBeInTheDocument();

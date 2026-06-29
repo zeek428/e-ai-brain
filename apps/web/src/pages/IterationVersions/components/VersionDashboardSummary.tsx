@@ -12,6 +12,7 @@ import {
   type ProductVersionDashboard,
 } from '../../../services/aiBrain';
 import {
+  buildBlockerActionQueue,
   dashboardHealthLevelLabels,
   internalHref,
   type DashboardHealthItem,
@@ -36,6 +37,8 @@ export function VersionDashboardActions({
   onViewRequirements,
   versionStatusLabels,
 }: VersionDashboardActionsProps) {
+  const priorityActions = buildBlockerActionQueue(dashboard).slice(0, 3);
+
   return (
     <div>
       <Text strong>下一步行动</Text>
@@ -89,6 +92,72 @@ export function VersionDashboardActions({
           版本全链路
         </Button>
       </Space>
+      {priorityActions.length ? (
+        <div
+          style={{
+            border: '1px solid #ffccc7',
+            borderRadius: 6,
+            marginTop: 12,
+            padding: 12,
+          }}
+        >
+          <Space align="center" style={{ display: 'flex', marginBottom: 8 }} wrap>
+            <Text strong>优先处理建议</Text>
+            <Tag color="red">{dashboard.summary.blockers} 个阻塞项</Tag>
+          </Space>
+          <Space size={8} style={{ display: 'flex' }} wrap>
+            {priorityActions.map((item) => (
+              <div
+                key={`${item.sourceType}-${item.id ?? item.title}-priority`}
+                style={{
+                  border: '1px solid #f0f0f0',
+                  borderRadius: 6,
+                  minHeight: 118,
+                  padding: '8px 10px',
+                  width: 270,
+                }}
+              >
+                <Space size={4} style={{ display: 'flex' }} wrap>
+                  <Tag color="blue">优先级 {item.priority}</Tag>
+                  <Tag color={item.severity === 'high' ? 'red' : 'gold'}>
+                    {item.sourceLabel}
+                  </Tag>
+                </Space>
+                <div style={{ marginTop: 6 }}>
+                  <Text strong ellipsis style={{ maxWidth: 238 }}>
+                    {String(item.title ?? '-')}
+                  </Text>
+                </div>
+                <div style={{ marginTop: 4 }}>
+                  <Text type="secondary">{String(item.reason ?? '-')}</Text>
+                </div>
+                <Space size={4} style={{ marginTop: 6 }} wrap>
+                  {item.actionHref ? (
+                    <Button
+                      href={item.actionHref}
+                      icon={<ArrowRightOutlined />}
+                      size="small"
+                      type="link"
+                    >
+                      {item.actionLabel}
+                    </Button>
+                  ) : null}
+                  {item.fullChainHref ? (
+                    <Button
+                      href={item.fullChainHref}
+                      icon={<LinkOutlined />}
+                      size="small"
+                      type="link"
+                    >
+                      全链路
+                    </Button>
+                  ) : null}
+                </Space>
+              </div>
+            ))}
+          </Space>
+        </div>
+      ) : null}
     </div>
   );
 }
