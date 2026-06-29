@@ -274,6 +274,55 @@ def test_gitlab_mr_preview_and_snapshot_are_read_only_and_immutable(monkeypatch)
     assert [event["event_type"] for event in audit_events] == ["gitlab_mr.snapshotted"]
 
 
+def test_gitlab_fixture_scheme_supports_version_dashboard_regression():
+    headers = auth_headers()
+    context = build_confirmed_solution_context(
+        headers,
+        repository_payload={
+            "credential_ref": "fixture-token-version-dashboard",
+            "git_provider": "gitlab",
+            "name": "版本总览 fixture GitLab",
+            "project_path": "dashboard/full-chain-fixture",
+            "remote_url": "fixture://gitlab",
+        },
+    )
+
+    preview = client.get(
+        f"/api/devops/gitlab/merge-requests/{context['repository_id']}/7/preview",
+        headers=headers,
+    ).json()["data"]
+    assert preview["title"] == "版本总览 Code Review 回归 !7"
+    assert preview["source_branch"] == "dashboard/full-chain-fixture"
+    assert preview["changed_file_count"] == 2
+    assert preview["writeback_allowed"] is False
+
+    snapshot = client.post(
+        f"/api/devops/gitlab/merge-requests/{context['repository_id']}/7/snapshot",
+        json={
+            "requirement_id": context["requirement_id"],
+            "technical_solution_task_id": context["technical_solution_task_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    assert snapshot["id"].startswith("snapshot_")
+    assert snapshot["project_path"] == "dashboard/full-chain-fixture"
+    assert snapshot["source_provider"] == "gitlab"
+
+    task_response = client.post(
+        "/api/ai-tasks",
+        json={
+            "input": {"gitlab_mr_snapshot_id": snapshot["id"]},
+            "requirement_id": context["requirement_id"],
+            "task_type": "code_review",
+            "title": "Review fixture MR !7",
+        },
+        headers=headers,
+    )
+
+    assert task_response.status_code == 200
+    assert task_response.json()["data"]["task_type"] == "code_review"
+
+
 def test_gitlab_mr_snapshot_reuses_existing_snapshot_for_same_diff(monkeypatch):
     install_real_gitlab_api_stub(monkeypatch)
     headers = auth_headers()

@@ -1,10 +1,12 @@
 import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from gitlab_fakes import install_real_gitlab_api_stub
 
 import app.services.model_gateway as model_gateway_service
 from app.main import app, settings
+from app.services.code_review_report import code_review_report_for_task
 
 client = TestClient(app)
 
@@ -16,6 +18,37 @@ def auth_headers() -> dict[str, str]:
     )
     token = response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_code_review_report_lookup_falls_back_to_report_task_id():
+    current_store = SimpleNamespace(
+        ai_tasks={
+            "task_db_first": {
+                "id": "task_db_first",
+                "task_type": "code_review",
+                "title": "DB-first Code Review",
+            }
+        },
+        code_review_reports={
+            "report_db_first": {
+                "findings": [],
+                "id": "report_db_first",
+                "risk_level": "low",
+                "status": "pending_review",
+                "summary": "DB-first report",
+                "task_id": "task_db_first",
+            }
+        },
+    )
+
+    report = code_review_report_for_task(
+        current_store,
+        task_id="task_db_first",
+        user={"roles": ["admin"]},
+    )
+
+    assert report["id"] == "report_db_first"
+    assert "AI Brain Code Review 结论" in report["writeback_template"]["body"]
 
 
 def build_mr_snapshot(headers: dict[str, str]) -> tuple[str, str]:

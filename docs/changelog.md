@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本补齐版本总览 Code Review 门禁：`--suite version-dashboard` 通过本地 GitLab fixture MR 快照创建待确认代码评审报告，并校验版本总览 `code_review_reports` 与 `pending_code_review_reports` 聚合不断链。
 - RBAC 权限范围名称预览：权限矩阵和用户权限诊断补齐产品、知识空间、全局 scope 的可读名称，角色管理页展示“名称 · ID · 访问级别”，减少只看原始 ID 的授权排查成本。
 - 迭代版本总览代码评审聚合：版本驾驶舱按版本内任务关联 Code Review 报告，展示报告数、待确认数、风险、执行器、关联任务和报告入口，减少版本推进前跨页面拼代码评审上下文。
 - 真实全链路回归脚本场景集：新增 `--suite` / `FULL_CHAIN_SUITE`，默认 `full` 保持完整业务主链路，`runner-reliability` 可单独验收 AI 执行器 Runner Token 轮换、租约、重派和死信门禁，`version-dashboard` 可快速验收版本总览需求/任务/分支聚合、状态推进影响和发布/分支阻塞项，`assistant-draft-governance` 可快速验收 AI 动作草案风险、影响、权限、差异、查看/修改/确认和审计链路。
@@ -78,6 +79,9 @@
 - AI 助手效果指标维度与导出：`/api/assistant/metrics` 支持产品、角色、时间段和动作过滤，返回产品/角色维度、每日趋势、草案类型趋势；新增 `/api/assistant/metrics/export`，前端指标弹窗支持 CSV 导出。
 - 研发执行器策略：需求交付新增研发执行器策略页面和 API，按任务类型、产品与优先级匹配插件管理下的 Codex、Claude Code、OpenClaw Runner；策略不装配 Agent/Skill，研发任务命中策略后投递 Runner 队列，完成回写后进入人工确认。
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
+
+### Fixed
+- Code Review 报告详情 DB-first 读取兼容：当 `ai_tasks` 结构表没有动态反链字段时，报告详情可按 `code_review_reports.task_id` 反查待确认报告，避免启动后报告已落库但详情接口返回 404。
 
 ### Changed
 - AI 动作确认中心详情治理面板组件化：草案详情页将风险原因、影响/来源对象、权限必需/缺失/问题、修复动作、审计事件和失败重试状态集中展示，减少确认高影响动作前的跨区块核对成本。

@@ -654,14 +654,66 @@ def validate_version_dashboard_quick_regression(
         StepResult("version_dashboard_requirement", f"{requirement['id']} / task={task_id}")
     )
 
+    design_started = client.post(
+        f"/api/ai-tasks/{task_id}/start",
+        {
+            "execution_mode": "deterministic",
+            "reason": "version dashboard quick regression prepares code review context",
+        },
+    )
+    _assert(
+        design_started.get("status") == "waiting_review",
+        f"Version dashboard design task did not enter review: {design_started}",
+    )
+    design_approved = client.post(
+        f"/api/reviews/{design_started['review_id']}/approve",
+        {"version": 1},
+    )
+    _assert(
+        design_approved.get("task_status") == "completed",
+        f"Version dashboard design task was not completed: {design_approved}",
+    )
+    technical_solution = client.post(
+        "/api/ai-tasks",
+        {
+            "input": {"product_detail_design_task_id": task_id},
+            "requirement_id": requirement["id"],
+            "task_type": "technical_solution",
+            "title": f"技术方案：版本总览快速回归 {slug}",
+        },
+    )
+    results.append(
+        StepResult("version_dashboard_solution", str(technical_solution["id"]))
+    )
+    solution_started = client.post(
+        f"/api/ai-tasks/{technical_solution['id']}/start",
+        {
+            "execution_mode": "deterministic",
+            "reason": "version dashboard quick regression prepares code review context",
+        },
+    )
+    _assert(
+        solution_started.get("status") == "waiting_review",
+        f"Version dashboard solution task did not enter review: {solution_started}",
+    )
+    solution_approved = client.post(
+        f"/api/reviews/{solution_started['review_id']}/approve",
+        {"version": 1},
+    )
+    _assert(
+        solution_approved.get("task_status") == "completed",
+        f"Version dashboard solution task was not completed: {solution_approved}",
+    )
+
     repository = client.post(
         f"/api/products/{product['id']}/git-repositories",
         {
+            "credential_ref": f"fixture-token-{slug}",
             "default_branch": "main",
-            "git_provider": "github",
+            "git_provider": "gitlab",
             "name": f"版本总览快速回归仓库 {slug}",
             "project_path": f"dashboard/{slug}",
-            "remote_url": str(repo_path),
+            "remote_url": "fixture://gitlab",
             "repo_type": "code",
             "root_path": "/",
             "status": "active",
@@ -678,8 +730,44 @@ def validate_version_dashboard_quick_regression(
             "working_branch": version_branch,
         },
     )
+    snapshot = client.post(
+        f"/api/devops/gitlab/merge-requests/{repository['id']}/7/snapshot",
+        {
+            "requirement_id": requirement["id"],
+            "technical_solution_task_id": technical_solution["id"],
+        },
+    )
     results.append(
         StepResult("version_dashboard_branch", f"{branch_config['id']} / {version_branch}")
+    )
+    code_review_task = client.post(
+        "/api/ai-tasks",
+        {
+            "input": {"gitlab_mr_snapshot_id": snapshot["id"]},
+            "requirement_id": requirement["id"],
+            "task_type": "code_review",
+            "title": f"Code Review：版本总览快速回归 {slug}",
+        },
+    )
+    code_review_started = client.post(
+        f"/api/ai-tasks/{code_review_task['id']}/start",
+        {
+            "execution_mode": "deterministic",
+            "reason": "version dashboard quick regression validates code review aggregation",
+        },
+    )
+    _assert(
+        code_review_started.get("status") == "waiting_review",
+        f"Version dashboard code review task did not enter review: {code_review_started}",
+    )
+    code_review_report = client.get(
+        f"/api/ai-tasks/{code_review_task['id']}/code-review-report"
+    )
+    results.append(
+        StepResult(
+            "version_dashboard_code_review",
+            f"{code_review_task['id']} / report={code_review_report['id']}",
+        )
     )
 
     version_testing = client.post(
@@ -708,6 +796,14 @@ def validate_version_dashboard_quick_regression(
         dashboard["summary"]["branch_configs"] >= 1,
         "Version dashboard quick check missed branch summary.",
     )
+    _assert(
+        dashboard["summary"].get("code_review_reports", 0) >= 1,
+        "Version dashboard quick check missed code review report summary.",
+    )
+    _assert(
+        dashboard["summary"].get("pending_code_review_reports", 0) >= 1,
+        "Version dashboard quick check missed pending code review report summary.",
+    )
     _assert_contains(
         _ids(dashboard.get("requirements", [])),
         requirement["id"],
@@ -722,6 +818,11 @@ def validate_version_dashboard_quick_regression(
         _ids(dashboard.get("branch_configs", [])),
         branch_config["id"],
         "Version dashboard quick check missed branch row",
+    )
+    _assert_contains(
+        _ids(dashboard.get("code_review_reports", [])),
+        code_review_report["id"],
+        "Version dashboard quick check missed code review report row",
     )
     status_impact = dashboard.get("status_impact") or {}
     _assert(

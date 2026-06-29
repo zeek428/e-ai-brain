@@ -23,6 +23,28 @@ def _read_memory_record(
     return record if isinstance(record, dict) else None
 
 
+def _find_code_review_report_for_task(
+    current_store: Any,
+    *,
+    task: dict[str, Any],
+) -> dict[str, Any] | None:
+    report_id = task.get("code_review_report_id")
+    report = _read_memory_record(current_store, "code_review_reports", report_id)
+    if report is not None:
+        return report
+    task_id = str(task.get("id") or "")
+    matches = [
+        item
+        for item in _read_memory_dict(current_store, "code_review_reports").values()
+        if isinstance(item, dict) and str(item.get("task_id") or "") == task_id
+    ]
+    matches.sort(
+        key=lambda item: str(item.get("created_at") or item.get("id") or ""),
+        reverse=True,
+    )
+    return matches[0] if matches else None
+
+
 def code_review_report_for_task(
     current_store: Any,
     *,
@@ -40,13 +62,7 @@ def code_review_report_for_task(
             status_code=403,
             detail={"code": "FORBIDDEN", "message": "Insufficient task permission"},
         )
-    report_id = task.get("code_review_report_id")
-    if not report_id:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "NOT_FOUND", "message": "Code review report not found"},
-        )
-    report = _read_memory_record(current_store, "code_review_reports", report_id)
+    report = _find_code_review_report_for_task(current_store, task=task)
     if report is None:
         raise HTTPException(
             status_code=404,

@@ -5,7 +5,7 @@ import os
 from collections.abc import Callable
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
@@ -56,6 +56,8 @@ def gitlab_request_json(
     *,
     opener: Callable[..., Any] = urlopen,
 ) -> dict[str, Any]:
+    if base_url.startswith("fixture://gitlab"):
+        return fixture_gitlab_request_json(path)
     request = UrlRequest(
         f"{base_url.rstrip('/')}{path}",
         headers={"Accept": "application/json", "PRIVATE-TOKEN": token},
@@ -78,6 +80,51 @@ def gitlab_request_json(
         raise api_error(exc.code, "GITLAB_REQUEST_FAILED", "GitLab API request failed") from exc
     except (OSError, URLError, json.JSONDecodeError) as exc:
         raise api_error(503, "DEVOPS_SOURCE_UNAVAILABLE", "GitLab API source unavailable") from exc
+
+
+def fixture_gitlab_request_json(path: str) -> dict[str, Any]:
+    parts = path.split("/")
+    if len(parts) < 7 or parts[:4] != ["", "api", "v4", "projects"]:
+        raise api_error(404, "GITLAB_MR_NOT_FOUND", "GitLab merge request not found")
+    project_path = unquote(parts[4])
+    if parts[5] != "merge_requests" or not project_path:
+        raise api_error(404, "GITLAB_MR_NOT_FOUND", "GitLab merge request not found")
+    try:
+        mr_iid = int(parts[6])
+    except ValueError as exc:
+        raise api_error(404, "GITLAB_MR_NOT_FOUND", "GitLab merge request not found") from exc
+
+    slug = project_path.rsplit("/", 1)[-1] or "fixture"
+    if len(parts) == 7:
+        return {
+            "author": {"name": "Regression Bot", "username": "regression-bot"},
+            "diff_refs": {
+                "base_sha": f"{slug}-base-sha",
+                "head_sha": f"{slug}-head-sha",
+                "start_sha": f"{slug}-start-sha",
+            },
+            "iid": mr_iid,
+            "source_branch": f"dashboard/{slug}",
+            "target_branch": "main",
+            "title": f"版本总览 Code Review 回归 !{mr_iid}",
+            "web_url": f"fixture://gitlab/{project_path}/-/merge_requests/{mr_iid}",
+        }
+    if len(parts) == 8 and parts[7] == "changes":
+        return {
+            "changes": [
+                {
+                    "diff": "@@ -1,2 +1,3 @@\n context\n+dashboard review gate\n",
+                    "new_path": "apps/api/app/services/product_version_dashboard.py",
+                    "old_path": "apps/api/app/services/product_version_dashboard.py",
+                },
+                {
+                    "diff": "@@ -1,1 +1,2 @@\n context\n+regression assertion\n",
+                    "new_path": "apps/api/tests/test_iteration_version_status_flow.py",
+                    "old_path": "apps/api/tests/test_iteration_version_status_flow.py",
+                },
+            ]
+        }
+    raise api_error(404, "GITLAB_MR_NOT_FOUND", "GitLab merge request not found")
 
 
 def gitlab_changes(payload: dict[str, Any]) -> list[dict[str, Any]]:

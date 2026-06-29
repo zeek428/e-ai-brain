@@ -111,6 +111,9 @@ def test_full_chain_regression_script_supports_version_dashboard_suite():
         'suite == "version-dashboard"',
         "/api/product-versions/{version['id']}/dashboard",
         "version_dashboard_quick",
+        "version_dashboard_code_review",
+        "pending_code_review_reports",
+        "Version dashboard quick check missed code review report",
         "release_evidence_blockers",
     ]:
         assert marker in content

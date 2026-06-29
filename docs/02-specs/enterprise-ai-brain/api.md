@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.450 |
+| 功能版本 | v1.1.451 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.451 | 2026-06-29 | GitLab MR 预览支持显式 `fixture://gitlab` 回归源，仅用于真实全链路脚本的本地可控 Code Review 门禁，不替代生产 GitLab/GitHub 只读 API 配置 | Codex |
 | v1.1.450 | 2026-06-29 | 代码巡检 suppression 申请支持 `accepted_risk` 责任人和到期时间，缺少 `expires_at` 返回 `ACCEPTED_RISK_EXPIRY_REQUIRED`，详情和 dashboard 返回过期接受风险计数 | Codex |
 | v1.1.449 | 2026-06-29 | 迭代版本驾驶舱 blockers 返回 `action_label/action_target_type/action_target_id/resolution_hint`，前端阻塞项表展示解除条件和处理入口 | Codex |
 | v1.1.448 | 2026-06-29 | 代码巡检报告和详情响应明确返回增量扫描快照字段 `incremental_from_commit`、`incremental_file_count` 与 `is_full_scan`，前端详情需展示扫描范围和增量基线 | Codex |
@@ -2970,7 +2971,7 @@ GET /api/devops/github/pull-requests/{repository_id}/{pr_number}/preview
 }
 ```
 
-MR/PR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持 GitLab/GitHub 只读仓库绑定、变更预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。任务中心前端应先读取产品 Git 资源，再根据 provider 预览 MR 或 PR、展示文件树、变更明细、风险摘要、Review Checklist 和 `permission_diagnostics`，确认后生成快照，最后用兼容字段 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。后端通过 GitLab API 读取 `GET /api/v4/projects/{project}/merge_requests/{iid}` 和 `.../{iid}/changes`，其中 `project` 来自产品 Git 资源的 `project_path` 或 `project_id`。GitHub API 读取 `GET /repos/{owner}/{repo}/pulls/{number}` 和 `.../files?per_page=100`，其中 `owner/repo` 来自 `project_path` 或 `remote_url`。`remote_url` 用于推导 GitLab base URL 或 GitHub Enterprise base URL，也可由 `GITLAB_BASE_URL` / `GITHUB_BASE_URL` 提供；`credential_ref` 推荐使用环境变量或服务端密钥引用，本地联调可直填只读 token，响应不得返回凭据值。预览响应的 `permission_diagnostics` 只暴露 base URL、仓库路径、凭据引用和 token 可用性等布尔诊断，不返回 token。快照响应会返回 `previous_snapshot`、`diff_change_summary` 和 `snapshot_reused`，用于比较同一 repository + MR/PR number 的上一轮快照。同一 `repository_id + snapshot_hash` 已存在时，快照接口返回已有 snapshot 并记录 `gitlab_mr.snapshot_reused` 或 `github_pr.snapshot_reused`，不得重复入库。MR/PR diff、变更文件数或单文件 diff 行数超过限制时返回 `GITLAB_MR_DIFF_TOO_LARGE`，不创建快照，并记录对应 provider 的 `*.snapshot_failed` 审计事件，payload 包含 `diff_size_bytes`、`diff_limit_bytes`、`changed_file_count`、`changed_file_limit`、`file_diff_line_count`、`file_diff_line_limit`、`file_path`、`mr_iid`、`requirement_id` 和 `technical_solution_task_id`。
+MR/PR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持 GitLab/GitHub 只读仓库绑定、变更预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。任务中心前端应先读取产品 Git 资源，再根据 provider 预览 MR 或 PR、展示文件树、变更明细、风险摘要、Review Checklist 和 `permission_diagnostics`，确认后生成快照，最后用兼容字段 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。后端通过 GitLab API 读取 `GET /api/v4/projects/{project}/merge_requests/{iid}` 和 `.../{iid}/changes`，其中 `project` 来自产品 Git 资源的 `project_path` 或 `project_id`；真实全链路回归脚本可显式配置 `remote_url=fixture://gitlab` 作为本地可控 GitLab MR 数据源，用于验证 Code Review 报告聚合门禁，该 fixture scheme 不作为生产 GitLab/GitHub 对接方案。GitHub API 读取 `GET /repos/{owner}/{repo}/pulls/{number}` 和 `.../files?per_page=100`，其中 `owner/repo` 来自 `project_path` 或 `remote_url`。`remote_url` 用于推导 GitLab base URL 或 GitHub Enterprise base URL，也可由 `GITLAB_BASE_URL` / `GITHUB_BASE_URL` 提供；`credential_ref` 推荐使用环境变量或服务端密钥引用，本地联调可直填只读 token，响应不得返回凭据值。预览响应的 `permission_diagnostics` 只暴露 base URL、仓库路径、凭据引用和 token 可用性等布尔诊断，不返回 token。快照响应会返回 `previous_snapshot`、`diff_change_summary` 和 `snapshot_reused`，用于比较同一 repository + MR/PR number 的上一轮快照。同一 `repository_id + snapshot_hash` 已存在时，快照接口返回已有 snapshot 并记录 `gitlab_mr.snapshot_reused` 或 `github_pr.snapshot_reused`，不得重复入库。MR/PR diff、变更文件数或单文件 diff 行数超过限制时返回 `GITLAB_MR_DIFF_TOO_LARGE`，不创建快照，并记录对应 provider 的 `*.snapshot_failed` 审计事件，payload 包含 `diff_size_bytes`、`diff_limit_bytes`、`changed_file_count`、`changed_file_limit`、`file_diff_line_count`、`file_diff_line_limit`、`file_path`、`mr_iid`、`requirement_id` 和 `technical_solution_task_id`。
 
 生成 MR diff 快照：
 
