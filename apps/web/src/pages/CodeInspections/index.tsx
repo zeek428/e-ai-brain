@@ -1,5 +1,6 @@
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Descriptions, Modal, Space, Table, Tag, Typography, message } from 'antd';
+import { Button, DatePicker, Descriptions, Form, Input, Modal, Space, Table, Tag, Typography, message } from 'antd';
+import dayjs, { type Dayjs } from 'dayjs';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
@@ -44,6 +45,12 @@ const sortFieldMap: Record<string, string> = {
   riskLevel: 'risk_level',
   severeFindingCount: 'severe_finding_count',
   status: 'status',
+};
+
+type AcceptedRiskFormValues = {
+  expires_at?: Dayjs;
+  note?: string;
+  owner?: string;
 };
 
 function normalizeFilterText(value: unknown) {
@@ -353,6 +360,11 @@ function codeInspectionGovernanceItems(detail: CodeInspectionDetailRecord) {
       children: `${governance?.accepted_risk_count ?? 0} 个`,
     },
     {
+      key: 'expired_accepted_risk',
+      label: '到期接受风险',
+      children: `${governance?.expired_accepted_risk_count ?? 0} 个`,
+    },
+    {
       key: 'action_items',
       label: '治理待办',
       children: actionItems.length ? actionItems.map((item) => `${item.label} ${item.count ?? 0}`).join('；') : '-',
@@ -361,8 +373,11 @@ function codeInspectionGovernanceItems(detail: CodeInspectionDetailRecord) {
 }
 
 export default function CodeInspectionsPage() {
+  const [acceptedRiskForm] = Form.useForm<AcceptedRiskFormValues>();
   const deepLinkReportId = useMemo(() => readCodeInspectionDeepLinkReportId(), []);
   const isDeepLinkHandledRef = useRef(false);
+  const [acceptedRiskFinding, setAcceptedRiskFinding] = useState<CodeInspectionFindingRecord>();
+  const [acceptedRiskSubmitting, setAcceptedRiskSubmitting] = useState(false);
   const [detailState, setDetailState] = useState<{
     detail?: CodeInspectionDetailRecord;
     loading: boolean;
@@ -457,6 +472,61 @@ export default function CodeInspectionsPage() {
     isDeepLinkHandledRef.current = true;
     void openDetailById(deepLinkReportId);
   }, [deepLinkReportId, openDetailById]);
+
+  const closeAcceptedRiskModal = useCallback(() => {
+    setAcceptedRiskFinding(undefined);
+    acceptedRiskForm.resetFields();
+  }, [acceptedRiskForm]);
+
+  const openAcceptedRiskModal = useCallback(
+    (finding: CodeInspectionFindingRecord) => {
+      setAcceptedRiskFinding(finding);
+      acceptedRiskForm.setFieldsValue({
+        expires_at: dayjs().add(30, 'day'),
+        note: '临时接受风险，到期后复核',
+        owner:
+          finding.suppression_owner ||
+          finding.committer_email ||
+          finding.committer_username ||
+          finding.committer_name ||
+          '',
+      });
+    },
+    [acceptedRiskForm],
+  );
+
+  const submitAcceptedRisk = useCallback(async () => {
+    const reportId = detailState?.report?.id ?? detailState?.detail?.report.id;
+    const finding = acceptedRiskFinding;
+    if (!reportId || !finding) {
+      return;
+    }
+    const values = await acceptedRiskForm.validateFields();
+    setAcceptedRiskSubmitting(true);
+    try {
+      const detail = await requestCodeInspectionFindingSuppression(reportId, finding.id, {
+        expires_at: values.expires_at?.toISOString(),
+        note: values.note?.trim() || '临时接受风险，到期后复核',
+        owner: values.owner?.trim() || undefined,
+        reason: 'accepted_risk',
+      });
+      setDetailState({ detail, loading: false, report: detail.report });
+      message.success('已提交接受风险审批');
+      closeAcceptedRiskModal();
+      void reload();
+    } catch (error) {
+      message.error(formatMutationError(error));
+    } finally {
+      setAcceptedRiskSubmitting(false);
+    }
+  }, [
+    acceptedRiskFinding,
+    acceptedRiskForm,
+    closeAcceptedRiskModal,
+    detailState?.detail?.report.id,
+    detailState?.report?.id,
+    reload,
+  ]);
 
   const handleSuppressionAction = useCallback(
     async (finding: CodeInspectionFindingRecord, action: 'approve' | 'reject' | 'request') => {
@@ -803,13 +873,23 @@ export default function CodeInspectionsPage() {
                 {
                   dataIndex: 'suppression_status',
                   title: '忽略审批',
-                  width: 150,
+                  width: 190,
                   render: (_, row) => (
                     <Space orientation="vertical" size={2}>
-                      {suppressionStatusTag(row.suppression_status)}
+                      {suppressionStatusTag(row.suppression_status, row.suppression_reason)}
                       {row.suppression_reason ? (
                         <Typography.Text type="secondary">
                           {suppressionReasonText(row.suppression_reason)}
+                        </Typography.Text>
+                      ) : null}
+                      {row.suppression_owner ? (
+                        <Typography.Text type="secondary">
+                          责任人：{row.suppression_owner}
+                        </Typography.Text>
+                      ) : null}
+                      {row.suppression_expires_at ? (
+                        <Typography.Text type="secondary">
+                          到期：{formatDisplayDateTime(row.suppression_expires_at)}
                         </Typography.Text>
                       ) : null}
                     </Space>
@@ -822,7 +902,7 @@ export default function CodeInspectionsPage() {
                   render: (_, row) => {
                     const status = row.suppression_status || 'none';
                     if (status === 'approved') {
-                      return <Typography.Text type="secondary">已忽略</Typography.Text>;
+                      return <Typography.Text type="secondary">已治理</Typography.Text>;
                     }
                     if (status === 'pending') {
                       return (
@@ -848,14 +928,19 @@ export default function CodeInspectionsPage() {
                       );
                     }
                     return (
-                      <Button
-                        loading={suppressionActionLoading === `request:${row.id}`}
-                        size="small"
-                        type="link"
-                        onClick={() => void handleSuppressionAction(row, 'request')}
-                      >
-                        {status === 'rejected' ? '重新申请' : '申请忽略'}
-                      </Button>
+                      <Space size={4}>
+                        <Button
+                          loading={suppressionActionLoading === `request:${row.id}`}
+                          size="small"
+                          type="link"
+                          onClick={() => void handleSuppressionAction(row, 'request')}
+                        >
+                          {status === 'rejected' ? '重新申请误报' : '申请误报'}
+                        </Button>
+                        <Button size="small" type="link" onClick={() => openAcceptedRiskModal(row)}>
+                          接受风险
+                        </Button>
+                      </Space>
                     );
                   },
                 },
@@ -881,6 +966,44 @@ export default function CodeInspectionsPage() {
             />
           </Space>
         ) : null}
+      </Modal>
+      <Modal
+        destroyOnHidden
+        confirmLoading={acceptedRiskSubmitting}
+        okText="提交接受风险"
+        open={Boolean(acceptedRiskFinding)}
+        title="接受风险"
+        onCancel={closeAcceptedRiskModal}
+        onOk={() => void submitAcceptedRisk()}
+      >
+        <Form form={acceptedRiskForm} layout="vertical">
+          <Form.Item label="责任人" name="owner">
+            <Input placeholder="默认使用提交人，可按实际责任人调整" />
+          </Form.Item>
+          <Form.Item
+            label="到期时间"
+            name="expires_at"
+            rules={[
+              { required: true, message: '请选择到期时间' },
+              {
+                validator: (_, value: Dayjs | undefined) => {
+                  if (!value || value.isAfter(dayjs())) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('到期时间需晚于当前时间'));
+                },
+              },
+            ]}
+          >
+            <DatePicker showTime style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item label="接受说明" name="note">
+            <Input.TextArea
+              placeholder="说明接受原因、补偿控制或复核要求"
+              rows={3}
+            />
+          </Form.Item>
+        </Form>
       </Modal>
     </>
   );

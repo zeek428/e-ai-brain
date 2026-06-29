@@ -212,7 +212,8 @@ class CodeInspectionReadRepository:
                            created_task_id, suppression_status, suppression_reason,
                            suppression_note, suppression_requested_by,
                            suppression_requested_at, suppression_reviewed_by,
-                           suppression_reviewed_at, created_at, updated_at
+                           suppression_reviewed_at, suppression_owner,
+                           suppression_expires_at, created_at, updated_at
                     FROM code_inspection_findings
                     WHERE report_id = %s
                     ORDER BY
@@ -395,14 +396,15 @@ class CodeInspectionReadRepository:
                   committer_email, committer_username, created_bug_id,
                   created_task_id, suppression_status, suppression_reason,
                   suppression_note, suppression_requested_by, suppression_requested_at,
-                  suppression_reviewed_by, suppression_reviewed_at, created_at, updated_at
+                  suppression_reviewed_by, suppression_reviewed_at, suppression_owner,
+                  suppression_expires_at, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s::jsonb, %s,
                   %s, %s, %s, %s, %s, %s,
                   %s, %s, %s::timestamptz, %s,
-                  %s::timestamptz, COALESCE(%s::timestamptz, now()),
+                  %s::timestamptz, %s, %s::timestamptz, COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -427,6 +429,8 @@ class CodeInspectionReadRepository:
                   suppression_requested_at = EXCLUDED.suppression_requested_at,
                   suppression_reviewed_by = EXCLUDED.suppression_reviewed_by,
                   suppression_reviewed_at = EXCLUDED.suppression_reviewed_at,
+                  suppression_owner = EXCLUDED.suppression_owner,
+                  suppression_expires_at = EXCLUDED.suppression_expires_at,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -453,6 +457,8 @@ class CodeInspectionReadRepository:
                     finding.get("suppression_requested_at"),
                     finding.get("suppression_reviewed_by"),
                     finding.get("suppression_reviewed_at"),
+                    finding.get("suppression_owner"),
+                    finding.get("suppression_expires_at"),
                     finding.get("created_at"),
                     finding.get("updated_at") or finding.get("created_at"),
                 ),
@@ -623,8 +629,10 @@ class CodeInspectionReadRepository:
             "suppression_requested_at": row[20].isoformat() if row[20] else None,
             "suppression_reviewed_by": row[21],
             "suppression_reviewed_at": row[22].isoformat() if row[22] else None,
-            "created_at": row[23].isoformat() if row[23] else None,
-            "updated_at": row[24].isoformat() if row[24] else None,
+            "suppression_owner": row[23],
+            "suppression_expires_at": row[24].isoformat() if row[24] else None,
+            "created_at": row[25].isoformat() if row[25] else None,
+            "updated_at": row[26].isoformat() if row[26] else None,
         }
 
     def _notification_from_row(self, row: Any) -> dict[str, Any]:

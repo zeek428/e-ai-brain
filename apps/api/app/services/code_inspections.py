@@ -1304,6 +1304,57 @@ def report_quality_gate_status(report: dict[str, Any]) -> str:
     return status or "unknown"
 
 
+def normalize_optional_datetime(value: Any, field_name: str) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise api_error(
+            422,
+            "INVALID_DATETIME",
+            f"{field_name} must be an ISO datetime",
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat()
+
+
+def parse_optional_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def finding_accepted_risk_is_expired(
+    finding: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if finding.get("suppression_status") != "approved":
+        return False
+    if finding.get("suppression_reason") != "accepted_risk":
+        return False
+    expires_at = parse_optional_datetime(finding.get("suppression_expires_at"))
+    if expires_at is None:
+        return False
+    return expires_at <= (now or datetime.now(UTC))
+
+
+def finding_suppression_is_effective(finding: dict[str, Any]) -> bool:
+    return finding.get("suppression_status") == "approved" and not finding_accepted_risk_is_expired(
+        finding
+    )
+
+
 def counter_rows(counter: Counter[str], *, key_name: str = "key") -> list[dict[str, Any]]:
     return [
         {key_name: key, "count": count}
@@ -1557,6 +1608,7 @@ def code_inspection_dashboard_response(
                     "covered_by_bug_count": 0,
                     "covered_by_task_count": 0,
                     "email": finding.get("committer_email"),
+                    "expired_accepted_risk_count": 0,
                     "finding_count": 0,
                     "latest_report_id": None,
                     "latest_report_summary": None,
@@ -1585,10 +1637,12 @@ def code_inspection_dashboard_response(
                 and finding.get("suppression_reason") == "accepted_risk"
             ):
                 committer_governance_entry["accepted_risk_count"] += 1
+                if finding_accepted_risk_is_expired(finding):
+                    committer_governance_entry["expired_accepted_risk_count"] += 1
             if is_severe:
                 severe_finding_count += 1
                 committer_governance_entry["severe_finding_count"] += 1
-                if suppression_status != "approved":
+                if not finding_suppression_is_effective(finding):
                     committer_governance_entry["active_severe_finding_count"] += 1
                     if finding.get("created_bug_id"):
                         committer_governance_entry["covered_by_bug_count"] += 1
@@ -1667,7 +1721,11 @@ def code_inspection_dashboard_response(
         ),
     )[:5]
     for entry in committer_governance_stats.values():
-        if entry["uncovered_bug_finding_count"] or entry["uncovered_task_finding_count"]:
+        if (
+            entry["uncovered_bug_finding_count"]
+            or entry["uncovered_task_finding_count"]
+            or entry["expired_accepted_risk_count"]
+        ):
             entry["status"] = "action_required"
         elif entry["pending_suppression_count"]:
             entry["status"] = "pending_review"
@@ -1687,6 +1745,7 @@ def code_inspection_dashboard_response(
             -int(item.get("uncovered_bug_finding_count") or 0),
             -int(item.get("uncovered_task_finding_count") or 0),
             -int(item.get("pending_suppression_count") or 0),
+            -int(item.get("expired_accepted_risk_count") or 0),
             -int(item.get("active_severe_finding_count") or 0),
             str(item.get("email") or item.get("username") or item.get("name") or ""),
         ),
@@ -1759,6 +1818,11 @@ def code_inspection_dashboard_response(
         "risk_distribution": counter_rows(risk_counts, key_name="risk_level"),
         "rule_distribution": rule_distribution,
         "rule_governance": {
+            "expired_accepted_risk_count": sum(
+                1
+                for finding in findings
+                if finding_accepted_risk_is_expired(finding)
+            ),
             "latest_report_rules_version": (
                 latest_report.get("rules_version") if latest_report else None
             ),
@@ -2077,7 +2141,7 @@ def code_inspection_governance_summary(
     active_severe_findings = [
         finding
         for finding in severe_findings
-        if finding.get("suppression_status") != "approved"
+        if not finding_suppression_is_effective(finding)
     ]
     pending_suppression_findings = [
         finding
@@ -2093,6 +2157,9 @@ def code_inspection_governance_summary(
         finding
         for finding in approved_suppression_findings
         if finding.get("suppression_reason") == "accepted_risk"
+    ]
+    expired_accepted_risk_findings = [
+        finding for finding in accepted_risk_findings if finding_accepted_risk_is_expired(finding)
     ]
     bug_covered = [finding for finding in active_severe_findings if finding.get("created_bug_id")]
     task_covered = [finding for finding in active_severe_findings if finding.get("created_task_id")]
@@ -2130,8 +2197,16 @@ def code_inspection_governance_summary(
                 "label": "审批待处理的忽略申请",
             }
         )
+    if expired_accepted_risk_findings:
+        action_items.append(
+            {
+                "code": "review_expired_accepted_risk",
+                "count": len(expired_accepted_risk_findings),
+                "label": "复核已过期的接受风险",
+            }
+        )
     status = "healthy"
-    if uncovered_bug_findings or uncovered_task_findings:
+    if uncovered_bug_findings or uncovered_task_findings or expired_accepted_risk_findings:
         status = "action_required"
     elif pending_suppression_findings:
         status = "pending_review"
@@ -2142,6 +2217,7 @@ def code_inspection_governance_summary(
         "bug_coverage_rate": bug_coverage_rate,
         "covered_by_bug_count": len(bug_covered),
         "covered_by_task_count": len(task_covered),
+        "expired_accepted_risk_count": len(expired_accepted_risk_findings),
         "pending_suppression_count": len(pending_suppression_findings),
         "severe_threshold": SEVERE_FINDING_THRESHOLD,
         "status": status,
@@ -2293,10 +2369,23 @@ def request_code_inspection_finding_suppression_response(
         )
     reason = str(getattr(payload, "reason", None) or "false_positive").strip() or "false_positive"
     ensure_enum(reason, CODE_INSPECTION_SUPPRESSION_REASONS, "reason")
+    expires_at = normalize_optional_datetime(
+        getattr(payload, "expires_at", None),
+        "expires_at",
+    )
+    owner = str(getattr(payload, "owner", None) or "").strip() or None
+    if reason == "accepted_risk" and expires_at is None:
+        raise api_error(
+            422,
+            "ACCEPTED_RISK_EXPIRY_REQUIRED",
+            "Accepted risk suppression requires expires_at",
+        )
     timestamp = now_iso()
     finding["suppression_status"] = "pending"
     finding["suppression_reason"] = reason
     finding["suppression_note"] = str(getattr(payload, "note", None) or "").strip() or None
+    finding["suppression_owner"] = owner or (user["id"] if reason == "accepted_risk" else None)
+    finding["suppression_expires_at"] = expires_at if reason == "accepted_risk" else None
     finding["suppression_requested_by"] = user["id"]
     finding["suppression_requested_at"] = timestamp
     finding["suppression_reviewed_by"] = None
@@ -2309,9 +2398,11 @@ def request_code_inspection_finding_suppression_response(
         event_type="code_inspection_finding_suppression.requested",
         payload={
             "finding_id": finding_id,
+            "owner": finding.get("suppression_owner"),
             "reason": reason,
             "report_id": report_id,
             "rule_id": finding.get("rule_id"),
+            "suppression_expires_at": expires_at,
         },
         subject_id=finding_id,
         subject_type="code_inspection_finding",
@@ -2380,9 +2471,11 @@ def review_code_inspection_finding_suppression_response(
         payload={
             "decision": decision,
             "finding_id": finding_id,
+            "owner": finding.get("suppression_owner"),
             "reason": reason,
             "report_id": report_id,
             "rule_id": finding.get("rule_id"),
+            "suppression_expires_at": finding.get("suppression_expires_at"),
         },
         subject_id=finding_id,
         subject_type="code_inspection_finding",

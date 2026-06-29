@@ -77,7 +77,9 @@ export type CodeInspectionFindingRecord = {
   report_id: string;
   rule_id?: string;
   severity: string;
+  suppression_expires_at?: string | null;
   suppression_note?: string | null;
+  suppression_owner?: string | null;
   suppression_reason?: string | null;
   suppression_requested_at?: string | null;
   suppression_requested_by?: string | null;
@@ -106,6 +108,7 @@ export type CodeInspectionDetailRecord = {
     bug_coverage_rate?: number;
     covered_by_bug_count?: number;
     covered_by_task_count?: number;
+    expired_accepted_risk_count?: number;
     pending_suppression_count?: number;
     severe_threshold?: string;
     status?: 'action_required' | 'healthy' | 'pending_review' | string;
@@ -152,6 +155,7 @@ export type CodeInspectionDashboardRecord = {
     covered_by_bug_count: number;
     covered_by_task_count: number;
     email?: string | null;
+    expired_accepted_risk_count?: number;
     finding_count: number;
     latest_report_id?: string | null;
     latest_report_summary?: string | null;
@@ -188,6 +192,7 @@ export type CodeInspectionDashboardRecord = {
     latest_report_scanner_version?: string | null;
     mixed_rules_version?: boolean;
     mixed_scanner_version?: boolean;
+    expired_accepted_risk_count?: number;
     report_with_suppression_count?: number;
     rule_version_distribution?: Array<{ count: number; rules_version: string }>;
     scanner_version_distribution?: Array<{ count: number; scanner_version: string }>;
@@ -317,14 +322,16 @@ export async function fetchCodeInspectionDetail(reportId: string): Promise<CodeI
 export async function requestCodeInspectionFindingSuppression(
   reportId: string,
   findingId: string,
-  payload: { note?: string; reason?: string } = {},
+  payload: { expires_at?: string; note?: string; owner?: string; reason?: string } = {},
 ): Promise<CodeInspectionDetailRecord> {
   const token = requireAccessToken();
   return apiRequest<CodeInspectionDetailRecord>(
     `/api/governance/code-inspections/${reportId}/findings/${findingId}/suppression-request`,
     {
       body: {
+        expires_at: payload.expires_at,
         note: payload.note,
+        owner: payload.owner,
         reason: payload.reason ?? 'false_positive',
       },
       method: 'POST',

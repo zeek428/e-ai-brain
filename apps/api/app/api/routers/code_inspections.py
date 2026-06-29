@@ -20,7 +20,9 @@ router = APIRouter(tags=["code-inspections"])
 
 
 class CodeInspectionFindingSuppressionRequest(BaseModel):
+    expires_at: str | None = None
     note: str | None = None
+    owner: str | None = None
     reason: str = "false_positive"
 
 

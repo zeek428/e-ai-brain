@@ -131,6 +131,7 @@ function installCodeInspectionsFetchMock() {
               covered_by_bug_count: 1,
               covered_by_task_count: 1,
               email: 'alice@example.com',
+              expired_accepted_risk_count: 1,
               finding_count: 1,
               latest_report_id: 'code_inspection_report_001',
               latest_report_summary: '发现 1 个 critical 安全问题。',
@@ -172,6 +173,7 @@ function installCodeInspectionsFetchMock() {
             latest_report_scanner_version: '2026.06.16',
             mixed_rules_version: true,
             mixed_scanner_version: false,
+            expired_accepted_risk_count: 1,
             report_with_suppression_count: 1,
             rule_version_distribution: [
               { count: 1, rules_version: 'builtin-2026.06.16' },
@@ -264,6 +266,7 @@ function installCodeInspectionsFetchMock() {
             bug_coverage_rate: 1,
             covered_by_bug_count: 1,
             covered_by_task_count: 1,
+            expired_accepted_risk_count: 1,
             pending_suppression_count: 0,
             severe_threshold: 'high',
             status: 'healthy',
@@ -327,6 +330,56 @@ function installCodeInspectionsFetchMock() {
         '/api/governance/code-inspections/code_inspection_report_001/findings/code_inspection_finding_001/suppression-request' &&
       init?.method === 'POST'
     ) {
+      const body = init.body ? JSON.parse(String(init.body)) : {};
+      if (body.reason === 'accepted_risk') {
+        expect(body.expires_at).toEqual(expect.any(String));
+        expect(body.owner).toBe('alice@example.com');
+        return jsonResponse({
+          data: {
+            findings: [
+              {
+                category: 'security',
+                committer_email: 'alice@example.com',
+                committer_name: 'Alice Chen',
+                created_bug_id: 'bug_code_001',
+                created_task_id: 'task_code_fix_001',
+                file_path: 'src/config.py',
+                id: 'code_inspection_finding_001',
+                line_number: 12,
+                recommendation: '补充结构化仓库扫描数据。',
+                report_id: report.id,
+                rule_id: 'inspection.incomplete_source_data',
+                severity: 'critical',
+                suppression_expires_at: body.expires_at,
+                suppression_owner: body.owner,
+                suppression_reason: 'accepted_risk',
+                suppression_status: 'pending',
+                title: '扫描输入数据不完整，无法进行文件级代码审计',
+              },
+            ],
+            governance_summary: {
+              accepted_risk_count: 1,
+              action_items: [
+                { code: 'review_pending_suppression', count: 1, label: '审批待处理的接受风险申请' },
+              ],
+              active_severe_finding_count: 1,
+              bug_coverage_rate: 1,
+              covered_by_bug_count: 1,
+              covered_by_task_count: 1,
+              expired_accepted_risk_count: 0,
+              pending_suppression_count: 1,
+              status: 'pending_review',
+              task_coverage_rate: 1,
+              uncovered_bug_finding_count: 0,
+              uncovered_task_finding_count: 0,
+            },
+            notifications: [],
+            report,
+            scan_summary: {},
+          },
+        });
+      }
+      expect(body.reason).toBe('false_positive');
       return jsonResponse({
         data: {
           findings: [
@@ -446,6 +499,7 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getByText('最近规则版本')).toBeInTheDocument();
     expect(screen.getByText('版本不一致')).toBeInTheDocument();
     expect(screen.getByText('已过滤问题')).toBeInTheDocument();
+    expect(screen.getByText('到期接受风险')).toBeInTheDocument();
     expect(screen.getAllByText('过滤原因').length).toBeGreaterThan(0);
     expect(screen.getByText('accepted_risk')).toBeInTheDocument();
     expect(screen.getByText('仓库风险排行')).toBeInTheDocument();
@@ -454,6 +508,7 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getAllByText('活跃严重').length).toBeGreaterThan(0);
     expect(screen.getAllByText('缺整改任务').length).toBeGreaterThan(0);
     expect(screen.getAllByText('健康').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('到期风险').length).toBeGreaterThan(0);
     expect(screen.getByText('质量门禁趋势')).toBeInTheDocument();
     expect(screen.getByText('门禁失败原因')).toBeInTheDocument();
     expect(screen.getByText('严重问题 SLA')).toBeInTheDocument();
@@ -593,7 +648,7 @@ describe('CodeInspectionsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '详情' }));
 
     const dialog = await screen.findByRole('dialog', { name: '代码巡检详情' });
-    const requestButton = await within(dialog).findByRole('button', { name: '申请忽略' });
+    const requestButton = await within(dialog).findByRole('button', { name: '申请误报' });
     fireEvent.click(requestButton);
 
     await waitFor(() => expect(within(dialog).getAllByText('待审批').length).toBeGreaterThan(0));
@@ -605,8 +660,21 @@ describe('CodeInspectionsPage', () => {
         method: 'POST',
       }),
     );
+    const requestCall = fetchMock.mock.calls.find(
+      ([requestInput, requestInit]) =>
+        String(requestInput).includes('/suppression-request') &&
+        requestInit?.method === 'POST',
+    );
+    expect(JSON.parse(String(requestCall?.[1]?.body))).toMatchObject({
+      reason: 'false_positive',
+    });
 
-    fireEvent.click(within(dialog).getByRole('button', { name: '批准忽略' }));
+    let approveButton: HTMLElement | undefined;
+    await waitFor(() => {
+      approveButton = within(dialog).getByRole('button', { name: /批准忽略/ });
+      expect(approveButton).toBeEnabled();
+    });
+    fireEvent.click(approveButton!);
 
     await waitFor(() => expect(within(dialog).getAllByText('已忽略').length).toBeGreaterThan(0));
     expect(
@@ -617,5 +685,43 @@ describe('CodeInspectionsPage', () => {
         method: 'POST',
       }),
     );
+  });
+
+  it('requests accepted risk with owner and expiry from the detail dialog', async () => {
+    const { fetchMock } = installCodeInspectionsFetchMock();
+
+    render(<CodeInspectionsPage />);
+
+    await screen.findByText('code_inspection_report_001');
+    fireEvent.click(screen.getByRole('button', { name: '详情' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '代码巡检详情' });
+    const acceptRiskButton = await within(dialog).findByRole('button', { name: '接受风险' });
+    fireEvent.click(acceptRiskButton);
+
+    const acceptRiskSubmitButton = await screen.findByRole('button', { name: '提交接受风险' });
+    const acceptRiskDialog = acceptRiskSubmitButton.closest('.ant-modal') as HTMLElement | null;
+    expect(acceptRiskDialog).not.toBeNull();
+    expect(within(acceptRiskDialog as HTMLElement).getByLabelText('责任人')).toHaveValue('alice@example.com');
+
+    fireEvent.click(acceptRiskSubmitButton);
+
+    await waitFor(() => expect(within(dialog).getAllByText('待审批').length).toBeGreaterThan(0));
+    await waitFor(() => expect(within(dialog).getAllByText('已接受风险').length).toBeGreaterThan(0));
+    expect(within(dialog).getByText('责任人：alice@example.com')).toBeInTheDocument();
+    expect(within(dialog).getByText(/到期：/)).toBeInTheDocument();
+
+    const requestCall = fetchMock.mock.calls.find(
+      ([requestInput, requestInit]) =>
+        String(requestInput).includes('/suppression-request') &&
+        requestInit?.method === 'POST' &&
+        JSON.parse(String(requestInit.body)).reason === 'accepted_risk',
+    );
+    const requestBody = JSON.parse(String(requestCall?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      owner: 'alice@example.com',
+      reason: 'accepted_risk',
+    });
+    expect(requestBody.expires_at).toEqual(expect.any(String));
   });
 });

@@ -142,6 +142,11 @@ export function CodeInspectionGovernanceOverview({
                 children: ruleGovernance?.suppressed_finding_count ?? 0,
               },
               {
+                key: 'expired_accepted_risk',
+                label: '到期接受风险',
+                children: ruleGovernance?.expired_accepted_risk_count ?? 0,
+              },
+              {
                 key: 'suppressed_reports',
                 label: '涉及报告',
                 children: ruleGovernance?.report_with_suppression_count ?? 0,
@@ -289,6 +294,7 @@ export function CodeInspectionGovernanceOverview({
                 { dataIndex: 'uncovered_task_finding_count', title: '缺整改任务', width: 120 },
                 { dataIndex: 'pending_suppression_count', title: '待审批忽略', width: 120 },
                 { dataIndex: 'accepted_risk_count', title: '已接受风险', width: 120 },
+                { dataIndex: 'expired_accepted_risk_count', title: '到期风险', width: 100 },
                 {
                   dataIndex: 'latest_report_summary',
                   render: (_, row) => compactText(String(row.latest_report_summary ?? row.latest_report_id ?? '-')),

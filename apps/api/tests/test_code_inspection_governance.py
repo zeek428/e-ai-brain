@@ -188,6 +188,8 @@ def test_code_inspection_finding_upsert_accepts_suppression_metadata():
                 "suppression_requested_by": "user_admin",
                 "suppression_reviewed_at": "2026-06-24T00:02:00+00:00",
                 "suppression_reviewed_by": "user_admin",
+                "suppression_owner": "security_owner",
+                "suppression_expires_at": "2026-07-01T00:00:00+00:00",
                 "suppression_status": "approved",
                 "title": "内部地址暴露于页面元数据",
                 "updated_at": "2026-06-24T00:02:00+00:00",
@@ -748,6 +750,134 @@ def test_code_inspection_finding_suppression_approval_updates_report_governance(
     audit_events = [event["event_type"] for event in app.state.store.audit_events]
     assert "code_inspection_finding_suppression.requested" in audit_events
     assert "code_inspection_finding_suppression.approved" in audit_events
+
+
+def test_code_inspection_accepted_risk_requires_expiry_and_surfaces_expired_governance():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(
+        headers,
+        code="repo-risk-acceptance-product",
+        name="Repository Risk Acceptance Product",
+    )
+    repository = create_repository(headers, product["id"])
+    report_id = "code_inspection_report_risk_acceptance"
+    finding_id = "code_inspection_finding_risk_acceptance"
+    app.state.store.code_inspection_reports[report_id] = {
+        "branch": "main",
+        "created_at": "2026-06-24T00:00:00+00:00",
+        "created_bug_ids": [],
+        "created_task_ids": [],
+        "created_by": "user_admin",
+        "committer_count": 1,
+        "committer_summary": [
+            {
+                "bug_count": 0,
+                "email": "alice@example.com",
+                "finding_count": 1,
+                "name": "Alice Chen",
+                "severe_finding_count": 1,
+            }
+        ],
+        "finding_count": 1,
+        "id": report_id,
+        "notification_ids": [],
+        "product_id": product["id"],
+        "repository": repository,
+        "repository_id": repository["id"],
+        "result_actions": [],
+        "risk_level": "high",
+        "scan_mode": "native_full_scan",
+        "scanner_name": "ai_brain_builtin_static",
+        "severe_finding_count": 1,
+        "source_system": "native-code-scanner",
+        "status": "completed",
+        "summary": "1 high risk finding.",
+        "suppressed_finding_count": 0,
+        "suppression_summary": {},
+        "updated_at": "2026-06-24T00:00:00+00:00",
+    }
+    app.state.store.code_inspection_findings[finding_id] = {
+        "category": "security",
+        "committer_email": "alice@example.com",
+        "committer_name": "Alice Chen",
+        "created_at": "2026-06-24T00:00:00+00:00",
+        "description": "Secret-like token in configuration.",
+        "file_path": "src/config.py",
+        "id": finding_id,
+        "line_number": 12,
+        "recommendation": "Rotate the key and remove it from code.",
+        "report_id": report_id,
+        "rule_id": "secret.hardcoded_token",
+        "severity": "high",
+        "suppression_status": "none",
+        "title": "Hard-coded token",
+        "updated_at": "2026-06-24T00:00:00+00:00",
+    }
+
+    missing_expiry = client.post(
+        f"/api/governance/code-inspections/{report_id}/findings/{finding_id}/suppression-request",
+        headers=headers,
+        json={
+            "note": "临时接受风险但缺少到期时间",
+            "reason": "accepted_risk",
+        },
+    )
+    assert missing_expiry.status_code == 422
+    assert missing_expiry.json()["detail"]["code"] == "ACCEPTED_RISK_EXPIRY_REQUIRED"
+
+    requested = client.post(
+        f"/api/governance/code-inspections/{report_id}/findings/{finding_id}/suppression-request",
+        headers=headers,
+        json={
+            "expires_at": "2000-01-01T00:00:00+00:00",
+            "note": "临时接受风险，到期后复核",
+            "owner": "security_owner",
+            "reason": "accepted_risk",
+        },
+    )
+    assert requested.status_code == 200
+    requested_finding = next(
+        item for item in requested.json()["data"]["findings"] if item["id"] == finding_id
+    )
+    assert requested_finding["suppression_status"] == "pending"
+    assert requested_finding["suppression_owner"] == "security_owner"
+    assert requested_finding["suppression_expires_at"] == "2000-01-01T00:00:00+00:00"
+
+    approved = client.post(
+        f"/api/governance/code-inspections/{report_id}/findings/{finding_id}/suppression-review",
+        headers=headers,
+        json={"decision": "approve", "note": "接受风险但需要过期复核"},
+    )
+    assert approved.status_code == 200
+    approved_payload = approved.json()["data"]
+    approved_finding = next(
+        item for item in approved_payload["findings"] if item["id"] == finding_id
+    )
+    assert approved_finding["suppression_status"] == "approved"
+    assert approved_finding["suppression_reason"] == "accepted_risk"
+    assert approved_finding["suppression_owner"] == "security_owner"
+    assert approved_payload["report"]["suppression_summary"]["accepted_risk"] == 1
+    assert approved_payload["governance_summary"]["expired_accepted_risk_count"] == 1
+    assert approved_payload["governance_summary"]["status"] == "action_required"
+    assert {
+        "code": "review_expired_accepted_risk",
+        "count": 1,
+        "label": "复核已过期的接受风险",
+    } in approved_payload["governance_summary"]["action_items"]
+
+    dashboard = client.get(
+        f"/api/governance/code-inspections/dashboard?product_id={product['id']}",
+        headers=headers,
+    )
+    assert dashboard.status_code == 200
+    dashboard_payload = dashboard.json()["data"]
+    assert dashboard_payload["rule_governance"]["expired_accepted_risk_count"] == 1
+    governance = dashboard_payload["committer_governance"][0]
+    assert governance["email"] == "alice@example.com"
+    assert governance["accepted_risk_count"] == 1
+    assert governance["expired_accepted_risk_count"] == 1
+    assert governance["status"] == "action_required"
 
 
 def test_code_inspection_uses_configured_repository_when_scanner_returns_project_path():

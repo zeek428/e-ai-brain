@@ -58,7 +58,10 @@ export function compactText(value?: string | null) {
   );
 }
 
-export function suppressionStatusTag(status?: string | null) {
+export function suppressionStatusTag(status?: string | null, reason?: string | null) {
+  if ((status || 'none') === 'approved' && reason === 'accepted_risk') {
+    return <Tag color="orange">已接受风险</Tag>;
+  }
   const config = suppressionStatusConfig.get(status || 'none') ?? {
     color: 'default',
     label: status || '未申请',
