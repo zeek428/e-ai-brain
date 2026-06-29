@@ -374,6 +374,12 @@ def run_regression(
             "config_json": {
                 "async_execution": False,
                 "branch": version_branch,
+                "quality_gate": {
+                    "critical_max": 0,
+                    "enabled": True,
+                    "high_max": 0,
+                    "medium_max": 0,
+                },
                 "repository_id": repository["id"],
                 "scan_mode": "native_full_scan",
                 "scan_rules": ["secrets", "internal_addresses"],
@@ -394,16 +400,37 @@ def run_regression(
     )
     scan_run = client.post(f"/api/system/scheduled-jobs/{scan_job['id']}/run")
     _assert(scan_run.get("status") == "succeeded", f"Code inspection run failed: {scan_run}")
-    report_id = scan_run.get("result_summary", {}).get("report_id")
+    scan_run_summary = scan_run.get("result_summary", {})
+    native_scan_node = (scan_run_summary.get("execution_nodes") or {}).get("native_scan") or {}
+    native_quality_gate = native_scan_node.get("quality_gate") or {}
+    _assert(
+        native_quality_gate.get("status") == "failed",
+        f"Native scan did not fail the configured quality gate: {native_quality_gate}",
+    )
+    _assert(
+        native_quality_gate.get("violations"),
+        f"Native scan quality gate did not include violation details: {native_quality_gate}",
+    )
+    report_id = scan_run_summary.get("report_id")
     _assert(bool(report_id), f"Code inspection run did not return report_id: {scan_run}")
     report_detail = client.get(f"/api/governance/code-inspections/{report_id}")
     report = report_detail["report"]
     findings = report_detail.get("findings", [])
     scan_summary = report_detail.get("scan_summary", {})
     governance_summary = report_detail.get("governance_summary", {})
+    report_quality_gate = report.get("quality_gate") or {}
+    scan_summary_quality_gate = scan_summary.get("quality_gate") or {}
     _assert(report["scan_mode"] == "native_full_scan", "Report is not native_full_scan.")
     _assert(report["branch"] == version_branch, "Report branch does not match version branch.")
     _assert(report["repository_id"] == repository["id"], "Report repository does not match version repository.")
+    _assert(
+        report_quality_gate.get("status") == "failed",
+        f"Report did not persist failed quality gate status: {report_quality_gate}",
+    )
+    _assert(
+        scan_summary_quality_gate.get("status") == "failed",
+        f"Detail scan summary did not expose failed quality gate status: {scan_summary_quality_gate}",
+    )
     _assert(len(findings) >= 2, f"Native scan did not return expected findings: {findings}")
     _assert(
         any(finding.get("rule_id") == "secrets.hardcoded_credential" for finding in findings),
@@ -426,6 +453,18 @@ def run_regression(
     _assert(
         int(governance_summary.get("covered_by_task_count") or 0) >= 1,
         f"Governance summary did not count remediation task coverage: {governance_summary}",
+    )
+    inspection_dashboard = client.get(
+        "/api/governance/code-inspections/dashboard",
+        {"product_id": product["id"], "repository_id": repository["id"]},
+    )
+    _assert(
+        any(int(item.get("quality_gate_failed_count") or 0) >= 1 for item in inspection_dashboard.get("trend", [])),
+        f"Code inspection dashboard trend missed quality gate failure: {inspection_dashboard.get('trend')}",
+    )
+    _assert(
+        inspection_dashboard.get("quality_gate_violations"),
+        f"Code inspection dashboard missed quality gate violation aggregation: {inspection_dashboard}",
     )
     report_bug_ids = {str(item) for item in report.get("created_bug_ids") or []}
     report_task_ids = {str(item) for item in report.get("created_task_ids") or []}
@@ -489,6 +528,10 @@ def run_regression(
         if blocker.get("source_type") == "code_inspection_report" and str(blocker.get("action_target_id")) == report_id
     ]
     _assert(inspection_blockers, "Version dashboard missed actionable code inspection blocker.")
+    _assert(
+        any("质量门禁" in str(blocker.get("reason") or "") for blocker in inspection_blockers),
+        f"Version dashboard code inspection blocker did not mention quality gate: {inspection_blockers}",
+    )
     bug_blockers = [
         blocker
         for blocker in dashboard_blockers
