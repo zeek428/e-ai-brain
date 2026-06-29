@@ -59,6 +59,7 @@ AI_EXECUTOR_TASK_TERMINAL_STATUSES = {
     "succeeded",
     "timed_out",
 }
+AI_EXECUTOR_TASK_RETRYABLE_STATUSES = {"cancelled", "dead_letter", "failed", "timed_out"}
 AI_EXECUTOR_TASK_SORT_FIELDS = {
     "claimed_at",
     "created_at",

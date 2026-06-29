@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.453 |
+| 功能版本 | v1.1.454 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.454 | 2026-06-30 | 新增 `POST /api/system/ai-executor-tasks/{task_id}/retry`，管理员可重试 `cancelled/failed/timed_out/dead_letter` 的 AI 执行器任务并保留来源、原因和审计链路 | Codex |
 | v1.1.453 | 2026-06-29 | 迭代版本驾驶舱知识沉淀明细补齐知识文档索引健康元数据，summary 返回可检索和向量就绪沉淀数 | Codex |
 | v1.1.452 | 2026-06-29 | 迭代版本驾驶舱聚合版本内任务知识沉淀，summary 返回 `knowledge_deposits`，明细按 `knowledge.read` 子权限降级隐藏 | Codex |
 | v1.1.451 | 2026-06-29 | GitLab MR 预览支持显式 `fixture://gitlab` 回归源，仅用于真实全链路脚本的本地可控 Code Review 门禁，不替代生产 GitLab/GitHub 只读 API 配置 | Codex |
@@ -826,6 +827,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Plugins | POST | `/api/system/ai-executor-tasks/{task_id}/complete` | Runner 完成回写接口。调用方必须携带 Runner token，并提交 `runner_id/status/result_json/logs/error_code/error_message`；`status` 支持 `running/succeeded/failed/cancelled/timed_out/dead_letter`，完成回写会更新 `ai_executor_tasks`，并同步插件调用日志、定时作业运行的 `runner_execution` 节点、结果动作反馈、collector run 和作业最近运行状态。 |
 | Plugins | GET/POST | `/api/system/ai-executor-tasks/{task_id}/logs` | 查询或追加 AI 执行器任务日志。Runner 追加日志时必须携带 Runner token 和 `runner_id`，服务端按时间顺序保留日志行，同步任务 `updated_at`，并刷新 `request_config.reliability.lease_expires_at` 作为执行心跳续租；管理员查询返回 `task_id/status/logs[]`，页面可作为流式日志查看的轮询数据源。管理员查询日志也必须校验任务产品范围；产品 scope 外任务返回 404，避免通过已知任务 ID 越权下钻。 |
 | Plugins | POST | `/api/system/ai-executor-tasks/{task_id}/cancel` | 管理员取消 queued/claimed/running 的 AI 执行器任务；响应更新任务状态为 `cancelled`，并同步插件调用日志和关联定时作业运行摘要。取消前必须校验任务产品范围；产品 scope 外任务返回 404。 |
+| Plugins | POST | `/api/system/ai-executor-tasks/{task_id}/retry` | 管理员重试 `cancelled/failed/timed_out/dead_letter` 的 AI 执行器任务；服务端复制原任务执行上下文创建新的 `queued` 任务，清空错误、结果和租约状态，在 `request_config.retry_of_task_id/retry_history` 保留来源任务、来源状态、原因和操作人，并写入 `ai_executor_task.retry_requested` 审计；非重试态返回 `409 AI_EXECUTOR_TASK_NOT_RETRYABLE`。 |
 | Plugins | POST | `/api/system/ai-executor-tasks/timeout-scan` | 管理员或后台调度触发 AI 执行器任务超时扫描；请求可带 `now`，响应返回 `requeued_task_ids/dead_letter_task_ids/timed_out_task_ids/tasks`。服务端先处理 `claimed/running` 任务租约过期：未超过 `max_reclaim_count` 时任务重置为 `queued`、清空 `claimed_at` 并累加 `request_config.reliability.reclaim_count`；超过后任务进入 `dead_letter`，写入 `AI_EXECUTOR_TASK_LEASE_EXPIRED` 并同步关联运行失败态。未触发租约规则但超过 `timeout_seconds` 的非终态任务继续熔断为 `timed_out`。产品受限用户触发时仅处理其产品 scope 内 Runner 任务，全局管理员可处理全部任务。 |
 | Scheduler | GET | `/api/system/scheduled-jobs` | 查询定时系统作业定义；响应项返回 `plugin_connection_ids` / `plugin_action_ids` 完整数组，若历史数据只有旧单字段则服务端展开为单元素数组，`plugin_connection_id` / `plugin_action_id` 继续作为第一项兼容字段。 |
 | Scheduler | GET | `/api/system/scheduled-job-templates` | 查询官方定时作业模板包；返回每周用户反馈洞察、代码仓库质量/安全/规范巡检、邮件摘要收取、GitLab MR AI 审查、AI 执行器仓库任务等模板的 `code/name/category/description/publisher/recommended_scenarios/payload_defaults/resource_selectors/template_version/available_resource_counts/wizard_steps`。`wizard_steps` 用于前端展示任务创建向导，至少覆盖数据连接、AI 处理、知识引用、结果写入和调度，前端用户侧展示时必须把 AI 处理映射为“AI执行”、把结果写入映射为“动作”。AI 执行器仓库任务模板必须在 `payload_defaults.config_json.ai_executor` 返回 `executor_type=model_gateway`、`runner_id=ai_executor_runner_system_default` 和 `runner_label=系统默认执行器`。前端新增作业模板下拉必须使用该目录渲染，按 `payload_defaults` 回填 cron、AI执行方式、作业类型、动态变量映射、`config_json`、`source_system` 内部来源标识和动作，按 `resource_selectors` 从当前产品、动作、连接、模型、AI角色、Skill 和知识文档中选择默认资源；新增/编辑表单按“基础信息、数据连接配置、AI执行配置、动作配置、调度配置”分区，只展示“调度配置”中的调度方式、Cron 表达式和间隔秒数，`source_system` 不作为用户输入项暴露；作业配置列表主列按“数据连接 / AI执行 / 动作 / 调度”合并展示；AI 助手定时作业草案也必须复用同一目录的默认 payload，避免作业模板散落在页面和助手硬编码中。 |

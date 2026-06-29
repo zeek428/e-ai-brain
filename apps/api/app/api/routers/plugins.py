@@ -19,6 +19,7 @@ from app.services.ai_executor_runners import (
     list_ai_executor_task_logs_response,
     list_ai_executor_tasks_response,
     patch_ai_executor_runner_response,
+    retry_ai_executor_task_response,
     rotate_ai_executor_runner_token_response,
     runner_heartbeat_response,
     test_ai_executor_runner_response,
@@ -200,6 +201,10 @@ class AiExecutorTaskLogAppendRequest(BaseModel):
 
 
 class AiExecutorTaskCancelRequest(BaseModel):
+    reason: str | None = None
+
+
+class AiExecutorTaskRetryRequest(BaseModel):
     reason: str | None = None
 
 
@@ -445,6 +450,24 @@ def cancel_ai_executor_task(
 ) -> dict[str, Any]:
     return envelope(
         cancel_ai_executor_task_response(
+            current_store=store(request),
+            payload=payload,
+            task_id=task_id,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-tasks/{task_id}/retry")
+def retry_ai_executor_task(
+    payload: AiExecutorTaskRetryRequest,
+    request: Request,
+    task_id: str,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        retry_ai_executor_task_response(
             current_store=store(request),
             payload=payload,
             task_id=task_id,

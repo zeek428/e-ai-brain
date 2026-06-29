@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 import app.services.plugins as plugin_services
 import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
-import app.services.scheduled_jobs as scheduled_jobs_service
 from app.main import app
 from app.services.ai_executor_runners import (
     list_ai_executor_runners_response,
@@ -1374,6 +1373,55 @@ def test_ai_executor_runner_token_rotation_logs_cancel_and_timeout_controls():
     assert cancelled.status_code == 200
     assert cancelled.json()["data"]["task"]["status"] == "cancelled"
     assert cancelled.json()["data"]["task"]["error_code"] == "AI_EXECUTOR_TASK_CANCELLED"
+
+    retried = client.post(
+        f"/api/system/ai-executor-tasks/{task_id}/retry",
+        json={"reason": "修复 Runner 后重试"},
+        headers=admin_headers,
+    )
+    assert retried.status_code == 200
+    retried_task = retried.json()["data"]["task"]
+    assert retried.json()["data"]["source_task"]["id"] == task_id
+    assert retried_task["id"] != task_id
+    assert retried_task["status"] == "queued"
+    assert retried_task["request_config"]["retry_of_task_id"] == task_id
+    assert retried_task["request_config"]["retry_history"][-1]["source_status"] == "cancelled"
+    assert retried_task["logs"][0]["message"].startswith(f"Task retried from {task_id}")
+
+    retry_claim = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret-v2"},
+    )
+    assert retry_claim.status_code == 200
+    assert retry_claim.json()["data"]["task"]["id"] == retried_task["id"]
+
+    retry_complete = client.post(
+        f"/api/system/ai-executor-tasks/{retried_task['id']}/complete",
+        json={
+            "logs": [{"level": "info", "message": "retry succeeded"}],
+            "result_json": {"ok": True},
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": "runner-secret-v2"},
+    )
+    assert retry_complete.status_code == 200
+
+    retry_succeeded_again = client.post(
+        f"/api/system/ai-executor-tasks/{retried_task['id']}/retry",
+        json={"reason": "重复重试"},
+        headers=admin_headers,
+    )
+    assert retry_succeeded_again.status_code == 409
+    assert retry_succeeded_again.json()["detail"]["code"] == "AI_EXECUTOR_TASK_NOT_RETRYABLE"
+
+    retry_audit = client.get(
+        f"/api/audit/events?event_type=ai_executor_task.retry_requested"
+        f"&subject_id={retried_task['id']}",
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    assert retry_audit[0]["payload"]["source_task_id"] == task_id
 
     timed_out_task = client.post(
         f"/api/system/plugin-actions/{action['id']}/invoke",

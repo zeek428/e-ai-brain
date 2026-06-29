@@ -15,6 +15,7 @@ from app.services.ai_executor_runner_constants import (
     AI_EXECUTOR_RUNNER_PROTOCOLS,
     AI_EXECUTOR_RUNNER_SORT_FIELDS,
     AI_EXECUTOR_RUNNER_STATUSES,
+    AI_EXECUTOR_TASK_RETRYABLE_STATUSES,
     AI_EXECUTOR_TASK_SORT_FIELDS,
     AI_EXECUTOR_TASK_STATUSES,
     AI_EXECUTOR_TASK_TERMINAL_STATUSES,
@@ -1889,6 +1890,104 @@ def cancel_ai_executor_task_response(
         runner_id=str(task.get("runner_id") or user["id"]),
     )
     return {"task": _task_public(task)}
+
+
+def retry_ai_executor_task_response(
+    *,
+    current_store: Any,
+    payload: Any,
+    task_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    _ensure_admin(user)
+    source_task = _sync_visible_ai_executor_task_by_id(
+        current_store,
+        task_id=task_id,
+        user=user,
+    )
+    source_status = str(source_task.get("status") or "")
+    if source_status not in AI_EXECUTOR_TASK_RETRYABLE_STATUSES:
+        raise api_error(
+            409,
+            "AI_EXECUTOR_TASK_NOT_RETRYABLE",
+            "Only cancelled, failed, timed_out or dead_letter tasks can be retried",
+        )
+
+    now = datetime.now(UTC).isoformat()
+    reason = str(getattr(payload, "reason", None) or "manual retry")
+    request_config = dict(source_task.get("request_config") or {})
+    retry_history = [
+        item
+        for item in request_config.get("retry_history") or []
+        if isinstance(item, dict)
+    ]
+    retry_metadata = {
+        "reason": reason,
+        "retried_at": now,
+        "retried_by": user["id"],
+        "source_status": source_status,
+        "source_task_id": source_task["id"],
+    }
+    request_config = {
+        **request_config,
+        "reliability": {},
+        "retry_history": [*retry_history, retry_metadata],
+        "retry_of_task_id": source_task["id"],
+    }
+    retry_task = {
+        **source_task,
+        "claimed_at": None,
+        "created_at": now,
+        "created_by": user["id"],
+        "error_code": None,
+        "error_message": None,
+        "finished_at": None,
+        "id": current_store.new_id("ai_executor_task"),
+        "logs": _append_task_logs(
+            {},
+            [
+                {
+                    "level": "info",
+                    "message": f"Task retried from {source_task['id']}: {reason}",
+                    "timestamp": now,
+                }
+            ],
+        ),
+        "request_config": request_config,
+        "result_json": {},
+        "status": "queued",
+        "updated_at": now,
+    }
+    audit_event = record_audit_event(
+        current_store,
+        event_type="ai_executor_task.retry_requested",
+        actor_id=user["id"],
+        subject_type="ai_executor_task",
+        subject_id=retry_task["id"],
+        payload={
+            "reason": reason,
+            "runner_id": retry_task.get("runner_id"),
+            "source_status": source_status,
+            "source_task_id": source_task["id"],
+        },
+    )
+    _persist_record(
+        current_store,
+        "save_ai_executor_task_record",
+        retry_task,
+        audit_event=audit_event,
+    )
+    _sync_runner_completion_to_scheduled_run(
+        current_store,
+        task=retry_task,
+        runner_id=str(retry_task.get("runner_id") or user["id"]),
+    )
+    _sync_runner_completion_to_ai_task(
+        current_store,
+        task=retry_task,
+        runner_id=str(retry_task.get("runner_id") or user["id"]),
+    )
+    return {"source_task": _task_public(source_task), "task": _task_public(retry_task)}
 
 
 def _datetime_value(value: Any) -> datetime | None:
