@@ -1026,6 +1026,16 @@ def validate_version_dashboard_quick_regression(
         branch_blockers,
         f"Version dashboard quick check missed branch blocker: {dashboard_blockers}",
     )
+    code_review_blockers = [
+        blocker
+        for blocker in dashboard_blockers
+        if blocker.get("source_type") == "code_review_report"
+        and str(blocker.get("action_target_id")) == code_review_report["id"]
+    ]
+    _assert(
+        code_review_blockers,
+        f"Version dashboard quick check missed pending code review blocker: {dashboard_blockers}",
+    )
     branch_quality = validate_version_dashboard_branch_quality(
         dashboard,
         branch_config_id=branch_config["id"],

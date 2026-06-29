@@ -458,7 +458,7 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     data = response.json()["data"]
     assert data["version"]["id"] == version["id"]
     assert data["summary"] == {
-        "blockers": 5,
+        "blockers": 6,
         "branch_configs": 1,
         "branch_quality_action_required": 1,
         "branch_quality_accepted_risks": 1,
@@ -493,6 +493,7 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     assert {item["source_type"] for item in data["blockers"]} == {
         "bug",
         "code_inspection_report",
+        "code_review_report",
         "jenkins_release",
         "product_version_branch_config",
     }
@@ -510,6 +511,14 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         == "code_inspection_report_dashboard"
     )
     assert "重新扫描" in blocker_by_source["code_inspection_report"]["resolution_hint"]
+    assert blocker_by_source["code_review_report"]["action_label"] == "处理评审"
+    assert (
+        blocker_by_source["code_review_report"]["action_target_id"]
+        == "code_review_report_dashboard"
+    )
+    assert blocker_by_source["code_review_report"]["action_target_type"] == "code_review_report"
+    assert "代码评审仍待确认" in blocker_by_source["code_review_report"]["reason"]
+    assert "关闭待确认项" in blocker_by_source["code_review_report"]["resolution_hint"]
     assert blocker_by_source["product_version_branch_config"]["action_label"] == "维护分支"
     assert blocker_by_source["jenkins_release"]["action_label"] == "排查发布"
     assert data["branch_configs"][0]["repository_name"] == "Dashboard Repo"

@@ -41,6 +41,7 @@ export type DashboardBlockerActionItem = ProductVersionDashboard['blockers'][num
 export const dashboardBlockerSourceLabels: Record<string, string> = {
   bug: 'Bug',
   code_inspection_report: '代码巡检',
+  code_review_report: '代码评审',
   jenkins_release: '发布记录',
   product_version_branch_config: '代码分支',
   requirement: '需求',
@@ -72,6 +73,7 @@ export function blockerSubjectType(sourceType: string) {
   if (
     sourceType === 'bug' ||
     sourceType === 'code_inspection_report' ||
+    sourceType === 'code_review_report' ||
     sourceType === 'jenkins_release' ||
     sourceType === 'product_version' ||
     sourceType === 'product_version_branch_config' ||
@@ -94,8 +96,9 @@ const blockerSourcePriority: Record<string, number> = {
   bug: 1,
   jenkins_release: 2,
   code_inspection_report: 3,
-  requirement: 4,
-  product_version_branch_config: 5,
+  code_review_report: 4,
+  requirement: 5,
+  product_version_branch_config: 6,
 };
 
 export function blockerActionHref(blocker: ProductVersionDashboard['blockers'][number], versionId: string) {
@@ -113,6 +116,11 @@ export function blockerActionHref(blocker: ProductVersionDashboard['blockers'][n
   if (targetType === 'code_inspection_report') {
     return internalHref('/governance/code-inspections', {
       source_id: targetId,
+    });
+  }
+  if (targetType === 'code_review_report') {
+    return internalHref('/delivery/rd-tasks', {
+      code_review_report_id: targetId,
     });
   }
   if (targetType === 'product_version_branch_config') {

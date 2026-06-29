@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 迭代版本总览阻塞队列补齐待确认 Code Review：后端将 `pending_review/waiting_review` 代码评审报告纳入版本阻塞项，前端可直接跳转评审处理和全链路。
 - 真实全链路回归脚本补齐 Runner 健康告警门禁：`runner-reliability` 场景验证新建 Runner 返回 `runner_never_connected`，心跳后恢复 `online` 且清除 `health_alert`。
 - AI 执行器 Runner 健康告警：`/api/system/ai-executor-runners` 和测试接口返回标准化 `health_alert`，插件管理执行器列表直接展示未连接、心跳超时、离线或停用原因和建议动作。
 - AI 动作草案服务继续拆大文件：新增 `apps/api/app/services/assistant_action_draft_common.py` 承接草案状态/动作枚举、默认 payload、基础动作校验和 Cron 表达式校验，`assistant_action_drafts.py` 降至 2600 行预算内并由架构守护防止通用规则回流。

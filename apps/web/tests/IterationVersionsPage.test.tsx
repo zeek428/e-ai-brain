@@ -898,6 +898,17 @@ describe('IterationVersionsPage', () => {
                 title: '发布阻塞 Bug',
               },
               {
+                action_label: '处理评审',
+                action_target_id: 'code_review_report_dashboard',
+                action_target_type: 'code_review_report',
+                id: 'code_review_report_dashboard',
+                reason: '代码评审仍待确认，未完成版本准入确认',
+                resolution_hint: '确认代码评审结论、补充整改或关闭待确认项后解除版本准入阻塞。',
+                severity: 'medium',
+                source_type: 'code_review_report',
+                title: '代码评审待确认',
+              },
+              {
                 action_label: '维护分支',
                 action_target_id: 'version_branch_dashboard',
                 action_target_type: 'product_version_branch_config',
@@ -1080,7 +1091,7 @@ describe('IterationVersionsPage', () => {
               ],
             },
             summary: {
-              blockers: 3,
+              blockers: 4,
               branch_configs: 1,
               branch_quality_action_required: 1,
               branch_quality_accepted_risks: 1,
@@ -1150,14 +1161,14 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByRole('button', { name: /查看需求/ }).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /维护分支/ })).toBeInTheDocument();
     expect(screen.getByText('优先处理建议')).toBeInTheDocument();
-    expect(screen.getAllByText('3 个阻塞项').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('4 个阻塞项').length).toBeGreaterThan(0);
     expect(screen.getByText('版本治理结论')).toBeInTheDocument();
     expect(screen.getByText('版本暂不建议推进')).toBeInTheDocument();
     expect(
-      screen.getByText('当前版本有 3 个发布阻塞项，未关闭 Bug 1 个，门禁失败 1 份，状态推进阻塞需求 1 条。'),
+      screen.getByText('当前版本有 4 个发布阻塞项，未关闭 Bug 1 个，门禁失败 1 份，状态推进阻塞需求 1 条。'),
     ).toBeInTheDocument();
     expect(screen.getByText('下一步动作：先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。')).toBeInTheDocument();
-    expect(screen.getByText('发布阻塞 3')).toBeInTheDocument();
+    expect(screen.getByText('发布阻塞 4')).toBeInTheDocument();
     expect(screen.getByText('严重质量风险 4')).toBeInTheDocument();
     expect(screen.getAllByText('Bug').length).toBeGreaterThan(0);
     expect(screen.getAllByText('发布记录').length).toBeGreaterThan(0);
@@ -1198,10 +1209,15 @@ describe('IterationVersionsPage', () => {
       'href',
       '/governance/code-inspections?version_id=version_dashboard',
     );
-    expect(screen.getByRole('link', { name: /处理评审/ })).toHaveAttribute(
-      'href',
-      '/delivery/rd-tasks?code_review_report_id=code_review_report_dashboard',
-    );
+    expect(
+      screen
+        .getAllByRole('link', { name: /处理评审/ })
+        .every(
+          (link) =>
+            link.getAttribute('href') ===
+            '/delivery/rd-tasks?code_review_report_id=code_review_report_dashboard',
+        ),
+    ).toBe(true);
     expect(screen.getByRole('link', { name: /处理版本 Bug/ })).toHaveAttribute(
       'href',
       '/delivery/bugs?version_id=version_dashboard',
@@ -1216,8 +1232,8 @@ describe('IterationVersionsPage', () => {
     );
     expect(screen.getByText('交付健康摘要')).toBeInTheDocument();
     expect(screen.getByText('发布准入')).toBeInTheDocument();
-    expect(screen.getAllByText('3 个阻塞项').length).toBeGreaterThan(0);
-    expect(screen.getByText('阻塞来源：Bug 1、代码分支 1、发布记录 1。')).toBeInTheDocument();
+    expect(screen.getAllByText('4 个阻塞项').length).toBeGreaterThan(0);
+    expect(screen.getByText('阻塞来源：Bug 1、代码评审 1、代码分支 1、发布记录 1。')).toBeInTheDocument();
     expect(screen.getByText('质量风险')).toBeInTheDocument();
     expect(screen.getByText('2 个严重风险')).toBeInTheDocument();
     expect(screen.getByText('严重 Bug 1，严重巡检 1，未关闭 Bug 1。')).toBeInTheDocument();
@@ -1243,6 +1259,8 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('优先级 2').length).toBeGreaterThan(0);
     expect(screen.getByText('高风险 · 发布记录')).toBeInTheDocument();
     expect(screen.getAllByText('优先级 3').length).toBeGreaterThan(0);
+    expect(screen.getByText('中风险 · 代码评审')).toBeInTheDocument();
+    expect(screen.getAllByText('优先级 4').length).toBeGreaterThan(0);
     expect(screen.getByText('中风险 · 代码分支')).toBeInTheDocument();
     expect(screen.getByText('状态分布')).toBeInTheDocument();
     expect(screen.getByText('需求状态')).toBeInTheDocument();
@@ -1261,6 +1279,7 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('修复、验证并关闭 blocker/critical Bug 后解除发布阻塞。')).toBeInTheDocument();
     expect(screen.getByText('创建或推进版本分支状态，使其满足测试/发布准入要求。')).toBeInTheDocument();
     expect(screen.getByText('登记或同步成功发布记录后解除发布阻塞。')).toBeInTheDocument();
+    expect(screen.getByText('确认代码评审结论、补充整改或关闭待确认项后解除版本准入阻塞。')).toBeInTheDocument();
     expect(
       screen
         .getAllByRole('link', { name: '处理 Bug' })
@@ -1280,6 +1299,15 @@ describe('IterationVersionsPage', () => {
         .getAllByRole('link', { name: '排查发布' })
         .every((link) => link.getAttribute('href') === '/governance/devops?version_id=version_dashboard'),
     ).toBe(true);
+    expect(
+      screen
+        .getAllByRole('link', { name: '处理评审' })
+        .every(
+          (link) =>
+            link.getAttribute('href') ===
+            '/delivery/rd-tasks?code_review_report_id=code_review_report_dashboard',
+        ),
+    ).toBe(true);
     expect(screen.getAllByText('发布阻塞 Bug').length).toBeGreaterThan(0);
     expect(screen.getAllByText('release/2026-dashboard').length).toBeGreaterThan(0);
     expect(screen.getAllByText('驾驶舱需求').length).toBeGreaterThan(0);
@@ -1295,7 +1323,7 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('待审批忽略').length).toBeGreaterThan(0);
     expect(screen.getAllByText('门禁失败报告').length).toBeGreaterThan(0);
     expect(screen.getAllByText('门禁失败项').length).toBeGreaterThan(0);
-    expect(screen.getByText('代码评审待确认')).toBeInTheDocument();
+    expect(screen.getAllByText('代码评审待确认').length).toBeGreaterThan(0);
     expect(screen.getAllByText('知识沉淀').length).toBeGreaterThan(0);
     expect(screen.getByText('版本驾驶舱知识沉淀')).toBeInTheDocument();
     expect(screen.getByText('版本驾驶舱知识文档')).toBeInTheDocument();
@@ -1318,6 +1346,9 @@ describe('IterationVersionsPage', () => {
     expect(cockpitLinks).toContain('/delivery/bugs?bug_id=bug_dashboard');
     expect(cockpitLinks).toContain('/governance/code-inspections?source_id=code_inspection_report_dashboard');
     expect(cockpitLinks).toContain('/delivery/rd-tasks?code_review_report_id=code_review_report_dashboard');
+    expect(cockpitLinks).toContain(
+      '/delivery/full-chain?subject_id=code_review_report_dashboard&subject_type=code_review_report',
+    );
     expect(cockpitLinks).toContain(
       '/delivery/full-chain?subject_id=knowledge_deposit_dashboard&subject_type=knowledge_deposit',
     );

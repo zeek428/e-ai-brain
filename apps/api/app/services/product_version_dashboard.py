@@ -47,6 +47,11 @@ def _blocker_action_context(source_type: str) -> tuple[str, str]:
             "治理巡检",
             "查看巡检详情，完成误报处理、风险接受或整改后重新扫描。",
         )
+    if source_type == "code_review_report":
+        return (
+            "处理评审",
+            "确认代码评审结论、补充整改或关闭待确认项后解除版本准入阻塞。",
+        )
     if source_type == "jenkins_release":
         return (
             "排查发布",
@@ -529,9 +534,11 @@ def _finding_governance_counts(findings: list[dict[str, Any]]) -> dict[str, int]
                 counts["accepted_risk_count"] += 1
                 if _accepted_risk_is_expired(finding):
                     counts["expired_accepted_risk_count"] += 1
-        if str(finding.get("severity") or "").lower() in SEVERE_CODE_RISKS and not _suppression_is_effective(
-            finding
-        ):
+        is_active_severe_finding = (
+            str(finding.get("severity") or "").lower() in SEVERE_CODE_RISKS
+            and not _suppression_is_effective(finding)
+        )
+        if is_active_severe_finding:
             counts["active_severe_finding_count"] += 1
             if finding.get("created_bug_id"):
                 counts["active_severe_bug_covered_count"] += 1
@@ -780,6 +787,7 @@ def _build_blockers(
     branch_configs: list[dict[str, Any]],
     bugs: list[dict[str, Any]],
     code_inspection_reports: list[dict[str, Any]],
+    code_review_reports: list[dict[str, Any]],
     releases: list[dict[str, Any]],
     status_impact: dict[str, Any] | None,
     target_status: str | None,
@@ -806,6 +814,17 @@ def _build_blockers(
                     severity="high",
                     source_type="bug",
                     title=bug.get("title"),
+                )
+            )
+    for report in code_review_reports:
+        if str(report.get("status") or "").lower() in PENDING_CODE_REVIEW_STATUSES:
+            blockers.append(
+                _dashboard_blocker(
+                    blocker_id=report.get("id"),
+                    reason="代码评审仍待确认，未完成版本准入确认",
+                    severity="high" if target_status == "released" else "medium",
+                    source_type="code_review_report",
+                    title=report.get("summary") or report.get("task_title") or report.get("id"),
                 )
             )
     for report in code_inspection_reports:
@@ -910,6 +929,7 @@ def product_version_dashboard_response(
         branch_configs=branch_configs,
         bugs=bugs,
         code_inspection_reports=code_inspection_reports,
+        code_review_reports=code_review_reports,
         releases=releases,
         status_impact=status_impact,
         target_status=next_status,

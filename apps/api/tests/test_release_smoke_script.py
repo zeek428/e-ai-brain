@@ -165,6 +165,8 @@ def test_full_chain_regression_script_supports_version_dashboard_suite():
         "pending_code_review_reports",
         "Version dashboard missed pending-scan branch quality summary",
         "Version dashboard quick check missed code review report",
+        "Version dashboard quick check missed pending code review blocker",
+        'source_type") == "code_review_report"',
         "release_evidence_blockers",
     ]:
         assert marker in content
