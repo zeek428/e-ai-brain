@@ -466,6 +466,32 @@ def run_regression(
         inspection_dashboard.get("quality_gate_violations"),
         f"Code inspection dashboard missed quality gate violation aggregation: {inspection_dashboard}",
     )
+    committer_governance = [
+        item
+        for item in inspection_dashboard.get("committer_governance", [])
+        if item.get("email") == "full-chain@example.com"
+    ]
+    _assert(
+        committer_governance,
+        f"Code inspection dashboard missed committer governance queue: {inspection_dashboard}",
+    )
+    committer_governance_item = committer_governance[0]
+    _assert(
+        committer_governance_item.get("status") == "healthy",
+        f"Code inspection committer governance did not close the loop: {committer_governance_item}",
+    )
+    _assert(
+        int(committer_governance_item.get("active_severe_finding_count") or 0) >= 1,
+        f"Code inspection committer governance missed active severe findings: {committer_governance_item}",
+    )
+    _assert(
+        int(committer_governance_item.get("covered_by_bug_count") or 0) >= 1,
+        f"Code inspection committer governance missed Bug coverage: {committer_governance_item}",
+    )
+    _assert(
+        int(committer_governance_item.get("covered_by_task_count") or 0) >= 1,
+        f"Code inspection committer governance missed remediation task coverage: {committer_governance_item}",
+    )
     report_bug_ids = {str(item) for item in report.get("created_bug_ids") or []}
     report_task_ids = {str(item) for item in report.get("created_task_ids") or []}
     _assert(report_bug_ids, f"Code inspection report did not record created Bug ids: {report}")

@@ -58,6 +58,8 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         "/api/dashboard/it-team",
         "/api/assistant/chat",
         "committer_distribution",
+        "committer_governance",
+        "active_severe_finding_count",
         "covered_by_bug_count",
         "covered_by_task_count",
         "action_label",
