@@ -57,6 +57,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- AI 助手引用服务继续拆大文件：新增 `assistant_reference_formatting`，承接引用类型元数据、来源模块、URL/标题/摘要格式化、候选合并、语义匹配和权限标签；`assistant_references.py` 降至 2600 行以内并继续聚焦候选读取、权限过滤和配置写接口。
 - AI 助手聊天服务继续拆大文件：新增 `assistant_chat_intents`，承接确定性意图 detector、任务向导、插件连接诊断、定时作业诊断、助手指标静态输出和引用合并 helper；`assistant_chat.py` 降至 2500 行以内并继续保留聊天运行、模型调用、草案和定时作业执行编排。
 - 插件管理服务继续拆大文件：将结果映射/写入预览抽取到 `plugin_result_mapping`，将结果写入记录构造、分页和产品 scope 过滤抽取到 `plugin_result_write_records`，`plugins.py` 降至 2800 行以内。
 - 插件管理服务继续拆大文件：将插件/连接/动作删除保护抽取到 `plugin_delete_protection`，删除前统一识别定时作业单 ID、多 ID 和 orchestration 多引用，避免多数据源作业仍引用资源时误删。

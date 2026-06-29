@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.672 |
+| 功能版本 | v1.1.673 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.673 | 2026-06-29 | AI 助手引用服务继续拆分：引用类型元数据、来源模块、URL/标题/摘要格式化、候选合并、语义匹配和权限标签抽取到 `assistant_reference_formatting`，`assistant_references.py` 聚焦候选读取、权限过滤和配置写接口 | Codex |
 | v1.1.672 | 2026-06-29 | AI 助手聊天服务继续拆分：确定性意图 detector、任务向导/诊断/指标静态输出和引用合并 helper 抽取到 `assistant_chat_intents`，`assistant_chat.py` 保留聊天运行、模型调用、草案和定时作业执行编排 | Codex |
 | v1.1.671 | 2026-06-29 | 插件管理服务继续拆分：结果映射/写入预览抽取到 `plugin_result_mapping`，结果写入记录构造、分页和产品 scope 过滤抽取到 `plugin_result_write_records`，`plugins.py` 降低为插件配置、调用和兼容入口 | Codex |
 | v1.1.670 | 2026-06-29 | 插件管理服务继续拆分：插件/连接/动作删除保护抽取到 `plugin_delete_protection`，删除前统一识别定时作业单 ID、多 ID 和 orchestration 多引用，避免多数据源作业仍引用资源时误删 | Codex |

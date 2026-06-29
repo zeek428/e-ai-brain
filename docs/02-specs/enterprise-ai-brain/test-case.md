@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.776 |
+| 功能版本 | v1.1.777 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.777 | 2026-06-29 | 补充 AI 助手引用格式化拆分回归：`assistant_reference_formatting` 覆盖执行诊断链接、定时作业运行标题、定时作业语义匹配、候选按类型均衡合并和权限标签；原引用候选/解析集成测试继续覆盖接口契约 | Codex |
 | v1.1.776 | 2026-06-29 | 补充 AI 助手确定性意图拆分回归：`assistant_chat_intents` 直接覆盖执行一次、定时作业诊断、插件连接诊断、任务向导输出和引用去重，原注册表集成测试继续覆盖 intent metadata | Codex |
 | v1.1.775 | 2026-06-29 | 补充插件结果写入记录拆分回归：结果写入目标、future write target action log、产品 scope 过滤和结果写入记录分页观测继续覆盖 `plugin_result_mapping` 与 `plugin_result_write_records` 拆分后的契约 | Codex |
 | v1.1.774 | 2026-06-29 | 补充插件删除保护拆分回归：`plugin_delete_protection` 需识别定时作业 `plugin_action_ids`、`plugin_connection_ids` 和 orchestration 多引用，插件管理删除接口在备用动作/连接仍被多数据源作业引用时返回 409 | Codex |
