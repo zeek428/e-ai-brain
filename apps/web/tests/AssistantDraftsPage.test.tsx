@@ -92,19 +92,31 @@ function installAssistantDraftsFetchMock(options: { includeFailed?: boolean } = 
         resource_type: 'scheduled_job',
       },
       permissions: {
-        issue_count: 0,
-        issues: [],
-        missing_permissions: [],
-        required_permissions: ['system.scheduled_jobs.manage'],
-        status: 'passed',
+        issue_count: 1,
+        issues: [
+          {
+            field: 'plugin_action_id',
+            message: '缺少插件动作管理权限',
+            repair_action: {
+              action: 'request_permission',
+              label: '申请插件权限',
+            },
+            severity: 'warning',
+          },
+        ],
+        missing_permissions: ['plugin.actions.manage'],
+        required_permissions: ['system.scheduled_jobs.manage', 'plugin.actions.manage'],
+        status: 'warning',
       },
       retries: {
         can_retry: false,
         failure_count: 0,
+        retry_reason: '首次生成，无需重试',
         retry_count: 0,
       },
       risk: {
         level: 'medium',
+        reason: '定时作业会创建新的自动化写入入口，确认前需核对调度和插件动作。',
       },
     },
     payload: {
@@ -263,10 +275,19 @@ describe('AssistantDraftsPage', () => {
     const dialog = await screen.findByRole('dialog', { name: '草案详情' });
     await waitFor(() => expect(within(dialog).getByText('草案 Payload')).toBeInTheDocument());
     expect(within(dialog).getByText('执行治理摘要')).toBeInTheDocument();
+    expect(within(dialog).getByText('定时作业会创建新的自动化写入入口，确认前需核对调度和插件动作。')).toBeInTheDocument();
     expect(within(dialog).getByText('执行前后差异')).toBeInTheDocument();
-    expect(within(dialog).getByText('system.scheduled_jobs.manage')).toBeInTheDocument();
-    expect(within(dialog).getByText(/assistant_action_draft.created/)).toBeInTheDocument();
-    expect(within(dialog).getByText('Cron 表达式')).toBeInTheDocument();
+    expect(within(dialog).getByText(/system\.scheduled_jobs\.manage/)).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/plugin\.actions\.manage/).length).toBeGreaterThanOrEqual(2);
+    expect(within(dialog).getByText('权限问题')).toBeInTheDocument();
+    expect(within(dialog).getByText('缺少插件动作管理权限')).toBeInTheDocument();
+    expect(within(dialog).getByText('申请插件权限')).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/assistant_action_draft.created/).length).toBeGreaterThanOrEqual(2);
+    expect(within(dialog).getByText(/audit_001/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/操作者 user_admin/)).toBeInTheDocument();
+    expect(within(dialog).getByText('不可重试')).toBeInTheDocument();
+    expect(within(dialog).getByText('首次生成，无需重试')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('Cron 表达式').length).toBeGreaterThanOrEqual(2);
     expect(within(dialog).getByText(JSON.stringify('0 9 * * MON'))).toBeInTheDocument();
     expect(within(dialog).getByRole('link', { name: '继续编辑' })).toHaveAttribute(
       'href',

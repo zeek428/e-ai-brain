@@ -15,11 +15,11 @@ import {
   compactText,
   jsonPreview,
   operationText,
-  permissionTag,
   riskTag,
   statusTag,
   validationTag,
 } from './assistantDraftWorkbenchPresentation';
+import { AssistantDraftGovernancePanel } from './AssistantDraftGovernancePanel';
 
 const { Text } = Typography;
 
@@ -63,14 +63,6 @@ export function AssistantDraftDetailModal({
   );
   const detailIssues = detail?.preview?.validation?.issues ?? [];
   const detailDiffs = detail?.preview?.diffs ?? [];
-  const governance = detail?.governance;
-  const impact = governance?.impact;
-  const permissions = governance?.permissions;
-  const retries = governance?.retries;
-  const audit = governance?.audit;
-  const requiredPermissions = permissions?.required_permissions?.join(', ') || '-';
-  const missingPermissions = permissions?.missing_permissions?.join(', ') || '-';
-  const sourceResource = impact?.source_resource;
 
   return (
     <Modal
@@ -103,55 +95,13 @@ export function AssistantDraftDetailModal({
               {detail.result_run?.status ? `${detail.result_run.status} · ${detail.result_run.result_type ?? '-'}` : '-'}
             </Descriptions.Item>
             <Descriptions.Item label="来源消息">{detail.source_message_id ?? '-'}</Descriptions.Item>
-            <Descriptions.Item label="来源链路">
+            <Descriptions.Item label="来源链路" span={2}>
               <ExecutionTraceLink asButton sourceId={detail.source_message_id} sourceType="assistant_message">
                 来源链路
               </ExecutionTraceLink>
             </Descriptions.Item>
           </Descriptions>
-          <Descriptions column={3} size="small" title="执行治理摘要">
-            <Descriptions.Item label="影响对象">
-              {operationText(impact?.operation)} · {impact?.resource_type ?? '-'}
-              {impact?.resource_id ? ` · ${impact.resource_id}` : ''}
-            </Descriptions.Item>
-            <Descriptions.Item label="来源对象" span={2}>
-              {sourceResource
-                ? `${sourceResource.resource_type ?? '-'} · ${sourceResource.title ?? sourceResource.resource_id ?? '-'}`
-                : '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label="字段差异">
-              {governance?.diff?.count ?? detailDiffs.length} 项
-            </Descriptions.Item>
-            <Descriptions.Item label="Payload 字段">
-              {impact?.payload_field_count ?? Object.keys(detail.payload ?? {}).length} 项
-            </Descriptions.Item>
-            <Descriptions.Item label="权限校验">
-              <Space size={4}>
-                {permissionTag(permissions?.status)}
-                {permissions?.issue_count ? <Text type="secondary">{permissions.issue_count}</Text> : null}
-              </Space>
-            </Descriptions.Item>
-            <Descriptions.Item label="必需权限" span={2}>
-              {requiredPermissions}
-            </Descriptions.Item>
-            <Descriptions.Item label="缺失权限">
-              {missingPermissions}
-            </Descriptions.Item>
-            <Descriptions.Item label="审计事件">
-              {audit?.event_count ?? 0} 条
-            </Descriptions.Item>
-            <Descriptions.Item label="最新审计" span={2}>
-              {audit?.latest_event_type
-                ? `${audit.latest_event_type} · ${formatDisplayDateTime(audit.latest_event_at)}`
-                : '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label="失败/重试">
-              {retries?.failure_count ?? 0} 次失败 · {retries?.retry_count ?? 0} 次重试
-            </Descriptions.Item>
-            <Descriptions.Item label="最近失败" span={2}>
-              {retries?.last_failure_message ?? retries?.last_failure_code ?? '-'}
-            </Descriptions.Item>
-          </Descriptions>
+          <AssistantDraftGovernancePanel detail={detail} diffCount={detailDiffs.length} />
           <Table<AssistantActionDraftPreviewDiff>
             columns={diffColumns}
             dataSource={detailDiffs}

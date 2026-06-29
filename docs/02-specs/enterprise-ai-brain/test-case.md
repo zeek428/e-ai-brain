@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.783 |
+| 功能版本 | v1.1.784 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.784 | 2026-06-29 | 补充 AI 动作确认中心详情治理面板回归：草案详情必须展示风险原因、权限必需/缺失/问题、修复动作、审计事件和失败重试状态；`AssistantDraftsPage.test.tsx` 覆盖 | Codex |
 | v1.1.783 | 2026-06-29 | 补充知识中心索引健康组件化回归：`KnowledgeIndexHealthPanel` 拆出后必须继续展示可检索、向量/关键词、chunk、Embedding、召回模式和健康问题动作；`KnowledgePage.test.tsx`、lint、typecheck 和真实知识中心页面 smoke 必须通过 | Codex |
 | v1.1.782 | 2026-06-29 | 补充版本总览组件继续细分回归：摘要行动区、状态分布、推进影响、阻塞项和质量交付明细拆到独立组件后，`IterationVersionsPage.test.tsx`、lint、typecheck 和真实 `/delivery/versions` 页面 smoke 必须继续通过 | Codex |
 | v1.1.781 | 2026-06-29 | 补充迭代版本页版本总览组件拆分回归：`VersionDashboardModal` 抽出后，版本总览弹窗仍需展示下一步行动、交付健康摘要、状态分布、推进影响、阻塞项处理入口和各明细表；`IterationVersionsPage.test.tsx`、typecheck 和真实 `/delivery/versions` 页面 smoke 必须通过 | Codex |
