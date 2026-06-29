@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import app.services.plugins as plugin_services
+import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.main import app
 from app.services.ai_executor_runners import (
@@ -3443,7 +3444,7 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
         )
         return FakeModelResponse()
 
-    monkeypatch.setattr(scheduled_jobs_service, "urlopen", fake_model_urlopen)
+    monkeypatch.setattr(scheduled_job_ai_processing_service, "urlopen", fake_model_urlopen)
 
     plugin = client.post(
         "/api/system/plugins",

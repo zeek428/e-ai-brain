@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from fastapi.testclient import TestClient
 
 import app.services.scheduled_jobs as scheduled_jobs_service
+import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
 from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
 from app.core.security import hash_password
 from app.core.users import MemoryUserRepository
@@ -1422,7 +1423,7 @@ def test_scheduled_job_validates_skill_output_schema_before_ai_processing(monkey
         model_called = True
         raise AssertionError("model gateway should not be called when mapping preflight fails")
 
-    monkeypatch.setattr(scheduled_jobs_service, "urlopen", fail_if_model_called)
+    monkeypatch.setattr(scheduled_job_ai_processing_service, "urlopen", fail_if_model_called)
 
     run = client.post(
         f"/api/system/scheduled-jobs/{job['id']}/run",

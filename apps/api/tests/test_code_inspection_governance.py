@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import app.services.native_code_scanner as native_code_scanner
+import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.core.repositories.code_inspections import CodeInspectionReadRepository
 from app.main import app
@@ -1950,7 +1951,7 @@ def test_ai_generated_repository_inspection_calls_model_before_writing_report(mo
         )
         return FakeModelResponse()
 
-    monkeypatch.setattr(scheduled_jobs_service, "urlopen", fake_model_urlopen)
+    monkeypatch.setattr(scheduled_job_ai_processing_service, "urlopen", fake_model_urlopen)
 
     job = client.post(
         "/api/system/scheduled-jobs",
