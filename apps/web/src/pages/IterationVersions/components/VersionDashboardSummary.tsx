@@ -15,6 +15,7 @@ import {
   buildBlockerActionQueue,
   dashboardHealthLevelLabels,
   internalHref,
+  summarizeBranchQualityGovernance,
   type DashboardHealthItem,
   type DashboardReadinessItem,
   type LabelItem,
@@ -191,6 +192,7 @@ export function VersionDashboardMetrics({
   const severeRiskCount =
     dashboard.summary.severe_bugs +
     dashboard.summary.severe_code_inspection_reports;
+  const branchQuality = summarizeBranchQualityGovernance(dashboard);
   return (
     <Space size={12} wrap>
       {dashboardMetric('需求', dashboard.summary.requirements)}
@@ -212,6 +214,26 @@ export function VersionDashboardMetrics({
         severeRiskCount ? '#cf1322' : undefined,
       )}
       {dashboardMetric('代码巡检', dashboard.summary.code_inspection_reports)}
+      {dashboardMetric(
+        '待治理分支',
+        branchQuality.actionRequiredBranchCount,
+        branchQuality.actionRequiredBranchCount ? '#cf1322' : undefined,
+      )}
+      {dashboardMetric(
+        '门禁失败',
+        branchQuality.qualityGateFailedReportCount,
+        branchQuality.qualityGateFailedReportCount ? '#cf1322' : undefined,
+      )}
+      {dashboardMetric(
+        '待审批忽略',
+        branchQuality.pendingSuppressionCount,
+        branchQuality.pendingSuppressionCount ? '#d48806' : undefined,
+      )}
+      {dashboardMetric(
+        '到期风险',
+        branchQuality.expiredAcceptedRiskCount,
+        branchQuality.expiredAcceptedRiskCount ? '#cf1322' : undefined,
+      )}
       {dashboardMetric('代码评审', dashboard.summary.code_review_reports)}
       {dashboardMetric('知识沉淀', dashboard.summary.knowledge_deposits)}
       {dashboardMetric(

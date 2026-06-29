@@ -1182,7 +1182,16 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('2 个严重风险')).toBeInTheDocument();
     expect(screen.getByText('严重 Bug 1，严重巡检 1，未关闭 Bug 1。')).toBeInTheDocument();
     expect(screen.getByText('1 个分支未创建')).toBeInTheDocument();
-    expect(screen.getByText('1 个分支待治理')).toBeInTheDocument();
+    expect(screen.getAllByText('待治理分支').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('门禁失败').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('待审批忽略').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('到期风险').length).toBeGreaterThan(0);
+    expect(screen.getByText('1 份门禁失败')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '已有 1 份巡检报告，高风险 1 份，待治理分支 1 个，活跃严重 2 个，门禁失败 1 份，待审批忽略 1 个，到期风险 1 个。',
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText('1 份待确认')).toBeInTheDocument();
     expect(screen.getAllByText('1/1 可检索').length).toBeGreaterThan(0);
     expect(screen.getByText('已有 1 条任务知识沉淀，可检索 1 条，向量就绪 0 条。')).toBeInTheDocument();

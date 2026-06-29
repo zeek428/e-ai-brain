@@ -223,6 +223,26 @@ function blockerSourceSummary(blockers: ProductVersionDashboard['blockers']) {
     .join('、');
 }
 
+export function summarizeBranchQualityGovernance(dashboard: ProductVersionDashboard) {
+  const branchRows = dashboard.branchQualityGovernance ?? [];
+  const sumBranchField = (field: keyof ProductVersionDashboard['branchQualityGovernance'][number]) =>
+    branchRows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+
+  return {
+    acceptedRiskCount: dashboard.summary.branch_quality_accepted_risks,
+    actionRequiredBranchCount: dashboard.summary.branch_quality_action_required,
+    activeSevereFindingCount: dashboard.summary.branch_quality_active_severe_findings,
+    expiredAcceptedRiskCount: dashboard.summary.branch_quality_expired_accepted_risks,
+    falsePositiveCount: dashboard.summary.branch_quality_false_positives,
+    pendingScanBranchCount: dashboard.summary.branch_quality_pending_scan,
+    pendingSuppressionCount: dashboard.summary.branch_quality_pending_suppressions,
+    qualityGateFailedReportCount: sumBranchField('qualityGateFailedReportCount'),
+    qualityGateViolationCount: sumBranchField('qualityGateViolationCount'),
+    uncoveredSevereBugCount: sumBranchField('uncoveredSevereBugCount'),
+    uncoveredSevereTaskCount: sumBranchField('uncoveredSevereTaskCount'),
+  };
+}
+
 export function buildDashboardHealthItems(dashboard?: ProductVersionDashboard): DashboardHealthItem[] {
   if (!dashboard) {
     return [];
@@ -246,6 +266,7 @@ export function buildDashboardHealthItems(dashboard?: ProductVersionDashboard): 
   ).length;
   const searchableKnowledgeDepositCount = dashboard.summary.searchable_knowledge_deposits;
   const vectorizedKnowledgeDepositCount = dashboard.summary.vectorized_knowledge_deposits;
+  const branchQuality = summarizeBranchQualityGovernance(dashboard);
   return [
     {
       detail: dashboard.blockers.length
@@ -288,17 +309,22 @@ export function buildDashboardHealthItems(dashboard?: ProductVersionDashboard): 
     },
     {
       detail: dashboard.codeInspectionReports.length
-        ? `已有 ${dashboard.codeInspectionReports.length} 份巡检报告，高风险 ${highRiskInspectionCount} 份，待治理分支 ${actionRequiredBranchQualityCount} 个。`
+        ? `已有 ${dashboard.codeInspectionReports.length} 份巡检报告，高风险 ${highRiskInspectionCount} 份，待治理分支 ${actionRequiredBranchQualityCount} 个，活跃严重 ${branchQuality.activeSevereFindingCount} 个，门禁失败 ${branchQuality.qualityGateFailedReportCount} 份，待审批忽略 ${branchQuality.pendingSuppressionCount} 个，到期风险 ${branchQuality.expiredAcceptedRiskCount} 个。`
         : '当前版本还没有代码巡检报告，进入测试/发布前建议补齐。',
       key: 'inspection',
       level:
-        highRiskInspectionCount || actionRequiredBranchQualityCount
+        branchQuality.qualityGateFailedReportCount ||
+        branchQuality.expiredAcceptedRiskCount ||
+        highRiskInspectionCount ||
+        actionRequiredBranchQualityCount
           ? 'warning'
           : dashboard.codeInspectionReports.length
             ? 'success'
             : 'info',
       title: '代码巡检',
-      value: actionRequiredBranchQualityCount
+      value: branchQuality.qualityGateFailedReportCount
+        ? `${branchQuality.qualityGateFailedReportCount} 份门禁失败`
+        : actionRequiredBranchQualityCount
         ? `${actionRequiredBranchQualityCount} 个分支待治理`
         : highRiskInspectionCount
         ? `${highRiskInspectionCount} 份高风险`
@@ -364,6 +390,7 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
   }).length;
   const pendingCodeReviewCount = dashboard.summary.pending_code_review_reports;
   const releaseBlockerCount = dashboard.blockers.filter((blocker) => blocker.sourceType === 'jenkins_release').length;
+  const branchQuality = summarizeBranchQualityGovernance(dashboard);
   return [
     {
       detail: blockedRequirementCount
@@ -404,17 +431,29 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
     {
       detail: highRiskInspectionCount
         ? `${dashboard.summary.code_inspection_reports} 份报告 · 高风险 ${highRiskInspectionCount} 份`
-        : actionRequiredBranchQualityCount || pendingScanBranchQualityCount
-          ? `${dashboard.summary.code_inspection_reports} 份报告 · 待治理分支 ${actionRequiredBranchQualityCount} 个 · 待巡检 ${pendingScanBranchQualityCount} 个`
+        : actionRequiredBranchQualityCount ||
+            pendingScanBranchQualityCount ||
+            branchQuality.qualityGateFailedReportCount ||
+            branchQuality.pendingSuppressionCount ||
+            branchQuality.expiredAcceptedRiskCount
+          ? `${dashboard.summary.code_inspection_reports} 份报告 · 待治理分支 ${actionRequiredBranchQualityCount} 个 · 待巡检 ${pendingScanBranchQualityCount} 个 · 门禁失败 ${branchQuality.qualityGateFailedReportCount} 份 · 待审批忽略 ${branchQuality.pendingSuppressionCount} 个 · 到期风险 ${branchQuality.expiredAcceptedRiskCount} 个`
           : `${dashboard.summary.code_inspection_reports} 份报告 · 暂无高风险`,
       key: 'inspections',
       level:
-        highRiskInspectionCount || actionRequiredBranchQualityCount || pendingScanBranchQualityCount
+        highRiskInspectionCount ||
+        actionRequiredBranchQualityCount ||
+        pendingScanBranchQualityCount ||
+        branchQuality.qualityGateFailedReportCount ||
+        branchQuality.expiredAcceptedRiskCount
           ? 'warning'
           : 'success',
       title: '代码巡检',
       value:
-        highRiskInspectionCount || actionRequiredBranchQualityCount || pendingScanBranchQualityCount
+        highRiskInspectionCount ||
+        actionRequiredBranchQualityCount ||
+        pendingScanBranchQualityCount ||
+        branchQuality.qualityGateFailedReportCount ||
+        branchQuality.expiredAcceptedRiskCount
           ? '质量待治理'
           : '质量可控',
     },
