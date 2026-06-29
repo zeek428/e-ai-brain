@@ -106,6 +106,24 @@ def test_full_chain_regression_script_supports_targeted_suites():
         assert marker in content
 
 
+def test_full_chain_regression_script_writes_structured_json_report():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    content = script_path.read_text(encoding="utf-8")
+
+    for marker in [
+        "FULL_CHAIN_JSON_OUTPUT",
+        "--json-output",
+        "build_regression_report(",
+        "write_json_report(",
+        '"status": status',
+        '"steps": [{"detail": step.detail, "name": step.name} for step in steps]',
+        'status="passed"',
+        'status="failed"',
+        "Full-chain regression report written to",
+    ]:
+        assert marker in content
+
+
 def test_full_chain_regression_script_supports_version_dashboard_suite():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
     content = script_path.read_text(encoding="utf-8")

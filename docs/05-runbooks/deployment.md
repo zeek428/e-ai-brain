@@ -114,10 +114,12 @@ READINESS_TECHNICAL_SOLUTION_TASK_ID=<technical_solution_task_id> \
 本地代码启动 API 时，可用真实全链路回归脚本验证业务闭环：
 
 ```bash
-./scripts/full_chain_regression.py --api-base-url http://localhost:8000
+./scripts/full_chain_regression.py \
+  --api-base-url http://localhost:8000 \
+  --json-output /tmp/ai-brain-full-chain-report.json
 ```
 
-该脚本只调用公开 API，不直接写数据库或 MemoryStore；默认通过管理员显式 `execution_mode=deterministic` 启动 AI 任务，跳过研发执行器 Runner 和外部模型网关波动，但仍写入 `ai_task.deterministic_execution_used` 审计。脚本覆盖产品、迭代版本、用户反馈转需求、批量排期、AI 任务、Review、知识沉淀、版本代码分支、本地完整代码巡检、Bug/整改任务写回、版本驾驶舱、统一 full-chain、团队看板和 AI 助手引用，并校验扫描 finding、提交人归因、治理覆盖率、看板计数和助手会话历史。需要验证真实模型网关时，可切换为 `--task-execution-mode model_gateway`。
+该脚本只调用公开 API，不直接写数据库或 MemoryStore；默认通过管理员显式 `execution_mode=deterministic` 启动 AI 任务，跳过研发执行器 Runner 和外部模型网关波动，但仍写入 `ai_task.deterministic_execution_used` 审计。脚本覆盖产品、迭代版本、用户反馈转需求、批量排期、AI 任务、Review、知识沉淀、版本代码分支、本地完整代码巡检、Bug/整改任务写回、版本驾驶舱、统一 full-chain、团队看板和 AI 助手引用，并校验扫描 finding、提交人归因、治理覆盖率、看板计数和助手会话历史。`--json-output` 或 `FULL_CHAIN_JSON_OUTPUT` 会在成功和失败时输出结构化验收报告，包含 suite、开始/结束时间、耗时、步骤列表和失败原因，便于 CI 保存证据和定位断点。需要验证真实模型网关时，可切换为 `--task-execution-mode model_gateway`。
 
 ### 5. 验证数据库与缓存
 

@@ -39,6 +39,46 @@ class StepResult:
     detail: str
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def build_regression_report(
+    *,
+    api_base_url: str,
+    duration_ms: int,
+    error: str | None,
+    finished_at: str,
+    started_at: str,
+    status: str,
+    steps: list[StepResult],
+    suite: str,
+    task_execution_mode: str,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "api_base_url": api_base_url,
+        "duration_ms": duration_ms,
+        "finished_at": finished_at,
+        "started_at": started_at,
+        "status": status,
+        "steps": [{"detail": step.detail, "name": step.name} for step in steps],
+        "suite": suite,
+        "task_execution_mode": task_execution_mode,
+    }
+    if error:
+        report["error"] = error
+    return report
+
+
+def write_json_report(path: str, report: dict[str, Any]) -> None:
+    report_path = Path(path).expanduser()
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 class ApiClient:
     def __init__(self, base_url: str, *, timeout: float = 60.0):
         self.base_url = base_url.rstrip("/")
@@ -1511,6 +1551,14 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--json-output",
+        default=os.getenv("FULL_CHAIN_JSON_OUTPUT"),
+        help=(
+            "Optional path for a machine-readable regression report. The script writes "
+            "the report on both pass and fail so CI can preserve run evidence."
+        ),
+    )
+    parser.add_argument(
         "--username",
         default=os.getenv("FULL_CHAIN_USERNAME", os.getenv("READINESS_USERNAME", "admin@example.com")),
         help="Login username. Defaults to FULL_CHAIN_USERNAME, READINESS_USERNAME, or admin@example.com.",
@@ -1518,6 +1566,8 @@ def main() -> int:
     args = parser.parse_args()
 
     client = ApiClient(args.api_base_url, timeout=args.timeout)
+    results: list[StepResult] = []
+    started_at_iso = _utc_now_iso()
     started_at = time.perf_counter()
     try:
         results = run_regression_suite(
@@ -1528,11 +1578,50 @@ def main() -> int:
             password=args.password,
         )
     except RegressionError as exc:
+        finished_at_iso = _utc_now_iso()
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        if args.json_output:
+            report = build_regression_report(
+                api_base_url=args.api_base_url,
+                duration_ms=duration_ms,
+                error=str(exc),
+                finished_at=finished_at_iso,
+                started_at=started_at_iso,
+                status="failed",
+                steps=results,
+                suite=args.suite,
+                task_execution_mode=args.task_execution_mode,
+            )
+            try:
+                write_json_report(args.json_output, report)
+                print(f"Full-chain regression report written to {args.json_output}.", file=sys.stderr)
+            except OSError as report_exc:
+                print(f"[FAIL] Could not write full-chain regression report: {report_exc}", file=sys.stderr)
         print(f"[FAIL] {exc}", file=sys.stderr)
         return 1
+    finished_at_iso = _utc_now_iso()
     duration_ms = int((time.perf_counter() - started_at) * 1000)
+    if args.json_output:
+        report = build_regression_report(
+            api_base_url=args.api_base_url,
+            duration_ms=duration_ms,
+            error=None,
+            finished_at=finished_at_iso,
+            started_at=started_at_iso,
+            status="passed",
+            steps=results,
+            suite=args.suite,
+            task_execution_mode=args.task_execution_mode,
+        )
+        try:
+            write_json_report(args.json_output, report)
+        except OSError as exc:
+            print(f"[FAIL] Could not write full-chain regression report: {exc}", file=sys.stderr)
+            return 1
     for result in results:
         print(f"[OK] {result.name}: {result.detail}")
+    if args.json_output:
+        print(f"Full-chain regression report written to {args.json_output}.")
     print(f"Full-chain regression passed in {duration_ms} ms.")
     return 0
 
