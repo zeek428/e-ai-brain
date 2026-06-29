@@ -612,6 +612,7 @@ def test_ai_executor_runners_include_system_default_model_gateway_executor():
     assert system_runner["executor_types"] == ["model_gateway"]
     assert system_runner["workspace_roots"] == ["*"]
     assert system_runner["health_status"] == "managed"
+    assert system_runner["health_alert"] is None
     assert system_runner["metadata"]["is_system"] is True
     assert system_runner["token_configured"] is False
     assert "无需启动本地 Runner" in system_runner["setup_command"]
@@ -644,9 +645,14 @@ def test_ai_executor_runner_list_supports_server_pagination_sort_filters_and_obs
         user=ADMIN_SERVICE_USER,
     )
 
-    assert response["items"][0]["id"] == "ai_executor_runner_repo_page"
-    assert response["items"][0]["token_configured"] is True
-    assert "token_hash" not in response["items"][0]
+    runner_item = response["items"][0]
+    assert runner_item["id"] == "ai_executor_runner_repo_page"
+    assert runner_item["token_configured"] is True
+    assert "token_hash" not in runner_item
+    assert runner_item["health_alert"]["code"] == "runner_heartbeat_timeout"
+    assert runner_item["health_alert"]["severity"] == "critical"
+    assert runner_item["health_alert"]["heartbeat_timeout_seconds"] == 120
+    assert "Runner 心跳超时" in runner_item["health_alert"]["message"]
     assert response["page"] == 2
     assert response["page_size"] == 1
     assert response["total"] == 2
@@ -711,6 +717,8 @@ def test_ai_executor_runner_test_endpoint_reports_managed_and_runner_health():
     cold_payload = cold_response.json()["data"]
     assert cold_payload["status"] == "failed"
     assert cold_payload["health_status"] == "never_connected"
+    assert cold_payload["runner"]["health_alert"]["code"] == "runner_never_connected"
+    assert "启动本地 Runner" in cold_payload["runner"]["health_alert"]["message"]
     assert any(
         item["name"] == "runner_heartbeat" and item["status"] == "failed"
         for item in cold_payload["diagnostics"]
@@ -733,6 +741,7 @@ def test_ai_executor_runner_test_endpoint_reports_managed_and_runner_health():
     healthy_payload = healthy_response.json()["data"]
     assert healthy_payload["status"] == "succeeded"
     assert healthy_payload["health_status"] == "online"
+    assert healthy_payload["runner"]["health_alert"] is None
     assert any(
         item["name"] == "runner_heartbeat" and item["status"] == "succeeded"
         for item in healthy_payload["diagnostics"]

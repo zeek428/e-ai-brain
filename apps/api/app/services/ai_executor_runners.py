@@ -129,7 +129,9 @@ def _runner_public(runner: dict[str, Any]) -> dict[str, Any]:
     )
     heartbeat_age = _heartbeat_age_seconds(runner.get("last_heartbeat_at"))
     public["heartbeat_age_seconds"] = heartbeat_age
-    public["health_status"] = _runner_health_status(runner, heartbeat_age)
+    health_status = _runner_health_status(runner, heartbeat_age)
+    public["health_status"] = health_status
+    public["health_alert"] = _runner_health_alert(runner, health_status, heartbeat_age)
     public["setup_command"] = _runner_setup_command(runner)
     public["token_rotated_at"] = runner.get("token_rotated_at")
     public["token_version"] = int(runner.get("token_version") or 1)
@@ -163,6 +165,65 @@ def _runner_health_status(runner: dict[str, Any], heartbeat_age: int | None) -> 
         return "never_connected"
     timeout_seconds = int(runner.get("heartbeat_timeout_seconds") or 120)
     return "online" if heartbeat_age <= timeout_seconds else "offline"
+
+
+def _runner_health_alert(
+    runner: dict[str, Any],
+    health_status: str,
+    heartbeat_age: int | None,
+) -> dict[str, Any] | None:
+    if health_status in {"managed", "online"}:
+        return None
+
+    if health_status == "disabled":
+        return {
+            "action_label": "启用 Runner",
+            "code": "runner_disabled",
+            "message": "Runner 已停用，不会接收新任务。",
+            "severity": "info",
+        }
+
+    if health_status == "never_connected":
+        return {
+            "action_label": "启动 Runner",
+            "code": "runner_never_connected",
+            "heartbeat_age_seconds": None,
+            "heartbeat_timeout_seconds": int(runner.get("heartbeat_timeout_seconds") or 120),
+            "message": "Runner 尚未上报心跳，请启动本地 Runner 或检查安装包配置。",
+            "severity": "warning",
+        }
+
+    if health_status == "offline":
+        timeout_seconds = int(runner.get("heartbeat_timeout_seconds") or 120)
+        if heartbeat_age is None:
+            return {
+                "action_label": "检查 Runner",
+                "code": "runner_offline",
+                "heartbeat_age_seconds": None,
+                "heartbeat_timeout_seconds": timeout_seconds,
+                "message": "Runner 当前离线，请检查进程、网络连接和 endpoint 配置。",
+                "severity": "warning",
+            }
+        return {
+            "action_label": "检查 Runner",
+            "code": "runner_heartbeat_timeout",
+            "heartbeat_age_seconds": heartbeat_age,
+            "heartbeat_timeout_seconds": timeout_seconds,
+            "message": (
+                f"Runner 心跳超时，最近心跳 {heartbeat_age} 秒前，"
+                f"超时时间 {timeout_seconds} 秒。"
+            ),
+            "severity": "critical",
+        }
+
+    return {
+        "action_label": "查看诊断",
+        "code": f"runner_{health_status}",
+        "heartbeat_age_seconds": heartbeat_age,
+        "heartbeat_timeout_seconds": int(runner.get("heartbeat_timeout_seconds") or 120),
+        "message": f"Runner 当前健康状态为 {health_status}，请查看诊断结果。",
+        "severity": "warning",
+    }
 
 
 def _runner_setup_command(runner: dict[str, Any]) -> str:

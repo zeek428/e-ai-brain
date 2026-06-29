@@ -575,6 +575,14 @@ export type AiExecutorRunnerRecord = {
   executor_types?: string[];
   heartbeat_age_seconds?: number | null;
   heartbeat_timeout_seconds?: number;
+  health_alert?: {
+    action_label?: string;
+    code?: string;
+    heartbeat_age_seconds?: number | null;
+    heartbeat_timeout_seconds?: number;
+    message?: string;
+    severity?: string;
+  } | null;
   health_status?: string;
   id: string;
   latest_task_id?: string | null;

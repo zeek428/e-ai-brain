@@ -688,18 +688,49 @@ function installPluginsFetchMock(
               token_version: 2,
               workspace_roots: ['/Users/zeek/source/e-ai-brain'],
             },
+            {
+              endpoint_url: 'http://192.168.110.34:8000/api/system/ai-executor-runners',
+              executor_types: ['codex'],
+              heartbeat_timeout_seconds: 300,
+              heartbeat_age_seconds: null,
+              health_alert: {
+                action_label: '启动 Runner',
+                code: 'runner_never_connected',
+                heartbeat_age_seconds: null,
+                heartbeat_timeout_seconds: 300,
+                message: 'Runner 尚未上报心跳，请启动本地 Runner 或检查安装包配置。',
+                severity: 'warning',
+              },
+              health_status: 'never_connected',
+              id: 'ai_executor_runner_cold',
+              last_heartbeat_at: null,
+              max_concurrent_tasks: 1,
+              metadata: {
+                install_mode: 'systemd',
+                package_arch: 'amd64',
+                target_os: 'linux',
+              },
+              name: '未连接 Runner',
+              protocol: 'runner_polling',
+              setup_command: 'ai-brain-runner start --runner-id ai_executor_runner_cold --token <runner_token> --server http://192.168.110.34:8000',
+              status: 'active',
+              token_configured: true,
+              token_rotated_at: null,
+              token_version: 1,
+              workspace_roots: ['*'],
+            },
           ],
           page: 1,
           page_size: 10,
           performance: {
             duration_ms: 8,
             p95_target_ms: 400,
-            result_count: 2,
+            result_count: 3,
             slow: false,
             slow_threshold_ms: 400,
-            total: 2,
+            total: 3,
           },
-          total: 2,
+          total: 3,
         },
       });
     }
@@ -1310,8 +1341,11 @@ describe('PluginsPage', () => {
     expect(screen.getByText('查询 8ms')).toBeInTheDocument();
     expect(screen.getByText('Zeek Mac 本地执行器')).toBeInTheDocument();
     expect(screen.getByText('online')).toBeInTheDocument();
+    expect(screen.getByText('未连接 Runner')).toBeInTheDocument();
+    expect(screen.getByText('never_connected')).toBeInTheDocument();
+    expect(screen.getByText('Runner 尚未上报心跳，请启动本地 Runner 或检查安装包配置。')).toBeInTheDocument();
     expect(screen.getByText('ai-brain-runner start --runner-id ai_executor_runner_001 --token <runner_token> --server http://127.0.0.1:8000')).toBeInTheDocument();
-    expect(screen.getByText('Codex')).toBeInTheDocument();
+    expect(screen.getAllByText('Codex').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Claude Code')).toBeInTheDocument();
     expect(screen.getByText('Hermes')).toBeInTheDocument();
     expect(screen.getByText('OpenClaw')).toBeInTheDocument();

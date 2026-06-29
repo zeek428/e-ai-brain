@@ -42,6 +42,7 @@
 - 研发执行器策略页属于管理型配置列表，必须复用统一管理列表底座，支持策略名称、任务类型、执行器、产品和状态筛选，以及横向滚动、列设置、刷新和本地筛选视图保存；新增/编辑弹窗仍不得出现 AI角色、Skill 或模型网关字段。
 - 定时作业运行详情必须优先展示数据连接、AI 执行、结果动作和 Runner 执行链路，失败运行提供修复草案和复跑对比。
 - 插件管理 Runner 执行日志弹窗必须提供任务诊断、Runner 诊断和来源运行诊断入口，分别按 `ai_executor_task`、`ai_executor_runner` 和 `scheduled_job_run` 来源 ID 跳转统一执行诊断中心，便于排查 Runner 未接单、任务失败或来源作业异常。
+- AI 执行器 Runner 列表必须展示服务端标准化 `health_alert`，覆盖 `never_connected`、`runner_heartbeat_timeout`、`runner_offline` 和 `runner_disabled` 等原因，直接给出脱敏问题说明和建议动作，避免只能通过测试弹窗排查心跳异常。
 - Runner 安装包按操作系统区分，并包含启动、停止、状态查看和卸载说明。
 - 连接、动作、Runner 的测试接口只返回脱敏诊断，不泄露 token、API key、完整请求体或完整响应。
 

@@ -122,12 +122,20 @@ export function PluginRunnerTable({
         {
           dataIndex: 'health_status',
           title: '健康状态',
-          width: 130,
+          width: 260,
           render: (_, row) => (
             <Space orientation="vertical" size={2}>
               <Tag color={runnerHealthStatusColor(row.health_status)}>{row.health_status ?? 'unknown'}</Tag>
               {typeof row.heartbeat_age_seconds === 'number' ? (
                 <Typography.Text type="secondary">{row.heartbeat_age_seconds}s</Typography.Text>
+              ) : null}
+              {row.health_alert?.message ? (
+                <Typography.Text
+                  ellipsis={{ tooltip: row.health_alert.message }}
+                  type={row.health_alert.severity === 'critical' ? 'danger' : 'secondary'}
+                >
+                  {row.health_alert.message}
+                </Typography.Text>
               ) : null}
             </Space>
           ),

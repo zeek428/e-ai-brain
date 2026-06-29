@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 执行器 Runner 健康告警：`/api/system/ai-executor-runners` 和测试接口返回标准化 `health_alert`，插件管理执行器列表直接展示未连接、心跳超时、离线或停用原因和建议动作。
 - AI 动作草案服务继续拆大文件：新增 `apps/api/app/services/assistant_action_draft_common.py` 承接草案状态/动作枚举、默认 payload、基础动作校验和 Cron 表达式校验，`assistant_action_drafts.py` 降至 2600 行预算内并由架构守护防止通用规则回流。
 - 代码巡检服务继续拆大文件：新增 `apps/api/app/services/code_inspection_common.py` 承接巡检枚举、严重级别归一化、提交人摘要和结果动作校验，`code_inspections.py` 降至 2600 行预算内并由架构守护防止通用规则回流。
 - 执行诊断“问 AI 分析链路”链接新增 `diagnostic_trace_id` 兜底，AI 助手在 URL prompt 缺失时可按 Trace 详情重建链路或节点诊断问题。
