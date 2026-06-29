@@ -1146,7 +1146,7 @@ describe('IterationVersionsPage', () => {
 
     expect(await screen.findByText('版本总览 · 2026-dashboard')).toBeInTheDocument();
     expect(screen.getByText('下一步行动')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /推进到测试中/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /推进到测试中/ }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: /查看需求/ }).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /维护分支/ })).toBeInTheDocument();
     expect(screen.getByText('优先处理建议')).toBeInTheDocument();
@@ -1182,6 +1182,38 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('1 条记录 · 发布阻塞 1 个').length).toBeGreaterThan(0);
     expect(screen.getAllByText('状态推进').length).toBeGreaterThan(0);
     expect(screen.getAllByText('同步 1 / 阻塞 1 / 保持 1').length).toBeGreaterThan(0);
+    expect(screen.getByRole('link', { name: /处理需求/ })).toHaveAttribute(
+      'href',
+      '/delivery/requirements?version_id=version_dashboard',
+    );
+    expect(screen.getByRole('link', { name: /查看任务/ })).toHaveAttribute(
+      'href',
+      '/delivery/rd-tasks?task_id=task_dashboard',
+    );
+    expect(screen.getByRole('link', { name: /处理分支/ })).toHaveAttribute(
+      'href',
+      '/delivery/versions?branch_config_id=version_branch_dashboard&version_id=version_dashboard',
+    );
+    expect(screen.getByRole('link', { name: /查看巡检/ })).toHaveAttribute(
+      'href',
+      '/governance/code-inspections?version_id=version_dashboard',
+    );
+    expect(screen.getByRole('link', { name: /处理评审/ })).toHaveAttribute(
+      'href',
+      '/delivery/rd-tasks?code_review_report_id=code_review_report_dashboard',
+    );
+    expect(screen.getByRole('link', { name: /处理版本 Bug/ })).toHaveAttribute(
+      'href',
+      '/delivery/bugs?version_id=version_dashboard',
+    );
+    expect(screen.getByRole('link', { name: /查看沉淀/ })).toHaveAttribute(
+      'href',
+      '/delivery/full-chain?subject_id=knowledge_deposit_dashboard&subject_type=knowledge_deposit',
+    );
+    expect(screen.getByRole('link', { name: /补充发布/ })).toHaveAttribute(
+      'href',
+      '/governance/devops?version_id=version_dashboard',
+    );
     expect(screen.getByText('交付健康摘要')).toBeInTheDocument();
     expect(screen.getByText('发布准入')).toBeInTheDocument();
     expect(screen.getAllByText('3 个阻塞项').length).toBeGreaterThan(0);

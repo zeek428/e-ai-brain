@@ -139,7 +139,10 @@ export function VersionDashboardModal({
             />
             <VersionDashboardMetrics dashboard={dashboard} />
             <VersionDashboardDeliveryOverview
+              dashboard={dashboard}
               items={dashboardReadinessItems}
+              onAdvanceVersion={onAdvanceVersion}
+              versionStatusLabels={versionStatusLabels}
             />
             <VersionDashboardReadinessChecklist
               items={dashboardReadinessItems}

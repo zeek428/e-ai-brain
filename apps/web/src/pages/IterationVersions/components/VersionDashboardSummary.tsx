@@ -307,11 +307,17 @@ type VersionDashboardReadinessChecklistProps = {
 };
 
 type VersionDashboardDeliveryOverviewProps = {
+  dashboard: ProductVersionDashboard;
   items: DashboardReadinessItem[];
+  onAdvanceVersion: (version: ProductVersionRecord) => void;
+  versionStatusLabels: Record<ProductVersionRecord['status'], LabelItem>;
 };
 
 export function VersionDashboardDeliveryOverview({
+  dashboard,
   items,
+  onAdvanceVersion,
+  versionStatusLabels,
 }: VersionDashboardDeliveryOverviewProps) {
   return (
     <div>
@@ -351,6 +357,27 @@ export function VersionDashboardDeliveryOverview({
               <div style={{ marginTop: 4 }}>
                 <Text type="secondary">{item.detail}</Text>
               </div>
+              {item.actionHref ? (
+                <Button
+                  href={item.actionHref}
+                  icon={<ArrowRightOutlined />}
+                  size="small"
+                  style={{ marginTop: 8 }}
+                  type="link"
+                >
+                  {item.actionLabel ?? '查看'}
+                </Button>
+              ) : item.key === 'status-impact' && dashboard.statusImpact ? (
+                <Button
+                  icon={<ArrowRightOutlined />}
+                  onClick={() => onAdvanceVersion(dashboard.version)}
+                  size="small"
+                  style={{ marginTop: 8 }}
+                  type="link"
+                >
+                  {`推进到${versionStatusLabels[dashboard.statusImpact.targetStatus].label}`}
+                </Button>
+              ) : null}
             </div>
           );
         })}

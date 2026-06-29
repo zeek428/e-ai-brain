@@ -4,6 +4,8 @@ import { fullChainSubjectHref, type ProductVersionDashboard } from '../../../ser
 export type LabelItem = { color: string; label: string };
 
 export type DashboardHealthItem = {
+  actionHref?: string;
+  actionLabel?: string;
   detail: string;
   key: string;
   level: 'error' | 'info' | 'success' | 'warning';
@@ -497,8 +499,19 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
   const pendingCodeReviewCount = dashboard.summary.pending_code_review_reports;
   const releaseBlockerCount = dashboard.blockers.filter((blocker) => blocker.sourceType === 'jenkins_release').length;
   const branchQuality = summarizeBranchQualityGovernance(dashboard);
+  const firstBranchConfig = dashboard.branchConfigs[0];
+  const firstTask = dashboard.tasks[0];
+  const firstCodeReviewReport = dashboard.codeReviewReports[0];
+  const firstKnowledgeDeposit = dashboard.knowledgeDeposits[0];
+  const taskActionHref = firstTask
+    ? internalHref('/delivery/rd-tasks', { task_id: firstTask.id })
+    : dashboard.version.productId
+      ? internalHref('/delivery/rd-tasks', { product_id: dashboard.version.productId })
+      : undefined;
   return [
     {
+      actionHref: internalHref('/delivery/requirements', { version_id: dashboard.version.id }),
+      actionLabel: blockedRequirementCount ? '处理需求' : '查看需求',
       detail: blockedRequirementCount
         ? `${dashboard.summary.requirements} 条需求 · 阻塞 ${blockedRequirementCount} 条`
         : `${dashboard.summary.requirements} 条需求 · 可推进`,
@@ -508,6 +521,8 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
       value: blockedRequirementCount ? '范围有阻塞' : '范围可推进',
     },
     {
+      actionHref: taskActionHref,
+      actionLabel: '查看任务',
       detail: runningTaskCount
         ? `${dashboard.summary.tasks} 个任务 · 运行中 ${runningTaskCount} 个`
         : `${dashboard.summary.tasks} 个任务 · 暂无运行中`,
@@ -517,6 +532,13 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
       value: runningTaskCount ? '任务进行中' : '任务稳定',
     },
     {
+      actionHref: firstBranchConfig
+        ? internalHref('/delivery/versions', {
+            branch_config_id: firstBranchConfig.id,
+            version_id: dashboard.version.id,
+          })
+        : internalHref('/delivery/versions', { version_id: dashboard.version.id }),
+      actionLabel: '处理分支',
       detail: notCreatedBranchCount
         ? `${dashboard.summary.branch_configs} 个分支 · 未创建 ${notCreatedBranchCount} 个`
         : actionRequiredBranchQualityCount || pendingScanBranchQualityCount
@@ -535,6 +557,8 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
           : '分支就绪',
     },
     {
+      actionHref: internalHref('/governance/code-inspections', { version_id: dashboard.version.id }),
+      actionLabel: '查看巡检',
       detail: highRiskInspectionCount
         ? `${dashboard.summary.code_inspection_reports} 份报告 · 高风险 ${highRiskInspectionCount} 份`
         : actionRequiredBranchQualityCount ||
@@ -564,6 +588,10 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
           : '质量可控',
     },
     {
+      actionHref: firstCodeReviewReport
+        ? internalHref('/delivery/rd-tasks', { code_review_report_id: firstCodeReviewReport.id })
+        : taskActionHref,
+      actionLabel: pendingCodeReviewCount ? '处理评审' : '查看评审',
       detail: pendingCodeReviewCount
         ? `${dashboard.summary.code_review_reports} 份报告 · 待确认 ${pendingCodeReviewCount} 份`
         : `${dashboard.summary.code_review_reports} 份报告 · 暂无待确认`,
@@ -573,6 +601,8 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
       value: pendingCodeReviewCount ? '评审待确认' : '评审已收敛',
     },
     {
+      actionHref: internalHref('/delivery/bugs', { version_id: dashboard.version.id }),
+      actionLabel: dashboard.summary.open_bugs ? '处理版本 Bug' : '查看版本 Bug',
       detail: dashboard.summary.open_bugs
         ? `${dashboard.summary.bugs} 个 Bug · 未关闭 ${dashboard.summary.open_bugs} 个`
         : `${dashboard.summary.bugs} 个 Bug · 已收敛`,
@@ -582,6 +612,10 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
       value: dashboard.summary.open_bugs ? 'Bug 待关闭' : 'Bug 已收敛',
     },
     {
+      actionHref: firstKnowledgeDeposit
+        ? fullChainSubjectHref('knowledge_deposit', firstKnowledgeDeposit.id)
+        : fullChainSubjectHref('product_version', dashboard.version.id),
+      actionLabel: '查看沉淀',
       detail: dashboard.summary.knowledge_deposits
         ? `${dashboard.summary.knowledge_deposits} 条知识沉淀 · 可检索 ${dashboard.summary.searchable_knowledge_deposits} 条 · 向量就绪 ${dashboard.summary.vectorized_knowledge_deposits} 条`
         : '暂无知识沉淀，发布前建议沉淀关键设计、巡检和整改经验',
@@ -598,6 +632,8 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
         : '沉淀待补齐',
     },
     {
+      actionHref: internalHref('/governance/devops', { version_id: dashboard.version.id }),
+      actionLabel: releaseBlockerCount ? '补充发布' : '查看发布',
       detail: releaseBlockerCount
         ? `${dashboard.summary.releases} 条记录 · 发布阻塞 ${releaseBlockerCount} 个`
         : `${dashboard.summary.releases} 条记录 · 暂无发布阻塞`,
