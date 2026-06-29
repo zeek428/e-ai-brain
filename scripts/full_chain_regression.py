@@ -1187,6 +1187,35 @@ def run_regression(
         inspection_dashboard.get("quality_gate_violations"),
         f"Code inspection dashboard missed quality gate violation aggregation: {inspection_dashboard}",
     )
+    governance_pressure = inspection_dashboard.get("governance_pressure") or {}
+    _assert(
+        governance_pressure,
+        f"Code inspection dashboard missed governance pressure summary: {inspection_dashboard}",
+    )
+    _assert(
+        governance_pressure.get("status") == "action_required",
+        f"Code inspection governance pressure did not expose quality gate pressure: {governance_pressure}",
+    )
+    _assert(
+        int(governance_pressure.get("quality_gate_failed_report_count") or 0) >= 1,
+        f"Code inspection governance pressure missed failed report count: {governance_pressure}",
+    )
+    _assert(
+        int(governance_pressure.get("quality_gate_violation_count") or 0) >= 1,
+        f"Code inspection governance pressure missed violation count: {governance_pressure}",
+    )
+    _assert(
+        int(governance_pressure.get("active_severe_finding_count") or 0) >= 1,
+        f"Code inspection governance pressure missed active severe findings: {governance_pressure}",
+    )
+    _assert(
+        int(governance_pressure.get("uncovered_bug_finding_count") or 0) == 0,
+        f"Code inspection governance pressure did not close Bug coverage: {governance_pressure}",
+    )
+    _assert(
+        int(governance_pressure.get("uncovered_task_finding_count") or 0) == 0,
+        f"Code inspection governance pressure did not close remediation coverage: {governance_pressure}",
+    )
     committer_governance = [
         item
         for item in inspection_dashboard.get("committer_governance", [])
@@ -1218,6 +1247,17 @@ def run_regression(
     _assert(report_bug_ids, f"Code inspection report did not record created Bug ids: {report}")
     _assert(report_task_ids, f"Code inspection report did not record created remediation task ids: {report}")
     results.append(StepResult("code_inspection", f"{report_id} / findings={len(findings)} / {scan_run['id']}"))
+    results.append(
+        StepResult(
+            "code_inspection_governance_pressure",
+            (
+                f"status={governance_pressure.get('status')}, "
+                f"gate_failures={governance_pressure.get('quality_gate_failed_report_count')}, "
+                f"uncovered_bug={governance_pressure.get('uncovered_bug_finding_count')}, "
+                f"uncovered_task={governance_pressure.get('uncovered_task_finding_count')}"
+            ),
+        )
+    )
 
     bugs = client.get("/api/bugs", {"product_id": product["id"], "source": "code_inspection"})
     bug_items = bugs.get("items", [])

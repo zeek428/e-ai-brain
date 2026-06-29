@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本补齐代码巡检治理压力门禁：完整链路校验 `governance_pressure` 的闭环状态、质量门禁失败、活跃严重问题以及 Bug/整改任务覆盖，避免治理压力总览断链只能靠人工页面发现。
 - 代码巡检治理压力总览：`GET /api/governance/code-inspections/dashboard` 新增 `governance_pressure`，页面顶部集中展示闭环状态、待闭环提交人、缺 Bug、缺整改任务、门禁失败、待审批忽略和到期接受风险。
 - AI 动作确认中心列表治理压力总览：草案任务台 summary 新增风险、权限和治理计数，页面顶部展示高风险、权限阻塞、校验阻塞、失败/重试和审计事件，减少确认前逐行扫描。
 - 真实全链路回归脚本结构化报告：`scripts/full_chain_regression.py` 新增 `--json-output` / `FULL_CHAIN_JSON_OUTPUT`，成功和失败均输出 suite、耗时、步骤和失败原因，方便 CI 留存证据并定位断点。
