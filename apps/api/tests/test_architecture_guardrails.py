@@ -97,6 +97,22 @@ def test_assistant_references_uses_split_action_defaults_module():
     assert "ASSISTANT_ACTION_CANDIDATES = (" not in entrypoint_source
 
 
+def test_assistant_references_uses_split_knowledge_reference_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/assistant_knowledge_references.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/assistant_references.py"
+
+    assert helper_path.exists(), (
+        "Move assistant knowledge reference candidates and context helpers to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "assistant_knowledge_references as knowledge_reference_helpers" in entrypoint_source
+    assert "def knowledge_document_reference_candidates(" in helper_source
+    assert "def knowledge_context_for_document(" in helper_source
+    assert "def _knowledge_document_reference_candidates(" not in entrypoint_source
+    assert "def _knowledge_context_for_document(" not in entrypoint_source
+
+
 def test_assistant_chat_uses_split_scheduled_job_run_module():
     helper_path = REPO_ROOT / "apps/api/app/services/assistant_scheduled_job_run.py"
     entrypoint_path = REPO_ROOT / "apps/api/app/services/assistant_chat.py"
