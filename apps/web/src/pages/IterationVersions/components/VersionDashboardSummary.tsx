@@ -16,6 +16,7 @@ import {
   dashboardHealthLevelLabels,
   internalHref,
   summarizeBranchQualityGovernance,
+  type DashboardGovernanceConclusion,
   type DashboardHealthItem,
   type DashboardReadinessItem,
   type LabelItem,
@@ -185,6 +186,52 @@ function dashboardMetric(label: string, value: number, color?: string) {
 type VersionDashboardMetricsProps = {
   dashboard: ProductVersionDashboard;
 };
+
+type VersionDashboardGovernanceConclusionProps = {
+  conclusion?: DashboardGovernanceConclusion;
+};
+
+export function VersionDashboardGovernanceConclusion({
+  conclusion,
+}: VersionDashboardGovernanceConclusionProps) {
+  if (!conclusion) {
+    return null;
+  }
+  const level = dashboardHealthLevelLabels[conclusion.level];
+  const alertType =
+    conclusion.level === 'error'
+      ? 'error'
+      : conclusion.level === 'warning'
+        ? 'warning'
+        : conclusion.level === 'success'
+          ? 'success'
+          : 'info';
+
+  return (
+    <Alert
+      description={
+        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+          <Text>{conclusion.detail}</Text>
+          <Space size={[6, 6]} wrap>
+            <Tag color={level.color}>{level.label}</Tag>
+            {conclusion.risks.map((risk) => (
+              <Tag key={risk}>{risk}</Tag>
+            ))}
+          </Space>
+          <Text strong>下一步动作：{conclusion.nextAction}</Text>
+        </Space>
+      }
+      title={
+        <Space size={8} wrap>
+          <Text strong>{conclusion.title}</Text>
+          <Text>{conclusion.value}</Text>
+        </Space>
+      }
+      showIcon
+      type={alertType}
+    />
+  );
+}
 
 export function VersionDashboardMetrics({
   dashboard,

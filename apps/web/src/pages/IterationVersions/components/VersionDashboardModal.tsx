@@ -13,6 +13,7 @@ import {
 import {
   VersionDashboardActions,
   VersionDashboardDeliveryOverview,
+  VersionDashboardGovernanceConclusion,
   VersionDashboardHealthSummary,
   VersionDashboardMetrics,
   VersionDashboardReadinessChecklist,
@@ -27,6 +28,7 @@ import {
 } from './VersionDashboardTables';
 import {
   buildDashboardHealthItems,
+  buildDashboardGovernanceConclusion,
   buildDashboardReadinessItems,
   buildStatusImpactRows,
   buildStatusLabelMap,
@@ -77,6 +79,8 @@ export function VersionDashboardModal({
   const dashboardStatusImpactRows = buildStatusImpactRows(
     dashboard?.statusImpact,
   );
+  const dashboardGovernanceConclusion =
+    buildDashboardGovernanceConclusion(dashboard);
   const dashboardHealthItems = buildDashboardHealthItems(dashboard);
   const dashboardReadinessItems = buildDashboardReadinessItems(dashboard);
 
@@ -129,6 +133,9 @@ export function VersionDashboardModal({
               onMaintainBranches={onMaintainBranches}
               onViewRequirements={onViewRequirements}
               versionStatusLabels={versionStatusLabels}
+            />
+            <VersionDashboardGovernanceConclusion
+              conclusion={dashboardGovernanceConclusion}
             />
             <VersionDashboardMetrics dashboard={dashboard} />
             <VersionDashboardDeliveryOverview

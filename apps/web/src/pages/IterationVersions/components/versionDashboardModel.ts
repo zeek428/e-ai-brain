@@ -15,6 +15,15 @@ export type DashboardReadinessItem = DashboardHealthItem;
 
 type DashboardRequirementImpact = NonNullable<ProductVersionDashboard['statusImpact']>['updatedRequirements'][number];
 
+export type DashboardGovernanceConclusion = {
+  detail: string;
+  level: DashboardHealthItem['level'];
+  nextAction: string;
+  risks: string[];
+  title: string;
+  value: string;
+};
+
 export type DashboardStatusImpactRow = DashboardRequirementImpact & {
   impact: 'blocked' | 'unchanged' | 'updated';
   impactLabel: string;
@@ -240,6 +249,103 @@ export function summarizeBranchQualityGovernance(dashboard: ProductVersionDashbo
     qualityGateViolationCount: sumBranchField('qualityGateViolationCount'),
     uncoveredSevereBugCount: sumBranchField('uncoveredSevereBugCount'),
     uncoveredSevereTaskCount: sumBranchField('uncoveredSevereTaskCount'),
+  };
+}
+
+function uniqueRiskLabels(labels: Array<string | undefined>) {
+  return [...new Set(labels.filter(Boolean) as string[])];
+}
+
+export function buildDashboardGovernanceConclusion(
+  dashboard?: ProductVersionDashboard,
+): DashboardGovernanceConclusion | undefined {
+  if (!dashboard) {
+    return undefined;
+  }
+  const branchQuality = summarizeBranchQualityGovernance(dashboard);
+  const blockerCount = dashboard.summary.blockers || dashboard.blockers.length;
+  const severeRiskCount =
+    dashboard.summary.severe_bugs +
+    dashboard.summary.severe_code_inspection_reports +
+    branchQuality.activeSevereFindingCount;
+  const pendingCodeReviewCount = dashboard.summary.pending_code_review_reports;
+  const blockedRequirementCount = dashboard.statusImpact?.blockedRequirements.length ?? 0;
+  const hasKnowledgeGap =
+    dashboard.summary.knowledge_deposits > 0 &&
+    dashboard.summary.searchable_knowledge_deposits < dashboard.summary.knowledge_deposits;
+  const hasDeliveryEvidenceGap =
+    !dashboard.summary.branch_configs ||
+    !dashboard.summary.code_inspection_reports ||
+    !dashboard.summary.code_review_reports ||
+    !dashboard.summary.knowledge_deposits;
+
+  const riskLabels = uniqueRiskLabels([
+    blockerCount ? `发布阻塞 ${blockerCount}` : undefined,
+    dashboard.summary.open_bugs ? `未关闭 Bug ${dashboard.summary.open_bugs}` : undefined,
+    severeRiskCount ? `严重质量风险 ${severeRiskCount}` : undefined,
+    branchQuality.qualityGateFailedReportCount
+      ? `门禁失败 ${branchQuality.qualityGateFailedReportCount}`
+      : undefined,
+    branchQuality.actionRequiredBranchCount
+      ? `待治理分支 ${branchQuality.actionRequiredBranchCount}`
+      : undefined,
+    branchQuality.pendingSuppressionCount
+      ? `待审批忽略 ${branchQuality.pendingSuppressionCount}`
+      : undefined,
+    branchQuality.expiredAcceptedRiskCount
+      ? `到期接受风险 ${branchQuality.expiredAcceptedRiskCount}`
+      : undefined,
+    pendingCodeReviewCount ? `待确认评审 ${pendingCodeReviewCount}` : undefined,
+    blockedRequirementCount ? `状态推进阻塞 ${blockedRequirementCount}` : undefined,
+    hasKnowledgeGap ? '知识索引未全部可检索' : undefined,
+  ]);
+
+  if (blockerCount) {
+    return {
+      detail: `当前版本有 ${blockerCount} 个发布阻塞项，未关闭 Bug ${dashboard.summary.open_bugs} 个，门禁失败 ${branchQuality.qualityGateFailedReportCount} 份，状态推进阻塞需求 ${blockedRequirementCount} 条。`,
+      level: 'error',
+      nextAction: '先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。',
+      risks: riskLabels,
+      title: '版本治理结论',
+      value: '版本暂不建议推进',
+    };
+  }
+
+  if (
+    severeRiskCount ||
+    branchQuality.qualityGateFailedReportCount ||
+    branchQuality.actionRequiredBranchCount ||
+    branchQuality.expiredAcceptedRiskCount ||
+    dashboard.summary.open_bugs
+  ) {
+    return {
+      detail: `严重质量风险 ${severeRiskCount} 个，待治理分支 ${branchQuality.actionRequiredBranchCount} 个，到期接受风险 ${branchQuality.expiredAcceptedRiskCount} 个，未关闭 Bug ${dashboard.summary.open_bugs} 个。`,
+      level: 'warning',
+      nextAction: '先完成质量门禁、严重巡检和 Bug 收敛，再推进版本状态。',
+      risks: riskLabels,
+      title: '版本治理结论',
+      value: '版本需治理后推进',
+    };
+  }
+
+  if (pendingCodeReviewCount || blockedRequirementCount || hasKnowledgeGap || hasDeliveryEvidenceGap) {
+    return {
+      detail: `待确认评审 ${pendingCodeReviewCount} 份，状态推进阻塞需求 ${blockedRequirementCount} 条，交付证据覆盖：分支 ${dashboard.summary.branch_configs}、巡检 ${dashboard.summary.code_inspection_reports}、评审 ${dashboard.summary.code_review_reports}、知识 ${dashboard.summary.knowledge_deposits}。`,
+      level: 'warning',
+      nextAction: '补齐待确认评审、知识索引或交付证据后，再执行版本推进。',
+      risks: riskLabels.length ? riskLabels : ['交付证据待补齐'],
+      title: '版本治理结论',
+      value: '版本证据待补齐',
+    };
+  }
+
+  return {
+    detail: `需求 ${dashboard.summary.requirements} 条，任务 ${dashboard.summary.tasks} 个，分支 ${dashboard.summary.branch_configs} 个，巡检 ${dashboard.summary.code_inspection_reports} 份，知识沉淀 ${dashboard.summary.knowledge_deposits} 条。`,
+    level: 'success',
+    nextAction: dashboard.statusImpact ? '可按状态推进预览继续操作。' : '当前状态暂无下一阶段，可继续观察交付健康。',
+    risks: ['暂无关键阻塞'],
+    title: '版本治理结论',
+    value: '版本具备推进基础',
   };
 }
 
