@@ -267,7 +267,21 @@ export type AssistantActionDraftRecord = {
 export type AssistantActionDraftWorkbenchSummary = {
   adoption_rate: number;
   draft_total: number;
+  governance_counts?: {
+    audit_events?: number;
+    failed?: number;
+    high_risk?: number;
+    permission_blocked?: number;
+    permission_issues?: number;
+    permission_warning?: number;
+    retry_total?: number;
+    validation_blocked?: number;
+    validation_issues?: number;
+    validation_warning?: number;
+  };
+  permission_counts?: Record<string, number>;
   resolution_rate: number;
+  risk_counts?: Record<string, number>;
   status_counts: Record<string, number>;
   user_modified_count: number;
   user_modified_rate: number;

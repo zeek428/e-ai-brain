@@ -1370,7 +1370,26 @@ def _assistant_action_draft_workbench_summary(
         status: sum(1 for draft in drafts if draft.get("validation_status") == status)
         for status in sorted(ASSISTANT_ACTION_DRAFT_VALIDATION_STATUSES)
     }
+    risk_levels = {"critical", "high", "low", "medium", "unknown"}
+    risk_counts = {
+        risk: sum(1 for draft in drafts if str(draft.get("risk_level") or "unknown") == risk)
+        for risk in sorted(risk_levels)
+    }
+    permission_statuses = {"blocked", "passed", "unknown", "warning"}
+    permission_counts = {
+        status: sum(
+            1
+            for draft in drafts
+            if str(draft.get("permission_status") or "unknown") == status
+        )
+        for status in sorted(permission_statuses)
+    }
     modified_count = sum(1 for draft in drafts if draft.get("user_modified"))
+    high_risk_count = risk_counts["critical"] + risk_counts["high"]
+    audit_event_total = sum(_safe_int(draft.get("audit_event_count")) for draft in drafts)
+    permission_issue_total = sum(_safe_int(draft.get("permission_issue_count")) for draft in drafts)
+    retry_total = sum(_safe_int(draft.get("retry_count")) for draft in drafts)
+    validation_issue_total = sum(_safe_int(draft.get("validation_issue_count")) for draft in drafts)
     terminal_count = sum(
         status_counts[status] for status in ("cancelled", "confirmed", "expired", "failed")
     )
@@ -1378,7 +1397,21 @@ def _assistant_action_draft_workbench_summary(
     return {
         "adoption_rate": _ratio(confirmed_count, total),
         "draft_total": total,
+        "governance_counts": {
+            "audit_events": audit_event_total,
+            "failed": status_counts["failed"],
+            "high_risk": high_risk_count,
+            "permission_blocked": permission_counts["blocked"],
+            "permission_issues": permission_issue_total,
+            "permission_warning": permission_counts["warning"],
+            "retry_total": retry_total,
+            "validation_blocked": validation_counts["blocked"],
+            "validation_issues": validation_issue_total,
+            "validation_warning": validation_counts["warning"],
+        },
+        "permission_counts": permission_counts,
         "resolution_rate": _ratio(terminal_count, total),
+        "risk_counts": risk_counts,
         "status_counts": status_counts,
         "user_modified_count": modified_count,
         "user_modified_rate": _ratio(modified_count, total),

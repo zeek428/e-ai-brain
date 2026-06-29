@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 动作确认中心列表治理压力总览：草案任务台 summary 新增风险、权限和治理计数，页面顶部展示高风险、权限阻塞、校验阻塞、失败/重试和审计事件，减少确认前逐行扫描。
 - 真实全链路回归脚本结构化报告：`scripts/full_chain_regression.py` 新增 `--json-output` / `FULL_CHAIN_JSON_OUTPUT`，成功和失败均输出 suite、耗时、步骤和失败原因，方便 CI 留存证据并定位断点。
 - 迭代版本总览交付链路视图：版本总览弹窗新增“交付链路总览”，按需求范围、研发任务、代码分支、代码巡检、代码评审、Bug、知识沉淀、发布证据和状态推进顺序展示红/黄风险环节，减少版本推进前跨表扫描。
 - AI 执行器 Runner 任务人工重试：新增 `POST /api/system/ai-executor-tasks/{task_id}/retry`，插件管理 Runner 执行日志弹窗支持将 `cancelled/failed/timed_out/dead_letter` 任务复制上下文重新入队，并保留 `retry_of_task_id/retry_history` 和 `ai_executor_task.retry_requested` 审计。

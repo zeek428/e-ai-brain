@@ -52,7 +52,32 @@ def _empty_draft_summary(total: int = 0) -> dict:
     return {
         "adoption_rate": 0.0,
         "draft_total": total,
+        "governance_counts": {
+            "audit_events": 0,
+            "failed": 0,
+            "high_risk": 0,
+            "permission_blocked": 0,
+            "permission_issues": 0,
+            "permission_warning": 0,
+            "retry_total": 0,
+            "validation_blocked": 0,
+            "validation_issues": 0,
+            "validation_warning": 0,
+        },
+        "permission_counts": {
+            "blocked": 0,
+            "passed": total,
+            "unknown": 0,
+            "warning": 0,
+        },
         "resolution_rate": 0.0,
+        "risk_counts": {
+            "critical": 0,
+            "high": 0,
+            "low": 0,
+            "medium": total,
+            "unknown": 0,
+        },
         "status_counts": {
             "cancelled": 0,
             "confirmed": 0,
@@ -235,6 +260,21 @@ def test_assistant_action_draft_workbench_lists_current_user_drafts_with_summary
     assert payload["summary"]["status_counts"]["pending"] == 2
     assert payload["summary"]["status_counts"]["confirmed"] == 1
     assert payload["summary"]["validation_counts"]["blocked"] == 1
+    assert payload["summary"]["risk_counts"]["high"] == 1
+    assert payload["summary"]["risk_counts"]["medium"] == 2
+    assert payload["summary"]["permission_counts"]["passed"] == 3
+    assert payload["summary"]["governance_counts"] == {
+        "audit_events": 1,
+        "failed": 0,
+        "high_risk": 1,
+        "permission_blocked": 0,
+        "permission_issues": 0,
+        "permission_warning": 0,
+        "retry_total": 0,
+        "validation_blocked": 1,
+        "validation_issues": 2,
+        "validation_warning": 0,
+    }
     assert payload["summary"]["adoption_rate"] == 0.3333
     assert payload["summary"]["user_modified_rate"] == 0.3333
     pending = next(

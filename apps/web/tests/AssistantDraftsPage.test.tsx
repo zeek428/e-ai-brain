@@ -177,7 +177,32 @@ function installAssistantDraftsFetchMock(options: { includeFailed?: boolean } = 
           summary: {
             adoption_rate: 0.25,
             draft_total: 4,
+            governance_counts: {
+              audit_events: 3,
+              failed: 1,
+              high_risk: 1,
+              permission_blocked: 1,
+              permission_issues: 2,
+              permission_warning: 0,
+              retry_total: 1,
+              validation_blocked: 1,
+              validation_issues: 2,
+              validation_warning: 1,
+            },
+            permission_counts: {
+              blocked: 1,
+              passed: 2,
+              unknown: 0,
+              warning: 0,
+            },
             resolution_rate: 0.5,
+            risk_counts: {
+              critical: 0,
+              high: 1,
+              low: 0,
+              medium: 3,
+              unknown: 0,
+            },
             status_counts: {
               cancelled: 0,
               confirmed: 1,
@@ -246,12 +271,19 @@ describe('AssistantDraftsPage', () => {
     const summaryStrip = screen.getByRole('list', { name: '草案任务台指标' });
     expect(summaryStrip).toHaveStyle('display: grid');
     expect(summaryStrip).toHaveStyle('width: 100%');
-    expect(within(summaryStrip).getAllByRole('listitem')).toHaveLength(6);
+    expect(within(summaryStrip).getAllByRole('listitem')).toHaveLength(11);
     expect(screen.getByText('待确认草案')).toBeInTheDocument();
     expect(screen.getByText('失败草案')).toBeInTheDocument();
     expect(screen.getByText('已采纳草案')).toBeInTheDocument();
     expect(screen.getByText('采纳率')).toBeInTheDocument();
     expect(screen.getAllByText('25%').length).toBeGreaterThan(0);
+    expect(screen.getByText('高风险草案')).toBeInTheDocument();
+    expect(screen.getByText('权限阻塞')).toBeInTheDocument();
+    expect(screen.getByText('校验阻塞')).toBeInTheDocument();
+    expect(screen.getByText('失败/重试')).toBeInTheDocument();
+    expect(screen.getByText('审计事件')).toBeInTheDocument();
+    expect(screen.getByText('1 / 1')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('3')).toBeInTheDocument();
     expect(screen.getAllByText('待确认').length).toBeGreaterThan(0);
     expect(screen.getAllByText('警告').length).toBeGreaterThan(0);
     expect(screen.getByText('新增 · scheduled_job')).toBeInTheDocument();
