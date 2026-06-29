@@ -395,12 +395,126 @@ describe('IterationVersionsPage', () => {
       '/delivery/full-chain?subject_id=version_branch_config_001&subject_type=product_version_branch_config',
     );
     expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
-      '/api/product-versions?page=1&page_size=100&sort_by=code&sort_order=asc',
+      '/api/product-versions?page=1&page_size=100&sort_by=created_at&sort_order=desc',
     );
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
       '/api/product-versions/version_branch/branch-configs',
       'GET',
     ]);
+  });
+
+  it('opens the version dashboard directly from the iteration version deep link', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({
+        Authorization: 'Bearer token-admin',
+      });
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-dashboard',
+                created_at: '2026-06-04T09:00:00+00:00',
+                id: 'version_dashboard',
+                name: '驾驶舱迭代',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_api',
+                product_name: 'AI Brain',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'AI-BRAIN',
+                id: 'product_api',
+                name: 'AI Brain',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions?active_only=true&page_size=100'
+      ) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/product-versions/version_dashboard/dashboard' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            access_issues: [],
+            blockers: [],
+            branch_configs: [],
+            bugs: [],
+            bug_status_counts: [],
+            code_inspection_reports: [],
+            code_review_reports: [],
+            knowledge_deposits: [],
+            releases: [],
+            requirement_status_counts: [],
+            requirements: [],
+            summary: {},
+            task_status_counts: [],
+            tasks: [],
+            version: {
+              code: '2026-dashboard',
+              created_at: '2026-06-04T09:00:00+00:00',
+              id: 'version_dashboard',
+              name: '驾驶舱迭代',
+              product_code: 'AI-BRAIN',
+              product_id: 'product_api',
+              product_name: 'AI Brain',
+              status: 'active',
+            },
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.history.pushState(
+      {},
+      '',
+      '/delivery/versions?version_id=version_dashboard&view=dashboard',
+    );
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<IterationVersionsPage />);
+
+    expect(await screen.findByText('版本总览 · 2026-dashboard')).toBeInTheDocument();
+    expect(screen.queryByText('代码分支 · 2026-dashboard')).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
+      '/api/product-versions?page=1&page_size=100&sort_by=created_at&sort_order=desc',
+    );
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+      '/api/product-versions/version_dashboard/dashboard',
+      'GET',
+    ]);
+    expect(
+      fetchMock.mock.calls.some(([path]) => String(path).endsWith('/version_dashboard/branch-configs')),
+    ).toBe(false);
   });
 
   it('manages version branch configs from the iteration version row', async () => {

@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 迭代版本入口体验优化：版本列表默认按创建时间倒序展示并新增“创建时间”列，支持 `/delivery/versions?version_id=<id>&view=dashboard` 直接打开版本总览；原代码分支深链仍打开分支维护弹窗。
 - 迭代版本总览知识沉淀索引健康：`GET /api/product-versions/{version_id}/dashboard` 的知识沉淀行补齐知识文档标题、索引状态、chunk 数、embedding chunk 数、索引错误摘要和关键词/混合/不可用检索模式，summary 新增可检索与向量就绪沉淀数；版本总览页面在发布准备清单和知识沉淀表直接展示知识资产可用性。
 - 迭代版本总览知识沉淀聚合：`GET /api/product-versions/{version_id}/dashboard` 按版本内任务汇总知识沉淀，summary 返回 `knowledge_deposits`，页面展示沉淀标题、来源任务、知识文档 ID 和全链路入口；真实全链路脚本校验知识沉淀行不断链。
 - 真实全链路回归脚本补齐版本总览 Code Review 门禁：`--suite version-dashboard` 通过本地 GitLab fixture MR 快照创建待确认代码评审报告，并校验版本总览 `code_review_reports` 与 `pending_code_review_reports` 聚合不断链。

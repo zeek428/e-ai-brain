@@ -847,6 +847,7 @@ type ProductListItem = {
 
 type ProductVersionListItem = {
   code?: string;
+  created_at?: string | null;
   description?: string | null;
   id: string;
   name: string;
@@ -856,6 +857,7 @@ type ProductVersionListItem = {
   release_date?: string | null;
   start_date?: string | null;
   status?: string;
+  updated_at?: string | null;
 };
 
 type ProductModuleListItem = {
@@ -1530,6 +1532,7 @@ export async function deleteManagementProduct(productId: string) {
 function mapProductVersionRecord(version: ProductVersionListItem): ProductVersionRecord {
   return {
     code: version.code ?? version.id,
+    createdAt: formatListDate(version.created_at ?? undefined),
     description: version.description ?? undefined,
     id: version.id,
     name: version.name,
@@ -1539,6 +1542,7 @@ function mapProductVersionRecord(version: ProductVersionListItem): ProductVersio
     releaseDate: version.release_date ?? undefined,
     startDate: version.start_date ?? undefined,
     status: normalizeProductVersionStatus(version.status),
+    updatedAt: formatListDate(version.updated_at ?? version.created_at ?? undefined),
   };
 }
 

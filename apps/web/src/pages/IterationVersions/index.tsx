@@ -187,11 +187,13 @@ const branchCreationSourceOptions = Object.entries(
 }));
 const versionSortFieldMap: Record<string, string> = {
   code: 'code',
+  createdAt: 'created_at',
   name: 'name',
   productName: 'product_name',
   releaseDate: 'release_date',
   startDate: 'start_date',
   status: 'status',
+  updatedAt: 'updated_at',
 };
 
 function normalizeFilterText(value: unknown) {
@@ -219,6 +221,7 @@ function readIterationVersionDeepLinkParams() {
   const searchParams = new URLSearchParams(window.location.search);
   return {
     branchConfigId: searchParams.get('branch_config_id') ?? undefined,
+    view: searchParams.get('view') === 'dashboard' ? 'dashboard' : undefined,
     versionId: searchParams.get('version_id') ?? undefined,
   };
 }
@@ -268,12 +271,14 @@ export default function IterationVersionsPage() {
   const [isBranchConfigSaving, setIsBranchConfigSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isBranchDeepLinkHandled, setIsBranchDeepLinkHandled] = useState(false);
+  const [isDashboardDeepLinkHandled, setIsDashboardDeepLinkHandled] =
+    useState(false);
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
     filters: {},
     page: 1,
     pageSize: deepLinkParams.versionId ? 100 : 10,
-    sortField: 'code',
-    sortOrder: 'ascend',
+    sortField: 'createdAt',
+    sortOrder: 'descend',
   });
   const [listState, setListState] = useState<{
     error?: RemoteRowsError;
@@ -476,6 +481,7 @@ export default function IterationVersionsPage() {
 
   useEffect(() => {
     if (
+      deepLinkParams.view === 'dashboard' ||
       isBranchDeepLinkHandled ||
       listState.status !== 'ready' ||
       !deepLinkParams.versionId
@@ -491,11 +497,45 @@ export default function IterationVersionsPage() {
     setIsBranchDeepLinkHandled(true);
     openBranchConfigModal(targetVersion);
   }, [
+    deepLinkParams.view,
     deepLinkParams.versionId,
     isBranchDeepLinkHandled,
     listState.rows,
     listState.status,
     openBranchConfigModal,
+  ]);
+
+  useEffect(() => {
+    if (
+      deepLinkParams.view !== 'dashboard' ||
+      isDashboardDeepLinkHandled ||
+      !deepLinkParams.versionId
+    ) {
+      return;
+    }
+
+    const targetVersion = listState.rows.find(
+      (row) => row.id === deepLinkParams.versionId,
+    );
+    setIsDashboardDeepLinkHandled(true);
+    setDashboardState({ loading: true, version: targetVersion });
+    fetchProductVersionDashboard(deepLinkParams.versionId)
+      .then((dashboard) => {
+        setDashboardState({
+          dashboard,
+          loading: false,
+          version: targetVersion ?? dashboard.version,
+        });
+      })
+      .catch((loadError) => {
+        setDashboardState(undefined);
+        message.error(formatMutationError(loadError));
+      });
+  }, [
+    deepLinkParams.versionId,
+    deepLinkParams.view,
+    isDashboardDeepLinkHandled,
+    listState.rows,
   ]);
 
   const openEditBranchConfig = useCallback(
@@ -788,6 +828,13 @@ export default function IterationVersionsPage() {
             <StatusTag color={statusLabel.color} label={statusLabel.label} />
           );
         },
+      },
+      {
+        dataIndex: 'createdAt',
+        sorter: true,
+        title: '创建时间',
+        width: 170,
+        render: (_, row) => row.createdAt ?? '-',
       },
       {
         dataIndex: 'startDate',
