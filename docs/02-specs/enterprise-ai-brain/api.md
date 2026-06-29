@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.457 |
+| 功能版本 | v1.1.458 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.458 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 的 `branch_quality_governance` 补齐 finding 级 suppression 治理计数，summary 返回活跃严重、误报忽略、接受风险、过期接受风险和待审批忽略统计 | Codex |
 | v1.1.457 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 新增 `branch_quality_governance` 和 summary 分支治理计数，版本总览可直接查看分支巡检、门禁、Bug/整改覆盖和最近报告 | Codex |
 | v1.1.456 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 在 PostgreSQL 运行时改为版本范围专用 read model，响应字段不变，避免先加载全量 task workflow source rows 后服务层过滤 | Codex |
 | v1.1.455 | 2026-06-30 | 代码巡检治理概览新增 `governance_pressure`，聚合待闭环提交人、缺 Bug、缺整改任务、门禁失败、待审批忽略和到期接受风险，供页面顶部治理压力总览展示 | Codex |
@@ -1346,7 +1347,12 @@ GET /api/product-versions/version_001/dashboard
       "tasks": 3,
       "branch_configs": 2,
       "branch_quality_action_required": 1,
+      "branch_quality_accepted_risks": 1,
+      "branch_quality_active_severe_findings": 2,
+      "branch_quality_expired_accepted_risks": 1,
+      "branch_quality_false_positives": 1,
       "branch_quality_pending_scan": 0,
+      "branch_quality_pending_suppressions": 1,
       "bugs": 4,
       "open_bugs": 2,
       "severe_bugs": 1,
@@ -1390,10 +1396,16 @@ GET /api/product-versions/version_001/dashboard
         "report_count": 1,
         "finding_count": 8,
         "severe_finding_count": 2,
+        "active_severe_finding_count": 2,
         "created_bug_count": 2,
         "created_task_count": 1,
         "uncovered_severe_bug_count": 0,
         "uncovered_severe_task_count": 1,
+        "false_positive_count": 1,
+        "accepted_risk_count": 1,
+        "expired_accepted_risk_count": 1,
+        "suppressed_finding_count": 2,
+        "pending_suppression_count": 1,
         "quality_gate_failed_report_count": 1,
         "quality_gate_violation_count": 2,
         "latest_report_id": "code_inspection_report_001",
@@ -1424,7 +1436,7 @@ GET /api/product-versions/version_001/dashboard
 }
 ```
 
-规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 和 `branch_quality_governance` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏；`knowledge_deposits` 仅在具备 `knowledge.read` 时返回，否则在 `access_issues` 中声明隐藏。知识沉淀明细只暴露沉淀 ID、标题、状态、来源任务、关联知识文档、知识文档标题、索引状态、chunk 数、embedding chunk 数、检索模式、索引错误摘要和更新时间，不返回知识正文；`knowledge_retrieval_mode=keyword` 表示关键词兜底，`hybrid` 表示向量与关键词可混合检索，`unavailable` 表示当前沉淀不可检索。summary 中 `searchable_knowledge_deposits` 统计可关键词或混合检索的沉淀，`vectorized_knowledge_deposits` 统计混合检索沉淀；`branch_quality_action_required` 统计存在门禁失败或严重问题缺 Bug/整改覆盖的版本分支，`branch_quality_pending_scan` 统计已配置但暂无巡检报告的版本分支。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态；每条 blocker 必须返回处理动作、目标主体和解除条件，前端将其映射为需求、Bug、代码巡检、版本分支或发布记录处理入口。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、交付健康摘要、status impact 和 blockers，再展示可读明细表；交付健康摘要基于阻塞项、严重 Bug/巡检、分支创建状态、分支质量治理、代码巡检风险、知识沉淀可检索状态和发布失败记录派生发布准入、质量风险、代码分支、代码巡检、知识沉淀和发布流水线结论。
+规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 和 `branch_quality_governance` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏；`knowledge_deposits` 仅在具备 `knowledge.read` 时返回，否则在 `access_issues` 中声明隐藏。知识沉淀明细只暴露沉淀 ID、标题、状态、来源任务、关联知识文档、知识文档标题、索引状态、chunk 数、embedding chunk 数、检索模式、索引错误摘要和更新时间，不返回知识正文；`knowledge_retrieval_mode=keyword` 表示关键词兜底，`hybrid` 表示向量与关键词可混合检索，`unavailable` 表示当前沉淀不可检索。summary 中 `searchable_knowledge_deposits` 统计可关键词或混合检索的沉淀，`vectorized_knowledge_deposits` 统计混合检索沉淀；`branch_quality_action_required` 统计存在门禁失败、活跃严重问题、过期接受风险、待审批忽略或严重问题缺 Bug/整改覆盖的版本分支，`branch_quality_pending_scan` 统计已配置但暂无巡检报告的版本分支，`branch_quality_active_severe_findings`、`branch_quality_false_positives`、`branch_quality_accepted_risks`、`branch_quality_expired_accepted_risks` 和 `branch_quality_pending_suppressions` 按分支报告 finding 聚合治理计数。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态；每条 blocker 必须返回处理动作、目标主体和解除条件，前端将其映射为需求、Bug、代码巡检、版本分支或发布记录处理入口。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、交付健康摘要、status impact 和 blockers，再展示可读明细表；交付健康摘要基于阻塞项、严重 Bug/巡检、分支创建状态、分支质量治理、代码巡检风险、知识沉淀可检索状态和发布失败记录派生发布准入、质量风险、代码分支、代码巡检、知识沉淀和发布流水线结论。
 
 ### 平台配置
 

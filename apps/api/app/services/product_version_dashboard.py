@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import UTC, datetime
 from typing import Any
 
 from app.services.bug_listing import bug_summary_projection
@@ -462,6 +463,93 @@ def _quality_gate_violation_count(report: dict[str, Any]) -> int:
     return sum(1 for violation in violations if isinstance(violation, dict))
 
 
+def _parse_optional_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _accepted_risk_is_expired(finding: dict[str, Any]) -> bool:
+    if finding.get("suppression_status") != "approved":
+        return False
+    if finding.get("suppression_reason") != "accepted_risk":
+        return False
+    expires_at = _parse_optional_datetime(finding.get("suppression_expires_at"))
+    if expires_at is None:
+        return False
+    return expires_at <= datetime.now(UTC)
+
+
+def _suppression_is_effective(finding: dict[str, Any]) -> bool:
+    return finding.get("suppression_status") == "approved" and not _accepted_risk_is_expired(
+        finding
+    )
+
+
+def _code_inspection_findings_by_report(
+    code_inspection_findings: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    findings_by_report: dict[str, list[dict[str, Any]]] = {}
+    for finding in code_inspection_findings:
+        report_id = str(finding.get("report_id") or "")
+        if not report_id:
+            continue
+        findings_by_report.setdefault(report_id, []).append(finding)
+    return findings_by_report
+
+
+def _finding_governance_counts(findings: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {
+        "accepted_risk_count": 0,
+        "active_severe_finding_count": 0,
+        "active_severe_bug_covered_count": 0,
+        "active_severe_task_covered_count": 0,
+        "expired_accepted_risk_count": 0,
+        "false_positive_count": 0,
+        "pending_suppression_count": 0,
+        "suppressed_finding_count": 0,
+    }
+    for finding in findings:
+        suppression_status = str(finding.get("suppression_status") or "none")
+        suppression_reason = str(finding.get("suppression_reason") or "")
+        if suppression_status == "pending":
+            counts["pending_suppression_count"] += 1
+        if suppression_status == "approved":
+            counts["suppressed_finding_count"] += 1
+            if suppression_reason == "false_positive":
+                counts["false_positive_count"] += 1
+            if suppression_reason == "accepted_risk":
+                counts["accepted_risk_count"] += 1
+                if _accepted_risk_is_expired(finding):
+                    counts["expired_accepted_risk_count"] += 1
+        if str(finding.get("severity") or "").lower() in SEVERE_CODE_RISKS and not _suppression_is_effective(
+            finding
+        ):
+            counts["active_severe_finding_count"] += 1
+            if finding.get("created_bug_id"):
+                counts["active_severe_bug_covered_count"] += 1
+            if finding.get("created_task_id"):
+                counts["active_severe_task_covered_count"] += 1
+    return counts
+
+
+def _suppression_summary_count(report: dict[str, Any], key: str) -> int:
+    suppression_summary = report.get("suppression_summary")
+    if not isinstance(suppression_summary, dict):
+        return 0
+    try:
+        return int(suppression_summary.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _report_sort_key(report: dict[str, Any]) -> str:
     return str(
         report.get("scan_finished_at")
@@ -474,8 +562,10 @@ def _report_sort_key(report: dict[str, Any]) -> str:
 def _version_branch_quality_governance(
     *,
     branch_configs: list[dict[str, Any]],
+    code_inspection_findings: list[dict[str, Any]],
     code_inspection_reports: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    findings_by_report = _code_inspection_findings_by_report(code_inspection_findings)
     branch_rows: dict[tuple[str, str], dict[str, Any]] = {}
     for config in branch_configs:
         repository_id = str(config.get("repository_id") or "")
@@ -486,8 +576,12 @@ def _version_branch_quality_governance(
             "_latest_report_sort_key": "",
             "branch": branch,
             "branch_config_id": config.get("id"),
+            "accepted_risk_count": 0,
+            "active_severe_finding_count": 0,
             "created_bug_count": 0,
             "created_task_count": 0,
+            "expired_accepted_risk_count": 0,
+            "false_positive_count": 0,
             "finding_count": 0,
             "id": str(config.get("id") or f"{repository_id}:{branch}"),
             "latest_report_id": None,
@@ -500,6 +594,8 @@ def _version_branch_quality_governance(
             "repository_name": config.get("repository_name") or repository_id,
             "severe_finding_count": 0,
             "status": "pending_scan",
+            "suppressed_finding_count": 0,
+            "pending_suppression_count": 0,
             "uncovered_severe_bug_count": 0,
             "uncovered_severe_task_count": 0,
         }
@@ -513,10 +609,14 @@ def _version_branch_quality_governance(
             (repository_id, branch),
             {
                 "_latest_report_sort_key": "",
+                "accepted_risk_count": 0,
+                "active_severe_finding_count": 0,
                 "branch": branch,
                 "branch_config_id": None,
                 "created_bug_count": 0,
                 "created_task_count": 0,
+                "expired_accepted_risk_count": 0,
+                "false_positive_count": 0,
                 "finding_count": 0,
                 "id": f"{repository_id}:{branch}",
                 "latest_report_id": None,
@@ -529,6 +629,8 @@ def _version_branch_quality_governance(
                 "repository_name": report.get("repository_name") or repository_id,
                 "severe_finding_count": 0,
                 "status": "pending_scan",
+                "suppressed_finding_count": 0,
+                "pending_suppression_count": 0,
                 "uncovered_severe_bug_count": 0,
                 "uncovered_severe_task_count": 0,
             },
@@ -537,13 +639,54 @@ def _version_branch_quality_governance(
         severe_finding_count = int(report.get("severe_finding_count") or 0)
         created_bug_count = len(report.get("created_bug_ids") or [])
         created_task_count = len(report.get("created_task_ids") or [])
+        report_findings = findings_by_report.get(str(report.get("id") or ""), [])
+        finding_governance = _finding_governance_counts(report_findings)
+        active_severe_finding_count = (
+            finding_governance["active_severe_finding_count"]
+            if report_findings
+            else severe_finding_count
+        )
+        active_severe_bug_covered_count = (
+            finding_governance["active_severe_bug_covered_count"]
+            if report_findings
+            else created_bug_count
+        )
+        active_severe_task_covered_count = (
+            finding_governance["active_severe_task_covered_count"]
+            if report_findings
+            else created_task_count
+        )
         row["report_count"] += 1
         row["finding_count"] += finding_count
         row["severe_finding_count"] += severe_finding_count
+        row["active_severe_finding_count"] += active_severe_finding_count
         row["created_bug_count"] += created_bug_count
         row["created_task_count"] += created_task_count
-        row["uncovered_severe_bug_count"] += max(severe_finding_count - created_bug_count, 0)
-        row["uncovered_severe_task_count"] += max(severe_finding_count - created_task_count, 0)
+        row["uncovered_severe_bug_count"] += max(
+            active_severe_finding_count - active_severe_bug_covered_count,
+            0,
+        )
+        row["uncovered_severe_task_count"] += max(
+            active_severe_finding_count - active_severe_task_covered_count,
+            0,
+        )
+        row["suppressed_finding_count"] += (
+            finding_governance["suppressed_finding_count"]
+            if report_findings
+            else int(report.get("suppressed_finding_count") or 0)
+        )
+        row["false_positive_count"] += (
+            finding_governance["false_positive_count"]
+            if report_findings
+            else _suppression_summary_count(report, "false_positive")
+        )
+        row["accepted_risk_count"] += (
+            finding_governance["accepted_risk_count"]
+            if report_findings
+            else _suppression_summary_count(report, "accepted_risk")
+        )
+        row["expired_accepted_risk_count"] += finding_governance["expired_accepted_risk_count"]
+        row["pending_suppression_count"] += finding_governance["pending_suppression_count"]
         if _quality_gate_failed(report):
             row["quality_gate_failed_report_count"] += 1
         row["quality_gate_violation_count"] += _quality_gate_violation_count(report)
@@ -564,6 +707,9 @@ def _version_branch_quality_governance(
             row["status"] = "pending_scan"
         elif (
             row["quality_gate_failed_report_count"]
+            or row["active_severe_finding_count"]
+            or row["expired_accepted_risk_count"]
+            or row["pending_suppression_count"]
             or row["uncovered_severe_bug_count"]
             or row["uncovered_severe_task_count"]
         ):
@@ -769,11 +915,19 @@ def product_version_dashboard_response(
         target_status=next_status,
         version_id=version_id,
     )
+    code_inspection_report_ids = {
+        str(report.get("id") or "") for report in code_inspection_reports if report.get("id")
+    }
     branch_quality_governance = (
         []
         if code_access_issues
         else _version_branch_quality_governance(
             branch_configs=branch_configs,
+            code_inspection_findings=[
+                finding
+                for finding in _memory_records(read_store, "code_inspection_findings")
+                if str(finding.get("report_id") or "") in code_inspection_report_ids
+            ],
             code_inspection_reports=code_inspection_reports,
         )
     )
@@ -827,8 +981,26 @@ def product_version_dashboard_response(
                 for item in branch_quality_governance
                 if item.get("status") == "action_required"
             ),
+            "branch_quality_accepted_risks": sum(
+                int(item.get("accepted_risk_count") or 0) for item in branch_quality_governance
+            ),
+            "branch_quality_active_severe_findings": sum(
+                int(item.get("active_severe_finding_count") or 0)
+                for item in branch_quality_governance
+            ),
+            "branch_quality_expired_accepted_risks": sum(
+                int(item.get("expired_accepted_risk_count") or 0)
+                for item in branch_quality_governance
+            ),
+            "branch_quality_false_positives": sum(
+                int(item.get("false_positive_count") or 0) for item in branch_quality_governance
+            ),
             "branch_quality_pending_scan": sum(
                 1 for item in branch_quality_governance if item.get("status") == "pending_scan"
+            ),
+            "branch_quality_pending_suppressions": sum(
+                int(item.get("pending_suppression_count") or 0)
+                for item in branch_quality_governance
             ),
             "bugs": len(bugs),
             "code_inspection_reports": len(code_inspection_reports),

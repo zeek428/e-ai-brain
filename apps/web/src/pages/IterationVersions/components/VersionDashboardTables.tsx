@@ -602,8 +602,13 @@ export function VersionDashboardQualityDeliveryTables({
           { dataIndex: 'reportCount', title: '报告数', width: 100 },
           { dataIndex: 'findingCount', title: '问题数', width: 100 },
           { dataIndex: 'severeFindingCount', title: '严重问题', width: 110 },
+          { dataIndex: 'activeSevereFindingCount', title: '活跃严重', width: 110 },
           { dataIndex: 'uncoveredSevereBugCount', title: '缺 Bug', width: 100 },
           { dataIndex: 'uncoveredSevereTaskCount', title: '缺整改任务', width: 120 },
+          { dataIndex: 'falsePositiveCount', title: '误报忽略', width: 110 },
+          { dataIndex: 'acceptedRiskCount', title: '接受风险', width: 110 },
+          { dataIndex: 'expiredAcceptedRiskCount', title: '过期风险', width: 110 },
+          { dataIndex: 'pendingSuppressionCount', title: '待审批忽略', width: 120 },
           { dataIndex: 'qualityGateFailedReportCount', title: '门禁失败报告', width: 130 },
           { dataIndex: 'qualityGateViolationCount', title: '门禁失败项', width: 120 },
           {
@@ -631,7 +636,7 @@ export function VersionDashboardQualityDeliveryTables({
         locale={{ emptyText: '当前版本暂无分支质量治理数据' }}
         pagination={dashboard.branchQualityGovernance.length > 5 ? { pageSize: 5 } : false}
         rowKey="id"
-        scroll={{ x: 1710 }}
+        scroll={{ x: 2160 }}
         size="small"
       />
       <Table<ProductVersionDashboard['codeReviewReports'][number]>

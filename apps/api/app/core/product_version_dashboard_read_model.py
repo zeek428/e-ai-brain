@@ -61,6 +61,14 @@ def product_version_dashboard_source_rows(repository: Any, version_id: str) -> d
                 task_ids=task_ids,
                 version_id=version_id,
             ),
+            "code_inspection_findings": _list_lightweight_code_inspection_findings_for_reports(
+                repository,
+                [
+                    str(report["id"])
+                    for report in code_inspection_reports
+                    if report.get("id")
+                ],
+            ),
             "code_inspection_reports": code_inspection_reports,
             "code_review_reports": _list_code_review_reports_for_tasks(repository, task_ids),
             "jenkins_release_records": repository.list_jenkins_release_records(
@@ -97,6 +105,7 @@ def _empty_task_workflow_source_rows() -> dict[str, Any]:
         "audit_events": [],
         "bugs": [],
         "code_inspection_reports": [],
+        "code_inspection_findings": [],
         "code_review_reports": [],
         "gitlab_daily_code_metrics": [],
         "gitlab_mr_snapshots": [],
@@ -295,6 +304,38 @@ def _list_code_review_reports_for_tasks(
                         report.pop(optional_key)
                 reports.append(report)
             return reports
+
+
+def _list_lightweight_code_inspection_findings_for_reports(
+    repository: Any,
+    report_ids: list[str],
+) -> list[dict[str, Any]]:
+    if not report_ids:
+        return []
+    with repository._connect() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, report_id, severity, created_bug_id, created_task_id,
+                       suppression_status, suppression_reason, suppression_expires_at
+                FROM code_inspection_findings
+                WHERE report_id = ANY(%s)
+                """,
+                (report_ids,),
+            )
+            return [
+                {
+                    "created_bug_id": row[3],
+                    "created_task_id": row[4],
+                    "id": row[0],
+                    "report_id": row[1],
+                    "severity": row[2],
+                    "suppression_expires_at": row[7].isoformat() if row[7] else None,
+                    "suppression_reason": row[6],
+                    "suppression_status": row[5] or "none",
+                }
+                for row in cursor.fetchall()
+            ]
 
 
 def _list_knowledge_deposits_for_tasks(

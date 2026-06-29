@@ -389,7 +389,8 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "branch": "release/2026-dashboard",
         "created_at": "2026-06-04T09:30:00+00:00",
         "created_bug_ids": ["bug_version_dashboard_from_inspection"],
-        "finding_count": 3,
+        "created_task_ids": [],
+        "finding_count": 4,
         "id": "code_inspection_report_dashboard",
         "product_id": product["id"],
         "quality_gate": {
@@ -399,9 +400,47 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "repository_id": "repo_dashboard",
         "repository_name": "Dashboard Repo",
         "risk_level": "high",
-        "severe_finding_count": 1,
+        "severe_finding_count": 3,
         "status": "completed",
+        "suppressed_finding_count": 2,
+        "suppression_summary": {"accepted_risk": 1, "false_positive": 1},
         "summary": "存在高风险问题",
+    }
+    app.state.store.code_inspection_findings["finding_dashboard_active"] = {
+        "created_bug_id": "bug_version_dashboard_from_inspection",
+        "created_task_id": None,
+        "id": "finding_dashboard_active",
+        "report_id": "code_inspection_report_dashboard",
+        "severity": "critical",
+        "suppression_status": "none",
+    }
+    app.state.store.code_inspection_findings["finding_dashboard_expired_risk"] = {
+        "created_bug_id": None,
+        "created_task_id": None,
+        "id": "finding_dashboard_expired_risk",
+        "report_id": "code_inspection_report_dashboard",
+        "severity": "high",
+        "suppression_expires_at": "2000-01-01T00:00:00+00:00",
+        "suppression_reason": "accepted_risk",
+        "suppression_status": "approved",
+    }
+    app.state.store.code_inspection_findings["finding_dashboard_false_positive"] = {
+        "created_bug_id": None,
+        "created_task_id": None,
+        "id": "finding_dashboard_false_positive",
+        "report_id": "code_inspection_report_dashboard",
+        "severity": "high",
+        "suppression_reason": "false_positive",
+        "suppression_status": "approved",
+    }
+    app.state.store.code_inspection_findings["finding_dashboard_pending_suppression"] = {
+        "created_bug_id": None,
+        "created_task_id": None,
+        "id": "finding_dashboard_pending_suppression",
+        "report_id": "code_inspection_report_dashboard",
+        "severity": "medium",
+        "suppression_reason": "accepted_risk",
+        "suppression_status": "pending",
     }
     app.state.store.jenkins_release_records["release_dashboard"] = {
         "build_id": "42",
@@ -422,7 +461,12 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "blockers": 5,
         "branch_configs": 1,
         "branch_quality_action_required": 1,
+        "branch_quality_accepted_risks": 1,
+        "branch_quality_active_severe_findings": 2,
+        "branch_quality_expired_accepted_risks": 1,
+        "branch_quality_false_positives": 1,
         "branch_quality_pending_scan": 0,
+        "branch_quality_pending_suppressions": 1,
         "bugs": 2,
         "code_review_reports": 1,
         "code_inspection_reports": 1,
@@ -473,9 +517,13 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         {
             "branch": "release/2026-dashboard",
             "branch_config_id": "version_branch_dashboard",
+            "accepted_risk_count": 1,
+            "active_severe_finding_count": 2,
             "created_bug_count": 1,
             "created_task_count": 0,
-            "finding_count": 3,
+            "expired_accepted_risk_count": 1,
+            "false_positive_count": 1,
+            "finding_count": 4,
             "id": "version_branch_dashboard",
             "latest_report_id": "code_inspection_report_dashboard",
             "latest_report_summary": "存在高风险问题",
@@ -485,10 +533,12 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
             "report_count": 1,
             "repository_id": "repo_dashboard",
             "repository_name": "Dashboard Repo",
-            "severe_finding_count": 1,
+            "severe_finding_count": 3,
             "status": "action_required",
-            "uncovered_severe_bug_count": 0,
-            "uncovered_severe_task_count": 1,
+            "suppressed_finding_count": 2,
+            "pending_suppression_count": 1,
+            "uncovered_severe_bug_count": 1,
+            "uncovered_severe_task_count": 2,
         }
     ]
     assert data["code_review_reports"] == [

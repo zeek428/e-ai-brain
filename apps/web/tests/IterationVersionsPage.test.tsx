@@ -935,11 +935,15 @@ describe('IterationVersionsPage', () => {
             ],
             branch_quality_governance: [
               {
+                accepted_risk_count: 1,
+                active_severe_finding_count: 2,
                 branch: 'release/2026-dashboard',
                 branch_config_id: 'version_branch_dashboard',
                 created_bug_count: 1,
                 created_task_count: 0,
-                finding_count: 3,
+                expired_accepted_risk_count: 1,
+                false_positive_count: 1,
+                finding_count: 4,
                 id: 'version_branch_dashboard',
                 latest_report_id: 'code_inspection_report_dashboard',
                 latest_report_summary: '存在高风险问题',
@@ -949,10 +953,12 @@ describe('IterationVersionsPage', () => {
                 report_count: 1,
                 repository_id: 'repo_dashboard',
                 repository_name: 'Dashboard Repo',
-                severe_finding_count: 1,
+                severe_finding_count: 3,
                 status: 'action_required',
-                uncovered_severe_bug_count: 0,
-                uncovered_severe_task_count: 1,
+                suppressed_finding_count: 2,
+                pending_suppression_count: 1,
+                uncovered_severe_bug_count: 1,
+                uncovered_severe_task_count: 2,
               },
             ],
             bugs: [
@@ -1077,7 +1083,12 @@ describe('IterationVersionsPage', () => {
               blockers: 3,
               branch_configs: 1,
               branch_quality_action_required: 1,
+              branch_quality_accepted_risks: 1,
+              branch_quality_active_severe_findings: 2,
+              branch_quality_expired_accepted_risks: 1,
+              branch_quality_false_positives: 1,
               branch_quality_pending_scan: 0,
+              branch_quality_pending_suppressions: 1,
               bugs: 1,
               code_inspection_reports: 1,
               code_review_reports: 1,
@@ -1228,6 +1239,11 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('分支质量治理')).toBeInTheDocument();
     expect(screen.getAllByText('待治理').length).toBeGreaterThan(0);
     expect(screen.getAllByText('缺整改任务').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('活跃严重').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('误报忽略').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('接受风险').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('过期风险').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('待审批忽略').length).toBeGreaterThan(0);
     expect(screen.getAllByText('门禁失败报告').length).toBeGreaterThan(0);
     expect(screen.getAllByText('门禁失败项').length).toBeGreaterThan(0);
     expect(screen.getByText('代码评审待确认')).toBeInTheDocument();

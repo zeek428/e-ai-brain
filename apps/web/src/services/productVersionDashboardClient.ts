@@ -105,10 +105,14 @@ type ProductVersionDashboardCodeInspectionReport = {
 };
 
 type ProductVersionDashboardBranchQualityGovernanceItem = {
+  accepted_risk_count?: number;
+  active_severe_finding_count?: number;
   branch?: string | null;
   branch_config_id?: string | null;
   created_bug_count?: number;
   created_task_count?: number;
+  expired_accepted_risk_count?: number;
+  false_positive_count?: number;
   finding_count?: number;
   id: string;
   latest_report_id?: string | null;
@@ -121,6 +125,8 @@ type ProductVersionDashboardBranchQualityGovernanceItem = {
   repository_name?: string | null;
   severe_finding_count?: number;
   status?: string;
+  suppressed_finding_count?: number;
+  pending_suppression_count?: number;
   uncovered_severe_bug_count?: number;
   uncovered_severe_task_count?: number;
 };
@@ -188,7 +194,12 @@ type ProductVersionDashboardSummary = {
   blockers: number;
   branch_configs: number;
   branch_quality_action_required: number;
+  branch_quality_accepted_risks: number;
+  branch_quality_active_severe_findings: number;
+  branch_quality_expired_accepted_risks: number;
+  branch_quality_false_positives: number;
   branch_quality_pending_scan: number;
+  branch_quality_pending_suppressions: number;
   bugs: number;
   code_inspection_reports: number;
   code_review_reports: number;
@@ -264,10 +275,14 @@ export type ProductVersionDashboard = {
   }>;
   branchConfigs: ProductVersionBranchConfigRecord[];
   branchQualityGovernance: Array<{
+    acceptedRiskCount: number;
+    activeSevereFindingCount: number;
     branch: string;
     branchConfigId?: string;
     createdBugCount: number;
     createdTaskCount: number;
+    expiredAcceptedRiskCount: number;
+    falsePositiveCount: number;
     findingCount: number;
     id: string;
     latestReportId?: string;
@@ -280,6 +295,8 @@ export type ProductVersionDashboard = {
     repositoryName: string;
     severeFindingCount: number;
     status: string;
+    suppressedFindingCount: number;
+    pendingSuppressionCount: number;
     uncoveredSevereBugCount: number;
     uncoveredSevereTaskCount: number;
   }>;
@@ -597,10 +614,14 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
     })),
     branchConfigs: (dashboard.branch_configs ?? []).map(mapProductVersionBranchConfigRecord),
     branchQualityGovernance: (dashboard.branch_quality_governance ?? []).map((item) => ({
+      acceptedRiskCount: normalizeDashboardCount(item.accepted_risk_count),
+      activeSevereFindingCount: normalizeDashboardCount(item.active_severe_finding_count),
       branch: item.branch ?? '-',
       branchConfigId: item.branch_config_id ?? undefined,
       createdBugCount: normalizeDashboardCount(item.created_bug_count),
       createdTaskCount: normalizeDashboardCount(item.created_task_count),
+      expiredAcceptedRiskCount: normalizeDashboardCount(item.expired_accepted_risk_count),
+      falsePositiveCount: normalizeDashboardCount(item.false_positive_count),
       findingCount: normalizeDashboardCount(item.finding_count),
       id: item.id,
       latestReportId: item.latest_report_id ?? undefined,
@@ -613,6 +634,8 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
       repositoryName: item.repository_name ?? item.repository_id ?? '-',
       severeFindingCount: normalizeDashboardCount(item.severe_finding_count),
       status: item.status ?? '-',
+      suppressedFindingCount: normalizeDashboardCount(item.suppressed_finding_count),
+      pendingSuppressionCount: normalizeDashboardCount(item.pending_suppression_count),
       uncoveredSevereBugCount: normalizeDashboardCount(item.uncovered_severe_bug_count),
       uncoveredSevereTaskCount: normalizeDashboardCount(item.uncovered_severe_task_count),
     })),
@@ -662,7 +685,12 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
       blockers: normalizeDashboardCount(summary.blockers),
       branch_configs: normalizeDashboardCount(summary.branch_configs),
       branch_quality_action_required: normalizeDashboardCount(summary.branch_quality_action_required),
+      branch_quality_accepted_risks: normalizeDashboardCount(summary.branch_quality_accepted_risks),
+      branch_quality_active_severe_findings: normalizeDashboardCount(summary.branch_quality_active_severe_findings),
+      branch_quality_expired_accepted_risks: normalizeDashboardCount(summary.branch_quality_expired_accepted_risks),
+      branch_quality_false_positives: normalizeDashboardCount(summary.branch_quality_false_positives),
       branch_quality_pending_scan: normalizeDashboardCount(summary.branch_quality_pending_scan),
+      branch_quality_pending_suppressions: normalizeDashboardCount(summary.branch_quality_pending_suppressions),
       bugs: normalizeDashboardCount(summary.bugs),
       code_inspection_reports: normalizeDashboardCount(summary.code_inspection_reports),
       code_review_reports: normalizeDashboardCount(summary.code_review_reports),

@@ -259,6 +259,10 @@ def validate_version_dashboard_branch_quality(
             f"Version dashboard missed action-required branch quality summary: {summary}",
         )
         _assert(
+            "branch_quality_active_severe_findings" in summary,
+            f"Version dashboard missed active severe branch quality summary: {summary}",
+        )
+        _assert(
             int(branch_quality.get("quality_gate_failed_report_count") or 0) >= 1,
             f"Version dashboard branch quality missed failed quality gate report count: {branch_quality}",
         )
@@ -288,7 +292,13 @@ def validate_version_dashboard_branch_quality(
         "created_bug_count",
         "created_task_count",
         "finding_count",
+        "accepted_risk_count",
+        "active_severe_finding_count",
+        "expired_accepted_risk_count",
+        "false_positive_count",
+        "pending_suppression_count",
         "severe_finding_count",
+        "suppressed_finding_count",
         "uncovered_severe_bug_count",
         "uncovered_severe_task_count",
     ]:
