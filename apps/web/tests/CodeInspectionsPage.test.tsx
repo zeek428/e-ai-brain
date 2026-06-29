@@ -113,6 +113,30 @@ function installCodeInspectionsFetchMock() {
               severe_finding_count: 1,
             },
           ],
+          branch_governance: [
+            {
+              accepted_risk_count: 0,
+              active_severe_finding_count: 1,
+              branch: 'main',
+              covered_by_bug_count: 1,
+              covered_by_task_count: 1,
+              expired_accepted_risk_count: 1,
+              finding_count: 1,
+              latest_report_id: 'code_inspection_report_001',
+              latest_report_summary: '发现 1 个 critical 安全问题。',
+              oldest_uncovered_at: null,
+              pending_suppression_count: 0,
+              quality_gate_failed_report_count: 1,
+              quality_gate_violation_count: 1,
+              report_count: 1,
+              repository_id: 'repo_ai_brain',
+              repository_name: 'AI Brain',
+              severe_finding_count: 1,
+              status: 'action_required',
+              uncovered_bug_finding_count: 0,
+              uncovered_task_finding_count: 0,
+            },
+          ],
           category_distribution: [{ category: 'security', count: 1 }],
           committer_ranking: [
             {
@@ -148,10 +172,12 @@ function installCodeInspectionsFetchMock() {
           ],
           governance_pressure: {
             accepted_risk_count: 1,
+            action_required_branch_count: 1,
             action_required_committer_count: 1,
             active_severe_finding_count: 1,
             expired_accepted_risk_count: 1,
             failed_report_count: 0,
+            pending_review_branch_count: 0,
             pending_review_committer_count: 0,
             pending_suppression_count: 0,
             quality_gate_failed_report_count: 1,
@@ -511,10 +537,10 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getByText('规则维度统计')).toBeInTheDocument();
     expect(screen.getByText('治理压力总览')).toBeInTheDocument();
     expect(screen.getByText('闭环状态')).toBeInTheDocument();
-    expect(screen.getByText('待闭环')).toBeInTheDocument();
+    expect(screen.getAllByText('待闭环').length).toBeGreaterThan(0);
     expect(screen.getByText('待闭环提交人')).toBeInTheDocument();
-    expect(screen.getByText('门禁失败报告')).toBeInTheDocument();
-    expect(screen.getByText('门禁失败项')).toBeInTheDocument();
+    expect(screen.getAllByText('门禁失败报告').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('门禁失败项').length).toBeGreaterThan(0);
     expect(screen.getByText('规则包与误报治理')).toBeInTheDocument();
     expect(screen.getByText('最近规则版本')).toBeInTheDocument();
     expect(screen.getByText('版本不一致')).toBeInTheDocument();
@@ -523,6 +549,8 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getAllByText('过滤原因').length).toBeGreaterThan(0);
     expect(screen.getByText('accepted_risk')).toBeInTheDocument();
     expect(screen.getByText('仓库风险排行')).toBeInTheDocument();
+    expect(screen.getByText('待闭环分支')).toBeInTheDocument();
+    expect(screen.getByText('分支治理待办')).toBeInTheDocument();
     expect(screen.getByText('提交人风险排行')).toBeInTheDocument();
     expect(screen.getByText('提交人治理待办')).toBeInTheDocument();
     expect(screen.getAllByText('活跃严重').length).toBeGreaterThan(0);

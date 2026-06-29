@@ -127,6 +127,16 @@ export function CodeInspectionGovernanceOverview({
               children: governancePressure?.action_required_committer_count ?? 0,
             },
             {
+              key: 'action_required_branches',
+              label: '待闭环分支',
+              children: governancePressure?.action_required_branch_count ?? 0,
+            },
+            {
+              key: 'pending_review_branches',
+              label: '待审批分支',
+              children: governancePressure?.pending_review_branch_count ?? 0,
+            },
+            {
               key: 'uncovered_bug',
               label: '缺 Bug',
               children: governancePressure?.uncovered_bug_finding_count ?? 0,
@@ -298,6 +308,43 @@ export function CodeInspectionGovernanceOverview({
                 { dataIndex: 'severe_finding_count', title: '严重', width: 90 },
               ],
               dataSource: dashboard?.branch_ranking ?? [],
+              rowKey: (row) => `${row.repository_id ?? row.repository_name ?? '-'}:${row.branch ?? '-'}`,
+            })}
+          </Card>
+        </Col>
+        <Col lg={24} xs={24}>
+          <Card loading={loading} size="small" title="分支治理待办">
+            {compactMetricTable({
+              columns: [
+                { dataIndex: 'branch', title: '分支', width: 160 },
+                {
+                  dataIndex: 'repository_name',
+                  render: (_, row) => compactText(String(row.repository_name ?? row.repository_id ?? '-')),
+                  title: '仓库',
+                  width: 220,
+                },
+                {
+                  dataIndex: 'status',
+                  render: (value) => governanceStatusTag(String(value ?? '')),
+                  title: '状态',
+                  width: 100,
+                },
+                { dataIndex: 'report_count', title: '报告', width: 80 },
+                { dataIndex: 'active_severe_finding_count', title: '活跃严重', width: 110 },
+                { dataIndex: 'uncovered_bug_finding_count', title: '缺 Bug', width: 90 },
+                { dataIndex: 'uncovered_task_finding_count', title: '缺整改任务', width: 120 },
+                { dataIndex: 'quality_gate_failed_report_count', title: '门禁失败报告', width: 130 },
+                { dataIndex: 'quality_gate_violation_count', title: '门禁失败项', width: 120 },
+                { dataIndex: 'pending_suppression_count', title: '待审批忽略', width: 120 },
+                { dataIndex: 'expired_accepted_risk_count', title: '到期风险', width: 100 },
+                {
+                  dataIndex: 'latest_report_summary',
+                  render: (_, row) => compactText(String(row.latest_report_summary ?? row.latest_report_id ?? '-')),
+                  title: '最近报告',
+                  width: 260,
+                },
+              ],
+              dataSource: dashboard?.branch_governance ?? [],
               rowKey: (row) => `${row.repository_id ?? row.repository_name ?? '-'}:${row.branch ?? '-'}`,
             })}
           </Card>

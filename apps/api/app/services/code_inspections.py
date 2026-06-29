@@ -1420,6 +1420,7 @@ def code_inspection_dashboard_response(
     rule_stats: dict[str, dict[str, Any]] = {}
     repository_stats: dict[str, dict[str, Any]] = {}
     branch_stats: dict[str, dict[str, Any]] = {}
+    branch_governance_stats: dict[str, dict[str, Any]] = {}
     committer_stats: dict[str, dict[str, Any]] = {}
     committer_governance_stats: dict[str, dict[str, Any]] = {}
     quality_gate_violation_stats: dict[str, dict[str, Any]] = {}
@@ -1479,6 +1480,7 @@ def code_inspection_dashboard_response(
             trend["quality_gate_skipped_count"] += 1
         else:
             trend["quality_gate_unknown_count"] += 1
+        report_quality_gate_violation_count = 0
         quality_gate = report.get("quality_gate")
         if isinstance(quality_gate, dict):
             violations = quality_gate.get("violations")
@@ -1486,6 +1488,7 @@ def code_inspection_dashboard_response(
                 for violation in violations:
                     if not isinstance(violation, dict):
                         continue
+                    report_quality_gate_violation_count += 1
                     metric = str(
                         violation.get("metric")
                         or violation.get("rule_id")
@@ -1567,6 +1570,47 @@ def code_inspection_dashboard_response(
         branch_entry["report_count"] += 1
         branch_entry["finding_count"] += int(report.get("finding_count") or len(report_findings))
         branch_entry["severe_finding_count"] += int(report.get("severe_finding_count") or 0)
+        branch_governance_entry = branch_governance_stats.setdefault(
+            branch_key,
+            {
+                "_latest_report_recency_key": "",
+                "_quality_gate_failed_report_ids": set(),
+                "_report_ids": set(),
+                "accepted_risk_count": 0,
+                "active_severe_finding_count": 0,
+                "branch": report.get("branch") or "-",
+                "covered_by_bug_count": 0,
+                "covered_by_task_count": 0,
+                "expired_accepted_risk_count": 0,
+                "finding_count": 0,
+                "latest_report_id": None,
+                "latest_report_summary": None,
+                "oldest_uncovered_at": None,
+                "pending_suppression_count": 0,
+                "quality_gate_failed_report_count": 0,
+                "quality_gate_violation_count": 0,
+                "repository_id": report.get("repository_id"),
+                "repository_name": report.get("repository_name"),
+                "severe_finding_count": 0,
+                "status": "healthy",
+                "uncovered_bug_finding_count": 0,
+                "uncovered_task_finding_count": 0,
+            },
+        )
+        branch_governance_entry["_report_ids"].add(report_id)
+        report_key = report_recency_key(report)
+        if report_key >= str(branch_governance_entry.get("_latest_report_recency_key") or ""):
+            branch_governance_entry["_latest_report_recency_key"] = report_key
+            branch_governance_entry["latest_report_id"] = report_id
+            branch_governance_entry["latest_report_summary"] = report.get("summary")
+        if quality_gate_status == "failed":
+            branch_governance_entry["_quality_gate_failed_report_ids"].add(report_id)
+            branch_governance_entry["quality_gate_failed_report_count"] = len(
+                branch_governance_entry["_quality_gate_failed_report_ids"]
+            )
+        branch_governance_entry["quality_gate_violation_count"] += (
+            report_quality_gate_violation_count
+        )
 
         for committer in report.get("committer_summary") or []:
             identity = (
@@ -1627,29 +1671,39 @@ def code_inspection_dashboard_response(
             committer_governance_entry["_report_ids"].add(report_id)
             committer_governance_entry["finding_count"] += 1
             report_key = report_recency_key(report)
-            if report_key >= str(committer_governance_entry.get("_latest_report_recency_key") or ""):
+            if report_key >= str(
+                committer_governance_entry.get("_latest_report_recency_key") or ""
+            ):
                 committer_governance_entry["_latest_report_recency_key"] = report_key
                 committer_governance_entry["latest_report_id"] = report_id
                 committer_governance_entry["latest_report_summary"] = report.get("summary")
             suppression_status = finding.get("suppression_status")
             if suppression_status == "pending":
                 committer_governance_entry["pending_suppression_count"] += 1
+                branch_governance_entry["pending_suppression_count"] += 1
             if (
                 suppression_status == "approved"
                 and finding.get("suppression_reason") == "accepted_risk"
             ):
                 committer_governance_entry["accepted_risk_count"] += 1
+                branch_governance_entry["accepted_risk_count"] += 1
                 if finding_accepted_risk_is_expired(finding):
                     committer_governance_entry["expired_accepted_risk_count"] += 1
+                    branch_governance_entry["expired_accepted_risk_count"] += 1
+            branch_governance_entry["finding_count"] += 1
             if is_severe:
                 severe_finding_count += 1
                 committer_governance_entry["severe_finding_count"] += 1
+                branch_governance_entry["severe_finding_count"] += 1
                 if not finding_suppression_is_effective(finding):
                     committer_governance_entry["active_severe_finding_count"] += 1
+                    branch_governance_entry["active_severe_finding_count"] += 1
                     if finding.get("created_bug_id"):
                         committer_governance_entry["covered_by_bug_count"] += 1
+                        branch_governance_entry["covered_by_bug_count"] += 1
                     else:
                         committer_governance_entry["uncovered_bug_finding_count"] += 1
+                        branch_governance_entry["uncovered_bug_finding_count"] += 1
                         if (
                             committer_governance_entry.get("oldest_uncovered_at") is None
                             or str(finding.get("created_at") or "")
@@ -1658,10 +1712,20 @@ def code_inspection_dashboard_response(
                             committer_governance_entry["oldest_uncovered_at"] = str(
                                 finding.get("created_at") or ""
                             )
+                        if (
+                            branch_governance_entry.get("oldest_uncovered_at") is None
+                            or str(finding.get("created_at") or "")
+                            < str(branch_governance_entry.get("oldest_uncovered_at") or "")
+                        ):
+                            branch_governance_entry["oldest_uncovered_at"] = str(
+                                finding.get("created_at") or ""
+                            )
                     if finding.get("created_task_id"):
                         committer_governance_entry["covered_by_task_count"] += 1
+                        branch_governance_entry["covered_by_task_count"] += 1
                     else:
                         committer_governance_entry["uncovered_task_finding_count"] += 1
+                        branch_governance_entry["uncovered_task_finding_count"] += 1
                 if finding.get("created_bug_id"):
                     covered_by_bug_count += 1
                 elif (
@@ -1731,6 +1795,44 @@ def code_inspection_dashboard_response(
             entry["status"] = "action_required"
         elif entry["pending_suppression_count"]:
             entry["status"] = "pending_review"
+    for entry in branch_governance_stats.values():
+        if (
+            entry["uncovered_bug_finding_count"]
+            or entry["uncovered_task_finding_count"]
+            or entry["expired_accepted_risk_count"]
+            or entry["quality_gate_failed_report_count"]
+        ):
+            entry["status"] = "action_required"
+        elif entry["pending_suppression_count"]:
+            entry["status"] = "pending_review"
+    branch_governance = sorted(
+        (
+            {
+                key: value
+                for key, value in {
+                    **entry,
+                    "report_count": len(entry["_report_ids"]),
+                }.items()
+                if key
+                not in {
+                    "_latest_report_recency_key",
+                    "_quality_gate_failed_report_ids",
+                    "_report_ids",
+                }
+            }
+            for entry in branch_governance_stats.values()
+        ),
+        key=lambda item: (
+            -int(item.get("uncovered_bug_finding_count") or 0),
+            -int(item.get("uncovered_task_finding_count") or 0),
+            -int(item.get("quality_gate_failed_report_count") or 0),
+            -int(item.get("pending_suppression_count") or 0),
+            -int(item.get("expired_accepted_risk_count") or 0),
+            -int(item.get("active_severe_finding_count") or 0),
+            str(item.get("repository_name") or item.get("repository_id") or ""),
+            str(item.get("branch") or ""),
+        ),
+    )[:10]
     committer_governance = sorted(
         (
             {
@@ -1762,6 +1864,11 @@ def code_inspection_dashboard_response(
             for entry in committer_governance_stats.values()
             if entry.get("status") == "action_required"
         ),
+        "action_required_branch_count": sum(
+            1
+            for entry in branch_governance_stats.values()
+            if entry.get("status") == "action_required"
+        ),
         "active_severe_finding_count": sum(
             int(entry.get("active_severe_finding_count") or 0)
             for entry in committer_governance_stats.values()
@@ -1774,6 +1881,11 @@ def code_inspection_dashboard_response(
         "pending_review_committer_count": sum(
             1
             for entry in committer_governance_stats.values()
+            if entry.get("status") == "pending_review"
+        ),
+        "pending_review_branch_count": sum(
+            1
+            for entry in branch_governance_stats.values()
             if entry.get("status") == "pending_review"
         ),
         "pending_suppression_count": sum(
@@ -1859,6 +1971,7 @@ def code_inspection_dashboard_response(
         "healthy" if bug_coverage_rate >= 0.8 and task_coverage_rate >= 0.8 else "at_risk"
     )
     return {
+        "branch_governance": branch_governance,
         "branch_ranking": branch_ranking,
         "category_distribution": counter_rows(category_counts, key_name="category"),
         "committer_governance": committer_governance,

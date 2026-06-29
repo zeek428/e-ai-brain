@@ -132,6 +132,28 @@ export type CodeInspectionDetailRecord = {
 };
 
 export type CodeInspectionDashboardRecord = {
+  branch_governance?: Array<{
+    accepted_risk_count: number;
+    active_severe_finding_count: number;
+    branch?: string | null;
+    covered_by_bug_count: number;
+    covered_by_task_count: number;
+    expired_accepted_risk_count?: number;
+    finding_count: number;
+    latest_report_id?: string | null;
+    latest_report_summary?: string | null;
+    oldest_uncovered_at?: string | null;
+    pending_suppression_count: number;
+    quality_gate_failed_report_count?: number;
+    quality_gate_violation_count?: number;
+    report_count: number;
+    repository_id?: string | null;
+    repository_name?: string | null;
+    severe_finding_count: number;
+    status: 'action_required' | 'healthy' | 'pending_review' | string;
+    uncovered_bug_finding_count: number;
+    uncovered_task_finding_count: number;
+  }>;
   branch_ranking: Array<{
     branch?: string | null;
     finding_count: number;
@@ -171,10 +193,12 @@ export type CodeInspectionDashboardRecord = {
   }>;
   governance_pressure?: {
     accepted_risk_count?: number;
+    action_required_branch_count?: number;
     action_required_committer_count?: number;
     active_severe_finding_count?: number;
     expired_accepted_risk_count?: number;
     failed_report_count?: number;
+    pending_review_branch_count?: number;
     pending_review_committer_count?: number;
     pending_suppression_count?: number;
     quality_gate_failed_report_count?: number;
