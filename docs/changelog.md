@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 前端系统管理 client 拆分：新增 `apps/web/src/services/systemManagementClient.ts`，承接用户、角色、菜单、权限矩阵和用户权限诊断 API，`services/aiBrain.ts` 保持兼容导出并将前端服务 barrel 守护预算收紧到 2400 行。
 - 授权仓储拆大文件：抽出 `authorization_defaults` 承接默认菜单、角色菜单授权、scope 白名单和排序字段，并把 `authorization.py` 纳入 2800 行架构守护。
 - AI 执行器 Runner 服务拆大文件：抽出 `ai_executor_runner_constants` 和 `ai_executor_runner_packages`，将 Runner 常量与安装包构造从主服务拆开，并把 `ai_executor_runners.py` 纳入 2800 行架构守护。
 - 代码巡检风险接受到期治理：`accepted_risk` 忽略申请必须携带到期时间，可记录责任人，详情页新增“接受风险”弹窗并展示责任人与到期时间，过期后在详情 `governance_summary`、治理概览 `rule_governance` 和 `committer_governance` 中标记待复核。

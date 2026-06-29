@@ -4,6 +4,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_DOMAIN_FILE_LINES = 2800
+MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
 
 DOMAIN_FILE_LINE_BUDGETS = {
     "apps/api/app/services/ai_executor_runners.py": MAX_DOMAIN_FILE_LINES,
@@ -12,7 +13,7 @@ DOMAIN_FILE_LINE_BUDGETS = {
     "apps/api/app/services/assistant_references.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/plugins.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/scheduled_jobs.py": MAX_DOMAIN_FILE_LINES,
-    "apps/web/src/services/aiBrain.ts": MAX_DOMAIN_FILE_LINES,
+    "apps/web/src/services/aiBrain.ts": MAX_FRONTEND_SERVICE_BARREL_LINES,
 }
 
 
