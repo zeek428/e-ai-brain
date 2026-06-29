@@ -57,6 +57,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 迭代版本页版本总览组件拆分：新增 `VersionDashboardModal` 承载版本健康、下一步行动、状态分布、推进影响、阻塞治理和各明细表展示，主页面继续聚焦版本列表、状态推进、需求归集和分支维护编排。
 - 前端系统运维与研发运营 client 继续拆分：新增 `apps/web/src/services/systemOperationsClient.ts` 承接 AI Skill/Agent、定时作业、插件、AI 执行器和研发执行器策略 API，新增 `apps/web/src/services/devopsOperationsClient.ts` 承接日志监控、采集运行和待归属数据 API；`services/aiBrain.ts` 保持兼容导出并降至 2800 行以内。
 - 定时作业服务 AI 处理链路继续拆大文件：新增 `scheduled_job_ai_processing`，承接知识文档引用校验、Skill 输出契约校验、AI prompts 组装、模型网关 JSON 调用和模型调用审计；`scheduled_jobs.py` 降至 2800 行以内并继续聚焦作业配置、执行和运行状态落库。
 - 定时作业服务继续拆大文件：新增 `scheduled_job_common`、`scheduled_job_store` 和 `scheduled_job_ai_capabilities`，分别承接通用校验、仓储同步/MemoryStore 兼容 helper、AI Skill/Agent 配置 CRUD 与活跃依赖校验；`scheduled_jobs.py` 从 3900+ 行降至约 3250 行并继续聚焦作业配置、执行和运行记录编排。

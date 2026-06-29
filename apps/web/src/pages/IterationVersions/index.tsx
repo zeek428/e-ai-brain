@@ -6,30 +6,29 @@ import {
   DeleteOutlined,
   EditOutlined,
   EyeOutlined,
-  LinkOutlined,
 } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import {
   Alert,
   Button,
   Checkbox,
-  Empty,
   Form,
   Input,
   Modal,
   Popconfirm,
   Select,
   Space,
-  Spin,
   Table,
-  Tag,
-  Typography,
   message,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DateStringPicker } from '../../components/DateStringPicker';
-import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
+import {
+  ManagementListPage,
+  StatusTag,
+  type ManagementListQuery,
+} from '../../components/ManagementListPage';
 import type {
   ProductContextOption,
   ProductGitRepositoryRecord,
@@ -37,7 +36,12 @@ import type {
   ProductVersionRecord,
   RequirementRecord,
 } from '../../data/management';
-import { formatRemoteRowsError, normalizeRemoteRowsError, useRemoteRows, type RemoteRowsError } from '../../hooks/useRemoteRows';
+import {
+  formatRemoteRowsError,
+  normalizeRemoteRowsError,
+  useRemoteRows,
+  type RemoteRowsError,
+} from '../../hooks/useRemoteRows';
 import {
   advanceProductVersionStatus,
   batchScheduleRequirements,
@@ -61,8 +65,7 @@ import {
   updateProductVersion,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
-
-const { Text } = Typography;
+import { VersionDashboardModal } from './components/VersionDashboardModal';
 
 type IterationVersionFormValues = {
   code: string;
@@ -93,14 +96,20 @@ type BranchConfigFormValues = {
   working_branch: string;
 };
 
-const versionStatusLabels: Record<ProductVersionRecord['status'], { color: string; label: string }> = {
+const versionStatusLabels: Record<
+  ProductVersionRecord['status'],
+  { color: string; label: string }
+> = {
   active: { color: 'blue', label: '开发中' },
   archived: { color: 'default', label: '历史归档' },
   planning: { color: 'gold', label: '规划中' },
   released: { color: 'green', label: '已发布' },
   testing: { color: 'purple', label: '测试中' },
 };
-const requirementStatusLabels: Record<RequirementRecord['status'], { color: string; label: string }> = {
+const requirementStatusLabels: Record<
+  RequirementRecord['status'],
+  { color: string; label: string }
+> = {
   accepted: { color: 'green', label: '已验收' },
   approved: { color: 'green', label: '需求池' },
   cancelled: { color: 'default', label: '已取消' },
@@ -119,14 +128,25 @@ const requirementStatusLabels: Record<RequirementRecord['status'], { color: stri
   testing: { color: 'volcano', label: '测试中' },
 };
 
-const collectableRequirementStatuses = new Set<RequirementRecord['status']>(['approved', 'planned']);
-const collectableVersionStatuses = new Set<ProductVersionRecord['status']>(['active', 'planning']);
-const versionStatusAdvanceTargets: Partial<Record<ProductVersionRecord['status'], ProductVersionRecord['status']>> = {
+const collectableRequirementStatuses = new Set<RequirementRecord['status']>([
+  'approved',
+  'planned',
+]);
+const collectableVersionStatuses = new Set<ProductVersionRecord['status']>([
+  'active',
+  'planning',
+]);
+const versionStatusAdvanceTargets: Partial<
+  Record<ProductVersionRecord['status'], ProductVersionRecord['status']>
+> = {
   active: 'testing',
   planning: 'active',
   testing: 'released',
 };
-const branchStatusLabels: Record<ProductVersionBranchConfigRecord['branchStatus'], { color: string; label: string }> = {
+const branchStatusLabels: Record<
+  ProductVersionBranchConfigRecord['branchStatus'],
+  { color: string; label: string }
+> = {
   active: { color: 'blue', label: '开发中' },
   archived: { color: 'default', label: '已归档' },
   merged: { color: 'green', label: '已合并' },
@@ -134,20 +154,15 @@ const branchStatusLabels: Record<ProductVersionBranchConfigRecord['branchStatus'
   released: { color: 'green', label: '已发布' },
   testing: { color: 'purple', label: '测试中' },
 };
-const branchCreationSourceLabels: Record<ProductVersionBranchConfigRecord['creationSource'], string> = {
+const branchCreationSourceLabels: Record<
+  ProductVersionBranchConfigRecord['creationSource'],
+  string
+> = {
   ai_task: 'AI 任务生成',
   github_sync: 'GitHub 同步',
   gitlab_sync: 'GitLab 同步',
   manual: '手工登记',
 };
-const dashboardBlockerSourceLabels: Record<string, string> = {
-  bug: 'Bug',
-  code_inspection_report: '代码巡检',
-  jenkins_release: '发布记录',
-  product_version_branch_config: '代码分支',
-  requirement: '需求',
-};
-
 const versionStatusOptions = [
   { label: '规划中', value: 'planning' },
   { label: '开发中', value: 'active' },
@@ -158,11 +173,15 @@ const versionStatusOptions = [
 const versionCreateStatusOptions = versionStatusOptions.filter((option) =>
   ['active', 'planning'].includes(option.value),
 );
-const branchStatusOptions = Object.entries(branchStatusLabels).map(([value, item]) => ({
-  label: item.label,
-  value,
-}));
-const branchCreationSourceOptions = Object.entries(branchCreationSourceLabels).map(([value, label]) => ({
+const branchStatusOptions = Object.entries(branchStatusLabels).map(
+  ([value, item]) => ({
+    label: item.label,
+    value,
+  }),
+);
+const branchCreationSourceOptions = Object.entries(
+  branchCreationSourceLabels,
+).map(([value, label]) => ({
   label,
   value,
 }));
@@ -175,274 +194,22 @@ const versionSortFieldMap: Record<string, string> = {
   status: 'status',
 };
 
-const dashboardStatusLabelMap: Record<string, { color: string; label: string }> = {
-  ...versionStatusLabels,
-  ...requirementStatusLabels,
-  active: { color: 'blue', label: '开发中' },
-  assigned: { color: 'blue', label: '已分派' },
-  closed: { color: 'default', label: '已关闭' },
-  completed: { color: 'green', label: '已完成' },
-  failed: { color: 'red', label: '失败' },
-  fixed: { color: 'cyan', label: '已修复' },
-  high: { color: 'orange', label: '高风险' },
-  low: { color: 'green', label: '低风险' },
-  medium: { color: 'gold', label: '中风险' },
-  open: { color: 'red', label: '打开' },
-  passed: { color: 'green', label: '通过' },
-  ready_for_release: { color: 'orange', label: '待发布' },
-  reopened: { color: 'volcano', label: '重新打开' },
-  running: { color: 'blue', label: '运行中' },
-  succeeded: { color: 'green', label: '成功' },
-  triaged: { color: 'gold', label: '已分诊' },
-  verified: { color: 'green', label: '已验证' },
-  waiting_review: { color: 'gold', label: '待确认' },
-};
-
 function normalizeFilterText(value: unknown) {
   return String(value ?? '').trim() || undefined;
 }
 
-function statusTag(value?: string | null) {
-  const key = String(value ?? '-');
-  const item = dashboardStatusLabelMap[key] ?? { color: 'default', label: key };
-  return <Tag color={item.color}>{item.label}</Tag>;
-}
-
-function dashboardMetric(label: string, value: number, color?: string) {
-  return (
-    <div
-      key={label}
-      style={{
-        border: '1px solid #f0f0f0',
-        borderRadius: 6,
-        minWidth: 112,
-        padding: '8px 12px',
-      }}
-    >
-      <Text type="secondary">{label}</Text>
-      <div style={{ color, fontSize: 20, fontWeight: 600, lineHeight: 1.4 }}>{value}</div>
-    </div>
-  );
-}
-
-function dashboardStatusCountStrip(
-  title: string,
-  counts: ProductVersionDashboard['requirementStatusCounts'],
-) {
-  return (
-    <div
-      style={{
-        border: '1px solid #f0f0f0',
-        borderRadius: 6,
-        minWidth: 260,
-        padding: '8px 12px',
-      }}
-    >
-      <Text strong>{title}</Text>
-      <Space size={6} style={{ marginTop: 8 }} wrap>
-        {counts.length ? (
-          counts.map((item) => (
-            <Tag key={`${title}-${item.status}`} color={dashboardStatusLabelMap[item.status]?.color ?? 'default'}>
-              {dashboardStatusLabelMap[item.status]?.label ?? item.status} {item.count}
-            </Tag>
-          ))
-        ) : (
-          <Text type="secondary">暂无数据</Text>
-        )}
-      </Space>
-    </div>
-  );
-}
-
-function dashboardDate(value?: string | null) {
-  return value || '-';
-}
-
-function internalHref(path: string, params: Record<string, string | undefined>) {
-  const searchParams = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value) {
-      searchParams.set(key, value);
-    }
-  });
-  const queryString = searchParams.toString();
-  return queryString ? `${path}?${queryString}` : path;
-}
-
-function blockerSubjectType(sourceType: string) {
-  if (
-    sourceType === 'bug' ||
-    sourceType === 'code_inspection_report' ||
-    sourceType === 'jenkins_release' ||
-    sourceType === 'product_version_branch_config' ||
-    sourceType === 'requirement'
-  ) {
-    return sourceType;
-  }
-  return undefined;
-}
-
-function blockerActionHref(
-  blocker: ProductVersionDashboard['blockers'][number],
-  versionId: string,
-) {
-  const targetType = blocker.actionTargetType || blocker.sourceType;
-  const targetId = blocker.actionTargetId || blocker.id;
-  if (!targetId) {
-    return undefined;
-  }
-  if (targetType === 'requirement') {
-    return internalHref('/delivery/requirements', { requirement_id: targetId });
-  }
-  if (targetType === 'bug') {
-    return internalHref('/delivery/bugs', { bug_id: targetId });
-  }
-  if (targetType === 'code_inspection_report') {
-    return internalHref('/governance/code-inspections', { source_id: targetId });
-  }
-  if (targetType === 'product_version_branch_config') {
-    return internalHref('/delivery/versions', {
-      branch_config_id: targetId,
-      version_id: versionId,
-    });
-  }
-  if (targetType === 'jenkins_release') {
-    return internalHref('/governance/devops', {
-      release_id: targetId,
-      version_id: versionId,
-    });
-  }
-  return undefined;
-}
-
-function buildStatusImpactRows(statusImpact?: ProductVersionDashboard['statusImpact']) {
-  if (!statusImpact) {
-    return [];
-  }
-  return [
-    ...statusImpact.updatedRequirements.map((item) => ({
-      ...item,
-      impact: 'updated',
-      impactLabel: '同步推进',
-    })),
-    ...statusImpact.blockedRequirements.map((item) => ({
-      ...item,
-      impact: 'blocked',
-      impactLabel: '阻塞',
-    })),
-    ...statusImpact.unchangedRequirements.map((item) => ({
-      ...item,
-      impact: 'unchanged',
-      impactLabel: '保持不变',
-    })),
-  ];
-}
-
-type DashboardHealthItem = {
-  detail: string;
-  key: string;
-  level: 'error' | 'info' | 'success' | 'warning';
-  title: string;
-  value: string;
-};
-
-const dashboardHealthLevelLabels: Record<DashboardHealthItem['level'], { color: string; label: string }> = {
-  error: { color: 'red', label: '需处理' },
-  info: { color: 'blue', label: '关注' },
-  success: { color: 'green', label: '正常' },
-  warning: { color: 'gold', label: '有风险' },
-};
-
-function blockerSourceSummary(blockers: ProductVersionDashboard['blockers']) {
-  const sourceCounts = blockers.reduce<Record<string, number>>((accumulator, blocker) => {
-    const source = dashboardBlockerSourceLabels[blocker.sourceType] ?? blocker.sourceType;
-    accumulator[source] = (accumulator[source] ?? 0) + 1;
-    return accumulator;
-  }, {});
-  return Object.entries(sourceCounts)
-    .map(([source, count]) => `${source} ${count}`)
-    .join('、');
-}
-
-function buildDashboardHealthItems(dashboard?: ProductVersionDashboard): DashboardHealthItem[] {
-  if (!dashboard) {
-    return [];
-  }
-  const severeRiskCount = dashboard.summary.severe_bugs + dashboard.summary.severe_code_inspection_reports;
-  const notCreatedBranchCount = dashboard.branchConfigs.filter(
-    (branchConfig) => branchConfig.branchStatus === 'not_created',
-  ).length;
-  const failedReleaseCount = dashboard.releases.filter((release) => {
-    const status = release.status.toLowerCase();
-    return status === 'failed' || status === 'failure' || status === 'canceled' || status === 'cancelled';
-  }).length;
-  const highRiskInspectionCount = dashboard.codeInspectionReports.filter((report) => {
-    const riskLevel = report.risk_level.toLowerCase();
-    return riskLevel === 'blocker' || riskLevel === 'critical' || riskLevel === 'high';
-  }).length;
-  return [
-    {
-      detail: dashboard.blockers.length
-        ? `阻塞来源：${blockerSourceSummary(dashboard.blockers)}。`
-        : '需求、分支、质量和发布记录暂无阻塞项。',
-      key: 'blockers',
-      level: dashboard.blockers.length ? 'error' : 'success',
-      title: '发布准入',
-      value: dashboard.blockers.length ? `${dashboard.blockers.length} 个阻塞项` : '暂无阻塞',
-    },
-    {
-      detail: `严重 Bug ${dashboard.summary.severe_bugs}，严重巡检 ${dashboard.summary.severe_code_inspection_reports}，未关闭 Bug ${dashboard.summary.open_bugs}。`,
-      key: 'quality',
-      level: severeRiskCount || dashboard.summary.open_bugs ? 'warning' : 'success',
-      title: '质量风险',
-      value: severeRiskCount ? `${severeRiskCount} 个严重风险` : '质量风险可控',
-    },
-    {
-      detail: dashboard.branchConfigs.length
-        ? `已登记 ${dashboard.branchConfigs.length} 个代码分支配置，未创建 ${notCreatedBranchCount} 个。`
-        : '尚未登记版本代码分支，进入开发/测试前需要补齐。',
-      key: 'branches',
-      level: !dashboard.branchConfigs.length || notCreatedBranchCount ? 'warning' : 'success',
-      title: '代码分支',
-      value: notCreatedBranchCount
-        ? `${notCreatedBranchCount} 个分支未创建`
-        : dashboard.branchConfigs.length
-          ? '分支已登记'
-          : '暂无分支',
-    },
-    {
-      detail: dashboard.codeInspectionReports.length
-        ? `已有 ${dashboard.codeInspectionReports.length} 份巡检报告，高风险 ${highRiskInspectionCount} 份。`
-        : '当前版本还没有代码巡检报告，进入测试/发布前建议补齐。',
-      key: 'inspection',
-      level: highRiskInspectionCount
-        ? 'warning'
-        : dashboard.codeInspectionReports.length
-          ? 'success'
-          : 'info',
-      title: '代码巡检',
-      value: highRiskInspectionCount ? `${highRiskInspectionCount} 份高风险` : `${dashboard.codeInspectionReports.length} 份报告`,
-    },
-    {
-      detail: dashboard.releases.length
-        ? `已有 ${dashboard.releases.length} 条发布记录，失败/取消 ${failedReleaseCount} 条。`
-        : '当前版本暂无发布记录。',
-      key: 'releases',
-      level: failedReleaseCount ? 'error' : dashboard.releases.length ? 'success' : 'info',
-      title: '发布流水线',
-      value: failedReleaseCount ? `${failedReleaseCount} 条失败发布` : `${dashboard.releases.length} 条发布记录`,
-    },
-  ];
-}
-
-function buildVersionListQuery(query: ManagementListQuery): ProductVersionListQuery {
+function buildVersionListQuery(
+  query: ManagementListQuery,
+): ProductVersionListQuery {
   return {
     code: normalizeFilterText(query.filters.code),
     name: normalizeFilterText(query.filters.name),
     page: query.page,
     pageSize: query.pageSize,
     product: normalizeFilterText(query.filters.productName),
-    sortField: query.sortField ? versionSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortField: query.sortField
+      ? (versionSortFieldMap[query.sortField] ?? query.sortField)
+      : undefined,
     sortOrder: query.sortOrder,
     status: normalizeFilterText(query.filters.status),
   };
@@ -457,26 +224,42 @@ function readIterationVersionDeepLinkParams() {
 }
 
 export default function IterationVersionsPage() {
-  const deepLinkParams = useMemo(() => readIterationVersionDeepLinkParams(), []);
+  const deepLinkParams = useMemo(
+    () => readIterationVersionDeepLinkParams(),
+    [],
+  );
   const [form] = Form.useForm<IterationVersionFormValues>();
   const [branchForm] = Form.useForm<BranchConfigFormValues>();
   const [collectForm] = Form.useForm<CollectRequirementsFormValues>();
   const [advanceForm] = Form.useForm<AdvanceVersionFormValues>();
-  const [editingVersion, setEditingVersion] = useState<ProductVersionRecord | null>(null);
-  const [collectingVersion, setCollectingVersion] = useState<ProductVersionRecord | null>(null);
-  const [advancingVersion, setAdvancingVersion] = useState<ProductVersionRecord | null>(null);
+  const [editingVersion, setEditingVersion] =
+    useState<ProductVersionRecord | null>(null);
+  const [collectingVersion, setCollectingVersion] =
+    useState<ProductVersionRecord | null>(null);
+  const [advancingVersion, setAdvancingVersion] =
+    useState<ProductVersionRecord | null>(null);
   const [dashboardState, setDashboardState] = useState<{
     dashboard?: ProductVersionDashboard;
     loading: boolean;
     version?: ProductVersionRecord;
   }>();
-  const [viewingVersion, setViewingVersion] = useState<ProductVersionRecord | null>(null);
-  const [branchConfigVersion, setBranchConfigVersion] = useState<ProductVersionRecord | null>(null);
-  const [editingBranchConfig, setEditingBranchConfig] = useState<ProductVersionBranchConfigRecord | null>(null);
-  const [advancePreview, setAdvancePreview] = useState<ProductVersionAdvanceStatusResult | null>(null);
-  const [branchConfigs, setBranchConfigs] = useState<ProductVersionBranchConfigRecord[]>([]);
-  const [branchRepositories, setBranchRepositories] = useState<ProductGitRepositoryRecord[]>([]);
-  const [collectRequirementIds, setCollectRequirementIds] = useState<string[]>([]);
+  const [viewingVersion, setViewingVersion] =
+    useState<ProductVersionRecord | null>(null);
+  const [branchConfigVersion, setBranchConfigVersion] =
+    useState<ProductVersionRecord | null>(null);
+  const [editingBranchConfig, setEditingBranchConfig] =
+    useState<ProductVersionBranchConfigRecord | null>(null);
+  const [advancePreview, setAdvancePreview] =
+    useState<ProductVersionAdvanceStatusResult | null>(null);
+  const [branchConfigs, setBranchConfigs] = useState<
+    ProductVersionBranchConfigRecord[]
+  >([]);
+  const [branchRepositories, setBranchRepositories] = useState<
+    ProductGitRepositoryRecord[]
+  >([]);
+  const [collectRequirementIds, setCollectRequirementIds] = useState<string[]>(
+    [],
+  );
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAdvancePreviewLoading, setIsAdvancePreviewLoading] = useState(false);
   const [isAdvanceSaving, setIsAdvanceSaving] = useState(false);
@@ -530,7 +313,9 @@ export default function IterationVersionsPage() {
   const reload = useCallback(async () => {
     setListState((current) => ({ ...current, status: 'loading' }));
     try {
-      const result = await fetchDeliveryIterationVersionList(buildVersionListQuery(listQuery));
+      const result = await fetchDeliveryIterationVersionList(
+        buildVersionListQuery(listQuery),
+      );
       setListState({
         page: result.page,
         pageSize: result.pageSize,
@@ -599,7 +384,9 @@ export default function IterationVersionsPage() {
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }, [requirements, viewingVersion]);
   const advanceTargetOptions = useMemo(() => {
-    const nextStatus = advancingVersion ? versionStatusAdvanceTargets[advancingVersion.status] : undefined;
+    const nextStatus = advancingVersion
+      ? versionStatusAdvanceTargets[advancingVersion.status]
+      : undefined;
     return nextStatus
       ? [{ label: versionStatusLabels[nextStatus].label, value: nextStatus }]
       : [];
@@ -624,34 +411,42 @@ export default function IterationVersionsPage() {
     }
   }, []);
 
-  const loadBranchConfigs = useCallback(async (version: ProductVersionRecord) => {
-    if (!version.productId) {
-      message.error('版本缺少所属产品，无法维护代码分支');
-      return;
-    }
-    setIsBranchConfigLoading(true);
-    try {
-      const [repositories, configs] = await Promise.all([
-        fetchProductGitRepositoryRecords(version.productId),
-        fetchProductVersionBranchConfigs(version.id),
-      ]);
-      const activeRepositories = repositories.filter((repository) => repository.status === 'active');
-      setBranchRepositories(activeRepositories);
-      setBranchConfigs(configs);
-    } catch (loadError) {
-      message.error(formatMutationError(loadError));
-      setBranchRepositories([]);
-      setBranchConfigs([]);
-    } finally {
-      setIsBranchConfigLoading(false);
-    }
-  }, []);
+  const loadBranchConfigs = useCallback(
+    async (version: ProductVersionRecord) => {
+      if (!version.productId) {
+        message.error('版本缺少所属产品，无法维护代码分支');
+        return;
+      }
+      setIsBranchConfigLoading(true);
+      try {
+        const [repositories, configs] = await Promise.all([
+          fetchProductGitRepositoryRecords(version.productId),
+          fetchProductVersionBranchConfigs(version.id),
+        ]);
+        const activeRepositories = repositories.filter(
+          (repository) => repository.status === 'active',
+        );
+        setBranchRepositories(activeRepositories);
+        setBranchConfigs(configs);
+      } catch (loadError) {
+        message.error(formatMutationError(loadError));
+        setBranchRepositories([]);
+        setBranchConfigs([]);
+      } finally {
+        setIsBranchConfigLoading(false);
+      }
+    },
+    [],
+  );
 
-  const openBranchConfigModal = useCallback((row: ProductVersionRecord) => {
-    setBranchConfigVersion(row);
-    setEditingBranchConfig(null);
-    void loadBranchConfigs(row);
-  }, [loadBranchConfigs]);
+  const openBranchConfigModal = useCallback(
+    (row: ProductVersionRecord) => {
+      setBranchConfigVersion(row);
+      setEditingBranchConfig(null);
+      void loadBranchConfigs(row);
+    },
+    [loadBranchConfigs],
+  );
 
   useEffect(() => {
     if (!branchConfigVersion || editingBranchConfig) {
@@ -661,14 +456,23 @@ export default function IterationVersionsPage() {
   }, [branchConfigVersion, branchForm, editingBranchConfig]);
 
   useEffect(() => {
-    if (!branchConfigVersion || editingBranchConfig || branchRepositories.length !== 1) {
+    if (
+      !branchConfigVersion ||
+      editingBranchConfig ||
+      branchRepositories.length !== 1
+    ) {
       return;
     }
     branchForm.setFieldsValue({
       base_branch: branchRepositories[0].defaultBranch,
       repository_id: branchRepositories[0].id,
     });
-  }, [branchConfigVersion, branchForm, branchRepositories, editingBranchConfig]);
+  }, [
+    branchConfigVersion,
+    branchForm,
+    branchRepositories,
+    editingBranchConfig,
+  ]);
 
   useEffect(() => {
     if (
@@ -678,7 +482,9 @@ export default function IterationVersionsPage() {
     ) {
       return;
     }
-    const targetVersion = listState.rows.find((row) => row.id === deepLinkParams.versionId);
+    const targetVersion = listState.rows.find(
+      (row) => row.id === deepLinkParams.versionId,
+    );
     if (!targetVersion) {
       return;
     }
@@ -692,17 +498,20 @@ export default function IterationVersionsPage() {
     openBranchConfigModal,
   ]);
 
-  const openEditBranchConfig = useCallback((row: ProductVersionBranchConfigRecord) => {
-    setEditingBranchConfig(row);
-    branchForm.setFieldsValue({
-      base_branch: row.baseBranch,
-      branch_status: row.branchStatus,
-      creation_source: row.creationSource,
-      description: row.description ?? undefined,
-      repository_id: row.repositoryId,
-      working_branch: row.workingBranch,
-    });
-  }, [branchForm]);
+  const openEditBranchConfig = useCallback(
+    (row: ProductVersionBranchConfigRecord) => {
+      setEditingBranchConfig(row);
+      branchForm.setFieldsValue({
+        base_branch: row.baseBranch,
+        branch_status: row.branchStatus,
+        creation_source: row.creationSource,
+        description: row.description ?? undefined,
+        repository_id: row.repositoryId,
+        working_branch: row.workingBranch,
+      });
+    },
+    [branchForm],
+  );
 
   const handleSaveBranchConfig = async () => {
     if (!branchConfigVersion) {
@@ -736,18 +545,21 @@ export default function IterationVersionsPage() {
     }
   };
 
-  const handleDeleteBranchConfig = useCallback(async (row: ProductVersionBranchConfigRecord) => {
-    if (!branchConfigVersion) {
-      return;
-    }
-    try {
-      await deleteProductVersionBranchConfig(row.id);
-      message.success('代码分支已删除');
-      await loadBranchConfigs(branchConfigVersion);
-    } catch (deleteError) {
-      message.error(formatMutationError(deleteError));
-    }
-  }, [branchConfigVersion, loadBranchConfigs]);
+  const handleDeleteBranchConfig = useCallback(
+    async (row: ProductVersionBranchConfigRecord) => {
+      if (!branchConfigVersion) {
+        return;
+      }
+      try {
+        await deleteProductVersionBranchConfig(row.id);
+        message.success('代码分支已删除');
+        await loadBranchConfigs(branchConfigVersion);
+      } catch (deleteError) {
+        message.error(formatMutationError(deleteError));
+      }
+    },
+    [branchConfigVersion, loadBranchConfigs],
+  );
 
   const openCreateModal = () => {
     setEditingVersion(null);
@@ -759,19 +571,22 @@ export default function IterationVersionsPage() {
     setIsModalOpen(true);
   };
 
-  const openEditModal = useCallback((row: ProductVersionRecord) => {
-    setEditingVersion(row);
-    form.setFieldsValue({
-      code: row.code,
-      description: row.description,
-      name: row.name,
-      product_id: row.productId,
-      release_date: row.releaseDate,
-      start_date: row.startDate,
-      status: row.status,
-    });
-    setIsModalOpen(true);
-  }, [form]);
+  const openEditModal = useCallback(
+    (row: ProductVersionRecord) => {
+      setEditingVersion(row);
+      form.setFieldsValue({
+        code: row.code,
+        description: row.description,
+        name: row.name,
+        product_id: row.productId,
+        release_date: row.releaseDate,
+        start_date: row.startDate,
+        status: row.status,
+      });
+      setIsModalOpen(true);
+    },
+    [form],
+  );
 
   const handleSave = async () => {
     const values = await form.validateFields();
@@ -801,25 +616,31 @@ export default function IterationVersionsPage() {
     }
   };
 
-  const handleDelete = useCallback(async (row: ProductVersionRecord) => {
-    try {
-      await deleteProductVersion(row.id);
-      message.success('迭代版本已删除');
-      await reload();
-    } catch (deleteError) {
-      message.error(formatMutationError(deleteError));
-    }
-  }, [reload]);
+  const handleDelete = useCallback(
+    async (row: ProductVersionRecord) => {
+      try {
+        await deleteProductVersion(row.id);
+        message.success('迭代版本已删除');
+        await reload();
+      } catch (deleteError) {
+        message.error(formatMutationError(deleteError));
+      }
+    },
+    [reload],
+  );
 
-  const openCollectModal = useCallback((row: ProductVersionRecord) => {
-    if (!collectableVersionStatuses.has(row.status)) {
-      message.warning('只有规划中或开发中的版本可以归集需求');
-      return;
-    }
-    setCollectingVersion(row);
-    setCollectRequirementIds([]);
-    collectForm.resetFields();
-  }, [collectForm]);
+  const openCollectModal = useCallback(
+    (row: ProductVersionRecord) => {
+      if (!collectableVersionStatuses.has(row.status)) {
+        message.warning('只有规划中或开发中的版本可以归集需求');
+        return;
+      }
+      setCollectingVersion(row);
+      setCollectRequirementIds([]);
+      collectForm.resetFields();
+    },
+    [collectForm],
+  );
 
   const handleCollectRequirements = async () => {
     if (!collectingVersion?.productId) {
@@ -844,7 +665,9 @@ export default function IterationVersionsPage() {
         requirement_ids: collectRequirementIds,
         version_id: collectingVersion.id,
       });
-      const skippedText = result.skippedCount ? `，跳过 ${result.skippedCount} 条` : '';
+      const skippedText = result.skippedCount
+        ? `，跳过 ${result.skippedCount} 条`
+        : '';
       message.success(`已归集 ${result.updatedCount} 条需求${skippedText}`);
       setCollectingVersion(null);
       setCollectRequirementIds([]);
@@ -857,21 +680,24 @@ export default function IterationVersionsPage() {
     }
   };
 
-  const openAdvanceModal = useCallback((row: ProductVersionRecord) => {
-    const nextStatus = versionStatusAdvanceTargets[row.status];
-    if (!nextStatus) {
-      message.warning('当前版本状态没有可推进的下一阶段');
-      return;
-    }
-    setAdvancingVersion(row);
-    setAdvancePreview(null);
-    advanceForm.resetFields();
-    advanceForm.setFieldsValue({
-      force: false,
-      reason: undefined,
-      target_status: nextStatus,
-    });
-  }, [advanceForm]);
+  const openAdvanceModal = useCallback(
+    (row: ProductVersionRecord) => {
+      const nextStatus = versionStatusAdvanceTargets[row.status];
+      if (!nextStatus) {
+        message.warning('当前版本状态没有可推进的下一阶段');
+        return;
+      }
+      setAdvancingVersion(row);
+      setAdvancePreview(null);
+      advanceForm.resetFields();
+      advanceForm.setFieldsValue({
+        force: false,
+        reason: undefined,
+        target_status: nextStatus,
+      });
+    },
+    [advanceForm],
+  );
 
   const handlePreviewAdvance = async () => {
     if (!advancingVersion) {
@@ -921,7 +747,9 @@ export default function IterationVersionsPage() {
         reason: trimText(values.reason),
         target_status: values.target_status,
       });
-      message.success(`版本已推进到${versionStatusLabels[result.targetStatus].label}`);
+      message.success(
+        `版本已推进到${versionStatusLabels[result.targetStatus].label}`,
+      );
       setAdvancingVersion(null);
       setAdvancePreview(null);
       await reload();
@@ -956,7 +784,9 @@ export default function IterationVersionsPage() {
         title: '状态',
         render: (_, row) => {
           const statusLabel = versionStatusLabels[row.status];
-          return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
+          return (
+            <StatusTag color={statusLabel.color} label={statusLabel.label} />
+          );
         },
       },
       {
@@ -978,16 +808,31 @@ export default function IterationVersionsPage() {
         width: 560,
         render: (_, row) => (
           <Space size={4}>
-            <Button icon={<DashboardOutlined />} onClick={() => void openDashboardModal(row)} type="link">
+            <Button
+              icon={<DashboardOutlined />}
+              onClick={() => void openDashboardModal(row)}
+              type="link"
+            >
               总览
             </Button>
-            <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
+            <Button
+              icon={<EditOutlined />}
+              onClick={() => openEditModal(row)}
+              type="link"
+            >
               编辑
             </Button>
-            <Button icon={<EyeOutlined />} onClick={() => setViewingVersion(row)} type="link">
+            <Button
+              icon={<EyeOutlined />}
+              onClick={() => setViewingVersion(row)}
+              type="link"
+            >
               查看需求
             </Button>
-            <Button href={fullChainSubjectHref('product_version', row.id)} type="link">
+            <Button
+              href={fullChainSubjectHref('product_version', row.id)}
+              type="link"
+            >
               全链路
             </Button>
             <Button
@@ -998,7 +843,11 @@ export default function IterationVersionsPage() {
             >
               推进状态
             </Button>
-            <Button icon={<CodeOutlined />} onClick={() => openBranchConfigModal(row)} type="link">
+            <Button
+              icon={<CodeOutlined />}
+              onClick={() => openBranchConfigModal(row)}
+              type="link"
+            >
               代码分支
             </Button>
             <Button
@@ -1009,7 +858,11 @@ export default function IterationVersionsPage() {
             >
               归集需求
             </Button>
-            <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除版本 ${row.code}？`}>
+            <Popconfirm
+              okText="删除"
+              onConfirm={() => handleDelete(row)}
+              title={`删除版本 ${row.code}？`}
+            >
               <Button danger icon={<DeleteOutlined />} type="link">
                 删除
               </Button>
@@ -1027,11 +880,6 @@ export default function IterationVersionsPage() {
       openEditModal,
     ],
   );
-
-  const dashboard = dashboardState?.dashboard;
-  const dashboardVersion = dashboard?.version ?? dashboardState?.version;
-  const dashboardStatusImpactRows = buildStatusImpactRows(dashboard?.statusImpact);
-  const dashboardHealthItems = buildDashboardHealthItems(dashboard);
 
   return (
     <>
@@ -1052,7 +900,9 @@ export default function IterationVersionsPage() {
           },
         ]}
         loading={listState.status === 'loading'}
-        notice={formatRemoteRowsError(listState.error ?? productError ?? requirementError)}
+        notice={formatRemoteRowsError(
+          listState.error ?? productError ?? requirementError,
+        )}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="新增迭代版本"
@@ -1067,641 +917,29 @@ export default function IterationVersionsPage() {
         tableTitle="迭代版本列表"
         title="迭代版本"
       />
-      <Modal
-        destroyOnHidden
-        footer={null}
-        onCancel={() => setDashboardState(undefined)}
+      <VersionDashboardModal
+        branchCreationSourceLabels={branchCreationSourceLabels}
+        branchStatusLabels={branchStatusLabels}
+        dashboard={dashboardState?.dashboard}
+        loading={dashboardState?.loading}
+        onAdvanceVersion={(version) => {
+          setDashboardState(undefined);
+          openAdvanceModal(version);
+        }}
+        onClose={() => setDashboardState(undefined)}
+        onMaintainBranches={(version) => {
+          setDashboardState(undefined);
+          openBranchConfigModal(version);
+        }}
+        onViewRequirements={(version) => {
+          setDashboardState(undefined);
+          setViewingVersion(version);
+        }}
         open={Boolean(dashboardState)}
-        title={dashboardVersion ? `版本总览 · ${dashboardVersion.code}` : '版本总览'}
-        width={1180}
-      >
-        <Spin spinning={dashboardState?.loading ?? false}>
-          {dashboard ? (
-            <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-              <Alert
-                action={
-                  <Button
-                    href={fullChainSubjectHref('product_version', dashboard.version.id)}
-                    icon={<LinkOutlined />}
-                    size="small"
-                  >
-                    版本全链路
-                  </Button>
-                }
-                title={`${dashboard.version.productName ?? dashboard.version.productId ?? '-'} · ${
-                  dashboard.version.name
-                } · ${versionStatusLabels[dashboard.version.status].label}`}
-                description={`开始时间：${dashboardDate(dashboard.version.startDate)}；计划发布时间：${dashboardDate(
-                  dashboard.version.releaseDate,
-                )}`}
-                type={dashboard.summary.blockers ? 'warning' : 'success'}
-              />
-              {dashboard.accessIssues.map((issue) => (
-                <Alert key={`${issue.section}-${issue.code}`} showIcon title={issue.message} type="warning" />
-              ))}
-              <div>
-                <Text strong>下一步行动</Text>
-                <Space size={8} style={{ display: 'flex', marginTop: 8 }} wrap>
-                  <Button
-                    disabled={!dashboard.statusImpact}
-                    icon={<ArrowRightOutlined />}
-                    onClick={() => {
-                      setDashboardState(undefined);
-                      openAdvanceModal(dashboard.version);
-                    }}
-                  >
-                    {dashboard.statusImpact
-                      ? `推进到${versionStatusLabels[dashboard.statusImpact.targetStatus].label}`
-                      : '推进状态'}
-                  </Button>
-                  <Button
-                    icon={<EyeOutlined />}
-                    onClick={() => {
-                      setDashboardState(undefined);
-                      setViewingVersion(dashboard.version);
-                    }}
-                  >
-                    查看需求
-                  </Button>
-                  <Button
-                    icon={<CodeOutlined />}
-                    onClick={() => {
-                      setDashboardState(undefined);
-                      openBranchConfigModal(dashboard.version);
-                    }}
-                  >
-                    维护分支
-                  </Button>
-                  <Button href={internalHref('/delivery/bugs', { version_id: dashboard.version.id })}>
-                    查看 Bug
-                  </Button>
-                  <Button href={internalHref('/governance/code-inspections', { version_id: dashboard.version.id })}>
-                    代码巡检
-                  </Button>
-                  <Button href={internalHref('/governance/devops', { version_id: dashboard.version.id })}>
-                    发布记录
-                  </Button>
-                  <Button href={fullChainSubjectHref('product_version', dashboard.version.id)} icon={<LinkOutlined />}>
-                    版本全链路
-                  </Button>
-                </Space>
-              </div>
-              <Space size={12} wrap>
-                {dashboardMetric('需求', dashboard.summary.requirements)}
-                {dashboardMetric('AI 任务', dashboard.summary.tasks)}
-                {dashboardMetric('代码分支', dashboard.summary.branch_configs)}
-                {dashboardMetric('Bug', dashboard.summary.bugs, dashboard.summary.open_bugs ? '#cf1322' : undefined)}
-                {dashboardMetric('未关闭 Bug', dashboard.summary.open_bugs, dashboard.summary.open_bugs ? '#cf1322' : undefined)}
-                {dashboardMetric(
-                  '严重风险',
-                  dashboard.summary.severe_bugs + dashboard.summary.severe_code_inspection_reports,
-                  dashboard.summary.severe_bugs + dashboard.summary.severe_code_inspection_reports
-                    ? '#cf1322'
-                    : undefined,
-                )}
-                {dashboardMetric('代码巡检', dashboard.summary.code_inspection_reports)}
-                {dashboardMetric('发布记录', dashboard.summary.releases)}
-                {dashboardMetric('阻塞项', dashboard.summary.blockers, dashboard.summary.blockers ? '#cf1322' : undefined)}
-              </Space>
-              <div>
-                <Text strong>交付健康摘要</Text>
-                <Space size={12} style={{ display: 'flex', marginTop: 8 }} wrap>
-                  {dashboardHealthItems.map((item) => {
-                    const level = dashboardHealthLevelLabels[item.level];
-                    return (
-                      <div
-                        key={item.key}
-                        style={{
-                          border: '1px solid #f0f0f0',
-                          borderRadius: 6,
-                          minHeight: 108,
-                          padding: '10px 12px',
-                          width: 210,
-                        }}
-                      >
-                        <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
-                          <Text strong>{item.title}</Text>
-                          <Tag color={level.color}>{level.label}</Tag>
-                        </Space>
-                        <div style={{ fontSize: 18, fontWeight: 600, lineHeight: 1.5, marginTop: 8 }}>
-                          {item.value}
-                        </div>
-                        <Text type="secondary">{item.detail}</Text>
-                      </div>
-                    );
-                  })}
-                </Space>
-              </div>
-              <div>
-                <Text strong>状态分布</Text>
-                <Space size={12} style={{ display: 'flex', marginTop: 8 }} wrap>
-                  {dashboardStatusCountStrip('需求状态', dashboard.requirementStatusCounts)}
-                  {dashboardStatusCountStrip('任务状态', dashboard.taskStatusCounts)}
-                  {dashboardStatusCountStrip('Bug 状态', dashboard.bugStatusCounts)}
-                </Space>
-              </div>
-              {dashboard.statusImpact ? (
-                <Alert
-                  description={`将同步 ${dashboard.statusImpact.updatedRequirements.length} 条需求，阻塞 ${dashboard.statusImpact.blockedRequirements.length} 条，保持不变 ${dashboard.statusImpact.unchangedRequirements.length} 条。`}
-                  showIcon
-                  title={`下一阶段：${versionStatusLabels[dashboard.statusImpact.targetStatus].label}`}
-                  type={dashboard.statusImpact.blockedRequirements.length ? 'warning' : 'info'}
-                />
-              ) : (
-                <Alert showIcon title="当前版本状态没有可推进的下一阶段" type="info" />
-              )}
-              {dashboard.statusImpact ? (
-                <div>
-                  <Text strong>推进影响明细</Text>
-                  <Table<(typeof dashboardStatusImpactRows)[number]>
-                    columns={[
-                      {
-                        dataIndex: 'impact',
-                        render: (value, row) => {
-                          const color = value === 'blocked' ? 'red' : value === 'updated' ? 'blue' : 'default';
-                          return <Tag color={color}>{row.impactLabel}</Tag>;
-                        },
-                        title: '影响',
-                        width: 120,
-                      },
-                      {
-                        dataIndex: 'id',
-                        render: (value) => (
-                          <Typography.Link
-                            href={internalHref('/delivery/requirements', {
-                              requirement_id: String(value),
-                            })}
-                          >
-                            {String(value)}
-                          </Typography.Link>
-                        ),
-                        title: '需求编号',
-                        width: 160,
-                      },
-                      {
-                        dataIndex: 'title',
-                        render: (value) => (
-                          <Text ellipsis style={{ maxWidth: 260 }}>
-                            {String(value ?? '-')}
-                          </Text>
-                        ),
-                        title: '需求标题',
-                        width: 280,
-                      },
-                      {
-                        dataIndex: 'from_status',
-                        render: (value) => statusTag(String(value ?? '-')),
-                        title: '当前状态',
-                        width: 130,
-                      },
-                      {
-                        dataIndex: 'to_status',
-                        render: (value) => (value ? statusTag(String(value)) : <Text type="secondary">-</Text>),
-                        title: '目标状态',
-                        width: 130,
-                      },
-                      {
-                        dataIndex: 'block_reason',
-                        render: (value) => (
-                          <Text ellipsis style={{ maxWidth: 280 }}>
-                            {String(value ?? '-')}
-                          </Text>
-                        ),
-                        title: '说明',
-                      },
-                      {
-                        key: 'action',
-                        render: (_, row) => (
-                          <Button
-                            href={fullChainSubjectHref('requirement', row.id)}
-                            icon={<LinkOutlined />}
-                            size="small"
-                            type="link"
-                          >
-                            全链路
-                          </Button>
-                        ),
-                        title: '操作',
-                        width: 110,
-                      },
-                    ]}
-                    dataSource={dashboardStatusImpactRows}
-                    locale={{ emptyText: '下一阶段暂无需求状态影响' }}
-                    pagination={dashboardStatusImpactRows.length > 5 ? { pageSize: 5 } : false}
-                    rowKey={(row) => `${row.impact}-${row.id}`}
-                    scroll={{ x: 1090 }}
-                    size="small"
-                  />
-                </div>
-              ) : null}
-              <div>
-                <Text strong>阻塞项</Text>
-                <Table<ProductVersionDashboard['blockers'][number]>
-                  columns={[
-                    {
-                      dataIndex: 'sourceType',
-                      render: (value) => dashboardBlockerSourceLabels[String(value)] ?? String(value ?? '-'),
-                      title: '来源',
-                      width: 120,
-                    },
-                    {
-                      dataIndex: 'title',
-                      render: (value) => (
-                        <Text ellipsis style={{ maxWidth: 220 }}>
-                          {String(value ?? '-')}
-                        </Text>
-                      ),
-                      title: '标题',
-                      width: 240,
-                    },
-                    {
-                      dataIndex: 'severity',
-                      render: (value) => statusTag(String(value)),
-                      title: '级别',
-                      width: 120,
-                    },
-                    {
-                      dataIndex: 'reason',
-                      render: (value) => (
-                        <Text ellipsis style={{ maxWidth: 460 }}>
-                          {String(value ?? '-')}
-                        </Text>
-                      ),
-                      title: '原因',
-                      width: 360,
-                    },
-                    {
-                      dataIndex: 'resolutionHint',
-                      render: (value) => (
-                        <Text ellipsis style={{ maxWidth: 340 }}>
-                          {String(value ?? '-')}
-                        </Text>
-                      ),
-                      title: '解除条件',
-                      width: 360,
-                    },
-                    {
-                      key: 'action',
-                      render: (_, row) => {
-                        const subjectType = blockerSubjectType(String(row.sourceType ?? ''));
-                        const actionHref = blockerActionHref(row, dashboard.version.id);
-                        return (
-                          <Space size={4}>
-                            {actionHref ? (
-                              <Button href={actionHref} size="small" type="link">
-                                {row.actionLabel}
-                              </Button>
-                            ) : null}
-                            {subjectType && row.id ? (
-                              <Button
-                                href={fullChainSubjectHref(subjectType, row.id)}
-                                icon={<LinkOutlined />}
-                                size="small"
-                                type="link"
-                              >
-                                全链路
-                              </Button>
-                            ) : null}
-                            {!actionHref && !(subjectType && row.id) ? <Text type="secondary">-</Text> : null}
-                          </Space>
-                        );
-                      },
-                      title: '操作',
-                      width: 180,
-                    },
-                  ]}
-                  dataSource={dashboard.blockers}
-                  locale={{ emptyText: <Empty description="暂无阻塞项" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-                  pagination={false}
-                  rowKey={(row) => `${row.sourceType}-${row.id ?? row.title}`}
-                  scroll={{ x: 1490 }}
-                  size="small"
-                />
-              </div>
-              <div>
-                <Text strong>需求与任务</Text>
-                <Table<RequirementRecord>
-                  columns={[
-                    {
-                      dataIndex: 'id',
-                      render: (value) => (
-                        <Typography.Link
-                          href={internalHref('/delivery/requirements', {
-                            requirement_id: String(value),
-                          })}
-                        >
-                          {String(value)}
-                        </Typography.Link>
-                      ),
-                      title: '需求编号',
-                      width: 160,
-                    },
-                    {
-                      dataIndex: 'title',
-                      render: (value) => (
-                        <Text ellipsis style={{ maxWidth: 260 }}>
-                          {String(value ?? '-')}
-                        </Text>
-                      ),
-                      title: '需求标题',
-                      width: 280,
-                    },
-                    { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
-                    { dataIndex: 'priority', title: '优先级', width: 100 },
-                    { dataIndex: 'updatedAt', title: '更新时间', width: 170 },
-                    {
-                      key: 'action',
-                      render: (_, row) => (
-                        <Button
-                          href={fullChainSubjectHref('requirement', row.id)}
-                          icon={<LinkOutlined />}
-                          size="small"
-                          type="link"
-                        >
-                          全链路
-                        </Button>
-                      ),
-                      title: '操作',
-                      width: 110,
-                    },
-                  ]}
-                  dataSource={dashboard.requirements}
-                  locale={{ emptyText: '当前版本暂无需求' }}
-                  pagination={dashboard.requirements.length > 5 ? { pageSize: 5 } : false}
-                  rowKey="id"
-                  scroll={{ x: 940 }}
-                  size="small"
-                />
-                <Table<ProductVersionDashboard['tasks'][number]>
-                  columns={[
-                    {
-                      dataIndex: 'id',
-                      render: (value) => (
-                        <Typography.Link
-                          href={internalHref('/delivery/rd-tasks', {
-                            task_id: String(value),
-                          })}
-                        >
-                          {String(value)}
-                        </Typography.Link>
-                      ),
-                      title: '任务编号',
-                      width: 160,
-                    },
-                    {
-                      dataIndex: 'label',
-                      render: (value) => (
-                        <Text ellipsis style={{ maxWidth: 260 }}>
-                          {String(value ?? '-')}
-                        </Text>
-                      ),
-                      title: '任务标题',
-                      width: 280,
-                    },
-                    { dataIndex: 'type', title: '类型', width: 130 },
-                    { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
-                    { dataIndex: 'owner', title: '负责人', width: 120 },
-                    {
-                      key: 'action',
-                      render: (_, row) => (
-                        <Button
-                          href={fullChainSubjectHref('ai_task', row.id)}
-                          icon={<LinkOutlined />}
-                          size="small"
-                          type="link"
-                        >
-                          全链路
-                        </Button>
-                      ),
-                      title: '操作',
-                      width: 110,
-                    },
-                  ]}
-                  dataSource={dashboard.tasks}
-                  locale={{ emptyText: '当前版本暂无 AI 任务' }}
-                  pagination={dashboard.tasks.length > 5 ? { pageSize: 5 } : false}
-                  rowKey="id"
-                  scroll={{ x: 920 }}
-                  size="small"
-                />
-              </div>
-              <div>
-                <Text strong>质量与交付</Text>
-                <Table<ProductVersionDashboard['bugs'][number]>
-                  columns={[
-                    {
-                      dataIndex: 'id',
-                      render: (value) => (
-                        <Typography.Link
-                          href={internalHref('/delivery/bugs', {
-                            bug_id: String(value),
-                          })}
-                        >
-                          {String(value)}
-                        </Typography.Link>
-                      ),
-                      title: 'Bug 编号',
-                      width: 150,
-                    },
-                    {
-                      dataIndex: 'title',
-                      render: (value) => (
-                        <Text ellipsis style={{ maxWidth: 240 }}>
-                          {String(value ?? '-')}
-                        </Text>
-                      ),
-                      title: 'Bug 标题',
-                      width: 260,
-                    },
-                    { dataIndex: 'severity', render: (value) => statusTag(String(value)), title: '严重级别', width: 120 },
-                    { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
-                    { dataIndex: 'assignee', title: '负责人', width: 120 },
-                    {
-                      key: 'action',
-                      render: (_, row) => (
-                        <Button
-                          href={fullChainSubjectHref('bug', row.id)}
-                          icon={<LinkOutlined />}
-                          size="small"
-                          type="link"
-                        >
-                          全链路
-                        </Button>
-                      ),
-                      title: '操作',
-                      width: 110,
-                    },
-                  ]}
-                  dataSource={dashboard.bugs}
-                  locale={{ emptyText: '当前版本暂无 Bug' }}
-                  pagination={dashboard.bugs.length > 5 ? { pageSize: 5 } : false}
-                  rowKey="id"
-                  scroll={{ x: 900 }}
-                  size="small"
-                />
-                <Table<ProductVersionDashboard['codeInspectionReports'][number]>
-                  columns={[
-                    {
-                      dataIndex: 'repository_name',
-                      render: (value, row) => (
-                        <Typography.Link href={fullChainSubjectHref('code_inspection_report', row.id)}>
-                          {String(value ?? row.id)}
-                        </Typography.Link>
-                      ),
-                      title: '代码库',
-                      width: 180,
-                    },
-                    { dataIndex: 'branch', title: '分支', width: 170 },
-                    { dataIndex: 'risk_level', render: (value) => statusTag(String(value)), title: '风险', width: 120 },
-                    { dataIndex: 'finding_count', title: '问题数', width: 100 },
-                    {
-                      dataIndex: 'summary',
-                      render: (value) => (
-                        <Text ellipsis style={{ maxWidth: 300 }}>
-                          {String(value ?? '-')}
-                        </Text>
-                      ),
-                      title: '摘要',
-                      width: 320,
-                    },
-                    { dataIndex: 'created_at', render: (value) => dashboardDate(String(value ?? '')), title: '创建时间', width: 170 },
-                    {
-                      key: 'action',
-                      render: (_, row) => (
-                        <Space size={4}>
-                          <Button
-                            href={internalHref('/governance/code-inspections', { source_id: row.id })}
-                            icon={<LinkOutlined />}
-                            size="small"
-                            type="link"
-                          >
-                            详情
-                          </Button>
-                          <Button
-                            href={fullChainSubjectHref('code_inspection_report', row.id)}
-                            size="small"
-                            type="link"
-                          >
-                            全链路
-                          </Button>
-                        </Space>
-                      ),
-                      title: '操作',
-                      width: 150,
-                    },
-                  ]}
-                  dataSource={dashboard.codeInspectionReports}
-                  locale={{ emptyText: '当前版本暂无代码巡检报告' }}
-                  pagination={dashboard.codeInspectionReports.length > 5 ? { pageSize: 5 } : false}
-                  rowKey="id"
-                  scroll={{ x: 1210 }}
-                  size="small"
-                />
-                <Table<ProductVersionDashboard['branchConfigs'][number]>
-                  columns={[
-                    { dataIndex: 'repositoryName', title: '代码库', width: 180 },
-                    { dataIndex: 'baseBranch', title: '基准分支', width: 150 },
-                    {
-                      dataIndex: 'workingBranch',
-                      render: (value, row) => (
-                        <Typography.Link
-                          href={internalHref('/delivery/versions', {
-                            branch_config_id: row.id,
-                            version_id: row.versionId,
-                          })}
-                        >
-                          {String(value ?? '-')}
-                        </Typography.Link>
-                      ),
-                      title: '开发分支',
-                      width: 200,
-                    },
-                    {
-                      dataIndex: 'branchStatus',
-                      render: (_, row) => {
-                        const statusLabel = branchStatusLabels[row.branchStatus];
-                        return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
-                      },
-                      title: '状态',
-                      width: 120,
-                    },
-                    {
-                      dataIndex: 'creationSource',
-                      render: (_, row) => branchCreationSourceLabels[row.creationSource],
-                      title: '来源',
-                      width: 140,
-                    },
-                    {
-                      key: 'action',
-                      render: (_, row) => (
-                        <Button
-                          href={fullChainSubjectHref('product_version_branch_config', row.id)}
-                          icon={<LinkOutlined />}
-                          size="small"
-                          type="link"
-                        >
-                          全链路
-                        </Button>
-                      ),
-                      title: '操作',
-                      width: 110,
-                    },
-                  ]}
-                  dataSource={dashboard.branchConfigs}
-                  locale={{ emptyText: '当前版本暂无代码分支配置' }}
-                  pagination={false}
-                  rowKey="id"
-                  scroll={{ x: 900 }}
-                  size="small"
-                />
-                <Table<ProductVersionDashboard['releases'][number]>
-                  columns={[
-                    {
-                      dataIndex: 'id',
-                      render: (value) => (
-                        <Typography.Link
-                          href={internalHref('/governance/devops', {
-                            version_id: dashboard.version.id,
-                          })}
-                        >
-                          {String(value ?? '-')}
-                        </Typography.Link>
-                      ),
-                      title: '发布编号',
-                      width: 180,
-                    },
-                    { dataIndex: 'jobName', title: '作业', width: 200 },
-                    { dataIndex: 'buildId', title: '构建号', width: 130 },
-                    { dataIndex: 'status', render: (value) => statusTag(String(value)), title: '状态', width: 120 },
-                    { dataIndex: 'createdAt', title: '时间', width: 170 },
-                    {
-                      key: 'action',
-                      render: (_, row) => (
-                        <Button
-                          href={fullChainSubjectHref('jenkins_release', row.id)}
-                          icon={<LinkOutlined />}
-                          size="small"
-                          type="link"
-                        >
-                          全链路
-                        </Button>
-                      ),
-                      title: '操作',
-                      width: 110,
-                    },
-                  ]}
-                  dataSource={dashboard.releases}
-                  locale={{ emptyText: '当前版本暂无发布记录' }}
-                  pagination={dashboard.releases.length > 5 ? { pageSize: 5 } : false}
-                  rowKey="id"
-                  scroll={{ x: 910 }}
-                  size="small"
-                />
-              </div>
-            </Space>
-          ) : null}
-        </Spin>
-      </Modal>
+        requirementStatusLabels={requirementStatusLabels}
+        version={dashboardState?.version}
+        versionStatusLabels={versionStatusLabels}
+      />
       <Modal
         destroyOnHidden
         footer={null}
@@ -1713,7 +951,11 @@ export default function IterationVersionsPage() {
           setBranchRepositories([]);
         }}
         open={Boolean(branchConfigVersion)}
-        title={branchConfigVersion ? `代码分支 · ${branchConfigVersion.code}` : '代码分支'}
+        title={
+          branchConfigVersion
+            ? `代码分支 · ${branchConfigVersion.code}`
+            : '代码分支'
+        }
         width={980}
       >
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
@@ -1733,14 +975,23 @@ export default function IterationVersionsPage() {
             layout="vertical"
             onValuesChange={(changedValues) => {
               if ('repository_id' in changedValues && !editingBranchConfig) {
-                const repository = branchRepositories.find((item) => item.id === changedValues.repository_id);
+                const repository = branchRepositories.find(
+                  (item) => item.id === changedValues.repository_id,
+                );
                 if (repository) {
-                  branchForm.setFieldValue('base_branch', repository.defaultBranch);
+                  branchForm.setFieldValue(
+                    'base_branch',
+                    repository.defaultBranch,
+                  );
                 }
               }
             }}
           >
-            <Form.Item label="关联代码库" name="repository_id" rules={[{ required: true, message: '请选择代码库' }]}>
+            <Form.Item
+              label="关联代码库"
+              name="repository_id"
+              rules={[{ required: true, message: '请选择代码库' }]}
+            >
               <Select
                 disabled={Boolean(editingBranchConfig)}
                 loading={isBranchConfigLoading}
@@ -1753,20 +1004,36 @@ export default function IterationVersionsPage() {
             <Form.Item label="基准分支" name="base_branch">
               <Input placeholder="main / master" />
             </Form.Item>
-            <Form.Item label="开发分支" name="working_branch" rules={[{ required: true, message: '请输入开发分支' }]}>
+            <Form.Item
+              label="开发分支"
+              name="working_branch"
+              rules={[{ required: true, message: '请输入开发分支' }]}
+            >
               <Input placeholder="release/2026-06 或 feature/version-code" />
             </Form.Item>
-            <Form.Item label="分支状态" name="branch_status" initialValue="not_created">
+            <Form.Item
+              label="分支状态"
+              name="branch_status"
+              initialValue="not_created"
+            >
               <Select options={branchStatusOptions} />
             </Form.Item>
-            <Form.Item label="创建来源" name="creation_source" initialValue="manual">
+            <Form.Item
+              label="创建来源"
+              name="creation_source"
+              initialValue="manual"
+            >
               <Select options={branchCreationSourceOptions} />
             </Form.Item>
             <Form.Item label="说明" name="description">
               <Input.TextArea rows={2} />
             </Form.Item>
             <Space>
-              <Button loading={isBranchConfigSaving} onClick={() => void handleSaveBranchConfig()} type="primary">
+              <Button
+                loading={isBranchConfigSaving}
+                onClick={() => void handleSaveBranchConfig()}
+                type="primary"
+              >
                 {editingBranchConfig ? '保存分支' : '新增分支'}
               </Button>
               {editingBranchConfig ? (
@@ -1790,26 +1057,46 @@ export default function IterationVersionsPage() {
                 dataIndex: 'branchStatus',
                 render: (_, row) => {
                   const statusLabel = branchStatusLabels[row.branchStatus];
-                  return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
+                  return (
+                    <StatusTag
+                      color={statusLabel.color}
+                      label={statusLabel.label}
+                    />
+                  );
                 },
                 title: '状态',
               },
               {
                 dataIndex: 'creationSource',
-                render: (_, row) => branchCreationSourceLabels[row.creationSource],
+                render: (_, row) =>
+                  branchCreationSourceLabels[row.creationSource],
                 title: '来源',
               },
               {
                 key: 'actions',
                 render: (_, row) => (
                   <Space size={4}>
-                    <Button href={fullChainSubjectHref('product_version_branch_config', row.id)} type="link">
+                    <Button
+                      href={fullChainSubjectHref(
+                        'product_version_branch_config',
+                        row.id,
+                      )}
+                      type="link"
+                    >
                       全链路
                     </Button>
-                    <Button icon={<EditOutlined />} onClick={() => openEditBranchConfig(row)} type="link">
+                    <Button
+                      icon={<EditOutlined />}
+                      onClick={() => openEditBranchConfig(row)}
+                      type="link"
+                    >
                       编辑
                     </Button>
-                    <Popconfirm okText="删除" onConfirm={() => handleDeleteBranchConfig(row)} title="删除该分支配置？">
+                    <Popconfirm
+                      okText="删除"
+                      onConfirm={() => handleDeleteBranchConfig(row)}
+                      title="删除该分支配置？"
+                    >
                       <Button danger icon={<DeleteOutlined />} type="link">
                         删除
                       </Button>
@@ -1833,7 +1120,9 @@ export default function IterationVersionsPage() {
         footer={null}
         onCancel={() => setViewingVersion(null)}
         open={Boolean(viewingVersion)}
-        title={viewingVersion ? `查看需求 · ${viewingVersion.code}` : '查看需求'}
+        title={
+          viewingVersion ? `查看需求 · ${viewingVersion.code}` : '查看需求'
+        }
         width={920}
       >
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
@@ -1855,14 +1144,22 @@ export default function IterationVersionsPage() {
                 dataIndex: 'status',
                 render: (_, row) => {
                   const statusLabel = requirementStatusLabels[row.status];
-                  return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
+                  return (
+                    <StatusTag
+                      color={statusLabel.color}
+                      label={statusLabel.label}
+                    />
+                  );
                 },
                 title: '状态',
               },
               {
                 dataIndex: 'priority',
                 render: (_, row) => (
-                  <StatusTag color={row.priority === 'P0' ? 'red' : 'blue'} label={row.priority} />
+                  <StatusTag
+                    color={row.priority === 'P0' ? 'red' : 'blue'}
+                    label={row.priority}
+                  />
                 ),
                 title: '优先级',
               },
@@ -1870,9 +1167,14 @@ export default function IterationVersionsPage() {
             ]}
             dataSource={currentVersionRequirements}
             locale={{
-              emptyText: requirementStatus === 'loading' ? '正在加载需求' : '当前版本暂无需求',
+              emptyText:
+                requirementStatus === 'loading'
+                  ? '正在加载需求'
+                  : '当前版本暂无需求',
             }}
-            pagination={currentVersionRequirements.length > 5 ? { pageSize: 5 } : false}
+            pagination={
+              currentVersionRequirements.length > 5 ? { pageSize: 5 } : false
+            }
             rowKey="id"
             size="small"
           />
@@ -1887,7 +1189,11 @@ export default function IterationVersionsPage() {
         title={editingVersion ? '编辑迭代版本' : '新增迭代版本'}
       >
         <Form<IterationVersionFormValues> form={form} layout="vertical">
-          <Form.Item label="所属产品" name="product_id" rules={[{ required: true, message: '请选择产品' }]}>
+          <Form.Item
+            label="所属产品"
+            name="product_id"
+            rules={[{ required: true, message: '请选择产品' }]}
+          >
             <Select
               disabled={Boolean(editingVersion)}
               loading={productStatus === 'loading'}
@@ -1897,14 +1203,26 @@ export default function IterationVersionsPage() {
               showSearch
             />
           </Form.Item>
-          <Form.Item label="版本编码" name="code" rules={[{ required: true, message: '请输入版本编码' }]}>
+          <Form.Item
+            label="版本编码"
+            name="code"
+            rules={[{ required: true, message: '请输入版本编码' }]}
+          >
             <Input />
           </Form.Item>
-          <Form.Item label="版本名称" name="name" rules={[{ required: true, message: '请输入版本名称' }]}>
+          <Form.Item
+            label="版本名称"
+            name="name"
+            rules={[{ required: true, message: '请输入版本名称' }]}
+          >
             <Input />
           </Form.Item>
           {!editingVersion ? (
-            <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
+            <Form.Item
+              label="状态"
+              name="status"
+              rules={[{ required: true, message: '请选择状态' }]}
+            >
               <Select options={versionCreateStatusOptions} />
             </Form.Item>
           ) : null}
@@ -1949,7 +1267,11 @@ export default function IterationVersionsPage() {
               }
             }}
           >
-            <Form.Item label="目标状态" name="target_status" rules={[{ required: true, message: '请选择目标状态' }]}>
+            <Form.Item
+              label="目标状态"
+              name="target_status"
+              rules={[{ required: true, message: '请选择目标状态' }]}
+            >
               <Select options={advanceTargetOptions} />
             </Form.Item>
             <Form.Item label="推进原因" name="reason">
@@ -1958,25 +1280,35 @@ export default function IterationVersionsPage() {
             <Form.Item name="force" valuePropName="checked">
               <Checkbox>允许带风险推进</Checkbox>
             </Form.Item>
-            <Button loading={isAdvancePreviewLoading} onClick={() => void handlePreviewAdvance()}>
+            <Button
+              loading={isAdvancePreviewLoading}
+              onClick={() => void handlePreviewAdvance()}
+            >
               生成影响预览
             </Button>
           </Form>
           {advancePreview ? (
             <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-              <Alert title={`将推进 ${advancePreview.updatedRequirements.length} 条需求`} type="success" />
+              <Alert
+                title={`将推进 ${advancePreview.updatedRequirements.length} 条需求`}
+                type="success"
+              />
               {advancePreview.updatedRequirements.map((requirement) => (
                 <div key={requirement.id}>
-                  {requirement.title} · {requirement.from_status} → {requirement.to_status}
+                  {requirement.title} · {requirement.from_status} →{' '}
+                  {requirement.to_status}
                 </div>
               ))}
               <Alert
                 title={`阻塞 ${advancePreview.blockedRequirements.length} 条需求`}
-                type={advancePreview.blockedRequirements.length ? 'warning' : 'info'}
+                type={
+                  advancePreview.blockedRequirements.length ? 'warning' : 'info'
+                }
               />
               {advancePreview.blockedRequirements.map((requirement) => (
                 <div key={requirement.id}>
-                  {requirement.title} · {requirement.status} · {requirement.block_reason}
+                  {requirement.title} · {requirement.status} ·{' '}
+                  {requirement.block_reason}
                 </div>
               ))}
             </Space>
@@ -1990,7 +1322,11 @@ export default function IterationVersionsPage() {
         onCancel={() => setCollectingVersion(null)}
         onOk={() => void handleCollectRequirements()}
         open={Boolean(collectingVersion)}
-        title={collectingVersion ? `归集需求到 ${collectingVersion.code}` : '归集需求'}
+        title={
+          collectingVersion
+            ? `归集需求到 ${collectingVersion.code}`
+            : '归集需求'
+        }
       >
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
           <Alert
@@ -2003,7 +1339,9 @@ export default function IterationVersionsPage() {
           />
           {collectableRequirements.length ? (
             <Checkbox.Group
-              onChange={(values) => setCollectRequirementIds(values.map((value) => String(value)))}
+              onChange={(values) =>
+                setCollectRequirementIds(values.map((value) => String(value)))
+              }
               value={collectRequirementIds}
             >
               <Space orientation="vertical">
@@ -2027,7 +1365,10 @@ export default function IterationVersionsPage() {
               type="warning"
             />
           )}
-          <Form<CollectRequirementsFormValues> form={collectForm} layout="vertical">
+          <Form<CollectRequirementsFormValues>
+            form={collectForm}
+            layout="vertical"
+          >
             <Form.Item label="归集原因" name="reason">
               <Input.TextArea rows={2} />
             </Form.Item>

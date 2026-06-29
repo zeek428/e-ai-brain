@@ -1224,13 +1224,6 @@ type CodeReviewReportResponse = {
   };
 };
 
-type FlexibleListItem = Record<string, unknown> & {
-  created_at?: string;
-  id?: string;
-  status?: string;
-  updated_at?: string;
-};
-
 type UserListItem = {
   display_name: string;
   id: string;
@@ -1501,13 +1494,6 @@ function normalizeActiveInactiveStatus(
   return status === 'inactive' ? 'inactive' : 'active';
 }
 
-function normalizeObjectRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
-
 function formatUnknownValue(value: unknown): string {
   if (value === null || value === undefined || value === '') {
     return '-';
@@ -1608,16 +1594,6 @@ function normalizePreviousSnapshot(
     id: snapshot.id,
     snapshotHash: snapshot.snapshot_hash,
   };
-}
-
-function firstKnownValue(item: FlexibleListItem, keys: string[]) {
-  for (const key of keys) {
-    const value = item[key];
-    if (value !== null && value !== undefined && value !== '') {
-      return value;
-    }
-  }
-  return undefined;
 }
 
 export async function fetchManagementProducts(): Promise<ProductRecord[]> {
