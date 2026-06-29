@@ -124,6 +124,27 @@ function installCodeInspectionsFetchMock() {
               username: 'alice',
             },
           ],
+          committer_governance: [
+            {
+              accepted_risk_count: 0,
+              active_severe_finding_count: 1,
+              covered_by_bug_count: 1,
+              covered_by_task_count: 1,
+              email: 'alice@example.com',
+              finding_count: 1,
+              latest_report_id: 'code_inspection_report_001',
+              latest_report_summary: '发现 1 个 critical 安全问题。',
+              name: 'Alice Chen',
+              oldest_uncovered_at: null,
+              pending_suppression_count: 0,
+              report_count: 1,
+              severe_finding_count: 1,
+              status: 'healthy',
+              uncovered_bug_finding_count: 0,
+              uncovered_task_finding_count: 0,
+              username: 'alice',
+            },
+          ],
           repository_ranking: [
             {
               branch_count: 1,
@@ -429,6 +450,10 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getByText('accepted_risk')).toBeInTheDocument();
     expect(screen.getByText('仓库风险排行')).toBeInTheDocument();
     expect(screen.getByText('提交人风险排行')).toBeInTheDocument();
+    expect(screen.getByText('提交人治理待办')).toBeInTheDocument();
+    expect(screen.getAllByText('活跃严重').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('缺整改任务').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('健康').length).toBeGreaterThan(0);
     expect(screen.getByText('质量门禁趋势')).toBeInTheDocument();
     expect(screen.getByText('门禁失败原因')).toBeInTheDocument();
     expect(screen.getByText('严重问题 SLA')).toBeInTheDocument();

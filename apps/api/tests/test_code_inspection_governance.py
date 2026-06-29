@@ -1744,6 +1744,13 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["branch_ranking"][0]["branch"] == "main"
     assert payload["committer_ranking"][0]["email"] == "alice@example.com"
     assert payload["committer_ranking"][0]["bug_count"] == 1
+    assert payload["committer_governance"][0]["email"] == "alice@example.com"
+    assert payload["committer_governance"][0]["status"] == "healthy"
+    assert payload["committer_governance"][0]["active_severe_finding_count"] == 1
+    assert payload["committer_governance"][0]["covered_by_bug_count"] == 1
+    assert payload["committer_governance"][0]["covered_by_task_count"] == 1
+    assert payload["committer_governance"][0]["uncovered_bug_finding_count"] == 0
+    assert payload["committer_governance"][0]["uncovered_task_finding_count"] == 0
     assert payload["trend"][0]["report_count"] == 1
     assert payload["trend"][0]["quality_gate_passed_count"] == 0
     assert payload["trend"][0]["quality_gate_failed_count"] == 1
@@ -1782,6 +1789,49 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     )
     assert filtered.status_code == 200
     assert filtered.json()["data"]["summary"]["report_count"] == 0
+
+
+def test_code_inspection_dashboard_committer_governance_tracks_uncovered_actions():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, code="repo-quality-product-committer-governance")
+    repository = create_repository(headers, product["id"])
+    _, connection, action = create_scanner_plugin(headers, repository["id"])
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {"branch": "main", "repository_id": repository["id"]},
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Committer governance inspection",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "repo-quality-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+    run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers)
+    assert run.status_code == 200
+
+    dashboard = client.get(
+        f"/api/governance/code-inspections/dashboard?product_id={product['id']}",
+        headers=headers,
+    )
+
+    assert dashboard.status_code == 200
+    governance = dashboard.json()["data"]["committer_governance"][0]
+    assert governance["email"] == "alice@example.com"
+    assert governance["status"] == "action_required"
+    assert governance["report_count"] == 1
+    assert governance["active_severe_finding_count"] == 1
+    assert governance["uncovered_bug_finding_count"] == 1
+    assert governance["uncovered_task_finding_count"] == 1
+    assert governance["latest_report_id"] == run.json()["data"]["result_summary"]["report_id"]
 
 
 def test_code_inspection_dashboard_quality_gate_latest_report_uses_report_recency():

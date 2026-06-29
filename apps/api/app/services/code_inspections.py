@@ -1370,6 +1370,7 @@ def code_inspection_dashboard_response(
     repository_stats: dict[str, dict[str, Any]] = {}
     branch_stats: dict[str, dict[str, Any]] = {}
     committer_stats: dict[str, dict[str, Any]] = {}
+    committer_governance_stats: dict[str, dict[str, Any]] = {}
     quality_gate_violation_stats: dict[str, dict[str, Any]] = {}
     rule_version_counts: Counter[str] = Counter()
     scanner_version_counts: Counter[str] = Counter()
@@ -1545,8 +1546,66 @@ def code_inspection_dashboard_response(
             severity_counts[severity] += 1
             category_counts[category] += 1
             is_severe = severity_rank(severity) >= severity_rank(SEVERE_FINDING_THRESHOLD)
+            committer_identity = committer_key(finding) or "unknown"
+            committer_governance_entry = committer_governance_stats.setdefault(
+                str(committer_identity),
+                {
+                    "_latest_report_recency_key": "",
+                    "_report_ids": set(),
+                    "accepted_risk_count": 0,
+                    "active_severe_finding_count": 0,
+                    "covered_by_bug_count": 0,
+                    "covered_by_task_count": 0,
+                    "email": finding.get("committer_email"),
+                    "finding_count": 0,
+                    "latest_report_id": None,
+                    "latest_report_summary": None,
+                    "name": finding.get("committer_name"),
+                    "oldest_uncovered_at": None,
+                    "pending_suppression_count": 0,
+                    "severe_finding_count": 0,
+                    "status": "healthy",
+                    "uncovered_bug_finding_count": 0,
+                    "uncovered_task_finding_count": 0,
+                    "username": finding.get("committer_username"),
+                },
+            )
+            committer_governance_entry["_report_ids"].add(report_id)
+            committer_governance_entry["finding_count"] += 1
+            report_key = report_recency_key(report)
+            if report_key >= str(committer_governance_entry.get("_latest_report_recency_key") or ""):
+                committer_governance_entry["_latest_report_recency_key"] = report_key
+                committer_governance_entry["latest_report_id"] = report_id
+                committer_governance_entry["latest_report_summary"] = report.get("summary")
+            suppression_status = finding.get("suppression_status")
+            if suppression_status == "pending":
+                committer_governance_entry["pending_suppression_count"] += 1
+            if (
+                suppression_status == "approved"
+                and finding.get("suppression_reason") == "accepted_risk"
+            ):
+                committer_governance_entry["accepted_risk_count"] += 1
             if is_severe:
                 severe_finding_count += 1
+                committer_governance_entry["severe_finding_count"] += 1
+                if suppression_status != "approved":
+                    committer_governance_entry["active_severe_finding_count"] += 1
+                    if finding.get("created_bug_id"):
+                        committer_governance_entry["covered_by_bug_count"] += 1
+                    else:
+                        committer_governance_entry["uncovered_bug_finding_count"] += 1
+                        if (
+                            committer_governance_entry.get("oldest_uncovered_at") is None
+                            or str(finding.get("created_at") or "")
+                            < str(committer_governance_entry.get("oldest_uncovered_at") or "")
+                        ):
+                            committer_governance_entry["oldest_uncovered_at"] = str(
+                                finding.get("created_at") or ""
+                            )
+                    if finding.get("created_task_id"):
+                        committer_governance_entry["covered_by_task_count"] += 1
+                    else:
+                        committer_governance_entry["uncovered_task_finding_count"] += 1
                 if finding.get("created_bug_id"):
                     covered_by_bug_count += 1
                 elif (
@@ -1607,6 +1666,31 @@ def code_inspection_dashboard_response(
             str(item.get("email") or item.get("username") or item.get("name") or ""),
         ),
     )[:5]
+    for entry in committer_governance_stats.values():
+        if entry["uncovered_bug_finding_count"] or entry["uncovered_task_finding_count"]:
+            entry["status"] = "action_required"
+        elif entry["pending_suppression_count"]:
+            entry["status"] = "pending_review"
+    committer_governance = sorted(
+        (
+            {
+                key: value
+                for key, value in {
+                    **entry,
+                    "report_count": len(entry["_report_ids"]),
+                }.items()
+                if key not in {"_latest_report_recency_key", "_report_ids"}
+            }
+            for entry in committer_governance_stats.values()
+        ),
+        key=lambda item: (
+            -int(item.get("uncovered_bug_finding_count") or 0),
+            -int(item.get("uncovered_task_finding_count") or 0),
+            -int(item.get("pending_suppression_count") or 0),
+            -int(item.get("active_severe_finding_count") or 0),
+            str(item.get("email") or item.get("username") or item.get("name") or ""),
+        ),
+    )[:10]
     rule_distribution = sorted(
         rule_stats.values(),
         key=lambda item: (
@@ -1662,6 +1746,7 @@ def code_inspection_dashboard_response(
     return {
         "branch_ranking": branch_ranking,
         "category_distribution": counter_rows(category_counts, key_name="category"),
+        "committer_governance": committer_governance,
         "committer_ranking": committer_ranking,
         "query": {
             "product_id": product_id,

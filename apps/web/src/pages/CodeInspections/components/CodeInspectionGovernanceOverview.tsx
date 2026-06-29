@@ -19,6 +19,21 @@ function severityTag(value?: string | null) {
   return <Tag color={severityColorByValue.get(text) ?? riskColorByValue.get(text) ?? 'default'}>{text}</Tag>;
 }
 
+function governanceStatusTag(value?: string | null) {
+  const colorByStatus = new Map([
+    ['action_required', 'red'],
+    ['pending_review', 'orange'],
+    ['healthy', 'green'],
+  ]);
+  const textByStatus = new Map([
+    ['action_required', '待闭环'],
+    ['pending_review', '待审批'],
+    ['healthy', '健康'],
+  ]);
+  const text = value || '-';
+  return <Tag color={colorByStatus.get(text) ?? 'default'}>{textByStatus.get(text) ?? text}</Tag>;
+}
+
 function compactMetricTable<Row extends Record<string, unknown>>({
   columns,
   dataSource,
@@ -248,6 +263,40 @@ export function CodeInspectionGovernanceOverview({
                 { dataIndex: 'bug_count', title: 'Bug', width: 90 },
               ],
               dataSource: dashboard?.committer_ranking ?? [],
+              rowKey: (row) => row.email ?? row.username ?? row.name ?? 'unknown',
+            })}
+          </Card>
+        </Col>
+        <Col lg={24} xs={24}>
+          <Card loading={loading} size="small" title="提交人治理待办">
+            {compactMetricTable({
+              columns: [
+                {
+                  dataIndex: 'email',
+                  render: (_, row) => compactText(committerLabel(row)),
+                  title: '提交人',
+                  width: 260,
+                },
+                {
+                  dataIndex: 'status',
+                  render: (value) => governanceStatusTag(String(value ?? '')),
+                  title: '状态',
+                  width: 100,
+                },
+                { dataIndex: 'report_count', title: '报告', width: 80 },
+                { dataIndex: 'active_severe_finding_count', title: '活跃严重', width: 110 },
+                { dataIndex: 'uncovered_bug_finding_count', title: '缺 Bug', width: 90 },
+                { dataIndex: 'uncovered_task_finding_count', title: '缺整改任务', width: 120 },
+                { dataIndex: 'pending_suppression_count', title: '待审批忽略', width: 120 },
+                { dataIndex: 'accepted_risk_count', title: '已接受风险', width: 120 },
+                {
+                  dataIndex: 'latest_report_summary',
+                  render: (_, row) => compactText(String(row.latest_report_summary ?? row.latest_report_id ?? '-')),
+                  title: '最近报告',
+                  width: 260,
+                },
+              ],
+              dataSource: dashboard?.committer_governance ?? [],
               rowKey: (row) => row.email ?? row.username ?? row.name ?? 'unknown',
             })}
           </Card>

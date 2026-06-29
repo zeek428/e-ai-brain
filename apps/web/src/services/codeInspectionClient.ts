@@ -146,6 +146,25 @@ export type CodeInspectionDashboardRecord = {
     severe_finding_count: number;
     username?: string | null;
   }>;
+  committer_governance?: Array<{
+    accepted_risk_count: number;
+    active_severe_finding_count: number;
+    covered_by_bug_count: number;
+    covered_by_task_count: number;
+    email?: string | null;
+    finding_count: number;
+    latest_report_id?: string | null;
+    latest_report_summary?: string | null;
+    name?: string | null;
+    oldest_uncovered_at?: string | null;
+    pending_suppression_count: number;
+    report_count: number;
+    severe_finding_count: number;
+    status: 'action_required' | 'healthy' | 'pending_review' | string;
+    uncovered_bug_finding_count: number;
+    uncovered_task_finding_count: number;
+    username?: string | null;
+  }>;
   repository_ranking: Array<{
     branch_count: number;
     finding_count: number;
