@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 插件服务公开投影拆分：新增 `plugin_projection` 承接插件版本元数据、公开响应投影和调用请求摘要脱敏，并由架构守护防止展示脱敏逻辑回流 `plugins.py`。
 - 定时作业服务配置 helper 拆分：新增 `scheduled_job_config` 承接调度时间、配置编排、多数据源引用、代码巡检仓库默认分支、数据连接策略和有效作业类型推导，并由架构守护防止配置归一化逻辑回流 `scheduled_jobs.py`。
 - 迭代版本总览版本范围读模型：`GET /api/product-versions/{version_id}/dashboard` 在 PostgreSQL 运行时优先读取版本专用 source rows，避免全量加载 task workflow 源数据后再服务层过滤，响应字段保持不变。
 - 迭代版本总览优先处理建议：版本总览“下一步行动”区基于阻塞处理队列展示前三个最高优先级阻塞和处理入口，让用户打开总览即可先处理发布准入风险。

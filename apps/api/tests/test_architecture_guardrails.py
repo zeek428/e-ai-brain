@@ -71,6 +71,20 @@ def test_plugin_entrypoint_uses_split_constants_module():
     assert "PLUGIN_CONNECTION_SORT_FIELDS = " not in entrypoint_source
 
 
+def test_plugin_entrypoint_uses_split_projection_module():
+    projection_path = REPO_ROOT / "apps/api/app/services/plugin_projection.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/plugins.py"
+
+    assert projection_path.exists(), (
+        "Move plugin public projections and request redaction to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    assert "from app.services.plugin_projection import" in entrypoint_source
+    assert "def public_plugin(" not in entrypoint_source
+    assert "def public_invocation_log(" not in entrypoint_source
+    assert "def redact_plugin_request_summary(" not in entrypoint_source
+
+
 def test_assistant_references_uses_split_action_defaults_module():
     defaults_path = REPO_ROOT / "apps/api/app/services/assistant_action_reference_defaults.py"
     entrypoint_path = REPO_ROOT / "apps/api/app/services/assistant_references.py"
