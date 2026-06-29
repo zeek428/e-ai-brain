@@ -65,8 +65,19 @@ from app.services.scheduled_job_catalog import (
     SCHEDULED_JOB_SCHEDULE_TYPES,
     SCHEDULED_JOB_TYPES,
 )
+from app.services.scheduled_job_audit import (
+    scheduled_job_audit_payload,
+    scheduled_job_run_audit_payload,
+)
 from app.services.scheduled_job_execution_engine import (
     ScheduledJobExecutionEngine as JobExecutionEngine,
+)
+from app.services.scheduled_job_refs import (
+    normalized_string_ids,
+    payload_field,
+    scheduled_job_multi_ids,
+    scheduled_job_multi_ids_from_config,
+    scheduled_job_orchestration_config,
 )
 from app.services.scheduled_job_run_projection import (
     public_scheduled_job_run_projection,
@@ -992,53 +1003,6 @@ def next_run_at(payload: Any) -> str | None:
     return now.isoformat()
 
 
-def payload_field(payload: Any, name: str, default: Any = None) -> Any:
-    if isinstance(payload, dict):
-        return payload.get(name, default)
-    return getattr(payload, name, default)
-
-
-def normalized_string_ids(value: Any) -> list[str]:
-    if value is None:
-        return []
-    values = value if isinstance(value, list) else [value]
-    seen: set[str] = set()
-    result: list[str] = []
-    for item in values:
-        if item is None:
-            continue
-        item_id = str(item).strip()
-        if not item_id or item_id in seen:
-            continue
-        seen.add(item_id)
-        result.append(item_id)
-    return result
-
-
-def scheduled_job_orchestration_config(config_json: Any) -> dict[str, Any]:
-    if not isinstance(config_json, dict):
-        return {}
-    orchestration = config_json.get("orchestration")
-    return dict(orchestration) if isinstance(orchestration, dict) else {}
-
-
-def scheduled_job_multi_ids_from_config(config_json: Any, key: str) -> list[str]:
-    return normalized_string_ids(scheduled_job_orchestration_config(config_json).get(key))
-
-
-def scheduled_job_multi_ids(payload: Any, plural_key: str, singular_key: str) -> list[str]:
-    return normalized_string_ids(
-        [
-            *normalized_string_ids(payload_field(payload, plural_key, [])),
-            *scheduled_job_multi_ids_from_config(
-                payload_field(payload, "config_json", {}),
-                plural_key,
-            ),
-            payload_field(payload, singular_key),
-        ]
-    )
-
-
 def scheduled_job_config_with_multi_refs(
     config_json: Any,
     *,
@@ -1533,110 +1497,6 @@ def list_scheduled_jobs_response(
         sort_order=sort_order,
         started_at=resolved_started_at,
     )
-
-
-def scheduled_job_audit_payload(job: dict[str, Any]) -> dict[str, Any]:
-    payload = {"job_type": job["job_type"], "enabled": job["enabled"]}
-    plugin_action_ids = scheduled_job_multi_ids(job, "plugin_action_ids", "plugin_action_id")
-    plugin_connection_ids = scheduled_job_multi_ids(
-        job,
-        "plugin_connection_ids",
-        "plugin_connection_id",
-    )
-    if plugin_action_ids:
-        payload["plugin_action_ids"] = plugin_action_ids
-    if plugin_connection_ids:
-        payload["plugin_connection_ids"] = plugin_connection_ids
-    assistant_draft = (job.get("config_json") or {}).get("assistant_draft")
-    if isinstance(assistant_draft, dict):
-        payload["assistant_draft"] = {
-            key: value
-            for key, value in {
-                "draft_id": assistant_draft.get("draft_id"),
-                "source": assistant_draft.get("source"),
-                "title": assistant_draft.get("title"),
-            }.items()
-            if value
-        }
-    template_source = (job.get("config_json") or {}).get("template_source")
-    if isinstance(template_source, dict):
-        payload["template_source"] = {
-            key: value
-            for key, value in {
-                "source_id": template_source.get("source_id"),
-                "source_type": template_source.get("source_type"),
-                "title": template_source.get("title"),
-            }.items()
-            if value
-        }
-    return payload
-
-
-def scheduled_job_run_audit_payload(
-    *,
-    job: dict[str, Any],
-    run: dict[str, Any],
-) -> dict[str, Any]:
-    result_summary = run.get("result_summary") or {}
-    execution_nodes = result_summary.get("execution_nodes") or {}
-    skill_processing = execution_nodes.get("skill_processing") or {}
-    result_action = execution_nodes.get("result_action") or {}
-    processing = result_summary.get("processing") or {}
-    plugin_snapshot = run.get("resolved_plugin_snapshot") or {}
-    plugin = plugin_snapshot.get("plugin") or {}
-    connection = plugin_snapshot.get("connection") or {}
-    action = plugin_snapshot.get("action") or {}
-
-    model_gateway_called = None
-    if isinstance(skill_processing.get("model_gateway_called"), bool):
-        model_gateway_called = skill_processing["model_gateway_called"]
-    elif isinstance(processing.get("model_gateway_called"), bool):
-        model_gateway_called = processing["model_gateway_called"]
-
-    result_action_types = [
-        item.get("type")
-        for item in (job.get("result_actions") or [])
-        if isinstance(item, dict) and item.get("type")
-    ]
-    payload = {
-        "agent_id": job.get("agent_id"),
-        "collector_run_id": run.get("collector_run_id"),
-        "error_code": run.get("error_code"),
-        "execution_mode": job.get("execution_mode"),
-        "job_type": job["job_type"],
-        "knowledge_document_ids": list(job.get("knowledge_document_ids") or []) or None,
-        "model_gateway_called": model_gateway_called,
-        "model_gateway_config_id": job.get("model_gateway_config_id"),
-        "plugin_action_code": action.get("code"),
-        "plugin_action_id": job.get("plugin_action_id"),
-        "plugin_action_ids": scheduled_job_multi_ids(
-            job,
-            "plugin_action_ids",
-            "plugin_action_id",
-        )
-        or None,
-        "plugin_code": plugin.get("code"),
-        "plugin_connection_environment": connection.get("environment"),
-        "plugin_connection_id": job.get("plugin_connection_id"),
-        "plugin_connection_ids": scheduled_job_multi_ids(
-            job,
-            "plugin_connection_ids",
-            "plugin_connection_id",
-        )
-        or None,
-        "plugin_invocation_log_id": run.get("plugin_invocation_log_id"),
-        "product_id": job.get("product_id"),
-        "records_imported": run.get("records_imported", 0),
-        "result_action_types": result_action_types or None,
-        "result_write_target": result_action.get("write_target")
-        or result_summary.get("write_target"),
-        "scheduled_job_id": run.get("scheduled_job_id"),
-        "skill_ids": list(job.get("skill_ids") or []) or None,
-        "source_run_id": run.get("source_run_id"),
-        "status": run.get("status"),
-        "trigger_type": run.get("trigger_type"),
-    }
-    return {key: value for key, value in payload.items() if value is not None}
 
 
 def public_scheduled_job_run(

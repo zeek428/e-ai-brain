@@ -11,7 +11,9 @@ from app.core.security import hash_password
 from app.core.users import MemoryUserRepository
 from app.main import app
 from app.services.dynamic_parameters import dynamic_time_parameters
+from app.services.scheduled_job_audit import scheduled_job_run_audit_payload
 from app.services.scheduled_job_execution_engine import ScheduledJobExecutionEngine
+from app.services.scheduled_job_refs import scheduled_job_multi_ids
 from app.services.scheduled_job_run_projection import public_scheduled_job_run_projection
 
 client = TestClient(app)
@@ -114,6 +116,101 @@ def test_scheduled_job_run_projection_adds_trace_graph_and_source_summary():
         "result_action",
     ]
     assert {node["retry_count"] for node in trace_graph["nodes"]} == {2}
+
+
+def test_scheduled_job_refs_merge_legacy_and_orchestration_ids():
+    assert scheduled_job_multi_ids(
+        {
+            "config_json": {
+                "orchestration": {
+                    "plugin_action_ids": ["action_config", "action_legacy", ""],
+                },
+            },
+            "plugin_action_id": "action_legacy",
+            "plugin_action_ids": ["action_table", "action_config"],
+        },
+        "plugin_action_ids",
+        "plugin_action_id",
+    ) == ["action_table", "action_config", "action_legacy"]
+
+
+def test_scheduled_job_run_audit_payload_preserves_execution_context():
+    payload = scheduled_job_run_audit_payload(
+        job={
+            "agent_id": "agent_001",
+            "config_json": {
+                "orchestration": {
+                    "plugin_action_ids": ["plugin_action_extra"],
+                    "plugin_connection_ids": ["plugin_connection_extra"],
+                },
+            },
+            "execution_mode": "ai_generated",
+            "job_type": "code_repository_inspection",
+            "knowledge_document_ids": ["knowledge_001"],
+            "model_gateway_config_id": "model_gateway_config_001",
+            "plugin_action_id": "plugin_action_001",
+            "plugin_connection_id": "plugin_connection_001",
+            "product_id": "product_001",
+            "result_actions": [
+                {"type": "write_code_inspection_report"},
+                {"type": "create_bug_for_severe_findings"},
+                {"severity_threshold": "low"},
+            ],
+            "skill_ids": ["skill_001"],
+        },
+        run={
+            "collector_run_id": "collector_run_001",
+            "error_code": "QUALITY_GATE_FAILED",
+            "plugin_invocation_log_id": "plugin_invocation_log_001",
+            "records_imported": 7,
+            "resolved_plugin_snapshot": {
+                "action": {"code": "scan_repository"},
+                "connection": {"environment": "prod"},
+                "plugin": {"code": "gitlab"},
+            },
+            "result_summary": {
+                "execution_nodes": {
+                    "result_action": {"write_target": "code_inspection_reports"},
+                    "skill_processing": {"model_gateway_called": True},
+                },
+            },
+            "scheduled_job_id": "scheduled_job_001",
+            "source_run_id": "scheduled_job_run_previous",
+            "status": "failed",
+            "trigger_type": "manual_rerun",
+        },
+    )
+
+    assert payload == {
+        "agent_id": "agent_001",
+        "collector_run_id": "collector_run_001",
+        "error_code": "QUALITY_GATE_FAILED",
+        "execution_mode": "ai_generated",
+        "job_type": "code_repository_inspection",
+        "knowledge_document_ids": ["knowledge_001"],
+        "model_gateway_called": True,
+        "model_gateway_config_id": "model_gateway_config_001",
+        "plugin_action_code": "scan_repository",
+        "plugin_action_id": "plugin_action_001",
+        "plugin_action_ids": ["plugin_action_extra", "plugin_action_001"],
+        "plugin_code": "gitlab",
+        "plugin_connection_environment": "prod",
+        "plugin_connection_id": "plugin_connection_001",
+        "plugin_connection_ids": ["plugin_connection_extra", "plugin_connection_001"],
+        "plugin_invocation_log_id": "plugin_invocation_log_001",
+        "product_id": "product_001",
+        "records_imported": 7,
+        "result_action_types": [
+            "write_code_inspection_report",
+            "create_bug_for_severe_findings",
+        ],
+        "result_write_target": "code_inspection_reports",
+        "scheduled_job_id": "scheduled_job_001",
+        "skill_ids": ["skill_001"],
+        "source_run_id": "scheduled_job_run_previous",
+        "status": "failed",
+        "trigger_type": "manual_rerun",
+    }
 
 
 def test_scheduled_job_repository_supports_paged_filtered_queries():
