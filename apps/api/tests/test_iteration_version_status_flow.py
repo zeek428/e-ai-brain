@@ -301,6 +301,7 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "working_branch": "release/2026-dashboard",
     }
     app.state.store.ai_tasks["task_version_dashboard"] = {
+        "code_review_report_id": "code_review_report_dashboard",
         "created_at": "2026-06-04T08:00:00+00:00",
         "created_by": "user_admin",
         "id": "task_version_dashboard",
@@ -311,6 +312,19 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "title": "实现版本驾驶舱",
         "updated_at": "2026-06-04T09:00:00+00:00",
         "version_id": version["id"],
+    }
+    app.state.store.code_review_reports["code_review_report_dashboard"] = {
+        "archived_at": None,
+        "executor": {"name": "codex", "type": "local"},
+        "findings": [{"severity": "medium", "summary": "需要补充边界测试"}],
+        "gitlab_mr_snapshot_id": "gitlab_mr_snapshot_dashboard",
+        "gitlab_writeback_performed": False,
+        "id": "code_review_report_dashboard",
+        "review_id": "review_dashboard",
+        "risk_level": "medium",
+        "status": "pending_review",
+        "summary": "代码评审待确认",
+        "task_id": "task_version_dashboard",
     }
     app.state.store.bugs["bug_version_dashboard"] = {
         "assignee": "qa_owner",
@@ -377,8 +391,10 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "blockers": 5,
         "branch_configs": 1,
         "bugs": 2,
+        "code_review_reports": 1,
         "code_inspection_reports": 1,
         "open_bugs": 2,
+        "pending_code_review_reports": 1,
         "releases": 1,
         "requirements": 1,
         "severe_bugs": 2,
@@ -417,6 +433,22 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     assert blocker_by_source["product_version_branch_config"]["action_label"] == "维护分支"
     assert blocker_by_source["jenkins_release"]["action_label"] == "排查发布"
     assert data["branch_configs"][0]["repository_name"] == "Dashboard Repo"
+    assert data["code_review_reports"] == [
+        {
+            "archived_at": None,
+            "executor": {"name": "codex", "type": "local"},
+            "finding_count": 1,
+            "gitlab_mr_snapshot_id": "gitlab_mr_snapshot_dashboard",
+            "gitlab_writeback_performed": False,
+            "id": "code_review_report_dashboard",
+            "review_id": "review_dashboard",
+            "risk_level": "medium",
+            "status": "pending_review",
+            "summary": "代码评审待确认",
+            "task_id": "task_version_dashboard",
+            "task_title": "实现版本驾驶舱",
+        }
+    ]
     assert data["code_inspection_reports"][0]["id"] == "code_inspection_report_dashboard"
     assert {bug["id"] for bug in data["bugs"]} == {
         "bug_version_dashboard",

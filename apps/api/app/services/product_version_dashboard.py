@@ -25,6 +25,7 @@ VERSION_NEXT_STATUS = {
 OPEN_BUG_STATUSES = {"assigned", "fixed", "needs_info", "open", "reopened", "triaged"}
 SEVERE_BUG_SEVERITIES = {"blocker", "critical"}
 SEVERE_CODE_RISKS = {"critical", "high"}
+PENDING_CODE_REVIEW_STATUSES = {"pending_review", "waiting_review"}
 
 
 def _blocker_action_context(source_type: str) -> tuple[str, str]:
@@ -252,6 +253,56 @@ def _version_code_inspection_reports(
     return reports, []
 
 
+def _public_code_review_report(
+    report: dict[str, Any],
+    *,
+    task: dict[str, Any] | None,
+) -> dict[str, Any]:
+    findings = report.get("findings") if isinstance(report.get("findings"), list) else []
+    return {
+        "archived_at": report.get("archived_at"),
+        "executor": report.get("executor") if isinstance(report.get("executor"), dict) else {},
+        "finding_count": len(findings),
+        "gitlab_mr_snapshot_id": report.get("gitlab_mr_snapshot_id"),
+        "gitlab_writeback_performed": bool(report.get("gitlab_writeback_performed")),
+        "id": report.get("id"),
+        "review_id": report.get("review_id"),
+        "risk_level": report.get("risk_level") or "medium",
+        "status": report.get("status") or "-",
+        "summary": report.get("summary") or report.get("id"),
+        "task_id": report.get("task_id"),
+        "task_title": (task or {}).get("title"),
+    }
+
+
+def _version_code_review_reports(
+    current_store: Any,
+    *,
+    tasks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    task_by_id = {str(task["id"]): task for task in tasks if task.get("id")}
+    linked_report_ids = {
+        str(task.get("code_review_report_id"))
+        for task in tasks
+        if task.get("code_review_report_id")
+    }
+    reports: list[dict[str, Any]] = []
+    for report in _memory_records(current_store, "code_review_reports"):
+        report_id = str(report.get("id") or "")
+        task_id = str(report.get("task_id") or "")
+        if report_id not in linked_report_ids and task_id not in task_by_id:
+            continue
+        reports.append(_public_code_review_report(report, task=task_by_id.get(task_id)))
+    reports.sort(
+        key=lambda item: (
+            item.get("archived_at") or "",
+            item.get("id") or "",
+        ),
+        reverse=True,
+    )
+    return reports
+
+
 def _version_releases(current_store: Any, version_id: str) -> list[dict[str, Any]]:
     releases = [
         dict(release)
@@ -411,6 +462,7 @@ def product_version_dashboard_response(
         version_id=version_id,
     )
     task_ids = {str(task["id"]) for task in tasks}
+    code_review_reports = _version_code_review_reports(read_store, tasks=tasks)
     branch_configs = _branch_configs_for_version(read_store, version_id)
     code_inspection_reports, code_access_issues = _version_code_inspection_reports(
         read_store,
@@ -460,6 +512,11 @@ def product_version_dashboard_response(
         for report in code_inspection_reports
         if report.get("risk_level") in SEVERE_CODE_RISKS or _quality_gate_failed(report)
     )
+    pending_code_review_report_count = sum(
+        1
+        for report in code_review_reports
+        if str(report.get("status") or "").lower() in PENDING_CODE_REVIEW_STATUSES
+    )
     return {
         "access_issues": [*bug_access_issues, *code_access_issues],
         "blockers": blockers,
@@ -467,6 +524,7 @@ def product_version_dashboard_response(
         "bugs": bugs[:20],
         "bug_status_counts": _status_counts(bugs),
         "code_inspection_reports": code_inspection_reports[:20],
+        "code_review_reports": code_review_reports[:20],
         "releases": releases[:20],
         "requirement_status_counts": _status_counts(requirements),
         "requirements": requirements[:50],
@@ -476,7 +534,9 @@ def product_version_dashboard_response(
             "branch_configs": len(branch_configs),
             "bugs": len(bugs),
             "code_inspection_reports": len(code_inspection_reports),
+            "code_review_reports": len(code_review_reports),
             "open_bugs": open_bug_count,
+            "pending_code_review_reports": pending_code_review_report_count,
             "releases": len(releases),
             "requirements": len(requirements),
             "severe_bugs": severe_bug_count,

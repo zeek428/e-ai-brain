@@ -102,6 +102,21 @@ type ProductVersionDashboardCodeInspectionReport = {
   summary?: string;
 };
 
+type ProductVersionDashboardCodeReviewReport = {
+  archived_at?: string | null;
+  executor?: { name?: string; type?: string } | null;
+  finding_count?: number;
+  gitlab_mr_snapshot_id?: string | null;
+  gitlab_writeback_performed?: boolean;
+  id: string;
+  review_id?: string | null;
+  risk_level?: string;
+  status?: string;
+  summary?: string;
+  task_id?: string | null;
+  task_title?: string | null;
+};
+
 type ProductVersionDashboardReleaseItem = {
   build_id?: unknown;
   created_at?: unknown;
@@ -135,7 +150,9 @@ type ProductVersionDashboardSummary = {
   branch_configs: number;
   bugs: number;
   code_inspection_reports: number;
+  code_review_reports: number;
   open_bugs: number;
+  pending_code_review_reports: number;
   releases: number;
   requirements: number;
   severe_bugs: number;
@@ -171,6 +188,7 @@ type ProductVersionDashboardResponse = {
   bug_status_counts?: ProductVersionDashboardStatusCount[];
   bugs?: BugListItem[];
   code_inspection_reports?: ProductVersionDashboardCodeInspectionReport[];
+  code_review_reports?: ProductVersionDashboardCodeReviewReport[];
   releases?: ProductVersionDashboardReleaseItem[];
   requirement_status_counts?: ProductVersionDashboardStatusCount[];
   requirements?: RequirementListItem[];
@@ -202,6 +220,20 @@ export type ProductVersionDashboard = {
   bugStatusCounts: ProductVersionDashboardStatusCount[];
   bugs: BugRecord[];
   codeInspectionReports: ProductVersionDashboardCodeInspectionReport[];
+  codeReviewReports: Array<{
+    executorName: string;
+    executorType: string;
+    findingCount: number;
+    gitlabMrSnapshotId?: string;
+    id: string;
+    reviewId?: string;
+    riskLevel: string;
+    status: string;
+    summary: string;
+    taskId?: string;
+    taskTitle: string;
+    writebackPerformed: boolean;
+  }>;
   releases: Array<{
     buildId?: string;
     createdAt: string;
@@ -495,6 +527,20 @@ function mapProductVersionDashboard(
     bugStatusCounts: dashboard.bug_status_counts ?? [],
     bugs: (dashboard.bugs ?? []).map(mapBugRecord),
     codeInspectionReports: dashboard.code_inspection_reports ?? [],
+    codeReviewReports: (dashboard.code_review_reports ?? []).map((report) => ({
+      executorName: formatUnknownValue(report.executor?.name),
+      executorType: formatUnknownValue(report.executor?.type),
+      findingCount: normalizeDashboardCount(report.finding_count),
+      gitlabMrSnapshotId: report.gitlab_mr_snapshot_id ?? undefined,
+      id: report.id,
+      reviewId: report.review_id ?? undefined,
+      riskLevel: report.risk_level ?? '-',
+      status: report.status ?? '-',
+      summary: report.summary ?? report.id,
+      taskId: report.task_id ?? undefined,
+      taskTitle: report.task_title ?? report.task_id ?? '-',
+      writebackPerformed: Boolean(report.gitlab_writeback_performed),
+    })),
     releases: (dashboard.releases ?? []).map((release) => ({
       buildId: formatUnknownValue(release.build_id),
       createdAt: formatListDate(formatUnknownValue(release.deployed_at ?? release.started_at ?? release.created_at)),
@@ -510,7 +556,9 @@ function mapProductVersionDashboard(
       branch_configs: normalizeDashboardCount(summary.branch_configs),
       bugs: normalizeDashboardCount(summary.bugs),
       code_inspection_reports: normalizeDashboardCount(summary.code_inspection_reports),
+      code_review_reports: normalizeDashboardCount(summary.code_review_reports),
       open_bugs: normalizeDashboardCount(summary.open_bugs),
+      pending_code_review_reports: normalizeDashboardCount(summary.pending_code_review_reports),
       releases: normalizeDashboardCount(summary.releases),
       requirements: normalizeDashboardCount(summary.requirements),
       severe_bugs: normalizeDashboardCount(summary.severe_bugs),

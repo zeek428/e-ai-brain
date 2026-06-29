@@ -792,6 +792,20 @@ describe('IterationVersionsPage', () => {
                 summary: '存在高风险问题',
               },
             ],
+            code_review_reports: [
+              {
+                executor: { name: 'codex', type: 'local' },
+                finding_count: 1,
+                gitlab_mr_snapshot_id: 'gitlab_mr_snapshot_dashboard',
+                id: 'code_review_report_dashboard',
+                review_id: 'review_dashboard',
+                risk_level: 'medium',
+                status: 'pending_review',
+                summary: '代码评审待确认',
+                task_id: 'task_dashboard',
+                task_title: '实现版本驾驶舱',
+              },
+            ],
             releases: [
               {
                 build_id: '42',
@@ -853,7 +867,9 @@ describe('IterationVersionsPage', () => {
               branch_configs: 1,
               bugs: 1,
               code_inspection_reports: 1,
+              code_review_reports: 1,
               open_bugs: 1,
+              pending_code_review_reports: 1,
               releases: 1,
               requirements: 1,
               severe_bugs: 1,
@@ -916,6 +932,8 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('1 个分支 · 未创建 1 个')).toBeInTheDocument();
     expect(screen.getAllByText('代码巡检').length).toBeGreaterThan(0);
     expect(screen.getByText('1 份报告 · 高风险 1 份')).toBeInTheDocument();
+    expect(screen.getAllByText('代码评审').length).toBeGreaterThan(0);
+    expect(screen.getByText('1 份报告 · 待确认 1 份')).toBeInTheDocument();
     expect(screen.getByText('Bug 收敛')).toBeInTheDocument();
     expect(screen.getByText('1 个 Bug · 未关闭 1 个')).toBeInTheDocument();
     expect(screen.getByText('发布证据')).toBeInTheDocument();
@@ -931,6 +949,7 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('严重 Bug 1，严重巡检 1，未关闭 Bug 1。')).toBeInTheDocument();
     expect(screen.getByText('1 个分支未创建')).toBeInTheDocument();
     expect(screen.getByText('1 份高风险')).toBeInTheDocument();
+    expect(screen.getByText('1 份待确认')).toBeInTheDocument();
     expect(screen.getByText('1 条失败发布')).toBeInTheDocument();
     expect(screen.getByText('阻塞处理队列')).toBeInTheDocument();
     expect(
@@ -989,8 +1008,10 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('发布阻塞 Bug').length).toBeGreaterThan(0);
     expect(screen.getAllByText('release/2026-dashboard').length).toBeGreaterThan(0);
     expect(screen.getAllByText('驾驶舱需求').length).toBeGreaterThan(0);
-    expect(screen.getByText('实现版本驾驶舱')).toBeInTheDocument();
+    expect(screen.getAllByText('实现版本驾驶舱').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Dashboard Repo').length).toBeGreaterThan(0);
+    expect(screen.getByText('代码评审待确认')).toBeInTheDocument();
+    expect(screen.getByText('codex')).toBeInTheDocument();
     expect(screen.getByText('deploy-dashboard')).toBeInTheDocument();
     const cockpitLinks = screen
       .getAllByRole('link')
@@ -1007,6 +1028,7 @@ describe('IterationVersionsPage', () => {
     expect(cockpitLinks).toContain(
       '/governance/code-inspections?source_id=code_inspection_report_dashboard',
     );
+    expect(cockpitLinks).toContain('/delivery/rd-tasks?code_review_report_id=code_review_report_dashboard');
     expect(cockpitLinks).toContain(
       '/delivery/versions?branch_config_id=version_branch_dashboard&version_id=version_dashboard',
     );

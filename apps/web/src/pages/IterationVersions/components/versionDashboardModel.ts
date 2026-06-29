@@ -229,6 +229,7 @@ export function buildStatusLabelMap(
     medium: { color: 'gold', label: '中风险' },
     open: { color: 'red', label: '打开' },
     passed: { color: 'green', label: '通过' },
+    pending_review: { color: 'gold', label: '待确认' },
     ready_for_release: { color: 'orange', label: '待发布' },
     reopened: { color: 'volcano', label: '重新打开' },
     running: { color: 'blue', label: '运行中' },
@@ -285,6 +286,10 @@ export function buildDashboardHealthItems(
       );
     },
   ).length;
+  const pendingCodeReviewCount = dashboard.codeReviewReports.filter(
+    (report) =>
+      report.status === 'pending_review' || report.status === 'waiting_review',
+  ).length;
   return [
     {
       detail: dashboard.blockers.length
@@ -337,6 +342,21 @@ export function buildDashboardHealthItems(
         : `${dashboard.codeInspectionReports.length} 份报告`,
     },
     {
+      detail: dashboard.codeReviewReports.length
+        ? `已有 ${dashboard.codeReviewReports.length} 份代码评审报告，待确认 ${pendingCodeReviewCount} 份。`
+        : '当前版本还没有代码评审报告，进入测试前建议补齐。',
+      key: 'code-reviews',
+      level: pendingCodeReviewCount
+        ? 'warning'
+        : dashboard.codeReviewReports.length
+          ? 'success'
+          : 'info',
+      title: '代码评审',
+      value: pendingCodeReviewCount
+        ? `${pendingCodeReviewCount} 份待确认`
+        : `${dashboard.codeReviewReports.length} 份报告`,
+    },
+    {
       detail: dashboard.releases.length
         ? `已有 ${dashboard.releases.length} 条发布记录，失败/取消 ${failedReleaseCount} 条。`
         : '当前版本暂无发布记录。',
@@ -383,6 +403,7 @@ export function buildDashboardReadinessItems(
       );
     },
   ).length;
+  const pendingCodeReviewCount = dashboard.summary.pending_code_review_reports;
   const releaseBlockerCount = dashboard.blockers.filter(
     (blocker) => blocker.sourceType === 'jenkins_release',
   ).length;
@@ -422,6 +443,15 @@ export function buildDashboardReadinessItems(
       level: highRiskInspectionCount ? 'warning' : 'success',
       title: '代码巡检',
       value: highRiskInspectionCount ? '质量待治理' : '质量可控',
+    },
+    {
+      detail: pendingCodeReviewCount
+        ? `${dashboard.summary.code_review_reports} 份报告 · 待确认 ${pendingCodeReviewCount} 份`
+        : `${dashboard.summary.code_review_reports} 份报告 · 暂无待确认`,
+      key: 'code-reviews',
+      level: pendingCodeReviewCount ? 'warning' : 'success',
+      title: '代码评审',
+      value: pendingCodeReviewCount ? '评审待确认' : '评审已收敛',
     },
     {
       detail: dashboard.summary.open_bugs

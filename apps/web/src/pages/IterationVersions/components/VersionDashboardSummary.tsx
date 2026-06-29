@@ -143,6 +143,12 @@ export function VersionDashboardMetrics({
         severeRiskCount ? '#cf1322' : undefined,
       )}
       {dashboardMetric('代码巡检', dashboard.summary.code_inspection_reports)}
+      {dashboardMetric('代码评审', dashboard.summary.code_review_reports)}
+      {dashboardMetric(
+        '待确认评审',
+        dashboard.summary.pending_code_review_reports,
+        dashboard.summary.pending_code_review_reports ? '#d48806' : undefined,
+      )}
       {dashboardMetric('发布记录', dashboard.summary.releases)}
       {dashboardMetric(
         '阻塞项',

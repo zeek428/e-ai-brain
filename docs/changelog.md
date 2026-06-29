@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 迭代版本总览代码评审聚合：版本驾驶舱按版本内任务关联 Code Review 报告，展示报告数、待确认数、风险、执行器、关联任务和报告入口，减少版本推进前跨页面拼代码评审上下文。
 - 真实全链路回归脚本场景集：新增 `--suite` / `FULL_CHAIN_SUITE`，默认 `full` 保持完整业务主链路，`runner-reliability` 可单独验收 AI 执行器 Runner Token 轮换、租约、重派和死信门禁，`version-dashboard` 可快速验收版本总览需求/任务/分支聚合、状态推进影响和发布/分支阻塞项，`assistant-draft-governance` 可快速验收 AI 动作草案风险、影响、权限、差异、查看/修改/确认和审计链路。
 - AI 执行器 Runner 安装包版本元数据：`README.md`、`ai-brain-runner.env`、`manifest.json` 和 `runner_config.json` 同步写入安装包版本，便于本地 Runner 兼容诊断、安装包追踪和后续升级。
 - 真实全链路回归脚本补齐 AI 执行器 Runner 可靠性门禁：脚本创建短租约 Runner 任务，先验证 Runner Token 轮换后旧 Token 被拒绝、新 Token 心跳可用和版本号递增，再验证公开 API 认领、超时重派、死信转换、死信列表和 warning/error 日志，确保 Runner 凭据与租约异常都能进入发布前回归。

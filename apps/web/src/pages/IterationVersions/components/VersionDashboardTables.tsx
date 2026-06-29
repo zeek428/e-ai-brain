@@ -618,6 +618,96 @@ export function VersionDashboardQualityDeliveryTables({
         scroll={{ x: 1210 }}
         size="small"
       />
+      <Table<ProductVersionDashboard['codeReviewReports'][number]>
+        columns={[
+          {
+            dataIndex: 'summary',
+            render: (value, row) => (
+              <Typography.Link
+                href={internalHref('/delivery/rd-tasks', {
+                  code_review_report_id: row.id,
+                })}
+              >
+                {String(value ?? row.id)}
+              </Typography.Link>
+            ),
+            title: '代码评审',
+            width: 260,
+          },
+          {
+            dataIndex: 'taskTitle',
+            render: (value, row) => (
+              <Typography.Link
+                href={internalHref('/delivery/rd-tasks', {
+                  task_id: row.taskId,
+                })}
+              >
+                {String(value ?? '-')}
+              </Typography.Link>
+            ),
+            title: '关联任务',
+            width: 220,
+          },
+          {
+            dataIndex: 'riskLevel',
+            render: (value) =>
+              dashboardStatusTag(String(value), statusLabelMap),
+            title: '风险',
+            width: 120,
+          },
+          {
+            dataIndex: 'status',
+            render: (value) =>
+              dashboardStatusTag(String(value), statusLabelMap),
+            title: '状态',
+            width: 120,
+          },
+          {
+            dataIndex: 'executorName',
+            title: '执行器',
+            width: 140,
+          },
+          {
+            dataIndex: 'findingCount',
+            title: '问题数',
+            width: 100,
+          },
+          {
+            key: 'action',
+            render: (_, row) => (
+              <Space size={4}>
+                <Button
+                  href={internalHref('/delivery/rd-tasks', {
+                    code_review_report_id: row.id,
+                  })}
+                  icon={<LinkOutlined />}
+                  size="small"
+                  type="link"
+                >
+                  详情
+                </Button>
+                <Button
+                  href={fullChainSubjectHref('code_review_report', row.id)}
+                  size="small"
+                  type="link"
+                >
+                  全链路
+                </Button>
+              </Space>
+            ),
+            title: '操作',
+            width: 150,
+          },
+        ]}
+        dataSource={dashboard.codeReviewReports}
+        locale={{ emptyText: '当前版本暂无代码评审报告' }}
+        pagination={
+          dashboard.codeReviewReports.length > 5 ? { pageSize: 5 } : false
+        }
+        rowKey="id"
+        scroll={{ x: 1110 }}
+        size="small"
+      />
       <Table<ProductVersionDashboard['branchConfigs'][number]>
         columns={[
           { dataIndex: 'repositoryName', title: '代码库', width: 180 },
