@@ -527,6 +527,24 @@ describe('CodeInspectionsPage', () => {
     vi.unstubAllGlobals();
   });
 
+  it('renders code inspection dashboard governance conclusion', async () => {
+    installCodeInspectionsFetchMock();
+
+    render(<CodeInspectionsPage />);
+
+    await screen.findByText('code_inspection_report_001');
+    expect(screen.getByText('代码巡检治理结论')).toBeInTheDocument();
+    expect(screen.getByText('优先处理质量门禁失败')).toBeInTheDocument();
+    expect(
+      screen.getByText('当前范围有 1 份巡检报告、1 个严重问题，门禁失败报告 1 份、失败项 1 个，缺 Bug 0 个、缺整改任务 0 个。'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('门禁失败报告 1')).toBeInTheDocument();
+    expect(screen.getByText('待闭环分支 1')).toBeInTheDocument();
+    expect(
+      screen.getByText('下一步动作：先查看“门禁失败原因”和最近失败报告，完成修复或风险接受后再重跑巡检。'),
+    ).toBeInTheDocument();
+  });
+
   it('shows scheduled job and plugin source trace in the detail dialog', async () => {
     installCodeInspectionsFetchMock();
 

@@ -1,4 +1,4 @@
-import { Card, Col, Descriptions, Row, Space, Statistic, Table, Tag } from 'antd';
+import { Alert, Card, Col, Descriptions, Row, Space, Statistic, Table, Tag, Typography } from 'antd';
 import type { ReactNode } from 'react';
 
 import type { CodeInspectionDashboardRecord } from '../../../services/aiBrain';
@@ -9,9 +9,15 @@ import {
   severityColorByValue,
 } from './codeInspectionPresentation';
 
+const { Text } = Typography;
+
 function percentText(value?: number | null) {
   const normalized = typeof value === 'number' && Number.isFinite(value) ? value : 0;
   return `${Math.round(normalized * 100)}%`;
+}
+
+function metricValue(value?: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 function severityTag(value?: string | null) {
@@ -60,6 +66,140 @@ function compactMetricTable<Row extends Record<string, unknown>>({
   );
 }
 
+type CodeInspectionGovernanceConclusion = {
+  detail: string;
+  level: 'error' | 'info' | 'success' | 'warning';
+  nextAction: string;
+  risks: string[];
+  value: string;
+};
+
+function buildCodeInspectionGovernanceConclusion(
+  dashboard?: CodeInspectionDashboardRecord,
+): CodeInspectionGovernanceConclusion {
+  const summary = dashboard?.summary;
+  const governancePressure = dashboard?.governance_pressure;
+  const ruleGovernance = dashboard?.rule_governance;
+  const sla = dashboard?.sla;
+  const reportCount = metricValue(summary?.report_count);
+  const severeFindingCount = metricValue(summary?.severe_finding_count);
+  const failedReportCount = metricValue(governancePressure?.quality_gate_failed_report_count);
+  const qualityGateViolationCount = metricValue(governancePressure?.quality_gate_violation_count);
+  const actionRequiredBranchCount = metricValue(governancePressure?.action_required_branch_count);
+  const actionRequiredCommitterCount = metricValue(governancePressure?.action_required_committer_count);
+  const uncoveredBugCount = metricValue(governancePressure?.uncovered_bug_finding_count);
+  const uncoveredTaskCount = metricValue(governancePressure?.uncovered_task_finding_count);
+  const pendingSuppressionCount = metricValue(governancePressure?.pending_suppression_count);
+  const pendingReviewCount =
+    metricValue(governancePressure?.pending_review_branch_count) +
+    metricValue(governancePressure?.pending_review_committer_count);
+  const expiredAcceptedRiskCount = Math.max(
+    metricValue(governancePressure?.expired_accepted_risk_count),
+    metricValue(ruleGovernance?.expired_accepted_risk_count),
+  );
+
+  if (!dashboard || (reportCount === 0 && severeFindingCount === 0)) {
+    return {
+      detail: '当前筛选范围暂无巡检报告。',
+      level: 'info',
+      nextAction: '先创建或运行代码仓库巡检作业，再回到本页查看治理结论。',
+      risks: ['暂无报告'],
+      value: '暂无巡检数据',
+    };
+  }
+
+  const risks = [
+    failedReportCount > 0 ? `门禁失败报告 ${failedReportCount}` : undefined,
+    qualityGateViolationCount > 0 ? `门禁失败项 ${qualityGateViolationCount}` : undefined,
+    actionRequiredBranchCount > 0 ? `待闭环分支 ${actionRequiredBranchCount}` : undefined,
+    actionRequiredCommitterCount > 0 ? `待闭环提交人 ${actionRequiredCommitterCount}` : undefined,
+    uncoveredBugCount > 0 ? `缺 Bug ${uncoveredBugCount}` : undefined,
+    uncoveredTaskCount > 0 ? `缺整改任务 ${uncoveredTaskCount}` : undefined,
+    pendingSuppressionCount + pendingReviewCount > 0
+      ? `待审批忽略 ${pendingSuppressionCount + pendingReviewCount}`
+      : undefined,
+    expiredAcceptedRiskCount > 0 ? `到期接受风险 ${expiredAcceptedRiskCount}` : undefined,
+  ].filter((item): item is string => Boolean(item));
+
+  if (!risks.length) {
+    risks.push(`Bug 覆盖率 ${percentText(sla?.bug_coverage_rate)}`);
+    risks.push(`整改覆盖率 ${percentText(sla?.task_coverage_rate)}`);
+  }
+
+  const detail = `当前范围有 ${reportCount} 份巡检报告、${severeFindingCount} 个严重问题，门禁失败报告 ${failedReportCount} 份、失败项 ${qualityGateViolationCount} 个，缺 Bug ${uncoveredBugCount} 个、缺整改任务 ${uncoveredTaskCount} 个。`;
+
+  if (failedReportCount > 0 || qualityGateViolationCount > 0) {
+    return {
+      detail,
+      level: 'error',
+      nextAction: '先查看“门禁失败原因”和最近失败报告，完成修复或风险接受后再重跑巡检。',
+      risks,
+      value: '优先处理质量门禁失败',
+    };
+  }
+  if (actionRequiredBranchCount > 0) {
+    return {
+      detail,
+      level: 'warning',
+      nextAction: '先处理“分支治理待办”中的待闭环分支，确认 Bug、整改任务和风险接受是否完整。',
+      risks,
+      value: '优先处理分支治理待办',
+    };
+  }
+  if (actionRequiredCommitterCount > 0) {
+    return {
+      detail,
+      level: 'warning',
+      nextAction: '先处理“提交人治理待办”中的责任人闭环，补齐缺失 Bug、整改任务或忽略审批。',
+      risks,
+      value: '优先处理提交人治理待办',
+    };
+  }
+  if (uncoveredBugCount > 0 || uncoveredTaskCount > 0) {
+    return {
+      detail,
+      level: 'warning',
+      nextAction: '先为严重问题补齐 Bug 或整改任务，确保扫描结果进入交付闭环。',
+      risks,
+      value: '优先补齐 Bug 和整改任务',
+    };
+  }
+  if (pendingSuppressionCount + pendingReviewCount > 0) {
+    return {
+      detail,
+      level: 'warning',
+      nextAction: '先审批待处理的误报忽略或接受风险申请，避免治理状态长期停留在待确认。',
+      risks,
+      value: '优先审批忽略申请',
+    };
+  }
+  if (expiredAcceptedRiskCount > 0) {
+    return {
+      detail,
+      level: 'warning',
+      nextAction: '先复核已到期的接受风险，重新评估继续接受、转 Bug 或安排整改。',
+      risks,
+      value: '复核到期接受风险',
+    };
+  }
+  if (severeFindingCount > 0) {
+    return {
+      detail,
+      level: 'info',
+      nextAction: '严重问题已完成基础覆盖，继续观察趋势并保持定期巡检。',
+      risks,
+      value: '严重问题已覆盖',
+    };
+  }
+  return {
+    detail,
+    level: 'success',
+    nextAction: '当前范围暂无优先治理项，可以继续保持定期巡检和趋势观察。',
+    risks,
+    value: '巡检治理健康',
+  };
+}
+
 export function CodeInspectionGovernanceOverview({
   dashboard,
   loading,
@@ -71,6 +211,7 @@ export function CodeInspectionGovernanceOverview({
   const ruleGovernance = dashboard?.rule_governance;
   const governancePressure = dashboard?.governance_pressure;
   const sla = dashboard?.sla;
+  const governanceConclusion = buildCodeInspectionGovernanceConclusion(dashboard);
   return (
     <Space orientation="vertical" size={12} style={{ width: '100%', marginBottom: 16 }}>
       <Row gutter={[12, 12]}>
@@ -112,6 +253,29 @@ export function CodeInspectionGovernanceOverview({
           </Card>
         </Col>
       </Row>
+      <Alert
+        description={
+          <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+            <Text>{governanceConclusion.detail}</Text>
+            <Space size={[6, 6]} wrap>
+              {governanceConclusion.risks.map((risk) => (
+                <Tag key={risk}>{risk}</Tag>
+              ))}
+            </Space>
+            <span>{`下一步动作：${governanceConclusion.nextAction}`}</span>
+          </Space>
+        }
+        title={
+          <Space size={8} wrap>
+            <Text strong>代码巡检治理结论</Text>
+            <Tag color={governanceConclusion.level === 'error' ? 'red' : governanceConclusion.level}>
+              {governanceConclusion.value}
+            </Tag>
+          </Space>
+        }
+        showIcon
+        type={governanceConclusion.level}
+      />
       <Card loading={loading} size="small" title="治理压力总览">
         <Descriptions
           column={{ lg: 4, md: 2, xs: 1 }}

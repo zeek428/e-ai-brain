@@ -35,6 +35,7 @@
 - 代码巡检报告、finding、通知、误报忽略审批和整改任务派生属于 DB-first 写路径：服务层不得直接写 `current_store.code_inspection_*` 或 `current_store.ai_tasks`；MemoryStore fallback 由 `persist_code_inspection_records` / `persist_ai_task_record` 承接，PostgreSQL 运行态的报告、finding、通知和审计必须在同一数据库事务中提交。
 - 代码巡检本地完整扫描需记录仓库、分支、提交、提交人、规则版本、扫描范围、增量基线 Commit、扫描覆盖、质量门禁和 suppression 摘要。
 - 代码巡检报告详情中的 finding 可提交误报/忽略申请，审批状态按 `none/pending/approved/rejected` 流转；审批通过后同步报告 suppression 统计、规则治理概览和审计事件，不能只在前端隐藏问题。
+- 代码巡检治理概览首屏必须展示“代码巡检治理结论”，基于 `governance_pressure`、`summary`、`sla` 和 `rule_governance` 既有字段派生总体判断、主要风险标签和下一步动作；优先级顺序为质量门禁失败、分支闭环、提交人闭环、Bug/整改覆盖缺口、待审批忽略/接受风险、到期接受风险和健康观察。
 - 代码巡检治理概览必须展示规则包与误报治理，包含最近报告规则/扫描器版本、版本不一致提示、规则/扫描器版本分布、suppression 总量和 baseline/已接受风险/忽略项/严重级别阈值等过滤原因分布。
 - 代码巡检治理概览必须展示质量门禁趋势，按日期聚合通过、失败、跳过和未知门禁数，便于判断规则升级或仓库质量门禁是否持续恶化。
 - 代码巡检治理概览必须展示质量门禁失败原因分布，按门禁指标或规则聚合触发次数、影响报告数、最高严重级别、实际值/阈值和最近报告摘要，帮助定位是规则阈值、严重问题数量还是单个扫描维度导致门禁失败。
