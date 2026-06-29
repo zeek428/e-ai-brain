@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.452 |
+| 功能版本 | v1.1.453 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.453 | 2026-06-29 | 迭代版本驾驶舱知识沉淀明细补齐知识文档索引健康元数据，summary 返回可检索和向量就绪沉淀数 | Codex |
 | v1.1.452 | 2026-06-29 | 迭代版本驾驶舱聚合版本内任务知识沉淀，summary 返回 `knowledge_deposits`，明细按 `knowledge.read` 子权限降级隐藏 | Codex |
 | v1.1.451 | 2026-06-29 | GitLab MR 预览支持显式 `fixture://gitlab` 回归源，仅用于真实全链路脚本的本地可控 Code Review 门禁，不替代生产 GitLab/GitHub 只读 API 配置 | Codex |
 | v1.1.450 | 2026-06-29 | 代码巡检 suppression 申请支持 `accepted_risk` 责任人和到期时间，缺少 `expires_at` 返回 `ACCEPTED_RISK_EXPIRY_REQUIRED`，详情和 dashboard 返回过期接受风险计数 | Codex |
@@ -662,7 +663,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Product | PATCH | `/api/products/{product_id}` | 更新产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404。 |
 | Product | DELETE | `/api/products/{product_id}` | 删除未被需求、AI 任务或 Bug 占用的产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404；无业务依赖时级联清理该产品的版本、模块和 Git 资源配置。 |
 | Product Version | GET | `/api/product-versions`, `/api/products/{product_id}/versions` | 产品迭代版本列表，前端主入口位于需求交付/迭代版本；要求 `product.read`，批量列表按当前用户产品 scope 过滤，指定 scope 外产品返回 404。 |
-| Product Version | GET | `/api/product-versions/{version_id}/dashboard` | 查询迭代版本驾驶舱，聚合版本需求、AI 任务、版本代码分支、Bug、代码巡检、代码评审、知识沉淀、发布记录、状态推进影响和阻塞项；要求 `product.read` 并按版本归属产品校验 scope，Bug 明细需 `bug.read`，代码巡检明细需 `code_inspection.read`，知识沉淀明细需 `knowledge.read`，缺少子权限时返回 `access_issues` 并隐藏对应明细。 |
+| Product Version | GET | `/api/product-versions/{version_id}/dashboard` | 查询迭代版本驾驶舱，聚合版本需求、AI 任务、版本代码分支、Bug、代码巡检、代码评审、知识沉淀、发布记录、状态推进影响和阻塞项；要求 `product.read` 并按版本归属产品校验 scope，Bug 明细需 `bug.read`，代码巡检明细需 `code_inspection.read`，知识沉淀明细需 `knowledge.read`，缺少子权限时返回 `access_issues` 并隐藏对应明细；知识沉淀行返回关联知识文档索引状态、chunk 数、embedding chunk 数和关键词/混合/不可用检索模式。 |
 | Product Version | POST | `/api/products/{product_id}/versions` | 创建产品迭代版本；要求 `product.manage`，并按当前用户产品 scope 校验产品可见性。 |
 | Product Version | PATCH | `/api/product-versions/{version_id}` | 更新产品迭代版本非状态字段；要求 `product.manage`，按版本归属产品校验当前用户产品 scope，状态变更必须走推进接口。 |
 | Product Version | POST | `/api/product-versions/{version_id}/advance-status` | 预览或推进迭代版本状态，并同步符合条件的需求状态；要求 `product.manage`，按版本归属产品校验当前用户产品 scope。 |
@@ -1347,6 +1348,8 @@ GET /api/product-versions/version_001/dashboard
       "code_review_reports": 1,
       "pending_code_review_reports": 1,
       "knowledge_deposits": 1,
+      "searchable_knowledge_deposits": 1,
+      "vectorized_knowledge_deposits": 0,
       "releases": 1,
       "blockers": 3
     },
@@ -1377,6 +1380,12 @@ GET /api/product-versions/version_001/dashboard
         "ai_task_id": "task_001",
         "task_title": "版本发布准入自动化",
         "knowledge_document_id": "knowledge_001",
+        "knowledge_document_title": "版本发布准入知识文档",
+        "knowledge_index_status": "text_indexed",
+        "knowledge_retrieval_mode": "keyword",
+        "knowledge_chunk_count": 4,
+        "knowledge_embedding_chunk_count": 0,
+        "knowledge_index_error": "Embedding 网关未配置，已降级为关键词检索。",
         "updated_at": "2026-06-04T09:40:00+00:00"
       }
     ],
@@ -1386,7 +1395,7 @@ GET /api/product-versions/version_001/dashboard
 }
 ```
 
-规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏；`knowledge_deposits` 仅在具备 `knowledge.read` 时返回，否则在 `access_issues` 中声明隐藏。知识沉淀明细只暴露沉淀 ID、标题、状态、来源任务、关联知识文档和更新时间，不返回知识正文。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态；每条 blocker 必须返回处理动作、目标主体和解除条件，前端将其映射为需求、Bug、代码巡检、版本分支或发布记录处理入口。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、交付健康摘要、status impact 和 blockers，再展示可读明细表；交付健康摘要基于阻塞项、严重 Bug/巡检、分支创建状态、代码巡检风险和发布失败记录派生发布准入、质量风险、代码分支、代码巡检和发布流水线结论。
+规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏；`knowledge_deposits` 仅在具备 `knowledge.read` 时返回，否则在 `access_issues` 中声明隐藏。知识沉淀明细只暴露沉淀 ID、标题、状态、来源任务、关联知识文档、知识文档标题、索引状态、chunk 数、embedding chunk 数、检索模式、索引错误摘要和更新时间，不返回知识正文；`knowledge_retrieval_mode=keyword` 表示关键词兜底，`hybrid` 表示向量与关键词可混合检索，`unavailable` 表示当前沉淀不可检索。summary 中 `searchable_knowledge_deposits` 统计可关键词或混合检索的沉淀，`vectorized_knowledge_deposits` 统计混合检索沉淀。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态；每条 blocker 必须返回处理动作、目标主体和解除条件，前端将其映射为需求、Bug、代码巡检、版本分支或发布记录处理入口。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、交付健康摘要、status impact 和 blockers，再展示可读明细表；交付健康摘要基于阻塞项、严重 Bug/巡检、分支创建状态、代码巡检风险、知识沉淀可检索状态和发布失败记录派生发布准入、质量风险、代码分支、代码巡检、知识沉淀和发布流水线结论。
 
 ### 平台配置
 

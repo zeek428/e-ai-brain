@@ -611,25 +611,23 @@ class PostgresSnapshotRepository:
             "audit_events": list(audit_payload.get("audit_events") or []),
             "bugs": list((bugs_payload.get("bugs") or {}).values()),
             "code_inspection_reports": self.list_code_inspection_reports(),
-            "code_review_reports": list(
-                (review_payload.get("code_review_reports") or {}).values()
-            ),
+            "code_review_reports": list((review_payload.get("code_review_reports") or {}).values()),
             "gitlab_daily_code_metrics": list(
                 (gitlab_metrics_payload.get("gitlab_daily_code_metrics") or {}).values()
             ),
-            "gitlab_mr_snapshots": list(
-                (review_payload.get("gitlab_mr_snapshots") or {}).values()
-            ),
-            "graph_checkpoints": list(
-                (workflow_payload.get("graph_checkpoints") or {}).values()
-            ),
+            "gitlab_mr_snapshots": list((review_payload.get("gitlab_mr_snapshots") or {}).values()),
+            "graph_checkpoints": list((workflow_payload.get("graph_checkpoints") or {}).values()),
             "graph_runs": list((workflow_payload.get("graph_runs") or {}).values()),
             "human_reviews": list((workflow_payload.get("human_reviews") or {}).values()),
             "jenkins_release_records": list(
                 (jenkins_releases_payload.get("jenkins_release_records") or {}).values()
             ),
+            "knowledge_chunks": list((knowledge_payload.get("knowledge_chunks") or {}).values()),
             "knowledge_deposits": list(
                 (knowledge_payload.get("knowledge_deposits") or {}).values()
+            ),
+            "knowledge_documents": list(
+                (knowledge_payload.get("knowledge_documents") or {}).values()
             ),
             "model_gateway_configs": list(
                 (model_gateway_payload.get("model_gateway_configs") or {}).values()
@@ -642,9 +640,7 @@ class PostgresSnapshotRepository:
             "product_git_repositories": list(
                 (product_config_payload.get("product_git_repositories") or {}).values()
             ),
-            "product_modules": list(
-                (product_config_payload.get("product_modules") or {}).values()
-            ),
+            "product_modules": list((product_config_payload.get("product_modules") or {}).values()),
             "product_version_branch_configs": list(
                 (product_config_payload.get("product_version_branch_configs") or {}).values()
             ),
@@ -652,9 +648,7 @@ class PostgresSnapshotRepository:
                 (product_config_payload.get("product_versions") or {}).values()
             ),
             "products": list((product_config_payload.get("products") or {}).values()),
-            "related_systems": list(
-                (product_config_payload.get("related_systems") or {}).values()
-            ),
+            "related_systems": list((product_config_payload.get("related_systems") or {}).values()),
             "requirements": list((requirements_payload.get("requirements") or {}).values()),
             "tasks": list((tasks_payload.get("ai_tasks") or {}).values()),
         }

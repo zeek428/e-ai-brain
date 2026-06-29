@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.product_version_dashboard import product_version_dashboard_response
 
 client = TestClient(app)
 
@@ -224,10 +225,7 @@ def test_advancing_testing_version_to_released_blocks_unfinished_requirements():
     assert released.status_code == 200
     released_data = released.json()["data"]
     assert released_data["version"]["status"] == "released"
-    assert {
-        item["id"]: item["to_status"]
-        for item in released_data["updated_requirements"]
-    } == {
+    assert {item["id"]: item["to_status"] for item in released_data["updated_requirements"]} == {
         testing_requirement["id"]: "released",
         ready_requirement["id"]: "released",
     }
@@ -323,6 +321,26 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "title": "版本驾驶舱知识沉淀",
         "updated_at": "2026-06-04T09:06:00+00:00",
     }
+    app.state.store.knowledge_documents["knowledge_version_dashboard"] = {
+        "active_chunk_set_id": "chunk_set_version_dashboard",
+        "created_at": "2026-06-04T09:05:30+00:00",
+        "doc_type": "markdown",
+        "id": "knowledge_version_dashboard",
+        "index_status": "text_indexed",
+        "permission_roles": ["admin"],
+        "title": "版本驾驶舱知识文档",
+        "updated_at": "2026-06-04T09:05:40+00:00",
+        "vector_index_error": "Embedding 网关未配置，已降级为关键词检索。",
+    }
+    app.state.store.knowledge_chunks["chunk_version_dashboard"] = {
+        "chunk_index": 0,
+        "chunk_set_id": "chunk_set_version_dashboard",
+        "content": "版本驾驶舱知识沉淀内容",
+        "created_at": "2026-06-04T09:05:35+00:00",
+        "document_id": "knowledge_version_dashboard",
+        "id": "chunk_version_dashboard",
+        "updated_at": "2026-06-04T09:05:35+00:00",
+    }
     app.state.store.code_review_reports["code_review_report_dashboard"] = {
         "archived_at": None,
         "executor": {"name": "codex", "type": "local"},
@@ -408,9 +426,11 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "pending_code_review_reports": 1,
         "releases": 1,
         "requirements": 1,
+        "searchable_knowledge_deposits": 1,
         "severe_bugs": 2,
         "severe_code_inspection_reports": 1,
         "tasks": 1,
+        "vectorized_knowledge_deposits": 0,
     }
     assert data["status_impact"]["target_status"] == "testing"
     assert data["status_impact"]["updated_requirements"] == [
@@ -465,7 +485,13 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         {
             "ai_task_id": "task_version_dashboard",
             "id": "deposit_version_dashboard",
+            "knowledge_chunk_count": 1,
             "knowledge_document_id": "knowledge_version_dashboard",
+            "knowledge_document_title": "版本驾驶舱知识文档",
+            "knowledge_embedding_chunk_count": 0,
+            "knowledge_index_error": "Embedding 网关未配置，已降级为关键词检索。",
+            "knowledge_index_status": "text_indexed",
+            "knowledge_retrieval_mode": "keyword",
             "status": "approved",
             "title": "版本驾驶舱知识沉淀",
             "task_title": "实现版本驾驶舱",
@@ -477,6 +503,135 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "bug_version_dashboard_from_inspection",
     }
     assert data["bug_status_counts"] == [{"count": 2, "status": "open"}]
+
+
+def test_product_version_dashboard_loads_knowledge_index_health_from_repository_projection():
+    class FakeRepository:
+        def get_task_workflow_source_rows(self) -> dict[str, list[dict[str, object]]]:
+            return {
+                "audit_events": [],
+                "bugs": [],
+                "code_inspection_reports": [],
+                "code_review_reports": [],
+                "gitlab_daily_code_metrics": [],
+                "gitlab_mr_snapshots": [],
+                "graph_checkpoints": [],
+                "graph_runs": [],
+                "human_reviews": [],
+                "jenkins_release_records": [],
+                "knowledge_chunks": [
+                    {
+                        "chunk_index": 1,
+                        "content": "repository projection knowledge chunk",
+                        "document_id": "knowledge_repository_projection",
+                        "id": "chunk_repository_projection",
+                    }
+                ],
+                "knowledge_deposits": [
+                    {
+                        "ai_task_id": "task_repository_projection",
+                        "created_at": "2026-06-04T09:05:00+00:00",
+                        "id": "deposit_repository_projection",
+                        "knowledge_document_id": "knowledge_repository_projection",
+                        "status": "approved",
+                        "title": "Repository 投影知识沉淀",
+                        "updated_at": "2026-06-04T09:06:00+00:00",
+                    }
+                ],
+                "knowledge_documents": [
+                    {
+                        "created_at": "2026-06-04T09:05:30+00:00",
+                        "doc_type": "task_deposit",
+                        "id": "knowledge_repository_projection",
+                        "index_status": "text_indexed",
+                        "permission_roles": ["admin"],
+                        "title": "Repository 投影知识文档",
+                        "updated_at": "2026-06-04T09:05:40+00:00",
+                        "vector_index_error": "Embedding 网关未配置，已降级为关键词检索。",
+                    }
+                ],
+                "model_gateway_configs": [],
+                "model_gateway_logs": [],
+                "mock_writebacks": [],
+                "online_log_metrics": [],
+                "product_git_repositories": [],
+                "product_modules": [],
+                "product_version_branch_configs": [],
+                "product_versions": [
+                    {
+                        "code": "repository-dashboard",
+                        "id": "version_repository_projection",
+                        "name": "Repository 投影驾驶舱",
+                        "product_id": "product_repository_projection",
+                        "status": "active",
+                    }
+                ],
+                "products": [
+                    {
+                        "code": "repository-dashboard-product",
+                        "id": "product_repository_projection",
+                        "name": "Repository 投影产品",
+                        "status": "active",
+                    }
+                ],
+                "related_systems": [],
+                "requirements": [
+                    {
+                        "created_at": "2026-06-04T08:00:00+00:00",
+                        "id": "requirement_repository_projection",
+                        "priority": "P1",
+                        "product_id": "product_repository_projection",
+                        "status": "developing",
+                        "title": "Repository 投影需求",
+                        "updated_at": "2026-06-04T08:30:00+00:00",
+                        "version_id": "version_repository_projection",
+                    }
+                ],
+                "tasks": [
+                    {
+                        "created_at": "2026-06-04T08:40:00+00:00",
+                        "created_by": "user_admin",
+                        "id": "task_repository_projection",
+                        "product_id": "product_repository_projection",
+                        "requirement_id": "requirement_repository_projection",
+                        "status": "completed",
+                        "task_type": "implementation",
+                        "title": "Repository 投影任务",
+                        "updated_at": "2026-06-04T09:00:00+00:00",
+                        "version_id": "version_repository_projection",
+                    }
+                ],
+            }
+
+    current_store = type("RepositoryBackedStore", (), {"repository": FakeRepository()})()
+
+    dashboard = product_version_dashboard_response(
+        current_store=current_store,
+        user={"id": "user_admin", "permissions": [], "roles": ["admin"]},
+        version_id="version_repository_projection",
+    )
+
+    assert dashboard is not None
+    assert dashboard["summary"]["knowledge_deposits"] == 1
+    assert dashboard["summary"]["searchable_knowledge_deposits"] == 1
+    assert dashboard["summary"]["vectorized_knowledge_deposits"] == 0
+    assert dashboard["knowledge_deposits"] == [
+        {
+            "ai_task_id": "task_repository_projection",
+            "id": "deposit_repository_projection",
+            "knowledge_chunk_count": 1,
+            "knowledge_document_id": "knowledge_repository_projection",
+            "knowledge_document_title": "Repository 投影知识文档",
+            "knowledge_embedding_chunk_count": 0,
+            "knowledge_index_error": "Embedding 网关未配置，已降级为关键词检索。",
+            "knowledge_index_status": "text_indexed",
+            "knowledge_retrieval_mode": "keyword",
+            "status": "approved",
+            "task_title": "Repository 投影任务",
+            "title": "Repository 投影知识沉淀",
+            "updated_at": "2026-06-04T09:06:00+00:00",
+        }
+    ]
 
 
 def test_product_version_dashboard_blocks_release_without_successful_release_record():

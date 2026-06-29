@@ -1,11 +1,5 @@
-import type {
-  ProductVersionRecord,
-  RequirementRecord,
-} from '../../../data/management';
-import {
-  fullChainSubjectHref,
-  type ProductVersionDashboard,
-} from '../../../services/aiBrain';
+import type { ProductVersionRecord, RequirementRecord } from '../../../data/management';
+import { fullChainSubjectHref, type ProductVersionDashboard } from '../../../services/aiBrain';
 
 export type LabelItem = { color: string; label: string };
 
@@ -19,22 +13,19 @@ export type DashboardHealthItem = {
 
 export type DashboardReadinessItem = DashboardHealthItem;
 
-type DashboardRequirementImpact = NonNullable<
-  ProductVersionDashboard['statusImpact']
->['updatedRequirements'][number];
+type DashboardRequirementImpact = NonNullable<ProductVersionDashboard['statusImpact']>['updatedRequirements'][number];
 
 export type DashboardStatusImpactRow = DashboardRequirementImpact & {
   impact: 'blocked' | 'unchanged' | 'updated';
   impactLabel: string;
 };
 
-export type DashboardBlockerActionItem =
-  ProductVersionDashboard['blockers'][number] & {
-    actionHref?: string;
-    fullChainHref?: string;
-    priority: number;
-    sourceLabel: string;
-  };
+export type DashboardBlockerActionItem = ProductVersionDashboard['blockers'][number] & {
+  actionHref?: string;
+  fullChainHref?: string;
+  priority: number;
+  sourceLabel: string;
+};
 
 export const dashboardBlockerSourceLabels: Record<string, string> = {
   bug: 'Bug',
@@ -44,10 +35,7 @@ export const dashboardBlockerSourceLabels: Record<string, string> = {
   requirement: '需求',
 };
 
-export const dashboardHealthLevelLabels: Record<
-  DashboardHealthItem['level'],
-  LabelItem
-> = {
+export const dashboardHealthLevelLabels: Record<DashboardHealthItem['level'], LabelItem> = {
   error: { color: 'red', label: '需处理' },
   info: { color: 'blue', label: '关注' },
   success: { color: 'green', label: '正常' },
@@ -58,10 +46,7 @@ export function dashboardDate(value?: string | null) {
   return value || '-';
 }
 
-export function internalHref(
-  path: string,
-  params: Record<string, string | undefined>,
-) {
+export function internalHref(path: string, params: Record<string, string | undefined>) {
   const searchParams = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value) {
@@ -102,10 +87,7 @@ const blockerSourcePriority: Record<string, number> = {
   product_version_branch_config: 5,
 };
 
-export function blockerActionHref(
-  blocker: ProductVersionDashboard['blockers'][number],
-  versionId: string,
-) {
+export function blockerActionHref(blocker: ProductVersionDashboard['blockers'][number], versionId: string) {
   const targetType = blocker.actionTargetType || blocker.sourceType;
   const targetId = blocker.actionTargetId || blocker.id;
   if (!targetId) {
@@ -140,41 +122,28 @@ export function blockerActionHref(
   return undefined;
 }
 
-export function buildBlockerActionQueue(
-  dashboard: ProductVersionDashboard,
-): DashboardBlockerActionItem[] {
+export function buildBlockerActionQueue(dashboard: ProductVersionDashboard): DashboardBlockerActionItem[] {
   return dashboard.blockers
     .map((blocker) => {
       const subjectType = blockerSubjectType(String(blocker.sourceType ?? ''));
       const actionHref = blockerActionHref(blocker, dashboard.version.id);
-      const fullChainHref =
-        subjectType && blocker.id
-          ? fullChainSubjectHref(subjectType, blocker.id)
-          : undefined;
+      const fullChainHref = subjectType && blocker.id ? fullChainSubjectHref(subjectType, blocker.id) : undefined;
       return {
         ...blocker,
         actionHref,
         fullChainHref,
         priority: 0,
-        sourceLabel:
-          dashboardBlockerSourceLabels[blocker.sourceType] ??
-          blocker.sourceType,
+        sourceLabel: dashboardBlockerSourceLabels[blocker.sourceType] ?? blocker.sourceType,
       };
     })
     .sort((left, right) => {
-      const leftSeverity =
-        blockerSeverityPriority[String(left.severity ?? '').toLowerCase()] ??
-        4;
-      const rightSeverity =
-        blockerSeverityPriority[String(right.severity ?? '').toLowerCase()] ??
-        4;
+      const leftSeverity = blockerSeverityPriority[String(left.severity ?? '').toLowerCase()] ?? 4;
+      const rightSeverity = blockerSeverityPriority[String(right.severity ?? '').toLowerCase()] ?? 4;
       if (leftSeverity !== rightSeverity) {
         return leftSeverity - rightSeverity;
       }
-      const leftSource =
-        blockerSourcePriority[String(left.sourceType ?? '')] ?? 99;
-      const rightSource =
-        blockerSourcePriority[String(right.sourceType ?? '')] ?? 99;
+      const leftSource = blockerSourcePriority[String(left.sourceType ?? '')] ?? 99;
+      const rightSource = blockerSourcePriority[String(right.sourceType ?? '')] ?? 99;
       if (leftSource !== rightSource) {
         return leftSource - rightSource;
       }
@@ -241,55 +210,37 @@ export function buildStatusLabelMap(
 }
 
 function blockerSourceSummary(blockers: ProductVersionDashboard['blockers']) {
-  const sourceCounts = blockers.reduce<Record<string, number>>(
-    (accumulator, blocker) => {
-      const source =
-        dashboardBlockerSourceLabels[blocker.sourceType] ?? blocker.sourceType;
-      accumulator[source] = (accumulator[source] ?? 0) + 1;
-      return accumulator;
-    },
-    {},
-  );
+  const sourceCounts = blockers.reduce<Record<string, number>>((accumulator, blocker) => {
+    const source = dashboardBlockerSourceLabels[blocker.sourceType] ?? blocker.sourceType;
+    accumulator[source] = (accumulator[source] ?? 0) + 1;
+    return accumulator;
+  }, {});
   return Object.entries(sourceCounts)
     .map(([source, count]) => `${source} ${count}`)
     .join('、');
 }
 
-export function buildDashboardHealthItems(
-  dashboard?: ProductVersionDashboard,
-): DashboardHealthItem[] {
+export function buildDashboardHealthItems(dashboard?: ProductVersionDashboard): DashboardHealthItem[] {
   if (!dashboard) {
     return [];
   }
-  const severeRiskCount =
-    dashboard.summary.severe_bugs +
-    dashboard.summary.severe_code_inspection_reports;
+  const severeRiskCount = dashboard.summary.severe_bugs + dashboard.summary.severe_code_inspection_reports;
   const notCreatedBranchCount = dashboard.branchConfigs.filter(
     (branchConfig) => branchConfig.branchStatus === 'not_created',
   ).length;
   const failedReleaseCount = dashboard.releases.filter((release) => {
     const status = release.status.toLowerCase();
-    return (
-      status === 'failed' ||
-      status === 'failure' ||
-      status === 'canceled' ||
-      status === 'cancelled'
-    );
+    return status === 'failed' || status === 'failure' || status === 'canceled' || status === 'cancelled';
   }).length;
-  const highRiskInspectionCount = dashboard.codeInspectionReports.filter(
-    (report) => {
-      const riskLevel = report.risk_level.toLowerCase();
-      return (
-        riskLevel === 'blocker' ||
-        riskLevel === 'critical' ||
-        riskLevel === 'high'
-      );
-    },
-  ).length;
+  const highRiskInspectionCount = dashboard.codeInspectionReports.filter((report) => {
+    const riskLevel = report.risk_level.toLowerCase();
+    return riskLevel === 'blocker' || riskLevel === 'critical' || riskLevel === 'high';
+  }).length;
   const pendingCodeReviewCount = dashboard.codeReviewReports.filter(
-    (report) =>
-      report.status === 'pending_review' || report.status === 'waiting_review',
+    (report) => report.status === 'pending_review' || report.status === 'waiting_review',
   ).length;
+  const searchableKnowledgeDepositCount = dashboard.summary.searchable_knowledge_deposits;
+  const vectorizedKnowledgeDepositCount = dashboard.summary.vectorized_knowledge_deposits;
   return [
     {
       detail: dashboard.blockers.length
@@ -298,15 +249,12 @@ export function buildDashboardHealthItems(
       key: 'blockers',
       level: dashboard.blockers.length ? 'error' : 'success',
       title: '发布准入',
-      value: dashboard.blockers.length
-        ? `${dashboard.blockers.length} 个阻塞项`
-        : '暂无阻塞',
+      value: dashboard.blockers.length ? `${dashboard.blockers.length} 个阻塞项` : '暂无阻塞',
     },
     {
       detail: `严重 Bug ${dashboard.summary.severe_bugs}，严重巡检 ${dashboard.summary.severe_code_inspection_reports}，未关闭 Bug ${dashboard.summary.open_bugs}。`,
       key: 'quality',
-      level:
-        severeRiskCount || dashboard.summary.open_bugs ? 'warning' : 'success',
+      level: severeRiskCount || dashboard.summary.open_bugs ? 'warning' : 'success',
       title: '质量风险',
       value: severeRiskCount ? `${severeRiskCount} 个严重风险` : '质量风险可控',
     },
@@ -315,10 +263,7 @@ export function buildDashboardHealthItems(
         ? `已登记 ${dashboard.branchConfigs.length} 个代码分支配置，未创建 ${notCreatedBranchCount} 个。`
         : '尚未登记版本代码分支，进入开发/测试前需要补齐。',
       key: 'branches',
-      level:
-        !dashboard.branchConfigs.length || notCreatedBranchCount
-          ? 'warning'
-          : 'success',
+      level: !dashboard.branchConfigs.length || notCreatedBranchCount ? 'warning' : 'success',
       title: '代码分支',
       value: notCreatedBranchCount
         ? `${notCreatedBranchCount} 个分支未创建`
@@ -331,11 +276,7 @@ export function buildDashboardHealthItems(
         ? `已有 ${dashboard.codeInspectionReports.length} 份巡检报告，高风险 ${highRiskInspectionCount} 份。`
         : '当前版本还没有代码巡检报告，进入测试/发布前建议补齐。',
       key: 'inspection',
-      level: highRiskInspectionCount
-        ? 'warning'
-        : dashboard.codeInspectionReports.length
-          ? 'success'
-          : 'info',
+      level: highRiskInspectionCount ? 'warning' : dashboard.codeInspectionReports.length ? 'success' : 'info',
       title: '代码巡检',
       value: highRiskInspectionCount
         ? `${highRiskInspectionCount} 份高风险`
@@ -346,11 +287,7 @@ export function buildDashboardHealthItems(
         ? `已有 ${dashboard.codeReviewReports.length} 份代码评审报告，待确认 ${pendingCodeReviewCount} 份。`
         : '当前版本还没有代码评审报告，进入测试前建议补齐。',
       key: 'code-reviews',
-      level: pendingCodeReviewCount
-        ? 'warning'
-        : dashboard.codeReviewReports.length
-          ? 'success'
-          : 'info',
+      level: pendingCodeReviewCount ? 'warning' : dashboard.codeReviewReports.length ? 'success' : 'info',
       title: '代码评审',
       value: pendingCodeReviewCount
         ? `${pendingCodeReviewCount} 份待确认`
@@ -358,13 +295,18 @@ export function buildDashboardHealthItems(
     },
     {
       detail: dashboard.knowledgeDeposits.length
-        ? `已有 ${dashboard.knowledgeDeposits.length} 条任务知识沉淀，可从版本上下文追溯来源任务。`
+        ? `已有 ${dashboard.knowledgeDeposits.length} 条任务知识沉淀，可检索 ${searchableKnowledgeDepositCount} 条，向量就绪 ${vectorizedKnowledgeDepositCount} 条。`
         : '当前版本还没有任务知识沉淀，建议在关键设计、评审和整改完成后沉淀经验。',
       key: 'knowledge-deposits',
-      level: dashboard.knowledgeDeposits.length ? 'success' : 'info',
+      level:
+        dashboard.knowledgeDeposits.length && !searchableKnowledgeDepositCount
+          ? 'warning'
+          : dashboard.knowledgeDeposits.length
+            ? 'success'
+            : 'info',
       title: '知识沉淀',
       value: dashboard.knowledgeDeposits.length
-        ? `${dashboard.knowledgeDeposits.length} 条沉淀`
+        ? `${searchableKnowledgeDepositCount}/${dashboard.knowledgeDeposits.length} 可检索`
         : '暂无沉淀',
     },
     {
@@ -372,52 +314,32 @@ export function buildDashboardHealthItems(
         ? `已有 ${dashboard.releases.length} 条发布记录，失败/取消 ${failedReleaseCount} 条。`
         : '当前版本暂无发布记录。',
       key: 'releases',
-      level: failedReleaseCount
-        ? 'error'
-        : dashboard.releases.length
-          ? 'success'
-          : 'info',
+      level: failedReleaseCount ? 'error' : dashboard.releases.length ? 'success' : 'info',
       title: '发布流水线',
-      value: failedReleaseCount
-        ? `${failedReleaseCount} 条失败发布`
-        : `${dashboard.releases.length} 条发布记录`,
+      value: failedReleaseCount ? `${failedReleaseCount} 条失败发布` : `${dashboard.releases.length} 条发布记录`,
     },
   ];
 }
 
-function statusCount(
-  counts: ProductVersionDashboard['taskStatusCounts'],
-  status: string,
-) {
+function statusCount(counts: ProductVersionDashboard['taskStatusCounts'], status: string) {
   return counts.find((item) => item.status === status)?.count ?? 0;
 }
 
-export function buildDashboardReadinessItems(
-  dashboard?: ProductVersionDashboard,
-): DashboardReadinessItem[] {
+export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard): DashboardReadinessItem[] {
   if (!dashboard) {
     return [];
   }
-  const blockedRequirementCount =
-    dashboard.statusImpact?.blockedRequirements.length ?? 0;
+  const blockedRequirementCount = dashboard.statusImpact?.blockedRequirements.length ?? 0;
   const runningTaskCount = statusCount(dashboard.taskStatusCounts, 'running');
   const notCreatedBranchCount = dashboard.branchConfigs.filter(
     (branchConfig) => branchConfig.branchStatus === 'not_created',
   ).length;
-  const highRiskInspectionCount = dashboard.codeInspectionReports.filter(
-    (report) => {
-      const riskLevel = report.risk_level.toLowerCase();
-      return (
-        riskLevel === 'blocker' ||
-        riskLevel === 'critical' ||
-        riskLevel === 'high'
-      );
-    },
-  ).length;
+  const highRiskInspectionCount = dashboard.codeInspectionReports.filter((report) => {
+    const riskLevel = report.risk_level.toLowerCase();
+    return riskLevel === 'blocker' || riskLevel === 'critical' || riskLevel === 'high';
+  }).length;
   const pendingCodeReviewCount = dashboard.summary.pending_code_review_reports;
-  const releaseBlockerCount = dashboard.blockers.filter(
-    (blocker) => blocker.sourceType === 'jenkins_release',
-  ).length;
+  const releaseBlockerCount = dashboard.blockers.filter((blocker) => blocker.sourceType === 'jenkins_release').length;
   return [
     {
       detail: blockedRequirementCount
@@ -475,12 +397,19 @@ export function buildDashboardReadinessItems(
     },
     {
       detail: dashboard.summary.knowledge_deposits
-        ? `${dashboard.summary.knowledge_deposits} 条知识沉淀 · 可追溯来源任务`
+        ? `${dashboard.summary.knowledge_deposits} 条知识沉淀 · 可检索 ${dashboard.summary.searchable_knowledge_deposits} 条 · 向量就绪 ${dashboard.summary.vectorized_knowledge_deposits} 条`
         : '暂无知识沉淀，发布前建议沉淀关键设计、巡检和整改经验',
       key: 'knowledge-deposits',
-      level: dashboard.summary.knowledge_deposits ? 'success' : 'info',
+      level:
+        dashboard.summary.knowledge_deposits && !dashboard.summary.searchable_knowledge_deposits
+          ? 'warning'
+          : dashboard.summary.knowledge_deposits
+            ? 'success'
+            : 'info',
       title: '知识沉淀',
-      value: dashboard.summary.knowledge_deposits ? '已有沉淀' : '沉淀待补齐',
+      value: dashboard.summary.knowledge_deposits
+        ? `${dashboard.summary.searchable_knowledge_deposits}/${dashboard.summary.knowledge_deposits} 可检索`
+        : '沉淀待补齐',
     },
     {
       detail: releaseBlockerCount
@@ -496,12 +425,11 @@ export function buildDashboardReadinessItems(
         ? `同步 ${dashboard.statusImpact.updatedRequirements.length} / 阻塞 ${dashboard.statusImpact.blockedRequirements.length} / 保持 ${dashboard.statusImpact.unchangedRequirements.length}`
         : '当前版本没有可推进的下一阶段',
       key: 'status-impact',
-      level:
-        dashboard.statusImpact?.blockedRequirements.length
-          ? 'warning'
-          : dashboard.statusImpact
-            ? 'success'
-            : 'info',
+      level: dashboard.statusImpact?.blockedRequirements.length
+        ? 'warning'
+        : dashboard.statusImpact
+          ? 'success'
+          : 'info',
       title: '状态推进',
       value: dashboard.statusImpact ? '已预览影响' : '无需推进',
     },

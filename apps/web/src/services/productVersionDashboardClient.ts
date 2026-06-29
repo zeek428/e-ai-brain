@@ -130,7 +130,13 @@ type ProductVersionDashboardReleaseItem = {
 type ProductVersionDashboardKnowledgeDepositItem = {
   ai_task_id?: string | null;
   id: string;
+  knowledge_chunk_count?: number;
   knowledge_document_id?: string | null;
+  knowledge_document_title?: string | null;
+  knowledge_embedding_chunk_count?: number;
+  knowledge_index_error?: string | null;
+  knowledge_index_status?: string | null;
+  knowledge_retrieval_mode?: string | null;
   status?: string;
   task_title?: string | null;
   title?: string;
@@ -166,9 +172,11 @@ type ProductVersionDashboardSummary = {
   pending_code_review_reports: number;
   releases: number;
   requirements: number;
+  searchable_knowledge_deposits: number;
   severe_bugs: number;
   severe_code_inspection_reports: number;
   tasks: number;
+  vectorized_knowledge_deposits: number;
 };
 
 type ProductVersionDashboardStatusCount = {
@@ -249,7 +257,13 @@ export type ProductVersionDashboard = {
   knowledgeDeposits: Array<{
     aiTaskId?: string;
     id: string;
+    knowledgeChunkCount: number;
     knowledgeDocumentId?: string;
+    knowledgeDocumentTitle?: string;
+    knowledgeEmbeddingChunkCount: number;
+    knowledgeIndexError?: string;
+    knowledgeIndexStatus?: string;
+    knowledgeRetrievalMode: string;
     status: string;
     taskTitle: string;
     title: string;
@@ -310,20 +324,13 @@ function normalizeDashboardCount(value: unknown) {
 }
 
 function normalizeProductVersionStatus(status?: string): ProductVersionRecord['status'] {
-  if (
-    status === 'archived' ||
-    status === 'planning' ||
-    status === 'released' ||
-    status === 'testing'
-  ) {
+  if (status === 'archived' || status === 'planning' || status === 'released' || status === 'testing') {
     return status;
   }
   return 'active';
 }
 
-function normalizeProductVersionBranchStatus(
-  status?: string | null,
-): ProductVersionBranchConfigRecord['branchStatus'] {
+function normalizeProductVersionBranchStatus(status?: string | null): ProductVersionBranchConfigRecord['branchStatus'] {
   const allowed = new Set(['active', 'archived', 'merged', 'not_created', 'released', 'testing']);
   return allowed.has(status ?? '') ? (status as ProductVersionBranchConfigRecord['branchStatus']) : 'not_created';
 }
@@ -407,7 +414,7 @@ function normalizeStringList(value: unknown): string[] {
     return [];
   }
   return value
-    .map((item) => (typeof item === 'string' ? item : JSON.stringify(item) ?? ''))
+    .map((item) => (typeof item === 'string' ? item : (JSON.stringify(item) ?? '')))
     .map((item) => item.trim())
     .filter(Boolean);
 }
@@ -493,9 +500,7 @@ function mapBugRecord(bug: BugListItem): BugRecord {
     status: normalizeBugStatus(bug.status),
     title: bug.title,
     versionId: bug.version_id ?? undefined,
-    versionName: bug.version_id
-      ? formatUnknownValue(bug.version_name ?? bug.version_code ?? bug.version_id)
-      : '未关联',
+    versionName: bug.version_id ? formatUnknownValue(bug.version_name ?? bug.version_code ?? bug.version_id) : '未关联',
   };
 }
 
@@ -515,9 +520,7 @@ function mapTaskRecord(task: ProductVersionDashboardTaskItem): ProductVersionDas
   };
 }
 
-function mapProductVersionDashboard(
-  dashboard: ProductVersionDashboardResponse,
-): ProductVersionDashboard {
+function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse): ProductVersionDashboard {
   const summary = dashboard.summary ?? {};
   const statusImpact = dashboard.status_impact
     ? {
@@ -565,7 +568,13 @@ function mapProductVersionDashboard(
     knowledgeDeposits: (dashboard.knowledge_deposits ?? []).map((deposit) => ({
       aiTaskId: deposit.ai_task_id ?? undefined,
       id: deposit.id,
+      knowledgeChunkCount: normalizeDashboardCount(deposit.knowledge_chunk_count),
       knowledgeDocumentId: deposit.knowledge_document_id ?? undefined,
+      knowledgeDocumentTitle: deposit.knowledge_document_title ?? undefined,
+      knowledgeEmbeddingChunkCount: normalizeDashboardCount(deposit.knowledge_embedding_chunk_count),
+      knowledgeIndexError: deposit.knowledge_index_error ?? undefined,
+      knowledgeIndexStatus: deposit.knowledge_index_status ?? undefined,
+      knowledgeRetrievalMode: deposit.knowledge_retrieval_mode ?? 'unavailable',
       status: deposit.status ?? '-',
       taskTitle: deposit.task_title ?? deposit.ai_task_id ?? '-',
       title: deposit.title ?? deposit.id,
@@ -592,9 +601,11 @@ function mapProductVersionDashboard(
       pending_code_review_reports: normalizeDashboardCount(summary.pending_code_review_reports),
       releases: normalizeDashboardCount(summary.releases),
       requirements: normalizeDashboardCount(summary.requirements),
+      searchable_knowledge_deposits: normalizeDashboardCount(summary.searchable_knowledge_deposits),
       severe_bugs: normalizeDashboardCount(summary.severe_bugs),
       severe_code_inspection_reports: normalizeDashboardCount(summary.severe_code_inspection_reports),
       tasks: normalizeDashboardCount(summary.tasks),
+      vectorized_knowledge_deposits: normalizeDashboardCount(summary.vectorized_knowledge_deposits),
     },
     taskStatusCounts: dashboard.task_status_counts ?? [],
     tasks: (dashboard.tasks ?? []).map(mapTaskRecord),
@@ -602,13 +613,10 @@ function mapProductVersionDashboard(
   };
 }
 
-export async function fetchProductVersionDashboard(
-  versionId: string,
-): Promise<ProductVersionDashboard> {
+export async function fetchProductVersionDashboard(versionId: string): Promise<ProductVersionDashboard> {
   const token = requireAccessToken();
-  const dashboard = await apiRequest<ProductVersionDashboardResponse>(
-    `/api/product-versions/${versionId}/dashboard`,
-    { token },
-  );
+  const dashboard = await apiRequest<ProductVersionDashboardResponse>(`/api/product-versions/${versionId}/dashboard`, {
+    token,
+  });
   return mapProductVersionDashboard(dashboard);
 }

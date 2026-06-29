@@ -27,7 +27,9 @@ describe('IterationVersionsPage', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
-      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      expect(init?.headers).toMatchObject({
+        Authorization: 'Bearer token-admin',
+      });
       if (
         path === '/api/product-versions' ||
         (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
@@ -52,7 +54,14 @@ describe('IterationVersionsPage', () => {
       if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
         return jsonResponse({
           data: {
-            items: [{ code: 'API-PRODUCT', id: 'product_api', name: '接口产品', status: 'active' }],
+            items: [
+              {
+                code: 'API-PRODUCT',
+                id: 'product_api',
+                name: '接口产品',
+                status: 'active',
+              },
+            ],
             total: 1,
           },
         });
@@ -155,7 +164,9 @@ describe('IterationVersionsPage', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
-      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      expect(init?.headers).toMatchObject({
+        Authorization: 'Bearer token-admin',
+      });
       if (
         path === '/api/product-versions' ||
         (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
@@ -180,7 +191,14 @@ describe('IterationVersionsPage', () => {
       if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
         return jsonResponse({
           data: {
-            items: [{ code: 'API-PRODUCT', id: 'product_api', name: 'AI Brain', status: 'active' }],
+            items: [
+              {
+                code: 'API-PRODUCT',
+                id: 'product_api',
+                name: 'AI Brain',
+                status: 'active',
+              },
+            ],
             total: 1,
           },
         });
@@ -263,7 +281,9 @@ describe('IterationVersionsPage', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
-      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      expect(init?.headers).toMatchObject({
+        Authorization: 'Bearer token-admin',
+      });
       if (
         path === '/api/product-versions' ||
         (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
@@ -290,7 +310,14 @@ describe('IterationVersionsPage', () => {
       if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
         return jsonResponse({
           data: {
-            items: [{ code: 'AI-BRAIN', id: 'product_api', name: 'AI Brain', status: 'active' }],
+            items: [
+              {
+                code: 'AI-BRAIN',
+                id: 'product_api',
+                name: 'AI Brain',
+                status: 'active',
+              },
+            ],
             total: 1,
           },
         });
@@ -359,7 +386,11 @@ describe('IterationVersionsPage', () => {
     expect(await screen.findByText('代码分支 · 2026-09')).toBeInTheDocument();
     const branchText = await screen.findByText('release/2026-09');
     expect(branchText).toBeInTheDocument();
-    expect(within(branchText.closest('tr') as HTMLElement).getByRole('link', { name: '全链路' })).toHaveAttribute(
+    expect(
+      within(branchText.closest('tr') as HTMLElement).getByRole('link', {
+        name: '全链路',
+      }),
+    ).toHaveAttribute(
       'href',
       '/delivery/full-chain?subject_id=version_branch_config_001&subject_type=product_version_branch_config',
     );
@@ -381,7 +412,9 @@ describe('IterationVersionsPage', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
-      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      expect(init?.headers).toMatchObject({
+        Authorization: 'Bearer token-admin',
+      });
       if (
         path === '/api/product-versions' ||
         (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
@@ -406,7 +439,14 @@ describe('IterationVersionsPage', () => {
       if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
         return jsonResponse({
           data: {
-            items: [{ code: 'AI-BRAIN', id: 'product_api', name: 'AI Brain', status: 'active' }],
+            items: [
+              {
+                code: 'AI-BRAIN',
+                id: 'product_api',
+                name: 'AI Brain',
+                status: 'active',
+              },
+            ],
             total: 1,
           },
         });
@@ -506,7 +546,9 @@ describe('IterationVersionsPage', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
-      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      expect(init?.headers).toMatchObject({
+        Authorization: 'Bearer token-admin',
+      });
       if (
         path === '/api/product-versions' ||
         (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
@@ -531,7 +573,14 @@ describe('IterationVersionsPage', () => {
       if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
         return jsonResponse({
           data: {
-            items: [{ code: 'API-PRODUCT', id: 'product_api', name: '接口产品', status: 'active' }],
+            items: [
+              {
+                code: 'API-PRODUCT',
+                id: 'product_api',
+                name: '接口产品',
+                status: 'active',
+              },
+            ],
             total: 1,
           },
         });
@@ -670,7 +719,9 @@ describe('IterationVersionsPage', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
-      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      expect(init?.headers).toMatchObject({
+        Authorization: 'Bearer token-admin',
+      });
       if (
         path === '/api/product-versions' ||
         (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
@@ -695,7 +746,14 @@ describe('IterationVersionsPage', () => {
       if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
         return jsonResponse({
           data: {
-            items: [{ code: 'AI-BRAIN', id: 'product_api', name: 'AI Brain', status: 'active' }],
+            items: [
+              {
+                code: 'AI-BRAIN',
+                id: 'product_api',
+                name: 'AI Brain',
+                status: 'active',
+              },
+            ],
             total: 1,
           },
         });
@@ -810,7 +868,13 @@ describe('IterationVersionsPage', () => {
               {
                 ai_task_id: 'task_dashboard',
                 id: 'knowledge_deposit_dashboard',
+                knowledge_chunk_count: 1,
                 knowledge_document_id: 'knowledge_document_dashboard',
+                knowledge_document_title: '版本驾驶舱知识文档',
+                knowledge_embedding_chunk_count: 0,
+                knowledge_index_error: 'Embedding 网关未配置，已降级为关键词检索。',
+                knowledge_index_status: 'text_indexed',
+                knowledge_retrieval_mode: 'keyword',
                 status: 'approved',
                 task_title: '实现版本驾驶舱',
                 title: '版本驾驶舱知识沉淀',
@@ -884,9 +948,11 @@ describe('IterationVersionsPage', () => {
               pending_code_review_reports: 1,
               releases: 1,
               requirements: 1,
+              searchable_knowledge_deposits: 1,
               severe_bugs: 1,
               severe_code_inspection_reports: 1,
               tasks: 1,
+              vectorized_knowledge_deposits: 0,
             },
             task_status_counts: [{ count: 1, status: 'running' }],
             tasks: [
@@ -948,6 +1014,7 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('1 份报告 · 待确认 1 份')).toBeInTheDocument();
     expect(screen.getByText('Bug 收敛')).toBeInTheDocument();
     expect(screen.getByText('1 个 Bug · 未关闭 1 个')).toBeInTheDocument();
+    expect(screen.getByText('1 条知识沉淀 · 可检索 1 条 · 向量就绪 0 条')).toBeInTheDocument();
     expect(screen.getByText('发布证据')).toBeInTheDocument();
     expect(screen.getByText('1 条记录 · 发布阻塞 1 个')).toBeInTheDocument();
     expect(screen.getByText('状态推进')).toBeInTheDocument();
@@ -962,11 +1029,11 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('1 个分支未创建')).toBeInTheDocument();
     expect(screen.getByText('1 份高风险')).toBeInTheDocument();
     expect(screen.getByText('1 份待确认')).toBeInTheDocument();
+    expect(screen.getAllByText('1/1 可检索').length).toBeGreaterThan(0);
+    expect(screen.getByText('已有 1 条任务知识沉淀，可检索 1 条，向量就绪 0 条。')).toBeInTheDocument();
     expect(screen.getByText('1 条失败发布')).toBeInTheDocument();
     expect(screen.getByText('阻塞处理队列')).toBeInTheDocument();
-    expect(
-      screen.getByText('按严重级别、来源类型和处理入口排序，优先处理发布准入风险。'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('按严重级别、来源类型和处理入口排序，优先处理发布准入风险。')).toBeInTheDocument();
     expect(screen.getByText('优先级 1')).toBeInTheDocument();
     expect(screen.getByText('高风险 · Bug')).toBeInTheDocument();
     expect(screen.getByText('优先级 2')).toBeInTheDocument();
@@ -993,11 +1060,7 @@ describe('IterationVersionsPage', () => {
     expect(
       screen
         .getAllByRole('link', { name: '处理 Bug' })
-        .every(
-          (link) =>
-            link.getAttribute('href') ===
-            '/delivery/bugs?bug_id=bug_dashboard',
-        ),
+        .every((link) => link.getAttribute('href') === '/delivery/bugs?bug_id=bug_dashboard'),
     ).toBe(true);
     expect(
       screen
@@ -1011,11 +1074,7 @@ describe('IterationVersionsPage', () => {
     expect(
       screen
         .getAllByRole('link', { name: '排查发布' })
-        .every(
-          (link) =>
-            link.getAttribute('href') ===
-            '/governance/devops?version_id=version_dashboard',
-        ),
+        .every((link) => link.getAttribute('href') === '/governance/devops?version_id=version_dashboard'),
     ).toBe(true);
     expect(screen.getAllByText('发布阻塞 Bug').length).toBeGreaterThan(0);
     expect(screen.getAllByText('release/2026-dashboard').length).toBeGreaterThan(0);
@@ -1025,24 +1084,25 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('代码评审待确认')).toBeInTheDocument();
     expect(screen.getAllByText('知识沉淀').length).toBeGreaterThan(0);
     expect(screen.getByText('版本驾驶舱知识沉淀')).toBeInTheDocument();
+    expect(screen.getByText('版本驾驶舱知识文档')).toBeInTheDocument();
     expect(screen.getByText('knowledge_document_dashboard')).toBeInTheDocument();
+    expect(screen.getByText('关键词可检索')).toBeInTheDocument();
+    expect(screen.getByText('关键词兜底')).toBeInTheDocument();
+    expect(screen.getByText('分块 1 / 向量 0')).toBeInTheDocument();
+    expect(screen.getByText('Embedding 网关未配置，已降级为关键词检索。')).toBeInTheDocument();
     expect(screen.getByText('codex')).toBeInTheDocument();
     expect(screen.getByText('deploy-dashboard')).toBeInTheDocument();
     const cockpitLinks = screen
       .getAllByRole('link')
       .map((link) => link.getAttribute('href'))
       .filter(Boolean);
-    expect(cockpitLinks).toContain(
-      '/delivery/full-chain?subject_id=version_dashboard&subject_type=product_version',
-    );
+    expect(cockpitLinks).toContain('/delivery/full-chain?subject_id=version_dashboard&subject_type=product_version');
     expect(cockpitLinks).toContain('/delivery/bugs?version_id=version_dashboard');
     expect(cockpitLinks).toContain('/governance/code-inspections?version_id=version_dashboard');
     expect(cockpitLinks).toContain('/delivery/requirements?requirement_id=requirement_dashboard');
     expect(cockpitLinks).toContain('/delivery/rd-tasks?task_id=task_dashboard');
     expect(cockpitLinks).toContain('/delivery/bugs?bug_id=bug_dashboard');
-    expect(cockpitLinks).toContain(
-      '/governance/code-inspections?source_id=code_inspection_report_dashboard',
-    );
+    expect(cockpitLinks).toContain('/governance/code-inspections?source_id=code_inspection_report_dashboard');
     expect(cockpitLinks).toContain('/delivery/rd-tasks?code_review_report_id=code_review_report_dashboard');
     expect(cockpitLinks).toContain(
       '/delivery/full-chain?subject_id=knowledge_deposit_dashboard&subject_type=knowledge_deposit',
@@ -1056,5 +1116,4 @@ describe('IterationVersionsPage', () => {
       'GET',
     ]);
   });
-
 });

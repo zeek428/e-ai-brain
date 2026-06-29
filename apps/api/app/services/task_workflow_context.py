@@ -17,7 +17,9 @@ TASK_WORKFLOW_COLLECTION_KEYS = {
     "graph_runs": "graph_runs",
     "human_reviews": "human_reviews",
     "jenkins_release_records": "jenkins_release_records",
+    "knowledge_chunks": "knowledge_chunks",
     "knowledge_deposits": "knowledge_deposits",
+    "knowledge_documents": "knowledge_documents",
     "model_gateway_configs": "model_gateway_configs",
     "mock_writebacks": "mock_writebacks",
     "online_log_metrics": "online_log_metrics",
@@ -50,7 +52,9 @@ class TaskWorkflowSourceStore:
         self.rd_task_executor_policies: dict[str, dict[str, Any]] = {}
         self.gitlab_mr_snapshots: dict[str, dict[str, Any]] = {}
         self.code_review_reports: dict[str, dict[str, Any]] = {}
+        self.knowledge_chunks: dict[str, dict[str, Any]] = {}
         self.knowledge_deposits: dict[str, dict[str, Any]] = {}
+        self.knowledge_documents: dict[str, dict[str, Any]] = {}
         self.mock_writebacks: dict[str, dict[str, Any]] = {}
         self.bugs: dict[str, dict[str, Any]] = {}
         self.code_inspection_reports: dict[str, dict[str, Any]] = {}

@@ -26,6 +26,8 @@ OPEN_BUG_STATUSES = {"assigned", "fixed", "needs_info", "open", "reopened", "tri
 SEVERE_BUG_SEVERITIES = {"blocker", "critical"}
 SEVERE_CODE_RISKS = {"critical", "high"}
 PENDING_CODE_REVIEW_STATUSES = {"pending_review", "waiting_review"}
+SEARCHABLE_KNOWLEDGE_INDEX_STATUSES = {"indexed", "text_indexed", "vector_indexed"}
+VECTOR_READY_KNOWLEDGE_INDEX_STATUSES = {"indexed", "vector_indexed"}
 
 
 def _blocker_action_context(source_type: str) -> tuple[str, str]:
@@ -106,10 +108,13 @@ def _public_branch_config(
     branch_config: dict[str, Any],
     current_store: Any,
 ) -> dict[str, Any]:
-    repository = get_product_git_repository_record(
-        current_store,
-        str(branch_config.get("repository_id") or ""),
-    ) or {}
+    repository = (
+        get_product_git_repository_record(
+            current_store,
+            str(branch_config.get("repository_id") or ""),
+        )
+        or {}
+    )
     return {
         **branch_config,
         "repository_default_branch": branch_config.get("repository_default_branch")
@@ -321,17 +326,72 @@ def _version_releases(current_store: Any, version_id: str) -> list[dict[str, Any
 def _public_knowledge_deposit(
     deposit: dict[str, Any],
     *,
+    chunk_counts: dict[str, int] | None,
+    document: dict[str, Any] | None,
     task: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    document_id = str(deposit.get("knowledge_document_id") or "")
+    index_status = (
+        document.get("index_status") if document is not None else "missing" if document_id else None
+    )
+    chunk_count = int((chunk_counts or {}).get("total_chunks") or 0)
+    embedding_chunk_count = int((chunk_counts or {}).get("embedding_chunks") or 0)
+    retrieval_mode = _knowledge_retrieval_mode(
+        chunk_count=chunk_count,
+        embedding_chunk_count=embedding_chunk_count,
+        index_status=str(index_status or ""),
+    )
     return {
         "ai_task_id": deposit.get("ai_task_id"),
         "id": deposit.get("id"),
+        "knowledge_chunk_count": chunk_count,
         "knowledge_document_id": deposit.get("knowledge_document_id"),
+        "knowledge_document_title": (document or {}).get("title"),
+        "knowledge_embedding_chunk_count": embedding_chunk_count,
+        "knowledge_index_error": (document or {}).get("index_error")
+        or (document or {}).get("vector_index_error"),
+        "knowledge_index_status": index_status,
+        "knowledge_retrieval_mode": retrieval_mode,
         "status": deposit.get("status") or "-",
         "task_title": (task or {}).get("title"),
         "title": deposit.get("title") or deposit.get("id"),
         "updated_at": deposit.get("updated_at") or deposit.get("created_at"),
     }
+
+
+def _knowledge_chunk_counts(
+    current_store: Any,
+    *,
+    active_chunk_set_id: str | None,
+    document_id: str,
+) -> dict[str, int]:
+    total_chunks = 0
+    embedding_chunks = 0
+    for chunk in _memory_records(current_store, "knowledge_chunks"):
+        if chunk.get("document_id") != document_id:
+            continue
+        if active_chunk_set_id and chunk.get("chunk_set_id") != active_chunk_set_id:
+            continue
+        total_chunks += 1
+        if chunk.get("embedding") is not None:
+            embedding_chunks += 1
+    return {
+        "embedding_chunks": embedding_chunks,
+        "total_chunks": total_chunks,
+    }
+
+
+def _knowledge_retrieval_mode(
+    *,
+    chunk_count: int,
+    embedding_chunk_count: int,
+    index_status: str,
+) -> str:
+    if index_status not in SEARCHABLE_KNOWLEDGE_INDEX_STATUSES or chunk_count <= 0:
+        return "unavailable"
+    if index_status in VECTOR_READY_KNOWLEDGE_INDEX_STATUSES and embedding_chunk_count > 0:
+        return "hybrid"
+    return "keyword"
 
 
 def _version_knowledge_deposits(
@@ -349,9 +409,22 @@ def _version_knowledge_deposits(
             }
         ]
     task_by_id = {str(task["id"]): task for task in tasks if task.get("id")}
+    document_by_id = {
+        str(document["id"]): document
+        for document in _memory_records(current_store, "knowledge_documents")
+        if document.get("id")
+    }
     deposits = [
         _public_knowledge_deposit(
             deposit,
+            chunk_counts=_knowledge_chunk_counts(
+                current_store,
+                active_chunk_set_id=(
+                    document_by_id.get(str(deposit.get("knowledge_document_id") or "")) or {}
+                ).get("active_chunk_set_id"),
+                document_id=str(deposit.get("knowledge_document_id") or ""),
+            ),
+            document=document_by_id.get(str(deposit.get("knowledge_document_id") or "")),
             task=task_by_id.get(str(deposit.get("ai_task_id") or "")),
         )
         for deposit in _memory_records(current_store, "knowledge_deposits")
@@ -568,6 +641,14 @@ def product_version_dashboard_response(
         for report in code_review_reports
         if str(report.get("status") or "").lower() in PENDING_CODE_REVIEW_STATUSES
     )
+    searchable_knowledge_deposit_count = sum(
+        1
+        for deposit in knowledge_deposits
+        if deposit.get("knowledge_retrieval_mode") in {"hybrid", "keyword"}
+    )
+    vectorized_knowledge_deposit_count = sum(
+        1 for deposit in knowledge_deposits if deposit.get("knowledge_retrieval_mode") == "hybrid"
+    )
     return {
         "access_issues": [
             *bug_access_issues,
@@ -596,9 +677,11 @@ def product_version_dashboard_response(
             "pending_code_review_reports": pending_code_review_report_count,
             "releases": len(releases),
             "requirements": len(requirements),
+            "searchable_knowledge_deposits": searchable_knowledge_deposit_count,
             "severe_bugs": severe_bug_count,
             "severe_code_inspection_reports": severe_code_report_count,
             "tasks": len(tasks),
+            "vectorized_knowledge_deposits": vectorized_knowledge_deposit_count,
         },
         "task_status_counts": _status_counts(tasks),
         "tasks": tasks[:30],

@@ -1235,6 +1235,10 @@ def run_regression(
     _assert(dashboard["summary"]["code_inspection_reports"] >= 1, "Version dashboard missed code inspection report.")
     _assert(dashboard["summary"]["branch_configs"] >= 1, "Version dashboard missed branch config.")
     _assert(dashboard["summary"].get("knowledge_deposits", 0) >= 1, "Version dashboard missed knowledge deposit summary.")
+    _assert(
+        dashboard["summary"].get("searchable_knowledge_deposits", 0) >= 1,
+        "Version dashboard missed searchable knowledge deposit summary.",
+    )
     _assert_contains(_ids(dashboard.get("branch_configs", [])), branch_config["id"], "Version dashboard missed branch config row")
     _assert_contains(
         _ids(dashboard.get("code_inspection_reports", [])),
@@ -1245,6 +1249,24 @@ def run_regression(
         _ids(dashboard.get("knowledge_deposits", [])),
         deposit["id"],
         "Version dashboard missed knowledge deposit row",
+    )
+    dashboard_deposit = next(
+        item
+        for item in dashboard.get("knowledge_deposits", [])
+        if item.get("id") == deposit["id"]
+    )
+    _assert(
+        dashboard_deposit.get("knowledge_retrieval_mode") in {"hybrid", "keyword"},
+        f"Version dashboard knowledge deposit was not searchable: {dashboard_deposit}",
+    )
+    _assert(
+        int(dashboard_deposit.get("knowledge_chunk_count") or 0) >= 1,
+        f"Version dashboard knowledge deposit missed chunk health: {dashboard_deposit}",
+    )
+    _assert(
+        dashboard_deposit.get("knowledge_index_status")
+        in {"indexed", "text_indexed", "vector_indexed"},
+        f"Version dashboard knowledge deposit missed searchable index status: {dashboard_deposit}",
     )
     _assert(report_bug_ids.intersection(_ids(dashboard.get("bugs", []))), "Version dashboard missed code-inspection Bug row.")
     _assert(_status_count(dashboard.get("bug_status_counts", []), "open") >= 1, "Version dashboard missed open Bug count.")

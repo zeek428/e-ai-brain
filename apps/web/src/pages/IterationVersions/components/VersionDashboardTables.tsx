@@ -2,14 +2,8 @@ import { LinkOutlined } from '@ant-design/icons';
 import { Button, Empty, Space, Table, Tag, Typography } from 'antd';
 
 import { StatusTag } from '../../../components/ManagementListPage';
-import type {
-  ProductVersionBranchConfigRecord,
-  RequirementRecord,
-} from '../../../data/management';
-import {
-  fullChainSubjectHref,
-  type ProductVersionDashboard,
-} from '../../../services/aiBrain';
+import type { ProductVersionBranchConfigRecord, RequirementRecord } from '../../../data/management';
+import { fullChainSubjectHref, type ProductVersionDashboard } from '../../../services/aiBrain';
 import {
   blockerActionHref,
   blockerSubjectType,
@@ -23,24 +17,35 @@ import {
 
 const { Text } = Typography;
 
-function dashboardStatusTag(
-  value: string | null | undefined,
-  statusLabelMap: Record<string, LabelItem>,
-) {
+function dashboardStatusTag(value: string | null | undefined, statusLabelMap: Record<string, LabelItem>) {
   const key = String(value ?? '-');
   const item = statusLabelMap[key] ?? { color: 'default', label: key };
   return <Tag color={item.color}>{item.label}</Tag>;
 }
+
+const knowledgeIndexStatusLabelMap: Record<string, LabelItem> = {
+  archived: { color: 'default', label: '已归档' },
+  importing: { color: 'processing', label: '导入中' },
+  indexed: { color: 'green', label: '已索引' },
+  index_failed: { color: 'red', label: '索引失败' },
+  missing: { color: 'red', label: '文档缺失' },
+  pending_index: { color: 'processing', label: '待索引' },
+  text_indexed: { color: 'gold', label: '关键词可检索' },
+  vector_indexed: { color: 'green', label: '向量可检索' },
+};
+
+const knowledgeRetrievalModeLabelMap: Record<string, LabelItem> = {
+  hybrid: { color: 'green', label: '混合检索' },
+  keyword: { color: 'gold', label: '关键词兜底' },
+  unavailable: { color: 'red', label: '不可检索' },
+};
 
 type VersionDashboardStatusImpactTableProps = {
   rows: DashboardStatusImpactRow[];
   statusLabelMap: Record<string, LabelItem>;
 };
 
-export function VersionDashboardStatusImpactTable({
-  rows,
-  statusLabelMap,
-}: VersionDashboardStatusImpactTableProps) {
+export function VersionDashboardStatusImpactTable({ rows, statusLabelMap }: VersionDashboardStatusImpactTableProps) {
   return (
     <div>
       <Text strong>推进影响明细</Text>
@@ -49,12 +54,7 @@ export function VersionDashboardStatusImpactTable({
           {
             dataIndex: 'impact',
             render: (value, row) => {
-              const color =
-                value === 'blocked'
-                  ? 'red'
-                  : value === 'updated'
-                    ? 'blue'
-                    : 'default';
+              const color = value === 'blocked' ? 'red' : value === 'updated' ? 'blue' : 'default';
               return <Tag color={color}>{row.impactLabel}</Tag>;
             },
             title: '影响',
@@ -86,19 +86,14 @@ export function VersionDashboardStatusImpactTable({
           },
           {
             dataIndex: 'from_status',
-            render: (value) =>
-              dashboardStatusTag(String(value ?? '-'), statusLabelMap),
+            render: (value) => dashboardStatusTag(String(value ?? '-'), statusLabelMap),
             title: '当前状态',
             width: 130,
           },
           {
             dataIndex: 'to_status',
             render: (value) =>
-              value ? (
-                dashboardStatusTag(String(value), statusLabelMap)
-              ) : (
-                <Text type="secondary">-</Text>
-              ),
+              value ? dashboardStatusTag(String(value), statusLabelMap) : <Text type="secondary">-</Text>,
             title: '目标状态',
             width: 130,
           },
@@ -143,10 +138,7 @@ type VersionDashboardBlockersTableProps = {
   statusLabelMap: Record<string, LabelItem>;
 };
 
-export function VersionDashboardBlockersTable({
-  dashboard,
-  statusLabelMap,
-}: VersionDashboardBlockersTableProps) {
+export function VersionDashboardBlockersTable({ dashboard, statusLabelMap }: VersionDashboardBlockersTableProps) {
   const blockerActionQueue = buildBlockerActionQueue(dashboard);
 
   return (
@@ -154,23 +146,16 @@ export function VersionDashboardBlockersTable({
       <Text strong>阻塞项</Text>
       {blockerActionQueue.length ? (
         <div style={{ marginTop: 10, marginBottom: 12 }}>
-          <Space
-            align="baseline"
-            style={{ display: 'flex', marginBottom: 8 }}
-            wrap
-          >
+          <Space align="baseline" style={{ display: 'flex', marginBottom: 8 }} wrap>
             <Text strong>阻塞处理队列</Text>
-            <Text type="secondary">
-              按严重级别、来源类型和处理入口排序，优先处理发布准入风险。
-            </Text>
+            <Text type="secondary">按严重级别、来源类型和处理入口排序，优先处理发布准入风险。</Text>
           </Space>
           <Space size={8} style={{ display: 'flex' }} wrap>
             {blockerActionQueue.map((item) => {
-              const severity =
-                statusLabelMap[String(item.severity)] ?? {
-                  color: 'default',
-                  label: String(item.severity ?? '-'),
-                };
+              const severity = statusLabelMap[String(item.severity)] ?? {
+                color: 'default',
+                label: String(item.severity ?? '-'),
+              };
               return (
                 <div
                   key={`${item.sourceType}-${item.id ?? item.title}-queue`}
@@ -194,14 +179,10 @@ export function VersionDashboardBlockersTable({
                     </Text>
                   </div>
                   <div style={{ marginTop: 4 }}>
-                    <Text type="secondary">
-                      {String(item.reason ?? '-')}
-                    </Text>
+                    <Text type="secondary">{String(item.reason ?? '-')}</Text>
                   </div>
                   <div style={{ marginTop: 4 }}>
-                    <Text type="secondary">
-                      解除条件：{String(item.resolutionHint ?? '-')}
-                    </Text>
+                    <Text type="secondary">解除条件：{String(item.resolutionHint ?? '-')}</Text>
                   </div>
                   <Space size={4} style={{ marginTop: 8 }} wrap>
                     {item.actionHref ? (
@@ -210,12 +191,7 @@ export function VersionDashboardBlockersTable({
                       </Button>
                     ) : null}
                     {item.fullChainHref ? (
-                      <Button
-                        href={item.fullChainHref}
-                        icon={<LinkOutlined />}
-                        size="small"
-                        type="link"
-                      >
+                      <Button href={item.fullChainHref} icon={<LinkOutlined />} size="small" type="link">
                         全链路
                       </Button>
                     ) : null}
@@ -230,9 +206,7 @@ export function VersionDashboardBlockersTable({
         columns={[
           {
             dataIndex: 'sourceType',
-            render: (value) =>
-              dashboardBlockerSourceLabels[String(value)] ??
-              String(value ?? '-'),
+            render: (value) => dashboardBlockerSourceLabels[String(value)] ?? String(value ?? '-'),
             title: '来源',
             width: 120,
           },
@@ -248,8 +222,7 @@ export function VersionDashboardBlockersTable({
           },
           {
             dataIndex: 'severity',
-            render: (value) =>
-              dashboardStatusTag(String(value), statusLabelMap),
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
             title: '级别',
             width: 120,
           },
@@ -276,9 +249,7 @@ export function VersionDashboardBlockersTable({
           {
             key: 'action',
             render: (_, row) => {
-              const subjectType = blockerSubjectType(
-                String(row.sourceType ?? ''),
-              );
+              const subjectType = blockerSubjectType(String(row.sourceType ?? ''));
               const actionHref = blockerActionHref(row, dashboard.version.id);
               return (
                 <Space size={4}>
@@ -297,9 +268,7 @@ export function VersionDashboardBlockersTable({
                       全链路
                     </Button>
                   ) : null}
-                  {!actionHref && !(subjectType && row.id) ? (
-                    <Text type="secondary">-</Text>
-                  ) : null}
+                  {!actionHref && !(subjectType && row.id) ? <Text type="secondary">-</Text> : null}
                 </Space>
               );
             },
@@ -309,12 +278,7 @@ export function VersionDashboardBlockersTable({
         ]}
         dataSource={dashboard.blockers}
         locale={{
-          emptyText: (
-            <Empty
-              description="暂无阻塞项"
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-            />
-          ),
+          emptyText: <Empty description="暂无阻塞项" image={Empty.PRESENTED_IMAGE_SIMPLE} />,
         }}
         pagination={false}
         rowKey={(row) => `${row.sourceType}-${row.id ?? row.title}`}
@@ -365,8 +329,7 @@ export function VersionDashboardRequirementTaskTables({
           },
           {
             dataIndex: 'status',
-            render: (value) =>
-              dashboardStatusTag(String(value), statusLabelMap),
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
             title: '状态',
             width: 120,
           },
@@ -424,8 +387,7 @@ export function VersionDashboardRequirementTaskTables({
           { dataIndex: 'type', title: '类型', width: 130 },
           {
             dataIndex: 'status',
-            render: (value) =>
-              dashboardStatusTag(String(value), statusLabelMap),
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
             title: '状态',
             width: 120,
           },
@@ -433,12 +395,7 @@ export function VersionDashboardRequirementTaskTables({
           {
             key: 'action',
             render: (_, row) => (
-              <Button
-                href={fullChainSubjectHref('ai_task', row.id)}
-                icon={<LinkOutlined />}
-                size="small"
-                type="link"
-              >
+              <Button href={fullChainSubjectHref('ai_task', row.id)} icon={<LinkOutlined />} size="small" type="link">
                 全链路
               </Button>
             ),
@@ -458,14 +415,8 @@ export function VersionDashboardRequirementTaskTables({
 }
 
 type VersionDashboardQualityDeliveryTablesProps = {
-  branchCreationSourceLabels: Record<
-    ProductVersionBranchConfigRecord['creationSource'],
-    string
-  >;
-  branchStatusLabels: Record<
-    ProductVersionBranchConfigRecord['branchStatus'],
-    LabelItem
-  >;
+  branchCreationSourceLabels: Record<ProductVersionBranchConfigRecord['creationSource'], string>;
+  branchStatusLabels: Record<ProductVersionBranchConfigRecord['branchStatus'], LabelItem>;
   dashboard: ProductVersionDashboard;
   statusLabelMap: Record<string, LabelItem>;
 };
@@ -507,15 +458,13 @@ export function VersionDashboardQualityDeliveryTables({
           },
           {
             dataIndex: 'severity',
-            render: (value) =>
-              dashboardStatusTag(String(value), statusLabelMap),
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
             title: '严重级别',
             width: 120,
           },
           {
             dataIndex: 'status',
-            render: (value) =>
-              dashboardStatusTag(String(value), statusLabelMap),
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
             title: '状态',
             width: 120,
           },
@@ -523,12 +472,7 @@ export function VersionDashboardQualityDeliveryTables({
           {
             key: 'action',
             render: (_, row) => (
-              <Button
-                href={fullChainSubjectHref('bug', row.id)}
-                icon={<LinkOutlined />}
-                size="small"
-                type="link"
-              >
+              <Button href={fullChainSubjectHref('bug', row.id)} icon={<LinkOutlined />} size="small" type="link">
                 全链路
               </Button>
             ),
@@ -548,9 +492,7 @@ export function VersionDashboardQualityDeliveryTables({
           {
             dataIndex: 'repository_name',
             render: (value, row) => (
-              <Typography.Link
-                href={fullChainSubjectHref('code_inspection_report', row.id)}
-              >
+              <Typography.Link href={fullChainSubjectHref('code_inspection_report', row.id)}>
                 {String(value ?? row.id)}
               </Typography.Link>
             ),
@@ -560,8 +502,7 @@ export function VersionDashboardQualityDeliveryTables({
           { dataIndex: 'branch', title: '分支', width: 170 },
           {
             dataIndex: 'risk_level',
-            render: (value) =>
-              dashboardStatusTag(String(value), statusLabelMap),
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
             title: '风险',
             width: 120,
           },
@@ -596,11 +537,7 @@ export function VersionDashboardQualityDeliveryTables({
                 >
                   详情
                 </Button>
-                <Button
-                  href={fullChainSubjectHref('code_inspection_report', row.id)}
-                  size="small"
-                  type="link"
-                >
+                <Button href={fullChainSubjectHref('code_inspection_report', row.id)} size="small" type="link">
                   全链路
                 </Button>
               </Space>
@@ -611,9 +548,7 @@ export function VersionDashboardQualityDeliveryTables({
         ]}
         dataSource={dashboard.codeInspectionReports}
         locale={{ emptyText: '当前版本暂无代码巡检报告' }}
-        pagination={
-          dashboard.codeInspectionReports.length > 5 ? { pageSize: 5 } : false
-        }
+        pagination={dashboard.codeInspectionReports.length > 5 ? { pageSize: 5 } : false}
         rowKey="id"
         scroll={{ x: 1210 }}
         size="small"
@@ -650,15 +585,13 @@ export function VersionDashboardQualityDeliveryTables({
           },
           {
             dataIndex: 'riskLevel',
-            render: (value) =>
-              dashboardStatusTag(String(value), statusLabelMap),
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
             title: '风险',
             width: 120,
           },
           {
             dataIndex: 'status',
-            render: (value) =>
-              dashboardStatusTag(String(value), statusLabelMap),
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
             title: '状态',
             width: 120,
           },
@@ -686,11 +619,7 @@ export function VersionDashboardQualityDeliveryTables({
                 >
                   详情
                 </Button>
-                <Button
-                  href={fullChainSubjectHref('code_review_report', row.id)}
-                  size="small"
-                  type="link"
-                >
+                <Button href={fullChainSubjectHref('code_review_report', row.id)} size="small" type="link">
                   全链路
                 </Button>
               </Space>
@@ -701,9 +630,7 @@ export function VersionDashboardQualityDeliveryTables({
         ]}
         dataSource={dashboard.codeReviewReports}
         locale={{ emptyText: '当前版本暂无代码评审报告' }}
-        pagination={
-          dashboard.codeReviewReports.length > 5 ? { pageSize: 5 } : false
-        }
+        pagination={dashboard.codeReviewReports.length > 5 ? { pageSize: 5 } : false}
         rowKey="id"
         scroll={{ x: 1110 }}
         size="small"
@@ -713,9 +640,7 @@ export function VersionDashboardQualityDeliveryTables({
           {
             dataIndex: 'title',
             render: (value, row) => (
-              <Typography.Link
-                href={fullChainSubjectHref('knowledge_deposit', row.id)}
-              >
+              <Typography.Link href={fullChainSubjectHref('knowledge_deposit', row.id)}>
                 {String(value ?? row.id)}
               </Typography.Link>
             ),
@@ -738,16 +663,47 @@ export function VersionDashboardQualityDeliveryTables({
           },
           {
             dataIndex: 'status',
-            render: (value) =>
-              dashboardStatusTag(String(value), statusLabelMap),
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
             title: '状态',
             width: 120,
           },
           {
             dataIndex: 'knowledgeDocumentId',
-            render: (value) => String(value ?? '-'),
+            render: (value, row) => (
+              <Space orientation="vertical" size={0}>
+                <Text ellipsis style={{ maxWidth: 220 }}>
+                  {row.knowledgeDocumentTitle ?? String(value ?? '-')}
+                </Text>
+                {row.knowledgeDocumentTitle && value ? (
+                  <Text ellipsis style={{ maxWidth: 220 }} type="secondary">
+                    {String(value)}
+                  </Text>
+                ) : null}
+              </Space>
+            ),
             title: '知识文档',
-            width: 180,
+            width: 240,
+          },
+          {
+            key: 'knowledgeIndexHealth',
+            render: (_, row) => (
+              <Space orientation="vertical" size={2}>
+                <Space size={4} wrap>
+                  {dashboardStatusTag(row.knowledgeIndexStatus ?? '-', knowledgeIndexStatusLabelMap)}
+                  {dashboardStatusTag(row.knowledgeRetrievalMode, knowledgeRetrievalModeLabelMap)}
+                </Space>
+                <Text type="secondary">
+                  分块 {row.knowledgeChunkCount} / 向量 {row.knowledgeEmbeddingChunkCount}
+                </Text>
+                {row.knowledgeIndexError ? (
+                  <Text ellipsis style={{ maxWidth: 240 }} type="secondary">
+                    {row.knowledgeIndexError}
+                  </Text>
+                ) : null}
+              </Space>
+            ),
+            title: '索引健康',
+            width: 270,
           },
           {
             dataIndex: 'updatedAt',
@@ -772,11 +728,9 @@ export function VersionDashboardQualityDeliveryTables({
         ]}
         dataSource={dashboard.knowledgeDeposits}
         locale={{ emptyText: '当前版本暂无知识沉淀' }}
-        pagination={
-          dashboard.knowledgeDeposits.length > 5 ? { pageSize: 5 } : false
-        }
+        pagination={dashboard.knowledgeDeposits.length > 5 ? { pageSize: 5 } : false}
         rowKey="id"
-        scroll={{ x: 1060 }}
+        scroll={{ x: 1350 }}
         size="small"
       />
       <Table<ProductVersionDashboard['branchConfigs'][number]>
@@ -802,12 +756,7 @@ export function VersionDashboardQualityDeliveryTables({
             dataIndex: 'branchStatus',
             render: (_, row) => {
               const statusLabel = branchStatusLabels[row.branchStatus];
-              return (
-                <StatusTag
-                  color={statusLabel.color}
-                  label={statusLabel.label}
-                />
-              );
+              return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
             },
             title: '状态',
             width: 120,
@@ -822,10 +771,7 @@ export function VersionDashboardQualityDeliveryTables({
             key: 'action',
             render: (_, row) => (
               <Button
-                href={fullChainSubjectHref(
-                  'product_version_branch_config',
-                  row.id,
-                )}
+                href={fullChainSubjectHref('product_version_branch_config', row.id)}
                 icon={<LinkOutlined />}
                 size="small"
                 type="link"
@@ -864,8 +810,7 @@ export function VersionDashboardQualityDeliveryTables({
           { dataIndex: 'buildId', title: '构建号', width: 130 },
           {
             dataIndex: 'status',
-            render: (value) =>
-              dashboardStatusTag(String(value), statusLabelMap),
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
             title: '状态',
             width: 120,
           },
