@@ -1234,11 +1234,17 @@ def run_regression(
     _assert(dashboard["summary"]["requirements"] >= 1, "Version dashboard missed requirement summary.")
     _assert(dashboard["summary"]["code_inspection_reports"] >= 1, "Version dashboard missed code inspection report.")
     _assert(dashboard["summary"]["branch_configs"] >= 1, "Version dashboard missed branch config.")
+    _assert(dashboard["summary"].get("knowledge_deposits", 0) >= 1, "Version dashboard missed knowledge deposit summary.")
     _assert_contains(_ids(dashboard.get("branch_configs", [])), branch_config["id"], "Version dashboard missed branch config row")
     _assert_contains(
         _ids(dashboard.get("code_inspection_reports", [])),
         report_id,
         "Version dashboard missed code inspection report row",
+    )
+    _assert_contains(
+        _ids(dashboard.get("knowledge_deposits", [])),
+        deposit["id"],
+        "Version dashboard missed knowledge deposit row",
     )
     _assert(report_bug_ids.intersection(_ids(dashboard.get("bugs", []))), "Version dashboard missed code-inspection Bug row.")
     _assert(_status_count(dashboard.get("bug_status_counts", []), "open") >= 1, "Version dashboard missed open Bug count.")

@@ -708,6 +708,77 @@ export function VersionDashboardQualityDeliveryTables({
         scroll={{ x: 1110 }}
         size="small"
       />
+      <Table<ProductVersionDashboard['knowledgeDeposits'][number]>
+        columns={[
+          {
+            dataIndex: 'title',
+            render: (value, row) => (
+              <Typography.Link
+                href={fullChainSubjectHref('knowledge_deposit', row.id)}
+              >
+                {String(value ?? row.id)}
+              </Typography.Link>
+            ),
+            title: '知识沉淀',
+            width: 260,
+          },
+          {
+            dataIndex: 'taskTitle',
+            render: (value, row) => (
+              <Typography.Link
+                href={internalHref('/delivery/rd-tasks', {
+                  task_id: row.aiTaskId,
+                })}
+              >
+                {String(value ?? '-')}
+              </Typography.Link>
+            ),
+            title: '来源任务',
+            width: 220,
+          },
+          {
+            dataIndex: 'status',
+            render: (value) =>
+              dashboardStatusTag(String(value), statusLabelMap),
+            title: '状态',
+            width: 120,
+          },
+          {
+            dataIndex: 'knowledgeDocumentId',
+            render: (value) => String(value ?? '-'),
+            title: '知识文档',
+            width: 180,
+          },
+          {
+            dataIndex: 'updatedAt',
+            title: '更新时间',
+            width: 170,
+          },
+          {
+            key: 'action',
+            render: (_, row) => (
+              <Button
+                href={fullChainSubjectHref('knowledge_deposit', row.id)}
+                icon={<LinkOutlined />}
+                size="small"
+                type="link"
+              >
+                全链路
+              </Button>
+            ),
+            title: '操作',
+            width: 110,
+          },
+        ]}
+        dataSource={dashboard.knowledgeDeposits}
+        locale={{ emptyText: '当前版本暂无知识沉淀' }}
+        pagination={
+          dashboard.knowledgeDeposits.length > 5 ? { pageSize: 5 } : false
+        }
+        rowKey="id"
+        scroll={{ x: 1060 }}
+        size="small"
+      />
       <Table<ProductVersionDashboard['branchConfigs'][number]>
         columns={[
           { dataIndex: 'repositoryName', title: '代码库', width: 180 },

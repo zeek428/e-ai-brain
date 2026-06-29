@@ -313,6 +313,16 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "updated_at": "2026-06-04T09:00:00+00:00",
         "version_id": version["id"],
     }
+    app.state.store.knowledge_deposits["deposit_version_dashboard"] = {
+        "ai_task_id": "task_version_dashboard",
+        "content": "版本驾驶舱知识沉淀内容",
+        "created_at": "2026-06-04T09:05:00+00:00",
+        "id": "deposit_version_dashboard",
+        "knowledge_document_id": "knowledge_version_dashboard",
+        "status": "approved",
+        "title": "版本驾驶舱知识沉淀",
+        "updated_at": "2026-06-04T09:06:00+00:00",
+    }
     app.state.store.code_review_reports["code_review_report_dashboard"] = {
         "archived_at": None,
         "executor": {"name": "codex", "type": "local"},
@@ -393,6 +403,7 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "bugs": 2,
         "code_review_reports": 1,
         "code_inspection_reports": 1,
+        "knowledge_deposits": 1,
         "open_bugs": 2,
         "pending_code_review_reports": 1,
         "releases": 1,
@@ -450,6 +461,17 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         }
     ]
     assert data["code_inspection_reports"][0]["id"] == "code_inspection_report_dashboard"
+    assert data["knowledge_deposits"] == [
+        {
+            "ai_task_id": "task_version_dashboard",
+            "id": "deposit_version_dashboard",
+            "knowledge_document_id": "knowledge_version_dashboard",
+            "status": "approved",
+            "title": "版本驾驶舱知识沉淀",
+            "task_title": "实现版本驾驶舱",
+            "updated_at": "2026-06-04T09:06:00+00:00",
+        }
+    ]
     assert {bug["id"] for bug in data["bugs"]} == {
         "bug_version_dashboard",
         "bug_version_dashboard_from_inspection",

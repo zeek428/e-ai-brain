@@ -318,6 +318,52 @@ def _version_releases(current_store: Any, version_id: str) -> list[dict[str, Any
     return releases
 
 
+def _public_knowledge_deposit(
+    deposit: dict[str, Any],
+    *,
+    task: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "ai_task_id": deposit.get("ai_task_id"),
+        "id": deposit.get("id"),
+        "knowledge_document_id": deposit.get("knowledge_document_id"),
+        "status": deposit.get("status") or "-",
+        "task_title": (task or {}).get("title"),
+        "title": deposit.get("title") or deposit.get("id"),
+        "updated_at": deposit.get("updated_at") or deposit.get("created_at"),
+    }
+
+
+def _version_knowledge_deposits(
+    current_store: Any,
+    *,
+    tasks: list[dict[str, Any]],
+    user: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    if not _has_permission(user, "knowledge.read"):
+        return [], [
+            {
+                "code": "knowledge.read",
+                "message": "缺少知识读取权限，版本驾驶舱已隐藏知识沉淀明细。",
+                "section": "knowledge_deposits",
+            }
+        ]
+    task_by_id = {str(task["id"]): task for task in tasks if task.get("id")}
+    deposits = [
+        _public_knowledge_deposit(
+            deposit,
+            task=task_by_id.get(str(deposit.get("ai_task_id") or "")),
+        )
+        for deposit in _memory_records(current_store, "knowledge_deposits")
+        if str(deposit.get("ai_task_id") or "") in task_by_id
+    ]
+    deposits.sort(
+        key=lambda item: item.get("updated_at") or "",
+        reverse=True,
+    )
+    return deposits, []
+
+
 def _quality_gate_failed(report: dict[str, Any]) -> bool:
     quality_gate = report.get("quality_gate")
     if not isinstance(quality_gate, dict):
@@ -463,6 +509,11 @@ def product_version_dashboard_response(
     )
     task_ids = {str(task["id"]) for task in tasks}
     code_review_reports = _version_code_review_reports(read_store, tasks=tasks)
+    knowledge_deposits, knowledge_access_issues = _version_knowledge_deposits(
+        read_store,
+        tasks=tasks,
+        user=user,
+    )
     branch_configs = _branch_configs_for_version(read_store, version_id)
     code_inspection_reports, code_access_issues = _version_code_inspection_reports(
         read_store,
@@ -518,13 +569,18 @@ def product_version_dashboard_response(
         if str(report.get("status") or "").lower() in PENDING_CODE_REVIEW_STATUSES
     )
     return {
-        "access_issues": [*bug_access_issues, *code_access_issues],
+        "access_issues": [
+            *bug_access_issues,
+            *code_access_issues,
+            *knowledge_access_issues,
+        ],
         "blockers": blockers,
         "branch_configs": branch_configs,
         "bugs": bugs[:20],
         "bug_status_counts": _status_counts(bugs),
         "code_inspection_reports": code_inspection_reports[:20],
         "code_review_reports": code_review_reports[:20],
+        "knowledge_deposits": knowledge_deposits[:20],
         "releases": releases[:20],
         "requirement_status_counts": _status_counts(requirements),
         "requirements": requirements[:50],
@@ -535,6 +591,7 @@ def product_version_dashboard_response(
             "bugs": len(bugs),
             "code_inspection_reports": len(code_inspection_reports),
             "code_review_reports": len(code_review_reports),
+            "knowledge_deposits": len(knowledge_deposits),
             "open_bugs": open_bug_count,
             "pending_code_review_reports": pending_code_review_report_count,
             "releases": len(releases),

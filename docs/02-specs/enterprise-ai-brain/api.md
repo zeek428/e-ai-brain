@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.451 |
+| 功能版本 | v1.1.452 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.452 | 2026-06-29 | 迭代版本驾驶舱聚合版本内任务知识沉淀，summary 返回 `knowledge_deposits`，明细按 `knowledge.read` 子权限降级隐藏 | Codex |
 | v1.1.451 | 2026-06-29 | GitLab MR 预览支持显式 `fixture://gitlab` 回归源，仅用于真实全链路脚本的本地可控 Code Review 门禁，不替代生产 GitLab/GitHub 只读 API 配置 | Codex |
 | v1.1.450 | 2026-06-29 | 代码巡检 suppression 申请支持 `accepted_risk` 责任人和到期时间，缺少 `expires_at` 返回 `ACCEPTED_RISK_EXPIRY_REQUIRED`，详情和 dashboard 返回过期接受风险计数 | Codex |
 | v1.1.449 | 2026-06-29 | 迭代版本驾驶舱 blockers 返回 `action_label/action_target_type/action_target_id/resolution_hint`，前端阻塞项表展示解除条件和处理入口 | Codex |
@@ -661,7 +662,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Product | PATCH | `/api/products/{product_id}` | 更新产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404。 |
 | Product | DELETE | `/api/products/{product_id}` | 删除未被需求、AI 任务或 Bug 占用的产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404；无业务依赖时级联清理该产品的版本、模块和 Git 资源配置。 |
 | Product Version | GET | `/api/product-versions`, `/api/products/{product_id}/versions` | 产品迭代版本列表，前端主入口位于需求交付/迭代版本；要求 `product.read`，批量列表按当前用户产品 scope 过滤，指定 scope 外产品返回 404。 |
-| Product Version | GET | `/api/product-versions/{version_id}/dashboard` | 查询迭代版本驾驶舱，聚合版本需求、AI 任务、版本代码分支、Bug、代码巡检、发布记录、状态推进影响和阻塞项；要求 `product.read` 并按版本归属产品校验 scope，Bug 明细需 `bug.read`，代码巡检明细需 `code_inspection.read`，缺少子权限时返回 `access_issues` 并隐藏对应明细。 |
+| Product Version | GET | `/api/product-versions/{version_id}/dashboard` | 查询迭代版本驾驶舱，聚合版本需求、AI 任务、版本代码分支、Bug、代码巡检、代码评审、知识沉淀、发布记录、状态推进影响和阻塞项；要求 `product.read` 并按版本归属产品校验 scope，Bug 明细需 `bug.read`，代码巡检明细需 `code_inspection.read`，知识沉淀明细需 `knowledge.read`，缺少子权限时返回 `access_issues` 并隐藏对应明细。 |
 | Product Version | POST | `/api/products/{product_id}/versions` | 创建产品迭代版本；要求 `product.manage`，并按当前用户产品 scope 校验产品可见性。 |
 | Product Version | PATCH | `/api/product-versions/{version_id}` | 更新产品迭代版本非状态字段；要求 `product.manage`，按版本归属产品校验当前用户产品 scope，状态变更必须走推进接口。 |
 | Product Version | POST | `/api/product-versions/{version_id}/advance-status` | 预览或推进迭代版本状态，并同步符合条件的需求状态；要求 `product.manage`，按版本归属产品校验当前用户产品 scope。 |
@@ -1343,6 +1344,9 @@ GET /api/product-versions/version_001/dashboard
       "severe_bugs": 1,
       "code_inspection_reports": 1,
       "severe_code_inspection_reports": 1,
+      "code_review_reports": 1,
+      "pending_code_review_reports": 1,
+      "knowledge_deposits": 1,
       "releases": 1,
       "blockers": 3
     },
@@ -1365,13 +1369,24 @@ GET /api/product-versions/version_001/dashboard
         "resolution_hint": "修复、验证并关闭 blocker/critical Bug 后解除发布阻塞。"
       }
     ],
+    "knowledge_deposits": [
+      {
+        "id": "deposit_001",
+        "title": "版本发布准入知识沉淀",
+        "status": "approved",
+        "ai_task_id": "task_001",
+        "task_title": "版本发布准入自动化",
+        "knowledge_document_id": "knowledge_001",
+        "updated_at": "2026-06-04T09:40:00+00:00"
+      }
+    ],
     "access_issues": []
   },
   "trace_id": "trace_xxx"
 }
 ```
 
-规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态；每条 blocker 必须返回处理动作、目标主体和解除条件，前端将其映射为需求、Bug、代码巡检、版本分支或发布记录处理入口。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、交付健康摘要、status impact 和 blockers，再展示可读明细表；交付健康摘要基于阻塞项、严重 Bug/巡检、分支创建状态、代码巡检风险和发布失败记录派生发布准入、质量风险、代码分支、代码巡检和发布流水线结论。
+规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏；`knowledge_deposits` 仅在具备 `knowledge.read` 时返回，否则在 `access_issues` 中声明隐藏。知识沉淀明细只暴露沉淀 ID、标题、状态、来源任务、关联知识文档和更新时间，不返回知识正文。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态；每条 blocker 必须返回处理动作、目标主体和解除条件，前端将其映射为需求、Bug、代码巡检、版本分支或发布记录处理入口。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、交付健康摘要、status impact 和 blockers，再展示可读明细表；交付健康摘要基于阻塞项、严重 Bug/巡检、分支创建状态、代码巡检风险和发布失败记录派生发布准入、质量风险、代码分支、代码巡检和发布流水线结论。
 
 ### 平台配置
 

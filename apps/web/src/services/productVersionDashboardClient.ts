@@ -127,6 +127,16 @@ type ProductVersionDashboardReleaseItem = {
   status?: unknown;
 };
 
+type ProductVersionDashboardKnowledgeDepositItem = {
+  ai_task_id?: string | null;
+  id: string;
+  knowledge_document_id?: string | null;
+  status?: string;
+  task_title?: string | null;
+  title?: string;
+  updated_at?: string | null;
+};
+
 type ProductVersionDashboardBlockerItem = {
   action_label?: string;
   action_target_id?: string;
@@ -151,6 +161,7 @@ type ProductVersionDashboardSummary = {
   bugs: number;
   code_inspection_reports: number;
   code_review_reports: number;
+  knowledge_deposits: number;
   open_bugs: number;
   pending_code_review_reports: number;
   releases: number;
@@ -189,6 +200,7 @@ type ProductVersionDashboardResponse = {
   bugs?: BugListItem[];
   code_inspection_reports?: ProductVersionDashboardCodeInspectionReport[];
   code_review_reports?: ProductVersionDashboardCodeReviewReport[];
+  knowledge_deposits?: ProductVersionDashboardKnowledgeDepositItem[];
   releases?: ProductVersionDashboardReleaseItem[];
   requirement_status_counts?: ProductVersionDashboardStatusCount[];
   requirements?: RequirementListItem[];
@@ -233,6 +245,15 @@ export type ProductVersionDashboard = {
     taskId?: string;
     taskTitle: string;
     writebackPerformed: boolean;
+  }>;
+  knowledgeDeposits: Array<{
+    aiTaskId?: string;
+    id: string;
+    knowledgeDocumentId?: string;
+    status: string;
+    taskTitle: string;
+    title: string;
+    updatedAt: string;
   }>;
   releases: Array<{
     buildId?: string;
@@ -541,6 +562,15 @@ function mapProductVersionDashboard(
       taskTitle: report.task_title ?? report.task_id ?? '-',
       writebackPerformed: Boolean(report.gitlab_writeback_performed),
     })),
+    knowledgeDeposits: (dashboard.knowledge_deposits ?? []).map((deposit) => ({
+      aiTaskId: deposit.ai_task_id ?? undefined,
+      id: deposit.id,
+      knowledgeDocumentId: deposit.knowledge_document_id ?? undefined,
+      status: deposit.status ?? '-',
+      taskTitle: deposit.task_title ?? deposit.ai_task_id ?? '-',
+      title: deposit.title ?? deposit.id,
+      updatedAt: formatListDate(deposit.updated_at ?? undefined),
+    })),
     releases: (dashboard.releases ?? []).map((release) => ({
       buildId: formatUnknownValue(release.build_id),
       createdAt: formatListDate(formatUnknownValue(release.deployed_at ?? release.started_at ?? release.created_at)),
@@ -557,6 +587,7 @@ function mapProductVersionDashboard(
       bugs: normalizeDashboardCount(summary.bugs),
       code_inspection_reports: normalizeDashboardCount(summary.code_inspection_reports),
       code_review_reports: normalizeDashboardCount(summary.code_review_reports),
+      knowledge_deposits: normalizeDashboardCount(summary.knowledge_deposits),
       open_bugs: normalizeDashboardCount(summary.open_bugs),
       pending_code_review_reports: normalizeDashboardCount(summary.pending_code_review_reports),
       releases: normalizeDashboardCount(summary.releases),

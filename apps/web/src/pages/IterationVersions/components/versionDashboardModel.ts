@@ -357,6 +357,17 @@ export function buildDashboardHealthItems(
         : `${dashboard.codeReviewReports.length} 份报告`,
     },
     {
+      detail: dashboard.knowledgeDeposits.length
+        ? `已有 ${dashboard.knowledgeDeposits.length} 条任务知识沉淀，可从版本上下文追溯来源任务。`
+        : '当前版本还没有任务知识沉淀，建议在关键设计、评审和整改完成后沉淀经验。',
+      key: 'knowledge-deposits',
+      level: dashboard.knowledgeDeposits.length ? 'success' : 'info',
+      title: '知识沉淀',
+      value: dashboard.knowledgeDeposits.length
+        ? `${dashboard.knowledgeDeposits.length} 条沉淀`
+        : '暂无沉淀',
+    },
+    {
       detail: dashboard.releases.length
         ? `已有 ${dashboard.releases.length} 条发布记录，失败/取消 ${failedReleaseCount} 条。`
         : '当前版本暂无发布记录。',
@@ -461,6 +472,15 @@ export function buildDashboardReadinessItems(
       level: dashboard.summary.open_bugs ? 'error' : 'success',
       title: 'Bug 收敛',
       value: dashboard.summary.open_bugs ? 'Bug 待关闭' : 'Bug 已收敛',
+    },
+    {
+      detail: dashboard.summary.knowledge_deposits
+        ? `${dashboard.summary.knowledge_deposits} 条知识沉淀 · 可追溯来源任务`
+        : '暂无知识沉淀，发布前建议沉淀关键设计、巡检和整改经验',
+      key: 'knowledge-deposits',
+      level: dashboard.summary.knowledge_deposits ? 'success' : 'info',
+      title: '知识沉淀',
+      value: dashboard.summary.knowledge_deposits ? '已有沉淀' : '沉淀待补齐',
     },
     {
       detail: releaseBlockerCount

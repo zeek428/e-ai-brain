@@ -806,6 +806,17 @@ describe('IterationVersionsPage', () => {
                 task_title: '实现版本驾驶舱',
               },
             ],
+            knowledge_deposits: [
+              {
+                ai_task_id: 'task_dashboard',
+                id: 'knowledge_deposit_dashboard',
+                knowledge_document_id: 'knowledge_document_dashboard',
+                status: 'approved',
+                task_title: '实现版本驾驶舱',
+                title: '版本驾驶舱知识沉淀',
+                updated_at: '2026-06-04T09:40:00+00:00',
+              },
+            ],
             releases: [
               {
                 build_id: '42',
@@ -868,6 +879,7 @@ describe('IterationVersionsPage', () => {
               bugs: 1,
               code_inspection_reports: 1,
               code_review_reports: 1,
+              knowledge_deposits: 1,
               open_bugs: 1,
               pending_code_review_reports: 1,
               releases: 1,
@@ -1011,6 +1023,9 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('实现版本驾驶舱').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Dashboard Repo').length).toBeGreaterThan(0);
     expect(screen.getByText('代码评审待确认')).toBeInTheDocument();
+    expect(screen.getAllByText('知识沉淀').length).toBeGreaterThan(0);
+    expect(screen.getByText('版本驾驶舱知识沉淀')).toBeInTheDocument();
+    expect(screen.getByText('knowledge_document_dashboard')).toBeInTheDocument();
     expect(screen.getByText('codex')).toBeInTheDocument();
     expect(screen.getByText('deploy-dashboard')).toBeInTheDocument();
     const cockpitLinks = screen
@@ -1029,6 +1044,9 @@ describe('IterationVersionsPage', () => {
       '/governance/code-inspections?source_id=code_inspection_report_dashboard',
     );
     expect(cockpitLinks).toContain('/delivery/rd-tasks?code_review_report_id=code_review_report_dashboard');
+    expect(cockpitLinks).toContain(
+      '/delivery/full-chain?subject_id=knowledge_deposit_dashboard&subject_type=knowledge_deposit',
+    );
     expect(cockpitLinks).toContain(
       '/delivery/versions?branch_config_id=version_branch_dashboard&version_id=version_dashboard',
     );

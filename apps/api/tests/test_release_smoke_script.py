@@ -52,6 +52,7 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         "/api/knowledge/index-health",
         "/api/knowledge/search",
         "retrieval_modes",
+        "Version dashboard missed knowledge deposit row",
         "/api/product-versions/",
         "/dashboard",
         "/api/lifecycle/full-chain",

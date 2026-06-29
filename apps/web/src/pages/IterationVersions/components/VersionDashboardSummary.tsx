@@ -144,6 +144,7 @@ export function VersionDashboardMetrics({
       )}
       {dashboardMetric('代码巡检', dashboard.summary.code_inspection_reports)}
       {dashboardMetric('代码评审', dashboard.summary.code_review_reports)}
+      {dashboardMetric('知识沉淀', dashboard.summary.knowledge_deposits)}
       {dashboardMetric(
         '待确认评审',
         dashboard.summary.pending_code_review_reports,
