@@ -419,6 +419,182 @@ def find_deposit_for_task(client: ApiClient, task_id: str) -> dict[str, Any] | N
     return None
 
 
+def validate_assistant_draft_governance(
+    client: ApiClient,
+    *,
+    username: str,
+    password: str,
+) -> list[StepResult]:
+    slug = _slug()
+    results: list[StepResult] = []
+    user = client.login(username, password).get("user", {})
+    results.append(StepResult("login", f"logged in as {user.get('username') or username}"))
+
+    draft = client.post(
+        "/api/assistant/action-drafts",
+        {
+            "action": "create_scheduled_job",
+            "client_draft_id": f"full_chain_assistant_draft_{slug}",
+            "metadata_json": {
+                "risk_reason": "full-chain regression validates action governance",
+                "wizard_steps": [{"key": "basic"}, {"key": "governance"}],
+            },
+            "payload": {
+                "enabled": False,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": f"全链路草案治理回归 {slug}",
+                "schedule_type": "manual",
+                "source_system": "ai-assistant",
+            },
+            "risk_level": "medium",
+            "title": f"全链路草案治理回归 {slug}",
+        },
+    )
+    _assert(draft.get("status") == "pending", f"Assistant draft was not pending: {draft}")
+    _assert(draft.get("risk_level") == "medium", f"Assistant draft risk was not persisted: {draft}")
+    governance = draft.get("governance") or {}
+    impact = governance.get("impact") or {}
+    permissions = governance.get("permissions") or {}
+    diff = governance.get("diff") or {}
+    audit = governance.get("audit") or {}
+    _assert(
+        permissions.get("status") == "passed",
+        f"Assistant draft permission_status was not passed: {governance}",
+    )
+    _assert(
+        impact.get("resource_type") == "scheduled_job",
+        f"Assistant draft impact resource type was unexpected: {governance}",
+    )
+    _assert(
+        int(impact.get("changed_field_count") or 0) >= 5,
+        f"Assistant draft impact_changed_field_count was too small: {governance}",
+    )
+    _assert(
+        int(diff.get("count") or 0) == int(impact.get("changed_field_count") or 0),
+        f"Assistant draft diff count and impact count diverged: {governance}",
+    )
+    _assert(
+        audit.get("latest_event_type") == "assistant_action_draft.created",
+        f"Assistant draft latest_audit_event_type did not track creation: {governance}",
+    )
+
+    viewed = client.post(
+        f"/api/assistant/action-drafts/{draft['id']}/view",
+        {"surface": "full_chain_regression"},
+    )
+    _assert(
+        int((viewed.get("metadata_json") or {}).get("view_count") or 0) >= 1,
+        f"Assistant draft view was not tracked: {viewed}",
+    )
+
+    modified = client.post(
+        f"/api/assistant/action-drafts/{draft['id']}/modification",
+        {"modified_fields": ["name"], "user_modified": True},
+    )
+    modified_metadata = modified.get("metadata_json") or {}
+    _assert(
+        modified_metadata.get("user_modified") is True,
+        f"Assistant draft modification marker was not tracked: {modified}",
+    )
+
+    patched_payload = dict(draft.get("payload") or {})
+    patched_payload["name"] = f"{patched_payload['name']} patched"
+    patched = client.request(
+        "PATCH",
+        f"/api/assistant/action-drafts/{draft['id']}",
+        body={
+            "modified_fields": ["name"],
+            "payload": patched_payload,
+            "user_modified": True,
+        },
+    )
+    metadata = patched.get("metadata_json") or {}
+    _assert(metadata.get("user_modified") is True, f"Assistant draft modification was not tracked: {patched}")
+    _assert("name" in set(metadata.get("modified_fields") or []), f"Assistant draft modified field missing: {patched}")
+
+    confirmed = client.post(f"/api/assistant/action-drafts/{draft['id']}/confirm")
+    confirmed_draft = confirmed.get("draft") or {}
+    run = confirmed.get("run") or {}
+    _assert(
+        confirmed_draft.get("status") == "confirmed",
+        f"Assistant draft was not confirmed: {confirmed}",
+    )
+    _assert(run.get("status") == "succeeded", f"Assistant draft run failed: {confirmed}")
+    _assert(
+        run.get("result_type") == "scheduled_job",
+        f"Assistant draft did not create scheduled job: {confirmed}",
+    )
+    result = run.get("result") or {}
+    _assert(result.get("enabled") is False, f"Assistant draft created an enabled job unexpectedly: {result}")
+
+    detail = client.get(f"/api/assistant/action-drafts/{draft['id']}")
+    detail_governance = detail.get("governance") or {}
+    detail_audit = detail_governance.get("audit") or {}
+    _assert(
+        detail_audit.get("latest_event_type") == "assistant_action_draft.confirmed",
+        f"Assistant draft latest audit did not track confirmation: {detail_governance}",
+    )
+    _assert(
+        "assistant_action_draft.confirmed" in set(detail_audit.get("event_types") or []),
+        f"Assistant draft audit event types missed confirmation: {detail_governance}",
+    )
+
+    draft_list = client.get(
+        "/api/assistant/action-drafts",
+        {"page": 1, "page_size": 10, "status": "confirmed", "sort_by": "updated_at", "sort_order": "desc"},
+    )
+    matching_items = [
+        item
+        for item in draft_list.get("items", [])
+        if item.get("id") == draft["id"]
+    ]
+    _assert(matching_items, f"Assistant draft list missed confirmed draft: {draft_list}")
+    list_item = matching_items[0]
+    _assert(
+        list_item.get("permission_status") == "passed",
+        f"Assistant draft list missed permission_status: {list_item}",
+    )
+    _assert(
+        int(list_item.get("impact_changed_field_count") or 0) >= 5,
+        f"Assistant draft list missed impact_changed_field_count: {list_item}",
+    )
+    _assert(
+        list_item.get("latest_audit_event_type") == "assistant_action_draft.confirmed",
+        f"Assistant draft list missed latest_audit_event_type: {list_item}",
+    )
+
+    audit_events = client.get(
+        "/api/audit/events",
+        {
+            "page": 1,
+            "page_size": 20,
+            "subject_id": draft["id"],
+            "subject_type": "assistant_action_draft",
+        },
+    )
+    audit_event_types = {item.get("event_type") for item in audit_events.get("items", [])}
+    for expected_event in [
+        "assistant_action_draft.created",
+        "assistant_action_draft.viewed",
+        "assistant_action_draft.modified",
+        "assistant_action_draft.updated",
+        "assistant_action_draft.confirmed",
+    ]:
+        _assert(
+            expected_event in audit_event_types,
+            f"Assistant draft audit trail missed {expected_event}: {audit_events}",
+        )
+
+    results.append(
+        StepResult(
+            "assistant_draft_governance",
+            f"{draft['id']} / {run.get('result_type')}={run.get('result_id')}",
+        )
+    )
+    return results
+
+
 def validate_version_dashboard_quick_regression(
     client: ApiClient,
     *,
@@ -1152,6 +1328,15 @@ def run_regression_suite(
             )
         )
         return results
+    if suite == "assistant-draft-governance":
+        results.extend(
+            validate_assistant_draft_governance(
+                client,
+                username=username,
+                password=password,
+            )
+        )
+        return results
     raise RegressionError(f"Unsupported regression suite: {suite}")
 
 
@@ -1186,13 +1371,14 @@ def main() -> int:
     )
     parser.add_argument(
         "--suite",
-        choices=["full", "runner-reliability", "version-dashboard"],
+        choices=["full", "runner-reliability", "version-dashboard", "assistant-draft-governance"],
         default=os.getenv("FULL_CHAIN_SUITE", "full"),
         help=(
             "Regression suite to run. full executes the end-to-end product workflow; "
             "runner-reliability executes only the AI executor Runner lease/dead-letter gate; "
             "version-dashboard executes a quick product version dashboard aggregation "
-            "and blocker gate."
+            "and blocker gate; assistant-draft-governance executes the AI action draft "
+            "governance/audit gate."
         ),
     )
     parser.add_argument(

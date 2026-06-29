@@ -93,7 +93,7 @@ def test_full_chain_regression_script_supports_targeted_suites():
     for marker in [
         "FULL_CHAIN_SUITE",
         "--suite",
-        'choices=["full", "runner-reliability", "version-dashboard"]',
+        'choices=["full", "runner-reliability", "version-dashboard", "assistant-draft-governance"]',
         "run_regression_suite(",
         'suite == "runner-reliability"',
         'StepResult("suite", suite)',
@@ -126,5 +126,23 @@ def test_full_chain_regression_script_validates_runner_token_rotation():
         "old runner token was still accepted after rotation",
         "runner_token_rotation",
         "token_version",
+    ]:
+        assert marker in content
+
+
+def test_full_chain_regression_script_supports_assistant_draft_governance_suite():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    content = script_path.read_text(encoding="utf-8")
+
+    for marker in [
+        '"assistant-draft-governance"',
+        "validate_assistant_draft_governance(",
+        "/api/assistant/action-drafts/{draft['id']}/view",
+        "/api/assistant/action-drafts/{draft['id']}/confirm",
+        "assistant_draft_governance",
+        "permission_status",
+        "impact_changed_field_count",
+        "latest_audit_event_type",
+        "assistant_action_draft.confirmed",
     ]:
         assert marker in content
