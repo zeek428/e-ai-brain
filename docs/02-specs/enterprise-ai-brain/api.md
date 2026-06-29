@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.455 |
+| 功能版本 | v1.1.456 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.456 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 在 PostgreSQL 运行时改为版本范围专用 read model，响应字段不变，避免先加载全量 task workflow source rows 后服务层过滤 | Codex |
 | v1.1.455 | 2026-06-30 | 代码巡检治理概览新增 `governance_pressure`，聚合待闭环提交人、缺 Bug、缺整改任务、门禁失败、待审批忽略和到期接受风险，供页面顶部治理压力总览展示 | Codex |
 | v1.1.454 | 2026-06-30 | 新增 `POST /api/system/ai-executor-tasks/{task_id}/retry`，管理员可重试 `cancelled/failed/timed_out/dead_letter` 的 AI 执行器任务并保留来源、原因和审计链路 | Codex |
 | v1.1.453 | 2026-06-29 | 迭代版本驾驶舱知识沉淀明细补齐知识文档索引健康元数据，summary 返回可检索和向量就绪沉淀数 | Codex |
@@ -665,7 +666,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Product | PATCH | `/api/products/{product_id}` | 更新产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404。 |
 | Product | DELETE | `/api/products/{product_id}` | 删除未被需求、AI 任务或 Bug 占用的产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404；无业务依赖时级联清理该产品的版本、模块和 Git 资源配置。 |
 | Product Version | GET | `/api/product-versions`, `/api/products/{product_id}/versions` | 产品迭代版本列表，前端主入口位于需求交付/迭代版本；要求 `product.read`，批量列表按当前用户产品 scope 过滤，指定 scope 外产品返回 404。 |
-| Product Version | GET | `/api/product-versions/{version_id}/dashboard` | 查询迭代版本驾驶舱，聚合版本需求、AI 任务、版本代码分支、Bug、代码巡检、代码评审、知识沉淀、发布记录、状态推进影响和阻塞项；要求 `product.read` 并按版本归属产品校验 scope，Bug 明细需 `bug.read`，代码巡检明细需 `code_inspection.read`，知识沉淀明细需 `knowledge.read`，缺少子权限时返回 `access_issues` 并隐藏对应明细；知识沉淀行返回关联知识文档索引状态、chunk 数、embedding chunk 数和关键词/混合/不可用检索模式。 |
+| Product Version | GET | `/api/product-versions/{version_id}/dashboard` | 查询迭代版本驾驶舱，聚合版本需求、AI 任务、版本代码分支、Bug、代码巡检、代码评审、知识沉淀、发布记录、状态推进影响和阻塞项；PostgreSQL 运行时使用版本范围专用 read model，响应字段不变，不先加载全量 task workflow source rows；要求 `product.read` 并按版本归属产品校验 scope，Bug 明细需 `bug.read`，代码巡检明细需 `code_inspection.read`，知识沉淀明细需 `knowledge.read`，缺少子权限时返回 `access_issues` 并隐藏对应明细；知识沉淀行返回关联知识文档索引状态、chunk 数、embedding chunk 数和关键词/混合/不可用检索模式。 |
 | Product Version | POST | `/api/products/{product_id}/versions` | 创建产品迭代版本；要求 `product.manage`，并按当前用户产品 scope 校验产品可见性。 |
 | Product Version | PATCH | `/api/product-versions/{version_id}` | 更新产品迭代版本非状态字段；要求 `product.manage`，按版本归属产品校验当前用户产品 scope，状态变更必须走推进接口。 |
 | Product Version | POST | `/api/product-versions/{version_id}/advance-status` | 预览或推进迭代版本状态，并同步符合条件的需求状态；要求 `product.manage`，按版本归属产品校验当前用户产品 scope。 |

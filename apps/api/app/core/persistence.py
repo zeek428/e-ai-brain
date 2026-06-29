@@ -8,6 +8,7 @@ from app.core.db import DatabaseConnectionPool
 from app.core.persistence_repositories import install_snapshot_repositories
 from app.core.persistence_runtime import PostgresRuntimeStore as PostgresRuntimeStore
 from app.core.persistent_memory_store import PersistentMemoryStore as PersistentMemoryStore
+from app.core.product_version_dashboard_read_model import product_version_dashboard_source_rows
 
 
 class PostgresSnapshotRepository:
@@ -652,6 +653,9 @@ class PostgresSnapshotRepository:
             "requirements": list((requirements_payload.get("requirements") or {}).values()),
             "tasks": list((tasks_payload.get("ai_tasks") or {}).values()),
         }
+
+    def get_product_version_dashboard_source_rows(self, version_id: str) -> dict[str, Any]:
+        return product_version_dashboard_source_rows(self, version_id)
 
     def load_knowledge(self) -> dict[str, Any]:
         return self._knowledge_read_repository.load_knowledge()

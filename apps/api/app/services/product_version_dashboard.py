@@ -14,7 +14,7 @@ from app.services.product_config_context import (
 from app.services.requirement_listing import requirement_summary_projection
 from app.services.task_access import can_read_task
 from app.services.task_listing import task_summary_projection
-from app.services.task_workflow_context import task_workflow_read_store
+from app.services.task_workflow_context import task_workflow_read_store, task_workflow_source_store
 from app.services.version_status import build_version_advance_impact
 
 VERSION_NEXT_STATUS = {
@@ -96,6 +96,14 @@ def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str
 
 def _memory_records(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
     return list(_memory_dict(current_store, collection_name).values())
+
+
+def _version_dashboard_read_store(current_store: Any, version_id: str) -> Any:
+    repository = getattr(current_store, "repository", None)
+    load_rows = getattr(repository, "get_product_version_dashboard_source_rows", None)
+    if callable(load_rows):
+        return task_workflow_source_store(load_rows(version_id), repository=repository)
+    return task_workflow_read_store(current_store)
 
 
 def _has_permission(user: dict[str, Any], permission: str) -> bool:
@@ -565,7 +573,7 @@ def product_version_dashboard_response(
     version_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any] | None:
-    read_store = task_workflow_read_store(current_store)
+    read_store = _version_dashboard_read_store(current_store, version_id)
     version = get_product_version_record(read_store, version_id)
     if version is None:
         return None

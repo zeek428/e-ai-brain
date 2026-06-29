@@ -634,6 +634,76 @@ def test_product_version_dashboard_loads_knowledge_index_health_from_repository_
     ]
 
 
+def test_product_version_dashboard_prefers_version_scoped_repository_projection():
+    class FakeRepository:
+        def __init__(self) -> None:
+            self.requested_version_id: str | None = None
+
+        def get_task_workflow_source_rows(self) -> dict[str, list[dict[str, object]]]:
+            raise AssertionError("version dashboard should not load full workflow source rows")
+
+        def get_product_version_dashboard_source_rows(
+            self,
+            version_id: str,
+        ) -> dict[str, list[dict[str, object]]]:
+            self.requested_version_id = version_id
+            return {
+                "product_versions": [
+                    {
+                        "code": "scoped-dashboard",
+                        "id": "version_scoped_projection",
+                        "name": "版本专用投影",
+                        "product_id": "product_scoped_projection",
+                        "status": "active",
+                    }
+                ],
+                "products": [
+                    {
+                        "code": "scoped-dashboard-product",
+                        "id": "product_scoped_projection",
+                        "name": "版本专用投影产品",
+                        "status": "active",
+                    }
+                ],
+                "requirements": [
+                    {
+                        "created_at": "2026-06-04T08:00:00+00:00",
+                        "id": "requirement_scoped_projection",
+                        "priority": "P1",
+                        "product_id": "product_scoped_projection",
+                        "status": "developing",
+                        "title": "版本专用投影需求",
+                        "updated_at": "2026-06-04T08:30:00+00:00",
+                        "version_id": "version_scoped_projection",
+                    }
+                ],
+                "tasks": [],
+            }
+
+    repository = FakeRepository()
+    current_store = type("RepositoryBackedStore", (), {"repository": repository})()
+
+    dashboard = product_version_dashboard_response(
+        current_store=current_store,
+        user={"id": "user_admin", "permissions": [], "roles": ["admin"]},
+        version_id="version_scoped_projection",
+    )
+
+    assert repository.requested_version_id == "version_scoped_projection"
+    assert dashboard is not None
+    assert dashboard["version"]["product_name"] == "版本专用投影产品"
+    assert dashboard["summary"]["requirements"] == 1
+    assert dashboard["summary"]["tasks"] == 0
+    assert dashboard["status_impact"]["updated_requirements"] == [
+        {
+            "from_status": "developing",
+            "id": "requirement_scoped_projection",
+            "title": "版本专用投影需求",
+            "to_status": "testing",
+        }
+    ]
+
+
 def test_product_version_dashboard_blocks_release_without_successful_release_record():
     app.state.store.reset()
     headers = auth_headers()

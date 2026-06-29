@@ -297,6 +297,8 @@ class WorkflowRuntimeRepository(Protocol):
 
     def get_task_workflow_source_rows(self) -> dict[str, Any]: ...
 
+    def get_product_version_dashboard_source_rows(self, version_id: str) -> dict[str, Any]: ...
+
     def count_requirement_summaries(
         self,
         *,
