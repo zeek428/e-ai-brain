@@ -84,3 +84,18 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         "/api/assistant/conversations/{conversation_id}/messages",
     ]:
         assert marker in content
+
+
+def test_full_chain_regression_script_supports_targeted_suites():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    content = script_path.read_text(encoding="utf-8")
+
+    for marker in [
+        "FULL_CHAIN_SUITE",
+        "--suite",
+        'choices=["full", "runner-reliability"]',
+        "run_regression_suite(",
+        'suite == "runner-reliability"',
+        'StepResult("suite", suite)',
+    ]:
+        assert marker in content

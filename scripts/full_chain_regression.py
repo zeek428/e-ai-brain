@@ -870,6 +870,42 @@ def run_regression(
     return results
 
 
+def run_regression_suite(
+    client: ApiClient,
+    *,
+    suite: str,
+    task_execution_mode: str,
+    username: str,
+    password: str,
+) -> list[StepResult]:
+    results = [StepResult("suite", suite)]
+    if suite == "full":
+        results.extend(
+            run_regression(
+                client,
+                task_execution_mode=task_execution_mode,
+                username=username,
+                password=password,
+            )
+        )
+        return results
+    if suite == "runner-reliability":
+        slug = _slug()
+        repo_path = create_fixture_repository(slug, f"runner/{slug}")
+        user = client.login(username, password).get("user", {})
+        results.append(StepResult("login", f"logged in as {user.get('username') or username}"))
+        results.append(
+            validate_ai_executor_runner_reliability(
+                client,
+                repo_path=repo_path,
+                slug=slug,
+            )
+        )
+        results.append(StepResult("fixture_repository", str(repo_path)))
+        return results
+    raise RegressionError(f"Unsupported regression suite: {suite}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run a real AI Brain full-chain regression through public APIs.",
@@ -900,6 +936,15 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--suite",
+        choices=["full", "runner-reliability"],
+        default=os.getenv("FULL_CHAIN_SUITE", "full"),
+        help=(
+            "Regression suite to run. full executes the end-to-end product workflow; "
+            "runner-reliability executes only the AI executor Runner lease/dead-letter gate."
+        ),
+    )
+    parser.add_argument(
         "--username",
         default=os.getenv("FULL_CHAIN_USERNAME", os.getenv("READINESS_USERNAME", "admin@example.com")),
         help="Login username. Defaults to FULL_CHAIN_USERNAME, READINESS_USERNAME, or admin@example.com.",
@@ -909,8 +954,9 @@ def main() -> int:
     client = ApiClient(args.api_base_url, timeout=args.timeout)
     started_at = time.perf_counter()
     try:
-        results = run_regression(
+        results = run_regression_suite(
             client,
+            suite=args.suite,
             task_execution_mode=args.task_execution_mode,
             username=args.username,
             password=args.password,

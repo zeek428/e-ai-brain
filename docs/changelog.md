@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本场景集：新增 `--suite` / `FULL_CHAIN_SUITE`，默认 `full` 保持完整业务主链路，`runner-reliability` 可单独验收 AI 执行器 Runner 租约、重派和死信门禁。
 - AI 执行器 Runner 安装包版本元数据：`README.md`、`ai-brain-runner.env`、`manifest.json` 和 `runner_config.json` 同步写入安装包版本，便于本地 Runner 兼容诊断、安装包追踪和后续升级。
 - 真实全链路回归脚本补齐 AI 执行器 Runner 可靠性门禁：脚本创建短租约 Runner 任务，验证公开 API 认领、超时重派、死信转换、死信列表和 warning/error 日志，确保 Runner 租约异常能进入发布前回归。
 - 真实全链路回归脚本补齐版本总览阻塞处理队列门禁：所有 blockers 必须携带来源、级别、标题、原因、动作目标和解除条件，避免阻塞队列无法排序或无法跳转处理。
