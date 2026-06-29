@@ -188,6 +188,73 @@ def _memory_import_jobs(
     return jobs
 
 
+def _permission_role_counts(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    for document in documents:
+        roles = {
+            str(role).strip()
+            for role in (document.get("permission_roles") or [])
+            if str(role).strip()
+        }
+        for role in roles:
+            counts[role] = counts.get(role, 0) + 1
+    return [
+        {"count": count, "role": role}
+        for role, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _permission_scope_summary(
+    *,
+    health: dict[str, Any],
+    permission_role: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    role_counts = [
+        {
+            "count": int(item.get("count") or 0),
+            "role": str(item.get("role") or "").strip(),
+        }
+        for item in health.get("permission_role_counts") or []
+        if str(item.get("role") or "").strip()
+    ]
+    if permission_role:
+        role_counts = [
+            item for item in role_counts if item["role"] == permission_role
+        ] or [
+            {
+                "count": int(health["summary"].get("total_documents") or 0),
+                "role": permission_role,
+            }
+        ]
+    matched_roles = [item["role"] for item in role_counts]
+    access_args = knowledge_repository_access_args(user)
+    if role_counts:
+        mode = "role_based"
+    elif access_args["global_knowledge_access"]:
+        mode = "global"
+    else:
+        mode = "scope_based"
+    scope_labels = [
+        f"角色 {item['role']} 命中 {item['count']} 个文档" for item in role_counts[:8]
+    ]
+    if not scope_labels and access_args["knowledge_space_scope_ids"]:
+        scope_labels.append(
+            f"知识空间范围 {len(access_args['knowledge_space_scope_ids'])} 个"
+        )
+    if not scope_labels and access_args["global_knowledge_access"]:
+        scope_labels.append("全局知识权限")
+    return {
+        "filter_role": permission_role,
+        "global_knowledge_access": access_args["global_knowledge_access"],
+        "knowledge_space_scope_ids": access_args["knowledge_space_scope_ids"],
+        "matched_roles": matched_roles,
+        "mode": mode,
+        "readable_role_count": len(matched_roles),
+        "scope_labels": scope_labels,
+    }
+
+
 def _memory_index_health(
     *,
     current_store: Any,
@@ -261,6 +328,7 @@ def _memory_index_health(
             [{"status": job.get("status")} for job in import_jobs]
         ),
         "issues": issues[:issue_limit],
+        "permission_role_counts": _permission_role_counts(documents),
         "status_counts": status_counts,
         "summary": {
             "chunk_ready_documents": sum(
@@ -355,6 +423,11 @@ def knowledge_index_health_response(
         "unavailable": int(health["summary"].get("missing_chunk_documents") or 0)
         + int(health["summary"].get("index_failed_documents") or 0),
     }
+    health["permission_scope"] = _permission_scope_summary(
+        health=health,
+        permission_role=permission_role,
+        user=user,
+    )
     health["items"] = list(health.get("issues") or [])
     health["total"] = int(health["summary"].get("total_documents") or 0)
     return envelope(

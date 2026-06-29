@@ -144,6 +144,7 @@ function installPluginsFetchMock(
     includeOfficialActions?: boolean;
     includeOfficialPlugins?: boolean;
     includeMultiResourceScheduledJob?: boolean;
+    includeOutOfPageConnection?: boolean;
   } = {},
 ) {
   const actionBodies: unknown[] = [];
@@ -840,6 +841,30 @@ function installPluginsFetchMock(
       && init?.method === 'GET'
     ) {
       connectionListCalls.push(input);
+      const baseConnections = [
+        {
+          auth_type: 'api_key_header',
+          endpoint_url: 'https://ai-brain-maxcompute-mcp.internal/mcp',
+          environment: 'prod',
+          id: 'connection_maxcompute_prod',
+          last_test_summary: {
+            checked_at: '2026-06-10T00:00:00Z',
+            error_code: 'HTTPError',
+            error_message: 'HTTP Error 400: Bad Request',
+            failed_step: 'network_request',
+            latency_ms: 211,
+            response_status_code: 400,
+            status: 'failed',
+          },
+          name: '生产 MaxCompute 项目',
+          plugin_id: 'plugin_maxcompute',
+          request_config: {
+            headers: { 'X-Workspace': 'prod' },
+            query: { appCode: '208b5b1456ee445ca47a42c' },
+          },
+          status: 'active',
+        },
+      ];
       const officialConnections = options.includeOfficialPlugins
         ? [
             {
@@ -862,34 +887,37 @@ function installPluginsFetchMock(
             },
           ]
         : [];
-      return jsonResponse({
-        data: {
-          items: [
+      const outOfPageConnections = options.includeOutOfPageConnection
+        ? [
             {
-              auth_type: 'api_key_header',
-              endpoint_url: 'https://ai-brain-maxcompute-mcp.internal/mcp',
+              auth_type: 'none',
+              endpoint_url: 'https://ai-service.example.com/chat-records',
               environment: 'prod',
-              id: 'connection_maxcompute_prod',
-              last_test_summary: {
-                checked_at: '2026-06-10T00:00:00Z',
-                error_code: 'HTTPError',
-                error_message: 'HTTP Error 400: Bad Request',
-                failed_step: 'network_request',
-                latency_ms: 211,
-                response_status_code: 400,
-                status: 'failed',
-              },
-              name: '生产 MaxCompute 项目',
+              id: 'connection_ai_chat_records',
+              name: 'AI 客服聊天记录连接',
               plugin_id: 'plugin_maxcompute',
               request_config: {
-                headers: { 'X-Workspace': 'prod' },
-                query: { appCode: '208b5b1456ee445ca47a42c' },
+                headers: { 'Content-Type': 'application/json' },
+                query: { start_date: '{{current_date-7}}' },
               },
               status: 'active',
             },
-            ...officialConnections,
-          ],
-          total: 1 + officialConnections.length,
+          ]
+        : [];
+      const allConnections = [
+        ...baseConnections,
+        ...officialConnections,
+        ...outOfPageConnections,
+      ];
+      const isPagedRequest = input.includes('page=') || input.includes('page_size=');
+      const pageConnections = [
+        ...baseConnections,
+        ...officialConnections,
+      ];
+      return jsonResponse({
+        data: {
+          items: isPagedRequest ? pageConnections : allConnections,
+          total: allConnections.length,
         },
       });
     }
@@ -1932,6 +1960,27 @@ describe('PluginsPage', () => {
     expect(actionListCalls).toContain(
       '/api/system/plugin-actions?page=1&page_size=10&sort_by=plugin_id&sort_order=asc',
     );
+  });
+
+  it('shows all available connections in the action selector even when the connection table is paged', async () => {
+    const { connectionListCalls } = installPluginsFetchMock({ includeOutOfPageConnection: true });
+
+    render(<PluginsPage />);
+
+    await waitFor(() => {
+      expect(connectionListCalls).toContain('/api/system/plugin-connections');
+      expect(connectionListCalls).toContain(
+        '/api/system/plugin-connections?page=1&page_size=10&sort_by=plugin_id&sort_order=asc',
+      );
+    });
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
+
+    const dialog = await findDialogByTitle('新增动作');
+    fireEvent.mouseDown(within(dialog).getByLabelText('连接'));
+
+    expect(await screen.findByText('AI 客服聊天记录连接 (prod)')).toBeInTheDocument();
   });
 
   it('shows latest connection test summary in the connection list', async () => {

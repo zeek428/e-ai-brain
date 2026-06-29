@@ -135,6 +135,15 @@ export type KnowledgeIndexHealthRecord = {
   importJobCounts: Array<{ count: number; status: string }>;
   issues: KnowledgeIndexHealthIssueRecord[];
   performance?: RemoteListPerformance;
+  permissionScope?: {
+    filterRole?: string | null;
+    globalKnowledgeAccess: boolean;
+    knowledgeSpaceScopeIds: string[];
+    matchedRoles: string[];
+    mode: string;
+    readableRoleCount: number;
+    scopeLabels: string[];
+  };
   retrievalModes: {
     hybridReady: number;
     keywordFallback: number;
@@ -366,6 +375,15 @@ type KnowledgeIndexHealthItem = {
   import_job_counts?: Array<{ count?: number; status?: string }>;
   issues?: KnowledgeIndexHealthIssueItem[];
   performance?: RemoteListPerformance;
+  permission_scope?: {
+    filter_role?: string | null;
+    global_knowledge_access?: boolean;
+    knowledge_space_scope_ids?: string[];
+    matched_roles?: string[];
+    mode?: string;
+    readable_role_count?: number;
+    scope_labels?: string[];
+  };
   retrieval_modes?: {
     hybrid_ready?: number;
     keyword_fallback?: number;
@@ -605,6 +623,17 @@ function mapKnowledgeIndexHealth(item: KnowledgeIndexHealthItem): KnowledgeIndex
       vectorIndexError: issue.vector_index_error,
     })),
     performance: item.performance,
+    permissionScope: item.permission_scope
+      ? {
+          filterRole: item.permission_scope.filter_role,
+          globalKnowledgeAccess: Boolean(item.permission_scope.global_knowledge_access),
+          knowledgeSpaceScopeIds: item.permission_scope.knowledge_space_scope_ids ?? [],
+          matchedRoles: item.permission_scope.matched_roles ?? [],
+          mode: item.permission_scope.mode ?? 'unknown',
+          readableRoleCount: Number(item.permission_scope.readable_role_count ?? 0),
+          scopeLabels: item.permission_scope.scope_labels ?? [],
+        }
+      : undefined,
     retrievalModes: {
       hybridReady: Number(item.retrieval_modes?.hybrid_ready ?? 0),
       keywordFallback: Number(item.retrieval_modes?.keyword_fallback ?? 0),

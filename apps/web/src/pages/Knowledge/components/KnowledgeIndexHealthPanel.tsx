@@ -198,6 +198,20 @@ function formatRetrievalModes(record?: KnowledgeIndexHealthRecord) {
   return `混合 ${hybridReady} · 关键词 ${keywordFallback} · 不可用 ${unavailable}`;
 }
 
+function formatPermissionScope(record?: KnowledgeIndexHealthRecord) {
+  if (!record?.permissionScope) {
+    return '当前页推断';
+  }
+  const labels = record.permissionScope.scopeLabels.filter(Boolean);
+  if (labels.length > 0) {
+    return labels.join('、');
+  }
+  if (record.permissionScope.knowledgeSpaceScopeIds.length > 0) {
+    return `知识空间 ${record.permissionScope.knowledgeSpaceScopeIds.length} 个`;
+  }
+  return record.permissionScope.globalKnowledgeAccess ? '全局知识权限' : '无命中说明';
+}
+
 export function KnowledgeIndexHealthPanel({
   healthState,
   listRows,
@@ -283,6 +297,7 @@ export function KnowledgeIndexHealthPanel({
       </div>
       <div className="knowledge-health-signals">
         <Text type="secondary">召回模式：{formatRetrievalModes(healthState.record)}</Text>
+        <Text type="secondary">权限命中：{formatPermissionScope(healthState.record)}</Text>
         <Text type="secondary">Embedding 模型：{formatEmbeddingModels(healthState.record)}</Text>
         <Text type="secondary">导入任务：{formatImportJobs(healthState.record)}</Text>
       </div>

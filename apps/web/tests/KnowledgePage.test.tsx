@@ -127,6 +127,15 @@ describe('KnowledgePage', () => {
               keyword_fallback: 1,
               unavailable: 0,
             },
+            permission_scope: {
+              filter_role: null,
+              global_knowledge_access: true,
+              knowledge_space_scope_ids: [],
+              matched_roles: ['admin'],
+              mode: 'role_based',
+              readable_role_count: 1,
+              scope_labels: ['角色 admin 命中 1 个文档'],
+            },
             summary: {
               chunk_ready_documents: 0,
               embedding_ready_chunks: 0,
@@ -172,6 +181,7 @@ describe('KnowledgePage', () => {
     expect(within(healthPanel).getByText('分块缺失')).toBeInTheDocument();
     expect(within(healthPanel).getByText('embedding provider unavailable')).toBeInTheDocument();
     expect(within(healthPanel).getByText('召回模式：混合 0 · 关键词 1 · 不可用 0')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('权限命中：角色 admin 命中 1 个文档')).toBeInTheDocument();
     expect(within(healthPanel).getByText('Embedding 模型：text-embedding-3-small/1536维 0')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '知识列表' })).toBeInTheDocument();
     const mainTable = document.querySelector('table[data-table-scroll-x="2000"]');

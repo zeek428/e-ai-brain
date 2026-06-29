@@ -839,6 +839,15 @@ def test_knowledge_index_health_summarizes_full_scope_and_actions():
         "keyword_fallback": 1,
         "unavailable": 2,
     }
+    assert data["permission_scope"] == {
+        "filter_role": None,
+        "global_knowledge_access": True,
+        "knowledge_space_scope_ids": [],
+        "matched_roles": ["admin"],
+        "mode": "role_based",
+        "readable_role_count": 1,
+        "scope_labels": ["角色 admin 命中 5 个文档"],
+    }
     assert any(item["model"] == "text-embedding-test" for item in data["embedding_models"])
     assert {issue["label"] for issue in data["issues"]} >= {
         "分块缺失",

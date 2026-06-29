@@ -20,6 +20,7 @@
 - 迭代版本总览阻塞项治理动作：`GET /api/product-versions/{version_id}/dashboard` 的 blockers 增加处理动作、目标主体和解除条件，前端阻塞项表新增“解除条件”和“处理入口”，可直接跳转处理需求、Bug、代码巡检、版本分支或发布记录。
 - 代码巡检增量扫描快照闭环：报告表、详情接口和前端弹窗补齐 `incremental_from_commit`、`incremental_file_count` 与全量/增量扫描范围展示，确保质量门禁和治理结论可追溯到实际扫描范围。
 - 真实全链路回归脚本补齐知识索引健康门禁：知识沉淀采纳后验证 `knowledge_document_id`、`GET /api/knowledge/index-health` 可检索文档/chunk/召回模式，以及 `POST /api/knowledge/search` 命中沉淀文档。
+- 知识索引健康中心补齐权限命中说明：`GET /api/knowledge/index-health` 返回 `permission_scope`，前端健康面板展示角色命中文档数、全局知识权限或知识空间 scope，帮助解释当前健康统计范围。
 - 迭代版本驾驶舱升级为版本总览：版本列表入口改为“总览”，弹窗顶部新增下一步行动区，集中提供推进到下一阶段、查看需求、维护分支、查看 Bug、代码巡检、发布记录和版本全链路入口。
 - 知识索引健康中心后端化：新增 `GET /api/knowledge/index-health`，按当前用户知识权限和筛选条件在 PostgreSQL read model 聚合全量文档、chunk、embedding、导入任务和可操作健康问题；知识中心健康面板改为展示当前筛选范围全量健康，不再只基于当前分页结果推断。
 - 迭代版本驾驶舱交付健康摘要：驾驶舱弹窗基于阻塞项、严重 Bug/巡检、分支创建状态、代码巡检风险和发布失败记录生成发布准入、质量风险、代码分支、代码巡检和发布流水线结论，减少跨表格扫描和跨页面拼接。
@@ -259,6 +260,7 @@
 - 执行诊断中心详情继续减重：链路概要、关联对象、节点表、关系表和元数据预览抽到 `ExecutionTraceDetailContent`，主页面从详情渲染细节中解耦，为后续 Trace DAG 钻取和诊断建议扩展预留组件边界。
 
 ### Fixed
+- 插件管理动作表单的连接下拉改用完整连接清单，不再受连接列表当前分页影响，避免新增动作或套用场景模板时找不到跨页连接。
 - 需求全链路读权限边界收紧：`/api/requirements/{requirement_id}/full-chain` 和 `/api/lifecycle/full-chain` 统一校验 `requirement.read`、`task.read` 或 `workspace.read` 任一读权限，并按入口主体或需求所属产品 scope 校验，缺权限返回 403，产品范围不匹配返回 404。
 - 执行诊断问 AI 跳转修复：AI 助手独立读取路由 `prompt`，即使 `reference_type` 是 `assistant_chat_run`、`model_gateway_log` 等诊断来源类型且无法解析为助手引用，也会把链路分析问题带入输入框。
 - AI 助手页面样式隔离：将 `.assistant-*` 规则从全局样式迁移到助手页面级 `Assistant.css`，并保留多视口真实页面 smoke 覆盖，降低其它页面样式变更影响助手布局的风险。

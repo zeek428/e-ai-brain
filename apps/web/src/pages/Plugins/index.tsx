@@ -17,6 +17,7 @@ import {
   fetchAiExecutorRunnersPage,
   fetchPluginActionsPage,
   fetchPluginActionTemplates,
+  fetchPluginConnections,
   fetchPluginConnectionsPage,
   fetchPluginMarketplace,
   fetchPlugins,
@@ -157,6 +158,7 @@ export default function PluginsPage() {
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [runners, setRunners] = useState<AiExecutorRunnerRecord[]>([]);
   const [connections, setConnections] = useState<PluginConnectionRecord[]>([]);
+  const [selectableConnections, setSelectableConnections] = useState<PluginConnectionRecord[]>([]);
   const [actions, setActions] = useState<PluginActionRecord[]>([]);
   const [connectionListQuery, setConnectionListQuery] = useState<PluginConnectionListQuery>({
     ...defaultPluginChildListQuery,
@@ -219,15 +221,15 @@ export default function PluginsPage() {
   );
   const connectionOptions = useMemo(
     () =>
-      connections.map((connection) => ({
+      selectableConnections.map((connection) => ({
         label: `${connection.name} (${connection.environment ?? 'default'})`,
         value: connection.id,
       })),
-    [connections],
+    [selectableConnections],
   );
   const connectionById = useMemo(
-    () => new Map(connections.map((connection) => [connection.id, connection])),
-    [connections],
+    () => new Map(selectableConnections.map((connection) => [connection.id, connection])),
+    [selectableConnections],
   );
   const pluginById = useMemo(() => new Map(plugins.map((plugin) => [plugin.id, plugin])), [plugins]);
   const marketplaceItemByPluginCode = useMemo(
@@ -284,6 +286,7 @@ export default function PluginsPage() {
         nextActionTemplates,
         nextResultWriteTargets,
         nextRunnersPage,
+        nextSelectableConnections,
         nextConnectionsPage,
         nextActionsPage,
         nextJobs,
@@ -293,6 +296,7 @@ export default function PluginsPage() {
         fetchPluginActionTemplates(),
         fetchResultWriteTargets(),
         fetchAiExecutorRunnersPage(runnerListQuery),
+        fetchPluginConnections(),
         fetchPluginConnectionsPage(connectionListQuery),
         fetchPluginActionsPage(actionListQuery),
         fetchScheduledJobs(),
@@ -302,6 +306,7 @@ export default function PluginsPage() {
       setActionTemplates(nextActionTemplates);
       setResultWriteTargets(nextResultWriteTargets);
       setRunners(nextRunnersPage.rows);
+      setSelectableConnections(nextSelectableConnections);
       setConnections(nextConnectionsPage.rows);
       setActions(nextActionsPage.rows);
       setConnectionListMeta({
@@ -984,7 +989,7 @@ export default function PluginsPage() {
     setActionScenario(scenario);
     const pluginByCode = (code: string) => plugins.find((plugin) => plugin.code === code);
     const connectionForPlugin = (pluginId?: string) =>
-      pluginId ? connections.find((connection) => connection.plugin_id === pluginId)?.id : undefined;
+      pluginId ? selectableConnections.find((connection) => connection.plugin_id === pluginId)?.id : undefined;
     const template = actionTemplates.find((item) => item.code === scenario);
     if (template) {
       const plugin = pluginByCode(template.plugin_code) ?? plugins.find((item) => item.id === template.plugin_id);
@@ -1017,7 +1022,7 @@ export default function PluginsPage() {
         action_type: stringValue(template.action_type, 'http_request'),
         code: stringValue(template.default_code, template.code),
         connection_id: connectionForPlugin(pluginId)
-          ?? (isMaxComputeTemplate && connections.length === 1 ? connections[0].id : undefined),
+          ?? (isMaxComputeTemplate && selectableConnections.length === 1 ? selectableConnections[0].id : undefined),
         header_rows: recordToRows(requestConfig.headers),
         max_rows: maxRows,
         method: stringValue(requestConfig.method, 'GET'),

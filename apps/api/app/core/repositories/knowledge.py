@@ -519,6 +519,28 @@ class KnowledgeReadRepository:
                 cursor.execute(
                     f"""
                     WITH visible_docs AS (
+                        SELECT d.id, d.permission_roles
+                        FROM knowledge_documents d
+                        WHERE {where_clause}
+                    )
+                    SELECT role.value AS role, COUNT(*)
+                    FROM visible_docs d
+                    CROSS JOIN LATERAL jsonb_array_elements_text(
+                        COALESCE(d.permission_roles, '[]'::jsonb)
+                    ) AS role(value)
+                    GROUP BY role.value
+                    ORDER BY COUNT(*) DESC, role.value
+                    """,
+                    tuple(params),
+                )
+                permission_role_counts = [
+                    {"count": int(row[1] or 0), "role": str(row[0])}
+                    for row in cursor.fetchall()
+                ]
+
+                cursor.execute(
+                    f"""
+                    WITH visible_docs AS (
                         SELECT d.id, d.title, d.index_status, d.index_error,
                                d.vector_index_error, d.knowledge_space_id,
                                d.active_chunk_set_id, d.updated_at
@@ -580,6 +602,7 @@ class KnowledgeReadRepository:
             "embedding_models": embedding_models,
             "import_job_counts": import_job_counts,
             "issues": issues,
+            "permission_role_counts": permission_role_counts,
             "status_counts": status_counts,
             "summary": {
                 "chunk_ready_documents": int(summary_values[6] or 0) if summary_values else 0,
