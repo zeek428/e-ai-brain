@@ -44,6 +44,20 @@ def test_scheduled_job_entrypoint_uses_split_constants_module():
     assert "from app.services.scheduled_job_constants import" in entrypoint_source
 
 
+def test_scheduled_job_entrypoint_uses_split_config_module():
+    config_path = REPO_ROOT / "apps/api/app/services/scheduled_job_config.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/scheduled_jobs.py"
+
+    assert config_path.exists(), (
+        "Move scheduled job config normalization and effective type helpers to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    assert "from app.services.scheduled_job_config import" in entrypoint_source
+    assert "def scheduled_job_config_with_multi_refs(" not in entrypoint_source
+    assert "def scheduled_job_data_connection_policy(" not in entrypoint_source
+    assert "def effective_scheduled_job_type(" not in entrypoint_source
+
+
 def test_plugin_entrypoint_uses_split_constants_module():
     constants_path = REPO_ROOT / "apps/api/app/services/plugin_constants.py"
     entrypoint_path = REPO_ROOT / "apps/api/app/services/plugins.py"
