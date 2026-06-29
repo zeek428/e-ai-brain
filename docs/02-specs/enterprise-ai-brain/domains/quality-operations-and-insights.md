@@ -32,6 +32,7 @@
 - 首页团队看板允许 Python 聚合，但输入必须来自 PostgreSQL source rows 或可重建只读缓存；看板快照写入优先调用 `save_dashboard_metric_snapshot_record`，MemoryStore 仅作为测试 fallback，通过 helper 写入 `dashboard_metric_snapshots` 并保留稳定快照 ID 与首次创建时间。
 - AI 助手聊天运行可作为执行诊断根节点，关联用户消息、助手消息、模型网关日志和审计事件；`source_id` 支持按 `assistant_message_id` 反查整条助手运行链路，详情只展示排障元数据，不展示完整对话、Prompt 或知识正文。
 - 代码巡检报告列表必须优先走 PostgreSQL read model，在数据库层完成产品 scope、仓库、风险、状态、摘要、提交人、排序和分页；列表接口必须校验 `code_inspection.read` 权限，产品 scope 不能只依赖前端菜单隐藏；MemoryStore 仅作为测试和降级路径。
+- 代码巡检服务入口 `code_inspections.py` 必须聚焦报告写入、治理概览、详情和 Bug/整改任务写回编排；巡检枚举、严重级别归一化、提交人摘要和结果动作校验统一由 `code_inspection_common` 维护，并由架构守护测试防止通用规则回流主服务文件。
 - 代码巡检报告、finding、通知、误报忽略审批和整改任务派生属于 DB-first 写路径：服务层不得直接写 `current_store.code_inspection_*` 或 `current_store.ai_tasks`；MemoryStore fallback 由 `persist_code_inspection_records` / `persist_ai_task_record` 承接，PostgreSQL 运行态的报告、finding、通知和审计必须在同一数据库事务中提交。
 - 代码巡检本地完整扫描需记录仓库、分支、提交、提交人、规则版本、扫描范围、增量基线 Commit、扫描覆盖、质量门禁和 suppression 摘要。
 - 代码巡检报告详情中的 finding 可提交误报/忽略申请，审批状态按 `none/pending/approved/rejected` 流转；审批通过后同步报告 suppression 统计、规则治理概览和审计事件，不能只在前端隐藏问题。

@@ -13,6 +13,7 @@ DOMAIN_FILE_LINE_BUDGETS = {
     "apps/api/app/core/repositories/authorization.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/assistant_chat.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/assistant_references.py": MAX_DOMAIN_FILE_LINES,
+    "apps/api/app/services/code_inspections.py": MAX_PLUGIN_SERVICE_LINES,
     "apps/api/app/services/plugins.py": MAX_PLUGIN_SERVICE_LINES,
     "apps/api/app/services/scheduled_jobs.py": MAX_SCHEDULED_JOB_SERVICE_LINES,
     "apps/web/src/services/aiBrain.ts": MAX_FRONTEND_SERVICE_BARREL_LINES,
@@ -146,3 +147,21 @@ def test_assistant_chat_uses_split_model_gateway_module():
     assert "def _read_model_gateway_response_payload(" not in entrypoint_source
     assert "def _model_gateway_chat_completions_url(" not in entrypoint_source
     assert "httpx.Client(" not in entrypoint_source
+
+
+def test_code_inspections_uses_split_common_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/code_inspection_common.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/code_inspections.py"
+
+    assert helper_path.exists(), (
+        "Move code inspection constants, severity helpers and result-action validation "
+        "to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "from app.services.code_inspection_common import" in entrypoint_source
+    assert "def validate_code_inspection_result_actions(" in helper_source
+    assert "def committer_summary(" in helper_source
+    assert "CODE_INSPECTION_ACTION_TYPES = " not in entrypoint_source
+    assert "def normalize_severity(" not in entrypoint_source
+    assert "def report_matches_committer(" not in entrypoint_source
