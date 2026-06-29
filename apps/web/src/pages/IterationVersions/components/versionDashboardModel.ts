@@ -2,7 +2,10 @@ import type {
   ProductVersionRecord,
   RequirementRecord,
 } from '../../../data/management';
-import type { ProductVersionDashboard } from '../../../services/aiBrain';
+import {
+  fullChainSubjectHref,
+  type ProductVersionDashboard,
+} from '../../../services/aiBrain';
 
 export type LabelItem = { color: string; label: string };
 
@@ -24,6 +27,14 @@ export type DashboardStatusImpactRow = DashboardRequirementImpact & {
   impact: 'blocked' | 'unchanged' | 'updated';
   impactLabel: string;
 };
+
+export type DashboardBlockerActionItem =
+  ProductVersionDashboard['blockers'][number] & {
+    actionHref?: string;
+    fullChainHref?: string;
+    priority: number;
+    sourceLabel: string;
+  };
 
 export const dashboardBlockerSourceLabels: Record<string, string> = {
   bug: 'Bug',
@@ -75,6 +86,22 @@ export function blockerSubjectType(sourceType: string) {
   return undefined;
 }
 
+const blockerSeverityPriority: Record<string, number> = {
+  blocker: 1,
+  critical: 1,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+
+const blockerSourcePriority: Record<string, number> = {
+  bug: 1,
+  jenkins_release: 2,
+  code_inspection_report: 3,
+  requirement: 4,
+  product_version_branch_config: 5,
+};
+
 export function blockerActionHref(
   blocker: ProductVersionDashboard['blockers'][number],
   versionId: string,
@@ -111,6 +138,52 @@ export function blockerActionHref(
     return internalHref('/governance/devops', { version_id: targetId });
   }
   return undefined;
+}
+
+export function buildBlockerActionQueue(
+  dashboard: ProductVersionDashboard,
+): DashboardBlockerActionItem[] {
+  return dashboard.blockers
+    .map((blocker) => {
+      const subjectType = blockerSubjectType(String(blocker.sourceType ?? ''));
+      const actionHref = blockerActionHref(blocker, dashboard.version.id);
+      const fullChainHref =
+        subjectType && blocker.id
+          ? fullChainSubjectHref(subjectType, blocker.id)
+          : undefined;
+      return {
+        ...blocker,
+        actionHref,
+        fullChainHref,
+        priority: 0,
+        sourceLabel:
+          dashboardBlockerSourceLabels[blocker.sourceType] ??
+          blocker.sourceType,
+      };
+    })
+    .sort((left, right) => {
+      const leftSeverity =
+        blockerSeverityPriority[String(left.severity ?? '').toLowerCase()] ??
+        4;
+      const rightSeverity =
+        blockerSeverityPriority[String(right.severity ?? '').toLowerCase()] ??
+        4;
+      if (leftSeverity !== rightSeverity) {
+        return leftSeverity - rightSeverity;
+      }
+      const leftSource =
+        blockerSourcePriority[String(left.sourceType ?? '')] ?? 99;
+      const rightSource =
+        blockerSourcePriority[String(right.sourceType ?? '')] ?? 99;
+      if (leftSource !== rightSource) {
+        return leftSource - rightSource;
+      }
+      return String(left.title ?? '').localeCompare(String(right.title ?? ''));
+    })
+    .map((item, index) => ({
+      ...item,
+      priority: index + 1,
+    }));
 }
 
 export function buildStatusImpactRows(

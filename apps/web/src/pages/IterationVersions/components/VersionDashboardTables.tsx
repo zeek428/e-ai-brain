@@ -13,6 +13,7 @@ import {
 import {
   blockerActionHref,
   blockerSubjectType,
+  buildBlockerActionQueue,
   dashboardBlockerSourceLabels,
   dashboardDate,
   internalHref,
@@ -146,9 +147,85 @@ export function VersionDashboardBlockersTable({
   dashboard,
   statusLabelMap,
 }: VersionDashboardBlockersTableProps) {
+  const blockerActionQueue = buildBlockerActionQueue(dashboard);
+
   return (
     <div>
       <Text strong>阻塞项</Text>
+      {blockerActionQueue.length ? (
+        <div style={{ marginTop: 10, marginBottom: 12 }}>
+          <Space
+            align="baseline"
+            style={{ display: 'flex', marginBottom: 8 }}
+            wrap
+          >
+            <Text strong>阻塞处理队列</Text>
+            <Text type="secondary">
+              按严重级别、来源类型和处理入口排序，优先处理发布准入风险。
+            </Text>
+          </Space>
+          <Space size={8} style={{ display: 'flex' }} wrap>
+            {blockerActionQueue.map((item) => {
+              const severity =
+                statusLabelMap[String(item.severity)] ?? {
+                  color: 'default',
+                  label: String(item.severity ?? '-'),
+                };
+              return (
+                <div
+                  key={`${item.sourceType}-${item.id ?? item.title}-queue`}
+                  style={{
+                    border: '1px solid #f0f0f0',
+                    borderRadius: 6,
+                    minHeight: 142,
+                    padding: 12,
+                    width: 300,
+                  }}
+                >
+                  <Space size={4} style={{ display: 'flex' }} wrap>
+                    <Tag color="blue">优先级 {item.priority}</Tag>
+                    <Tag color={severity.color}>
+                      {severity.label} · {item.sourceLabel}
+                    </Tag>
+                  </Space>
+                  <div style={{ marginTop: 8 }}>
+                    <Text strong ellipsis style={{ maxWidth: 260 }}>
+                      {String(item.title ?? '-')}
+                    </Text>
+                  </div>
+                  <div style={{ marginTop: 4 }}>
+                    <Text type="secondary">
+                      {String(item.reason ?? '-')}
+                    </Text>
+                  </div>
+                  <div style={{ marginTop: 4 }}>
+                    <Text type="secondary">
+                      解除条件：{String(item.resolutionHint ?? '-')}
+                    </Text>
+                  </div>
+                  <Space size={4} style={{ marginTop: 8 }} wrap>
+                    {item.actionHref ? (
+                      <Button href={item.actionHref} size="small" type="link">
+                        {item.actionLabel}
+                      </Button>
+                    ) : null}
+                    {item.fullChainHref ? (
+                      <Button
+                        href={item.fullChainHref}
+                        icon={<LinkOutlined />}
+                        size="small"
+                        type="link"
+                      >
+                        全链路
+                      </Button>
+                    ) : null}
+                  </Space>
+                </div>
+              );
+            })}
+          </Space>
+        </div>
+      ) : null}
       <Table<ProductVersionDashboard['blockers'][number]>
         columns={[
           {

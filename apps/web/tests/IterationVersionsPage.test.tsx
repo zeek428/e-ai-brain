@@ -932,6 +932,16 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('1 个分支未创建')).toBeInTheDocument();
     expect(screen.getByText('1 份高风险')).toBeInTheDocument();
     expect(screen.getByText('1 条失败发布')).toBeInTheDocument();
+    expect(screen.getByText('阻塞处理队列')).toBeInTheDocument();
+    expect(
+      screen.getByText('按严重级别、来源类型和处理入口排序，优先处理发布准入风险。'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('优先级 1')).toBeInTheDocument();
+    expect(screen.getByText('高风险 · Bug')).toBeInTheDocument();
+    expect(screen.getByText('优先级 2')).toBeInTheDocument();
+    expect(screen.getByText('高风险 · 发布记录')).toBeInTheDocument();
+    expect(screen.getByText('优先级 3')).toBeInTheDocument();
+    expect(screen.getByText('中风险 · 代码分支')).toBeInTheDocument();
     expect(screen.getByText('状态分布')).toBeInTheDocument();
     expect(screen.getByText('需求状态')).toBeInTheDocument();
     expect(screen.getByText('开发中 1')).toBeInTheDocument();
@@ -949,18 +959,33 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('修复、验证并关闭 blocker/critical Bug 后解除发布阻塞。')).toBeInTheDocument();
     expect(screen.getByText('创建或推进版本分支状态，使其满足测试/发布准入要求。')).toBeInTheDocument();
     expect(screen.getByText('登记或同步成功发布记录后解除发布阻塞。')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '处理 Bug' })).toHaveAttribute(
-      'href',
-      '/delivery/bugs?bug_id=bug_dashboard',
-    );
-    expect(screen.getByRole('link', { name: '维护分支' })).toHaveAttribute(
-      'href',
-      '/delivery/versions?branch_config_id=version_branch_dashboard&version_id=version_dashboard',
-    );
-    expect(screen.getByRole('link', { name: '排查发布' })).toHaveAttribute(
-      'href',
-      '/governance/devops?version_id=version_dashboard',
-    );
+    expect(
+      screen
+        .getAllByRole('link', { name: '处理 Bug' })
+        .every(
+          (link) =>
+            link.getAttribute('href') ===
+            '/delivery/bugs?bug_id=bug_dashboard',
+        ),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByRole('link', { name: '维护分支' })
+        .every(
+          (link) =>
+            link.getAttribute('href') ===
+            '/delivery/versions?branch_config_id=version_branch_dashboard&version_id=version_dashboard',
+        ),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByRole('link', { name: '排查发布' })
+        .every(
+          (link) =>
+            link.getAttribute('href') ===
+            '/governance/devops?version_id=version_dashboard',
+        ),
+    ).toBe(true);
     expect(screen.getAllByText('发布阻塞 Bug').length).toBeGreaterThan(0);
     expect(screen.getAllByText('release/2026-dashboard').length).toBeGreaterThan(0);
     expect(screen.getAllByText('驾驶舱需求').length).toBeGreaterThan(0);
