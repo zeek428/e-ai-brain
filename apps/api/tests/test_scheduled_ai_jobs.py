@@ -12,6 +12,7 @@ from app.core.users import MemoryUserRepository
 from app.main import app
 from app.services.dynamic_parameters import dynamic_time_parameters
 from app.services.scheduled_job_execution_engine import ScheduledJobExecutionEngine
+from app.services.scheduled_job_run_projection import public_scheduled_job_run_projection
 
 client = TestClient(app)
 ADMIN_SERVICE_USER = {"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]}
@@ -59,6 +60,60 @@ def create_feedback(headers: dict[str, str], product_id: str) -> dict:
         },
         headers=headers,
     ).json()["data"]
+
+
+def test_scheduled_job_run_projection_adds_trace_graph_and_source_summary():
+    source_run = {
+        "error_code": None,
+        "finished_at": "2026-06-29T01:00:00+00:00",
+        "id": "scheduled_job_run_source",
+        "records_imported": 3,
+        "started_at": "2026-06-29T00:59:00+00:00",
+        "status": "succeeded",
+        "trigger_type": "manual",
+    }
+    projected = public_scheduled_job_run_projection(
+        {
+            "config_snapshot": {"max_retry_count": 2},
+            "id": "scheduled_job_run_rerun",
+            "result_summary": {
+                "execution_nodes": {
+                    "data_connection": {
+                        "input_mapping": {"week_start": "2026-06-22"},
+                        "label": "数据连接获取内容",
+                        "records_imported": 3,
+                        "status": "succeeded",
+                    },
+                    "result_action": {
+                        "label": "结果动作反馈内容",
+                        "records_imported": 3,
+                        "status": "succeeded",
+                        "write_target": "scheduled_job_result",
+                    },
+                },
+            },
+            "source_run_id": source_run["id"],
+        },
+        source_run=source_run,
+    )
+
+    assert projected["source_run_summary"] == {
+        "error_code": None,
+        "finished_at": "2026-06-29T01:00:00+00:00",
+        "id": "scheduled_job_run_source",
+        "latency_ms": None,
+        "records_imported": 3,
+        "started_at": "2026-06-29T00:59:00+00:00",
+        "status": "succeeded",
+        "trigger_type": "manual",
+    }
+    trace_graph = projected["result_summary"]["trace_graph"]
+    assert trace_graph["edges"] == [{"from": "data_connection", "to": "result_action"}]
+    assert [node["id"] for node in trace_graph["nodes"]] == [
+        "data_connection",
+        "result_action",
+    ]
+    assert {node["retry_count"] for node in trace_graph["nodes"]} == {2}
 
 
 def test_scheduled_job_repository_supports_paged_filtered_queries():

@@ -57,6 +57,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 定时作业服务拆大文件：将运行记录 API 投影、trace graph 补齐和 rerun 来源摘要抽取到 `scheduled_job_run_projection`，`scheduled_jobs.py` 继续保留兼容入口并委托新模块。
 - 前端用户洞察 client 拆分：新增 `apps/web/src/services/userInsightsClient.ts`，将用户洞察列表、用户反馈登记/处理/转需求、使用指标登记和迭代建议决策请求从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出，继续降低用户反馈到需求全链路入口的改动风险。
 - 前端执行诊断 client 拆分：新增 `apps/web/src/services/diagnosticsClient.ts`，将审计列表、执行诊断列表/详情、生命周期上下文查询和相关类型从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出，`lifecycleClient.ts` 复用执行诊断类型，继续降低全链路/诊断改动风险。
 - 前端需求全链路 client 拆分：新增 `apps/web/src/services/lifecycleClient.ts`，将需求 full-chain 获取、生命周期主体 full-chain 获取、full-chain 链接生成和响应映射从 `services/aiBrain.ts` 抽出，`aiBrain.ts` 保持兼容导出并继续减重。
