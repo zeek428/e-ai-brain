@@ -5,8 +5,9 @@ from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
-import app.services.scheduled_jobs as scheduled_jobs_service
+import app.services.scheduled_job_ai_capabilities as scheduled_job_ai_capabilities_service
 import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
+import app.services.scheduled_jobs as scheduled_jobs_service
 from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
 from app.core.security import hash_password
 from app.core.users import MemoryUserRepository
@@ -576,7 +577,7 @@ def test_ai_capability_lists_use_repository_pagination_when_requested():
     repository = PagedRepository()
     current_store = SimpleNamespace(repository=repository, ai_agents={}, ai_skills={})
 
-    skills = scheduled_jobs_service.list_ai_skills_response(
+    skills = scheduled_job_ai_capabilities_service.list_ai_skills_response(
         code="code_review",
         current_store=current_store,
         keyword="review",
@@ -590,7 +591,7 @@ def test_ai_capability_lists_use_repository_pagination_when_requested():
         started_at=None,
         status="active",
     )
-    agents = scheduled_jobs_service.list_ai_agents_response(
+    agents = scheduled_job_ai_capabilities_service.list_ai_agents_response(
         brain_app_id="rd_brain",
         current_store=current_store,
         keyword="review",

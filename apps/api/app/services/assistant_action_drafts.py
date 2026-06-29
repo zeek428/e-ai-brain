@@ -26,13 +26,15 @@ from app.services.requirements import (
     generate_requirement_task_result,
     requirement_write_store,
 )
+from app.services.scheduled_job_ai_capabilities import (
+    create_ai_agent_response,
+    create_ai_skill_response,
+)
 from app.services.scheduled_jobs import (
     AI_REQUIRED_SCHEDULED_JOB_TYPES,
     SCHEDULED_JOB_EXECUTION_MODES,
     SCHEDULED_JOB_SCHEDULE_TYPES,
     SCHEDULED_JOB_TYPES,
-    create_ai_agent_response,
-    create_ai_skill_response,
     create_scheduled_job_response,
     effective_scheduled_job_execution_mode,
     effective_scheduled_job_type,
@@ -2488,7 +2490,11 @@ def _assistant_action_draft_governance(
     preview: dict[str, Any],
     user: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    metadata_json = draft.get("metadata_json") if isinstance(draft.get("metadata_json"), dict) else {}
+    metadata_json = (
+        draft.get("metadata_json")
+        if isinstance(draft.get("metadata_json"), dict)
+        else {}
+    )
     validation = preview.get("validation") if isinstance(preview.get("validation"), dict) else {}
     validation_issues = (
         validation.get("issues") if isinstance(validation.get("issues"), list) else []

@@ -8,23 +8,25 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
+from app.services.scheduled_job_ai_capabilities import (
+    create_ai_agent_response,
+    create_ai_skill_package_response,
+    create_ai_skill_response,
+    list_ai_agents_response,
+    list_ai_skills_response,
+    patch_ai_agent_response,
+    patch_ai_skill_response,
+)
 from app.services.scheduled_job_catalog import list_scheduled_job_catalog_response
 from app.services.scheduled_job_observability import scheduled_job_run_observability_response
 from app.services.scheduled_job_templates import list_scheduled_job_templates_response
 from app.services.scheduled_jobs import (
     cancel_scheduled_job_run_response,
-    create_ai_agent_response,
-    create_ai_skill_package_response,
-    create_ai_skill_response,
     create_scheduled_job_response,
     delete_scheduled_job_response,
     dry_run_scheduled_job_response,
-    list_ai_agents_response,
-    list_ai_skills_response,
     list_scheduled_job_runs_response,
     list_scheduled_jobs_response,
-    patch_ai_agent_response,
-    patch_ai_skill_response,
     patch_scheduled_job_response,
     run_scheduled_job_response,
     scheduled_job_template_from_run_response,

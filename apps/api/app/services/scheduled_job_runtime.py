@@ -1,0 +1,43 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from app.api.deps import api_error
+from app.services.dynamic_parameters import (
+    dynamic_time_parameters,
+    resolve_dynamic_parameter_value,
+)
+
+
+def scheduled_job_timezone(job: dict[str, Any]) -> ZoneInfo:
+    timezone_name = str(job.get("timezone") or "UTC")
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        raise api_error(400, "VALIDATION_ERROR", f"Unsupported timezone: {timezone_name}") from None
+
+
+def resolve_plugin_input_mapping(
+    mapping: dict[str, Any],
+    job: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    return resolve_dynamic_parameter_value(
+        mapping,
+        dynamic_time_parameters(now=now, timezone=scheduled_job_timezone(job)),
+        now=now,
+        timezone=scheduled_job_timezone(job),
+    )
+
+
+def exception_error_code_and_message(exc: Exception) -> tuple[str, str]:
+    error_code = exc.__class__.__name__
+    error_message = str(exc)
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, dict):
+        error_code = str(detail.get("code") or error_code)
+        error_message = str(detail.get("message") or error_message)
+    return error_code, error_message

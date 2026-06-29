@@ -6,18 +6,13 @@ from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from types import SimpleNamespace
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app.api.deps import api_error, require_any_permission, require_permissions
+from app.api.deps import api_error
 from app.core.listing import add_list_observability, sort_list_items
 from app.services.code_inspections import (
     execute_code_inspection_result_actions,
     sync_product_git_repository_store,
     validate_code_inspection_result_actions,
-)
-from app.services.dynamic_parameters import (
-    dynamic_time_parameters,
-    resolve_dynamic_parameter_value,
 )
 from app.services.iteration_planning import create_iteration_suggestions_response
 from app.services.native_code_scanner import (
@@ -38,16 +33,17 @@ from app.services.plugins import (
     invoke_plugin_action_response,
     resolve_plugin_snapshot,
 )
+from app.services.scheduled_job_access import (
+    require_admin,
+    require_scheduled_job_runner,
+    scheduled_job_matches_product_scope,
+    scheduled_job_plugin_invocation_user,
+    scheduled_job_product_scope_filter,
+    scheduled_job_run_matches_product_scope,
+)
 from app.services.scheduled_job_ai_capabilities import (
-    create_ai_agent_response,
-    create_ai_skill_package_response,
-    create_ai_skill_response,
     ensure_active_model_gateway,
     ensure_active_skills,
-    list_ai_agents_response,
-    list_ai_skills_response,
-    patch_ai_agent_response,
-    patch_ai_skill_response,
 )
 from app.services.scheduled_job_ai_processing import (
     run_scheduled_job_ai_processing,
@@ -55,19 +51,17 @@ from app.services.scheduled_job_ai_processing import (
     validate_knowledge_document_ids,
     validate_skill_output_mapping_contract,
 )
+from app.services.scheduled_job_audit import (
+    scheduled_job_audit_payload,
+    scheduled_job_run_audit_payload,
+)
 from app.services.scheduled_job_catalog import (
     AI_REQUIRED_SCHEDULED_JOB_TYPES,
     CODE_INSPECTION_SCAN_MODES,
     DEFAULT_CODE_INSPECTION_SCAN_MODE,
     SCHEDULED_JOB_EXECUTION_MODES,
-    SCHEDULED_JOB_MANAGE_PERMISSION,
-    SCHEDULED_JOB_RUN_PERMISSION,
     SCHEDULED_JOB_SCHEDULE_TYPES,
     SCHEDULED_JOB_TYPES,
-)
-from app.services.scheduled_job_audit import (
-    scheduled_job_audit_payload,
-    scheduled_job_run_audit_payload,
 )
 from app.services.scheduled_job_common import ensure_enum, ensure_non_blank
 from app.services.scheduled_job_execution_engine import (
@@ -76,24 +70,28 @@ from app.services.scheduled_job_execution_engine import (
 from app.services.scheduled_job_native_scan import (
     execute_native_multi_code_inspection_summary,
     native_code_scan_repository_ids,
+)
+from app.services.scheduled_job_native_scan import (
     queued_native_scan_result_summary as native_scan_result_summary,
 )
 from app.services.scheduled_job_refs import (
     normalized_string_ids,
     payload_field,
     scheduled_job_multi_ids,
-    scheduled_job_multi_ids_from_config,
     scheduled_job_orchestration_config,
 )
 from app.services.scheduled_job_run_projection import (
     public_scheduled_job_run_projection,
 )
+from app.services.scheduled_job_runtime import (
+    exception_error_code_and_message,
+    resolve_plugin_input_mapping,
+)
 from app.services.scheduled_job_store import (
     delete_memory_record as _delete_memory_record,
-    memory_dict as _memory_dict,
+)
+from app.services.scheduled_job_store import (
     persist_record,
-    put_memory_record as _put_memory_record,
-    read_memory_dict as _read_memory_dict,
     scheduled_jobs_query_repository,
     snapshot,
     sync_ai_agent_store,
@@ -101,7 +99,12 @@ from app.services.scheduled_job_store import (
     sync_reference_store,
     sync_scheduled_job_run_store,
     sync_scheduled_job_store,
-    uses_repository_context,
+)
+from app.services.scheduled_job_store import (
+    put_memory_record as _put_memory_record,
+)
+from app.services.scheduled_job_store import (
+    read_memory_dict as _read_memory_dict,
 )
 from app.services.scheduled_job_templates import STANDARD_WIZARD_STEPS
 from app.services.skill_packages import load_skill_package_snapshot
@@ -145,126 +148,6 @@ DEFAULT_RESULT_ACTION_POLICY = {
     "failure_policy": "continue_on_error",
     "mode": "sequential",
 }
-
-
-def require_admin(user: dict[str, Any]) -> None:
-    require_permissions(user, {SCHEDULED_JOB_MANAGE_PERMISSION})
-
-
-def require_scheduled_job_runner(user: dict[str, Any]) -> None:
-    require_any_permission(
-        user,
-        {SCHEDULED_JOB_MANAGE_PERMISSION, SCHEDULED_JOB_RUN_PERMISSION},
-    )
-
-
-def user_product_access(user: dict[str, Any]) -> tuple[bool, set[str]]:
-    roles = set(user.get("roles") or [])
-    permissions = set(user.get("permissions") or [])
-    if "admin" in roles or "system.admin" in permissions:
-        return True, set()
-    scope_summary = user.get("scope_summary") or []
-    if not scope_summary:
-        return True, set()
-    product_ids: set[str] = set()
-    has_product_scope = False
-    for scope in scope_summary:
-        if not isinstance(scope, dict):
-            continue
-        if scope.get("access_level") not in {"admin", "read", "write"}:
-            continue
-        scope_type = scope.get("scope_type")
-        scope_id = scope.get("scope_id")
-        if scope_type == "global" and scope_id == "*":
-            return True, set()
-        if scope_type == "product" and scope_id:
-            has_product_scope = True
-            product_ids.add(str(scope_id))
-    if not has_product_scope:
-        return True, set()
-    return False, product_ids
-
-
-def user_can_access_scheduled_job_product(user: dict[str, Any], product_id: Any) -> bool:
-    global_access, product_ids = user_product_access(user)
-    if global_access:
-        return True
-    return product_id is not None and str(product_id) in product_ids
-
-
-def scheduled_job_product_scope_filter(user: dict[str, Any]) -> list[str] | None:
-    global_access, product_ids = user_product_access(user)
-    return None if global_access else sorted(product_ids)
-
-
-def scheduled_job_matches_product_scope(job: dict[str, Any], user: dict[str, Any]) -> bool:
-    return user_can_access_scheduled_job_product(user, job.get("product_id"))
-
-
-def scheduled_job_run_product_id(
-    current_store: Any,
-    run: dict[str, Any],
-) -> Any:
-    job_id = run.get("scheduled_job_id")
-    if job_id:
-        job = _read_memory_dict(current_store, "scheduled_jobs").get(str(job_id))
-        if isinstance(job, dict) and job.get("product_id") is not None:
-            return job.get("product_id")
-    config_snapshot = run.get("config_snapshot")
-    if isinstance(config_snapshot, dict):
-        return config_snapshot.get("product_id")
-    return None
-
-
-def scheduled_job_run_matches_product_scope(
-    current_store: Any,
-    run: dict[str, Any],
-    user: dict[str, Any],
-) -> bool:
-    return user_can_access_scheduled_job_product(
-        user,
-        scheduled_job_run_product_id(current_store, run),
-    )
-
-
-def scheduled_job_plugin_invocation_user(user: dict[str, Any]) -> dict[str, Any]:
-    permissions = set(user.get("permissions") or [])
-    permissions.add("system.plugins.manage")
-    # Running a configured job authorizes invoking its bound action; direct plugin APIs
-    # still require plugin management permission at the router/service boundary.
-    return {**user, "permissions": sorted(permissions)}
-
-
-def scheduled_job_timezone(job: dict[str, Any]) -> ZoneInfo:
-    timezone_name = str(job.get("timezone") or "UTC")
-    try:
-        return ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError:
-        raise api_error(400, "VALIDATION_ERROR", f"Unsupported timezone: {timezone_name}") from None
-
-
-def resolve_plugin_input_mapping(
-    mapping: dict[str, Any],
-    job: dict[str, Any],
-    *,
-    now: datetime | None = None,
-) -> dict[str, Any]:
-    return resolve_dynamic_parameter_value(
-        mapping,
-        dynamic_time_parameters(now=now, timezone=scheduled_job_timezone(job)),
-        now=now,
-        timezone=scheduled_job_timezone(job),
-    )
-
-
-def exception_error_code_and_message(exc: Exception) -> tuple[str, str]:
-    error_code = exc.__class__.__name__
-    error_message = str(exc)
-    detail = getattr(exc, "detail", None)
-    if isinstance(detail, dict):
-        error_code = str(detail.get("code") or error_code)
-        error_message = str(detail.get("message") or error_message)
-    return error_code, error_message
 
 
 def validate_product(current_store: Any, product_id: str | None) -> None:
