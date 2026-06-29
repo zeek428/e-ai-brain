@@ -57,6 +57,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 知识中心索引健康面板组件化：健康摘要、远端全量聚合兜底、问题动作和 chunk/Embedding/召回模式信号抽到 `KnowledgeIndexHealthPanel`，知识中心主页面继续聚焦列表、弹窗和导入编排。
 - 版本总览弹窗继续组件化：`VersionDashboardModal` 收缩为弹窗编排层，摘要行动区、健康摘要和状态分布移入 `VersionDashboardSummary`，推进影响、阻塞项、需求/任务和质量/交付表格移入 `VersionDashboardTables`，日期/链接/状态影响/健康摘要计算移入 `versionDashboardModel`。
 - 迭代版本页版本总览组件拆分：新增 `VersionDashboardModal` 承载版本健康、下一步行动、状态分布、推进影响、阻塞治理和各明细表展示，主页面继续聚焦版本列表、状态推进、需求归集和分支维护编排。
 - 前端系统运维与研发运营 client 继续拆分：新增 `apps/web/src/services/systemOperationsClient.ts` 承接 AI Skill/Agent、定时作业、插件、AI 执行器和研发执行器策略 API，新增 `apps/web/src/services/devopsOperationsClient.ts` 承接日志监控、采集运行和待归属数据 API；`services/aiBrain.ts` 保持兼容导出并降至 2800 行以内。

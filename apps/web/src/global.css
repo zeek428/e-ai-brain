@@ -216,6 +216,20 @@ body {
   line-height: 1.2;
 }
 
+.knowledge-health-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-width: 0;
+}
+
+.knowledge-health-signals .ant-typography {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .knowledge-health-issues {
   display: grid;
   gap: 8px;

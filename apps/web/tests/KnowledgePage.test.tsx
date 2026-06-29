@@ -28,6 +28,37 @@ const roleCatalogEnvelope = {
   },
 };
 
+function knowledgeHealthEnvelope(overrides: Record<string, unknown> = {}) {
+  return {
+    data: {
+      embedding_models: [],
+      import_job_counts: [],
+      issues: [],
+      performance: { duration_ms: 9 },
+      retrieval_modes: {
+        hybrid_ready: 0,
+        keyword_fallback: 0,
+        unavailable: 0,
+      },
+      status_counts: [],
+      summary: {
+        chunk_ready_documents: 0,
+        embedding_ready_chunks: 0,
+        index_failed_documents: 0,
+        keyword_only_chunks: 0,
+        keyword_only_documents: 0,
+        missing_chunk_documents: 0,
+        processing_documents: 0,
+        searchable_documents: 0,
+        total_chunks: 0,
+        total_documents: 0,
+        vector_ready_documents: 0,
+      },
+      ...overrides,
+    },
+  };
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -66,6 +97,52 @@ describe('KnowledgePage', () => {
           },
         });
       }
+      if (String(input).startsWith('/api/knowledge/index-health')) {
+        return jsonResponse(
+          knowledgeHealthEnvelope({
+            embedding_models: [{ count: 0, dimension: 1536, model: 'text-embedding-3-small' }],
+            issues: [
+              {
+                action: 'retry_index',
+                description: 'embedding provider unavailable',
+                document_id: 'knowledge_layout',
+                label: '向量待补',
+                severity: 'warning',
+                status: 'text_indexed',
+                title: '知识中心布局验证',
+                vector_index_error: 'embedding provider unavailable',
+              },
+              {
+                action: 'open_chunks',
+                description: '文档处于可检索状态，但没有生效分块版本。',
+                document_id: 'knowledge_layout',
+                label: '分块缺失',
+                severity: 'warning',
+                status: 'text_indexed',
+                title: '知识中心布局验证',
+              },
+            ],
+            retrieval_modes: {
+              hybrid_ready: 0,
+              keyword_fallback: 1,
+              unavailable: 0,
+            },
+            summary: {
+              chunk_ready_documents: 0,
+              embedding_ready_chunks: 0,
+              index_failed_documents: 0,
+              keyword_only_chunks: 1,
+              keyword_only_documents: 1,
+              missing_chunk_documents: 1,
+              processing_documents: 0,
+              searchable_documents: 1,
+              total_chunks: 1,
+              total_documents: 1,
+              vector_ready_documents: 0,
+            },
+          }),
+        );
+      }
       if (input === '/api/knowledge/spaces') {
         return jsonResponse({
           data: {
@@ -94,6 +171,8 @@ describe('KnowledgePage', () => {
     expect(within(healthPanel).getByText('向量待补')).toBeInTheDocument();
     expect(within(healthPanel).getByText('分块缺失')).toBeInTheDocument();
     expect(within(healthPanel).getByText('embedding provider unavailable')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('召回模式：混合 0 · 关键词 1 · 不可用 0')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('Embedding 模型：text-embedding-3-small/1536维 0')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '知识列表' })).toBeInTheDocument();
     const mainTable = document.querySelector('table[data-table-scroll-x="2000"]');
     expect(mainTable).not.toBeNull();
@@ -161,6 +240,9 @@ describe('KnowledgePage', () => {
             title: '技术方案知识沉淀',
           },
         });
+      }
+      if (String(input).startsWith('/api/knowledge/index-health')) {
+        return jsonResponse(knowledgeHealthEnvelope());
       }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
@@ -243,6 +325,9 @@ describe('KnowledgePage', () => {
           },
         });
       }
+      if (String(input).startsWith('/api/knowledge/index-health')) {
+        return jsonResponse(knowledgeHealthEnvelope());
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -261,6 +346,7 @@ describe('KnowledgePage', () => {
       ['/api/auth/roles', 'GET'],
       ['/api/knowledge/spaces', 'GET'],
       ['/api/knowledge/documents', 'GET'],
+      ['/api/knowledge/index-health', 'GET'],
       ['/api/knowledge/search', 'POST'],
     ]);
   });
@@ -309,6 +395,40 @@ describe('KnowledgePage', () => {
             title: '失败知识',
           },
         });
+      }
+      if (String(input).startsWith('/api/knowledge/index-health')) {
+        return jsonResponse(
+          knowledgeHealthEnvelope(
+            retryCalled
+              ? {}
+              : {
+                  issues: [
+                    {
+                      action: 'retry_index',
+                      description: 'embedding provider timeout',
+                      document_id: 'knowledge_failed',
+                      label: '索引失败',
+                      severity: 'error',
+                      status: 'index_failed',
+                      title: '失败知识',
+                    },
+                  ],
+                  summary: {
+                    chunk_ready_documents: 0,
+                    embedding_ready_chunks: 0,
+                    index_failed_documents: 1,
+                    keyword_only_chunks: 0,
+                    keyword_only_documents: 0,
+                    missing_chunk_documents: 0,
+                    processing_documents: 0,
+                    searchable_documents: 0,
+                    total_chunks: 0,
+                    total_documents: 1,
+                    vector_ready_documents: 0,
+                  },
+                },
+          ),
+        );
       }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
@@ -423,6 +543,9 @@ describe('KnowledgePage', () => {
             },
           },
         });
+      }
+      if (String(input).startsWith('/api/knowledge/index-health')) {
+        return jsonResponse(knowledgeHealthEnvelope());
       }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
@@ -629,6 +752,30 @@ describe('KnowledgePage', () => {
           folder_id: null,
         });
         return jsonResponse({ data: { skipped: [], updated: ['knowledge_ops'] } });
+      }
+      if (String(input).startsWith('/api/knowledge/index-health')) {
+        return jsonResponse(
+          knowledgeHealthEnvelope({
+            retrieval_modes: {
+              hybrid_ready: 1,
+              keyword_fallback: 0,
+              unavailable: 0,
+            },
+            summary: {
+              chunk_ready_documents: 1,
+              embedding_ready_chunks: 2,
+              index_failed_documents: 0,
+              keyword_only_chunks: 0,
+              keyword_only_documents: 0,
+              missing_chunk_documents: 0,
+              processing_documents: 0,
+              searchable_documents: 1,
+              total_chunks: 2,
+              total_documents: 1,
+              vector_ready_documents: 1,
+            },
+          }),
+        );
       }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
