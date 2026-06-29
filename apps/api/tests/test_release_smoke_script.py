@@ -93,9 +93,24 @@ def test_full_chain_regression_script_supports_targeted_suites():
     for marker in [
         "FULL_CHAIN_SUITE",
         "--suite",
-        'choices=["full", "runner-reliability"]',
+        'choices=["full", "runner-reliability", "version-dashboard"]',
         "run_regression_suite(",
         'suite == "runner-reliability"',
         'StepResult("suite", suite)',
+    ]:
+        assert marker in content
+
+
+def test_full_chain_regression_script_supports_version_dashboard_suite():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    content = script_path.read_text(encoding="utf-8")
+
+    for marker in [
+        '"version-dashboard"',
+        "validate_version_dashboard_quick_regression(",
+        'suite == "version-dashboard"',
+        "/api/product-versions/{version['id']}/dashboard",
+        "version_dashboard_quick",
+        "release_evidence_blockers",
     ]:
         assert marker in content

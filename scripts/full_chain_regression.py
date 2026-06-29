@@ -349,6 +349,176 @@ def find_deposit_for_task(client: ApiClient, task_id: str) -> dict[str, Any] | N
     return None
 
 
+def validate_version_dashboard_quick_regression(
+    client: ApiClient,
+    *,
+    username: str,
+    password: str,
+) -> list[StepResult]:
+    slug = _slug()
+    version_branch = f"dashboard/{slug}"
+    repo_path = create_fixture_repository(slug, version_branch)
+    results: list[StepResult] = []
+
+    user = client.login(username, password).get("user", {})
+    results.append(StepResult("login", f"logged in as {user.get('username') or username}"))
+
+    product = client.post(
+        "/api/products",
+        {
+            "code": f"dashboard-{slug}",
+            "description": "自动版本总览快速回归脚本创建的产品数据。",
+            "name": f"版本总览快速回归产品 {slug}",
+            "status": "active",
+        },
+    )
+    version = client.post(
+        f"/api/products/{product['id']}/versions",
+        {
+            "code": f"dashboard-{slug}",
+            "description": "自动版本总览快速回归版本。",
+            "name": f"版本总览快速回归版本 {slug}",
+            "status": "active",
+        },
+    )
+    results.append(StepResult("version_dashboard_product", f"{product['id']} / {version['id']}"))
+
+    requirement = client.post(
+        "/api/requirements",
+        {
+            "content": "版本总览快速回归验证需求、任务、分支和发布阻塞项聚合。",
+            "priority": "P0",
+            "product_id": product["id"],
+            "source": "product_planning",
+            "title": f"版本总览快速回归需求 {slug}",
+            "version_id": version["id"],
+        },
+    )
+    approved = client.post(
+        f"/api/requirements/{requirement['id']}/approve",
+        {"comment": "版本总览快速回归审批通过"},
+    )
+    _assert(
+        approved["status"] in {"approved", "planned"},
+        f"Version dashboard requirement was not approved: {approved}",
+    )
+    task = client.post(f"/api/requirements/{requirement['id']}/generate-task")
+    task_id = str(task["task_id"])
+    results.append(
+        StepResult("version_dashboard_requirement", f"{requirement['id']} / task={task_id}")
+    )
+
+    repository = client.post(
+        f"/api/products/{product['id']}/git-repositories",
+        {
+            "default_branch": "main",
+            "git_provider": "github",
+            "name": f"版本总览快速回归仓库 {slug}",
+            "project_path": f"dashboard/{slug}",
+            "remote_url": str(repo_path),
+            "repo_type": "code",
+            "root_path": "/",
+            "status": "active",
+        },
+    )
+    branch_config = client.post(
+        f"/api/product-versions/{version['id']}/branch-configs",
+        {
+            "base_branch": "main",
+            "branch_status": "active",
+            "creation_source": "manual",
+            "description": "版本总览快速回归分支，保持 active 以验证发布前分支阻塞。",
+            "repository_id": repository["id"],
+            "working_branch": version_branch,
+        },
+    )
+    results.append(
+        StepResult("version_dashboard_branch", f"{branch_config['id']} / {version_branch}")
+    )
+
+    version_testing = client.post(
+        f"/api/product-versions/{version['id']}/advance-status",
+        {
+            "force": True,
+            "reason": "version dashboard quick regression checks release blockers",
+            "target_status": "testing",
+        },
+    )
+    _assert(
+        version_testing.get("version", {}).get("status") == "testing",
+        f"Version dashboard fixture did not advance to testing: {version_testing}",
+    )
+
+    dashboard = client.get(f"/api/product-versions/{version['id']}/dashboard")
+    _assert(
+        dashboard["summary"]["requirements"] >= 1,
+        "Version dashboard quick check missed requirement summary.",
+    )
+    _assert(
+        dashboard["summary"]["tasks"] >= 1,
+        "Version dashboard quick check missed task summary.",
+    )
+    _assert(
+        dashboard["summary"]["branch_configs"] >= 1,
+        "Version dashboard quick check missed branch summary.",
+    )
+    _assert_contains(
+        _ids(dashboard.get("requirements", [])),
+        requirement["id"],
+        "Version dashboard quick check missed requirement row",
+    )
+    _assert_contains(
+        _ids(dashboard.get("tasks", [])),
+        task_id,
+        "Version dashboard quick check missed task row",
+    )
+    _assert_contains(
+        _ids(dashboard.get("branch_configs", [])),
+        branch_config["id"],
+        "Version dashboard quick check missed branch row",
+    )
+    status_impact = dashboard.get("status_impact") or {}
+    _assert(
+        status_impact.get("target_status") == "released",
+        f"Version dashboard quick check did not preview release impact: {status_impact}",
+    )
+    dashboard_blockers = dashboard.get("blockers", [])
+    _assert(
+        dashboard["summary"]["blockers"] >= 1,
+        "Version dashboard quick check did not expose blockers.",
+    )
+    validate_version_dashboard_blocker_actions(dashboard_blockers)
+    release_evidence_blockers = [
+        blocker
+        for blocker in dashboard_blockers
+        if blocker.get("source_type") == "jenkins_release"
+        and blocker.get("action_target_type") == "product_version"
+        and str(blocker.get("action_target_id")) == version["id"]
+    ]
+    _assert(
+        release_evidence_blockers,
+        f"Version dashboard quick check missed release evidence blocker: {dashboard_blockers}",
+    )
+    branch_blockers = [
+        blocker
+        for blocker in dashboard_blockers
+        if blocker.get("source_type") == "product_version_branch_config"
+        and str(blocker.get("action_target_id")) == branch_config["id"]
+    ]
+    _assert(
+        branch_blockers,
+        f"Version dashboard quick check missed branch blocker: {dashboard_blockers}",
+    )
+    results.append(
+        StepResult(
+            "version_dashboard_quick",
+            f"blockers={dashboard['summary']['blockers']}, tasks={dashboard['summary']['tasks']}",
+        )
+    )
+    results.append(StepResult("fixture_repository", str(repo_path)))
+    return results
+
+
 def run_regression(
     client: ApiClient,
     *,
@@ -903,6 +1073,15 @@ def run_regression_suite(
         )
         results.append(StepResult("fixture_repository", str(repo_path)))
         return results
+    if suite == "version-dashboard":
+        results.extend(
+            validate_version_dashboard_quick_regression(
+                client,
+                username=username,
+                password=password,
+            )
+        )
+        return results
     raise RegressionError(f"Unsupported regression suite: {suite}")
 
 
@@ -937,11 +1116,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--suite",
-        choices=["full", "runner-reliability"],
+        choices=["full", "runner-reliability", "version-dashboard"],
         default=os.getenv("FULL_CHAIN_SUITE", "full"),
         help=(
             "Regression suite to run. full executes the end-to-end product workflow; "
-            "runner-reliability executes only the AI executor Runner lease/dead-letter gate."
+            "runner-reliability executes only the AI executor Runner lease/dead-letter gate; "
+            "version-dashboard executes a quick product version dashboard aggregation "
+            "and blocker gate."
         ),
     )
     parser.add_argument(
