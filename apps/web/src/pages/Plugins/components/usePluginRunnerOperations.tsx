@@ -7,6 +7,7 @@ import {
   deleteAiExecutorRunner,
   downloadAiExecutorRunnerInstallPackage,
   fetchAiExecutorTaskLogs,
+  retryAiExecutorTask,
   rotateAiExecutorRunnerToken,
   testAiExecutorRunner,
   updateAiExecutorRunner,
@@ -248,6 +249,27 @@ export function usePluginRunnerOperations({
     }
   };
 
+  const retryRunnerTask = async () => {
+    if (!runnerLogTask?.id) {
+      return;
+    }
+    setRunnerLogLoading(true);
+    try {
+      const result = await retryAiExecutorTask(
+        runnerLogTask.id,
+        '管理员从插件管理页面重试 Runner 任务',
+      );
+      setRunnerLogTask(result.task);
+      setRunnerLogRows(result.task.logs ?? []);
+      message.success('Runner 任务已重新入队');
+      await reload();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Runner 任务重试失败');
+    } finally {
+      setRunnerLogLoading(false);
+    }
+  };
+
   const openRunnerTestDiagnostics = (
     runner: AiExecutorRunnerRecord,
     result: AiExecutorRunnerTestResult,
@@ -309,6 +331,7 @@ export function usePluginRunnerOperations({
     openCreateRunnerModal,
     openEditRunnerModal,
     openRunnerLogs,
+    retryRunnerTask,
     rotateRunnerToken,
     rotatedRunnerToken,
     rotatingRunner,

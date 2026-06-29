@@ -1,4 +1,4 @@
-import { StopOutlined } from '@ant-design/icons';
+import { ReloadOutlined, StopOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { SelectProps } from 'antd';
 import { Alert, Button, Input, Modal, Select, Space, Table, Tag, Typography } from 'antd';
@@ -28,6 +28,7 @@ type RunnerLogModalProps = {
   loading: boolean;
   onCancelTask: () => void;
   onClose: () => void;
+  onRetryTask: () => void;
   open: boolean;
   rows: AiExecutorTaskLogRecord[];
   task?: AiExecutorTaskRecord;
@@ -67,6 +68,13 @@ const TERMINAL_RUNNER_TASK_STATUSES = new Set([
   'timed_out',
 ]);
 
+const RETRYABLE_RUNNER_TASK_STATUSES = new Set([
+  'cancelled',
+  'dead_letter',
+  'failed',
+  'timed_out',
+]);
+
 export function SystemVariableModal({
   columns,
   items,
@@ -97,11 +105,13 @@ export function RunnerLogModal({
   loading,
   onCancelTask,
   onClose,
+  onRetryTask,
   open,
   rows,
   task,
 }: RunnerLogModalProps) {
   const canCancelTask = Boolean(task?.id) && !TERMINAL_RUNNER_TASK_STATUSES.has(String(task?.status));
+  const canRetryTask = Boolean(task?.id) && RETRYABLE_RUNNER_TASK_STATUSES.has(String(task?.status));
   return (
     <Modal
       aria-label="Runner 执行日志"
@@ -109,6 +119,16 @@ export function RunnerLogModal({
       footer={(
         <Space>
           <Button onClick={onClose}>关闭</Button>
+          <Button
+            aria-label="重试任务"
+            disabled={!canRetryTask}
+            icon={<ReloadOutlined />}
+            loading={loading}
+            onClick={onRetryTask}
+            type="primary"
+          >
+            重试任务
+          </Button>
           <Button
             aria-label="取消任务"
             danger

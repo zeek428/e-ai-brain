@@ -168,6 +168,7 @@ function installPluginsFetchMock(
   const runnerPackageCalls: string[] = [];
   const runnerRotateBodies: unknown[] = [];
   const runnerTaskCancelBodies: unknown[] = [];
+  const runnerTaskRetryBodies: unknown[] = [];
   const runnerTestCalls: string[] = [];
   const runnerUpdateBodies: unknown[] = [];
   const connectionTestDeferred = options.deferConnectionTest
@@ -801,6 +802,44 @@ function installPluginsFetchMock(
         },
       });
     }
+    if (input === '/api/system/ai-executor-tasks/ai_executor_task_001/retry' && init?.method === 'POST') {
+      runnerTaskRetryBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({
+        data: {
+          source_task: {
+            error_code: 'AI_EXECUTOR_TASK_CANCELLED',
+            id: 'ai_executor_task_001',
+            runner_id: 'ai_executor_runner_001',
+            scheduled_job_run_id: 'scheduled_job_run_runner_trace',
+            status: 'cancelled',
+          },
+          task: {
+            id: 'ai_executor_task_retry_001',
+            logs: [
+              {
+                level: 'info',
+                message: 'Task retried from ai_executor_task_001: 管理员从插件管理页面重试 Runner 任务',
+                sequence: 1,
+                timestamp: '2026-06-13T09:12:00Z',
+              },
+            ],
+            request_config: {
+              retry_history: [
+                {
+                  reason: '管理员从插件管理页面重试 Runner 任务',
+                  source_status: 'cancelled',
+                  source_task_id: 'ai_executor_task_001',
+                },
+              ],
+              retry_of_task_id: 'ai_executor_task_001',
+            },
+            runner_id: 'ai_executor_runner_001',
+            scheduled_job_run_id: 'scheduled_job_run_runner_trace',
+            status: 'queued',
+          },
+        },
+      });
+    }
     if (input === '/api/system/ai-executor-runners/ai_executor_runner_001' && init?.method === 'PATCH') {
       runnerUpdateBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({ data: { id: 'ai_executor_runner_001', status: 'active' } });
@@ -1173,6 +1212,7 @@ function installPluginsFetchMock(
     runnerPackageCalls,
     runnerRotateBodies,
     runnerTaskCancelBodies,
+    runnerTaskRetryBodies,
     runnerTestCalls,
     runnerUpdateBodies,
   };
@@ -1369,7 +1409,7 @@ describe('PluginsPage', () => {
   });
 
   it('rotates runner tokens and shows streaming task logs with cancellation', async () => {
-    const { runnerRotateBodies, runnerTaskCancelBodies } = installPluginsFetchMock();
+    const { runnerRotateBodies, runnerTaskCancelBodies, runnerTaskRetryBodies } = installPluginsFetchMock();
 
     render(<PluginsPage />);
 
@@ -1409,6 +1449,14 @@ describe('PluginsPage', () => {
       expect(runnerTaskCancelBodies).toEqual([{ reason: '管理员从插件管理页面取消 Runner 任务' }]),
     );
     expect(await screen.findByText('Runner 任务已取消')).toBeInTheDocument();
+
+    fireEvent.click(within(logDrawer).getByRole('button', { name: '重试任务' }));
+    await waitFor(() =>
+      expect(runnerTaskRetryBodies).toEqual([{ reason: '管理员从插件管理页面重试 Runner 任务' }]),
+    );
+    expect(await screen.findByText('Runner 任务已重新入队')).toBeInTheDocument();
+    expect(within(logDrawer).getByText('ai_executor_task_retry_001')).toBeInTheDocument();
+    expect(within(logDrawer).getByText(/Task retried from ai_executor_task_001/)).toBeInTheDocument();
   });
 
   it('shows the official plugin marketplace and opens guided connection setup', async () => {

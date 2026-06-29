@@ -678,6 +678,11 @@ export type AiExecutorTaskLogsResponse = {
   task: AiExecutorTaskRecord;
 };
 
+export type AiExecutorTaskRetryResponse = {
+  source_task: AiExecutorTaskRecord;
+  task: AiExecutorTaskRecord;
+};
+
 export type AiExecutorRunnerInstallPackageOptions = {
   arch?: string;
   install_mode?: string;
@@ -984,6 +989,18 @@ export async function cancelAiExecutorTask(
 ): Promise<{ task: AiExecutorTaskRecord }> {
   const token = requireAccessToken();
   return apiRequest<{ task: AiExecutorTaskRecord }>(`/api/system/ai-executor-tasks/${taskId}/cancel`, {
+    body: { reason },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function retryAiExecutorTask(
+  taskId: string,
+  reason?: string,
+): Promise<AiExecutorTaskRetryResponse> {
+  const token = requireAccessToken();
+  return apiRequest<AiExecutorTaskRetryResponse>(`/api/system/ai-executor-tasks/${taskId}/retry`, {
     body: { reason },
     method: 'POST',
     token,

@@ -104,6 +104,7 @@ type PluginManagementModalsProps = {
   onRotateRunnerTokenCancel: () => void;
   onRotateRunnerTokenSubmit: () => void | Promise<void>;
   onRunActionTrial: () => void | Promise<void>;
+  onRetryRunnerTask: () => void;
   onSubmitAction: () => void | Promise<void>;
   onSubmitConnection: () => void | Promise<void>;
   onSubmitConnectionAndTest: () => void | Promise<void>;
@@ -183,6 +184,7 @@ export function PluginManagementModals({
   onRotateRunnerTokenCancel,
   onRotateRunnerTokenSubmit,
   onRunActionTrial,
+  onRetryRunnerTask,
   onSubmitAction,
   onSubmitConnection,
   onSubmitConnectionAndTest,
@@ -217,6 +219,7 @@ export function PluginManagementModals({
         loading={runnerLogLoading}
         onCancelTask={onCancelRunnerTask}
         onClose={onCloseRunnerLogModal}
+        onRetryTask={onRetryRunnerTask}
         open={runnerLogModalOpen}
         rows={runnerLogRows}
         task={runnerLogTask}

@@ -353,6 +353,7 @@ export default function PluginsPage() {
     openCreateRunnerModal,
     openEditRunnerModal,
     openRunnerLogs,
+    retryRunnerTask,
     rotateRunnerToken,
     rotatedRunnerToken,
     rotatingRunner,
@@ -1466,6 +1467,7 @@ export default function PluginsPage() {
         onRotateRunnerTokenCancel={cancelRotateRunnerToken}
         onRotateRunnerTokenSubmit={submitRotateRunnerToken}
         onRunActionTrial={runActionTrial}
+        onRetryRunnerTask={retryRunnerTask}
         onSubmitAction={submitAction}
         onSubmitConnection={() => submitConnection()}
         onSubmitConnectionAndTest={() => submitConnection({ testAfterSave: true })}
