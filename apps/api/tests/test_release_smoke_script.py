@@ -114,3 +114,17 @@ def test_full_chain_regression_script_supports_version_dashboard_suite():
         "release_evidence_blockers",
     ]:
         assert marker in content
+
+
+def test_full_chain_regression_script_validates_runner_token_rotation():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    content = script_path.read_text(encoding="utf-8")
+
+    for marker in [
+        "validate_runner_token_rotation(",
+        "/api/system/ai-executor-runners/{runner['id']}/rotate-token",
+        "old runner token was still accepted after rotation",
+        "runner_token_rotation",
+        "token_version",
+    ]:
+        assert marker in content

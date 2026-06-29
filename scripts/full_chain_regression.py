@@ -150,6 +150,18 @@ def _assert_contains(container: set[str], expected: str, message: str) -> None:
     _assert(expected in container, f"{message}: expected {expected}, got {sorted(container)}")
 
 
+def expect_api_error(callable_request: Any, *, status: int, message: str) -> ApiError:
+    try:
+        callable_request()
+    except ApiError as exc:
+        _assert(
+            exc.status == status,
+            f"{message}: expected HTTP {status}, got {exc.status}",
+        )
+        return exc
+    raise RegressionError(message)
+
+
 def validate_version_dashboard_blocker_actions(blockers: list[dict[str, Any]]) -> None:
     for blocker in blockers:
         _assert(blocker.get("source_type"), f"Version dashboard blocker missed source_type: {blocker}")
@@ -166,12 +178,61 @@ def validate_version_dashboard_blocker_actions(blockers: list[dict[str, Any]]) -
         _assert(blocker.get("resolution_hint"), f"Version dashboard blocker missed resolution_hint: {blocker}")
 
 
+def validate_runner_token_rotation(
+    client: ApiClient,
+    *,
+    old_runner_token: str,
+    runner: dict[str, Any],
+    slug: str,
+) -> tuple[dict[str, str], StepResult]:
+    new_runner_token = f"{old_runner_token}-rotated"
+    rotated = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/rotate-token",
+        {"runner_token": new_runner_token},
+    )
+    _assert(
+        rotated.get("runner_token") == new_runner_token,
+        f"Runner token rotation did not return the one-time token: {rotated}",
+    )
+    _assert(
+        int(rotated.get("token_version") or 0) >= 2,
+        f"Runner token rotation did not increment token_version: {rotated}",
+    )
+    _assert(rotated.get("token_rotated_at"), f"Runner token rotation missed timestamp: {rotated}")
+
+    old_runner_headers = {"X-Runner-Token": old_runner_token}
+    expect_api_error(
+        lambda: client.post(
+            f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
+            {"metadata": {"source": "old-token-after-rotation", "slug": slug}},
+            headers=old_runner_headers,
+        ),
+        status=401,
+        message="old runner token was still accepted after rotation",
+    )
+
+    new_runner_headers = {"X-Runner-Token": new_runner_token}
+    heartbeat = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
+        {"metadata": {"source": "new-token-after-rotation", "slug": slug}},
+        headers=new_runner_headers,
+    )
+    _assert(
+        heartbeat.get("last_heartbeat_at"),
+        f"Runner heartbeat with rotated token did not update heartbeat: {heartbeat}",
+    )
+    return (
+        new_runner_headers,
+        StepResult("runner_token_rotation", f"token_version={rotated.get('token_version')}"),
+    )
+
+
 def validate_ai_executor_runner_reliability(
     client: ApiClient,
     *,
     repo_path: Path,
     slug: str,
-) -> StepResult:
+) -> list[StepResult]:
     client.get("/api/system/plugin-marketplace")
     runner_token = f"runner-lease-{slug}"
     runner = client.post(
@@ -190,6 +251,12 @@ def validate_ai_executor_runner_reliability(
         f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
         {"metadata": {"source": "full_chain_regression"}},
         headers=runner_headers,
+    )
+    runner_headers, token_rotation_result = validate_runner_token_rotation(
+        client,
+        old_runner_token=runner_token,
+        runner=runner,
+        slug=slug,
     )
 
     code_suffix = slug.replace("-", "_")
@@ -295,7 +362,10 @@ def validate_ai_executor_runner_reliability(
     task_logs = client.get(f"/api/system/ai-executor-tasks/{task_id}/logs")
     log_levels = [entry.get("level") for entry in task_logs.get("logs", [])]
     _assert("warning" in log_levels and "error" in log_levels, f"Runner lease logs are incomplete: {task_logs}")
-    return StepResult("runner_reliability", f"{task_id} / requeued=1 / dead_letter=1")
+    return [
+        token_rotation_result,
+        StepResult("runner_reliability", f"{task_id} / requeued=1 / dead_letter=1"),
+    ]
 
 
 def _git(args: list[str], cwd: Path, *, env: dict[str, str] | None = None) -> None:
@@ -861,7 +931,7 @@ def run_regression(
             f"bugs={len(report_bug_ids)}, tasks={len(report_task_ids)}",
         )
     )
-    results.append(
+    results.extend(
         validate_ai_executor_runner_reliability(
             client,
             repo_path=repo_path,
@@ -1064,7 +1134,7 @@ def run_regression_suite(
         repo_path = create_fixture_repository(slug, f"runner/{slug}")
         user = client.login(username, password).get("user", {})
         results.append(StepResult("login", f"logged in as {user.get('username') or username}"))
-        results.append(
+        results.extend(
             validate_ai_executor_runner_reliability(
                 client,
                 repo_path=repo_path,
