@@ -168,6 +168,59 @@ type VersionDashboardReadinessChecklistProps = {
   items: DashboardReadinessItem[];
 };
 
+type VersionDashboardDeliveryOverviewProps = {
+  items: DashboardReadinessItem[];
+};
+
+export function VersionDashboardDeliveryOverview({
+  items,
+}: VersionDashboardDeliveryOverviewProps) {
+  return (
+    <div>
+      <Space align="baseline" style={{ display: 'flex', marginBottom: 8 }} wrap>
+        <Text strong>交付链路总览</Text>
+        <Text type="secondary">版本推进前的关键环节按研发链路排序，红/黄环节优先治理。</Text>
+      </Space>
+      <div
+        style={{
+          display: 'grid',
+          gap: 10,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(178px, 1fr))',
+        }}
+      >
+        {items.map((item, index) => {
+          const level = dashboardHealthLevelLabels[item.level];
+          return (
+            <div
+              key={`delivery-${item.key}`}
+              style={{
+                border: `1px solid ${item.level === 'error' ? '#ffccc7' : item.level === 'warning' ? '#ffe58f' : '#f0f0f0'}`,
+                borderRadius: 6,
+                minHeight: 126,
+                padding: '10px 12px',
+              }}
+            >
+              <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
+                <Tag color="blue">{String(index + 1).padStart(2, '0')}</Tag>
+                <Tag color={level.color}>{level.label}</Tag>
+              </Space>
+              <div style={{ fontWeight: 600, lineHeight: 1.5, marginTop: 8 }}>
+                {item.title}
+              </div>
+              <div style={{ marginTop: 4 }}>
+                <Text>{item.value}</Text>
+              </div>
+              <div style={{ marginTop: 4 }}>
+                <Text type="secondary">{item.detail}</Text>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function VersionDashboardReadinessChecklist({
   items,
 }: VersionDashboardReadinessChecklistProps) {

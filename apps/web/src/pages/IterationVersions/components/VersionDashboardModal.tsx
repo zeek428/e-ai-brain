@@ -12,6 +12,7 @@ import {
 } from '../../../services/aiBrain';
 import {
   VersionDashboardActions,
+  VersionDashboardDeliveryOverview,
   VersionDashboardHealthSummary,
   VersionDashboardMetrics,
   VersionDashboardReadinessChecklist,
@@ -130,6 +131,9 @@ export function VersionDashboardModal({
               versionStatusLabels={versionStatusLabels}
             />
             <VersionDashboardMetrics dashboard={dashboard} />
+            <VersionDashboardDeliveryOverview
+              items={dashboardReadinessItems}
+            />
             <VersionDashboardReadinessChecklist
               items={dashboardReadinessItems}
             />
