@@ -13,6 +13,10 @@ from app.main import app
 from app.services.dynamic_parameters import dynamic_time_parameters
 from app.services.scheduled_job_audit import scheduled_job_run_audit_payload
 from app.services.scheduled_job_execution_engine import ScheduledJobExecutionEngine
+from app.services.scheduled_job_native_scan import (
+    native_code_scan_repository_ids,
+    queued_native_scan_result_summary,
+)
 from app.services.scheduled_job_refs import scheduled_job_multi_ids
 from app.services.scheduled_job_run_projection import public_scheduled_job_run_projection
 
@@ -132,6 +136,36 @@ def test_scheduled_job_refs_merge_legacy_and_orchestration_ids():
         "plugin_action_ids",
         "plugin_action_id",
     ) == ["action_table", "action_config", "action_legacy"]
+
+
+def test_native_code_scan_repository_ids_merge_multi_and_single_refs():
+    assert native_code_scan_repository_ids(
+        {
+            "config_json": {
+                "repository_id": "repo_c",
+                "repository_ids": ["repo_a", "repo_b", "repo_a", "", None],
+            },
+        },
+    ) == ["repo_a", "repo_b", "repo_c"]
+
+
+def test_queued_native_scan_result_summary_uses_repository_default_branch():
+    summary = queued_native_scan_result_summary(
+        job={
+            "config_json": {
+                "repository_id": "repo_001",
+                "scan_mode": "native_full_scan",
+            },
+            "skill_ids": ["skill_001"],
+        },
+        repository={"default_branch": "develop"},
+        skill_codes=["code_scan"],
+    )
+
+    assert summary["execution_nodes"]["native_scan"]["branch"] == "develop"
+    assert summary["execution_nodes"]["native_scan"]["repository_id"] == "repo_001"
+    assert summary["processing"]["skill_codes"] == ["code_scan"]
+    assert summary["processing"]["skill_ids"] == ["skill_001"]
 
 
 def test_scheduled_job_run_audit_payload_preserves_execution_context():
