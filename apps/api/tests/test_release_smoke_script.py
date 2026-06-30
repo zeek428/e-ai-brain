@@ -47,10 +47,15 @@ def test_web_page_smoke_fails_on_network_4xx_or_5xx_responses():
 
 def test_full_chain_regression_script_covers_public_api_workflow():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    runner_path = REPO_ROOT / "scripts" / "full_chain_regression_runner.py"
     assert script_path.exists()
     assert script_path.stat().st_mode & 0o111
 
-    content = script_path.read_text(encoding="utf-8")
+    content = (
+        script_path.read_text(encoding="utf-8")
+        + "\n"
+        + runner_path.read_text(encoding="utf-8")
+    )
     for marker in [
         "http.client",
         "/api/insights/user-feedback",
@@ -204,6 +209,21 @@ def test_full_chain_regression_suite_metadata_is_split_from_runner():
     assert "REGRESSION_SUITE_DOMAINS: dict" in suite_content
     assert "REGRESSION_OBJECTIVE_DOMAINS: tuple" in suite_content
     assert "def regression_suite_coverage(" in suite_content
+
+
+def test_full_chain_regression_runner_reliability_is_split_from_runner():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    runner_path = REPO_ROOT / "scripts" / "full_chain_regression_runner.py"
+    script_content = script_path.read_text(encoding="utf-8")
+    runner_content = runner_path.read_text(encoding="utf-8")
+
+    assert "from full_chain_regression_runner import validate_ai_executor_runner_reliability" in script_content
+    assert "def validate_ai_executor_runner_reliability(" not in script_content
+    assert "def validate_runner_token_rotation(" not in script_content
+    assert "def validate_runner_health_alert_projection(" not in script_content
+    assert "def validate_ai_executor_runner_reliability(" in runner_content
+    assert "def validate_runner_token_rotation(" in runner_content
+    assert "def validate_runner_health_alert_projection(" in runner_content
 
 
 def test_full_chain_regression_report_includes_suite_coverage():
@@ -382,7 +402,12 @@ def test_full_chain_regression_script_supports_version_dashboard_suite():
 
 def test_full_chain_regression_script_validates_runner_token_rotation():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
-    content = script_path.read_text(encoding="utf-8")
+    runner_path = REPO_ROOT / "scripts" / "full_chain_regression_runner.py"
+    content = (
+        script_path.read_text(encoding="utf-8")
+        + "\n"
+        + runner_path.read_text(encoding="utf-8")
+    )
 
     for marker in [
         "validate_runner_token_rotation(",
