@@ -7,7 +7,7 @@ import {
   PauseCircleOutlined,
   StopOutlined,
 } from '@ant-design/icons';
-import { Alert, Button, Space, Tag, Typography } from 'antd';
+import { Alert, Button, Progress, Space, Tag, Typography } from 'antd';
 import type { ReactNode } from 'react';
 
 import type { ProductVersionRecord } from '../../../data/management';
@@ -27,6 +27,15 @@ import {
 } from './versionDashboardModel';
 
 const { Text } = Typography;
+
+const evidenceStatusLabels: Record<string, LabelItem> = {
+  blocked: { color: 'red', label: '阻断' },
+  covered: { color: 'green', label: '已覆盖' },
+  inaccessible: { color: 'gold', label: '权限不足' },
+  missing: { color: 'gold', label: '待补齐' },
+  not_applicable: { color: 'default', label: '不适用' },
+  risk: { color: 'orange', label: '待治理' },
+};
 
 type VersionDashboardActionsProps = {
   dashboard: ProductVersionDashboard;
@@ -191,6 +200,10 @@ type VersionDashboardMetricsProps = {
   dashboard: ProductVersionDashboard;
 };
 
+type VersionDashboardEvidenceCoverageProps = {
+  dashboard: ProductVersionDashboard;
+};
+
 type VersionDashboardGovernanceConclusionProps = {
   conclusion?: DashboardGovernanceConclusion;
 };
@@ -309,6 +322,157 @@ export function VersionDashboardMetrics({
         dashboard.summary.blockers ? '#cf1322' : undefined,
       )}
     </Space>
+  );
+}
+
+function evidenceActionHref(
+  domain: ProductVersionDashboard['evidenceCoverage']['domains'][number],
+  versionId: string,
+) {
+  const targetId = domain.actionTargetId;
+  const targetType = domain.actionTargetType;
+  if (!targetId || !targetType) {
+    return undefined;
+  }
+  if (targetType === 'requirements') {
+    return internalHref('/delivery/requirements', { version_id: targetId });
+  }
+  if (targetType === 'tasks_by_version') {
+    return internalHref('/delivery/rd-tasks', { version_id: targetId });
+  }
+  if (targetType === 'product_version') {
+    return internalHref('/delivery/versions', { version_id: targetId });
+  }
+  if (targetType === 'code_inspection_dashboard') {
+    return internalHref('/governance/code-inspections', { version_id: targetId });
+  }
+  if (targetType === 'code_review_reports_by_version') {
+    return internalHref('/delivery/rd-tasks', { version_id: targetId });
+  }
+  if (targetType === 'bugs') {
+    return internalHref('/delivery/bugs', { version_id: targetId });
+  }
+  if (targetType === 'knowledge_deposits_by_version') {
+    return internalHref('/assets/knowledge', { version_id: targetId });
+  }
+  if (targetType === 'releases') {
+    return internalHref('/governance/devops', { version_id: targetId });
+  }
+  if (targetType === 'product_version_advance') {
+    return undefined;
+  }
+  return internalHref('/delivery/versions', { version_id: versionId });
+}
+
+export function VersionDashboardEvidenceCoverage({
+  dashboard,
+}: VersionDashboardEvidenceCoverageProps) {
+  const coverage = dashboard.evidenceCoverage;
+  if (!coverage.domains.length && !coverage.totalDomains) {
+    return null;
+  }
+  const level = dashboardHealthLevelLabels[coverage.level];
+  const alertType =
+    coverage.level === 'error'
+      ? 'error'
+      : coverage.level === 'warning'
+        ? 'warning'
+        : coverage.level === 'success'
+          ? 'success'
+          : 'info';
+
+  return (
+    <div>
+      <Space align="baseline" style={{ display: 'flex', marginBottom: 8 }} wrap>
+        <Text strong>证据覆盖</Text>
+        <Tag color={level.color}>{level.label}</Tag>
+        <Text type="secondary">
+          已覆盖 {coverage.coveredDomains}/{coverage.totalDomains}，阻断{' '}
+          {coverage.blockingDomains}，待补齐 {coverage.gapDomains}
+        </Text>
+      </Space>
+      <Alert
+        description={
+          <Space
+            align="center"
+            size={12}
+            style={{ display: 'flex', width: '100%' }}
+            wrap
+          >
+            <Progress
+              percent={coverage.score}
+              size={[160, 8]}
+              status={coverage.level === 'error' ? 'exception' : 'normal'}
+            />
+            <Text>{coverage.summary}</Text>
+          </Space>
+        }
+        showIcon
+        type={alertType}
+      />
+      <div
+        style={{
+          display: 'grid',
+          gap: 10,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
+          marginTop: 10,
+        }}
+      >
+        {coverage.domains.map((domain) => {
+          const domainLevel = dashboardHealthLevelLabels[domain.level];
+          const statusLabel = evidenceStatusLabels[domain.status] ?? {
+            color: 'default',
+            label: domain.status,
+          };
+          const actionHref = evidenceActionHref(domain, dashboard.version.id);
+          return (
+            <div
+              key={domain.key}
+              style={{
+                border: `1px solid ${
+                  domain.level === 'error'
+                    ? '#ffccc7'
+                    : domain.level === 'warning'
+                      ? '#ffe58f'
+                      : '#f0f0f0'
+                }`,
+                borderRadius: 6,
+                minHeight: 126,
+                padding: '10px 12px',
+              }}
+            >
+              <Space
+                align="center"
+                style={{ justifyContent: 'space-between', width: '100%' }}
+              >
+                <Text strong>{domain.title}</Text>
+                <Space size={4} wrap>
+                  <Tag color={statusLabel.color}>{statusLabel.label}</Tag>
+                  <Tag color={domainLevel.color}>{domainLevel.label}</Tag>
+                </Space>
+              </Space>
+              <div style={{ fontSize: 18, fontWeight: 600, marginTop: 8 }}>
+                {domain.value}
+              </div>
+              <div style={{ marginTop: 4 }}>
+                <Text type="secondary">{domain.detail}</Text>
+              </div>
+              {actionHref && domain.actionLabel ? (
+                <Button
+                  href={actionHref}
+                  icon={<ArrowRightOutlined />}
+                  size="small"
+                  style={{ marginTop: 8 }}
+                  type="link"
+                >
+                  {domain.actionLabel}
+                </Button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

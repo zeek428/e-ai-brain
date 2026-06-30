@@ -219,6 +219,29 @@ type ProductVersionDashboardDeliveryStageItem = {
   value?: string;
 };
 
+type ProductVersionDashboardEvidenceDomain = {
+  action_label?: string | null;
+  action_target_id?: string | null;
+  action_target_type?: string | null;
+  detail?: string;
+  key?: string;
+  level?: string;
+  status?: string;
+  title?: string;
+  value?: string;
+};
+
+type ProductVersionDashboardEvidenceCoverage = {
+  blocking_domains?: number;
+  covered_domains?: number;
+  domains?: ProductVersionDashboardEvidenceDomain[];
+  gap_domains?: number;
+  level?: string;
+  score?: number;
+  summary?: string;
+  total_domains?: number;
+};
+
 type ProductVersionDashboardSummary = {
   blockers: number;
   branch_configs: number;
@@ -277,6 +300,7 @@ type ProductVersionDashboardResponse = {
   code_inspection_reports?: ProductVersionDashboardCodeInspectionReport[];
   code_review_reports?: ProductVersionDashboardCodeReviewReport[];
   delivery_stage_overview?: ProductVersionDashboardDeliveryStageItem[];
+  evidence_coverage?: ProductVersionDashboardEvidenceCoverage | null;
   governance_conclusion?: ProductVersionDashboardGovernanceConclusion | null;
   knowledge_deposits?: ProductVersionDashboardKnowledgeDepositItem[];
   next_actions?: ProductVersionDashboardNextActionItem[];
@@ -386,6 +410,26 @@ export type ProductVersionDashboard = {
     title: string;
     value: string;
   }>;
+  evidenceCoverage: {
+    blockingDomains: number;
+    coveredDomains: number;
+    domains: Array<{
+      actionLabel?: string;
+      actionTargetId?: string;
+      actionTargetType?: string;
+      detail: string;
+      key: string;
+      level: 'error' | 'info' | 'success' | 'warning';
+      status: string;
+      title: string;
+      value: string;
+    }>;
+    gapDomains: number;
+    level: 'error' | 'info' | 'success' | 'warning';
+    score: number;
+    summary: string;
+    totalDomains: number;
+  };
   nextActions: Array<{
     actionLabel: string;
     actionTargetId?: string;
@@ -677,6 +721,31 @@ function mapGovernanceConclusion(
   };
 }
 
+function mapEvidenceCoverage(
+  coverage?: ProductVersionDashboardEvidenceCoverage | null,
+): ProductVersionDashboard['evidenceCoverage'] {
+  return {
+    blockingDomains: normalizeDashboardCount(coverage?.blocking_domains),
+    coveredDomains: normalizeDashboardCount(coverage?.covered_domains),
+    domains: (coverage?.domains ?? []).map((domain) => ({
+      actionLabel: domain.action_label ?? undefined,
+      actionTargetId: domain.action_target_id ?? undefined,
+      actionTargetType: domain.action_target_type ?? undefined,
+      detail: domain.detail ?? '-',
+      key: domain.key ?? '-',
+      level: normalizeDashboardLevel(domain.level),
+      status: domain.status ?? '-',
+      title: domain.title ?? '-',
+      value: domain.value ?? '-',
+    })),
+    gapDomains: normalizeDashboardCount(coverage?.gap_domains),
+    level: normalizeDashboardLevel(coverage?.level),
+    score: normalizeDashboardCount(coverage?.score),
+    summary: coverage?.summary ?? '版本证据覆盖状态待计算。',
+    totalDomains: normalizeDashboardCount(coverage?.total_domains),
+  };
+}
+
 function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse): ProductVersionDashboard {
   const summary = dashboard.summary ?? {};
   const statusImpact = dashboard.status_impact
@@ -760,6 +829,7 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
       title: stage.title ?? '-',
       value: stage.value ?? '-',
     })),
+    evidenceCoverage: mapEvidenceCoverage(dashboard.evidence_coverage),
     governanceConclusion: mapGovernanceConclusion(dashboard.governance_conclusion),
     knowledgeDeposits: (dashboard.knowledge_deposits ?? []).map((deposit) => ({
       aiTaskId: deposit.ai_task_id ?? undefined,

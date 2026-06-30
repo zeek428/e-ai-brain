@@ -568,11 +568,122 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     )
     assert (
         delivery_stage_by_key["releases"]["detail"]
-        == "1 条记录 · 发布阻塞 1 个 · 成功 0 条 · 失败 1 条 · 最近 failed deploy-dashboard · 2026-06-04 18:00"
+        == "1 条记录 · 发布阻塞 1 个 · 成功 0 条 · 失败 1 条 · "
+        "最近 failed deploy-dashboard · 2026-06-04 18:00"
     )
     assert delivery_stage_by_key["releases"]["level"] == "error"
     assert delivery_stage_by_key["status-impact"]["action_target_type"] == "product_version_advance"
     assert delivery_stage_by_key["status-impact"]["detail"] == "同步 1 / 阻塞 0 / 保持 0"
+    assert data["evidence_coverage"] == {
+        "blocking_domains": 5,
+        "covered_domains": 4,
+        "domains": [
+            {
+                "action_label": "查看需求",
+                "action_target_id": version["id"],
+                "action_target_type": "requirements",
+                "detail": "1 条需求 · 状态推进阻塞 0 条",
+                "key": "requirements",
+                "level": "success",
+                "status": "covered",
+                "title": "需求范围",
+                "value": "1 条",
+            },
+            {
+                "action_label": "查看任务",
+                "action_target_id": version["id"],
+                "action_target_type": "tasks_by_version",
+                "detail": "1 个研发任务",
+                "key": "tasks",
+                "level": "success",
+                "status": "covered",
+                "title": "研发任务",
+                "value": "1 个",
+            },
+            {
+                "action_label": "维护分支",
+                "action_target_id": version["id"],
+                "action_target_type": "product_version",
+                "detail": "1 个版本分支 · 待治理 1 个",
+                "key": "branches",
+                "level": "error",
+                "status": "blocked",
+                "title": "代码分支",
+                "value": "1 个",
+            },
+            {
+                "action_label": "查看巡检",
+                "action_target_id": version["id"],
+                "action_target_type": "code_inspection_dashboard",
+                "detail": "1 份报告 · 严重风险 1 份",
+                "key": "inspections",
+                "level": "error",
+                "status": "blocked",
+                "title": "代码巡检",
+                "value": "1 份",
+            },
+            {
+                "action_label": "查看评审",
+                "action_target_id": version["id"],
+                "action_target_type": "code_review_reports_by_version",
+                "detail": "1 份评审 · 待确认 1 份",
+                "key": "code-reviews",
+                "level": "error",
+                "status": "blocked",
+                "title": "代码评审",
+                "value": "1 份",
+            },
+            {
+                "action_label": "查看 Bug",
+                "action_target_id": version["id"],
+                "action_target_type": "bugs",
+                "detail": "2 个 Bug · 未关闭 2 个 · 严重 2 个",
+                "key": "bugs",
+                "level": "error",
+                "status": "blocked",
+                "title": "Bug 收敛",
+                "value": "2 未关闭",
+            },
+            {
+                "action_label": "查看沉淀",
+                "action_target_id": version["id"],
+                "action_target_type": "knowledge_deposits_by_version",
+                "detail": "1 条沉淀 · 可检索 1 条 · 向量就绪 0 条",
+                "key": "knowledge-deposits",
+                "level": "success",
+                "status": "covered",
+                "title": "知识沉淀",
+                "value": "1/1 可检索",
+            },
+            {
+                "action_label": "查看发布",
+                "action_target_id": version["id"],
+                "action_target_type": "releases",
+                "detail": "1 条发布记录 · 成功 0 条 · 失败 1 条",
+                "key": "releases",
+                "level": "error",
+                "status": "blocked",
+                "title": "发布证据",
+                "value": "发布待补证",
+            },
+            {
+                "action_label": "推进状态",
+                "action_target_id": version["id"],
+                "action_target_type": "product_version_advance",
+                "detail": "目标 testing · 同步 1 · 阻塞 0",
+                "key": "status-impact",
+                "level": "success",
+                "status": "covered",
+                "title": "状态推进",
+                "value": "影响已预览",
+            },
+        ],
+        "gap_domains": 0,
+        "level": "error",
+        "score": 44,
+        "summary": "5 个交付域存在阻断，需先处理阻塞队列。",
+        "total_domains": 9,
+    }
     assert data["status_impact"]["target_status"] == "testing"
     assert data["status_impact"]["updated_requirements"] == [
         {
@@ -717,6 +828,12 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
             "section": "code_inspections",
         }
     ]
+    limited_evidence_by_key = {
+        item["key"]: item for item in limited_dashboard["evidence_coverage"]["domains"]
+    }
+    assert limited_evidence_by_key["inspections"]["status"] == "inaccessible"
+    assert limited_evidence_by_key["inspections"]["value"] == "权限不足"
+    assert limited_dashboard["evidence_coverage"]["gap_domains"] >= 1
 
 
 def test_product_version_dashboard_loads_knowledge_index_health_from_repository_projection():
@@ -996,7 +1113,8 @@ def test_product_version_dashboard_blocks_release_without_successful_release_rec
     )
     assert (
         release_stage["detail"]
-        == "1 条记录 · 暂无发布阻塞 · 成功 1 条 · 失败 0 条 · 最近 success deploy-release · 2026-06-04 18:00"
+        == "1 条记录 · 暂无发布阻塞 · 成功 1 条 · 失败 0 条 · "
+        "最近 success deploy-release · 2026-06-04 18:00"
     )
     assert data_with_release["governance_conclusion"] == {
         "detail": (

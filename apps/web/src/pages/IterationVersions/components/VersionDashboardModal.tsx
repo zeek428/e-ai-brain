@@ -13,6 +13,7 @@ import {
 import {
   VersionDashboardActions,
   VersionDashboardDeliveryOverview,
+  VersionDashboardEvidenceCoverage,
   VersionDashboardGovernanceConclusion,
   VersionDashboardHealthSummary,
   VersionDashboardMetrics,
@@ -135,6 +136,7 @@ export function VersionDashboardModal({
               onViewRequirements={onViewRequirements}
               versionStatusLabels={versionStatusLabels}
             />
+            <VersionDashboardEvidenceCoverage dashboard={dashboard} />
             <VersionDashboardGovernanceConclusion
               conclusion={dashboardGovernanceConclusion}
             />
