@@ -23,6 +23,7 @@ import {
 import { formatDisplayDateTime } from '../../utils/dateTime';
 import { formatMutationError } from '../../utils/managementCrud';
 import { AssistantDraftDetailModal } from './components/AssistantDraftDetailModal';
+import { AssistantDraftGovernanceQueue } from './components/AssistantDraftGovernanceQueue';
 import { AssistantDraftSummaryStrip } from './components/AssistantDraftSummaryStrip';
 import {
   actionLabel,
@@ -391,7 +392,12 @@ export default function AssistantDraftsPage() {
   return (
     <>
       <ManagementListPage<AssistantActionDraftWorkbenchItem>
-        beforeTable={<AssistantDraftSummaryStrip summary={listState.summary} />}
+        beforeTable={(
+          <>
+            <AssistantDraftSummaryStrip summary={listState.summary} />
+            <AssistantDraftGovernanceQueue rows={listState.rows} summary={listState.summary} />
+          </>
+        )}
         breadcrumbGroup="AI 助手"
         columns={columns}
         dataSource={listState.rows}

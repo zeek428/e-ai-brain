@@ -272,18 +272,27 @@ describe('AssistantDraftsPage', () => {
     expect(summaryStrip).toHaveStyle('display: grid');
     expect(summaryStrip).toHaveStyle('width: 100%');
     expect(within(summaryStrip).getAllByRole('listitem')).toHaveLength(11);
-    expect(screen.getByText('待确认草案')).toBeInTheDocument();
-    expect(screen.getByText('失败草案')).toBeInTheDocument();
-    expect(screen.getByText('已采纳草案')).toBeInTheDocument();
-    expect(screen.getByText('采纳率')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('待确认草案')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('失败草案')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('已采纳草案')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('采纳率')).toBeInTheDocument();
     expect(screen.getAllByText('25%').length).toBeGreaterThan(0);
-    expect(screen.getByText('高风险草案')).toBeInTheDocument();
-    expect(screen.getByText('权限阻塞')).toBeInTheDocument();
-    expect(screen.getByText('校验阻塞')).toBeInTheDocument();
-    expect(screen.getByText('失败/重试')).toBeInTheDocument();
-    expect(screen.getByText('审计事件')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('高风险草案')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('权限阻塞')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('校验阻塞')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('失败/重试')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('审计事件')).toBeInTheDocument();
     expect(screen.getByText('1 / 1')).toBeInTheDocument();
     expect(within(summaryStrip).getByText('3')).toBeInTheDocument();
+    const governanceQueue = screen.getByLabelText('草案治理优先队列');
+    expect(within(governanceQueue).getByText('治理优先队列')).toBeInTheDocument();
+    expect(within(governanceQueue).getByText('4 类待处理')).toBeInTheDocument();
+    expect(within(governanceQueue).getByText('权限阻断草案')).toBeInTheDocument();
+    expect(within(governanceQueue).getByText('补齐权限或调整草案后再确认')).toBeInTheDocument();
+    expect(within(governanceQueue).getByText('校验阻断草案')).toBeInTheDocument();
+    expect(within(governanceQueue).getByText('失败草案待重试')).toBeInTheDocument();
+    expect(within(governanceQueue).getByText('高风险草案')).toBeInTheDocument();
+    expect(within(governanceQueue).getAllByText('代表草案').length).toBeGreaterThan(0);
     expect(screen.getAllByText('待确认').length).toBeGreaterThan(0);
     expect(screen.getAllByText('警告').length).toBeGreaterThan(0);
     expect(screen.getByText('新增 · scheduled_job')).toBeInTheDocument();
@@ -341,6 +350,13 @@ describe('AssistantDraftsPage', () => {
     render(<AssistantDraftsPage />);
 
     await screen.findByText('失败草案');
+    const governanceQueue = screen.getByLabelText('草案治理优先队列');
+    expect(within(governanceQueue).getByText('失败草案待重试')).toBeInTheDocument();
+    expect(within(governanceQueue).getByText('失败草案')).toBeInTheDocument();
+    expect(within(governanceQueue).getByRole('link', { name: '处理' })).toHaveAttribute(
+      'href',
+      '/assistant?draft_id=assistant_action_draft_failed',
+    );
     fireEvent.click(screen.getByRole('button', { name: '重新打开' }));
 
     const popconfirm = await screen.findByText(
