@@ -294,6 +294,24 @@ def test_full_chain_regression_knowledge_index_checks_are_split_from_runner():
     assert "/api/knowledge/documents/{document_id}/retry-index" in helper_content
 
 
+def test_full_chain_regression_permission_visibility_checks_are_split_from_runner():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_permissions.py"
+    script_content = script_path.read_text(encoding="utf-8")
+    helper_content = helper_path.read_text(encoding="utf-8")
+
+    assert (
+        "from full_chain_regression_permissions import "
+        "validate_permission_visibility_quick_regression"
+    ) in script_content
+    assert "def validate_permission_visibility_quick_regression(" not in script_content
+    assert "permission_visibility_role_preview" not in script_content
+    assert "Permission diagnostics missed readable effective scope" not in script_content
+    assert "def validate_permission_visibility_quick_regression(" in helper_content
+    assert "permission_visibility_role_preview" in helper_content
+    assert "Permission diagnostics missed readable effective scope" in helper_content
+
+
 def test_full_chain_regression_report_includes_suite_coverage():
     module = _load_full_chain_regression_module()
 
@@ -677,7 +695,12 @@ def test_full_chain_regression_script_supports_knowledge_index_health_suite():
 
 def test_full_chain_regression_script_supports_permission_visibility_suite():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
-    content = script_path.read_text(encoding="utf-8")
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_permissions.py"
+    content = (
+        script_path.read_text(encoding="utf-8")
+        + "\n"
+        + helper_path.read_text(encoding="utf-8")
+    )
 
     for marker in [
         '"permission-visibility"',

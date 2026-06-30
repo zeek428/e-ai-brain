@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本权限可视化校验继续拆分：新增 `scripts/full_chain_regression_permissions.py` 承接角色列表、权限矩阵、角色访问预览、范围名称和用户权限诊断断言，主脚本继续聚焦 suite 编排和公开 API 主链路。
 - 真实全链路回归脚本知识索引健康校验继续拆分：新增 `scripts/full_chain_regression_knowledge.py` 承接知识文档创建、索引健康、权限命中、失败重试和检索恢复断言，主脚本继续聚焦 suite 编排和公开 API 主链路。
 - 真实全链路回归脚本 AI 动作草案治理校验继续拆分：新增 `scripts/full_chain_regression_assistant_drafts.py` 承接草案确认、失败重试、列表 read model 和审计链路断言，主脚本继续聚焦 suite 编排和公开 API 主链路。
 - 迭代版本总览发布证据增强：版本驾驶舱 summary 新增成功/失败发布计数，交付阶段发布证据卡展示最近一次发布状态与时间，真实全链路回归 helper 校验发布证据计数不断链。
