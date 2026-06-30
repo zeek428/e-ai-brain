@@ -1,10 +1,14 @@
 import {
   ArrowRightOutlined,
+  CheckCircleOutlined,
   CodeOutlined,
   EyeOutlined,
   LinkOutlined,
+  PauseCircleOutlined,
+  StopOutlined,
 } from '@ant-design/icons';
 import { Alert, Button, Space, Tag, Typography } from 'antd';
+import type { ReactNode } from 'react';
 
 import type { ProductVersionRecord } from '../../../data/management';
 import {
@@ -554,6 +558,12 @@ type VersionDashboardStatusImpactNoticeProps = {
   versionStatusLabels: Record<ProductVersionRecord['status'], LabelItem>;
 };
 
+type VersionDashboardStatusImpactPreviewProps = {
+  dashboard: ProductVersionDashboard;
+  statusLabelMap: Record<string, LabelItem>;
+  versionStatusLabels: Record<ProductVersionRecord['status'], LabelItem>;
+};
+
 export function VersionDashboardStatusImpactNotice({
   dashboard,
   versionStatusLabels,
@@ -573,5 +583,141 @@ export function VersionDashboardStatusImpactNotice({
         dashboard.statusImpact.blockedRequirements.length ? 'warning' : 'info'
       }
     />
+  );
+}
+
+function requirementStatusTag(
+  status: string | null | undefined,
+  statusLabelMap: Record<string, LabelItem>,
+) {
+  const key = String(status ?? '-');
+  const item = statusLabelMap[key] ?? { color: 'default', label: key };
+  return <Tag color={item.color}>{item.label}</Tag>;
+}
+
+function impactPreviewBlock({
+  color,
+  detail,
+  icon,
+  title,
+  value,
+}: {
+  color: string;
+  detail: ReactNode;
+  icon: ReactNode;
+  title: string;
+  value: number;
+}) {
+  return (
+    <div
+      style={{
+        border: `1px solid ${color}`,
+        borderRadius: 6,
+        minHeight: 128,
+        padding: '10px 12px',
+      }}
+    >
+      <Space align="center" size={8}>
+        {icon}
+        <Text strong>{title}</Text>
+      </Space>
+      <div style={{ fontSize: 24, fontWeight: 600, lineHeight: 1.5, marginTop: 8 }}>
+        {value}
+      </div>
+      <div style={{ marginTop: 4 }}>{detail}</div>
+    </div>
+  );
+}
+
+export function VersionDashboardStatusImpactPreview({
+  dashboard,
+  statusLabelMap,
+  versionStatusLabels,
+}: VersionDashboardStatusImpactPreviewProps) {
+  const statusImpact = dashboard.statusImpact;
+  if (!statusImpact) {
+    return (
+      <Alert
+        showIcon
+        title="状态推进影响预览"
+        description="当前版本状态没有可推进的下一阶段。"
+        type="info"
+      />
+    );
+  }
+
+  const targetLabel = versionStatusLabels[statusImpact.targetStatus]?.label ?? statusImpact.targetStatus;
+  const blockedSamples = statusImpact.blockedRequirements.slice(0, 3);
+  const firstUpdated = statusImpact.updatedRequirements[0];
+  const firstUnchanged = statusImpact.unchangedRequirements[0];
+
+  return (
+    <div>
+      <Space align="baseline" style={{ display: 'flex', marginBottom: 8 }} wrap>
+        <Text strong>状态推进影响预览</Text>
+        <Text type="secondary">推进到 {targetLabel} 前先看同步、阻塞和保持不变的需求影响。</Text>
+      </Space>
+      <div
+        style={{
+          display: 'grid',
+          gap: 10,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        }}
+      >
+        {impactPreviewBlock({
+          color: '#91caff',
+          detail: firstUpdated ? (
+            <Space size={4} wrap>
+              <Text type="secondary">示例：</Text>
+              <Text ellipsis style={{ maxWidth: 220 }}>
+                {firstUpdated.title}
+              </Text>
+              {requirementStatusTag(firstUpdated.from_status ?? firstUpdated.status, statusLabelMap)}
+              <ArrowRightOutlined />
+              {requirementStatusTag(firstUpdated.to_status ?? statusImpact.targetStatus, statusLabelMap)}
+            </Space>
+          ) : (
+            <Text type="secondary">暂无需求会同步推进</Text>
+          ),
+          icon: <CheckCircleOutlined style={{ color: '#1677ff' }} />,
+          title: '同步推进',
+          value: statusImpact.updatedRequirements.length,
+        })}
+        {impactPreviewBlock({
+          color: statusImpact.blockedRequirements.length ? '#ffccc7' : '#d9f7be',
+          detail: blockedSamples.length ? (
+            <Space orientation="vertical" size={2} style={{ width: '100%' }}>
+              {blockedSamples.map((item) => (
+                <Text key={item.id} ellipsis style={{ maxWidth: 300 }} type="secondary">
+                  {item.title}：{item.block_reason ?? '状态不满足推进条件'}
+                </Text>
+              ))}
+            </Space>
+          ) : (
+            <Text type="secondary">暂无推进阻塞</Text>
+          ),
+          icon: <StopOutlined style={{ color: statusImpact.blockedRequirements.length ? '#cf1322' : '#52c41a' }} />,
+          title: '阻塞',
+          value: statusImpact.blockedRequirements.length,
+        })}
+        {impactPreviewBlock({
+          color: '#f0f0f0',
+          detail: firstUnchanged ? (
+            <Space size={4} wrap>
+              <Text type="secondary">示例：</Text>
+              <Text ellipsis style={{ maxWidth: 220 }}>
+                {firstUnchanged.title}
+              </Text>
+              {requirementStatusTag(firstUnchanged.status ?? firstUnchanged.from_status, statusLabelMap)}
+            </Space>
+          ) : (
+            <Text type="secondary">暂无需求保持不变</Text>
+          ),
+          icon: <PauseCircleOutlined style={{ color: '#8c8c8c' }} />,
+          title: '保持不变',
+          value: statusImpact.unchangedRequirements.length,
+        })}
+      </div>
+    </div>
   );
 }

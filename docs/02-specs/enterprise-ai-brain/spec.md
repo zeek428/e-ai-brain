@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.757 |
+| 功能版本 | v1.1.758 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.758 | 2026-06-30 | 迭代版本总览新增状态推进影响预览：在明细表前集中展示同步推进、阻塞和保持不变需求，降低版本推进前跨表核对成本 | Codex |
 | v1.1.757 | 2026-06-30 | AI 动作确认中心新增服务端统一确认决策：`governance.decision` 和列表行决策字段集中说明可确认、阻断、失败、过期和下一步动作 | Codex |
 | v1.1.756 | 2026-06-30 | 迭代版本总览新增后端 `delivery_stage_overview`：版本页、AI 助手和回归脚本复用同一交付阶段总览 | Codex |
 | v1.1.755 | 2026-06-30 | 真实全链路回归脚本版本驾驶舱校验逻辑拆分：阻塞项、下一步行动、治理结论和分支质量门禁迁移到 `full_chain_regression_version_dashboard.py` | Codex |
@@ -882,6 +883,8 @@ DB-first 迁移状态：上述结构化持久化不代表所有 API 已经直连
 迭代版本驾驶舱由 `GET /api/product-versions/{version_id}/dashboard` 提供版本级交付健康聚合，入口位于需求交付/迭代版本列表行操作；版本列表默认按 `created_at desc` 展示最新版本，`/delivery/versions?version_id=<id>&view=dashboard` 必须直达版本总览，未携带 `view=dashboard` 的版本分支深链继续打开代码分支维护弹窗。接口先校验 `product.read` 和当前用户产品 scope，再聚合同版本需求、AI 任务、版本代码分支、Bug、代码巡检报告、分支质量治理、代码评审报告、知识沉淀、发布记录、下一阶段状态影响和阻塞项；PostgreSQL 运行时必须通过版本范围专用 read model 读取该版本相关源数据，不得先调用全量 `get_task_workflow_source_rows()` 再在服务层过滤，知识 chunk 只读取计数和 embedding 覆盖所需轻量字段。Bug 明细要求 `bug.read`，代码巡检明细和分支质量治理要求 `code_inspection.read`，知识沉淀明细要求 `knowledge.read`，缺少子权限时对应明细降级为空并返回 `access_issues`，但不影响版本摘要、需求、任务和分支展示。代码评审报告通过版本内可见任务的 `code_review_report_id` 或报告 `task_id` 聚合，summary 必须返回 `code_review_reports` 和 `pending_code_review_reports`，前端展示报告摘要、待确认状态、风险等级、执行器、关联任务和代码评审报告入口。知识沉淀通过版本内可见任务的 `ai_task_id` 聚合，summary 必须返回 `knowledge_deposits`、`searchable_knowledge_deposits` 和 `vectorized_knowledge_deposits`，明细只展示沉淀 ID、标题、状态、来源任务、关联知识文档、知识文档标题、索引状态、chunk 数、embedding chunk 数、检索模式、索引错误摘要和更新时间，不返回知识正文，并提供沉淀全链路入口；`text_indexed` 对应关键词兜底，`indexed/vector_indexed` 且存在 embedding chunk 时对应混合检索，否则不可检索状态必须在明细中暴露。同版本代码巡检报告通过版本分支配置命中后，其 `created_bug_ids` 派生的 Bug 也必须纳入驾驶舱 Bug 明细、Bug 状态分布和发布阻塞项；版本总览还必须基于版本分支配置、同分支巡检报告和报告 finding 返回 `branch_quality_governance`，按分支展示报告数、问题数、严重问题数、活跃严重问题、严重问题 Bug 覆盖、整改任务覆盖、误报忽略、接受风险、过期接受风险、待审批忽略、质量门禁失败报告数、门禁失败项、最近报告和治理状态，summary 同步返回 `branch_quality_action_required`、`branch_quality_pending_scan`、`branch_quality_active_severe_findings`、`branch_quality_false_positives`、`branch_quality_accepted_risks`、`branch_quality_expired_accepted_risks` 和 `branch_quality_pending_suppressions`。接口必须返回 `governance_conclusion`，基于同一份 summary、阻塞项、分支治理和状态推进影响生成“版本暂不建议推进、版本需治理后推进、版本证据待补齐或版本具备推进基础”的总体判断、主要风险标签和下一步动作，供版本页、AI 助手和真实全链路回归复用；前端仅在旧响应缺少该字段时使用本地推导兜底。页面必须在摘要指标中展示待治理分支、门禁失败、待审批忽略和到期接受风险，并在下一步行动后展示版本治理结论，再在摘要指标外展示交付链路总览和发布准备清单，按需求范围、研发任务、代码分支、代码巡检、代码评审、Bug 收敛、知识沉淀、发布证据和状态推进九类信息给出可推进、阻塞或待治理判断，其中交付链路总览必须按研发顺序突出红/黄风险环节，代码分支和代码巡检环节必须纳入待治理分支、待巡检分支、质量门禁失败、待审批忽略和到期风险，知识沉淀必须展示可检索数和向量就绪数，再展示需求、任务、Bug 状态分布，并把状态推进影响拆成“同步推进 / 阻塞 / 保持不变”明细，包含需求编号、标题、当前状态、目标状态和阻塞说明。阻塞项至少覆盖未完成需求、待确认 Code Review、发布阻塞 Bug、高风险代码巡检、缺少版本代码分支和缺少成功发布记录；版本下一阶段为 `released` 时，若发布记录中不存在 `success/succeeded/successful/passed/deployed/released` 等成功状态，也必须返回“缺少成功发布记录”的发布阻塞项，`action_target_type=product_version`、`action_target_id=<version_id>`，前端跳转到按版本筛选的发布记录。每条阻塞项必须携带 `action_label`、`action_target_type`、`action_target_id` 和 `resolution_hint`，前端展示“解除条件”和处理入口，直接跳转需求、Bug、代码巡检、代码评审、版本分支或发布记录管理页面；阻塞项区域必须先按严重级别和来源类型生成“阻塞处理队列”，展示优先级、风险来源、阻塞原因、解除条件和处理入口，再提供完整阻塞项明细表。前端必须用固定列宽与横向滚动承载明细，避免长标题、仓库 URL 或建议文本挤压操作区。版本总览弹窗展示逻辑由 `VersionDashboardModal` 独立承载，迭代版本主页面只保留列表数据、状态推进、需求归集和分支维护编排；弹窗内部摘要行动区、交付链路总览、发布准备清单、健康摘要和状态分布由 `VersionDashboardSummary` 承载，推进影响、阻塞处理队列、阻塞项、需求/任务和质量/交付明细表由 `VersionDashboardTables` 承载，日期/链接/状态影响/健康摘要/发布准备清单/阻塞处理队列计算由 `versionDashboardModel` 承载，后续版本健康展示优化应优先落在对应职责组件内。
 
 接口还必须返回 `delivery_stage_overview`，由后端基于 summary、状态推进影响、阻塞项、分支质量治理、代码巡检、代码评审、Bug、知识沉淀和发布记录生成研发顺序阶段投影。字段顺序固定为 `requirements/tasks/branches/inspections/code-reviews/bugs/knowledge-deposits/releases/status-impact`；每个阶段必须包含 `key/title/value/detail/level`，可处理阶段必须包含 `action_label/action_target_type/action_target_id`，并在可追踪时补充 `full_chain_subject_type/full_chain_subject_id`。版本页和 AI 助手必须优先消费该后端投影，只有旧响应缺失时才允许前端本地推导兜底。
+
+版本总览前端必须在推进影响明细表前展示“状态推进影响预览”：以三组摘要卡片分别展示同步推进、阻塞和保持不变需求数量，并暴露代表需求标题、当前状态、目标状态或阻塞原因；无下一阶段影响时展示空态提示。该预览消费 dashboard `status_impact`，不得替代明细表，目的是让产品负责人在点击推进版本前先完成风险核对。
 
 交付链路总览的九类阶段卡片必须直接暴露处理入口：需求范围进入版本需求筛选，研发任务进入首个任务或产品任务列表，代码分支进入版本分支维护，代码巡检进入按版本筛选的巡检页，代码评审进入首个待看评审，Bug 收敛进入版本 Bug 筛选，知识沉淀进入沉淀全链路，发布证据进入按版本筛选的发布记录，状态推进直接触发版本推进弹窗。
 

@@ -19,6 +19,7 @@ import {
   VersionDashboardReadinessChecklist,
   VersionDashboardStatusDistribution,
   VersionDashboardStatusImpactNotice,
+  VersionDashboardStatusImpactPreview,
 } from './VersionDashboardSummary';
 import {
   VersionDashboardBlockersTable,
@@ -154,6 +155,11 @@ export function VersionDashboardModal({
             />
             <VersionDashboardStatusImpactNotice
               dashboard={dashboard}
+              versionStatusLabels={versionStatusLabels}
+            />
+            <VersionDashboardStatusImpactPreview
+              dashboard={dashboard}
+              statusLabelMap={statusLabelMap}
               versionStatusLabels={versionStatusLabels}
             />
             {dashboard.statusImpact ? (

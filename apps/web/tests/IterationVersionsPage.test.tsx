@@ -1274,6 +1274,13 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('1 条记录 · 发布阻塞 1 个').length).toBeGreaterThan(0);
     expect(screen.getAllByText('状态推进').length).toBeGreaterThan(0);
     expect(screen.getAllByText('同步 1 / 阻塞 1 / 保持 1').length).toBeGreaterThan(0);
+    expect(screen.getByText('状态推进影响预览')).toBeInTheDocument();
+    expect(screen.getAllByText('同步推进').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('阻塞').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('保持不变').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('驾驶舱需求').length).toBeGreaterThan(0);
+    expect(screen.getByText('待评审需求：需求仍待评审，不能进入测试')).toBeInTheDocument();
+    expect(screen.getAllByText('已取消需求').length).toBeGreaterThan(0);
     expect(screen.getByRole('link', { name: /处理需求/ })).toHaveAttribute(
       'href',
       '/delivery/requirements?version_id=version_dashboard',
@@ -1352,9 +1359,9 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('Bug 状态')).toBeInTheDocument();
     expect(screen.getByText('打开 1')).toBeInTheDocument();
     expect(screen.getByText('推进影响明细')).toBeInTheDocument();
-    expect(screen.getByText('同步推进')).toBeInTheDocument();
-    expect(screen.getByText('阻塞')).toBeInTheDocument();
-    expect(screen.getByText('保持不变')).toBeInTheDocument();
+    expect(screen.getAllByText('同步推进').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('阻塞').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('保持不变').length).toBeGreaterThan(0);
     expect(screen.getByText('需求仍待评审，不能进入测试')).toBeInTheDocument();
     expect(screen.getAllByText('解除条件').length).toBeGreaterThan(0);
     expect(screen.getByText('修复、验证并关闭 blocker/critical Bug 后解除发布阻塞。')).toBeInTheDocument();
