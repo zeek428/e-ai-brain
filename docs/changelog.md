@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本继续拆分：新增 `scripts/full_chain_regression_suites.py` 承接目标域、快速 suite 编排和 coverage 计算，主脚本只保留公开 API 执行编排，降低后续继续扩展版本总览、助手问答和治理套件的维护风险。
 - 真实全链路回归脚本新增 `assistant-qa` 快速套件：独立校验迭代版本治理问答走确定性助手、版本引用、`assistant.iteration`、版本总览 `next_actions` 和会话历史，并纳入 `all-targeted`。
 - 真实全链路回归脚本新增 `all-targeted` 快速治理组合套件：一次串行执行 Runner 可靠性、版本总览、AI 助手问答、AI 动作草案治理、代码巡检治理、知识索引健康和权限可视化，并在 JSON 覆盖矩阵中标记不是完整主链路。
 - 真实全链路回归 JSON 报告新增 `coverage` 覆盖矩阵：声明当前 suite 覆盖/跳过的目标域，`full` 主链路补跑 AI 动作草案治理和权限可视化门禁，避免局部快速 suite 被误判为完整验收。

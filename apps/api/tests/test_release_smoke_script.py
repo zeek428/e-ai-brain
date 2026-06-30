@@ -164,7 +164,12 @@ def test_full_chain_regression_script_supports_targeted_suites():
 
 def test_full_chain_regression_script_writes_structured_json_report():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
-    content = script_path.read_text(encoding="utf-8")
+    suite_path = REPO_ROOT / "scripts" / "full_chain_regression_suites.py"
+    content = (
+        script_path.read_text(encoding="utf-8")
+        + "\n"
+        + suite_path.read_text(encoding="utf-8")
+    )
 
     for marker in [
         "FULL_CHAIN_JSON_OUTPUT",
@@ -184,6 +189,21 @@ def test_full_chain_regression_script_writes_structured_json_report():
         "Full-chain regression report written to",
     ]:
         assert marker in content
+
+
+def test_full_chain_regression_suite_metadata_is_split_from_runner():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    suite_path = REPO_ROOT / "scripts" / "full_chain_regression_suites.py"
+    script_content = script_path.read_text(encoding="utf-8")
+    suite_content = suite_path.read_text(encoding="utf-8")
+
+    assert "from full_chain_regression_suites import" in script_content
+    assert "REGRESSION_SUITE_DOMAINS: dict" not in script_content
+    assert "REGRESSION_OBJECTIVE_DOMAINS: tuple" not in script_content
+    assert "def regression_suite_coverage(" not in script_content
+    assert "REGRESSION_SUITE_DOMAINS: dict" in suite_content
+    assert "REGRESSION_OBJECTIVE_DOMAINS: tuple" in suite_content
+    assert "def regression_suite_coverage(" in suite_content
 
 
 def test_full_chain_regression_report_includes_suite_coverage():
