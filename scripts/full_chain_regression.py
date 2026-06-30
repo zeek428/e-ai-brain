@@ -17,6 +17,48 @@ from urllib.parse import urlencode, urlparse
 
 DEFAULT_API_BASE_URL = "http://localhost:8000"
 FIXTURE_ROOT = Path(os.getenv("AI_BRAIN_FULL_CHAIN_FIXTURE_ROOT", "/tmp/e-ai-brain-full-chain-fixtures"))
+REGRESSION_OBJECTIVE_DOMAINS: tuple[tuple[str, str], ...] = (
+    ("user_feedback_to_requirement", "用户反馈转需求"),
+    ("requirement_version_scheduling", "需求归入迭代版本"),
+    ("ai_task_review", "AI 任务与 Review"),
+    ("knowledge_deposit", "知识沉淀"),
+    ("knowledge_index_health", "知识索引健康"),
+    ("version_branch", "迭代版本代码分支"),
+    ("code_inspection_governance", "代码巡检治理闭环"),
+    ("bug_remediation", "Bug 和整改任务写回"),
+    ("runner_reliability", "Runner 运行可靠性"),
+    ("assistant_draft_governance", "AI 动作确认中心"),
+    ("version_dashboard", "版本总览"),
+    ("release_blockers", "发布阻塞项"),
+    ("full_chain_trace", "需求全链路聚合"),
+    ("team_dashboard", "IT 团队看板"),
+    ("assistant_qa", "AI 助手问答"),
+    ("permission_visibility", "权限可视化"),
+)
+REGRESSION_OBJECTIVE_DOMAIN_KEYS = tuple(key for key, _label in REGRESSION_OBJECTIVE_DOMAINS)
+REGRESSION_OBJECTIVE_DOMAIN_LABELS = {
+    key: label for key, label in REGRESSION_OBJECTIVE_DOMAINS
+}
+REGRESSION_SUITE_DOMAINS: dict[str, tuple[str, ...]] = {
+    "full": REGRESSION_OBJECTIVE_DOMAIN_KEYS,
+    "runner-reliability": ("runner_reliability",),
+    "version-dashboard": (
+        "requirement_version_scheduling",
+        "ai_task_review",
+        "version_branch",
+        "version_dashboard",
+        "release_blockers",
+    ),
+    "assistant-draft-governance": ("assistant_draft_governance",),
+    "code-inspection-governance": (
+        "version_branch",
+        "code_inspection_governance",
+        "bug_remediation",
+        "version_dashboard",
+    ),
+    "knowledge-index-health": ("knowledge_index_health",),
+    "permission-visibility": ("permission_visibility",),
+}
 VERSION_DASHBOARD_BLOCKER_SEVERITIES = {"info", "low", "medium", "high", "critical", "blocker"}
 VERSION_DASHBOARD_BLOCKER_SEVERITY_PRIORITY = {
     "blocker": 1,
@@ -67,6 +109,49 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def regression_suite_coverage(suite: str) -> dict[str, Any]:
+    covered_keys = list(REGRESSION_SUITE_DOMAINS.get(suite, ()))
+    skipped_keys = [
+        key for key in REGRESSION_OBJECTIVE_DOMAIN_KEYS if key not in set(covered_keys)
+    ]
+    return {
+        "covered": [
+            {"key": key, "label": REGRESSION_OBJECTIVE_DOMAIN_LABELS[key]}
+            for key in covered_keys
+        ],
+        "covered_domain_count": len(covered_keys),
+        "covered_keys": covered_keys,
+        "is_complete_chain": not skipped_keys,
+        "objective_domain_count": len(REGRESSION_OBJECTIVE_DOMAIN_KEYS),
+        "skipped": [
+            {"key": key, "label": REGRESSION_OBJECTIVE_DOMAIN_LABELS[key]}
+            for key in skipped_keys
+        ],
+        "skipped_keys": skipped_keys,
+        "suite": suite,
+    }
+
+
+def validate_regression_suite_coverage(suite: str) -> StepResult:
+    coverage = regression_suite_coverage(suite)
+    _assert(
+        coverage["covered_domain_count"] > 0,
+        f"Regression suite has no declared coverage domains: {suite}",
+    )
+    if suite == "full":
+        _assert(
+            coverage["is_complete_chain"],
+            f"Full regression suite coverage is incomplete: {coverage}",
+        )
+    return StepResult(
+        "coverage",
+        (
+            f"{coverage['covered_domain_count']}/"
+            f"{coverage['objective_domain_count']} objective domains"
+        ),
+    )
+
+
 def build_regression_report(
     *,
     api_base_url: str,
@@ -81,6 +166,7 @@ def build_regression_report(
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
         "api_base_url": api_base_url,
+        "coverage": regression_suite_coverage(suite),
         "duration_ms": duration_ms,
         "finished_at": finished_at,
         "started_at": started_at,
@@ -2758,6 +2844,21 @@ def run_regression(
     )
     results.append(StepResult("assistant_qa", f"{assistant_message_id} / conversation={conversation_id}"))
 
+    results.extend(
+        validate_assistant_draft_governance(
+            client,
+            username=username,
+            password=password,
+        )
+    )
+    results.extend(
+        validate_permission_visibility_quick_regression(
+            client,
+            username=username,
+            password=password,
+        )
+    )
+
     results.append(StepResult("fixture_repository", str(repo_path)))
     return results
 
@@ -2770,7 +2871,7 @@ def run_regression_suite(
     username: str,
     password: str,
 ) -> list[StepResult]:
-    results = [StepResult("suite", suite)]
+    results = [StepResult("suite", suite), validate_regression_suite_coverage(suite)]
     if suite == "full":
         results.extend(
             run_regression(

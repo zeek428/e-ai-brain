@@ -1,8 +1,21 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _load_full_chain_regression_module():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    spec = importlib.util.spec_from_file_location("full_chain_regression", script_path)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_release_smoke_script_runs_fixed_readiness_and_web_gates():
@@ -105,6 +118,8 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         'action_target_type") == "product_version"',
         "release_evidence_blockers",
         "validate_ai_executor_runner_reliability",
+        "validate_assistant_draft_governance",
+        "validate_permission_visibility_quick_regression",
         "validate_runner_health_alert_projection",
         "runner_never_connected",
         "runner_health_alert",
@@ -149,7 +164,13 @@ def test_full_chain_regression_script_writes_structured_json_report():
         "FULL_CHAIN_JSON_OUTPUT",
         "--json-output",
         "build_regression_report(",
+        "regression_suite_coverage(",
+        "validate_regression_suite_coverage(",
         "write_json_report(",
+        '"coverage": regression_suite_coverage(suite)',
+        '"covered_keys": covered_keys',
+        '"skipped_keys": skipped_keys',
+        '"is_complete_chain": not skipped_keys',
         '"status": status',
         '"steps": [{"detail": step.detail, "name": step.name} for step in steps]',
         'status="passed"',
@@ -157,6 +178,35 @@ def test_full_chain_regression_script_writes_structured_json_report():
         "Full-chain regression report written to",
     ]:
         assert marker in content
+
+
+def test_full_chain_regression_report_includes_suite_coverage():
+    module = _load_full_chain_regression_module()
+
+    report = module.build_regression_report(
+        api_base_url="http://api.test",
+        duration_ms=123,
+        error=None,
+        finished_at="2026-06-30T00:00:01+00:00",
+        started_at="2026-06-30T00:00:00+00:00",
+        status="passed",
+        steps=[module.StepResult("suite", "full")],
+        suite="full",
+        task_execution_mode="deterministic",
+    )
+
+    coverage = report["coverage"]
+    assert coverage["suite"] == "full"
+    assert coverage["is_complete_chain"] is True
+    assert coverage["skipped_keys"] == []
+    assert "assistant_draft_governance" in coverage["covered_keys"]
+    assert "permission_visibility" in coverage["covered_keys"]
+    assert coverage["covered_domain_count"] == coverage["objective_domain_count"]
+
+    dashboard_coverage = module.regression_suite_coverage("version-dashboard")
+    assert dashboard_coverage["is_complete_chain"] is False
+    assert "version_dashboard" in dashboard_coverage["covered_keys"]
+    assert "runner_reliability" in dashboard_coverage["skipped_keys"]
 
 
 def test_full_chain_regression_script_supports_version_dashboard_suite():

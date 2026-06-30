@@ -119,7 +119,7 @@ READINESS_TECHNICAL_SOLUTION_TASK_ID=<technical_solution_task_id> \
   --json-output /tmp/ai-brain-full-chain-report.json
 ```
 
-该脚本只调用公开 API，不直接写数据库或 MemoryStore；默认通过管理员显式 `execution_mode=deterministic` 启动 AI 任务，跳过研发执行器 Runner 和外部模型网关波动，但仍写入 `ai_task.deterministic_execution_used` 审计。脚本覆盖产品、迭代版本、用户反馈转需求、批量排期、AI 任务、Review、知识沉淀、版本代码分支、本地完整代码巡检、Bug/整改任务写回、版本驾驶舱、统一 full-chain、团队看板和 AI 助手引用，并校验扫描 finding、提交人归因、治理覆盖率、治理压力总览、看板计数和助手会话历史。代码巡检治理压力必须能暴露质量门禁失败、活跃严重问题，并确认严重 finding 的 Bug 和整改任务覆盖已闭环。`--json-output` 或 `FULL_CHAIN_JSON_OUTPUT` 会在成功和失败时输出结构化验收报告，包含 suite、开始/结束时间、耗时、步骤列表和失败原因，便于 CI 保存证据和定位断点。需要验证真实模型网关时，可切换为 `--task-execution-mode model_gateway`。
+该脚本只调用公开 API，不直接写数据库或 MemoryStore；默认通过管理员显式 `execution_mode=deterministic` 启动 AI 任务，跳过研发执行器 Runner 和外部模型网关波动，但仍写入 `ai_task.deterministic_execution_used` 审计。脚本覆盖产品、迭代版本、用户反馈转需求、批量排期、AI 任务、Review、知识沉淀、版本代码分支、本地完整代码巡检、Bug/整改任务写回、版本驾驶舱、统一 full-chain、团队看板、AI 助手引用、AI 动作草案治理和权限可视化，并校验扫描 finding、提交人归因、治理覆盖率、治理压力总览、看板计数、助手会话历史、草案确认审计和角色权限诊断。代码巡检治理压力必须能暴露质量门禁失败、活跃严重问题，并确认严重 finding 的 Bug 和整改任务覆盖已闭环。`--json-output` 或 `FULL_CHAIN_JSON_OUTPUT` 会在成功和失败时输出结构化验收报告，包含 suite、开始/结束时间、耗时、步骤列表、失败原因和 `coverage` 覆盖矩阵；`coverage.covered_keys/skipped_keys` 用于区分完整主链路与局部快速 suite，避免 CI 把单域回归误判为全链路验收。需要验证真实模型网关时，可切换为 `--task-execution-mode model_gateway`。
 
 ### 5. 验证数据库与缓存
 
