@@ -323,50 +323,103 @@ class AssistantChatReadRepository:
                 items = [self._assistant_action_draft_from_row(row) for row in cursor.fetchall()]
                 cursor.execute(
                     f"""
+                    WITH filtered AS (
+                      SELECT
+                        d.*,
+                        COALESCE(
+                          NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''),
+                          'unknown'
+                        ) AS validation_status,
+                        CASE
+                          WHEN jsonb_typeof(d.metadata_json #> '{{preview,validation,issues}}') = 'array'
+                          THEN d.metadata_json #> '{{preview,validation,issues}}'
+                          ELSE '[]'::jsonb
+                        END AS validation_issues,
+                        CASE
+                          WHEN jsonb_typeof(d.metadata_json -> 'modified_fields') = 'array'
+                          THEN d.metadata_json -> 'modified_fields'
+                          ELSE '[]'::jsonb
+                        END AS modified_fields,
+                        CASE
+                          WHEN COALESCE(d.metadata_json ->> 'retry_count', '') ~ '^[0-9]+$'
+                          THEN (d.metadata_json ->> 'retry_count')::int
+                          ELSE 0
+                        END AS retry_count,
+                        COALESCE((
+                          SELECT COUNT(*)::int
+                          FROM audit_events a
+                          WHERE a.subject_type = 'assistant_action_draft'
+                            AND a.subject_id = d.id
+                        ), 0) AS audit_event_count
+                      FROM assistant_action_drafts d
+                      LEFT JOIN assistant_action_runs r ON r.id = d.result_run_id
+                      {where}
+                    ),
+                    enriched AS (
+                      SELECT
+                        filtered.*,
+                        jsonb_array_length(filtered.modified_fields) AS modified_field_count,
+                        jsonb_array_length(filtered.validation_issues) AS validation_issue_count,
+                        COALESCE((
+                          SELECT COUNT(*)::int
+                          FROM jsonb_array_elements(filtered.validation_issues) AS issue
+                          WHERE issue ->> 'field' = 'permission'
+                        ), 0) AS permission_issue_count
+                      FROM filtered
+                    ),
+                    decisions AS (
+                      SELECT
+                        enriched.*,
+                        CASE
+                          WHEN enriched.status IN ('confirmed', 'cancelled') THEN 'terminal'
+                          WHEN enriched.status = 'expired' THEN 'expired'
+                          WHEN enriched.status = 'failed' THEN 'failed'
+                          WHEN enriched.validation_status = 'blocked'
+                            OR enriched.permission_issue_count > 0 THEN 'blocked'
+                          WHEN COALESCE(enriched.risk_level, 'unknown') IN ('critical', 'high')
+                            OR enriched.validation_status = 'warning'
+                            OR enriched.audit_event_count = 0 THEN 'warning'
+                          WHEN enriched.status = 'pending' THEN 'ready'
+                          ELSE 'unknown'
+                        END AS decision_status
+                      FROM enriched
+                    )
                     SELECT
                       COUNT(*)::int AS total,
-                      COUNT(*) FILTER (WHERE d.status = 'cancelled')::int AS cancelled_count,
-                      COUNT(*) FILTER (WHERE d.status = 'confirmed')::int AS confirmed_count,
-                      COUNT(*) FILTER (WHERE d.status = 'expired')::int AS expired_count,
-                      COUNT(*) FILTER (WHERE d.status = 'failed')::int AS failed_count,
-                      COUNT(*) FILTER (WHERE d.status = 'pending')::int AS pending_count,
+                      COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled_count,
+                      COUNT(*) FILTER (WHERE status = 'confirmed')::int AS confirmed_count,
+                      COUNT(*) FILTER (WHERE status = 'expired')::int AS expired_count,
+                      COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+                      COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count,
                       COUNT(*) FILTER (
-                        WHERE COALESCE(d.metadata_json ->> 'user_modified', 'false') = 'true'
-                           OR jsonb_array_length(
-                                CASE
-                                  WHEN jsonb_typeof(d.metadata_json -> 'modified_fields') = 'array'
-                                  THEN d.metadata_json -> 'modified_fields'
-                                  ELSE '[]'::jsonb
-                                END
-                              ) > 0
+                        WHERE COALESCE(metadata_json ->> 'user_modified', 'false') = 'true'
+                           OR modified_field_count > 0
                       )::int AS modified_count,
-                      COUNT(*) FILTER (
-                        WHERE COALESCE(
-                          NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''),
-                          'unknown'
-                        ) = 'blocked'
-                      )::int AS validation_blocked_count,
-                      COUNT(*) FILTER (
-                        WHERE COALESCE(
-                          NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''),
-                          'unknown'
-                        ) = 'passed'
-                      )::int AS validation_passed_count,
-                      COUNT(*) FILTER (
-                        WHERE COALESCE(
-                          NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''),
-                          'unknown'
-                        ) = 'unknown'
-                      )::int AS validation_unknown_count,
-                      COUNT(*) FILTER (
-                        WHERE COALESCE(
-                          NULLIF(d.metadata_json #>> '{{preview,validation,status}}', ''),
-                          'unknown'
-                        ) = 'warning'
-                      )::int AS validation_warning_count
-                    FROM assistant_action_drafts d
-                    LEFT JOIN assistant_action_runs r ON r.id = d.result_run_id
-                    {where}
+                      COUNT(*) FILTER (WHERE validation_status = 'blocked')::int AS validation_blocked_count,
+                      COUNT(*) FILTER (WHERE validation_status = 'passed')::int AS validation_passed_count,
+                      COUNT(*) FILTER (WHERE validation_status = 'unknown')::int AS validation_unknown_count,
+                      COUNT(*) FILTER (WHERE validation_status = 'warning')::int AS validation_warning_count,
+                      COUNT(*) FILTER (WHERE COALESCE(risk_level, 'unknown') = 'critical')::int AS risk_critical_count,
+                      COUNT(*) FILTER (WHERE COALESCE(risk_level, 'unknown') = 'high')::int AS risk_high_count,
+                      COUNT(*) FILTER (WHERE COALESCE(risk_level, 'unknown') = 'low')::int AS risk_low_count,
+                      COUNT(*) FILTER (WHERE COALESCE(risk_level, 'unknown') = 'medium')::int AS risk_medium_count,
+                      COUNT(*) FILTER (WHERE COALESCE(risk_level, 'unknown') = 'unknown')::int AS risk_unknown_count,
+                      COUNT(*) FILTER (WHERE permission_issue_count > 0)::int AS permission_blocked_count,
+                      COUNT(*) FILTER (WHERE permission_issue_count = 0)::int AS permission_passed_count,
+                      0::int AS permission_unknown_count,
+                      0::int AS permission_warning_count,
+                      COALESCE(SUM(audit_event_count), 0)::int AS audit_event_total,
+                      COALESCE(SUM(permission_issue_count), 0)::int AS permission_issue_total,
+                      COALESCE(SUM(retry_count), 0)::int AS retry_total,
+                      COALESCE(SUM(validation_issue_count), 0)::int AS validation_issue_total,
+                      COUNT(*) FILTER (WHERE decision_status = 'blocked')::int AS decision_blocked_count,
+                      COUNT(*) FILTER (WHERE decision_status = 'expired')::int AS decision_expired_count,
+                      COUNT(*) FILTER (WHERE decision_status = 'failed')::int AS decision_failed_count,
+                      COUNT(*) FILTER (WHERE decision_status = 'ready')::int AS decision_ready_count,
+                      COUNT(*) FILTER (WHERE decision_status = 'terminal')::int AS decision_terminal_count,
+                      COUNT(*) FILTER (WHERE decision_status = 'unknown')::int AS decision_unknown_count,
+                      COUNT(*) FILTER (WHERE decision_status = 'warning')::int AS decision_warning_count
+                    FROM decisions
                     """,
                     params,
                 )
@@ -1518,6 +1571,32 @@ class AssistantChatReadRepository:
                 "unknown": 0,
                 "warning": 0,
             }
+            risk_counts = {
+                "critical": 0,
+                "high": 0,
+                "low": 0,
+                "medium": 0,
+                "unknown": 0,
+            }
+            permission_counts = {
+                "blocked": 0,
+                "passed": 0,
+                "unknown": 0,
+                "warning": 0,
+            }
+            audit_event_total = 0
+            permission_issue_total = 0
+            retry_total = 0
+            validation_issue_total = 0
+            decision_counts = {
+                "blocked": 0,
+                "expired": 0,
+                "failed": 0,
+                "ready": 0,
+                "terminal": 0,
+                "unknown": 0,
+                "warning": 0,
+            }
         else:
             total = int(row[0] or 0)
             status_counts = {
@@ -1534,14 +1613,62 @@ class AssistantChatReadRepository:
                 "unknown": int(row[9] or 0),
                 "warning": int(row[10] or 0),
             }
+            risk_counts = {
+                "critical": int(row[11] or 0),
+                "high": int(row[12] or 0),
+                "low": int(row[13] or 0),
+                "medium": int(row[14] or 0),
+                "unknown": int(row[15] or 0),
+            }
+            permission_counts = {
+                "blocked": int(row[16] or 0),
+                "passed": int(row[17] or 0),
+                "unknown": int(row[18] or 0),
+                "warning": int(row[19] or 0),
+            }
+            audit_event_total = int(row[20] or 0)
+            permission_issue_total = int(row[21] or 0)
+            retry_total = int(row[22] or 0)
+            validation_issue_total = int(row[23] or 0)
+            decision_counts = {
+                "blocked": int(row[24] or 0),
+                "expired": int(row[25] or 0),
+                "failed": int(row[26] or 0),
+                "ready": int(row[27] or 0),
+                "terminal": int(row[28] or 0),
+                "unknown": int(row[29] or 0),
+                "warning": int(row[30] or 0),
+            }
         terminal_count = sum(
             status_counts[status] for status in ("cancelled", "confirmed", "expired", "failed")
         )
         confirmed_count = status_counts["confirmed"]
+        high_risk_count = risk_counts["critical"] + risk_counts["high"]
         return {
             "adoption_rate": self._ratio(confirmed_count, total),
+            "confirm_blocked_count": (
+                decision_counts["blocked"]
+                + decision_counts["expired"]
+                + decision_counts["failed"]
+            ),
+            "confirm_ready_count": decision_counts["ready"] + decision_counts["warning"],
+            "decision_counts": decision_counts,
             "draft_total": total,
+            "governance_counts": {
+                "audit_events": audit_event_total,
+                "failed": status_counts["failed"],
+                "high_risk": high_risk_count,
+                "permission_blocked": permission_counts["blocked"],
+                "permission_issues": permission_issue_total,
+                "permission_warning": permission_counts["warning"],
+                "retry_total": retry_total,
+                "validation_blocked": validation_counts["blocked"],
+                "validation_issues": validation_issue_total,
+                "validation_warning": validation_counts["warning"],
+            },
+            "permission_counts": permission_counts,
             "resolution_rate": self._ratio(terminal_count, total),
+            "risk_counts": risk_counts,
             "status_counts": status_counts,
             "user_modified_count": modified_count,
             "user_modified_rate": self._ratio(modified_count, total),

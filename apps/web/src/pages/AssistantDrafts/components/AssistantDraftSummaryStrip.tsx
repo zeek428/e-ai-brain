@@ -50,10 +50,28 @@ export function AssistantDraftSummaryStrip({
   summary?: AssistantActionDraftWorkbenchSummary;
 }) {
   const statusCounts = summary?.status_counts ?? {};
+  const decisionCounts = summary?.decision_counts ?? {};
   const governanceCounts = summary?.governance_counts ?? {};
   const validationCounts = summary?.validation_counts ?? {};
   const metrics = [
     { label: '待确认草案', value: statusCounts.pending ?? 0 },
+    {
+      label: '可确认草案',
+      value: count(summary?.confirm_ready_count ?? ((decisionCounts.ready ?? 0) + (decisionCounts.warning ?? 0))),
+    },
+    {
+      label: '确认阻断',
+      value: count(
+        summary?.confirm_blocked_count
+          ?? ((decisionCounts.blocked ?? 0) + (decisionCounts.failed ?? 0) + (decisionCounts.expired ?? 0)),
+      ),
+      valueStyle: count(
+        summary?.confirm_blocked_count
+          ?? ((decisionCounts.blocked ?? 0) + (decisionCounts.failed ?? 0) + (decisionCounts.expired ?? 0)),
+      ) > 0
+        ? dangerValueStyle
+        : summaryValueStyle,
+    },
     { label: '失败草案', value: statusCounts.failed ?? 0 },
     { label: '已采纳草案', value: statusCounts.confirmed ?? 0 },
     { label: '采纳率', value: percent(summary?.adoption_rate) },

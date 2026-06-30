@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from app.core.repositories.assistant_chat import AssistantChatReadRepository
 from app.main import app
 from app.services.assistant_action_drafts import list_assistant_action_drafts_response
 
@@ -51,6 +52,17 @@ def _draft(
 def _empty_draft_summary(total: int = 0) -> dict:
     return {
         "adoption_rate": 0.0,
+        "confirm_blocked_count": 0,
+        "confirm_ready_count": total,
+        "decision_counts": {
+            "blocked": 0,
+            "expired": 0,
+            "failed": 0,
+            "ready": total,
+            "terminal": 0,
+            "unknown": 0,
+            "warning": 0,
+        },
         "draft_total": total,
         "governance_counts": {
             "audit_events": 0,
@@ -117,6 +129,73 @@ class FakeAssistantDraftPagingRepository:
 
     def list_assistant_action_drafts(self, **_kwargs) -> list[dict]:
         raise AssertionError("草案任务台列表应使用分页 read model，不能退回全量草案读取")
+
+
+def test_assistant_action_draft_repository_summary_returns_governance_decisions():
+    repository = AssistantChatReadRepository(lambda: None)
+
+    summary = repository._assistant_action_draft_workbench_summary_from_row(
+        (
+            4,  # total
+            0,  # cancelled
+            1,  # confirmed
+            1,  # expired
+            1,  # failed
+            1,  # pending
+            1,  # modified
+            1,  # validation blocked
+            2,  # validation passed
+            0,  # validation unknown
+            1,  # validation warning
+            0,  # risk critical
+            1,  # risk high
+            0,  # risk low
+            3,  # risk medium
+            0,  # risk unknown
+            1,  # permission blocked
+            3,  # permission passed
+            0,  # permission unknown
+            0,  # permission warning
+            5,  # audit events
+            2,  # permission issues
+            1,  # retries
+            4,  # validation issues
+            1,  # decision blocked
+            1,  # decision expired
+            1,  # decision failed
+            0,  # decision ready
+            1,  # decision terminal
+            0,  # decision unknown
+            0,  # decision warning
+        )
+    )
+
+    assert summary["draft_total"] == 4
+    assert summary["confirm_blocked_count"] == 3
+    assert summary["confirm_ready_count"] == 0
+    assert summary["decision_counts"] == {
+        "blocked": 1,
+        "expired": 1,
+        "failed": 1,
+        "ready": 0,
+        "terminal": 1,
+        "unknown": 0,
+        "warning": 0,
+    }
+    assert summary["governance_counts"] == {
+        "audit_events": 5,
+        "failed": 1,
+        "high_risk": 1,
+        "permission_blocked": 1,
+        "permission_issues": 2,
+        "permission_warning": 0,
+        "retry_total": 1,
+        "validation_blocked": 1,
+        "validation_issues": 4,
+        "validation_warning": 1,
+    }
+    assert summary["permission_counts"]["blocked"] == 1
+    assert summary["risk_counts"]["high"] == 1
 
 
 def test_assistant_action_draft_workbench_uses_repository_pagination_when_available():
@@ -263,6 +342,17 @@ def test_assistant_action_draft_workbench_lists_current_user_drafts_with_summary
     assert payload["summary"]["risk_counts"]["high"] == 1
     assert payload["summary"]["risk_counts"]["medium"] == 2
     assert payload["summary"]["permission_counts"]["passed"] == 3
+    assert payload["summary"]["confirm_ready_count"] == 1
+    assert payload["summary"]["confirm_blocked_count"] == 1
+    assert payload["summary"]["decision_counts"] == {
+        "blocked": 1,
+        "expired": 0,
+        "failed": 0,
+        "ready": 1,
+        "terminal": 1,
+        "unknown": 0,
+        "warning": 0,
+    }
     assert payload["summary"]["governance_counts"] == {
         "audit_events": 1,
         "failed": 0,
@@ -289,6 +379,10 @@ def test_assistant_action_draft_workbench_lists_current_user_drafts_with_summary
     assert pending["latest_audit_event_type"] == "assistant_action_draft.created"
     assert pending["view_count"] == 3
     assert pending["permission_status"] == "passed"
+    assert pending["decision_status"] == "ready"
+    assert pending["decision_label"] == "可确认"
+    assert pending["decision_next_action"] == "可确认执行"
+    assert pending["can_confirm"] is True
     assert pending["retry_count"] == 0
     assert pending["wizard_step_count"] == 1
     assert pending["source_link"] == "/assistant?draft_id=assistant_action_draft_pending"
@@ -298,6 +392,14 @@ def test_assistant_action_draft_workbench_lists_current_user_drafts_with_summary
     assert confirmed["result_status"] == "succeeded"
     assert confirmed["result_type"] == "plugin_action"
     assert confirmed["result_id"] == "plugin_action_001"
+    assert confirmed["decision_status"] == "terminal"
+    assert confirmed["decision_label"] == "已采纳"
+    blocked = next(
+        item for item in payload["items"] if item["id"] == "assistant_action_draft_blocked"
+    )
+    assert blocked["decision_status"] == "blocked"
+    assert blocked["decision_label"] == "校验阻断"
+    assert blocked["can_confirm"] is False
 
 
 def test_assistant_action_draft_workbench_filters_and_scopes_to_current_user():
@@ -431,6 +533,15 @@ def test_assistant_action_draft_retry_reopens_failed_draft_with_audit():
     assert payload["governance"]["audit"]["latest_event_type"] == (
         "assistant_action_draft.retry_requested"
     )
+    assert payload["governance"]["decision"] == {
+        "blocking_count": 0,
+        "can_confirm": True,
+        "can_retry": False,
+        "label": "可确认",
+        "next_action": "可确认执行",
+        "reason": "校验、权限和审计链路已通过",
+        "status": "ready",
+    }
     stored_draft = app.state.store.assistant_action_drafts["assistant_action_draft_failed"]
     assert stored_draft["status"] == "pending"
     assert stored_draft["result_run_id"] is None

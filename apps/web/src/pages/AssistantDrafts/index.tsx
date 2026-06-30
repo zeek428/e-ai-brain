@@ -30,6 +30,7 @@ import {
   actionOptions,
   assistantDraftEditHref,
   compactText,
+  decisionTag,
   operationText,
   permissionTag,
   riskTag,
@@ -259,6 +260,21 @@ export default function AssistantDraftsPage() {
         ),
       },
       {
+        dataIndex: 'decision_status',
+        title: '确认决策',
+        width: 170,
+        render: (_, row) => (
+          <Space orientation="vertical" size={0} style={{ width: '100%' }}>
+            {decisionTag(row.decision_status, row.decision_label)}
+            {row.decision_next_action ? (
+              <Text ellipsis={{ tooltip: row.decision_reason ?? row.decision_next_action }} type="secondary">
+                {row.decision_next_action}
+              </Text>
+            ) : null}
+          </Space>
+        ),
+      },
+      {
         dataIndex: 'risk_level',
         sorter: true,
         title: '风险',
@@ -353,9 +369,11 @@ export default function AssistantDraftsPage() {
               <Popconfirm
                 okText="确认"
                 onConfirm={() => void confirmDraft(row)}
-                title="确认后会写入对应业务配置，是否继续？"
+                title={row.can_confirm === false
+                  ? row.decision_reason ?? '当前草案暂不可确认'
+                  : '确认后会写入对应业务配置，是否继续？'}
               >
-                <Button loading={mutatingId === row.id} type="link">
+                <Button disabled={row.can_confirm === false} loading={mutatingId === row.id} type="link">
                   确认
                 </Button>
               </Popconfirm>

@@ -266,6 +266,9 @@ export type AssistantActionDraftRecord = {
 
 export type AssistantActionDraftWorkbenchSummary = {
   adoption_rate: number;
+  confirm_blocked_count?: number;
+  confirm_ready_count?: number;
+  decision_counts?: Record<string, number>;
   draft_total: number;
   governance_counts?: {
     audit_events?: number;
@@ -295,6 +298,11 @@ export type AssistantActionDraftWorkbenchItem = {
   confirmed_at?: string | null;
   created_at?: string | null;
   created_by?: string | null;
+  can_confirm?: boolean;
+  decision_label?: string | null;
+  decision_next_action?: string | null;
+  decision_reason?: string | null;
+  decision_status?: string | null;
   expires_at?: string | null;
   id: string;
   audit_event_count?: number;
@@ -393,6 +401,15 @@ export type AssistantActionDraftGovernance = {
     latest_event_at?: string | null;
     latest_event_id?: string | null;
     latest_event_type?: string | null;
+  };
+  decision?: {
+    blocking_count?: number;
+    can_confirm?: boolean;
+    can_retry?: boolean;
+    label?: string | null;
+    next_action?: string | null;
+    reason?: string | null;
+    status?: string | null;
   };
   diff?: {
     changed_fields?: Array<{

@@ -38,6 +38,139 @@ ASSISTANT_ACTION_DRAFT_SORT_FIELDS = {
     "validation_status",
     "view_count",
 }
+
+
+def assistant_action_draft_decision(
+    *,
+    audit_event_count: int,
+    draft: dict[str, Any],
+    last_failure_payload: dict[str, Any],
+    missing_permissions: list[str],
+    permission_issue_count: int,
+    permission_status: str,
+    risk_level: str,
+    validation_issue_count: int,
+    validation_status: str,
+) -> dict[str, Any]:
+    status = str(draft.get("status") or "unknown")
+    if status == "confirmed":
+        return {
+            "blocking_count": 0,
+            "can_confirm": False,
+            "can_retry": False,
+            "label": "已采纳",
+            "next_action": "查看结果和审计链路",
+            "reason": "草案已确认执行",
+            "status": "terminal",
+        }
+    if status == "cancelled":
+        return {
+            "blocking_count": 0,
+            "can_confirm": False,
+            "can_retry": False,
+            "label": "已取消",
+            "next_action": "无需确认",
+            "reason": draft.get("cancel_reason") or "草案已取消",
+            "status": "terminal",
+        }
+    if status == "expired":
+        return {
+            "blocking_count": 1,
+            "can_confirm": False,
+            "can_retry": False,
+            "label": "已过期",
+            "next_action": "重新生成草案",
+            "reason": "草案超过确认有效期",
+            "status": "expired",
+        }
+    if status == "failed":
+        return {
+            "blocking_count": 1,
+            "can_confirm": False,
+            "can_retry": True,
+            "label": "执行失败",
+            "next_action": "查看失败原因并重新打开",
+            "reason": (
+                last_failure_payload.get("message")
+                or last_failure_payload.get("code")
+                or "草案确认执行失败"
+            ),
+            "status": "failed",
+        }
+
+    if validation_status == "blocked":
+        issue_count = max(validation_issue_count, 1)
+        return {
+            "blocking_count": issue_count,
+            "can_confirm": False,
+            "can_retry": False,
+            "label": "校验阻断",
+            "next_action": "补齐必填字段和校验问题",
+            "reason": f"存在 {issue_count} 个校验阻断问题",
+            "status": "blocked",
+        }
+    if permission_status == "blocked":
+        issue_count = max(permission_issue_count, len(missing_permissions), 1)
+        missing = "、".join(missing_permissions[:3])
+        return {
+            "blocking_count": issue_count,
+            "can_confirm": False,
+            "can_retry": False,
+            "label": "权限阻断",
+            "next_action": "补齐权限或调整草案",
+            "reason": missing or f"存在 {issue_count} 个权限问题",
+            "status": "blocked",
+        }
+    if risk_level in {"critical", "high"}:
+        return {
+            "blocking_count": 0,
+            "can_confirm": True,
+            "can_retry": False,
+            "label": "高风险待复核",
+            "next_action": "逐条核对影响对象和执行前后差异",
+            "reason": "高风险草案确认前需要人工复核",
+            "status": "warning",
+        }
+    if validation_status == "warning" or permission_status == "warning":
+        return {
+            "blocking_count": 0,
+            "can_confirm": True,
+            "can_retry": False,
+            "label": "有警告可确认",
+            "next_action": "核对警告后确认执行",
+            "reason": "存在非阻断校验或权限警告",
+            "status": "warning",
+        }
+    if audit_event_count == 0:
+        return {
+            "blocking_count": 0,
+            "can_confirm": True,
+            "can_retry": False,
+            "label": "审计待补齐",
+            "next_action": "打开详情确认来源链路",
+            "reason": "当前草案尚未产生审计事件",
+            "status": "warning",
+        }
+    if status == "pending":
+        return {
+            "blocking_count": 0,
+            "can_confirm": True,
+            "can_retry": False,
+            "label": "可确认",
+            "next_action": "可确认执行",
+            "reason": "校验、权限和审计链路已通过",
+            "status": "ready",
+        }
+    return {
+        "blocking_count": 0,
+        "can_confirm": False,
+        "can_retry": False,
+        "label": "未知",
+        "next_action": "查看草案详情",
+        "reason": f"未知草案状态：{status}",
+        "status": "unknown",
+    }
+
 AI_AGENT_DEFAULTS = {
     "brain_app_id": "rd_brain",
     "default_skill_ids": [],

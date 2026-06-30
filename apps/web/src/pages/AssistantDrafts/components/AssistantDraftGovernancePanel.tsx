@@ -9,6 +9,7 @@ import type {
 import { formatDisplayDateTime } from '../../../utils/dateTime';
 import {
   compactText,
+  decisionTag,
   operationText,
   permissionTag,
   riskTag,
@@ -47,6 +48,7 @@ export function AssistantDraftGovernancePanel({
   const permissions = governance?.permissions;
   const retries = governance?.retries;
   const audit = governance?.audit;
+  const decision = governance?.decision;
   const risk = governance?.risk;
   const sourceResource = impact?.source_resource;
   const permissionIssues = permissions?.issues ?? [];
@@ -68,6 +70,18 @@ export function AssistantDraftGovernancePanel({
   return (
     <Space orientation="vertical" size={12} style={{ width: '100%' }}>
       <Descriptions column={3} size="small" title="执行治理摘要">
+        <Descriptions.Item label="确认决策">
+          <Space size={4}>
+            {decisionTag(decision?.status, decision?.label)}
+            <Text type="secondary">{decision?.can_confirm ? '可确认' : '不可确认'}</Text>
+          </Space>
+        </Descriptions.Item>
+        <Descriptions.Item label="决策原因">
+          {decision?.reason ?? '-'}
+        </Descriptions.Item>
+        <Descriptions.Item label="下一步">
+          {decision?.next_action ?? '-'}
+        </Descriptions.Item>
         <Descriptions.Item label="风险等级">
           {riskTag(risk?.level ?? detail.risk_level)}
         </Descriptions.Item>

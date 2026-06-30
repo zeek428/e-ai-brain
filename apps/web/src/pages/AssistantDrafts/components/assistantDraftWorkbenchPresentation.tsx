@@ -31,6 +31,16 @@ const actionLabels = new Map(actionOptions.map((item) => [item.value, item.label
 const statusLabels = new Map(statusOptions.map((item) => [item.value, item.label]));
 const validationLabels = new Map(validationOptions.map((item) => [item.value, item.label]));
 
+const decisionLabels = new Map([
+  ['blocked', '阻断'],
+  ['expired', '已过期'],
+  ['failed', '失败'],
+  ['ready', '可确认'],
+  ['terminal', '已结束'],
+  ['unknown', '未知'],
+  ['warning', '需复核'],
+]);
+
 const statusColors = new Map([
   ['cancelled', 'default'],
   ['confirmed', 'green'],
@@ -42,6 +52,16 @@ const statusColors = new Map([
 const validationColors = new Map([
   ['blocked', 'red'],
   ['passed', 'green'],
+  ['unknown', 'default'],
+  ['warning', 'orange'],
+]);
+
+const decisionColors = new Map([
+  ['blocked', 'red'],
+  ['expired', 'default'],
+  ['failed', 'red'],
+  ['ready', 'green'],
+  ['terminal', 'blue'],
   ['unknown', 'default'],
   ['warning', 'orange'],
 ]);
@@ -79,6 +99,11 @@ export function statusTag(status?: string | null) {
 export function validationTag(status?: string | null) {
   const value = String(status ?? 'unknown');
   return <StatusTag color={validationColors.get(value) ?? 'default'} label={validationLabels.get(value) ?? value} />;
+}
+
+export function decisionTag(status?: string | null, label?: string | null) {
+  const value = String(status ?? 'unknown');
+  return <StatusTag color={decisionColors.get(value) ?? 'default'} label={label ?? decisionLabels.get(value) ?? value} />;
 }
 
 export function permissionTag(status?: string | null) {

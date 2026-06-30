@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 动作确认中心新增服务端统一确认决策：草案详情返回 `governance.decision`，列表行展开 `decision_*` 与 `can_confirm`，顶部指标新增可确认草案和确认阻断，详情页同步展示决策原因与下一步。
 - 迭代版本总览新增后端 `delivery_stage_overview`：服务端按需求、任务、分支、巡检、评审、Bug、知识、发布和状态推进固定顺序输出交付阶段总览，版本页、AI 助手和真实全链路回归复用同一份判断。
 - 真实全链路回归脚本版本驾驶舱校验继续拆分：新增 `scripts/full_chain_regression_version_dashboard.py` 承接版本阻塞项、`next_actions`、`governance_conclusion` 和分支质量门禁校验，主脚本只保留公开 API 编排；失败 JSON 报告同步捕获拆分 helper 的断言失败。
 - 迭代版本总览新增后端 `governance_conclusion`：版本驾驶舱、AI 助手迭代版本问答和真实全链路回归可复用同一份治理结论，前端仅保留旧响应兜底推导。

@@ -15,6 +15,11 @@ function installAssistantDraftsFetchMock(options: { includeFailed?: boolean } = 
     expires_at: null,
     id: 'assistant_action_draft_001',
     audit_event_count: 1,
+    can_confirm: true,
+    decision_label: '有警告可确认',
+    decision_next_action: '核对警告后确认执行',
+    decision_reason: '存在非阻断校验或权限警告',
+    decision_status: 'warning',
     failure_count: 0,
     impact_changed_field_count: 3,
     impact_operation: 'create',
@@ -45,6 +50,11 @@ function installAssistantDraftsFetchMock(options: { includeFailed?: boolean } = 
   const failedDraftRow = {
     ...draftRow,
     id: 'assistant_action_draft_failed',
+    can_confirm: false,
+    decision_label: '执行失败',
+    decision_next_action: '查看失败原因并重新打开',
+    decision_reason: '模拟确认失败',
+    decision_status: 'failed',
     modified_field_count: 0,
     result_run_id: 'assistant_action_run_failed',
     result_status: 'failed',
@@ -77,6 +87,15 @@ function installAssistantDraftsFetchMock(options: { includeFailed?: boolean } = 
         latest_event_at: '2026-06-20T02:20:00Z',
         latest_event_id: 'audit_001',
         latest_event_type: 'assistant_action_draft.created',
+      },
+      decision: {
+        blocking_count: 0,
+        can_confirm: true,
+        can_retry: false,
+        label: '有警告可确认',
+        next_action: '核对警告后确认执行',
+        reason: '存在非阻断校验或权限警告',
+        status: 'warning',
       },
       diff: {
         changed_fields: [
@@ -176,6 +195,17 @@ function installAssistantDraftsFetchMock(options: { includeFailed?: boolean } = 
           page_size: 10,
           summary: {
             adoption_rate: 0.25,
+            confirm_blocked_count: 2,
+            confirm_ready_count: 2,
+            decision_counts: {
+              blocked: 1,
+              expired: 0,
+              failed: 1,
+              ready: 1,
+              terminal: 1,
+              unknown: 0,
+              warning: 1,
+            },
             draft_total: 4,
             governance_counts: {
               audit_events: 3,
@@ -271,8 +301,10 @@ describe('AssistantDraftsPage', () => {
     const summaryStrip = screen.getByRole('list', { name: '草案任务台指标' });
     expect(summaryStrip).toHaveStyle('display: grid');
     expect(summaryStrip).toHaveStyle('width: 100%');
-    expect(within(summaryStrip).getAllByRole('listitem')).toHaveLength(11);
+    expect(within(summaryStrip).getAllByRole('listitem')).toHaveLength(13);
     expect(within(summaryStrip).getByText('待确认草案')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('可确认草案')).toBeInTheDocument();
+    expect(within(summaryStrip).getByText('确认阻断')).toBeInTheDocument();
     expect(within(summaryStrip).getByText('失败草案')).toBeInTheDocument();
     expect(within(summaryStrip).getByText('已采纳草案')).toBeInTheDocument();
     expect(within(summaryStrip).getByText('采纳率')).toBeInTheDocument();
@@ -295,6 +327,8 @@ describe('AssistantDraftsPage', () => {
     expect(within(governanceQueue).getAllByText('代表草案').length).toBeGreaterThan(0);
     expect(screen.getAllByText('待确认').length).toBeGreaterThan(0);
     expect(screen.getAllByText('警告').length).toBeGreaterThan(0);
+    expect(screen.getByText('有警告可确认')).toBeInTheDocument();
+    expect(screen.getByText('核对警告后确认执行')).toBeInTheDocument();
     expect(screen.getByText('新增 · scheduled_job')).toBeInTheDocument();
     expect(screen.getByText('3 项差异')).toBeInTheDocument();
     expect(screen.getByText('1 条审计')).toBeInTheDocument();
@@ -316,6 +350,10 @@ describe('AssistantDraftsPage', () => {
     const dialog = await screen.findByRole('dialog', { name: '草案详情' });
     await waitFor(() => expect(within(dialog).getByText('草案 Payload')).toBeInTheDocument());
     expect(within(dialog).getByText('执行治理摘要')).toBeInTheDocument();
+    expect(within(dialog).getByText('确认决策')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('有警告可确认').length).toBeGreaterThanOrEqual(1);
+    expect(within(dialog).getByText('存在非阻断校验或权限警告')).toBeInTheDocument();
+    expect(within(dialog).getByText('核对警告后确认执行')).toBeInTheDocument();
     expect(within(dialog).getByText('定时作业会创建新的自动化写入入口，确认前需核对调度和插件动作。')).toBeInTheDocument();
     expect(within(dialog).getByText('执行前后差异')).toBeInTheDocument();
     expect(within(dialog).getByText(/system\.scheduled_jobs\.manage/)).toBeInTheDocument();

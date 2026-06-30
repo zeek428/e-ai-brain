@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.469 |
+| 功能版本 | v1.1.470 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.470 | 2026-06-30 | `GET /api/assistant/action-drafts` 和草案详情响应新增统一确认决策字段：列表返回 `decision_*` 与 `can_confirm`，详情返回 `governance.decision` | Codex |
 | v1.1.469 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 新增 `delivery_stage_overview`，后端统一输出交付阶段总览供版本总览、AI 助手和回归脚本复用 | Codex |
 | v1.1.468 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 新增 `governance_conclusion`，后端统一输出版本治理结论供版本总览、AI 助手和回归脚本复用 | Codex |
 | v1.1.467 | 2026-06-30 | 知识中心索引健康前端展示升级为解析状态、Chunk/Embedding、检索与权限三段治理摘要，健康问题操作明确区分补向量、重试索引、查看分块和导入任务 | Codex |
@@ -726,8 +727,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 使用的候选；覆盖引用类业务对象、可读知识空间/知识目录/知识文档/知识片段、管理员或专项权限可见的定时作业/运行/插件动作/插件连接/AI角色/Skill，以及 `assistant_action` 动作入口；运营类定时作业和运行记录必须再按当前用户产品 scope 过滤，未指定 type 的默认候选按类型均衡合并。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
 | Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持研发任务、AI Skill、AI角色、定时作业、插件连接、动作配置和分析草案。 |
-| Assistant | GET | `/api/assistant/action-drafts` | 查询当前登录用户草案任务台列表，支持 `action/status/validation_status/keyword/created_from/created_to/page/page_size/sort_by/sort_order`，返回草案行、分页元数据、`query/performance` 和状态/采纳/处理/修改率汇总；列表行补充 `impact_*`、`permission_status`、`audit_event_count`、`failure_count` 和 `retry_count`，用于任务台直接判断影响对象、权限和重试治理状态；PostgreSQL 运行态优先由 read model 在数据库侧完成当前用户、动作、状态、校验状态、时间、关键词、排序和分页。 |
-| Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情；`preview.validation.issues[]` 可返回 `repair_action={action,label,field,resource_type,resource_id}`，用于前端展示修正字段、生成前置草案或打开连接测试等操作；响应新增 `governance`，按草案 payload、`preview.diffs`、动作确认权限、失败历史、动作运行和 `assistant_action_draft.*` 审计事件派生风险、影响对象、权限校验、执行前后差异、失败重试和审计链路摘要。 |
+| Assistant | GET | `/api/assistant/action-drafts` | 查询当前登录用户草案任务台列表，支持 `action/status/validation_status/keyword/created_from/created_to/page/page_size/sort_by/sort_order`，返回草案行、分页元数据、`query/performance` 和状态/采纳/处理/修改率汇总；列表行补充 `impact_*`、`permission_status`、`audit_event_count`、`failure_count`、`retry_count`、`decision_status/decision_label/decision_reason/decision_next_action` 和 `can_confirm`，用于任务台直接判断影响对象、权限、重试治理状态和是否可确认；PostgreSQL 运行态优先由 read model 在数据库侧完成当前用户、动作、状态、校验状态、时间、关键词、排序和分页。 |
+| Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情；`preview.validation.issues[]` 可返回 `repair_action={action,label,field,resource_type,resource_id}`，用于前端展示修正字段、生成前置草案或打开连接测试等操作；响应新增 `governance`，按草案 payload、`preview.diffs`、动作确认权限、失败历史、动作运行和 `assistant_action_draft.*` 审计事件派生风险、影响对象、权限校验、执行前后差异、失败重试、审计链路摘要和 `decision` 统一确认决策。 |
 | Assistant | PATCH | `/api/assistant/action-drafts/{draft_id}` | 在 pending 草案确认前更新草案 payload，并写入 `modified_fields/user_modified/modified_at/modified_by` 元数据和 `assistant_action_draft.updated` 审计；表单页从助手草案进入后保存必须走该接口再调用 confirm，不得直接绕过服务端草案生命周期创建领域对象。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/view` | 记录当前用户查看草案详情或深链加载草案，`surface=detail_modal` 写入 `detail_viewed_at`，`surface=deeplink` 写入 `deeplink_viewed_at`，并统一写入 `viewed_at/last_viewed_at/view_count/viewed_by/last_view_surface` 和 `assistant_action_draft.viewed` 审计，用于区分“查看详情”和“深链打开”。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/confirm` | 确认 pending 草案并调度到对应领域 service；已 confirmed 且存在成功 `assistant_action_run` 的重复提交必须幂等返回同一 run，不得重复创建作业、插件连接或动作。 |
@@ -1985,7 +1986,7 @@ POST /api/assistant/action-drafts/{draft_id}/modification
 
 PostgreSQL 运行态必须在 `assistant_action_drafts` read model 中完成当前用户、动作、状态、`validation_status`、创建时间、关键词、排序和分页过滤，不得因校验状态筛选回退到全量草案读取后服务层切片。
 
-响应在通用列表字段外返回 `summary`，包括 `draft_total`、`status_counts`、`validation_counts`、`risk_counts`、`permission_counts`、`governance_counts`、`adoption_rate=confirmed/total`、`resolution_rate=(confirmed+cancelled+expired+failed)/total`、`user_modified_count` 和 `user_modified_rate`。`governance_counts` 至少包含 `high_risk`、`permission_blocked`、`permission_warning`、`validation_blocked`、`validation_warning`、`failed`、`retry_total`、`audit_events`、`permission_issues` 和 `validation_issues`，用于草案任务台顶部集中展示确认治理压力。列表行包含 `source_link=/assistant?draft_id=<id>`、`view_count`、`modified_field_count`、`validation_issue_count`、`wizard_step_count`、`result_status/result_type/result_id`、`impact_operation/impact_resource_type/impact_changed_field_count`、`permission_status/permission_issue_count`、`audit_event_count/latest_audit_event_type`、`failure_count/retry_count` 等任务台字段；敏感 payload 仍只能通过详情接口按现有脱敏规则查看。详情响应的 `governance` 必须包含 `risk`、`impact`、`permissions`、`diff`、`retries` 和 `audit` 六段，供前端确认前集中展示风险等级、影响对象、权限校验、执行前后差异、失败重试和审计链路。
+响应在通用列表字段外返回 `summary`，包括 `draft_total`、`status_counts`、`validation_counts`、`risk_counts`、`permission_counts`、`governance_counts`、`decision_counts`、`confirm_ready_count`、`confirm_blocked_count`、`adoption_rate=confirmed/total`、`resolution_rate=(confirmed+cancelled+expired+failed)/total`、`user_modified_count` 和 `user_modified_rate`。`governance_counts` 至少包含 `high_risk`、`permission_blocked`、`permission_warning`、`validation_blocked`、`validation_warning`、`failed`、`retry_total`、`audit_events`、`permission_issues` 和 `validation_issues`，用于草案任务台顶部集中展示确认治理压力。`decision_counts` 按 `ready/warning/blocked/failed/expired/terminal/unknown` 聚合，`confirm_ready_count=ready+warning`，`confirm_blocked_count=blocked+failed+expired`。列表行包含 `source_link=/assistant?draft_id=<id>`、`view_count`、`modified_field_count`、`validation_issue_count`、`wizard_step_count`、`result_status/result_type/result_id`、`impact_operation/impact_resource_type/impact_changed_field_count`、`permission_status/permission_issue_count`、`audit_event_count/latest_audit_event_type`、`failure_count/retry_count`、`decision_status/decision_label/decision_reason/decision_next_action/can_confirm` 等任务台字段；敏感 payload 仍只能通过详情接口按现有脱敏规则查看。详情响应的 `governance` 必须包含 `decision`、`risk`、`impact`、`permissions`、`diff`、`retries` 和 `audit` 七段，供前端确认前集中展示可确认状态、原因、下一步、风险等级、影响对象、权限校验、执行前后差异、失败重试和审计链路。
 
 创建草案请求：
 

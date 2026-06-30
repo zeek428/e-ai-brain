@@ -27,6 +27,7 @@ from app.services.assistant_action_draft_common import (
     PLUGIN_CONNECTION_DEFAULTS,
     RD_TASK_DEFAULTS,
     SCHEDULED_JOB_DEFAULTS,
+    assistant_action_draft_decision,
     ensure_draft_action,
     ensure_non_blank,
     valid_cron_expression,
@@ -1198,6 +1199,11 @@ def _assistant_action_draft_workbench_item(public_draft: dict[str, Any]) -> dict
         governance.get("retries") if isinstance(governance.get("retries"), dict) else {}
     )
     audit = governance.get("audit") if isinstance(governance.get("audit"), dict) else {}
+    decision = (
+        governance.get("decision")
+        if isinstance(governance.get("decision"), dict)
+        else {}
+    )
     modified_fields = (
         metadata_json.get("modified_fields")
         if isinstance(metadata_json.get("modified_fields"), list)
@@ -1209,9 +1215,14 @@ def _assistant_action_draft_workbench_item(public_draft: dict[str, Any]) -> dict
         "action": public_draft["action"],
         "cancel_reason": public_draft.get("cancel_reason"),
         "client_draft_id": public_draft.get("client_draft_id"),
+        "can_confirm": bool(decision.get("can_confirm")),
         "confirmed_at": public_draft.get("confirmed_at"),
         "created_at": public_draft["created_at"],
         "created_by": public_draft["created_by"],
+        "decision_label": decision.get("label"),
+        "decision_next_action": decision.get("next_action"),
+        "decision_reason": decision.get("reason"),
+        "decision_status": decision.get("status"),
         "expires_at": public_draft.get("expires_at"),
         "id": public_draft["id"],
         "audit_event_count": _safe_int(audit.get("event_count")),
@@ -1284,8 +1295,24 @@ def _assistant_action_draft_workbench_summary(
         status_counts[status] for status in ("cancelled", "confirmed", "expired", "failed")
     )
     confirmed_count = status_counts["confirmed"]
+    decision_statuses = {"blocked", "expired", "failed", "ready", "terminal", "unknown", "warning"}
+    decision_counts = {
+        status: sum(
+            1
+            for draft in drafts
+            if str(draft.get("decision_status") or "unknown") == status
+        )
+        for status in sorted(decision_statuses)
+    }
     return {
         "adoption_rate": _ratio(confirmed_count, total),
+        "confirm_blocked_count": (
+            decision_counts["blocked"]
+            + decision_counts["expired"]
+            + decision_counts["failed"]
+        ),
+        "confirm_ready_count": decision_counts["ready"] + decision_counts["warning"],
+        "decision_counts": decision_counts,
         "draft_total": total,
         "governance_counts": {
             "audit_events": audit_event_total,
@@ -2375,21 +2402,45 @@ def _assistant_action_draft_governance(
         draft_id=str(draft.get("id") or ""),
     )
     latest_event = audit_events[-1] if audit_events else {}
+    audit_snapshot = {
+        "event_count": len(audit_events),
+        "event_types": sorted(
+            {
+                str(event.get("event_type") or "")
+                for event in audit_events
+                if str(event.get("event_type") or "")
+            }
+        ),
+        "latest_actor_id": latest_event.get("actor_id"),
+        "latest_event_at": latest_event.get("created_at"),
+        "latest_event_id": latest_event.get("id"),
+        "latest_event_type": latest_event.get("event_type"),
+    }
+    retry_snapshot = {
+        "can_retry": draft.get("status") == "failed",
+        "failure_count": len(failure_sources),
+        "last_failure_code": last_failure_payload.get("code"),
+        "last_failure_message": last_failure_payload.get("message"),
+        "retry_count": _safe_int(metadata_json.get("retry_count")),
+        "retry_reason": metadata_json.get("retry_reason"),
+    }
+    risk_level = str(draft.get("risk_level") or "medium")
+    validation_status = str(validation.get("status") or "unknown")
+    permission_issue_count = len(permission_issues) + len(missing_permissions)
+    decision = assistant_action_draft_decision(
+        audit_event_count=audit_snapshot["event_count"],
+        draft=draft,
+        last_failure_payload=last_failure_payload,
+        missing_permissions=missing_permissions,
+        permission_issue_count=permission_issue_count,
+        permission_status=permission_status,
+        risk_level=risk_level,
+        validation_issue_count=len(validation_issues),
+        validation_status=validation_status,
+    )
     return {
-        "audit": {
-            "event_count": len(audit_events),
-            "event_types": sorted(
-                {
-                    str(event.get("event_type") or "")
-                    for event in audit_events
-                    if str(event.get("event_type") or "")
-                }
-            ),
-            "latest_actor_id": latest_event.get("actor_id"),
-            "latest_event_at": latest_event.get("created_at"),
-            "latest_event_id": latest_event.get("id"),
-            "latest_event_type": latest_event.get("event_type"),
-        },
+        "audit": audit_snapshot,
+        "decision": decision,
         "diff": {
             "changed_fields": normalized_diffs,
             "count": len(normalized_diffs),
@@ -2403,22 +2454,15 @@ def _assistant_action_draft_governance(
             "source_resource": target.get("source_resource"),
         },
         "permissions": {
-            "issue_count": len(permission_issues) + len(missing_permissions),
+            "issue_count": permission_issue_count,
             "issues": permission_issues,
             "missing_permissions": missing_permissions,
             "required_permissions": required_permissions,
             "status": permission_status,
         },
-        "retries": {
-            "can_retry": draft.get("status") == "failed",
-            "failure_count": len(failure_sources),
-            "last_failure_code": last_failure_payload.get("code"),
-            "last_failure_message": last_failure_payload.get("message"),
-            "retry_count": _safe_int(metadata_json.get("retry_count")),
-            "retry_reason": metadata_json.get("retry_reason"),
-        },
+        "retries": retry_snapshot,
         "risk": {
-            "level": draft.get("risk_level", "medium"),
+            "level": risk_level,
             "reason": metadata_json.get("risk_reason"),
         },
     }
