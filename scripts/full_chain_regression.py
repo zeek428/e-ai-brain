@@ -39,8 +39,35 @@ REGRESSION_OBJECTIVE_DOMAIN_KEYS = tuple(key for key, _label in REGRESSION_OBJEC
 REGRESSION_OBJECTIVE_DOMAIN_LABELS = {
     key: label for key, label in REGRESSION_OBJECTIVE_DOMAINS
 }
+REGRESSION_TARGETED_SUITE_NAMES = (
+    "runner-reliability",
+    "version-dashboard",
+    "assistant-draft-governance",
+    "code-inspection-governance",
+    "knowledge-index-health",
+    "permission-visibility",
+)
+REGRESSION_TARGETED_DOMAIN_KEYS = tuple(
+    key
+    for key in REGRESSION_OBJECTIVE_DOMAIN_KEYS
+    if key
+    in {
+        "ai_task_review",
+        "assistant_draft_governance",
+        "bug_remediation",
+        "code_inspection_governance",
+        "knowledge_index_health",
+        "permission_visibility",
+        "release_blockers",
+        "requirement_version_scheduling",
+        "runner_reliability",
+        "version_branch",
+        "version_dashboard",
+    }
+)
 REGRESSION_SUITE_DOMAINS: dict[str, tuple[str, ...]] = {
     "full": REGRESSION_OBJECTIVE_DOMAIN_KEYS,
+    "all-targeted": REGRESSION_TARGETED_DOMAIN_KEYS,
     "runner-reliability": ("runner_reliability",),
     "version-dashboard": (
         "requirement_version_scheduling",
@@ -111,8 +138,9 @@ def _utc_now_iso() -> str:
 
 def regression_suite_coverage(suite: str) -> dict[str, Any]:
     covered_keys = list(REGRESSION_SUITE_DOMAINS.get(suite, ()))
+    covered_key_set = set(covered_keys)
     skipped_keys = [
-        key for key in REGRESSION_OBJECTIVE_DOMAIN_KEYS if key not in set(covered_keys)
+        key for key in REGRESSION_OBJECTIVE_DOMAIN_KEYS if key not in covered_key_set
     ]
     return {
         "covered": [
@@ -150,6 +178,10 @@ def validate_regression_suite_coverage(suite: str) -> StepResult:
             f"{coverage['objective_domain_count']} objective domains"
         ),
     )
+
+
+def regression_suite_header_results(suite: str) -> list[StepResult]:
+    return [StepResult("suite", suite), validate_regression_suite_coverage(suite)]
 
 
 def build_regression_report(
@@ -2871,7 +2903,7 @@ def run_regression_suite(
     username: str,
     password: str,
 ) -> list[StepResult]:
-    results = [StepResult("suite", suite), validate_regression_suite_coverage(suite)]
+    results = regression_suite_header_results(suite)
     if suite == "full":
         results.extend(
             run_regression(
@@ -2881,6 +2913,25 @@ def run_regression_suite(
                 password=password,
             )
         )
+        return results
+    if suite == "all-targeted":
+        for targeted_suite in REGRESSION_TARGETED_SUITE_NAMES:
+            child_results = run_regression_suite(
+                client,
+                suite=targeted_suite,
+                task_execution_mode=task_execution_mode,
+                username=username,
+                password=password,
+            )
+            for child_result in child_results:
+                if child_result.name in {"suite", "coverage"}:
+                    continue
+                results.append(
+                    StepResult(
+                        f"{targeted_suite}:{child_result.name}",
+                        child_result.detail,
+                    )
+                )
         return results
     if suite == "runner-reliability":
         slug = _slug()
@@ -2977,6 +3028,7 @@ def main() -> int:
         "--suite",
         choices=[
             "full",
+            "all-targeted",
             "runner-reliability",
             "version-dashboard",
             "assistant-draft-governance",
@@ -2987,6 +3039,8 @@ def main() -> int:
         default=os.getenv("FULL_CHAIN_SUITE", "full"),
         help=(
             "Regression suite to run. full executes the end-to-end product workflow; "
+            "all-targeted executes every fast governance suite without the full "
+            "feedback-to-assistant product workflow; "
             "runner-reliability executes only the AI executor Runner lease/dead-letter gate; "
             "version-dashboard executes a quick product version dashboard aggregation "
             "and blocker gate; assistant-draft-governance executes the AI action draft "
@@ -3029,6 +3083,11 @@ def main() -> int:
     except RegressionError as exc:
         finished_at_iso = _utc_now_iso()
         duration_ms = int((time.perf_counter() - started_at) * 1000)
+        if not results:
+            try:
+                results = regression_suite_header_results(args.suite)
+            except RegressionError:
+                results = [StepResult("suite", args.suite)]
         if args.json_output:
             report = build_regression_report(
                 api_base_url=args.api_base_url,

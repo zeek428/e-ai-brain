@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -143,10 +144,13 @@ def test_full_chain_regression_script_supports_targeted_suites():
     for marker in [
         "FULL_CHAIN_SUITE",
         "--suite",
+        '"all-targeted"',
         '"code-inspection-governance"',
         '"knowledge-index-health"',
         '"permission-visibility"',
+        "REGRESSION_TARGETED_SUITE_NAMES",
         "run_regression_suite(",
+        'suite == "all-targeted"',
         'suite == "runner-reliability"',
         'suite == "code-inspection-governance"',
         'suite == "knowledge-index-health"',
@@ -207,6 +211,125 @@ def test_full_chain_regression_report_includes_suite_coverage():
     assert dashboard_coverage["is_complete_chain"] is False
     assert "version_dashboard" in dashboard_coverage["covered_keys"]
     assert "runner_reliability" in dashboard_coverage["skipped_keys"]
+
+    targeted_coverage = module.regression_suite_coverage("all-targeted")
+    assert targeted_coverage["is_complete_chain"] is False
+    assert "runner_reliability" in targeted_coverage["covered_keys"]
+    assert "assistant_draft_governance" in targeted_coverage["covered_keys"]
+    assert "permission_visibility" in targeted_coverage["covered_keys"]
+    assert "full_chain_trace" in targeted_coverage["skipped_keys"]
+    assert targeted_coverage["covered_domain_count"] > dashboard_coverage["covered_domain_count"]
+
+
+def test_full_chain_regression_all_targeted_suite_aggregates_fast_suite_results(monkeypatch):
+    module = _load_full_chain_regression_module()
+    called: list[str] = []
+
+    class FakeClient:
+        def login(self, username: str, password: str):
+            del password
+            called.append("runner-reliability")
+            return {"user": {"username": username}}
+
+    def fixture_repository(slug: str, branch: str):
+        del slug, branch
+        return Path("/tmp/full-chain-fixture")
+
+    def runner_reliability(client, *, repo_path, slug):
+        del client, repo_path, slug
+        return [module.StepResult("runner_reliability", "ok")]
+
+    def suite_result(name: str):
+        def _result(*args, **kwargs):
+            del args, kwargs
+            called.append(name)
+            return [module.StepResult(name, "ok")]
+
+        return _result
+
+    monkeypatch.setattr(module, "create_fixture_repository", fixture_repository)
+    monkeypatch.setattr(module, "validate_ai_executor_runner_reliability", runner_reliability)
+    monkeypatch.setattr(module, "validate_version_dashboard_quick_regression", suite_result("version_dashboard"))
+    monkeypatch.setattr(module, "validate_assistant_draft_governance", suite_result("assistant_draft_governance"))
+    monkeypatch.setattr(
+        module,
+        "validate_code_inspection_governance_quick_regression",
+        suite_result("code_inspection_governance"),
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_knowledge_index_health_quick_regression",
+        suite_result("knowledge_index_health"),
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_permission_visibility_quick_regression",
+        suite_result("permission_visibility"),
+    )
+
+    results = module.run_regression_suite(
+        FakeClient(),
+        suite="all-targeted",
+        task_execution_mode="deterministic",
+        username="admin@example.com",
+        password="admin123",
+    )
+
+    assert [item.name for item in results[:2]] == ["suite", "coverage"]
+    result_names = [item.name for item in results]
+    assert "runner-reliability:runner_reliability" in result_names
+    assert "version-dashboard:version_dashboard" in result_names
+    assert "assistant-draft-governance:assistant_draft_governance" in result_names
+    assert "code-inspection-governance:code_inspection_governance" in result_names
+    assert "knowledge-index-health:knowledge_index_health" in result_names
+    assert "permission-visibility:permission_visibility" in result_names
+    assert called == [
+        "runner-reliability",
+        "version_dashboard",
+        "assistant_draft_governance",
+        "code_inspection_governance",
+        "knowledge_index_health",
+        "permission_visibility",
+    ]
+
+
+def test_full_chain_regression_failed_json_report_keeps_suite_coverage_steps(
+    monkeypatch,
+    tmp_path,
+):
+    module = _load_full_chain_regression_module()
+    report_path = tmp_path / "full-chain-failed.json"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+    def fail_regression(*args, **kwargs):
+        del args, kwargs
+        raise module.RegressionError("boom")
+
+    monkeypatch.setattr(module, "ApiClient", FakeClient)
+    monkeypatch.setattr(module, "run_regression_suite", fail_regression)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "full_chain_regression.py",
+            "--suite",
+            "all-targeted",
+            "--json-output",
+            str(report_path),
+        ],
+    )
+
+    assert module.main() == 1
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert report["status"] == "failed"
+    assert report["suite"] == "all-targeted"
+    assert report["error"] == "boom"
+    assert report["coverage"]["is_complete_chain"] is False
+    assert [step["name"] for step in report["steps"]] == ["suite", "coverage"]
 
 
 def test_full_chain_regression_script_supports_version_dashboard_suite():
