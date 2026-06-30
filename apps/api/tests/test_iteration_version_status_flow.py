@@ -521,6 +521,21 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     assert "关闭待确认项" in blocker_by_source["code_review_report"]["resolution_hint"]
     assert blocker_by_source["product_version_branch_config"]["action_label"] == "维护分支"
     assert blocker_by_source["jenkins_release"]["action_label"] == "排查发布"
+    assert [item["priority"] for item in data["next_actions"]] == [1, 2, 3]
+    assert [item["source_type"] for item in data["next_actions"]] == [
+        "bug",
+        "bug",
+        "jenkins_release",
+    ]
+    assert data["next_actions"][0]["source_label"] == "Bug"
+    assert data["next_actions"][0]["full_chain_subject_type"] == "bug"
+    assert data["next_actions"][0]["full_chain_subject_id"] in {
+        "bug_version_dashboard",
+        "bug_version_dashboard_from_inspection",
+    }
+    assert data["next_actions"][2]["source_label"] == "发布记录"
+    assert data["next_actions"][2]["full_chain_subject_type"] == "jenkins_release"
+    assert data["next_actions"][2]["full_chain_subject_id"] == "release_dashboard"
     assert data["branch_configs"][0]["repository_name"] == "Dashboard Repo"
     assert data["branch_quality_governance"] == [
         {
@@ -842,6 +857,23 @@ def test_product_version_dashboard_blocks_release_without_successful_release_rec
             "title": "缺少成功发布记录",
         }
     ]
+    assert data["next_actions"] == [
+        {
+            "action_label": "排查发布",
+            "action_target_id": version["id"],
+            "action_target_type": "product_version",
+            "full_chain_subject_id": version["id"],
+            "full_chain_subject_type": "product_version",
+            "id": None,
+            "priority": 1,
+            "reason": "缺少成功发布记录，不能确认版本已完成发布。",
+            "resolution_hint": "登记或同步成功发布记录后解除发布阻塞。",
+            "severity": "high",
+            "source_label": "发布记录",
+            "source_type": "jenkins_release",
+            "title": "缺少成功发布记录",
+        }
+    ]
 
     app.state.store.jenkins_release_records["release_success"] = {
         "build_id": "99",
@@ -862,3 +894,4 @@ def test_product_version_dashboard_blocks_release_without_successful_release_rec
     data_with_release = response_with_release.json()["data"]
     assert data_with_release["summary"]["blockers"] == 0
     assert data_with_release["blockers"] == []
+    assert data_with_release["next_actions"] == []

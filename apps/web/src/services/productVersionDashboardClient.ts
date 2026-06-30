@@ -184,6 +184,13 @@ type ProductVersionDashboardBlockerItem = {
   title?: string;
 };
 
+type ProductVersionDashboardNextActionItem = ProductVersionDashboardBlockerItem & {
+  full_chain_subject_id?: string | null;
+  full_chain_subject_type?: string | null;
+  priority?: number;
+  source_label?: string;
+};
+
 type ProductVersionDashboardAccessIssue = {
   code?: string;
   message?: string;
@@ -246,6 +253,7 @@ type ProductVersionDashboardResponse = {
   code_inspection_reports?: ProductVersionDashboardCodeInspectionReport[];
   code_review_reports?: ProductVersionDashboardCodeReviewReport[];
   knowledge_deposits?: ProductVersionDashboardKnowledgeDepositItem[];
+  next_actions?: ProductVersionDashboardNextActionItem[];
   releases?: ProductVersionDashboardReleaseItem[];
   requirement_status_counts?: ProductVersionDashboardStatusCount[];
   requirements?: RequirementListItem[];
@@ -331,6 +339,21 @@ export type ProductVersionDashboard = {
     taskTitle: string;
     title: string;
     updatedAt: string;
+  }>;
+  nextActions: Array<{
+    actionLabel: string;
+    actionTargetId?: string;
+    actionTargetType: string;
+    fullChainSubjectId?: string;
+    fullChainSubjectType?: string;
+    id?: string;
+    priority: number;
+    reason: string;
+    resolutionHint: string;
+    severity: string;
+    sourceLabel: string;
+    sourceType: string;
+    title: string;
   }>;
   releases: Array<{
     buildId?: string;
@@ -670,6 +693,21 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
       taskTitle: deposit.task_title ?? deposit.ai_task_id ?? '-',
       title: deposit.title ?? deposit.id,
       updatedAt: formatListDate(deposit.updated_at ?? undefined),
+    })),
+    nextActions: (dashboard.next_actions ?? []).map((action, index) => ({
+      actionLabel: action.action_label ?? '处理',
+      actionTargetId: action.action_target_id ?? action.id,
+      actionTargetType: action.action_target_type ?? action.source_type ?? '-',
+      fullChainSubjectId: action.full_chain_subject_id ?? undefined,
+      fullChainSubjectType: action.full_chain_subject_type ?? undefined,
+      id: action.id ?? undefined,
+      priority: normalizeDashboardCount(action.priority || index + 1),
+      reason: action.reason ?? '-',
+      resolutionHint: action.resolution_hint ?? '打开关联对象并处理阻塞原因。',
+      severity: action.severity ?? 'medium',
+      sourceLabel: action.source_label ?? action.source_type ?? '-',
+      sourceType: action.source_type ?? '-',
+      title: action.title ?? action.id ?? '-',
     })),
     releases: (dashboard.releases ?? []).map((release) => ({
       buildId: formatUnknownValue(release.build_id),

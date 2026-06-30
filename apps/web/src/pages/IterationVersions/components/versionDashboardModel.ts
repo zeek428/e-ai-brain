@@ -17,6 +17,22 @@ export type DashboardReadinessItem = DashboardHealthItem;
 
 type DashboardRequirementImpact = NonNullable<ProductVersionDashboard['statusImpact']>['updatedRequirements'][number];
 
+type DashboardActionTarget = {
+  actionLabel?: string;
+  actionTargetId?: string;
+  actionTargetType?: string;
+  fullChainSubjectId?: string;
+  fullChainSubjectType?: string;
+  id?: string;
+  priority?: number;
+  reason?: string;
+  resolutionHint?: string;
+  severity?: string;
+  sourceLabel?: string;
+  sourceType?: string;
+  title?: string;
+};
+
 export type DashboardGovernanceConclusion = {
   detail: string;
   level: DashboardHealthItem['level'];
@@ -31,7 +47,7 @@ export type DashboardStatusImpactRow = DashboardRequirementImpact & {
   impactLabel: string;
 };
 
-export type DashboardBlockerActionItem = ProductVersionDashboard['blockers'][number] & {
+export type DashboardBlockerActionItem = DashboardActionTarget & {
   actionHref?: string;
   fullChainHref?: string;
   priority: number;
@@ -101,7 +117,7 @@ const blockerSourcePriority: Record<string, number> = {
   product_version_branch_config: 6,
 };
 
-export function blockerActionHref(blocker: ProductVersionDashboard['blockers'][number], versionId: string) {
+export function blockerActionHref(blocker: DashboardActionTarget, versionId: string) {
   const targetType = blocker.actionTargetType || blocker.sourceType;
   const targetId = blocker.actionTargetId || blocker.id;
   if (!targetId) {
@@ -172,6 +188,25 @@ export function buildBlockerActionQueue(dashboard: ProductVersionDashboard): Das
       ...item,
       priority: index + 1,
     }));
+}
+
+export function buildDashboardActionQueue(dashboard: ProductVersionDashboard): DashboardBlockerActionItem[] {
+  if (!dashboard.nextActions.length) {
+    return buildBlockerActionQueue(dashboard);
+  }
+  return dashboard.nextActions.map((action, index) => {
+    const actionHref = blockerActionHref(action, dashboard.version.id);
+    const fallbackSubjectType = blockerSubjectType(String(action.sourceType ?? ''));
+    const subjectType = action.fullChainSubjectType || fallbackSubjectType;
+    const subjectId = action.fullChainSubjectId || action.id;
+    return {
+      ...action,
+      actionHref,
+      fullChainHref: subjectType && subjectId ? fullChainSubjectHref(subjectType, subjectId) : undefined,
+      priority: action.priority || index + 1,
+      sourceLabel: action.sourceLabel || dashboardBlockerSourceLabels[action.sourceType ?? ''] || action.sourceType || '-',
+    };
+  });
 }
 
 export function buildStatusImpactRows(

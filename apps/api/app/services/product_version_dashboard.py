@@ -29,6 +29,38 @@ SEVERE_CODE_RISKS = {"critical", "high"}
 PENDING_CODE_REVIEW_STATUSES = {"pending_review", "waiting_review"}
 SEARCHABLE_KNOWLEDGE_INDEX_STATUSES = {"indexed", "text_indexed", "vector_indexed"}
 VECTOR_READY_KNOWLEDGE_INDEX_STATUSES = {"indexed", "vector_indexed"}
+BLOCKER_SEVERITY_PRIORITY = {
+    "blocker": 1,
+    "critical": 1,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+}
+BLOCKER_SOURCE_PRIORITY = {
+    "bug": 1,
+    "jenkins_release": 2,
+    "code_inspection_report": 3,
+    "code_review_report": 4,
+    "requirement": 5,
+    "product_version_branch_config": 6,
+}
+BLOCKER_SOURCE_LABELS = {
+    "bug": "Bug",
+    "code_inspection_report": "代码巡检",
+    "code_review_report": "代码评审",
+    "jenkins_release": "发布记录",
+    "product_version_branch_config": "代码分支",
+    "requirement": "需求",
+}
+FULL_CHAIN_SUBJECT_TYPES = {
+    "bug",
+    "code_inspection_report",
+    "code_review_report",
+    "jenkins_release",
+    "product_version",
+    "product_version_branch_config",
+    "requirement",
+}
 
 
 def _blocker_action_context(source_type: str) -> tuple[str, str]:
@@ -93,6 +125,58 @@ def _dashboard_blocker(
         "source_type": source_type,
         "title": title,
     }
+
+
+def _blocker_sort_key(blocker: dict[str, Any]) -> tuple[int, int, str, str]:
+    severity = str(blocker.get("severity") or "").lower()
+    source_type = str(blocker.get("source_type") or "")
+    return (
+        BLOCKER_SEVERITY_PRIORITY.get(severity, 4),
+        BLOCKER_SOURCE_PRIORITY.get(source_type, 99),
+        str(blocker.get("title") or ""),
+        str(blocker.get("action_target_id") or blocker.get("id") or ""),
+    )
+
+
+def _blocker_full_chain_subject(blocker: dict[str, Any]) -> tuple[str | None, str | None]:
+    source_type = str(blocker.get("source_type") or "")
+    blocker_id = blocker.get("id")
+    if source_type in FULL_CHAIN_SUBJECT_TYPES and blocker_id:
+        return source_type, str(blocker_id)
+    target_type = str(blocker.get("action_target_type") or "")
+    target_id = blocker.get("action_target_id")
+    if target_type in FULL_CHAIN_SUBJECT_TYPES and target_id:
+        return target_type, str(target_id)
+    return None, None
+
+
+def _version_next_actions(
+    blockers: list[dict[str, Any]],
+    *,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    next_actions = []
+    for index, blocker in enumerate(blockers[:limit], start=1):
+        full_chain_subject_type, full_chain_subject_id = _blocker_full_chain_subject(blocker)
+        source_type = str(blocker.get("source_type") or "")
+        next_actions.append(
+            {
+                "action_label": blocker.get("action_label"),
+                "action_target_id": blocker.get("action_target_id"),
+                "action_target_type": blocker.get("action_target_type"),
+                "full_chain_subject_id": full_chain_subject_id,
+                "full_chain_subject_type": full_chain_subject_type,
+                "id": blocker.get("id"),
+                "priority": index,
+                "reason": blocker.get("reason"),
+                "resolution_hint": blocker.get("resolution_hint"),
+                "severity": blocker.get("severity"),
+                "source_label": BLOCKER_SOURCE_LABELS.get(source_type, source_type),
+                "source_type": source_type,
+                "title": blocker.get("title"),
+            }
+        )
+    return next_actions
 
 
 def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
@@ -925,16 +1009,20 @@ def product_version_dashboard_response(
         if next_status
         else None
     )
-    blockers = _build_blockers(
-        branch_configs=branch_configs,
-        bugs=bugs,
-        code_inspection_reports=code_inspection_reports,
-        code_review_reports=code_review_reports,
-        releases=releases,
-        status_impact=status_impact,
-        target_status=next_status,
-        version_id=version_id,
+    blockers = sorted(
+        _build_blockers(
+            branch_configs=branch_configs,
+            bugs=bugs,
+            code_inspection_reports=code_inspection_reports,
+            code_review_reports=code_review_reports,
+            releases=releases,
+            status_impact=status_impact,
+            target_status=next_status,
+            version_id=version_id,
+        ),
+        key=_blocker_sort_key,
     )
+    next_actions = _version_next_actions(blockers)
     code_inspection_report_ids = {
         str(report.get("id") or "") for report in code_inspection_reports if report.get("id")
     }
@@ -989,6 +1077,7 @@ def product_version_dashboard_response(
         "code_inspection_reports": code_inspection_reports[:20],
         "code_review_reports": code_review_reports[:20],
         "knowledge_deposits": knowledge_deposits[:20],
+        "next_actions": next_actions,
         "releases": releases[:20],
         "requirement_status_counts": _status_counts(requirements),
         "requirements": requirements[:50],

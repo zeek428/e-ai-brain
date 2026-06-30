@@ -12,7 +12,7 @@ import {
   type ProductVersionDashboard,
 } from '../../../services/aiBrain';
 import {
-  buildBlockerActionQueue,
+  buildDashboardActionQueue,
   dashboardHealthLevelLabels,
   internalHref,
   summarizeBranchQualityGovernance,
@@ -39,7 +39,7 @@ export function VersionDashboardActions({
   onViewRequirements,
   versionStatusLabels,
 }: VersionDashboardActionsProps) {
-  const priorityActions = buildBlockerActionQueue(dashboard).slice(0, 3);
+  const priorityActions = buildDashboardActionQueue(dashboard).slice(0, 3);
 
   return (
     <div>

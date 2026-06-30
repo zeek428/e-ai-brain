@@ -931,6 +931,53 @@ describe('IterationVersionsPage', () => {
                 title: '缺少成功发布记录',
               },
             ],
+            next_actions: [
+              {
+                action_label: '处理 Bug',
+                action_target_id: 'bug_dashboard',
+                action_target_type: 'bug',
+                full_chain_subject_id: 'bug_dashboard',
+                full_chain_subject_type: 'bug',
+                id: 'bug_dashboard',
+                priority: 1,
+                reason: 'critical Bug 仍未关闭',
+                resolution_hint: '修复、验证并关闭 blocker/critical Bug 后解除发布阻塞。',
+                severity: 'high',
+                source_label: 'Bug',
+                source_type: 'bug',
+                title: '后端建议：先关闭发布阻塞 Bug',
+              },
+              {
+                action_label: '排查发布',
+                action_target_id: 'version_dashboard',
+                action_target_type: 'product_version',
+                full_chain_subject_id: 'version_dashboard',
+                full_chain_subject_type: 'product_version',
+                id: null,
+                priority: 2,
+                reason: '缺少成功发布记录，不能确认版本已完成发布。',
+                resolution_hint: '登记或同步成功发布记录后解除发布阻塞。',
+                severity: 'high',
+                source_label: '发布记录',
+                source_type: 'jenkins_release',
+                title: '后端建议：补充成功发布记录',
+              },
+              {
+                action_label: '处理评审',
+                action_target_id: 'code_review_report_dashboard',
+                action_target_type: 'code_review_report',
+                full_chain_subject_id: 'code_review_report_dashboard',
+                full_chain_subject_type: 'code_review_report',
+                id: 'code_review_report_dashboard',
+                priority: 3,
+                reason: '代码评审仍待确认，未完成版本准入确认',
+                resolution_hint: '确认代码评审结论、补充整改或关闭待确认项后解除版本准入阻塞。',
+                severity: 'medium',
+                source_label: '代码评审',
+                source_type: 'code_review_report',
+                title: '后端建议：确认代码评审',
+              },
+            ],
             branch_configs: [
               {
                 base_branch: 'main',
@@ -1161,6 +1208,9 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByRole('button', { name: /查看需求/ }).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /维护分支/ })).toBeInTheDocument();
     expect(screen.getByText('优先处理建议')).toBeInTheDocument();
+    expect(screen.getByText('后端建议：先关闭发布阻塞 Bug')).toBeInTheDocument();
+    expect(screen.getByText('后端建议：补充成功发布记录')).toBeInTheDocument();
+    expect(screen.getByText('后端建议：确认代码评审')).toBeInTheDocument();
     expect(screen.getAllByText('4 个阻塞项').length).toBeGreaterThan(0);
     expect(screen.getByText('版本治理结论')).toBeInTheDocument();
     expect(screen.getByText('版本暂不建议推进')).toBeInTheDocument();

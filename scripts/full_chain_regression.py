@@ -18,6 +18,30 @@ from urllib.parse import urlencode, urlparse
 DEFAULT_API_BASE_URL = "http://localhost:8000"
 FIXTURE_ROOT = Path(os.getenv("AI_BRAIN_FULL_CHAIN_FIXTURE_ROOT", "/tmp/e-ai-brain-full-chain-fixtures"))
 VERSION_DASHBOARD_BLOCKER_SEVERITIES = {"info", "low", "medium", "high", "critical", "blocker"}
+VERSION_DASHBOARD_BLOCKER_SEVERITY_PRIORITY = {
+    "blocker": 1,
+    "critical": 1,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+}
+VERSION_DASHBOARD_BLOCKER_SOURCE_PRIORITY = {
+    "bug": 1,
+    "jenkins_release": 2,
+    "code_inspection_report": 3,
+    "code_review_report": 4,
+    "requirement": 5,
+    "product_version_branch_config": 6,
+}
+VERSION_DASHBOARD_FULL_CHAIN_SUBJECT_TYPES = {
+    "bug",
+    "code_inspection_report",
+    "code_review_report",
+    "jenkins_release",
+    "product_version",
+    "product_version_branch_config",
+    "requirement",
+}
 
 
 class RegressionError(RuntimeError):
@@ -216,6 +240,103 @@ def validate_version_dashboard_blocker_actions(blockers: list[dict[str, Any]]) -
         _assert(blocker.get("action_target_type"), f"Version dashboard blocker missed action_target_type: {blocker}")
         _assert(blocker.get("action_target_id"), f"Version dashboard blocker missed action_target_id: {blocker}")
         _assert(blocker.get("resolution_hint"), f"Version dashboard blocker missed resolution_hint: {blocker}")
+
+
+def _version_dashboard_blocker_sort_key(blocker: dict[str, Any]) -> tuple[int, int, str, str]:
+    severity = str(blocker.get("severity") or "").lower()
+    source_type = str(blocker.get("source_type") or "")
+    return (
+        VERSION_DASHBOARD_BLOCKER_SEVERITY_PRIORITY.get(severity, 4),
+        VERSION_DASHBOARD_BLOCKER_SOURCE_PRIORITY.get(source_type, 99),
+        str(blocker.get("title") or ""),
+        str(blocker.get("action_target_id") or blocker.get("id") or ""),
+    )
+
+
+def _version_dashboard_full_chain_subject(
+    blocker: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    source_type = str(blocker.get("source_type") or "")
+    blocker_id = blocker.get("id")
+    if source_type in VERSION_DASHBOARD_FULL_CHAIN_SUBJECT_TYPES and blocker_id:
+        return source_type, str(blocker_id)
+    action_target_type = str(blocker.get("action_target_type") or "")
+    action_target_id = blocker.get("action_target_id")
+    if (
+        action_target_type in VERSION_DASHBOARD_FULL_CHAIN_SUBJECT_TYPES
+        and action_target_id
+    ):
+        return action_target_type, str(action_target_id)
+    return None, None
+
+
+def validate_version_dashboard_next_actions(
+    dashboard: dict[str, Any],
+    blockers: list[dict[str, Any]],
+) -> None:
+    next_actions = dashboard.get("next_actions")
+    _assert(
+        isinstance(next_actions, list),
+        f"Version dashboard next_actions is not a list: {next_actions}",
+    )
+    if not blockers:
+        _assert(
+            next_actions == [],
+            f"Version dashboard next_actions should be empty: {next_actions}",
+        )
+        return
+    expected_blockers = sorted(blockers, key=_version_dashboard_blocker_sort_key)[:3]
+    _assert(
+        len(next_actions) == len(expected_blockers),
+        (
+            "Version dashboard next_actions should expose top "
+            f"{len(expected_blockers)} blockers: {next_actions}"
+        ),
+    )
+    for index, (action, blocker) in enumerate(
+        zip(next_actions, expected_blockers),
+        start=1,
+    ):
+        _assert(
+            action.get("priority") == index,
+            f"Version dashboard next action priority drifted: {action}",
+        )
+        for field in (
+            "action_label",
+            "action_target_id",
+            "action_target_type",
+            "reason",
+            "resolution_hint",
+            "severity",
+            "source_type",
+            "title",
+        ):
+            _assert(
+                action.get(field) == blocker.get(field),
+                (
+                    f"Version dashboard next action {field} drifted: "
+                    f"action={action}, blocker={blocker}"
+                ),
+            )
+        _assert(
+            action.get("source_label"),
+            f"Version dashboard next action missed source_label: {action}",
+        )
+        subject_type, subject_id = _version_dashboard_full_chain_subject(blocker)
+        _assert(
+            action.get("full_chain_subject_type") == subject_type,
+            (
+                "Version dashboard next action full-chain type drifted: "
+                f"action={action}, blocker={blocker}"
+            ),
+        )
+        _assert(
+            action.get("full_chain_subject_id") == subject_id,
+            (
+                "Version dashboard next action full-chain id drifted: "
+                f"action={action}, blocker={blocker}"
+            ),
+        )
 
 
 def validate_version_dashboard_branch_quality(
@@ -1412,6 +1533,7 @@ def validate_code_inspection_governance_quick_regression(
     )
     dashboard_blockers = dashboard.get("blockers", [])
     validate_version_dashboard_blocker_actions(dashboard_blockers)
+    validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     inspection_blockers = [
         blocker
         for blocker in dashboard_blockers
@@ -1851,6 +1973,7 @@ def validate_version_dashboard_quick_regression(
         "Version dashboard quick check did not expose blockers.",
     )
     validate_version_dashboard_blocker_actions(dashboard_blockers)
+    validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     release_evidence_blockers = [
         blocker
         for blocker in dashboard_blockers
@@ -2427,6 +2550,7 @@ def run_regression(
     _assert(dashboard["summary"]["blockers"] >= 1, "Version dashboard did not expose blockers.")
     _assert(dashboard_blockers, "Version dashboard blocker list is empty.")
     validate_version_dashboard_blocker_actions(dashboard_blockers)
+    validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     inspection_blockers = [
         blocker
         for blocker in dashboard_blockers
