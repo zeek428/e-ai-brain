@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.774 |
+| 功能版本 | v1.1.775 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.775 | 2026-06-30 | 真实全链路回归版本驾驶舱 helper 纳入 `evidence_coverage` 门禁：校验证据域顺序、状态、计数和覆盖分一致性 | Codex |
 | v1.1.774 | 2026-06-30 | 迭代版本总览新增 `evidence_coverage` 证据覆盖评分：按需求、任务、分支、巡检、评审、Bug、知识、发布和状态推进输出覆盖/阻断/缺口摘要 | Codex |
 | v1.1.773 | 2026-06-30 | 用户反馈原始列表补齐分页性能治理：`GET /api/insights/user-feedback` 带分页时走 count/page read model，支持摘要模式和查询性能观测，用户洞察聚合列表反馈摘要截断 | Codex |
 | v1.1.772 | 2026-06-30 | 真实全链路回归脚本 AI 助手问答校验拆分：确定性助手、版本引用、`assistant.iteration`、版本总览投影和会话历史断言迁移到 `full_chain_regression_assistant_qa.py` | Codex |
@@ -2136,7 +2137,7 @@ suggested → rejected
 - `FULL_CHAIN_SUITE=permission-visibility` 或 `--suite permission-visibility` 可独立执行角色列表、权限矩阵、角色详情 `access_preview`、产品/知识空间范围名称、菜单权限缺口和用户权限诊断门禁，用于快速判断系统管理权限可视化和授权排障链路是否闭环。
 - 全链路脚本的目标域、快速 suite 编排和 coverage 计算必须由 `scripts/full_chain_regression_suites.py` 承接；`scripts/full_chain_regression.py` 只保留公开 API 执行、断言、报告输出和命令行入口，避免后续新增版本总览、助手问答或治理套件时继续把元数据贴回主执行脚本。
 - Runner 可靠性快速回归逻辑必须由 `scripts/full_chain_regression_runner.py` 承接，包括 Runner 初始健康告警、心跳恢复、Token 轮换、旧 Token 拒绝、任务取消、人工重试、重试任务认领完成、重复重试拒绝、重试审计、租约超时重派、死信转换、死信列表和任务日志校验；`scripts/full_chain_regression.py` 只导入 `validate_ai_executor_runner_reliability` 并保持 suite 编排，不得重新贴回 Runner 细节。
-- 版本驾驶舱快速回归校验必须由 `scripts/full_chain_regression_version_dashboard.py` 承接，包括 blocker 结构、next_actions 排序与全链路主体、`governance_conclusion`、`delivery_stage_overview` 和 `branch_quality_governance` 分支质量门禁；`scripts/full_chain_regression.py` 只导入这些 validator 并保持公开 API 场景编排。
+- 版本驾驶舱快速回归校验必须由 `scripts/full_chain_regression_version_dashboard.py` 承接，包括 blocker 结构、next_actions 排序与全链路主体、`governance_conclusion`、`delivery_stage_overview`、`evidence_coverage` 证据域顺序/状态/计数/覆盖分一致性和 `branch_quality_governance` 分支质量门禁；`scripts/full_chain_regression.py` 只导入这些 validator 并保持公开 API 场景编排。
 - AI 助手问答快速回归逻辑必须由 `scripts/full_chain_regression_assistant_qa.py` 承接，包括确定性助手、产品版本引用、`assistant.iteration` tool result、版本总览 `next_actions`、`delivery_stage_overview`、`governance_conclusion`、`status_impact` 投影和会话历史持久化校验；`scripts/full_chain_regression.py` 只导入 `validate_assistant_qa_quick_regression` 并保持 suite 编排，不得重新贴回助手问答快速套件细节。
 - 代码巡检治理快速回归逻辑必须由 `scripts/full_chain_regression_code_inspection.py` 承接，包括本地完整扫描、质量门禁、Bug/整改任务写回、治理压力、提交人治理、趋势对比和版本总览代码巡检/Bug 阻塞校验；`scripts/full_chain_regression.py` 只导入 `validate_code_inspection_governance_quick_regression` 并保持 suite 编排，不得重新贴回代码巡检治理快速套件细节。
 - AI 动作草案治理快速回归逻辑必须由 `scripts/full_chain_regression_assistant_drafts.py` 承接，包括草案创建、治理摘要、查看埋点、用户修改、确认落库、预检失败、失败原因、人工重试、修复后确认、列表 read model 和审计链路校验；`scripts/full_chain_regression.py` 只导入 `validate_assistant_draft_governance` 并保持 suite 编排，不得重新贴回草案治理细节。

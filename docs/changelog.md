@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本纳入版本证据覆盖门禁：`full`、`version-dashboard`、`assistant-qa` 和 `code-inspection-governance` 均调用 `validate_version_dashboard_evidence_coverage`，重算并校验 `evidence_coverage` 域顺序、状态、阻断/缺口计数和覆盖分一致性。
 - 迭代版本总览新增证据覆盖评分：`GET /api/product-versions/{version_id}/dashboard` 返回 `evidence_coverage`，按需求、任务、分支、巡检、评审、Bug、知识、发布和状态推进汇总覆盖/阻断/缺口，版本总览首屏展示覆盖分和证据域状态。
 - 用户反馈原始列表补齐分页性能治理：`GET /api/insights/user-feedback` 带 `page/page_size` 时走 count/page read model，返回 `query/performance`，并支持 `summary_only=true` 截断长反馈内容；用户洞察聚合列表同步截断反馈摘要，降低大响应和慢查询风险。
 - 真实全链路回归脚本 AI 助手问答校验继续拆分：新增 `scripts/full_chain_regression_assistant_qa.py` 承接确定性助手、版本引用、`assistant.iteration`、版本总览投影和会话历史断言，主脚本继续聚焦 suite 编排和公开 API 主链路。

@@ -32,6 +32,7 @@ from full_chain_regression_version_dashboard import (  # noqa: E402
     validate_version_dashboard_blocker_actions,
     validate_version_dashboard_branch_quality,
     validate_version_dashboard_delivery_stage_overview,
+    validate_version_dashboard_evidence_coverage,
     validate_version_dashboard_governance_conclusion,
     validate_version_dashboard_next_actions,
     validate_version_dashboard_status_impact,
@@ -583,6 +584,7 @@ def validate_version_dashboard_quick_regression(
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     validate_version_dashboard_delivery_stage_overview(dashboard)
+    validate_version_dashboard_evidence_coverage(dashboard, require_blockers=True)
     validate_version_dashboard_status_impact(dashboard)
     release_evidence_blockers = [
         blocker
@@ -1180,6 +1182,10 @@ def run_regression(
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     validate_version_dashboard_delivery_stage_overview(dashboard)
+    dashboard_evidence_coverage = validate_version_dashboard_evidence_coverage(
+        dashboard,
+        require_blockers=True,
+    )
     dashboard_status_impact = validate_version_dashboard_status_impact(dashboard)
     inspection_blockers = [
         blocker
@@ -1218,6 +1224,7 @@ def run_regression(
             (
                 f"blockers={dashboard['summary']['blockers']}, "
                 f"blocker_actions={len(dashboard_blockers)}, "
+                f"evidence_score={dashboard_evidence_coverage['score']}, "
                 f"branch_quality={branch_quality['status']}"
             ),
         )

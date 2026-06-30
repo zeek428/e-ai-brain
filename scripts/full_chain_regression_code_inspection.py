@@ -11,6 +11,7 @@ from full_chain_regression_version_dashboard import (
     validate_version_dashboard_blocker_actions,
     validate_version_dashboard_branch_quality,
     validate_version_dashboard_delivery_stage_overview,
+    validate_version_dashboard_evidence_coverage,
     validate_version_dashboard_governance_conclusion,
     validate_version_dashboard_next_actions,
     validate_version_dashboard_status_impact,
@@ -437,6 +438,7 @@ def validate_code_inspection_governance_quick_regression(
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     validate_version_dashboard_delivery_stage_overview(dashboard)
+    validate_version_dashboard_evidence_coverage(dashboard, require_blockers=True)
     validate_version_dashboard_status_impact(dashboard)
     inspection_blockers = [
         blocker

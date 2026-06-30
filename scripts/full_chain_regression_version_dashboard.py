@@ -38,6 +38,15 @@ VERSION_DASHBOARD_DELIVERY_STAGE_KEYS = [
     "releases",
     "status-impact",
 ]
+VERSION_DASHBOARD_EVIDENCE_STATUSES = {
+    "blocked",
+    "covered",
+    "inaccessible",
+    "missing",
+    "not_applicable",
+    "risk",
+}
+VERSION_DASHBOARD_LEVELS = {"error", "info", "success", "warning"}
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -286,6 +295,139 @@ def validate_version_dashboard_delivery_stage_overview(dashboard: dict[str, Any]
             "发布阻塞" in release_stage_detail,
             f"Version dashboard release stage missed release blocker detail: {release_stage}",
         )
+
+
+def validate_version_dashboard_evidence_coverage(
+    dashboard: dict[str, Any],
+    *,
+    require_blockers: bool = False,
+) -> dict[str, Any]:
+    coverage = dashboard.get("evidence_coverage")
+    _assert(
+        isinstance(coverage, dict),
+        f"Version dashboard evidence_coverage is not an object: {coverage}",
+    )
+    for field in (
+        "blocking_domains",
+        "covered_domains",
+        "domains",
+        "gap_domains",
+        "level",
+        "score",
+        "summary",
+        "total_domains",
+    ):
+        _assert(
+            field in coverage,
+            f"Version dashboard evidence_coverage missed {field}: {coverage}",
+        )
+    _assert(
+        coverage.get("level") in VERSION_DASHBOARD_LEVELS,
+        f"Version dashboard evidence coverage level unsupported: {coverage}",
+    )
+    _assert(
+        coverage.get("summary"),
+        f"Version dashboard evidence coverage missed summary: {coverage}",
+    )
+    domains = coverage.get("domains")
+    _assert(
+        isinstance(domains, list),
+        f"Version dashboard evidence coverage domains is not a list: {coverage}",
+    )
+    domain_keys = [str(domain.get("key") or "") for domain in domains if isinstance(domain, dict)]
+    _assert(
+        domain_keys == VERSION_DASHBOARD_DELIVERY_STAGE_KEYS,
+        f"Version dashboard evidence coverage domain order drifted: {domain_keys}",
+    )
+    for domain in domains:
+        _assert(
+            isinstance(domain, dict),
+            f"Version dashboard evidence coverage domain is not an object: {domain}",
+        )
+        for field in ("detail", "key", "level", "status", "title", "value"):
+            _assert(
+                field in domain and domain.get(field),
+                f"Version dashboard evidence coverage domain missed {field}: {domain}",
+            )
+        _assert(
+            domain.get("level") in VERSION_DASHBOARD_LEVELS,
+            f"Version dashboard evidence coverage domain level unsupported: {domain}",
+        )
+        _assert(
+            domain.get("status") in VERSION_DASHBOARD_EVIDENCE_STATUSES,
+            f"Version dashboard evidence coverage domain status unsupported: {domain}",
+        )
+        if domain.get("status") != "not_applicable":
+            _assert(
+                domain.get("action_label"),
+                f"Version dashboard evidence coverage domain missed action_label: {domain}",
+            )
+            _assert(
+                domain.get("action_target_id"),
+                f"Version dashboard evidence coverage domain missed action_target_id: {domain}",
+            )
+            _assert(
+                domain.get("action_target_type"),
+                f"Version dashboard evidence coverage domain missed action_target_type: {domain}",
+            )
+
+    scored_domains = [
+        domain for domain in domains if domain.get("status") != "not_applicable"
+    ]
+    total_domains = len(scored_domains)
+    covered_domains = sum(1 for domain in scored_domains if domain.get("status") == "covered")
+    gap_domains = sum(
+        1
+        for domain in scored_domains
+        if domain.get("status") in {"inaccessible", "missing", "risk"}
+    )
+    blocking_domains = sum(1 for domain in scored_domains if domain.get("level") == "error")
+    expected_score = int(round((covered_domains / total_domains) * 100)) if total_domains else 100
+    _assert(
+        int(coverage.get("total_domains") or 0) == total_domains,
+        f"Version dashboard evidence coverage total_domains drifted: {coverage}",
+    )
+    _assert(
+        int(coverage.get("covered_domains") or 0) == covered_domains,
+        f"Version dashboard evidence coverage covered_domains drifted: {coverage}",
+    )
+    _assert(
+        int(coverage.get("gap_domains") or 0) == gap_domains,
+        f"Version dashboard evidence coverage gap_domains drifted: {coverage}",
+    )
+    _assert(
+        int(coverage.get("blocking_domains") or 0) == blocking_domains,
+        f"Version dashboard evidence coverage blocking_domains drifted: {coverage}",
+    )
+    _assert(
+        int(coverage.get("score") or 0) == expected_score,
+        f"Version dashboard evidence coverage score drifted: {coverage}",
+    )
+    if blocking_domains:
+        _assert(
+            coverage.get("level") == "error",
+            f"Version dashboard evidence coverage should be error when blocked: {coverage}",
+        )
+        _assert(
+            "阻断" in str(coverage.get("summary") or ""),
+            f"Version dashboard evidence coverage missed blocker summary: {coverage}",
+        )
+    elif gap_domains:
+        _assert(
+            coverage.get("level") == "warning",
+            f"Version dashboard evidence coverage should warn when gaps exist: {coverage}",
+        )
+    else:
+        _assert(
+            coverage.get("level") == "success",
+            f"Version dashboard evidence coverage should succeed when complete: {coverage}",
+        )
+    if require_blockers or int((dashboard.get("summary") or {}).get("blockers") or 0) > 0:
+        _assert(
+            blocking_domains >= 1,
+            f"Version dashboard evidence coverage missed blocker domains: {coverage}",
+        )
+    return coverage
 
 
 def validate_version_dashboard_status_impact(

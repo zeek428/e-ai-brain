@@ -19,6 +19,20 @@ def _load_full_chain_regression_module():
     return module
 
 
+def _load_full_chain_version_dashboard_module():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression_version_dashboard.py"
+    spec = importlib.util.spec_from_file_location(
+        "full_chain_regression_version_dashboard",
+        script_path,
+    )
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_release_smoke_script_runs_fixed_readiness_and_web_gates():
     script_path = REPO_ROOT / "scripts" / "release_smoke.sh"
     assert script_path.exists()
@@ -112,8 +126,11 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         "validate_version_dashboard_next_actions",
         "validate_version_dashboard_governance_conclusion",
         "validate_version_dashboard_branch_quality",
+        "validate_version_dashboard_evidence_coverage",
         "validate_version_dashboard_status_impact",
         "validate_version_dashboard_status_impact_projection",
+        "evidence_coverage",
+        "Version dashboard evidence coverage score drifted",
         "governance_conclusion",
         "Version dashboard blocker missed source_type",
         "Version dashboard governance conclusion missed next_action",
@@ -235,7 +252,10 @@ def test_full_chain_regression_runner_reliability_is_split_from_runner():
     script_content = script_path.read_text(encoding="utf-8")
     runner_content = runner_path.read_text(encoding="utf-8")
 
-    assert "from full_chain_regression_runner import validate_ai_executor_runner_reliability" in script_content
+    assert (
+        "from full_chain_regression_runner import "
+        "validate_ai_executor_runner_reliability"
+    ) in script_content
     assert "def validate_ai_executor_runner_reliability(" not in script_content
     assert "def validate_runner_token_rotation(" not in script_content
     assert "def validate_runner_health_alert_projection(" not in script_content
@@ -256,15 +276,66 @@ def test_full_chain_regression_version_dashboard_checks_are_split_from_runner():
     assert "def validate_version_dashboard_next_actions(" not in script_content
     assert "def validate_version_dashboard_governance_conclusion(" not in script_content
     assert "def validate_version_dashboard_branch_quality(" not in script_content
+    assert "def validate_version_dashboard_evidence_coverage(" not in script_content
     assert "def validate_version_dashboard_status_impact(" not in script_content
     assert "VERSION_DASHBOARD_BLOCKER_SOURCE_PRIORITY" not in script_content
+    assert "VERSION_DASHBOARD_EVIDENCE_STATUSES" not in script_content
     assert "def validate_version_dashboard_blocker_actions(" in helper_content
     assert "def validate_version_dashboard_delivery_stage_overview(" in helper_content
     assert "def validate_version_dashboard_next_actions(" in helper_content
     assert "def validate_version_dashboard_governance_conclusion(" in helper_content
     assert "def validate_version_dashboard_branch_quality(" in helper_content
+    assert "def validate_version_dashboard_evidence_coverage(" in helper_content
     assert "def validate_version_dashboard_status_impact(" in helper_content
     assert "VERSION_DASHBOARD_BLOCKER_SOURCE_PRIORITY" in helper_content
+    assert "VERSION_DASHBOARD_EVIDENCE_STATUSES" in helper_content
+
+
+def test_full_chain_regression_validates_version_dashboard_evidence_coverage():
+    module = _load_full_chain_version_dashboard_module()
+    domain_statuses = {
+        "requirements": ("success", "covered"),
+        "tasks": ("success", "covered"),
+        "branches": ("error", "blocked"),
+        "inspections": ("warning", "missing"),
+        "code-reviews": ("error", "blocked"),
+        "bugs": ("error", "blocked"),
+        "knowledge-deposits": ("warning", "risk"),
+        "releases": ("error", "blocked"),
+        "status-impact": ("success", "covered"),
+    }
+    domains = [
+        {
+            "action_label": "处理",
+            "action_target_id": "version_demo",
+            "action_target_type": "product_version",
+            "detail": f"{key} detail",
+            "key": key,
+            "level": level,
+            "status": status,
+            "title": key,
+            "value": key,
+        }
+        for key, (level, status) in domain_statuses.items()
+    ]
+    dashboard = {
+        "evidence_coverage": {
+            "blocking_domains": 4,
+            "covered_domains": 3,
+            "domains": domains,
+            "gap_domains": 2,
+            "level": "error",
+            "score": 33,
+            "summary": "4 个交付域存在阻断，需先处理阻塞队列。",
+            "total_domains": 9,
+        },
+        "summary": {"blockers": 4},
+    }
+
+    assert module.validate_version_dashboard_evidence_coverage(
+        dashboard,
+        require_blockers=True,
+    ) == dashboard["evidence_coverage"]
 
 
 def test_full_chain_regression_assistant_draft_checks_are_split_from_runner():
@@ -273,7 +344,10 @@ def test_full_chain_regression_assistant_draft_checks_are_split_from_runner():
     script_content = script_path.read_text(encoding="utf-8")
     helper_content = helper_path.read_text(encoding="utf-8")
 
-    assert "from full_chain_regression_assistant_drafts import validate_assistant_draft_governance" in script_content
+    assert (
+        "from full_chain_regression_assistant_drafts import "
+        "validate_assistant_draft_governance"
+    ) in script_content
     assert "def validate_assistant_draft_governance(" not in script_content
     assert "DRAFT_PRECHECK_FAILED" not in script_content
     assert "assistant_action_draft.retry_requested" not in script_content
@@ -288,7 +362,10 @@ def test_full_chain_regression_knowledge_index_checks_are_split_from_runner():
     script_content = script_path.read_text(encoding="utf-8")
     helper_content = helper_path.read_text(encoding="utf-8")
 
-    assert "from full_chain_regression_knowledge import validate_knowledge_index_health_quick_regression" in script_content
+    assert (
+        "from full_chain_regression_knowledge import "
+        "validate_knowledge_index_health_quick_regression"
+    ) in script_content
     assert "def validate_knowledge_index_health_quick_regression(" not in script_content
     assert "Knowledge index health missed readable permission scope labels" not in script_content
     assert "/api/knowledge/documents/{document_id}/retry-index" not in script_content
@@ -322,7 +399,10 @@ def test_full_chain_regression_assistant_qa_checks_are_split_from_runner():
     script_content = script_path.read_text(encoding="utf-8")
     helper_content = helper_path.read_text(encoding="utf-8")
 
-    assert "from full_chain_regression_assistant_qa import validate_assistant_qa_quick_regression" in script_content
+    assert (
+        "from full_chain_regression_assistant_qa import "
+        "validate_assistant_qa_quick_regression"
+    ) in script_content
     assert "def validate_assistant_qa_quick_regression(" not in script_content
     assert '"assistant_qa_quick"' not in script_content
     assert "Assistant QA history missed iteration tool result" not in script_content
@@ -416,9 +496,21 @@ def test_full_chain_regression_all_targeted_suite_aggregates_fast_suite_results(
 
     monkeypatch.setattr(module, "create_fixture_repository", fixture_repository)
     monkeypatch.setattr(module, "validate_ai_executor_runner_reliability", runner_reliability)
-    monkeypatch.setattr(module, "validate_version_dashboard_quick_regression", suite_result("version_dashboard"))
-    monkeypatch.setattr(module, "validate_assistant_qa_quick_regression", suite_result("assistant_qa"))
-    monkeypatch.setattr(module, "validate_assistant_draft_governance", suite_result("assistant_draft_governance"))
+    monkeypatch.setattr(
+        module,
+        "validate_version_dashboard_quick_regression",
+        suite_result("version_dashboard"),
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_assistant_qa_quick_regression",
+        suite_result("assistant_qa"),
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_assistant_draft_governance",
+        suite_result("assistant_draft_governance"),
+    )
     monkeypatch.setattr(
         module,
         "validate_code_inspection_governance_quick_regression",
