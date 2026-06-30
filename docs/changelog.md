@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 迭代版本总览证据覆盖评分继续拆大文件：新增 `product_version_evidence_coverage` 承接证据域、权限降级、阻断/缺口/覆盖计数、覆盖分和摘要计算，`product_version_dashboard.py` 从 2122 行降至 1707 行并纳入 1800 行架构预算。
 - AI 动作草案预览校验继续拆大文件：新增 `assistant_action_draft_preview_helpers` 承接通用预览差异、引用校验、权限校验、修复动作和 validation 状态计算，`assistant_action_drafts.py` 从 2241 行降至 1960 行并将预算收紧到 2000 行。
 - 定时作业引用校验继续拆大文件：新增 `scheduled_job_ref_validation` 承接 AI Agent/Skill/模型网关、产品、插件动作/连接和多引用校验，`scheduled_jobs.py` 从 2235 行降至 2124 行并将预算收紧到 2200 行。
 - AI 执行器 Runner 健康投影继续拆大文件：新增 `ai_executor_runner_health` 承接系统默认 Runner、公开投影、心跳健康状态、健康告警和启动命令，`ai_executor_runners.py` 从 2300 行降至 2156 行并将预算收紧到 2200 行。

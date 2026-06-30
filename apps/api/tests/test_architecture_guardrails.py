@@ -7,6 +7,7 @@ MAX_DOMAIN_FILE_LINES = 2800
 MAX_AI_EXECUTOR_RUNNER_LINES = 2200
 MAX_CODE_INSPECTION_SERVICE_LINES = 2400
 MAX_PLUGIN_MAIN_SERVICE_LINES = 2300
+MAX_PRODUCT_VERSION_DASHBOARD_LINES = 1800
 MAX_SCHEDULED_JOB_SERVICE_LINES = 2200
 MAX_ASSISTANT_ACTION_DRAFT_LINES = 2000
 MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
@@ -20,6 +21,7 @@ DOMAIN_FILE_LINE_BUDGETS = {
     "apps/api/app/services/assistant_references.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/code_inspections.py": MAX_CODE_INSPECTION_SERVICE_LINES,
     "apps/api/app/services/plugins.py": MAX_PLUGIN_MAIN_SERVICE_LINES,
+    "apps/api/app/services/product_version_dashboard.py": MAX_PRODUCT_VERSION_DASHBOARD_LINES,
     "apps/api/app/services/scheduled_jobs.py": MAX_SCHEDULED_JOB_SERVICE_LINES,
     "apps/web/src/services/aiBrain.ts": MAX_FRONTEND_SERVICE_BARREL_LINES,
 }
@@ -354,6 +356,21 @@ def test_assistant_action_drafts_uses_split_preview_helpers_module():
     assert "def _generic_create_draft_preview(" not in entrypoint_source
     assert "def _validate_plugin_connection_ref(" not in entrypoint_source
     assert "def _with_action_permission_preview(" not in entrypoint_source
+
+
+def test_product_version_dashboard_uses_split_evidence_coverage_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/product_version_evidence_coverage.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/product_version_dashboard.py"
+
+    assert helper_path.exists(), (
+        "Move product version dashboard evidence coverage scoring to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "from app.services.product_version_evidence_coverage import" in entrypoint_source
+    assert "def version_evidence_coverage(" in helper_source
+    assert "def _version_evidence_coverage(" not in entrypoint_source
+    assert "def _evidence_domain(" not in entrypoint_source
 
 
 def test_code_inspections_uses_split_common_module():
