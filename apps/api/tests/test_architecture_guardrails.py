@@ -5,6 +5,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_DOMAIN_FILE_LINES = 2800
 MAX_PLUGIN_SERVICE_LINES = 2600
+MAX_PLUGIN_MAIN_SERVICE_LINES = 2300
 MAX_SCHEDULED_JOB_SERVICE_LINES = 2400
 MAX_ASSISTANT_ACTION_DRAFT_LINES = 2400
 MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
@@ -17,7 +18,7 @@ DOMAIN_FILE_LINE_BUDGETS = {
     "apps/api/app/services/assistant_chat.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/assistant_references.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/code_inspections.py": MAX_PLUGIN_SERVICE_LINES,
-    "apps/api/app/services/plugins.py": MAX_PLUGIN_SERVICE_LINES,
+    "apps/api/app/services/plugins.py": MAX_PLUGIN_MAIN_SERVICE_LINES,
     "apps/api/app/services/scheduled_jobs.py": MAX_SCHEDULED_JOB_SERVICE_LINES,
     "apps/web/src/services/aiBrain.ts": MAX_FRONTEND_SERVICE_BARREL_LINES,
 }
@@ -160,6 +161,25 @@ def test_plugin_entrypoint_uses_split_projection_module():
     assert "def public_plugin(" not in entrypoint_source
     assert "def public_invocation_log(" not in entrypoint_source
     assert "def redact_plugin_request_summary(" not in entrypoint_source
+
+
+def test_plugin_entrypoint_uses_split_store_helpers_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/plugin_store_helpers.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/plugins.py"
+
+    assert helper_path.exists(), (
+        "Move plugin MemoryStore compatibility, repository sync and generic validators "
+        "to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "from app.services.plugin_store_helpers import" in entrypoint_source
+    assert "def ensure_standard_plugins(" in helper_source
+    assert "def sync_plugin_dependency_store(" in helper_source
+    assert "def merge_masked_config(" in helper_source
+    assert "def ensure_standard_plugins(" not in entrypoint_source
+    assert "def sync_plugin_dependency_store(" not in entrypoint_source
+    assert "def merge_masked_config(" not in entrypoint_source
 
 
 def test_assistant_references_uses_split_action_defaults_module():
