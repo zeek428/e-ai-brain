@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.770 |
+| 功能版本 | v1.1.771 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.771 | 2026-06-30 | 真实全链路回归脚本代码巡检治理校验拆分：本地完整扫描、质量门禁、Bug/整改任务写回、提交人治理、趋势对比和版本总览阻塞断言迁移到 `full_chain_regression_code_inspection.py` | Codex |
 | v1.1.770 | 2026-06-30 | 真实全链路回归脚本权限可视化校验拆分：角色列表、权限矩阵、角色访问预览、范围名称和用户权限诊断断言迁移到 `full_chain_regression_permissions.py` | Codex |
 | v1.1.769 | 2026-06-30 | 真实全链路回归脚本知识索引健康校验拆分：文档创建、索引健康、权限命中、失败重试和检索恢复断言迁移到 `full_chain_regression_knowledge.py` | Codex |
 | v1.1.768 | 2026-06-30 | 真实全链路回归脚本 AI 动作草案治理校验拆分：确认、失败重试、列表 read model 和审计链路断言迁移到 `full_chain_regression_assistant_drafts.py` | Codex |
@@ -2131,6 +2132,7 @@ suggested → rejected
 - 全链路脚本的目标域、快速 suite 编排和 coverage 计算必须由 `scripts/full_chain_regression_suites.py` 承接；`scripts/full_chain_regression.py` 只保留公开 API 执行、断言、报告输出和命令行入口，避免后续新增版本总览、助手问答或治理套件时继续把元数据贴回主执行脚本。
 - Runner 可靠性快速回归逻辑必须由 `scripts/full_chain_regression_runner.py` 承接，包括 Runner 初始健康告警、心跳恢复、Token 轮换、旧 Token 拒绝、任务取消、人工重试、重试任务认领完成、重复重试拒绝、重试审计、租约超时重派、死信转换、死信列表和任务日志校验；`scripts/full_chain_regression.py` 只导入 `validate_ai_executor_runner_reliability` 并保持 suite 编排，不得重新贴回 Runner 细节。
 - 版本驾驶舱快速回归校验必须由 `scripts/full_chain_regression_version_dashboard.py` 承接，包括 blocker 结构、next_actions 排序与全链路主体、`governance_conclusion`、`delivery_stage_overview` 和 `branch_quality_governance` 分支质量门禁；`scripts/full_chain_regression.py` 只导入这些 validator 并保持公开 API 场景编排。
+- 代码巡检治理快速回归逻辑必须由 `scripts/full_chain_regression_code_inspection.py` 承接，包括本地完整扫描、质量门禁、Bug/整改任务写回、治理压力、提交人治理、趋势对比和版本总览代码巡检/Bug 阻塞校验；`scripts/full_chain_regression.py` 只导入 `validate_code_inspection_governance_quick_regression` 并保持 suite 编排，不得重新贴回代码巡检治理快速套件细节。
 - AI 动作草案治理快速回归逻辑必须由 `scripts/full_chain_regression_assistant_drafts.py` 承接，包括草案创建、治理摘要、查看埋点、用户修改、确认落库、预检失败、失败原因、人工重试、修复后确认、列表 read model 和审计链路校验；`scripts/full_chain_regression.py` 只导入 `validate_assistant_draft_governance` 并保持 suite 编排，不得重新贴回草案治理细节。
 - 知识索引健康快速回归逻辑必须由 `scripts/full_chain_regression_knowledge.py` 承接，包括知识文档创建、列表投影、索引健康汇总、权限命中说明、检索模式、索引失败、`retry-index` 恢复和恢复后检索命中校验；`scripts/full_chain_regression.py` 只导入 `validate_knowledge_index_health_quick_regression` 并保持 suite 编排，不得重新贴回知识索引健康细节。
 - 权限可视化快速回归逻辑必须由 `scripts/full_chain_regression_permissions.py` 承接，包括角色列表、权限矩阵、角色详情 `access_preview`、产品/知识空间范围名称、`scope_summary`、菜单权限缺口、用户权限诊断和有效范围可读名称校验；`scripts/full_chain_regression.py` 只导入 `validate_permission_visibility_quick_regression` 并保持 suite 编排，不得重新贴回权限可视化细节。

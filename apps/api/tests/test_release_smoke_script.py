@@ -47,6 +47,7 @@ def test_web_page_smoke_fails_on_network_4xx_or_5xx_responses():
 
 def test_full_chain_regression_script_covers_public_api_workflow():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    code_inspection_path = REPO_ROOT / "scripts" / "full_chain_regression_code_inspection.py"
     runner_path = REPO_ROOT / "scripts" / "full_chain_regression_runner.py"
     version_dashboard_path = REPO_ROOT / "scripts" / "full_chain_regression_version_dashboard.py"
     assert script_path.exists()
@@ -54,6 +55,8 @@ def test_full_chain_regression_script_covers_public_api_workflow():
 
     content = (
         script_path.read_text(encoding="utf-8")
+        + "\n"
+        + code_inspection_path.read_text(encoding="utf-8")
         + "\n"
         + runner_path.read_text(encoding="utf-8")
         + "\n"
@@ -292,6 +295,25 @@ def test_full_chain_regression_knowledge_index_checks_are_split_from_runner():
     assert "def validate_knowledge_index_health_quick_regression(" in helper_content
     assert "Knowledge index health missed readable permission scope labels" in helper_content
     assert "/api/knowledge/documents/{document_id}/retry-index" in helper_content
+
+
+def test_full_chain_regression_code_inspection_checks_are_split_from_runner():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_code_inspection.py"
+    script_content = script_path.read_text(encoding="utf-8")
+    helper_content = helper_path.read_text(encoding="utf-8")
+
+    assert (
+        "from full_chain_regression_code_inspection import "
+        "validate_code_inspection_governance_quick_regression"
+    ) in script_content
+    assert "def validate_code_inspection_governance_quick_regression(" not in script_content
+    assert "version_dashboard_code_inspection_governance" not in script_content
+    assert "def validate_code_inspection_governance_quick_regression(" in helper_content
+    assert "version_dashboard_code_inspection_governance" in helper_content
+    assert "native_full_scan" in helper_content
+    assert "create_bug_for_severe_findings" in helper_content
+    assert "create_task_for_severe_findings" in helper_content
 
 
 def test_full_chain_regression_permission_visibility_checks_are_split_from_runner():
@@ -644,7 +666,12 @@ def test_full_chain_regression_script_supports_assistant_qa_suite():
 
 def test_full_chain_regression_script_supports_code_inspection_governance_suite():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
-    content = script_path.read_text(encoding="utf-8")
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_code_inspection.py"
+    content = (
+        script_path.read_text(encoding="utf-8")
+        + "\n"
+        + helper_path.read_text(encoding="utf-8")
+    )
 
     for marker in [
         '"code-inspection-governance"',
