@@ -242,6 +242,32 @@ type ProductVersionDashboardEvidenceCoverage = {
   total_domains?: number;
 };
 
+type ProductVersionDashboardReleaseReadinessItem = {
+  action_label?: string | null;
+  action_target_id?: string | null;
+  action_target_type?: string | null;
+  detail?: string;
+  key?: string;
+  level?: string;
+  status?: string;
+  title?: string;
+  value?: string;
+};
+
+type ProductVersionDashboardReleaseReadinessChecklist = {
+  blocked_items?: number;
+  items?: ProductVersionDashboardReleaseReadinessItem[];
+  level?: string;
+  missing_items?: number;
+  not_applicable_items?: number;
+  ready_items?: number;
+  risk_items?: number;
+  summary?: string;
+  title?: string;
+  total_items?: number;
+  value?: string;
+};
+
 type ProductVersionDashboardSummary = {
   blockers: number;
   branch_configs: number;
@@ -304,6 +330,7 @@ type ProductVersionDashboardResponse = {
   governance_conclusion?: ProductVersionDashboardGovernanceConclusion | null;
   knowledge_deposits?: ProductVersionDashboardKnowledgeDepositItem[];
   next_actions?: ProductVersionDashboardNextActionItem[];
+  release_readiness_checklist?: ProductVersionDashboardReleaseReadinessChecklist | null;
   releases?: ProductVersionDashboardReleaseItem[];
   requirement_status_counts?: ProductVersionDashboardStatusCount[];
   requirements?: RequirementListItem[];
@@ -429,6 +456,29 @@ export type ProductVersionDashboard = {
     score: number;
     summary: string;
     totalDomains: number;
+  };
+  releaseReadinessChecklist: {
+    blockedItems: number;
+    items: Array<{
+      actionLabel?: string;
+      actionTargetId?: string;
+      actionTargetType?: string;
+      detail: string;
+      key: string;
+      level: 'error' | 'info' | 'success' | 'warning';
+      status: string;
+      title: string;
+      value: string;
+    }>;
+    level: 'error' | 'info' | 'success' | 'warning';
+    missingItems: number;
+    notApplicableItems: number;
+    readyItems: number;
+    riskItems: number;
+    summary: string;
+    title: string;
+    totalItems: number;
+    value: string;
   };
   nextActions: Array<{
     actionLabel: string;
@@ -746,6 +796,34 @@ function mapEvidenceCoverage(
   };
 }
 
+function mapReleaseReadinessChecklist(
+  checklist?: ProductVersionDashboardReleaseReadinessChecklist | null,
+): ProductVersionDashboard['releaseReadinessChecklist'] {
+  return {
+    blockedItems: normalizeDashboardCount(checklist?.blocked_items),
+    items: (checklist?.items ?? []).map((item) => ({
+      actionLabel: item.action_label ?? undefined,
+      actionTargetId: item.action_target_id ?? undefined,
+      actionTargetType: item.action_target_type ?? undefined,
+      detail: item.detail ?? '-',
+      key: item.key ?? '-',
+      level: normalizeDashboardLevel(item.level),
+      status: item.status ?? '-',
+      title: item.title ?? '-',
+      value: item.value ?? '-',
+    })),
+    level: normalizeDashboardLevel(checklist?.level),
+    missingItems: normalizeDashboardCount(checklist?.missing_items),
+    notApplicableItems: normalizeDashboardCount(checklist?.not_applicable_items),
+    readyItems: normalizeDashboardCount(checklist?.ready_items),
+    riskItems: normalizeDashboardCount(checklist?.risk_items),
+    summary: checklist?.summary ?? '版本发布准备状态待计算。',
+    title: checklist?.title ?? '发布准备清单',
+    totalItems: normalizeDashboardCount(checklist?.total_items),
+    value: checklist?.value ?? '-',
+  };
+}
+
 function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse): ProductVersionDashboard {
   const summary = dashboard.summary ?? {};
   const statusImpact = dashboard.status_impact
@@ -861,6 +939,9 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
       sourceType: action.source_type ?? '-',
       title: action.title ?? action.id ?? '-',
     })),
+    releaseReadinessChecklist: mapReleaseReadinessChecklist(
+      dashboard.release_readiness_checklist,
+    ),
     releases: (dashboard.releases ?? []).map((release) => ({
       buildId: formatUnknownValue(release.build_id),
       createdAt: formatListDate(formatUnknownValue(release.deployed_at ?? release.started_at ?? release.created_at)),

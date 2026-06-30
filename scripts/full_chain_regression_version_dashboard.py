@@ -47,6 +47,13 @@ VERSION_DASHBOARD_EVIDENCE_STATUSES = {
     "risk",
 }
 VERSION_DASHBOARD_LEVELS = {"error", "info", "success", "warning"}
+VERSION_DASHBOARD_RELEASE_READINESS_STATUSES = {
+    "blocked",
+    "missing",
+    "not_applicable",
+    "ready",
+    "risk",
+}
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -428,6 +435,137 @@ def validate_version_dashboard_evidence_coverage(
             f"Version dashboard evidence coverage missed blocker domains: {coverage}",
         )
     return coverage
+
+
+def validate_version_dashboard_release_readiness(
+    dashboard: dict[str, Any],
+    *,
+    require_blockers: bool = False,
+) -> dict[str, Any]:
+    checklist = dashboard.get("release_readiness_checklist")
+    _assert(
+        isinstance(checklist, dict),
+        f"Version dashboard release_readiness_checklist is not an object: {checklist}",
+    )
+    for field in (
+        "blocked_items",
+        "items",
+        "level",
+        "missing_items",
+        "not_applicable_items",
+        "ready_items",
+        "risk_items",
+        "summary",
+        "title",
+        "total_items",
+        "value",
+    ):
+        _assert(
+            field in checklist,
+            f"Version dashboard release_readiness_checklist missed {field}: {checklist}",
+        )
+    _assert(
+        checklist.get("title") == "发布准备清单",
+        f"Version dashboard release readiness title drifted: {checklist}",
+    )
+    _assert(
+        checklist.get("level") in VERSION_DASHBOARD_LEVELS,
+        f"Version dashboard release readiness level unsupported: {checklist}",
+    )
+    _assert(
+        checklist.get("summary"),
+        f"Version dashboard release readiness missed summary: {checklist}",
+    )
+    _assert(
+        checklist.get("value"),
+        f"Version dashboard release readiness missed value: {checklist}",
+    )
+    items = checklist.get("items")
+    _assert(
+        isinstance(items, list),
+        f"Version dashboard release readiness items is not a list: {checklist}",
+    )
+    item_keys = [str(item.get("key") or "") for item in items if isinstance(item, dict)]
+    _assert(
+        item_keys == VERSION_DASHBOARD_DELIVERY_STAGE_KEYS,
+        f"Version dashboard release readiness item order drifted: {item_keys}",
+    )
+    status_counts = {
+        "blocked": 0,
+        "missing": 0,
+        "not_applicable": 0,
+        "ready": 0,
+        "risk": 0,
+    }
+    for item in items:
+        _assert(
+            isinstance(item, dict),
+            f"Version dashboard release readiness item is not an object: {item}",
+        )
+        for field in ("detail", "key", "level", "status", "title", "value"):
+            _assert(
+                field in item and item.get(field),
+                f"Version dashboard release readiness item missed {field}: {item}",
+            )
+        _assert(
+            item.get("level") in VERSION_DASHBOARD_LEVELS,
+            f"Version dashboard release readiness item level unsupported: {item}",
+        )
+        status = str(item.get("status") or "")
+        _assert(
+            status in VERSION_DASHBOARD_RELEASE_READINESS_STATUSES,
+            f"Version dashboard release readiness item status unsupported: {item}",
+        )
+        status_counts[status] += 1
+        if status != "not_applicable":
+            _assert(
+                item.get("action_label"),
+                f"Version dashboard release readiness item missed action_label: {item}",
+            )
+            _assert(
+                item.get("action_target_id"),
+                f"Version dashboard release readiness item missed action_target_id: {item}",
+            )
+            _assert(
+                item.get("action_target_type"),
+                f"Version dashboard release readiness item missed action_target_type: {item}",
+            )
+    _assert(
+        int(checklist.get("total_items") or 0) == len(items),
+        f"Version dashboard release readiness total_items drifted: {checklist}",
+    )
+    for status, count_key in (
+        ("blocked", "blocked_items"),
+        ("missing", "missing_items"),
+        ("not_applicable", "not_applicable_items"),
+        ("ready", "ready_items"),
+        ("risk", "risk_items"),
+    ):
+        _assert(
+            int(checklist.get(count_key) or 0) == status_counts[status],
+            f"Version dashboard release readiness {count_key} drifted: {checklist}",
+        )
+    if status_counts["blocked"] or status_counts["missing"]:
+        _assert(
+            checklist.get("level") == "error",
+            f"Version dashboard release readiness should be error: {checklist}",
+        )
+    elif status_counts["risk"]:
+        _assert(
+            checklist.get("level") == "warning",
+            f"Version dashboard release readiness should warn: {checklist}",
+        )
+    elif status_counts["ready"]:
+        _assert(
+            checklist.get("level") == "success",
+            f"Version dashboard release readiness should succeed: {checklist}",
+        )
+    if require_blockers or int((dashboard.get("summary") or {}).get("blockers") or 0) > 0:
+        _assert(
+            status_counts["blocked"] + status_counts["missing"] >= 1,
+            f"Version dashboard release readiness missed blocker pressure: {checklist}",
+        )
+    return checklist
 
 
 def validate_version_dashboard_status_impact(

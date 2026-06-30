@@ -503,6 +503,44 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "title": "版本治理结论",
         "value": "版本暂不建议推进",
     }
+    assert data["release_readiness_checklist"]["title"] == "发布准备清单"
+    assert data["release_readiness_checklist"]["level"] == "error"
+    assert data["release_readiness_checklist"]["value"] == "发布准备未通过"
+    assert data["release_readiness_checklist"]["blocked_items"] == 5
+    assert data["release_readiness_checklist"]["missing_items"] == 0
+    assert data["release_readiness_checklist"]["ready_items"] == 4
+    assert data["release_readiness_checklist"]["risk_items"] == 0
+    readiness_by_key = {
+        item["key"]: item for item in data["release_readiness_checklist"]["items"]
+    }
+    assert list(readiness_by_key) == [
+        "requirements",
+        "tasks",
+        "branches",
+        "inspections",
+        "code-reviews",
+        "bugs",
+        "knowledge-deposits",
+        "releases",
+        "status-impact",
+    ]
+    assert readiness_by_key["branches"]["status"] == "blocked"
+    assert readiness_by_key["branches"]["value"] == "分支待治理"
+    assert readiness_by_key["inspections"]["value"] == "质量门禁未通过"
+    assert readiness_by_key["code-reviews"]["status"] == "blocked"
+    assert readiness_by_key["bugs"]["value"] == "严重 Bug 未关闭"
+    assert readiness_by_key["knowledge-deposits"]["status"] == "ready"
+    assert readiness_by_key["releases"] == {
+        "action_label": "排查发布",
+        "action_target_id": version["id"],
+        "action_target_type": "releases",
+        "detail": "成功 0 条，失败 1 条，发布阻塞 1 个。",
+        "key": "releases",
+        "level": "error",
+        "status": "blocked",
+        "title": "发布证据",
+        "value": "发布待治理",
+    }
     assert [item["key"] for item in data["delivery_stage_overview"]] == [
         "requirements",
         "tasks",

@@ -24,6 +24,9 @@ from app.services.product_version_delivery_overview import (
     successful_release as _successful_release,
 )
 from app.services.product_version_evidence_coverage import version_evidence_coverage
+from app.services.product_version_release_readiness import (
+    version_release_readiness_checklist,
+)
 from app.services.requirement_listing import requirement_summary_projection
 from app.services.task_access import can_read_task
 from app.services.task_listing import task_summary_projection
@@ -1140,6 +1143,14 @@ def product_version_dashboard_response(
         summary=summary,
         version_id=version_id,
     )
+    release_readiness_checklist = version_release_readiness_checklist(
+        blockers=blockers,
+        branch_quality_governance=branch_quality_governance,
+        releases=releases,
+        status_impact=status_impact,
+        summary=summary,
+        version_id=version_id,
+    )
     return {
         "access_issues": access_issues,
         "blockers": blockers,
@@ -1154,6 +1165,7 @@ def product_version_dashboard_response(
         "governance_conclusion": governance_conclusion,
         "knowledge_deposits": knowledge_deposits[:20],
         "next_actions": next_actions,
+        "release_readiness_checklist": release_readiness_checklist,
         "releases": releases[:20],
         "requirement_status_counts": _status_counts(requirements),
         "requirements": requirements[:50],

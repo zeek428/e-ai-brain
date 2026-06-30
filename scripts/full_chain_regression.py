@@ -35,6 +35,7 @@ from full_chain_regression_version_dashboard import (  # noqa: E402
     validate_version_dashboard_evidence_coverage,
     validate_version_dashboard_governance_conclusion,
     validate_version_dashboard_next_actions,
+    validate_version_dashboard_release_readiness,
     validate_version_dashboard_status_impact,
     validate_version_dashboard_status_impact_projection,
 )
@@ -585,6 +586,7 @@ def validate_version_dashboard_quick_regression(
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     validate_version_dashboard_delivery_stage_overview(dashboard)
     validate_version_dashboard_evidence_coverage(dashboard, require_blockers=True)
+    validate_version_dashboard_release_readiness(dashboard, require_blockers=True)
     validate_version_dashboard_status_impact(dashboard)
     release_evidence_blockers = [
         blocker
@@ -1186,6 +1188,7 @@ def run_regression(
         dashboard,
         require_blockers=True,
     )
+    validate_version_dashboard_release_readiness(dashboard, require_blockers=True)
     dashboard_status_impact = validate_version_dashboard_status_impact(dashboard)
     inspection_blockers = [
         blocker

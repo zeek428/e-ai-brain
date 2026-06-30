@@ -29,6 +29,7 @@ import {
   VersionDashboardStatusImpactTable,
 } from './VersionDashboardTables';
 import {
+  buildDashboardDeliveryStageItems,
   buildDashboardHealthItems,
   buildDashboardGovernanceConclusion,
   buildDashboardReadinessItems,
@@ -84,6 +85,7 @@ export function VersionDashboardModal({
   const dashboardGovernanceConclusion =
     buildDashboardGovernanceConclusion(dashboard);
   const dashboardHealthItems = buildDashboardHealthItems(dashboard);
+  const dashboardDeliveryStageItems = buildDashboardDeliveryStageItems(dashboard);
   const dashboardReadinessItems = buildDashboardReadinessItems(dashboard);
 
   return (
@@ -143,11 +145,12 @@ export function VersionDashboardModal({
             <VersionDashboardMetrics dashboard={dashboard} />
             <VersionDashboardDeliveryOverview
               dashboard={dashboard}
-              items={dashboardReadinessItems}
+              items={dashboardDeliveryStageItems}
               onAdvanceVersion={onAdvanceVersion}
               versionStatusLabels={versionStatusLabels}
             />
             <VersionDashboardReadinessChecklist
+              checklist={dashboard.releaseReadinessChecklist}
               items={dashboardReadinessItems}
             />
             <VersionDashboardHealthSummary items={dashboardHealthItems} />

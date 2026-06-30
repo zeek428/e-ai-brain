@@ -481,6 +481,7 @@ type VersionDashboardHealthSummaryProps = {
 };
 
 type VersionDashboardReadinessChecklistProps = {
+  checklist?: ProductVersionDashboard['releaseReadinessChecklist'];
   items: DashboardReadinessItem[];
 };
 
@@ -565,11 +566,17 @@ export function VersionDashboardDeliveryOverview({
 }
 
 export function VersionDashboardReadinessChecklist({
+  checklist,
   items,
 }: VersionDashboardReadinessChecklistProps) {
+  const level = checklist ? dashboardHealthLevelLabels[checklist.level] : undefined;
   return (
     <div>
-      <Text strong>发布准备清单</Text>
+      <Space align="baseline" style={{ display: 'flex' }} wrap>
+        <Text strong>{checklist?.title ?? '发布准备清单'}</Text>
+        {level ? <Tag color={level.color}>{level.label}</Tag> : null}
+        {checklist?.summary ? <Text type="secondary">{checklist.summary}</Text> : null}
+      </Space>
       <Space size={8} style={{ display: 'flex', marginTop: 8 }} wrap>
         {items.map((item) => {
           const level = dashboardHealthLevelLabels[item.level];

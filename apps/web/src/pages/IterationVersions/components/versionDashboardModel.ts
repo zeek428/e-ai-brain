@@ -296,6 +296,23 @@ function backendDeliveryStageItems(dashboard: ProductVersionDashboard): Dashboar
   }));
 }
 
+function backendReleaseReadinessItems(dashboard: ProductVersionDashboard): DashboardReadinessItem[] {
+  if (!dashboard.releaseReadinessChecklist.items.length) {
+    return [];
+  }
+  return dashboard.releaseReadinessChecklist.items.map((item) => ({
+    actionHref: deliveryStageActionHref(item, dashboard),
+    actionLabel: item.actionLabel,
+    actionTargetId: item.actionTargetId,
+    actionTargetType: item.actionTargetType,
+    detail: item.detail,
+    key: item.key,
+    level: item.level,
+    title: item.title,
+    value: item.value,
+  }));
+}
+
 export function buildStatusImpactRows(
   statusImpact?: ProductVersionDashboard['statusImpact'],
 ): DashboardStatusImpactRow[] {
@@ -622,7 +639,7 @@ function statusCount(counts: ProductVersionDashboard['taskStatusCounts'], status
   return counts.find((item) => item.status === status)?.count ?? 0;
 }
 
-export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard): DashboardReadinessItem[] {
+export function buildDashboardDeliveryStageItems(dashboard?: ProductVersionDashboard): DashboardReadinessItem[] {
   if (!dashboard) {
     return [];
   }
@@ -811,4 +828,15 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
       value: dashboard.statusImpact ? '已预览影响' : '无需推进',
     },
   ];
+}
+
+export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard): DashboardReadinessItem[] {
+  if (!dashboard) {
+    return [];
+  }
+  const backendChecklist = backendReleaseReadinessItems(dashboard);
+  if (backendChecklist.length) {
+    return backendChecklist;
+  }
+  return buildDashboardDeliveryStageItems(dashboard);
 }

@@ -8,7 +8,8 @@
 ## [Unreleased]
 
 ### Added
-- 定时作业主服务继续拆大文件：新增 `scheduled_job_read_models` 承接定时作业列表、运行记录列表和运行公开投影，`scheduled_jobs.py` 从 2124 行降至 1770 行并将预算收紧到 1900 行。
+- 迭代版本总览新增后端发布准备清单投影：`GET /api/product-versions/{version_id}/dashboard` 返回 `release_readiness_checklist`，按需求、任务、分支、巡检、评审、Bug、知识、发布和状态推进九项统一输出准入状态；前端“发布准备清单”优先消费该字段，真实全链路版本驾驶舱 helper 纳入结构和计数校验。
+- 定时作业主服务继续拆大文件：新增 `scheduled_job_read_models` 承接定时作业列表、运行记录列表和运行公开投影，`scheduled_jobs.py` 从 2124 行降至 1773 行并将预算收紧到 1900 行。
 - AI 执行器 Runner 主服务继续拆大文件：新增 `ai_executor_runner_task_context` 承接任务产品 scope、上游定时作业/插件日志/AI任务上下文、运行节点投影和时间解析 helper，`ai_executor_runners.py` 从 2156 行降至 2009 行并将预算收紧到 2050 行。
 - 插件主服务继续拆大文件：新增 `plugin_invocation_runtime` 承接动态请求配置解析、请求预览、HTTP/MCP 调用、AI 执行器 Runner 派发和系统默认模型网关执行器，`plugins.py` 从 2183 行降至 1666 行并将预算收紧到 1800 行。
 - 代码巡检服务继续拆大文件：新增 `code_inspection_read_models` 承接列表分页、Dashboard 聚合、趋势、分支/提交人治理和读模型 scope，`code_inspections.py` 从 2260 行降至 1299 行并将预算收紧到 1600 行。
