@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.742 |
+| 功能版本 | v1.1.743 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.743 | 2026-06-30 | 真实全链路回归脚本新增 permission-visibility 快速场景，独立验收角色列表、权限矩阵、范围名称、菜单权限缺口和用户权限诊断 | Codex |
 | v1.1.742 | 2026-06-30 | 真实全链路回归脚本新增 knowledge-index-health 快速场景，独立验收知识文档创建、索引健康、权限命中说明、检索模式和知识搜索命中 | Codex |
 | v1.1.741 | 2026-06-30 | 真实全链路回归脚本新增 code-inspection-governance 快速场景，独立验收本地完整扫描、质量门禁、Bug/整改任务写回、提交人治理、趋势对比和版本总览阻塞 | Codex |
 | v1.1.740 | 2026-06-30 | 迭代版本总览将待确认 Code Review 纳入发布阻塞处理队列，阻塞项可直接跳转评审处理和全链路上下文 | Codex |
@@ -2094,6 +2095,7 @@ suggested → rejected
 - `scripts/full_chain_regression.py` 是本地 PostgreSQL 运行态的真实全链路回归入口，必须通过公开 API 串联产品、版本、用户反馈转需求、批量排期、AI 任务启动、Review、知识沉淀、知识索引健康、版本代码分支、本地完整代码巡检、Bug/整改任务写回、AI 执行器 Runner 可靠性、AI 动作草案治理、版本总览、统一 full-chain、团队看板和 AI 助手引用。脚本成功不应只代表接口调用返回 2xx，还必须校验知识沉淀采纳后的 `knowledge_document_id`、索引健康可检索文档/chunk/召回模式、知识检索命中结果、本地完整扫描 finding、提交人归因、治理覆盖率、派生 Bug/整改任务回写 ID、质量门禁失败在运行摘要、报告详情和治理概览 `quality_gate_violations` 中可追踪、治理概览 `governance_pressure` 能集中返回 `action_required` 闭环状态、质量门禁失败报告数、失败项数、活跃严重问题数，并确认严重 finding 的 Bug 覆盖和整改任务覆盖已闭环、治理概览 `committer_governance` 能按提交人返回闭环状态、活跃严重问题、Bug 覆盖和整改任务覆盖、Runner Token 轮换必须拒绝旧 Token 并接受新 Token 心跳、新建 Runner 必须先返回 `runner_never_connected` 健康告警且心跳后 `health_alert` 清除、AI 执行器短租约任务可按 `claim -> timeout-scan -> requeue -> claim -> timeout-scan -> dead_letter` 闭环验证，死信任务返回 `AI_EXECUTOR_TASK_LEASE_EXPIRED` 且 warning/error 日志可查询、AI 动作草案必须能展示风险、影响对象、权限状态、字段差异、查看/修改/确认和审计事件，版本总览状态分布、`code_review_reports` 与 `pending_code_review_reports` 聚合，待确认 Code Review 必须进入可处理阻塞队列、`knowledge_deposits` 摘要与沉淀明细、所有版本总览阻塞项均携带 `source_type`、`severity`、`title`、`reason`、动作标签、目标主体和解除条件、发布到已发布前缺少成功发布记录时能形成可跳转的发布阻塞项、代码巡检报告主体解析回 full-chain、团队看板产品维度计数，以及助手会话历史中保留需求、版本和代码巡检引用与工具结果。默认 `--suite full` 保持完整主链路；`FULL_CHAIN_SUITE=runner-reliability` 或 `--suite runner-reliability` 可只执行登录、fixture 仓库和 AI 执行器 Runner Token 轮换、健康告警、租约/死信门禁，便于日常快速验收运行可靠性；`FULL_CHAIN_SUITE=version-dashboard` 或 `--suite version-dashboard` 可只执行产品、版本、需求、任务、技术方案、本地 GitLab fixture MR 快照、Code Review 待确认报告、版本分支、状态推进影响和版本总览待确认代码评审/发布/分支阻塞项校验，便于快速验收迭代版本页总览聚合是否断链；`FULL_CHAIN_SUITE=assistant-draft-governance` 或 `--suite assistant-draft-governance` 可只执行 AI 动作草案创建、治理摘要、查看埋点、用户修改、确认落库、列表 read model 和审计链路校验，便于快速验收动作确认中心不断链。默认使用显式 `deterministic` 任务启动模式以避免研发执行器 Runner 或外部模型网关波动；如需验收模型网关，可通过脚本参数切换为 `model_gateway`。
 - `FULL_CHAIN_SUITE=code-inspection-governance` 或 `--suite code-inspection-governance` 可独立执行本地完整扫描、质量门禁、Bug/整改任务写回、提交人治理、趋势对比和版本总览代码巡检阻塞门禁，用于快速判断代码巡检治理链路是否闭环。
 - `FULL_CHAIN_SUITE=knowledge-index-health` 或 `--suite knowledge-index-health` 可独立执行知识文档创建、知识列表、索引健康、权限命中说明、检索模式和知识搜索命中门禁，用于快速判断知识中心索引健康和检索链路是否闭环。
+- `FULL_CHAIN_SUITE=permission-visibility` 或 `--suite permission-visibility` 可独立执行角色列表、权限矩阵、产品/知识空间范围名称、菜单权限缺口和用户权限诊断门禁，用于快速判断系统管理权限可视化和授权排障链路是否闭环。
 - `apps/api/tests/test_architecture_guardrails.py` 固化已拆分领域入口文件的行数预算：`authorization.py`、`ai_executor_runners.py`、`assistant_references.py` 和 `assistant_chat.py` 均不得超过 2800 行，AI 动作草案主服务 `assistant_action_drafts.py`、定时作业主服务 `scheduled_jobs.py` 和插件主服务 `plugins.py` 均不得超过 2600 行，前端服务兼容 barrel `services/aiBrain.ts` 不得超过 2400 行；超过时必须继续拆分到领域模块或组件后再合入。授权仓储的默认菜单/角色授权配置应保留在 `authorization_defaults`，避免 RBAC 默认数据继续膨胀仓储实现；AI 执行器 Runner 的常量、安装包构造和运行任务编排应保持独立模块边界，避免 Runner 安装包文案或平台差异继续膨胀主服务；AI 助手动作引用默认候选、触发词和配置常量应保留在 `assistant_action_reference_defaults`，避免默认入口数据继续膨胀 `assistant_references.py`；AI 动作草案状态/动作枚举、默认 payload、基础校验和 Cron 表达式校验应保留在 `assistant_action_draft_common`，避免通用规则继续膨胀 `assistant_action_drafts.py`；定时作业权限/产品范围判断应保留在 `scheduled_job_access`，时区、动态输入映射和异常摘要应保留在 `scheduled_job_runtime`，调度时间、配置编排、多数据源引用、代码巡检仓库默认分支、数据连接策略和有效作业类型推导应保留在 `scheduled_job_config`，避免配置归一化逻辑继续膨胀定时作业主服务；插件协议、分类、状态、认证类型、连接环境、调用状态和排序字段常量应保留在 `plugin_constants`，GitHub/GitLab 连接地址解析、请求配置规范化和 GitHub 认证校验应保留在 `plugin_connection_config`，插件版本元数据、公开投影和调用请求摘要脱敏应保留在 `plugin_projection`，避免静态配置、连接平台差异和展示脱敏逻辑继续膨胀插件主服务；系统管理用户、角色、菜单和权限诊断 API 应保留在 `systemManagementClient`，`aiBrain.ts` 只保留兼容导出。
 - AI 助手知识引用候选、知识空间/目录可读范围、文档/chunk 引用投影和模型注入上下文应保留在 `assistant_knowledge_references`，`assistant_references.py` 只保留引用入口编排、业务对象解析、权限分发和动作引用配置。
 - AI 助手模型网关调用的配置选择、请求组装、HTTP/HTTPX 执行、取消中断、响应解析、引用合并和模型日志应保留在 `assistant_chat_gateway`，`assistant_chat.py` 只保留调用入口、错误映射和聊天记录持久化。

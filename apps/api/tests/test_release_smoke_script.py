@@ -126,10 +126,12 @@ def test_full_chain_regression_script_supports_targeted_suites():
         "--suite",
         '"code-inspection-governance"',
         '"knowledge-index-health"',
+        '"permission-visibility"',
         "run_regression_suite(",
         'suite == "runner-reliability"',
         'suite == "code-inspection-governance"',
         'suite == "knowledge-index-health"',
+        'suite == "permission-visibility"',
         'StepResult("suite", suite)',
     ]:
         assert marker in content
@@ -247,5 +249,26 @@ def test_full_chain_regression_script_supports_knowledge_index_health_suite():
         "Knowledge search did not retrieve created document",
         "permission_scope",
         "retrieval_modes",
+    ]:
+        assert marker in content
+
+
+def test_full_chain_regression_script_supports_permission_visibility_suite():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    content = script_path.read_text(encoding="utf-8")
+
+    for marker in [
+        '"permission-visibility"',
+        "validate_permission_visibility_quick_regression(",
+        'suite == "permission-visibility"',
+        "/api/system/roles",
+        "/api/system/permissions/matrix",
+        "/api/system/permissions/diagnostics",
+        "menu_permission_gap",
+        "missing_menu_permission_codes",
+        "scope_name",
+        "permission_visibility_matrix",
+        "permission_visibility_diagnostics",
+        "Permission diagnostics missed readable effective scope",
     ]:
         assert marker in content
