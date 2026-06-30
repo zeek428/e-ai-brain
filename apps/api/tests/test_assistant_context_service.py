@@ -228,6 +228,7 @@ def test_assistant_system_context_is_product_scoped_and_includes_delivery_signal
     assert iteration_item["governance_conclusion"]["title"] == "版本治理结论"
     assert iteration_item["governance_conclusion"]["value"] == "版本暂不建议推进"
     assert iteration_item["status_impact"]["target_status"] == "released"
+    assert iteration_item["status_impact"]["updated_count"] == 1
     assert iteration_item["url"] == "/delivery/versions?version_id=version_001&view=dashboard"
     assert [stage["key"] for stage in iteration_item["delivery_stage_overview"]] == [
         "requirements",

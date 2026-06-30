@@ -6445,6 +6445,14 @@ def test_ai_assistant_iteration_governance_is_deterministic_and_keeps_history(
     ]
     assert version_item["delivery_stage_overview"][0]["key"] == "requirements"
     assert version_item["delivery_stage_overview"][0]["title"] == "需求范围"
+    assert version_item["status_impact"]["target_status"] == "released"
+    assert set(version_item["status_impact"]) >= {
+        "blocked_count",
+        "from_status",
+        "target_status",
+        "unchanged_count",
+        "updated_count",
+    }
 
     history_response = client.get(
         f"/api/assistant/conversations/{payload['conversation_id']}/messages",
@@ -6463,6 +6471,14 @@ def test_ai_assistant_iteration_governance_is_deterministic_and_keeps_history(
     )
     assert history_iteration_tool["items"][0]["next_actions"]
     assert history_iteration_tool["items"][0]["delivery_stage_overview"][0]["key"] == "requirements"
+    assert history_iteration_tool["items"][0]["status_impact"]["target_status"] == "released"
+    assert set(history_iteration_tool["items"][0]["status_impact"]) >= {
+        "blocked_count",
+        "from_status",
+        "target_status",
+        "unchanged_count",
+        "updated_count",
+    }
 
 
 def test_ai_assistant_chat_generates_release_risk_analysis_draft(monkeypatch):

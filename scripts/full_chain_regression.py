@@ -30,6 +30,7 @@ from full_chain_regression_version_dashboard import (  # noqa: E402
     validate_version_dashboard_governance_conclusion,
     validate_version_dashboard_next_actions,
     validate_version_dashboard_status_impact,
+    validate_version_dashboard_status_impact_projection,
 )
 
 DEFAULT_API_BASE_URL = "http://localhost:8000"
@@ -1724,7 +1725,7 @@ def validate_assistant_qa_quick_regression(
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     validate_version_dashboard_delivery_stage_overview(dashboard)
-    validate_version_dashboard_status_impact(dashboard)
+    dashboard_status_impact = validate_version_dashboard_status_impact(dashboard)
 
     assistant = client.post(
         "/api/assistant/chat",
@@ -1807,6 +1808,11 @@ def validate_assistant_qa_quick_regression(
                 f"field={field}, assistant={assistant_conclusion}, dashboard={dashboard_conclusion}"
             ),
         )
+    validate_version_dashboard_status_impact_projection(
+        dashboard_status_impact,
+        version_item.get("status_impact"),
+        label="Assistant QA",
+    )
     conversation_id = assistant.get("conversation_id") or assistant.get("run", {}).get("conversation_id")
     _assert(conversation_id, f"Assistant QA response missing conversation id: {assistant}")
     conversation_messages = client.get(f"/api/assistant/conversations/{conversation_id}/messages")
@@ -1840,6 +1846,11 @@ def validate_assistant_qa_quick_regression(
     _assert(
         persisted_version_items[0].get("delivery_stage_overview"),
         f"Assistant QA history missed version delivery_stage_overview: {persisted_version_items[0]}",
+    )
+    validate_version_dashboard_status_impact_projection(
+        dashboard_status_impact,
+        persisted_version_items[0].get("status_impact"),
+        label="Assistant QA history",
     )
     results.append(
         StepResult(
@@ -2379,7 +2390,7 @@ def run_regression(
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     validate_version_dashboard_delivery_stage_overview(dashboard)
-    validate_version_dashboard_status_impact(dashboard)
+    dashboard_status_impact = validate_version_dashboard_status_impact(dashboard)
     inspection_blockers = [
         blocker
         for blocker in dashboard_blockers
@@ -2570,6 +2581,11 @@ def run_regression(
                 f"field={field}, assistant={assistant_conclusion}, dashboard={dashboard_conclusion}"
             ),
         )
+    validate_version_dashboard_status_impact_projection(
+        dashboard_status_impact,
+        assistant_version_item.get("status_impact"),
+        label="Assistant iteration tool",
+    )
     conversation_id = assistant.get("conversation_id") or assistant.get("run", {}).get("conversation_id")
     _assert(conversation_id, f"Assistant response missing conversation_id: {assistant}")
     conversation_messages = client.get(f"/api/assistant/conversations/{conversation_id}/messages")
@@ -2617,6 +2633,11 @@ def run_regression(
             "Persisted assistant iteration tool missed version "
             f"delivery_stage_overview: {persisted_version_items[0]}"
         ),
+    )
+    validate_version_dashboard_status_impact_projection(
+        dashboard_status_impact,
+        persisted_version_items[0].get("status_impact"),
+        label="Persisted assistant iteration tool",
     )
     results.append(StepResult("assistant_qa", f"{assistant_message_id} / conversation={conversation_id}"))
 

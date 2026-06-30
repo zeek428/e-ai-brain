@@ -768,12 +768,36 @@ def _iteration_status_impact(status_impact: Any) -> dict[str, Any]:
     if not isinstance(status_impact, dict) or not status_impact:
         return {}
     return {
-        "blocked_count": _safe_int(status_impact.get("blocked_count")),
+        "blocked_count": _status_impact_count(
+            status_impact,
+            count_key="blocked_count",
+            list_key="blocked_requirements",
+        ),
         "from_status": status_impact.get("from_status"),
         "target_status": status_impact.get("target_status"),
-        "unchanged_count": _safe_int(status_impact.get("unchanged_count")),
-        "updated_count": _safe_int(status_impact.get("updated_count")),
+        "unchanged_count": _status_impact_count(
+            status_impact,
+            count_key="unchanged_count",
+            list_key="unchanged_requirements",
+        ),
+        "updated_count": _status_impact_count(
+            status_impact,
+            count_key="updated_count",
+            list_key="updated_requirements",
+        ),
     }
+
+
+def _status_impact_count(
+    status_impact: dict[str, Any],
+    *,
+    count_key: str,
+    list_key: str,
+) -> int:
+    if status_impact.get(count_key) is not None:
+        return _safe_int(status_impact.get(count_key))
+    items = status_impact.get(list_key)
+    return len(items) if isinstance(items, list) else 0
 
 
 def _bugs_tool(context: dict[str, Any], *, limit: int) -> dict[str, Any]:

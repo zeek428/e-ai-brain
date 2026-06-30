@@ -380,6 +380,63 @@ def validate_version_dashboard_status_impact(
     return status_impact
 
 
+def _status_impact_count(
+    status_impact: dict[str, Any],
+    count_key: str,
+    list_key: str,
+) -> int:
+    if status_impact.get(count_key) is not None:
+        return int(status_impact.get(count_key) or 0)
+    value = status_impact.get(list_key)
+    return len(value) if isinstance(value, list) else 0
+
+
+def validate_version_dashboard_status_impact_projection(
+    dashboard_status_impact: dict[str, Any],
+    projection: Any,
+    *,
+    label: str,
+) -> None:
+    if not dashboard_status_impact:
+        _assert(
+            projection in ({}, None),
+            f"{label} status_impact projection should be empty: {projection}",
+        )
+        return
+    _assert(
+        isinstance(projection, dict) and projection,
+        f"{label} missed status_impact projection: {projection}",
+    )
+    expected = {
+        "blocked_count": _status_impact_count(
+            dashboard_status_impact,
+            "blocked_count",
+            "blocked_requirements",
+        ),
+        "from_status": dashboard_status_impact.get("from_status"),
+        "target_status": dashboard_status_impact.get("target_status"),
+        "unchanged_count": _status_impact_count(
+            dashboard_status_impact,
+            "unchanged_count",
+            "unchanged_requirements",
+        ),
+        "updated_count": _status_impact_count(
+            dashboard_status_impact,
+            "updated_count",
+            "updated_requirements",
+        ),
+    }
+    for field, expected_value in expected.items():
+        _assert(
+            projection.get(field) == expected_value,
+            (
+                f"{label} status_impact drifted from version dashboard: "
+                f"field={field}, expected={expected_value}, projection={projection}, "
+                f"dashboard={dashboard_status_impact}"
+            ),
+        )
+
+
 def validate_version_dashboard_branch_quality(
     dashboard: dict[str, Any],
     *,
