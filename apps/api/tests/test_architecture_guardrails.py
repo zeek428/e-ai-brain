@@ -8,7 +8,7 @@ MAX_AI_EXECUTOR_RUNNER_LINES = 2050
 MAX_CODE_INSPECTION_SERVICE_LINES = 1600
 MAX_PLUGIN_MAIN_SERVICE_LINES = 1800
 MAX_PRODUCT_VERSION_DASHBOARD_LINES = 1300
-MAX_SCHEDULED_JOB_SERVICE_LINES = 2200
+MAX_SCHEDULED_JOB_SERVICE_LINES = 1900
 MAX_ASSISTANT_ACTION_DRAFT_LINES = 2000
 MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
 FRONTEND_PAGE_CONTAINER_REVIEW_THRESHOLD_LINES = 900
@@ -137,6 +137,24 @@ def test_scheduled_job_entrypoint_uses_split_user_feedback_module():
     assert "USER_FEEDBACK_TYPES" not in entrypoint_source
     assert "def run_user_feedback_insight_extract_job(" in user_feedback_source
     assert "def resolve_job_plugin_output_mapping(" in user_feedback_source
+
+
+def test_scheduled_job_entrypoint_uses_split_read_model_module():
+    read_model_path = REPO_ROOT / "apps/api/app/services/scheduled_job_read_models.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/scheduled_jobs.py"
+
+    assert read_model_path.exists(), (
+        "Move scheduled job list and run list read models to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    read_model_source = read_model_path.read_text(encoding="utf-8")
+    assert "from app.services.scheduled_job_read_models import" in entrypoint_source
+    assert "def list_scheduled_jobs_response(" in read_model_source
+    assert "def list_scheduled_job_runs_response(" in read_model_source
+    assert "def public_scheduled_job_run(" in read_model_source
+    assert "def list_scheduled_jobs_response(" not in entrypoint_source
+    assert "def list_scheduled_job_runs_response(" not in entrypoint_source
+    assert "def public_scheduled_job_run(" not in entrypoint_source
 
 
 def test_scheduled_job_entrypoint_uses_split_ref_validation_module():

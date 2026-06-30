@@ -4,7 +4,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
-from app.services.scheduled_jobs import (
+from app.services.scheduled_job_access import (
     require_scheduled_job_runner,
     scheduled_job_product_scope_filter,
 )
