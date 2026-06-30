@@ -6,7 +6,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_DOMAIN_FILE_LINES = 2800
 MAX_PLUGIN_SERVICE_LINES = 2600
 MAX_SCHEDULED_JOB_SERVICE_LINES = 2400
-MAX_ASSISTANT_ACTION_DRAFT_LINES = 2600
+MAX_ASSISTANT_ACTION_DRAFT_LINES = 2400
 MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
 FRONTEND_PAGE_CONTAINER_REVIEW_THRESHOLD_LINES = 900
 
@@ -241,6 +241,23 @@ def test_assistant_action_drafts_uses_split_common_module():
     assert "ASSISTANT_DRAFT_ACTIONS = " not in entrypoint_source
     assert "SCHEDULED_JOB_DEFAULTS = " not in entrypoint_source
     assert "def _valid_cron_expression(" not in entrypoint_source
+
+
+def test_assistant_action_drafts_uses_split_workbench_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/assistant_action_draft_workbench.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/assistant_action_drafts.py"
+
+    assert helper_path.exists(), (
+        "Move assistant action draft workbench projections and summary to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "from app.services.assistant_action_draft_workbench import" in entrypoint_source
+    assert "def assistant_action_draft_workbench_item(" in helper_source
+    assert "def assistant_action_draft_workbench_summary(" in helper_source
+    assert "def _assistant_action_draft_workbench_item(" not in entrypoint_source
+    assert "def _assistant_action_draft_workbench_summary(" not in entrypoint_source
+    assert "governance_counts" in helper_source
 
 
 def test_code_inspections_uses_split_common_module():
