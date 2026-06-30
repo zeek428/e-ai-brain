@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 插件主服务继续拆大文件：新增 `plugin_invocation_runtime` 承接动态请求配置解析、请求预览、HTTP/MCP 调用、AI 执行器 Runner 派发和系统默认模型网关执行器，`plugins.py` 从 2183 行降至 1666 行并将预算收紧到 1800 行。
 - 代码巡检服务继续拆大文件：新增 `code_inspection_read_models` 承接列表分页、Dashboard 聚合、趋势、分支/提交人治理和读模型 scope，`code_inspections.py` 从 2260 行降至 1299 行并将预算收紧到 1600 行。
 - 迭代版本总览治理结论和交付阶段投影继续拆大文件：新增 `product_version_delivery_overview` 承接发布状态判断、治理结论和交付阶段总览，`product_version_dashboard.py` 从 1707 行降至 1165 行并将预算收紧到 1300 行。
 - 迭代版本总览证据覆盖评分继续拆大文件：新增 `product_version_evidence_coverage` 承接证据域、权限降级、阻断/缺口/覆盖计数、覆盖分和摘要计算，`product_version_dashboard.py` 从 2122 行降至 1707 行并纳入 1800 行架构预算。

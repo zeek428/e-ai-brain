@@ -6,7 +6,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_DOMAIN_FILE_LINES = 2800
 MAX_AI_EXECUTOR_RUNNER_LINES = 2200
 MAX_CODE_INSPECTION_SERVICE_LINES = 1600
-MAX_PLUGIN_MAIN_SERVICE_LINES = 2300
+MAX_PLUGIN_MAIN_SERVICE_LINES = 1800
 MAX_PRODUCT_VERSION_DASHBOARD_LINES = 1300
 MAX_SCHEDULED_JOB_SERVICE_LINES = 2200
 MAX_ASSISTANT_ACTION_DRAFT_LINES = 2000
@@ -202,6 +202,26 @@ def test_plugin_entrypoint_uses_split_store_helpers_module():
     assert "def ensure_standard_plugins(" not in entrypoint_source
     assert "def sync_plugin_dependency_store(" not in entrypoint_source
     assert "def merge_masked_config(" not in entrypoint_source
+
+
+def test_plugin_entrypoint_uses_split_invocation_runtime_module():
+    runtime_path = REPO_ROOT / "apps/api/app/services/plugin_invocation_runtime.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/plugins.py"
+
+    assert runtime_path.exists(), (
+        "Move plugin dynamic request config, preview and invocation runtime helpers "
+        "to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    runtime_source = runtime_path.read_text(encoding="utf-8")
+    assert "from app.services.plugin_invocation_runtime import" in entrypoint_source
+    assert "def resolve_plugin_request_config(" in runtime_source
+    assert "def plugin_action_request_preview(" in runtime_source
+    assert "def _invoke_ai_executor_runner(" in runtime_source
+    assert "def resolve_plugin_request_config(" not in entrypoint_source
+    assert "def plugin_action_request_preview(" not in entrypoint_source
+    assert "def _invoke_ai_executor_runner(" not in entrypoint_source
+    assert "call_model_gateway_for_task(" not in entrypoint_source
 
 
 def test_ai_executor_runners_use_split_health_module():
