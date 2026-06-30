@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本 AI 动作草案治理校验继续拆分：新增 `scripts/full_chain_regression_assistant_drafts.py` 承接草案确认、失败重试、列表 read model 和审计链路断言，主脚本继续聚焦 suite 编排和公开 API 主链路。
 - 迭代版本总览发布证据增强：版本驾驶舱 summary 新增成功/失败发布计数，交付阶段发布证据卡展示最近一次发布状态与时间，真实全链路回归 helper 校验发布证据计数不断链。
 - 前端任务中心继续拆大文件：任务详情弹窗抽取为 `TaskDetailModal`，主页面只保留加载和开关编排，并将 TaskCenter 页面容器预算收紧到 1800 行。
 - 工程拆大文件守护补齐前端页面容器预算：TaskCenter、知识中心、角色、插件、迭代版本等高风险页面纳入 `test_frontend_page_containers_stay_under_line_budget`，新出现超过 900 行的页面必须登记预算或继续拆分。

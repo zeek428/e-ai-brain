@@ -264,6 +264,21 @@ def test_full_chain_regression_version_dashboard_checks_are_split_from_runner():
     assert "VERSION_DASHBOARD_BLOCKER_SOURCE_PRIORITY" in helper_content
 
 
+def test_full_chain_regression_assistant_draft_checks_are_split_from_runner():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_assistant_drafts.py"
+    script_content = script_path.read_text(encoding="utf-8")
+    helper_content = helper_path.read_text(encoding="utf-8")
+
+    assert "from full_chain_regression_assistant_drafts import validate_assistant_draft_governance" in script_content
+    assert "def validate_assistant_draft_governance(" not in script_content
+    assert "DRAFT_PRECHECK_FAILED" not in script_content
+    assert "assistant_action_draft.retry_requested" not in script_content
+    assert "def validate_assistant_draft_governance(" in helper_content
+    assert "DRAFT_PRECHECK_FAILED" in helper_content
+    assert "assistant_action_draft.retry_requested" in helper_content
+
+
 def test_full_chain_regression_report_includes_suite_coverage():
     module = _load_full_chain_regression_module()
 
@@ -544,7 +559,12 @@ def test_full_chain_regression_script_validates_runner_cancel_retry():
 
 def test_full_chain_regression_script_supports_assistant_draft_governance_suite():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
-    content = script_path.read_text(encoding="utf-8")
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_assistant_drafts.py"
+    content = (
+        script_path.read_text(encoding="utf-8")
+        + "\n"
+        + helper_path.read_text(encoding="utf-8")
+    )
 
     for marker in [
         '"assistant-draft-governance"',
