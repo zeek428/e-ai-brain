@@ -279,6 +279,21 @@ def test_full_chain_regression_assistant_draft_checks_are_split_from_runner():
     assert "assistant_action_draft.retry_requested" in helper_content
 
 
+def test_full_chain_regression_knowledge_index_checks_are_split_from_runner():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_knowledge.py"
+    script_content = script_path.read_text(encoding="utf-8")
+    helper_content = helper_path.read_text(encoding="utf-8")
+
+    assert "from full_chain_regression_knowledge import validate_knowledge_index_health_quick_regression" in script_content
+    assert "def validate_knowledge_index_health_quick_regression(" not in script_content
+    assert "Knowledge index health missed readable permission scope labels" not in script_content
+    assert "/api/knowledge/documents/{document_id}/retry-index" not in script_content
+    assert "def validate_knowledge_index_health_quick_regression(" in helper_content
+    assert "Knowledge index health missed readable permission scope labels" in helper_content
+    assert "/api/knowledge/documents/{document_id}/retry-index" in helper_content
+
+
 def test_full_chain_regression_report_includes_suite_coverage():
     module = _load_full_chain_regression_module()
 
@@ -631,7 +646,12 @@ def test_full_chain_regression_script_supports_code_inspection_governance_suite(
 
 def test_full_chain_regression_script_supports_knowledge_index_health_suite():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
-    content = script_path.read_text(encoding="utf-8")
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_knowledge.py"
+    content = (
+        script_path.read_text(encoding="utf-8")
+        + "\n"
+        + helper_path.read_text(encoding="utf-8")
+    )
 
     for marker in [
         '"knowledge-index-health"',
