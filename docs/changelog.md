@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本 AI 助手问答校验继续拆分：新增 `scripts/full_chain_regression_assistant_qa.py` 承接确定性助手、版本引用、`assistant.iteration`、版本总览投影和会话历史断言，主脚本继续聚焦 suite 编排和公开 API 主链路。
 - 真实全链路回归脚本代码巡检治理校验继续拆分：新增 `scripts/full_chain_regression_code_inspection.py` 承接本地完整扫描、质量门禁、Bug/整改任务写回、提交人治理、趋势对比和版本总览阻塞断言，主脚本继续聚焦 suite 编排和公开 API 主链路。
 - 真实全链路回归脚本权限可视化校验继续拆分：新增 `scripts/full_chain_regression_permissions.py` 承接角色列表、权限矩阵、角色访问预览、范围名称和用户权限诊断断言，主脚本继续聚焦 suite 编排和公开 API 主链路。
 - 真实全链路回归脚本知识索引健康校验继续拆分：新增 `scripts/full_chain_regression_knowledge.py` 承接知识文档创建、索引健康、权限命中、失败重试和检索恢复断言，主脚本继续聚焦 suite 编排和公开 API 主链路。

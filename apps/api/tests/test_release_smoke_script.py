@@ -316,6 +316,21 @@ def test_full_chain_regression_code_inspection_checks_are_split_from_runner():
     assert "create_task_for_severe_findings" in helper_content
 
 
+def test_full_chain_regression_assistant_qa_checks_are_split_from_runner():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_assistant_qa.py"
+    script_content = script_path.read_text(encoding="utf-8")
+    helper_content = helper_path.read_text(encoding="utf-8")
+
+    assert "from full_chain_regression_assistant_qa import validate_assistant_qa_quick_regression" in script_content
+    assert "def validate_assistant_qa_quick_regression(" not in script_content
+    assert '"assistant_qa_quick"' not in script_content
+    assert "Assistant QA history missed iteration tool result" not in script_content
+    assert "def validate_assistant_qa_quick_regression(" in helper_content
+    assert '"assistant_qa_quick"' in helper_content
+    assert "Assistant QA history missed iteration tool result" in helper_content
+
+
 def test_full_chain_regression_permission_visibility_checks_are_split_from_runner():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
     helper_path = REPO_ROOT / "scripts" / "full_chain_regression_permissions.py"
@@ -642,7 +657,12 @@ def test_full_chain_regression_script_supports_assistant_draft_governance_suite(
 
 def test_full_chain_regression_script_supports_assistant_qa_suite():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
-    content = script_path.read_text(encoding="utf-8")
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_assistant_qa.py"
+    content = (
+        script_path.read_text(encoding="utf-8")
+        + "\n"
+        + helper_path.read_text(encoding="utf-8")
+    )
 
     for marker in [
         '"assistant-qa"',
