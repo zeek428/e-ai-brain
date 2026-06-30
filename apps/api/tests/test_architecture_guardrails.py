@@ -32,7 +32,7 @@ FRONTEND_PAGE_CONTAINER_LINE_BUDGETS = {
     "apps/web/src/pages/Requirements/index.tsx": 1250,
     "apps/web/src/pages/Roles/index.tsx": 1600,
     "apps/web/src/pages/ScheduledJobs/index.tsx": 1300,
-    "apps/web/src/pages/TaskCenter/index.tsx": 1900,
+    "apps/web/src/pages/TaskCenter/index.tsx": 1800,
 }
 
 
@@ -77,6 +77,20 @@ def test_frontend_page_containers_stay_under_line_budget():
     assert not oversized_files, "Split frontend page containers before merging:\n" + "\n".join(
         oversized_files
     )
+
+
+def test_task_center_detail_modal_is_split_from_page_container():
+    component_path = REPO_ROOT / "apps/web/src/pages/TaskCenter/components/TaskDetailModal.tsx"
+    entrypoint_path = REPO_ROOT / "apps/web/src/pages/TaskCenter/index.tsx"
+
+    assert component_path.exists(), "Keep TaskCenter task-detail display in a split component."
+    component_source = component_path.read_text(encoding="utf-8")
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+
+    assert "TaskDetailModal" in entrypoint_source
+    assert "任务详情加载中" not in entrypoint_source
+    assert "Graph Runs" in component_source
+    assert "formatJsonPreview" in component_source
 
 
 def test_scheduled_job_entrypoint_uses_split_constants_module():
