@@ -4,6 +4,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_DOMAIN_FILE_LINES = 2800
+MAX_AI_EXECUTOR_RUNNER_LINES = 2200
 MAX_CODE_INSPECTION_SERVICE_LINES = 2400
 MAX_PLUGIN_MAIN_SERVICE_LINES = 2300
 MAX_SCHEDULED_JOB_SERVICE_LINES = 2400
@@ -12,7 +13,7 @@ MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
 FRONTEND_PAGE_CONTAINER_REVIEW_THRESHOLD_LINES = 900
 
 DOMAIN_FILE_LINE_BUDGETS = {
-    "apps/api/app/services/ai_executor_runners.py": MAX_DOMAIN_FILE_LINES,
+    "apps/api/app/services/ai_executor_runners.py": MAX_AI_EXECUTOR_RUNNER_LINES,
     "apps/api/app/services/assistant_action_drafts.py": MAX_ASSISTANT_ACTION_DRAFT_LINES,
     "apps/api/app/core/repositories/authorization.py": MAX_DOMAIN_FILE_LINES,
     "apps/api/app/services/assistant_chat.py": MAX_DOMAIN_FILE_LINES,
@@ -180,6 +181,25 @@ def test_plugin_entrypoint_uses_split_store_helpers_module():
     assert "def ensure_standard_plugins(" not in entrypoint_source
     assert "def sync_plugin_dependency_store(" not in entrypoint_source
     assert "def merge_masked_config(" not in entrypoint_source
+
+
+def test_ai_executor_runners_use_split_health_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/ai_executor_runner_health.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/ai_executor_runners.py"
+
+    assert helper_path.exists(), (
+        "Move AI executor runner health, system runner and public projection helpers "
+        "to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "from app.services.ai_executor_runner_health import" in entrypoint_source
+    assert "def runner_public(" in helper_source
+    assert "def runner_health_alert(" in helper_source
+    assert "def system_default_ai_executor_runner(" in helper_source
+    assert "def _runner_public(" not in entrypoint_source
+    assert "def _runner_health_alert(" not in entrypoint_source
+    assert "def system_default_ai_executor_runner(" not in entrypoint_source
 
 
 def test_assistant_references_uses_split_action_defaults_module():

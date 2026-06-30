@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 执行器 Runner 健康投影继续拆大文件：新增 `ai_executor_runner_health` 承接系统默认 Runner、公开投影、心跳健康状态、健康告警和启动命令，`ai_executor_runners.py` 从 2300 行降至 2156 行并将预算收紧到 2200 行。
 - AI 动作草案治理投影继续拆大文件：新增 `assistant_action_draft_governance` 承接风险等级、影响对象、权限校验、执行前后差异、失败重试、审计链路和确认决策，`assistant_action_drafts.py` 从 2385 行降至 2235 行并将预算收紧到 2250 行。
 - 代码巡检详情治理投影继续拆大文件：新增 `code_inspection_detail_projection` 承接扫描覆盖摘要、规则/文件/提交人分布、Bug/整改覆盖率、待审批忽略和接受风险有效性判断，`code_inspections.py` 从 2504 行降至 2259 行并将预算收紧到 2400 行。
 - 插件主服务继续拆大文件：新增 `plugin_store_helpers` 承接 MemoryStore 兼容、Repository 同步、通用校验、标准插件种子和脱敏合并 helper，`plugins.py` 从 2470 行降至 2183 行并将预算收紧到 2300 行。
