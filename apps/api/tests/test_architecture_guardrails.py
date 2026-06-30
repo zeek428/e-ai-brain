@@ -7,7 +7,7 @@ MAX_DOMAIN_FILE_LINES = 2800
 MAX_AI_EXECUTOR_RUNNER_LINES = 2200
 MAX_CODE_INSPECTION_SERVICE_LINES = 2400
 MAX_PLUGIN_MAIN_SERVICE_LINES = 2300
-MAX_SCHEDULED_JOB_SERVICE_LINES = 2400
+MAX_SCHEDULED_JOB_SERVICE_LINES = 2200
 MAX_ASSISTANT_ACTION_DRAFT_LINES = 2250
 MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
 FRONTEND_PAGE_CONTAINER_REVIEW_THRESHOLD_LINES = 900
@@ -135,6 +135,25 @@ def test_scheduled_job_entrypoint_uses_split_user_feedback_module():
     assert "USER_FEEDBACK_TYPES" not in entrypoint_source
     assert "def run_user_feedback_insight_extract_job(" in user_feedback_source
     assert "def resolve_job_plugin_output_mapping(" in user_feedback_source
+
+
+def test_scheduled_job_entrypoint_uses_split_ref_validation_module():
+    validation_path = REPO_ROOT / "apps/api/app/services/scheduled_job_ref_validation.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/scheduled_jobs.py"
+
+    assert validation_path.exists(), (
+        "Move scheduled job AI, product and plugin reference validation "
+        "to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    validation_source = validation_path.read_text(encoding="utf-8")
+    assert "from app.services.scheduled_job_ref_validation import" in entrypoint_source
+    assert "def validate_job_refs(" in validation_source
+    assert "def validate_plugin_refs(" in validation_source
+    assert "ensure_active_model_gateway(" in validation_source
+    assert "ensure_active_plugin_action(" in validation_source
+    assert "def validate_job_refs(" not in entrypoint_source
+    assert "def validate_plugin_refs(" not in entrypoint_source
 
 
 def test_plugin_entrypoint_uses_split_constants_module():
