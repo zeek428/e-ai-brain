@@ -436,6 +436,72 @@ def validate_knowledge_index_health_quick_regression(
         any(item.get("retrieval_mode") in {"keyword", "vector"} for item in search_items),
         f"Knowledge search did not return retrieval mode: {search_items}",
     )
+
+    failed_document = client.request(
+        "PATCH",
+        f"/api/knowledge/documents/{document_id}",
+        body={
+            "index_error": "full-chain regression forced index failure",
+            "index_status": "index_failed",
+        },
+    )
+    _assert(
+        failed_document.get("index_status") == "index_failed",
+        f"Knowledge document was not marked index_failed: {failed_document}",
+    )
+    _assert(
+        int(failed_document.get("chunk_count") or 0) == 0,
+        f"Knowledge index_failed document should not keep active chunks: {failed_document}",
+    )
+    failed_health = client.get(
+        "/api/knowledge/index-health",
+        {
+            "index_status": "index_failed",
+            "issue_limit": 20,
+            "keyword": marker,
+            "permission_role": "admin",
+        },
+    )
+    failed_summary = failed_health.get("summary") or {}
+    _assert(
+        int(failed_summary.get("index_failed_documents") or 0) >= 1,
+        f"Knowledge index health missed failed document count: {failed_health}",
+    )
+    failed_issues = [
+        issue for issue in failed_health.get("items", []) if str(issue.get("document_id")) == document_id
+    ]
+    _assert(
+        any(
+            issue.get("action") == "retry_index"
+            and issue.get("severity") == "error"
+            and issue.get("status") == "index_failed"
+            for issue in failed_issues
+        ),
+        f"Knowledge index health missed retry issue for failed document: {failed_issues}",
+    )
+    failed_search = client.post("/api/knowledge/search", {"query": marker, "top_k": 5})
+    failed_search_ids = {str(item.get("document_id")) for item in failed_search.get("items", [])}
+    _assert(
+        document_id not in failed_search_ids,
+        f"Knowledge search returned index_failed document before retry: {failed_search}",
+    )
+
+    retried_document = client.post(f"/api/knowledge/documents/{document_id}/retry-index")
+    _assert(
+        retried_document.get("index_status") in {"indexed", "text_indexed", "vector_indexed"},
+        f"Knowledge retry did not restore a searchable status: {retried_document}",
+    )
+    _assert(
+        int(retried_document.get("chunk_count") or 0) >= 1,
+        f"Knowledge retry did not rebuild chunks: {retried_document}",
+    )
+    retried_search = client.post("/api/knowledge/search", {"query": marker, "top_k": 5})
+    retried_search_items = retried_search.get("items", [])
+    _assert_contains(
+        {str(item.get("document_id")) for item in retried_search_items},
+        document_id,
+        "Knowledge search did not retrieve document after retry-index",
+    )
     results.append(
         StepResult(
             "knowledge_index_health_quick",
@@ -448,7 +514,7 @@ def validate_knowledge_index_health_quick_regression(
     results.append(
         StepResult(
             "knowledge_search",
-            f"hits={len(search_items)} / document={document_id}",
+            f"hits={len(search_items)} / retried_hits={len(retried_search_items)} / document={document_id}",
         )
     )
     return results

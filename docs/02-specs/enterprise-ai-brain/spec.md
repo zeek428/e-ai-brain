@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.761 |
+| 功能版本 | v1.1.762 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.762 | 2026-06-30 | 真实全链路回归 `knowledge-index-health` 补齐索引失败、健康问题 retry 动作、重试恢复和恢复后检索命中校验 | Codex |
 | v1.1.761 | 2026-06-30 | 真实全链路回归 `assistant-draft-governance` 补齐 AI 动作草案确认失败、失败原因投影、人工重试、修复后确认和审计链路校验 | Codex |
 | v1.1.760 | 2026-06-30 | 真实全链路回归补齐 AI 助手 `status_impact` 投影一致性校验，确保助手即时回答和历史消息复用版本驾驶舱状态推进摘要 | Codex |
 | v1.1.759 | 2026-06-30 | 真实全链路回归版本驾驶舱 helper 补齐 `status_impact` 结构校验，统一守护同步推进、阻塞和保持不变需求数据 | Codex |
@@ -2116,7 +2117,7 @@ suggested → rejected
 - v1.2 扩展覆盖“用户洞察采集 → AI 迭代规划建议 → 产品负责人确认 → 转正式需求”的产品迭代路径。
 - `scripts/full_chain_regression.py` 是本地 PostgreSQL 运行态的真实全链路回归入口，必须通过公开 API 串联产品、版本、用户反馈转需求、批量排期、AI 任务启动、Review、知识沉淀、知识索引健康、版本代码分支、本地完整代码巡检、Bug/整改任务写回、AI 执行器 Runner 可靠性、AI 动作草案治理、版本总览、统一 full-chain、团队看板、AI 助手引用和权限可视化。脚本成功不应只代表接口调用返回 2xx，还必须校验知识沉淀采纳后的 `knowledge_document_id`、索引健康可检索文档/chunk/召回模式、知识检索命中结果、本地完整扫描 finding、提交人归因、治理覆盖率、派生 Bug/整改任务回写 ID、质量门禁失败在运行摘要、报告详情和治理概览 `quality_gate_violations` 中可追踪、治理概览 `governance_pressure` 能集中返回 `action_required` 闭环状态、质量门禁失败报告数、失败项数、活跃严重问题数，并确认严重 finding 的 Bug 覆盖和整改任务覆盖已闭环、治理概览 `committer_governance` 能按提交人返回闭环状态、活跃严重问题、Bug 覆盖和整改任务覆盖、Runner Token 轮换必须拒绝旧 Token 并接受新 Token 心跳、新建 Runner 必须先返回 `runner_never_connected` 健康告警且心跳后 `health_alert` 清除、AI 执行器短租约任务可按 `claim -> timeout-scan -> requeue -> claim -> timeout-scan -> dead_letter` 闭环验证，死信任务返回 `AI_EXECUTOR_TASK_LEASE_EXPIRED` 且 warning/error 日志可查询、AI 动作草案必须能展示风险、影响对象、权限状态、字段差异、查看/修改/确认、确认失败、失败原因、重试恢复和审计事件，版本总览状态分布、`code_review_reports` 与 `pending_code_review_reports` 聚合，待确认 Code Review 必须进入可处理阻塞队列、`knowledge_deposits` 摘要与沉淀明细、所有版本总览阻塞项均携带 `source_type`、`severity`、`title`、`reason`、动作标签、目标主体和解除条件、发布到已发布前缺少成功发布记录时能形成可跳转的发布阻塞项、代码巡检报告主体解析回 full-chain、团队看板产品维度计数、助手会话历史中保留需求、版本、代码巡检引用、`assistant.iteration` 版本阻塞数量、版本总览 `next_actions` 工具结果和 `status_impact` 安全投影，以及权限矩阵、角色访问预览和用户权限诊断不断链。`--json-output` 报告必须包含 `coverage` 矩阵，列出当前 suite 覆盖/跳过的目标域；`--suite full` 的 `coverage.is_complete_chain` 必须为 `true`，避免把局部快速 suite 误判为完整验收。默认 `--suite full` 保持完整主链路；`FULL_CHAIN_SUITE=all-targeted` 或 `--suite all-targeted` 串行执行 Runner 可靠性、版本总览、AI 助手问答、AI 动作草案治理、代码巡检治理、知识索引健康和权限可视化快速门禁，并在覆盖矩阵中标记 `is_complete_chain=false`，适合日常快速治理回归但不能替代完整 `full` 主链路；`FULL_CHAIN_SUITE=runner-reliability` 或 `--suite runner-reliability` 可只执行登录、fixture 仓库和 AI 执行器 Runner Token 轮换、健康告警、租约/死信门禁，便于日常快速验收运行可靠性；`FULL_CHAIN_SUITE=version-dashboard` 或 `--suite version-dashboard` 可只执行产品、版本、需求、任务、技术方案、本地 GitLab fixture MR 快照、Code Review 待确认报告、版本分支、状态推进影响和版本总览待确认代码评审/发布/分支阻塞项校验，便于快速验收迭代版本页总览聚合是否断链；`FULL_CHAIN_SUITE=assistant-qa` 或 `--suite assistant-qa` 可只执行迭代版本治理问答，校验助手使用 `assistant-deterministic`、返回 `assistant.iteration` 工具结果、版本引用、版本总览 `next_actions`、`status_impact` 安全投影和会话历史，便于快速验收 AI 助手系统问答不断链；`FULL_CHAIN_SUITE=assistant-draft-governance` 或 `--suite assistant-draft-governance` 可只执行 AI 动作草案创建、治理摘要、查看埋点、用户修改、确认落库、确认失败、重试恢复、列表 read model 和审计链路校验，便于快速验收动作确认中心不断链。默认使用显式 `deterministic` 任务启动模式以避免研发执行器 Runner 或外部模型网关波动；如需验收模型网关，可通过脚本参数切换为 `model_gateway`。
 - `FULL_CHAIN_SUITE=code-inspection-governance` 或 `--suite code-inspection-governance` 可独立执行本地完整扫描、质量门禁、Bug/整改任务写回、提交人治理、趋势对比和版本总览代码巡检阻塞门禁，用于快速判断代码巡检治理链路是否闭环。
-- `FULL_CHAIN_SUITE=knowledge-index-health` 或 `--suite knowledge-index-health` 可独立执行知识文档创建、知识列表、索引健康、权限命中说明、检索模式和知识搜索命中门禁，用于快速判断知识中心索引健康和检索链路是否闭环。
+- `FULL_CHAIN_SUITE=knowledge-index-health` 或 `--suite knowledge-index-health` 可独立执行知识文档创建、知识列表、索引健康、权限命中说明、检索模式、索引失败健康问题、`retry-index` 恢复和知识搜索命中门禁，用于快速判断知识中心索引健康和检索链路是否闭环。
 - `FULL_CHAIN_SUITE=permission-visibility` 或 `--suite permission-visibility` 可独立执行角色列表、权限矩阵、角色详情 `access_preview`、产品/知识空间范围名称、菜单权限缺口和用户权限诊断门禁，用于快速判断系统管理权限可视化和授权排障链路是否闭环。
 - 全链路脚本的目标域、快速 suite 编排和 coverage 计算必须由 `scripts/full_chain_regression_suites.py` 承接；`scripts/full_chain_regression.py` 只保留公开 API 执行、断言、报告输出和命令行入口，避免后续新增版本总览、助手问答或治理套件时继续把元数据贴回主执行脚本。
 - Runner 可靠性快速回归逻辑必须由 `scripts/full_chain_regression_runner.py` 承接，包括 Runner 初始健康告警、心跳恢复、Token 轮换、旧 Token 拒绝、租约超时重派、死信转换、死信列表和任务日志校验；`scripts/full_chain_regression.py` 只导入 `validate_ai_executor_runner_reliability` 并保持 suite 编排，不得重新贴回 Runner 细节。
