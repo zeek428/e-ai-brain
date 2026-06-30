@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.754 |
+| 功能版本 | v1.1.755 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.755 | 2026-06-30 | 真实全链路回归脚本版本驾驶舱校验逻辑拆分：阻塞项、下一步行动、治理结论和分支质量门禁迁移到 `full_chain_regression_version_dashboard.py` | Codex |
 | v1.1.754 | 2026-06-30 | 迭代版本总览新增后端 `governance_conclusion`：版本页、AI 助手和回归脚本复用同一治理结论，前端仅保留旧响应兜底推导 | Codex |
 | v1.1.753 | 2026-06-30 | 真实全链路回归脚本 Runner 可靠性逻辑拆分：健康告警、Token 轮换、租约重派、死信队列和日志校验迁移到 `full_chain_regression_runner.py` | Codex |
 | v1.1.752 | 2026-06-30 | 真实全链路回归脚本 suite 元数据拆分：目标域、快速 suite 编排和 coverage 计算迁移到 `full_chain_regression_suites.py`，主脚本聚焦公开 API 执行编排 | Codex |
@@ -2109,6 +2110,7 @@ suggested → rejected
 - `FULL_CHAIN_SUITE=permission-visibility` 或 `--suite permission-visibility` 可独立执行角色列表、权限矩阵、角色详情 `access_preview`、产品/知识空间范围名称、菜单权限缺口和用户权限诊断门禁，用于快速判断系统管理权限可视化和授权排障链路是否闭环。
 - 全链路脚本的目标域、快速 suite 编排和 coverage 计算必须由 `scripts/full_chain_regression_suites.py` 承接；`scripts/full_chain_regression.py` 只保留公开 API 执行、断言、报告输出和命令行入口，避免后续新增版本总览、助手问答或治理套件时继续把元数据贴回主执行脚本。
 - Runner 可靠性快速回归逻辑必须由 `scripts/full_chain_regression_runner.py` 承接，包括 Runner 初始健康告警、心跳恢复、Token 轮换、旧 Token 拒绝、租约超时重派、死信转换、死信列表和任务日志校验；`scripts/full_chain_regression.py` 只导入 `validate_ai_executor_runner_reliability` 并保持 suite 编排，不得重新贴回 Runner 细节。
+- 版本驾驶舱快速回归校验必须由 `scripts/full_chain_regression_version_dashboard.py` 承接，包括 blocker 结构、next_actions 排序与全链路主体、`governance_conclusion` 和 `branch_quality_governance` 分支质量门禁；`scripts/full_chain_regression.py` 只导入这些 validator 并保持公开 API 场景编排。
 - `apps/api/tests/test_architecture_guardrails.py` 固化已拆分领域入口文件的行数预算：`authorization.py`、`ai_executor_runners.py`、`assistant_references.py` 和 `assistant_chat.py` 均不得超过 2800 行，AI 动作草案主服务 `assistant_action_drafts.py`、定时作业主服务 `scheduled_jobs.py` 和插件主服务 `plugins.py` 均不得超过 2600 行，前端服务兼容 barrel `services/aiBrain.ts` 不得超过 2400 行；超过时必须继续拆分到领域模块或组件后再合入。授权仓储的默认菜单/角色授权配置应保留在 `authorization_defaults`，避免 RBAC 默认数据继续膨胀仓储实现；AI 执行器 Runner 的常量、安装包构造和运行任务编排应保持独立模块边界，避免 Runner 安装包文案或平台差异继续膨胀主服务；AI 助手动作引用默认候选、触发词和配置常量应保留在 `assistant_action_reference_defaults`，避免默认入口数据继续膨胀 `assistant_references.py`；AI 动作草案状态/动作枚举、默认 payload、基础校验和 Cron 表达式校验应保留在 `assistant_action_draft_common`，避免通用规则继续膨胀 `assistant_action_drafts.py`；定时作业权限/产品范围判断应保留在 `scheduled_job_access`，时区、动态输入映射和异常摘要应保留在 `scheduled_job_runtime`，调度时间、配置编排、多数据源引用、代码巡检仓库默认分支、数据连接策略和有效作业类型推导应保留在 `scheduled_job_config`，避免配置归一化逻辑继续膨胀定时作业主服务；插件协议、分类、状态、认证类型、连接环境、调用状态和排序字段常量应保留在 `plugin_constants`，GitHub/GitLab 连接地址解析、请求配置规范化和 GitHub 认证校验应保留在 `plugin_connection_config`，插件版本元数据、公开投影和调用请求摘要脱敏应保留在 `plugin_projection`，避免静态配置、连接平台差异和展示脱敏逻辑继续膨胀插件主服务；系统管理用户、角色、菜单和权限诊断 API 应保留在 `systemManagementClient`，`aiBrain.ts` 只保留兼容导出。
 - AI 助手知识引用候选、知识空间/目录可读范围、文档/chunk 引用投影和模型注入上下文应保留在 `assistant_knowledge_references`，`assistant_references.py` 只保留引用入口编排、业务对象解析、权限分发和动作引用配置。
 - AI 助手模型网关调用的配置选择、请求组装、HTTP/HTTPX 执行、取消中断、响应解析、引用合并和模型日志应保留在 `assistant_chat_gateway`，`assistant_chat.py` 只保留调用入口、错误映射和聊天记录持久化。

@@ -48,6 +48,7 @@ def test_web_page_smoke_fails_on_network_4xx_or_5xx_responses():
 def test_full_chain_regression_script_covers_public_api_workflow():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
     runner_path = REPO_ROOT / "scripts" / "full_chain_regression_runner.py"
+    version_dashboard_path = REPO_ROOT / "scripts" / "full_chain_regression_version_dashboard.py"
     assert script_path.exists()
     assert script_path.stat().st_mode & 0o111
 
@@ -55,6 +56,8 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         script_path.read_text(encoding="utf-8")
         + "\n"
         + runner_path.read_text(encoding="utf-8")
+        + "\n"
+        + version_dashboard_path.read_text(encoding="utf-8")
     )
     for marker in [
         "http.client",
@@ -229,6 +232,25 @@ def test_full_chain_regression_runner_reliability_is_split_from_runner():
     assert "def validate_runner_health_alert_projection(" in runner_content
 
 
+def test_full_chain_regression_version_dashboard_checks_are_split_from_runner():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_version_dashboard.py"
+    script_content = script_path.read_text(encoding="utf-8")
+    helper_content = helper_path.read_text(encoding="utf-8")
+
+    assert "from full_chain_regression_version_dashboard import" in script_content
+    assert "def validate_version_dashboard_blocker_actions(" not in script_content
+    assert "def validate_version_dashboard_next_actions(" not in script_content
+    assert "def validate_version_dashboard_governance_conclusion(" not in script_content
+    assert "def validate_version_dashboard_branch_quality(" not in script_content
+    assert "VERSION_DASHBOARD_BLOCKER_SOURCE_PRIORITY" not in script_content
+    assert "def validate_version_dashboard_blocker_actions(" in helper_content
+    assert "def validate_version_dashboard_next_actions(" in helper_content
+    assert "def validate_version_dashboard_governance_conclusion(" in helper_content
+    assert "def validate_version_dashboard_branch_quality(" in helper_content
+    assert "VERSION_DASHBOARD_BLOCKER_SOURCE_PRIORITY" in helper_content
+
+
 def test_full_chain_regression_report_includes_suite_coverage():
     module = _load_full_chain_regression_module()
 
@@ -381,9 +403,52 @@ def test_full_chain_regression_failed_json_report_keeps_suite_coverage_steps(
     assert [step["name"] for step in report["steps"]] == ["suite", "coverage"]
 
 
+def test_full_chain_regression_failed_json_report_catches_helper_assertion(
+    monkeypatch,
+    tmp_path,
+):
+    module = _load_full_chain_regression_module()
+    report_path = tmp_path / "full-chain-helper-failed.json"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+    def fail_regression(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("helper assertion failed")
+
+    monkeypatch.setattr(module, "ApiClient", FakeClient)
+    monkeypatch.setattr(module, "run_regression_suite", fail_regression)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "full_chain_regression.py",
+            "--suite",
+            "version-dashboard",
+            "--json-output",
+            str(report_path),
+        ],
+    )
+
+    assert module.main() == 1
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert report["status"] == "failed"
+    assert report["suite"] == "version-dashboard"
+    assert report["error"] == "helper assertion failed"
+    assert [step["name"] for step in report["steps"]] == ["suite", "coverage"]
+
+
 def test_full_chain_regression_script_supports_version_dashboard_suite():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
-    content = script_path.read_text(encoding="utf-8")
+    helper_path = REPO_ROOT / "scripts" / "full_chain_regression_version_dashboard.py"
+    content = (
+        script_path.read_text(encoding="utf-8")
+        + "\n"
+        + helper_path.read_text(encoding="utf-8")
+    )
 
     for marker in [
         '"version-dashboard"',
