@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from full_chain_regression_slug import regression_slug
 from full_chain_regression_version_dashboard import (
     validate_version_dashboard_blocker_actions,
     validate_version_dashboard_branch_quality,
@@ -28,8 +28,7 @@ class StepResult:
 
 
 def _slug() -> str:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    return f"full-chain-{timestamp}"
+    return regression_slug()
 
 
 def _assert(condition: bool, message: str) -> None:

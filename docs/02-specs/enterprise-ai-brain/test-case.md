@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.886 |
+| 功能版本 | v1.1.887 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.887 | 2026-07-01 | 补充真实全链路回归稳定性验收：脚本族必须复用 `full_chain_regression_slug`，权限可视化场景必须按本次唯一后缀筛选角色列表，连续运行 `all-targeted` 时不得因秒级 fixture 目录或历史角色分页污染失败 | Codex |
 | v1.1.886 | 2026-07-01 | 补充迭代版本总览发布准备清单后端投影验收：dashboard 必须返回 `release_readiness_checklist`，页面清单优先消费该字段，版本驾驶舱/助手/代码巡检快速回归 helper 必须校验结构、顺序和计数一致性 | Codex |
 | v1.1.885 | 2026-07-01 | 补充定时作业 read model 拆分守护：`scheduled_jobs.py` 纳入 1900 行预算，定时作业列表、运行记录列表和运行公开投影必须留在 `scheduled_job_read_models.py` | Codex |
 | v1.1.884 | 2026-07-01 | 补充 AI 执行器 Runner 任务上下文拆分守护：`ai_executor_runners.py` 纳入 2050 行预算，任务产品 scope、上游运行上下文、运行节点投影和时间解析 helper 必须留在 `ai_executor_runner_task_context.py` | Codex |

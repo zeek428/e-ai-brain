@@ -468,6 +468,30 @@ def test_full_chain_regression_report_includes_suite_coverage():
     assert targeted_coverage["covered_domain_count"] > dashboard_coverage["covered_domain_count"]
 
 
+def test_full_chain_regression_slugs_are_unique_for_targeted_suites():
+    module = _load_full_chain_regression_module()
+    script_paths = [
+        REPO_ROOT / "scripts" / "full_chain_regression.py",
+        REPO_ROOT / "scripts" / "full_chain_regression_assistant_drafts.py",
+        REPO_ROOT / "scripts" / "full_chain_regression_assistant_qa.py",
+        REPO_ROOT / "scripts" / "full_chain_regression_code_inspection.py",
+        REPO_ROOT / "scripts" / "full_chain_regression_knowledge.py",
+        REPO_ROOT / "scripts" / "full_chain_regression_permissions.py",
+    ]
+
+    first_slug = module.regression_slug()
+    second_slug = module.regression_slug()
+
+    assert first_slug != second_slug
+    assert first_slug.startswith("full-chain-")
+    assert second_slug.startswith("full-chain-")
+
+    for script_path in script_paths:
+        content = script_path.read_text(encoding="utf-8")
+        assert "from full_chain_regression_slug import regression_slug" in content
+        assert 'strftime("%Y%m%d%H%M%S")' not in content
+
+
 def test_full_chain_regression_all_targeted_suite_aggregates_fast_suite_results(monkeypatch):
     module = _load_full_chain_regression_module()
     called: list[str] = []
@@ -861,3 +885,6 @@ def test_full_chain_regression_script_supports_permission_visibility_suite():
         "Permission diagnostics missed readable effective scope",
     ]:
         assert marker in content
+
+    assert '"role": code_suffix' in content
+    assert '"role": "权限可视化"' not in content

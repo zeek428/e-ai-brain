@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本 slug 生成收口到 `full_chain_regression_slug`：使用微秒时间、进程号和进程内计数生成临时资源名，权限可视化场景按本次唯一后缀筛选角色列表，避免 `all-targeted` 组合套件连续创建 Runner/代码巡检 fixture 或复用历史权限回归数据时失败。
 - 迭代版本总览新增后端发布准备清单投影：`GET /api/product-versions/{version_id}/dashboard` 返回 `release_readiness_checklist`，按需求、任务、分支、巡检、评审、Bug、知识、发布和状态推进九项统一输出准入状态；前端“发布准备清单”优先消费该字段，真实全链路版本驾驶舱 helper 纳入结构和计数校验。
 - 定时作业主服务继续拆大文件：新增 `scheduled_job_read_models` 承接定时作业列表、运行记录列表和运行公开投影，`scheduled_jobs.py` 从 2124 行降至 1773 行并将预算收紧到 1900 行。
 - AI 执行器 Runner 主服务继续拆大文件：新增 `ai_executor_runner_task_context` 承接任务产品 scope、上游定时作业/插件日志/AI任务上下文、运行节点投影和时间解析 helper，`ai_executor_runners.py` 从 2156 行降至 2009 行并将预算收紧到 2050 行。

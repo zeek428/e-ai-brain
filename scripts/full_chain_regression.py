@@ -24,6 +24,7 @@ from full_chain_regression_assistant_qa import validate_assistant_qa_quick_regre
 from full_chain_regression_code_inspection import validate_code_inspection_governance_quick_regression  # noqa: E402
 from full_chain_regression_knowledge import validate_knowledge_index_health_quick_regression  # noqa: E402
 from full_chain_regression_permissions import validate_permission_visibility_quick_regression  # noqa: E402
+from full_chain_regression_slug import regression_slug  # noqa: E402
 from full_chain_regression_suites import (  # noqa: E402
     REGRESSION_TARGETED_SUITE_NAMES,
     regression_suite_coverage,
@@ -215,8 +216,7 @@ class ApiClient:
 
 
 def _slug() -> str:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    return f"full-chain-{timestamp}"
+    return regression_slug()
 
 
 def _assert(condition: bool, message: str) -> None:

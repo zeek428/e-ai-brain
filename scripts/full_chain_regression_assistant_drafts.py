@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
+
+from full_chain_regression_slug import regression_slug
 
 
 @dataclass
@@ -12,8 +13,7 @@ class StepResult:
 
 
 def _slug() -> str:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    return f"full-chain-{timestamp}"
+    return regression_slug()
 
 
 def _assert(condition: bool, message: str) -> None:
