@@ -177,16 +177,24 @@ describe('KnowledgePage', () => {
     expect((await screen.findAllByText('知识中心布局验证')).length).toBeGreaterThan(0);
     const healthPanel = screen.getByLabelText('知识索引健康');
     expect(within(healthPanel).getByText('索引健康')).toBeInTheDocument();
-    expect(within(healthPanel).getByText('关键词兜底')).toBeInTheDocument();
+    expect(within(healthPanel).getAllByText('关键词兜底').length).toBeGreaterThan(0);
+    expect(within(healthPanel).getByText('解析状态')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('解析可用')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('Chunk & Embedding')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('检索与权限')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('检索可用')).toBeInTheDocument();
     expect(within(healthPanel).getByText('向量待补')).toBeInTheDocument();
     expect(within(healthPanel).getByText('分块缺失')).toBeInTheDocument();
     expect(within(healthPanel).getByText('embedding provider unavailable')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('状态分布：文本索引 1')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('文本索引 · 补向量')).toBeInTheDocument();
+    expect(within(healthPanel).getByText('文本索引 · 查看分块')).toBeInTheDocument();
     expect(within(healthPanel).getByText('文档状态：文本索引 1')).toBeInTheDocument();
     expect(
       within(healthPanel).getByText('Chunk / Embedding：分块文档 0 · 缺分块 1 · Chunk 1 · Embedding 0 · 覆盖率 0%'),
     ).toBeInTheDocument();
     expect(within(healthPanel).getByText('召回模式：混合 0 · 关键词 1 · 不可用 0')).toBeInTheDocument();
-    expect(within(healthPanel).getByText('权限命中：角色 admin 命中 1 个文档')).toBeInTheDocument();
+    expect(within(healthPanel).getAllByText('权限命中：角色 admin 命中 1 个文档').length).toBeGreaterThan(0);
     expect(within(healthPanel).getByText('Embedding 模型：text-embedding-3-small/1536维 0')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '知识列表' })).toBeInTheDocument();
     const mainTable = document.querySelector('table[data-table-scroll-x="2000"]');
@@ -454,7 +462,7 @@ describe('KnowledgePage', () => {
 
     expect((await screen.findAllByText('失败知识')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('embedding provider timeout').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button', { name: /重试索引/ }));
+    fireEvent.click(screen.getAllByRole('button', { name: /重试索引/ })[0]);
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
@@ -806,7 +814,7 @@ describe('KnowledgePage', () => {
     expect(screen.getByText('导入 worker')).toBeInTheDocument();
     expect(screen.getByText('运行中')).toBeInTheDocument();
     expect(screen.getByText('待处理 1')).toBeInTheDocument();
-    expect(screen.getByText('失败 0')).toBeInTheDocument();
+    expect(screen.getAllByText('失败 0').length).toBeGreaterThan(0);
     expect(screen.getByText('ops-import.md')).toBeInTheDocument();
     expect(screen.getByText('0%')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /运行/ }));

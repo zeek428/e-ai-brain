@@ -44,6 +44,17 @@ type KnowledgeHealthSummary = {
   vectorReadyCount: number;
 };
 
+type KnowledgeGovernanceSection = {
+  detail: string;
+  facts: string[];
+  key: string;
+  label: string;
+  status: {
+    color: string;
+    label: string;
+  };
+};
+
 export type KnowledgeIndexHealthState = {
   error?: string;
   record?: KnowledgeIndexHealthRecord;
@@ -252,6 +263,76 @@ function formatPermissionScope(record?: KnowledgeIndexHealthRecord) {
   return record.permissionScope.globalKnowledgeAccess ? '全局知识权限' : '无命中说明';
 }
 
+function buildKnowledgeGovernanceSections(
+  summary: KnowledgeHealthSummary,
+  record: KnowledgeIndexHealthRecord | undefined,
+  rows: KnowledgeRecord[],
+): KnowledgeGovernanceSection[] {
+  const totalChunks = Number(record?.summary.totalChunks ?? 0);
+  const embeddingReadyChunks = Number(record?.summary.embeddingReadyChunks ?? 0);
+  const parseStatus =
+    summary.failedCount > 0
+      ? { color: 'red', label: '失败待处理' }
+      : summary.pendingCount > 0
+        ? { color: 'blue', label: '解析中' }
+        : summary.total > 0
+          ? { color: 'green', label: '解析可用' }
+          : { color: 'default', label: '暂无文档' };
+  const chunkStatus =
+    summary.missingChunkCount > 0
+      ? { color: 'gold', label: '分块待补' }
+      : totalChunks > 0
+        ? { color: 'green', label: '分块可用' }
+        : { color: 'default', label: '暂无 Chunk' };
+  const embeddingStatus =
+    summary.searchableCount > 0 && summary.vectorReadyCount === 0
+      ? { color: 'gold', label: '关键词兜底' }
+      : embeddingReadyChunks > 0
+        ? { color: 'green', label: '向量可用' }
+        : chunkStatus;
+  const retrievalUsable = Number(record?.retrievalModes.hybridReady ?? 0) + Number(record?.retrievalModes.keywordFallback ?? 0);
+  const retrievalStatus =
+    Number(record?.retrievalModes.unavailable ?? 0) > 0
+      ? { color: 'red', label: '存在不可用' }
+      : retrievalUsable > 0
+        ? { color: 'green', label: '检索可用' }
+        : { color: 'default', label: '等待索引' };
+
+  return [
+    {
+      detail: `状态分布：${formatDocumentStatusCounts(record, rows)}`,
+      facts: [`失败 ${summary.failedCount}`, `处理中 ${summary.pendingCount}`, `可检索 ${summary.searchableCount}`],
+      key: 'parse',
+      label: '解析状态',
+      status: parseStatus,
+    },
+    {
+      detail: formatChunkEmbeddingCoverage(summary, record),
+      facts: [`分块文档 ${summary.chunkReadyCount}`, `向量文档 ${summary.vectorReadyCount}`, `缺分块 ${summary.missingChunkCount}`],
+      key: 'chunk_embedding',
+      label: 'Chunk & Embedding',
+      status: embeddingStatus,
+    },
+    {
+      detail: `权限命中：${formatPermissionScope(record)}`,
+      facts: [formatRetrievalModes(record), `模型：${formatEmbeddingModels(record)}`],
+      key: 'retrieval_permission',
+      label: '检索与权限',
+      status: retrievalStatus,
+    },
+  ];
+}
+
+function issueActionText(issue: KnowledgeHealthIssue) {
+  if (issue.action === 'open_chunks') {
+    return '查看分块';
+  }
+  if (issue.action === 'open_import_jobs') {
+    return '导入任务';
+  }
+  return issue.document.status === 'text_indexed' ? '补向量' : '重试索引';
+}
+
 export function KnowledgeIndexHealthPanel({
   healthState,
   listRows,
@@ -265,6 +346,7 @@ export function KnowledgeIndexHealthPanel({
     ? buildRemoteKnowledgeHealthSummary(healthState.record, listRows)
     : localSummary;
   const healthMetrics = buildKnowledgeHealthMetrics(summary, healthState.record);
+  const governanceSections = buildKnowledgeGovernanceSections(summary, healthState.record, listRows);
   const healthStatus =
     summary.failedCount > 0
       ? { color: 'red', label: '需处理' }
@@ -281,7 +363,7 @@ export function KnowledgeIndexHealthPanel({
           size="small"
           type="link"
         >
-          处理
+          {issueActionText(issue)}
         </Button>
       );
     }
@@ -293,7 +375,7 @@ export function KnowledgeIndexHealthPanel({
           size="small"
           type="link"
         >
-          分块
+          {issueActionText(issue)}
         </Button>
       );
     }
@@ -304,7 +386,7 @@ export function KnowledgeIndexHealthPanel({
         size="small"
         type="link"
       >
-        导入任务
+        {issueActionText(issue)}
       </Button>
     );
   };
@@ -335,6 +417,22 @@ export function KnowledgeIndexHealthPanel({
           </div>
         ))}
       </div>
+      <div className="knowledge-health-governance" role="list">
+        {governanceSections.map((section) => (
+          <div className="knowledge-health-governance-card" key={section.key} role="listitem">
+            <div className="knowledge-health-governance-title">
+              <Text strong>{section.label}</Text>
+              <StatusTag color={section.status.color} label={section.status.label} />
+            </div>
+            <Text type="secondary">{section.detail}</Text>
+            <div className="knowledge-health-governance-facts">
+              {section.facts.map((fact) => (
+                <span key={fact}>{fact}</span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
       <div className="knowledge-health-signals">
         <Text type="secondary">文档状态：{formatDocumentStatusCounts(healthState.record, listRows)}</Text>
         <Text type="secondary">Chunk / Embedding：{formatChunkEmbeddingCoverage(summary, healthState.record)}</Text>
@@ -360,6 +458,9 @@ export function KnowledgeIndexHealthPanel({
               <div className="knowledge-health-issue-content">
                 <Text strong>{issue.title}</Text>
                 <Text type="secondary">{issue.description}</Text>
+                <Text type="secondary">
+                  {knowledgeStatusLabels[issue.document.status] ?? issue.document.status} · {issueActionText(issue)}
+                </Text>
               </div>
               {renderAction(issue)}
             </div>

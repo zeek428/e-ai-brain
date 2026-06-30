@@ -216,6 +216,57 @@ body {
   line-height: 1.2;
 }
 
+.knowledge-health-governance {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.knowledge-health-governance-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e7edf6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.knowledge-health-governance-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.knowledge-health-governance-card > .ant-typography {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-health-governance-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.knowledge-health-governance-facts span {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #f5f7fb;
+  color: rgba(15, 23, 42, 0.68);
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .knowledge-health-signals {
   display: flex;
   flex-wrap: wrap;
