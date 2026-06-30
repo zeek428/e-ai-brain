@@ -145,12 +145,14 @@ def test_full_chain_regression_script_supports_targeted_suites():
         "FULL_CHAIN_SUITE",
         "--suite",
         '"all-targeted"',
+        '"assistant-qa"',
         '"code-inspection-governance"',
         '"knowledge-index-health"',
         '"permission-visibility"',
         "REGRESSION_TARGETED_SUITE_NAMES",
         "run_regression_suite(",
         'suite == "all-targeted"',
+        'suite == "assistant-qa"',
         'suite == "runner-reliability"',
         'suite == "code-inspection-governance"',
         'suite == "knowledge-index-health"',
@@ -215,6 +217,7 @@ def test_full_chain_regression_report_includes_suite_coverage():
     targeted_coverage = module.regression_suite_coverage("all-targeted")
     assert targeted_coverage["is_complete_chain"] is False
     assert "runner_reliability" in targeted_coverage["covered_keys"]
+    assert "assistant_qa" in targeted_coverage["covered_keys"]
     assert "assistant_draft_governance" in targeted_coverage["covered_keys"]
     assert "permission_visibility" in targeted_coverage["covered_keys"]
     assert "full_chain_trace" in targeted_coverage["skipped_keys"]
@@ -250,6 +253,7 @@ def test_full_chain_regression_all_targeted_suite_aggregates_fast_suite_results(
     monkeypatch.setattr(module, "create_fixture_repository", fixture_repository)
     monkeypatch.setattr(module, "validate_ai_executor_runner_reliability", runner_reliability)
     monkeypatch.setattr(module, "validate_version_dashboard_quick_regression", suite_result("version_dashboard"))
+    monkeypatch.setattr(module, "validate_assistant_qa_quick_regression", suite_result("assistant_qa"))
     monkeypatch.setattr(module, "validate_assistant_draft_governance", suite_result("assistant_draft_governance"))
     monkeypatch.setattr(
         module,
@@ -279,6 +283,7 @@ def test_full_chain_regression_all_targeted_suite_aggregates_fast_suite_results(
     result_names = [item.name for item in results]
     assert "runner-reliability:runner_reliability" in result_names
     assert "version-dashboard:version_dashboard" in result_names
+    assert "assistant-qa:assistant_qa" in result_names
     assert "assistant-draft-governance:assistant_draft_governance" in result_names
     assert "code-inspection-governance:code_inspection_governance" in result_names
     assert "knowledge-index-health:knowledge_index_health" in result_names
@@ -286,6 +291,7 @@ def test_full_chain_regression_all_targeted_suite_aggregates_fast_suite_results(
     assert called == [
         "runner-reliability",
         "version_dashboard",
+        "assistant_qa",
         "assistant_draft_governance",
         "code_inspection_governance",
         "knowledge_index_health",
@@ -384,6 +390,26 @@ def test_full_chain_regression_script_supports_assistant_draft_governance_suite(
         "impact_changed_field_count",
         "latest_audit_event_type",
         "assistant_action_draft.confirmed",
+    ]:
+        assert marker in content
+
+
+def test_full_chain_regression_script_supports_assistant_qa_suite():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    content = script_path.read_text(encoding="utf-8")
+
+    for marker in [
+        '"assistant-qa"',
+        "validate_assistant_qa_quick_regression(",
+        'suite == "assistant-qa"',
+        "/api/assistant/chat",
+        "/api/assistant/conversations/{conversation_id}/messages",
+        "assistant-deterministic",
+        "assistant.iteration",
+        "assistant_qa_quick",
+        "Assistant QA next_actions drifted from version dashboard",
+        "Assistant QA history missed iteration tool result",
+        "product_version",
     ]:
         assert marker in content
 
