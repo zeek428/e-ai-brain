@@ -516,6 +516,11 @@ def test_full_chain_regression_script_supports_assistant_draft_governance_suite(
         "permission_status",
         "impact_changed_field_count",
         "latest_audit_event_type",
+        "DRAFT_PRECHECK_FAILED",
+        "/api/assistant/action-drafts/{retry_draft['id']}/retry",
+        "failure_history",
+        "last_failure_code",
+        "assistant_action_draft.retry_requested",
         "assistant_action_draft.confirmed",
     ]:
         assert marker in content

@@ -1312,10 +1312,136 @@ def validate_assistant_draft_governance(
             f"Assistant draft audit trail missed {expected_event}: {audit_events}",
         )
 
+    retry_draft = client.post(
+        "/api/assistant/action-drafts",
+        {
+            "action": "create_scheduled_job",
+            "client_draft_id": f"full_chain_assistant_retry_draft_{slug}",
+            "metadata_json": {
+                "risk_reason": "full-chain regression validates failed draft retry",
+                "wizard_steps": [{"key": "schedule"}, {"key": "governance"}],
+            },
+            "payload": {
+                "enabled": False,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": f"全链路草案失败重试回归 {slug}",
+                "schedule_type": "cron",
+                "source_system": "ai-assistant",
+            },
+            "risk_level": "medium",
+            "title": f"全链路草案失败重试回归 {slug}",
+        },
+    )
+    retry_governance = retry_draft.get("governance") or {}
+    _assert(
+        (retry_governance.get("decision") or {}).get("status") == "blocked",
+        f"Assistant retry draft should start with blocked precheck: {retry_governance}",
+    )
+    retry_error = expect_api_error(
+        lambda: client.post(f"/api/assistant/action-drafts/{retry_draft['id']}/confirm"),
+        status=409,
+        message="Assistant retry draft confirm should fail precheck",
+    )
+    _assert(
+        "DRAFT_PRECHECK_FAILED" in retry_error.body,
+        f"Assistant retry draft failed with unexpected error body: {retry_error.body}",
+    )
+    failed_retry_draft = client.get(f"/api/assistant/action-drafts/{retry_draft['id']}")
+    failed_metadata = failed_retry_draft.get("metadata_json") or {}
+    failed_retries = (failed_retry_draft.get("governance") or {}).get("retries") or {}
+    _assert(
+        failed_retry_draft.get("status") == "failed",
+        f"Assistant retry draft was not marked failed after precheck: {failed_retry_draft}",
+    )
+    _assert(
+        (failed_metadata.get("failure") or {}).get("code") == "DRAFT_PRECHECK_FAILED",
+        f"Assistant retry draft failure was not persisted: {failed_retry_draft}",
+    )
+    _assert(
+        failed_retries.get("can_retry") is True,
+        f"Assistant retry draft did not expose can_retry after failure: {failed_retry_draft}",
+    )
+
+    reopened = client.post(
+        f"/api/assistant/action-drafts/{retry_draft['id']}/retry",
+        {"reason": "补齐 Cron 表达式后重试"},
+    )
+    reopened_metadata = reopened.get("metadata_json") or {}
+    reopened_retries = (reopened.get("governance") or {}).get("retries") or {}
+    _assert(reopened.get("status") == "pending", f"Assistant retry draft was not reopened: {reopened}")
+    _assert(
+        reopened_metadata.get("retry_count") == 1,
+        f"Assistant retry draft did not persist retry_count: {reopened}",
+    )
+    _assert(
+        reopened_metadata.get("retry_reason") == "补齐 Cron 表达式后重试",
+        f"Assistant retry draft did not persist retry_reason: {reopened}",
+    )
+    _assert(
+        len(reopened_metadata.get("failure_history") or []) == 1,
+        f"Assistant retry draft did not keep failure_history: {reopened}",
+    )
+    _assert(
+        reopened_retries.get("failure_count") == 1
+        and reopened_retries.get("last_failure_code") == "DRAFT_PRECHECK_FAILED",
+        f"Assistant retry draft governance missed historical failure: {reopened}",
+    )
+
+    retry_payload = dict(retry_draft.get("payload") or {})
+    retry_payload["cron_expression"] = "0 9 * * MON"
+    patched_retry = client.request(
+        "PATCH",
+        f"/api/assistant/action-drafts/{retry_draft['id']}",
+        body={
+            "modified_fields": ["cron_expression"],
+            "payload": retry_payload,
+            "user_modified": True,
+        },
+    )
+    patched_decision = (patched_retry.get("governance") or {}).get("decision") or {}
+    _assert(
+        patched_decision.get("can_confirm") is True,
+        f"Assistant retry draft was not confirmable after cron fix: {patched_retry}",
+    )
+    retry_confirmed = client.post(f"/api/assistant/action-drafts/{retry_draft['id']}/confirm")
+    retry_confirmed_draft = retry_confirmed.get("draft") or {}
+    retry_run = retry_confirmed.get("run") or {}
+    _assert(
+        retry_confirmed_draft.get("status") == "confirmed",
+        f"Assistant retry draft was not confirmed after retry: {retry_confirmed}",
+    )
+    _assert(retry_run.get("status") == "succeeded", f"Assistant retry draft run failed: {retry_confirmed}")
+
+    retry_audit_events = client.get(
+        "/api/audit/events",
+        {
+            "page": 1,
+            "page_size": 20,
+            "subject_id": retry_draft["id"],
+            "subject_type": "assistant_action_draft",
+        },
+    )
+    retry_audit_event_types = {item.get("event_type") for item in retry_audit_events.get("items", [])}
+    for expected_event in [
+        "assistant_action_draft.created",
+        "assistant_action_draft.failed",
+        "assistant_action_draft.retry_requested",
+        "assistant_action_draft.updated",
+        "assistant_action_draft.confirmed",
+    ]:
+        _assert(
+            expected_event in retry_audit_event_types,
+            f"Assistant retry draft audit trail missed {expected_event}: {retry_audit_events}",
+        )
+
     results.append(
         StepResult(
             "assistant_draft_governance",
-            f"{draft['id']} / {run.get('result_type')}={run.get('result_id')}",
+            (
+                f"{draft['id']} / {run.get('result_type')}={run.get('result_id')} / "
+                f"retry={retry_draft['id']}"
+            ),
         )
     )
     return results
