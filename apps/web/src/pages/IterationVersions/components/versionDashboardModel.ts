@@ -498,6 +498,10 @@ export function buildDashboardHealthItems(dashboard?: ProductVersionDashboard): 
     const status = release.status.toLowerCase();
     return status === 'failed' || status === 'failure' || status === 'canceled' || status === 'cancelled';
   }).length;
+  const latestRelease = dashboard.releases[0];
+  const latestReleaseDetail = latestRelease
+    ? `最近 ${latestRelease.status} ${latestRelease.jobName ?? latestRelease.buildId ?? latestRelease.id} · ${latestRelease.createdAt}`
+    : '暂无最近发布记录';
   const highRiskInspectionCount = dashboard.codeInspectionReports.filter((report) => {
     const riskLevel = report.risk_level.toLowerCase();
     return riskLevel === 'blocker' || riskLevel === 'critical' || riskLevel === 'high';
@@ -600,12 +604,16 @@ export function buildDashboardHealthItems(dashboard?: ProductVersionDashboard): 
     },
     {
       detail: dashboard.releases.length
-        ? `已有 ${dashboard.releases.length} 条发布记录，失败/取消 ${failedReleaseCount} 条。`
+        ? `已有 ${dashboard.releases.length} 条发布记录，成功 ${dashboard.summary.successful_releases} 条，失败/取消 ${failedReleaseCount} 条，${latestReleaseDetail}。`
         : '当前版本暂无发布记录。',
       key: 'releases',
       level: failedReleaseCount ? 'error' : dashboard.releases.length ? 'success' : 'info',
       title: '发布流水线',
-      value: failedReleaseCount ? `${failedReleaseCount} 条失败发布` : `${dashboard.releases.length} 条发布记录`,
+      value: failedReleaseCount
+        ? `${failedReleaseCount} 条失败发布`
+        : dashboard.summary.successful_releases
+          ? `${dashboard.summary.successful_releases} 条成功发布`
+          : `${dashboard.releases.length} 条发布记录`,
     },
   ];
 }
@@ -635,6 +643,18 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
   }).length;
   const pendingCodeReviewCount = dashboard.summary.pending_code_review_reports;
   const releaseBlockerCount = dashboard.blockers.filter((blocker) => blocker.sourceType === 'jenkins_release').length;
+  const latestRelease = dashboard.releases[0];
+  const releaseDetailParts = [
+    `${dashboard.summary.releases} 条记录`,
+    releaseBlockerCount ? `发布阻塞 ${releaseBlockerCount} 个` : '暂无发布阻塞',
+    `成功 ${dashboard.summary.successful_releases} 条`,
+    `失败 ${dashboard.summary.failed_releases} 条`,
+  ];
+  if (latestRelease) {
+    releaseDetailParts.push(
+      `最近 ${latestRelease.status} ${latestRelease.jobName ?? latestRelease.buildId ?? latestRelease.id} · ${latestRelease.createdAt}`,
+    );
+  }
   const branchQuality = summarizeBranchQualityGovernance(dashboard);
   const firstBranchConfig = dashboard.branchConfigs[0];
   const firstTask = dashboard.tasks[0];
@@ -771,9 +791,7 @@ export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard
     {
       actionHref: internalHref('/governance/devops', { version_id: dashboard.version.id }),
       actionLabel: releaseBlockerCount ? '补充发布' : '查看发布',
-      detail: releaseBlockerCount
-        ? `${dashboard.summary.releases} 条记录 · 发布阻塞 ${releaseBlockerCount} 个`
-        : `${dashboard.summary.releases} 条记录 · 暂无发布阻塞`,
+      detail: releaseDetailParts.join(' · '),
       key: 'releases',
       level: releaseBlockerCount ? 'error' : 'success',
       title: '发布证据',

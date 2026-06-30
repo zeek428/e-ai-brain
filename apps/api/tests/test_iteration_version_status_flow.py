@@ -473,11 +473,13 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "knowledge_deposits": 1,
         "open_bugs": 2,
         "pending_code_review_reports": 1,
+        "failed_releases": 1,
         "releases": 1,
         "requirements": 1,
         "searchable_knowledge_deposits": 1,
         "severe_bugs": 2,
         "severe_code_inspection_reports": 1,
+        "successful_releases": 0,
         "tasks": 1,
         "vectorized_knowledge_deposits": 0,
     }
@@ -564,7 +566,10 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         delivery_stage_by_key["knowledge-deposits"]["detail"]
         == "1 条知识沉淀 · 可检索 1 条 · 向量就绪 0 条"
     )
-    assert delivery_stage_by_key["releases"]["detail"] == "1 条记录 · 发布阻塞 1 个 · 成功 0 条"
+    assert (
+        delivery_stage_by_key["releases"]["detail"]
+        == "1 条记录 · 发布阻塞 1 个 · 成功 0 条 · 失败 1 条 · 最近 failed deploy-dashboard · 2026-06-04 18:00"
+    )
     assert delivery_stage_by_key["releases"]["level"] == "error"
     assert delivery_stage_by_key["status-impact"]["action_target_type"] == "product_version_advance"
     assert delivery_stage_by_key["status-impact"]["detail"] == "同步 1 / 阻塞 0 / 保持 0"
@@ -982,6 +987,17 @@ def test_product_version_dashboard_blocks_release_without_successful_release_rec
     assert response_with_release.status_code == 200
     data_with_release = response_with_release.json()["data"]
     assert data_with_release["summary"]["blockers"] == 0
+    assert data_with_release["summary"]["successful_releases"] == 1
+    assert data_with_release["summary"]["failed_releases"] == 0
+    release_stage = next(
+        item
+        for item in data_with_release["delivery_stage_overview"]
+        if item["key"] == "releases"
+    )
+    assert (
+        release_stage["detail"]
+        == "1 条记录 · 暂无发布阻塞 · 成功 1 条 · 失败 0 条 · 最近 success deploy-release · 2026-06-04 18:00"
+    )
     assert data_with_release["governance_conclusion"] == {
         "detail": (
             "待确认评审 0 份，状态推进阻塞需求 0 条，"

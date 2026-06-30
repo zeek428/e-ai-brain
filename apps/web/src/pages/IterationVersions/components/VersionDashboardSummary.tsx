@@ -294,6 +294,16 @@ export function VersionDashboardMetrics({
       )}
       {dashboardMetric('发布记录', dashboard.summary.releases)}
       {dashboardMetric(
+        '成功发布',
+        dashboard.summary.successful_releases,
+        dashboard.summary.successful_releases ? '#389e0d' : undefined,
+      )}
+      {dashboardMetric(
+        '失败发布',
+        dashboard.summary.failed_releases,
+        dashboard.summary.failed_releases ? '#cf1322' : undefined,
+      )}
+      {dashboardMetric(
         '阻塞项',
         dashboard.summary.blockers,
         dashboard.summary.blockers ? '#cf1322' : undefined,

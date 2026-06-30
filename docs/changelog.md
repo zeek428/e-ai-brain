@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 迭代版本总览发布证据增强：版本驾驶舱 summary 新增成功/失败发布计数，交付阶段发布证据卡展示最近一次发布状态与时间，真实全链路回归 helper 校验发布证据计数不断链。
 - 前端任务中心继续拆大文件：任务详情弹窗抽取为 `TaskDetailModal`，主页面只保留加载和开关编排，并将 TaskCenter 页面容器预算收紧到 1800 行。
 - 工程拆大文件守护补齐前端页面容器预算：TaskCenter、知识中心、角色、插件、迭代版本等高风险页面纳入 `test_frontend_page_containers_stay_under_line_budget`，新出现超过 900 行的页面必须登记预算或继续拆分。
 - 真实全链路 `runner-reliability` 快速回归补齐 Runner 取消/重试恢复门禁：验证运行中任务取消、`AI_EXECUTOR_TASK_CANCELLED`、人工重试、`retry_of_task_id/retry_history`、重试任务再认领完成、重复重试拒绝和 `ai_executor_task.retry_requested` 审计。

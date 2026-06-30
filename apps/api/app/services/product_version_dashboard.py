@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from app.services.bug_listing import bug_summary_projection
@@ -420,6 +420,10 @@ def _delivery_stage_overview(
         1 for blocker in blockers if blocker.get("source_type") == "jenkins_release"
     )
     successful_release_count = sum(1 for release in releases if _successful_release(release))
+    failed_release_count = sum(1 for release in releases if _failed_release(release))
+    latest_release = releases[0] if releases else {}
+    latest_release_label = _release_label(latest_release) if latest_release else ""
+    latest_release_time = _release_display_time(latest_release) if latest_release else ""
     first_branch_config = branch_configs[0] if branch_configs else {}
     first_code_review_report = code_review_reports[0] if code_review_reports else {}
     first_knowledge_deposit = knowledge_deposits[0] if knowledge_deposits else {}
@@ -496,12 +500,17 @@ def _delivery_stage_overview(
         )
     else:
         knowledge_detail = "暂无知识沉淀，发布前建议沉淀关键设计、巡检和整改经验"
-    release_detail = (
-        f"{release_count} 条记录 · 发布阻塞 {release_blocker_count} 个 · "
-        f"成功 {successful_release_count} 条"
-        if release_blocker_count
-        else f"{release_count} 条记录 · 暂无发布阻塞 · 成功 {successful_release_count} 条"
-    )
+    release_detail_parts = [
+        f"{release_count} 条记录",
+        f"发布阻塞 {release_blocker_count} 个" if release_blocker_count else "暂无发布阻塞",
+        f"成功 {successful_release_count} 条",
+        f"失败 {failed_release_count} 条",
+    ]
+    if latest_release:
+        release_detail_parts.append(
+            f"最近 {latest_release_label} · {latest_release_time or '-'}"
+        )
+    release_detail = " · ".join(release_detail_parts)
 
     return [
         _delivery_stage(
@@ -1334,6 +1343,40 @@ def _successful_release(release: dict[str, Any]) -> bool:
     }
 
 
+def _failed_release(release: dict[str, Any]) -> bool:
+    return str(release.get("status") or "").lower() in {
+        "canceled",
+        "cancelled",
+        "failed",
+        "failure",
+    }
+
+
+def _release_time_value(release: dict[str, Any]) -> str:
+    return str(
+        release.get("deployed_at")
+        or release.get("started_at")
+        or release.get("created_at")
+        or ""
+    )
+
+
+def _release_display_time(release: dict[str, Any]) -> str:
+    raw_time = _release_time_value(release)
+    parsed = _parse_optional_datetime(raw_time)
+    if parsed is None:
+        return raw_time.replace("T", " ").split("+", 1)[0].split("Z", 1)[0][:16]
+    return parsed.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+
+
+def _release_label(release: dict[str, Any]) -> str:
+    status = str(release.get("status") or "-")
+    job_name = str(release.get("job_name") or "").strip()
+    build_id = str(release.get("build_id") or "").strip()
+    subject = job_name or build_id or str(release.get("id") or "").strip()
+    return f"{status} {subject}".strip()
+
+
 def _branch_blockers(
     *,
     branch_configs: list[dict[str, Any]],
@@ -1421,7 +1464,7 @@ def _build_blockers(
                 )
             )
     for release in releases:
-        if str(release.get("status") or "").lower() in {"failed", "cancelled"}:
+        if _failed_release(release):
             blockers.append(
                 _dashboard_blocker(
                     blocker_id=release.get("id"),
@@ -1596,11 +1639,13 @@ def product_version_dashboard_response(
         "knowledge_deposits": len(knowledge_deposits),
         "open_bugs": open_bug_count,
         "pending_code_review_reports": pending_code_review_report_count,
+        "failed_releases": sum(1 for release in releases if _failed_release(release)),
         "releases": len(releases),
         "requirements": len(requirements),
         "searchable_knowledge_deposits": searchable_knowledge_deposit_count,
         "severe_bugs": severe_bug_count,
         "severe_code_inspection_reports": severe_code_report_count,
+        "successful_releases": sum(1 for release in releases if _successful_release(release)),
         "tasks": len(tasks),
         "vectorized_knowledge_deposits": vectorized_knowledge_deposit_count,
     }

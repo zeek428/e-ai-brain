@@ -1184,11 +1184,13 @@ describe('IterationVersionsPage', () => {
               knowledge_deposits: 1,
               open_bugs: 1,
               pending_code_review_reports: 1,
+              failed_releases: 1,
               releases: 1,
               requirements: 1,
               searchable_knowledge_deposits: 1,
               severe_bugs: 1,
               severe_code_inspection_reports: 1,
+              successful_releases: 0,
               tasks: 1,
               vectorized_knowledge_deposits: 0,
             },
@@ -1271,7 +1273,11 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('1 个 Bug · 未关闭 1 个').length).toBeGreaterThan(0);
     expect(screen.getAllByText('1 条知识沉淀 · 可检索 1 条 · 向量就绪 0 条').length).toBeGreaterThan(0);
     expect(screen.getAllByText('发布证据').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('1 条记录 · 发布阻塞 1 个').length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(
+        '1 条记录 · 发布阻塞 1 个 · 成功 0 条 · 失败 1 条 · 最近 failed deploy-dashboard · 2026-06-04 18:00',
+      ).length,
+    ).toBeGreaterThan(0);
     expect(screen.getAllByText('状态推进').length).toBeGreaterThan(0);
     expect(screen.getAllByText('同步 1 / 阻塞 1 / 保持 1').length).toBeGreaterThan(0);
     expect(screen.getByText('状态推进影响预览')).toBeInTheDocument();
@@ -1339,7 +1345,12 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('1 份待确认')).toBeInTheDocument();
     expect(screen.getAllByText('1/1 可检索').length).toBeGreaterThan(0);
     expect(screen.getByText('已有 1 条任务知识沉淀，可检索 1 条，向量就绪 0 条。')).toBeInTheDocument();
+    expect(screen.getByText('成功发布')).toBeInTheDocument();
+    expect(screen.getByText('失败发布')).toBeInTheDocument();
     expect(screen.getByText('1 条失败发布')).toBeInTheDocument();
+    expect(
+      screen.getByText('已有 1 条发布记录，成功 0 条，失败/取消 1 条，最近 failed deploy-dashboard · 2026-06-04 18:00。'),
+    ).toBeInTheDocument();
     expect(screen.getByText('阻塞处理队列')).toBeInTheDocument();
     expect(screen.getByText('按严重级别、来源类型和处理入口排序，优先处理发布准入风险。')).toBeInTheDocument();
     expect(screen.getAllByText('优先级 1').length).toBeGreaterThan(0);

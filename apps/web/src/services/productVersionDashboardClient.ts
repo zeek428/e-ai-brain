@@ -235,11 +235,13 @@ type ProductVersionDashboardSummary = {
   knowledge_deposits: number;
   open_bugs: number;
   pending_code_review_reports: number;
+  failed_releases: number;
   releases: number;
   requirements: number;
   searchable_knowledge_deposits: number;
   severe_bugs: number;
   severe_code_inspection_reports: number;
+  successful_releases: number;
   tasks: number;
   vectorized_knowledge_deposits: number;
 };
@@ -815,11 +817,13 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
       knowledge_deposits: normalizeDashboardCount(summary.knowledge_deposits),
       open_bugs: normalizeDashboardCount(summary.open_bugs),
       pending_code_review_reports: normalizeDashboardCount(summary.pending_code_review_reports),
+      failed_releases: normalizeDashboardCount(summary.failed_releases),
       releases: normalizeDashboardCount(summary.releases),
       requirements: normalizeDashboardCount(summary.requirements),
       searchable_knowledge_deposits: normalizeDashboardCount(summary.searchable_knowledge_deposits),
       severe_bugs: normalizeDashboardCount(summary.severe_bugs),
       severe_code_inspection_reports: normalizeDashboardCount(summary.severe_code_inspection_reports),
+      successful_releases: normalizeDashboardCount(summary.successful_releases),
       tasks: normalizeDashboardCount(summary.tasks),
       vectorized_knowledge_deposits: normalizeDashboardCount(summary.vectorized_knowledge_deposits),
     },
