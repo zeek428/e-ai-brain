@@ -5,7 +5,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_DOMAIN_FILE_LINES = 2800
 MAX_PLUGIN_SERVICE_LINES = 2600
-MAX_SCHEDULED_JOB_SERVICE_LINES = 2600
+MAX_SCHEDULED_JOB_SERVICE_LINES = 2400
 MAX_ASSISTANT_ACTION_DRAFT_LINES = 2600
 MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
 FRONTEND_PAGE_CONTAINER_REVIEW_THRESHOLD_LINES = 900
@@ -116,6 +116,23 @@ def test_scheduled_job_entrypoint_uses_split_config_module():
     assert "def scheduled_job_config_with_multi_refs(" not in entrypoint_source
     assert "def scheduled_job_data_connection_policy(" not in entrypoint_source
     assert "def effective_scheduled_job_type(" not in entrypoint_source
+
+
+def test_scheduled_job_entrypoint_uses_split_user_feedback_module():
+    user_feedback_path = REPO_ROOT / "apps/api/app/services/scheduled_job_user_feedback.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/scheduled_jobs.py"
+
+    assert user_feedback_path.exists(), (
+        "Move scheduled job user feedback insight extraction to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    user_feedback_source = user_feedback_path.read_text(encoding="utf-8")
+    assert "from app.services.scheduled_job_user_feedback import" in entrypoint_source
+    assert "def run_user_feedback_insight_extract_job(" not in entrypoint_source
+    assert "def normalized_insight_enum(" not in entrypoint_source
+    assert "USER_FEEDBACK_TYPES" not in entrypoint_source
+    assert "def run_user_feedback_insight_extract_job(" in user_feedback_source
+    assert "def resolve_job_plugin_output_mapping(" in user_feedback_source
 
 
 def test_plugin_entrypoint_uses_split_constants_module():

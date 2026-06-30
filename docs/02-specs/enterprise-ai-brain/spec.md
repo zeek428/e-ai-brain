@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.775 |
+| 功能版本 | v1.1.776 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.776 | 2026-06-30 | 定时作业服务继续拆大文件：用户反馈洞察提取、输出映射解析和反馈写回摘要迁移到 `scheduled_job_user_feedback.py`，主服务行数预算收紧到 2400 | Codex |
 | v1.1.775 | 2026-06-30 | 真实全链路回归版本驾驶舱 helper 纳入 `evidence_coverage` 门禁：校验证据域顺序、状态、计数和覆盖分一致性 | Codex |
 | v1.1.774 | 2026-06-30 | 迭代版本总览新增 `evidence_coverage` 证据覆盖评分：按需求、任务、分支、巡检、评审、Bug、知识、发布和状态推进输出覆盖/阻断/缺口摘要 | Codex |
 | v1.1.773 | 2026-06-30 | 用户反馈原始列表补齐分页性能治理：`GET /api/insights/user-feedback` 带分页时走 count/page read model，支持摘要模式和查询性能观测，用户洞察聚合列表反馈摘要截断 | Codex |
@@ -2143,7 +2144,7 @@ suggested → rejected
 - AI 动作草案治理快速回归逻辑必须由 `scripts/full_chain_regression_assistant_drafts.py` 承接，包括草案创建、治理摘要、查看埋点、用户修改、确认落库、预检失败、失败原因、人工重试、修复后确认、列表 read model 和审计链路校验；`scripts/full_chain_regression.py` 只导入 `validate_assistant_draft_governance` 并保持 suite 编排，不得重新贴回草案治理细节。
 - 知识索引健康快速回归逻辑必须由 `scripts/full_chain_regression_knowledge.py` 承接，包括知识文档创建、列表投影、索引健康汇总、权限命中说明、检索模式、索引失败、`retry-index` 恢复和恢复后检索命中校验；`scripts/full_chain_regression.py` 只导入 `validate_knowledge_index_health_quick_regression` 并保持 suite 编排，不得重新贴回知识索引健康细节。
 - 权限可视化快速回归逻辑必须由 `scripts/full_chain_regression_permissions.py` 承接，包括角色列表、权限矩阵、角色详情 `access_preview`、产品/知识空间范围名称、`scope_summary`、菜单权限缺口、用户权限诊断和有效范围可读名称校验；`scripts/full_chain_regression.py` 只导入 `validate_permission_visibility_quick_regression` 并保持 suite 编排，不得重新贴回权限可视化细节。
-- `apps/api/tests/test_architecture_guardrails.py` 固化已拆分领域入口文件的行数预算：`authorization.py`、`ai_executor_runners.py`、`assistant_references.py` 和 `assistant_chat.py` 均不得超过 2800 行，AI 动作草案主服务 `assistant_action_drafts.py`、定时作业主服务 `scheduled_jobs.py` 和插件主服务 `plugins.py` 均不得超过 2600 行，前端服务兼容 barrel `services/aiBrain.ts` 不得超过 2400 行；超过时必须继续拆分到领域模块或组件后再合入。授权仓储的默认菜单/角色授权配置应保留在 `authorization_defaults`，避免 RBAC 默认数据继续膨胀仓储实现；AI 执行器 Runner 的常量、安装包构造和运行任务编排应保持独立模块边界，避免 Runner 安装包文案或平台差异继续膨胀主服务；AI 助手动作引用默认候选、触发词和配置常量应保留在 `assistant_action_reference_defaults`，避免默认入口数据继续膨胀 `assistant_references.py`；AI 动作草案状态/动作枚举、默认 payload、基础校验和 Cron 表达式校验应保留在 `assistant_action_draft_common`，避免通用规则继续膨胀 `assistant_action_drafts.py`；定时作业权限/产品范围判断应保留在 `scheduled_job_access`，时区、动态输入映射和异常摘要应保留在 `scheduled_job_runtime`，调度时间、配置编排、多数据源引用、代码巡检仓库默认分支、数据连接策略和有效作业类型推导应保留在 `scheduled_job_config`，避免配置归一化逻辑继续膨胀定时作业主服务；插件协议、分类、状态、认证类型、连接环境、调用状态和排序字段常量应保留在 `plugin_constants`，GitHub/GitLab 连接地址解析、请求配置规范化和 GitHub 认证校验应保留在 `plugin_connection_config`，插件版本元数据、公开投影和调用请求摘要脱敏应保留在 `plugin_projection`，避免静态配置、连接平台差异和展示脱敏逻辑继续膨胀插件主服务；系统管理用户、角色、菜单和权限诊断 API 应保留在 `systemManagementClient`，`aiBrain.ts` 只保留兼容导出。
+- `apps/api/tests/test_architecture_guardrails.py` 固化已拆分领域入口文件的行数预算：`authorization.py`、`ai_executor_runners.py`、`assistant_references.py` 和 `assistant_chat.py` 均不得超过 2800 行，AI 动作草案主服务 `assistant_action_drafts.py`、插件主服务 `plugins.py` 均不得超过 2600 行，定时作业主服务 `scheduled_jobs.py` 不得超过 2400 行，前端服务兼容 barrel `services/aiBrain.ts` 不得超过 2400 行；超过时必须继续拆分到领域模块或组件后再合入。授权仓储的默认菜单/角色授权配置应保留在 `authorization_defaults`，避免 RBAC 默认数据继续膨胀仓储实现；AI 执行器 Runner 的常量、安装包构造和运行任务编排应保持独立模块边界，避免 Runner 安装包文案或平台差异继续膨胀主服务；AI 助手动作引用默认候选、触发词和配置常量应保留在 `assistant_action_reference_defaults`，避免默认入口数据继续膨胀 `assistant_references.py`；AI 动作草案状态/动作枚举、默认 payload、基础校验和 Cron 表达式校验应保留在 `assistant_action_draft_common`，避免通用规则继续膨胀 `assistant_action_drafts.py`；定时作业权限/产品范围判断应保留在 `scheduled_job_access`，时区、动态输入映射和异常摘要应保留在 `scheduled_job_runtime`，调度时间、配置编排、多数据源引用、代码巡检仓库默认分支、数据连接策略和有效作业类型推导应保留在 `scheduled_job_config`，用户反馈洞察提取、输出映射解析和反馈写回摘要应保留在 `scheduled_job_user_feedback`，避免配置归一化和结果写回逻辑继续膨胀定时作业主服务；插件协议、分类、状态、认证类型、连接环境、调用状态和排序字段常量应保留在 `plugin_constants`，GitHub/GitLab 连接地址解析、请求配置规范化和 GitHub 认证校验应保留在 `plugin_connection_config`，插件版本元数据、公开投影和调用请求摘要脱敏应保留在 `plugin_projection`，避免静态配置、连接平台差异和展示脱敏逻辑继续膨胀插件主服务；系统管理用户、角色、菜单和权限诊断 API 应保留在 `systemManagementClient`，`aiBrain.ts` 只保留兼容导出。
 - 前端页面容器同样纳入工程拆分守护：`apps/api/tests/test_architecture_guardrails.py::test_frontend_page_containers_stay_under_line_budget` 固定 `TaskCenter`、`Knowledge`、`Roles`、`Plugins`、`IterationVersions`、`ScheduledJobs`、`Requirements`、`Products`、`CodeInspections` 和 `AiCapabilities` 页面预算，其中 `TaskCenter` 已将任务详情展示抽取到 `TaskDetailModal` 并收紧到 1800 行；任何新的 `apps/web/src/pages/*/index.tsx` 超过 900 行时，必须显式登记预算或先抽取 columns、modal、hooks、presentation helper、业务操作 helper 后再合入。后续每次拆分完成后应逐步收紧对应预算，避免页面显示异常和多业务编排继续集中在单个容器文件。
 - AI 助手知识引用候选、知识空间/目录可读范围、文档/chunk 引用投影和模型注入上下文应保留在 `assistant_knowledge_references`，`assistant_references.py` 只保留引用入口编排、业务对象解析、权限分发和动作引用配置。
 - AI 助手模型网关调用的配置选择、请求组装、HTTP/HTTPX 执行、取消中断、响应解析、引用合并和模型日志应保留在 `assistant_chat_gateway`，`assistant_chat.py` 只保留调用入口、错误映射和聊天记录持久化。
