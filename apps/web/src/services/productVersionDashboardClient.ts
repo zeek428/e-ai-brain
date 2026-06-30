@@ -197,6 +197,15 @@ type ProductVersionDashboardAccessIssue = {
   section?: string;
 };
 
+type ProductVersionDashboardGovernanceConclusion = {
+  detail?: string;
+  level?: string;
+  next_action?: string;
+  risks?: string[];
+  title?: string;
+  value?: string;
+};
+
 type ProductVersionDashboardSummary = {
   blockers: number;
   branch_configs: number;
@@ -252,6 +261,7 @@ type ProductVersionDashboardResponse = {
   bugs?: BugListItem[];
   code_inspection_reports?: ProductVersionDashboardCodeInspectionReport[];
   code_review_reports?: ProductVersionDashboardCodeReviewReport[];
+  governance_conclusion?: ProductVersionDashboardGovernanceConclusion | null;
   knowledge_deposits?: ProductVersionDashboardKnowledgeDepositItem[];
   next_actions?: ProductVersionDashboardNextActionItem[];
   releases?: ProductVersionDashboardReleaseItem[];
@@ -340,6 +350,14 @@ export type ProductVersionDashboard = {
     title: string;
     updatedAt: string;
   }>;
+  governanceConclusion?: {
+    detail: string;
+    level: 'error' | 'info' | 'success' | 'warning';
+    nextAction: string;
+    risks: string[];
+    title: string;
+    value: string;
+  };
   nextActions: Array<{
     actionLabel: string;
     actionTargetId?: string;
@@ -407,6 +425,13 @@ function formatUnknownValue(value: unknown): string {
 
 function normalizeDashboardCount(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function normalizeDashboardLevel(value?: string): 'error' | 'info' | 'success' | 'warning' {
+  if (value === 'error' || value === 'info' || value === 'success' || value === 'warning') {
+    return value;
+  }
+  return 'info';
 }
 
 function normalizeProductVersionStatus(status?: string): ProductVersionRecord['status'] {
@@ -608,6 +633,22 @@ function mapTaskRecord(task: ProductVersionDashboardTaskItem): ProductVersionDas
   };
 }
 
+function mapGovernanceConclusion(
+  conclusion?: ProductVersionDashboardGovernanceConclusion | null,
+): ProductVersionDashboard['governanceConclusion'] {
+  if (!conclusion) {
+    return undefined;
+  }
+  return {
+    detail: conclusion.detail ?? '-',
+    level: normalizeDashboardLevel(conclusion.level),
+    nextAction: conclusion.next_action ?? '-',
+    risks: Array.isArray(conclusion.risks) ? conclusion.risks.filter(Boolean) : [],
+    title: conclusion.title ?? '版本治理结论',
+    value: conclusion.value ?? '-',
+  };
+}
+
 function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse): ProductVersionDashboard {
   const summary = dashboard.summary ?? {};
   const statusImpact = dashboard.status_impact
@@ -679,6 +720,7 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
       taskTitle: report.task_title ?? report.task_id ?? '-',
       writebackPerformed: Boolean(report.gitlab_writeback_performed),
     })),
+    governanceConclusion: mapGovernanceConclusion(dashboard.governance_conclusion),
     knowledgeDeposits: (dashboard.knowledge_deposits ?? []).map((deposit) => ({
       aiTaskId: deposit.ai_task_id ?? undefined,
       id: deposit.id,

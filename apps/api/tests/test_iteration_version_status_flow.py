@@ -481,6 +481,23 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "tasks": 1,
         "vectorized_knowledge_deposits": 0,
     }
+    assert data["governance_conclusion"] == {
+        "detail": "当前版本有 6 个发布阻塞项，未关闭 Bug 2 个，门禁失败 1 份，状态推进阻塞需求 0 条。",
+        "level": "error",
+        "next_action": "先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。",
+        "risks": [
+            "发布阻塞 6",
+            "未关闭 Bug 2",
+            "严重质量风险 5",
+            "门禁失败 1",
+            "待治理分支 1",
+            "待审批忽略 1",
+            "到期接受风险 1",
+            "待确认评审 1",
+        ],
+        "title": "版本治理结论",
+        "value": "版本暂不建议推进",
+    }
     assert data["status_impact"]["target_status"] == "testing"
     assert data["status_impact"]["updated_requirements"] == [
         {
@@ -844,6 +861,8 @@ def test_product_version_dashboard_blocks_release_without_successful_release_rec
     data = response.json()["data"]
     assert data["status_impact"]["target_status"] == "released"
     assert data["summary"]["blockers"] == 1
+    assert data["governance_conclusion"]["value"] == "版本暂不建议推进"
+    assert data["governance_conclusion"]["risks"] == ["发布阻塞 1"]
     assert data["blockers"] == [
         {
             "action_label": "排查发布",
@@ -893,5 +912,13 @@ def test_product_version_dashboard_blocks_release_without_successful_release_rec
     assert response_with_release.status_code == 200
     data_with_release = response_with_release.json()["data"]
     assert data_with_release["summary"]["blockers"] == 0
+    assert data_with_release["governance_conclusion"] == {
+        "detail": "待确认评审 0 份，状态推进阻塞需求 0 条，交付证据覆盖：分支 0、巡检 0、评审 0、知识 0。",
+        "level": "warning",
+        "next_action": "补齐待确认评审、知识索引或交付证据后，再执行版本推进。",
+        "risks": ["交付证据待补齐"],
+        "title": "版本治理结论",
+        "value": "版本证据待补齐",
+    }
     assert data_with_release["blockers"] == []
     assert data_with_release["next_actions"] == []

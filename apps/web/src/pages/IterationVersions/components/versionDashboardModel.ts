@@ -307,6 +307,9 @@ export function buildDashboardGovernanceConclusion(
   if (!dashboard) {
     return undefined;
   }
+  if (dashboard.governanceConclusion) {
+    return dashboard.governanceConclusion;
+  }
   const branchQuality = summarizeBranchQualityGovernance(dashboard);
   const blockerCount = dashboard.summary.blockers || dashboard.blockers.length;
   const severeRiskCount =

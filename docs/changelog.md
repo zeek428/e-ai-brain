@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 迭代版本总览新增后端 `governance_conclusion`：版本驾驶舱、AI 助手迭代版本问答和真实全链路回归可复用同一份治理结论，前端仅保留旧响应兜底推导。
 - 真实全链路回归脚本 Runner 可靠性逻辑继续拆分：新增 `scripts/full_chain_regression_runner.py` 承接 Runner 健康告警、Token 轮换、租约重派、死信队列和日志校验，主脚本只负责 suite 编排和公开 API 主链路。
 - 真实全链路回归脚本继续拆分：新增 `scripts/full_chain_regression_suites.py` 承接目标域、快速 suite 编排和 coverage 计算，主脚本只保留公开 API 执行编排，降低后续继续扩展版本总览、助手问答和治理套件的维护风险。
 - 真实全链路回归脚本新增 `assistant-qa` 快速套件：独立校验迭代版本治理问答走确定性助手、版本引用、`assistant.iteration`、版本总览 `next_actions` 和会话历史，并纳入 `all-targeted`。

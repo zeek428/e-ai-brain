@@ -179,6 +179,175 @@ def _version_next_actions(
     return next_actions
 
 
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _unique_labels(labels: list[str | None]) -> list[str]:
+    result: list[str] = []
+    for label in labels:
+        if not label or label in result:
+            continue
+        result.append(label)
+    return result
+
+
+def _branch_quality_summary(
+    branch_quality_governance: list[dict[str, Any]],
+    summary: dict[str, int],
+) -> dict[str, int]:
+    def sum_field(field: str) -> int:
+        return sum(_safe_int(item.get(field)) for item in branch_quality_governance)
+
+    return {
+        "accepted_risk_count": summary["branch_quality_accepted_risks"],
+        "action_required_branch_count": summary["branch_quality_action_required"],
+        "active_severe_finding_count": summary["branch_quality_active_severe_findings"],
+        "expired_accepted_risk_count": summary["branch_quality_expired_accepted_risks"],
+        "false_positive_count": summary["branch_quality_false_positives"],
+        "pending_scan_branch_count": summary["branch_quality_pending_scan"],
+        "pending_suppression_count": summary["branch_quality_pending_suppressions"],
+        "quality_gate_failed_report_count": sum_field("quality_gate_failed_report_count"),
+        "quality_gate_violation_count": sum_field("quality_gate_violation_count"),
+        "uncovered_severe_bug_count": sum_field("uncovered_severe_bug_count"),
+        "uncovered_severe_task_count": sum_field("uncovered_severe_task_count"),
+    }
+
+
+def _version_governance_conclusion(
+    *,
+    blockers: list[dict[str, Any]],
+    branch_quality_governance: list[dict[str, Any]],
+    status_impact: dict[str, Any] | None,
+    summary: dict[str, int],
+) -> dict[str, Any]:
+    branch_quality = _branch_quality_summary(branch_quality_governance, summary)
+    blocker_count = summary["blockers"] or len(blockers)
+    severe_risk_count = (
+        summary["severe_bugs"]
+        + summary["severe_code_inspection_reports"]
+        + branch_quality["active_severe_finding_count"]
+    )
+    pending_code_review_count = summary["pending_code_review_reports"]
+    blocked_requirement_count = (
+        len(status_impact.get("blocked_requirements") or []) if status_impact else 0
+    )
+    has_knowledge_gap = (
+        summary["knowledge_deposits"] > 0
+        and summary["searchable_knowledge_deposits"] < summary["knowledge_deposits"]
+    )
+    has_delivery_evidence_gap = (
+        not summary["branch_configs"]
+        or not summary["code_inspection_reports"]
+        or not summary["code_review_reports"]
+        or not summary["knowledge_deposits"]
+    )
+    risk_labels = _unique_labels(
+        [
+            f"发布阻塞 {blocker_count}" if blocker_count else None,
+            f"未关闭 Bug {summary['open_bugs']}" if summary["open_bugs"] else None,
+            f"严重质量风险 {severe_risk_count}" if severe_risk_count else None,
+            (
+                f"门禁失败 {branch_quality['quality_gate_failed_report_count']}"
+                if branch_quality["quality_gate_failed_report_count"]
+                else None
+            ),
+            (
+                f"待治理分支 {branch_quality['action_required_branch_count']}"
+                if branch_quality["action_required_branch_count"]
+                else None
+            ),
+            (
+                f"待审批忽略 {branch_quality['pending_suppression_count']}"
+                if branch_quality["pending_suppression_count"]
+                else None
+            ),
+            (
+                f"到期接受风险 {branch_quality['expired_accepted_risk_count']}"
+                if branch_quality["expired_accepted_risk_count"]
+                else None
+            ),
+            (
+                f"待确认评审 {pending_code_review_count}"
+                if pending_code_review_count
+                else None
+            ),
+            (
+                f"状态推进阻塞 {blocked_requirement_count}"
+                if blocked_requirement_count
+                else None
+            ),
+            "知识索引未全部可检索" if has_knowledge_gap else None,
+        ]
+    )
+
+    if blocker_count:
+        return {
+            "detail": (
+                f"当前版本有 {blocker_count} 个发布阻塞项，未关闭 Bug {summary['open_bugs']} 个，"
+                f"门禁失败 {branch_quality['quality_gate_failed_report_count']} 份，"
+                f"状态推进阻塞需求 {blocked_requirement_count} 条。"
+            ),
+            "level": "error",
+            "next_action": "先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。",
+            "risks": risk_labels,
+            "title": "版本治理结论",
+            "value": "版本暂不建议推进",
+        }
+
+    if (
+        severe_risk_count
+        or branch_quality["quality_gate_failed_report_count"]
+        or branch_quality["action_required_branch_count"]
+        or branch_quality["expired_accepted_risk_count"]
+        or summary["open_bugs"]
+    ):
+        return {
+            "detail": (
+                f"严重质量风险 {severe_risk_count} 个，"
+                f"待治理分支 {branch_quality['action_required_branch_count']} 个，"
+                f"到期接受风险 {branch_quality['expired_accepted_risk_count']} 个，"
+                f"未关闭 Bug {summary['open_bugs']} 个。"
+            ),
+            "level": "warning",
+            "next_action": "先完成质量门禁、严重巡检和 Bug 收敛，再推进版本状态。",
+            "risks": risk_labels,
+            "title": "版本治理结论",
+            "value": "版本需治理后推进",
+        }
+
+    if pending_code_review_count or blocked_requirement_count or has_knowledge_gap or has_delivery_evidence_gap:
+        return {
+            "detail": (
+                f"待确认评审 {pending_code_review_count} 份，"
+                f"状态推进阻塞需求 {blocked_requirement_count} 条，交付证据覆盖："
+                f"分支 {summary['branch_configs']}、巡检 {summary['code_inspection_reports']}、"
+                f"评审 {summary['code_review_reports']}、知识 {summary['knowledge_deposits']}。"
+            ),
+            "level": "warning",
+            "next_action": "补齐待确认评审、知识索引或交付证据后，再执行版本推进。",
+            "risks": risk_labels or ["交付证据待补齐"],
+            "title": "版本治理结论",
+            "value": "版本证据待补齐",
+        }
+
+    return {
+        "detail": (
+            f"需求 {summary['requirements']} 条，任务 {summary['tasks']} 个，"
+            f"分支 {summary['branch_configs']} 个，巡检 {summary['code_inspection_reports']} 份，"
+            f"知识沉淀 {summary['knowledge_deposits']} 条。"
+        ),
+        "level": "success",
+        "next_action": "可按状态推进预览继续操作。" if status_impact else "当前状态暂无下一阶段，可继续观察交付健康。",
+        "risks": ["暂无关键阻塞"],
+        "title": "版本治理结论",
+        "value": "版本具备推进基础",
+    }
+
+
 def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     return collection if isinstance(collection, dict) else {}
@@ -1063,6 +1232,55 @@ def product_version_dashboard_response(
     vectorized_knowledge_deposit_count = sum(
         1 for deposit in knowledge_deposits if deposit.get("knowledge_retrieval_mode") == "hybrid"
     )
+    summary = {
+        "blockers": len(blockers),
+        "branch_configs": len(branch_configs),
+        "branch_quality_action_required": sum(
+            1
+            for item in branch_quality_governance
+            if item.get("status") == "action_required"
+        ),
+        "branch_quality_accepted_risks": sum(
+            int(item.get("accepted_risk_count") or 0) for item in branch_quality_governance
+        ),
+        "branch_quality_active_severe_findings": sum(
+            int(item.get("active_severe_finding_count") or 0)
+            for item in branch_quality_governance
+        ),
+        "branch_quality_expired_accepted_risks": sum(
+            int(item.get("expired_accepted_risk_count") or 0)
+            for item in branch_quality_governance
+        ),
+        "branch_quality_false_positives": sum(
+            int(item.get("false_positive_count") or 0) for item in branch_quality_governance
+        ),
+        "branch_quality_pending_scan": sum(
+            1 for item in branch_quality_governance if item.get("status") == "pending_scan"
+        ),
+        "branch_quality_pending_suppressions": sum(
+            int(item.get("pending_suppression_count") or 0)
+            for item in branch_quality_governance
+        ),
+        "bugs": len(bugs),
+        "code_inspection_reports": len(code_inspection_reports),
+        "code_review_reports": len(code_review_reports),
+        "knowledge_deposits": len(knowledge_deposits),
+        "open_bugs": open_bug_count,
+        "pending_code_review_reports": pending_code_review_report_count,
+        "releases": len(releases),
+        "requirements": len(requirements),
+        "searchable_knowledge_deposits": searchable_knowledge_deposit_count,
+        "severe_bugs": severe_bug_count,
+        "severe_code_inspection_reports": severe_code_report_count,
+        "tasks": len(tasks),
+        "vectorized_knowledge_deposits": vectorized_knowledge_deposit_count,
+    }
+    governance_conclusion = _version_governance_conclusion(
+        blockers=blockers,
+        branch_quality_governance=branch_quality_governance,
+        status_impact=status_impact,
+        summary=summary,
+    )
     return {
         "access_issues": [
             *bug_access_issues,
@@ -1076,55 +1294,14 @@ def product_version_dashboard_response(
         "bug_status_counts": _status_counts(bugs),
         "code_inspection_reports": code_inspection_reports[:20],
         "code_review_reports": code_review_reports[:20],
+        "governance_conclusion": governance_conclusion,
         "knowledge_deposits": knowledge_deposits[:20],
         "next_actions": next_actions,
         "releases": releases[:20],
         "requirement_status_counts": _status_counts(requirements),
         "requirements": requirements[:50],
         "status_impact": status_impact,
-        "summary": {
-            "blockers": len(blockers),
-            "branch_configs": len(branch_configs),
-            "branch_quality_action_required": sum(
-                1
-                for item in branch_quality_governance
-                if item.get("status") == "action_required"
-            ),
-            "branch_quality_accepted_risks": sum(
-                int(item.get("accepted_risk_count") or 0) for item in branch_quality_governance
-            ),
-            "branch_quality_active_severe_findings": sum(
-                int(item.get("active_severe_finding_count") or 0)
-                for item in branch_quality_governance
-            ),
-            "branch_quality_expired_accepted_risks": sum(
-                int(item.get("expired_accepted_risk_count") or 0)
-                for item in branch_quality_governance
-            ),
-            "branch_quality_false_positives": sum(
-                int(item.get("false_positive_count") or 0) for item in branch_quality_governance
-            ),
-            "branch_quality_pending_scan": sum(
-                1 for item in branch_quality_governance if item.get("status") == "pending_scan"
-            ),
-            "branch_quality_pending_suppressions": sum(
-                int(item.get("pending_suppression_count") or 0)
-                for item in branch_quality_governance
-            ),
-            "bugs": len(bugs),
-            "code_inspection_reports": len(code_inspection_reports),
-            "code_review_reports": len(code_review_reports),
-            "knowledge_deposits": len(knowledge_deposits),
-            "open_bugs": open_bug_count,
-            "pending_code_review_reports": pending_code_review_report_count,
-            "releases": len(releases),
-            "requirements": len(requirements),
-            "searchable_knowledge_deposits": searchable_knowledge_deposit_count,
-            "severe_bugs": severe_bug_count,
-            "severe_code_inspection_reports": severe_code_report_count,
-            "tasks": len(tasks),
-            "vectorized_knowledge_deposits": vectorized_knowledge_deposit_count,
-        },
+        "summary": summary,
         "task_status_counts": _status_counts(tasks),
         "tasks": tasks[:30],
         "version": version_summary,

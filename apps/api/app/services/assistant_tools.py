@@ -717,6 +717,7 @@ def _iteration_dashboard_governance(
         "blocker_count": _safe_int(summary.get("blockers")),
         "blockers_by_source": _count_by(blockers, "source_type"),
         "dashboard_url": f"/delivery/versions?version_id={version_id}&view=dashboard",
+        "governance_conclusion": dashboard.get("governance_conclusion") or {},
         "next_actions": [
             _iteration_next_action(action)
             for action in (dashboard.get("next_actions") or [])[:3]

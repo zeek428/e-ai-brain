@@ -373,6 +373,59 @@ def validate_version_dashboard_next_actions(
         )
 
 
+def validate_version_dashboard_governance_conclusion(
+    dashboard: dict[str, Any],
+    blockers: list[dict[str, Any]],
+) -> None:
+    conclusion = dashboard.get("governance_conclusion")
+    _assert(
+        isinstance(conclusion, dict),
+        f"Version dashboard governance_conclusion is not an object: {conclusion}",
+    )
+    for field in ("detail", "level", "next_action", "risks", "title", "value"):
+        _assert(
+            field in conclusion,
+            f"Version dashboard governance_conclusion missed {field}: {conclusion}",
+        )
+    _assert(
+        conclusion.get("title") == "版本治理结论",
+        f"Version dashboard governance conclusion title drifted: {conclusion}",
+    )
+    _assert(
+        conclusion.get("level") in {"error", "info", "success", "warning"},
+        f"Version dashboard governance conclusion level unsupported: {conclusion}",
+    )
+    _assert(
+        isinstance(conclusion.get("risks"), list),
+        f"Version dashboard governance conclusion risks is not a list: {conclusion}",
+    )
+    _assert(
+        conclusion.get("value"),
+        f"Version dashboard governance conclusion missed value: {conclusion}",
+    )
+    _assert(
+        conclusion.get("detail"),
+        f"Version dashboard governance conclusion missed detail: {conclusion}",
+    )
+    _assert(
+        conclusion.get("next_action"),
+        f"Version dashboard governance conclusion missed next_action: {conclusion}",
+    )
+    if blockers:
+        blocker_count = int((dashboard.get("summary") or {}).get("blockers") or len(blockers))
+        _assert(
+            conclusion.get("level") in {"error", "warning"},
+            f"Version dashboard governance conclusion should warn when blockers exist: {conclusion}",
+        )
+        _assert(
+            any(str(risk) == f"发布阻塞 {blocker_count}" for risk in conclusion.get("risks", [])),
+            (
+                "Version dashboard governance conclusion missed blocker risk label: "
+                f"blockers={blocker_count}, conclusion={conclusion}"
+            ),
+        )
+
+
 def validate_version_dashboard_branch_quality(
     dashboard: dict[str, Any],
     *,
@@ -1339,6 +1392,7 @@ def validate_code_inspection_governance_quick_regression(
     dashboard_blockers = dashboard.get("blockers", [])
     validate_version_dashboard_blocker_actions(dashboard_blockers)
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
+    validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     inspection_blockers = [
         blocker
         for blocker in dashboard_blockers
@@ -1779,6 +1833,7 @@ def validate_version_dashboard_quick_regression(
     )
     validate_version_dashboard_blocker_actions(dashboard_blockers)
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
+    validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     release_evidence_blockers = [
         blocker
         for blocker in dashboard_blockers
@@ -1937,6 +1992,7 @@ def validate_assistant_qa_quick_regression(
     )
     validate_version_dashboard_blocker_actions(dashboard_blockers)
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
+    validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
 
     assistant = client.post(
         "/api/assistant/chat",
@@ -1994,6 +2050,16 @@ def validate_assistant_qa_quick_regression(
             f"assistant={version_item.get('next_actions')}, dashboard={dashboard.get('next_actions')}"
         ),
     )
+    dashboard_conclusion = dashboard.get("governance_conclusion") or {}
+    assistant_conclusion = version_item.get("governance_conclusion") or {}
+    for field in ("level", "value"):
+        _assert(
+            assistant_conclusion.get(field) == dashboard_conclusion.get(field),
+            (
+                "Assistant QA governance_conclusion drifted from version dashboard: "
+                f"field={field}, assistant={assistant_conclusion}, dashboard={dashboard_conclusion}"
+            ),
+        )
     conversation_id = assistant.get("conversation_id") or assistant.get("run", {}).get("conversation_id")
     _assert(conversation_id, f"Assistant QA response missing conversation id: {assistant}")
     conversation_messages = client.get(f"/api/assistant/conversations/{conversation_id}/messages")
@@ -2560,6 +2626,7 @@ def run_regression(
     _assert(dashboard_blockers, "Version dashboard blocker list is empty.")
     validate_version_dashboard_blocker_actions(dashboard_blockers)
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
+    validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     inspection_blockers = [
         blocker
         for blocker in dashboard_blockers
@@ -2724,6 +2791,16 @@ def run_regression(
             f"dashboard={dashboard.get('next_actions')}"
         ),
     )
+    dashboard_conclusion = dashboard.get("governance_conclusion") or {}
+    assistant_conclusion = assistant_version_item.get("governance_conclusion") or {}
+    for field in ("level", "value"):
+        _assert(
+            assistant_conclusion.get(field) == dashboard_conclusion.get(field),
+            (
+                "Assistant iteration tool did not carry version dashboard governance_conclusion: "
+                f"field={field}, assistant={assistant_conclusion}, dashboard={dashboard_conclusion}"
+            ),
+        )
     conversation_id = assistant.get("conversation_id") or assistant.get("run", {}).get("conversation_id")
     _assert(conversation_id, f"Assistant response missing conversation_id: {assistant}")
     conversation_messages = client.get(f"/api/assistant/conversations/{conversation_id}/messages")

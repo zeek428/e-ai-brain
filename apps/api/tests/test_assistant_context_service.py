@@ -225,6 +225,8 @@ def test_assistant_system_context_is_product_scoped_and_includes_delivery_signal
     iteration_item = iteration_tool["items"][0]
     assert iteration_item["id"] == "version_001"
     assert iteration_item["blocker_count"] >= 2
+    assert iteration_item["governance_conclusion"]["title"] == "版本治理结论"
+    assert iteration_item["governance_conclusion"]["value"] == "版本暂不建议推进"
     assert iteration_item["status_impact"]["target_status"] == "released"
     assert iteration_item["url"] == "/delivery/versions?version_id=version_001&view=dashboard"
     assert [item["source_type"] for item in iteration_item["next_actions"][:2]] == [

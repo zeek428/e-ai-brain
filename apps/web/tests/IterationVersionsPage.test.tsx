@@ -1064,6 +1064,16 @@ describe('IterationVersionsPage', () => {
                 task_title: '实现版本驾驶舱',
               },
             ],
+            governance_conclusion: {
+              detail:
+                '后端统一结论：当前版本有 4 个发布阻塞项，未关闭 Bug 1 个，门禁失败 1 份，状态推进阻塞需求 1 条。',
+              level: 'error',
+              next_action:
+                '后端统一动作：先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。',
+              risks: ['发布阻塞 4', '后端统一风险'],
+              title: '版本治理结论',
+              value: '版本暂不建议推进',
+            },
             knowledge_deposits: [
               {
                 ai_task_id: 'task_dashboard',
@@ -1215,11 +1225,11 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByText('版本治理结论')).toBeInTheDocument();
     expect(screen.getByText('版本暂不建议推进')).toBeInTheDocument();
     expect(
-      screen.getByText('当前版本有 4 个发布阻塞项，未关闭 Bug 1 个，门禁失败 1 份，状态推进阻塞需求 1 条。'),
+      screen.getByText('后端统一结论：当前版本有 4 个发布阻塞项，未关闭 Bug 1 个，门禁失败 1 份，状态推进阻塞需求 1 条。'),
     ).toBeInTheDocument();
-    expect(screen.getByText('下一步动作：先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。')).toBeInTheDocument();
+    expect(screen.getByText('下一步动作：后端统一动作：先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。')).toBeInTheDocument();
     expect(screen.getByText('发布阻塞 4')).toBeInTheDocument();
-    expect(screen.getByText('严重质量风险 4')).toBeInTheDocument();
+    expect(screen.getByText('后端统一风险')).toBeInTheDocument();
     expect(screen.getAllByText('Bug').length).toBeGreaterThan(0);
     expect(screen.getAllByText('发布记录').length).toBeGreaterThan(0);
     expect(screen.getByText('下一阶段：测试中')).toBeInTheDocument();
