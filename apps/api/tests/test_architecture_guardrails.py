@@ -7,7 +7,7 @@ MAX_DOMAIN_FILE_LINES = 2800
 MAX_CODE_INSPECTION_SERVICE_LINES = 2400
 MAX_PLUGIN_MAIN_SERVICE_LINES = 2300
 MAX_SCHEDULED_JOB_SERVICE_LINES = 2400
-MAX_ASSISTANT_ACTION_DRAFT_LINES = 2400
+MAX_ASSISTANT_ACTION_DRAFT_LINES = 2250
 MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
 FRONTEND_PAGE_CONTAINER_REVIEW_THRESHOLD_LINES = 900
 
@@ -278,6 +278,24 @@ def test_assistant_action_drafts_uses_split_workbench_module():
     assert "def _assistant_action_draft_workbench_item(" not in entrypoint_source
     assert "def _assistant_action_draft_workbench_summary(" not in entrypoint_source
     assert "governance_counts" in helper_source
+
+
+def test_assistant_action_drafts_uses_split_governance_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/assistant_action_draft_governance.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/assistant_action_drafts.py"
+
+    assert helper_path.exists(), (
+        "Move assistant action draft risk, impact, permission, retry and audit governance "
+        "projection to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "from app.services.assistant_action_draft_governance import" in entrypoint_source
+    assert "def assistant_action_draft_governance(" in helper_source
+    assert "def assistant_action_required_permissions(" in helper_source
+    assert "def _assistant_action_draft_governance(" not in entrypoint_source
+    assert "def _assistant_action_required_permissions(" not in entrypoint_source
+    assert "assistant_action_draft_decision" in helper_source
 
 
 def test_code_inspections_uses_split_common_module():
