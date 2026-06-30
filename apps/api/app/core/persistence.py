@@ -1133,8 +1133,31 @@ class PostgresSnapshotRepository:
         feature_code: str | None = None,
         status: str | None = None,
         created_by: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        summary_only: bool = False,
     ) -> list[dict[str, Any]]:
         return self._user_insight_read_repository.list_user_feedback(
+            created_by=created_by,
+            feature_code=feature_code,
+            limit=limit,
+            module_code=module_code,
+            offset=offset,
+            product_id=product_id,
+            status=status,
+            summary_only=summary_only,
+        )
+
+    def count_user_feedback(
+        self,
+        *,
+        product_id: str | None = None,
+        module_code: str | None = None,
+        feature_code: str | None = None,
+        status: str | None = None,
+        created_by: str | None = None,
+    ) -> int:
+        return self._user_insight_read_repository.count_user_feedback(
             created_by=created_by,
             feature_code=feature_code,
             module_code=module_code,

@@ -88,6 +88,46 @@ def test_user_feedback_supports_create_filter_update_and_audit():
     ]
 
 
+def test_user_feedback_list_supports_pagination_observability_and_summary_mode():
+    admin_headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+    context = create_product_context(admin_headers)
+    long_content = "用户反馈列表需要避免一次返回超长内容。" * 30
+
+    created_ids = []
+    for index in range(3):
+        created = client.post(
+            "/api/insights/user-feedback",
+            json={
+                "content": long_content if index == 2 else f"短反馈 {index}",
+                "feedback_type": "improvement",
+                "module_code": context["module_code"],
+                "product_id": context["product_id"],
+                "source_channel": "in_app",
+            },
+            headers=reviewer_headers,
+        ).json()["data"]
+        created_ids.append(created["id"])
+
+    listed = client.get(
+        (
+            "/api/insights/user-feedback"
+            f"?product_id={context['product_id']}"
+            "&page=1&page_size=2&summary_only=true"
+        ),
+        headers=admin_headers,
+    ).json()["data"]
+
+    assert listed["total"] == 3
+    assert listed["page"] == 1
+    assert listed["page_size"] == 2
+    assert listed["query"]["name"] == "user_feedback"
+    assert listed["performance"]["result_count"] == 2
+    assert [item["id"] for item in listed["items"]] == list(reversed(created_ids[-2:]))
+    assert listed["items"][0]["content"].endswith("...")
+    assert len(listed["items"][0]["content"]) == 243
+
+
 def test_user_feedback_can_convert_to_requirement_and_sync_status():
     admin_headers = auth_headers()
     reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")

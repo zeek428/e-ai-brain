@@ -41,6 +41,7 @@ LIST_P95_TARGETS_MS = {
     "scheduled_job_runs": 400,
     "scheduled_jobs": 400,
     "users": 300,
+    "user_feedback": 400,
     "user_insights": 400,
 }
 logger = logging.getLogger(__name__)

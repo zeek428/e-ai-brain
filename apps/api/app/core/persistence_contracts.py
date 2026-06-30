@@ -651,7 +651,20 @@ class UserFeedbackRepository(Protocol):
         feature_code: str | None = None,
         status: str | None = None,
         created_by: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        summary_only: bool = False,
     ) -> list[dict[str, Any]]: ...
+
+    def count_user_feedback(
+        self,
+        *,
+        product_id: str | None = None,
+        module_code: str | None = None,
+        feature_code: str | None = None,
+        status: str | None = None,
+        created_by: str | None = None,
+    ) -> int: ...
 
     def get_user_feedback(self, feedback_id: str) -> dict[str, Any] | None: ...
 

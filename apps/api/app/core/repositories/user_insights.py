@@ -132,7 +132,69 @@ class UserInsightReadRepository:
         feature_code: str | None = None,
         status: str | None = None,
         created_by: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        summary_only: bool = False,
     ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
+        if module_code is not None:
+            where_clauses.append("module_code = %s")
+            params.append(module_code)
+        if feature_code is not None:
+            where_clauses.append("feature_code = %s")
+            params.append(feature_code)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        if created_by is not None:
+            where_clauses.append("created_by = %s")
+            params.append(created_by)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        limit_clause = ""
+        query_params = list(params)
+        if limit is not None:
+            limit_clause = "LIMIT %s OFFSET %s"
+            query_params.extend([limit, offset or 0])
+        content_expression = (
+            """
+            CASE
+              WHEN length(content) > 240 THEN substring(content from 1 for 240) || '...'
+              ELSE content
+            END
+            """
+            if summary_only
+            else "content"
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, module_code, feature_code, source_channel,
+                           feedback_type, sentiment, satisfaction_score, {content_expression}, tags,
+                           related_requirement_id, status, triage_note, created_by,
+                           created_at, updated_at
+                    FROM user_feedback
+                    {where_clause}
+                    ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+                    {limit_clause}
+                    """,
+                    tuple(query_params),
+                )
+                return [self._user_feedback_from_row(row) for row in cursor.fetchall()]
+
+    def count_user_feedback(
+        self,
+        *,
+        product_id: str | None = None,
+        module_code: str | None = None,
+        feature_code: str | None = None,
+        status: str | None = None,
+        created_by: str | None = None,
+    ) -> int:
         where_clauses: list[str] = []
         params: list[Any] = []
         if product_id is not None:
@@ -155,17 +217,13 @@ class UserInsightReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, product_id, module_code, feature_code, source_channel,
-                           feedback_type, sentiment, satisfaction_score, content, tags,
-                           related_requirement_id, status, triage_note, created_by,
-                           created_at, updated_at
+                    SELECT COUNT(*)
                     FROM user_feedback
                     {where_clause}
-                    ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
                     """,
                     tuple(params),
                 )
-                return [self._user_feedback_from_row(row) for row in cursor.fetchall()]
+                return int(cursor.fetchone()[0])
 
     def get_user_feedback(self, feedback_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:

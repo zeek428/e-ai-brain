@@ -1703,14 +1703,17 @@ def test_postgres_user_insight_read_models_delegate_to_domain_repository(monkeyp
         ("load_user_feedback", {}),
         (
             "list_user_feedback",
-            {
-                "created_by": "user_admin",
-                "feature_code": "search",
-                "module_code": "knowledge",
-                "product_id": "product_001",
-                "status": "resolved",
-            },
-        ),
+                {
+                    "created_by": "user_admin",
+                    "feature_code": "search",
+                    "limit": None,
+                    "module_code": "knowledge",
+                    "offset": None,
+                    "product_id": "product_001",
+                    "status": "resolved",
+                    "summary_only": False,
+                },
+            ),
         ("get_user_feedback", {"feedback_id": "feedback_001"}),
         ("load_user_usage_metrics", {}),
         (

@@ -169,16 +169,25 @@ def user_feedback(
     feature_code: str | None = None,
     status: str | None = None,
     created_by: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    summary_only: bool = False,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    started_at = getattr(request.state, "started_at", None)
     return envelope(
         list_user_feedback_response(
             created_by=created_by,
             current_store=store(request),
             feature_code=feature_code,
             module_code=module_code,
+            page=page,
+            page_size=page_size,
             product_id=product_id,
+            started_at=started_at if isinstance(started_at, float) else perf_counter(),
             status=status,
+            summary_only=summary_only,
+            trace_id=get_trace_id(request),
         ),
         get_trace_id(request),
     )

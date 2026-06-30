@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.772 |
+| 功能版本 | v1.1.773 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.773 | 2026-06-30 | 用户反馈原始列表补齐分页性能治理：`GET /api/insights/user-feedback` 带分页时走 count/page read model，支持摘要模式和查询性能观测，用户洞察聚合列表反馈摘要截断 | Codex |
 | v1.1.772 | 2026-06-30 | 真实全链路回归脚本 AI 助手问答校验拆分：确定性助手、版本引用、`assistant.iteration`、版本总览投影和会话历史断言迁移到 `full_chain_regression_assistant_qa.py` | Codex |
 | v1.1.771 | 2026-06-30 | 真实全链路回归脚本代码巡检治理校验拆分：本地完整扫描、质量门禁、Bug/整改任务写回、提交人治理、趋势对比和版本总览阻塞断言迁移到 `full_chain_regression_code_inspection.py` | Codex |
 | v1.1.770 | 2026-06-30 | 真实全链路回归脚本权限可视化校验拆分：角色列表、权限矩阵、角色访问预览、范围名称和用户权限诊断断言迁移到 `full_chain_regression_permissions.py` | Codex |
@@ -1647,7 +1648,7 @@ AI 助手聊天生成必须以 `assistant_chat_runs` 作为服务端运行真相
 | 用户洞察列表 | GET | /api/insights/items | 聚合用户使用、用户反馈和迭代建议，支持服务端分页、排序和筛选。 |
 | 用户反馈转需求 | POST | /api/insights/user-feedback/{feedback_id}/convert-requirement | 将已登记用户反馈转为正式需求，需求来源为 `user_feedback`，并同步反馈归属产品、关联需求和 `linked` 状态。 |
 | 用户使用指标 | GET/POST | /api/insights/usage-metrics | 查询或登记产品、模块、功能和用户群体维度的真实使用趋势。 |
-| 用户反馈 | GET/POST/PATCH | /api/insights/user-feedback, /api/insights/user-feedback/{feedback_id} | 查询、登记和更新用户反馈。 |
+| 用户反馈 | GET/POST/PATCH | /api/insights/user-feedback, /api/insights/user-feedback/{feedback_id} | 查询、登记和更新用户反馈；GET 带 `page/page_size` 时优先由 SQL read model 完成 count/page 查询并返回性能观测，支持 `summary_only` 摘要模式。 |
 | 迭代规划建议 | GET/POST | /api/planning/iteration-suggestions | 查询或生成 AI 迭代规划建议。 |
 | 迭代规划确认 | POST | /api/planning/iteration-suggestions/{suggestion_id}/decide | 产品负责人确认、修改后采纳或驳回迭代规划建议。 |
 
@@ -2172,7 +2173,7 @@ suggested → rejected
 | 迭代规划生成 | 异步任务 | 证据聚合与模型调用异步执行，前端查询建议状态。 |
 
 **性能优化点**:
-- 对任务列表、审计列表、知识检索、研发运营指标、用户洞察和迭代规划建议列表使用分页和 top_k 限制；用户洞察和研发运营页面主列表必须使用统一聚合接口进行服务端分页、排序和筛选。
+- 对任务列表、审计列表、知识检索、研发运营指标、用户洞察、用户反馈原始列表和迭代规划建议列表使用分页和 top_k 限制；用户洞察和研发运营页面主列表必须使用统一聚合接口进行服务端分页、排序和筛选；`GET /api/insights/user-feedback` 传入分页参数时必须走用户反馈 count/page read model 并返回 `query/performance`，`summary_only=true` 仅返回摘要内容，避免超长反馈撑大列表响应。
 - 将模型调用和迭代规划生成放入异步任务，不阻塞常规 HTTP 请求。
 
 ---

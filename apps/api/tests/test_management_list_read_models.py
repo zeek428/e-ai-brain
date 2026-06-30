@@ -166,6 +166,81 @@ def test_insight_items_use_repository_read_model_for_sql_pagination():
         _restore_repository(original_store, original_users)
 
 
+def test_user_feedback_list_uses_repository_count_and_page_for_sql_pagination():
+    class ReadModelOnlyFeedbackRepository(FakeSnapshotRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.feedback_counts: list[dict] = []
+            self.feedback_reads: list[dict] = []
+
+        def count_user_feedback(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.feedback_counts.append(dict(kwargs))
+            return 3
+
+        def list_user_feedback(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.feedback_reads.append(dict(kwargs))
+            return [
+                {
+                    "content": "迭代版本反馈摘要",
+                    "created_at": "2026-06-05T09:00:00+00:00",
+                    "created_by": "user_admin",
+                    "feedback_type": "improvement",
+                    "id": "feedback_read_model",
+                    "product_id": "product_read_model",
+                    "source_channel": "manual",
+                    "status": "open",
+                    "tags": [],
+                    "updated_at": "2026-06-05T09:00:00+00:00",
+                }
+            ]
+
+    repository = ReadModelOnlyFeedbackRepository()
+    original_store, original_users = _use_repository(repository)
+
+    try:
+        response = client.get(
+            (
+                "/api/insights/user-feedback"
+                "?product_id=product_read_model"
+                "&status=open"
+                "&created_by=user_admin"
+                "&page=2&page_size=1"
+                "&summary_only=true"
+            ),
+            headers=auth_headers(),
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["total"] == 3
+        assert data["page"] == 2
+        assert data["page_size"] == 1
+        assert data["items"][0]["id"] == "feedback_read_model"
+        assert data["query"]["name"] == "user_feedback"
+        assert repository.feedback_counts == [
+            {
+                "created_by": "user_admin",
+                "feature_code": None,
+                "module_code": None,
+                "product_id": "product_read_model",
+                "status": "open",
+            }
+        ]
+        assert repository.feedback_reads == [
+            {
+                "created_by": "user_admin",
+                "feature_code": None,
+                "limit": 1,
+                "module_code": None,
+                "offset": 1,
+                "product_id": "product_read_model",
+                "status": "open",
+                "summary_only": True,
+            }
+        ]
+    finally:
+        _restore_repository(original_store, original_users)
+
+
 def test_requirement_list_uses_repository_read_model_for_sql_pagination():
     class ReadModelOnlyRequirementRepository(FakeSnapshotRepository):
         def __init__(self) -> None:

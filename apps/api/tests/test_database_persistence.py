@@ -1358,6 +1358,9 @@ class FakeSnapshotRepository:
         feature_code: str | None = None,
         status: str | None = None,
         created_by: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        summary_only: bool = False,
     ) -> list[dict]:
         payload = self.user_feedback_payload or {"user_feedback": {}}
         items = []
@@ -1372,11 +1375,39 @@ class FakeSnapshotRepository:
                 continue
             if created_by is not None and feedback.get("created_by") != created_by:
                 continue
-            items.append(dict(feedback))
-        return sorted(
+            item = dict(feedback)
+            if summary_only:
+                content = str(item.get("content") or "")
+                if len(content) > 240:
+                    item["content"] = f"{content[:240]}..."
+            items.append(item)
+        sorted_items = sorted(
             items,
             key=lambda item: item.get("updated_at") or item.get("created_at") or "",
             reverse=True,
+        )
+        if limit is not None:
+            start = offset or 0
+            return sorted_items[start : start + limit]
+        return sorted_items
+
+    def count_user_feedback(
+        self,
+        *,
+        product_id: str | None = None,
+        module_code: str | None = None,
+        feature_code: str | None = None,
+        status: str | None = None,
+        created_by: str | None = None,
+    ) -> int:
+        return len(
+            self.list_user_feedback(
+                created_by=created_by,
+                feature_code=feature_code,
+                module_code=module_code,
+                product_id=product_id,
+                status=status,
+            )
         )
 
     def get_user_feedback(self, feedback_id: str) -> dict | None:

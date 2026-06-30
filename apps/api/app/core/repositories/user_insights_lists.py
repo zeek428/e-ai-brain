@@ -53,7 +53,10 @@ class UserInsightListRepository:
                        id,
                        created_by AS owner,
                        status,
-                       content AS summary,
+                       CASE
+                         WHEN length(content) > 240 THEN substring(content from 1 for 240) || '...'
+                         ELSE content
+                       END AS summary,
                        COALESCE(updated_at, created_at) AS updated_at,
                        product_id,
                        '-'::text AS version_id,

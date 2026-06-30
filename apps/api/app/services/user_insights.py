@@ -180,6 +180,23 @@ def user_insight_projection(category: str, item: dict[str, Any]) -> dict[str, An
             "window_start",
         ),
     )
+    summary = str(
+        first_list_value(
+            item,
+            (
+                "summary",
+                "title",
+                "content",
+                "feedback_text",
+                "suggestion",
+                "recommendation_reason",
+                "feature_code",
+            ),
+        )
+        or "-"
+    )
+    if len(summary) > 240:
+        summary = f"{summary[:240]}..."
     return {
         **item,
         "category": category,
@@ -195,21 +212,7 @@ def user_insight_projection(category: str, item: dict[str, Any]) -> dict[str, An
         "priority": str(item.get("priority") or "-"),
         "product_id": str(item.get("product_id") or "-"),
         "status": str(item.get("status") or "-"),
-        "summary": str(
-            first_list_value(
-                item,
-                (
-                    "summary",
-                    "title",
-                    "content",
-                    "feedback_text",
-                    "suggestion",
-                    "recommendation_reason",
-                    "feature_code",
-                ),
-            )
-            or "-"
-        ),
+        "summary": summary,
         "updated_at": str(updated_at or ""),
         "version_id": str(item.get("version_id") or "-"),
     }

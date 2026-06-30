@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.api.deps import api_error, require_roles
+from app.core.listing import add_list_observability, paginated_list_payload
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.product_config_context import product_config_source_store
 from app.services.user_insights import (
@@ -143,20 +144,89 @@ def list_user_feedback_response(
     current_store: Any,
     feature_code: str | None,
     module_code: str | None,
+    page: int | None = None,
+    page_size: int | None = None,
     product_id: str | None,
+    started_at: float | None = None,
     status: str | None,
+    summary_only: bool = False,
+    trace_id: str = "",
 ) -> dict[str, Any]:
     validate_user_feedback_enums(status=status)
+    filters = {
+        "created_by": created_by,
+        "feature_code": feature_code,
+        "module_code": module_code,
+        "product_id": product_id,
+        "status": status,
+        "summary_only": summary_only or None,
+    }
     repository = user_insight_query_repository(current_store)
     if repository is not None:
-        items = repository.list_user_feedback(
-            product_id=product_id,
-            module_code=module_code,
-            feature_code=feature_code,
-            status=status,
-            created_by=created_by,
-        )
-        return {"items": items, "total": len(items)}
+        use_pagination = page is not None or page_size is not None
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        list_filters = {
+            "product_id": product_id,
+            "module_code": module_code,
+            "feature_code": feature_code,
+            "status": status,
+            "created_by": created_by,
+        }
+        count_feedback = getattr(repository, "count_user_feedback", None)
+        if use_pagination and callable(count_feedback):
+            total = count_feedback(
+                **list_filters,
+            )
+            items = repository.list_user_feedback(
+                **list_filters,
+                limit=resolved_page_size,
+                offset=(resolved_page - 1) * resolved_page_size,
+                summary_only=summary_only,
+            )
+            return add_list_observability(
+                {
+                    "items": items,
+                    "page": resolved_page,
+                    "page_size": resolved_page_size,
+                    "total": total,
+                },
+                filters=filters,
+                list_name="user_feedback",
+                page=resolved_page,
+                page_size=resolved_page_size,
+                sort_by="updated_at",
+                sort_order="desc",
+                started_at=started_at,
+            )
+        if summary_only:
+            items = repository.list_user_feedback(**list_filters, summary_only=True)
+        else:
+            items = repository.list_user_feedback(**list_filters)
+        if not use_pagination:
+            payload = {"items": items, "total": len(items)}
+            if started_at is not None:
+                payload = add_list_observability(
+                    payload,
+                    filters=filters,
+                    list_name="user_feedback",
+                    sort_by="updated_at",
+                    sort_order="desc",
+                    started_at=started_at,
+                )
+            return payload
+        return paginated_list_payload(
+            items,
+            filters=filters,
+            list_name="user_feedback",
+            observed=True,
+            page=page,
+            page_size=page_size,
+            sort_by="updated_at",
+            sort_order="desc",
+            started_at=started_at,
+            trace_id=trace_id,
+        )["data"]
     items = []
     for feedback in _user_feedback_collection(current_store).values():
         if product_id is not None and feedback.get("product_id") != product_id:
@@ -174,7 +244,30 @@ def list_user_feedback_response(
         key=lambda item: item.get("updated_at") or item.get("created_at") or "",
         reverse=True,
     )
-    return {"items": items, "total": len(items)}
+    if summary_only:
+        items = [
+            {
+                **item,
+                "content": (
+                    f"{str(item.get('content') or '')[:240]}..."
+                    if len(str(item.get("content") or "")) > 240
+                    else item.get("content")
+                ),
+            }
+            for item in items
+        ]
+    return paginated_list_payload(
+        items,
+        filters=filters,
+        list_name="user_feedback",
+        observed=started_at is not None,
+        page=page,
+        page_size=page_size,
+        sort_by="updated_at",
+        sort_order="desc",
+        started_at=started_at,
+        trace_id=trace_id,
+    )["data"]
 
 
 def create_user_feedback_response(

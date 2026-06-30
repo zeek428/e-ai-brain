@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.470 |
+| 功能版本 | v1.1.471 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.471 | 2026-06-30 | `GET /api/insights/user-feedback` 补齐分页查询契约：带 `page/page_size` 时优先走用户反馈 count/page read model，支持 `summary_only` 摘要模式和 `query/performance` 观测 | Codex |
 | v1.1.470 | 2026-06-30 | `GET /api/assistant/action-drafts` 和草案详情响应新增统一确认决策字段：列表返回 `decision_*` 与 `can_confirm`，详情返回 `governance.decision` | Codex |
 | v1.1.469 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 新增 `delivery_stage_overview`，后端统一输出交付阶段总览供版本总览、AI 助手和回归脚本复用 | Codex |
 | v1.1.468 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 新增 `governance_conclusion`，后端统一输出版本治理结论供版本总览、AI 助手和回归脚本复用 | Codex |
@@ -882,7 +883,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Insights | GET | `/api/insights/items` | 查询用户洞察统一聚合列表，支持服务端分页、排序和筛选。 |
 | Insights | GET | `/api/insights/usage-metrics` | 查询真实用户使用指标。 |
 | Insights | POST | `/api/insights/usage-metrics` | 登记真实用户使用指标。 |
-| Insights | GET | `/api/insights/user-feedback` | 查询用户反馈列表。 |
+| Insights | GET | `/api/insights/user-feedback` | 查询用户反馈列表；带 `page/page_size` 时返回分页、`query/performance`，可用 `summary_only=true` 返回摘要内容。 |
 | Insights | POST | `/api/insights/user-feedback` | 登记真实用户反馈。 |
 | Insights | PATCH | `/api/insights/user-feedback/{feedback_id}` | 更新用户反馈状态和处理信息。 |
 | Insights | POST | `/api/insights/user-feedback/{feedback_id}/convert-requirement` | 将用户反馈转为正式需求，并同步反馈状态为 `linked`。 |
@@ -4028,7 +4029,7 @@ GET /api/insights/items?category=用户反馈&summary=迭代版本&status=open&p
 
 该接口面向用户洞察主列表聚合用户使用指标、用户反馈和 AI 迭代规划建议，返回统一行字段 `category`、`summary`、`owner`、`status`、`updated_at`、`product_id`、`version_id`、`module_code`、`feature_code`，并保留 `feedback_type`、`confidence_level`、`planning_cycle`、`priority` 和 `converted_requirement_id` 等上下文。支持 `category` 精确筛选，`summary` 文本筛选，`status` 精确筛选，`page/page_size` 服务端分页，`sort_by` 支持 `category/id/owner/status/summary/updated_at`，`sort_order` 支持 `asc/desc`。PostgreSQL 运行时必须通过 repository SQL read model 聚合查询三类来源，并在 SQL 层完成筛选、排序和分页；MemoryStore 仅保留为测试 helper fallback。前端用户洞察主列表必须调用该接口，不再并发拉取使用指标、反馈和迭代建议三个原始接口后本地拼装、排序或分页；登记、处理和决策仍使用对应原始写接口。
 
-反馈状态支持：`open | triaged | linked | resolved | archived`。`POST /api/insights/user-feedback` 允许任意已登录用户登记真实反馈；`PATCH /api/insights/user-feedback/{feedback_id}` 仅允许 `product_owner`、`rd_owner` 或 `admin` 更新状态、标签、情绪、评分和处理备注；GET 支持按 `product_id`、`module_code`、`feature_code`、`status` 和 `created_by` 筛选。反馈写入 `user_feedback` 结构表，并记录 `user_feedback.created` / `user_feedback.updated` 审计事件。
+反馈状态支持：`open | triaged | linked | resolved | archived`。`POST /api/insights/user-feedback` 允许任意已登录用户登记真实反馈；`PATCH /api/insights/user-feedback/{feedback_id}` 仅允许 `product_owner`、`rd_owner` 或 `admin` 更新状态、标签、情绪、评分和处理备注；GET 支持按 `product_id`、`module_code`、`feature_code`、`status` 和 `created_by` 筛选。GET 传入 `page` 或 `page_size` 时必须返回 `items/page/page_size/total/query/performance`，PostgreSQL 运行态优先调用用户反馈 count/page read model，不得先读取全部反馈后在接口层切片；`summary_only=true` 时列表行 `content` 仅返回 240 字摘要，避免用户洞察和调试列表被超长反馈拖慢。未传分页参数时保留旧 `items/total` 全量返回兼容历史调用，但不作为新增列表页面默认读取方式。反馈写入 `user_feedback` 结构表，并记录 `user_feedback.created` / `user_feedback.updated` 审计事件。
 
 反馈转需求请求体：
 
