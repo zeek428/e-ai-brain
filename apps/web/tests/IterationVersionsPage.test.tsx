@@ -471,6 +471,25 @@ describe('IterationVersionsPage', () => {
             bug_status_counts: [],
             code_inspection_reports: [],
             code_review_reports: [],
+            delivery_stage_overview: [
+              {
+                action_label: '查看需求',
+                action_target_id: 'version_dashboard',
+                action_target_type: 'requirements',
+                detail: '后端阶段总览覆盖需求范围',
+                key: 'requirements',
+                level: 'success',
+                title: '需求范围',
+                value: '后端范围可推进',
+              },
+              {
+                detail: '当前版本没有可推进的下一阶段',
+                key: 'status-impact',
+                level: 'info',
+                title: '状态推进',
+                value: '无需推进',
+              },
+            ],
             knowledge_deposits: [],
             releases: [],
             requirement_status_counts: [],
@@ -504,6 +523,8 @@ describe('IterationVersionsPage', () => {
     render(<IterationVersionsPage />);
 
     expect(await screen.findByText('版本总览 · 2026-dashboard')).toBeInTheDocument();
+    expect(screen.getAllByText('后端范围可推进').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('后端阶段总览覆盖需求范围').length).toBeGreaterThan(0);
     expect(screen.queryByText('代码分支 · 2026-dashboard')).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
       '/api/product-versions?page=1&page_size=100&sort_by=created_at&sort_order=desc',

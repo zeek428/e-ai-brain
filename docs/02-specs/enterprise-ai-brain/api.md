@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.468 |
+| 功能版本 | v1.1.469 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.469 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 新增 `delivery_stage_overview`，后端统一输出交付阶段总览供版本总览、AI 助手和回归脚本复用 | Codex |
 | v1.1.468 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 新增 `governance_conclusion`，后端统一输出版本治理结论供版本总览、AI 助手和回归脚本复用 | Codex |
 | v1.1.467 | 2026-06-30 | 知识中心索引健康前端展示升级为解析状态、Chunk/Embedding、检索与权限三段治理摘要，健康问题操作明确区分补向量、重试索引、查看分块和导入任务 | Codex |
 | v1.1.466 | 2026-06-30 | `POST /api/assistant/chat` 对迭代版本阻塞/下一步行动问题使用确定性 `assistant.iteration` 工具结果，复用版本总览治理上下文并在历史消息保留安全摘要 | Codex |
@@ -678,7 +679,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Product | PATCH | `/api/products/{product_id}` | 更新产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404。 |
 | Product | DELETE | `/api/products/{product_id}` | 删除未被需求、AI 任务或 Bug 占用的产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404；无业务依赖时级联清理该产品的版本、模块和 Git 资源配置。 |
 | Product Version | GET | `/api/product-versions`, `/api/products/{product_id}/versions` | 产品迭代版本列表，前端主入口位于需求交付/迭代版本；要求 `product.read`，批量列表按当前用户产品 scope 过滤，指定 scope 外产品返回 404。 |
-| Product Version | GET | `/api/product-versions/{version_id}/dashboard` | 查询迭代版本驾驶舱，聚合版本需求、AI 任务、版本代码分支、Bug、代码巡检、代码评审、知识沉淀、发布记录、状态推进影响和阻塞项；PostgreSQL 运行时使用版本范围专用 read model，响应字段不变，不先加载全量 task workflow source rows；要求 `product.read` 并按版本归属产品校验 scope，Bug 明细需 `bug.read`，代码巡检明细需 `code_inspection.read`，知识沉淀明细需 `knowledge.read`，缺少子权限时返回 `access_issues` 并隐藏对应明细；知识沉淀行返回关联知识文档索引状态、chunk 数、embedding chunk 数和关键词/混合/不可用检索模式。 |
+| Product Version | GET | `/api/product-versions/{version_id}/dashboard` | 查询迭代版本驾驶舱，聚合版本需求、AI 任务、版本代码分支、Bug、代码巡检、代码评审、知识沉淀、发布记录、状态推进影响和阻塞项；PostgreSQL 运行时使用版本范围专用 read model，响应字段不变，不先加载全量 task workflow source rows；要求 `product.read` 并按版本归属产品校验 scope，Bug 明细需 `bug.read`，代码巡检明细需 `code_inspection.read`，知识沉淀明细需 `knowledge.read`，缺少子权限时返回 `access_issues` 并隐藏对应明细；知识沉淀行返回关联知识文档索引状态、chunk 数、embedding chunk 数和关键词/混合/不可用检索模式；`delivery_stage_overview` 返回后端统一生成的交付阶段总览。 |
 | Product Version | POST | `/api/products/{product_id}/versions` | 创建产品迭代版本；要求 `product.manage`，并按当前用户产品 scope 校验产品可见性。 |
 | Product Version | PATCH | `/api/product-versions/{version_id}` | 更新产品迭代版本非状态字段；要求 `product.manage`，按版本归属产品校验当前用户产品 scope，状态变更必须走推进接口。 |
 | Product Version | POST | `/api/product-versions/{version_id}/advance-status` | 预览或推进迭代版本状态，并同步符合条件的需求状态；要求 `product.manage`，按版本归属产品校验当前用户产品 scope。 |
@@ -1497,13 +1498,27 @@ GET /api/product-versions/version_001/dashboard
       "risks": ["发布阻塞 3", "未关闭 Bug 1", "门禁失败 1"],
       "next_action": "先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。"
     },
+    "delivery_stage_overview": [
+      {
+        "key": "requirements",
+        "title": "需求范围",
+        "value": "范围可推进",
+        "detail": "7 条需求 · 可推进",
+        "level": "success",
+        "action_label": "查看需求",
+        "action_target_type": "requirements",
+        "action_target_id": "version_001",
+        "full_chain_subject_type": null,
+        "full_chain_subject_id": null
+      }
+    ],
     "access_issues": []
   },
   "trace_id": "trace_xxx"
 }
 ```
 
-规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 和 `branch_quality_governance` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏；`knowledge_deposits` 仅在具备 `knowledge.read` 时返回，否则在 `access_issues` 中声明隐藏。知识沉淀明细只暴露沉淀 ID、标题、状态、来源任务、关联知识文档、知识文档标题、索引状态、chunk 数、embedding chunk 数、检索模式、索引错误摘要和更新时间，不返回知识正文；`knowledge_retrieval_mode=keyword` 表示关键词兜底，`hybrid` 表示向量与关键词可混合检索，`unavailable` 表示当前沉淀不可检索。summary 中 `searchable_knowledge_deposits` 统计可关键词或混合检索的沉淀，`vectorized_knowledge_deposits` 统计混合检索沉淀；`branch_quality_action_required` 统计存在门禁失败、活跃严重问题、过期接受风险、待审批忽略或严重问题缺 Bug/整改覆盖的版本分支，`branch_quality_pending_scan` 统计已配置但暂无巡检报告的版本分支，`branch_quality_active_severe_findings`、`branch_quality_false_positives`、`branch_quality_accepted_risks`、`branch_quality_expired_accepted_risks` 和 `branch_quality_pending_suppressions` 按分支报告 finding 聚合治理计数。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态；每条 blocker 必须返回处理动作、目标主体和解除条件，前端将其映射为需求、Bug、代码巡检、版本分支或发布记录处理入口。`next_actions` 由后端按 blockers 的严重级别、来源类型、标题和目标 ID 排序后截取前三条，必须返回 `priority/source_label/full_chain_subject_type/full_chain_subject_id`，供版本总览首屏、AI 助手问答和真实全链路回归脚本复用同一处理建议；无阻塞时返回空数组。`governance_conclusion` 由后端基于 summary、blockers、分支质量治理和 `status_impact` 统一生成，返回 `title/value/level/detail/risks/next_action`，供版本总览、AI 助手和回归脚本复用；前端仅在旧响应缺失该字段时基于 dashboard 本地兜底推导。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、版本治理结论、交付健康摘要、status impact 和 blockers，再展示可读明细表；summary 指标区必须展示待治理分支、门禁失败、待审批忽略和到期风险；交付链路总览必须基于既有 `requirements/tasks/branch_configs/code_inspection_reports/code_review_reports/bugs/knowledge_deposits/releases/status_impact` 响应派生各阶段处理入口，直接跳转需求、首个任务或产品任务列表、版本分支、代码巡检、代码评审、版本 Bug、知识沉淀、发布记录或触发状态推进；交付健康摘要基于阻塞项、严重 Bug/巡检、分支创建状态、分支质量治理、代码巡检风险、知识沉淀可检索状态和发布失败记录派生发布准入、质量风险、代码分支、代码巡检、知识沉淀和发布流水线结论，代码巡检结论必须直接说明门禁失败、待审批忽略和到期风险。
+规则：接口要求 `product.read`，并在聚合前按版本归属产品校验当前用户产品 scope；scope 外返回 404。`requirements/tasks/branch_configs/releases/status_impact` 随 `product.read` 返回；`bugs` 和 `bug_status_counts` 仅在用户具备 `bug.read` 时返回，否则在 `access_issues` 中声明隐藏；`code_inspection_reports` 和 `branch_quality_governance` 仅在具备 `code_inspection.read` 时返回，否则同样降级隐藏；`knowledge_deposits` 仅在具备 `knowledge.read` 时返回，否则在 `access_issues` 中声明隐藏。知识沉淀明细只暴露沉淀 ID、标题、状态、来源任务、关联知识文档、知识文档标题、索引状态、chunk 数、embedding chunk 数、检索模式、索引错误摘要和更新时间，不返回知识正文；`knowledge_retrieval_mode=keyword` 表示关键词兜底，`hybrid` 表示向量与关键词可混合检索，`unavailable` 表示当前沉淀不可检索。summary 中 `searchable_knowledge_deposits` 统计可关键词或混合检索的沉淀，`vectorized_knowledge_deposits` 统计混合检索沉淀；`branch_quality_action_required` 统计存在门禁失败、活跃严重问题、过期接受风险、待审批忽略或严重问题缺 Bug/整改覆盖的版本分支，`branch_quality_pending_scan` 统计已配置但暂无巡检报告的版本分支，`branch_quality_active_severe_findings`、`branch_quality_false_positives`、`branch_quality_accepted_risks`、`branch_quality_expired_accepted_risks` 和 `branch_quality_pending_suppressions` 按分支报告 finding 聚合治理计数。`blockers` 聚合需求推进阻塞、未关闭严重 Bug、高风险或质量门禁失败的代码巡检报告、失败发布记录，以及进入测试或发布前不满足要求的版本分支状态；每条 blocker 必须返回处理动作、目标主体和解除条件，前端将其映射为需求、Bug、代码巡检、版本分支或发布记录处理入口。`next_actions` 由后端按 blockers 的严重级别、来源类型、标题和目标 ID 排序后截取前三条，必须返回 `priority/source_label/full_chain_subject_type/full_chain_subject_id`，供版本总览首屏、AI 助手问答和真实全链路回归脚本复用同一处理建议；无阻塞时返回空数组。`governance_conclusion` 由后端基于 summary、blockers、分支质量治理和 `status_impact` 统一生成，返回 `title/value/level/detail/risks/next_action`，供版本总览、AI 助手和回归脚本复用；前端仅在旧响应缺失该字段时基于 dashboard 本地兜底推导。`delivery_stage_overview` 由后端生成，固定返回 `requirements/tasks/branches/inspections/code-reviews/bugs/knowledge-deposits/releases/status-impact` 九类阶段，每项包含 `key/title/value/detail/level`，可处理阶段包含 `action_label/action_target_type/action_target_id`，并在可追踪时返回 `full_chain_subject_type/full_chain_subject_id`；版本总览、AI 助手和回归脚本必须优先复用该字段，旧响应缺失时才允许前端本地兜底推导。前端迭代版本页“驾驶舱”弹窗必须优先展示 summary、版本治理结论、交付健康摘要、status impact 和 blockers，再展示可读明细表；summary 指标区必须展示待治理分支、门禁失败、待审批忽略和到期风险；交付链路总览必须基于后端 `delivery_stage_overview` 展示阶段处理入口，直接跳转需求、首个任务或产品任务列表、版本分支、代码巡检、代码评审、版本 Bug、知识沉淀、发布记录或触发状态推进；交付健康摘要基于阻塞项、严重 Bug/巡检、分支创建状态、分支质量治理、代码巡检风险、知识沉淀可检索状态和发布失败记录派生发布准入、质量风险、代码分支、代码巡检、知识沉淀和发布流水线结论，代码巡检结论必须直接说明门禁失败、待审批忽略和到期风险。
 
 ### 平台配置
 
@@ -1731,7 +1746,7 @@ POST /api/assistant/chat
 }
 ```
 
-助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide`、`assistant.scheduled_job_diagnostic` 和 `assistant.plugin_connection_diagnostic`，其中明确询问迭代版本阻塞、下一步行动、版本总览或发布准备时，服务端应直接走 `assistant-deterministic` 确定性回答，不依赖 Chat 模型网关；`assistant.iteration` 工具项除版本需求/任务/Bug 计数外，还必须在当前用户有权限时复用 `GET /api/product-versions/{version_id}/dashboard` 的治理摘要，返回 `blocker_count`、`blockers_by_source`、`dashboard_url`、前三个 `next_actions[]` 和 `status_impact`，让助手回答版本阻塞、下一步行动或发布准备问题时与版本总览一致；`reference_candidates` 可覆盖命令面板型 `assistant_action`，以及引用类 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_space`、`knowledge_folder`、`knowledge_document`、`knowledge_chunk`，以及管理员、`system.admin` 或对应管理权限可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent`、`ai_skill`。引用候选 query 识别类型词时，`新建/新增/创建` 可匹配 `assistant_action`，`定时作业/定时任务` 优先匹配 `scheduled_job`，`运行记录/失败` 优先匹配 `scheduled_job_run`，`知识空间/知识目录` 分别匹配 `knowledge_space` / `knowledge_folder`，避免用户在创建配置、执行一次、失败诊断或知识范围引用前选到错误上下文。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据。每次聊天请求都会创建或复用 `assistant_chat_runs` 运行记录，状态为 `running/succeeded/cancelled/failed`；用户消息先按同一 `run_id` 写入 `pending`，成功后用户消息和助手消息置为 `completed`，取消时置为 `cancelled`，失败时写入 `failed/error_code`。`client_request_id` 用于客户端重试、停止生成和审计关联，未传时默认等同 `run_id`。成功审计事件为 `assistant.chat_completed`，取消审计事件为 `assistant.chat_cancelled`，失败审计事件为 `assistant.chat_failed`。
+助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide`、`assistant.scheduled_job_diagnostic` 和 `assistant.plugin_connection_diagnostic`，其中明确询问迭代版本阻塞、下一步行动、版本总览或发布准备时，服务端应直接走 `assistant-deterministic` 确定性回答，不依赖 Chat 模型网关；`assistant.iteration` 工具项除版本需求/任务/Bug 计数外，还必须在当前用户有权限时复用 `GET /api/product-versions/{version_id}/dashboard` 的治理摘要，返回 `blocker_count`、`blockers_by_source`、`dashboard_url`、前三个 `next_actions[]`、`delivery_stage_overview[]` 和 `status_impact`，让助手回答版本阻塞、下一步行动或发布准备问题时与版本总览一致；`reference_candidates` 可覆盖命令面板型 `assistant_action`，以及引用类 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_space`、`knowledge_folder`、`knowledge_document`、`knowledge_chunk`，以及管理员、`system.admin` 或对应管理权限可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent`、`ai_skill`。引用候选 query 识别类型词时，`新建/新增/创建` 可匹配 `assistant_action`，`定时作业/定时任务` 优先匹配 `scheduled_job`，`运行记录/失败` 优先匹配 `scheduled_job_run`，`知识空间/知识目录` 分别匹配 `knowledge_space` / `knowledge_folder`，避免用户在创建配置、执行一次、失败诊断或知识范围引用前选到错误上下文。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据。每次聊天请求都会创建或复用 `assistant_chat_runs` 运行记录，状态为 `running/succeeded/cancelled/failed`；用户消息先按同一 `run_id` 写入 `pending`，成功后用户消息和助手消息置为 `completed`，取消时置为 `cancelled`，失败时写入 `failed/error_code`。`client_request_id` 用于客户端重试、停止生成和审计关联，未传时默认等同 `run_id`。成功审计事件为 `assistant.chat_completed`，取消审计事件为 `assistant.chat_cancelled`，失败审计事件为 `assistant.chat_failed`。
 
 停止生成：
 
@@ -2367,7 +2382,7 @@ GET /api/assistant/conversations/{conversation_id}/messages
 }
 ```
 
-历史消息中的 `tool_results` 是展示用安全视图，不等同于原始运行载荷。`assistant.action_draft` 历史项只返回草案展示所需字段和动作白名单内的有限 payload 字段；`assistant.iteration` 历史项只保留版本 ID/标题/状态、需求/任务计数、`blocker_count`、`blockers_by_source`、`dashboard_url`、`next_actions` 和 `status_impact` 等版本治理摘要，不保留原始 dashboard 明细载荷；`api_key`、`auth_config`、`Authorization`、token、password、secret、cookie、private key 等敏感字段必须递归脱敏或移除。若 `preview.diffs[]` 的字段名、路径或标签命中敏感信息，`current`、`previous`、`proposed`、`default`、`value` 等值必须返回 `"***"`，不得在历史恢复、深链加载或模型上下文中泄露密钥和 Header 明文。
+历史消息中的 `tool_results` 是展示用安全视图，不等同于原始运行载荷。`assistant.action_draft` 历史项只返回草案展示所需字段和动作白名单内的有限 payload 字段；`assistant.iteration` 历史项只保留版本 ID/标题/状态、需求/任务计数、`blocker_count`、`blockers_by_source`、`dashboard_url`、`next_actions`、`delivery_stage_overview` 和 `status_impact` 等版本治理摘要，不保留原始 dashboard 明细载荷；`api_key`、`auth_config`、`Authorization`、token、password、secret、cookie、private key 等敏感字段必须递归脱敏或移除。若 `preview.diffs[]` 的字段名、路径或标签命中敏感信息，`current`、`previous`、`proposed`、`default`、`value` 等值必须返回 `"***"`，不得在历史恢复、深链加载或模型上下文中泄露密钥和 Header 明文。
 
 ### 需求管理
 

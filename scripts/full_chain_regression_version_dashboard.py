@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 VERSION_DASHBOARD_BLOCKER_SEVERITIES = {"info", "low", "medium", "high", "critical", "blocker"}
 VERSION_DASHBOARD_BLOCKER_SEVERITY_PRIORITY = {
     "blocker": 1,
@@ -28,6 +27,17 @@ VERSION_DASHBOARD_FULL_CHAIN_SUBJECT_TYPES = {
     "product_version_branch_config",
     "requirement",
 }
+VERSION_DASHBOARD_DELIVERY_STAGE_KEYS = [
+    "requirements",
+    "tasks",
+    "branches",
+    "inspections",
+    "code-reviews",
+    "bugs",
+    "knowledge-deposits",
+    "releases",
+    "status-impact",
+]
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -197,6 +207,66 @@ def validate_version_dashboard_governance_conclusion(
             (
                 "Version dashboard governance conclusion missed blocker risk label: "
                 f"blockers={blocker_count}, conclusion={conclusion}"
+            ),
+        )
+
+
+def validate_version_dashboard_delivery_stage_overview(dashboard: dict[str, Any]) -> None:
+    stages = dashboard.get("delivery_stage_overview")
+    _assert(
+        isinstance(stages, list),
+        f"Version dashboard delivery_stage_overview is not a list: {stages}",
+    )
+    stage_keys = [str(stage.get("key") or "") for stage in stages if isinstance(stage, dict)]
+    _assert(
+        stage_keys == VERSION_DASHBOARD_DELIVERY_STAGE_KEYS,
+        f"Version dashboard delivery stage order drifted: {stage_keys}",
+    )
+    for stage in stages:
+        _assert(
+            isinstance(stage, dict),
+            f"Version dashboard delivery stage is not an object: {stage}",
+        )
+        for field in ("detail", "key", "level", "title", "value"):
+            _assert(
+                field in stage and stage.get(field),
+                f"Version dashboard delivery stage missed {field}: {stage}",
+            )
+        _assert(
+            stage.get("level") in {"error", "info", "success", "warning"},
+            f"Version dashboard delivery stage level unsupported: {stage}",
+        )
+        if stage.get("key") != "status-impact":
+            _assert(
+                stage.get("action_label"),
+                f"Version dashboard delivery stage missed action_label: {stage}",
+            )
+            _assert(
+                stage.get("action_target_id"),
+                f"Version dashboard delivery stage missed action_target_id: {stage}",
+            )
+            _assert(
+                stage.get("action_target_type"),
+                f"Version dashboard delivery stage missed action_target_type: {stage}",
+            )
+    summary = dashboard.get("summary") or {}
+    blocker_count = int(summary.get("blockers") or 0)
+    release_stage = next((stage for stage in stages if stage.get("key") == "releases"), {})
+    if blocker_count:
+        _assert(
+            any(stage.get("level") in {"error", "warning"} for stage in stages),
+            f"Version dashboard delivery stages should expose blocker pressure: {stages}",
+        )
+    has_release_blocker = any(
+        blocker.get("source_type") == "jenkins_release"
+        for blocker in dashboard.get("blockers") or []
+    )
+    if has_release_blocker:
+        _assert(
+            release_stage.get("level") == "error",
+            (
+                "Version dashboard release stage should be error when release "
+                f"blockers exist: {release_stage}"
             ),
         )
 

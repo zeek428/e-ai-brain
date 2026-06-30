@@ -717,6 +717,11 @@ def _iteration_dashboard_governance(
         "blocker_count": _safe_int(summary.get("blockers")),
         "blockers_by_source": _count_by(blockers, "source_type"),
         "dashboard_url": f"/delivery/versions?version_id={version_id}&view=dashboard",
+        "delivery_stage_overview": [
+            _iteration_delivery_stage(stage)
+            for stage in (dashboard.get("delivery_stage_overview") or [])[:9]
+            if isinstance(stage, dict)
+        ],
         "governance_conclusion": dashboard.get("governance_conclusion") or {},
         "next_actions": [
             _iteration_next_action(action)
@@ -724,6 +729,21 @@ def _iteration_dashboard_governance(
             if isinstance(action, dict)
         ],
         "status_impact": _iteration_status_impact(dashboard.get("status_impact")),
+    }
+
+
+def _iteration_delivery_stage(stage: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "action_label": stage.get("action_label"),
+        "action_target_id": stage.get("action_target_id"),
+        "action_target_type": stage.get("action_target_type"),
+        "detail": stage.get("detail"),
+        "full_chain_subject_id": stage.get("full_chain_subject_id"),
+        "full_chain_subject_type": stage.get("full_chain_subject_type"),
+        "key": stage.get("key"),
+        "level": stage.get("level"),
+        "title": stage.get("title"),
+        "value": stage.get("value"),
     }
 
 

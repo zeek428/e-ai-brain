@@ -319,7 +319,13 @@ def _version_governance_conclusion(
             "value": "版本需治理后推进",
         }
 
-    if pending_code_review_count or blocked_requirement_count or has_knowledge_gap or has_delivery_evidence_gap:
+    has_review_or_evidence_gap = (
+        pending_code_review_count
+        or blocked_requirement_count
+        or has_knowledge_gap
+        or has_delivery_evidence_gap
+    )
+    if has_review_or_evidence_gap:
         return {
             "detail": (
                 f"待确认评审 {pending_code_review_count} 份，"
@@ -341,11 +347,334 @@ def _version_governance_conclusion(
             f"知识沉淀 {summary['knowledge_deposits']} 条。"
         ),
         "level": "success",
-        "next_action": "可按状态推进预览继续操作。" if status_impact else "当前状态暂无下一阶段，可继续观察交付健康。",
+        "next_action": (
+            "可按状态推进预览继续操作。"
+            if status_impact
+            else "当前状态暂无下一阶段，可继续观察交付健康。"
+        ),
         "risks": ["暂无关键阻塞"],
         "title": "版本治理结论",
         "value": "版本具备推进基础",
     }
+
+
+def _delivery_stage(
+    *,
+    action_label: str | None = None,
+    action_target_id: Any | None = None,
+    action_target_type: str | None = None,
+    detail: str,
+    full_chain_subject_id: Any | None = None,
+    full_chain_subject_type: str | None = None,
+    key: str,
+    level: str,
+    title: str,
+    value: str,
+) -> dict[str, Any]:
+    return {
+        "action_label": action_label,
+        "action_target_id": str(action_target_id) if action_target_id else None,
+        "action_target_type": action_target_type,
+        "detail": detail,
+        "full_chain_subject_id": str(full_chain_subject_id) if full_chain_subject_id else None,
+        "full_chain_subject_type": full_chain_subject_type,
+        "key": key,
+        "level": level,
+        "title": title,
+        "value": value,
+    }
+
+
+def _delivery_stage_overview(
+    *,
+    blockers: list[dict[str, Any]],
+    branch_configs: list[dict[str, Any]],
+    branch_quality_governance: list[dict[str, Any]],
+    bugs: list[dict[str, Any]],
+    code_inspection_reports: list[dict[str, Any]],
+    code_review_reports: list[dict[str, Any]],
+    knowledge_deposits: list[dict[str, Any]],
+    releases: list[dict[str, Any]],
+    status_impact: dict[str, Any] | None,
+    summary: dict[str, int],
+    tasks: list[dict[str, Any]],
+    version: dict[str, Any],
+) -> list[dict[str, Any]]:
+    branch_quality = _branch_quality_summary(branch_quality_governance, summary)
+    blocked_requirement_count = (
+        len(status_impact.get("blocked_requirements") or []) if status_impact else 0
+    )
+    running_task_count = sum(1 for task in tasks if task.get("status") == "running")
+    not_created_branch_count = sum(
+        1 for branch_config in branch_configs if branch_config.get("branch_status") == "not_created"
+    )
+    pending_scan_branch_count = summary["branch_quality_pending_scan"]
+    action_required_branch_count = summary["branch_quality_action_required"]
+    high_risk_inspection_count = sum(
+        1
+        for report in code_inspection_reports
+        if str(report.get("risk_level") or "").lower() in {"blocker", *SEVERE_CODE_RISKS}
+    )
+    pending_code_review_count = summary["pending_code_review_reports"]
+    release_blocker_count = sum(
+        1 for blocker in blockers if blocker.get("source_type") == "jenkins_release"
+    )
+    successful_release_count = sum(1 for release in releases if _successful_release(release))
+    first_branch_config = branch_configs[0] if branch_configs else {}
+    first_code_review_report = code_review_reports[0] if code_review_reports else {}
+    first_knowledge_deposit = knowledge_deposits[0] if knowledge_deposits else {}
+    first_task = tasks[0] if tasks else {}
+    version_id = version.get("id")
+    product_id = version.get("product_id")
+    branch_config_count = summary["branch_configs"]
+    inspection_report_count = summary["code_inspection_reports"]
+    knowledge_deposit_count = summary["knowledge_deposits"]
+    searchable_knowledge_count = summary["searchable_knowledge_deposits"]
+    vectorized_knowledge_count = summary["vectorized_knowledge_deposits"]
+    release_count = summary["releases"]
+    branch_has_pressure = (
+        not_created_branch_count
+        or action_required_branch_count
+        or pending_scan_branch_count
+    )
+    inspection_gate_failed_count = branch_quality["quality_gate_failed_report_count"]
+    pending_suppression_count = branch_quality["pending_suppression_count"]
+    expired_accepted_risk_count = branch_quality["expired_accepted_risk_count"]
+    inspection_has_detail_pressure = (
+        action_required_branch_count
+        or pending_scan_branch_count
+        or inspection_gate_failed_count
+        or pending_suppression_count
+        or expired_accepted_risk_count
+    )
+    inspection_has_pressure = (
+        high_risk_inspection_count
+        or action_required_branch_count
+        or pending_scan_branch_count
+        or inspection_gate_failed_count
+        or expired_accepted_risk_count
+    )
+    if not_created_branch_count:
+        branch_detail = f"{branch_config_count} 个分支 · 未创建 {not_created_branch_count} 个"
+    elif action_required_branch_count or pending_scan_branch_count:
+        branch_detail = (
+            f"{branch_config_count} 个分支 · "
+            f"待治理 {action_required_branch_count} 个 · "
+            f"待巡检 {pending_scan_branch_count} 个"
+        )
+    else:
+        branch_detail = f"{branch_config_count} 个分支 · 已登记"
+    if high_risk_inspection_count:
+        inspection_detail = (
+            f"{inspection_report_count} 份报告 · 高风险 {high_risk_inspection_count} 份"
+        )
+    elif inspection_has_detail_pressure:
+        inspection_detail = (
+            f"{inspection_report_count} 份报告 · "
+            f"待治理分支 {action_required_branch_count} 个 · "
+            f"待巡检 {pending_scan_branch_count} 个 · "
+            f"门禁失败 {inspection_gate_failed_count} 份 · "
+            f"待审批忽略 {pending_suppression_count} 个 · "
+            f"到期风险 {expired_accepted_risk_count} 个"
+        )
+    else:
+        inspection_detail = f"{inspection_report_count} 份报告 · 暂无高风险"
+    code_review_action_target_id = (
+        first_code_review_report.get("id") or first_task.get("id") or product_id
+    )
+    code_review_full_chain_subject_id = (
+        first_code_review_report.get("id") or first_task.get("requirement_id")
+    )
+    knowledge_action_target_type = (
+        "knowledge_deposit" if first_knowledge_deposit.get("id") else "product_version"
+    )
+    if knowledge_deposit_count:
+        knowledge_detail = (
+            f"{knowledge_deposit_count} 条知识沉淀 · "
+            f"可检索 {searchable_knowledge_count} 条 · "
+            f"向量就绪 {vectorized_knowledge_count} 条"
+        )
+    else:
+        knowledge_detail = "暂无知识沉淀，发布前建议沉淀关键设计、巡检和整改经验"
+    release_detail = (
+        f"{release_count} 条记录 · 发布阻塞 {release_blocker_count} 个 · "
+        f"成功 {successful_release_count} 条"
+        if release_blocker_count
+        else f"{release_count} 条记录 · 暂无发布阻塞 · 成功 {successful_release_count} 条"
+    )
+
+    return [
+        _delivery_stage(
+            action_label="处理需求" if blocked_requirement_count else "查看需求",
+            action_target_id=version_id,
+            action_target_type="requirements",
+            detail=(
+                f"{summary['requirements']} 条需求 · 阻塞 {blocked_requirement_count} 条"
+                if blocked_requirement_count
+                else f"{summary['requirements']} 条需求 · 可推进"
+            ),
+            key="requirements",
+            level="warning" if blocked_requirement_count else "success",
+            title="需求范围",
+            value="范围有阻塞" if blocked_requirement_count else "范围可推进",
+        ),
+        _delivery_stage(
+            action_label="查看任务",
+            action_target_id=first_task.get("id") or product_id,
+            action_target_type="ai_task" if first_task.get("id") else "tasks_by_product",
+            detail=(
+                f"{summary['tasks']} 个任务 · 运行中 {running_task_count} 个"
+                if running_task_count
+                else f"{summary['tasks']} 个任务 · 暂无运行中"
+            ),
+            full_chain_subject_id=first_task.get("requirement_id") or version_id,
+            full_chain_subject_type=(
+                "requirement" if first_task.get("requirement_id") else "product_version"
+            ),
+            key="tasks",
+            level="info" if running_task_count else "success",
+            title="研发任务",
+            value="任务进行中" if running_task_count else "任务稳定",
+        ),
+        _delivery_stage(
+            action_label="处理分支",
+            action_target_id=first_branch_config.get("id") or version_id,
+            action_target_type=(
+                "product_version_branch_config"
+                if first_branch_config.get("id")
+                else "product_version"
+            ),
+            detail=branch_detail,
+            full_chain_subject_id=first_branch_config.get("id") or version_id,
+            full_chain_subject_type=(
+                "product_version_branch_config"
+                if first_branch_config.get("id")
+                else "product_version"
+            ),
+            key="branches",
+            level="warning" if branch_has_pressure else "success",
+            title="代码分支",
+            value=(
+                "分支待维护"
+                if not_created_branch_count
+                else (
+                    "分支质量待治理"
+                    if action_required_branch_count or pending_scan_branch_count
+                    else "分支就绪"
+                )
+            ),
+        ),
+        _delivery_stage(
+            action_label="查看巡检",
+            action_target_id=version_id,
+            action_target_type="code_inspection_dashboard",
+            detail=inspection_detail,
+            key="inspections",
+            level="warning" if inspection_has_pressure else "success",
+            title="代码巡检",
+            value="质量待治理" if inspection_has_pressure else "质量可控",
+        ),
+        _delivery_stage(
+            action_label="处理评审" if pending_code_review_count else "查看评审",
+            action_target_id=code_review_action_target_id,
+            action_target_type=(
+                "code_review_report"
+                if first_code_review_report.get("id")
+                else "ai_task"
+                if first_task.get("id")
+                else "tasks_by_product"
+            ),
+            detail=(
+                f"{summary['code_review_reports']} 份报告 · 待确认 {pending_code_review_count} 份"
+                if pending_code_review_count
+                else f"{summary['code_review_reports']} 份报告 · 暂无待确认"
+            ),
+            full_chain_subject_id=code_review_full_chain_subject_id,
+            full_chain_subject_type=(
+                "code_review_report"
+                if first_code_review_report.get("id")
+                else "requirement"
+                if first_task.get("requirement_id")
+                else None
+            ),
+            key="code-reviews",
+            level="warning" if pending_code_review_count else "success",
+            title="代码评审",
+            value="评审待确认" if pending_code_review_count else "评审已收敛",
+        ),
+        _delivery_stage(
+            action_label="处理版本 Bug" if summary["open_bugs"] else "查看版本 Bug",
+            action_target_id=version_id,
+            action_target_type="bugs",
+            detail=(
+                f"{summary['bugs']} 个 Bug · 未关闭 {summary['open_bugs']} 个"
+                if summary["open_bugs"]
+                else f"{summary['bugs']} 个 Bug · 已收敛"
+            ),
+            full_chain_subject_id=(bugs[0] or {}).get("id") if bugs else version_id,
+            full_chain_subject_type="bug" if bugs else "product_version",
+            key="bugs",
+            level="error" if summary["open_bugs"] else "success",
+            title="Bug 收敛",
+            value="Bug 待关闭" if summary["open_bugs"] else "Bug 已收敛",
+        ),
+        _delivery_stage(
+            action_label="查看沉淀",
+            action_target_id=first_knowledge_deposit.get("id") or version_id,
+            action_target_type=knowledge_action_target_type,
+            detail=knowledge_detail,
+            full_chain_subject_id=first_knowledge_deposit.get("id") or version_id,
+            full_chain_subject_type=knowledge_action_target_type,
+            key="knowledge-deposits",
+            level=(
+                "warning"
+                if knowledge_deposit_count and not searchable_knowledge_count
+                else "success"
+                if knowledge_deposit_count
+                else "info"
+            ),
+            title="知识沉淀",
+            value=(
+                f"{searchable_knowledge_count}/{knowledge_deposit_count} 可检索"
+                if knowledge_deposit_count
+                else "沉淀待补齐"
+            ),
+        ),
+        _delivery_stage(
+            action_label="补充发布" if release_blocker_count else "查看发布",
+            action_target_id=version_id,
+            action_target_type="releases",
+            detail=release_detail,
+            key="releases",
+            level="error" if release_blocker_count else "success",
+            title="发布证据",
+            value="发布待补证" if release_blocker_count else "发布证据可用",
+        ),
+        _delivery_stage(
+            action_label="推进状态" if status_impact else None,
+            action_target_id=version_id,
+            action_target_type="product_version_advance" if status_impact else None,
+            detail=(
+                f"同步 {len(status_impact.get('updated_requirements') or [])} / "
+                f"阻塞 {len(status_impact.get('blocked_requirements') or [])} / "
+                f"保持 {len(status_impact.get('unchanged_requirements') or [])}"
+                if status_impact
+                else "当前版本没有可推进的下一阶段"
+            ),
+            full_chain_subject_id=version_id,
+            full_chain_subject_type="product_version",
+            key="status-impact",
+            level=(
+                "warning"
+                if status_impact and status_impact.get("blocked_requirements")
+                else "success"
+                if status_impact
+                else "info"
+            ),
+            title="状态推进",
+            value="已预览影响" if status_impact else "无需推进",
+        ),
+    ]
 
 
 def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
@@ -1281,6 +1610,20 @@ def product_version_dashboard_response(
         status_impact=status_impact,
         summary=summary,
     )
+    delivery_stage_overview = _delivery_stage_overview(
+        blockers=blockers,
+        branch_configs=branch_configs,
+        branch_quality_governance=branch_quality_governance,
+        bugs=bugs,
+        code_inspection_reports=code_inspection_reports,
+        code_review_reports=code_review_reports,
+        knowledge_deposits=knowledge_deposits,
+        releases=releases,
+        status_impact=status_impact,
+        summary=summary,
+        tasks=tasks,
+        version=version_summary,
+    )
     return {
         "access_issues": [
             *bug_access_issues,
@@ -1294,6 +1637,7 @@ def product_version_dashboard_response(
         "bug_status_counts": _status_counts(bugs),
         "code_inspection_reports": code_inspection_reports[:20],
         "code_review_reports": code_review_reports[:20],
+        "delivery_stage_overview": delivery_stage_overview,
         "governance_conclusion": governance_conclusion,
         "knowledge_deposits": knowledge_deposits[:20],
         "next_actions": next_actions,

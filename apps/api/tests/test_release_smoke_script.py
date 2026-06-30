@@ -105,6 +105,7 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         "action_target_type",
         "resolution_hint",
         "validate_version_dashboard_blocker_actions",
+        "validate_version_dashboard_delivery_stage_overview",
         "validate_version_dashboard_next_actions",
         "validate_version_dashboard_governance_conclusion",
         "validate_version_dashboard_branch_quality",
@@ -240,11 +241,13 @@ def test_full_chain_regression_version_dashboard_checks_are_split_from_runner():
 
     assert "from full_chain_regression_version_dashboard import" in script_content
     assert "def validate_version_dashboard_blocker_actions(" not in script_content
+    assert "def validate_version_dashboard_delivery_stage_overview(" not in script_content
     assert "def validate_version_dashboard_next_actions(" not in script_content
     assert "def validate_version_dashboard_governance_conclusion(" not in script_content
     assert "def validate_version_dashboard_branch_quality(" not in script_content
     assert "VERSION_DASHBOARD_BLOCKER_SOURCE_PRIORITY" not in script_content
     assert "def validate_version_dashboard_blocker_actions(" in helper_content
+    assert "def validate_version_dashboard_delivery_stage_overview(" in helper_content
     assert "def validate_version_dashboard_next_actions(" in helper_content
     assert "def validate_version_dashboard_governance_conclusion(" in helper_content
     assert "def validate_version_dashboard_branch_quality(" in helper_content
@@ -458,6 +461,8 @@ def test_full_chain_regression_script_supports_version_dashboard_suite():
         "version_dashboard_quick",
         "version_dashboard_branch_quality",
         "version_dashboard_code_review",
+        "delivery_stage_overview",
+        "Version dashboard delivery stage order drifted",
         "pending_code_review_reports",
         "Version dashboard missed pending-scan branch quality summary",
         "Version dashboard quick check missed code review report",

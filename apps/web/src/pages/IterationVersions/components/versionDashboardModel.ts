@@ -13,7 +13,12 @@ export type DashboardHealthItem = {
   value: string;
 };
 
-export type DashboardReadinessItem = DashboardHealthItem;
+export type DashboardReadinessItem = DashboardHealthItem & {
+  actionTargetId?: string;
+  actionTargetType?: string;
+  fullChainSubjectId?: string;
+  fullChainSubjectType?: string;
+};
 
 type DashboardRequirementImpact = NonNullable<ProductVersionDashboard['statusImpact']>['updatedRequirements'][number];
 
@@ -207,6 +212,88 @@ export function buildDashboardActionQueue(dashboard: ProductVersionDashboard): D
       sourceLabel: action.sourceLabel || dashboardBlockerSourceLabels[action.sourceType ?? ''] || action.sourceType || '-',
     };
   });
+}
+
+function deliveryStageActionHref(
+  item: ProductVersionDashboard['deliveryStageOverview'][number],
+  dashboard: ProductVersionDashboard,
+) {
+  const targetId = item.actionTargetId;
+  const targetType = item.actionTargetType;
+  if (!targetType || !targetId) {
+    if (item.fullChainSubjectType && item.fullChainSubjectId) {
+      return fullChainSubjectHref(item.fullChainSubjectType, item.fullChainSubjectId);
+    }
+    return undefined;
+  }
+  if (targetType === 'requirements') {
+    return internalHref('/delivery/requirements', { version_id: targetId });
+  }
+  if (targetType === 'ai_task') {
+    return internalHref('/delivery/rd-tasks', { task_id: targetId });
+  }
+  if (targetType === 'tasks_by_product') {
+    return internalHref('/delivery/rd-tasks', { product_id: targetId });
+  }
+  if (targetType === 'product_version_branch_config') {
+    return internalHref('/delivery/versions', {
+      branch_config_id: targetId,
+      version_id: dashboard.version.id,
+    });
+  }
+  if (targetType === 'product_version') {
+    return internalHref('/delivery/versions', { version_id: targetId });
+  }
+  if (targetType === 'code_inspection_dashboard') {
+    return internalHref('/governance/code-inspections', { version_id: targetId });
+  }
+  if (targetType === 'code_review_report') {
+    return internalHref('/delivery/rd-tasks', { code_review_report_id: targetId });
+  }
+  if (targetType === 'bugs') {
+    return internalHref('/delivery/bugs', { version_id: targetId });
+  }
+  if (targetType === 'bug') {
+    return internalHref('/delivery/bugs', { bug_id: targetId });
+  }
+  if (targetType === 'knowledge_deposit') {
+    return fullChainSubjectHref('knowledge_deposit', targetId);
+  }
+  if (targetType === 'releases') {
+    return internalHref('/governance/devops', { version_id: targetId });
+  }
+  if (targetType === 'jenkins_release') {
+    return internalHref('/governance/devops', {
+      release_id: targetId,
+      version_id: dashboard.version.id,
+    });
+  }
+  if (targetType === 'product_version_advance') {
+    return undefined;
+  }
+  if (item.fullChainSubjectType && item.fullChainSubjectId) {
+    return fullChainSubjectHref(item.fullChainSubjectType, item.fullChainSubjectId);
+  }
+  return undefined;
+}
+
+function backendDeliveryStageItems(dashboard: ProductVersionDashboard): DashboardReadinessItem[] {
+  if (!dashboard.deliveryStageOverview.length) {
+    return [];
+  }
+  return dashboard.deliveryStageOverview.map((item) => ({
+    actionHref: deliveryStageActionHref(item, dashboard),
+    actionLabel: item.actionLabel,
+    actionTargetId: item.actionTargetId,
+    actionTargetType: item.actionTargetType,
+    detail: item.detail,
+    fullChainSubjectId: item.fullChainSubjectId,
+    fullChainSubjectType: item.fullChainSubjectType,
+    key: item.key,
+    level: item.level,
+    title: item.title,
+    value: item.value,
+  }));
 }
 
 export function buildStatusImpactRows(
@@ -530,6 +617,10 @@ function statusCount(counts: ProductVersionDashboard['taskStatusCounts'], status
 export function buildDashboardReadinessItems(dashboard?: ProductVersionDashboard): DashboardReadinessItem[] {
   if (!dashboard) {
     return [];
+  }
+  const backendStages = backendDeliveryStageItems(dashboard);
+  if (backendStages.length) {
+    return backendStages;
   }
   const blockedRequirementCount = dashboard.statusImpact?.blockedRequirements.length ?? 0;
   const runningTaskCount = statusCount(dashboard.taskStatusCounts, 'running');

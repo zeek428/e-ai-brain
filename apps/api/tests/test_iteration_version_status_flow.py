@@ -482,7 +482,10 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "vectorized_knowledge_deposits": 0,
     }
     assert data["governance_conclusion"] == {
-        "detail": "当前版本有 6 个发布阻塞项，未关闭 Bug 2 个，门禁失败 1 份，状态推进阻塞需求 0 条。",
+        "detail": (
+            "当前版本有 6 个发布阻塞项，未关闭 Bug 2 个，"
+            "门禁失败 1 份，状态推进阻塞需求 0 条。"
+        ),
         "level": "error",
         "next_action": "先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。",
         "risks": [
@@ -498,6 +501,73 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "title": "版本治理结论",
         "value": "版本暂不建议推进",
     }
+    assert [item["key"] for item in data["delivery_stage_overview"]] == [
+        "requirements",
+        "tasks",
+        "branches",
+        "inspections",
+        "code-reviews",
+        "bugs",
+        "knowledge-deposits",
+        "releases",
+        "status-impact",
+    ]
+    delivery_stage_by_key = {item["key"]: item for item in data["delivery_stage_overview"]}
+    assert delivery_stage_by_key["requirements"] == {
+        "action_label": "查看需求",
+        "action_target_id": version["id"],
+        "action_target_type": "requirements",
+        "detail": "1 条需求 · 可推进",
+        "full_chain_subject_id": None,
+        "full_chain_subject_type": None,
+        "key": "requirements",
+        "level": "success",
+        "title": "需求范围",
+        "value": "范围可推进",
+    }
+    assert delivery_stage_by_key["tasks"] == {
+        "action_label": "查看任务",
+        "action_target_id": "task_version_dashboard",
+        "action_target_type": "ai_task",
+        "detail": "1 个任务 · 运行中 1 个",
+        "full_chain_subject_id": requirement["id"],
+        "full_chain_subject_type": "requirement",
+        "key": "tasks",
+        "level": "info",
+        "title": "研发任务",
+        "value": "任务进行中",
+    }
+    assert (
+        delivery_stage_by_key["branches"]["action_target_id"]
+        == "version_branch_dashboard"
+    )
+    assert (
+        delivery_stage_by_key["branches"]["action_target_type"]
+        == "product_version_branch_config"
+    )
+    assert delivery_stage_by_key["branches"]["detail"] == "1 个分支 · 未创建 1 个"
+    assert delivery_stage_by_key["branches"]["level"] == "warning"
+    assert delivery_stage_by_key["inspections"]["detail"] == "1 份报告 · 高风险 1 份"
+    assert delivery_stage_by_key["inspections"]["level"] == "warning"
+    assert (
+        delivery_stage_by_key["code-reviews"]["action_target_id"]
+        == "code_review_report_dashboard"
+    )
+    assert delivery_stage_by_key["code-reviews"]["detail"] == "1 份报告 · 待确认 1 份"
+    assert delivery_stage_by_key["bugs"]["detail"] == "2 个 Bug · 未关闭 2 个"
+    assert delivery_stage_by_key["bugs"]["level"] == "error"
+    assert (
+        delivery_stage_by_key["knowledge-deposits"]["action_target_id"]
+        == "deposit_version_dashboard"
+    )
+    assert (
+        delivery_stage_by_key["knowledge-deposits"]["detail"]
+        == "1 条知识沉淀 · 可检索 1 条 · 向量就绪 0 条"
+    )
+    assert delivery_stage_by_key["releases"]["detail"] == "1 条记录 · 发布阻塞 1 个 · 成功 0 条"
+    assert delivery_stage_by_key["releases"]["level"] == "error"
+    assert delivery_stage_by_key["status-impact"]["action_target_type"] == "product_version_advance"
+    assert delivery_stage_by_key["status-impact"]["detail"] == "同步 1 / 阻塞 0 / 保持 0"
     assert data["status_impact"]["target_status"] == "testing"
     assert data["status_impact"]["updated_requirements"] == [
         {
@@ -913,7 +983,10 @@ def test_product_version_dashboard_blocks_release_without_successful_release_rec
     data_with_release = response_with_release.json()["data"]
     assert data_with_release["summary"]["blockers"] == 0
     assert data_with_release["governance_conclusion"] == {
-        "detail": "待确认评审 0 份，状态推进阻塞需求 0 条，交付证据覆盖：分支 0、巡检 0、评审 0、知识 0。",
+        "detail": (
+            "待确认评审 0 份，状态推进阻塞需求 0 条，"
+            "交付证据覆盖：分支 0、巡检 0、评审 0、知识 0。"
+        ),
         "level": "warning",
         "next_action": "补齐待确认评审、知识索引或交付证据后，再执行版本推进。",
         "risks": ["交付证据待补齐"],

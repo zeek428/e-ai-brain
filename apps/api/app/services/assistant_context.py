@@ -735,6 +735,7 @@ def _public_light_tool_item(tool_name: str, item: dict[str, Any]) -> dict[str, A
             "blockers_by_source",
             "code",
             "dashboard_url",
+            "delivery_stage_overview",
             "id",
             "next_actions",
             "requirement_count",

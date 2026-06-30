@@ -206,6 +206,19 @@ type ProductVersionDashboardGovernanceConclusion = {
   value?: string;
 };
 
+type ProductVersionDashboardDeliveryStageItem = {
+  action_label?: string | null;
+  action_target_id?: string | null;
+  action_target_type?: string | null;
+  detail?: string;
+  full_chain_subject_id?: string | null;
+  full_chain_subject_type?: string | null;
+  key?: string;
+  level?: string;
+  title?: string;
+  value?: string;
+};
+
 type ProductVersionDashboardSummary = {
   blockers: number;
   branch_configs: number;
@@ -261,6 +274,7 @@ type ProductVersionDashboardResponse = {
   bugs?: BugListItem[];
   code_inspection_reports?: ProductVersionDashboardCodeInspectionReport[];
   code_review_reports?: ProductVersionDashboardCodeReviewReport[];
+  delivery_stage_overview?: ProductVersionDashboardDeliveryStageItem[];
   governance_conclusion?: ProductVersionDashboardGovernanceConclusion | null;
   knowledge_deposits?: ProductVersionDashboardKnowledgeDepositItem[];
   next_actions?: ProductVersionDashboardNextActionItem[];
@@ -358,6 +372,18 @@ export type ProductVersionDashboard = {
     title: string;
     value: string;
   };
+  deliveryStageOverview: Array<{
+    actionLabel?: string;
+    actionTargetId?: string;
+    actionTargetType?: string;
+    detail: string;
+    fullChainSubjectId?: string;
+    fullChainSubjectType?: string;
+    key: string;
+    level: 'error' | 'info' | 'success' | 'warning';
+    title: string;
+    value: string;
+  }>;
   nextActions: Array<{
     actionLabel: string;
     actionTargetId?: string;
@@ -719,6 +745,18 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
       taskId: report.task_id ?? undefined,
       taskTitle: report.task_title ?? report.task_id ?? '-',
       writebackPerformed: Boolean(report.gitlab_writeback_performed),
+    })),
+    deliveryStageOverview: (dashboard.delivery_stage_overview ?? []).map((stage) => ({
+      actionLabel: stage.action_label ?? undefined,
+      actionTargetId: stage.action_target_id ?? undefined,
+      actionTargetType: stage.action_target_type ?? undefined,
+      detail: stage.detail ?? '-',
+      fullChainSubjectId: stage.full_chain_subject_id ?? undefined,
+      fullChainSubjectType: stage.full_chain_subject_type ?? undefined,
+      key: stage.key ?? '-',
+      level: normalizeDashboardLevel(stage.level),
+      title: stage.title ?? '-',
+      value: stage.value ?? '-',
     })),
     governanceConclusion: mapGovernanceConclusion(dashboard.governance_conclusion),
     knowledgeDeposits: (dashboard.knowledge_deposits ?? []).map((deposit) => ({

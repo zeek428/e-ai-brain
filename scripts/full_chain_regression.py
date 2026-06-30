@@ -18,14 +18,15 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from full_chain_regression_runner import validate_ai_executor_runner_reliability  # noqa: E402
 from full_chain_regression_suites import (  # noqa: E402
     REGRESSION_TARGETED_SUITE_NAMES,
     regression_suite_coverage,
 )
-from full_chain_regression_runner import validate_ai_executor_runner_reliability  # noqa: E402
 from full_chain_regression_version_dashboard import (  # noqa: E402
     validate_version_dashboard_blocker_actions,
     validate_version_dashboard_branch_quality,
+    validate_version_dashboard_delivery_stage_overview,
     validate_version_dashboard_governance_conclusion,
     validate_version_dashboard_next_actions,
 )
@@ -1117,6 +1118,7 @@ def validate_code_inspection_governance_quick_regression(
     validate_version_dashboard_blocker_actions(dashboard_blockers)
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
+    validate_version_dashboard_delivery_stage_overview(dashboard)
     inspection_blockers = [
         blocker
         for blocker in dashboard_blockers
@@ -1558,6 +1560,7 @@ def validate_version_dashboard_quick_regression(
     validate_version_dashboard_blocker_actions(dashboard_blockers)
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
+    validate_version_dashboard_delivery_stage_overview(dashboard)
     release_evidence_blockers = [
         blocker
         for blocker in dashboard_blockers
@@ -1717,6 +1720,7 @@ def validate_assistant_qa_quick_regression(
     validate_version_dashboard_blocker_actions(dashboard_blockers)
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
+    validate_version_dashboard_delivery_stage_overview(dashboard)
 
     assistant = client.post(
         "/api/assistant/chat",
@@ -1774,6 +1778,21 @@ def validate_assistant_qa_quick_regression(
             f"assistant={version_item.get('next_actions')}, dashboard={dashboard.get('next_actions')}"
         ),
     )
+    dashboard_stage_keys = [
+        str(item.get("key") or "")
+        for item in dashboard.get("delivery_stage_overview", [])
+    ]
+    assistant_stage_keys = [
+        str(item.get("key") or "") for item in version_item.get("delivery_stage_overview", [])
+    ]
+    _assert(
+        assistant_stage_keys == dashboard_stage_keys[:9],
+        (
+            "Assistant QA delivery_stage_overview drifted from version dashboard: "
+            f"assistant={version_item.get('delivery_stage_overview')}, "
+            f"dashboard={dashboard.get('delivery_stage_overview')}"
+        ),
+    )
     dashboard_conclusion = dashboard.get("governance_conclusion") or {}
     assistant_conclusion = version_item.get("governance_conclusion") or {}
     for field in ("level", "value"):
@@ -1813,6 +1832,10 @@ def validate_assistant_qa_quick_regression(
     _assert(
         persisted_version_items and persisted_version_items[0].get("next_actions"),
         f"Assistant QA history missed version next_actions: {persisted_iteration_tools}",
+    )
+    _assert(
+        persisted_version_items[0].get("delivery_stage_overview"),
+        f"Assistant QA history missed version delivery_stage_overview: {persisted_version_items[0]}",
     )
     results.append(
         StepResult(
@@ -2351,6 +2374,7 @@ def run_regression(
     validate_version_dashboard_blocker_actions(dashboard_blockers)
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
+    validate_version_dashboard_delivery_stage_overview(dashboard)
     inspection_blockers = [
         blocker
         for blocker in dashboard_blockers
@@ -2515,6 +2539,22 @@ def run_regression(
             f"dashboard={dashboard.get('next_actions')}"
         ),
     )
+    dashboard_stage_keys = [
+        str(item.get("key") or "")
+        for item in dashboard.get("delivery_stage_overview", [])
+    ]
+    assistant_stage_keys = [
+        str(item.get("key") or "")
+        for item in assistant_version_item.get("delivery_stage_overview", [])
+    ]
+    _assert(
+        assistant_stage_keys == dashboard_stage_keys[:9],
+        (
+            "Assistant iteration tool did not carry version dashboard delivery_stage_overview: "
+            f"assistant={assistant_version_item.get('delivery_stage_overview')}, "
+            f"dashboard={dashboard.get('delivery_stage_overview')}"
+        ),
+    )
     dashboard_conclusion = dashboard.get("governance_conclusion") or {}
     assistant_conclusion = assistant_version_item.get("governance_conclusion") or {}
     for field in ("level", "value"):
@@ -2565,6 +2605,13 @@ def run_regression(
     _assert(
         persisted_version_items[0].get("next_actions"),
         f"Persisted assistant iteration tool missed version next_actions: {persisted_version_items[0]}",
+    )
+    _assert(
+        persisted_version_items[0].get("delivery_stage_overview"),
+        (
+            "Persisted assistant iteration tool missed version "
+            f"delivery_stage_overview: {persisted_version_items[0]}"
+        ),
     )
     results.append(StepResult("assistant_qa", f"{assistant_message_id} / conversation={conversation_id}"))
 

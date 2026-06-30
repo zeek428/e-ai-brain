@@ -229,6 +229,23 @@ def test_assistant_system_context_is_product_scoped_and_includes_delivery_signal
     assert iteration_item["governance_conclusion"]["value"] == "版本暂不建议推进"
     assert iteration_item["status_impact"]["target_status"] == "released"
     assert iteration_item["url"] == "/delivery/versions?version_id=version_001&view=dashboard"
+    assert [stage["key"] for stage in iteration_item["delivery_stage_overview"]] == [
+        "requirements",
+        "tasks",
+        "branches",
+        "inspections",
+        "code-reviews",
+        "bugs",
+        "knowledge-deposits",
+        "releases",
+        "status-impact",
+    ]
+    assert iteration_item["delivery_stage_overview"][0]["title"] == "需求范围"
+    assert iteration_item["delivery_stage_overview"][1]["full_chain_subject_type"] == "requirement"
+    assert (
+        iteration_item["delivery_stage_overview"][1]["full_chain_subject_id"]
+        == "requirement_001"
+    )
     assert [item["source_type"] for item in iteration_item["next_actions"][:2]] == [
         "bug",
         "jenkins_release",
