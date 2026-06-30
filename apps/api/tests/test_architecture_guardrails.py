@@ -5,7 +5,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_DOMAIN_FILE_LINES = 2800
 MAX_AI_EXECUTOR_RUNNER_LINES = 2200
-MAX_CODE_INSPECTION_SERVICE_LINES = 2400
+MAX_CODE_INSPECTION_SERVICE_LINES = 1600
 MAX_PLUGIN_MAIN_SERVICE_LINES = 2300
 MAX_PRODUCT_VERSION_DASHBOARD_LINES = 1300
 MAX_SCHEDULED_JOB_SERVICE_LINES = 2200
@@ -425,3 +425,22 @@ def test_code_inspections_uses_split_detail_projection_module():
     assert "def code_inspection_scan_summary(" not in entrypoint_source
     assert "def code_inspection_governance_summary(" not in entrypoint_source
     assert "finding_accepted_risk_is_expired" in helper_source
+
+
+def test_code_inspections_uses_split_read_model_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/code_inspection_read_models.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/code_inspections.py"
+
+    assert helper_path.exists(), (
+        "Move code inspection dashboard, list pagination and read model helpers "
+        "to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "from app.services.code_inspection_read_models import" in entrypoint_source
+    assert "def code_inspection_dashboard_response(" in helper_source
+    assert "def list_code_inspection_reports_response(" in helper_source
+    assert "def scoped_code_inspection_reports(" in helper_source
+    assert "def code_inspection_dashboard_response(" not in entrypoint_source
+    assert "def list_code_inspection_reports_response(" not in entrypoint_source
+    assert "def scoped_code_inspection_reports(" not in entrypoint_source
