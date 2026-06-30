@@ -109,6 +109,7 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         "validate_version_dashboard_next_actions",
         "validate_version_dashboard_governance_conclusion",
         "validate_version_dashboard_branch_quality",
+        "validate_version_dashboard_status_impact",
         "governance_conclusion",
         "Version dashboard blocker missed source_type",
         "Version dashboard governance conclusion missed next_action",
@@ -245,12 +246,14 @@ def test_full_chain_regression_version_dashboard_checks_are_split_from_runner():
     assert "def validate_version_dashboard_next_actions(" not in script_content
     assert "def validate_version_dashboard_governance_conclusion(" not in script_content
     assert "def validate_version_dashboard_branch_quality(" not in script_content
+    assert "def validate_version_dashboard_status_impact(" not in script_content
     assert "VERSION_DASHBOARD_BLOCKER_SOURCE_PRIORITY" not in script_content
     assert "def validate_version_dashboard_blocker_actions(" in helper_content
     assert "def validate_version_dashboard_delivery_stage_overview(" in helper_content
     assert "def validate_version_dashboard_next_actions(" in helper_content
     assert "def validate_version_dashboard_governance_conclusion(" in helper_content
     assert "def validate_version_dashboard_branch_quality(" in helper_content
+    assert "def validate_version_dashboard_status_impact(" in helper_content
     assert "VERSION_DASHBOARD_BLOCKER_SOURCE_PRIORITY" in helper_content
 
 
@@ -462,6 +465,8 @@ def test_full_chain_regression_script_supports_version_dashboard_suite():
         "version_dashboard_branch_quality",
         "version_dashboard_code_review",
         "delivery_stage_overview",
+        "validate_version_dashboard_status_impact(",
+        "Version dashboard status_impact target status drifted",
         "Version dashboard delivery stage order drifted",
         "pending_code_review_reports",
         "Version dashboard missed pending-scan branch quality summary",

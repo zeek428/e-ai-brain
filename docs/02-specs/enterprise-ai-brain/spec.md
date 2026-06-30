@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.758 |
+| 功能版本 | v1.1.759 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.759 | 2026-06-30 | 真实全链路回归版本驾驶舱 helper 补齐 `status_impact` 结构校验，统一守护同步推进、阻塞和保持不变需求数据 | Codex |
 | v1.1.758 | 2026-06-30 | 迭代版本总览新增状态推进影响预览：在明细表前集中展示同步推进、阻塞和保持不变需求，降低版本推进前跨表核对成本 | Codex |
 | v1.1.757 | 2026-06-30 | AI 动作确认中心新增服务端统一确认决策：`governance.decision` 和列表行决策字段集中说明可确认、阻断、失败、过期和下一步动作 | Codex |
 | v1.1.756 | 2026-06-30 | 迭代版本总览新增后端 `delivery_stage_overview`：版本页、AI 助手和回归脚本复用同一交付阶段总览 | Codex |
@@ -884,7 +885,7 @@ DB-first 迁移状态：上述结构化持久化不代表所有 API 已经直连
 
 接口还必须返回 `delivery_stage_overview`，由后端基于 summary、状态推进影响、阻塞项、分支质量治理、代码巡检、代码评审、Bug、知识沉淀和发布记录生成研发顺序阶段投影。字段顺序固定为 `requirements/tasks/branches/inspections/code-reviews/bugs/knowledge-deposits/releases/status-impact`；每个阶段必须包含 `key/title/value/detail/level`，可处理阶段必须包含 `action_label/action_target_type/action_target_id`，并在可追踪时补充 `full_chain_subject_type/full_chain_subject_id`。版本页和 AI 助手必须优先消费该后端投影，只有旧响应缺失时才允许前端本地推导兜底。
 
-版本总览前端必须在推进影响明细表前展示“状态推进影响预览”：以三组摘要卡片分别展示同步推进、阻塞和保持不变需求数量，并暴露代表需求标题、当前状态、目标状态或阻塞原因；无下一阶段影响时展示空态提示。该预览消费 dashboard `status_impact`，不得替代明细表，目的是让产品负责人在点击推进版本前先完成风险核对。
+版本总览前端必须在推进影响明细表前展示“状态推进影响预览”：以三组摘要卡片分别展示同步推进、阻塞和保持不变需求数量，并暴露代表需求标题、当前状态、目标状态或阻塞原因；无下一阶段影响时展示空态提示。该预览消费 dashboard `status_impact`，不得替代明细表，目的是让产品负责人在点击推进版本前先完成风险核对。真实全链路版本驾驶舱 helper 必须用 `validate_version_dashboard_status_impact` 校验 `status_impact.target_status`、`updated_requirements`、`blocked_requirements`、`unchanged_requirements` 以及代表需求字段，主脚本只调用 helper，不得重新散落状态影响断言。
 
 交付链路总览的九类阶段卡片必须直接暴露处理入口：需求范围进入版本需求筛选，研发任务进入首个任务或产品任务列表，代码分支进入版本分支维护，代码巡检进入按版本筛选的巡检页，代码评审进入首个待看评审，Bug 收敛进入版本 Bug 筛选，知识沉淀进入沉淀全链路，发布证据进入按版本筛选的发布记录，状态推进直接触发版本推进弹窗。
 

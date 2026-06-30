@@ -271,6 +271,115 @@ def validate_version_dashboard_delivery_stage_overview(dashboard: dict[str, Any]
         )
 
 
+def validate_version_dashboard_status_impact(
+    dashboard: dict[str, Any],
+    *,
+    expected_target_status: str | None = None,
+    require_preview: bool = False,
+) -> dict[str, Any]:
+    status_impact = dashboard.get("status_impact")
+    if status_impact is None:
+        _assert(
+            expected_target_status is None and not require_preview,
+            f"Version dashboard missed status_impact: {dashboard}",
+        )
+        return {}
+    _assert(
+        isinstance(status_impact, dict),
+        f"Version dashboard status_impact is not an object: {status_impact}",
+    )
+    target_status = status_impact.get("target_status")
+    _assert(
+        target_status,
+        f"Version dashboard status_impact missed target_status: {status_impact}",
+    )
+    if expected_target_status is not None:
+        _assert(
+            target_status == expected_target_status,
+            (
+                "Version dashboard status_impact target status drifted: "
+                f"expected={expected_target_status}, status_impact={status_impact}"
+            ),
+        )
+    for field in (
+        "updated_requirements",
+        "blocked_requirements",
+        "unchanged_requirements",
+    ):
+        _assert(
+            isinstance(status_impact.get(field), list),
+            f"Version dashboard status_impact missed list {field}: {status_impact}",
+        )
+    updated_requirements = status_impact["updated_requirements"]
+    blocked_requirements = status_impact["blocked_requirements"]
+    unchanged_requirements = status_impact["unchanged_requirements"]
+    _assert(
+        (
+            updated_requirements
+            or blocked_requirements
+            or unchanged_requirements
+            or not require_preview
+        ),
+        f"Version dashboard status_impact preview has no requirement rows: {status_impact}",
+    )
+    for requirement in updated_requirements:
+        _assert(
+            requirement.get("id"),
+            f"Updated status impact missed id: {requirement}",
+        )
+        _assert(
+            requirement.get("title"),
+            f"Updated status impact missed title: {requirement}",
+        )
+        _assert(
+            requirement.get("from_status") or requirement.get("status"),
+            f"Updated status impact missed source status: {requirement}",
+        )
+        _assert(
+            requirement.get("to_status") or target_status,
+            f"Updated status impact missed target status: {requirement}",
+        )
+        if requirement.get("to_status"):
+            _assert(
+                requirement.get("to_status") == target_status,
+                (
+                    "Updated status impact target status drifted: "
+                    f"target={target_status}, requirement={requirement}"
+                ),
+            )
+    for requirement in blocked_requirements:
+        _assert(
+            requirement.get("id"),
+            f"Blocked status impact missed id: {requirement}",
+        )
+        _assert(
+            requirement.get("title"),
+            f"Blocked status impact missed title: {requirement}",
+        )
+        _assert(
+            requirement.get("status"),
+            f"Blocked status impact missed status: {requirement}",
+        )
+        _assert(
+            requirement.get("block_reason"),
+            f"Blocked status impact missed block_reason: {requirement}",
+        )
+    for requirement in unchanged_requirements:
+        _assert(
+            requirement.get("id"),
+            f"Unchanged status impact missed id: {requirement}",
+        )
+        _assert(
+            requirement.get("title"),
+            f"Unchanged status impact missed title: {requirement}",
+        )
+        _assert(
+            requirement.get("status"),
+            f"Unchanged status impact missed status: {requirement}",
+        )
+    return status_impact
+
+
 def validate_version_dashboard_branch_quality(
     dashboard: dict[str, Any],
     *,

@@ -29,6 +29,7 @@ from full_chain_regression_version_dashboard import (  # noqa: E402
     validate_version_dashboard_delivery_stage_overview,
     validate_version_dashboard_governance_conclusion,
     validate_version_dashboard_next_actions,
+    validate_version_dashboard_status_impact,
 )
 
 DEFAULT_API_BASE_URL = "http://localhost:8000"
@@ -1119,6 +1120,7 @@ def validate_code_inspection_governance_quick_regression(
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     validate_version_dashboard_delivery_stage_overview(dashboard)
+    validate_version_dashboard_status_impact(dashboard)
     inspection_blockers = [
         blocker
         for blocker in dashboard_blockers
@@ -1547,10 +1549,10 @@ def validate_version_dashboard_quick_regression(
         code_review_report["id"],
         "Version dashboard quick check missed code review report row",
     )
-    status_impact = dashboard.get("status_impact") or {}
-    _assert(
-        status_impact.get("target_status") == "released",
-        f"Version dashboard quick check did not preview release impact: {status_impact}",
+    validate_version_dashboard_status_impact(
+        dashboard,
+        expected_target_status="released",
+        require_preview=True,
     )
     dashboard_blockers = dashboard.get("blockers", [])
     _assert(
@@ -1561,6 +1563,7 @@ def validate_version_dashboard_quick_regression(
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     validate_version_dashboard_delivery_stage_overview(dashboard)
+    validate_version_dashboard_status_impact(dashboard)
     release_evidence_blockers = [
         blocker
         for blocker in dashboard_blockers
@@ -1721,6 +1724,7 @@ def validate_assistant_qa_quick_regression(
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     validate_version_dashboard_delivery_stage_overview(dashboard)
+    validate_version_dashboard_status_impact(dashboard)
 
     assistant = client.post(
         "/api/assistant/chat",
@@ -2375,6 +2379,7 @@ def run_regression(
     validate_version_dashboard_next_actions(dashboard, dashboard_blockers)
     validate_version_dashboard_governance_conclusion(dashboard, dashboard_blockers)
     validate_version_dashboard_delivery_stage_overview(dashboard)
+    validate_version_dashboard_status_impact(dashboard)
     inspection_blockers = [
         blocker
         for blocker in dashboard_blockers
