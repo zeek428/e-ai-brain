@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路 `version-dashboard` 快速回归补齐版本 Bug 聚合门禁：创建手工 blocker Bug，校验版本总览 Bug 汇总、明细、状态计数、阻塞项和 `next_actions` 首项优先级，并在覆盖矩阵中标记 `bug_remediation`。
 - 真实全链路 `knowledge-index-health` 回归补齐索引失败恢复链路：强制制造 `index_failed` 文档，校验健康中心 retry 动作、失败态不可检索、`retry-index` 重建 chunk 和恢复后搜索命中。
 - 真实全链路 `assistant-draft-governance` 回归补齐 AI 动作草案失败重试链路：确认预检失败后校验失败原因、可重试决策、`failure_history`、修复后确认和 failed/retry 审计事件。
 - AI 助手版本治理问答回归补齐 `status_impact` 投影一致性校验：即时回答和历史消息中的目标状态与同步/阻塞/保持计数必须与版本驾驶舱一致。

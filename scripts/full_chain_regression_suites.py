@@ -61,6 +61,7 @@ REGRESSION_SUITE_DOMAINS: dict[str, tuple[str, ...]] = {
         "requirement_version_scheduling",
         "ai_task_review",
         "version_branch",
+        "bug_remediation",
         "version_dashboard",
         "release_blockers",
     ),

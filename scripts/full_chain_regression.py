@@ -1700,6 +1700,25 @@ def validate_version_dashboard_quick_regression(
         version_testing.get("version", {}).get("status") == "testing",
         f"Version dashboard fixture did not advance to testing: {version_testing}",
     )
+    version_bug = client.post(
+        "/api/bugs",
+        {
+            "description": "版本总览快速回归创建的阻塞 Bug，用于验证版本页集中展示缺陷和发布阻塞。",
+            "evidence": {"regression_suite": "version-dashboard"},
+            "product_id": product["id"],
+            "related_task_id": task_id,
+            "requirement_id": requirement["id"],
+            "reproduce_steps": ["打开版本总览", "确认 Bug 汇总、列表和阻塞项"],
+            "severity": "blocker",
+            "source": "manual_test",
+            "title": f"版本总览快速回归阻塞 Bug {slug}",
+            "version_id": version["id"],
+        },
+    )
+    _assert(
+        version_bug.get("status") == "open",
+        f"Version dashboard quick Bug was not open: {version_bug}",
+    )
 
     dashboard = client.get(f"/api/product-versions/{version['id']}/dashboard")
     _assert(
@@ -1722,6 +1741,18 @@ def validate_version_dashboard_quick_regression(
         dashboard["summary"].get("pending_code_review_reports", 0) >= 1,
         "Version dashboard quick check missed pending code review report summary.",
     )
+    _assert(
+        dashboard["summary"].get("bugs", 0) >= 1,
+        "Version dashboard quick check missed Bug summary.",
+    )
+    _assert(
+        dashboard["summary"].get("open_bugs", 0) >= 1,
+        "Version dashboard quick check missed open Bug summary.",
+    )
+    _assert(
+        dashboard["summary"].get("severe_bugs", 0) >= 1,
+        "Version dashboard quick check missed severe Bug summary.",
+    )
     _assert_contains(
         _ids(dashboard.get("requirements", [])),
         requirement["id"],
@@ -1741,6 +1772,15 @@ def validate_version_dashboard_quick_regression(
         _ids(dashboard.get("code_review_reports", [])),
         code_review_report["id"],
         "Version dashboard quick check missed code review report row",
+    )
+    _assert_contains(
+        _ids(dashboard.get("bugs", [])),
+        version_bug["id"],
+        "Version dashboard quick check missed Bug row",
+    )
+    _assert(
+        _status_count(dashboard.get("bug_status_counts", []), "open") >= 1,
+        "Version dashboard quick check missed open Bug status count.",
     )
     validate_version_dashboard_status_impact(
         dashboard,
@@ -1788,6 +1828,20 @@ def validate_version_dashboard_quick_regression(
         code_review_blockers,
         f"Version dashboard quick check missed pending code review blocker: {dashboard_blockers}",
     )
+    bug_blockers = [
+        blocker
+        for blocker in dashboard_blockers
+        if blocker.get("source_type") == "bug"
+        and str(blocker.get("action_target_id")) == version_bug["id"]
+    ]
+    _assert(
+        bug_blockers,
+        f"Version dashboard quick check missed Bug blocker: {dashboard_blockers}",
+    )
+    _assert(
+        dashboard.get("next_actions", [{}])[0].get("source_type") == "bug",
+        f"Version dashboard next actions should prioritize blocker Bug: {dashboard.get('next_actions')}",
+    )
     branch_quality = validate_version_dashboard_branch_quality(
         dashboard,
         branch_config_id=branch_config["id"],
@@ -1803,7 +1857,10 @@ def validate_version_dashboard_quick_regression(
     results.append(
         StepResult(
             "version_dashboard_quick",
-            f"blockers={dashboard['summary']['blockers']}, tasks={dashboard['summary']['tasks']}",
+            (
+                f"blockers={dashboard['summary']['blockers']}, "
+                f"tasks={dashboard['summary']['tasks']}, bugs={dashboard['summary'].get('bugs')}"
+            ),
         )
     )
     results.append(StepResult("fixture_repository", str(repo_path)))
@@ -3010,7 +3067,8 @@ def main() -> int:
             "feedback-to-assistant product workflow; "
             "runner-reliability executes only the AI executor Runner lease/dead-letter gate; "
             "version-dashboard executes a quick product version dashboard aggregation "
-            "and blocker gate; assistant-draft-governance executes the AI action draft "
+            "with Bug, branch, review, release, and blocker gates; "
+            "assistant-draft-governance executes the AI action draft "
             "governance/audit gate; assistant-qa executes deterministic assistant "
             "iteration governance Q&A, references, next_actions, and history gates; "
             "code-inspection-governance executes native scan, "

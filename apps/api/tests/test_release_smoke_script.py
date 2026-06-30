@@ -287,6 +287,7 @@ def test_full_chain_regression_report_includes_suite_coverage():
     dashboard_coverage = module.regression_suite_coverage("version-dashboard")
     assert dashboard_coverage["is_complete_chain"] is False
     assert "version_dashboard" in dashboard_coverage["covered_keys"]
+    assert "bug_remediation" in dashboard_coverage["covered_keys"]
     assert "runner_reliability" in dashboard_coverage["skipped_keys"]
 
     targeted_coverage = module.regression_suite_coverage("all-targeted")
@@ -465,6 +466,7 @@ def test_full_chain_regression_script_supports_version_dashboard_suite():
         "validate_version_dashboard_quick_regression(",
         'suite == "version-dashboard"',
         "/api/product-versions/{version['id']}/dashboard",
+        "/api/bugs",
         "version_dashboard_quick",
         "version_dashboard_branch_quality",
         "version_dashboard_code_review",
@@ -476,7 +478,14 @@ def test_full_chain_regression_script_supports_version_dashboard_suite():
         "Version dashboard missed pending-scan branch quality summary",
         "Version dashboard quick check missed code review report",
         "Version dashboard quick check missed pending code review blocker",
+        "Version dashboard quick check missed Bug summary",
+        "Version dashboard quick check missed Bug row",
+        "Version dashboard quick check missed open Bug status count",
+        "Version dashboard quick check missed Bug blocker",
+        "Version dashboard next actions should prioritize blocker Bug",
+        "bug_status_counts",
         'source_type") == "code_review_report"',
+        'source_type") == "bug"',
         "release_evidence_blockers",
     ]:
         assert marker in content
