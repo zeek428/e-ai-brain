@@ -949,6 +949,49 @@ def validate_permission_visibility_quick_regression(
         any(scope.get("scope_id") == scoped_product["id"] for scope in role_detail.get("scopes") or []),
         f"Role detail missed product scope grant: {role_detail}",
     )
+    access_preview = role_detail.get("access_preview") or {}
+    _assert(
+        access_preview.get("role_code") == scope_role_code,
+        f"Role detail access preview missed role code: {role_detail}",
+    )
+    _assert(
+        any(menu.get("code") == "task.center" and menu.get("path") == "/delivery/rd-tasks" for menu in access_preview.get("visible_menus") or []),
+        f"Role detail access preview missed visible menu path: {access_preview}",
+    )
+    _assert(
+        access_preview.get("missing_menu_permission_codes") == ["task.read"],
+        f"Role detail access preview missed menu permission gap: {access_preview}",
+    )
+    _assert(
+        any(item.get("code") == "menu_permission_gap" for item in access_preview.get("diagnostics") or []),
+        f"Role detail access preview missed menu gap diagnostic: {access_preview}",
+    )
+    _assert(
+        not access_preview.get("operation_permissions"),
+        f"Role detail access preview should show no granted operation permissions: {access_preview}",
+    )
+    _assert(
+        {group.get("scope_type") for group in access_preview.get("scope_groups") or []}
+        >= {"knowledge_space", "product"},
+        f"Role detail access preview missed scope groups: {access_preview}",
+    )
+    _assert(
+        any(
+            scope.get("scope_id") == scoped_product["id"]
+            and scope.get("scope_name") == scoped_product["name"]
+            for scope in access_preview.get("scopes") or []
+        ),
+        f"Role detail access preview missed readable product scope: {access_preview}",
+    )
+    results.append(
+        StepResult(
+            "permission_visibility_role_preview",
+            (
+                f"menus={access_preview.get('menu_count')} / "
+                f"scopes={access_preview.get('scope_summary')}"
+            ),
+        )
+    )
 
     diagnostic_user = client.post(
         "/api/users",

@@ -89,7 +89,39 @@ export type MenuResourceMutationPayload = {
   status?: string;
 };
 
+export type RoleAccessPreview = {
+  diagnostics: Array<{
+    code: string;
+    level: string;
+    message: string;
+    permission_codes?: string[];
+  }>;
+  granted_menu_codes: string[];
+  granted_permission_codes: string[];
+  high_risk_permission_codes: string[];
+  high_risk_permission_count: number;
+  menu_count: number;
+  missing_menu_permission_codes: string[];
+  operation_permissions: PermissionRecord[];
+  permission_count: number;
+  required_permission_codes: string[];
+  role_code: string;
+  role_id: string;
+  role_name: string;
+  scope_count: number;
+  scope_groups: Array<{
+    count: number;
+    scope_type: string;
+    scope_type_label: string;
+    scopes: ScopeGrant[];
+  }>;
+  scope_summary: string;
+  scopes: ScopeGrant[];
+  visible_menus: MenuResourceRecord[];
+};
+
 export type SystemRoleRecord = UserRoleDefinition & {
+  access_preview?: RoleAccessPreview;
   id: string;
   is_system: boolean;
   menu_codes: string[];
@@ -222,6 +254,7 @@ type RoleDefinitionListItem = {
   permissions?: string[];
   responsibilities?: string[];
   scopes?: ScopeGrant[];
+  access_preview?: RoleAccessPreview;
   id?: string;
   sort_order?: number;
   status?: string;
@@ -251,6 +284,7 @@ function mapSystemRole(role: RoleDefinitionListItem): SystemRoleRecord {
   return {
     ...roleDefinition,
     id: role.id ?? role.code,
+    access_preview: role.access_preview,
     is_system: role.is_system ?? false,
     menu_codes: role.menu_codes ?? role.menu_scope ?? [],
     permission_codes: role.permission_codes ?? role.permissions ?? [],

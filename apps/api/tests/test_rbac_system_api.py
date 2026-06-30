@@ -479,6 +479,103 @@ def test_permission_matrix_enriches_product_and_knowledge_scope_names():
     ]
 
 
+def test_role_detail_includes_readable_access_preview():
+    headers = auth_headers()
+    app.state.store.products["product_role_preview"] = {
+        "code": "PREVIEW",
+        "id": "product_role_preview",
+        "name": "预览产品",
+        "status": "active",
+    }
+    app.state.store.knowledge_spaces["knowledge_space_role_preview"] = {
+        "id": "knowledge_space_role_preview",
+        "name": "预览知识空间",
+        "status": "active",
+    }
+    role = client.post(
+        "/api/system/roles",
+        headers=headers,
+        json={"code": "role_preview_operator", "name": "Role Preview Operator"},
+    ).json()["data"]
+    client.put(
+        f"/api/system/roles/{role['id']}/menus",
+        headers=headers,
+        json={"menu_codes": ["knowledge.center", "workspace.dashboard"]},
+    )
+    client.put(
+        f"/api/system/roles/{role['id']}/permissions",
+        headers=headers,
+        json={"permission_codes": ["knowledge.read"]},
+    )
+    client.put(
+        f"/api/system/roles/{role['id']}/scopes",
+        headers=headers,
+        json={
+            "scopes": [
+                {
+                    "access_level": "read",
+                    "scope_id": "product_role_preview",
+                    "scope_type": "product",
+                },
+                {
+                    "access_level": "write",
+                    "scope_id": "knowledge_space_role_preview",
+                    "scope_type": "knowledge_space",
+                },
+            ]
+        },
+    )
+
+    response = client.get(f"/api/system/roles/{role['id']}", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    preview = data["access_preview"]
+    assert preview["role_code"] == "role_preview_operator"
+    assert preview["menu_count"] == 2
+    assert preview["permission_count"] == 1
+    assert preview["scope_count"] == 2
+    assert preview["scope_summary"] == "知识空间 1 项，产品 1 项"
+    assert preview["missing_menu_permission_codes"] == ["workspace.read"]
+    assert preview["diagnostics"][0]["code"] == "menu_permission_gap"
+    assert {
+        "code": "workspace.dashboard",
+        "name": "团队看板",
+        "path": "/welcome",
+        "required_permissions": ["workspace.read"],
+    }.items() <= preview["visible_menus"][0].items()
+    assert preview["operation_permissions"] == [
+        {
+            "category": "knowledge",
+            "code": "knowledge.read",
+            "description": "",
+            "name": "knowledge.read",
+            "risk_level": "normal",
+            "status": "active",
+        }
+    ]
+    assert preview["scopes"] == [
+        {
+            "access_level": "write",
+            "scope_id": "knowledge_space_role_preview",
+            "scope_name": "预览知识空间",
+            "scope_type": "knowledge_space",
+        },
+        {
+            "access_level": "read",
+            "scope_id": "product_role_preview",
+            "scope_name": "预览产品",
+            "scope_type": "product",
+        },
+    ]
+    assert [group["scope_type"] for group in preview["scope_groups"]] == [
+        "knowledge_space",
+        "product",
+    ]
+    assert preview["scope_groups"][0]["scope_type_label"] == "知识空间"
+    assert preview["scope_groups"][1]["scope_type_label"] == "产品"
+
+
 def test_permission_diagnostics_explains_user_menu_permission_and_scope_blocks():
     headers = auth_headers()
     app.state.store.products["product_alpha"] = {

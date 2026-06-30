@@ -16,7 +16,11 @@ from app.core.listing import (
 )
 from app.core.trace import envelope, get_trace_id
 from app.services.product_config_context import list_product_records, runtime_repository
-from app.services.rbac_matrix import build_rbac_policy_matrix, build_user_permission_diagnostic
+from app.services.rbac_matrix import (
+    build_rbac_policy_matrix,
+    build_role_access_preview,
+    build_user_permission_diagnostic,
+)
 
 router = APIRouter(tags=["system-rbac"])
 ROLE_CATEGORIES = {
@@ -696,10 +700,21 @@ def get_role(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_permissions(user, {"system.roles.manage"})
-    role = _authorization_repository(request).get_role(role_id)
+    repository = _authorization_repository(request)
+    role = repository.get_role(role_id)
     if role is None:
         raise api_error(404, "NOT_FOUND", "Role not found")
-    return envelope(role, get_trace_id(request))
+    return envelope(
+        {
+            **role,
+            "access_preview": build_role_access_preview(
+                repository,
+                role,
+                scope_resource_names=_scope_resource_names(request),
+            ),
+        },
+        get_trace_id(request),
+    )
 
 
 @router.patch("/api/system/roles/{role_id}")

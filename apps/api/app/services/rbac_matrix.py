@@ -78,6 +78,43 @@ def _enrich_scopes(
     return sorted(enriched_scopes, key=_scope_sort_key)
 
 
+def _permission_sort_key(permission: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(permission.get("category") or ""),
+        str(permission.get("code") or ""),
+    )
+
+
+def _menu_sort_key(menu: dict[str, Any]) -> tuple[int, str, str]:
+    return (
+        int(menu.get("sort_order") or 0),
+        str(menu.get("parent_code") or ""),
+        str(menu.get("code") or ""),
+    )
+
+
+def _scope_groups(scopes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for scope in scopes:
+        scope_type = str(scope.get("scope_type") or "unknown")
+        grouped.setdefault(scope_type, []).append(scope)
+    return [
+        {
+            "count": len(items),
+            "scope_type": scope_type,
+            "scope_type_label": _scope_type_label(scope_type),
+            "scopes": items,
+        }
+        for scope_type, items in sorted(
+            grouped.items(),
+            key=lambda item: (
+                SCOPE_TYPE_SORT_ORDER.get(item[0], 99),
+                _scope_type_label(item[0]),
+            ),
+        )
+    ]
+
+
 def _role_grant_reasons(
     roles: list[dict[str, Any]],
     role_codes: list[str],
@@ -110,6 +147,128 @@ def _role_grant_reasons(
                 }
             )
     return reasons
+
+
+def build_role_access_preview(
+    repository: Any,
+    role: dict[str, Any],
+    *,
+    scope_resource_names: ScopeResourceNames | None = None,
+) -> dict[str, Any]:
+    """Project a single role into readable menu, permission, scope, and risk previews."""
+
+    permissions = list(repository.list_permissions())
+    menus = list(repository.menu_resources())
+    permission_by_code = {str(permission.get("code") or ""): permission for permission in permissions}
+    menu_by_code = {str(menu.get("code") or ""): menu for menu in menus}
+
+    granted_permission_codes = _string_list(role.get("permission_codes") or role.get("permissions") or [])
+    granted_menu_codes = _string_list(role.get("menu_codes") or role.get("menu_scope") or [])
+    scopes = _enrich_scopes(
+        [
+            dict(scope)
+            for scope in role.get("scopes", [])
+            if isinstance(scope, dict)
+        ],
+        scope_resource_names=scope_resource_names,
+    )
+    required_permission_codes = sorted(
+        {
+            str(permission_code)
+            for menu_code in granted_menu_codes
+            for permission_code in menu_by_code.get(menu_code, {}).get("required_permissions", [])
+            if str(permission_code or "").strip()
+        }
+    )
+    missing_menu_permission_codes = sorted(
+        set(required_permission_codes) - set(granted_permission_codes)
+    )
+    high_risk_permission_codes = sorted(
+        permission_code
+        for permission_code in granted_permission_codes
+        if str(permission_by_code.get(permission_code, {}).get("risk_level") or "").lower()
+        in HIGH_RISK_LEVELS
+    )
+
+    diagnostics: list[dict[str, Any]] = []
+    if missing_menu_permission_codes:
+        diagnostics.append(
+            {
+                "code": "menu_permission_gap",
+                "level": "warning",
+                "message": "已授权菜单缺少对应权限点",
+                "permission_codes": missing_menu_permission_codes,
+            }
+        )
+    if high_risk_permission_codes:
+        diagnostics.append(
+            {
+                "code": "high_risk_permission",
+                "level": "risk",
+                "message": "包含高风险权限点",
+                "permission_codes": high_risk_permission_codes,
+            }
+        )
+    if not scopes:
+        diagnostics.append(
+            {
+                "code": "scope_not_configured",
+                "level": "warning",
+                "message": "未配置产品、知识空间或全局数据范围",
+                "permission_codes": [],
+            }
+        )
+
+    visible_menus = [
+        {
+            "code": str(menu.get("code") or menu_code),
+            "menu_type": str(menu.get("menu_type") or "page"),
+            "name": str(menu.get("name") or menu_code),
+            "parent_code": menu.get("parent_code"),
+            "path": menu.get("path"),
+            "required_permissions": _string_list(menu.get("required_permissions") or []),
+            "sort_order": int(menu.get("sort_order") or 0),
+            "status": str(menu.get("status") or "active"),
+        }
+        for menu_code in granted_menu_codes
+        if (menu := menu_by_code.get(menu_code)) is not None
+    ]
+    visible_menus.sort(key=_menu_sort_key)
+
+    operation_permissions = [
+        {
+            "category": str(permission.get("category") or ""),
+            "code": str(permission.get("code") or permission_code),
+            "description": str(permission.get("description") or ""),
+            "name": str(permission.get("name") or permission_code),
+            "risk_level": str(permission.get("risk_level") or "normal"),
+            "status": str(permission.get("status") or "active"),
+        }
+        for permission_code in granted_permission_codes
+        for permission in [permission_by_code.get(permission_code, {"code": permission_code})]
+    ]
+    operation_permissions.sort(key=_permission_sort_key)
+
+    return {
+        "diagnostics": diagnostics,
+        "granted_menu_codes": granted_menu_codes,
+        "granted_permission_codes": granted_permission_codes,
+        "high_risk_permission_codes": high_risk_permission_codes,
+        "high_risk_permission_count": len(high_risk_permission_codes),
+        "menu_count": len(granted_menu_codes),
+        "missing_menu_permission_codes": missing_menu_permission_codes,
+        "operation_permissions": operation_permissions,
+        "permission_count": len(granted_permission_codes),
+        "required_permission_codes": required_permission_codes,
+        "role_code": str(role.get("code") or ""),
+        "role_id": str(role.get("id") or role.get("code") or ""),
+        "role_name": str(role.get("name") or role.get("code") or ""),
+        "scope_count": len(scopes),
+        "scope_groups": _scope_groups(scopes),
+        "scope_summary": _scope_summary(scopes),
+        "scopes": scopes,
+        "visible_menus": visible_menus,
+    }
 
 
 def _scope_matches(scope: dict[str, Any], *, scope_type: str, scope_id: str) -> bool:
