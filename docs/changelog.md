@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 真实全链路回归脚本新增 `knowledge-index-health` 快速场景：独立验收知识文档创建、索引健康、权限命中说明、检索模式和知识搜索命中。
 - 真实全链路回归脚本新增 `code-inspection-governance` 快速场景：独立验收本地完整扫描、质量门禁、Bug/整改任务写回、提交人治理、趋势对比和版本总览阻塞。
 - 迭代版本总览阻塞队列补齐待确认 Code Review：后端将 `pending_review/waiting_review` 代码评审报告纳入版本阻塞项，前端可直接跳转评审处理和全链路。
 - 真实全链路回归脚本补齐 Runner 健康告警门禁：`runner-reliability` 场景验证新建 Runner 返回 `runner_never_connected`，心跳后恢复 `online` 且清除 `health_alert`。

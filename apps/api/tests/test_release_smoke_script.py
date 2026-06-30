@@ -125,9 +125,11 @@ def test_full_chain_regression_script_supports_targeted_suites():
         "FULL_CHAIN_SUITE",
         "--suite",
         '"code-inspection-governance"',
+        '"knowledge-index-health"',
         "run_regression_suite(",
         'suite == "runner-reliability"',
         'suite == "code-inspection-governance"',
+        'suite == "knowledge-index-health"',
         'StepResult("suite", suite)',
     ]:
         assert marker in content
@@ -223,5 +225,27 @@ def test_full_chain_regression_script_supports_code_inspection_governance_suite(
         "inspection_writeback",
         "code_inspection_trend_comparison",
         "version_dashboard_code_inspection_governance",
+    ]:
+        assert marker in content
+
+
+def test_full_chain_regression_script_supports_knowledge_index_health_suite():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    content = script_path.read_text(encoding="utf-8")
+
+    for marker in [
+        '"knowledge-index-health"',
+        "validate_knowledge_index_health_quick_regression(",
+        'suite == "knowledge-index-health"',
+        "/api/knowledge/documents",
+        "/api/knowledge/index-health",
+        "/api/knowledge/search",
+        "knowledge_index_health_quick",
+        "Knowledge index health missed readable permission scope labels",
+        "Knowledge index health did not expose usable retrieval mode",
+        "Knowledge index health missed vector-backfill warning for text-indexed document",
+        "Knowledge search did not retrieve created document",
+        "permission_scope",
+        "retrieval_modes",
     ]:
         assert marker in content
