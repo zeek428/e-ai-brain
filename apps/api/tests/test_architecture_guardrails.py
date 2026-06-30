@@ -4,7 +4,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_DOMAIN_FILE_LINES = 2800
-MAX_AI_EXECUTOR_RUNNER_LINES = 2200
+MAX_AI_EXECUTOR_RUNNER_LINES = 2050
 MAX_CODE_INSPECTION_SERVICE_LINES = 1600
 MAX_PLUGIN_MAIN_SERVICE_LINES = 1800
 MAX_PRODUCT_VERSION_DASHBOARD_LINES = 1300
@@ -241,6 +241,26 @@ def test_ai_executor_runners_use_split_health_module():
     assert "def _runner_public(" not in entrypoint_source
     assert "def _runner_health_alert(" not in entrypoint_source
     assert "def system_default_ai_executor_runner(" not in entrypoint_source
+
+
+def test_ai_executor_runners_use_split_task_context_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/ai_executor_runner_task_context.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/ai_executor_runners.py"
+
+    assert helper_path.exists(), (
+        "Move AI executor task product-scope, upstream context and runner node helpers "
+        "to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "from app.services.ai_executor_runner_task_context import" in entrypoint_source
+    assert "def _ai_executor_task_visible_to_user(" in helper_source
+    assert "def _runner_node_from_task(" in helper_source
+    assert "def _datetime_value(" in helper_source
+    assert "def _load_scheduled_job_run(" not in entrypoint_source
+    assert "def _ai_executor_task_visible_to_user(" not in entrypoint_source
+    assert "def _runner_node_from_task(" not in entrypoint_source
+    assert "def _datetime_value(" not in entrypoint_source
 
 
 def test_assistant_references_uses_split_action_defaults_module():

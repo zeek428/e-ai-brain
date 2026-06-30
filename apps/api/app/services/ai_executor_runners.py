@@ -39,6 +39,19 @@ from app.services.ai_executor_runner_health import (
     system_default_ai_executor_runner,
 )
 from app.services.ai_executor_runner_packages import build_ai_executor_runner_install_package
+from app.services.ai_executor_runner_task_context import (
+    _ai_executor_task_visible_to_user,
+    _datetime_value,
+    _load_ai_task,
+    _load_collector_run,
+    _load_plugin_invocation_log,
+    _load_scheduled_job,
+    _load_scheduled_job_run,
+    _records_imported_from_runner_result,
+    _runner_node_from_task,
+    _status_for_runner_task,
+    _task_public,
+)
 from app.services.ai_executor_task_reliability import (
     apply_task_claim_lease,
     apply_task_dead_letter,
@@ -48,7 +61,7 @@ from app.services.ai_executor_task_reliability import (
     task_lease_expired,
 )
 from app.services.operational_records import record_audit_event, save_single_repository_record
-from app.services.product_scope import product_scope_filter, user_can_read_product
+from app.services.product_scope import product_scope_filter
 
 
 def _ensure_admin(user: dict[str, Any]) -> None:
@@ -95,10 +108,6 @@ def _normalized_executor_types(value: Any) -> list[str]:
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _task_public(task: dict[str, Any]) -> dict[str, Any]:
-    return dict(task)
 
 
 def create_ai_executor_runner_install_package_response(
@@ -331,130 +340,6 @@ def _delete_runner_record(
             collection.pop(record_id, None)
 
 
-def _load_scheduled_job_run(current_store: Any, task: dict[str, Any]) -> dict[str, Any] | None:
-    run_id = task.get("scheduled_job_run_id")
-    if not run_id:
-        return None
-    run = _read_record(current_store, "scheduled_job_runs", run_id)
-    if run is not None:
-        return run
-    repository = getattr(current_store, "repository", None)
-    list_runs = getattr(repository, "list_scheduled_job_runs", None)
-    if callable(list_runs):
-        for candidate in list_runs(scheduled_job_id=task.get("scheduled_job_id")):
-            if candidate.get("id") == run_id:
-                return candidate
-    return None
-
-
-def _load_plugin_invocation_log(current_store: Any, task: dict[str, Any]) -> dict[str, Any] | None:
-    log_id = task.get("plugin_invocation_log_id")
-    if not log_id:
-        return None
-    log = _read_record(current_store, "plugin_invocation_logs", log_id)
-    if log is not None:
-        return log
-    repository = getattr(current_store, "repository", None)
-    list_logs = getattr(repository, "list_plugin_invocation_logs", None)
-    if callable(list_logs):
-        for candidate in list_logs(scheduled_job_run_id=task.get("scheduled_job_run_id")):
-            if candidate.get("id") == log_id:
-                return candidate
-    return None
-
-
-def _load_collector_run(current_store: Any, collector_run_id: str | None) -> dict[str, Any] | None:
-    if not collector_run_id:
-        return None
-    collector_run = _read_record(current_store, "collector_runs", collector_run_id)
-    if collector_run is not None:
-        return collector_run
-    repository = getattr(current_store, "repository", None)
-    list_collector_runs = getattr(repository, "list_collector_runs", None)
-    if callable(list_collector_runs):
-        for candidate in list_collector_runs():
-            if candidate.get("id") == collector_run_id:
-                return candidate
-    return None
-
-
-def _load_scheduled_job(current_store: Any, scheduled_job_id: str | None) -> dict[str, Any] | None:
-    if not scheduled_job_id:
-        return None
-    job = _read_record(current_store, "scheduled_jobs", scheduled_job_id)
-    if job is not None:
-        return job
-    repository = getattr(current_store, "repository", None)
-    list_jobs = getattr(repository, "list_scheduled_jobs", None)
-    if callable(list_jobs):
-        for candidate in list_jobs():
-            if candidate.get("id") == scheduled_job_id:
-                return candidate
-    return None
-
-
-def _load_ai_task(current_store: Any, ai_task_id: str | None) -> dict[str, Any] | None:
-    if not ai_task_id:
-        return None
-    task = _read_record(current_store, "ai_tasks", ai_task_id)
-    if task is not None:
-        return task
-    repository = getattr(current_store, "repository", None)
-    load_ai_tasks = getattr(repository, "load_ai_tasks", None)
-    if callable(load_ai_tasks):
-        payload = load_ai_tasks()
-        for candidate in payload.get("ai_tasks", {}).values():
-            if candidate.get("id") == ai_task_id:
-                return candidate
-        return _read_record(current_store, "ai_tasks", ai_task_id)
-    return None
-
-
-def _ai_executor_task_product_id(current_store: Any, task: dict[str, Any]) -> Any:
-    if task.get("product_id") is not None:
-        return task.get("product_id")
-    job = _load_scheduled_job(current_store, task.get("scheduled_job_id"))
-    if job is not None and job.get("product_id") is not None:
-        return job.get("product_id")
-    run = _load_scheduled_job_run(current_store, task)
-    if run is not None:
-        config_snapshot = run.get("config_snapshot")
-        if isinstance(config_snapshot, dict) and config_snapshot.get("product_id") is not None:
-            return config_snapshot.get("product_id")
-        run_job = _load_scheduled_job(current_store, run.get("scheduled_job_id"))
-        if run_job is not None and run_job.get("product_id") is not None:
-            return run_job.get("product_id")
-    ai_task = _load_ai_task(current_store, task.get("ai_task_id"))
-    if ai_task is not None:
-        return ai_task.get("product_id")
-    return None
-
-
-def _ai_executor_task_visible_to_user(
-    current_store: Any,
-    *,
-    task: dict[str, Any],
-    user: dict[str, Any],
-) -> bool:
-    return user_can_read_product(user, _ai_executor_task_product_id(current_store, task))
-
-
-def _runner_node_from_task(task: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "error_code": task.get("error_code"),
-        "error_message": task.get("error_message"),
-        "executor_type": task.get("executor_type"),
-        "finished_at": task.get("finished_at"),
-        "label": "AI 执行器执行内容",
-        "logs": task.get("logs") or [],
-        "result_json": task.get("result_json") or {},
-        "runner_id": task.get("runner_id"),
-        "runner_task_id": task.get("id"),
-        "status": task.get("status"),
-        "workspace_root": task.get("workspace_root"),
-    }
-
-
 def _persist_task_state_records(
     current_store: Any,
     *,
@@ -638,26 +523,6 @@ def _sync_runner_completion_to_ai_task(
         reviews=None,
         task=updated_task,
     )
-
-
-def _status_for_runner_task(task_status: str) -> str:
-    if task_status == "succeeded":
-        return "succeeded"
-    if task_status == "cancelled":
-        return "cancelled"
-    if task_status in {"dead_letter", "failed", "timed_out"}:
-        return "failed"
-    return "running"
-
-
-def _records_imported_from_runner_result(task: dict[str, Any], fallback: int = 0) -> int:
-    result_json = task.get("result_json")
-    if isinstance(result_json, dict):
-        for key in ("records_imported", "finding_count", "row_count", "count"):
-            value = result_json.get(key)
-            if isinstance(value, int) and value >= 0:
-                return value
-    return fallback
 
 
 def _sync_runner_completion_to_scheduled_run(
@@ -1905,18 +1770,6 @@ def retry_ai_executor_task_response(
         runner_id=str(retry_task.get("runner_id") or user["id"]),
     )
     return {"source_task": _task_public(source_task), "task": _task_public(retry_task)}
-
-
-def _datetime_value(value: Any) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
 
 
 def timeout_ai_executor_tasks_response(
