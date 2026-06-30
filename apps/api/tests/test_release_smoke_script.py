@@ -512,6 +512,33 @@ def test_full_chain_regression_script_validates_runner_token_rotation():
         assert marker in content
 
 
+def test_full_chain_regression_script_validates_runner_cancel_retry():
+    script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
+    runner_path = REPO_ROOT / "scripts" / "full_chain_regression_runner.py"
+    content = (
+        script_path.read_text(encoding="utf-8")
+        + "\n"
+        + runner_path.read_text(encoding="utf-8")
+    )
+
+    for marker in [
+        "validate_runner_cancel_retry(",
+        "full-chain-runner-cancel-retry",
+        "runner_cancel_retry",
+        "/api/system/ai-executor-tasks/{cancel_task_id}/logs",
+        "/api/system/ai-executor-tasks/{cancel_task_id}/cancel",
+        "/api/system/ai-executor-tasks/{cancel_task_id}/retry",
+        "/api/system/ai-executor-tasks/{retry_task_id}/complete",
+        "AI_EXECUTOR_TASK_CANCELLED",
+        "retry_of_task_id",
+        "retry_history",
+        "AI_EXECUTOR_TASK_NOT_RETRYABLE",
+        "ai_executor_task.retry_requested",
+        "lease/dead-letter/cancel-retry gate",
+    ]:
+        assert marker in content
+
+
 def test_full_chain_regression_script_supports_assistant_draft_governance_suite():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
     content = script_path.read_text(encoding="utf-8")

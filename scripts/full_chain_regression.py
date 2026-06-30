@@ -3065,7 +3065,7 @@ def main() -> int:
             "Regression suite to run. full executes the end-to-end product workflow; "
             "all-targeted executes every fast governance suite without the full "
             "feedback-to-assistant product workflow; "
-            "runner-reliability executes only the AI executor Runner lease/dead-letter gate; "
+            "runner-reliability executes only the AI executor Runner lease/dead-letter/cancel-retry gate; "
             "version-dashboard executes a quick product version dashboard aggregation "
             "with Bug, branch, review, release, and blocker gates; "
             "assistant-draft-governance executes the AI action draft "

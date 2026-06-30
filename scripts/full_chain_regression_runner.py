@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -24,11 +25,25 @@ def _assert_contains(values: set[str], expected: str, message: str) -> None:
     _assert(expected in values, f"{message}: expected {expected}, got {sorted(values)}")
 
 
-def expect_api_error(call: Callable[[], Any], *, status: int, message: str) -> None:
+def expect_api_error(
+    call: Callable[[], Any],
+    *,
+    code: str | None = None,
+    message: str,
+    status: int,
+) -> None:
     try:
         call()
     except Exception as exc:
         if getattr(exc, "status", None) == status:
+            if code:
+                try:
+                    body = json.loads(str(getattr(exc, "body", "") or "{}"))
+                except json.JSONDecodeError as parse_exc:
+                    raise AssertionError(f"{message}: failed to parse error body {exc}") from parse_exc
+                actual_code = (body.get("detail") or {}).get("code") if isinstance(body, dict) else None
+                if actual_code != code:
+                    raise AssertionError(f"{message}: expected error code {code}, got {actual_code}") from exc
             return
         raise AssertionError(f"{message}: unexpected error {exc}") from exc
     raise AssertionError(message)
@@ -112,6 +127,145 @@ def validate_runner_health_alert_projection(runner: dict[str, Any]) -> StepResul
     return StepResult("runner_health_alert", str(alert.get("code")))
 
 
+def validate_runner_cancel_retry(
+    client: Any,
+    *,
+    action: dict[str, Any],
+    runner: dict[str, Any],
+    runner_headers: dict[str, str],
+) -> StepResult:
+    cancel_invoked = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        {"input_payload": {"source": "full-chain-runner-cancel-retry"}},
+    )
+    cancel_task_id = str(cancel_invoked["response_summary"]["json"]["runner_task_id"])
+
+    cancel_claim = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        {"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers=runner_headers,
+    )
+    cancel_claim_task = cancel_claim.get("task") or {}
+    _assert(
+        cancel_claim_task.get("id") == cancel_task_id,
+        f"Runner cancel/retry task was not claimed first: {cancel_claim}",
+    )
+
+    appended_logs = client.post(
+        f"/api/system/ai-executor-tasks/{cancel_task_id}/logs",
+        {
+            "logs": [
+                {"level": "info", "message": "cancel retry smoke checkout"},
+                {"level": "info", "message": "cancel retry smoke running"},
+            ],
+            "runner_id": runner["id"],
+            "status": "running",
+        },
+        headers=runner_headers,
+    )
+    _assert(
+        (appended_logs.get("task") or {}).get("status") == "running",
+        f"Runner cancel/retry task did not enter running state: {appended_logs}",
+    )
+    running_logs = client.get(f"/api/system/ai-executor-tasks/{cancel_task_id}/logs")
+    _assert(
+        [entry.get("sequence") for entry in running_logs.get("logs", [])][:2] == [1, 2],
+        f"Runner cancel/retry task logs missed ordered runner entries: {running_logs}",
+    )
+
+    cancelled = client.post(
+        f"/api/system/ai-executor-tasks/{cancel_task_id}/cancel",
+        {"reason": "full-chain cancel retry gate"},
+    )
+    cancelled_task = cancelled.get("task") or {}
+    _assert(cancelled_task.get("status") == "cancelled", f"Runner task was not cancelled: {cancelled}")
+    _assert(
+        cancelled_task.get("error_code") == "AI_EXECUTOR_TASK_CANCELLED",
+        f"Runner cancelled task error code drifted: {cancelled}",
+    )
+
+    retried = client.post(
+        f"/api/system/ai-executor-tasks/{cancel_task_id}/retry",
+        {"reason": "full-chain retry after cancel"},
+    )
+    source_task = retried.get("source_task") or {}
+    retried_task = retried.get("task") or {}
+    retry_task_id = str(retried_task.get("id") or "")
+    retry_config = retried_task.get("request_config") or {}
+    retry_history = retry_config.get("retry_history") or []
+    _assert(source_task.get("id") == cancel_task_id, f"Runner retry missed source task: {retried}")
+    _assert(retry_task_id and retry_task_id != cancel_task_id, f"Runner retry reused source task id: {retried}")
+    _assert(retried_task.get("status") == "queued", f"Runner retry task was not queued: {retried}")
+    _assert(
+        retry_config.get("retry_of_task_id") == cancel_task_id,
+        f"Runner retry task missed retry_of_task_id: {retried_task}",
+    )
+    _assert(
+        retry_history and retry_history[-1].get("source_status") == "cancelled",
+        f"Runner retry task missed cancelled retry_history: {retried_task}",
+    )
+    _assert(
+        str((retried_task.get("logs") or [{}])[0].get("message") or "").startswith(
+            f"Task retried from {cancel_task_id}"
+        ),
+        f"Runner retry task missed seed retry log: {retried_task}",
+    )
+
+    retry_claim = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        {"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers=runner_headers,
+    )
+    _assert(
+        (retry_claim.get("task") or {}).get("id") == retry_task_id,
+        f"Runner did not claim retried task: {retry_claim}",
+    )
+
+    retry_complete = client.post(
+        f"/api/system/ai-executor-tasks/{retry_task_id}/complete",
+        {
+            "logs": [{"level": "info", "message": "retry succeeded"}],
+            "result_json": {"ok": True},
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers=runner_headers,
+    )
+    _assert(
+        (retry_complete.get("task") or {}).get("status") == "succeeded",
+        f"Runner retried task did not complete: {retry_complete}",
+    )
+
+    expect_api_error(
+        lambda: client.post(
+            f"/api/system/ai-executor-tasks/{retry_task_id}/retry",
+            {"reason": "full-chain duplicate retry guard"},
+        ),
+        code="AI_EXECUTOR_TASK_NOT_RETRYABLE",
+        status=409,
+        message="succeeded runner task was unexpectedly retryable",
+    )
+
+    cancelled_logs = client.get(f"/api/system/ai-executor-tasks/{cancel_task_id}/logs")
+    _assert(
+        any(
+            entry.get("level") == "warning" and "cancel" in str(entry.get("message") or "").lower()
+            for entry in cancelled_logs.get("logs", [])
+        ),
+        f"Runner cancelled task logs missed warning entry: {cancelled_logs}",
+    )
+    retry_audit = client.get(
+        "/api/audit/events",
+        {"event_type": "ai_executor_task.retry_requested", "subject_id": retry_task_id},
+    )
+    audit_items = retry_audit.get("items") or []
+    _assert(
+        audit_items and (audit_items[0].get("payload") or {}).get("source_task_id") == cancel_task_id,
+        f"Runner retry audit missed source task link: {retry_audit}",
+    )
+    return StepResult("runner_cancel_retry", f"{cancel_task_id} -> {retry_task_id}")
+
+
 def validate_ai_executor_runner_reliability(
     client: Any,
     *,
@@ -191,6 +345,13 @@ def validate_ai_executor_runner_reliability(
             "status": "active",
         },
     )
+    cancel_retry_result = validate_runner_cancel_retry(
+        client,
+        action=action,
+        runner=runner,
+        runner_headers=runner_headers,
+    )
+
     invoked = client.post(
         f"/api/system/plugin-actions/{action['id']}/invoke",
         {"input_payload": {"source": "full-chain-runner-reliability"}},
@@ -259,5 +420,6 @@ def validate_ai_executor_runner_reliability(
     return [
         runner_health_alert_result,
         token_rotation_result,
+        cancel_retry_result,
         StepResult("runner_reliability", f"{task_id} / requeued=1 / dead_letter=1"),
     ]
