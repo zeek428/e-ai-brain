@@ -8,7 +8,7 @@ MAX_AI_EXECUTOR_RUNNER_LINES = 2200
 MAX_CODE_INSPECTION_SERVICE_LINES = 2400
 MAX_PLUGIN_MAIN_SERVICE_LINES = 2300
 MAX_SCHEDULED_JOB_SERVICE_LINES = 2200
-MAX_ASSISTANT_ACTION_DRAFT_LINES = 2250
+MAX_ASSISTANT_ACTION_DRAFT_LINES = 2000
 MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
 FRONTEND_PAGE_CONTAINER_REVIEW_THRESHOLD_LINES = 900
 
@@ -335,6 +335,25 @@ def test_assistant_action_drafts_uses_split_governance_module():
     assert "def _assistant_action_draft_governance(" not in entrypoint_source
     assert "def _assistant_action_required_permissions(" not in entrypoint_source
     assert "assistant_action_draft_decision" in helper_source
+
+
+def test_assistant_action_drafts_uses_split_preview_helpers_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/assistant_action_draft_preview_helpers.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/assistant_action_drafts.py"
+
+    assert helper_path.exists(), (
+        "Move assistant action draft preview, validation and permission helper "
+        "logic to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "from app.services.assistant_action_draft_preview_helpers import" in entrypoint_source
+    assert "def generic_create_draft_preview(" in helper_source
+    assert "def validate_plugin_connection_ref(" in helper_source
+    assert "def with_action_permission_preview(" in helper_source
+    assert "def _generic_create_draft_preview(" not in entrypoint_source
+    assert "def _validate_plugin_connection_ref(" not in entrypoint_source
+    assert "def _with_action_permission_preview(" not in entrypoint_source
 
 
 def test_code_inspections_uses_split_common_module():

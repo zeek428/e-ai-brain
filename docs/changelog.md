@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 动作草案预览校验继续拆大文件：新增 `assistant_action_draft_preview_helpers` 承接通用预览差异、引用校验、权限校验、修复动作和 validation 状态计算，`assistant_action_drafts.py` 从 2241 行降至 1960 行并将预算收紧到 2000 行。
 - 定时作业引用校验继续拆大文件：新增 `scheduled_job_ref_validation` 承接 AI Agent/Skill/模型网关、产品、插件动作/连接和多引用校验，`scheduled_jobs.py` 从 2235 行降至 2124 行并将预算收紧到 2200 行。
 - AI 执行器 Runner 健康投影继续拆大文件：新增 `ai_executor_runner_health` 承接系统默认 Runner、公开投影、心跳健康状态、健康告警和启动命令，`ai_executor_runners.py` 从 2300 行降至 2156 行并将预算收紧到 2200 行。
 - AI 动作草案治理投影继续拆大文件：新增 `assistant_action_draft_governance` 承接风险等级、影响对象、权限校验、执行前后差异、失败重试、审计链路和确认决策，`assistant_action_drafts.py` 从 2385 行降至 2235 行并将预算收紧到 2250 行。
