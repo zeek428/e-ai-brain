@@ -8,6 +8,7 @@ MAX_PLUGIN_SERVICE_LINES = 2600
 MAX_SCHEDULED_JOB_SERVICE_LINES = 2600
 MAX_ASSISTANT_ACTION_DRAFT_LINES = 2600
 MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
+FRONTEND_PAGE_CONTAINER_REVIEW_THRESHOLD_LINES = 900
 
 DOMAIN_FILE_LINE_BUDGETS = {
     "apps/api/app/services/ai_executor_runners.py": MAX_DOMAIN_FILE_LINES,
@@ -21,6 +22,19 @@ DOMAIN_FILE_LINE_BUDGETS = {
     "apps/web/src/services/aiBrain.ts": MAX_FRONTEND_SERVICE_BARREL_LINES,
 }
 
+FRONTEND_PAGE_CONTAINER_LINE_BUDGETS = {
+    "apps/web/src/pages/AiCapabilities/index.tsx": 1000,
+    "apps/web/src/pages/CodeInspections/index.tsx": 1100,
+    "apps/web/src/pages/IterationVersions/index.tsx": 1500,
+    "apps/web/src/pages/Knowledge/index.tsx": 1800,
+    "apps/web/src/pages/Plugins/index.tsx": 1600,
+    "apps/web/src/pages/Products/index.tsx": 1100,
+    "apps/web/src/pages/Requirements/index.tsx": 1250,
+    "apps/web/src/pages/Roles/index.tsx": 1600,
+    "apps/web/src/pages/ScheduledJobs/index.tsx": 1300,
+    "apps/web/src/pages/TaskCenter/index.tsx": 1900,
+}
+
 
 def test_split_domain_entrypoints_stay_under_line_budget():
     oversized_files: list[str] = []
@@ -32,6 +46,35 @@ def test_split_domain_entrypoints_stay_under_line_budget():
             oversized_files.append(f"{relative_path}: {line_count} lines > {max_lines}")
 
     assert not oversized_files, "Split large domain files before merging:\n" + "\n".join(
+        oversized_files
+    )
+
+
+def test_frontend_page_containers_stay_under_line_budget():
+    oversized_files: list[str] = []
+    unguarded_large_pages: list[str] = []
+    pages_root = REPO_ROOT / "apps/web/src/pages"
+
+    for page_path in sorted(pages_root.glob("*/index.tsx")):
+        relative_path = str(page_path.relative_to(REPO_ROOT))
+        line_count = len(page_path.read_text(encoding="utf-8").splitlines())
+        max_lines = FRONTEND_PAGE_CONTAINER_LINE_BUDGETS.get(relative_path)
+
+        if max_lines is None:
+            if line_count > FRONTEND_PAGE_CONTAINER_REVIEW_THRESHOLD_LINES:
+                unguarded_large_pages.append(
+                    f"{relative_path}: {line_count} lines needs an explicit split budget"
+                )
+            continue
+
+        if line_count > max_lines:
+            oversized_files.append(f"{relative_path}: {line_count} lines > {max_lines}")
+
+    assert not unguarded_large_pages, (
+        "Add an explicit page-container budget or split these frontend pages:\n"
+        + "\n".join(unguarded_large_pages)
+    )
+    assert not oversized_files, "Split frontend page containers before merging:\n" + "\n".join(
         oversized_files
     )
 
