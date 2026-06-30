@@ -43,6 +43,8 @@ class FakePluginPagingRepository:
         self.action_page_kwargs: dict | None = None
         self.invocation_log_count_kwargs: dict | None = None
         self.invocation_log_page_kwargs: dict | None = None
+        self.result_write_record_count_kwargs: dict | None = None
+        self.result_write_record_page_kwargs: dict | None = None
         self.ai_executor_runner_count_kwargs: dict | None = None
         self.ai_executor_runner_page_kwargs: dict | None = None
         self.ai_executor_task_count_kwargs: dict | None = None
@@ -59,6 +61,9 @@ class FakePluginPagingRepository:
 
     def list_plugin_invocation_logs(self, **_kwargs):
         raise AssertionError("full plugin invocation log list should not be used")
+
+    def list_scheduled_job_runs(self, **_kwargs):
+        raise AssertionError("full scheduled job run list should not be used")
 
     def list_ai_executor_tasks(self, **_kwargs):
         raise AssertionError("full AI executor task list should not be used")
@@ -143,6 +148,36 @@ class FakePluginPagingRepository:
                 "trace_id": "trace_sql",
                 "trigger_type": "scheduled_job",
                 "updated_at": "2026-06-24T01:00:00+00:00",
+            }
+        ]
+
+    def count_result_write_records(self, **kwargs):
+        self.result_write_record_count_kwargs = kwargs
+        return 7
+
+    def list_result_write_records_page(self, **kwargs):
+        self.result_write_record_page_kwargs = kwargs
+        return [
+            {
+                "created_at": "2026-06-24T01:00:00+00:00",
+                "feedback": {"delivery_id": "mail_001"},
+                "id": "result_write_record_sql",
+                "plugin_action_id": "plugin_action_sql",
+                "plugin_code": "email",
+                "plugin_connection_id": "plugin_connection_sql",
+                "plugin_id": "plugin_email",
+                "plugin_invocation_log_id": "plugin_invocation_log_sql",
+                "preview": {"write_target": "email_notifications"},
+                "records_imported": "2",
+                "scheduled_job_id": "scheduled_job_sql",
+                "scheduled_job_name": "Weekly Digest",
+                "scheduled_job_run_id": "scheduled_run_sql",
+                "source_type": "scheduled_job_run",
+                "status": "succeeded",
+                "summary_fields": {"delivery_id": "mail_001"},
+                "updated_at": "2026-06-24T01:00:00+00:00",
+                "write_target": "email_notifications",
+                "write_target_label": None,
             }
         ]
 
@@ -2354,6 +2389,56 @@ def test_plugin_invocation_log_list_uses_repository_pagination_when_requested():
         "sort_by": "created_at",
         "sort_order": "desc",
         "status": "succeeded",
+    }
+
+
+def test_result_write_record_list_uses_repository_pagination_when_requested():
+    repository = FakePluginPagingRepository()
+    store = SimpleNamespace(repository=repository)
+
+    response = plugin_services.list_result_write_records_response(
+        current_store=store,
+        page=2,
+        page_size=5,
+        plugin_action_id="plugin_action_sql",
+        scheduled_job_id="scheduled_job_sql",
+        scheduled_job_run_id="scheduled_run_sql",
+        sort_by="records_imported",
+        sort_order="asc",
+        started_at=None,
+        status="succeeded",
+        user=SCOPED_PLUGIN_MANAGER_USER,
+        write_target="email_notifications",
+    )
+
+    assert response["total"] == 7
+    assert response["page"] == 2
+    assert response["page_size"] == 5
+    assert response["items"][0]["id"] == "result_write_record_sql"
+    assert response["items"][0]["records_imported"] == 2
+    assert response["items"][0]["write_target_label"] == "邮件通知记录"
+    assert response["query"]["name"] == "result_write_records"
+    assert response["query"]["sort_by"] == "records_imported"
+    assert response["performance"]["p95_target_ms"] == 500
+    assert repository.result_write_record_count_kwargs == {
+        "plugin_action_id": "plugin_action_sql",
+        "product_scope_ids": ["product_sql"],
+        "scheduled_job_id": "scheduled_job_sql",
+        "scheduled_job_run_id": "scheduled_run_sql",
+        "status": "succeeded",
+        "write_target": "email_notifications",
+    }
+    assert repository.result_write_record_page_kwargs == {
+        "limit": 5,
+        "offset": 5,
+        "plugin_action_id": "plugin_action_sql",
+        "product_scope_ids": ["product_sql"],
+        "scheduled_job_id": "scheduled_job_sql",
+        "scheduled_job_run_id": "scheduled_run_sql",
+        "sort_by": "records_imported",
+        "sort_order": "asc",
+        "status": "succeeded",
+        "write_target": "email_notifications",
     }
 
 

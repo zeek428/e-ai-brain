@@ -1764,6 +1764,52 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def count_result_write_records(
+        self,
+        *,
+        plugin_action_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+        write_target: str | None = None,
+    ) -> int:
+        return self._plugin_read_repository.count_result_write_records(
+            plugin_action_id=plugin_action_id,
+            product_scope_ids=product_scope_ids,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
+            write_target=write_target,
+        )
+
+    def list_result_write_records_page(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        plugin_action_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+        write_target: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_result_write_records_page(
+            limit=limit,
+            offset=offset,
+            plugin_action_id=plugin_action_id,
+            product_scope_ids=product_scope_ids,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            status=status,
+            write_target=write_target,
+        )
+
     def list_ai_executor_runners(
         self,
         *,

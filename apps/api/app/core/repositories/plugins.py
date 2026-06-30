@@ -70,6 +70,20 @@ PLUGIN_INVOCATION_LOG_SORT_COLUMNS = {
     "updated_at": "updated_at",
 }
 
+RESULT_WRITE_RECORD_SORT_COLUMNS = {
+    "created_at": "created_at",
+    "id": "id",
+    "plugin_action_id": "plugin_action_id",
+    "plugin_invocation_log_id": "plugin_invocation_log_id",
+    "records_imported": "records_imported",
+    "scheduled_job_id": "scheduled_job_id",
+    "scheduled_job_run_id": "scheduled_job_run_id",
+    "source_type": "source_type",
+    "status": "status",
+    "updated_at": "updated_at",
+    "write_target": "write_target",
+}
+
 
 class PluginReadRepository:
     def __init__(
@@ -430,6 +444,83 @@ class PluginReadRepository:
                     tuple(params),
                 )
                 return [self._invocation_log_from_row(row) for row in cursor.fetchall()]
+
+    def count_result_write_records(
+        self,
+        *,
+        plugin_action_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+        write_target: str | None = None,
+    ) -> int:
+        where, params = self._result_write_record_where(
+            plugin_action_id=plugin_action_id,
+            product_scope_ids=product_scope_ids,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
+            write_target=write_target,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    {self._result_write_records_cte()}
+                    SELECT count(*) FROM result_write_records
+                    {where}
+                    """,
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_result_write_records_page(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        plugin_action_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+        write_target: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._result_write_record_where(
+            plugin_action_id=plugin_action_id,
+            product_scope_ids=product_scope_ids,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
+            write_target=write_target,
+        )
+        sort_column = RESULT_WRITE_RECORD_SORT_COLUMNS.get(sort_by, "created_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    {self._result_write_records_cte()}
+                    SELECT id, source_type, scheduled_job_id, scheduled_job_name,
+                           scheduled_job_run_id, plugin_action_id,
+                           plugin_invocation_log_id, plugin_id, plugin_code,
+                           plugin_connection_id, write_target, write_target_label,
+                           status, records_imported, feedback, preview,
+                           summary_fields, created_at, updated_at
+                    FROM result_write_records
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
+                    """,
+                    tuple(params),
+                )
+                return [self._result_write_record_from_row(row) for row in cursor.fetchall()]
 
     def list_ai_executor_runners(
         self,
@@ -1046,6 +1137,193 @@ class PluginReadRepository:
                 params.extend([normalized_product_ids, normalized_product_ids])
         return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
 
+    def _result_write_record_where(
+        self,
+        *,
+        plugin_action_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+        write_target: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for field, value in (
+            ("plugin_action_id", plugin_action_id),
+            ("scheduled_job_id", scheduled_job_id),
+            ("scheduled_job_run_id", scheduled_job_run_id),
+            ("status", status),
+            ("write_target", write_target),
+        ):
+            if value is not None:
+                clauses.append(f"{field} = %s")
+                params.append(value)
+        if product_scope_ids is not None:
+            normalized_product_ids = [
+                str(product_id)
+                for product_id in product_scope_ids
+                if str(product_id).strip()
+            ]
+            if not normalized_product_ids:
+                clauses.append("FALSE")
+            else:
+                clauses.append("product_id = ANY(%s)")
+                params.append(normalized_product_ids)
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def _result_write_records_cte(self) -> str:
+        return """
+        WITH scheduled_result_write_records AS (
+          SELECT
+            CONCAT('result_write_record_', run.id) AS id,
+            'scheduled_job_run'::text AS source_type,
+            run.scheduled_job_id,
+            job.name AS scheduled_job_name,
+            run.id AS scheduled_job_run_id,
+            COALESCE(
+              NULLIF(result_action ->> 'action_id', ''),
+              run.resolved_plugin_snapshot #>> '{action,id}'
+            ) AS plugin_action_id,
+            COALESCE(
+              NULLIF(feedback ->> 'plugin_invocation_log_id', ''),
+              run.plugin_invocation_log_id
+            ) AS plugin_invocation_log_id,
+            run.resolved_plugin_snapshot #>> '{plugin,id}' AS plugin_id,
+            run.resolved_plugin_snapshot #>> '{plugin,code}' AS plugin_code,
+            COALESCE(
+              NULLIF(run.resolved_plugin_snapshot #>> '{connection,id}', ''),
+              run.resolved_plugin_snapshot #>> '{action,connection_id}'
+            ) AS plugin_connection_id,
+            COALESCE(
+              NULLIF(result_action ->> 'write_target', ''),
+              NULLIF(feedback ->> 'write_target', ''),
+              NULLIF(preview ->> 'write_target', ''),
+              NULLIF(run.result_summary ->> 'write_target', ''),
+              'scheduled_job_result'
+            ) AS write_target,
+            COALESCE(
+              NULLIF(result_action ->> 'write_target_label', ''),
+              NULLIF(preview ->> 'write_target_label', '')
+            ) AS write_target_label,
+            COALESCE(NULLIF(result_action ->> 'status', ''), run.status) AS status,
+            CASE
+              WHEN COALESCE(
+                result_action ->> 'records_imported',
+                feedback ->> 'records_imported',
+                preview ->> 'records_imported',
+                run.records_imported::text,
+                '0'
+              ) ~ '^-?[0-9]+$'
+              THEN COALESCE(
+                result_action ->> 'records_imported',
+                feedback ->> 'records_imported',
+                preview ->> 'records_imported',
+                run.records_imported::text,
+                '0'
+              )::int
+              ELSE 0
+            END AS records_imported,
+            feedback,
+            preview,
+            jsonb_strip_nulls(
+              jsonb_build_object(
+                'candidate_count',
+                COALESCE(feedback -> 'candidate_count', preview -> 'candidate_count'),
+                'delivery_id',
+                COALESCE(feedback -> 'delivery_id', preview -> 'delivery_id'),
+                'delivery_status',
+                COALESCE(feedback -> 'delivery_status', preview -> 'delivery_status'),
+                'preview_value',
+                COALESCE(feedback -> 'preview_value', preview -> 'preview_value'),
+                'report_preview',
+                COALESCE(feedback -> 'report_preview', preview -> 'report_preview'),
+                'sample_records',
+                COALESCE(feedback -> 'sample_records', preview -> 'sample_records'),
+                'source_row_count',
+                COALESCE(feedback -> 'source_row_count', preview -> 'source_row_count'),
+                'subject', COALESCE(feedback -> 'subject', preview -> 'subject')
+              )
+            ) AS summary_fields,
+            COALESCE(run.finished_at, run.started_at, run.created_at) AS created_at,
+            COALESCE(run.finished_at, run.updated_at, run.created_at) AS updated_at,
+            job.product_id
+          FROM scheduled_job_runs run
+          LEFT JOIN scheduled_jobs job ON job.id = run.scheduled_job_id
+          CROSS JOIN LATERAL (
+            SELECT CASE
+              WHEN jsonb_typeof(run.result_summary #> '{execution_nodes,result_action}') = 'object'
+              THEN run.result_summary #> '{execution_nodes,result_action}'
+              ELSE '{}'::jsonb
+            END AS result_action
+          ) action_node
+          CROSS JOIN LATERAL (
+            SELECT CASE
+              WHEN jsonb_typeof(action_node.result_action -> 'feedback') = 'object'
+              THEN action_node.result_action -> 'feedback'
+              ELSE '{}'::jsonb
+            END AS feedback
+          ) feedback_node
+          CROSS JOIN LATERAL (
+            SELECT CASE
+              WHEN jsonb_typeof(feedback_node.feedback -> 'write_preview') = 'object'
+              THEN feedback_node.feedback -> 'write_preview'
+              ELSE '{}'::jsonb
+            END AS preview
+          ) preview_node
+          WHERE action_node.result_action <> '{}'::jsonb
+        ),
+        invocation_result_write_records AS (
+          SELECT
+            CONCAT('result_write_record_', log.id) AS id,
+            'plugin_invocation_log'::text AS source_type,
+            log.scheduled_job_id,
+            job.name AS scheduled_job_name,
+            NULL::text AS scheduled_job_run_id,
+            log.action_id AS plugin_action_id,
+            log.id AS plugin_invocation_log_id,
+            log.plugin_id,
+            plugin.code AS plugin_code,
+            log.connection_id AS plugin_connection_id,
+            COALESCE(
+              NULLIF(action.result_mapping ->> 'write_target', ''),
+              'scheduled_job_result'
+            ) AS write_target,
+            NULL::text AS write_target_label,
+            log.status,
+            0::int AS records_imported,
+            jsonb_build_object(
+              'plugin_invocation_log_id', log.id,
+              'response_summary', COALESCE(log.response_summary, '{}'::jsonb),
+              'write_preview', jsonb_build_object(
+                'write_target',
+                COALESCE(
+                  NULLIF(action.result_mapping ->> 'write_target', ''),
+                  'scheduled_job_result'
+                )
+              )
+            ) AS feedback,
+            jsonb_build_object(
+              'write_target',
+              COALESCE(NULLIF(action.result_mapping ->> 'write_target', ''), 'scheduled_job_result')
+            ) AS preview,
+            '{}'::jsonb AS summary_fields,
+            log.created_at,
+            COALESCE(log.updated_at, log.created_at) AS updated_at,
+            job.product_id
+          FROM plugin_invocation_logs log
+          JOIN plugin_actions action ON action.id = log.action_id
+          LEFT JOIN integration_plugins plugin ON plugin.id = log.plugin_id
+          LEFT JOIN scheduled_jobs job ON job.id = log.scheduled_job_id
+          WHERE log.scheduled_job_run_id IS NULL
+        ),
+        result_write_records AS (
+          SELECT * FROM scheduled_result_write_records
+          UNION ALL
+          SELECT * FROM invocation_result_write_records
+        )
+        """
+
     def _ai_executor_runner_where(
         self,
         *,
@@ -1269,6 +1547,29 @@ class PluginReadRepository:
             "created_by": row[14],
             "created_at": row[15].isoformat() if row[15] else None,
             "updated_at": row[16].isoformat() if row[16] else None,
+        }
+
+    def _result_write_record_from_row(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row[0],
+            "source_type": row[1],
+            "scheduled_job_id": row[2],
+            "scheduled_job_name": row[3],
+            "scheduled_job_run_id": row[4],
+            "plugin_action_id": row[5],
+            "plugin_invocation_log_id": row[6],
+            "plugin_id": row[7],
+            "plugin_code": row[8],
+            "plugin_connection_id": row[9],
+            "write_target": row[10],
+            "write_target_label": row[11],
+            "status": row[12],
+            "records_imported": row[13] or 0,
+            "feedback": row[14] or {},
+            "preview": row[15] or {},
+            "summary_fields": row[16] or {},
+            "created_at": row[17].isoformat() if row[17] else None,
+            "updated_at": row[18].isoformat() if row[18] else None,
         }
 
     def _ai_executor_runner_from_row(self, row: Any) -> dict[str, Any]:

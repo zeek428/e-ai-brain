@@ -63,6 +63,56 @@ def result_write_record_summary_fields(
     return fields
 
 
+def normalize_result_write_record(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(record)
+    write_target = str(normalized.get("write_target") or "scheduled_job_result")
+    normalized["write_target"] = write_target
+    normalized["write_target_label"] = (
+        normalized.get("write_target_label") or result_write_target_label(write_target)
+    )
+    normalized["feedback"] = (
+        normalized.get("feedback") if isinstance(normalized.get("feedback"), dict) else {}
+    )
+    normalized["preview"] = (
+        normalized.get("preview") if isinstance(normalized.get("preview"), dict) else {}
+    )
+    normalized["summary_fields"] = (
+        normalized.get("summary_fields")
+        if isinstance(normalized.get("summary_fields"), dict)
+        else {}
+    )
+    try:
+        normalized["records_imported"] = int(normalized.get("records_imported") or 0)
+    except (TypeError, ValueError):
+        normalized["records_imported"] = 0
+    return normalized
+
+
+def result_write_record_page_repository(current_store: Any) -> Any | None:
+    repository = getattr(current_store, "repository", None)
+    if repository is None:
+        return None
+    required_methods = (
+        "count_result_write_records",
+        "list_result_write_records_page",
+    )
+    if all(callable(getattr(repository, method_name, None)) for method_name in required_methods):
+        return repository
+    return None
+
+
+def can_list_result_write_records_from_repository(
+    current_store: Any,
+    *,
+    page: int | None,
+    page_size: int | None,
+) -> bool:
+    return (
+        (page is not None or page_size is not None)
+        and result_write_record_page_repository(current_store) is not None
+    )
+
+
 def result_write_record_from_scheduled_run(
     current_store: Any,
     run: dict[str, Any],
@@ -264,16 +314,65 @@ def list_result_write_records_payload(
     resolved_page_size = page_size or 10
     with_pagination = page is not None or page_size is not None
     scoped_product_ids = product_scope_filter(user)
+    repository = result_write_record_page_repository(current_store)
+    if with_pagination and repository is not None:
+        offset = (resolved_page - 1) * resolved_page_size
+        total = repository.count_result_write_records(
+            plugin_action_id=plugin_action_id,
+            product_scope_ids=scoped_product_ids,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
+            write_target=write_target,
+        )
+        items = [
+            normalize_result_write_record(record)
+            for record in repository.list_result_write_records_page(
+                limit=resolved_page_size,
+                offset=offset,
+                plugin_action_id=plugin_action_id,
+                product_scope_ids=scoped_product_ids,
+                scheduled_job_id=scheduled_job_id,
+                scheduled_job_run_id=scheduled_job_run_id,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+                status=status,
+                write_target=write_target,
+            )
+        ]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters={
+                "plugin_action_id": plugin_action_id,
+                "product_scope_ids": scoped_product_ids,
+                "scheduled_job_id": scheduled_job_id,
+                "scheduled_job_run_id": scheduled_job_run_id,
+                "status": status,
+                "write_target": write_target,
+            },
+            list_name="result_write_records",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+
     scoped_product_id_set = set(scoped_product_ids) if scoped_product_ids is not None else None
     records: list[dict[str, Any]] = []
     for run in _read_memory_dict(current_store, "scheduled_job_runs").values():
         record = result_write_record_from_scheduled_run(current_store, run)
         if record is not None:
-            records.append(record)
+            records.append(normalize_result_write_record(record))
     for log in _read_memory_dict(current_store, "plugin_invocation_logs").values():
         record = result_write_record_from_invocation_log(current_store, log)
         if record is not None:
-            records.append(record)
+            records.append(normalize_result_write_record(record))
 
     filtered = []
     for record in records:

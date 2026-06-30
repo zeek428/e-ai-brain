@@ -71,6 +71,7 @@ from app.services.plugin_result_mapping import result_mapping_hits, result_write
 from app.services.plugin_result_write_records import (
     RESULT_WRITE_RECORD_SORT_FIELDS,
     RESULT_WRITE_RECORD_STATUSES,
+    can_list_result_write_records_from_repository,
     list_result_write_records_payload,
 )
 from app.services.plugin_templates import (
@@ -530,7 +531,12 @@ def list_result_write_records_response(
     ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
     if sort_by is not None:
         ensure_enum(sort_by, RESULT_WRITE_RECORD_SORT_FIELDS, "sort_by")
-    sync_result_write_record_store(current_store)
+    if not can_list_result_write_records_from_repository(
+        current_store,
+        page=page,
+        page_size=page_size,
+    ):
+        sync_result_write_record_store(current_store)
     return list_result_write_records_payload(
         current_store=current_store,
         page=page,

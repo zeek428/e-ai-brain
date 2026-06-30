@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 结果写入记录分页查询补齐 PostgreSQL 派生 read model：`GET /api/system/result-write-records` 带 `page/page_size` 时按定时作业运行和无运行归属的插件调用日志在数据库侧聚合，产品 scope、筛选、排序和 count/page 下推，避免执行诊断或运行详情先拉全量 MemoryStore 再分页。
 - AI 动作草案任务台投影继续拆大文件：新增 `assistant_action_draft_workbench` 承接草案列表行、风险/权限/审计/重试/决策汇总，`assistant_action_drafts.py` 预算收紧到 2400 行并由架构守护防止确认中心展示统计回流。
 - 定时作业服务用户反馈洞察提取继续拆大文件：新增 `scheduled_job_user_feedback` 承接用户反馈洞察输出映射、AI 处理结果转用户反馈和执行节点摘要，`scheduled_jobs.py` 预算收紧到 2400 行并由架构守护防止写回逻辑回流。
 - 真实全链路回归脚本纳入版本证据覆盖门禁：`full`、`version-dashboard`、`assistant-qa` 和 `code-inspection-governance` 均调用 `validate_version_dashboard_evidence_coverage`，重算并校验 `evidence_coverage` 域顺序、状态、阻断/缺口计数和覆盖分一致性。
