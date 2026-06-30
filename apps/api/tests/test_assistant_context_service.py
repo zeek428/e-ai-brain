@@ -213,6 +213,24 @@ def test_assistant_system_context_is_product_scoped_and_includes_delivery_signal
         "type": "code_review_report",
         "url": "/delivery/rd-tasks?code_review_report_id=report_001",
     }
+    iteration_tool_results = assistant_tool_results(
+        store,
+        message="当前迭代版本阻塞项和下一步行动是什么？",
+        product_id="product_001",
+        user={"id": "user_admin", "permissions": [], "roles": ["admin"]},
+    )
+    iteration_tool = next(
+        item for item in iteration_tool_results if item["tool"] == "assistant.iteration"
+    )
+    iteration_item = iteration_tool["items"][0]
+    assert iteration_item["id"] == "version_001"
+    assert iteration_item["blocker_count"] >= 2
+    assert iteration_item["status_impact"]["target_status"] == "released"
+    assert iteration_item["url"] == "/delivery/versions?version_id=version_001&view=dashboard"
+    assert [item["source_type"] for item in iteration_item["next_actions"][:2]] == [
+        "bug",
+        "jenkins_release",
+    ]
 
 
 def test_assistant_tool_results_can_generate_scheduled_job_action_draft():
@@ -1072,3 +1090,82 @@ def test_public_assistant_message_can_strip_heavy_tool_result_details_for_histor
     ]
     assert "preview" not in tool_result["items"][0]
     assert "prompt" not in tool_result["items"][0]["payload"]["config_json"]
+
+
+def test_public_assistant_message_keeps_iteration_governance_summary_in_history():
+    public_message = public_assistant_message(
+        {
+            "content": "版本存在阻塞",
+            "conversation_id": "conversation_001",
+            "created_at": "2026-06-05T09:00:00+00:00",
+            "id": "assistant_message_001",
+            "metadata_json": {
+                "tool_results": [
+                    {
+                        "intent": "iteration",
+                        "items": [
+                            {
+                                "blocker_count": 2,
+                                "blockers_by_source": {"bug": 1, "jenkins_release": 1},
+                                "dashboard_url": (
+                                    "/delivery/versions?version_id=version_001&view=dashboard"
+                                ),
+                                "id": "version_001",
+                                "next_actions": [
+                                    {
+                                        "action_label": "处理 Bug",
+                                        "priority": 1,
+                                        "reason": "critical Bug 仍未关闭",
+                                        "source_label": "Bug",
+                                        "source_type": "bug",
+                                        "title": "助手阻塞缺陷",
+                                    }
+                                ],
+                                "status": "testing",
+                                "status_impact": {
+                                    "blocked_count": 0,
+                                    "target_status": "released",
+                                    "updated_count": 1,
+                                },
+                                "title": "AI 助手迭代",
+                                "url": "/delivery/versions?version_id=version_001&view=dashboard",
+                            }
+                        ],
+                        "summary": {"version_count": 1},
+                        "tool": "assistant.iteration",
+                    }
+                ],
+            },
+            "role": "assistant",
+            "suggestions": [],
+        },
+        include_tool_details=False,
+    )
+
+    tool_result = public_message["tool_results"][0]
+    assert tool_result["items"] == [
+        {
+            "blocker_count": 2,
+            "blockers_by_source": {"bug": 1, "jenkins_release": 1},
+            "dashboard_url": "/delivery/versions?version_id=version_001&view=dashboard",
+            "id": "version_001",
+            "next_actions": [
+                {
+                    "action_label": "处理 Bug",
+                    "priority": 1,
+                    "reason": "critical Bug 仍未关闭",
+                    "source_label": "Bug",
+                    "source_type": "bug",
+                    "title": "助手阻塞缺陷",
+                }
+            ],
+            "status": "testing",
+            "status_impact": {
+                "blocked_count": 0,
+                "target_status": "released",
+                "updated_count": 1,
+            },
+            "title": "AI 助手迭代",
+            "url": "/delivery/versions?version_id=version_001&view=dashboard",
+        }
+    ]

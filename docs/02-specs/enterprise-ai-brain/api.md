@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.465 |
+| 功能版本 | v1.1.466 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.466 | 2026-06-30 | `POST /api/assistant/chat` 对迭代版本阻塞/下一步行动问题使用确定性 `assistant.iteration` 工具结果，复用版本总览治理上下文并在历史消息保留安全摘要 | Codex |
 | v1.1.465 | 2026-06-30 | `GET /api/product-versions/{version_id}/dashboard` 新增后端 `next_actions`，按阻塞优先级返回前三个版本治理建议及全链路主体，供版本总览、AI 助手和回归脚本复用 | Codex |
 | v1.1.464 | 2026-06-30 | `GET /api/system/roles/{role_id}` 新增 `access_preview`，返回单角色可见菜单、操作权限、范围分组和菜单权限缺口/高风险诊断 | Codex |
 | v1.1.463 | 2026-06-30 | 迭代版本总览交付链路总览需基于 dashboard 既有响应为各阶段生成直接处理入口，无需新增接口字段 | Codex |
@@ -1720,7 +1721,7 @@ POST /api/assistant/chat
 }
 ```
 
-助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide`、`assistant.scheduled_job_diagnostic` 和 `assistant.plugin_connection_diagnostic`，`reference_candidates` 可覆盖命令面板型 `assistant_action`，以及引用类 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_space`、`knowledge_folder`、`knowledge_document`、`knowledge_chunk`，以及管理员、`system.admin` 或对应管理权限可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent`、`ai_skill`。引用候选 query 识别类型词时，`新建/新增/创建` 可匹配 `assistant_action`，`定时作业/定时任务` 优先匹配 `scheduled_job`，`运行记录/失败` 优先匹配 `scheduled_job_run`，`知识空间/知识目录` 分别匹配 `knowledge_space` / `knowledge_folder`，避免用户在创建配置、执行一次、失败诊断或知识范围引用前选到错误上下文。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据。每次聊天请求都会创建或复用 `assistant_chat_runs` 运行记录，状态为 `running/succeeded/cancelled/failed`；用户消息先按同一 `run_id` 写入 `pending`，成功后用户消息和助手消息置为 `completed`，取消时置为 `cancelled`，失败时写入 `failed/error_code`。`client_request_id` 用于客户端重试、停止生成和审计关联，未传时默认等同 `run_id`。成功审计事件为 `assistant.chat_completed`，取消审计事件为 `assistant.chat_cancelled`，失败审计事件为 `assistant.chat_failed`。
+助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide`、`assistant.scheduled_job_diagnostic` 和 `assistant.plugin_connection_diagnostic`，其中明确询问迭代版本阻塞、下一步行动、版本总览或发布准备时，服务端应直接走 `assistant-deterministic` 确定性回答，不依赖 Chat 模型网关；`assistant.iteration` 工具项除版本需求/任务/Bug 计数外，还必须在当前用户有权限时复用 `GET /api/product-versions/{version_id}/dashboard` 的治理摘要，返回 `blocker_count`、`blockers_by_source`、`dashboard_url`、前三个 `next_actions[]` 和 `status_impact`，让助手回答版本阻塞、下一步行动或发布准备问题时与版本总览一致；`reference_candidates` 可覆盖命令面板型 `assistant_action`，以及引用类 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_space`、`knowledge_folder`、`knowledge_document`、`knowledge_chunk`，以及管理员、`system.admin` 或对应管理权限可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent`、`ai_skill`。引用候选 query 识别类型词时，`新建/新增/创建` 可匹配 `assistant_action`，`定时作业/定时任务` 优先匹配 `scheduled_job`，`运行记录/失败` 优先匹配 `scheduled_job_run`，`知识空间/知识目录` 分别匹配 `knowledge_space` / `knowledge_folder`，避免用户在创建配置、执行一次、失败诊断或知识范围引用前选到错误上下文。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据。每次聊天请求都会创建或复用 `assistant_chat_runs` 运行记录，状态为 `running/succeeded/cancelled/failed`；用户消息先按同一 `run_id` 写入 `pending`，成功后用户消息和助手消息置为 `completed`，取消时置为 `cancelled`，失败时写入 `failed/error_code`。`client_request_id` 用于客户端重试、停止生成和审计关联，未传时默认等同 `run_id`。成功审计事件为 `assistant.chat_completed`，取消审计事件为 `assistant.chat_cancelled`，失败审计事件为 `assistant.chat_failed`。
 
 停止生成：
 
@@ -2356,7 +2357,7 @@ GET /api/assistant/conversations/{conversation_id}/messages
 }
 ```
 
-历史消息中的 `tool_results` 是展示用安全视图，不等同于原始运行载荷。`assistant.action_draft` 历史项只返回草案展示所需字段和动作白名单内的有限 payload 字段；`api_key`、`auth_config`、`Authorization`、token、password、secret、cookie、private key 等敏感字段必须递归脱敏或移除。若 `preview.diffs[]` 的字段名、路径或标签命中敏感信息，`current`、`previous`、`proposed`、`default`、`value` 等值必须返回 `"***"`，不得在历史恢复、深链加载或模型上下文中泄露密钥和 Header 明文。
+历史消息中的 `tool_results` 是展示用安全视图，不等同于原始运行载荷。`assistant.action_draft` 历史项只返回草案展示所需字段和动作白名单内的有限 payload 字段；`assistant.iteration` 历史项只保留版本 ID/标题/状态、需求/任务计数、`blocker_count`、`blockers_by_source`、`dashboard_url`、`next_actions` 和 `status_impact` 等版本治理摘要，不保留原始 dashboard 明细载荷；`api_key`、`auth_config`、`Authorization`、token、password、secret、cookie、private key 等敏感字段必须递归脱敏或移除。若 `preview.diffs[]` 的字段名、路径或标签命中敏感信息，`current`、`previous`、`proposed`、`default`、`value` 等值必须返回 `"***"`，不得在历史恢复、深链加载或模型上下文中泄露密钥和 Header 明文。
 
 ### 需求管理
 

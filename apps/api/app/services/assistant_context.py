@@ -729,6 +729,21 @@ def _public_light_tool_item(tool_name: str, item: dict[str, Any]) -> dict[str, A
             "url",
             "wizard_steps",
         )
+    elif tool_name == "assistant.iteration":
+        allowed_keys = (
+            "blocker_count",
+            "blockers_by_source",
+            "code",
+            "dashboard_url",
+            "id",
+            "next_actions",
+            "requirement_count",
+            "status",
+            "status_impact",
+            "task_count",
+            "title",
+            "url",
+        )
     elif tool_name == "assistant.scheduled_job_run":
         allowed_keys = (
             "error_message",

@@ -87,6 +87,7 @@ def call_model_gateway_for_assistant_chat(
         message=payload.message,
         product_id=payload.product_id,
         references=resolved_references["items"],
+        user=user,
     )
     messages = _assistant_chat_messages(
         current_store,

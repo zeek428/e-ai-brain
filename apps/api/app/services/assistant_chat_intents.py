@@ -118,6 +118,41 @@ def assistant_metrics_explanation_requested(message: str) -> bool:
     return has_metrics_intent and has_assistant_context
 
 
+def iteration_governance_requested(message: str) -> bool:
+    normalized = message.lower()
+    has_iteration_context = any(
+        keyword in normalized
+        for keyword in (
+            "迭代",
+            "版本",
+            "发布准备",
+            "版本总览",
+            "version",
+            "release readiness",
+        )
+    )
+    has_governance_intent = any(
+        keyword in normalized
+        for keyword in (
+            "阻塞",
+            "风险",
+            "下一步",
+            "行动",
+            "治理",
+            "总览",
+            "发布",
+            "ready",
+            "blocker",
+            "next action",
+        )
+    )
+    has_create_intent = any(
+        keyword in normalized
+        for keyword in ("创建", "新增", "新建", "配置", "生成草案", "create")
+    )
+    return has_iteration_context and has_governance_intent and not has_create_intent
+
+
 def task_creation_guide_requested(message: str) -> bool:
     normalized = message.lower()
     has_create_intent = any(
@@ -349,6 +384,51 @@ def assistant_metrics_explanation_output(
     }
 
 
+def iteration_governance_output(
+    current_store: MemoryStore,
+    *,
+    payload: Any,
+    selected_references: list[dict[str, str]],
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    started = perf_counter()
+    tool_results = [
+        result
+        for result in assistant_tool_results(
+            current_store,
+            message=payload.message,
+            product_id=payload.product_id,
+            references=selected_references,
+            user=user,
+        )
+        if result.get("tool") == "assistant.iteration"
+    ]
+    iteration_references = [
+        reference
+        for result in tool_results
+        for reference in result.get("references", [])
+        if isinstance(reference, dict)
+    ]
+    version_items = [
+        item
+        for result in tool_results
+        for item in result.get("items", [])
+        if isinstance(item, dict)
+    ]
+    return {
+        "answer": _iteration_governance_answer(version_items),
+        "latency_ms": int((perf_counter() - started) * 1000),
+        "model": "assistant-deterministic",
+        "references": merge_assistant_references(
+            selected_references,
+            iteration_references,
+        ),
+        "selected_references": selected_references,
+        "suggestions": ["打开版本总览", "查看版本全链路"],
+        "tool_results": tool_results,
+    }
+
+
 def task_creation_guide_output(
     *,
     selected_references: list[dict[str, str]],
@@ -432,6 +512,32 @@ def merge_assistant_references(
             if len(references) >= 6:
                 return references
     return references
+
+
+def _iteration_governance_answer(version_items: list[dict[str, Any]]) -> str:
+    if not version_items:
+        return "我没有找到可用的迭代版本治理摘要，请先确认产品和版本范围。"
+    version = version_items[0]
+    title = version.get("title") or version.get("code") or version.get("id") or "当前版本"
+    blocker_count = _safe_int(version.get("blocker_count"))
+    next_actions = [
+        str(action.get("action_label") or action.get("title") or "").strip()
+        for action in version.get("next_actions") or []
+        if isinstance(action, dict)
+    ]
+    next_actions = [action for action in next_actions if action][:3]
+    action_text = "、".join(next_actions) if next_actions else "暂无明确下一步行动"
+    return (
+        f"已读取「{title}」的版本治理摘要：当前 {blocker_count} 个阻塞，"
+        f"优先下一步为 {action_text}。"
+    )
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _ai_capability_specific_scenario_requested(normalized_message: str) -> bool:

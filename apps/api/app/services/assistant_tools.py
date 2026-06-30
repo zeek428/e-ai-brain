@@ -6,6 +6,7 @@ from typing import Any
 from app.services.assistant_draft_builder import AssistantDraftBuilder
 from app.services.assistant_references import normalize_assistant_references
 from app.services.plugin_result_write_records import result_write_record_from_scheduled_run
+from app.services.product_version_dashboard import product_version_dashboard_response
 
 __all__ = ["assistant_tool_results"]
 
@@ -27,6 +28,7 @@ def assistant_tool_results(
     product_id: str | None,
     references: list[dict[str, Any]] | None = None,
     limit: int = 5,
+    user: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Deterministic read-model style tools used before asking the model."""
 
@@ -93,7 +95,14 @@ def assistant_tool_results(
         elif intent == "code_review":
             results.append(_code_review_tool(context, limit=limit))
         elif intent == "iteration":
-            results.append(_iteration_tool(context, limit=limit))
+            results.append(
+                _iteration_tool(
+                    current_store,
+                    context,
+                    limit=limit,
+                    user=user,
+                )
+            )
         elif intent == "bugs":
             results.append(_bugs_tool(context, limit=limit))
         elif intent == "model_gateway":
@@ -631,7 +640,13 @@ def _code_review_tool(context: dict[str, Any], *, limit: int) -> dict[str, Any]:
     }
 
 
-def _iteration_tool(context: dict[str, Any], *, limit: int) -> dict[str, Any]:
+def _iteration_tool(
+    current_store: Any,
+    context: dict[str, Any],
+    *,
+    limit: int,
+    user: dict[str, Any] | None,
+) -> dict[str, Any]:
     requirements = context["requirements"]
     tasks = context["tasks"]
     bugs = context["bugs"]
@@ -650,25 +665,93 @@ def _iteration_tool(context: dict[str, Any], *, limit: int) -> dict[str, Any]:
             or task.get("requirement_id") in version_requirement_ids
         ]
         version_bugs = [bug for bug in bugs if bug.get("version_id") == version["id"]]
-        items.append(
-            {
-                "bug_count": len(version_bugs),
-                "code": version.get("code"),
-                "id": version["id"],
-                "requirement_count": len(version_requirements),
-                "requirements_by_status": _count_by(version_requirements, "status"),
-                "status": version.get("status"),
-                "task_count": len(version_tasks),
-                "title": version.get("name") or version.get("code") or version["id"],
-                "url": f"/delivery/versions?version_id={version['id']}",
-            }
+        item = {
+            "bug_count": len(version_bugs),
+            "code": version.get("code"),
+            "id": version["id"],
+            "requirement_count": len(version_requirements),
+            "requirements_by_status": _count_by(version_requirements, "status"),
+            "status": version.get("status"),
+            "task_count": len(version_tasks),
+            "title": version.get("name") or version.get("code") or version["id"],
+            "url": f"/delivery/versions?version_id={version['id']}&view=dashboard",
+        }
+        item.update(
+            _iteration_dashboard_governance(
+                current_store,
+                str(version["id"]),
+                user=user,
+            )
         )
+        items.append(item)
     return {
         "intent": "iteration",
         "items": items,
         "references": _references("iteration_version", items),
         "summary": {"version_count": len(context["versions"])},
         "tool": "assistant.iteration",
+    }
+
+
+def _iteration_dashboard_governance(
+    current_store: Any,
+    version_id: str,
+    *,
+    user: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if user is None:
+        return {}
+    try:
+        dashboard = product_version_dashboard_response(
+            current_store=current_store,
+            user=user,
+            version_id=version_id,
+        )
+    except Exception:
+        return {}
+    if not dashboard:
+        return {}
+    summary = dashboard.get("summary") or {}
+    blockers = dashboard.get("blockers") or []
+    return {
+        "blocker_count": _safe_int(summary.get("blockers")),
+        "blockers_by_source": _count_by(blockers, "source_type"),
+        "dashboard_url": f"/delivery/versions?version_id={version_id}&view=dashboard",
+        "next_actions": [
+            _iteration_next_action(action)
+            for action in (dashboard.get("next_actions") or [])[:3]
+            if isinstance(action, dict)
+        ],
+        "status_impact": _iteration_status_impact(dashboard.get("status_impact")),
+    }
+
+
+def _iteration_next_action(action: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "action_label": action.get("action_label"),
+        "action_target_id": action.get("action_target_id"),
+        "action_target_type": action.get("action_target_type"),
+        "full_chain_subject_id": action.get("full_chain_subject_id"),
+        "full_chain_subject_type": action.get("full_chain_subject_type"),
+        "priority": _safe_int(action.get("priority")),
+        "reason": action.get("reason"),
+        "resolution_hint": action.get("resolution_hint"),
+        "severity": action.get("severity"),
+        "source_label": action.get("source_label"),
+        "source_type": action.get("source_type"),
+        "title": action.get("title"),
+    }
+
+
+def _iteration_status_impact(status_impact: Any) -> dict[str, Any]:
+    if not isinstance(status_impact, dict) or not status_impact:
+        return {}
+    return {
+        "blocked_count": _safe_int(status_impact.get("blocked_count")),
+        "from_status": status_impact.get("from_status"),
+        "target_status": status_impact.get("target_status"),
+        "unchanged_count": _safe_int(status_impact.get("unchanged_count")),
+        "updated_count": _safe_int(status_impact.get("updated_count")),
     }
 
 
@@ -1575,6 +1658,13 @@ def _run_records_imported(run: dict[str, Any]) -> int:
         run.get("result_summary") if isinstance(run.get("result_summary"), dict) else {}
     )
     value = run.get("records_imported", result_summary.get("records_imported", 0))
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_int(value: Any) -> int:
     try:
         return int(value or 0)
     except (TypeError, ValueError):

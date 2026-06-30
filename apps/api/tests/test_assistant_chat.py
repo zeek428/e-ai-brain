@@ -6370,6 +6370,98 @@ def test_ai_assistant_chat_generates_knowledge_inspection_analysis_draft(monkeyp
     assert run["result"]["source_draft_id"] == draft_item["draft_id"]
 
 
+def test_ai_assistant_iteration_governance_is_deterministic_and_keeps_history(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.products["product_iteration_governance"] = {
+        "code": "iteration-governance",
+        "created_at": "2026-06-30T08:00:00+00:00",
+        "id": "product_iteration_governance",
+        "name": "迭代治理产品",
+        "status": "active",
+        "updated_at": "2026-06-30T08:00:00+00:00",
+    }
+    app.state.store.product_versions["version_iteration_governance"] = {
+        "code": "v1.0",
+        "created_at": "2026-06-30T08:00:00+00:00",
+        "id": "version_iteration_governance",
+        "name": "v1.0 迭代",
+        "product_id": "product_iteration_governance",
+        "status": "testing",
+        "updated_at": "2026-06-30T08:00:00+00:00",
+    }
+    app.state.store.requirements["requirement_iteration_governance"] = {
+        "created_at": "2026-06-30T08:00:00+00:00",
+        "id": "requirement_iteration_governance",
+        "priority": "P1",
+        "product_id": "product_iteration_governance",
+        "status": "testing",
+        "title": "版本治理助手问答",
+        "updated_at": "2026-06-30T08:00:00+00:00",
+        "version_id": "version_iteration_governance",
+    }
+    app.state.store.bugs["bug_iteration_governance"] = {
+        "created_at": "2026-06-30T08:00:00+00:00",
+        "id": "bug_iteration_governance",
+        "product_id": "product_iteration_governance",
+        "severity": "critical",
+        "status": "open",
+        "title": "发布前关键缺陷",
+        "updated_at": "2026-06-30T08:00:00+00:00",
+        "version_id": "version_iteration_governance",
+    }
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("iteration governance should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "请总结当前迭代版本阻塞项、版本总览和下一步行动",
+            "product_id": "product_iteration_governance",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["model"] == "assistant-deterministic"
+    message = payload["message"]
+    assert "版本治理摘要" in message["content"]
+    iteration_tool = next(
+        item for item in message["tool_results"] if item["tool"] == "assistant.iteration"
+    )
+    version_item = iteration_tool["items"][0]
+    assert version_item["id"] == "version_iteration_governance"
+    assert version_item["blocker_count"] >= 2
+    assert [item["source_type"] for item in version_item["next_actions"][:2]] == [
+        "bug",
+        "jenkins_release",
+    ]
+
+    history_response = client.get(
+        f"/api/assistant/conversations/{payload['conversation_id']}/messages",
+        headers=headers,
+    )
+    assert history_response.status_code == 200, history_response.text
+    assistant_message = [
+        item
+        for item in history_response.json()["data"]["items"]
+        if item["role"] == "assistant"
+    ][0]
+    history_iteration_tool = next(
+        item
+        for item in assistant_message["tool_results"]
+        if item["tool"] == "assistant.iteration"
+    )
+    assert history_iteration_tool["items"][0]["next_actions"]
+
+
 def test_ai_assistant_chat_generates_release_risk_analysis_draft(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()

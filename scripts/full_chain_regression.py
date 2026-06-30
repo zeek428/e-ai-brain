@@ -2647,7 +2647,10 @@ def run_regression(
         "/api/assistant/chat",
         {
             "client_request_id": f"full-chain-regression-{slug}",
-            "message": f"请基于产品 {product['name']} 的这次全链路回归引用，帮我新建一个后续跟进任务向导。",
+            "message": (
+                f"请基于产品 {product['name']} 的这次全链路回归引用，"
+                "总结版本总览阻塞项、下一步行动和后续跟进任务。"
+            ),
             "product_id": product["id"],
             "references": [
                 {"id": requirement["id"], "type": "requirement"},
@@ -2657,6 +2660,10 @@ def run_regression(
         },
     )
     assistant_message = assistant.get("message", {})
+    _assert(
+        assistant.get("model") == "assistant-deterministic",
+        f"Assistant version governance question should be deterministic: {assistant}",
+    )
     assistant_message_id = assistant_message.get("id")
     _assert(assistant_message_id, f"Assistant chat response missing message: {assistant}")
     assistant_reference_keys = {
@@ -2671,6 +2678,43 @@ def run_regression(
             expected_reference in assistant_reference_keys,
             f"Assistant response missed reference {expected_reference}: {assistant_message.get('references')}",
         )
+    assistant_tool_results = assistant_message.get("tool_results") or []
+    assistant_iteration_tools = [
+        item for item in assistant_tool_results if item.get("tool") == "assistant.iteration"
+    ]
+    _assert(
+        assistant_iteration_tools,
+        f"Assistant response missed iteration governance tool result: {assistant_tool_results}",
+    )
+    assistant_iteration_items = assistant_iteration_tools[0].get("items") or []
+    assistant_version_items = [
+        item for item in assistant_iteration_items if str(item.get("id")) == version["id"]
+    ]
+    _assert(
+        assistant_version_items,
+        f"Assistant iteration tool missed product version {version['id']}: {assistant_iteration_items}",
+    )
+    assistant_version_item = assistant_version_items[0]
+    _assert(
+        int(assistant_version_item.get("blocker_count") or 0)
+        == int(dashboard["summary"].get("blockers") or 0),
+        f"Assistant iteration blocker count drifted: {assistant_version_item}",
+    )
+    dashboard_next_action_sources = [
+        str(item.get("source_type") or "") for item in dashboard.get("next_actions", [])
+    ]
+    assistant_next_action_sources = [
+        str(item.get("source_type") or "")
+        for item in assistant_version_item.get("next_actions", [])
+    ]
+    _assert(
+        assistant_next_action_sources == dashboard_next_action_sources[:3],
+        (
+            "Assistant iteration tool did not carry version dashboard next_actions: "
+            f"assistant={assistant_version_item.get('next_actions')}, "
+            f"dashboard={dashboard.get('next_actions')}"
+        ),
+    )
     conversation_id = assistant.get("conversation_id") or assistant.get("run", {}).get("conversation_id")
     _assert(conversation_id, f"Assistant response missing conversation_id: {assistant}")
     conversation_messages = client.get(f"/api/assistant/conversations/{conversation_id}/messages")
@@ -2689,6 +2733,28 @@ def run_regression(
     _assert(
         persisted_assistant_messages[0].get("tool_results"),
         f"Persisted assistant message missed tool results: {persisted_assistant_messages[0]}",
+    )
+    persisted_iteration_tools = [
+        item
+        for item in persisted_assistant_messages[0].get("tool_results", [])
+        if item.get("tool") == "assistant.iteration"
+    ]
+    _assert(
+        persisted_iteration_tools,
+        f"Persisted assistant message missed iteration tool result: {persisted_assistant_messages[0]}",
+    )
+    persisted_version_items = [
+        item
+        for item in persisted_iteration_tools[0].get("items", [])
+        if str(item.get("id")) == version["id"]
+    ]
+    _assert(
+        persisted_version_items,
+        f"Persisted assistant iteration tool missed version {version['id']}: {persisted_iteration_tools}",
+    )
+    _assert(
+        persisted_version_items[0].get("next_actions"),
+        f"Persisted assistant iteration tool missed version next_actions: {persisted_version_items[0]}",
     )
     results.append(StepResult("assistant_qa", f"{assistant_message_id} / conversation={conversation_id}"))
 

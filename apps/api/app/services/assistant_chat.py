@@ -34,6 +34,12 @@ from app.services.assistant_chat_intents import (
     assistant_metrics_explanation_requested as _assistant_metrics_explanation_requested,
 )
 from app.services.assistant_chat_intents import (
+    iteration_governance_output as _iteration_governance_output,
+)
+from app.services.assistant_chat_intents import (
+    iteration_governance_requested as _iteration_governance_requested,
+)
+from app.services.assistant_chat_intents import (
     merge_assistant_references as _merge_assistant_references,
 )
 from app.services.assistant_chat_intents import (
@@ -1027,6 +1033,30 @@ def _handle_assistant_metrics_explanation_intent(
     return _assistant_metrics_explanation_output(current_store, user=user)
 
 
+def _handle_iteration_governance_intent(
+    current_store: MemoryStore,
+    *,
+    payload: AssistantChatRequest,
+    user: dict[str, Any],
+    intent: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    del intent
+    try:
+        resolved_references = resolve_assistant_references(
+            current_store,
+            references=payload.references,
+            user=user,
+        )
+    except AssistantReferenceError as exc:
+        raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
+    return _iteration_governance_output(
+        current_store,
+        payload=payload,
+        selected_references=resolved_references["items"],
+        user=user,
+    )
+
+
 def _handle_action_draft_intent(
     current_store: MemoryStore,
     *,
@@ -1311,6 +1341,18 @@ def _deterministic_intent_registry() -> list[dict[str, Any]]:
             "tool": "assistant.metrics_summary",
         },
         {
+            "action": "summarize_iteration_governance",
+            "conflict_policy": "first_match",
+            "confidence": 0.88,
+            "detector": _iteration_governance_requested,
+            "handler": _handle_iteration_governance_intent,
+            "intent_code": "iteration_governance",
+            "priority": 65,
+            "required_refs": [],
+            "summary": "将执行：版本治理摘要",
+            "tool": "assistant.iteration",
+        },
+        {
             "action": "create_action_draft",
             "conflict_policy": "fallback",
             "confidence": 0.7,
@@ -1401,6 +1443,7 @@ def _deterministic_action_draft_output(
         message=payload.message,
         product_id=payload.product_id,
         references=resolved_references["items"],
+        user=user,
     )
     draft_results = [
         result
