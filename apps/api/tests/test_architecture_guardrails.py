@@ -7,7 +7,7 @@ MAX_DOMAIN_FILE_LINES = 2800
 MAX_AI_EXECUTOR_RUNNER_LINES = 2200
 MAX_CODE_INSPECTION_SERVICE_LINES = 2400
 MAX_PLUGIN_MAIN_SERVICE_LINES = 2300
-MAX_PRODUCT_VERSION_DASHBOARD_LINES = 1800
+MAX_PRODUCT_VERSION_DASHBOARD_LINES = 1300
 MAX_SCHEDULED_JOB_SERVICE_LINES = 2200
 MAX_ASSISTANT_ACTION_DRAFT_LINES = 2000
 MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
@@ -371,6 +371,25 @@ def test_product_version_dashboard_uses_split_evidence_coverage_module():
     assert "def version_evidence_coverage(" in helper_source
     assert "def _version_evidence_coverage(" not in entrypoint_source
     assert "def _evidence_domain(" not in entrypoint_source
+
+
+def test_product_version_dashboard_uses_split_delivery_overview_module():
+    helper_path = REPO_ROOT / "apps/api/app/services/product_version_delivery_overview.py"
+    entrypoint_path = REPO_ROOT / "apps/api/app/services/product_version_dashboard.py"
+
+    assert helper_path.exists(), (
+        "Move product version dashboard delivery stage and governance conclusion "
+        "projection to a split module."
+    )
+    entrypoint_source = entrypoint_path.read_text(encoding="utf-8")
+    helper_source = helper_path.read_text(encoding="utf-8")
+    assert "from app.services.product_version_delivery_overview import" in entrypoint_source
+    assert "def version_governance_conclusion(" in helper_source
+    assert "def version_delivery_stage_overview(" in helper_source
+    assert "def successful_release(" in helper_source
+    assert "def _version_governance_conclusion(" not in entrypoint_source
+    assert "def _delivery_stage_overview(" not in entrypoint_source
+    assert "def _delivery_stage(" not in entrypoint_source
 
 
 def test_code_inspections_uses_split_common_module():
