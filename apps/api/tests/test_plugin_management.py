@@ -937,6 +937,27 @@ def test_internal_data_source_supports_source_filters_and_field_permissions():
     }
     assert "description" in result["schemas"]["requirements"]["fields"]
 
+    detail_permission_result = read_internal_data_source(
+        current_store=store,
+        input_payload={},
+        request_config={
+            "query": {
+                "field_mode": "detail",
+                "source_types": ["requirements"],
+            },
+        },
+        user={
+            "id": "internal_data_source_detail_reader",
+            "permissions": ["system.internal_data_source.detail"],
+            "roles": [],
+        },
+    )
+    assert "description" in detail_permission_result["schemas"]["requirements"]["fields"]
+    assert detail_permission_result["datasets"]["requirements"][0]["description"] in {
+        "计划中需求详情",
+        "草稿需求详情",
+    }
+
 
 def test_plugin_request_config_replaces_path_templates_from_connection_params():
     connection = {

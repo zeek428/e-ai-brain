@@ -216,6 +216,37 @@ def test_admin_can_create_role_update_permissions_disable_and_enable():
     assert enabled.json()["data"]["status"] == "active"
 
 
+def test_internal_data_source_detail_permission_is_assignable():
+    headers = auth_headers()
+    permissions_response = client.get("/api/system/permissions", headers=headers)
+    assert permissions_response.status_code == 200
+    permission_codes = {
+        item["code"]
+        for item in permissions_response.json()["data"]["items"]
+    }
+    assert "system.internal_data_source.detail" in permission_codes
+
+    role = client.post(
+        "/api/system/roles",
+        headers=headers,
+        json={
+            "code": "internal_data_source_detail_reader",
+            "name": "Internal Data Source Detail Reader",
+            "category": "system",
+        },
+    ).json()["data"]
+    permissions = client.put(
+        f"/api/system/roles/{role['id']}/permissions",
+        headers=headers,
+        json={"permission_codes": ["system.internal_data_source.detail"]},
+    )
+
+    assert permissions.status_code == 200
+    assert permissions.json()["data"]["permission_codes"] == [
+        "system.internal_data_source.detail",
+    ]
+
+
 def test_system_roles_list_supports_remote_pagination_filters_sort_and_observability():
     headers = auth_headers()
     for code, name in (
