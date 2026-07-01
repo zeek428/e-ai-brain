@@ -9,6 +9,7 @@ from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.store import MemoryStore
 from app.main import app
 from app.services.plugin_constants import PLUGIN_PROTOCOLS
+from app.services.plugin_templates import STANDARD_PLUGIN_CONNECTION_DEFAULTS
 from app.services.platform_status import runtime_data_access_mode, tcp_endpoint_from_url
 from app.services.task_workflow_context import task_workflow_read_store, task_workflow_source_store
 
@@ -544,6 +545,31 @@ def test_integration_plugin_protocol_constraints_cover_supported_protocols():
         "must include every supported plugin protocol:\n"
         + "\n".join(missing_by_migration)
     )
+
+
+def test_ai_executor_official_default_docs_match_model_gateway_template():
+    ai_executor_defaults = STANDARD_PLUGIN_CONNECTION_DEFAULTS["ai_executor"]
+    ai_executor_query = ai_executor_defaults["request_config"]["query"]
+
+    assert ai_executor_defaults["endpoint_url"] == "model-gateway://default"
+    assert ai_executor_query["executor_type"] == "model_gateway"
+    assert ai_executor_query["runner_id"] == "ai_executor_runner_system_default"
+    assert ai_executor_query["supported_executor_types"][0] == "model_gateway"
+
+    repository_root = Path(__file__).resolve().parents[3]
+    spec_source = (
+        repository_root / "docs/02-specs/enterprise-ai-brain/spec.md"
+    ).read_text()
+    integration_plugin_line = next(
+        line
+        for line in spec_source.splitlines()
+        if line.startswith("| integration_plugins |")
+    )
+
+    assert "`executor_type=model_gateway`" in integration_plugin_line
+    assert "`model-gateway://default`" in integration_plugin_line
+    assert "`runner_id=ai_executor_runner_system_default`" in integration_plugin_line
+    assert "`executor_type=codex`" not in integration_plugin_line
 
 
 def test_postgres_repository_patches_additive_schema_gaps_for_existing_volumes():

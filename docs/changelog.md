@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- 修正技术规格中 AI 执行器官方连接默认值残留旧口径的问题：官方默认连接应使用系统模型网关 `executor_type=model_gateway` 和 `ai_executor_runner_system_default`，只有本地 Runner 场景才选择 Codex/Claude/Hermes/OpenClaw。
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
