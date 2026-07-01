@@ -608,6 +608,7 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                         "path": "request_config.query.source_filters.requirements.status",
                         "required": False,
                         "type": "select",
+                        "visible_when_source_types": ["requirements"],
                     },
                     {
                         "description": "只作用于需求数据。",
@@ -621,6 +622,7 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                         "path": "request_config.query.source_filters.requirements.priority",
                         "required": False,
                         "type": "select",
+                        "visible_when_source_types": ["requirements"],
                     },
                     {
                         "description": "只作用于 Bug 数据。",
@@ -639,6 +641,7 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                         "path": "request_config.query.source_filters.bugs.status",
                         "required": False,
                         "type": "select",
+                        "visible_when_source_types": ["bugs"],
                     },
                     {
                         "description": "只作用于 Bug 数据。",
@@ -653,6 +656,7 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                         "path": "request_config.query.source_filters.bugs.severity",
                         "required": False,
                         "type": "select",
+                        "visible_when_source_types": ["bugs"],
                     },
                 ],
             },

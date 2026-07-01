@@ -378,6 +378,7 @@ export type PluginConnectionSchemaFieldRecord = {
   required?: boolean;
   supports_system_variables?: boolean;
   type?: string;
+  visible_when_source_types?: string[];
 };
 
 export type PluginConnectionSchemaSectionRecord = {

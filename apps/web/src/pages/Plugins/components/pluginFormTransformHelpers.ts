@@ -235,6 +235,28 @@ function pathSegments(path?: string): string[] {
   return path ? path.split('.').map((segment) => segment.trim()).filter(Boolean) : [];
 }
 
+function schemaStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  return value ? [String(value)] : [];
+}
+
+function schemaFieldVisibleForValues(
+  field: PluginConnectionSchemaFieldRecord,
+  schemaValues: Record<string, unknown>,
+) {
+  const requiredSourceTypes = field.visible_when_source_types ?? [];
+  if (requiredSourceTypes.length === 0) {
+    return true;
+  }
+  const selectedSourceTypes = new Set(schemaStringList(schemaValues.source_types));
+  return requiredSourceTypes.some((sourceType) => selectedSourceTypes.has(sourceType));
+}
+
 function valueAtPath(source: Record<string, unknown>, path?: string): unknown {
   return pathSegments(path).reduce<unknown>((current, segment) => {
     if (!current || typeof current !== 'object' || Array.isArray(current)) {
@@ -335,7 +357,7 @@ function applySchemaValuesToRequestConfig(
   const root: Record<string, unknown> = { request_config: { ...requestConfig } };
   schemaFields(schema).forEach((field) => {
     const value = schemaValues[field.key];
-    if (value === undefined) {
+    if (value === undefined || !schemaFieldVisibleForValues(field, schemaValues)) {
       return;
     }
     if (field.type === 'github_repository_url') {

@@ -37,6 +37,15 @@ function getDialogField<T extends HTMLElement = HTMLElement>(dialog: HTMLElement
   return field!;
 }
 
+function removeSelectedTag(dialog: HTMLElement, label: string) {
+  const tag = within(dialog).getByText(label).closest('.ant-select-selection-item');
+  expect(tag).toBeTruthy();
+  const removeButton = tag!.querySelector<HTMLElement>('.ant-select-selection-item-remove');
+  expect(removeButton).toBeTruthy();
+  fireEvent.mouseDown(removeButton!);
+  fireEvent.click(removeButton!);
+}
+
 function pluginConnectionTestBody() {
   return {
     data: {
@@ -546,6 +555,7 @@ function installPluginsFetchMock(
                         path: 'request_config.query.source_filters.requirements.status',
                         required: false,
                         type: 'select',
+                        visible_when_source_types: ['requirements'],
                       },
                       {
                         key: 'requirements_priority',
@@ -558,6 +568,7 @@ function installPluginsFetchMock(
                         path: 'request_config.query.source_filters.requirements.priority',
                         required: false,
                         type: 'select',
+                        visible_when_source_types: ['requirements'],
                       },
                       {
                         key: 'bugs_status',
@@ -569,6 +580,7 @@ function installPluginsFetchMock(
                         path: 'request_config.query.source_filters.bugs.status',
                         required: false,
                         type: 'select',
+                        visible_when_source_types: ['bugs'],
                       },
                       {
                         key: 'bugs_severity',
@@ -580,6 +592,7 @@ function installPluginsFetchMock(
                         path: 'request_config.query.source_filters.bugs.severity',
                         required: false,
                         type: 'select',
+                        visible_when_source_types: ['bugs'],
                       },
                     ],
                     key: 'source_filters',
@@ -2513,6 +2526,50 @@ describe('PluginsPage', () => {
         }),
       ),
     );
+
+    fireEvent.click(screen.getByRole('button', { name: '新增连接' }));
+    const filteredDialog = await findDialogByTitle('新增连接');
+    fireEvent.mouseDown(within(filteredDialog).getByLabelText('插件'));
+    fireEvent.click(await screen.findByText('内部数据源 (internal_read_model)'));
+
+    await waitFor(() =>
+      expect(within(filteredDialog).getByLabelText('Bug 状态')).toBeInTheDocument(),
+    );
+    fireEvent.mouseDown(within(filteredDialog).getByLabelText('Bug 状态'));
+    fireEvent.click(await screen.findByText('待处理'));
+    fireEvent.mouseDown(within(filteredDialog).getByLabelText('需求优先级'));
+    fireEvent.click((await screen.findAllByText('P0')).at(-1)!);
+
+    removeSelectedTag(filteredDialog, '需求数据');
+    removeSelectedTag(filteredDialog, 'Bug 数据');
+
+    await waitFor(() =>
+      expect(within(filteredDialog).queryByLabelText('需求优先级')).not.toBeInTheDocument(),
+    );
+    expect(within(filteredDialog).queryByLabelText('Bug 状态')).not.toBeInTheDocument();
+    expect(within(filteredDialog).queryByText('按源过滤')).not.toBeInTheDocument();
+
+    fireEvent.change(within(filteredDialog).getByLabelText('名称'), {
+      target: { value: '内部产品洞察连接' },
+    });
+    fireEvent.click(within(filteredDialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() =>
+      expect(connectionBodies.at(-1)).toEqual(
+        expect.objectContaining({
+          name: '内部产品洞察连接',
+          request_config: {
+            query: expect.objectContaining({
+              source_types: ['user_insights', 'products'],
+            }),
+          },
+        }),
+      ),
+    );
+    const latestConnectionBody = connectionBodies.at(-1) as
+      | { request_config?: { query?: Record<string, unknown> } }
+      | undefined;
+    expect(latestConnectionBody?.request_config?.query).not.toHaveProperty('source_filters');
   });
 
   it('can edit existing connections', async () => {

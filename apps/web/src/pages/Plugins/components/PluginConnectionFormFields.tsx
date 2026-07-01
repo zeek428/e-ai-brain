@@ -96,6 +96,28 @@ function normalizeSchemaOptions(field: PluginConnectionSchemaFieldRecord) {
   ));
 }
 
+function stringValues(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  return value ? [String(value)] : [];
+}
+
+function isSchemaFieldVisible(
+  field: PluginConnectionSchemaFieldRecord,
+  selectedSourceTypes: unknown,
+) {
+  const requiredSourceTypes = field.visible_when_source_types ?? [];
+  if (requiredSourceTypes.length === 0) {
+    return true;
+  }
+  const selected = new Set(stringValues(selectedSourceTypes));
+  return requiredSourceTypes.some((sourceType) => selected.has(sourceType));
+}
+
 type ConnectionSchemaFieldsProps = {
   pluginCode?: string;
   schema?: PluginConnectionSchemaRecord;
@@ -108,6 +130,9 @@ export function ConnectionSchemaFields({
   systemVariableOptions,
 }: ConnectionSchemaFieldsProps) {
   const form = Form.useFormInstance();
+  const watchedSourceTypes = Form.useWatch(['schema_values', 'source_types'], form);
+  const selectedSourceTypes = watchedSourceTypes
+    ?? form.getFieldValue(['schema_values', 'source_types']);
   const sections = schema?.sections ?? [];
   if (!sections.length) {
     return null;
@@ -139,89 +164,105 @@ export function ConnectionSchemaFields({
           type="info"
         />
       ) : null}
-      {sections.map((section) => (
-        <Space key={section.key} orientation="vertical" size={8} style={{ width: '100%' }}>
-          <div style={{ color: '#53627a', fontWeight: 600 }}>{section.title}</div>
-          <Space wrap align="start">
-            {(section.fields ?? []).map((field) => {
-              const rules = [
-                ...(field.required ? [{ required: true, message: `请输入${field.label}` }] : []),
-                ...(field.type === 'github_repository_url'
-                  ? [{
-                    validator: (_: unknown, value: unknown) => (
-                      !value || parseGitRepositoryAddress(value)
-                        ? Promise.resolve()
-                        : Promise.reject(new Error('请输入有效的 GitHub 仓库地址，例如 https://github.com/acme/ai-brain.git'))
-                    ),
-                  }]
-                  : []),
-                ...(field.type === 'gitlab_project_url'
-                  ? [{
-                    validator: (_: unknown, value: unknown) => (
-                      !value || parseGitLabProjectAddress(value)
-                        ? Promise.resolve()
-                        : Promise.reject(new Error('请输入有效的 GitLab 地址，例如 http://gitlab.local/acme/ai-brain.git'))
-                    ),
-                  }]
-                  : []),
-              ];
-              const fieldName = ['schema_values', field.key];
-              const schemaOptions = normalizeSchemaOptions(field);
-              const control = field.type === 'multi_select' && schemaOptions.length > 0 ? (
-                <Select
-                  mode="multiple"
-                  options={schemaOptions}
-                  placeholder={field.placeholder || field.label}
-                  style={{ minWidth: 320 }}
-                />
-              ) : field.type === 'select' && schemaOptions.length > 0 ? (
-                <Select
-                  allowClear={!field.required}
-                  options={schemaOptions}
-                  placeholder={field.placeholder || field.label}
-                  style={{ width: 240 }}
-                />
-              ) : field.type === 'number' ? (
-                <InputNumber placeholder={field.placeholder || field.label} style={{ width: 240 }} />
-              ) : field.type === 'boolean' ? (
-                <Switch />
-              ) : (
-                <Input
-                  placeholder={field.placeholder || field.label}
-                  style={{ width: ['github_repository_url', 'gitlab_project_url'].includes(field.type ?? '') ? 420 : 240 }}
-                />
-              );
-              return (
-                <Space key={field.key} align="baseline" size={6}>
-                  <Form.Item
-                    extra={field.description}
-                    label={field.label}
-                    name={fieldName}
-                    rules={rules.length ? rules : undefined}
-                    style={{ marginBottom: 8 }}
-                    valuePropName={field.type === 'boolean' ? 'checked' : 'value'}
-                  >
-                    {control}
-                  </Form.Item>
-                  {field.supports_system_variables ? (
-                    <Select
-                      allowClear
-                      options={systemVariableOptions}
-                      placeholder="系统变量"
-                      style={{ width: 190, marginTop: 30 }}
-                      onChange={(value) => {
-                        if (value) {
-                          form.setFieldValue(fieldName, value);
-                        }
-                      }}
-                    />
-                  ) : null}
-                </Space>
-              );
-            })}
+      {sections.map((section) => {
+        const visibleFields = (section.fields ?? []).filter((field) => (
+          isSchemaFieldVisible(field, selectedSourceTypes)
+        ));
+        if (visibleFields.length === 0) {
+          return null;
+        }
+        return (
+          <Space key={section.key} orientation="vertical" size={8} style={{ width: '100%' }}>
+            <div style={{ color: '#53627a', fontWeight: 600 }}>{section.title}</div>
+            <Space wrap align="start">
+              {visibleFields.map((field) => {
+                const rules = [
+                  ...(field.required ? [{ required: true, message: `请输入${field.label}` }] : []),
+                  ...(field.type === 'github_repository_url'
+                    ? [{
+                      validator: (_: unknown, value: unknown) => (
+                        !value || parseGitRepositoryAddress(value)
+                          ? Promise.resolve()
+                          : Promise.reject(new Error(
+                            '请输入有效的 GitHub 仓库地址，例如 https://github.com/acme/ai-brain.git',
+                          ))
+                      ),
+                    }]
+                    : []),
+                  ...(field.type === 'gitlab_project_url'
+                    ? [{
+                      validator: (_: unknown, value: unknown) => (
+                        !value || parseGitLabProjectAddress(value)
+                          ? Promise.resolve()
+                          : Promise.reject(new Error(
+                            '请输入有效的 GitLab 地址，例如 http://gitlab.local/acme/ai-brain.git',
+                          ))
+                      ),
+                    }]
+                    : []),
+                ];
+                const fieldName = ['schema_values', field.key];
+                const schemaOptions = normalizeSchemaOptions(field);
+                const control = field.type === 'multi_select' && schemaOptions.length > 0 ? (
+                  <Select
+                    mode="multiple"
+                    options={schemaOptions}
+                    placeholder={field.placeholder || field.label}
+                    style={{ minWidth: 320 }}
+                  />
+                ) : field.type === 'select' && schemaOptions.length > 0 ? (
+                  <Select
+                    allowClear={!field.required}
+                    options={schemaOptions}
+                    placeholder={field.placeholder || field.label}
+                    style={{ width: 240 }}
+                  />
+                ) : field.type === 'number' ? (
+                  <InputNumber placeholder={field.placeholder || field.label} style={{ width: 240 }} />
+                ) : field.type === 'boolean' ? (
+                  <Switch />
+                ) : (
+                  <Input
+                    placeholder={field.placeholder || field.label}
+                    style={{
+                      width: ['github_repository_url', 'gitlab_project_url'].includes(field.type ?? '')
+                        ? 420
+                        : 240,
+                    }}
+                  />
+                );
+                return (
+                  <Space key={field.key} align="baseline" size={6}>
+                    <Form.Item
+                      extra={field.description}
+                      label={field.label}
+                      name={fieldName}
+                      rules={rules.length ? rules : undefined}
+                      style={{ marginBottom: 8 }}
+                      valuePropName={field.type === 'boolean' ? 'checked' : 'value'}
+                    >
+                      {control}
+                    </Form.Item>
+                    {field.supports_system_variables ? (
+                      <Select
+                        allowClear
+                        options={systemVariableOptions}
+                        placeholder="系统变量"
+                        style={{ width: 190, marginTop: 30 }}
+                        onChange={(value) => {
+                          if (value) {
+                            form.setFieldValue(fieldName, value);
+                          }
+                        }}
+                      />
+                    ) : null}
+                  </Space>
+                );
+              })}
+            </Space>
           </Space>
-        </Space>
-      ))}
+        );
+      })}
     </Space>
   );
 }
