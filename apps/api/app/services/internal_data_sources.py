@@ -219,9 +219,16 @@ def _string_list(value: Any) -> list[str]:
 
 
 def _normalize_source_types(value: Any) -> list[str]:
-    source_types = _string_list(value)
-    if not source_types:
-        source_types = list(INTERNAL_DATA_SOURCE_DEFAULT_TYPES)
+    raw_source_types = _string_list(value)
+    if not raw_source_types:
+        raw_source_types = list(INTERNAL_DATA_SOURCE_DEFAULT_TYPES)
+    source_types: list[str] = []
+    seen: set[str] = set()
+    for source_type in raw_source_types:
+        if source_type in seen:
+            continue
+        source_types.append(source_type)
+        seen.add(source_type)
     unsupported = [source for source in source_types if source not in INTERNAL_DATA_SOURCE_TYPES]
     if unsupported:
         raise api_error(

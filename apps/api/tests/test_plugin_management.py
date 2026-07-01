@@ -989,6 +989,28 @@ def test_internal_data_source_supports_source_filters_and_field_permissions():
         "requirements": {"status": "planned"},
     }
 
+    duplicate_source_result = read_internal_data_source(
+        current_store=store,
+        input_payload={},
+        request_config={
+            "query": {
+                "field_mode": "detail",
+                "source_filters": {
+                    "bugs": {"severity": "critical"},
+                    "requirements": {"status": "planned"},
+                },
+                "source_types": ["requirements", "requirements", "bugs", "bugs"],
+            },
+        },
+        user=ADMIN_SERVICE_USER,
+    )
+    assert duplicate_source_result["source_types"] == ["requirements", "bugs"]
+    assert list(duplicate_source_result["datasets"]) == ["requirements", "bugs"]
+    assert duplicate_source_result["source_counts"] == {
+        "requirements": 1,
+        "bugs": 1,
+    }
+
     detail_permission_result = read_internal_data_source(
         current_store=store,
         input_payload={},

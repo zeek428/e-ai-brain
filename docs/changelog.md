@@ -12,6 +12,7 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 内部数据源读取解析对 `source_types` 做服务端保序去重，连接测试预览和动作读取响应不再因旧客户端重复传源数据而出现重复摘要。
 - 内部数据源连接测试预览和动作读取按当前 `source_types` 裁剪残留 `source_filters`，旧客户端或旧 JSON 配置带入未选源过滤时，响应过滤摘要只保留实际生效条件。
 - 内部数据源连接表单的“按源过滤”字段按 `source_types` 联动展示：只选择用户洞察/产品时不再显示需求或 Bug 过滤，且隐藏字段不会继续写入 `source_filters`。
 - 内部数据源官方插件的连接默认源数据和 `source_types` 多选项改为复用服务端内部数据源注册表生成，避免新增内部业务源时读取层、插件市场 schema 和默认连接模板不一致。
