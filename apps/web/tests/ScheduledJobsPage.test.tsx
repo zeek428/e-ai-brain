@@ -2076,7 +2076,8 @@ describe('ScheduledJobsPage', () => {
     expect(assistantParams.get('reference_id')).toBe('scheduled_job_run_weekly_feedback');
     expect(assistantParams.get('prompt')).toBe('帮我分析这次运行结果');
 
-    const insightDraftLink = within(dialog).getByRole('link', { name: '转洞察草案' });
+    fireEvent.click(within(dialog).getByRole('button', { name: '转业务草案' }));
+    const insightDraftLink = await screen.findByRole('link', { name: '转洞察草案' });
     expect(insightDraftLink).toHaveAttribute('href');
     const insightDraftHref = insightDraftLink.getAttribute('href') ?? '';
     expect(insightDraftHref.startsWith('/assistant?')).toBe(true);
@@ -2085,6 +2086,22 @@ describe('ScheduledJobsPage', () => {
     expect(insightDraftParams.get('reference_id')).toBe('scheduled_job_run_weekly_feedback');
     expect(insightDraftParams.get('prompt')).toBe(
       '请基于这次定时作业运行结果生成用户洞察草案，保留数据来源、AI处理结论和结果动作反馈。',
+    );
+    const requirementDraftLink = screen.getByRole('link', { name: '转需求草案' });
+    const requirementDraftHref = requirementDraftLink.getAttribute('href') ?? '';
+    const requirementDraftParams = new URLSearchParams(requirementDraftHref.split('?')[1]);
+    expect(requirementDraftParams.get('reference_type')).toBe('scheduled_job_run');
+    expect(requirementDraftParams.get('reference_id')).toBe('scheduled_job_run_weekly_feedback');
+    expect(requirementDraftParams.get('prompt')).toBe(
+      '请基于这次定时作业运行结果提炼可落地的需求草案，包含背景、目标、价值、验收标准和建议优先级。',
+    );
+    const bugDraftLink = screen.getByRole('link', { name: '转 Bug 草案' });
+    const bugDraftHref = bugDraftLink.getAttribute('href') ?? '';
+    const bugDraftParams = new URLSearchParams(bugDraftHref.split('?')[1]);
+    expect(bugDraftParams.get('reference_type')).toBe('scheduled_job_run');
+    expect(bugDraftParams.get('reference_id')).toBe('scheduled_job_run_weekly_feedback');
+    expect(bugDraftParams.get('prompt')).toBe(
+      '请基于这次定时作业运行结果识别需要跟进的缺陷或异常，生成 Bug 草案，包含复现线索、影响范围、严重级别和建议处理人。',
     );
 
     fireEvent.click(within(dialog).getByRole('button', { name: '导出 JSON' }));

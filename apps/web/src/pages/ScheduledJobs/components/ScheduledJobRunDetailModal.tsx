@@ -1,12 +1,15 @@
 import {
+  BugOutlined,
   BulbOutlined,
   CopyOutlined,
+  DownOutlined,
   DownloadOutlined,
   EditOutlined,
+  FileAddOutlined,
   ReloadOutlined,
   RobotOutlined,
 } from '@ant-design/icons';
-import { Button, Descriptions, Modal, Space } from 'antd';
+import { Button, Descriptions, Dropdown, Modal, Space } from 'antd';
 
 import type {
   ResultWriteRecord,
@@ -67,6 +70,14 @@ function assistantRunComparisonPrompt() {
 
 function assistantRunInsightDraftPrompt() {
   return '请基于这次定时作业运行结果生成用户洞察草案，保留数据来源、AI处理结论和结果动作反馈。';
+}
+
+function assistantRunRequirementDraftPrompt() {
+  return '请基于这次定时作业运行结果提炼可落地的需求草案，包含背景、目标、价值、验收标准和建议优先级。';
+}
+
+function assistantRunBugDraftPrompt() {
+  return '请基于这次定时作业运行结果识别需要跟进的缺陷或异常，生成 Bug 草案，包含复现线索、影响范围、严重级别和建议处理人。';
 }
 
 function assistantRunFollowupUrl(run: ScheduledJobRunRecord, prompt = assistantRunFollowupPrompt(run)) {
@@ -187,6 +198,26 @@ export function ScheduledJobRunDetailModal({
     );
   };
 
+  const businessDraftItems = run
+    ? [
+        {
+          icon: <BulbOutlined />,
+          key: 'insight-draft',
+          label: <a href={assistantRunFollowupUrl(run, assistantRunInsightDraftPrompt())}>转洞察草案</a>,
+        },
+        {
+          icon: <FileAddOutlined />,
+          key: 'requirement-draft',
+          label: <a href={assistantRunFollowupUrl(run, assistantRunRequirementDraftPrompt())}>转需求草案</a>,
+        },
+        {
+          icon: <BugOutlined />,
+          key: 'bug-draft',
+          label: <a href={assistantRunFollowupUrl(run, assistantRunBugDraftPrompt())}>转 Bug 草案</a>,
+        },
+      ]
+    : [];
+
   return (
     <Modal
       destroyOnHidden
@@ -218,13 +249,12 @@ export function ScheduledJobRunDetailModal({
             </Button>
           ) : null}
           {run ? (
-            <Button
-              aria-label="转洞察草案"
-              href={assistantRunFollowupUrl(run, assistantRunInsightDraftPrompt())}
-              icon={<BulbOutlined />}
-            >
-              转洞察草案
-            </Button>
+            <Dropdown menu={{ items: businessDraftItems }} trigger={['click']}>
+              <Button aria-label="转业务草案" icon={<BulbOutlined />}>
+                转业务草案
+                <DownOutlined />
+              </Button>
+            </Dropdown>
           ) : null}
           {run?.status === 'failed' ? (
             <>
