@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from zipfile import ZipFile
 from zoneinfo import ZoneInfo
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import app.services.scheduled_job_ai_capabilities as scheduled_job_ai_capabilities_service
@@ -284,6 +286,38 @@ def test_skill_output_schema_contract_supports_extended_jsonpath():
         "output_schema": {},
         "status": "not_required",
     }
+
+
+def test_skill_output_json_contract_rejects_nested_array_item_type_mismatch():
+    schema = {
+        "properties": {
+            "insights": {
+                "items": {
+                    "properties": {
+                        "content": {"type": "string"},
+                        "score": {"type": ["number", "null"]},
+                    },
+                    "required": ["content", "score"],
+                    "type": "object",
+                },
+                "type": ["null", "array"],
+            },
+        },
+        "required": ["insights"],
+        "type": "object",
+    }
+
+    with pytest.raises(HTTPException) as exc_info:
+        scheduled_job_ai_processing_service.validate_skill_output_json_contract(
+            {"insights": [{"content": "响应慢", "score": "high"}]},
+            schema,
+        )
+
+    assert exc_info.value.detail["code"] == "SKILL_OUTPUT_SCHEMA_INVALID"
+    assert (
+        "$.insights[0].score expected number, got string"
+        in exc_info.value.detail["message"]
+    )
 
 
 def test_native_code_scan_repository_ids_merge_multi_and_single_refs():
@@ -2117,6 +2151,148 @@ def test_scheduled_job_validates_skill_output_schema_before_ai_processing(monkey
     skill_node = run["result_summary"]["execution_nodes"]["skill_processing"]
     assert skill_node["status"] == "failed"
     assert "insights_path" in skill_node["error_message"]
+
+
+def test_scheduled_job_rejects_model_output_type_mismatch_before_result_actions(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product = create_product(admin_headers)
+    model_gateway = create_model_gateway(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "feedback_output_type_skill",
+            "input_schema": {"type": "object"},
+            "name": "反馈输出类型 Skill",
+            "output_schema": {
+                "properties": {"insights": {"type": "array"}},
+                "required": ["insights"],
+                "type": "object",
+            },
+            "prompt_template": "输出 insights 数组。",
+            "status": "active",
+            "version": "1.0.0",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "feedback_output_type_agent",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "反馈输出类型 AI角色",
+            "status": "active",
+            "system_prompt": "输出结构化反馈洞察。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    class InvalidModelResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            content = {"insights": "not-a-list", "row_count": 1}
+            return json.dumps(
+                {
+                    "choices": [
+                        {"message": {"content": json.dumps(content, ensure_ascii=False)}},
+                    ],
+                    "usage": {"completion_tokens": 8, "prompt_tokens": 16, "total_tokens": 24},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        scheduled_job_ai_processing_service,
+        "urlopen",
+        lambda *_args, **_kwargs: InvalidModelResponse(),
+    )
+
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "output_type_feedback_reader",
+            "name": "输出类型反馈读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://output-type-feedback.example.com",
+            "environment": "prod",
+            "name": "输出类型反馈连接",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_output_type_feedback",
+            "connection_id": connection["id"],
+            "name": "拉取输出类型反馈",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {"row_count": 1, "rows": [{"content": "卡顿"}]},
+                "path": "/feedback",
+            },
+            "result_mapping": {
+                "insights_path": "$.insights",
+                "records_imported_path": "$.row_count",
+                "write_target": "user_feedback_insights",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "agent_id": agent["id"],
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "user_feedback_insight_extract",
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "输出类型 Schema 校验作业",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "schedule_type": "manual",
+            "skill_ids": [skill["id"]],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    run = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    ).json()["data"]
+
+    assert run["status"] == "failed"
+    assert run["error_code"] == "SKILL_OUTPUT_SCHEMA_INVALID"
+    skill_node = run["result_summary"]["execution_nodes"]["skill_processing"]
+    assert skill_node["status"] == "failed"
+    assert "$.insights expected array, got string" in skill_node["error_message"]
+    assert run["result_summary"]["execution_nodes"]["result_action"]["status"] == "not_run"
+    feedback_items = client.get(
+        f"/api/insights/user-feedback?product_id={product['id']}",
+        headers=admin_headers,
+    ).json()["data"]
+    assert feedback_items["total"] == 0
 
 
 def test_user_feedback_job_continues_after_result_action_mapping_failure(monkeypatch):

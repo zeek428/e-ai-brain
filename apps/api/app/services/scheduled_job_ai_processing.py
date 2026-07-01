@@ -446,20 +446,119 @@ def validate_skill_output_json_contract(
 ) -> None:
     if not schema:
         return
-    required = schema.get("required")
-    if not isinstance(required, list):
-        return
-    missing = [
-        item
-        for item in required
-        if isinstance(item, str) and item not in output_json
-    ]
-    if missing:
+    errors = _skill_output_schema_errors(output_json, schema, "$")
+    if errors:
         raise api_error(
             400,
             "SKILL_OUTPUT_SCHEMA_INVALID",
-            f"AI output is missing required field(s): {', '.join(missing)}",
+            f"AI output does not match Skill output schema: {'; '.join(errors[:5])}",
         )
+
+
+def _skill_output_schema_errors(
+    value: Any,
+    schema: Any,
+    path: str,
+) -> list[str]:
+    if not isinstance(schema, dict) or not schema:
+        return []
+    schema_type = schema.get("type")
+    allowed_types = (
+        [item for item in schema_type if isinstance(item, str)]
+        if isinstance(schema_type, list)
+        else [schema_type] if isinstance(schema_type, str) else []
+    )
+    if value is None and "null" in allowed_types:
+        return []
+    non_null_types = [item for item in allowed_types if item != "null"]
+    if not non_null_types:
+        if "properties" in schema:
+            non_null_types = ["object"]
+        elif "items" in schema:
+            non_null_types = ["array"]
+    errors: list[str] = []
+    matched_types = [
+        item for item in non_null_types if _json_value_matches_schema_type(value, item)
+    ]
+    if non_null_types and not matched_types:
+        expected = " or ".join(non_null_types)
+        return [f"{path} expected {expected}, got {_json_value_type_name(value)}"]
+    effective_type = (
+        matched_types[0]
+        if matched_types
+        else non_null_types[0] if non_null_types else None
+    )
+    if "enum" in schema:
+        enum = schema.get("enum")
+        if isinstance(enum, list) and value not in enum:
+            errors.append(f"{path} must be one of {enum}")
+    if effective_type == "object" or isinstance(schema.get("properties"), dict):
+        if not isinstance(value, dict):
+            return errors
+        required = schema.get("required")
+        if isinstance(required, list):
+            for item in required:
+                if isinstance(item, str) and item not in value:
+                    errors.append(f"{path}.{item} is required")
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            for key, property_schema in properties.items():
+                if key in value:
+                    errors.extend(
+                        _skill_output_schema_errors(
+                            value[key],
+                            property_schema,
+                            f"{path}.{key}",
+                        ),
+                    )
+        return errors
+    if effective_type == "array" or "items" in schema:
+        if not isinstance(value, list):
+            return errors
+        items_schema = schema.get("items")
+        if isinstance(items_schema, dict):
+            for index, item in enumerate(value):
+                errors.extend(
+                    _skill_output_schema_errors(item, items_schema, f"{path}[{index}]"),
+                )
+        return errors
+    return errors
+
+
+def _json_value_matches_schema_type(value: Any, schema_type: str) -> bool:
+    if schema_type == "object":
+        return isinstance(value, dict)
+    if schema_type == "array":
+        return isinstance(value, list)
+    if schema_type == "string":
+        return isinstance(value, str)
+    if schema_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if schema_type == "number":
+        return (isinstance(value, int | float) and not isinstance(value, bool))
+    if schema_type == "boolean":
+        return isinstance(value, bool)
+    if schema_type == "null":
+        return value is None
+    return True
+
+
+def _json_value_type_name(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    return type(value).__name__
 
 
 def selected_model_gateway_config(current_store: Any, job: dict[str, Any]) -> dict[str, Any]:
