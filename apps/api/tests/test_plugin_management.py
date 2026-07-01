@@ -968,6 +968,27 @@ def test_internal_data_source_supports_source_filters_and_field_permissions():
     }
     assert "description" in result["schemas"]["requirements"]["fields"]
 
+    stale_filter_result = read_internal_data_source(
+        current_store=store,
+        input_payload={},
+        request_config={
+            "query": {
+                "field_mode": "detail",
+                "source_filters": {
+                    "bugs": {"severity": "critical"},
+                    "requirements": {"status": "planned"},
+                },
+                "source_types": ["requirements"],
+            },
+        },
+        user=ADMIN_SERVICE_USER,
+    )
+    assert list(stale_filter_result["datasets"]) == ["requirements"]
+    assert "bugs" not in stale_filter_result["source_counts"]
+    assert stale_filter_result["filters"]["source_filters"] == {
+        "requirements": {"status": "planned"},
+    }
+
     detail_permission_result = read_internal_data_source(
         current_store=store,
         input_payload={},

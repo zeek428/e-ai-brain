@@ -553,6 +553,25 @@ def internal_data_source_filters(
     payload = input_payload or {}
     query = _query_section(request_config)
     input_mapping = _input_mapping(payload)
+    source_types = _normalize_source_types(
+        _first_value(
+            payload.get("source_types"),
+            input_mapping.get("source_types"),
+            query.get("source_types"),
+        ),
+    )
+    source_filters = _normalize_source_filters(
+        _first_value(
+            payload.get("source_filters"),
+            input_mapping.get("source_filters"),
+            query.get("source_filters"),
+        ),
+    )
+    selected_source_filters = {
+        source_type: source_filters[source_type]
+        for source_type in source_types
+        if source_type in source_filters
+    }
     return {
         "category": _first_value(
             payload.get("category"),
@@ -608,20 +627,8 @@ def internal_data_source_filters(
             input_mapping.get("source"),
             query.get("source"),
         ),
-        "source_filters": _normalize_source_filters(
-            _first_value(
-                payload.get("source_filters"),
-                input_mapping.get("source_filters"),
-                query.get("source_filters"),
-            ),
-        ),
-        "source_types": _normalize_source_types(
-            _first_value(
-                payload.get("source_types"),
-                input_mapping.get("source_types"),
-                query.get("source_types"),
-            ),
-        ),
+        "source_filters": selected_source_filters,
+        "source_types": source_types,
         "status": _first_value(
             payload.get("status"),
             input_mapping.get("status"),
