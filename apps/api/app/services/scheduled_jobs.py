@@ -71,8 +71,6 @@ from app.services.scheduled_job_execution_engine import (
 from app.services.scheduled_job_native_scan import (
     execute_native_multi_code_inspection_summary,
     native_code_scan_repository_ids,
-)
-from app.services.scheduled_job_native_scan import (
     queued_native_scan_result_summary as native_scan_result_summary,
 )
 from app.services.scheduled_job_read_models import (
@@ -87,6 +85,7 @@ from app.services.scheduled_job_refs import (
 )
 from app.services.scheduled_job_runtime import (
     exception_error_code_and_message,
+    generic_scheduled_job_result_summary,
     model_gateway_failure_diagnostics,
     resolve_plugin_input_mapping,
 )
@@ -1452,6 +1451,7 @@ def run_scheduled_job_response(
                 records_imported += plugin_records_imported
         elif job["job_type"] == "plugin_action_invoke" and plugin_summary is not None:
             result_summary = {
+                **generic_scheduled_job_result_summary(str(job["job_type"])),
                 "execution_nodes": JobExecutionEngine.plugin_action_execution_nodes(
                     job=job,
                     plugin_output_mapping=plugin_output_mapping,
@@ -1619,7 +1619,7 @@ def run_scheduled_job_response(
                 "task_ids": inspection_result.get("task_ids") or [],
             }
         else:
-            result_summary = {"message": "No handler implemented"}
+            result_summary = generic_scheduled_job_result_summary(str(job["job_type"]))
             if plugin_summary is not None:
                 result_summary["plugin"] = plugin_summary
                 result_summary["execution_nodes"] = (

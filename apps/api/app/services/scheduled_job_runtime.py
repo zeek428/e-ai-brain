@@ -58,3 +58,13 @@ def model_gateway_failure_diagnostics(exc: Exception) -> dict[str, Any]:
         )
         if key in detail
     }
+
+
+def generic_scheduled_job_result_summary(job_type: str) -> dict[str, Any]:
+    message = "通用定时作业运行完成"
+    if job_type == "plugin_action_invoke":
+        message = "插件执行调用完成"
+    return {
+        "job_type": job_type,
+        "message": message,
+    }

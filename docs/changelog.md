@@ -16,6 +16,7 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 插件执行调用类定时作业成功运行摘要改为“插件执行调用完成”，并保留 `job_type`、插件摘要和三段 `execution_nodes`，不再在运行详情暴露 `No handler implemented` 占位文案。
 - 定时作业模型输出不符合 Skill Schema 时仍保留模型调用日志：失败运行的 `skill_processing` 与 `processing` 返回 `model_gateway_called=true`、`model_log_id`、模型、供应商和耗时，便于区分“未调用模型”和“模型已调用但输出不合约”。
 - 定时作业正式运行补齐 Skill 输出 JSON Schema 子集校验：模型输出缺必填字段、字段类型或数组 item 类型不匹配时返回 `SKILL_OUTPUT_SCHEMA_INVALID`，结果动作不再继续执行。
 - 定时作业 dry-run 的 Skill 输出样例对 `insights/findings/rows/recipients` 等未声明 item schema 的常见业务数组生成结构化样例记录，写入预览不再只展示裸字符串。

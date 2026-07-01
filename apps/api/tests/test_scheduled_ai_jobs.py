@@ -3268,6 +3268,12 @@ def test_plugin_action_scheduled_job_run_records_request_trace_summary():
         headers=admin_headers,
     ).json()["data"]
 
+    assert run["result_summary"]["job_type"] == "plugin_action_invoke"
+    assert run["result_summary"]["message"] == "插件执行调用完成"
+    assert "No handler implemented" not in json.dumps(
+        run["result_summary"],
+        ensure_ascii=False,
+    )
     data_node = run["result_summary"]["execution_nodes"]["data_connection"]
     assert data_node["connection_environment"] == "prod"
     assert data_node["request_method"] == "GET"
