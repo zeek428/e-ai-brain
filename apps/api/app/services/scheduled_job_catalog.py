@@ -10,94 +10,134 @@ SCHEDULED_JOB_RUN_PERMISSION = "system.scheduled_jobs.run"
 
 SCHEDULED_JOB_TYPE_DEFINITIONS: list[dict[str, Any]] = [
     {
+        "allow_create": True,
         "category": "governance",
         "default_execution_mode": "deterministic",
         "label": "代码仓库巡检（质量 / 安全 / 规范）",
         "requires_product": True,
         "requires_plugin_resource": True,
+        "runnable": True,
         "value": "code_repository_inspection",
     },
     {
+        "allow_create": True,
         "category": "insights",
         "default_execution_mode": "ai_generated",
         "label": "用户反馈洞察抽取（取数 + AI 分析 + 写入）",
         "requires_ai_assembly": True,
         "requires_product": True,
         "requires_plugin_resource": True,
+        "runnable": True,
         "value": "user_feedback_insight_extract",
     },
     {
+        "allow_create": True,
         "category": "planning",
         "default_execution_mode": "ai_generated",
         "label": "迭代规划建议生成",
         "requires_ai_assembly": True,
+        "runnable": True,
         "value": "iteration_plan_suggestion_generate",
     },
     {
+        "allow_create": False,
         "category": "operations",
         "default_execution_mode": "ai_generated",
         "label": "线上日志 AI 分析",
         "requires_ai_assembly": True,
+        "runnable": False,
+        "unavailable_reason": "运行处理器尚未闭环，后续通过线上日志模板补齐后开放。",
         "value": "online_log_ai_analysis",
     },
     {
+        "allow_create": False,
         "category": "insights",
         "default_execution_mode": "deterministic",
         "label": "用户使用指标采集",
+        "runnable": False,
+        "unavailable_reason": "当前仅保留历史兼容类型，新增作业请使用内部数据源或插件执行调用。",
         "value": "user_usage_metric_collect",
     },
     {
+        "allow_create": False,
         "category": "insights",
         "default_execution_mode": "deterministic",
         "label": "用户反馈采集（仅取数，不调用 AI）",
+        "runnable": False,
+        "unavailable_reason": "配置 AI 后会自动升级为用户反馈洞察抽取；纯取数请使用插件执行调用。",
         "value": "user_feedback_collect",
     },
     {
+        "allow_create": False,
         "category": "operations",
         "default_execution_mode": "deterministic",
         "label": "线上日志指标采集",
+        "runnable": False,
+        "unavailable_reason": "当前仅保留历史兼容类型，新增作业请使用内部数据源或插件执行调用。",
         "value": "online_log_metric_collect",
     },
     {
+        "allow_create": False,
         "category": "devops",
         "default_execution_mode": "deterministic",
         "label": "GitLab 每日代码指标采集",
+        "runnable": False,
+        "unavailable_reason": "当前仅保留历史兼容类型，新增作业请使用代码仓库巡检或插件执行调用。",
         "value": "gitlab_daily_code_metric_collect",
     },
     {
+        "allow_create": False,
         "category": "devops",
         "default_execution_mode": "deterministic",
         "label": "Jenkins 发布记录采集",
+        "runnable": False,
+        "unavailable_reason": "当前仅保留历史兼容类型，新增作业请使用插件执行调用。",
         "value": "jenkins_release_collect",
     },
     {
+        "allow_create": True,
         "category": "integration",
         "default_execution_mode": "deterministic",
         "label": "插件执行调用",
         "requires_plugin_resource": True,
+        "runnable": True,
         "value": "plugin_action_invoke",
     },
     {
+        "allow_create": False,
         "category": "dashboard",
         "default_execution_mode": "deterministic",
         "label": "看板快照刷新",
+        "runnable": False,
+        "unavailable_reason": "当前仅保留系统内部兼容类型，不作为用户新增定时作业入口。",
         "value": "dashboard_snapshot_refresh",
     },
     {
+        "allow_create": False,
         "category": "lifecycle",
         "default_execution_mode": "deterministic",
         "label": "生命周期上下文刷新",
+        "runnable": False,
+        "unavailable_reason": "当前仅保留系统内部兼容类型，不作为用户新增定时作业入口。",
         "value": "lifecycle_context_refresh",
     },
     {
+        "allow_create": False,
         "category": "operations",
         "default_execution_mode": "deterministic",
         "label": "待归属数据重试",
+        "runnable": False,
+        "unavailable_reason": "当前仅保留系统内部兼容类型，不作为用户新增定时作业入口。",
         "value": "pending_attribution_retry",
     },
 ]
 
 SCHEDULED_JOB_TYPES = {definition["value"] for definition in SCHEDULED_JOB_TYPE_DEFINITIONS}
+SCHEDULED_JOB_RUNNABLE_TYPES = {
+    definition["value"]
+    for definition in SCHEDULED_JOB_TYPE_DEFINITIONS
+    if definition.get("runnable") is not False
+}
 AI_REQUIRED_SCHEDULED_JOB_TYPES = {
     definition["value"]
     for definition in SCHEDULED_JOB_TYPE_DEFINITIONS
@@ -131,6 +171,25 @@ SCHEDULED_JOB_SCHEDULE_TYPE_DEFINITIONS = [
 SCHEDULED_JOB_SCHEDULE_TYPES = {
     definition["value"] for definition in SCHEDULED_JOB_SCHEDULE_TYPE_DEFINITIONS
 }
+
+
+def scheduled_job_type_definition(job_type: str | None) -> dict[str, Any] | None:
+    normalized = str(job_type or "")
+    for definition in SCHEDULED_JOB_TYPE_DEFINITIONS:
+        if definition["value"] == normalized:
+            return deepcopy(definition)
+    return None
+
+
+def scheduled_job_type_is_runnable(job_type: str | None) -> bool:
+    return str(job_type or "") in SCHEDULED_JOB_RUNNABLE_TYPES
+
+
+def scheduled_job_type_allows_create(job_type: str | None) -> bool:
+    definition = scheduled_job_type_definition(job_type)
+    if definition is None:
+        return False
+    return definition.get("allow_create") is not False
 
 CONNECTION_ENVIRONMENT_DEFINITIONS = [
     {"label": "默认", "value": "default"},

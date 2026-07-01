@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.810 |
+| 功能版本 | v1.1.811 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.811 | 2026-07-01 | 定时作业 Catalog 增加 `allow_create/runnable/unavailable_reason`，新增表单只展示已闭环类型，后端创建和手动运行共同拒绝未完成运行处理器 | Codex |
 | v1.1.810 | 2026-07-01 | 内部数据源移除 `product_scope` 配置项并按源权限返回 access_issues；定时作业数据连接配置去掉连接环境筛选，用户反馈洞察运行摘要和结果写入记录支持多动作反馈 | Codex |
 | v1.1.809 | 2026-07-01 | AI 助手定时作业草案引用数组统一跳过 null/空字符串并保序去重，预览和确认保存使用同一引用口径 | Codex |
 | v1.1.808 | 2026-07-01 | 内部数据源 `source_types` 输入新增服务端保序去重规则，避免重复源导致响应摘要不稳定 | Codex |
@@ -1794,7 +1795,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 - 定时作业配置列表属于管理型列表，`GET /api/system/scheduled-jobs` 必须优先走 PostgreSQL read model 完成名称/关键字、产品、来源系统、作业类型、启停和状态筛选，以及 `next_run_at/created_at/updated_at/name/job_type/status/enabled/last_*` 服务端排序与分页；未带分页参数的全量返回仅作为旧客户端和测试 helper 兼容，不能作为新增页面默认读路径。
 - 定时作业运行记录列表也属于管理型列表，`GET /api/system/scheduled-job-runs` 传入 `page/page_size` 时必须优先走 PostgreSQL read model，支持按运行 ID、作业 ID、状态和当前用户产品 scope 过滤，并允许 `started_at/finished_at/created_at/updated_at/status/trigger_type/records_imported` 白名单排序；未带分页参数的全量返回仅用于旧客户端、助手按 runId 拉详情和测试 helper 兼容。
 - `job_type` 首批支持 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`code_repository_inspection`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。
-- 作业类型、执行方式、调度方式、代码巡检扫描方式、扫描引擎、内置规则、忽略规则、结果动作、严重级别阈值和作业必填规则以 `ScheduledJobCatalog` 服务端注册中心为准，通过 `GET /api/system/scheduled-job-catalog` 输出给任务中心页面和 AI 助手草案；连接环境仅作为接口兼容和运行排障元数据保留，不再作为定时作业新增/编辑页面筛选项；前端 `scheduledJobFormTransformHelpers` 中的静态常量只能作为接口不可用时的降级，不得作为新增作业类型或规则扩展的权威来源。
+- 作业类型、执行方式、调度方式、代码巡检扫描方式、扫描引擎、内置规则、忽略规则、结果动作、严重级别阈值和作业必填规则以 `ScheduledJobCatalog` 服务端注册中心为准，通过 `GET /api/system/scheduled-job-catalog` 输出给任务中心页面和 AI 助手草案；`job_types[]` 必须声明 `allow_create`、`runnable` 和不可用原因，新增/编辑表单只展示 `allow_create=true` 且 `runnable=true` 的已闭环类型，历史类型仅用于旧数据中文标签和兼容读取；连接环境仅作为接口兼容和运行排障元数据保留，不再作为定时作业新增/编辑页面筛选项；前端 `scheduledJobFormTransformHelpers` 中的静态常量只能作为接口不可用时的降级，不得作为新增作业类型或规则扩展的权威来源。
 - `execution_mode` 分为 `deterministic`、`ai_assisted`、`ai_generated`：确定性作业可写真实指标；AI 辅助作业可写摘要、风险信号或看板派生结果；AI 生成作业只能写候选建议或待确认结果。前端和服务端都必须按执行模式识别 AI 装配要求，任一作业选择 `ai_assisted` 或 `ai_generated` 时均需 active AI 模型、AI角色和 Skill。
 - `iteration_plan_suggestion_generate`、`online_log_ai_analysis` 和 `user_feedback_insight_extract` 属于 AI 必选链路作业，服务端创建/修改时必须把有效执行模式归一为 `ai_generated`，并要求 active AI角色（Agent）、active Skill（可来自 AI角色默认 Skill）和 active 模型网关（可来自 AI角色默认模型网关或作业覆盖项）。
 - 调度 worker 每分钟或按配置 tick，查询 `enabled=true AND next_run_at <= now()` 的作业，并通过数据库行级更新设置 `lease_owner` / `lease_expires_at` 抢占执行权；锁过期后其他 worker 可接管，已创建的运行实例不得被覆盖。
@@ -1815,7 +1816,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 | `ScheduledJobRunner` | 装配运行上下文、创建/更新 collector run、调用 handler、处理重试和超时。 |
 | `ScheduledJobHandler` | 每类 job 的业务执行器，复用现有 DevOps、用户洞察、迭代规划、看板和生命周期 service。 |
 | `ScheduledJobTemplateCatalog` | 提供官方定时作业模板目录，声明模板版本、默认 payload、推荐场景和资源选择规则；任务中心页面与 AI 助手草案共用该目录生成周反馈洞察、代码巡检和邮件摘要作业配置。 |
-| `ScheduledJobCatalog` | 提供作业配置注册中心，声明作业类型、必填资源规则、执行/调度枚举和代码巡检扫描/规则/结果动作选项；连接环境字段仅作为旧客户端兼容输出保留，定时作业 service 复用该 catalog 做后端校验，前端仅消费 catalog 渲染选项和校验提示。 |
+| `ScheduledJobCatalog` | 提供作业配置注册中心，声明作业类型、可创建/可运行状态、不可用原因、必填资源规则、执行/调度枚举和代码巡检扫描/规则/结果动作选项；连接环境字段仅作为旧客户端兼容输出保留，定时作业 service 复用该 catalog 做后端校验，前端仅消费 catalog 渲染选项和校验提示。 |
 | `ScheduledJobExecutionEngine` | 构造执行期节点追踪和摘要，包括数据连接、Skill/AI 处理、结果动作、代码巡检报告写入、插件写入预览和是否需要 AI 处理判断；作业运行事务、审计和持久化仍由定时作业服务编排。 |
 | `AiExecutorRunnerService` | 管理系统默认执行器与隔离 Runner：系统默认执行器 `ai_executor_runner_system_default` 使用 `model_gateway` 执行类型，直接调用平台默认 AI 大模型并返回结构化执行结果，不参与 Runner Token、心跳或任务认领；本地 Runner 负责注册、心跳、Token 校验和轮换、任务队列、OpenClaw/Codex/Claude/Hermes 执行类型校验、任务认领、租约写入、日志续租、租约过期重派、死信、管理员取消、超时熔断和完成回写；管理员侧测试接口只读取 Runner 配置与健康投影，返回诊断项并写轻量审计，不下发真实任务；完成回写不得执行外部命令，只更新任务状态、插件日志、定时作业运行、collector run 和作业最近运行字段。 |
 | `ScheduledJobObservabilityService` | 聚合运行健康概览、失败原因、慢运行和 AI/插件/动作写入指标；只读取运行实例、作业定义和模型日志元数据，不参与作业执行。 |

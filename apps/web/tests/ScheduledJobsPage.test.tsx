@@ -136,29 +136,44 @@ function installScheduledJobsFetchMock(
           ],
           job_types: [
             {
+              allow_create: true,
               label: '代码仓库巡检（质量 / 安全 / 规范）',
               requires_plugin_resource: true,
               requires_product: true,
+              runnable: true,
               value: 'code_repository_inspection',
             },
             {
+              allow_create: true,
               label: '用户反馈洞察抽取（取数 + AI 分析 + 写入）',
               requires_ai_assembly: true,
               requires_plugin_resource: true,
               requires_product: true,
+              runnable: true,
               value: 'user_feedback_insight_extract',
             },
             {
+              allow_create: true,
               label: '迭代规划建议生成',
               requires_ai_assembly: true,
+              runnable: true,
               value: 'iteration_plan_suggestion_generate',
             },
             {
+              allow_create: false,
               label: '线上日志 AI 分析',
               requires_ai_assembly: true,
+              runnable: false,
+              unavailable_reason: '运行处理器尚未闭环，后续通过线上日志模板补齐后开放。',
               value: 'online_log_ai_analysis',
             },
-            { label: '插件执行调用', requires_plugin_resource: true, value: 'plugin_action_invoke' },
+            {
+              allow_create: true,
+              label: '插件执行调用',
+              requires_plugin_resource: true,
+              runnable: true,
+              value: 'plugin_action_invoke',
+            },
           ],
           required_job_types: {
             ai_processing: [
@@ -1319,9 +1334,12 @@ describe('ScheduledJobsPage', () => {
 
     const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
     await waitFor(() => expect(within(dialog).getByLabelText('作业类型')).toBeInTheDocument());
-    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '线上日志 AI 分析' } });
+    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '每周反馈 AI 洞察' } });
     fireEvent.mouseDown(within(dialog).getByLabelText('作业类型'));
-    fireEvent.click(await screen.findByText('线上日志 AI 分析'));
+    const feedbackJobTypeOptions = await screen.findAllByText('用户反馈洞察抽取（取数 + AI 分析 + 写入）');
+    expect(feedbackJobTypeOptions.length).toBeGreaterThan(0);
+    expect(screen.queryByText('线上日志 AI 分析')).not.toBeInTheDocument();
+    fireEvent.click(feedbackJobTypeOptions[feedbackJobTypeOptions.length - 1]);
 
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 

@@ -8,12 +8,14 @@
 ## [Unreleased]
 
 ### Fixed
+- 定时作业运行入口不再对未闭环作业类型返回伪成功占位结果；历史兼容类型手动运行会明确返回不可运行错误。
 - 内部数据源读取不再因插件管理权限临时注入需求、产品或 Bug 读取权限；缺少业务源读取权限时返回空数据与 `access_issues`，防止越权读取内部业务数据。
 - 内部数据源时间窗口过滤改为在窗口请求时扩大分页扫描，避免先按 limit 取第一页再过滤导致旧数据命中被漏掉。
 - 修正技术规格中 AI 执行器官方连接默认值残留旧口径的问题：官方默认连接应使用系统模型网关 `executor_type=model_gateway` 和 `ai_executor_runner_system_default`，只有本地 Runner 场景才选择 Codex/Claude/Hermes/OpenClaw。
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 定时作业 Catalog 增加可创建/可运行状态，新增作业表单只展示已闭环类型，历史作业类型仍保留中文标签用于列表和详情兼容显示。
 - 内部数据源连接默认值和 schema 移除产品范围选项，产品范围由服务端按当前用户 scope 自动过滤。
 - 定时作业数据连接配置移除连接环境筛选，连接下拉、列表和编排预览只显示连接名称。
 - AI 助手定时作业草案的 `plugin_connection_ids`、`plugin_action_ids` 和 `skill_ids` 引用解析统一跳过 null/空字符串并保序去重，避免空引用阻塞预览或写入定时作业配置。

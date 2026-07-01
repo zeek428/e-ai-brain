@@ -873,9 +873,14 @@ def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
     by_type = {item["value"]: item for item in catalog["job_types"]}
 
     assert by_type["code_repository_inspection"]["label"] == "代码仓库巡检（质量 / 安全 / 规范）"
+    assert by_type["code_repository_inspection"]["allow_create"] is True
+    assert by_type["code_repository_inspection"]["runnable"] is True
     assert by_type["code_repository_inspection"]["requires_product"] is True
     assert by_type["code_repository_inspection"]["requires_plugin_resource"] is True
     assert by_type["user_feedback_insight_extract"]["requires_ai_assembly"] is True
+    assert by_type["online_log_ai_analysis"]["allow_create"] is False
+    assert by_type["online_log_ai_analysis"]["runnable"] is False
+    assert "尚未闭环" in by_type["online_log_ai_analysis"]["unavailable_reason"]
     assert catalog["required_job_types"] == {
         "ai_processing": [
             "iteration_plan_suggestion_generate",
@@ -899,6 +904,75 @@ def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
         "ai_generated",
         "deterministic",
     }
+
+
+def test_unavailable_scheduled_job_types_are_not_creatable_or_runnable():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    create_response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "dashboard_snapshot_refresh",
+            "name": "看板快照刷新",
+            "schedule_type": "manual",
+            "source_system": "ai-brain",
+        },
+        headers=admin_headers,
+    )
+
+    assert create_response.status_code == 400
+    assert create_response.json()["detail"]["code"] == "SCHEDULED_JOB_TYPE_UNAVAILABLE"
+
+    now = "2026-07-01T00:00:00+00:00"
+    legacy_job_id = app.state.store.new_id("scheduled_job")
+    app.state.store.scheduled_jobs[legacy_job_id] = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": now,
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": legacy_job_id,
+        "interval_seconds": None,
+        "job_type": "dashboard_snapshot_refresh",
+        "knowledge_document_ids": [],
+        "last_error_message": None,
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 300,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "name": "历史看板快照刷新",
+        "next_run_at": None,
+        "plugin_action_id": None,
+        "plugin_action_ids": [],
+        "plugin_connection_id": None,
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": now,
+    }
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{legacy_job_id}/run",
+        headers=admin_headers,
+    )
+
+    assert run_response.status_code == 400
+    assert run_response.json()["detail"]["code"] == "SCHEDULED_JOB_TYPE_NOT_RUNNABLE"
+    assert app.state.store.scheduled_job_runs == {}
 
 
 def test_successful_scheduled_job_run_can_generate_template_and_trace_graph():
@@ -1842,6 +1916,45 @@ def test_scheduled_job_audit_includes_assistant_draft_source():
 def test_scheduled_job_audit_includes_template_source():
     app.state.store.reset()
     admin_headers = auth_headers()
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "template_source_test",
+            "name": "模板来源测试插件",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://example.com/template-source",
+            "name": "模板来源测试连接",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "template_source_test_action",
+            "connection_id": connection["id"],
+            "name": "模板来源测试动作",
+            "plugin_id": plugin["id"],
+            "request_config": {"method": "GET", "mock_response_json": {"row_count": 0}},
+            "result_mapping": {
+                "records_imported_path": "$.row_count",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
 
     response = client.post(
         "/api/system/scheduled-jobs",
@@ -1855,8 +1968,10 @@ def test_scheduled_job_audit_includes_template_source():
             },
             "enabled": True,
             "execution_mode": "deterministic",
-            "job_type": "dashboard_snapshot_refresh",
+            "job_type": "plugin_action_invoke",
             "name": "每周用户反馈洞察 运行快照副本",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
             "schedule_type": "manual",
             "source_system": "ai-brain",
         },

@@ -182,11 +182,14 @@ export type ScheduledJobCatalogOption = {
 };
 
 export type ScheduledJobCatalogJobType = ScheduledJobCatalogOption & {
+  allow_create?: boolean;
   category?: string;
   default_execution_mode?: string;
   requires_ai_assembly?: boolean;
   requires_plugin_resource?: boolean;
   requires_product?: boolean;
+  runnable?: boolean;
+  unavailable_reason?: string;
 };
 
 export type ScheduledJobCatalogRecord = {

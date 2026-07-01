@@ -43,7 +43,12 @@ from app.services.scheduled_job_audit import (
     scheduled_job_audit_payload,
     scheduled_job_run_audit_payload,
 )
-from app.services.scheduled_job_catalog import AI_REQUIRED_SCHEDULED_JOB_TYPES
+from app.services.scheduled_job_catalog import (
+    AI_REQUIRED_SCHEDULED_JOB_TYPES,
+    scheduled_job_type_allows_create,
+    scheduled_job_type_definition,
+    scheduled_job_type_is_runnable,
+)
 from app.services.scheduled_job_common import ensure_enum, ensure_non_blank
 from app.services.scheduled_job_config import (
     effective_scheduled_job_execution_mode,
@@ -188,6 +193,34 @@ def scheduled_job_template_from_run_response(
     }
 
 
+def ensure_scheduled_job_type_available_for_create(job_type: str) -> None:
+    if scheduled_job_type_allows_create(job_type):
+        return
+    definition = scheduled_job_type_definition(job_type) or {}
+    raise api_error(
+        400,
+        "SCHEDULED_JOB_TYPE_UNAVAILABLE",
+        str(
+            definition.get("unavailable_reason")
+            or "Scheduled job type is not available for manual creation",
+        ),
+    )
+
+
+def ensure_scheduled_job_type_runnable(job_type: str) -> None:
+    if scheduled_job_type_is_runnable(job_type):
+        return
+    definition = scheduled_job_type_definition(job_type) or {}
+    raise api_error(
+        400,
+        "SCHEDULED_JOB_TYPE_NOT_RUNNABLE",
+        str(
+            definition.get("unavailable_reason")
+            or "Scheduled job type does not have a completed runtime handler",
+        ),
+    )
+
+
 def create_scheduled_job_response(
     *,
     current_store: Any,
@@ -202,6 +235,7 @@ def create_scheduled_job_response(
         job_type,
         execution_mode,
     ) = validate_job_refs(current_store, payload)
+    ensure_scheduled_job_type_available_for_create(job_type)
     (
         plugin_action_id,
         plugin_connection_id,
@@ -297,6 +331,7 @@ def dry_run_scheduled_job_response(
         job_type,
         execution_mode,
     ) = validate_job_refs(current_store, payload)
+    ensure_scheduled_job_type_available_for_create(job_type)
     (
         plugin_action_id,
         plugin_connection_id,
@@ -1225,6 +1260,7 @@ def run_scheduled_job_response(
             "execution_mode": effective_execution_mode,
             "job_type": effective_job_type,
         }
+    ensure_scheduled_job_type_runnable(str(job["job_type"]))
     native_code_inspection = (
         job["job_type"] == "code_repository_inspection"
         and code_inspection_uses_native_scan(job)

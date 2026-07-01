@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.490 |
+| 功能版本 | v1.1.491 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.491 | 2026-07-01 | 定时作业 Catalog `job_types[]` 新增 `allow_create/runnable/unavailable_reason`，创建/试运行和手动运行分别返回 `SCHEDULED_JOB_TYPE_UNAVAILABLE` 与 `SCHEDULED_JOB_TYPE_NOT_RUNNABLE` 拦截已登记但未闭环类型 | Codex |
 | v1.1.490 | 2026-07-01 | 结果写入记录 API 从定时作业 `execution_nodes.result_actions[]` 逐条派生记录，旧 `result_action` 作为兼容回退 | Codex |
 | v1.1.489 | 2026-07-01 | 内部数据源 API 契约移除用户可选 `product_scope`，读取按业务源权限和当前用户产品范围过滤并返回 `access_issues/schemas.access_status`；定时作业配置页不再消费连接环境筛选 | Codex |
 | v1.1.488 | 2026-07-01 | AI 助手定时作业草案确认前统一归一化插件连接、动作和 Skill 引用数组，空值跳过且重复 ID 保留首次出现 | Codex |
@@ -840,7 +841,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Plugins | GET | `/api/system/plugin-action-templates` | 查询官方动作场景模板目录；返回 GitHub 代码巡检、GitLab 代码巡检、邮箱通知发送、邮件收取、AI 执行器下达指令、执行器结果同步和内部业务数据读取等模板，每个模板包含 `code/name/plugin_code/plugin_id/action_type/default_code/default_name/request_config/result_mapping/form_defaults/template_version`。内部业务数据读取模板 `code=internal_business_data_query`、`plugin_code=internal_data_source`、`action_type=internal_query`，默认调用 `internal_data_source.query`，用于把内部 read model 数据作为定时作业数据连接输入；MaxCompute 当前通过普通 HTTP 插件/连接和自定义动作维护，不作为官方动作模板返回。前端新增动作表单必须使用该目录动态生成场景选项，并按模板回填请求配置、Params/Headers、结果写入目标和 JSONPath 映射；AI 助手生成动作草案时必须携带 `template_code/template_version`；若服务端模板缺失，前端和 AI 助手只能提示模板缺失或要求刷新模板目录，不得硬编码生成官方动作兜底。 |
 | Plugins | GET | `/api/system/result-write-targets` | 查询结果写入目标注册表；返回 `items[]`，每项包含 `code/label/form_label/description/default_result_mapping/mapping_fields/supported_job_types`。首批目标为 `scheduled_job_result`、`user_feedback_insights`、`code_inspection_reports`、`email_notifications`；前端动作表单必须使用 `form_label` 生成下拉选项，使用 `default_result_mapping` 生成目标切换默认 JSON，使用 `mapping_fields[]` 动态渲染 JSONPath 字段；`user_feedback_insights` 的洞察列表、源表行数和原始行列表路径由 `default_result_mapping` 系统托管，`mapping_fields=[]`，动作表单不展示这些字段；动作模板、试运行 `write_preview` 和运行详情目标标签应复用同一注册表定义。 |
 | Scheduler | GET | `/api/system/result-write-records` | 查询通用结果写入记录读模型；支持 `scheduled_job_run_id`、`scheduled_job_id`、`write_target`、`status`、`plugin_action_id` 查询参数。带 `page/page_size` 时按服务端分页返回 `page/page_size/total/query/performance`，并优先走 PostgreSQL 派生 read model 聚合定时作业运行和未归属定时运行的动作调用日志，完成产品 scope、筛选、排序和 count/page 下推，不先拉全量运行或调用日志到 MemoryStore；支持 `sort_by=id/write_target/status/source_type/scheduled_job_id/scheduled_job_run_id/plugin_action_id/plugin_invocation_log_id/records_imported/created_at/updated_at` 与 `sort_order=asc/desc`；未带分页时保留旧兼容返回。定时作业运行详情必须使用 `scheduled_job_run_id` 精确查询当前运行的最终写入反馈，避免同一作业多次运行混在一起。响应 `items[]` 由正式定时作业运行 `result_summary.execution_nodes.result_actions[]` 逐条派生，旧运行摘要缺少数组时回退 `result_summary.execution_nodes.result_action`，并聚合未归属定时运行的动作调用日志；每条包含 `id/write_target/write_target_label/status/source_type/scheduled_job_id/scheduled_job_name/scheduled_job_run_id/plugin_action_id/plugin_connection_id/plugin_invocation_log_id/records_imported/summary_fields/preview/feedback/created_at/updated_at`。多动作运行的首条记录 ID 保持 `result_write_record_<run_id>` 兼容，后续记录使用 `result_write_record_<run_id>_<序号>`。接口必须通过记录上的 `scheduled_job_id` 或 `scheduled_job_run_id` 解析定时作业产品并按当前用户产品 scope 过滤；scope 外写入记录不返回、不计入 `total`，无产品归属的独立动作调用记录仅对全局产品范围用户可见。`email_notifications` 的 `summary_fields` 返回 `subject/delivery_status/delivery_id/sample_records` 便于页面直接展示邮件主题、投递状态、消息 ID 和收件人摘要；未知未来写入目标允许按目标 code 查询并保留通用 `preview/feedback` JSON，不要求新增目标专属页面。 |
-| Scheduler | GET | `/api/system/scheduled-job-catalog` | 查询定时作业配置注册中心。需要 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`；响应返回 `job_types[]`、`required_job_types`、`execution_modes[]`、`schedule_types[]`、兼容字段 `connection_environments[]` 和 `code_inspection` 扫描/规则/结果动作选项。定时作业新增/编辑页不再展示连接环境筛选，助手定时作业草案和相关测试必须优先使用该接口中的作业类型、执行方式、调度和代码巡检选项，静态前端常量仅作为接口不可用时的降级。 |
+| Scheduler | GET | `/api/system/scheduled-job-catalog` | 查询定时作业配置注册中心。需要 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`；响应返回 `job_types[]`、`required_job_types`、`execution_modes[]`、`schedule_types[]`、兼容字段 `connection_environments[]` 和 `code_inspection` 扫描/规则/结果动作选项。`job_types[]` 包含 `allow_create/runnable/unavailable_reason`，新增/编辑页只展示可创建且可运行的已闭环类型，历史兼容类型只用于旧记录标签。定时作业新增/编辑页不再展示连接环境筛选，助手定时作业草案和相关测试必须优先使用该接口中的作业类型、执行方式、调度和代码巡检选项，静态前端常量仅作为接口不可用时的降级。 |
 | Plugins | GET | `/api/system/plugins` | 查询集成插件定义；系统会确保 `gitlab`、`github`、`email`、`ai_executor` 和 `internal_data_source` 官方标准插件存在并返回 `is_system=true`。 |
 | Plugins | POST | `/api/system/plugins` | 创建自定义 HTTP/MCP 插件定义；`category` 必须使用约定枚举 `general/data_warehouse/devops/issue_tracking/observability/knowledge_base/collaboration/ai_service/business_system`，新建插件默认 `is_system=false`。 |
 | Plugins | PATCH | `/api/system/plugins/{plugin_id}` | 更新自定义插件名称、分类、协议、风险等级或状态；分类必须使用插件分类枚举，不允许自由文本；官方标准插件返回 `409 PLUGIN_STANDARD_PLUGIN_LOCKED`。 |
@@ -3807,7 +3808,9 @@ GET /api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_001&status=fai
 POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 ```
 
-`GET /api/system/scheduled-job-catalog` 是定时作业配置的服务端注册中心，要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`。响应字段包括：`job_types[]`（`value/label/category/default_execution_mode/requires_product/requires_plugin_resource/requires_ai_assembly`）、`required_job_types.product/plugin_resource/ai_processing`、`execution_modes[]`、`schedule_types[]`、`connection_environments[]`，以及 `code_inspection.native_scan_mode/default_scan_mode/scan_modes/scanner_engines/builtin_rules/ignore_rules/result_actions/severity_thresholds/default_result_actions`。前端新增/编辑弹窗、AI 助手定时作业草案和测试 mock 必须以该响应为首选来源；只有接口不可用时才允许使用本地静态选项降级，且降级不得覆盖服务端校验。
+`GET /api/system/scheduled-job-catalog` 是定时作业配置的服务端注册中心，要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`。响应字段包括：`job_types[]`（`value/label/category/default_execution_mode/requires_product/requires_plugin_resource/requires_ai_assembly/allow_create/runnable/unavailable_reason`）、`required_job_types.product/plugin_resource/ai_processing`、`execution_modes[]`、`schedule_types[]`、`connection_environments[]`，以及 `code_inspection.native_scan_mode/default_scan_mode/scan_modes/scanner_engines/builtin_rules/ignore_rules/result_actions/severity_thresholds/default_result_actions`。前端新增/编辑弹窗、AI 助手定时作业草案和测试 mock 必须以该响应为首选来源；新增入口只展示 `allow_create=true` 且 `runnable=true` 的类型，`allow_create=false` 或 `runnable=false` 的类型仅用于历史作业标签、兼容读取和内部迁移。只有接口不可用时才允许使用本地静态选项降级，且降级不得覆盖服务端校验。
+
+`POST /api/system/scheduled-jobs` 和 `POST /api/system/scheduled-jobs/dry-run` 对已登记但 `allow_create=false` 的 `job_type` 返回 `400 SCHEDULED_JOB_TYPE_UNAVAILABLE`，错误消息使用 catalog 的 `unavailable_reason`；未知 `job_type` 继续走通用枚举校验返回 `VALIDATION_ERROR`。`POST /api/system/scheduled-jobs/{job_id}/run` 对 `runnable=false` 的历史作业返回 `400 SCHEDULED_JOB_TYPE_NOT_RUNNABLE`，不得创建伪成功运行记录，也不得落 collector run 或插件调用日志。
 
 `GET /api/system/scheduled-jobs` 支持 `page/page_size/sort_by/sort_order` 服务端分页排序，`page_size` 最大 100，`sort_order` 为 `asc|desc`，`sort_by` 允许 `next_run_at/created_at/updated_at/name/job_type/status/enabled/last_run_at/last_success_at/last_failure_at`；筛选参数包括 `enabled`、`job_type`、`status`、`product_id`、`source_system`、`name` 和 `keyword`。传入分页参数时生产路径必须通过 PostgreSQL read model 返回 `items/page/page_size/total/query/performance`，避免前端全量拉取后本地过滤；未传分页参数时保留旧 `items/total` 全量返回兼容，但不作为新增管理页面默认读路径。
 

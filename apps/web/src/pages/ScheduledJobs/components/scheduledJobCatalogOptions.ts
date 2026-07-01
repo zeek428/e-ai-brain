@@ -3,6 +3,7 @@ import { useCallback, useMemo } from 'react';
 
 import type {
   ScheduledJobCatalogRecord,
+  ScheduledJobCatalogJobType,
   ScheduledJobResultAction,
 } from '../../../services/aiBrain';
 import {
@@ -14,6 +15,7 @@ import {
   codeInspectionScanModeOptions,
   codeInspectionScannerEngineOptions,
   codeInspectionUsesNativeScan,
+  creatableJobTypeOptions,
   defaultCodeInspectionResultActions,
   executionModeOptions,
   hasRequiredFormValue,
@@ -70,15 +72,26 @@ function requiredForAiAssembly(aiRequiredJobTypes: string[], message: string): F
 }
 
 export function useScheduledJobCatalogOptions(jobCatalog: ScheduledJobCatalogRecord | undefined) {
-  const jobTypeSelectOptions = useMemo(
-    () => (jobCatalog?.job_types?.length
-      ? jobCatalog.job_types.map((option) => ({ label: option.label, value: option.value }))
-      : jobTypeOptions),
+  const catalogJobTypes = useMemo(
+    (): ScheduledJobCatalogJobType[] => (
+      jobCatalog?.job_types?.length
+        ? jobCatalog.job_types
+        : creatableJobTypeOptions.map((option) => ({ ...option, allow_create: true, runnable: true }))
+    ),
     [jobCatalog],
   );
+  const jobTypeSelectOptions = useMemo(
+    () => catalogJobTypes
+      .filter((option) => option.allow_create !== false && option.runnable !== false)
+      .map((option) => ({ label: option.label, value: option.value })),
+    [catalogJobTypes],
+  );
   const jobTypeLabelMap = useMemo(
-    () => new Map(jobTypeSelectOptions.map((option) => [option.value, option.label])),
-    [jobTypeSelectOptions],
+    () => new Map([
+      ...jobTypeOptions.map((option) => [option.value, option.label] as const),
+      ...catalogJobTypes.map((option) => [option.value, option.label] as const),
+    ]),
+    [catalogJobTypes],
   );
   const executionModeSelectOptions = useMemo(
     () => (jobCatalog?.execution_modes?.length ? jobCatalog.execution_modes : executionModeOptions),

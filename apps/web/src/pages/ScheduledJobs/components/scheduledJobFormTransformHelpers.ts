@@ -70,21 +70,26 @@ export const assistantDraftTrackedFields = [
   'source_system',
 ] as const;
 
-export const jobTypeOptions = [
+export const creatableJobTypeOptions = [
   { label: '代码仓库巡检（质量 / 安全 / 规范）', value: 'code_repository_inspection' },
   { label: '用户反馈洞察抽取（取数 + AI 分析 + 写入）', value: 'user_feedback_insight_extract' },
   { label: '迭代规划建议生成', value: 'iteration_plan_suggestion_generate' },
+  { label: '插件执行调用', value: 'plugin_action_invoke' },
+];
+
+export const legacyJobTypeOptions = [
   { label: '线上日志 AI 分析', value: 'online_log_ai_analysis' },
   { label: '用户使用指标采集', value: 'user_usage_metric_collect' },
   { label: '用户反馈采集（仅取数，不调用 AI）', value: 'user_feedback_collect' },
   { label: '线上日志指标采集', value: 'online_log_metric_collect' },
   { label: 'GitLab 每日代码指标采集', value: 'gitlab_daily_code_metric_collect' },
   { label: 'Jenkins 发布记录采集', value: 'jenkins_release_collect' },
-  { label: '插件执行调用', value: 'plugin_action_invoke' },
   { label: '看板快照刷新', value: 'dashboard_snapshot_refresh' },
   { label: '生命周期上下文刷新', value: 'lifecycle_context_refresh' },
   { label: '待归属数据重试', value: 'pending_attribution_retry' },
 ];
+
+export const jobTypeOptions = [...creatableJobTypeOptions, ...legacyJobTypeOptions];
 
 export const jobTypeLabelByValue = new Map(jobTypeOptions.map((option) => [option.value, option.label]));
 
