@@ -1564,6 +1564,291 @@ def test_scheduled_job_runs_multiple_data_connections_with_merged_dag_node():
     assert [node["output"]["records_imported"] for node in trace_data_nodes] == [2, 2]
 
 
+def test_scheduled_job_data_connections_continue_after_failed_connection(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "multi_continue_reader",
+            "name": "多连接继续读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    failed_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://failed-warehouse.example.com",
+            "name": "失败仓库",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    healthy_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://healthy-warehouse.example.com",
+            "name": "可用仓库",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_continue_connection_rows",
+            "connection_id": failed_connection["id"],
+            "name": "继续策略取数",
+            "plugin_id": plugin["id"],
+            "request_config": {"method": "GET", "path": "/weekly"},
+            "result_mapping": {
+                "records_imported_path": "$.row_count",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    calls: list[str | None] = []
+
+    def fake_invoke_plugin_action_response(
+        *,
+        action_id,
+        connection_id=None,
+        current_store,
+        **_kwargs,
+    ):
+        calls.append(connection_id)
+        log_id = current_store.new_id("plugin_invocation_log")
+        if connection_id == failed_connection["id"]:
+            return {
+                "action_id": action_id,
+                "connection_id": connection_id,
+                "error_code": "HTTPError",
+                "error_message": "HTTP Error 500: Internal Server Error",
+                "id": log_id,
+                "latency_ms": 12,
+                "request_summary": {
+                    "method": "GET",
+                    "request_preview": {"method": "GET", "url": "https://failed/weekly"},
+                    "url": "https://failed/weekly",
+                },
+                "response_summary": {"json": {}, "status_code": 500},
+                "status": "failed",
+            }
+        return {
+            "action_id": action_id,
+            "connection_id": connection_id,
+            "error_code": None,
+            "error_message": None,
+            "id": log_id,
+            "latency_ms": 15,
+            "request_summary": {
+                "method": "GET",
+                "request_preview": {"method": "GET", "url": "https://healthy/weekly"},
+                "url": "https://healthy/weekly",
+            },
+            "response_summary": {
+                "json": {"row_count": 2, "rows": [{"id": "ok-1"}, {"id": "ok-2"}]},
+                "status_code": 200,
+            },
+            "status": "succeeded",
+        }
+
+    monkeypatch.setattr(
+        scheduled_jobs_service,
+        "invoke_plugin_action_response",
+        fake_invoke_plugin_action_response,
+    )
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "orchestration": {
+                    "data_connections": {
+                        "failure_policy": "continue_on_error",
+                        "merge_strategy": "append_json_arrays",
+                        "mode": "sequential",
+                    },
+                },
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "多连接失败后继续作业",
+            "plugin_action_id": action["id"],
+            "plugin_connection_ids": [
+                failed_connection["id"],
+                healthy_connection["id"],
+            ],
+            "schedule_type": "manual",
+            "source_system": "warehouse",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert calls == [failed_connection["id"], healthy_connection["id"]]
+    assert run["status"] == "succeeded"
+    assert run["records_imported"] == 2
+    data_node = run["result_summary"]["execution_nodes"]["data_connection"]
+    assert data_node["status"] == "partial_failed"
+    assert data_node["failure_policy"] == "continue_on_error"
+    assert data_node["successful_count"] == 1
+    assert data_node["failed_count"] == 1
+    assert data_node["response_summary"]["json"]["row_count"] == 2
+    assert [item["status"] for item in data_node["items"]] == ["failed", "succeeded"]
+    assert data_node["items"][0]["error_code"] == "HTTPError"
+    assert data_node["items"][1]["records_imported"] == 2
+    trace_nodes = run["result_summary"]["trace_graph"]["nodes"]
+    by_id = {node["id"]: node for node in trace_nodes}
+    assert by_id["data_connection_1"]["status"] == "failed"
+    assert by_id["data_connection_1"]["error"]["code"] == "HTTPError"
+    assert by_id["data_connection_2"]["status"] == "succeeded"
+    assert by_id["result_action"]["status"] == "partial_failed"
+
+
+def test_scheduled_job_data_connection_fail_fast_keeps_failure_trace(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "multi_fail_fast_reader",
+            "name": "多连接快速失败读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    failed_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://failed-fast-warehouse.example.com",
+            "name": "快速失败仓库",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    skipped_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://skipped-warehouse.example.com",
+            "name": "不会调用仓库",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_fail_fast_connection_rows",
+            "connection_id": failed_connection["id"],
+            "name": "快速失败策略取数",
+            "plugin_id": plugin["id"],
+            "request_config": {"method": "GET", "path": "/weekly"},
+            "result_mapping": {
+                "records_imported_path": "$.row_count",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    calls: list[str | None] = []
+
+    def fake_invoke_plugin_action_response(
+        *,
+        action_id,
+        connection_id=None,
+        current_store,
+        **_kwargs,
+    ):
+        calls.append(connection_id)
+        return {
+            "action_id": action_id,
+            "connection_id": connection_id,
+            "error_code": "HTTPError",
+            "error_message": "HTTP Error 502: Bad Gateway",
+            "id": current_store.new_id("plugin_invocation_log"),
+            "latency_ms": 9,
+            "request_summary": {
+                "method": "GET",
+                "request_preview": {"method": "GET", "url": "https://failed-fast/weekly"},
+                "url": "https://failed-fast/weekly",
+            },
+            "response_summary": {"json": {}, "status_code": 502},
+            "status": "failed",
+        }
+
+    monkeypatch.setattr(
+        scheduled_jobs_service,
+        "invoke_plugin_action_response",
+        fake_invoke_plugin_action_response,
+    )
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "多连接快速失败作业",
+            "plugin_action_id": action["id"],
+            "plugin_connection_ids": [
+                failed_connection["id"],
+                skipped_connection["id"],
+            ],
+            "schedule_type": "manual",
+            "source_system": "warehouse",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert calls == [failed_connection["id"]]
+    assert run["status"] == "failed"
+    assert run["error_code"] == "HTTPError"
+    data_node = run["result_summary"]["execution_nodes"]["data_connection"]
+    assert data_node["status"] == "failed"
+    assert data_node["error_code"] == "HTTPError"
+    assert data_node["response_status_code"] == 502
+    result_action = run["result_summary"]["execution_nodes"]["result_action"]
+    assert result_action["status"] == "failed"
+    trace_nodes = run["result_summary"]["trace_graph"]["nodes"]
+    by_id = {node["id"]: node for node in trace_nodes}
+    assert by_id["data_connection"]["status"] == "failed"
+    assert by_id["data_connection"]["error"]["code"] == "HTTPError"
+    assert by_id["result_action"]["status"] == "failed"
+
+
 def test_scheduled_job_validates_skill_output_schema_before_ai_processing(monkeypatch):
     app.state.store.reset()
     admin_headers = auth_headers()

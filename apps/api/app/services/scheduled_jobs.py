@@ -792,6 +792,8 @@ def plugin_summary_from_log(current_store: Any, plugin_log: dict[str, Any]) -> d
             or {}
         ).get("environment"),
         "connection_id": plugin_log.get("connection_id"),
+        "error_code": plugin_log.get("error_code"),
+        "error_message": plugin_log.get("error_message"),
         "invocation_log_id": plugin_log["id"],
         "latency_ms": plugin_log.get("latency_ms"),
         "request_summary": plugin_log.get("request_summary") or {},
@@ -840,6 +842,7 @@ def invoke_job_data_connections(
                 ),
                 "timezone": job.get("timezone") or "UTC",
             },
+            raise_on_failed=False,
             scheduled_job_id=linked_scheduled_job_id,
             scheduled_job_run_id=linked_scheduled_job_run_id,
             trigger_type=trigger_type,
@@ -1397,6 +1400,13 @@ def run_scheduled_job_response(
                     )
                 )
                 run["plugin_invocation_log_id"] = plugin_summary.get("invocation_log_id")
+                if plugin_summary.get("status") == "failed":
+                    raise api_error(
+                        502,
+                        plugin_summary.get("error_code") or "PLUGIN_ACTION_FAILED",
+                        plugin_summary.get("error_message")
+                        or "Scheduled job data connection failed",
+                    )
         if handled_job:
             pass
         elif job["job_type"] == "iteration_plan_suggestion_generate":
@@ -1711,6 +1721,18 @@ def run_scheduled_job_response(
                     "skill_ids": list(job.get("skill_ids", [])),
                 },
                 "write_target": "code_inspection_reports",
+            }
+        elif plugin_summary is not None:
+            result_summary = {
+                "execution_nodes": JobExecutionEngine.plugin_action_execution_nodes(
+                    job=job,
+                    plugin_output_mapping=plugin_output_mapping,
+                    plugin_records_imported=plugin_records_imported,
+                    plugin_summary=plugin_summary,
+                    resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                    skill_codes=skill_codes_for_job(current_store, job),
+                ),
+                "plugin": plugin_summary,
             }
         records_imported = 0
     if status == "succeeded" and JobExecutionEngine.has_pending_runner(plugin_summary):

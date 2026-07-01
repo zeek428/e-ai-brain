@@ -1533,6 +1533,7 @@ def invoke_plugin_action_response(
     connection_id: str | None = None,
     current_store: Any,
     input_payload: dict[str, Any] | None = None,
+    raise_on_failed: bool = True,
     scheduled_job_id: str | None = None,
     scheduled_job_run_id: str | None = None,
     trace_id: str | None = None,
@@ -1648,7 +1649,7 @@ def invoke_plugin_action_response(
             "save_ai_executor_task_record",
             runner_task,
         )
-    if status == "failed":
+    if status == "failed" and raise_on_failed:
         raise api_error(
             502,
             error_code or "PLUGIN_INVOCATION_FAILED",

@@ -93,6 +93,8 @@ class ScheduledJobExecutionEngine:
             "connection_environment": plugin_summary.get("connection_environment"),
             "connection_id": plugin_summary.get("connection_id")
             or job.get("plugin_connection_id"),
+            "error_code": plugin_summary.get("error_code"),
+            "error_message": plugin_summary.get("error_message"),
             "input_mapping": resolved_plugin_input_mapping,
             "label": "数据连接获取内容",
             "latency_ms": plugin_summary.get("latency_ms"),
@@ -155,6 +157,10 @@ class ScheduledJobExecutionEngine:
             if successful_count == 0
             else "partial_failed"
         )
+        first_failed = next(
+            (summary for summary in summaries if str(summary.get("status")) != "succeeded"),
+            {},
+        )
         items = [
             cls._plugin_summary_item(
                 summary,
@@ -165,6 +171,8 @@ class ScheduledJobExecutionEngine:
         return {
             **first,
             "connection_count": len(summaries),
+            "error_code": first_failed.get("error_code"),
+            "error_message": first_failed.get("error_message"),
             "failed_count": failed_count,
             "failure_policy": failure_policy,
             "items": items,
@@ -217,6 +225,8 @@ class ScheduledJobExecutionEngine:
             "action_id": summary.get("action_id"),
             "connection_environment": summary.get("connection_environment"),
             "connection_id": summary.get("connection_id"),
+            "error_code": summary.get("error_code"),
+            "error_message": summary.get("error_message"),
             "input_mapping": resolved_plugin_input_mapping,
             "latency_ms": summary.get("latency_ms"),
             "plugin_invocation_log_id": summary.get("invocation_log_id"),
