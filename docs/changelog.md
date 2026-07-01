@@ -11,6 +11,7 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 插件连接环境契约收口到文档与验收用例：插件管理页面不展示连接环境字段、环境筛选或环境列，`environment` 查询仅作为后台运维、定时作业筛选、运行排障和旧客户端兼容能力保留。
 - 定时作业配置列表移除“模板来源”列，模板来源继续保留在复制确认、运行详情和审计 payload 中，列表聚焦数据连接、AI执行、动作和调度。
 
 ### Added
