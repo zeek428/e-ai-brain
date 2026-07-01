@@ -41,3 +41,20 @@ def exception_error_code_and_message(exc: Exception) -> tuple[str, str]:
         error_code = str(detail.get("code") or error_code)
         error_message = str(detail.get("message") or error_message)
     return error_code, error_message
+
+
+def model_gateway_failure_diagnostics(exc: Exception) -> dict[str, Any]:
+    detail = getattr(exc, "detail", None)
+    if not isinstance(detail, dict):
+        return {}
+    return {
+        key: detail[key]
+        for key in (
+            "latency_ms",
+            "model",
+            "model_gateway_config_id",
+            "model_log_id",
+            "provider",
+        )
+        if key in detail
+    }

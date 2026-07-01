@@ -87,6 +87,7 @@ from app.services.scheduled_job_refs import (
 )
 from app.services.scheduled_job_runtime import (
     exception_error_code_and_message,
+    model_gateway_failure_diagnostics,
     resolve_plugin_input_mapping,
 )
 from app.services.scheduled_job_store import (
@@ -1640,13 +1641,15 @@ def run_scheduled_job_response(
         error_code, error_message = exception_error_code_and_message(exc)
         result_summary = {}
         if job["job_type"] == "user_feedback_insight_extract" and plugin_summary is not None:
+            model_gateway_failure = model_gateway_failure_diagnostics(exc)
             data_connection_failed = plugin_summary.get("status") == "failed"
             source_row_count = records_imported_from_mapping(
                 plugin_summary.get("response_summary") or {},
                 {"records_imported_path": plugin_output_mapping.get("records_imported_path")},
             )
             skill_processing_status = "not_run" if data_connection_failed else "failed"
-            model_gateway_called = not data_connection_failed
+            model_gateway_called = bool(model_gateway_failure) or not data_connection_failed
+            model_gateway_config_id = model_gateway_failure.get("model_gateway_config_id") or job.get("model_gateway_config_id")
             skill_processing_note = (
                 "数据连接失败，平台 AI 大模型处理未开始。"
                 if data_connection_failed
@@ -1668,11 +1671,12 @@ def run_scheduled_job_response(
                         or "user_feedback_insights",
                     },
                     "skill_processing": {
+                        **model_gateway_failure,
                         "error_code": error_code,
                         "error_message": error_message,
                         "label": "Skill 处理后内容",
                         "model_gateway_called": model_gateway_called,
-                        "model_gateway_config_id": job.get("model_gateway_config_id"),
+                        "model_gateway_config_id": model_gateway_config_id,
                         "note": skill_processing_note,
                         "processing_mode": (
                             "not_started"
@@ -1686,6 +1690,7 @@ def run_scheduled_job_response(
                 },
                 "plugin": plugin_summary,
                 "processing": {
+                    **model_gateway_failure,
                     "error_code": error_code,
                     "error_message": error_message,
                     "model_gateway_called": model_gateway_called,
@@ -1696,6 +1701,7 @@ def run_scheduled_job_response(
                 or "user_feedback_insights",
             }
         elif job["job_type"] == "code_repository_inspection" and plugin_summary is not None:
+            model_gateway_failure = model_gateway_failure_diagnostics(exc)
             data_connection_failed = plugin_summary.get("status") == "failed"
             code_inspection_output_mapping = resolve_job_plugin_output_mapping(current_store, job)
             source_finding_count = records_imported_from_mapping(
@@ -1708,7 +1714,7 @@ def run_scheduled_job_response(
                 },
             )
             code_inspection_model_gateway_called = (
-                False
+                bool(model_gateway_failure)
                 if data_connection_failed
                 else JobExecutionEngine.uses_ai_processing(
                     job,
@@ -1725,6 +1731,7 @@ def run_scheduled_job_response(
                 )
             )
             code_inspection_skill_status = "not_run" if data_connection_failed else "failed"
+            model_gateway_config_id = model_gateway_failure.get("model_gateway_config_id") or job.get("model_gateway_config_id")
             code_inspection_note = (
                 "数据连接失败，代码巡检 AI 处理和结果写入未开始。"
                 if data_connection_failed
@@ -1745,11 +1752,12 @@ def run_scheduled_job_response(
                         "write_target": "code_inspection_reports",
                     },
                     "skill_processing": {
+                        **model_gateway_failure,
                         "error_code": error_code,
                         "error_message": error_message,
                         "label": "Skill 处理后内容",
                         "model_gateway_called": code_inspection_model_gateway_called,
-                        "model_gateway_config_id": job.get("model_gateway_config_id"),
+                        "model_gateway_config_id": model_gateway_config_id,
                         "note": code_inspection_note,
                         "processing_mode": code_inspection_processing_mode,
                         "skill_codes": skill_codes_for_job(current_store, job),
@@ -1759,6 +1767,7 @@ def run_scheduled_job_response(
                 },
                 "plugin": plugin_summary,
                 "processing": {
+                    **model_gateway_failure,
                     "error_code": error_code,
                     "error_message": error_message,
                     "model_gateway_called": code_inspection_model_gateway_called,

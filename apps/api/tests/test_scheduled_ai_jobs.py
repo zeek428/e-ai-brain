@@ -2286,7 +2286,20 @@ def test_scheduled_job_rejects_model_output_type_mismatch_before_result_actions(
     assert run["error_code"] == "SKILL_OUTPUT_SCHEMA_INVALID"
     skill_node = run["result_summary"]["execution_nodes"]["skill_processing"]
     assert skill_node["status"] == "failed"
+    assert skill_node["model_gateway_called"] is True
+    assert skill_node["model_gateway_config_id"] == model_gateway["id"]
+    assert skill_node["model_log_id"].startswith("model_log_")
     assert "$.insights expected array, got string" in skill_node["error_message"]
+    processing = run["result_summary"]["processing"]
+    assert processing["model_gateway_called"] is True
+    assert processing["model_log_id"] == skill_node["model_log_id"]
+    model_logs = {
+        item["id"]: item
+        for item in app.state.store.model_gateway_logs
+        if item.get("purpose") == "scheduled_job_ai_processing"
+    }
+    assert model_logs[skill_node["model_log_id"]]["status"] == "succeeded"
+    assert model_logs[skill_node["model_log_id"]]["tokens"]["total"] == 24
     assert run["result_summary"]["execution_nodes"]["result_action"]["status"] == "not_run"
     feedback_items = client.get(
         f"/api/insights/user-feedback?product_id={product['id']}",

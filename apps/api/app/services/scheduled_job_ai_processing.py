@@ -7,6 +7,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
+from fastapi import HTTPException
+
 from app.api.deps import api_error
 from app.services.knowledge_documents import (
     knowledge_document_chunks,
@@ -821,7 +823,6 @@ def run_scheduled_job_ai_processing(
             urlopen_func=urlopen,
         )
         output_json = model_json_content(response_payload)
-        validate_skill_output_json_contract(output_json, output_schema)
         latency_ms = int((perf_counter() - started) * 1000)
         model_log = model_gateway_log(
             current_store,
@@ -901,6 +902,24 @@ def run_scheduled_job_ai_processing(
         },
     )
     save_model_gateway_records(current_store, audit_event=audit_event)
+    try:
+        validate_skill_output_json_contract(output_json, output_schema)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        if detail.get("code") == "SKILL_OUTPUT_SCHEMA_INVALID":
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={
+                    **detail,
+                    "latency_ms": latency_ms,
+                    "model": model_log["model"],
+                    "model_gateway_called": True,
+                    "model_gateway_config_id": config["id"],
+                    "model_log_id": model_log["id"],
+                    "provider": model_log["provider"],
+                },
+            ) from exc
+        raise
     return {
         "knowledge_references": knowledge_references,
         "model_gateway_config_id": config["id"],
