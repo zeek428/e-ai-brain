@@ -47,6 +47,7 @@ from app.services.model_gateway_runtime import (
     model_gateway_test_failure,
     model_gateway_test_skipped,
     parse_embedding_response,
+    read_model_gateway_json_response,
 )
 from app.services.model_gateway_task_io import (
     derive_code_review_risk_level,
@@ -142,8 +143,11 @@ def call_openai_compatible_model_gateway(
     resolved_opener = opener or urlopen
     started = perf_counter()
     try:
-        with resolved_opener(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
+        response_payload = read_model_gateway_json_response(
+            request,
+            timeout_seconds=int(config.get("timeout_seconds") or 60),
+            urlopen_func=resolved_opener,
+        )
         output = parse_model_gateway_task_output(response_payload, task)
         latency_ms = int((perf_counter() - started) * 1000)
         log = model_gateway_log(
@@ -318,8 +322,11 @@ def call_openai_compatible_embeddings(
     )
     started = perf_counter()
     try:
-        with urlopen(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
+        response_payload = read_model_gateway_json_response(
+            request,
+            timeout_seconds=int(config.get("timeout_seconds") or 60),
+            urlopen_func=urlopen,
+        )
         embeddings = parse_embedding_response(response_payload, expected_count=len(inputs))
         latency_ms = int((perf_counter() - started) * 1000)
         log = model_gateway_log(
@@ -402,8 +409,11 @@ def test_model_gateway_chat(config: dict[str, Any]) -> dict[str, Any]:
     )
     started = perf_counter()
     try:
-        with urlopen(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        payload = read_model_gateway_json_response(
+            request,
+            timeout_seconds=int(config.get("timeout_seconds") or 60),
+            urlopen_func=urlopen,
+        )
         choices = payload.get("choices")
         if not isinstance(choices, list) or not choices:
             raise ValueError("Model gateway chat response is missing choices")
@@ -456,8 +466,11 @@ def test_model_gateway_embedding(config: dict[str, Any]) -> dict[str, Any]:
     )
     started = perf_counter()
     try:
-        with urlopen(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        payload = read_model_gateway_json_response(
+            request,
+            timeout_seconds=int(config.get("timeout_seconds") or 60),
+            urlopen_func=urlopen,
+        )
         embeddings = parse_embedding_response(payload, expected_count=1)
         return {
             "dimension": len(embeddings[0]),

@@ -1,4 +1,4 @@
-import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, ExperimentOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -192,6 +192,7 @@ export default function ModelGatewayPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
+  const [testingConfigId, setTestingConfigId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<ModelGatewayConfigTestResult | null>(null);
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
     filters: {},
@@ -440,6 +441,44 @@ export default function ModelGatewayPage() {
     }
   };
 
+  const buildRowTestPayload = useCallback((row: ModelGatewayConfigRecord) => {
+    const testTarget: ModelGatewayFormValues['test_target'] =
+      row.embeddingConnectionMode === 'disabled' ? 'chat' : 'chat_and_embedding';
+    return {
+      base_url: row.baseUrl,
+      config_id: row.id,
+      default_chat_model: row.defaultChatModel,
+      default_embedding_model: row.defaultEmbeddingModel ?? undefined,
+      embedding_base_url: row.embeddingBaseUrl ?? undefined,
+      embedding_connection_mode: row.embeddingConnectionMode,
+      embedding_dimension: row.embeddingDimension ?? undefined,
+      is_default: row.isDefault,
+      max_retries: row.maxRetries,
+      name: row.name,
+      provider: row.provider,
+      status: row.status,
+      test_target: testTarget,
+      timeout_seconds: row.timeoutSeconds,
+    };
+  }, []);
+
+  const handleTestConfig = useCallback(async (row: ModelGatewayConfigRecord) => {
+    setTestingConfigId(row.id);
+    try {
+      const result = await testModelGatewayConfig(buildRowTestPayload(row));
+      const chatStatus = formatTestStatus(result.chat);
+      const embeddingStatus = formatTestStatus(result.embedding);
+      message[result.ok ? 'success' : 'warning'](
+        `模型网关测试${result.ok ? '通过' : '未通过'}：Chat ${chatStatus}，Embedding ${embeddingStatus}`,
+      );
+      void reloadLogs();
+    } catch (testError) {
+      message.error(formatMutationError(testError));
+    } finally {
+      setTestingConfigId(null);
+    }
+  }, [buildRowTestPayload, reloadLogs]);
+
   const handleSave = async () => {
     const values = await form.validateFields();
     const payload = buildPayload(values);
@@ -530,6 +569,14 @@ export default function ModelGatewayPage() {
         valueType: 'option',
         render: (_, row) => (
           <Space size={4}>
+            <Button
+              icon={<ExperimentOutlined />}
+              loading={testingConfigId === row.id}
+              onClick={() => void handleTestConfig(row)}
+              type="link"
+            >
+              测试
+            </Button>
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
@@ -546,7 +593,7 @@ export default function ModelGatewayPage() {
         ),
       },
     ],
-    [handleDelete, openEditModal],
+    [handleDelete, handleTestConfig, openEditModal, testingConfigId],
   );
   const logColumns = useMemo<ColumnsType<ModelGatewayLogRecord>>(
     () => [

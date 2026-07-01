@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import http.client
+import json
 from time import perf_counter
 from typing import Any
+from urllib.error import HTTPError
+from urllib.parse import urlparse
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen as default_urlopen
 
 from app.core.config import get_settings
 
@@ -41,6 +47,67 @@ def model_gateway_embeddings_url(base_url: str) -> str:
     if normalized.endswith("/embeddings"):
         return normalized
     return f"{normalized}/embeddings"
+
+
+def read_model_gateway_json_response(
+    request: UrlRequest,
+    *,
+    timeout_seconds: int,
+    urlopen_func: Any = default_urlopen,
+) -> dict[str, Any]:
+    if urlopen_func is not default_urlopen:
+        with urlopen_func(request, timeout=timeout_seconds) as response:
+            return json.loads(response.read().decode("utf-8"))
+    return _read_model_gateway_json_response_with_http_client(
+        request,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _read_model_gateway_json_response_with_http_client(
+    request: UrlRequest,
+    *,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    parsed = urlparse(request.full_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("Model gateway URL must use http or https")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("Model gateway URL is missing host")
+    connection_class = (
+        http.client.HTTPSConnection
+        if parsed.scheme == "https"
+        else http.client.HTTPConnection
+    )
+    connection = connection_class(
+        host,
+        parsed.port,
+        timeout=timeout_seconds,
+    )
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    try:
+        connection.request(
+            request.get_method(),
+            path,
+            body=request.data,
+            headers=dict(request.header_items()),
+        )
+        response = connection.getresponse()
+        response_body = response.read()
+        if response.status >= 400:
+            raise HTTPError(
+                request.full_url,
+                response.status,
+                response.reason,
+                response.headers,
+                None,
+            )
+        return json.loads(response_body.decode("utf-8"))
+    finally:
+        connection.close()
 
 
 def parse_embedding_response(

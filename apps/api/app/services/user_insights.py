@@ -243,6 +243,7 @@ def list_user_insight_items_response(
     current_store: Any,
     page: int | None,
     page_size: int | None,
+    product_id: str | None,
     sort_by: str | None,
     sort_order: str,
     started_at: float | None,
@@ -254,7 +255,7 @@ def list_user_insight_items_response(
     resolved_sort_by = sort_by or "updated_at"
     if resolved_sort_by not in USER_INSIGHT_SORT_FIELDS:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
-    filters = {"category": category, "status": status, "summary": summary}
+    filters = {"category": category, "product_id": product_id, "status": status, "summary": summary}
 
     repository = user_insight_query_repository(current_store)
     list_items = (
@@ -264,6 +265,7 @@ def list_user_insight_items_response(
         return add_list_observability(
             list_items(
                 category=category,
+                product_id=product_id,
                 summary=summary,
                 status=status,
                 page=page,
@@ -283,6 +285,8 @@ def list_user_insight_items_response(
     items = user_insight_rows(current_store)
     if category is not None:
         items = [item for item in items if item.get("category") == category]
+    if product_id is not None:
+        items = [item for item in items if item.get("product_id") == product_id]
     if status is not None:
         items = [item for item in items if item.get("status") == status]
     items = [

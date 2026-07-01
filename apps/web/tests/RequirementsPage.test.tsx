@@ -205,6 +205,31 @@ describe('RequirementsPage', () => {
     expect(screen.getByText('2026-06-04 16:00')).toBeInTheDocument();
     expect(screen.getByText('2026-06-04 16:10')).toBeInTheDocument();
 
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText('所属产品')).getByRole('option', {
+          name: 'API-PRODUCT · 接口产品',
+        }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText('所属产品'), { target: { value: 'product_api' } });
+    fireEvent.submit(screen.getByRole('form', { name: '查询表格' }));
+
+    await waitFor(() => {
+      const requirementListUrls = fetchMock.mock.calls
+        .map(([path]) => String(path))
+        .filter((path) => path.startsWith('/api/requirements?'));
+      expect(
+        requirementListUrls.some((path) => {
+          const params = new URLSearchParams(path.split('?')[1]);
+          return params.get('product_id') === 'product_api';
+        }),
+      ).toBe(true);
+    });
+
+    fireEvent.reset(screen.getByRole('form', { name: '查询表格' }));
+    expect(await screen.findByText('归集需求一')).toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText('迭代版本'), { target: { value: '2026-05' } });
     fireEvent.submit(screen.getByRole('form', { name: '查询表格' }));
 

@@ -64,6 +64,7 @@ FAILED_STATUSES = {"cancelled", "failed"}
 RUNNING_STATUSES = {"pending", "queued", "running"}
 ATTENTION_STATUSES = FAILED_STATUSES | RUNNING_STATUSES
 DIAGNOSTIC_NODE_LIMIT = 5
+MAX_TRACE_DURATION_MS = 2_147_483_647
 SENSITIVE_KEYWORDS = (
     "api_key",
     "apikey",
@@ -300,7 +301,16 @@ def _duration_ms(started_at: Any, finished_at: Any) -> int | None:
         finished = parse_trace_datetime(str(finished_at), "finished_at")
     except Exception:
         return None
-    return max(0, int((finished - started).total_seconds() * 1000))
+    return _safe_duration_ms(int((finished - started).total_seconds() * 1000))
+
+
+def _safe_duration_ms(value: Any) -> int | None:
+    if not isinstance(value, int | float):
+        return None
+    duration = max(0, int(value))
+    if duration > MAX_TRACE_DURATION_MS:
+        return None
+    return duration
 
 
 def _status(value: Any) -> str:
@@ -375,7 +385,7 @@ def _node(
     summary: Any = None,
 ) -> dict[str, Any]:
     return {
-        "duration_ms": duration_ms,
+        "duration_ms": _safe_duration_ms(duration_ms),
         "error_code": str(error_code) if error_code else None,
         "error_message": str(error_message) if error_message else None,
         "finished_at": str(finished_at) if finished_at else None,
@@ -1357,6 +1367,7 @@ class ExecutionTraceBuilder:
         duration = root.get("latency_ms")
         if duration is None:
             duration = _duration_ms(started_at, finished_at)
+        duration = _safe_duration_ms(duration)
         node_ids = {node["id"] for node in nodes}
         edges = [
             edge

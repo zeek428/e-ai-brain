@@ -148,6 +148,7 @@ function buildRequirementListQuery(query: ManagementListQuery): RequirementListQ
     pageSize: query.pageSize,
     priority: normalizeFilterText(query.filters.priority),
     product: normalizeFilterText(query.filters.product),
+    productId: normalizeFilterText(query.filters.productId),
     source: normalizeFilterText(query.filters.source),
     sortField: query.sortField ? requirementSortFieldMap[query.sortField] ?? query.sortField : undefined,
     sortOrder: query.sortOrder,
@@ -902,7 +903,12 @@ export default function RequirementsPage() {
         viewStorageKey="delivery.requirements"
         filters={[
           { label: '需求标题', name: 'title', type: 'text' },
-          { label: '所属产品', name: 'product', type: 'text' },
+          {
+            label: '所属产品',
+            name: 'productId',
+            options: productOptions,
+            type: 'select',
+          },
           { label: '迭代版本', name: 'versionName', type: 'text' },
           {
             label: '需求来源',

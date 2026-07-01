@@ -13,6 +13,7 @@ class UserInsightListRepository:
         self,
         *,
         category: str | None = None,
+        product_id: str | None = None,
         summary: str | None = None,
         status: str | None = None,
         page: int | None = None,
@@ -97,6 +98,9 @@ class UserInsightListRepository:
         if category is not None:
             where_clauses.append("category = %s")
             params.append(category)
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
         if status is not None:
             where_clauses.append("status = %s")
             params.append(status)

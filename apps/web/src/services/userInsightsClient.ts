@@ -32,6 +32,7 @@ type FlexibleListItem = Record<string, unknown> & {
 
 export type UserInsightListQuery = RemoteListQuery & {
   category?: string;
+  productId?: string;
   status?: string;
   summary?: string;
 };
@@ -249,6 +250,7 @@ export async function fetchUserInsightList(
   const token = requireAccessToken();
   const params = new URLSearchParams();
   appendQueryParam(params, 'category', query.category);
+  appendQueryParam(params, 'product_id', query.productId);
   appendQueryParam(params, 'summary', query.summary);
   appendQueryParam(params, 'status', query.status);
   appendRemoteListParams(params, query);

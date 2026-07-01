@@ -100,6 +100,7 @@ class IterationSuggestionDecisionRequest(BaseModel):
 def insight_items(
     request: Request,
     category: str | None = None,
+    product_id: str | None = None,
     summary: str | None = None,
     status: str | None = None,
     page: int | None = Query(default=None, ge=1),
@@ -114,6 +115,7 @@ def insight_items(
         current_store=store(request),
         page=page,
         page_size=page_size,
+        product_id=product_id,
         sort_by=sort_by,
         sort_order=sort_order,
         started_at=started_at if isinstance(started_at, float) else perf_counter(),

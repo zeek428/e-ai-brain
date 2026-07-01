@@ -266,6 +266,7 @@ def test_user_insight_items_support_server_pagination_sort_and_filters():
         (
             "/api/insights/items"
             "?category=用户反馈"
+            f"&product_id={context['product_id']}"
             "&summary=迭代版本"
             "&status=open"
             "&page=1&page_size=1"

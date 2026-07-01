@@ -34,6 +34,7 @@ export type RequirementResponse = {
 export type RequirementListQuery = RemoteListQuery & {
   priority?: string;
   product?: string;
+  productId?: string;
   source?: string;
   status?: string;
   title?: string;
@@ -269,6 +270,7 @@ export async function fetchManagementRequirementList(
   const params = new URLSearchParams();
   appendQueryParam(params, 'priority', query.priority);
   appendQueryParam(params, 'product', query.product);
+  appendQueryParam(params, 'product_id', query.productId);
   appendQueryParam(params, 'source', query.source);
   appendQueryParam(params, 'status', query.status);
   appendQueryParam(params, 'title', query.title);

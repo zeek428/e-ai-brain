@@ -1210,6 +1210,7 @@ class PostgresSnapshotRepository:
         self,
         *,
         category: str | None = None,
+        product_id: str | None = None,
         summary: str | None = None,
         status: str | None = None,
         page: int | None = None,
@@ -1219,6 +1220,7 @@ class PostgresSnapshotRepository:
     ) -> dict[str, Any]:
         return self._user_insight_read_repository.list_user_insight_items(
             category=category,
+            product_id=product_id,
             summary=summary,
             status=status,
             page=page,

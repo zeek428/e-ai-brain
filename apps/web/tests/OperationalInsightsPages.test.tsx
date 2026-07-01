@@ -126,8 +126,10 @@ describe('operational insights pages', () => {
     expect(screen.getByText('product_api')).toBeInTheDocument();
     fireEvent.click(screen.getAllByLabelText('Close')[0]);
     fireEvent.click(screen.getByRole('button', { name: '登记反馈' }));
-    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
-    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
+    await waitFor(() => expect(screen.getAllByLabelText('所属产品')).toHaveLength(2));
+    fireEvent.mouseDown(screen.getAllByLabelText('所属产品')[1]);
+    await waitFor(() => expect(screen.getAllByRole('option', { name: '研发平台' })).toHaveLength(2));
+    fireEvent.click(screen.getAllByRole('option', { name: '研发平台' })[1]);
     fireEvent.change(screen.getByLabelText('反馈内容'), { target: { value: '新反馈内容' } });
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
@@ -167,6 +169,51 @@ describe('operational insights pages', () => {
           triage_note: '已纳入优化池',
         }),
       ]),
+    );
+  });
+
+  it('filters user insights by selected product', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const path = String(input);
+      if (path.startsWith('/api/products?active_only=true')) {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path.startsWith('/api/product-versions?active_only=true')) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path.startsWith('/api/insights/items')) {
+        return jsonResponse({
+          data: {
+            items: [],
+            page: 1,
+            page_size: 10,
+            total: 0,
+          },
+        });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<InsightsPage />);
+
+    await screen.findByLabelText('所属产品');
+    fireEvent.change(screen.getByLabelText('所属产品'), { target: { value: 'product_api' } });
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([path]) => String(path).includes('product_id=product_api'))).toBe(true),
     );
   });
 

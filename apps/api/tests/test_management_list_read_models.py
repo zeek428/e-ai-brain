@@ -138,6 +138,7 @@ def test_insight_items_use_repository_read_model_for_sql_pagination():
             (
                 "/api/insights/items"
                 "?category=用户反馈"
+                "&product_id=product_read_model"
                 "&summary=迭代版本"
                 "&status=open"
                 "&page=1&page_size=1"
@@ -156,6 +157,7 @@ def test_insight_items_use_repository_read_model_for_sql_pagination():
                 "category": "用户反馈",
                 "page": 1,
                 "page_size": 1,
+                "product_id": "product_read_model",
                 "sort_by": "updated_at",
                 "sort_order": "desc",
                 "status": "open",

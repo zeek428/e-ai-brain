@@ -350,6 +350,7 @@ class UserInsightReadRepository:
         self,
         *,
         category: str | None = None,
+        product_id: str | None = None,
         summary: str | None = None,
         status: str | None = None,
         page: int | None = None,
@@ -359,6 +360,7 @@ class UserInsightReadRepository:
     ) -> dict[str, Any]:
         return self._list_repository.list_user_insight_items(
             category=category,
+            product_id=product_id,
             summary=summary,
             status=status,
             page=page,

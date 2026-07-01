@@ -20,7 +20,10 @@ from app.services.model_gateway_logging import (
     model_gateway_log,
     openai_usage_tokens,
 )
-from app.services.model_gateway_runtime import model_gateway_chat_completions_url
+from app.services.model_gateway_runtime import (
+    model_gateway_chat_completions_url,
+    read_model_gateway_json_response,
+)
 from app.services.operational_records import record_audit_event
 from app.services.scheduled_job_store import (
     read_memory_dict,
@@ -475,8 +478,11 @@ def run_scheduled_job_ai_processing(
     )
     started = perf_counter()
     try:
-        with urlopen(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
+        response_payload = read_model_gateway_json_response(
+            request,
+            timeout_seconds=int(config.get("timeout_seconds") or 60),
+            urlopen_func=urlopen,
+        )
         output_json = model_json_content(response_payload)
         validate_skill_output_json_contract(output_json, output_schema)
         latency_ms = int((perf_counter() - started) * 1000)

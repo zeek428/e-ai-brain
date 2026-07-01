@@ -541,6 +541,52 @@ def test_execution_trace_lists_related_runtime_nodes_and_redacts_secrets():
     assert "<redacted>" in serialized_detail
 
 
+def test_execution_trace_ignores_out_of_range_duration_from_placeholder_finished_at():
+    app.state.store.reset()
+    headers = auth_headers()
+    app.state.store.ai_executor_tasks["ai_executor_task_future_finished"] = {
+        "claimed_at": "2026-06-20T01:00:02+00:00",
+        "created_at": "2026-06-20T01:00:01+00:00",
+        "executor_type": "codex",
+        "finished_at": "2099-01-01T00:00:00+00:00",
+        "id": "ai_executor_task_future_finished",
+        "runner_id": "ai_executor_runner_future_finished",
+        "status": "failed",
+    }
+    app.state.store.ai_executor_runners["ai_executor_runner_future_finished"] = {
+        "created_at": "2026-06-20T01:00:01+00:00",
+        "id": "ai_executor_runner_future_finished",
+        "last_heartbeat_at": "2026-06-20T01:00:02+00:00",
+        "protocol": "runner_polling",
+        "status": "active",
+    }
+
+    response = client.get(
+        "/api/governance/execution-traces"
+        "?source_id=ai_executor_task_future_finished&source_type=ai_executor_task"
+        "&page=1&page_size=10",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["data"]["items"][0]
+    assert item["id"] == "ai_executor_task_future_finished"
+    assert item["duration_ms"] is None
+
+    detail_response = client.get(
+        "/api/governance/execution-traces/ai_executor_task_future_finished",
+        headers=headers,
+    )
+
+    assert detail_response.status_code == 200, detail_response.text
+    task_node = next(
+        node
+        for node in detail_response.json()["data"]["nodes"]
+        if node["source_id"] == "ai_executor_task_future_finished"
+    )
+    assert task_node["duration_ms"] is None
+
+
 def test_execution_trace_attaches_audit_to_model_gateway_log_without_duplicate_trace():
     app.state.store.reset()
     seed_model_gateway_audit_trace_records()

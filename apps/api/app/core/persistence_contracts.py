@@ -719,6 +719,7 @@ class IterationPlanningRepository(Protocol):
         self,
         *,
         category: str | None = None,
+        product_id: str | None = None,
         summary: str | None = None,
         status: str | None = None,
         page: int | None = None,
