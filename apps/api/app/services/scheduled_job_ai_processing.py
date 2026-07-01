@@ -194,7 +194,9 @@ def _schema_sample_value(
     if isinstance(schema_type, list):
         schema_type = next((item for item in schema_type if item != "null"), schema_type[0])
     if schema_type == "array" or "items" in schema:
-        items_schema = schema.get("items") if isinstance(schema.get("items"), dict) else {}
+        items_schema = schema.get("items") if isinstance(schema.get("items"), dict) else None
+        if items_schema is None:
+            items_schema = _default_array_item_schema(property_name)
         return [
             _schema_sample_value(
                 items_schema,
@@ -228,8 +230,56 @@ def _schema_sample_value(
     return _sample_string(property_name)
 
 
+def _default_array_item_schema(property_name: str) -> dict[str, Any]:
+    lower_name = property_name.lower()
+    if lower_name in {"insights", "user_feedback_insights"}:
+        return {
+            "properties": {
+                "confidence": {"type": "number"},
+                "feedback_type": {"type": "string"},
+                "sentiment": {"type": "string"},
+                "source_channel": {"type": "string"},
+                "summary": {"type": "string"},
+                "title": {"type": "string"},
+            },
+            "type": "object",
+        }
+    if lower_name in {"findings", "issues"}:
+        return {
+            "properties": {
+                "file_path": {"type": "string"},
+                "line": {"type": "integer"},
+                "risk_level": {"type": "string"},
+                "rule_id": {"type": "string"},
+                "summary": {"type": "string"},
+            },
+            "type": "object",
+        }
+    if lower_name in {"recipients", "emails", "to", "cc"}:
+        return {"type": "string", "format": "email"}
+    if lower_name in {"rows", "items", "records"}:
+        return {
+            "properties": {
+                "id": {"type": "string"},
+                "summary": {"type": "string"},
+            },
+            "type": "object",
+        }
+    return {}
+
+
 def _sample_string(property_name: str) -> str:
     lower_name = property_name.lower()
+    if lower_name in {"email", "recipient", "recipients", "to", "cc"}:
+        return "dry-run@example.com"
+    if lower_name in {"file_path", "path"}:
+        return "src/example.py"
+    if lower_name in {"rule_id"}:
+        return "AI-BRAIN-DRY-RUN"
+    if lower_name in {"summary", "description"}:
+        return "AI Brain dry-run sample summary"
+    if lower_name in {"id"}:
+        return "dry-run-id"
     if lower_name in {"sentiment"}:
         return "neutral"
     if lower_name in {"feedback_type", "type"}:

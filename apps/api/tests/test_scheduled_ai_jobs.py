@@ -2466,10 +2466,26 @@ def test_scheduled_job_dry_run_previews_data_ai_contract_and_write_mapping():
     }
     assert data["stages"]["ai_processing"]["output_preview_source"] == "skill_output_schema"
     assert len(data["stages"]["ai_processing"]["output_preview"]["insights"]) == 2
+    assert data["stages"]["ai_processing"]["output_preview"]["insights"][0] == {
+        "confidence": 1,
+        "feedback_type": "improvement",
+        "sentiment": "neutral",
+        "source_channel": "dry_run",
+        "summary": "AI Brain dry-run sample summary",
+        "title": "AI Brain dry-run sample",
+    }
     assert data["stages"]["result_actions"][0]["write_target"] == "user_feedback_insights"
     assert data["stages"]["result_actions"][0]["write_preview_source"] == "skill_output_schema"
     assert data["stages"]["result_actions"][0]["write_preview"]["candidate_count"] == 2
     assert data["stages"]["result_actions"][0]["write_preview"]["records_imported"] == 2
+    assert data["stages"]["result_actions"][0]["write_preview"]["sample_records"][0] == {
+        "confidence": 1,
+        "feedback_type": "improvement",
+        "sentiment": "neutral",
+        "source_channel": "dry_run",
+        "summary": "AI Brain dry-run sample summary",
+        "title": "AI Brain dry-run sample",
+    }
     invocation_log = next(
         log
         for log in app.state.store.plugin_invocation_logs.values()

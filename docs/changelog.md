@@ -16,6 +16,7 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 定时作业 dry-run 的 Skill 输出样例对 `insights/findings/rows/recipients` 等未声明 item schema 的常见业务数组生成结构化样例记录，写入预览不再只展示裸字符串。
 - 定时作业全链路试运行结果面板补充预览来源摘要：页面直接展示 AI 输出来源、每个动作预计写入数量和预览来源，同时保留完整 JSON 供排障。
 - 定时作业 dry-run 在 AI 场景下基于 Skill 输出 Schema 生成安全输出样例，并用该样例计算动作写入预览和预计写入数量，响应返回 `output_preview_source` 与 `write_preview_source` 方便页面解释预览来源。
 - 定时作业运行 Trace DAG 的边关系改为按编排层生成：多数据连接分别指向下一处理节点，多结果动作分别由上游处理节点连出，不再把同层连接或同层动作串成前后依赖。
