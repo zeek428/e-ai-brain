@@ -7,6 +7,10 @@ from app.services.ai_executor_runners import (
     SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
     SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
 )
+from app.services.internal_data_sources import (
+    INTERNAL_DATA_SOURCE_DEFAULT_TYPES,
+    internal_data_source_source_options,
+)
 from app.services.result_write_targets import result_write_target_default_mapping
 
 STANDARD_PLUGINS = [
@@ -252,12 +256,7 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
                 "field_mode": "summary",
                 "limit": 100,
                 "product_scope": "current_user_scope",
-                "source_types": [
-                    "user_insights",
-                    "requirements",
-                    "products",
-                    "bugs",
-                ],
+                "source_types": list(INTERNAL_DATA_SOURCE_DEFAULT_TYPES),
                 "window_end": "{{now}}",
                 "window_start": "{{current_date-30}}",
             },
@@ -501,12 +500,7 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                         "description": "可多选，运行时按数据源分别读取并合并为结构化输入。",
                         "key": "source_types",
                         "label": "源数据",
-                        "options": [
-                            {"label": "用户洞察数据", "value": "user_insights"},
-                            {"label": "需求数据", "value": "requirements"},
-                            {"label": "产品数据", "value": "products"},
-                            {"label": "Bug 数据", "value": "bugs"},
-                        ],
+                        "options": internal_data_source_source_options(),
                         "path": "request_config.query.source_types",
                         "required": True,
                         "type": "multi_select",
@@ -855,7 +849,10 @@ STANDARD_PLUGIN_ACTION_TEMPLATES = [
         "code": "internal_business_data_query",
         "default_code": "query_internal_business_data",
         "default_name": "读取内部业务数据",
-        "description": "只读读取 AI Brain 内部用户洞察、需求、产品和 Bug 数据，作为定时作业 AI 处理输入。",
+        "description": (
+            "只读读取 AI Brain 内部用户洞察、需求、产品和 Bug 数据，作为定时作业 "
+            "AI 处理输入。"
+        ),
         "form_defaults": {},
         "name": "读取内部业务数据",
         "plugin_code": "internal_data_source",

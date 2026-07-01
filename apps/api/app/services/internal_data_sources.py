@@ -12,8 +12,10 @@ from app.services.product_config_context import (
 )
 from app.services.product_scope import product_scope_filter
 from app.services.requirement_listing import list_requirements_response
-from app.services.user_insights import list_user_insight_items_response, user_insight_rows
-
+from app.services.user_insights import (
+    list_user_insight_items_response,
+    user_insight_rows,
+)
 
 INTERNAL_DATA_SOURCE_PROTOCOL = "internal_read_model"
 INTERNAL_DATA_SOURCE_ACTION_TYPE = "internal_query"
@@ -171,6 +173,12 @@ INTERNAL_DATA_SOURCE_TYPES = {
     source_type: str(config["label"])
     for source_type, config in INTERNAL_DATA_SOURCE_REGISTRY.items()
 }
+INTERNAL_DATA_SOURCE_DEFAULT_TYPES = (
+    "user_insights",
+    "requirements",
+    "products",
+    "bugs",
+)
 
 DATE_FIELDS = (
     "updated_at",
@@ -213,7 +221,7 @@ def _string_list(value: Any) -> list[str]:
 def _normalize_source_types(value: Any) -> list[str]:
     source_types = _string_list(value)
     if not source_types:
-        source_types = ["user_insights", "requirements", "products", "bugs"]
+        source_types = list(INTERNAL_DATA_SOURCE_DEFAULT_TYPES)
     unsupported = [source for source in source_types if source not in INTERNAL_DATA_SOURCE_TYPES]
     if unsupported:
         raise api_error(
@@ -222,6 +230,21 @@ def _normalize_source_types(value: Any) -> list[str]:
             f"Unsupported internal source: {', '.join(unsupported)}",
         )
     return source_types
+
+
+def internal_data_source_source_options() -> list[dict[str, str]]:
+    ordered_source_types = [
+        *INTERNAL_DATA_SOURCE_DEFAULT_TYPES,
+        *[
+            source_type
+            for source_type in INTERNAL_DATA_SOURCE_TYPES
+            if source_type not in INTERNAL_DATA_SOURCE_DEFAULT_TYPES
+        ],
+    ]
+    return [
+        {"label": INTERNAL_DATA_SOURCE_TYPES[source_type], "value": source_type}
+        for source_type in ordered_source_types
+    ]
 
 
 def _normalize_source_filters(value: Any) -> dict[str, dict[str, Any]]:
@@ -321,7 +344,11 @@ def _visible_fields(
     user: dict[str, Any],
 ) -> list[str]:
     source_config = INTERNAL_DATA_SOURCE_REGISTRY[source_type]
-    fields = source_config["detail_fields"] if field_mode == "detail" else source_config["summary_fields"]
+    fields = (
+        source_config["detail_fields"]
+        if field_mode == "detail"
+        else source_config["summary_fields"]
+    )
     field_permissions = source_config.get("field_permissions")
     if not isinstance(field_permissions, dict) or not field_permissions:
         return list(fields)
@@ -353,7 +380,12 @@ def _limit_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     return rows[:limit]
 
 
-def _product_rows(current_store: Any, *, filters: dict[str, Any], user: dict[str, Any]) -> list[dict[str, Any]]:
+def _product_rows(
+    current_store: Any,
+    *,
+    filters: dict[str, Any],
+    user: dict[str, Any],
+) -> list[dict[str, Any]]:
     product_scope_ids = product_scope_filter(user)
     repository = product_config_query_repository(current_store)
     if repository is not None:
@@ -522,7 +554,11 @@ def internal_data_source_filters(
     query = _query_section(request_config)
     input_mapping = _input_mapping(payload)
     return {
-        "category": _first_value(payload.get("category"), input_mapping.get("category"), query.get("category")),
+        "category": _first_value(
+            payload.get("category"),
+            input_mapping.get("category"),
+            query.get("category"),
+        ),
         "field_mode": str(
             _first_value(
                 payload.get("field_mode"),
@@ -531,7 +567,11 @@ def internal_data_source_filters(
                 "summary",
             ),
         ),
-        "keyword": _first_value(payload.get("keyword"), input_mapping.get("keyword"), query.get("keyword")),
+        "keyword": _first_value(
+            payload.get("keyword"),
+            input_mapping.get("keyword"),
+            query.get("keyword"),
+        ),
         "limit": _positive_int(
             _first_value(payload.get("limit"), input_mapping.get("limit"), query.get("limit")),
             default=100,
@@ -542,16 +582,32 @@ def internal_data_source_filters(
             input_mapping.get("module_code"),
             query.get("module_code"),
         ),
-        "priority": _first_value(payload.get("priority"), input_mapping.get("priority"), query.get("priority")),
-        "product": _first_value(payload.get("product"), input_mapping.get("product"), query.get("product")),
+        "priority": _first_value(
+            payload.get("priority"),
+            input_mapping.get("priority"),
+            query.get("priority"),
+        ),
+        "product": _first_value(
+            payload.get("product"),
+            input_mapping.get("product"),
+            query.get("product"),
+        ),
         "product_id": _first_value(
             payload.get("product_id"),
             input_mapping.get("product_id"),
             query.get("product_id"),
         ),
         "product_scope": _first_value(query.get("product_scope"), "current_user_scope"),
-        "severity": _first_value(payload.get("severity"), input_mapping.get("severity"), query.get("severity")),
-        "source": _first_value(payload.get("source"), input_mapping.get("source"), query.get("source")),
+        "severity": _first_value(
+            payload.get("severity"),
+            input_mapping.get("severity"),
+            query.get("severity"),
+        ),
+        "source": _first_value(
+            payload.get("source"),
+            input_mapping.get("source"),
+            query.get("source"),
+        ),
         "source_filters": _normalize_source_filters(
             _first_value(
                 payload.get("source_filters"),
@@ -566,7 +622,11 @@ def internal_data_source_filters(
                 query.get("source_types"),
             ),
         ),
-        "status": _first_value(payload.get("status"), input_mapping.get("status"), query.get("status")),
+        "status": _first_value(
+            payload.get("status"),
+            input_mapping.get("status"),
+            query.get("status"),
+        ),
         "version_id": _first_value(
             payload.get("version_id"),
             input_mapping.get("version_id"),

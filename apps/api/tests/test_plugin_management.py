@@ -13,8 +13,12 @@ from app.services.ai_executor_runners import (
     list_ai_executor_runners_response,
     list_ai_executor_tasks_response,
 )
+from app.services.internal_data_sources import (
+    INTERNAL_DATA_SOURCE_DEFAULT_TYPES,
+    internal_data_source_source_options,
+    read_internal_data_source,
+)
 from app.services.plugin_result_mapping import records_imported_from_mapping
-from app.services.internal_data_sources import read_internal_data_source
 from app.services.plugins import (
     list_plugin_actions_response,
     list_plugin_connections_response,
@@ -537,15 +541,13 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert internal_item["connection_defaults"]["endpoint_url"] == (
         "internal://e-ai-brain/business-data"
     )
+    assert internal_item["connection_defaults"]["request_config"]["query"]["source_types"] == list(
+        INTERNAL_DATA_SOURCE_DEFAULT_TYPES
+    )
     internal_source_field = internal_item["connection_schema"]["sections"][0]["fields"][0]
     assert internal_source_field["key"] == "source_types"
     assert internal_source_field["type"] == "multi_select"
-    assert internal_source_field["options"] == [
-        {"label": "用户洞察数据", "value": "user_insights"},
-        {"label": "需求数据", "value": "requirements"},
-        {"label": "产品数据", "value": "products"},
-        {"label": "Bug 数据", "value": "bugs"},
-    ]
+    assert internal_source_field["options"] == internal_data_source_source_options()
     assert internal_item["connection_schema"]["sections"][2]["title"] == "按源过滤"
     internal_source_filter_fields = {
         field["key"]: field for field in internal_item["connection_schema"]["sections"][2]["fields"]
@@ -978,6 +980,14 @@ def test_internal_data_source_supports_source_filters_and_field_permissions():
         "计划中需求详情",
         "草稿需求详情",
     }
+
+    default_source_result = read_internal_data_source(
+        current_store=store,
+        input_payload={},
+        request_config={"query": {"field_mode": "summary"}},
+        user=ADMIN_SERVICE_USER,
+    )
+    assert default_source_result["source_types"] == list(INTERNAL_DATA_SOURCE_DEFAULT_TYPES)
 
 
 def test_plugin_request_config_replaces_path_templates_from_connection_params():
