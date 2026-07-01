@@ -18,7 +18,11 @@ from app.services.internal_data_sources import (
     internal_data_source_source_options,
     read_internal_data_source,
 )
-from app.services.plugin_result_mapping import records_imported_from_mapping
+from app.services.plugin_result_mapping import (
+    json_path_value,
+    records_imported_from_mapping,
+    result_write_preview,
+)
 from app.services.plugins import (
     list_plugin_actions_response,
     list_plugin_connections_response,
@@ -3452,6 +3456,48 @@ def test_records_imported_mapping_counts_array_values():
         )
         == 3
     )
+
+
+def test_json_path_mapping_supports_brackets_indexes_and_wildcards():
+    response_summary = {
+        "json": {
+            "payload": {
+                "data.rows": [
+                    {"items": [{"id": "feedback-1"}, {"id": "feedback-2"}]},
+                ],
+                "deliveries": [
+                    {"recipients": ["a@example.com", "b@example.com"]},
+                    {"recipients": ["c@example.com"]},
+                ],
+            },
+        },
+    }
+
+    assert (
+        json_path_value(
+            response_summary["json"],
+            "$.payload['data.rows'][0].items[1].id",
+        )
+        == "feedback-2"
+    )
+    assert json_path_value(
+        response_summary["json"],
+        "$.payload.deliveries[*].recipients",
+    ) == ["a@example.com", "b@example.com", "c@example.com"]
+    assert (
+        records_imported_from_mapping(
+            response_summary,
+            {"records_imported_path": "$.payload.deliveries[*].recipients"},
+        )
+        == 3
+    )
+    assert result_write_preview(
+        response_summary,
+        {
+            "recipients_path": "$.payload.deliveries[*].recipients",
+            "write_target": "email_notifications",
+        },
+    )["candidate_count"] == 3
 
 
 def test_plugin_action_trial_returns_request_preview_and_mapping_hits():

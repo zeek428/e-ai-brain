@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from typing import Any
 
@@ -22,17 +23,116 @@ def compact_preview_value(value: Any) -> Any:
 
 
 def json_path_value(payload: Any, path: str | None) -> Any:
-    if path == "$":
-        return payload
-    if not path or not path.startswith("$."):
+    tokens = _json_path_tokens(path)
+    if tokens is None:
         return None
-    current = payload
-    for part in path[2:].split("."):
-        if isinstance(current, dict):
-            current = current.get(part)
+    return _json_path_apply(payload, tokens)
+
+
+def _json_path_tokens(path: str | None) -> list[tuple[str, Any]] | None:
+    if path == "$":
+        return []
+    if not path or not path.startswith("$"):
+        return None
+    tokens: list[tuple[str, Any]] = []
+    index = 1
+    while index < len(path):
+        char = path[index]
+        if char == ".":
+            index += 1
+            start = index
+            while index < len(path) and path[index] not in ".[":
+                index += 1
+            key = path[start:index]
+            if not key:
+                return None
+            if key == "*":
+                tokens.append(("wildcard", None))
+            else:
+                tokens.append(("key", key))
+            continue
+        if char == "[":
+            end = _json_path_bracket_end(path, index)
+            if end is None:
+                return None
+            token = _json_path_bracket_token(path[index + 1 : end])
+            if token is None:
+                return None
+            tokens.append(token)
+            index = end + 1
+            continue
+        return None
+    return tokens
+
+
+def _json_path_bracket_end(path: str, start: int) -> int | None:
+    quote: str | None = None
+    escaped = False
+    for index in range(start + 1, len(path)):
+        char = path[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char == "]":
+            return index
+    return None
+
+
+def _json_path_bracket_token(content: str) -> tuple[str, Any] | None:
+    stripped = content.strip()
+    if stripped == "*":
+        return ("wildcard", None)
+    if stripped.isdigit():
+        return ("index", int(stripped))
+    if len(stripped) >= 2 and stripped[0] in {"'", '"'} and stripped[-1] == stripped[0]:
+        try:
+            value = ast.literal_eval(stripped)
+        except (SyntaxError, ValueError):
+            return None
+        if isinstance(value, str):
+            return ("key", value)
+    return None
+
+
+def _json_path_apply(payload: Any, tokens: list[tuple[str, Any]]) -> Any:
+    if not tokens:
+        return payload
+    kind, value = tokens[0]
+    rest = tokens[1:]
+    if kind == "key":
+        if not isinstance(payload, dict) or value not in payload:
+            return None
+        return _json_path_apply(payload[value], rest)
+    if kind == "index":
+        if not isinstance(payload, list) or value >= len(payload):
+            return None
+        return _json_path_apply(payload[value], rest)
+    if kind == "wildcard":
+        if isinstance(payload, dict):
+            items = payload.values()
+        elif isinstance(payload, list):
+            items = payload
         else:
             return None
-    return current
+        results: list[Any] = []
+        for item in items:
+            resolved = _json_path_apply(item, rest)
+            if resolved is None:
+                continue
+            if isinstance(resolved, list):
+                results.extend(resolved)
+            else:
+                results.append(resolved)
+        return results
+    return None
 
 
 def records_imported_from_mapping(response_summary: dict[str, Any], mapping: dict[str, Any]) -> int:
