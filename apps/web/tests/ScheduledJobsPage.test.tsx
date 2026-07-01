@@ -2332,6 +2332,8 @@ describe('ScheduledJobsPage', () => {
           id: 'scheduled_job_run_system_executor_scan',
           records_imported: 1,
           result_summary: {
+            job_type: 'plugin_action_invoke',
+            message: '插件执行调用完成',
             execution_nodes: {
               data_connection: {
                 records_imported: 0,
@@ -2380,6 +2382,9 @@ describe('ScheduledJobsPage', () => {
     );
 
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    expect(within(dialog).getByText('运行摘要')).toBeInTheDocument();
+    expect(within(dialog).getByText('插件执行调用完成')).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent('No handler implemented');
     const executorNode = within(dialog).getByLabelText('流程节点 AI 执行器执行内容');
     expect(executorNode).toHaveTextContent('执行器实例');
     expect(executorNode).toHaveTextContent('model_gateway');

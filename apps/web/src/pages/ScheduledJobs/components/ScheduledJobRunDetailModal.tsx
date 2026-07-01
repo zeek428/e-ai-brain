@@ -60,6 +60,11 @@ function assistantRunFollowupPrompt(run: ScheduledJobRunRecord) {
   return run.status === 'failed' ? '为什么这次任务失败？' : '帮我分析这次运行结果';
 }
 
+function runResultSummaryMessage(run: ScheduledJobRunRecord): string | undefined {
+  const message = run.result_summary?.message;
+  return typeof message === 'string' && message.trim() ? message : undefined;
+}
+
 function assistantRunRepairDraftPrompt() {
   return '这次失败怎么修？帮我生成修复草案';
 }
@@ -217,6 +222,7 @@ export function ScheduledJobRunDetailModal({
         },
       ]
     : [];
+  const resultSummaryMessage = run ? runResultSummaryMessage(run) : undefined;
 
   return (
     <Modal
@@ -301,6 +307,9 @@ export function ScheduledJobRunDetailModal({
             items={[
               { key: 'id', label: '运行 ID', children: run.id },
               { key: 'status', label: '状态', children: run.status },
+              ...(resultSummaryMessage
+                ? [{ key: 'result_summary_message', label: '运行摘要', children: resultSummaryMessage }]
+                : []),
               { key: 'job_type', label: '作业类型', children: jobTypeLabel },
               { key: 'execution_mode', label: 'AI执行', children: executionModeLabel },
               { key: 'model_gateway_config_id', label: 'AI 模型', children: modelLabel },
