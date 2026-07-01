@@ -264,17 +264,33 @@ export function PluginConnectionModal({
           </>
         ) : null}
         <Button onClick={onToggleAdvancedRequestJson} type="link">
-          高级请求 JSON 修改
+          {isInternalDataSourceConnection ? '高级过滤 JSON 修改' : '高级请求 JSON 修改'}
         </Button>
         {advancedRequestJsonOpen ? (
           <>
             <Space style={{ marginBottom: 8 }}>
-              <Button onClick={onSyncRequestJsonFromVisual}>同步可视化到 JSON</Button>
-              <Button onClick={onApplyRequestJsonToVisual}>从 JSON 应用到 Params / Headers</Button>
+              <Button onClick={onSyncRequestJsonFromVisual}>
+                {isInternalDataSourceConnection ? '同步源数据配置到 JSON' : '同步可视化到 JSON'}
+              </Button>
+              <Button onClick={onApplyRequestJsonToVisual}>
+                {isInternalDataSourceConnection ? '从 JSON 应用到源数据字段' : '从 JSON 应用到 Params / Headers'}
+              </Button>
             </Space>
-            <Form.Item label="请求配置 JSON" name="request_config">
+            <Form.Item
+              extra={
+                isInternalDataSourceConnection
+                  ? '可在这里补充每类源数据独立过滤 source_filters，例如只读取 P0 需求或 critical Bug。'
+                  : undefined
+              }
+              label={isInternalDataSourceConnection ? '过滤配置 JSON' : '请求配置 JSON'}
+              name="request_config"
+            >
               <Input.TextArea
-                placeholder='{"query":{"start_pt":"{{current_date-7}}"},"headers":{"Authorization":"APPCODE xxx"}}'
+                placeholder={
+                  isInternalDataSourceConnection
+                    ? '{"query":{"source_filters":{"requirements":{"priority":"P0"},"bugs":{"severity":"critical"}}}}'
+                    : '{"query":{"start_pt":"{{current_date-7}}"},"headers":{"Authorization":"APPCODE xxx"}}'
+                }
                 rows={4}
               />
             </Form.Item>

@@ -3371,6 +3371,134 @@ def test_ai_assistant_chat_scopes_repair_draft_to_referenced_scheduled_job(monke
     )
 
 
+def test_ai_assistant_chat_generates_business_drafts_from_scheduled_job_run(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "我已基于本次运行生成业务草案，确认后归档。",
+                                        "suggestions": ["查看草案"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setattr(assistant_router, "urlopen", lambda _request, timeout: FakeResponse())
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "请基于这次定时作业运行结果生成用户洞察、需求和 Bug 草案",
+            "references": [
+                {"id": "scheduled_job_run_feedback_failed", "type": "scheduled_job_run"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    draft_result = next(
+        result
+        for result in message["tool_results"]
+        if result["tool"] == "assistant.action_draft"
+        and result["intent"] == "scheduled_job_run_business_draft"
+    )
+    assert draft_result["summary"] == {
+        "draft_count": 3,
+        "draft_types": ["user_insight", "requirement", "bug"],
+        "requires_confirmation": True,
+        "source_run_id": "scheduled_job_run_feedback_failed",
+        "target": "assistant_analysis",
+    }
+    items_by_analysis_type = {
+        item["payload"]["analysis_type"]: item for item in draft_result["items"]
+    }
+    assert set(items_by_analysis_type) == {
+        "scheduled_job_run_bug_draft",
+        "scheduled_job_run_requirement_draft",
+        "scheduled_job_run_user_insight_draft",
+    }
+    insight_item = items_by_analysis_type["scheduled_job_run_user_insight_draft"]
+    assert insight_item["action"] == "create_analysis_draft"
+    assert insight_item["client_draft_id"] == (
+        "assistant_draft_user_insight_scheduled_job_run_feedback_failed"
+    )
+    assert insight_item["draft_id"].startswith("assistant_action_draft_")
+    assert insight_item["server_draft_id"] == insight_item["draft_id"]
+    assert insight_item["status"] == "pending"
+    assert insight_item["requires_confirmation"] is True
+    assert insight_item["references"] == [
+        {
+            "id": "scheduled_job_run_feedback_failed",
+            "title": "每周反馈洞察定时作业 / failed",
+            "type": "scheduled_job_run",
+            "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed",
+        }
+    ]
+    assert insight_item["payload"]["summary"] == {
+        "records_imported": 128,
+        "result_write_record_id": (
+            "result_write_record_scheduled_job_run_feedback_failed"
+        ),
+        "result_write_status": "failed",
+        "result_write_target": "user_feedback_insights",
+        "run_id": "scheduled_job_run_feedback_failed",
+        "run_status": "failed",
+        "scheduled_job_id": "scheduled_job_feedback_weekly",
+        "trigger_type": "manual",
+    }
+    assert insight_item["payload"]["findings"][0]["type"] == (
+        "scheduled_job_run_user_insight"
+    )
+
+    requirement_item = items_by_analysis_type["scheduled_job_run_requirement_draft"]
+    assert requirement_item["payload"]["findings"][0]["title"] == "待提炼需求"
+    bug_item = items_by_analysis_type["scheduled_job_run_bug_draft"]
+    assert bug_item["payload"]["findings"][0]["message"] == "结果写入动作返回 500"
+
+    draft_response = client.get(
+        f"/api/assistant/action-drafts/{insight_item['draft_id']}",
+        headers=headers,
+    )
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+    assert draft["action"] == "create_analysis_draft"
+    assert draft["source_message_id"] == message["id"]
+    assert draft["preview"]["target"]["resource_type"] == "assistant_analysis"
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{insight_item['draft_id']}/confirm",
+        headers=headers,
+    )
+    assert confirm_response.status_code == 200
+    run = confirm_response.json()["data"]["run"]
+    assert run["action"] == "create_analysis_draft"
+    assert run["result_type"] == "assistant_analysis"
+    assert run["result"]["analysis_type"] == "scheduled_job_run_user_insight_draft"
+    assert run["result"]["source_draft_id"] == insight_item["draft_id"]
+
+
 def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
     headers = auth_headers()
     app.state.store.reset()

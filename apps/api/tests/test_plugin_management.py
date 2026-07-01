@@ -822,8 +822,10 @@ def test_internal_data_source_respects_product_scope_for_multi_source_reads():
     }
     store.requirements["requirement_visible"] = {
         "created_at": "2026-06-10T00:00:00+00:00",
+        "description": "受限用户不应默认读取需求详情描述",
         "id": "requirement_visible",
         "product_id": "product_sql",
+        "raw_payload": {"secret": "requirement-secret"},
         "source": "user_feedback",
         "status": "planned",
         "title": "可见需求",
@@ -841,6 +843,7 @@ def test_internal_data_source_respects_product_scope_for_multi_source_reads():
         input_payload={},
         request_config={
             "query": {
+                "field_mode": "detail",
                 "limit": 20,
                 "source_types": ["products", "requirements"],
             },
@@ -851,6 +854,89 @@ def test_internal_data_source_respects_product_scope_for_multi_source_reads():
     assert [row["id"] for row in result["datasets"]["requirements"]] == [
         "requirement_visible",
     ]
+    assert "description" not in result["datasets"]["requirements"][0]
+    assert "raw_payload" not in result["datasets"]["requirements"][0]
+    assert result["schemas"]["requirements"]["field_mode"] == "detail"
+    assert "description" not in result["schemas"]["requirements"]["fields"]
+
+
+def test_internal_data_source_supports_source_filters_and_field_permissions():
+    app.state.store.reset()
+    store = app.state.store
+    store.products["product_sql"] = {
+        "code": "VISIBLE",
+        "id": "product_sql",
+        "name": "可见产品",
+        "status": "active",
+    }
+    store.requirements["requirement_planned"] = {
+        "created_at": "2026-06-10T00:00:00+00:00",
+        "description": "计划中需求详情",
+        "id": "requirement_planned",
+        "product_id": "product_sql",
+        "source": "user_feedback",
+        "status": "planned",
+        "title": "计划中需求",
+    }
+    store.requirements["requirement_draft"] = {
+        "created_at": "2026-06-10T00:00:00+00:00",
+        "description": "草稿需求详情",
+        "id": "requirement_draft",
+        "product_id": "product_sql",
+        "source": "user_feedback",
+        "status": "draft",
+        "title": "草稿需求",
+    }
+    store.bugs["bug_critical"] = {
+        "created_at": "2026-06-11T00:00:00+00:00",
+        "description": "严重缺陷详情",
+        "id": "bug_critical",
+        "product_id": "product_sql",
+        "raw_payload": {"secret": "bug-secret"},
+        "severity": "critical",
+        "source": "manual_test",
+        "status": "open",
+        "title": "严重缺陷",
+    }
+    store.bugs["bug_low"] = {
+        "created_at": "2026-06-11T00:00:00+00:00",
+        "description": "低级缺陷详情",
+        "id": "bug_low",
+        "product_id": "product_sql",
+        "severity": "low",
+        "source": "manual_test",
+        "status": "open",
+        "title": "低级缺陷",
+    }
+
+    result = read_internal_data_source(
+        current_store=store,
+        input_payload={},
+        request_config={
+            "query": {
+                "field_mode": "detail",
+                "source_filters": {
+                    "bugs": {"severity": "critical"},
+                    "requirements": {"status": "planned"},
+                },
+                "source_types": ["requirements", "bugs"],
+            },
+        },
+        user=ADMIN_SERVICE_USER,
+    )
+
+    assert [row["id"] for row in result["datasets"]["requirements"]] == [
+        "requirement_planned",
+    ]
+    assert [row["id"] for row in result["datasets"]["bugs"]] == ["bug_critical"]
+    assert result["datasets"]["requirements"][0]["description"] == "计划中需求详情"
+    assert result["datasets"]["bugs"][0]["raw_payload"] == {"secret": "bug-secret"}
+    assert result["filters"]["source_filters"] == {
+        "bugs": {"severity": "critical"},
+        "requirements": {"status": "planned"},
+    }
+    assert "description" in result["schemas"]["requirements"]["fields"]
+
 
 def test_plugin_request_config_replaces_path_templates_from_connection_params():
     connection = {

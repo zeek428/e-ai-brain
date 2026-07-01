@@ -72,6 +72,15 @@ def assistant_tool_results(
                     references=references or [],
                 )
             )
+        elif intent == "scheduled_job_run_business_draft":
+            results.append(
+                _scheduled_job_run_business_draft_tool(
+                    context,
+                    limit=limit,
+                    message=message,
+                    references=references or [],
+                )
+            )
         elif intent == "scheduled_job_diagnostic":
             results.append(
                 _scheduled_job_diagnostic_tool(
@@ -228,6 +237,11 @@ def _assistant_tool_intents(
         intents.append("release_risk_analysis_draft")
     if _scheduled_job_run_repair_draft_requested(normalized):
         intents.append("scheduled_job_run_repair_draft")
+    if _scheduled_job_run_business_draft_requested(
+        normalized,
+        has_run_reference=has_run_reference,
+    ):
+        intents.append("scheduled_job_run_business_draft")
     if _scheduled_job_run_comparison_requested(normalized, has_run_reference=has_run_reference):
         intents.append("scheduled_job_run_comparison")
     if _scheduled_job_diagnostic_requested(normalized, has_run_reference=has_run_reference):
@@ -312,6 +326,42 @@ def _scheduled_job_run_repair_draft_requested(normalized_message: str) -> bool:
         for keyword in ("草案", "生成", "创建", "draft", "create")
     )
     return has_repair_intent and has_draft_intent
+
+
+def _scheduled_job_run_business_draft_requested(
+    normalized_message: str,
+    *,
+    has_run_reference: bool = False,
+) -> bool:
+    has_business_draft_intent = any(
+        keyword in normalized_message
+        for keyword in (
+            "业务草案",
+            "洞察草案",
+            "用户洞察草案",
+            "需求草案",
+            "bug 草案",
+            "bug草案",
+            "缺陷草案",
+            "转洞察",
+            "转需求",
+            "转 bug",
+            "转bug",
+            "生成用户洞察",
+            "生成需求",
+            "生成 bug",
+            "生成bug",
+            "business draft",
+            "insight draft",
+            "requirement draft",
+            "bug draft",
+        )
+    )
+    has_run_context = any(
+        keyword in normalized_message
+        for keyword in ("这次", "本次", "运行结果", "定时作业", "定时任务", "run")
+    )
+    return has_business_draft_intent and (has_run_context or has_run_reference)
 
 
 def _rd_task_draft_requested(normalized_message: str) -> bool:
@@ -1290,6 +1340,281 @@ def _scheduled_job_run_repair_draft_tool(
         },
         "tool": "assistant.action_draft",
     }
+
+
+def _scheduled_job_run_business_draft_tool(
+    context: dict[str, Any],
+    *,
+    limit: int,
+    message: str,
+    references: list[dict[str, Any]],
+) -> dict[str, Any]:
+    candidate_runs = _scheduled_job_run_business_draft_candidates(
+        context["scheduled_job_runs"],
+        limit=limit,
+        references=references,
+    )
+    jobs_by_id = {
+        str(job["id"]): job
+        for job in context["scheduled_jobs"]
+        if job.get("id") is not None
+    }
+    result_write_records_by_run_id = {
+        str(record.get("scheduled_job_run_id")): record
+        for record in context["result_write_records"]
+        if record.get("scheduled_job_run_id") is not None
+    }
+    draft_types = _scheduled_job_run_business_draft_types(message)
+    items: list[dict[str, Any]] = []
+    references_out: list[dict[str, Any]] = []
+    for run in candidate_runs[:limit]:
+        run_id = str(run.get("id") or "")
+        if not run_id:
+            continue
+        job = jobs_by_id.get(str(run.get("scheduled_job_id"))) or {}
+        run_reference = _scheduled_job_run_tool_reference(job=job, run=run)
+        result_write_record = result_write_records_by_run_id.get(run_id)
+        for draft_type in draft_types:
+            items.append(
+                _scheduled_job_run_business_draft_item(
+                    draft_type=draft_type,
+                    job=job,
+                    result_write_record=result_write_record,
+                    run=run,
+                    run_reference=run_reference,
+                )
+            )
+            references_out.append(run_reference)
+    return {
+        "intent": "scheduled_job_run_business_draft",
+        "items": items,
+        "references": normalize_assistant_references(references_out),
+        "summary": {
+            "draft_count": len(items),
+            "draft_types": draft_types,
+            "requires_confirmation": bool(items),
+            "source_run_id": str(candidate_runs[0].get("id")) if candidate_runs else None,
+            "target": "assistant_analysis",
+        },
+        "tool": "assistant.action_draft",
+    }
+
+
+def _scheduled_job_run_business_draft_candidates(
+    runs: list[dict[str, Any]],
+    *,
+    limit: int,
+    references: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    referenced_run_ids = [
+        str(reference["id"])
+        for reference in references
+        if reference.get("type") == "scheduled_job_run" and reference.get("id")
+    ]
+    if referenced_run_ids:
+        run_by_id = {str(run["id"]): run for run in runs if run.get("id") is not None}
+        return [run_by_id[run_id] for run_id in referenced_run_ids if run_id in run_by_id]
+    return _latest(runs)[:limit]
+
+
+def _scheduled_job_run_business_draft_types(message: str) -> list[str]:
+    normalized = message.lower()
+    draft_types: list[str] = []
+    if any(keyword in normalized for keyword in ("洞察", "insight")):
+        draft_types.append("user_insight")
+    if any(keyword in normalized for keyword in ("需求", "requirement")):
+        draft_types.append("requirement")
+    if any(keyword in normalized for keyword in ("bug", "缺陷", "异常")):
+        draft_types.append("bug")
+    return draft_types or ["user_insight", "requirement", "bug"]
+
+
+def _scheduled_job_run_business_draft_item(
+    *,
+    draft_type: str,
+    job: dict[str, Any],
+    result_write_record: dict[str, Any] | None,
+    run: dict[str, Any],
+    run_reference: dict[str, Any],
+) -> dict[str, Any]:
+    run_id = str(run.get("id") or "scheduled_job_run")
+    spec = _scheduled_job_run_business_draft_spec(draft_type)
+    payload = {
+        "analysis_type": f"scheduled_job_run_{draft_type}_draft",
+        "findings": _scheduled_job_run_business_findings(
+            draft_type=draft_type,
+            result_write_record=result_write_record,
+            run=run,
+        ),
+        "source_module": "scheduled_jobs",
+        "source_reference": run_reference,
+        "summary": _scheduled_job_run_business_summary(
+            result_write_record=result_write_record,
+            run=run,
+        ),
+        "title": f"{spec['title']}：{job.get('name') or run.get('scheduled_job_id') or run_id}",
+    }
+    return {
+        "action": "create_analysis_draft",
+        "draft_id": f"assistant_draft_{draft_type}_{run_id}",
+        "payload": payload,
+        "references": [run_reference],
+        "requires_confirmation": True,
+        "risk_level": spec["risk_level"],
+        "title": payload["title"],
+        "wizard_steps": _scheduled_job_run_business_wizard_steps(
+            draft_type_label=spec["title"],
+            run=run,
+        ),
+    }
+
+
+def _scheduled_job_run_business_draft_spec(draft_type: str) -> dict[str, str]:
+    if draft_type == "requirement":
+        return {"risk_level": "medium", "title": "需求草案"}
+    if draft_type == "bug":
+        return {"risk_level": "medium", "title": "Bug 草案"}
+    return {"risk_level": "low", "title": "用户洞察草案"}
+
+
+def _scheduled_job_run_business_summary(
+    *,
+    result_write_record: dict[str, Any] | None,
+    run: dict[str, Any],
+) -> dict[str, Any]:
+    record = result_write_record if isinstance(result_write_record, dict) else {}
+    result_action = _result_action_node(run)
+    return {
+        "records_imported": _run_records_imported(run),
+        "result_write_record_id": record.get("id"),
+        "result_write_status": record.get("status") or result_action.get("status"),
+        "result_write_target": record.get("write_target") or result_action.get("write_target"),
+        "run_id": run.get("id"),
+        "run_status": run.get("status"),
+        "scheduled_job_id": run.get("scheduled_job_id"),
+        "trigger_type": run.get("trigger_type"),
+    }
+
+
+def _scheduled_job_run_business_findings(
+    *,
+    draft_type: str,
+    result_write_record: dict[str, Any] | None,
+    run: dict[str, Any],
+) -> list[dict[str, Any]]:
+    result_summary = (
+        run.get("result_summary") if isinstance(run.get("result_summary"), dict) else {}
+    )
+    execution_nodes = (
+        result_summary.get("execution_nodes")
+        if isinstance(result_summary.get("execution_nodes"), dict)
+        else {}
+    )
+    findings = [
+        {
+            "message": _scheduled_job_run_business_message(
+                draft_type=draft_type,
+                run=run,
+            ),
+            "run_id": run.get("id"),
+            "severity": "medium" if run.get("status") == "failed" else "low",
+            "title": _scheduled_job_run_business_finding_title(draft_type),
+            "type": f"scheduled_job_run_{draft_type}",
+        }
+    ]
+    for node_name in ("data_connection", "ai_processing", "result_action"):
+        node = execution_nodes.get(node_name)
+        if isinstance(node, dict):
+            findings.append(
+                {
+                    "message": node.get("summary") or node.get("error_message"),
+                    "severity": "medium" if node.get("status") == "failed" else "low",
+                    "stage": node_name,
+                    "status": node.get("status"),
+                    "title": node_name,
+                    "type": "execution_node",
+                }
+            )
+    if isinstance(result_write_record, dict) and result_write_record.get("id"):
+        findings.append(
+            {
+                "message": result_write_record.get("write_target_label")
+                or result_write_record.get("write_target"),
+                "result_write_record_id": result_write_record.get("id"),
+                "severity": (
+                    "medium" if result_write_record.get("status") == "failed" else "low"
+                ),
+                "status": result_write_record.get("status"),
+                "title": "结果写入记录",
+                "type": "result_write_record",
+            }
+        )
+    return findings
+
+
+def _scheduled_job_run_business_message(*, draft_type: str, run: dict[str, Any]) -> str:
+    if draft_type == "requirement":
+        return "从本次运行的数据、AI处理结论和动作反馈中提炼可落地需求。"
+    if draft_type == "bug":
+        if run.get("status") == "failed":
+            return str(run.get("error_message") or "本次运行失败，需要生成 Bug 草案跟进。")
+        return "从本次运行输出中识别需要缺陷跟进的异常或风险。"
+    return "从本次运行输出中提炼用户洞察草案。"
+
+
+def _scheduled_job_run_business_finding_title(draft_type: str) -> str:
+    if draft_type == "requirement":
+        return "待提炼需求"
+    if draft_type == "bug":
+        return "待跟进缺陷"
+    return "待沉淀洞察"
+
+
+def _scheduled_job_run_business_wizard_steps(
+    *,
+    draft_type_label: str,
+    run: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "depends_on": [],
+            "key": "data_source",
+            "status": "ready",
+            "summary": (
+                f"读取运行 {run.get('id')}，导入数 {_run_records_imported(run)}，"
+                f"状态 {run.get('status') or 'unknown'}"
+            ),
+            "title": "数据来源",
+        },
+        {
+            "depends_on": ["data_source"],
+            "key": "ai_processing",
+            "status": "ready",
+            "summary": f"基于运行链路生成{draft_type_label}",
+            "title": "AI处理",
+        },
+        {
+            "depends_on": ["ai_processing"],
+            "key": "result_action",
+            "status": "ready",
+            "summary": "确认后归档为助手分析草案，不直接写业务表",
+            "title": "结果动作",
+        },
+        {
+            "depends_on": [],
+            "key": "schedule",
+            "status": "skipped",
+            "summary": "一次性草案生成，不创建定时调度",
+            "title": "调度策略",
+        },
+        {
+            "depends_on": ["data_source", "ai_processing", "result_action"],
+            "key": "confirmation",
+            "status": "pending",
+            "summary": "等待人工确认后归档分析结果",
+            "title": "确认执行",
+        },
+    ]
 
 
 def _referenced_or_latest_failed_runs(

@@ -17,66 +17,159 @@ from app.services.user_insights import list_user_insight_items_response, user_in
 
 INTERNAL_DATA_SOURCE_PROTOCOL = "internal_read_model"
 INTERNAL_DATA_SOURCE_ACTION_TYPE = "internal_query"
-INTERNAL_DATA_SOURCE_TYPES = {
-    "bugs": "Bug 数据",
-    "products": "产品数据",
-    "requirements": "需求数据",
-    "user_insights": "用户洞察数据",
+INTERNAL_DATA_SOURCE_DETAIL_PERMISSION = "system.internal_data_source.detail"
+
+INTERNAL_DATA_SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
+    "bugs": {
+        "detail_fields": [
+            "id",
+            "title",
+            "description",
+            "product_id",
+            "version_id",
+            "version_name",
+            "module_code",
+            "severity",
+            "priority",
+            "status",
+            "source",
+            "assignee",
+            "reporter",
+            "created_at",
+            "updated_at",
+            "closed_at",
+            "raw_payload",
+        ],
+        "field_permissions": {
+            "description": INTERNAL_DATA_SOURCE_DETAIL_PERMISSION,
+            "raw_payload": INTERNAL_DATA_SOURCE_DETAIL_PERMISSION,
+        },
+        "label": "Bug 数据",
+        "summary_fields": [
+            "id",
+            "title",
+            "product_id",
+            "version_id",
+            "version_name",
+            "module_code",
+            "severity",
+            "status",
+            "source",
+            "assignee",
+            "created_at",
+            "updated_at",
+        ],
+    },
+    "products": {
+        "detail_fields": [
+            "id",
+            "code",
+            "name",
+            "description",
+            "status",
+            "owner_team",
+            "current_version_id",
+            "current_version_name",
+            "module_count",
+            "created_at",
+            "updated_at",
+        ],
+        "field_permissions": {
+            "description": INTERNAL_DATA_SOURCE_DETAIL_PERMISSION,
+        },
+        "label": "产品数据",
+        "summary_fields": [
+            "id",
+            "code",
+            "name",
+            "status",
+            "owner_team",
+            "current_version_name",
+            "module_count",
+            "updated_at",
+        ],
+    },
+    "requirements": {
+        "detail_fields": [
+            "id",
+            "title",
+            "description",
+            "product_id",
+            "product_name",
+            "version_id",
+            "version_name",
+            "module_code",
+            "priority",
+            "status",
+            "source",
+            "assignee",
+            "created_at",
+            "updated_at",
+            "raw_payload",
+        ],
+        "field_permissions": {
+            "description": INTERNAL_DATA_SOURCE_DETAIL_PERMISSION,
+            "raw_payload": INTERNAL_DATA_SOURCE_DETAIL_PERMISSION,
+        },
+        "label": "需求数据",
+        "summary_fields": [
+            "id",
+            "title",
+            "product_id",
+            "product_name",
+            "version_id",
+            "version_name",
+            "priority",
+            "status",
+            "source",
+            "assignee",
+            "created_at",
+            "updated_at",
+        ],
+    },
+    "user_insights": {
+        "detail_fields": [
+            "id",
+            "category",
+            "summary",
+            "evidence",
+            "product_id",
+            "version_id",
+            "module_code",
+            "feature_code",
+            "owner",
+            "priority",
+            "status",
+            "confidence_level",
+            "created_at",
+            "updated_at",
+            "raw_feedback",
+        ],
+        "field_permissions": {
+            "evidence": INTERNAL_DATA_SOURCE_DETAIL_PERMISSION,
+            "raw_feedback": INTERNAL_DATA_SOURCE_DETAIL_PERMISSION,
+        },
+        "label": "用户洞察数据",
+        "summary_fields": [
+            "id",
+            "category",
+            "summary",
+            "product_id",
+            "version_id",
+            "module_code",
+            "feature_code",
+            "owner",
+            "priority",
+            "status",
+            "confidence_level",
+            "updated_at",
+        ],
+    },
 }
 
-SUMMARY_FIELDS = {
-    "bugs": [
-        "id",
-        "title",
-        "product_id",
-        "version_id",
-        "version_name",
-        "module_code",
-        "severity",
-        "status",
-        "source",
-        "assignee",
-        "created_at",
-        "updated_at",
-    ],
-    "products": [
-        "id",
-        "code",
-        "name",
-        "status",
-        "owner_team",
-        "current_version_name",
-        "module_count",
-        "updated_at",
-    ],
-    "requirements": [
-        "id",
-        "title",
-        "product_id",
-        "product_name",
-        "version_id",
-        "version_name",
-        "priority",
-        "status",
-        "source",
-        "assignee",
-        "created_at",
-        "updated_at",
-    ],
-    "user_insights": [
-        "id",
-        "category",
-        "summary",
-        "product_id",
-        "version_id",
-        "module_code",
-        "feature_code",
-        "owner",
-        "priority",
-        "status",
-        "confidence_level",
-        "updated_at",
-    ],
+INTERNAL_DATA_SOURCE_TYPES = {
+    source_type: str(config["label"])
+    for source_type, config in INTERNAL_DATA_SOURCE_REGISTRY.items()
 }
 
 DATE_FIELDS = (
@@ -129,6 +222,32 @@ def _normalize_source_types(value: Any) -> list[str]:
             f"Unsupported internal source: {', '.join(unsupported)}",
         )
     return source_types
+
+
+def _normalize_source_filters(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    filters: dict[str, dict[str, Any]] = {}
+    for source_type, source_filter in value.items():
+        normalized_source_type = str(source_type).strip()
+        if not normalized_source_type:
+            continue
+        if normalized_source_type not in INTERNAL_DATA_SOURCE_TYPES:
+            raise api_error(
+                400,
+                "INTERNAL_DATA_SOURCE_UNSUPPORTED",
+                f"Unsupported internal source: {normalized_source_type}",
+            )
+        if source_filter is None:
+            continue
+        if not isinstance(source_filter, dict):
+            raise api_error(
+                400,
+                "INTERNAL_DATA_SOURCE_FILTER_INVALID",
+                "Internal source filter must be an object",
+            )
+        filters[normalized_source_type] = dict(source_filter)
+    return filters
 
 
 def _positive_int(value: Any, *, default: int, maximum: int) -> int:
@@ -187,10 +306,46 @@ def _within_window(
     return True
 
 
-def _safe_row(row: dict[str, Any], *, field_mode: str, source_type: str) -> dict[str, Any]:
-    if field_mode == "detail":
-        return dict(row)
-    fields = SUMMARY_FIELDS[source_type]
+def _user_permissions(user: dict[str, Any]) -> set[str]:
+    permissions = set(str(item) for item in user.get("permissions") or [])
+    roles = set(str(item) for item in user.get("roles") or [])
+    if "admin" in roles or "system.admin" in permissions:
+        permissions.add(INTERNAL_DATA_SOURCE_DETAIL_PERMISSION)
+    return permissions
+
+
+def _visible_fields(
+    *,
+    field_mode: str,
+    source_type: str,
+    user: dict[str, Any],
+) -> list[str]:
+    source_config = INTERNAL_DATA_SOURCE_REGISTRY[source_type]
+    fields = source_config["detail_fields"] if field_mode == "detail" else source_config["summary_fields"]
+    field_permissions = source_config.get("field_permissions")
+    if not isinstance(field_permissions, dict) or not field_permissions:
+        return list(fields)
+    permissions = _user_permissions(user)
+    return [
+        str(field)
+        for field in fields
+        if not field_permissions.get(str(field))
+        or str(field_permissions[str(field)]) in permissions
+    ]
+
+
+def _safe_row(
+    row: dict[str, Any],
+    *,
+    field_mode: str,
+    source_type: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    fields = _visible_fields(
+        field_mode=field_mode,
+        source_type=source_type,
+        user=user,
+    )
     return {field: row.get(field) for field in fields if field in row}
 
 
@@ -397,6 +552,13 @@ def internal_data_source_filters(
         "product_scope": _first_value(query.get("product_scope"), "current_user_scope"),
         "severity": _first_value(payload.get("severity"), input_mapping.get("severity"), query.get("severity")),
         "source": _first_value(payload.get("source"), input_mapping.get("source"), query.get("source")),
+        "source_filters": _normalize_source_filters(
+            _first_value(
+                payload.get("source_filters"),
+                input_mapping.get("source_filters"),
+                query.get("source_filters"),
+            ),
+        ),
         "source_types": _normalize_source_types(
             _first_value(
                 payload.get("source_types"),
@@ -425,6 +587,49 @@ def internal_data_source_filters(
     }
 
 
+def _filters_for_source(filters: dict[str, Any], source_type: str) -> dict[str, Any]:
+    source_filters = filters.get("source_filters")
+    if not isinstance(source_filters, dict):
+        return filters
+    source_filter = source_filters.get(source_type)
+    if not isinstance(source_filter, dict):
+        return filters
+    return {
+        **filters,
+        **source_filter,
+        "source_filters": source_filters,
+        "source_types": filters.get("source_types"),
+    }
+
+
+def _limit_for_source(filters: dict[str, Any], default_limit: int) -> int:
+    return _positive_int(
+        filters.get("limit"),
+        default=default_limit,
+        maximum=500,
+    )
+
+
+def internal_data_source_dataset_schemas(
+    *,
+    field_mode: str,
+    source_types: list[str],
+    user: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    return {
+        source_type: {
+            "field_mode": field_mode,
+            "fields": _visible_fields(
+                field_mode=field_mode,
+                source_type=source_type,
+                user=user,
+            ),
+            "label": INTERNAL_DATA_SOURCE_TYPES[source_type],
+        }
+        for source_type in source_types
+    }
+
+
 def read_internal_data_source(
     *,
     current_store: Any,
@@ -438,10 +643,12 @@ def read_internal_data_source(
     datasets: dict[str, list[dict[str, Any]]] = {}
     source_counts: dict[str, int] = {}
     for source_type in filters["source_types"]:
+        source_filters = _filters_for_source(filters, source_type)
+        source_limit = _limit_for_source(source_filters, limit)
         rows = _source_rows(
             current_store,
-            filters=filters,
-            limit=limit,
+            filters=source_filters,
+            limit=source_limit,
             source_type=source_type,
             user=user,
         )
@@ -450,13 +657,18 @@ def read_internal_data_source(
             for row in rows
             if _within_window(
                 row,
-                window_end=filters.get("window_end"),
-                window_start=filters.get("window_start"),
+                window_end=source_filters.get("window_end"),
+                window_start=source_filters.get("window_start"),
             )
         ]
         safe_rows = [
-            _safe_row(row, field_mode=field_mode, source_type=source_type)
-            for row in _limit_rows(rows, limit)
+            _safe_row(
+                row,
+                field_mode=field_mode,
+                source_type=source_type,
+                user=user,
+            )
+            for row in _limit_rows(rows, source_limit)
         ]
         datasets[source_type] = safe_rows
         source_counts[source_type] = len(safe_rows)
@@ -473,6 +685,11 @@ def read_internal_data_source(
             for source_type in filters["source_types"]
         },
         "row_count": total_rows,
+        "schemas": internal_data_source_dataset_schemas(
+            field_mode=field_mode,
+            source_types=filters["source_types"],
+            user=user,
+        ),
         "source_counts": source_counts,
         "source_types": filters["source_types"],
         "total_rows": total_rows,

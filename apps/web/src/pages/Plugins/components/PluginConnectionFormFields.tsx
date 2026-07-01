@@ -133,7 +133,7 @@ export function ConnectionSchemaFields({
       ) : null}
       {pluginCode === 'internal_data_source' ? (
         <Alert
-          description="该连接不需要 Endpoint、认证、Params 或 Headers；只需选择要读取的内部业务数据源，运行时会按用户产品范围只读查询。"
+          description="该连接不需要 Endpoint、认证、Params 或 Headers；只需选择要读取的内部业务数据源，运行时会按用户产品范围只读查询。需要每类源数据独立过滤时，可在高级过滤 JSON 中补充 source_filters。"
           showIcon
           title="内部数据源用于读取 AI Brain 内部业务数据。"
           type="info"
