@@ -8,6 +8,65 @@ from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.users import MemoryUserRepository
 
 
+ASSISTANT_RUNNABLE_PLUGIN_ID = "plugin_assistant_http"
+ASSISTANT_RUNNABLE_CONNECTION_ID = "plugin_connection_assistant_test"
+ASSISTANT_RUNNABLE_ACTION_ID = "plugin_action_assistant_test"
+
+
+def seed_assistant_plugin_action_runtime(store) -> None:
+    now = "2026-06-16T08:00:00+00:00"
+    store.integration_plugins[ASSISTANT_RUNNABLE_PLUGIN_ID] = {
+        "category": "general",
+        "code": "assistant_http",
+        "created_at": now,
+        "description": "助手测试 HTTP 插件。",
+        "id": ASSISTANT_RUNNABLE_PLUGIN_ID,
+        "is_system": False,
+        "name": "助手测试 HTTP 插件",
+        "plugin_type": "http",
+        "protocol": "http",
+        "risk_level": "low",
+        "status": "active",
+        "updated_at": now,
+    }
+    store.plugin_connections[ASSISTANT_RUNNABLE_CONNECTION_ID] = {
+        "auth_config": {},
+        "auth_type": "none",
+        "created_at": now,
+        "created_by": "user_admin",
+        "endpoint_url": "https://assistant-plugin.example.com",
+        "environment": "prod",
+        "id": ASSISTANT_RUNNABLE_CONNECTION_ID,
+        "max_retries": 0,
+        "name": "助手测试连接",
+        "plugin_id": ASSISTANT_RUNNABLE_PLUGIN_ID,
+        "request_config": {},
+        "status": "active",
+        "timeout_seconds": 30,
+        "updated_at": now,
+    }
+    store.plugin_actions[ASSISTANT_RUNNABLE_ACTION_ID] = {
+        "action_type": "http_request",
+        "code": "assistant_test_action",
+        "connection_id": ASSISTANT_RUNNABLE_CONNECTION_ID,
+        "created_at": now,
+        "id": ASSISTANT_RUNNABLE_ACTION_ID,
+        "name": "助手测试动作",
+        "plugin_id": ASSISTANT_RUNNABLE_PLUGIN_ID,
+        "request_config": {
+            "method": "GET",
+            "mock_response_json": {"records_imported": 0},
+            "path": "/ok",
+        },
+        "result_mapping": {
+            "records_imported_path": "$.records_imported",
+            "write_target": "scheduled_job_result",
+        },
+        "status": "active",
+        "updated_at": now,
+    }
+
+
 class AssistantChatRepositoryStub:
     def __init__(self) -> None:
         self.payload: dict | None = None
@@ -58,6 +117,66 @@ class AssistantChatRepositoryStub:
 class ScheduledJobAssistantRepository(FakeSnapshotRepository):
     def __init__(self) -> None:
         super().__init__()
+        now = "2026-06-16T08:00:00+00:00"
+        self.plugin_payload = {
+            "integration_plugins": {
+                ASSISTANT_RUNNABLE_PLUGIN_ID: {
+                    "category": "general",
+                    "code": "assistant_http",
+                    "created_at": now,
+                    "description": "助手测试 HTTP 插件。",
+                    "id": ASSISTANT_RUNNABLE_PLUGIN_ID,
+                    "is_system": False,
+                    "name": "助手测试 HTTP 插件",
+                    "plugin_type": "http",
+                    "protocol": "http",
+                    "risk_level": "low",
+                    "status": "active",
+                    "updated_at": now,
+                },
+            },
+            "plugin_actions": {
+                ASSISTANT_RUNNABLE_ACTION_ID: {
+                    "action_type": "http_request",
+                    "code": "assistant_test_action",
+                    "connection_id": ASSISTANT_RUNNABLE_CONNECTION_ID,
+                    "created_at": now,
+                    "id": ASSISTANT_RUNNABLE_ACTION_ID,
+                    "name": "助手测试动作",
+                    "plugin_id": ASSISTANT_RUNNABLE_PLUGIN_ID,
+                    "request_config": {
+                        "method": "GET",
+                        "mock_response_json": {"records_imported": 0},
+                        "path": "/ok",
+                    },
+                    "result_mapping": {
+                        "records_imported_path": "$.records_imported",
+                        "write_target": "scheduled_job_result",
+                    },
+                    "status": "active",
+                    "updated_at": now,
+                },
+            },
+            "plugin_connections": {
+                ASSISTANT_RUNNABLE_CONNECTION_ID: {
+                    "auth_config": {},
+                    "auth_type": "none",
+                    "created_at": now,
+                    "created_by": "user_admin",
+                    "endpoint_url": "https://assistant-plugin.example.com",
+                    "environment": "prod",
+                    "id": ASSISTANT_RUNNABLE_CONNECTION_ID,
+                    "max_retries": 0,
+                    "name": "助手测试连接",
+                    "plugin_id": ASSISTANT_RUNNABLE_PLUGIN_ID,
+                    "request_config": {},
+                    "status": "active",
+                    "timeout_seconds": 30,
+                    "updated_at": now,
+                },
+            },
+            "plugin_invocation_logs": {},
+        }
         self.scheduled_jobs_payload = {
             "scheduled_job_runs": {},
             "scheduled_jobs": {
@@ -71,7 +190,7 @@ class ScheduledJobAssistantRepository(FakeSnapshotRepository):
                     "execution_mode": "deterministic",
                     "id": "scheduled_job_feedback_insight",
                     "interval_seconds": None,
-                    "job_type": "dashboard_snapshot_refresh",
+                    "job_type": "plugin_action_invoke",
                     "knowledge_document_ids": [],
                     "last_failure_at": None,
                     "last_run_at": None,
@@ -81,12 +200,15 @@ class ScheduledJobAssistantRepository(FakeSnapshotRepository):
                     "model_gateway_config_id": None,
                     "name": "提取每周用户反馈有价值信息",
                     "next_run_at": None,
-                    "plugin_action_id": None,
-                    "plugin_action_ids": [],
-                    "plugin_connection_id": None,
-                    "plugin_connection_ids": [],
+                    "plugin_action_id": ASSISTANT_RUNNABLE_ACTION_ID,
+                    "plugin_action_ids": [ASSISTANT_RUNNABLE_ACTION_ID],
+                    "plugin_connection_id": ASSISTANT_RUNNABLE_CONNECTION_ID,
+                    "plugin_connection_ids": [ASSISTANT_RUNNABLE_CONNECTION_ID],
                     "plugin_input_mapping": {},
-                    "plugin_output_mapping": {},
+                    "plugin_output_mapping": {
+                        "records_imported_path": "$.records_imported",
+                        "write_target": "scheduled_job_result",
+                    },
                     "product_id": None,
                     "result_actions": [],
                     "schedule_type": "manual",
@@ -115,6 +237,95 @@ class ScheduledJobAssistantRepository(FakeSnapshotRepository):
         status: str | None = None,
     ) -> list[dict]:
         return []
+
+    def list_plugins(
+        self,
+        *,
+        protocol: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        items = [
+            dict(plugin)
+            for plugin in self.plugin_payload.get("integration_plugins", {}).values()
+        ]
+        if protocol is not None:
+            items = [plugin for plugin in items if plugin.get("protocol") == protocol]
+        if status is not None:
+            items = [plugin for plugin in items if plugin.get("status") == status]
+        return items
+
+    def list_plugin_connections(
+        self,
+        *,
+        environment: str | None = None,
+        plugin_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        items = [
+            dict(connection)
+            for connection in self.plugin_payload.get("plugin_connections", {}).values()
+        ]
+        if environment is not None:
+            items = [
+                connection for connection in items if connection.get("environment") == environment
+            ]
+        if plugin_id is not None:
+            items = [connection for connection in items if connection.get("plugin_id") == plugin_id]
+        if status is not None:
+            items = [connection for connection in items if connection.get("status") == status]
+        return items
+
+    def list_plugin_actions(
+        self,
+        *,
+        plugin_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        items = [
+            dict(action)
+            for action in self.plugin_payload.get("plugin_actions", {}).values()
+        ]
+        if plugin_id is not None:
+            items = [action for action in items if action.get("plugin_id") == plugin_id]
+        if status is not None:
+            items = [action for action in items if action.get("status") == status]
+        return items
+
+    def list_plugin_invocation_logs(
+        self,
+        *,
+        action_id: str | None = None,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        items = [
+            dict(log)
+            for log in self.plugin_payload.get("plugin_invocation_logs", {}).values()
+        ]
+        if action_id is not None:
+            items = [log for log in items if log.get("action_id") == action_id]
+        if scheduled_job_id is not None:
+            items = [log for log in items if log.get("scheduled_job_id") == scheduled_job_id]
+        if scheduled_job_run_id is not None:
+            items = [
+                log for log in items if log.get("scheduled_job_run_id") == scheduled_job_run_id
+            ]
+        if status is not None:
+            items = [log for log in items if log.get("status") == status]
+        return items
+
+    def save_plugin_invocation_log_record(
+        self,
+        record: dict,
+        *,
+        audit_event: dict | None = None,
+    ) -> None:
+        self.plugin_payload.setdefault("plugin_invocation_logs", {})[record["id"]] = dict(
+            record
+        )
+        if audit_event is not None:
+            self._append_direct_audit_event(audit_event)
 
     def list_scheduled_jobs(
         self,
@@ -594,6 +805,7 @@ def test_assistant_chat_runs_scheduled_job_from_repository_context():
     repository = ScheduledJobAssistantRepository()
 
     app.state.store = PostgresRuntimeStore(repository)
+    seed_assistant_plugin_action_runtime(app.state.store)
     app.state.user_repository = MemoryUserRepository.seeded()
 
     try:

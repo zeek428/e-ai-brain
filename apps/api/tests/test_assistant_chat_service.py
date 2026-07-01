@@ -18,6 +18,118 @@ from app.services.assistant_chat import (
 from app.services.assistant_history import ensure_assistant_conversation
 
 
+ASSISTANT_RUNNABLE_PLUGIN_ID = "plugin_assistant_http"
+ASSISTANT_RUNNABLE_CONNECTION_ID = "plugin_connection_assistant_test"
+ASSISTANT_RUNNABLE_ACTION_ID = "plugin_action_assistant_test"
+
+
+def seed_assistant_plugin_action_runtime(store: MemoryStore) -> None:
+    now = "2026-06-16T08:00:00+00:00"
+    store.integration_plugins[ASSISTANT_RUNNABLE_PLUGIN_ID] = {
+        "category": "general",
+        "code": "assistant_http",
+        "created_at": now,
+        "description": "助手测试 HTTP 插件。",
+        "id": ASSISTANT_RUNNABLE_PLUGIN_ID,
+        "is_system": False,
+        "name": "助手测试 HTTP 插件",
+        "plugin_type": "http",
+        "protocol": "http",
+        "risk_level": "low",
+        "status": "active",
+        "updated_at": now,
+    }
+    store.plugin_connections[ASSISTANT_RUNNABLE_CONNECTION_ID] = {
+        "auth_config": {},
+        "auth_type": "none",
+        "created_at": now,
+        "created_by": "user_admin",
+        "endpoint_url": "https://assistant-plugin.example.com",
+        "environment": "prod",
+        "id": ASSISTANT_RUNNABLE_CONNECTION_ID,
+        "max_retries": 0,
+        "name": "助手测试连接",
+        "plugin_id": ASSISTANT_RUNNABLE_PLUGIN_ID,
+        "request_config": {},
+        "status": "active",
+        "timeout_seconds": 30,
+        "updated_at": now,
+    }
+    store.plugin_actions[ASSISTANT_RUNNABLE_ACTION_ID] = {
+        "action_type": "http_request",
+        "code": "assistant_test_action",
+        "connection_id": ASSISTANT_RUNNABLE_CONNECTION_ID,
+        "created_at": now,
+        "id": ASSISTANT_RUNNABLE_ACTION_ID,
+        "name": "助手测试动作",
+        "plugin_id": ASSISTANT_RUNNABLE_PLUGIN_ID,
+        "request_config": {
+            "method": "GET",
+            "mock_response_json": {"records_imported": 0},
+            "path": "/ok",
+        },
+        "result_mapping": {
+            "records_imported_path": "$.records_imported",
+            "write_target": "scheduled_job_result",
+        },
+        "status": "active",
+        "updated_at": now,
+    }
+
+
+def seed_assistant_runnable_job(
+    store: MemoryStore,
+    *,
+    job_id: str = "scheduled_job_feedback_insight",
+    name: str = "提取每周用户反馈有价值信息",
+    **overrides,
+) -> dict[str, object]:
+    seed_assistant_plugin_action_runtime(store)
+    now = "2026-06-16T08:00:00+00:00"
+    job: dict[str, object] = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": now,
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": job_id,
+        "interval_seconds": None,
+        "job_type": "plugin_action_invoke",
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "name": name,
+        "next_run_at": None,
+        "plugin_action_id": ASSISTANT_RUNNABLE_ACTION_ID,
+        "plugin_action_ids": [ASSISTANT_RUNNABLE_ACTION_ID],
+        "plugin_connection_id": ASSISTANT_RUNNABLE_CONNECTION_ID,
+        "plugin_connection_ids": [ASSISTANT_RUNNABLE_CONNECTION_ID],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {
+            "records_imported_path": "$.records_imported",
+            "write_target": "scheduled_job_result",
+        },
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": now,
+    }
+    job.update(overrides)
+    store.scheduled_jobs[job_id] = job
+    return job
+
+
 def test_assistant_chat_service_owns_validation_and_gateway_errors():
     store = MemoryStore()
     user = {"id": "user_admin"}
@@ -673,42 +785,7 @@ def test_assistant_chat_cancel_run_returns_before_blocking_model_response_finish
 
 def test_assistant_chat_runs_explicitly_mentioned_scheduled_job_once_without_model_gateway():
     store = MemoryStore()
-    store.scheduled_jobs["scheduled_job_feedback_insight"] = {
-        "agent_id": None,
-        "config_json": {},
-        "created_at": "2026-06-16T08:00:00+00:00",
-        "created_by": "user_admin",
-        "cron_expression": None,
-        "enabled": True,
-        "execution_mode": "deterministic",
-        "id": "scheduled_job_feedback_insight",
-        "interval_seconds": None,
-        "job_type": "dashboard_snapshot_refresh",
-        "knowledge_document_ids": [],
-        "last_failure_at": None,
-        "last_run_at": None,
-        "last_success_at": None,
-        "lock_ttl_seconds": 900,
-        "max_retry_count": 0,
-        "model_gateway_config_id": None,
-        "name": "提取每周用户反馈有价值信息",
-        "next_run_at": None,
-        "plugin_action_id": None,
-        "plugin_action_ids": [],
-        "plugin_connection_id": None,
-        "plugin_connection_ids": [],
-        "plugin_input_mapping": {},
-        "plugin_output_mapping": {},
-        "product_id": None,
-        "result_actions": [],
-        "schedule_type": "manual",
-        "skill_ids": [],
-        "source_system": "ai-brain",
-        "status": "active",
-        "timeout_seconds": 600,
-        "timezone": "Asia/Shanghai",
-        "updated_at": "2026-06-16T08:00:00+00:00",
-    }
+    seed_assistant_runnable_job(store)
 
     response = assistant_chat_response(
         store,
@@ -787,42 +864,7 @@ def test_assistant_chat_runs_explicitly_mentioned_scheduled_job_once_without_mod
 
 def test_assistant_chat_runs_weekly_feedback_alias_job_once_without_model_gateway():
     store = MemoryStore()
-    store.scheduled_jobs["scheduled_job_feedback_insight"] = {
-        "agent_id": None,
-        "config_json": {},
-        "created_at": "2026-06-16T08:00:00+00:00",
-        "created_by": "user_admin",
-        "cron_expression": None,
-        "enabled": True,
-        "execution_mode": "deterministic",
-        "id": "scheduled_job_feedback_insight",
-        "interval_seconds": None,
-        "job_type": "dashboard_snapshot_refresh",
-        "knowledge_document_ids": [],
-        "last_failure_at": None,
-        "last_run_at": None,
-        "last_success_at": None,
-        "lock_ttl_seconds": 900,
-        "max_retry_count": 0,
-        "model_gateway_config_id": None,
-        "name": "每周用户反馈洞察抽取",
-        "next_run_at": None,
-        "plugin_action_id": None,
-        "plugin_action_ids": [],
-        "plugin_connection_id": None,
-        "plugin_connection_ids": [],
-        "plugin_input_mapping": {},
-        "plugin_output_mapping": {},
-        "product_id": None,
-        "result_actions": [],
-        "schedule_type": "manual",
-        "skill_ids": [],
-        "source_system": "ai-brain",
-        "status": "active",
-        "timeout_seconds": 600,
-        "timezone": "Asia/Shanghai",
-        "updated_at": "2026-06-16T08:00:00+00:00",
-    }
+    seed_assistant_runnable_job(store, name="每周用户反馈洞察抽取")
 
     response = assistant_chat_response(
         store,
@@ -850,42 +892,7 @@ def test_assistant_chat_runs_weekly_feedback_alias_job_once_without_model_gatewa
 
 def test_assistant_chat_allows_run_once_with_scheduled_job_permission():
     store = MemoryStore()
-    store.scheduled_jobs["scheduled_job_feedback_insight"] = {
-        "agent_id": None,
-        "config_json": {},
-        "created_at": "2026-06-16T08:00:00+00:00",
-        "created_by": "user_admin",
-        "cron_expression": None,
-        "enabled": True,
-        "execution_mode": "deterministic",
-        "id": "scheduled_job_feedback_insight",
-        "interval_seconds": None,
-        "job_type": "dashboard_snapshot_refresh",
-        "knowledge_document_ids": [],
-        "last_failure_at": None,
-        "last_run_at": None,
-        "last_success_at": None,
-        "lock_ttl_seconds": 900,
-        "max_retry_count": 0,
-        "model_gateway_config_id": None,
-        "name": "提取每周用户反馈有价值信息",
-        "next_run_at": None,
-        "plugin_action_id": None,
-        "plugin_action_ids": [],
-        "plugin_connection_id": None,
-        "plugin_connection_ids": [],
-        "plugin_input_mapping": {},
-        "plugin_output_mapping": {},
-        "product_id": None,
-        "result_actions": [],
-        "schedule_type": "manual",
-        "skill_ids": [],
-        "source_system": "ai-brain",
-        "status": "active",
-        "timeout_seconds": 600,
-        "timezone": "Asia/Shanghai",
-        "updated_at": "2026-06-16T08:00:00+00:00",
-    }
+    seed_assistant_runnable_job(store)
 
     response = assistant_chat_response(
         store,
@@ -1060,42 +1067,7 @@ def test_assistant_chat_returns_running_record_for_long_ai_job_once_without_wait
 
 def test_assistant_chat_explains_run_once_waiting_for_ai_executor(monkeypatch):
     store = MemoryStore()
-    store.scheduled_jobs["scheduled_job_feedback_insight"] = {
-        "agent_id": None,
-        "config_json": {},
-        "created_at": "2026-06-16T08:00:00+00:00",
-        "created_by": "user_admin",
-        "cron_expression": None,
-        "enabled": True,
-        "execution_mode": "deterministic",
-        "id": "scheduled_job_feedback_insight",
-        "interval_seconds": None,
-        "job_type": "dashboard_snapshot_refresh",
-        "knowledge_document_ids": [],
-        "last_failure_at": None,
-        "last_run_at": None,
-        "last_success_at": None,
-        "lock_ttl_seconds": 900,
-        "max_retry_count": 0,
-        "model_gateway_config_id": None,
-        "name": "提取每周用户反馈有价值信息",
-        "next_run_at": None,
-        "plugin_action_id": None,
-        "plugin_action_ids": [],
-        "plugin_connection_id": None,
-        "plugin_connection_ids": [],
-        "plugin_input_mapping": {},
-        "plugin_output_mapping": {},
-        "product_id": None,
-        "result_actions": [],
-        "schedule_type": "manual",
-        "skill_ids": [],
-        "source_system": "ai-brain",
-        "status": "active",
-        "timeout_seconds": 600,
-        "timezone": "Asia/Shanghai",
-        "updated_at": "2026-06-16T08:00:00+00:00",
-    }
+    seed_assistant_runnable_job(store)
 
     def fake_run_scheduled_job_response(
         *,

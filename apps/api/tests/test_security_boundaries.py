@@ -234,13 +234,71 @@ def create_manual_scheduled_job(
     name: str,
     product_id: str,
 ) -> dict:
+    suffix = f"{product_id}_{len(app.state.store.plugin_actions) + 1}"
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "business_system",
+            "code": f"scheduled_scope_plugin_{suffix}",
+            "name": f"{name} 插件",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=headers,
+    )
+    assert plugin.status_code == 200, plugin.text
+    plugin_data = plugin.json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://scheduled-scope.example.com",
+            "name": f"{name} 连接",
+            "plugin_id": plugin_data["id"],
+            "status": "active",
+        },
+        headers=headers,
+    )
+    assert connection.status_code == 200, connection.text
+    connection_data = connection.json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": f"scheduled_scope_action_{suffix}",
+            "connection_id": connection_data["id"],
+            "name": f"{name} 动作",
+            "plugin_id": plugin_data["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {"records_imported": 0},
+                "path": "/scope",
+            },
+            "result_mapping": {
+                "records_imported_path": "$.records_imported",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=headers,
+    )
+    assert action.status_code == 200, action.text
+    action_data = action.json()["data"]
     response = client.post(
         "/api/system/scheduled-jobs",
         json={
             "enabled": True,
             "execution_mode": "deterministic",
-            "job_type": "dashboard_snapshot_refresh",
+            "job_type": "plugin_action_invoke",
             "name": name,
+            "plugin_action_id": action_data["id"],
+            "plugin_action_ids": [action_data["id"]],
+            "plugin_connection_id": connection_data["id"],
+            "plugin_connection_ids": [connection_data["id"]],
+            "plugin_output_mapping": {
+                "records_imported_path": "$.records_imported",
+                "write_target": "scheduled_job_result",
+            },
             "product_id": product_id,
             "schedule_type": "manual",
             "source_system": "ai-brain",
@@ -293,16 +351,17 @@ def add_scheduled_job_run(job: dict, *, run_id: str) -> None:
 
 
 def add_plugin_invocation_log(job: dict, *, log_id: str, run_id: str) -> None:
+    action = app.state.store.plugin_actions.get(str(job.get("plugin_action_id") or ""))
     app.state.store.plugin_invocation_logs[log_id] = {
-        "action_id": None,
-        "connection_id": None,
+        "action_id": job.get("plugin_action_id"),
+        "connection_id": job.get("plugin_connection_id"),
         "created_at": "2026-06-27T10:00:30+00:00",
         "created_by": "user_admin",
         "error_code": None,
         "error_message": None,
         "id": log_id,
         "latency_ms": 42,
-        "plugin_id": None,
+        "plugin_id": action.get("plugin_id") if isinstance(action, dict) else None,
         "request_summary": {},
         "response_summary": {},
         "scheduled_job_id": job["id"],
