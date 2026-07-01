@@ -502,7 +502,7 @@ export function buildActionPayload(
     connection_id: values.connection_id,
     description: values.description,
     name: values.name,
-    plugin_id: values.plugin_id,
+    ...(values.plugin_id ? { plugin_id: values.plugin_id } : {}),
     request_config: requestConfig,
     requires_human_review: values.requires_human_review,
     result_mapping: resultMapping,

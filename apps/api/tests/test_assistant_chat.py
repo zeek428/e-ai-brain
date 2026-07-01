@@ -7233,6 +7233,66 @@ def test_ai_assistant_chat_generates_ai_capability_drafts_directly(monkeypatch):
     assert agent_item["payload"]["model_gateway_config_id"] == "model_gateway_default"
 
 
+def test_ai_assistant_explicit_ai_skill_action_generates_skill_draft_without_task_guide(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("explicit AI Skill draft generation should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": (
+                "@新建AI能力配置 新建一个基于用户客服聊天对话内容"
+                "提炼成产品迭代需求的skill"
+            )
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["model"] == "assistant-deterministic"
+    message = payload["message"]
+    assert "你想新增哪类任务" not in message["content"]
+    assert "AI 能力草案" in message["content"]
+    draft_result = message["tool_results"][0]
+    assert draft_result["tool"] == "assistant.action_draft"
+    assert draft_result["intent"] == "ai_capability_draft"
+    assert draft_result["summary"] == {
+        "draft_count": 1,
+        "scenario": "customer_feedback_requirement",
+        "target": "ai_skill",
+    }
+    assert len(draft_result["items"]) == 1
+    skill_item = draft_result["items"][0]
+    assert skill_item["action"] == "create_ai_skill"
+    assert skill_item["title"] == "客服对话需求提炼 Skill"
+    assert skill_item["payload"]["code"] == "customer_feedback_requirement_mining"
+    assert "客服聊天对话" in skill_item["payload"]["prompt_template"]
+    assert "产品迭代需求" in skill_item["payload"]["prompt_template"]
+    assert skill_item["preview"]["validation"]["status"] == "passed"
+    assert skill_item["server_draft_id"] in app.state.store.assistant_action_drafts
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{skill_item['server_draft_id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm_response.status_code == 200, confirm_response.text
+    run = confirm_response.json()["data"]["run"]
+    assert run["result_type"] == "ai_skill"
+    assert app.state.store.ai_skills[run["result_id"]]["code"] == (
+        "customer_feedback_requirement_mining"
+    )
+
+
 def test_ai_assistant_generated_ai_code_inspection_drafts_confirm_in_order(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()

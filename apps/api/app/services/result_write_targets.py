@@ -34,29 +34,7 @@ RESULT_WRITE_TARGETS = [
         "description": "把 AI 处理后的用户反馈洞察写入用户洞察表。",
         "form_label": "用户洞察表",
         "label": "用户洞察表",
-        "mapping_fields": [
-            {
-                "description": "AI 输出中洞察列表所在路径。",
-                "key": "insights_path",
-                "label": "洞察列表 JSONPath",
-                "placeholder": "$.insights",
-                "required": True,
-            },
-            {
-                "description": "原始源表行数所在路径。",
-                "key": "records_imported_path",
-                "label": "源表行数 JSONPath",
-                "placeholder": "$.row_count",
-                "required": False,
-            },
-            {
-                "description": "原始行列表所在路径，用于运行详情回放。",
-                "key": "rows_path",
-                "label": "原始行列表 JSONPath",
-                "placeholder": "$.rows",
-                "required": False,
-            },
-        ],
+        "mapping_fields": [],
         "supported_job_types": ["user_feedback_insight_extract"],
     },
     {

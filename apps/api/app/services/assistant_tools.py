@@ -425,14 +425,43 @@ def _ai_capability_draft_requested(normalized_message: str) -> bool:
             "agent",
         )
     )
-    has_supported_scenario = _code_inspection_draft_requested(
-        normalized_message
-    ) or _online_log_anomaly_draft_requested(normalized_message)
+    has_supported_scenario = (
+        _code_inspection_draft_requested(normalized_message)
+        or _online_log_anomaly_draft_requested(normalized_message)
+        or _customer_feedback_requirement_skill_requested(normalized_message)
+    )
+    has_explicit_skill_or_agent_target = any(
+        keyword in normalized_message
+        for keyword in ("skill", "ai skill", "技能", "ai角色", "ai 角色", "agent", "智能体")
+    )
     return (
         has_create_intent
         and has_ai_capability
-        and has_supported_scenario
+        and (has_supported_scenario or has_explicit_skill_or_agent_target)
         and not _scheduled_job_draft_requested(normalized_message)
+    )
+
+
+def _customer_feedback_requirement_skill_requested(normalized_message: str) -> bool:
+    return any(
+        keyword in normalized_message
+        for keyword in (
+            "客服",
+            "客户服务",
+            "客服聊天",
+            "聊天对话",
+            "客户对话",
+            "用户客服",
+            "用户聊天",
+            "需求提炼",
+            "需求抽取",
+            "产品迭代需求",
+            "迭代需求",
+            "customer support",
+            "customer service",
+            "support chat",
+            "product requirement",
+        )
     )
 
 

@@ -34,7 +34,7 @@ export type PluginActionFormValues = {
   name: string;
   param_rows?: RequestParameterRow[];
   path?: string;
-  plugin_id: string;
+  plugin_id?: string;
   request_config?: string;
   requires_human_review: boolean;
   records_imported_path?: string;
@@ -81,7 +81,6 @@ type PluginActionModalProps = {
   ) => void;
   onWriteTargetChange: (writeTarget?: string) => void;
   open: boolean;
-  pluginOptions: SelectOption[];
   requestPreview: Record<string, unknown>;
   resultWriteTargetOptions: SelectOption[];
   resultWriteTargets: ResultWriteTargetRecord[];
@@ -94,6 +93,8 @@ const requestMethodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((valu
   label: value,
   value,
 }));
+
+const HIDDEN_RESULT_MAPPING_FIELD_TARGETS = new Set(['user_feedback_insights']);
 
 function resultWriteTargetRecordByCode(
   writeTargets: ResultWriteTargetRecord[],
@@ -113,6 +114,9 @@ function ResultWriteTargetMappingFields({
   writeTargets: ResultWriteTargetRecord[];
 }) {
   const target = resultWriteTargetRecordByCode(writeTargets, writeTarget, defaultWriteTarget);
+  if (target && HIDDEN_RESULT_MAPPING_FIELD_TARGETS.has(target.code)) {
+    return null;
+  }
   if (target?.mapping_fields.length) {
     return (
       <Space wrap>
@@ -149,7 +153,6 @@ export function PluginActionModal({
   onValuesChange,
   onWriteTargetChange,
   open,
-  pluginOptions,
   requestPreview,
   resultWriteTargetOptions,
   resultWriteTargets,
@@ -184,8 +187,8 @@ export function PluginActionModal({
             options={scenarioOptions}
           />
         </Form.Item>
-        <Form.Item label="插件" name="plugin_id" rules={[{ required: true }]}>
-          <Select options={pluginOptions} />
+        <Form.Item hidden name="plugin_id">
+          <Input type="hidden" />
         </Form.Item>
         <Form.Item label="连接" name="connection_id">
           <Select allowClear options={connectionOptions} />

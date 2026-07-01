@@ -13,14 +13,14 @@ def _json(value: Any, default: Any) -> str:
 
 
 PLUGIN_CONNECTION_SORT_COLUMNS = {
-    "created_at": "created_at",
-    "endpoint_url": "lower(endpoint_url)",
-    "environment": "environment",
-    "id": "id",
-    "name": "lower(name)",
-    "plugin_id": "plugin_id",
-    "status": "status",
-    "updated_at": "updated_at",
+    "created_at": "pc.created_at",
+    "endpoint_url": "lower(pc.endpoint_url)",
+    "environment": "pc.environment",
+    "id": "pc.id",
+    "name": "lower(pc.name)",
+    "plugin_id": "pc.plugin_id",
+    "status": "pc.status",
+    "updated_at": "pc.updated_at",
 }
 
 PLUGIN_ACTION_SORT_COLUMNS = {
@@ -145,19 +145,23 @@ class PluginReadRepository:
         plugin_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
-        where, params = self._where(
-            {"environment": environment, "plugin_id": plugin_id, "status": status},
+        where, params = self._plugin_connection_where(
+            environment=environment,
+            plugin_id=plugin_id,
+            status=status,
         )
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, plugin_id, name, environment, endpoint_url, auth_type,
-                           auth_config, request_config, timeout_seconds, max_retries, status,
-                           created_by, created_at, updated_at, last_test_summary, test_history
-                    FROM plugin_connections
+                    SELECT pc.id, pc.plugin_id, pc.name, pc.environment, pc.endpoint_url,
+                           pc.auth_type, pc.auth_config, pc.request_config, pc.timeout_seconds,
+                           pc.max_retries, pc.status, pc.created_by, pc.created_at, pc.updated_at,
+                           pc.last_test_summary, pc.test_history, plugin.name, plugin.code
+                    FROM plugin_connections pc
+                    LEFT JOIN integration_plugins plugin ON plugin.id = pc.plugin_id
                     {where}
-                    ORDER BY plugin_id ASC, environment ASC, id ASC
+                    ORDER BY pc.plugin_id ASC, pc.environment ASC, pc.id ASC
                     """,
                     tuple(params),
                 )
@@ -180,7 +184,7 @@ class PluginReadRepository:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    f"SELECT count(*) FROM plugin_connections {where}",
+                    f"SELECT count(*) FROM plugin_connections pc {where}",
                     tuple(params),
                 )
                 row = cursor.fetchone()
@@ -212,12 +216,14 @@ class PluginReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, plugin_id, name, environment, endpoint_url, auth_type,
-                           auth_config, request_config, timeout_seconds, max_retries, status,
-                           created_by, created_at, updated_at, last_test_summary, test_history
-                    FROM plugin_connections
+                    SELECT pc.id, pc.plugin_id, pc.name, pc.environment, pc.endpoint_url,
+                           pc.auth_type, pc.auth_config, pc.request_config, pc.timeout_seconds,
+                           pc.max_retries, pc.status, pc.created_by, pc.created_at, pc.updated_at,
+                           pc.last_test_summary, pc.test_history, plugin.name, plugin.code
+                    FROM plugin_connections pc
+                    LEFT JOIN integration_plugins plugin ON plugin.id = pc.plugin_id
                     {where}
-                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    ORDER BY {sort_column} {direction} {nulls}, pc.id {direction}
                     LIMIT %s OFFSET %s
                     """,
                     tuple(params),
@@ -1420,23 +1426,30 @@ class PluginReadRepository:
         plugin_id: str | None = None,
         status: str | None = None,
     ) -> tuple[str, list[Any]]:
-        where, params = self._where(
-            {"environment": environment, "plugin_id": plugin_id, "status": status},
-        )
-        clauses = [where.removeprefix("WHERE ")] if where else []
+        clauses = []
+        params: list[Any] = []
+        filters = {
+            "pc.environment": environment,
+            "pc.plugin_id": plugin_id,
+            "pc.status": status,
+        }
+        for column, value in filters.items():
+            if value is not None:
+                clauses.append(f"{column} = %s")
+                params.append(value)
         normalized_keyword = str(keyword or "").strip().lower()
         if normalized_keyword:
             keyword_param = f"%{normalized_keyword}%"
             clauses.append(
                 """
                 (
-                  lower(id) LIKE %s
-                  OR lower(plugin_id) LIKE %s
-                  OR lower(name) LIKE %s
-                  OR lower(environment) LIKE %s
-                  OR lower(endpoint_url) LIKE %s
-                  OR lower(auth_type) LIKE %s
-                  OR lower(status) LIKE %s
+                  lower(pc.id) LIKE %s
+                  OR lower(pc.plugin_id) LIKE %s
+                  OR lower(pc.name) LIKE %s
+                  OR lower(pc.environment) LIKE %s
+                  OR lower(pc.endpoint_url) LIKE %s
+                  OR lower(pc.auth_type) LIKE %s
+                  OR lower(pc.status) LIKE %s
                 )
                 """
             )
@@ -1506,6 +1519,8 @@ class PluginReadRepository:
             "updated_at": row[13].isoformat() if row[13] else None,
             "last_test_summary": row[14] or {},
             "test_history": row[15] or [],
+            "plugin_name": row[16] if len(row) > 16 else None,
+            "plugin_code": row[17] if len(row) > 17 else None,
         }
 
     def _action_from_row(self, row: Any) -> dict[str, Any]:

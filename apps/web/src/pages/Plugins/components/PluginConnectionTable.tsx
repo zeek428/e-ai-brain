@@ -6,7 +6,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
-import { Button, Select, Space, Typography } from 'antd';
+import { Button, Space } from 'antd';
 import type { TablePaginationConfig } from 'antd';
 import type { SorterResult } from 'antd/es/table/interface';
 
@@ -25,9 +25,6 @@ type PluginConnectionRemoteMeta = {
 
 type PluginConnectionTableProps = {
   connections: PluginConnectionRecord[];
-  environmentFilter?: string;
-  environmentLabels: Map<string, string>;
-  environmentOptions: Array<{ label: string; value: string }>;
   loading: boolean;
   pluginById: Map<string, PluginRecord>;
   remote: PluginConnectionRemoteMeta;
@@ -35,7 +32,6 @@ type PluginConnectionTableProps = {
   onCreateConnection: () => void;
   onDeleteConnection: (connection: PluginConnectionRecord) => void;
   onEditConnection: (connection: PluginConnectionRecord) => void;
-  onEnvironmentFilterChange: (value?: string) => void;
   onRemoteChange: (query: PluginConnectionListQuery) => void;
   onReload: () => void;
   onTestConnection: (connection: PluginConnectionRecord) => void | Promise<void>;
@@ -66,11 +62,22 @@ function normalizeConnectionSorter(
   };
 }
 
+function pluginDisplayName(
+  connection: PluginConnectionRecord,
+  pluginById: Map<string, PluginRecord>,
+) {
+  const projectedName = connection.plugin_name?.trim();
+  const projectedCode = connection.plugin_code?.trim();
+  return (
+    projectedName
+    || pluginById.get(connection.plugin_id)?.name
+    || projectedCode
+    || connection.plugin_id
+  );
+}
+
 export function PluginConnectionTable({
   connections,
-  environmentFilter,
-  environmentLabels,
-  environmentOptions,
   loading,
   pluginById,
   remote,
@@ -78,40 +85,15 @@ export function PluginConnectionTable({
   onCreateConnection,
   onDeleteConnection,
   onEditConnection,
-  onEnvironmentFilterChange,
   onRemoteChange,
   onReload,
   onTestConnection,
 }: PluginConnectionTableProps) {
   return (
-    <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-      <Space wrap>
-        <Typography.Text type="secondary">环境</Typography.Text>
-        <Select
-          allowClear
-          onChange={(value) => onEnvironmentFilterChange(value)}
-          options={environmentOptions}
-          placeholder="全部环境"
-          style={{ width: 160 }}
-          value={environmentFilter}
-        />
-        <Button
-          aria-label="新增连接"
-          htmlType="button"
-          icon={<PlusOutlined />}
-          onClick={onCreateConnection}
-          type="primary"
-        >
-          新增连接
-        </Button>
-        <Button htmlType="button" icon={<ReloadOutlined />} onClick={onReload}>
-          刷新
-        </Button>
-      </Space>
-      <ProTable<PluginConnectionRecord>
-        cardBordered
-        className="management-list-table"
-        columns={[
+    <ProTable<PluginConnectionRecord>
+      cardBordered
+      className="management-list-table"
+      columns={[
           { dataIndex: 'name', sorter: true, title: '名称', ellipsis: true, width: 220 },
           {
             dataIndex: 'plugin_id',
@@ -119,14 +101,7 @@ export function PluginConnectionTable({
             title: '插件',
             ellipsis: true,
             width: 220,
-            render: (value) => pluginById.get(String(value))?.name ?? value,
-          },
-          {
-            dataIndex: 'environment',
-            sorter: true,
-            title: '环境',
-            width: 130,
-            render: (value) => environmentLabels.get(String(value)) ?? String(value ?? '-'),
+            render: (_, row) => pluginDisplayName(row, pluginById),
           },
           { dataIndex: 'auth_type', title: '认证', width: 130 },
           { dataIndex: 'endpoint_url', sorter: true, title: 'Endpoint', ellipsis: true, width: 320 },
@@ -185,40 +160,53 @@ export function PluginConnectionTable({
               );
             },
           },
-        ]}
-        dataSource={connections}
-        dateFormatter="string"
-        headerTitle="连接"
-        loading={loading}
-        onChange={(
-          pagination: TablePaginationConfig,
-          _filters,
-          sorter,
-        ) => {
-          onRemoteChange({
-            page: pagination.current ?? remote.page,
-            pageSize: pagination.pageSize ?? remote.pageSize,
-            ...normalizeConnectionSorter(sorter),
-          });
-        }}
-        options={{
-          density: true,
-          fullScreen: true,
-          reload: onReload,
-          setting: true,
-        }}
-        pagination={{
-          current: remote.page,
-          pageSize: remote.pageSize,
-          showSizeChanger: true,
-          showTotal: (total) => `共 ${total} 条`,
-          total: remote.total,
-        }}
-        rowKey="id"
-        scroll={{ x: 1600 }}
-        search={false}
-        tableLayout="fixed"
-      />
-    </Space>
+      ]}
+      dataSource={connections}
+      dateFormatter="string"
+      headerTitle="连接"
+      loading={loading}
+      onChange={(
+        pagination: TablePaginationConfig,
+        _filters,
+        sorter,
+      ) => {
+        onRemoteChange({
+          page: pagination.current ?? remote.page,
+          pageSize: pagination.pageSize ?? remote.pageSize,
+          ...normalizeConnectionSorter(sorter),
+        });
+      }}
+      options={{
+        density: true,
+        fullScreen: true,
+        reload: onReload,
+        setting: true,
+      }}
+      pagination={{
+        current: remote.page,
+        pageSize: remote.pageSize,
+        showSizeChanger: true,
+        showTotal: (total) => `共 ${total} 条`,
+        total: remote.total,
+      }}
+      rowKey="id"
+      scroll={{ x: 1460 }}
+      search={false}
+      tableLayout="fixed"
+      toolBarRender={() => [
+        <Button
+          aria-label="新增连接"
+          icon={<PlusOutlined />}
+          key="create-connection"
+          onClick={onCreateConnection}
+          type="primary"
+        >
+          新增连接
+        </Button>,
+        <Button icon={<ReloadOutlined />} key="reload-connections" onClick={onReload}>
+          刷新
+        </Button>,
+      ]}
+    />
   );
 }

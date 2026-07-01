@@ -16,11 +16,6 @@ import { PluginMarketplaceTable } from './PluginMarketplaceTable';
 import { PluginRunnerTable } from './PluginRunnerTable';
 import { PluginTable } from './PluginTable';
 
-type SelectOption = {
-  label: string;
-  value: string;
-};
-
 type PluginManagementTabsProps = {
   actions: PluginActionRecord[];
   actionListMeta: {
@@ -29,9 +24,6 @@ type PluginManagementTabsProps = {
     total: number;
   };
   connectionById: Map<string, PluginConnectionRecord>;
-  connectionEnvironmentFilter?: string;
-  connectionEnvironmentLabels: Map<string, string>;
-  connectionEnvironmentOptions: SelectOption[];
   connectionListMeta: {
     page: number;
     pageSize: number;
@@ -60,7 +52,6 @@ type PluginManagementTabsProps = {
   onEditConnection: (connection: PluginConnectionRecord) => void;
   onEditPlugin: (plugin: PluginRecord) => void;
   onEditRunner: (runner: AiExecutorRunnerRecord) => void;
-  onEnvironmentFilterChange: (environment?: string) => void;
   onOpenRunnerLogs: (runner: AiExecutorRunnerRecord) => void;
   onReload: () => void;
   onRotateRunnerToken: (runner: AiExecutorRunnerRecord) => void;
@@ -88,9 +79,6 @@ export function PluginManagementTabs({
   actions,
   actionListMeta,
   connectionById,
-  connectionEnvironmentFilter,
-  connectionEnvironmentLabels,
-  connectionEnvironmentOptions,
   connectionListMeta,
   connections,
   formatWriteTarget,
@@ -115,7 +103,6 @@ export function PluginManagementTabs({
   onEditConnection,
   onEditPlugin,
   onEditRunner,
-  onEnvironmentFilterChange,
   onOpenRunnerLogs,
   onReload,
   onRotateRunnerToken,
@@ -169,9 +156,6 @@ export function PluginManagementTabs({
           children: (
             <PluginConnectionTable
               connections={connections}
-              environmentFilter={connectionEnvironmentFilter}
-              environmentLabels={connectionEnvironmentLabels}
-              environmentOptions={connectionEnvironmentOptions}
               loading={loading}
               pluginById={pluginById}
               remote={connectionListMeta}
@@ -179,7 +163,6 @@ export function PluginManagementTabs({
               onCreateConnection={onCreateConnection}
               onDeleteConnection={onDeleteConnection}
               onEditConnection={onEditConnection}
-              onEnvironmentFilterChange={onEnvironmentFilterChange}
               onRemoteChange={onConnectionListChange}
               onReload={onReload}
               onTestConnection={onTestConnection}

@@ -145,6 +145,7 @@ function installPluginsFetchMock(
     includeOfficialPlugins?: boolean;
     includeMultiResourceScheduledJob?: boolean;
     includeOutOfPageConnection?: boolean;
+    includeProjectedPluginConnection?: boolean;
   } = {},
 ) {
   const actionBodies: unknown[] = [];
@@ -532,26 +533,7 @@ function installPluginsFetchMock(
               },
               form_label: '用户洞察表',
               label: '用户洞察表',
-              mapping_fields: [
-                {
-                  key: 'insights_path',
-                  label: '洞察列表 JSONPath',
-                  placeholder: '$.insights',
-                  required: true,
-                },
-                {
-                  key: 'records_imported_path',
-                  label: '源表行数 JSONPath',
-                  placeholder: '$.row_count',
-                  required: false,
-                },
-                {
-                  key: 'rows_path',
-                  label: '原始行列表 JSONPath',
-                  placeholder: '$.rows',
-                  required: false,
-                },
-              ],
+              mapping_fields: [],
             },
             {
               code: 'code_inspection_reports',
@@ -974,15 +956,36 @@ function installPluginsFetchMock(
             },
           ]
         : [];
+      const projectedPluginConnections = options.includeProjectedPluginConnection
+        ? [
+            {
+              auth_type: 'none',
+              endpoint_url: 'https://feedback.example.com/api',
+              environment: 'prod',
+              id: 'connection_projected_plugin_name',
+              name: '用户反馈连接器',
+              plugin_code: 'generic_http',
+              plugin_id: 'plugin_001',
+              plugin_name: '通用 HTTP 插件',
+              request_config: {
+                headers: { Authorization: 'APPCODE 208b5b1456ee445ca47a42c' },
+                query: { start_pt: '{{current_date-7}}' },
+              },
+              status: 'active',
+            },
+          ]
+        : [];
       const allConnections = [
         ...baseConnections,
         ...officialConnections,
         ...outOfPageConnections,
+        ...projectedPluginConnections,
       ];
       const isPagedRequest = input.includes('page=') || input.includes('page_size=');
       const pageConnections = [
         ...baseConnections,
         ...officialConnections,
+        ...projectedPluginConnections,
       ];
       return jsonResponse({
         data: {
@@ -1303,23 +1306,25 @@ describe('PluginsPage', () => {
     expect(await screen.findByRole('button', { name: '新增动作' })).toBeInTheDocument();
   });
 
-  it('renders a compact system variable preview and opens the full table on demand', async () => {
+  it('keeps plugin management compact while retaining system variable insertion in forms', async () => {
     installPluginsFetchMock();
 
     render(<PluginsPage />);
 
-    expect(await screen.findByText('系统变量预览')).toBeInTheDocument();
-    expect(screen.getByText('常用变量')).toBeInTheDocument();
-    expect(screen.getAllByText(/{{current_date-7}}/).length).toBeGreaterThan(0);
+    expect(await screen.findByRole('tab', { name: '动作' })).toBeInTheDocument();
+    expect(screen.queryByText('系统变量预览')).not.toBeInTheDocument();
+    expect(screen.queryByText('常用变量')).not.toBeInTheDocument();
+    expect(screen.queryByText('通用调用链路')).not.toBeInTheDocument();
     expect(screen.queryByText('当前解析值')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看全部变量' }));
+    fireEvent.click(screen.getByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
 
-    const dialog = await findDialogByTitle('全部系统变量');
-    expect(within(dialog).getAllByText('表达式').length).toBeGreaterThan(0);
-    expect(within(dialog).getAllByText('当前解析值').length).toBeGreaterThan(0);
-    expect(within(dialog).getByText('YYYYMMDD 格式，适合近 7 天起始分区')).toBeInTheDocument();
-    expect(within(dialog).getByText('20260603')).toBeInTheDocument();
+    const dialog = await findDialogByTitle('新增动作');
+    fireEvent.click(within(dialog).getByRole('button', { name: /添加 Params/ }));
+    fireEvent.mouseDown(within(dialog).getByText('系统变量'));
+
+    expect(await screen.findByText('当前日期 - 7 天')).toBeInTheDocument();
   });
 
   it('manages AI executor runners with remote executor options and install packages', async () => {
@@ -1582,7 +1587,7 @@ describe('PluginsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '从市场插件 GitHub 创建动作' }));
 
     const dialog = await findDialogByTitle('新增动作');
-    expect(within(dialog).getByText('GitHub (http)')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('插件')).not.toBeInTheDocument();
     expect(within(dialog).getByText('代码巡检报告')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('请求路径')).toHaveValue('/repos/{{owner}}/{{repo}}/dependabot/alerts');
     expect(within(dialog).getByDisplayValue('state')).toBeInTheDocument();
@@ -1662,7 +1667,7 @@ describe('PluginsPage', () => {
     expect(
       window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY)),
     ).toBeNull();
-    expect(within(dialog).getByText('GitHub (http)')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('插件')).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText('名称')).toHaveValue('GitHub 代码巡检');
     expect(within(dialog).getByLabelText('编码')).toHaveValue('scan_github_code_inspection');
     expect(within(dialog).getByLabelText('请求路径')).toHaveValue('/repos/{{owner}}/{{repo}}/code-scanning/alerts');
@@ -1903,13 +1908,14 @@ describe('PluginsPage', () => {
     expect(actionDeleteIds).toEqual([]);
   });
 
-  it('uses predefined connection environments and can test a connection', async () => {
+  it('keeps connection environment hidden and can test a connection', async () => {
     const { connectionBodies, connectionTestCalls } = installPluginsFetchMock();
 
     render(<PluginsPage />);
 
     fireEvent.click(await screen.findByRole('tab', { name: '连接' }));
-    expect(await screen.findByText('生产')).toBeInTheDocument();
+    expect(await screen.findByText('生产 MaxCompute 项目')).toBeInTheDocument();
+    expect(screen.queryByText('全部环境')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /测试/ }));
     await waitFor(() =>
@@ -1958,18 +1964,15 @@ describe('PluginsPage', () => {
     const actionDialogFromReplay = await findDialogByTitle('新增动作');
     expect(within(actionDialogFromReplay).getByLabelText('名称')).toHaveValue('生产 MaxCompute 项目 请求动作');
     expect(within(actionDialogFromReplay).getByLabelText('编码')).toHaveValue('test_connection_maxcompute_prod');
-    expect(within(actionDialogFromReplay).getByText('阿里云 MaxCompute (mcp_http)')).toBeInTheDocument();
-    expect(within(actionDialogFromReplay).getByText('生产 MaxCompute 项目 (prod)')).toBeInTheDocument();
+    expect(within(actionDialogFromReplay).queryByLabelText('插件')).not.toBeInTheDocument();
+    expect(within(actionDialogFromReplay).getByText('生产 MaxCompute 项目')).toBeInTheDocument();
     fireEvent.click(within(actionDialogFromReplay).getByRole('button', { name: /取\s*消/ }));
 
     fireEvent.click(screen.getByRole('button', { name: '新增连接' }));
     const dialog = await findDialogByTitle('新增连接');
-    expect(within(dialog).queryByRole('textbox', { name: '环境' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('环境')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('认证配置 JSON')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('请求配置 JSON')).not.toBeInTheDocument();
-    fireEvent.mouseDown(within(dialog).getByLabelText('环境'));
-    expect(await screen.findByText('预发 / Staging')).toBeInTheDocument();
-    expect(screen.getAllByText('生产').length).toBeGreaterThan(0);
 
     fireEvent.change(getDialogField<HTMLInputElement>(dialog, 'name'), { target: { value: '生产 MaxCompute API' } });
     fireEvent.change(getDialogField<HTMLInputElement>(dialog, 'endpoint_url'), {
@@ -2012,21 +2015,15 @@ describe('PluginsPage', () => {
     );
   }, 10000);
 
-  it('filters plugin connections by environment', async () => {
+  it('does not expose connection environment filtering in the connection list', async () => {
     const { connectionListCalls } = installPluginsFetchMock();
 
     render(<PluginsPage />);
 
     fireEvent.click(await screen.findByRole('tab', { name: '连接' }));
-    fireEvent.mouseDown(await screen.findByText('全部环境'));
-    const prodOptions = await screen.findAllByText('生产');
-    fireEvent.click(prodOptions.at(-1)!);
-
-    await waitFor(() =>
-      expect(connectionListCalls).toContain(
-        '/api/system/plugin-connections?environment=prod&page=1&page_size=10&sort_by=plugin_id&sort_order=asc',
-      ),
-    );
+    expect(await screen.findByText('生产 MaxCompute 项目')).toBeInTheDocument();
+    expect(screen.queryByText('全部环境')).not.toBeInTheDocument();
+    expect(connectionListCalls.some((call) => call.includes('environment='))).toBe(false);
   });
 
   it('loads plugin connections and actions through server-side pagination', async () => {
@@ -2042,6 +2039,18 @@ describe('PluginsPage', () => {
     expect(actionListCalls).toContain(
       '/api/system/plugin-actions?page=1&page_size=10&sort_by=plugin_id&sort_order=asc',
     );
+  });
+
+  it('renders plugin names in the connection list when the server provides plugin projection fields', async () => {
+    installPluginsFetchMock({ includeProjectedPluginConnection: true });
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '连接' }));
+
+    expect(await screen.findByText('用户反馈连接器')).toBeInTheDocument();
+    expect(screen.getByText('通用 HTTP 插件')).toBeInTheDocument();
+    expect(screen.queryByText('plugin_001')).not.toBeInTheDocument();
   });
 
   it('shows all available connections in the action selector even when the connection table is paged', async () => {
@@ -2062,7 +2071,7 @@ describe('PluginsPage', () => {
     const dialog = await findDialogByTitle('新增动作');
     fireEvent.mouseDown(within(dialog).getByLabelText('连接'));
 
-    expect(await screen.findByText('AI 客服聊天记录连接 (prod)')).toBeInTheDocument();
+    expect(await screen.findByText('AI 客服聊天记录连接')).toBeInTheDocument();
   });
 
   it('shows latest connection test summary in the connection list', async () => {
@@ -2346,8 +2355,9 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByText('仅保存运行结果')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('导入数量 JSONPath')).toBeInTheDocument();
     expect(within(dialog).queryByLabelText('洞察列表 JSONPath')).not.toBeInTheDocument();
-    fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
-    fireEvent.click((await screen.findAllByText('阿里云 MaxCompute (mcp_http)')).at(-1)!);
+    expect(within(dialog).queryByLabelText('插件')).not.toBeInTheDocument();
+    fireEvent.mouseDown(within(dialog).getByLabelText('连接'));
+    fireEvent.click((await screen.findAllByText('生产 MaxCompute 项目')).at(-1)!);
     fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '调用反馈 API' } });
     fireEvent.change(within(dialog).getByLabelText('编码'), { target: { value: 'fetch_feedback_api' } });
     fireEvent.change(within(dialog).getByLabelText('请求路径'), { target: { value: '/zqf_api/feedback' } });
@@ -2382,8 +2392,8 @@ describe('PluginsPage', () => {
     );
   });
 
-  it('updates result mapping fields when the write target changes', async () => {
-    installPluginsFetchMock();
+  it('keeps user insight result mapping hidden while preserving default mapping', async () => {
+    const { actionBodies } = installPluginsFetchMock();
 
     render(<PluginsPage />);
 
@@ -2397,10 +2407,32 @@ describe('PluginsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('结果写入目标'));
     fireEvent.click(await screen.findByText('用户洞察表'));
 
-    expect(within(dialog).getByLabelText('洞察列表 JSONPath')).toHaveValue('$.insights');
-    expect(within(dialog).getByLabelText('源表行数 JSONPath')).toHaveValue('$.row_count');
-    expect(within(dialog).getByLabelText('原始行列表 JSONPath')).toHaveValue('$.rows');
+    expect(within(dialog).queryByLabelText('洞察列表 JSONPath')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('源表行数 JSONPath')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('原始行列表 JSONPath')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('导入数量 JSONPath')).not.toBeInTheDocument();
+
+    expect(within(dialog).queryByLabelText('插件')).not.toBeInTheDocument();
+    fireEvent.mouseDown(within(dialog).getByLabelText('连接'));
+    fireEvent.click((await screen.findAllByText('生产 MaxCompute 项目')).at(-1)!);
+    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '写入用户洞察' } });
+    fireEvent.change(within(dialog).getByLabelText('编码'), { target: { value: 'write_user_insights' } });
+    fireEvent.change(within(dialog).getByLabelText('请求路径'), { target: { value: '/insights/write' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
+
+    await waitFor(() =>
+      expect(actionBodies).toEqual([
+        expect.objectContaining({
+          code: 'write_user_insights',
+          result_mapping: {
+            insights_path: '$.insights',
+            records_imported_path: '$.row_count',
+            rows_path: '$.rows',
+            write_target: 'user_feedback_insights',
+          },
+        }),
+      ]),
+    );
   });
 
   it('offers code inspection reports as an action write target', async () => {
@@ -2421,8 +2453,9 @@ describe('PluginsPage', () => {
     expect(within(dialog).queryByLabelText('洞察列表 JSONPath')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('导入数量 JSONPath')).not.toBeInTheDocument();
 
-    fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
-    fireEvent.click((await screen.findAllByText('阿里云 MaxCompute (mcp_http)')).at(-1)!);
+    expect(within(dialog).queryByLabelText('插件')).not.toBeInTheDocument();
+    fireEvent.mouseDown(within(dialog).getByLabelText('连接'));
+    fireEvent.click((await screen.findAllByText('生产 MaxCompute 项目')).at(-1)!);
     fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '扫描仓库质量' } });
     fireEvent.change(within(dialog).getByLabelText('编码'), { target: { value: 'scan_repository_quality' } });
     fireEvent.change(within(dialog).getByLabelText('请求路径'), { target: { value: '/quality/scan' } });
@@ -2431,7 +2464,9 @@ describe('PluginsPage', () => {
     await waitFor(() =>
       expect(actionBodies).toEqual([
         expect.objectContaining({
+          connection_id: 'connection_maxcompute_prod',
           code: 'scan_repository_quality',
+          plugin_id: 'plugin_maxcompute',
           result_mapping: {
             branch_path: '$.branch',
             commit_sha_path: '$.commit_sha',
@@ -2543,8 +2578,8 @@ describe('PluginsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('配置场景'));
     fireEvent.click(await screen.findByText('邮箱通知发送'));
 
-    expect(within(dialog).getByText('邮箱 (http)')).toBeInTheDocument();
-    expect(within(dialog).getByText('生产邮箱网关 (prod)')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('插件')).not.toBeInTheDocument();
+    expect(within(dialog).getByText('生产邮箱网关')).toBeInTheDocument();
     expect(within(dialog).getByText('POST')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('请求路径')).toHaveValue('/messages/send');
     expect(within(dialog).getByDisplayValue('Content-Type')).toBeInTheDocument();

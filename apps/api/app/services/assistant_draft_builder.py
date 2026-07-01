@@ -195,19 +195,22 @@ class AssistantDraftBuilder:
         }
 
     def ai_capability_draft(self, *, message: str) -> dict[str, Any]:
-        scenario = self._ai_capability_scenario(message.lower())
+        normalized_message = message.lower()
+        scenario = self._ai_capability_scenario(normalized_message)
         model_gateway = _first_active(
             self.context["model_gateway_configs"],
             predicate=lambda item: item.get("is_default") is True,
         ) or _first_active(self.context["model_gateway_configs"])
         skill_item = self._ai_skill_draft_item(scenario)
-        agent_item = self._ai_agent_draft_item(
-            scenario,
-            default_skill_ids=[],
-            model_gateway_config_id=model_gateway.get("id") if model_gateway else None,
-            prerequisite_draft_ids=[skill_item["draft_id"]],
-        )
-        items = [skill_item, agent_item]
+        items = [skill_item]
+        if self._ai_capability_target(normalized_message) != "skill":
+            agent_item = self._ai_agent_draft_item(
+                scenario,
+                default_skill_ids=[],
+                model_gateway_config_id=model_gateway.get("id") if model_gateway else None,
+                prerequisite_draft_ids=[skill_item["draft_id"]],
+            )
+            items.append(agent_item)
         return {
             "intent": "ai_capability_draft",
             "items": items,
@@ -225,7 +228,7 @@ class AssistantDraftBuilder:
             "summary": {
                 "draft_count": len(items),
                 "scenario": scenario,
-                "target": "ai_capabilities",
+                "target": "ai_skill" if len(items) == 1 else "ai_capabilities",
             },
             "tool": "assistant.action_draft",
         }
@@ -938,6 +941,27 @@ class AssistantDraftBuilder:
         if any(
             keyword in normalized_message
             for keyword in (
+                "客服",
+                "客户服务",
+                "客服聊天",
+                "聊天对话",
+                "客户对话",
+                "用户客服",
+                "用户聊天",
+                "需求提炼",
+                "需求抽取",
+                "产品迭代需求",
+                "迭代需求",
+                "customer support",
+                "customer service",
+                "support chat",
+                "product requirement",
+            )
+        ):
+            return "customer_feedback_requirement"
+        if any(
+            keyword in normalized_message
+            for keyword in (
                 "online_log",
                 "online log",
                 "log anomaly",
@@ -947,7 +971,21 @@ class AssistantDraftBuilder:
             )
         ):
             return "online_log_anomaly"
-        return "code_inspection"
+        if any(
+            keyword in normalized_message
+            for keyword in ("代码巡检", "code inspection", "github", "gitlab")
+        ):
+            return "code_inspection"
+        return "generic_business_analysis"
+
+    @staticmethod
+    def _ai_capability_target(normalized_message: str) -> str:
+        has_skill = any(keyword in normalized_message for keyword in ("skill", "ai skill", "技能"))
+        has_agent = any(
+            keyword in normalized_message
+            for keyword in ("ai角色", "ai 角色", "agent", "智能体")
+        )
+        return "skill" if has_skill and not has_agent else "capability"
 
     @staticmethod
     def _plugin_connection_draft_item(scenario: str, *, plugin_id: str) -> dict[str, Any]:
@@ -1033,6 +1071,72 @@ class AssistantDraftBuilder:
                 "risk_level": "medium",
                 "title": "线上日志异常检测 Skill",
             }
+        if scenario == "customer_feedback_requirement":
+            return {
+                "action": "create_ai_skill",
+                "draft_id": "assistant_draft_customer_feedback_requirement_ai_skill",
+                "payload": {
+                    "code": "customer_feedback_requirement_mining",
+                    "description": "从客服聊天、客户服务对话和用户反馈中提炼产品迭代需求。",
+                    "input_schema": {
+                        "properties": {
+                            "conversation_text": {"type": "string"},
+                            "product_context": {"type": "string"},
+                        },
+                        "required": ["conversation_text"],
+                        "type": "object",
+                    },
+                    "name": "客服对话需求提炼 Skill",
+                    "output_schema": {
+                        "properties": {
+                            "evidence": {"items": {"type": "string"}, "type": "array"},
+                            "requirement_candidates": {
+                                "items": {"type": "object"},
+                                "type": "array",
+                            },
+                            "summary": {"type": "string"},
+                        },
+                        "required": ["summary", "requirement_candidates"],
+                        "type": "object",
+                    },
+                    "prompt_template": (
+                        "请基于用户客服聊天对话内容，识别高频痛点、未满足场景和可落地的产品迭代需求。"
+                        "输出需求标题、用户问题、业务价值、优先级建议、验收标准和原始对话证据，"
+                        "避免把单次情绪反馈直接当成需求。"
+                    ),
+                    "required_context": [
+                        "customer_service_chats",
+                        "user_feedback",
+                        "product_context",
+                    ],
+                    "risk_level": "medium",
+                    "status": "active",
+                    "version": "1.0.0",
+                },
+                "requires_confirmation": True,
+                "risk_level": "medium",
+                "title": "客服对话需求提炼 Skill",
+            }
+        if scenario == "generic_business_analysis":
+            return {
+                "action": "create_ai_skill",
+                "draft_id": "assistant_draft_generic_business_analysis_ai_skill",
+                "payload": {
+                    "code": "generic_business_analysis",
+                    "description": "面向业务文本的通用分析 Skill，可在确认前继续编辑具体场景。",
+                    "name": "通用业务分析 Skill",
+                    "prompt_template": (
+                        "请基于输入的业务上下文提炼结构化结论，输出关键发现、证据、风险和下一步建议。"
+                    ),
+                    "required_context": ["business_context"],
+                    "risk_level": "medium",
+                    "status": "active",
+                    "version": "1.0.0",
+                },
+                "requires_confirmation": True,
+                "risk_level": "medium",
+                "title": "通用业务分析 Skill",
+            }
         if scenario != "code_inspection":
             raise ValueError(f"Unsupported AI skill draft scenario: {scenario}")
         return {
@@ -1086,6 +1190,51 @@ class AssistantDraftBuilder:
                 "requires_confirmation": True,
                 "risk_level": "medium",
                 "title": "线上日志分析 AI角色",
+            }
+        if scenario == "customer_feedback_requirement":
+            payload = {
+                "brain_app_id": "rd_brain",
+                "code": "customer_feedback_requirement_agent",
+                "default_skill_ids": default_skill_ids,
+                "description": "用于从客服对话和用户反馈中沉淀产品迭代需求的 AI角色。",
+                "model_gateway_config_id": model_gateway_config_id,
+                "name": "客服洞察需求分析 AI角色",
+                "status": "active",
+                "system_prompt": (
+                    "你负责分析客服聊天对话、用户反馈和产品上下文，"
+                    "提炼可进入需求池的产品迭代建议并保留证据链。"
+                ),
+            }
+            if prerequisite_draft_ids:
+                payload["assistant_prerequisite_draft_ids"] = prerequisite_draft_ids
+            return {
+                "action": "create_ai_agent",
+                "draft_id": "assistant_draft_customer_feedback_requirement_ai_agent",
+                "payload": payload,
+                "requires_confirmation": True,
+                "risk_level": "medium",
+                "title": "客服洞察需求分析 AI角色",
+            }
+        if scenario == "generic_business_analysis":
+            payload = {
+                "brain_app_id": "rd_brain",
+                "code": "generic_business_analysis_agent",
+                "default_skill_ids": default_skill_ids,
+                "description": "用于编排通用业务分析 Skill 的 AI角色。",
+                "model_gateway_config_id": model_gateway_config_id,
+                "name": "通用业务分析 AI角色",
+                "status": "active",
+                "system_prompt": "你负责调用业务分析 Skill，输出结构化结论、证据和下一步建议。",
+            }
+            if prerequisite_draft_ids:
+                payload["assistant_prerequisite_draft_ids"] = prerequisite_draft_ids
+            return {
+                "action": "create_ai_agent",
+                "draft_id": "assistant_draft_generic_business_analysis_ai_agent",
+                "payload": payload,
+                "requires_confirmation": True,
+                "risk_level": "medium",
+                "title": "通用业务分析 AI角色",
             }
         if scenario != "code_inspection":
             raise ValueError(f"Unsupported AI role draft scenario: {scenario}")

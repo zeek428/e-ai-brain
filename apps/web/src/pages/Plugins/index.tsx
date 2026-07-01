@@ -95,7 +95,6 @@ import {
   stableJson,
   stringValue,
 } from './components/pluginFormTransformHelpers';
-import { PluginWorkspaceGuide } from './components/PluginWorkspaceGuide';
 import { SYSTEM_VARIABLE_OPTIONS } from './components/pluginSystemVariableOptions';
 import {
   actionDeleteUsageGroups,
@@ -133,19 +132,6 @@ const defaultRunnerListQuery = {
   sortField: 'updated_at',
   sortOrder: 'descend' as const,
 };
-
-const connectionEnvironmentOptions = [
-  { label: '默认', value: 'default' },
-  { label: '开发', value: 'dev' },
-  { label: '测试', value: 'test' },
-  { label: '预发 / Staging', value: 'staging' },
-  { label: '生产', value: 'prod' },
-  { label: '沙箱', value: 'sandbox' },
-];
-
-const connectionEnvironmentLabelByValue = new Map(
-  connectionEnvironmentOptions.map((option) => [option.value, option.label]),
-);
 
 export default function PluginsPage() {
   const [pluginForm] = Form.useForm<PluginFormValues>();
@@ -206,7 +192,6 @@ export default function PluginsPage() {
   const [trialResult, setTrialResult] = useState<PluginActionTrialResult | undefined>();
   const [trialRunning, setTrialRunning] = useState(false);
   const [actionScenario, setActionScenario] = useState<string | undefined>();
-  const connectionEnvironmentFilter = connectionListQuery.environment;
   const [advancedConnectionJsonOpen, setAdvancedConnectionJsonOpen] = useState(false);
   const [advancedConnectionRequestJsonOpen, setAdvancedConnectionRequestJsonOpen] = useState(false);
   const [advancedActionJsonOpen, setAdvancedActionJsonOpen] = useState(false);
@@ -222,7 +207,7 @@ export default function PluginsPage() {
   const connectionOptions = useMemo(
     () =>
       selectableConnections.map((connection) => ({
-        label: `${connection.name} (${connection.environment ?? 'default'})`,
+        label: connection.name,
         value: connection.id,
       })),
     [selectableConnections],
@@ -387,14 +372,6 @@ export default function PluginsPage() {
     setRunnerListQuery((currentQuery) => ({
       ...currentQuery,
       ...query,
-    }));
-  }, []);
-
-  const handleConnectionEnvironmentFilterChange = useCallback((environment?: string) => {
-    setConnectionListQuery((currentQuery) => ({
-      ...currentQuery,
-      environment,
-      page: 1,
     }));
   }, []);
 
@@ -777,16 +754,26 @@ export default function PluginsPage() {
   const submitAction = async () => {
     try {
       const values = await actionForm.validateFields();
+      const selectedActionConnection = values.connection_id
+        ? connectionById.get(values.connection_id)
+        : undefined;
+      const normalizedValues = {
+        ...values,
+        plugin_id: selectedActionConnection?.plugin_id ?? values.plugin_id,
+      };
+      if (!normalizedValues.plugin_id) {
+        throw new Error('请选择连接');
+      }
       const requestConfig =
-        values.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO && !advancedActionJsonOpen
-          ? buildMaxComputeRequestConfig(values)
+        normalizedValues.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO && !advancedActionJsonOpen
+          ? buildMaxComputeRequestConfig(normalizedValues)
           : advancedActionJsonOpen
-            ? parseJsonObject(values.request_config, '请求配置')
-            : buildVisualRequestConfig(values);
+            ? parseJsonObject(normalizedValues.request_config, '请求配置')
+            : buildVisualRequestConfig(normalizedValues);
       const resultMapping = advancedActionJsonOpen
-        ? mergeWriteTarget(parseJsonObject(values.result_mapping, '结果映射'), values.write_target)
-        : buildVisualResultMapping(values, resultWriteTargets);
-      const payload = buildActionPayload(values, requestConfig, resultMapping);
+        ? mergeWriteTarget(parseJsonObject(normalizedValues.result_mapping, '结果映射'), normalizedValues.write_target)
+        : buildVisualResultMapping(normalizedValues, resultWriteTargets);
+      const payload = buildActionPayload(normalizedValues, requestConfig, resultMapping);
       if (editingAction) {
         await updatePluginAction(editingAction.id, payload);
         message.success('动作已更新');
@@ -1299,6 +1286,14 @@ export default function PluginsPage() {
     changedValues: Partial<ActionFormValues>,
     allValues: ActionFormValues,
   ) => {
+    if (Object.prototype.hasOwnProperty.call(changedValues, 'connection_id')) {
+      const selectedConnection = allValues.connection_id
+        ? connectionById.get(allValues.connection_id)
+        : undefined;
+      if (selectedConnection?.plugin_id && selectedConnection.plugin_id !== allValues.plugin_id) {
+        actionForm.setFieldValue('plugin_id', selectedConnection.plugin_id);
+      }
+    }
     if (
       advancedActionJsonOpen
       && !Object.prototype.hasOwnProperty.call(changedValues, 'request_config')
@@ -1349,14 +1344,10 @@ export default function PluginsPage() {
 
   return (
     <PageContainer title={false}>
-      <PluginWorkspaceGuide />
       <PluginManagementTabs
         actions={actions}
         actionListMeta={actionListMeta}
         connectionById={connectionById}
-        connectionEnvironmentFilter={connectionEnvironmentFilter}
-        connectionEnvironmentLabels={connectionEnvironmentLabelByValue}
-        connectionEnvironmentOptions={connectionEnvironmentOptions}
         connectionListMeta={connectionListMeta}
         connections={connections}
         formatWriteTarget={(writeTarget) => resultWriteTargetLabel(
@@ -1390,7 +1381,6 @@ export default function PluginsPage() {
         onEditConnection={openEditConnectionModal}
         onEditPlugin={openEditPluginModal}
         onEditRunner={openEditRunnerModal}
-        onEnvironmentFilterChange={handleConnectionEnvironmentFilterChange}
         onOpenRunnerLogs={(runner) => void openRunnerLogs(runner)}
         onRunnerListChange={handleRunnerListChange}
         onReload={reload}
@@ -1409,7 +1399,6 @@ export default function PluginsPage() {
         advancedActionJsonOpen={advancedActionJsonOpen}
         advancedConnectionJsonOpen={advancedConnectionJsonOpen}
         advancedConnectionRequestJsonOpen={advancedConnectionRequestJsonOpen}
-        connectionEnvironmentOptions={connectionEnvironmentOptions}
         connectionForm={connectionForm}
         connectionModalOpen={connectionModalOpen}
         connectionOptions={connectionOptions}

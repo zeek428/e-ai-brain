@@ -45,7 +45,6 @@ type PluginManagementModalsProps = {
   advancedConnectionJsonOpen: boolean;
   advancedConnectionRequestJsonOpen: boolean;
   connectionForm: FormInstance<PluginConnectionFormValues>;
-  connectionEnvironmentOptions: SelectOption[];
   connectionModalOpen: boolean;
   connectionOptions: SelectOption[];
   connectionSubmitAction?: 'save' | 'save-test';
@@ -131,7 +130,6 @@ export function PluginManagementModals({
   advancedConnectionJsonOpen,
   advancedConnectionRequestJsonOpen,
   connectionForm,
-  connectionEnvironmentOptions,
   connectionModalOpen,
   connectionOptions,
   connectionSubmitAction,
@@ -246,7 +244,6 @@ export function PluginManagementModals({
         advancedRequestJsonOpen={advancedConnectionRequestJsonOpen}
         authType={selectedConnectionAuthType}
         connectionSubmitAction={connectionSubmitAction}
-        environmentOptions={connectionEnvironmentOptions}
         form={connectionForm}
         isEditing={editingConnection}
         isGithubConnection={selectedConnectionIsGithub}
@@ -285,7 +282,6 @@ export function PluginManagementModals({
         onValuesChange={onActionValuesChange}
         onWriteTargetChange={onWriteTargetChange}
         open={actionModalOpen}
-        pluginOptions={pluginOptions}
         requestPreview={requestPreview}
         resultWriteTargetOptions={resultWriteTargetOptions}
         resultWriteTargets={resultWriteTargets}

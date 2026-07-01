@@ -45,6 +45,8 @@ type PluginRunnerTableProps = {
 
 const SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID = 'ai_executor_runner_system_default';
 const SYSTEM_DEFAULT_AI_EXECUTOR_TYPE = 'model_gateway';
+const RUNNER_ACTION_COLUMN_WIDTH = 520;
+const RUNNER_TABLE_SCROLL_X = 2540;
 
 const aiExecutorTypeLabelByValue = new Map([
   [SYSTEM_DEFAULT_AI_EXECUTOR_TYPE, '系统默认模型'],
@@ -233,7 +235,7 @@ export function PluginRunnerTable({
           key: 'actions',
           title: '操作',
           valueType: 'option',
-          width: 360,
+          width: RUNNER_ACTION_COLUMN_WIDTH,
           render: (_, row) => {
             const testButton = (
               <Button
@@ -359,7 +361,7 @@ export function PluginRunnerTable({
         total: remote.total,
       }}
       rowKey="id"
-      scroll={{ x: 1900 }}
+      scroll={{ x: RUNNER_TABLE_SCROLL_X }}
       search={false}
       tableLayout="fixed"
       toolBarRender={() => [

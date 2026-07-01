@@ -88,7 +88,9 @@ class FakePluginPagingRepository:
                 "id": "plugin_connection_sql",
                 "max_retries": 1,
                 "name": "GitLab Prod",
+                "plugin_code": "gitlab",
                 "plugin_id": "plugin_gitlab",
+                "plugin_name": "GitLab",
                 "request_config": {},
                 "status": "active",
                 "timeout_seconds": 30,
@@ -309,6 +311,62 @@ def create_plugin_bundle(headers: dict[str, str]) -> tuple[dict, dict, dict]:
         headers=headers,
     ).json()["data"]
     return plugin, connection, action
+
+
+def test_plugin_action_create_can_derive_plugin_from_connection():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugin, connection, _action = create_plugin_bundle(admin_headers)
+    other_plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "devops",
+            "code": "other_metrics",
+            "description": "备用指标插件",
+            "name": "备用指标插件",
+            "protocol": "http",
+            "risk_level": "medium",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    created = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_daily_metrics_without_plugin",
+            "connection_id": connection["id"],
+            "name": "按连接拉取每日指标",
+            "request_config": {"method": "GET", "path": "/metrics"},
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    )
+
+    assert created.status_code == 200
+    created_action = created.json()["data"]
+    assert created_action["connection_id"] == connection["id"]
+    assert created_action["plugin_id"] == plugin["id"]
+
+    mismatched = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_daily_metrics_mismatch",
+            "connection_id": connection["id"],
+            "name": "插件连接不匹配",
+            "plugin_id": other_plugin["id"],
+            "request_config": {"method": "GET", "path": "/metrics"},
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    )
+
+    assert mismatched.status_code == 400
+    assert mismatched.json()["detail"]["code"] == "PLUGIN_CONNECTION_MISMATCH"
 
 
 def create_product(headers: dict[str, str]) -> dict:
@@ -1755,6 +1813,14 @@ def test_result_write_targets_registry_drives_action_mapping_forms():
         "scheduled_job_result",
         "user_feedback_insights",
     }
+    user_insights = by_code["user_feedback_insights"]
+    assert user_insights["default_result_mapping"] == {
+        "insights_path": "$.insights",
+        "records_imported_path": "$.row_count",
+        "rows_path": "$.rows",
+        "write_target": "user_feedback_insights",
+    }
+    assert user_insights["mapping_fields"] == []
     code_inspection = by_code["code_inspection_reports"]
     assert code_inspection["label"] == "代码巡检报告"
     assert code_inspection["form_label"] == "代码巡检报告"
@@ -2216,6 +2282,8 @@ def test_plugin_connections_can_be_filtered_by_environment():
     assert payload["total"] == 1
     assert payload["items"][0]["id"] == prod_connection["id"]
     assert payload["items"][0]["environment"] == "prod"
+    assert payload["items"][0]["plugin_name"] == plugin["name"]
+    assert payload["items"][0]["plugin_code"] == plugin["code"]
     assert test_connection["id"] not in {item["id"] for item in payload["items"]}
 
     invalid = client.get(
@@ -2249,6 +2317,8 @@ def test_plugin_connection_and_action_lists_use_repository_pagination_when_reque
     assert connection_response["page_size"] == 1
     assert connection_response["items"][0]["id"] == "plugin_connection_sql"
     assert connection_response["items"][0]["auth_config"] == {"token": "secret"}
+    assert connection_response["items"][0]["plugin_name"] == "GitLab"
+    assert connection_response["items"][0]["plugin_code"] == "gitlab"
     assert connection_response["query"]["name"] == "plugin_connections"
     assert connection_response["performance"]["p95_target_ms"] == 400
     assert repository.connection_count_kwargs == {

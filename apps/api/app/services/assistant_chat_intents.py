@@ -195,8 +195,16 @@ def task_creation_guide_requested(message: str) -> bool:
         )
     )
     has_specific_ai_capability_scenario = _ai_capability_specific_scenario_requested(normalized)
+    has_explicit_ai_capability_draft_target = (
+        has_generic_ai_capability_config
+        and any(
+            keyword in normalized
+            for keyword in ("skill", "ai skill", "技能", "ai角色", "ai 角色", "agent", "智能体")
+        )
+    )
     return (
         has_create_intent
+        and not has_explicit_ai_capability_draft_target
         and (
             (has_task_context and not has_specific_task_type)
             or (
@@ -556,6 +564,20 @@ def _ai_capability_specific_scenario_requested(normalized_message: str) -> bool:
             "online_log_anomaly",
             "online_log",
             "log anomaly",
+            "客服",
+            "客户服务",
+            "客服聊天",
+            "聊天对话",
+            "客户对话",
+            "用户客服",
+            "需求提炼",
+            "需求抽取",
+            "产品迭代需求",
+            "迭代需求",
+            "customer support",
+            "customer service",
+            "support chat",
+            "product requirement",
         )
     )
 

@@ -53,7 +53,6 @@ type PluginConnectionModalProps = {
   advancedRequestJsonOpen: boolean;
   authType?: string;
   connectionSubmitAction?: 'save' | 'save-test';
-  environmentOptions: SelectOption[];
   form: FormInstance<PluginConnectionFormValues>;
   isEditing: boolean;
   isGithubConnection: boolean;
@@ -83,7 +82,6 @@ export function PluginConnectionModal({
   advancedRequestJsonOpen,
   authType,
   connectionSubmitAction,
-  environmentOptions,
   form,
   isEditing,
   isGithubConnection,
@@ -157,21 +155,19 @@ export function PluginConnectionModal({
         <Form.Item label="Endpoint URL" name="endpoint_url" rules={[{ required: true }]}>
           <Input />
         </Form.Item>
-        <Space>
-          <Form.Item label="环境" name="environment">
-            <Select options={environmentOptions} />
-          </Form.Item>
-          <Form.Item label="认证" name="auth_type">
-            <Select
-              options={[
-                { label: 'none', value: 'none' },
-                { label: 'bearer', value: 'bearer' },
-                { label: 'api_key_header', value: 'api_key_header' },
-                { label: 'basic', value: 'basic' },
-              ]}
-            />
-          </Form.Item>
-        </Space>
+        <Form.Item hidden name="environment">
+          <Input type="hidden" />
+        </Form.Item>
+        <Form.Item label="认证" name="auth_type">
+          <Select
+            options={[
+              { label: 'none', value: 'none' },
+              { label: 'bearer', value: 'bearer' },
+              { label: 'api_key_header', value: 'api_key_header' },
+              { label: 'basic', value: 'basic' },
+            ]}
+          />
+        </Form.Item>
         {!advancedAuthJsonOpen && authType === 'api_key_header' ? (
           <Space wrap>
             <Form.Item label="Header 名" name="header_name">

@@ -122,7 +122,7 @@ class PluginActionRequest(BaseModel):
     input_schema: dict[str, Any] = Field(default_factory=dict)
     name: str
     output_schema: dict[str, Any] = Field(default_factory=dict)
-    plugin_id: str
+    plugin_id: str | None = None
     request_config: dict[str, Any] = Field(default_factory=dict)
     requires_human_review: bool = False
     result_mapping: dict[str, Any] = Field(default_factory=dict)

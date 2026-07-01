@@ -473,7 +473,9 @@ export type PluginConnectionRecord = {
   };
   max_retries?: number;
   name: string;
+  plugin_code?: string | null;
   plugin_id: string;
+  plugin_name?: string | null;
   request_config?: Record<string, unknown>;
   status: string;
   test_history?: PluginConnectionTestHistoryRecord[];

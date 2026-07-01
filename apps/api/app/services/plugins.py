@@ -128,6 +128,20 @@ def list_plugins_response(
     return {"items": items, "total": len(items)}
 
 
+def _connection_with_plugin_projection(
+    current_store: Any,
+    connection: dict[str, Any],
+) -> dict[str, Any]:
+    item = dict(connection)
+    if item.get("plugin_name") and item.get("plugin_code"):
+        return item
+    plugin = _read_memory_record(current_store, "integration_plugins", str(item.get("plugin_id") or ""))
+    if plugin is not None:
+        item.setdefault("plugin_name", plugin.get("name"))
+        item.setdefault("plugin_code", plugin.get("code"))
+    return item
+
+
 def list_plugin_marketplace_response(
     *,
     current_store: Any,
@@ -492,7 +506,7 @@ def list_plugin_connections_response(
             status=status,
         )
         items = [
-            public_connection(connection)
+            public_connection(_connection_with_plugin_projection(current_store, connection))
             for connection in list_page(
                 environment=environment,
                 keyword=keyword,
@@ -553,7 +567,7 @@ def list_plugin_connections_response(
                 )
             ):
                 continue
-        items.append(public_connection(connection))
+        items.append(public_connection(_connection_with_plugin_projection(current_store, connection)))
     if sort_by is None and not with_pagination:
         items.sort(
             key=lambda item: (
@@ -653,7 +667,7 @@ def create_plugin_connection_response(
         connection,
         audit_event=audit_event,
     )
-    return public_connection(connection)
+    return public_connection(_connection_with_plugin_projection(current_store, connection))
 
 
 def patch_plugin_connection_response(
@@ -725,7 +739,7 @@ def patch_plugin_connection_response(
         connection,
         audit_event=audit_event,
     )
-    return public_connection(connection)
+    return public_connection(_connection_with_plugin_projection(current_store, connection))
 
 
 def delete_plugin_connection_response(
@@ -1027,6 +1041,33 @@ def ensure_active_connection(
     return connection
 
 
+def resolve_plugin_id_for_action_payload(
+    current_store: Any,
+    *,
+    connection_id: str | None,
+    existing_plugin_id: str | None = None,
+    plugin_id: str | None = None,
+) -> str:
+    connection = ensure_active_connection(current_store, connection_id)
+    resolved_plugin_id = str(connection["plugin_id"]) if connection is not None else None
+    if plugin_id is not None:
+        if resolved_plugin_id is not None and resolved_plugin_id != plugin_id:
+            raise api_error(
+                400,
+                "PLUGIN_CONNECTION_MISMATCH",
+                "Plugin connection does not belong to plugin",
+            )
+        resolved_plugin_id = plugin_id
+    if resolved_plugin_id is None and existing_plugin_id is not None:
+        resolved_plugin_id = existing_plugin_id
+    if resolved_plugin_id is None:
+        raise api_error(400, "PLUGIN_REQUIRED", "Plugin is required when no connection is selected")
+    ensure_active_plugin(current_store, resolved_plugin_id)
+    if connection_id is not None:
+        ensure_active_connection(current_store, connection_id, plugin_id=resolved_plugin_id)
+    return resolved_plugin_id
+
+
 def list_plugin_actions_response(
     *,
     current_store: Any,
@@ -1151,8 +1192,11 @@ def create_plugin_action_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_admin(user)
-    ensure_active_plugin(current_store, payload.plugin_id)
-    ensure_active_connection(current_store, payload.connection_id, plugin_id=payload.plugin_id)
+    plugin_id = resolve_plugin_id_for_action_payload(
+        current_store,
+        connection_id=payload.connection_id,
+        plugin_id=payload.plugin_id,
+    )
     ensure_enum(payload.action_type, PLUGIN_ACTION_TYPES, "action_type")
     ensure_enum(payload.status, PLUGIN_STATUSES, "status")
     now = datetime.now(UTC).isoformat()
@@ -1168,7 +1212,7 @@ def create_plugin_action_response(
         "input_schema": payload.input_schema,
         "name": ensure_non_blank(payload.name, "name"),
         "output_schema": payload.output_schema,
-        "plugin_id": payload.plugin_id,
+        "plugin_id": plugin_id,
         "request_config": payload.request_config,
         "requires_human_review": payload.requires_human_review,
         "result_mapping": payload.result_mapping,
@@ -1210,11 +1254,14 @@ def patch_plugin_action_response(
     if action is None:
         raise api_error(404, "NOT_FOUND", "Plugin action not found")
     updates = payload.model_dump(exclude_unset=True)
-    plugin_id = updates.get("plugin_id", action["plugin_id"])
-    if "plugin_id" in updates:
-        ensure_active_plugin(current_store, plugin_id)
-    if "connection_id" in updates:
-        ensure_active_connection(current_store, updates["connection_id"], plugin_id=plugin_id)
+    connection_id = updates.get("connection_id", action.get("connection_id"))
+    plugin_id = resolve_plugin_id_for_action_payload(
+        current_store,
+        connection_id=connection_id,
+        existing_plugin_id=action["plugin_id"],
+        plugin_id=updates.get("plugin_id"),
+    )
+    updates["plugin_id"] = plugin_id
     if "action_type" in updates:
         ensure_enum(updates["action_type"], PLUGIN_ACTION_TYPES, "action_type")
     if "status" in updates:
@@ -1321,7 +1368,7 @@ def resolve_plugin_snapshot(
     )
     return {
         "action": public_action(action),
-        "connection": public_connection(connection),
+        "connection": public_connection(_connection_with_plugin_projection(current_store, connection)),
         "plugin": public_plugin(plugin),
     }
 
