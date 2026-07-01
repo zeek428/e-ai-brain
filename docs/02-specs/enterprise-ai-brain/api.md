@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.496 |
+| 功能版本 | v1.1.497 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.497 | 2026-07-02 | 定时作业运行 API、AI 助手诊断和运行健康补齐多节点诊断口径：连接失败时 AI 节点明确未开始，多连接/多动作摘要和动作写入统计按明细聚合 | Codex |
 | v1.1.496 | 2026-07-02 | 定时作业多数据连接运行按 `data_connections.failure_policy` 落地：`continue_on_error` 保留失败连接节点并继续后续连接，`fail_fast` 失败运行仍返回数据连接和 Trace 排障明细 | Codex |
 | v1.1.495 | 2026-07-02 | 用户反馈洞察定时作业多结果动作按 `result_actions.failure_policy` 执行，默认 `continue_on_error` 时失败动作进入运行节点、Trace DAG 和结果写入记录，后续动作继续执行 | Codex |
 | v1.1.494 | 2026-07-02 | 定时作业运行 `result_summary.trace_graph` 展开多数据连接和多结果动作节点，节点输入输出携带连接、动作和写入反馈摘要 | Codex |
@@ -1903,7 +1904,7 @@ GET /api/assistant/reference-candidates?query=反馈&product_id=product_001&limi
 }
 ```
 
-前端诊断卡片必须把三个阶段分别展示为“数据连接是否成功”“AI处理是否成功”“结果动作是否写入成功”，并将阶段状态转换为成功、失败、执行中、排队中、有告警或已跳过等用户可读判断。各阶段的 `log_id` 只表示安全日志元数据 ID，前端诊断卡片必须展示为“关联日志：<log_id>”，用于继续追踪模型日志或插件调用日志；不得展示完整插件请求/响应、模型 Prompt、模型输出或密钥。`result_action` 段的结果写入字段来自与 `/api/system/result-write-records?scheduled_job_run_id=<run_id>` 同源的派生读模型，只返回记录 ID、状态、写入目标和标签等排障元数据。
+前端诊断卡片必须把三个阶段分别展示为“数据连接是否成功”“AI处理是否成功”“结果动作是否写入成功”，并将阶段状态转换为成功、失败、执行中、排队中、有告警或已跳过等用户可读判断。各阶段的 `log_id` 只表示安全日志元数据 ID，前端诊断卡片必须展示为“关联日志：<log_id>”，用于继续追踪模型日志或插件调用日志；不得展示完整插件请求/响应、模型 Prompt、模型输出或密钥。多数据连接运行的 `data_connection` 段可额外返回 `connection_count/successful_count/failed_count/log_ids/failed_items`，用于定位哪个连接失败；多结果动作运行的 `result_action` 段可额外返回 `action_count/successful_count/failed_count/write_targets/log_ids/failed_actions/result_write_records`，用于判断同一次运行是否部分写入成功。`result_action` 段的结果写入字段来自与 `/api/system/result-write-records?scheduled_job_run_id=<run_id>` 同源的派生读模型，只返回记录 ID、状态、写入目标和标签等排障元数据。
 
 当聊天消息显式引用 `scheduled_job_run` 且问题包含“和上次成功有什么不同/对比/差异”意图时，响应中的 `message.tool_results[]` 会包含；短追问“和上次成功有什么不同？”应直接使用已引用运行记录：
 
@@ -3823,6 +3824,8 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 
 `GET /api/system/scheduled-job-runs` 支持 `page/page_size/sort_by/sort_order` 服务端分页排序，`page_size` 最大 100，`sort_order` 为 `asc|desc`，`sort_by` 允许 `started_at/finished_at/created_at/updated_at/status/trigger_type/records_imported`；筛选参数包括 `run_id`（可重复传多个）、`scheduled_job_id` 和 `status`。传入分页参数时生产路径必须通过 PostgreSQL read model 返回 `items/page/page_size/total/query/performance`，并按当前用户产品 scope 通过运行所属作业过滤；未传分页参数时保留旧 `items/total` 全量返回兼容，用于助手按 runId 拉运行详情或旧测试 helper，不作为定时作业页面运行记录主表默认读路径。
 
+当 `user_feedback_insight_extract`、`code_repository_inspection` 等 AI 链路作业在数据连接阶段失败并且尚未进入模型处理时，运行响应必须把 `result_summary.execution_nodes.skill_processing.status` 设为 `not_run`，`model_gateway_called=false`，`processing_mode=not_started`，并在 note 中说明“数据连接失败，AI 大模型处理未开始”；不得因为作业类型需要 AI 就把未开始的阶段标记为 `failed/model_gateway_called=true`。当 `result_summary.execution_nodes.data_connection.items[]` 存在时，运行详情和助手诊断必须返回连接总数、成功数、失败数、失败连接摘要和关联插件日志 ID。
+
 创建定时作业示例：
 
 ```json
@@ -3856,6 +3859,8 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 定时作业链路按“数据连接取数 -> AI执行处理 -> 动作写入/通知”理解：作业定义中 `plugin_connection_ids` 表示按顺序配置的数据连接，`execution_mode/model_gateway_config_id/agent_id/skill_ids/knowledge_document_ids` 共同组成 AI执行配置，`plugin_action_ids` 表示按顺序配置的动作模板，`plugin_input_mapping` 表示运行时传给连接/动作的输入参数。`plugin_connection_id` / `plugin_action_id` 是第一项兼容字段。`plugin_output_mapping` 是作业级覆盖项；为空时运行时复用动作模板的 `result_mapping`。插件输出映射第一阶段支持 `records_imported_path` 这类摘要字段映射和 `write_target` 写入目标，JSONPath 子集支持 `$` 根、点路径、`['key']` / `["key"]` bracket key、数组下标和 `[*]` 通配，动作试运行、定时作业 dry-run、正式运行写入预览和结果写入记录必须复用同一解析口径。真实业务入库仍必须通过对应业务 service 完成。
 
 `plugin_input_mapping`、插件连接 `request_config.query/headers` 和动作 `request_config.query/headers` 支持动态时间 token，保存配置时保留语义 token，运行实例触发时按作业 `timezone` 解析。首批 token 包括 `{{current_date}}` / `{{date}}`（输出 `YYYYMMDD`）、`{{date_iso}}`（输出 `YYYY-MM-DD`）、`{{now}}`、`{{today.start}}`、`{{today.end}}`、`{{yesterday.start}}`、`{{yesterday.end}}`、`{{last_7_days.start}}`、`{{last_7_days.end}}`、`{{last_full_week.start}}` 和 `{{last_full_week.end}}`；日期和时间 token 支持简单天数偏移表达式，例如 `{{current_date-7}}` 表示当前日期前 7 天、`{{today.start-7}}` 表示今天零点前 7 天。历史值 `last_monday_00:00:00` 与 `this_monday_00:00:00` 兼容解析为上一完整自然周起止时间。前端配置默认以官方 `connection_schema` 字段作为业务配置展示，例如 GitHub 连接展示“仓库地址”并自动解析 `owner/repo`，GitLab 连接展示“GitLab 地址”并自动解析 Endpoint、`project_id` 与 `project_path`；schema 管理字段保存到 `request_config.query/headers`，但不重复出现在高级 Params 表格。高级 Params/Headers 仅用于补充额外 API query/header，并在高级模式中提供 JSON 同步和反向应用，避免要求业务用户手写复杂 JSON。连接配置作为公共默认值，动作配置作为具体接口覆盖项；同名 query/header 由动作覆盖连接。动作 `request_config.path` 中的 `{{owner}}`、`{{repo}}`、`{{project_id}}`、`{{api_version}}` 等非时间模板变量可从合并后的连接 query、动作 query 和运行输入中的标量值解析，用于 GitHub/GitLab 官方动作路径。
+
+`GET /api/system/scheduled-job-runs/observability` 的动作写入口径必须优先消费 `result_summary.execution_nodes.result_actions[]`：`action_write_runs` 按每个动作节点计数，`action_write_success_runs` 按每个动作节点状态统计，`write_target_distribution` 按每个动作节点的写入目标聚合；旧运行缺少 `result_actions[]` 时才回退兼容字段 `result_action`。这样同一运行配置多个邮件通知、用户洞察写入或代码巡检写入动作时，健康概览不会只统计第一个动作。
 
 MaxCompute 每周用户反馈场景使用 `job_type=user_feedback_insight_extract`，数据连接作为普通 HTTP 插件连接保存 endpoint、认证和公共 Params/Headers，结果写入动作通常为 `action_type=http_request` 的自定义 HTTP 动作；请求时间参数优先在连接/动作 Params 中配置，作业级 `plugin_input_mapping` 仅作为兼容和高级覆盖。作业必须选择 `model_gateway_config_id`、`agent_id` 和 `skill_ids`，页面展示为 AI 模型、AI角色和 Skills，可选选择知识引用文档。动作 `result_mapping` 默认包含 `write_target=user_feedback_insights`、`insights_path`、`records_imported_path` 和 `rows_path`，作业 `plugin_output_mapping` 仅用于覆盖。运行顺序为数据连接取数、读取知识引用、模型网关按 AI角色/Skill 处理为结构化 JSON、结果写入。运行成功后 `records_imported` 为实际新增洞察数，`result_summary.plugin.response_summary.json.row_count` 保留源表读取行数摘要；`result_summary.execution_nodes` 必须按 `data_connection`、`skill_processing`、`result_action` 三段保存数据连接获取内容、Skill 处理内容和结果写入反馈内容。`skill_processing.model_gateway_called=true`，并包含 `model_gateway_config_id`、`model_log_id`、`processing_mode=model_gateway_json_transform`、`input.knowledge_references` 和模型输出 JSON 摘要。
 

@@ -1620,9 +1620,17 @@ def run_scheduled_job_response(
         error_code, error_message = exception_error_code_and_message(exc)
         result_summary = {}
         if job["job_type"] == "user_feedback_insight_extract" and plugin_summary is not None:
+            data_connection_failed = plugin_summary.get("status") == "failed"
             source_row_count = records_imported_from_mapping(
                 plugin_summary.get("response_summary") or {},
                 {"records_imported_path": plugin_output_mapping.get("records_imported_path")},
+            )
+            skill_processing_status = "not_run" if data_connection_failed else "failed"
+            model_gateway_called = not data_connection_failed
+            skill_processing_note = (
+                "数据连接失败，平台 AI 大模型处理未开始。"
+                if data_connection_failed
+                else "数据连接已完成，但平台 AI 大模型处理失败。"
             )
             result_summary = {
                 "execution_nodes": {
@@ -1643,20 +1651,24 @@ def run_scheduled_job_response(
                         "error_code": error_code,
                         "error_message": error_message,
                         "label": "Skill 处理后内容",
-                        "model_gateway_called": True,
+                        "model_gateway_called": model_gateway_called,
                         "model_gateway_config_id": job.get("model_gateway_config_id"),
-                        "note": "数据连接已完成，但平台 AI 大模型处理失败。",
-                        "processing_mode": "model_gateway_json_transform",
+                        "note": skill_processing_note,
+                        "processing_mode": (
+                            "not_started"
+                            if data_connection_failed
+                            else "model_gateway_json_transform"
+                        ),
                         "skill_codes": skill_codes_for_job(current_store, job),
                         "skill_ids": list(job.get("skill_ids", [])),
-                        "status": "failed",
+                        "status": skill_processing_status,
                     },
                 },
                 "plugin": plugin_summary,
                 "processing": {
                     "error_code": error_code,
                     "error_message": error_message,
-                    "model_gateway_called": True,
+                    "model_gateway_called": model_gateway_called,
                     "skill_codes": skill_codes_for_job(current_store, job),
                     "skill_ids": list(job.get("skill_ids", [])),
                 },
@@ -1664,6 +1676,7 @@ def run_scheduled_job_response(
                 or "user_feedback_insights",
             }
         elif job["job_type"] == "code_repository_inspection" and plugin_summary is not None:
+            data_connection_failed = plugin_summary.get("status") == "failed"
             code_inspection_output_mapping = resolve_job_plugin_output_mapping(current_store, job)
             source_finding_count = records_imported_from_mapping(
                 plugin_summary.get("response_summary") or {},
@@ -1673,6 +1686,29 @@ def run_scheduled_job_response(
                     )
                     or code_inspection_output_mapping.get("records_imported_path")
                 },
+            )
+            code_inspection_model_gateway_called = (
+                False
+                if data_connection_failed
+                else JobExecutionEngine.uses_ai_processing(
+                    job,
+                    ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
+                )
+            )
+            code_inspection_processing_mode = (
+                "not_started"
+                if data_connection_failed
+                else (
+                    "model_gateway_json_transform"
+                    if code_inspection_model_gateway_called
+                    else "plugin_structured_output"
+                )
+            )
+            code_inspection_skill_status = "not_run" if data_connection_failed else "failed"
+            code_inspection_note = (
+                "数据连接失败，代码巡检 AI 处理和结果写入未开始。"
+                if data_connection_failed
+                else "数据连接已完成，但代码巡检 AI 处理或结果写入失败。"
             )
             result_summary = {
                 "execution_nodes": {
@@ -1692,31 +1728,20 @@ def run_scheduled_job_response(
                         "error_code": error_code,
                         "error_message": error_message,
                         "label": "Skill 处理后内容",
-                        "model_gateway_called": JobExecutionEngine.uses_ai_processing(
-                            job,
-                            ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
-                        ),
+                        "model_gateway_called": code_inspection_model_gateway_called,
                         "model_gateway_config_id": job.get("model_gateway_config_id"),
-                        "note": "数据连接已完成，但代码巡检 AI 处理或结果写入失败。",
-                        "processing_mode": "model_gateway_json_transform"
-                        if JobExecutionEngine.uses_ai_processing(
-                            job,
-                            ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
-                        )
-                        else "plugin_structured_output",
+                        "note": code_inspection_note,
+                        "processing_mode": code_inspection_processing_mode,
                         "skill_codes": skill_codes_for_job(current_store, job),
                         "skill_ids": list(job.get("skill_ids", [])),
-                        "status": "failed",
+                        "status": code_inspection_skill_status,
                     },
                 },
                 "plugin": plugin_summary,
                 "processing": {
                     "error_code": error_code,
                     "error_message": error_message,
-                    "model_gateway_called": JobExecutionEngine.uses_ai_processing(
-                        job,
-                        ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
-                    ),
+                    "model_gateway_called": code_inspection_model_gateway_called,
                     "skill_codes": skill_codes_for_job(current_store, job),
                     "skill_ids": list(job.get("skill_ids", [])),
                 },

@@ -123,6 +123,19 @@ def _scheduled_job_run_model_log_id(run: dict[str, Any]) -> str | None:
     return None
 
 
+def _scheduled_job_run_result_action_nodes(run: dict[str, Any]) -> list[dict[str, Any]]:
+    execution_nodes = _scheduled_job_run_nodes(run)
+    result_actions = execution_nodes.get("result_actions")
+    if isinstance(result_actions, list):
+        action_nodes = [node for node in result_actions if isinstance(node, dict)]
+        if action_nodes:
+            return action_nodes
+    result_action = execution_nodes.get("result_action")
+    if isinstance(result_action, dict):
+        return [result_action]
+    return []
+
+
 def _model_gateway_log_total_tokens(log: dict[str, Any] | None) -> int:
     if not isinstance(log, dict):
         return 0
@@ -247,9 +260,7 @@ def scheduled_job_run_observability_response(
         model_log_id = _scheduled_job_run_model_log_id(run)
         if model_log_id:
             model_log_ids.add(model_log_id)
-        execution_nodes = _scheduled_job_run_nodes(run)
-        result_action = execution_nodes.get("result_action")
-        if isinstance(result_action, dict):
+        for result_action in _scheduled_job_run_result_action_nodes(run):
             action_write_runs += 1
             if result_action.get("status") == "succeeded":
                 action_write_success_runs += 1

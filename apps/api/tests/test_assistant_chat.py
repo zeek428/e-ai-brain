@@ -9,6 +9,7 @@ import app.services.assistant_action_drafts as assistant_action_drafts_service
 import app.services.assistant_chat as assistant_chat_service
 import app.services.assistant_metrics as assistant_metrics_service
 import app.services.assistant_role_quick_tasks as assistant_role_quick_tasks_service
+import app.services.scheduled_jobs as scheduled_jobs_service
 from app.api.deps import api_error
 from app.core.repositories.authorization import CompatibilityAuthorizationRepository
 from app.core.security import hash_password
@@ -31,6 +32,180 @@ def auth_headers(username: str = "admin@example.com", password: str = "admin123"
     response = client.post("/api/auth/login", json={"username": username, "password": password})
     token = response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def seed_assistant_plugin_action_runtime() -> None:
+    now = "2026-06-16T08:00:00+00:00"
+    app.state.store.integration_plugins["plugin_assistant_http"] = {
+        "category": "general",
+        "code": "assistant_http",
+        "created_at": now,
+        "description": "助手测试 HTTP 插件。",
+        "id": "plugin_assistant_http",
+        "is_system": False,
+        "name": "助手测试 HTTP 插件",
+        "plugin_type": "http",
+        "protocol": "http",
+        "risk_level": "low",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.plugin_connections["plugin_connection_assistant_test"] = {
+        "auth_config": {},
+        "auth_type": "none",
+        "created_at": now,
+        "created_by": "user_admin",
+        "endpoint_url": "https://assistant-plugin.example.com",
+        "environment": "prod",
+        "id": "plugin_connection_assistant_test",
+        "max_retries": 0,
+        "name": "助手测试连接",
+        "plugin_id": "plugin_assistant_http",
+        "request_config": {},
+        "status": "active",
+        "timeout_seconds": 30,
+        "updated_at": now,
+    }
+    app.state.store.plugin_actions["plugin_action_assistant_test"] = {
+        "action_type": "http_request",
+        "code": "assistant_test_action",
+        "connection_id": "plugin_connection_assistant_test",
+        "created_at": now,
+        "id": "plugin_action_assistant_test",
+        "name": "助手测试动作",
+        "plugin_id": "plugin_assistant_http",
+        "request_config": {"method": "GET", "path": "/ok"},
+        "result_mapping": {
+            "records_imported_path": "$.records_imported",
+            "write_target": "scheduled_job_result",
+        },
+        "status": "active",
+        "updated_at": now,
+    }
+
+
+def assistant_runnable_job_record(
+    *,
+    job_id: str,
+    name: str,
+    **overrides,
+) -> dict[str, object]:
+    now = "2026-06-16T08:00:00+00:00"
+    record: dict[str, object] = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": now,
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": job_id,
+        "interval_seconds": None,
+        "job_type": "plugin_action_invoke",
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "name": name,
+        "next_run_at": None,
+        "plugin_action_id": "plugin_action_assistant_test",
+        "plugin_action_ids": ["plugin_action_assistant_test"],
+        "plugin_connection_id": "plugin_connection_assistant_test",
+        "plugin_connection_ids": ["plugin_connection_assistant_test"],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {
+            "records_imported_path": "$.records_imported",
+            "write_target": "scheduled_job_result",
+        },
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": now,
+    }
+    record.update(overrides)
+    return record
+
+
+def assistant_runnable_job_payload(*, name: str, **overrides) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "job_type": "plugin_action_invoke",
+        "name": name,
+        "plugin_action_id": "plugin_action_assistant_test",
+        "plugin_action_ids": ["plugin_action_assistant_test"],
+        "plugin_connection_id": "plugin_connection_assistant_test",
+        "plugin_connection_ids": ["plugin_connection_assistant_test"],
+        "plugin_output_mapping": {
+            "records_imported_path": "$.records_imported",
+            "write_target": "scheduled_job_result",
+        },
+        "schedule_type": "manual",
+        "source_system": "ai-assistant",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def seed_assistant_runnable_job(
+    *,
+    job_id: str = "scheduled_job_feedback_insight",
+    name: str = "提取每周用户反馈有价值信息",
+    **overrides,
+) -> dict[str, object]:
+    seed_assistant_plugin_action_runtime()
+    job = assistant_runnable_job_record(job_id=job_id, name=name, **overrides)
+    app.state.store.scheduled_jobs[job_id] = job
+    return job
+
+
+def stub_successful_scheduled_job_plugin_action(monkeypatch) -> None:
+    def fake_invoke_plugin_action_response(
+        *,
+        action_id,
+        connection_id=None,
+        current_store,
+        input_payload=None,
+        raise_on_failed=True,
+        scheduled_job_id=None,
+        scheduled_job_run_id=None,
+        trace_id=None,
+        trigger_type="manual",
+        user,
+    ):
+        del input_payload, raise_on_failed, trace_id, trigger_type, user
+        log_id = current_store.new_id("plugin_invocation_log")
+        log = {
+            "action_id": action_id,
+            "connection_id": connection_id,
+            "created_at": "2026-06-16T08:00:01+00:00",
+            "error_code": None,
+            "error_message": None,
+            "id": log_id,
+            "latency_ms": 12,
+            "request_summary": {"method": "GET", "url": "/ok"},
+            "response_summary": {"json": {"records_imported": 1}},
+            "scheduled_job_id": scheduled_job_id,
+            "scheduled_job_run_id": scheduled_job_run_id,
+            "status": "succeeded",
+            "updated_at": "2026-06-16T08:00:01+00:00",
+        }
+        current_store.plugin_invocation_logs[log_id] = log
+        return log
+
+    monkeypatch.setattr(
+        scheduled_jobs_service,
+        "invoke_plugin_action_response",
+        fake_invoke_plugin_action_response,
+    )
 
 
 def test_ai_assistant_draft_templates_list_official_market_entries():
@@ -1159,42 +1334,8 @@ def test_ai_assistant_test_owner_can_run_explicit_mention_job_once(monkeypatch):
             },
         },
     )
-    app.state.store.scheduled_jobs["scheduled_job_feedback_insight"] = {
-        "agent_id": None,
-        "config_json": {},
-        "created_at": "2026-06-16T08:00:00+00:00",
-        "created_by": "user_admin",
-        "cron_expression": None,
-        "enabled": True,
-        "execution_mode": "deterministic",
-        "id": "scheduled_job_feedback_insight",
-        "interval_seconds": None,
-        "job_type": "dashboard_snapshot_refresh",
-        "knowledge_document_ids": [],
-        "last_failure_at": None,
-        "last_run_at": None,
-        "last_success_at": None,
-        "lock_ttl_seconds": 900,
-        "max_retry_count": 0,
-        "model_gateway_config_id": None,
-        "name": "提取每周用户反馈有价值信息",
-        "next_run_at": None,
-        "plugin_action_id": None,
-        "plugin_action_ids": [],
-        "plugin_connection_id": None,
-        "plugin_connection_ids": [],
-        "plugin_input_mapping": {},
-        "plugin_output_mapping": {},
-        "product_id": None,
-        "result_actions": [],
-        "schedule_type": "manual",
-        "skill_ids": [],
-        "source_system": "ai-brain",
-        "status": "active",
-        "timeout_seconds": 600,
-        "timezone": "Asia/Shanghai",
-        "updated_at": "2026-06-16T08:00:00+00:00",
-    }
+    seed_assistant_runnable_job()
+    stub_successful_scheduled_job_plugin_action(monkeypatch)
 
     def fail_if_model_called(_request, timeout):
         del timeout
@@ -2752,6 +2893,161 @@ def test_ai_assistant_run_diagnostic_keeps_data_connection_plugin_log(monkeypatc
     assert stages["result_action"]["log_id"] == "plugin_invocation_log_feedback_failed"
 
 
+def test_ai_assistant_run_diagnostic_summarizes_multi_connection_and_actions(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    failed_run = app.state.store.scheduled_job_runs["scheduled_job_run_feedback_failed"]
+    failed_run["result_summary"]["execution_nodes"]["data_connection"] = {
+        "connection_count": 2,
+        "failed_count": 1,
+        "failure_policy": "continue_on_error",
+        "items": [
+            {
+                "connection_id": "plugin_connection_failed",
+                "error_code": "HTTPError",
+                "error_message": "HTTP 500",
+                "plugin_invocation_log_id": "plugin_invocation_log_fetch_failed",
+                "status": "failed",
+            },
+            {
+                "connection_id": "plugin_connection_maxcompute",
+                "plugin_invocation_log_id": "plugin_invocation_log_fetch_ok",
+                "records_imported": 128,
+                "status": "succeeded",
+            },
+        ],
+        "invocation_log_ids": [
+            "plugin_invocation_log_fetch_failed",
+            "plugin_invocation_log_fetch_ok",
+        ],
+        "status": "partial_failed",
+        "successful_count": 1,
+        "summary": "两个数据连接中一个失败，一个成功。",
+    }
+    failed_run["result_summary"]["execution_nodes"]["result_action"] = {
+        "status": "partial_failed",
+        "summary": "两个结果动作中一个失败。",
+        "write_target": "user_feedback_insights",
+    }
+    failed_run["result_summary"]["execution_nodes"]["result_actions"] = [
+        {
+            "action_id": "plugin_action_email_notify",
+            "feedback": {
+                "plugin_invocation_log_id": "plugin_invocation_log_email_notify",
+                "records_imported": 1,
+            },
+            "records_imported": 1,
+            "status": "succeeded",
+            "write_target": "email_notifications",
+        },
+        {
+            "action_id": "plugin_action_feedback_write",
+            "error_code": "RESULT_WRITE_FAILED",
+            "error_message": "HTTP 500: downstream write failed",
+            "feedback": {
+                "plugin_invocation_log_id": "plugin_invocation_log_feedback_failed",
+                "records_imported": 0,
+            },
+            "records_imported": 0,
+            "status": "failed",
+            "write_target": "user_feedback_insights",
+            "write_target_label": "用户洞察表",
+        },
+    ]
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "这次存在部分数据连接失败和结果动作失败。",
+                                        "suggestions": ["分别检查失败连接和失败写入动作"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        del timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "帮我诊断这次任务失败",
+            "references": [
+                {"id": "scheduled_job_run_feedback_failed", "type": "scheduled_job_run"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    diagnostic = next(
+        result
+        for result in response.json()["data"]["message"]["tool_results"]
+        if result["tool"] == "assistant.scheduled_job_diagnostic"
+    )
+    stages = {
+        stage["stage"]: stage
+        for stage in diagnostic["items"][0]["stages"]
+    }
+    assert stages["data_connection"]["connection_count"] == 2
+    assert stages["data_connection"]["failed_count"] == 1
+    assert stages["data_connection"]["successful_count"] == 1
+    assert stages["data_connection"]["log_ids"] == [
+        "plugin_invocation_log_fetch_failed",
+        "plugin_invocation_log_fetch_ok",
+    ]
+    assert stages["data_connection"]["failed_items"] == [
+        {
+            "connection_id": "plugin_connection_failed",
+            "error_code": "HTTPError",
+            "error_message": "HTTP 500",
+            "plugin_invocation_log_id": "plugin_invocation_log_fetch_failed",
+            "status": "failed",
+        }
+    ]
+    assert stages["result_action"]["action_count"] == 2
+    assert stages["result_action"]["failed_count"] == 1
+    assert stages["result_action"]["successful_count"] == 1
+    assert stages["result_action"]["write_targets"] == [
+        "email_notifications",
+        "user_feedback_insights",
+    ]
+    assert stages["result_action"]["failed_actions"] == [
+        {
+            "action_id": "plugin_action_feedback_write",
+            "error_code": "RESULT_WRITE_FAILED",
+            "error_message": "HTTP 500: downstream write failed",
+            "status": "failed",
+            "write_target": "user_feedback_insights",
+        }
+    ]
+    assert [
+        record["write_target"]
+        for record in stages["result_action"]["result_write_records"]
+    ] == ["email_notifications", "user_feedback_insights"]
+
+
 def test_ai_assistant_chat_scopes_diagnostic_to_referenced_scheduled_job(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
@@ -3502,24 +3798,27 @@ def test_ai_assistant_chat_generates_business_drafts_from_scheduled_job_run(monk
 def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
     headers = auth_headers()
     app.state.store.reset()
+    seed_assistant_plugin_action_runtime()
 
     draft_response = client.post(
         "/api/assistant/action-drafts",
         json={
             "action": "create_scheduled_job",
-            "payload": {
-                "enabled": False,
-                "execution_mode": "deterministic",
-                "job_type": "dashboard_snapshot_refresh",
-                "name": "AI 助手草案仪表盘刷新",
-                "plugin_action_ids": [None, "", "  ", None],
-                "plugin_connection_ids": [None, "", "  ", None],
-                "schedule_type": "manual",
-                "skill_ids": [None, "", "  ", None],
-                "source_system": "ai-assistant",
-            },
+            "payload": assistant_runnable_job_payload(
+                enabled=False,
+                name="AI 助手草案插件执行",
+                plugin_action_ids=[None, "plugin_action_assistant_test", "", "  ", None],
+                plugin_connection_ids=[
+                    None,
+                    "plugin_connection_assistant_test",
+                    "",
+                    "  ",
+                    None,
+                ],
+                skill_ids=[None, "", "  ", None],
+            ),
             "risk_level": "medium",
-            "title": "创建仪表盘刷新定时任务",
+            "title": "创建插件执行定时任务",
         },
         headers=headers,
     )
@@ -3529,7 +3828,7 @@ def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
     assert draft["action"] == "create_scheduled_job"
     assert draft["status"] == "pending"
     assert draft["created_by"] == "user_admin"
-    assert draft["payload"]["name"] == "AI 助手草案仪表盘刷新"
+    assert draft["payload"]["name"] == "AI 助手草案插件执行"
     assert draft["preview"]["validation"]["status"] == "passed"
 
     confirm_response = client.post(
@@ -3545,14 +3844,14 @@ def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
     assert payload["run"]["status"] == "succeeded"
     assert payload["run"]["result_type"] == "scheduled_job"
     scheduled_job = payload["run"]["result"]
-    assert scheduled_job["name"] == "AI 助手草案仪表盘刷新"
-    assert scheduled_job["plugin_action_ids"] == []
-    assert scheduled_job["plugin_connection_ids"] == []
+    assert scheduled_job["name"] == "AI 助手草案插件执行"
+    assert scheduled_job["plugin_action_ids"] == ["plugin_action_assistant_test"]
+    assert scheduled_job["plugin_connection_ids"] == ["plugin_connection_assistant_test"]
     assert scheduled_job["skill_ids"] == []
     assert scheduled_job["config_json"]["assistant_draft"] == {
         "draft_id": draft["id"],
         "source": "ai_assistant",
-        "title": "创建仪表盘刷新定时任务",
+        "title": "创建插件执行定时任务",
     }
 
     get_response = client.get(f"/api/assistant/action-drafts/{draft['id']}", headers=headers)
@@ -3846,19 +4145,13 @@ def test_ai_assistant_action_draft_confirm_failure_is_persisted(monkeypatch):
 def test_ai_assistant_action_draft_payload_update_marks_modified_before_confirmation():
     headers = auth_headers()
     app.state.store.reset()
+    seed_assistant_plugin_action_runtime()
 
     draft_response = client.post(
         "/api/assistant/action-drafts",
         json={
             "action": "create_scheduled_job",
-            "payload": {
-                "enabled": True,
-                "execution_mode": "deterministic",
-                "job_type": "dashboard_snapshot_refresh",
-                "name": "原始草案作业",
-                "schedule_type": "manual",
-                "source_system": "ai-assistant",
-            },
+            "payload": assistant_runnable_job_payload(name="原始草案作业"),
             "risk_level": "medium",
             "title": "创建可编辑的定时任务",
         },
@@ -3871,14 +4164,7 @@ def test_ai_assistant_action_draft_payload_update_marks_modified_before_confirma
         f"/api/assistant/action-drafts/{draft_id}",
         json={
             "modified_fields": ["name"],
-            "payload": {
-                "enabled": True,
-                "execution_mode": "deterministic",
-                "job_type": "dashboard_snapshot_refresh",
-                "name": "表单调整后的草案作业",
-                "schedule_type": "manual",
-                "source_system": "ai-assistant",
-            },
+            "payload": assistant_runnable_job_payload(name="表单调整后的草案作业"),
         },
         headers=headers,
     )
@@ -3903,19 +4189,13 @@ def test_ai_assistant_action_draft_payload_update_marks_modified_before_confirma
 def test_ai_assistant_action_draft_confirm_is_idempotent_after_success():
     headers = auth_headers()
     app.state.store.reset()
+    seed_assistant_plugin_action_runtime()
 
     draft_response = client.post(
         "/api/assistant/action-drafts",
         json={
             "action": "create_scheduled_job",
-            "payload": {
-                "enabled": True,
-                "execution_mode": "deterministic",
-                "job_type": "dashboard_snapshot_refresh",
-                "name": "幂等确认定时任务",
-                "schedule_type": "manual",
-                "source_system": "ai-assistant",
-            },
+            "payload": assistant_runnable_job_payload(name="幂等确认定时任务"),
             "risk_level": "medium",
             "title": "创建幂等确认定时任务",
         },
@@ -3947,19 +4227,13 @@ def test_ai_assistant_action_draft_confirm_is_idempotent_after_success():
 def test_ai_assistant_action_draft_modification_rejects_terminal_status():
     headers = auth_headers()
     app.state.store.reset()
+    seed_assistant_plugin_action_runtime()
 
     draft_response = client.post(
         "/api/assistant/action-drafts",
         json={
             "action": "create_scheduled_job",
-            "payload": {
-                "enabled": True,
-                "execution_mode": "deterministic",
-                "job_type": "dashboard_snapshot_refresh",
-                "name": "已确认后不可修改的定时任务",
-                "schedule_type": "manual",
-                "source_system": "ai-assistant",
-            },
+            "payload": assistant_runnable_job_payload(name="已确认后不可修改的定时任务"),
             "risk_level": "medium",
             "title": "创建确认后不可修改定时任务",
         },
@@ -3983,28 +4257,25 @@ def test_ai_assistant_action_draft_modification_rejects_terminal_status():
     assert modification_response.json()["detail"]["code"] == "DRAFT_NOT_PENDING"
 
 
-def test_ai_assistant_run_once_draft_confirm_triggers_scheduled_job_run():
+def test_ai_assistant_run_once_draft_confirm_triggers_scheduled_job_run(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
+    seed_assistant_plugin_action_runtime()
+    stub_successful_scheduled_job_plugin_action(monkeypatch)
 
     draft_response = client.post(
         "/api/assistant/action-drafts",
         json={
             "action": "create_scheduled_job",
-            "payload": {
-                "config_json": {
+            "payload": assistant_runnable_job_payload(
+                config_json={
                     "assistant_run_once_request": {
                         "requested": True,
                         "source_message": "@提取每周用户反馈有价值信息 执行一次",
                     },
                 },
-                "enabled": True,
-                "execution_mode": "deterministic",
-                "job_type": "dashboard_snapshot_refresh",
-                "name": "确认后立即执行的反馈洞察作业",
-                "schedule_type": "manual",
-                "source_system": "ai-assistant",
-            },
+                name="确认后立即执行的反馈洞察作业",
+            ),
             "risk_level": "medium",
             "title": "创建并执行反馈洞察定时作业",
         },
@@ -7560,42 +7831,8 @@ def test_ai_assistant_chat_runs_explicit_mention_job_once_without_model_gateway(
 ):
     headers = auth_headers()
     app.state.store.reset()
-    app.state.store.scheduled_jobs["scheduled_job_feedback_insight"] = {
-        "agent_id": None,
-        "config_json": {},
-        "created_at": "2026-06-16T08:00:00+00:00",
-        "created_by": "user_admin",
-        "cron_expression": None,
-        "enabled": True,
-        "execution_mode": "deterministic",
-        "id": "scheduled_job_feedback_insight",
-        "interval_seconds": None,
-        "job_type": "dashboard_snapshot_refresh",
-        "knowledge_document_ids": [],
-        "last_failure_at": None,
-        "last_run_at": None,
-        "last_success_at": None,
-        "lock_ttl_seconds": 999999999,
-        "max_retry_count": 0,
-        "model_gateway_config_id": None,
-        "name": "提取每周用户反馈有价值信息",
-        "next_run_at": None,
-        "plugin_action_id": None,
-        "plugin_action_ids": [],
-        "plugin_connection_id": None,
-        "plugin_connection_ids": [],
-        "plugin_input_mapping": {},
-        "plugin_output_mapping": {},
-        "product_id": None,
-        "result_actions": [],
-        "schedule_type": "manual",
-        "skill_ids": [],
-        "source_system": "ai-brain",
-        "status": "active",
-        "timeout_seconds": 600,
-        "timezone": "Asia/Shanghai",
-        "updated_at": "2026-06-16T08:00:00+00:00",
-    }
+    seed_assistant_runnable_job(lock_ttl_seconds=999999999)
+    stub_successful_scheduled_job_plugin_action(monkeypatch)
 
     def fail_if_model_called(_request, timeout):
         del timeout
@@ -7632,42 +7869,8 @@ def test_ai_assistant_chat_runs_explicit_mention_job_once_without_model_gateway(
 def test_ai_assistant_chat_runs_fullwidth_explicit_mention_job_once(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
-    app.state.store.scheduled_jobs["scheduled_job_feedback_insight"] = {
-        "agent_id": None,
-        "config_json": {},
-        "created_at": "2026-06-16T08:00:00+00:00",
-        "created_by": "user_admin",
-        "cron_expression": None,
-        "enabled": True,
-        "execution_mode": "deterministic",
-        "id": "scheduled_job_feedback_insight",
-        "interval_seconds": None,
-        "job_type": "dashboard_snapshot_refresh",
-        "knowledge_document_ids": [],
-        "last_failure_at": None,
-        "last_run_at": None,
-        "last_success_at": None,
-        "lock_ttl_seconds": 999999999,
-        "max_retry_count": 0,
-        "model_gateway_config_id": None,
-        "name": "提取每周用户反馈有价值信息",
-        "next_run_at": None,
-        "plugin_action_id": None,
-        "plugin_action_ids": [],
-        "plugin_connection_id": None,
-        "plugin_connection_ids": [],
-        "plugin_input_mapping": {},
-        "plugin_output_mapping": {},
-        "product_id": None,
-        "result_actions": [],
-        "schedule_type": "manual",
-        "skill_ids": [],
-        "source_system": "ai-brain",
-        "status": "active",
-        "timeout_seconds": 600,
-        "timezone": "Asia/Shanghai",
-        "updated_at": "2026-06-16T08:00:00+00:00",
-    }
+    seed_assistant_runnable_job(lock_ttl_seconds=999999999)
+    stub_successful_scheduled_job_plugin_action(monkeypatch)
 
     def fail_if_model_called(_request, timeout):
         del timeout
@@ -8101,40 +8304,12 @@ def test_ai_assistant_chat_runs_exact_explicit_mention_when_similar_jobs_exist(
 ):
     headers = auth_headers()
     app.state.store.reset()
-    base_job = {
-        "agent_id": None,
-        "config_json": {},
-        "created_at": "2026-06-16T08:00:00+00:00",
-        "created_by": "user_admin",
-        "cron_expression": None,
-        "enabled": True,
-        "execution_mode": "deterministic",
-        "interval_seconds": None,
-        "job_type": "dashboard_snapshot_refresh",
-        "knowledge_document_ids": [],
-        "last_failure_at": None,
-        "last_run_at": None,
-        "last_success_at": None,
-        "lock_ttl_seconds": 900,
-        "max_retry_count": 0,
-        "model_gateway_config_id": None,
-        "next_run_at": None,
-        "plugin_action_id": None,
-        "plugin_action_ids": [],
-        "plugin_connection_id": None,
-        "plugin_connection_ids": [],
-        "plugin_input_mapping": {},
-        "plugin_output_mapping": {},
-        "product_id": None,
-        "result_actions": [],
-        "schedule_type": "manual",
-        "skill_ids": [],
-        "source_system": "ai-brain",
-        "status": "active",
-        "timeout_seconds": 600,
-        "timezone": "Asia/Shanghai",
-        "updated_at": "2026-06-16T08:00:00+00:00",
-    }
+    seed_assistant_plugin_action_runtime()
+    stub_successful_scheduled_job_plugin_action(monkeypatch)
+    base_job = assistant_runnable_job_record(
+        job_id="scheduled_job_feedback_base",
+        name="基础插件执行作业",
+    )
     app.state.store.scheduled_jobs["scheduled_job_feedback_exact"] = {
         **base_job,
         "code": "feedback_exact",
@@ -8179,40 +8354,12 @@ def test_ai_assistant_chat_prioritizes_structured_reference_over_text_mention(
 ):
     headers = auth_headers()
     app.state.store.reset()
-    base_job = {
-        "agent_id": None,
-        "config_json": {},
-        "created_at": "2026-06-16T08:00:00+00:00",
-        "created_by": "user_admin",
-        "cron_expression": None,
-        "enabled": True,
-        "execution_mode": "deterministic",
-        "interval_seconds": None,
-        "job_type": "dashboard_snapshot_refresh",
-        "knowledge_document_ids": [],
-        "last_failure_at": None,
-        "last_run_at": None,
-        "last_success_at": None,
-        "lock_ttl_seconds": 900,
-        "max_retry_count": 0,
-        "model_gateway_config_id": None,
-        "next_run_at": None,
-        "plugin_action_id": None,
-        "plugin_action_ids": [],
-        "plugin_connection_id": None,
-        "plugin_connection_ids": [],
-        "plugin_input_mapping": {},
-        "plugin_output_mapping": {},
-        "product_id": None,
-        "result_actions": [],
-        "schedule_type": "manual",
-        "skill_ids": [],
-        "source_system": "ai-brain",
-        "status": "active",
-        "timeout_seconds": 600,
-        "timezone": "Asia/Shanghai",
-        "updated_at": "2026-06-16T08:00:00+00:00",
-    }
+    seed_assistant_plugin_action_runtime()
+    stub_successful_scheduled_job_plugin_action(monkeypatch)
+    base_job = assistant_runnable_job_record(
+        job_id="scheduled_job_structured_base",
+        name="基础结构化引用作业",
+    )
     app.state.store.scheduled_jobs["scheduled_job_selected"] = {
         **base_job,
         "id": "scheduled_job_selected",
@@ -8252,42 +8399,15 @@ def test_ai_assistant_chat_keeps_structured_reference_even_when_text_mentions_of
 ):
     headers = auth_headers()
     app.state.store.reset()
-    base_job = {
-        "agent_id": None,
-        "config_json": {},
-        "created_at": "2026-06-16T08:00:00+00:00",
-        "created_by": "user_admin",
-        "cron_expression": None,
-        "enabled": True,
-        "execution_mode": "deterministic",
-        "interval_seconds": None,
-        "knowledge_document_ids": [],
-        "last_failure_at": None,
-        "last_run_at": None,
-        "last_success_at": None,
-        "lock_ttl_seconds": 900,
-        "max_retry_count": 0,
-        "model_gateway_config_id": None,
-        "next_run_at": None,
-        "plugin_action_id": None,
-        "plugin_action_ids": [],
-        "plugin_connection_id": None,
-        "plugin_connection_ids": [],
-        "plugin_input_mapping": {},
-        "plugin_output_mapping": {},
-        "product_id": None,
-        "result_actions": [],
-        "schedule_type": "manual",
-        "skill_ids": [],
-        "status": "active",
-        "timeout_seconds": 600,
-        "timezone": "Asia/Shanghai",
-        "updated_at": "2026-06-16T08:00:00+00:00",
-    }
+    seed_assistant_plugin_action_runtime()
+    stub_successful_scheduled_job_plugin_action(monkeypatch)
+    base_job = assistant_runnable_job_record(
+        job_id="scheduled_job_selected_daily_base",
+        name="基础每日作业",
+    )
     app.state.store.scheduled_jobs["scheduled_job_selected_daily"] = {
         **base_job,
         "id": "scheduled_job_selected_daily",
-        "job_type": "dashboard_snapshot_refresh",
         "name": "用户明确选择的每日看板刷新",
         "source_system": "ai-brain",
     }
@@ -8336,38 +8456,12 @@ def test_ai_assistant_chat_prefers_enabled_job_when_run_once_alias_matches_histo
 ):
     headers = auth_headers()
     app.state.store.reset()
-    base_job = {
-        "agent_id": None,
-        "config_json": {},
-        "created_at": "2026-06-16T08:00:00+00:00",
-        "created_by": "user_admin",
-        "cron_expression": None,
-        "execution_mode": "deterministic",
-        "interval_seconds": None,
-        "job_type": "dashboard_snapshot_refresh",
-        "knowledge_document_ids": [],
-        "last_failure_at": None,
-        "last_run_at": None,
-        "last_success_at": None,
-        "lock_ttl_seconds": 900,
-        "max_retry_count": 0,
-        "model_gateway_config_id": None,
-        "next_run_at": None,
-        "plugin_action_id": None,
-        "plugin_action_ids": [],
-        "plugin_connection_id": None,
-        "plugin_connection_ids": [],
-        "plugin_input_mapping": {},
-        "plugin_output_mapping": {},
-        "product_id": None,
-        "result_actions": [],
-        "schedule_type": "manual",
-        "skill_ids": [],
-        "source_system": "ai-brain",
-        "timeout_seconds": 600,
-        "timezone": "Asia/Shanghai",
-        "updated_at": "2026-06-16T08:00:00+00:00",
-    }
+    seed_assistant_plugin_action_runtime()
+    stub_successful_scheduled_job_plugin_action(monkeypatch)
+    base_job = assistant_runnable_job_record(
+        job_id="scheduled_job_feedback_base",
+        name="基础反馈作业",
+    )
     app.state.store.scheduled_jobs["scheduled_job_feedback_active"] = {
         **base_job,
         "code": "weekly_feedback_insight",

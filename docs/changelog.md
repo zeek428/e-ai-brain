@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- 定时作业在数据连接阶段失败时，运行摘要不再把 AI 执行节点误标为已调用大模型；`skill_processing` 明确为 `not_run` 且 `model_gateway_called=false`。
 - 定时作业运行入口不再对未闭环作业类型返回伪成功占位结果；历史兼容类型手动运行会明确返回不可运行错误。
 - 内部数据源读取不再因插件管理权限临时注入需求、产品或 Bug 读取权限；缺少业务源读取权限时返回空数据与 `access_issues`，防止越权读取内部业务数据。
 - 内部数据源时间窗口过滤改为在窗口请求时扩大分页扫描，避免先按 limit 取第一页再过滤导致旧数据命中被漏掉。
@@ -15,6 +16,7 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- AI 助手定时作业运行诊断和运行健康概览改为消费多数据连接、多结果动作明细：诊断卡片返回失败连接、关联日志、多动作写入记录摘要；健康统计按 `result_actions[]` 逐个动作计算写入次数、成功率和写入目标分布。
 - 定时作业多数据连接按 `data_connections.failure_policy` 真正执行：`continue_on_error` 会记录失败连接并继续后续连接、合并成功数据；`fail_fast` 中断时仍保留数据连接失败节点、动作节点和 Trace DAG 供运行详情排障。
 - 用户反馈洞察定时作业多结果动作按 `result_actions.failure_policy` 落地：默认 `continue_on_error` 时单个动作映射或写入失败会进入运行节点、Trace DAG 和结果写入记录，后续动作继续执行；`fail_fast` 保持失败即中断。
 - 定时作业运行 Trace DAG 展开多数据连接和多结果动作明细节点，节点输入输出携带连接、动作、写入目标和反馈摘要，提升运行记录排障可见性。

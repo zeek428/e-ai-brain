@@ -5,7 +5,7 @@ from typing import Any
 
 from app.services.assistant_draft_builder import AssistantDraftBuilder
 from app.services.assistant_references import normalize_assistant_references
-from app.services.plugin_result_write_records import result_write_record_from_scheduled_run
+from app.services.plugin_result_write_records import result_write_records_from_scheduled_run
 from app.services.product_version_dashboard import product_version_dashboard_response
 
 __all__ = ["assistant_tool_results"]
@@ -19,6 +19,22 @@ def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dic
 def _read_memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     return collection if isinstance(collection, list) else []
+
+
+def _records_by_scheduled_job_run_id(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        run_id = record.get("scheduled_job_run_id")
+        if run_id is None:
+            continue
+        grouped.setdefault(str(run_id), []).append(record)
+    return grouped
+
+
+def _first_record(records: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    if not records:
+        return None
+    return records[0]
 
 
 def assistant_tool_results(
@@ -150,9 +166,7 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
     ]
     result_write_records = []
     for run in scheduled_job_runs:
-        record = result_write_record_from_scheduled_run(current_store, run)
-        if record is not None:
-            result_write_records.append(record)
+        result_write_records.extend(result_write_records_from_scheduled_run(current_store, run))
     return {
         "ai_agents": list(_read_memory_dict(current_store, "ai_agents").values()),
         "ai_skills": list(_read_memory_dict(current_store, "ai_skills").values()),
@@ -1100,30 +1114,28 @@ def _scheduled_job_diagnostic_tool(
         for job in context["scheduled_jobs"]
         if job.get("id") is not None
     }
-    plugin_logs_by_run_id = {
-        str(log.get("scheduled_job_run_id")): log
-        for log in context["plugin_invocation_logs"]
-        if log.get("scheduled_job_run_id") is not None
-    }
+    plugin_logs_by_run_id = _records_by_scheduled_job_run_id(context["plugin_invocation_logs"])
     model_logs_by_id = {
         str(log.get("id")): log
         for log in context["model_gateway_logs"]
         if log.get("id") is not None
     }
-    result_write_records_by_run_id = {
-        str(record.get("scheduled_job_run_id")): record
-        for record in context["result_write_records"]
-        if record.get("scheduled_job_run_id") is not None
-    }
+    result_write_records_by_run_id = _records_by_scheduled_job_run_id(
+        context["result_write_records"],
+    )
     items: list[dict[str, Any]] = []
     for run in _latest(candidate_runs)[:limit]:
         run_id = str(run["id"])
         job = jobs_by_id.get(str(run.get("scheduled_job_id"))) or {}
+        plugin_logs = plugin_logs_by_run_id.get(run_id, [])
+        result_write_records = result_write_records_by_run_id.get(run_id, [])
         stages = _scheduled_job_diagnostic_stages(
             run,
             model_logs_by_id=model_logs_by_id,
-            plugin_log=plugin_logs_by_run_id.get(run_id),
-            result_write_record=result_write_records_by_run_id.get(run_id),
+            plugin_log=_first_record(plugin_logs),
+            plugin_logs=plugin_logs,
+            result_write_record=_first_record(result_write_records),
+            result_write_records=result_write_records,
         )
         title = (
             f"{job.get('name') or run.get('scheduled_job_id') or run_id} / "
@@ -1181,21 +1193,15 @@ def _scheduled_job_run_comparison_tool(
         for job in context["scheduled_jobs"]
         if job.get("id") is not None
     }
-    plugin_logs_by_run_id = {
-        str(log.get("scheduled_job_run_id")): log
-        for log in context["plugin_invocation_logs"]
-        if log.get("scheduled_job_run_id") is not None
-    }
+    plugin_logs_by_run_id = _records_by_scheduled_job_run_id(context["plugin_invocation_logs"])
     model_logs_by_id = {
         str(log.get("id")): log
         for log in context["model_gateway_logs"]
         if log.get("id") is not None
     }
-    result_write_records_by_run_id = {
-        str(record.get("scheduled_job_run_id")): record
-        for record in context["result_write_records"]
-        if record.get("scheduled_job_run_id") is not None
-    }
+    result_write_records_by_run_id = _records_by_scheduled_job_run_id(
+        context["result_write_records"],
+    )
     items: list[dict[str, Any]] = []
     references_out: list[dict[str, Any]] = []
     for current_run in candidate_runs[:limit]:
@@ -1204,19 +1210,30 @@ def _scheduled_job_run_comparison_tool(
             continue
         baseline_run = _previous_successful_scheduled_job_run(runs, current_run)
         job = jobs_by_id.get(str(current_run.get("scheduled_job_id"))) or {}
+        current_plugin_logs = plugin_logs_by_run_id.get(run_id, [])
+        current_result_write_records = result_write_records_by_run_id.get(run_id, [])
         current_stages = _scheduled_job_diagnostic_stages(
             current_run,
             model_logs_by_id=model_logs_by_id,
-            plugin_log=plugin_logs_by_run_id.get(run_id),
-            result_write_record=result_write_records_by_run_id.get(run_id),
+            plugin_log=_first_record(current_plugin_logs),
+            plugin_logs=current_plugin_logs,
+            result_write_record=_first_record(current_result_write_records),
+            result_write_records=current_result_write_records,
         )
         baseline_stages = (
             _scheduled_job_diagnostic_stages(
                 baseline_run,
                 model_logs_by_id=model_logs_by_id,
-                plugin_log=plugin_logs_by_run_id.get(str(baseline_run.get("id"))),
-                result_write_record=result_write_records_by_run_id.get(
-                    str(baseline_run.get("id"))
+                plugin_log=_first_record(
+                    plugin_logs_by_run_id.get(str(baseline_run.get("id")), []),
+                ),
+                plugin_logs=plugin_logs_by_run_id.get(str(baseline_run.get("id")), []),
+                result_write_record=_first_record(
+                    result_write_records_by_run_id.get(str(baseline_run.get("id")), []),
+                ),
+                result_write_records=result_write_records_by_run_id.get(
+                    str(baseline_run.get("id")),
+                    [],
                 ),
             )
             if baseline_run is not None
@@ -1359,11 +1376,9 @@ def _scheduled_job_run_business_draft_tool(
         for job in context["scheduled_jobs"]
         if job.get("id") is not None
     }
-    result_write_records_by_run_id = {
-        str(record.get("scheduled_job_run_id")): record
-        for record in context["result_write_records"]
-        if record.get("scheduled_job_run_id") is not None
-    }
+    result_write_records_by_run_id = _records_by_scheduled_job_run_id(
+        context["result_write_records"],
+    )
     draft_types = _scheduled_job_run_business_draft_types(message)
     items: list[dict[str, Any]] = []
     references_out: list[dict[str, Any]] = []
@@ -1373,7 +1388,7 @@ def _scheduled_job_run_business_draft_tool(
             continue
         job = jobs_by_id.get(str(run.get("scheduled_job_id"))) or {}
         run_reference = _scheduled_job_run_tool_reference(job=job, run=run)
-        result_write_record = result_write_records_by_run_id.get(run_id)
+        result_write_record = _first_record(result_write_records_by_run_id.get(run_id))
         for draft_type in draft_types:
             items.append(
                 _scheduled_job_run_business_draft_item(
@@ -1923,7 +1938,9 @@ def _scheduled_job_diagnostic_stages(
     *,
     model_logs_by_id: dict[str, dict[str, Any]],
     plugin_log: dict[str, Any] | None,
-    result_write_record: dict[str, Any] | None,
+    plugin_logs: list[dict[str, Any]] | None = None,
+    result_write_record: dict[str, Any] | None = None,
+    result_write_records: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     result_summary = (
         run.get("result_summary") if isinstance(run.get("result_summary"), dict) else {}
@@ -1969,15 +1986,84 @@ def _scheduled_job_diagnostic_stages(
         }
         if node.get("error_code"):
             stage["error_code"] = node.get("error_code")
+        if stage_name == "data_connection":
+            stage.update(_data_connection_diagnostic_fields(node, plugin_logs or []))
         if stage_name == "result_action":
-            stage.update(_result_write_diagnostic_fields(node, result_write_record))
+            result_actions = (
+                raw_nodes.get("result_actions")
+                if isinstance(raw_nodes.get("result_actions"), list)
+                else []
+            )
+            stage.update(
+                _result_write_diagnostic_fields(
+                    node,
+                    result_write_record,
+                    result_actions=result_actions,
+                    result_write_records=result_write_records or [],
+                ),
+            )
         stages.append(stage)
     return stages
+
+
+def _data_connection_diagnostic_fields(
+    node: dict[str, Any],
+    plugin_logs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    items = node.get("items")
+    if not isinstance(items, list):
+        return {}
+    normalized_items = [item for item in items if isinstance(item, dict)]
+    fields: dict[str, Any] = {
+        "connection_count": node.get("connection_count") or len(normalized_items),
+        "failed_count": node.get("failed_count")
+        or len([item for item in normalized_items if item.get("status") == "failed"]),
+        "successful_count": node.get("successful_count")
+        or len([item for item in normalized_items if item.get("status") == "succeeded"]),
+    }
+    raw_invocation_log_ids = node.get("invocation_log_ids")
+    if isinstance(raw_invocation_log_ids, list):
+        log_ids = [str(log_id) for log_id in raw_invocation_log_ids if log_id]
+    elif raw_invocation_log_ids:
+        log_ids = [str(raw_invocation_log_ids)]
+    else:
+        log_ids = []
+    if not log_ids:
+        log_ids = [
+            str(item["plugin_invocation_log_id"])
+            for item in normalized_items
+            if item.get("plugin_invocation_log_id")
+        ]
+    if not log_ids:
+        log_ids = [
+            str(log["id"])
+            for log in plugin_logs
+            if isinstance(log, dict) and log.get("id")
+        ]
+    if log_ids:
+        fields["log_ids"] = log_ids
+    failed_items = [
+        {
+            "connection_id": item.get("connection_id"),
+            "error_code": item.get("error_code"),
+            "error_message": item.get("error_message"),
+            "plugin_invocation_log_id": item.get("plugin_invocation_log_id"),
+            "status": item.get("status"),
+        }
+        for item in normalized_items
+        if item.get("status") not in {None, "succeeded"}
+    ]
+    if failed_items:
+        fields["failed_items"] = failed_items
+    return fields
 
 
 def _result_write_diagnostic_fields(
     node: dict[str, Any],
     result_write_record: dict[str, Any] | None,
+    *,
+    result_actions: list[Any] | None = None,
+    result_write_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     record = result_write_record if isinstance(result_write_record, dict) else {}
     fields: dict[str, Any] = {}
@@ -1991,6 +2077,86 @@ def _result_write_diagnostic_fields(
     write_target_label = record.get("write_target_label") or node.get("write_target_label")
     if write_target_label:
         fields["result_write_target_label"] = write_target_label
+    action_nodes = [
+        action
+        for action in (result_actions or [])
+        if isinstance(action, dict)
+    ]
+    records = [
+        candidate
+        for candidate in (result_write_records or [])
+        if isinstance(candidate, dict)
+    ]
+    if len(action_nodes) > 1 or len(records) > 1:
+        count_source = action_nodes or records
+        fields["action_count"] = len(action_nodes) or len(records)
+        fields["successful_count"] = len(
+            [candidate for candidate in count_source if candidate.get("status") == "succeeded"],
+        )
+        fields["failed_count"] = len(
+            [
+                candidate
+                for candidate in count_source
+                if candidate.get("status") not in {None, "succeeded", "not_run"}
+            ],
+        )
+        write_targets = [
+            str(value)
+            for value in [
+                *[action.get("write_target") for action in action_nodes],
+                *[candidate.get("write_target") for candidate in records],
+            ]
+            if value
+        ]
+        if write_targets:
+            fields["write_targets"] = list(dict.fromkeys(write_targets))
+        log_ids = [
+            str(log_id)
+            for log_id in [
+                *[
+                    (action.get("feedback") or {}).get("plugin_invocation_log_id")
+                    for action in action_nodes
+                    if isinstance(action.get("feedback"), dict)
+                ],
+                *[candidate.get("plugin_invocation_log_id") for candidate in records],
+            ]
+            if log_id
+        ]
+        if log_ids:
+            fields["log_ids"] = list(dict.fromkeys(log_ids))
+        failed_actions = [
+            {
+                "action_id": action.get("action_id"),
+                "error_code": action.get("error_code"),
+                "error_message": action.get("error_message"),
+                "status": action.get("status"),
+                "write_target": action.get("write_target"),
+            }
+            for action in action_nodes
+            if action.get("status") not in {None, "succeeded", "not_run"}
+        ]
+        if not failed_actions and not action_nodes:
+            failed_actions = [
+                {
+                    "result_write_record_id": candidate.get("id"),
+                    "status": candidate.get("status"),
+                    "write_target": candidate.get("write_target"),
+                }
+                for candidate in records
+                if candidate.get("status") not in {None, "succeeded", "not_run"}
+            ]
+        if failed_actions:
+            fields["failed_actions"] = failed_actions
+        if records:
+            fields["result_write_records"] = [
+                {
+                    "id": candidate.get("id"),
+                    "status": candidate.get("status"),
+                    "write_target": candidate.get("write_target"),
+                    "write_target_label": candidate.get("write_target_label"),
+                }
+                for candidate in records
+            ]
     return fields
 
 
@@ -2003,11 +2169,23 @@ def _diagnostic_log_id(
     if stage_name == "ai_processing":
         return node.get("model_gateway_log_id") or node.get("log_id")
     if stage_name == "data_connection":
-        return node.get("plugin_invocation_log_id") or node.get("log_id")
-    if stage_name == "result_action":
+        invocation_log_ids = node.get("invocation_log_ids")
+        first_invocation_log_id = (
+            invocation_log_ids[0]
+            if isinstance(invocation_log_ids, list) and invocation_log_ids
+            else None
+        )
         return (
             node.get("plugin_invocation_log_id")
             or node.get("log_id")
+            or first_invocation_log_id
+        )
+    if stage_name == "result_action":
+        feedback = node.get("feedback") if isinstance(node.get("feedback"), dict) else {}
+        return (
+            node.get("plugin_invocation_log_id")
+            or node.get("log_id")
+            or feedback.get("plugin_invocation_log_id")
             or (plugin_log or {}).get("id")
         )
     return node.get("log_id")

@@ -1849,6 +1849,157 @@ def test_scheduled_job_data_connection_fail_fast_keeps_failure_trace(monkeypatch
     assert by_id["result_action"]["status"] == "failed"
 
 
+def test_user_feedback_data_connection_failure_marks_ai_processing_not_run(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product = create_product(admin_headers)
+    model_gateway = create_model_gateway(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "feedback_not_started_skill",
+            "input_schema": {"type": "object"},
+            "name": "反馈未开始 Skill",
+            "output_schema": {
+                "properties": {"insights": {"type": "array"}},
+                "required": ["insights"],
+                "type": "object",
+            },
+            "prompt_template": "输出 insights 数组。",
+            "status": "active",
+            "version": "1.0.0",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "feedback_not_started_agent",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "反馈未开始 AI角色",
+            "status": "active",
+            "system_prompt": "分析反馈。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "feedback_data_failure_reader",
+            "name": "反馈失败读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://feedback-failed.example.com",
+            "name": "反馈失败连接",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_failed_feedback_for_ai",
+            "connection_id": connection["id"],
+            "name": "失败反馈取数",
+            "plugin_id": plugin["id"],
+            "request_config": {"method": "GET", "path": "/feedback"},
+            "result_mapping": {
+                "insights_path": "$.insights",
+                "records_imported_path": "$.row_count",
+                "write_target": "user_feedback_insights",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    def fake_invoke_plugin_action_response(
+        *,
+        action_id,
+        connection_id=None,
+        current_store,
+        **_kwargs,
+    ):
+        return {
+            "action_id": action_id,
+            "connection_id": connection_id,
+            "error_code": "HTTPError",
+            "error_message": "HTTP Error 502: Bad Gateway",
+            "id": current_store.new_id("plugin_invocation_log"),
+            "latency_ms": 18,
+            "request_summary": {
+                "method": "GET",
+                "request_preview": {"method": "GET", "url": "https://feedback-failed/feedback"},
+                "url": "https://feedback-failed/feedback",
+            },
+            "response_summary": {"json": {}, "status_code": 502},
+            "status": "failed",
+        }
+
+    model_called = False
+
+    def fail_if_model_called(*_args, **_kwargs):
+        nonlocal model_called
+        model_called = True
+        raise AssertionError("model gateway should not be called when data connection fails")
+
+    monkeypatch.setattr(
+        scheduled_jobs_service,
+        "invoke_plugin_action_response",
+        fake_invoke_plugin_action_response,
+    )
+    monkeypatch.setattr(scheduled_job_ai_processing_service, "urlopen", fail_if_model_called)
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "agent_id": agent["id"],
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "user_feedback_insight_extract",
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "反馈取数失败不调用 AI",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "schedule_type": "manual",
+            "skill_ids": [skill["id"]],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    )
+
+    assert run_response.status_code == 200
+    assert model_called is False
+    run = run_response.json()["data"]
+    assert run["status"] == "failed"
+    assert run["error_code"] == "HTTPError"
+    execution_nodes = run["result_summary"]["execution_nodes"]
+    assert execution_nodes["data_connection"]["status"] == "failed"
+    assert execution_nodes["skill_processing"]["status"] == "not_run"
+    assert execution_nodes["skill_processing"]["model_gateway_called"] is False
+    assert execution_nodes["skill_processing"]["processing_mode"] == "not_started"
+    assert "数据连接失败" in execution_nodes["skill_processing"]["note"]
+    assert execution_nodes["result_action"]["status"] == "not_run"
+    assert run["result_summary"]["processing"]["model_gateway_called"] is False
+
+
 def test_scheduled_job_validates_skill_output_schema_before_ai_processing(monkeypatch):
     app.state.store.reset()
     admin_headers = auth_headers()
@@ -2939,9 +3090,23 @@ def test_plugin_action_scheduled_job_run_records_request_trace_summary():
                 "data_connection": {"records_imported": 1, "status": "succeeded"},
                 "result_action": {
                     "records_imported": 0,
-                    "status": "failed",
+                    "status": "partial_failed",
                     "write_target": "user_feedback_insights",
                 },
+                "result_actions": [
+                    {
+                        "records_imported": 1,
+                        "status": "succeeded",
+                        "write_target": "email_notifications",
+                    },
+                    {
+                        "error_code": "RESULT_WRITE_FAILED",
+                        "error_message": "洞察写入失败",
+                        "records_imported": 0,
+                        "status": "failed",
+                        "write_target": "user_feedback_insights",
+                    },
+                ],
                 "skill_processing": {
                     "model_gateway_called": True,
                     "model_log_id": "model_log_scheduled_observability",
@@ -2967,8 +3132,14 @@ def test_plugin_action_scheduled_job_run_records_request_trace_summary():
     assert observability["summary"]["model_gateway_called_runs"] == 1
     assert observability["summary"]["model_gateway_token_total"] == 42
     assert observability["summary"]["plugin_invocation_runs"] == 1
-    assert observability["summary"]["action_write_success_runs"] == 1
-    assert observability["summary"]["action_write_success_rate"] == 50.0
+    assert observability["summary"]["action_write_runs"] == 3
+    assert observability["summary"]["action_write_success_runs"] == 2
+    assert observability["summary"]["action_write_success_rate"] == 66.67
+    assert observability["write_target_distribution"] == [
+        {"count": 1, "write_target": "email_notifications"},
+        {"count": 1, "write_target": "scheduled_job_result"},
+        {"count": 1, "write_target": "user_feedback_insights"},
+    ]
     assert observability["error_distribution"] == [
         {"count": 1, "error": "MODEL_GATEWAY_FAILED"},
     ]
