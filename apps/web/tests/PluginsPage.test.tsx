@@ -232,6 +232,18 @@ function installPluginsFetchMock(
                 template_version: 'v1',
                 version_status: 'latest',
               },
+              {
+                category: 'business_system',
+                code: 'internal_data_source',
+                id: 'plugin_standard_internal_data_source',
+                is_system: true,
+                name: '内部数据源',
+                protocol: 'internal_read_model',
+                risk_level: 'low',
+                status: 'active',
+                template_version: 'v1',
+                version_status: 'latest',
+              },
             ]
           : []),
       ];
@@ -429,8 +441,120 @@ function installPluginsFetchMock(
               upgrade_available: false,
               version_status: 'latest',
             },
+            {
+              action_count: 0,
+              action_templates: ['读取内部业务数据'],
+              category: 'business_system',
+              code: 'internal_data_source',
+              connection_defaults: {
+                auth_config: {},
+                auth_type: 'none',
+                endpoint_url: 'internal://e-ai-brain/business-data',
+                environment: 'prod',
+                max_retries: 0,
+                name: '内部业务数据连接',
+                request_config: {
+                  query: {
+                    field_mode: 'summary',
+                    limit: 100,
+                    product_scope: 'current_user_scope',
+                    source_types: ['user_insights', 'requirements', 'products', 'bugs'],
+                    window_end: '{{now}}',
+                    window_start: '{{current_date-30}}',
+                  },
+                },
+                status: 'active',
+                timeout_seconds: 30,
+              },
+              connection_schema: {
+                schema_version: 'v1',
+                sections: [
+                  {
+                    fields: [
+                      {
+                        key: 'source_types',
+                        label: '源数据',
+                        options: [
+                          { label: '用户洞察数据', value: 'user_insights' },
+                          { label: '需求数据', value: 'requirements' },
+                          { label: '产品数据', value: 'products' },
+                          { label: 'Bug 数据', value: 'bugs' },
+                        ],
+                        path: 'request_config.query.source_types',
+                        required: true,
+                        type: 'multi_select',
+                      },
+                      {
+                        key: 'field_mode',
+                        label: '字段模式',
+                        options: [
+                          { label: '摘要字段', value: 'summary' },
+                          { label: '完整字段', value: 'detail' },
+                        ],
+                        path: 'request_config.query.field_mode',
+                        required: true,
+                        type: 'select',
+                      },
+                      {
+                        key: 'limit',
+                        label: '每类最大行数',
+                        path: 'request_config.query.limit',
+                        required: true,
+                        type: 'number',
+                      },
+                      {
+                        key: 'product_scope',
+                        label: '产品范围',
+                        options: [
+                          { label: '当前用户可访问产品', value: 'current_user_scope' },
+                          { label: '全部可访问数据', value: 'all_accessible' },
+                        ],
+                        path: 'request_config.query.product_scope',
+                        required: true,
+                        type: 'select',
+                      },
+                      {
+                        key: 'window_start',
+                        label: '开始时间',
+                        path: 'request_config.query.window_start',
+                        required: false,
+                        supports_system_variables: true,
+                        type: 'text',
+                      },
+                      {
+                        key: 'window_end',
+                        label: '结束时间',
+                        path: 'request_config.query.window_end',
+                        required: false,
+                        supports_system_variables: true,
+                        type: 'text',
+                      },
+                    ],
+                    key: 'sources',
+                    title: '源数据选择',
+                  },
+                ],
+              },
+              connection_count: 0,
+              connection_template_version: 'v1',
+              id: 'marketplace_internal_data_source',
+              installed: true,
+              is_system: true,
+              latest_template_version: 'v1',
+              name: '内部数据源',
+              plugin_id: 'plugin_standard_internal_data_source',
+              protocol: 'internal_read_model',
+              publisher: 'AI Brain 官方',
+              recommended_scenarios: ['每周内部业务洞察', '需求与 Bug 风险分析'],
+              risk_level: 'low',
+              status: 'active',
+              summary: '只读读取 AI Brain 内部业务数据。',
+              template_version: 'v1',
+              upgrade_available: false,
+              version_status: 'latest',
+            },
           ],
-          total: 3,
+          total: 4,
         },
       });
     }
@@ -498,6 +622,17 @@ function installPluginsFetchMock(
                 subject_path: '$.subject',
                 write_target: 'email_notifications',
               },
+              template_version: 'v1',
+            },
+            {
+              action_type: 'internal_query',
+              code: 'internal_business_data_query',
+              default_code: 'query_internal_business_data',
+              default_name: '读取内部业务数据',
+              name: '读取内部业务数据',
+              plugin_code: 'internal_data_source',
+              request_config: { tool_name: 'internal_data_source.query' },
+              result_mapping: { write_target: 'scheduled_job_result' },
               template_version: 'v1',
             },
           ],
@@ -2166,7 +2301,7 @@ describe('PluginsPage', () => {
     );
   });
 
-  it('locks official plugins while providing GitLab GitHub and email connection defaults', async () => {
+  it('locks official plugins while providing GitLab GitHub email and internal data source connection defaults', async () => {
     const { connectionBodies } = installPluginsFetchMock({ includeOfficialPlugins: true });
 
     render(<PluginsPage />);
@@ -2174,13 +2309,16 @@ describe('PluginsPage', () => {
     expect(await screen.findByText('GitLab')).toBeInTheDocument();
     expect(screen.getByText('GitHub')).toBeInTheDocument();
     expect(screen.getByText('邮箱')).toBeInTheDocument();
-    expect(screen.getAllByText('官方标准').length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText('内部数据源')).toBeInTheDocument();
+    expect(screen.getAllByText('官方标准').length).toBeGreaterThanOrEqual(4);
     expect(screen.queryByRole('button', { name: '编辑插件 GitLab' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '删除插件 GitLab' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '编辑插件 GitHub' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '删除插件 GitHub' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '编辑插件 邮箱' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '删除插件 邮箱' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑插件 内部数据源' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '删除插件 内部数据源' })).not.toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole('tab', { name: '连接' }));
     fireEvent.click(screen.getByRole('button', { name: '新增连接' }));
@@ -2257,6 +2395,46 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByLabelText('默认收件人')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('subject_template')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('[AI Brain] {{job_name}} 执行结果')).toBeInTheDocument();
+
+    fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
+    fireEvent.click(await screen.findByText('内部数据源 (internal_read_model)'));
+
+    await waitFor(() =>
+      expect(within(dialog).queryByLabelText('Endpoint URL')).not.toBeInTheDocument(),
+    );
+    expect(within(dialog).queryByLabelText('认证')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('高级查询 Params')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('Headers')).not.toBeInTheDocument();
+    expect(within(dialog).getByText('内部数据源用于读取 AI Brain 内部业务数据。')).toBeInTheDocument();
+    expect(within(dialog).getByText('用户洞察数据')).toBeInTheDocument();
+    expect(within(dialog).getByText('需求数据')).toBeInTheDocument();
+    expect(within(dialog).getByText('产品数据')).toBeInTheDocument();
+    expect(within(dialog).getByText('Bug 数据')).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '内部数据源连接' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() =>
+      expect(connectionBodies.at(-1)).toEqual(
+        expect.objectContaining({
+          auth_config: {},
+          auth_type: 'none',
+          endpoint_url: 'internal://e-ai-brain/business-data',
+          name: '内部数据源连接',
+          plugin_id: 'plugin_standard_internal_data_source',
+          request_config: {
+            query: {
+              field_mode: 'summary',
+              limit: 100,
+              product_scope: 'current_user_scope',
+              source_types: ['user_insights', 'requirements', 'products', 'bugs'],
+              window_end: '{{now}}',
+              window_start: '{{current_date-30}}',
+            },
+          },
+        }),
+      ),
+    );
   });
 
   it('can edit existing connections', async () => {

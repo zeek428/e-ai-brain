@@ -14,6 +14,7 @@ from app.services.ai_executor_runners import (
     list_ai_executor_tasks_response,
 )
 from app.services.plugin_result_mapping import records_imported_from_mapping
+from app.services.internal_data_sources import read_internal_data_source
 from app.services.plugins import (
     list_plugin_actions_response,
     list_plugin_connections_response,
@@ -430,7 +431,14 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert marketplace.status_code == 200
     items = marketplace.json()["data"]["items"]
     by_code = {item["code"]: item for item in items}
-    assert set(by_code) == {"ai_executor", "email", "github", "gitlab", "observability"}
+    assert set(by_code) == {
+        "ai_executor",
+        "email",
+        "github",
+        "gitlab",
+        "internal_data_source",
+        "observability",
+    }
     assert by_code["ai_executor"]["installed"] is True
     assert by_code["ai_executor"]["is_system"] is True
     assert by_code["ai_executor"]["latest_template_version"] == "v1"
@@ -523,6 +531,22 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert observability_defaults["request_config"]["query"]["window_minutes"] == 30
     assert by_code["github"]["connection_count"] == 0
     assert by_code["github"]["action_count"] == 0
+    internal_item = by_code["internal_data_source"]
+    assert internal_item["plugin_id"] == "plugin_standard_internal_data_source"
+    assert internal_item["protocol"] == "internal_read_model"
+    assert internal_item["connection_defaults"]["endpoint_url"] == (
+        "internal://e-ai-brain/business-data"
+    )
+    internal_source_field = internal_item["connection_schema"]["sections"][0]["fields"][0]
+    assert internal_source_field["key"] == "source_types"
+    assert internal_source_field["type"] == "multi_select"
+    assert internal_source_field["options"] == [
+        {"label": "用户洞察数据", "value": "user_insights"},
+        {"label": "需求数据", "value": "requirements"},
+        {"label": "产品数据", "value": "products"},
+        {"label": "Bug 数据", "value": "bugs"},
+    ]
+    assert "读取内部业务数据" in internal_item["action_templates"]
 
     missing_github_token = client.post(
         "/api/system/plugin-connections",
@@ -602,10 +626,17 @@ def test_plugin_action_templates_are_structured_for_dynamic_forms():
         "email_notification",
         "email_receive",
         "github_code_inspection",
+        "internal_business_data_query",
         "gitlab_code_inspection",
         "observability_online_log_metrics",
     }
     assert "maxcompute_weekly_feedback" not in by_code
+    internal_template = by_code["internal_business_data_query"]
+    assert internal_template["plugin_code"] == "internal_data_source"
+    assert internal_template["action_type"] == "internal_query"
+    assert internal_template["request_config"] == {
+        "tool_name": "internal_data_source.query",
+    }
     ai_command_template = by_code["ai_executor_command"]
     assert ai_command_template["template_version"] == "v1"
     assert ai_command_template["plugin_code"] == "ai_executor"
@@ -653,6 +684,173 @@ def test_plugin_action_templates_are_structured_for_dynamic_forms():
     assert email_receive_template["request_config"]["path"] == "/messages/search"
     assert email_receive_template["request_config"]["query"]["folder"] == "{{mailbox_folder}}"
     assert email_receive_template["request_config"]["query"]["since"] == "{{poll_since}}"
+
+
+def test_internal_data_source_connection_and_action_read_business_data():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    client.get("/api/system/plugin-marketplace", headers=admin_headers)
+    store = app.state.store
+    store.products["product_sql"] = {
+        "code": "AI-BRAIN",
+        "id": "product_sql",
+        "name": "AI Brain",
+        "owner_team": "平台研发",
+        "status": "active",
+    }
+    store.requirements["requirement_sql"] = {
+        "created_at": "2026-06-10T00:00:00+00:00",
+        "id": "requirement_sql",
+        "priority": "P0",
+        "product_id": "product_sql",
+        "source": "user_feedback",
+        "status": "planned",
+        "title": "提升用户洞察抽取质量",
+    }
+    store.bugs["bug_sql"] = {
+        "created_at": "2026-06-11T00:00:00+00:00",
+        "id": "bug_sql",
+        "product_id": "product_sql",
+        "severity": "critical",
+        "source": "manual_test",
+        "status": "open",
+        "title": "洞察同步失败",
+    }
+    store.user_feedback["feedback_sql"] = {
+        "content": "每周洞察需要自动聚合需求和缺陷风险。",
+        "created_at": "2026-06-12T00:00:00+00:00",
+        "feedback_type": "需求建议",
+        "id": "feedback_sql",
+        "product_id": "product_sql",
+        "status": "new",
+        "user_id": "user_001",
+    }
+
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {},
+            "auth_type": "none",
+            "endpoint_url": "",
+            "environment": "prod",
+            "name": "内部业务数据连接",
+            "plugin_id": "plugin_standard_internal_data_source",
+            "request_config": {
+                "query": {
+                    "field_mode": "summary",
+                    "limit": 50,
+                    "source_types": ["user_insights", "requirements", "products", "bugs"],
+                    "window_end": "20260630",
+                    "window_start": "20260601",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    )
+    assert connection.status_code == 200, connection.text
+    connection_data = connection.json()["data"]
+    assert connection_data["endpoint_url"] == "internal://e-ai-brain/business-data"
+
+    test_response = client.post(
+        f"/api/system/plugin-connections/{connection_data['id']}/test",
+        headers=admin_headers,
+    )
+    assert test_response.status_code == 200, test_response.text
+    test_data = test_response.json()["data"]
+    assert test_data["status"] == "succeeded"
+    assert test_data["request_summary"]["method"] == "INTERNAL_READ"
+    assert test_data["request_summary"]["internal_preview"]["source_types"] == [
+        "user_insights",
+        "requirements",
+        "products",
+        "bugs",
+    ]
+    assert test_data["response_summary"]["json"]["source_counts"] == {
+        "bugs": 1,
+        "products": 1,
+        "requirements": 1,
+        "user_insights": 1,
+    }
+    assert test_data["action_template_draft"]["action_type"] == "internal_query"
+
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "internal_query",
+            "code": "query_internal_business_data",
+            "connection_id": connection_data["id"],
+            "name": "读取内部业务数据",
+            "plugin_id": "plugin_standard_internal_data_source",
+            "request_config": {"tool_name": "internal_data_source.query"},
+            "result_mapping": {"records_imported_path": "$.json.row_count"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    )
+    assert action.status_code == 200, action.text
+    action_data = action.json()["data"]
+
+    invocation = client.post(
+        f"/api/system/plugin-actions/{action_data['id']}/invoke",
+        json={"input_payload": {"source_types": ["requirements"], "timezone": "UTC"}},
+        headers=admin_headers,
+    )
+    assert invocation.status_code == 200, invocation.text
+    invocation_data = invocation.json()["data"]
+    assert invocation_data["status"] == "succeeded"
+    assert invocation_data["response_summary"]["json"]["source_counts"] == {
+        "requirements": 1,
+    }
+    assert invocation_data["request_summary"]["request_preview"]["method"] == "INTERNAL_READ"
+
+
+def test_internal_data_source_respects_product_scope_for_multi_source_reads():
+    app.state.store.reset()
+    store = app.state.store
+    store.products["product_sql"] = {
+        "code": "VISIBLE",
+        "id": "product_sql",
+        "name": "可见产品",
+        "status": "active",
+    }
+    store.products["product_hidden"] = {
+        "code": "HIDDEN",
+        "id": "product_hidden",
+        "name": "不可见产品",
+        "status": "active",
+    }
+    store.requirements["requirement_visible"] = {
+        "created_at": "2026-06-10T00:00:00+00:00",
+        "id": "requirement_visible",
+        "product_id": "product_sql",
+        "source": "user_feedback",
+        "status": "planned",
+        "title": "可见需求",
+    }
+    store.requirements["requirement_hidden"] = {
+        "created_at": "2026-06-10T00:00:00+00:00",
+        "id": "requirement_hidden",
+        "product_id": "product_hidden",
+        "source": "user_feedback",
+        "status": "planned",
+        "title": "不可见需求",
+    }
+    result = read_internal_data_source(
+        current_store=store,
+        input_payload={},
+        request_config={
+            "query": {
+                "limit": 20,
+                "source_types": ["products", "requirements"],
+            },
+        },
+        user=SCOPED_PLUGIN_MANAGER_USER,
+    )
+    assert [row["id"] for row in result["datasets"]["products"]] == ["product_sql"]
+    assert [row["id"] for row in result["datasets"]["requirements"]] == [
+        "requirement_visible",
+    ]
 
 def test_plugin_request_config_replaces_path_templates_from_connection_params():
     connection = {

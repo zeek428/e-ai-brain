@@ -60,6 +60,19 @@ class ConnectionDiagnosticsService:
         plugin: dict[str, Any],
         request_summary: dict[str, Any],
     ) -> dict[str, Any]:
+        if plugin.get("protocol") == "internal_read_model":
+            return {
+                "action_type": "internal_query",
+                "code": "query_internal_business_data",
+                "connection_id": connection["id"],
+                "description": "由内部数据源连接测试生成，运行时按连接配置只读读取内部业务数据。",
+                "name": f"{connection['name']} 读取内部业务数据",
+                "plugin_id": plugin["id"],
+                "request_config": {"tool_name": "internal_data_source.query"},
+                "requires_human_review": False,
+                "result_mapping": result_write_target_default_mapping("scheduled_job_result"),
+                "status": "draft",
+            }
         original_request_config = (
             request_summary.get("original_request_config")
             if isinstance(request_summary.get("original_request_config"), dict)

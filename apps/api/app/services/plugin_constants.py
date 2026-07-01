@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-PLUGIN_PROTOCOLS = {"http", "mcp_http", "mcp_stdio", "runner_polling", "runner_websocket"}
+PLUGIN_PROTOCOLS = {
+    "http",
+    "internal_read_model",
+    "mcp_http",
+    "mcp_stdio",
+    "runner_polling",
+    "runner_websocket",
+}
 PLUGIN_CATEGORIES = {
     "ai_service",
     "business_system",
@@ -14,7 +21,7 @@ PLUGIN_CATEGORIES = {
 }
 PLUGIN_STATUSES = {"active", "disabled", "draft"}
 PLUGIN_AUTH_TYPES = {"none", "bearer", "api_key_header", "basic"}
-PLUGIN_ACTION_TYPES = {"http_request", "mcp_tool"}
+PLUGIN_ACTION_TYPES = {"http_request", "internal_query", "mcp_tool"}
 PLUGIN_CONNECTION_ENVIRONMENTS = {"default", "dev", "test", "staging", "prod", "sandbox"}
 PLUGIN_INVOCATION_STATUSES = {"failed", "succeeded"}
 AI_EXECUTOR_RUNNER_PROTOCOLS = {"runner_polling", "runner_websocket"}

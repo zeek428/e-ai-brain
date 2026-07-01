@@ -77,6 +77,20 @@ STANDARD_PLUGINS = [
         "risk_level": "medium",
         "status": "active",
     },
+    {
+        "category": "business_system",
+        "code": "internal_data_source",
+        "description": (
+            "官方标准内部数据源插件，只读访问 AI Brain 内部业务数据，支持用户洞察、"
+            "需求、产品和 Bug 数据作为定时作业输入。"
+        ),
+        "id": "plugin_standard_internal_data_source",
+        "is_system": True,
+        "name": "内部数据源",
+        "protocol": "internal_read_model",
+        "risk_level": "low",
+        "status": "active",
+    },
 ]
 
 STANDARD_PLUGIN_IDS_BY_CODE = {
@@ -115,6 +129,17 @@ STANDARD_PLUGIN_MARKETPLACE_METADATA = {
         "publisher": "AI Brain 官方",
         "recommended_scenarios": ["代码仓库质量巡检", "安全告警同步", "PR 上下文读取"],
         "summary": "连接 GitHub API，读取仓库、分支、PR、代码扫描和质量数据。",
+    },
+    "internal_data_source": {
+        "action_templates": ["读取内部业务数据"],
+        "publisher": "AI Brain 官方",
+        "recommended_scenarios": [
+            "每周内部业务洞察",
+            "需求与 Bug 风险分析",
+            "用户洞察转需求",
+            "产品反馈趋势分析",
+        ],
+        "summary": "只读读取 AI Brain 内部业务数据，作为定时作业和 AI 处理的数据输入。",
     },
     "gitlab": {
         "action_templates": ["GitLab 代码巡检", "GitLab MR / 项目读取"],
@@ -210,6 +235,31 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
             "query": {
                 "owner": "",
                 "repo": "",
+            },
+        },
+        "status": "active",
+        "timeout_seconds": 30,
+    },
+    "internal_data_source": {
+        "auth_config": {},
+        "auth_type": "none",
+        "endpoint_url": "internal://e-ai-brain/business-data",
+        "environment": "prod",
+        "max_retries": 0,
+        "name": "内部业务数据连接",
+        "request_config": {
+            "query": {
+                "field_mode": "summary",
+                "limit": 100,
+                "product_scope": "current_user_scope",
+                "source_types": [
+                    "user_insights",
+                    "requirements",
+                    "products",
+                    "bugs",
+                ],
+                "window_end": "{{now}}",
+                "window_start": "{{current_date-30}}",
             },
         },
         "status": "active",
@@ -440,6 +490,103 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
             },
         ],
     },
+    "internal_data_source": {
+        "schema_version": "v1",
+        "sections": [
+            {
+                "key": "sources",
+                "title": "源数据选择",
+                "fields": [
+                    {
+                        "description": "可多选，运行时按数据源分别读取并合并为结构化输入。",
+                        "key": "source_types",
+                        "label": "源数据",
+                        "options": [
+                            {"label": "用户洞察数据", "value": "user_insights"},
+                            {"label": "需求数据", "value": "requirements"},
+                            {"label": "产品数据", "value": "products"},
+                            {"label": "Bug 数据", "value": "bugs"},
+                        ],
+                        "path": "request_config.query.source_types",
+                        "required": True,
+                        "type": "multi_select",
+                    },
+                    {
+                        "description": "summary 只返回常用字段，detail 返回更完整的业务字段。",
+                        "key": "field_mode",
+                        "label": "字段模式",
+                        "options": [
+                            {"label": "摘要字段", "value": "summary"},
+                            {"label": "完整字段", "value": "detail"},
+                        ],
+                        "path": "request_config.query.field_mode",
+                        "required": True,
+                        "type": "select",
+                    },
+                    {
+                        "description": "每类源数据最多返回条数。",
+                        "key": "limit",
+                        "label": "每类最大行数",
+                        "path": "request_config.query.limit",
+                        "required": True,
+                        "type": "number",
+                    },
+                    {
+                        "description": "默认按当前用户可访问产品范围过滤。",
+                        "key": "product_scope",
+                        "label": "产品范围",
+                        "options": [
+                            {"label": "当前用户可访问产品", "value": "current_user_scope"},
+                            {"label": "全部可访问数据", "value": "all_accessible"},
+                        ],
+                        "path": "request_config.query.product_scope",
+                        "required": True,
+                        "type": "select",
+                    },
+                ],
+            },
+            {
+                "key": "filters",
+                "title": "过滤条件",
+                "fields": [
+                    {
+                        "description": "支持系统变量，例如 {{current_date-7}}。",
+                        "key": "window_start",
+                        "label": "开始时间",
+                        "path": "request_config.query.window_start",
+                        "required": False,
+                        "supports_system_variables": True,
+                        "type": "text",
+                    },
+                    {
+                        "description": "支持系统变量，例如 {{now}}。",
+                        "key": "window_end",
+                        "label": "结束时间",
+                        "path": "request_config.query.window_end",
+                        "required": False,
+                        "supports_system_variables": True,
+                        "type": "text",
+                    },
+                    {
+                        "description": "选填，限制读取某一个产品。",
+                        "key": "product_id",
+                        "label": "产品 ID",
+                        "path": "request_config.query.product_id",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "description": "选填，按业务状态过滤。",
+                        "key": "status",
+                        "label": "状态",
+                        "path": "request_config.query.status",
+                        "required": False,
+                        "type": "text",
+                    },
+                ],
+            },
+        ],
+    },
 }
 
 STANDARD_PLUGIN_ACTION_TEMPLATES = [
@@ -626,12 +773,28 @@ STANDARD_PLUGIN_ACTION_TEMPLATES = [
         },
         "template_version": "v1",
     },
+    {
+        "action_type": "internal_query",
+        "code": "internal_business_data_query",
+        "default_code": "query_internal_business_data",
+        "default_name": "读取内部业务数据",
+        "description": "只读读取 AI Brain 内部用户洞察、需求、产品和 Bug 数据，作为定时作业 AI 处理输入。",
+        "form_defaults": {},
+        "name": "读取内部业务数据",
+        "plugin_code": "internal_data_source",
+        "request_config": {
+            "tool_name": "internal_data_source.query",
+        },
+        "result_mapping": result_write_target_default_mapping("scheduled_job_result"),
+        "template_version": "v1",
+    },
 ]
 
 DEFAULT_ACTION_TEMPLATE_BY_PLUGIN_CODE = {
     "ai_executor": "ai_executor_command",
     "email": "email_notification",
     "github": "github_code_inspection",
+    "internal_data_source": "internal_business_data_query",
     "gitlab": "gitlab_code_inspection",
     "observability": "observability_online_log_metrics",
 }

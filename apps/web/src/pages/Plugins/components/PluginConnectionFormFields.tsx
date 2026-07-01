@@ -131,6 +131,14 @@ export function ConnectionSchemaFields({
           type="info"
         />
       ) : null}
+      {pluginCode === 'internal_data_source' ? (
+        <Alert
+          description="该连接不需要 Endpoint、认证、Params 或 Headers；只需选择要读取的内部业务数据源，运行时会按用户产品范围只读查询。"
+          showIcon
+          title="内部数据源用于读取 AI Brain 内部业务数据。"
+          type="info"
+        />
+      ) : null}
       {sections.map((section) => (
         <Space key={section.key} orientation="vertical" size={8} style={{ width: '100%' }}>
           <div style={{ color: '#53627a', fontWeight: 600 }}>{section.title}</div>
@@ -159,7 +167,14 @@ export function ConnectionSchemaFields({
               ];
               const fieldName = ['schema_values', field.key];
               const schemaOptions = normalizeSchemaOptions(field);
-              const control = field.type === 'select' && schemaOptions.length > 0 ? (
+              const control = field.type === 'multi_select' && schemaOptions.length > 0 ? (
+                <Select
+                  mode="multiple"
+                  options={schemaOptions}
+                  placeholder={field.placeholder || field.label}
+                  style={{ minWidth: 320 }}
+                />
+              ) : field.type === 'select' && schemaOptions.length > 0 ? (
                 <Select
                   allowClear={!field.required}
                   options={schemaOptions}

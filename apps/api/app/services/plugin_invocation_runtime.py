@@ -27,6 +27,11 @@ from app.services.model_gateway import (
     call_model_gateway_for_task,
     save_model_gateway_records,
 )
+from app.services.internal_data_sources import (
+    INTERNAL_DATA_SOURCE_PROTOCOL,
+    internal_data_source_request_preview,
+    read_internal_data_source,
+)
 from app.services.plugin_constants import AI_EXECUTOR_RUNNER_PROTOCOLS
 from app.services.plugin_store_helpers import _set_header, ensure_non_blank
 
@@ -460,7 +465,27 @@ def _invoke_action(
     connection: dict[str, Any],
     action: dict[str, Any],
     input_payload: dict[str, Any],
+    *,
+    current_store: Any | None = None,
+    user: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if plugin["protocol"] == INTERNAL_DATA_SOURCE_PROTOCOL:
+        if current_store is None or user is None:
+            raise api_error(
+                400,
+                "INTERNAL_DATA_SOURCE_CONTEXT_REQUIRED",
+                "Internal data source invocation requires store and user context",
+            )
+        request_config = resolve_plugin_request_config(connection, action, input_payload)
+        return {
+            "json": read_internal_data_source(
+                current_store=current_store,
+                input_payload=input_payload,
+                request_config=request_config,
+                user=user,
+            ),
+            "mocked": False,
+        }
     if plugin["protocol"] == "mcp_stdio":
         raise api_error(
             400,
@@ -533,6 +558,12 @@ def plugin_action_request_preview(
             "tool_name": request_config.get("tool_name"),
             "url": _url_with_query(endpoint_url, query),
         }
+    if plugin["protocol"] == INTERNAL_DATA_SOURCE_PROTOCOL:
+        return internal_data_source_request_preview(
+            connection=connection,
+            input_payload=input_payload,
+            request_config=request_config,
+        )
     method = str(request_config.get("method") or "GET").upper()
     path = str(request_config.get("path") or "")
     url = urljoin(str(connection.get("endpoint_url", "")).rstrip("/") + "/", path.lstrip("/"))

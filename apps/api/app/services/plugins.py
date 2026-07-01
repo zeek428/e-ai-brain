@@ -13,6 +13,11 @@ from app.api.deps import api_error
 from app.core.listing import add_list_observability, sort_list_items
 from app.services.connection_diagnostics import ConnectionDiagnosticsService
 from app.services.dynamic_parameters import dynamic_parameter_preview
+from app.services.internal_data_sources import (
+    INTERNAL_DATA_SOURCE_PROTOCOL,
+    internal_data_source_request_preview,
+    read_internal_data_source,
+)
 from app.services.model_gateway import (  # noqa: F401 - re-exported for service tests/imports.
     call_model_gateway_for_task,
 )
@@ -629,7 +634,12 @@ def create_plugin_connection_response(
     )
     now = datetime.now(UTC).isoformat()
     connection_id = current_store.new_id("plugin_connection")
-    endpoint_url = ensure_non_blank(payload.endpoint_url, "endpoint_url")
+    endpoint_url = (
+        "internal://e-ai-brain/business-data"
+        if plugin.get("protocol") == INTERNAL_DATA_SOURCE_PROTOCOL
+        and not str(payload.endpoint_url or "").strip()
+        else ensure_non_blank(payload.endpoint_url, "endpoint_url")
+    )
     request_config = normalize_github_connection_request_config(payload.request_config, plugin)
     endpoint_url, request_config = normalize_gitlab_connection_config(
         endpoint_url=endpoint_url,
@@ -693,9 +703,17 @@ def patch_plugin_connection_response(
         ensure_enum(updates["environment"], PLUGIN_CONNECTION_ENVIRONMENTS, "environment")
     if "status" in updates:
         ensure_enum(updates["status"], PLUGIN_STATUSES, "status")
-    for key in ("endpoint_url", "environment", "name"):
+    next_plugin_record = ensure_active_plugin(current_store, str(next_plugin))
+    for key in ("environment", "name"):
         if key in updates:
             updates[key] = ensure_non_blank(updates[key], key)
+    if "endpoint_url" in updates:
+        updates["endpoint_url"] = (
+            "internal://e-ai-brain/business-data"
+            if next_plugin_record.get("protocol") == INTERNAL_DATA_SOURCE_PROTOCOL
+            and not str(updates["endpoint_url"] or "").strip()
+            else ensure_non_blank(updates["endpoint_url"], "endpoint_url")
+        )
     if "auth_config" in updates:
         updates["auth_config"] = merge_masked_config(
             connection.get("auth_config") or {},
@@ -707,7 +725,7 @@ def patch_plugin_connection_response(
             updates["request_config"] or {},
         )
     connection = {**connection, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    plugin = ensure_active_plugin(current_store, str(next_plugin))
+    plugin = next_plugin_record
     connection["request_config"] = normalize_github_connection_request_config(
         connection.get("request_config") or {},
         plugin,
@@ -717,7 +735,12 @@ def patch_plugin_connection_response(
         request_config=connection["request_config"],
         plugin=plugin,
     )
-    connection["endpoint_url"] = ensure_non_blank(endpoint_url, "endpoint_url")
+    connection["endpoint_url"] = (
+        "internal://e-ai-brain/business-data"
+        if plugin.get("protocol") == INTERNAL_DATA_SOURCE_PROTOCOL
+        and not str(endpoint_url or "").strip()
+        else ensure_non_blank(endpoint_url, "endpoint_url")
+    )
     connection["request_config"] = request_config
     ensure_plugin_connection_auth_requirements(
         auth_config=connection.get("auth_config") or {},
@@ -822,7 +845,13 @@ def test_plugin_connection_response(
         now=resolution_now,
     )
     request_query = _dict_config_section(request_config.get("query"))
-    request_method = "POST" if plugin.get("protocol") == "mcp_http" else "GET"
+    request_method = (
+        "INTERNAL_READ"
+        if plugin.get("protocol") == INTERNAL_DATA_SOURCE_PROTOCOL
+        else "POST"
+        if plugin.get("protocol") == "mcp_http"
+        else "GET"
+    )
     request_url = _url_with_query(str(connection.get("endpoint_url") or ""), request_query)
     request_body: dict[str, Any] | None = None
     request_headers, header_sources = _build_headers_with_sources(
@@ -859,6 +888,26 @@ def test_plugin_connection_response(
                     "network_request",
                     detail="使用 mock_test_response，未发起真实网络请求",
                     status="mocked",
+                ),
+            )
+        elif plugin.get("protocol") == INTERNAL_DATA_SOURCE_PROTOCOL:
+            step_start = perf_counter()
+            internal_result = read_internal_data_source(
+                current_store=current_store,
+                input_payload={},
+                request_config=request_config,
+                user=user,
+            )
+            response_summary = {"json": internal_result, "mocked": False}
+            diagnostics.append(
+                ConnectionDiagnosticsService.diagnostic_step(
+                    "internal_read_model",
+                    detail=(
+                        f"读取 {len(internal_result['source_types'])} 类源数据，"
+                        f"共 {internal_result['total_rows']} 行"
+                    ),
+                    latency_ms=int((perf_counter() - step_start) * 1000),
+                    status="succeeded",
                 ),
             )
         elif plugin.get("protocol") == "mcp_stdio":
@@ -960,6 +1009,12 @@ def test_plugin_connection_response(
         "variable_resolution_timezone": variable_timezone,
         "variable_resolutions": variable_resolutions,
     }
+    if plugin.get("protocol") == INTERNAL_DATA_SOURCE_PROTOCOL:
+        request_summary["internal_preview"] = internal_data_source_request_preview(
+            connection=connection,
+            input_payload={},
+            request_config=request_config,
+        )
     request_summary["curl_command"] = (
         ConnectionDiagnosticsService.curl_command_from_request_summary(request_summary)
     )
@@ -1395,7 +1450,14 @@ def trial_plugin_action_response(
     status = "succeeded"
     request_preview = plugin_action_request_preview(plugin, connection, action, payload)
     try:
-        response_summary = _invoke_action(plugin, connection, action, payload)
+        response_summary = _invoke_action(
+            plugin,
+            connection,
+            action,
+            payload,
+            current_store=current_store,
+            user=user,
+        )
     except Exception as exc:
         status = "failed"
         error_code = exc.__class__.__name__
@@ -1503,7 +1565,14 @@ def invoke_plugin_action_response(
                 user=user,
             )
         else:
-            response_summary = _invoke_action(plugin, connection, action, input_payload or {})
+            response_summary = _invoke_action(
+                plugin,
+                connection,
+                action,
+                input_payload or {},
+                current_store=current_store,
+                user=user,
+            )
     except Exception as exc:
         status = "failed"
         error_code = exc.__class__.__name__

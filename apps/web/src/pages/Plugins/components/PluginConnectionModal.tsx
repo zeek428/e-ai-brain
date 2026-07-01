@@ -102,6 +102,7 @@ export function PluginConnectionModal({
   schema,
   systemVariableOptions,
 }: PluginConnectionModalProps) {
+  const isInternalDataSourceConnection = pluginCode === 'internal_data_source';
   return (
     <Modal
       footer={[
@@ -152,23 +153,35 @@ export function PluginConnectionModal({
         <Form.Item label="名称" name="name" rules={[{ required: true }]}>
           <Input />
         </Form.Item>
-        <Form.Item label="Endpoint URL" name="endpoint_url" rules={[{ required: true }]}>
-          <Input />
-        </Form.Item>
+        {!isInternalDataSourceConnection ? (
+          <Form.Item label="Endpoint URL" name="endpoint_url" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+        ) : (
+          <Form.Item hidden name="endpoint_url">
+            <Input type="hidden" />
+          </Form.Item>
+        )}
         <Form.Item hidden name="environment">
           <Input type="hidden" />
         </Form.Item>
-        <Form.Item label="认证" name="auth_type">
-          <Select
-            options={[
-              { label: 'none', value: 'none' },
-              { label: 'bearer', value: 'bearer' },
-              { label: 'api_key_header', value: 'api_key_header' },
-              { label: 'basic', value: 'basic' },
-            ]}
-          />
-        </Form.Item>
-        {!advancedAuthJsonOpen && authType === 'api_key_header' ? (
+        {!isInternalDataSourceConnection ? (
+          <Form.Item label="认证" name="auth_type">
+            <Select
+              options={[
+                { label: 'none', value: 'none' },
+                { label: 'bearer', value: 'bearer' },
+                { label: 'api_key_header', value: 'api_key_header' },
+                { label: 'basic', value: 'basic' },
+              ]}
+            />
+          </Form.Item>
+        ) : (
+          <Form.Item hidden name="auth_type">
+            <Input type="hidden" />
+          </Form.Item>
+        )}
+        {!isInternalDataSourceConnection && !advancedAuthJsonOpen && authType === 'api_key_header' ? (
           <Space wrap>
             <Form.Item label="Header 名" name="header_name">
               <Input placeholder="Authorization" />
@@ -178,7 +191,7 @@ export function PluginConnectionModal({
             </Form.Item>
           </Space>
         ) : null}
-        {!advancedAuthJsonOpen && authType === 'bearer' ? (
+        {!isInternalDataSourceConnection && !advancedAuthJsonOpen && authType === 'bearer' ? (
           <Form.Item
             extra={
               isGithubConnection
@@ -196,7 +209,7 @@ export function PluginConnectionModal({
             <Input placeholder="ghp_xxx / vault/github/token / env:GITHUB_TOKEN" />
           </Form.Item>
         ) : null}
-        {!advancedAuthJsonOpen && authType === 'basic' ? (
+        {!isInternalDataSourceConnection && !advancedAuthJsonOpen && authType === 'basic' ? (
           <Space wrap>
             <Form.Item label="用户名引用" name="username_ref">
               <Input placeholder="vault/path/to/username" />
@@ -206,10 +219,12 @@ export function PluginConnectionModal({
             </Form.Item>
           </Space>
         ) : null}
-        <Button onClick={onToggleAdvancedAuthJson} type="link">
-          高级认证 JSON 修改
-        </Button>
-        {advancedAuthJsonOpen ? (
+        {!isInternalDataSourceConnection ? (
+          <Button onClick={onToggleAdvancedAuthJson} type="link">
+            高级认证 JSON 修改
+          </Button>
+        ) : null}
+        {!isInternalDataSourceConnection && advancedAuthJsonOpen ? (
           <>
             <Space style={{ marginBottom: 8 }}>
               <Button onClick={onSyncAuthJsonFromVisual}>同步可视化到 JSON</Button>
@@ -228,22 +243,26 @@ export function PluginConnectionModal({
           schema={schema}
           systemVariableOptions={systemVariableOptions}
         />
-        <RequestParameterRows
-          addText="添加 Params"
-          name="connection_param_rows"
-          namePlaceholder="参数名"
-          systemVariableOptions={systemVariableOptions}
-          title="高级查询 Params"
-          valuePlaceholder="参数值"
-        />
-        <RequestParameterRows
-          addText="添加 Headers"
-          name="connection_header_rows"
-          namePlaceholder="Header 名"
-          systemVariableOptions={systemVariableOptions}
-          title="Headers"
-          valuePlaceholder="Header 值"
-        />
+        {!isInternalDataSourceConnection ? (
+          <>
+            <RequestParameterRows
+              addText="添加 Params"
+              name="connection_param_rows"
+              namePlaceholder="参数名"
+              systemVariableOptions={systemVariableOptions}
+              title="高级查询 Params"
+              valuePlaceholder="参数值"
+            />
+            <RequestParameterRows
+              addText="添加 Headers"
+              name="connection_header_rows"
+              namePlaceholder="Header 名"
+              systemVariableOptions={systemVariableOptions}
+              title="Headers"
+              valuePlaceholder="Header 值"
+            />
+          </>
+        ) : null}
         <Button onClick={onToggleAdvancedRequestJson} type="link">
           高级请求 JSON 修改
         </Button>

@@ -767,7 +767,7 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     response = client.get("/api/system/scheduled-job-templates", headers=admin_headers)
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["total"] == 6
+    assert data["total"] == 10
     by_code = {item["code"]: item for item in data["items"]}
 
     weekly = by_code["weekly_feedback_insight"]
@@ -835,6 +835,28 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     assert ai_executor["resource_selectors"]["plugin_action"]["code_candidates"] == [
         "run_ai_executor_instruction",
     ]
+
+    internal_weekly = by_code["internal_business_weekly_insight"]
+    assert internal_weekly["payload_defaults"]["job_type"] == "plugin_action_invoke"
+    assert internal_weekly["payload_defaults"]["source_system"] == "internal_data_source"
+    assert internal_weekly["payload_defaults"]["plugin_input_mapping"]["source_types"] == [
+        "user_insights",
+        "requirements",
+        "products",
+        "bugs",
+    ]
+    assert internal_weekly["resource_selectors"]["plugin_action"]["code_candidates"] == [
+        "query_internal_business_data",
+    ]
+    assert by_code["requirement_bug_risk_analysis"]["payload_defaults"][
+        "plugin_input_mapping"
+    ]["source_types"] == ["requirements", "bugs"]
+    assert by_code["user_insight_requirement_mining"]["payload_defaults"][
+        "plugin_input_mapping"
+    ]["source_types"] == ["user_insights", "requirements"]
+    assert by_code["product_feedback_trend_analysis"]["payload_defaults"][
+        "plugin_input_mapping"
+    ]["source_types"] == ["products", "user_insights", "bugs"]
 
 
 def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
