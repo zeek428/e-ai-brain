@@ -11,7 +11,14 @@ CREATE TABLE IF NOT EXISTS integration_plugins (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT ck_integration_plugins_protocol CHECK (
-    protocol IN ('http', 'mcp_http', 'mcp_stdio', 'runner_polling', 'runner_websocket')
+    protocol IN (
+      'http',
+      'internal_read_model',
+      'mcp_http',
+      'mcp_stdio',
+      'runner_polling',
+      'runner_websocket'
+    )
   ),
   CONSTRAINT ck_integration_plugins_status CHECK (status IN ('active', 'disabled', 'draft'))
 );

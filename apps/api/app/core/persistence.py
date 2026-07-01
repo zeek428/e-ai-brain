@@ -242,6 +242,14 @@ class PostgresSnapshotRepository:
                     cursor,
                     "073_code_inspection_risk_acceptance_expiry.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "074_internal_data_source_plugin.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "075_internal_data_source_detail_permission.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

@@ -2458,6 +2458,9 @@ describe('PluginsPage', () => {
     expect(within(dialog).queryByText('高级查询 Params')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('Headers')).not.toBeInTheDocument();
     expect(within(dialog).getByText('内部数据源用于读取 AI Brain 内部业务数据。')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/常用按源过滤可直接在下方表单选择/),
+    ).toBeInTheDocument();
     expect(within(dialog).getByText('用户洞察数据')).toBeInTheDocument();
     expect(within(dialog).getByText('需求数据')).toBeInTheDocument();
     expect(within(dialog).getByText('产品数据')).toBeInTheDocument();

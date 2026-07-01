@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.store import MemoryStore
 from app.main import app
+from app.services.plugin_constants import PLUGIN_PROTOCOLS
 from app.services.platform_status import runtime_data_access_mode, tcp_endpoint_from_url
 from app.services.task_workflow_context import task_workflow_read_store, task_workflow_source_store
 
@@ -526,6 +527,23 @@ def test_migrations_define_db_first_id_counters():
     assert "CREATE TABLE IF NOT EXISTS id_counters" in migrations
     assert "prefix text PRIMARY KEY" in migrations
     assert "next_value integer NOT NULL DEFAULT 1" in migrations
+
+
+def test_integration_plugin_protocol_constraints_cover_supported_protocols():
+    missing_by_migration: list[str] = []
+    for migration_path in sorted(Path("app/db/migrations").glob("*.sql")):
+        migration = migration_path.read_text()
+        if "ck_integration_plugins_protocol" not in migration:
+            continue
+        for protocol in sorted(PLUGIN_PROTOCOLS):
+            if f"'{protocol}'" not in migration:
+                missing_by_migration.append(f"{migration_path.name} missing {protocol}")
+
+    assert not missing_by_migration, (
+        "All migrations that create or rebuild ck_integration_plugins_protocol "
+        "must include every supported plugin protocol:\n"
+        + "\n".join(missing_by_migration)
+    )
 
 
 def test_postgres_repository_patches_additive_schema_gaps_for_existing_volumes():

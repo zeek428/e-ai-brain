@@ -6,7 +6,14 @@ ALTER TABLE IF EXISTS integration_plugins
 
 ALTER TABLE IF EXISTS integration_plugins
   ADD CONSTRAINT ck_integration_plugins_protocol CHECK (
-    protocol IN ('http', 'mcp_http', 'mcp_stdio', 'runner_polling', 'runner_websocket')
+    protocol IN (
+      'http',
+      'internal_read_model',
+      'mcp_http',
+      'mcp_stdio',
+      'runner_polling',
+      'runner_websocket'
+    )
   );
 
 INSERT INTO integration_plugins (
