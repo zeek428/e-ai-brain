@@ -140,6 +140,18 @@ def scheduled_job_data_connection_policy(job: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def scheduled_job_result_action_policy(job: dict[str, Any]) -> dict[str, str]:
+    policy = scheduled_job_orchestration_config(job.get("config_json") or {}).get(
+        "result_actions",
+    )
+    if not isinstance(policy, dict):
+        return dict(DEFAULT_RESULT_ACTION_POLICY)
+    return {
+        "failure_policy": str(policy.get("failure_policy") or "continue_on_error"),
+        "mode": str(policy.get("mode") or "sequential"),
+    }
+
+
 def scheduled_job_with_multi_refs(job: dict[str, Any]) -> dict[str, Any]:
     enriched = dict(job)
     plugin_action_ids = scheduled_job_multi_ids(enriched, "plugin_action_ids", "plugin_action_id")

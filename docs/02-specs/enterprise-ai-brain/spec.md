@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.814 |
+| 功能版本 | v1.1.815 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.815 | 2026-07-02 | 用户反馈洞察定时作业补齐多结果动作失败策略落地，默认 `continue_on_error` 时失败动作记录明细并继续后续写入，`fail_fast` 保持中断语义 | Codex |
 | v1.1.814 | 2026-07-02 | 定时作业运行 Trace DAG 对 `data_connection.items[]` 和 `execution_nodes.result_actions[]` 展开明细节点，保留旧单节点运行兼容 | Codex |
 | v1.1.813 | 2026-07-02 | 定时作业 Skill 输出 Schema 契约校验与动作结果映射共用 JSONPath token 规则，dry-run 返回 `mapping_contract.checked_paths/invalid_fields` 诊断 | Codex |
 | v1.1.812 | 2026-07-02 | 插件动作和定时作业结果映射 JSONPath 子集扩展为支持 bracket key、数组下标和 `[*]` 通配，写入预览与运行记录共用同一解析口径 | Codex |
@@ -1804,6 +1805,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 - 调度 worker 每分钟或按配置 tick，查询 `enabled=true AND next_run_at <= now()` 的作业，并通过数据库行级更新设置 `lease_owner` / `lease_expires_at` 抢占执行权；锁过期后其他 worker 可接管，已创建的运行实例不得被覆盖。
 - 每次运行必须冻结 `config_snapshot`；AI 作业还必须冻结 AI角色（Agent）、Skill、模型网关、Prompt 模板、输出 Schema、工具策略和上下文范围快照，避免配置修改影响历史可追溯性。
 - `user_feedback_insight_extract` 必须绑定数据连接、AI 模型、AI角色、Skills 和写入策略。页面允许配置多个数据连接和多个写入策略，配置顺序由 `plugin_connection_ids` / `plugin_action_ids` 表达；服务端保存默认编排策略到 `config_json.orchestration`，数据连接默认 `mode=sequential/failure_policy=fail_fast/merge_strategy=append_json_arrays`，结果写入默认 `mode=sequential/failure_policy=continue_on_error`。运行顺序固定为：先按连接顺序调用同一取数动作并合并 JSON 数组/rows/items 响应，任何连接失败且策略为 `fail_fast` 时终止；若配置 `knowledge_document_ids`，再按当前用户权限获取可检索知识 chunk 并注入 Skill 输入；随后通过平台模型网关按 AI角色系统提示、Skill Prompt 和知识引用将源数据处理为结果动作需要的结构化 JSON；最后按写入策略顺序根据动作 `result_mapping.write_target` 执行业务写入，单个写入失败按策略记录并继续或终止。当写入目标为 `user_feedback_insights` 时通过用户反馈 service 写入用户洞察表，`records_imported` 记录实际写入洞察数，源表行数只进入 `result_summary.source_row_count`；当写入目标为 `scheduled_job_result` 时只保存本次运行结果，不重复写业务表。作业未配置 `plugin_output_mapping` 时复用动作 `result_mapping`。运行摘要必须通过 `result_summary.execution_nodes.data_connection.connection_count/successful_count/failed_count/items`、`result_summary.execution_nodes.skill_processing.model_gateway_called=true`、`model_log_id`、`processing_mode=model_gateway_json_transform`、`input.knowledge_references`、处理输入/输出、`execution_nodes.result_action` 兼容首个动作和 `execution_nodes.result_actions[]` 全量动作反馈如实记录链路节点；`result_summary.trace_graph` 必须把多连接 `data_connection.items[]` 展开为 `data_connection_1...n`，把多动作 `result_actions[]` 展开为 `result_action_1...n`，旧运行缺少明细数组时继续保留 `data_connection` 与 `result_action` 单节点兼容；通用结果写入记录读模型必须为 `result_actions[]` 中每个动作派生一条记录，首条保留旧 ID 兼容。
+- 多结果动作失败策略必须在运行层落地：`result_summary.result_action_policy` 记录本次运行采用的动作编排策略；默认 `failure_policy=continue_on_error` 时，单个结果动作映射或写入失败要写入 `execution_nodes.result_actions[]`、Trace DAG 和通用结果写入记录，并继续执行后续动作；配置 `failure_policy=fail_fast` 时保持失败即中断。
 - Skill 必须声明输入/输出 Schema；定时作业运行和 dry-run 在调用模型前先合并所选 Skill 的输出 Schema，并校验写入策略 `result_mapping` 引用的 JSONPath 是否能由 Schema 支撑。JSONPath 支持 `$` 根、点路径、`['key']` / `["key"]` bracket key、数组下标和 `[*]` 通配读取，Schema 契约校验、试运行、写入预览、运行记录和结果写入记录必须复用同一解析口径。dry-run 的 `stages.ai_processing.mapping_contract` 必须返回 `status`、`checked_paths[]`、`invalid_fields[]` 和合并后的 `output_schema`，便于页面提示具体不兼容字段；正式运行若契约不兼容必须在模型网关调用前失败。模型返回 JSON 后还必须校验必填输出字段，缺失时运行失败或进入待人工确认，不得把不符合契约的内容直接写入业务表。
 - 定时作业新增和编辑表单不展示连接环境筛选，数据连接下拉只显示连接名称；历史作业或运行摘要中的连接环境仅用于排障和旧客户端兼容，不参与新配置筛选或提交。
 - 前端运行详情必须先渲染三段执行链路卡片：`data_connection` 展示数据连接获取状态，`skill_processing` 展示模型是否调用、处理模式和模型日志，`result_action` 展示写入目标和写入反馈；当作业通过 AI 执行器执行时，还必须在数据连接后条件展示 `runner_execution` 节点，系统默认执行器展示 executor type、执行器实例、模型日志和结果摘要，本地 Codex/Claude/Hermes/OpenClaw Runner 继续展示任务 ID、工作区、状态、完成时间、日志条数和结果 JSON。原始 `execution_nodes`、插件快照、Skill 快照、Prompt 快照和作业配置快照继续作为高级 JSON 展示。

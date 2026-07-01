@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 from types import SimpleNamespace
 from zipfile import ZipFile
@@ -1680,6 +1681,232 @@ def test_scheduled_job_validates_skill_output_schema_before_ai_processing(monkey
     skill_node = run["result_summary"]["execution_nodes"]["skill_processing"]
     assert skill_node["status"] == "failed"
     assert "insights_path" in skill_node["error_message"]
+
+
+def test_user_feedback_job_continues_after_result_action_mapping_failure(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product = create_product(admin_headers)
+    model_gateway = create_model_gateway(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "feedback_partial_action_skill",
+            "input_schema": {"type": "object"},
+            "name": "反馈部分动作失败 Skill",
+            "output_schema": {
+                "properties": {
+                    "bad_insights": {"type": "string"},
+                    "insights": {"type": "array"},
+                },
+                "required": ["insights"],
+                "type": "object",
+            },
+            "prompt_template": "输出 insights 数组。",
+            "status": "active",
+            "version": "1.0.0",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "feedback_partial_action_agent",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "反馈部分动作失败 AI角色",
+            "status": "active",
+            "system_prompt": "分析用户反馈并输出结构化洞察。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    class FakeModelResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            content = {
+                "bad_insights": "not-a-list",
+                "insights": [
+                    {
+                        "content": "AI 提炼的可落地改进",
+                        "feedback_type": "improvement",
+                        "sentiment": "neutral",
+                        "source_channel": "weekly_ai",
+                        "tags": ["ai"],
+                    },
+                ],
+                "row_count": 1,
+            }
+            return json.dumps(
+                {
+                    "choices": [
+                        {"message": {"content": json.dumps(content, ensure_ascii=False)}},
+                    ],
+                    "usage": {"completion_tokens": 16, "prompt_tokens": 32, "total_tokens": 48},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        scheduled_job_ai_processing_service,
+        "urlopen",
+        lambda *_args, **_kwargs: FakeModelResponse(),
+    )
+
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "feedback_partial_action_reader",
+            "name": "反馈部分动作失败读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://partial-action-feedback.example.com",
+            "environment": "prod",
+            "name": "反馈部分动作失败连接",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    archive_action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "archive_partial_action_feedback",
+            "connection_id": connection["id"],
+            "name": "归档用户反馈 AI 结果",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {"row_count": 1, "rows": [{"content": "希望优化导出"}]},
+                "path": "/feedback",
+            },
+            "result_mapping": {
+                "insights_path": "$.insights",
+                "records_imported_path": "$.row_count",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    broken_action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "broken_partial_action_feedback",
+            "connection_id": connection["id"],
+            "name": "错误映射用户反馈 AI 结果",
+            "plugin_id": plugin["id"],
+            "request_config": {"method": "POST", "path": "/broken"},
+            "result_mapping": {
+                "insights_path": "$.bad_insights",
+                "records_imported_path": "$.row_count",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    write_action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "write_partial_action_feedback",
+            "connection_id": connection["id"],
+            "name": "写入用户洞察",
+            "plugin_id": plugin["id"],
+            "request_config": {"method": "POST", "path": "/insights"},
+            "result_mapping": {
+                "insights_path": "$.insights",
+                "records_imported_path": "$.row_count",
+                "write_target": "user_feedback_insights",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "agent_id": agent["id"],
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "user_feedback_insight_extract",
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "用户反馈结果动作部分失败继续执行",
+            "plugin_action_id": archive_action["id"],
+            "plugin_action_ids": [
+                archive_action["id"],
+                broken_action["id"],
+                write_action["id"],
+            ],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "schedule_type": "manual",
+            "skill_ids": [skill["id"]],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert run["status"] == "succeeded"
+    assert run["records_imported"] == 1
+    result_actions = run["result_summary"]["execution_nodes"]["result_actions"]
+    assert [action["status"] for action in result_actions] == [
+        "succeeded",
+        "failed",
+        "succeeded",
+    ]
+    assert result_actions[1]["action_id"] == broken_action["id"]
+    assert result_actions[1]["error_code"] == "PLUGIN_RESULT_INVALID"
+    assert result_actions[2]["action_id"] == write_action["id"]
+    assert result_actions[2]["records_imported"] == 1
+    assert run["result_summary"]["result_action_policy"] == {
+        "failure_policy": "continue_on_error",
+        "mode": "sequential",
+    }
+    trace_nodes = run["result_summary"]["trace_graph"]["nodes"]
+    by_id = {node["id"]: node for node in trace_nodes}
+    assert by_id["result_action_2"]["status"] == "failed"
+    assert by_id["result_action_2"]["error"]["code"] == "PLUGIN_RESULT_INVALID"
+    assert by_id["result_action_3"]["status"] == "succeeded"
+
+    result_records = client.get(
+        f"/api/system/result-write-records?scheduled_job_run_id={run['id']}",
+        headers=admin_headers,
+    ).json()["data"]
+    assert [item["status"] for item in result_records["items"]] == [
+        "succeeded",
+        "failed",
+        "succeeded",
+    ]
+    feedback_items = client.get(
+        f"/api/insights/user-feedback?product_id={product['id']}",
+        headers=admin_headers,
+    ).json()["data"]
+    assert feedback_items["total"] == 1
+    assert feedback_items["items"][0]["source_channel"] == "weekly_ai"
 
 
 def test_scheduled_job_dry_run_previews_data_ai_contract_and_write_mapping():

@@ -12,11 +12,15 @@ from app.services.scheduled_job_ai_processing import (
     run_scheduled_job_ai_processing,
     skill_codes_for_job,
 )
-from app.services.scheduled_job_config import scheduled_job_multi_ids
+from app.services.scheduled_job_config import (
+    scheduled_job_multi_ids,
+    scheduled_job_result_action_policy,
+)
 from app.services.scheduled_job_constants import USER_FEEDBACK_INSIGHT_WRITE_TARGETS
 from app.services.scheduled_job_execution_engine import (
     ScheduledJobExecutionEngine as JobExecutionEngine,
 )
+from app.services.scheduled_job_runtime import exception_error_code_and_message
 from app.services.scheduled_job_store import read_memory_dict as _read_memory_dict
 from app.services.user_feedback import (
     USER_FEEDBACK_SENTIMENTS,
@@ -135,6 +139,44 @@ def _write_user_feedback_insights(
     return created_ids, skipped
 
 
+def _result_action_base(
+    result_mapping: dict[str, Any],
+    *,
+    write_target: str,
+) -> dict[str, Any]:
+    return {
+        "action_code": result_mapping.get("action_code"),
+        "action_id": result_mapping.get("action_id"),
+        "action_name": result_mapping.get("action_name"),
+        "label": "结果动作反馈内容",
+        "write_target": write_target,
+    }
+
+
+def _failed_result_action(
+    result_mapping: dict[str, Any],
+    *,
+    error: Exception,
+    write_target: str,
+) -> dict[str, Any]:
+    error_code, error_message = exception_error_code_and_message(error)
+    return {
+        **_result_action_base(result_mapping, write_target=write_target),
+        "created_ids": [],
+        "error_code": error_code,
+        "error_message": error_message,
+        "feedback": {
+            "error_code": error_code,
+            "error_message": error_message,
+            "records_imported": 0,
+            "write_target": write_target,
+        },
+        "records_imported": 0,
+        "skipped_insights": 0,
+        "status": "failed",
+    }
+
+
 def run_user_feedback_insight_extract_job(
     current_store: Any,
     *,
@@ -145,6 +187,7 @@ def run_user_feedback_insight_extract_job(
 ) -> tuple[dict[str, Any], int]:
     mapping = resolve_job_plugin_output_mapping(current_store, job)
     result_mappings = resolve_job_plugin_result_mappings(current_store, job)
+    result_action_policy = scheduled_job_result_action_policy(job)
     for result_mapping in result_mappings:
         action_mapping = result_mapping.get("mapping") or {}
         write_target = str(action_mapping.get("write_target") or "user_feedback_insights")
@@ -182,46 +225,57 @@ def run_user_feedback_insight_extract_job(
     for result_mapping in result_mappings:
         action_mapping = result_mapping.get("mapping") or {}
         action_write_target = str(action_mapping.get("write_target") or "user_feedback_insights")
-        action_insights = json_path_value(
-            processed_json,
-            str(action_mapping.get("insights_path") or "$.insights"),
-        )
-        if action_insights is None:
-            action_insights = []
-        if not isinstance(action_insights, list):
-            raise api_error(400, "PLUGIN_RESULT_INVALID", "Mapped insights result must be a list")
-        action_created_ids: list[str] = []
-        action_skipped = 0
-        if action_write_target == "user_feedback_insights":
-            action_created_ids, action_skipped = _write_user_feedback_insights(
-                current_store,
-                insights=action_insights,
-                job=job,
-                user=user,
+        try:
+            action_insights = json_path_value(
+                processed_json,
+                str(action_mapping.get("insights_path") or "$.insights"),
             )
-            created_ids.extend(action_created_ids)
-            skipped += action_skipped
-        result_actions.append(
-            {
-                "action_code": result_mapping.get("action_code"),
-                "action_id": result_mapping.get("action_id"),
-                "action_name": result_mapping.get("action_name"),
-                "created_ids": action_created_ids,
-                "feedback": {
-                    "candidate_count": len(action_insights),
+            if action_insights is None:
+                action_insights = []
+            if not isinstance(action_insights, list):
+                raise api_error(
+                    400,
+                    "PLUGIN_RESULT_INVALID",
+                    "Mapped insights result must be a list",
+                )
+            action_created_ids: list[str] = []
+            action_skipped = 0
+            if action_write_target == "user_feedback_insights":
+                action_created_ids, action_skipped = _write_user_feedback_insights(
+                    current_store,
+                    insights=action_insights,
+                    job=job,
+                    user=user,
+                )
+                created_ids.extend(action_created_ids)
+                skipped += action_skipped
+            result_actions.append(
+                {
+                    **_result_action_base(result_mapping, write_target=action_write_target),
                     "created_ids": action_created_ids,
+                    "feedback": {
+                        "candidate_count": len(action_insights),
+                        "created_ids": action_created_ids,
+                        "records_imported": len(action_created_ids),
+                        "skipped_insights": action_skipped,
+                        "stored_in_run_result": action_write_target == "scheduled_job_result",
+                        "write_target": action_write_target,
+                    },
                     "records_imported": len(action_created_ids),
                     "skipped_insights": action_skipped,
-                    "stored_in_run_result": action_write_target == "scheduled_job_result",
-                    "write_target": action_write_target,
+                    "status": "succeeded",
                 },
-                "label": "结果动作反馈内容",
-                "records_imported": len(action_created_ids),
-                "skipped_insights": action_skipped,
-                "status": "succeeded",
-                "write_target": action_write_target,
-            },
-        )
+            )
+        except Exception as exc:
+            result_actions.append(
+                _failed_result_action(
+                    result_mapping,
+                    error=exc,
+                    write_target=action_write_target,
+                ),
+            )
+            if result_action_policy["failure_policy"] == "fail_fast":
+                raise
     primary_result_action = (
         result_actions[0]
         if result_actions
@@ -286,6 +340,7 @@ def run_user_feedback_insight_extract_job(
             "skill_ids": skill_ids,
             "skill_codes": skill_codes,
         },
+        "result_action_policy": result_action_policy,
         "skipped_insights": skipped,
         "source_row_count": source_row_count,
         "write_target": primary_result_action.get("write_target"),

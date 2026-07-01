@@ -15,6 +15,7 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 用户反馈洞察定时作业多结果动作按 `result_actions.failure_policy` 落地：默认 `continue_on_error` 时单个动作映射或写入失败会进入运行节点、Trace DAG 和结果写入记录，后续动作继续执行；`fail_fast` 保持失败即中断。
 - 定时作业运行 Trace DAG 展开多数据连接和多结果动作明细节点，节点输入输出携带连接、动作、写入目标和反馈摘要，提升运行记录排障可见性。
 - 定时作业 Skill 输出 Schema 契约校验复用动作结果映射 JSONPath 解析规则，并在 dry-run 返回 `mapping_contract` 诊断字段，便于定位复杂写入路径不兼容问题。
 - 动作结果映射 JSONPath 子集扩展为支持 bracket key、数组下标和 `[*]` 通配，动作试运行、定时作业 dry-run、正式运行写入预览和结果写入记录统一解析复杂接口响应。
