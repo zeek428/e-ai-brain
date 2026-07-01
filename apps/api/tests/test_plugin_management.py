@@ -546,6 +546,27 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
         {"label": "产品数据", "value": "products"},
         {"label": "Bug 数据", "value": "bugs"},
     ]
+    assert internal_item["connection_schema"]["sections"][2]["title"] == "按源过滤"
+    internal_source_filter_fields = {
+        field["key"]: field for field in internal_item["connection_schema"]["sections"][2]["fields"]
+    }
+    assert (
+        internal_source_filter_fields["requirements_status"]["path"]
+        == "request_config.query.source_filters.requirements.status"
+    )
+    assert internal_source_filter_fields["requirements_priority"]["options"] == [
+        {"label": "P0", "value": "P0"},
+        {"label": "P1", "value": "P1"},
+        {"label": "P2", "value": "P2"},
+    ]
+    assert (
+        internal_source_filter_fields["bugs_status"]["path"]
+        == "request_config.query.source_filters.bugs.status"
+    )
+    assert (
+        internal_source_filter_fields["bugs_severity"]["path"]
+        == "request_config.query.source_filters.bugs.severity"
+    )
     assert "读取内部业务数据" in internal_item["action_templates"]
 
     missing_github_token = client.post(

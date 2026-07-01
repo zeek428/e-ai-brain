@@ -533,6 +533,58 @@ function installPluginsFetchMock(
                     key: 'sources',
                     title: '源数据选择',
                   },
+                  {
+                    fields: [
+                      {
+                        key: 'requirements_status',
+                        label: '需求状态',
+                        options: [
+                          { label: '草稿', value: 'draft' },
+                          { label: '已排期', value: 'planned' },
+                          { label: '已关闭', value: 'closed' },
+                        ],
+                        path: 'request_config.query.source_filters.requirements.status',
+                        required: false,
+                        type: 'select',
+                      },
+                      {
+                        key: 'requirements_priority',
+                        label: '需求优先级',
+                        options: [
+                          { label: 'P0', value: 'P0' },
+                          { label: 'P1', value: 'P1' },
+                          { label: 'P2', value: 'P2' },
+                        ],
+                        path: 'request_config.query.source_filters.requirements.priority',
+                        required: false,
+                        type: 'select',
+                      },
+                      {
+                        key: 'bugs_status',
+                        label: 'Bug 状态',
+                        options: [
+                          { label: '待处理', value: 'open' },
+                          { label: '已关闭', value: 'closed' },
+                        ],
+                        path: 'request_config.query.source_filters.bugs.status',
+                        required: false,
+                        type: 'select',
+                      },
+                      {
+                        key: 'bugs_severity',
+                        label: 'Bug 严重级别',
+                        options: [
+                          { label: 'critical', value: 'critical' },
+                          { label: 'major', value: 'major' },
+                        ],
+                        path: 'request_config.query.source_filters.bugs.severity',
+                        required: false,
+                        type: 'select',
+                      },
+                    ],
+                    key: 'source_filters',
+                    title: '按源过滤',
+                  },
                 ],
               },
               connection_count: 0,
@@ -2410,6 +2462,19 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByText('需求数据')).toBeInTheDocument();
     expect(within(dialog).getByText('产品数据')).toBeInTheDocument();
     expect(within(dialog).getByText('Bug 数据')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('需求状态')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('需求优先级')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Bug 状态')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Bug 严重级别')).toBeInTheDocument();
+
+    fireEvent.mouseDown(within(dialog).getByLabelText('需求状态'));
+    fireEvent.click(await screen.findByText('已排期'));
+    fireEvent.mouseDown(within(dialog).getByLabelText('需求优先级'));
+    fireEvent.click((await screen.findAllByText('P0')).at(-1)!);
+    fireEvent.mouseDown(within(dialog).getByLabelText('Bug 状态'));
+    fireEvent.click(await screen.findByText('待处理'));
+    fireEvent.mouseDown(within(dialog).getByLabelText('Bug 严重级别'));
+    fireEvent.click((await screen.findAllByText('critical')).at(-1)!);
 
     fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '内部数据源连接' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
@@ -2427,6 +2492,16 @@ describe('PluginsPage', () => {
               field_mode: 'summary',
               limit: 100,
               product_scope: 'current_user_scope',
+              source_filters: {
+                bugs: {
+                  severity: 'critical',
+                  status: 'open',
+                },
+                requirements: {
+                  priority: 'P0',
+                  status: 'planned',
+                },
+              },
               source_types: ['user_insights', 'requirements', 'products', 'bugs'],
               window_end: '{{now}}',
               window_start: '{{current_date-30}}',
