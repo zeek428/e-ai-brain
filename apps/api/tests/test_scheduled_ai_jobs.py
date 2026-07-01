@@ -2464,7 +2464,11 @@ def test_scheduled_job_dry_run_previews_data_ai_contract_and_write_mapping():
         "output_schema": data["stages"]["ai_processing"]["output_schema"],
         "status": "succeeded",
     }
+    assert data["stages"]["ai_processing"]["output_preview_source"] == "skill_output_schema"
+    assert len(data["stages"]["ai_processing"]["output_preview"]["insights"]) == 2
     assert data["stages"]["result_actions"][0]["write_target"] == "user_feedback_insights"
+    assert data["stages"]["result_actions"][0]["write_preview_source"] == "skill_output_schema"
+    assert data["stages"]["result_actions"][0]["write_preview"]["candidate_count"] == 2
     assert data["stages"]["result_actions"][0]["write_preview"]["records_imported"] == 2
     invocation_log = next(
         log

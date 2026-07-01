@@ -161,6 +161,100 @@ def merged_skill_output_schema(current_store: Any, job: dict[str, Any]) -> dict[
     }
 
 
+def skill_output_schema_sample(
+    schema: dict[str, Any],
+    *,
+    source_row_count: int = 0,
+) -> dict[str, Any]:
+    if not schema:
+        return {}
+    array_size = max(1, min(int(source_row_count or 1), 3))
+    sample = _schema_sample_value(
+        schema,
+        array_size=array_size,
+        property_name="root",
+        source_row_count=source_row_count,
+    )
+    return sample if isinstance(sample, dict) else {"value": sample}
+
+
+def _schema_sample_value(
+    schema: Any,
+    *,
+    array_size: int,
+    property_name: str,
+    source_row_count: int,
+) -> Any:
+    if not isinstance(schema, dict):
+        return _sample_string(property_name)
+    enum = schema.get("enum")
+    if isinstance(enum, list) and enum:
+        return enum[0]
+    schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        schema_type = next((item for item in schema_type if item != "null"), schema_type[0])
+    if schema_type == "array" or "items" in schema:
+        items_schema = schema.get("items") if isinstance(schema.get("items"), dict) else {}
+        return [
+            _schema_sample_value(
+                items_schema,
+                array_size=array_size,
+                property_name=property_name.rstrip("s") or property_name,
+                source_row_count=source_row_count,
+            )
+            for _index in range(array_size)
+        ]
+    properties = schema.get("properties")
+    if schema_type == "object" or isinstance(properties, dict):
+        if not isinstance(properties, dict):
+            return {}
+        return {
+            key: _schema_sample_value(
+                value if isinstance(value, dict) else {},
+                array_size=array_size,
+                property_name=key,
+                source_row_count=source_row_count,
+            )
+            for key, value in properties.items()
+        }
+    if schema_type in {"integer", "number"}:
+        if property_name in {"count", "row_count", "records_imported"}:
+            return source_row_count
+        return 1
+    if schema_type == "boolean":
+        return True
+    if schema_type == "null":
+        return None
+    return _sample_string(property_name)
+
+
+def _sample_string(property_name: str) -> str:
+    lower_name = property_name.lower()
+    if lower_name in {"sentiment"}:
+        return "neutral"
+    if lower_name in {"feedback_type", "type"}:
+        return "improvement"
+    if lower_name in {"source_channel", "channel"}:
+        return "dry_run"
+    if lower_name in {"risk_level", "severity"}:
+        return "medium"
+    if lower_name in {"branch"}:
+        return "main"
+    if lower_name in {"commit_sha", "sha"}:
+        return "0000000"
+    if lower_name in {"repository_id", "repo_id"}:
+        return "repository_sample"
+    if lower_name in {"status", "delivery_status"}:
+        return "succeeded"
+    if lower_name in {"message_id", "delivery_id"}:
+        return "dry-run-message"
+    if lower_name in {"subject", "title"}:
+        return "AI Brain dry-run sample"
+    if lower_name in {"tags"}:
+        return "dry-run"
+    return f"{property_name}_sample"
+
+
 def schema_supports_json_path(schema: dict[str, Any], path: str | None) -> bool:
     if not schema or path in {None, "$"}:
         return True

@@ -35,6 +35,7 @@ from app.services.scheduled_job_access import (
 )
 from app.services.scheduled_job_ai_processing import (
     run_scheduled_job_ai_processing,
+    skill_output_schema_sample,
     skill_output_mapping_contract,
     skill_codes_for_job,
     validate_knowledge_document_ids,
@@ -434,18 +435,33 @@ def dry_run_scheduled_job_response(
         )
         mapping_status = mapping_contract["status"]
     response_summary = plugin_summary.get("response_summary") if plugin_summary else {}
+    preview_response_summary = response_summary or {}
+    output_preview = {}
+    result_action_preview_source = "data_connection_response"
+    if will_call_model_gateway and output_schema:
+        output_preview = skill_output_schema_sample(
+            output_schema,
+            source_row_count=records_imported,
+        )
+        preview_response_summary = {
+            "json": output_preview,
+            "preview_source": "skill_output_schema",
+            "source_row_count": records_imported,
+        }
+        result_action_preview_source = "skill_output_schema"
     result_actions = []
     for action_id in plugin_action_ids:
         action = _read_memory_dict(current_store, "plugin_actions").get(action_id) or {}
         action_mapping = action.get("result_mapping") if isinstance(action, dict) else {}
         mapping = action_mapping if isinstance(action_mapping, dict) else {}
-        preview = result_write_preview(response_summary or {}, mapping or output_mapping)
+        preview = result_write_preview(preview_response_summary, mapping or output_mapping)
         result_actions.append(
             {
                 "action_code": action.get("code"),
                 "action_id": action_id,
                 "action_name": action.get("name"),
                 "write_preview": preview,
+                "write_preview_source": result_action_preview_source,
                 "write_target": (mapping or output_mapping).get(
                     "write_target",
                     "scheduled_job_result",
@@ -476,6 +492,10 @@ def dry_run_scheduled_job_response(
                 "mapping_contract": mapping_contract,
                 "mapping_status": mapping_status,
                 "model_gateway_config_id": model_gateway_config_id,
+                "output_preview": output_preview,
+                "output_preview_source": (
+                    "skill_output_schema" if output_preview else "not_available"
+                ),
                 "output_schema": output_schema,
                 "skill_ids": skill_ids,
                 "will_call_model_gateway": will_call_model_gateway,

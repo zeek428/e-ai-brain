@@ -231,9 +231,12 @@ def result_write_preview(
             str(mapping.get("rows_path") or default_mapping.get("rows_path")),
         )
         sample_records = insights[:3] if isinstance(insights, list) else []
+        records_imported = records_imported_from_mapping(response_summary, mapping)
+        if records_imported == 0 and isinstance(insights, list):
+            records_imported = len(insights)
         return {
             "candidate_count": len(insights) if isinstance(insights, list) else 0,
-            "records_imported": records_imported_from_mapping(response_summary, mapping),
+            "records_imported": records_imported,
             "sample_records": [compact_preview_value(record) for record in sample_records],
             "source_row_count": len(rows) if isinstance(rows, list) else None,
             "write_target": write_target,

@@ -3499,6 +3499,14 @@ def test_json_path_mapping_supports_brackets_indexes_and_wildcards():
             "write_target": "email_notifications",
         },
     )["candidate_count"] == 3
+    assert result_write_preview(
+        {"json": {"insights": [{"id": "insight-1"}, {"id": "insight-2"}]}},
+        {
+            "insights_path": "$.insights",
+            "records_imported_path": "$.row_count",
+            "write_target": "user_feedback_insights",
+        },
+    )["records_imported"] == 2
     assert result_mapping_hits(
         {"json": {"data.rows": [{"id": "feedback-1"}]}},
         {"rows_path": "$['data.rows']"},
