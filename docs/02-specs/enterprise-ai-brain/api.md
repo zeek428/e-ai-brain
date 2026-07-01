@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.487 |
+| 功能版本 | v1.1.488 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.488 | 2026-07-01 | AI 助手定时作业草案确认前统一归一化插件连接、动作和 Skill 引用数组，空值跳过且重复 ID 保留首次出现 | Codex |
 | v1.1.487 | 2026-07-01 | 内部数据源 `source_types` 服务端保序去重，连接测试、请求预览和动作读取响应使用去重后的源列表 | Codex |
 | v1.1.486 | 2026-07-01 | 内部数据源连接测试与动作读取按 `source_types` 裁剪残留 `source_filters`，响应过滤摘要只返回实际生效源条件 | Codex |
 | v1.1.485 | 2026-07-01 | 内部数据源连接 schema 字段新增 `visible_when_source_types`，前端按源数据选择联动展示按源过滤字段并跳过隐藏字段提交 | Codex |
@@ -748,7 +749,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情；`preview.validation.issues[]` 可返回 `repair_action={action,label,field,resource_type,resource_id}`，用于前端展示修正字段、生成前置草案或打开连接测试等操作；响应新增 `governance`，按草案 payload、`preview.diffs`、动作确认权限、失败历史、动作运行和 `assistant_action_draft.*` 审计事件派生风险、影响对象、权限校验、执行前后差异、失败重试、审计链路摘要和 `decision` 统一确认决策。 |
 | Assistant | PATCH | `/api/assistant/action-drafts/{draft_id}` | 在 pending 草案确认前更新草案 payload，并写入 `modified_fields/user_modified/modified_at/modified_by` 元数据和 `assistant_action_draft.updated` 审计；表单页从助手草案进入后保存必须走该接口再调用 confirm，不得直接绕过服务端草案生命周期创建领域对象。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/view` | 记录当前用户查看草案详情或深链加载草案，`surface=detail_modal` 写入 `detail_viewed_at`，`surface=deeplink` 写入 `deeplink_viewed_at`，并统一写入 `viewed_at/last_viewed_at/view_count/viewed_by/last_view_surface` 和 `assistant_action_draft.viewed` 审计，用于区分“查看详情”和“深链打开”。 |
-| Assistant | POST | `/api/assistant/action-drafts/{draft_id}/confirm` | 确认 pending 草案并调度到对应领域 service；已 confirmed 且存在成功 `assistant_action_run` 的重复提交必须幂等返回同一 run，不得重复创建作业、插件连接或动作。 |
+| Assistant | POST | `/api/assistant/action-drafts/{draft_id}/confirm` | 确认 pending 草案并调度到对应领域 service；已 confirmed 且存在成功 `assistant_action_run` 的重复提交必须幂等返回同一 run，不得重复创建作业、插件连接或动作。`create_scheduled_job` 草案确认前必须对 `plugin_connection_ids`、`plugin_action_ids`、`skill_ids` 和 `assistant_prerequisite_draft_ids` 跳过 null/空白值并保序去重，空数组按未选择处理。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/cancel` | 取消 pending 草案，不产生领域写入。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/retry` | 将当前用户 failed 草案重新打开为 pending，保留 `failure_history/retry_count/retry_reason`，清空当前失败 `result_run_id`，写入 `assistant_action_draft.retry_requested` 审计；非 failed 或已过期草案返回 409。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/modification` | 标记当前用户对草案应用后的字段修改，写入用户修改率指标元数据；仅 pending 草案可写，confirmed/cancelled/expired/failed 返回 `409 DRAFT_NOT_PENDING` 或 `DRAFT_EXPIRED`。 |

@@ -263,7 +263,10 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
     {
         "category": "insights",
         "code": "internal_business_weekly_insight",
-        "description": "每周读取内部用户洞察、需求、产品和 Bug 数据，经 AI/Skill 分析后保存运行结果或写入业务目标。",
+        "description": (
+            "每周读取内部用户洞察、需求、产品和 Bug 数据，"
+            "经 AI/Skill 分析后保存运行结果或写入业务目标。"
+        ),
         "name": "每周内部业务洞察分析",
         "payload_defaults": {
             "cron_expression": "0 9 * * MON",

@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.903 |
+| 功能版本 | v1.1.904 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.904 | 2026-07-01 | 补充 AI 助手定时作业草案空引用归一化验收：预览和确认保存必须跳过空值并保序去重 | Codex |
 | v1.1.903 | 2026-07-01 | 补充内部数据源重复源验收：旧客户端传入重复 `source_types` 时服务端需保序去重并稳定返回摘要 | Codex |
 | v1.1.902 | 2026-07-01 | 补充内部数据源服务端裁剪验收：旧客户端带入未选源过滤时，测试预览和动作读取只返回实际生效 `source_filters` | Codex |
 | v1.1.901 | 2026-07-01 | 补充内部数据源按源过滤联动验收：取消需求或 Bug 源后对应过滤字段隐藏且不提交残留 `source_filters` | Codex |
@@ -1030,6 +1031,7 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 | TC-AIBRAIN-ASSISTANT-FUNC-013G | v1.1 | P0 | 前端展示含前置草案 ID 依赖的配置向导 | 当 `assistant.action_draft.items[]` 同时返回前置草案和最终作业草案，最终作业的 `wizard_steps[].depends_on` 或 `assistant_prerequisite_draft_ids` 使用草案 ID 时，前端必须在卡片、配置向导和“生成前置草案/AI生成步骤草案”回填提示中把 ID 映射为同批草案标题，例如“可观测平台连接、线上日志查询动作”，不得向用户展示 `assistant_draft_*` 机器 ID；找不到标题映射时才允许回退展示原始 ID。回归见 `apps/web/tests/AssistantPage.test.tsx::renders wizard prerequisite draft ids as readable draft titles`。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-013H | v1.1 | P0 | 用户直接要求新增或配置代码巡检/线上日志 AI 能力草案 | 后端必须在模型调用前确定性返回 `assistant.action_draft intent=ai_capability_draft`，按 Skill、AI角色顺序生成 `create_ai_skill` 和 `create_ai_agent` 服务端草案；AI角色草案 payload 必须通过 `assistant_prerequisite_draft_ids` 依赖 Skill 草案，并带出可用默认模型网关；响应文案必须明确“AI 能力草案”，确认前不得写入 `ai_skills` 或 `ai_agents`。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_generates_ai_capability_drafts_directly`。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-014 | v1.1 | P0 | 管理员确认定时作业创建草案 | 草案已持久化到 `assistant_action_drafts` 且状态为 `pending`；`POST /api/assistant/action-drafts/{draft_id}/confirm` 重新校验引用和权限，复用 scheduled_jobs service 写入作业、审计和配置快照，响应返回 `{draft, run}`、作业 ID 与管理页链接，草案状态变为 `confirmed`；若草案 payload 携带 `config_json.assistant_run_once_request.requested=true`，确认后必须再复用手动运行链路创建一次 `scheduled_job_run`，`run.result.scheduled_job_run` 返回运行记录，`assistant_action_draft.confirmed` 审计 payload 记录 `scheduled_job_run_id`；前端草案卡确认成功后必须展示“打开定时作业”和“打开本次运行”，本次运行链接携带 `job_id` 与 `run_id`；若确认接口返回校验、引用失效或服务端业务错误，服务端必须把草案状态持久化为 `failed`，写入 `assistant_action_runs.status=failed`、`metadata_json.failure` 和 `assistant_action_draft.failed` 审计事件，`/api/assistant/metrics` 必须计入 `draft_failed_count/action_run_failed_count`；前端草案卡必须显式展示“失败”，不得继续展示“确认创建”或应用到表单入口，并保留“重新生成”。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job`、`apps/api/tests/test_assistant_chat.py::test_ai_assistant_run_once_draft_confirm_triggers_scheduled_job_run`、`apps/api/tests/test_assistant_chat.py::test_ai_assistant_action_draft_confirm_failure_is_persisted`、`apps/web/tests/AssistantPage.test.tsx::confirms server-side assistant action drafts from the draft card` 和 `apps/web/tests/AssistantPage.test.tsx::marks assistant action drafts as failed when confirmation fails`。 |
+| TC-AIBRAIN-ASSISTANT-FUNC-014E | v1.1 | P0 | 定时作业草案携带空引用占位 | `create_scheduled_job` 草案 payload 若携带 `plugin_connection_ids`、`plugin_action_ids` 或 `skill_ids` 中的 `null`、空字符串、空白字符串和重复 ID，服务端预览、引用校验和确认保存必须统一跳过空值并按首次出现顺序去重；全为空时保存为空数组，不得返回引用失效或把空值写入作业配置。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job`。 |
 | TC-AIBRAIN-ASSISTANT-API-014B | v1.1 | P0 | 聊天返回的 `assistant.action_draft` 工具项自动转为服务端草案 | `/api/assistant/chat` 响应中的可支持草案项包含 `server_draft_id`、`client_draft_id` 和 `status=pending`；刷新历史消息后仍能看到草案卡片，确认/取消操作使用服务端草案 ID。 |
 | TC-AIBRAIN-ASSISTANT-API-014D | v1.1 | P1 | 用户点击草案“查看详情”或通过 `/assistant?draft_id=...` 打开草案 | 前端必须调用 `POST /api/assistant/action-drafts/{draft_id}/view`，详情弹窗传 `surface=detail_modal`，深链加载传 `surface=deeplink`；后端统一写入 `metadata_json.viewed_at/last_viewed_at/view_count/viewed_by/last_view_surface`，且仅详情弹窗写入 `detail_viewed_at`、仅深链加载写入 `deeplink_viewed_at`，并记录 `assistant_action_draft.viewed` 审计；响应返回刷新后的草案，前端再展示详情或深链卡片；`GET /api/assistant/metrics` 必须分别返回任意查看、查看详情和深链打开计数，不得用前端临时态替代。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_action_draft_view_updates_metrics_and_audit`、`apps/api/tests/test_assistant_chat.py::test_ai_assistant_action_draft_deeplink_view_is_tracked_separately` 和 `apps/web/tests/AssistantPage.test.tsx::records assistant draft detail views before opening the detail dialog`。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-014C | v1.1 | P0 | `@定时作业 执行一次` 未命中现成作业而生成 run-once 草案 | 聊天回复必须明确说明当前“尚未执行”，不得让用户误以为发送命令已经触发运行；前端 run-once 草案卡片在 `pending` 状态必须同时展示“确认后执行一次”和“尚未执行”，确认按钮文案为“确认并执行一次”；确认前不得创建作业或运行记录，确认后才创建作业并触发一次手动运行。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_generates_feedback_draft_when_run_once_job_missing` 和 `apps/web/tests/AssistantPage.test.tsx::makes run-once draft confirmation explicit when an @ command needs a new scheduled job`。 |

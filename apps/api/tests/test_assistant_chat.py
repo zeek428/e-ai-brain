@@ -3512,7 +3512,10 @@ def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
                 "execution_mode": "deterministic",
                 "job_type": "dashboard_snapshot_refresh",
                 "name": "AI 助手草案仪表盘刷新",
+                "plugin_action_ids": [None, "", "  ", None],
+                "plugin_connection_ids": [None, "", "  ", None],
                 "schedule_type": "manual",
+                "skill_ids": [None, "", "  ", None],
                 "source_system": "ai-assistant",
             },
             "risk_level": "medium",
@@ -3527,6 +3530,7 @@ def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
     assert draft["status"] == "pending"
     assert draft["created_by"] == "user_admin"
     assert draft["payload"]["name"] == "AI 助手草案仪表盘刷新"
+    assert draft["preview"]["validation"]["status"] == "passed"
 
     confirm_response = client.post(
         f"/api/assistant/action-drafts/{draft['id']}/confirm",
@@ -3542,6 +3546,9 @@ def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
     assert payload["run"]["result_type"] == "scheduled_job"
     scheduled_job = payload["run"]["result"]
     assert scheduled_job["name"] == "AI 助手草案仪表盘刷新"
+    assert scheduled_job["plugin_action_ids"] == []
+    assert scheduled_job["plugin_connection_ids"] == []
+    assert scheduled_job["skill_ids"] == []
     assert scheduled_job["config_json"]["assistant_draft"] == {
         "draft_id": draft["id"],
         "source": "ai_assistant",

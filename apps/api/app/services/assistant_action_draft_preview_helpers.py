@@ -309,9 +309,14 @@ def string_ids(value: Any) -> list[str]:
     if value is None:
         return []
     values = value if isinstance(value, list) else [value]
-    result = []
+    result: list[str] = []
+    seen: set[str] = set()
     for item in values:
+        if item is None:
+            continue
         item_id = str(item).strip()
-        if item_id:
-            result.append(item_id)
+        if not item_id or item_id in seen:
+            continue
+        seen.add(item_id)
+        result.append(item_id)
     return result

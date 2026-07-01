@@ -48,7 +48,7 @@ def validate_job_refs(
     sync_reference_store(current_store)
     validate_product(current_store, payload.product_id)
     agent_id = payload.agent_id
-    skill_ids = list(payload.skill_ids)
+    skill_ids = normalized_string_ids(payload.skill_ids)
     model_gateway_config_id = payload.model_gateway_config_id
     ai_required_job = job_type in AI_REQUIRED_SCHEDULED_JOB_TYPES
     ai_processing_job = execution_mode in {"ai_assisted", "ai_generated"} or ai_required_job

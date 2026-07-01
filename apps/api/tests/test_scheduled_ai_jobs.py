@@ -1571,7 +1571,9 @@ def test_scheduled_job_dry_run_previews_data_ai_contract_and_write_mapping():
     assert data["stages"]["result_actions"][0]["write_target"] == "user_feedback_insights"
     assert data["stages"]["result_actions"][0]["write_preview"]["records_imported"] == 2
     invocation_log = next(
-        log for log in app.state.store.plugin_invocation_logs.values() if log["action_id"] == action["id"]
+        log
+        for log in app.state.store.plugin_invocation_logs.values()
+        if log["action_id"] == action["id"]
     )
     assert invocation_log["trigger_type"] == "dry_run"
     assert invocation_log["scheduled_job_id"] is None
