@@ -196,10 +196,10 @@ def test_scheduled_job_run_projection_expands_multi_connection_and_action_trace_
         "result_action_2",
     ]
     assert trace_graph["edges"] == [
-        {"from": "data_connection_1", "to": "data_connection_2"},
+        {"from": "data_connection_1", "to": "skill_processing"},
         {"from": "data_connection_2", "to": "skill_processing"},
         {"from": "skill_processing", "to": "result_action_1"},
-        {"from": "result_action_1", "to": "result_action_2"},
+        {"from": "skill_processing", "to": "result_action_2"},
     ]
     first_connection = trace_graph["nodes"][0]
     assert first_connection["duration_ms"] == 120

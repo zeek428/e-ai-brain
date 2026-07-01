@@ -466,11 +466,34 @@ class ScheduledJobExecutionEngine:
             for node_id, node in present_entries
         ]
         present_ids = [node_id for node_id, _node in present_entries]
-        graph_edges = [
-            {"from": present_ids[index], "to": present_ids[index + 1]}
-            for index in range(len(present_ids) - 1)
-        ]
+        graph_edges = cls._trace_graph_edges(present_ids)
         return {"edges": graph_edges, "nodes": graph_nodes}
+
+    @classmethod
+    def _trace_graph_edges(cls, present_ids: list[str]) -> list[dict[str, str]]:
+        if len(present_ids) < 2:
+            return []
+        grouped_layers: list[tuple[str, list[str]]] = []
+        for node_id in present_ids:
+            canonical_id = cls._canonical_trace_node_id(node_id)
+            if grouped_layers and grouped_layers[-1][0] == canonical_id:
+                grouped_layers[-1][1].append(node_id)
+            else:
+                grouped_layers.append((canonical_id, [node_id]))
+
+        edges: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for index in range(len(grouped_layers) - 1):
+            from_nodes = grouped_layers[index][1]
+            to_nodes = grouped_layers[index + 1][1]
+            for from_node in from_nodes:
+                for to_node in to_nodes:
+                    edge_key = (from_node, to_node)
+                    if edge_key in seen:
+                        continue
+                    seen.add(edge_key)
+                    edges.append({"from": from_node, "to": to_node})
+        return edges
 
     @staticmethod
     def _trace_graph_entries(execution_nodes: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
