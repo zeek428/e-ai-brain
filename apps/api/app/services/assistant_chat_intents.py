@@ -80,6 +80,56 @@ TASK_CREATION_GUIDE_ITEMS = [
     },
 ]
 
+EXPLICIT_CREATE_ACTION_PREFIXES = (
+    "@新建需求",
+    "@新增需求",
+    "@创建需求",
+    "@新建bug",
+    "@新增bug",
+    "@创建bug",
+    "@新建缺陷",
+    "@新增缺陷",
+    "@创建缺陷",
+    "@新建插件连接",
+    "@新增插件连接",
+    "@创建插件连接",
+    "@新建插件动作",
+    "@新增插件动作",
+    "@创建插件动作",
+    "@新建定时作业",
+    "@新增定时作业",
+    "@创建定时作业",
+    "@新建定时任务",
+    "@新增定时任务",
+    "@创建定时任务",
+    "@新建知识",
+    "@新增知识",
+    "@创建知识",
+    "@新建知识文档",
+    "@新增知识文档",
+    "@创建知识文档",
+    "@新建导入任务",
+    "@新增导入任务",
+    "@创建导入任务",
+    "@新建ai能力配置",
+    "@新增ai能力配置",
+    "@创建ai能力配置",
+    "@新建ai能力",
+    "@新增ai能力",
+    "@创建ai能力",
+)
+
+EXPLICIT_CREATE_ACTION_PREFIXES_COMPACT = tuple(
+    "".join(prefix.split()).lower() for prefix in EXPLICIT_CREATE_ACTION_PREFIXES
+)
+
+
+def _explicit_create_action_prefix_requested(normalized: str) -> bool:
+    compact_message = "".join(normalized.split())
+    return any(
+        prefix in compact_message for prefix in EXPLICIT_CREATE_ACTION_PREFIXES_COMPACT
+    )
+
 
 def scheduled_job_run_once_requested(message: str) -> bool:
     normalized = message.lower()
@@ -155,6 +205,8 @@ def iteration_governance_requested(message: str) -> bool:
 
 def task_creation_guide_requested(message: str) -> bool:
     normalized = message.lower()
+    if _explicit_create_action_prefix_requested(normalized):
+        return False
     has_create_intent = any(
         keyword in normalized
         for keyword in ("新增", "新建", "创建", "增加", "create", "add")
@@ -169,6 +221,12 @@ def task_creation_guide_requested(message: str) -> bool:
             "ai任务",
             "ai 任务",
             "产品详细设计",
+            "需求",
+            "bug",
+            "缺陷",
+            "知识",
+            "知识文档",
+            "导入任务",
             "插件动作",
             "插件连接",
             "代码巡检",

@@ -72,8 +72,7 @@ function writeStrategyLabelFromAction(action: PluginActionRecord): string {
   const mapping = action.result_mapping ?? {};
   const writeTargetLabel = typeof mapping.write_target_label === 'string' ? mapping.write_target_label : undefined;
   const writeTarget = typeof mapping.write_target === 'string' ? mapping.write_target : undefined;
-  const strategyLabel = writeTargetLabel ?? writeTarget ?? action.name;
-  return `${strategyLabel} (${action.code})`;
+  return action.name || writeTargetLabel || writeTarget || action.id;
 }
 
 export default function ScheduledJobsPage() {

@@ -359,7 +359,7 @@ def dry_run_scheduled_job_response(
             job=job,
             resolved_plugin_input_mapping=resolved_input_mapping,
             run_id=job["id"],
-            trigger_type="manual",
+            trigger_type="dry_run",
             user=user,
         )
     output_mapping = resolve_job_plugin_output_mapping(current_store, job)
@@ -774,6 +774,8 @@ def invoke_job_data_connections(
     summaries: list[dict[str, Any]] = []
     for connection_id in connection_ids or [None]:
         job_config = job.get("config_json") or {}
+        linked_scheduled_job_id = None if trigger_type == "dry_run" else job["id"]
+        linked_scheduled_job_run_id = None if trigger_type == "dry_run" else run_id
         plugin_log = invoke_plugin_action_response(
             action_id=job["plugin_action_id"],
             connection_id=connection_id,
@@ -790,8 +792,8 @@ def invoke_job_data_connections(
                 ),
                 "timezone": job.get("timezone") or "UTC",
             },
-            scheduled_job_id=job["id"],
-            scheduled_job_run_id=run_id,
+            scheduled_job_id=linked_scheduled_job_id,
+            scheduled_job_run_id=linked_scheduled_job_run_id,
             trigger_type=trigger_type,
             user=scheduled_job_plugin_invocation_user(user),
         )

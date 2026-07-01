@@ -21,12 +21,10 @@ import type {
   ScheduledJobResultAction,
 } from '../../../services/aiBrain';
 import { formatDisplayDateTime } from '../../../utils/dateTime';
-import { TemplateSourceSummary } from './ScheduledJobRunTraceDetails';
 import {
   multiIdsFromScheduledJob,
   statusLabelByValue,
 } from './scheduledJobFormTransformHelpers';
-import { templateSourceFromConfig } from './scheduledJobRunTraceHelpers';
 import type { ScheduledJobRemoteTableMeta } from './useScheduledJobWorkspaceData';
 
 type ScheduledJobConfigTableProps = {
@@ -117,12 +115,6 @@ export function ScheduledJobConfigTable({
           title: '名称',
           width: 220,
           render: (value) => ellipsisText(String(value ?? '')),
-        },
-        {
-          key: 'template_source',
-          title: '模板来源',
-          width: 220,
-          render: (_, row) => <TemplateSourceSummary source={templateSourceFromConfig(row.config_json)} />,
         },
         {
           dataIndex: 'job_type',
