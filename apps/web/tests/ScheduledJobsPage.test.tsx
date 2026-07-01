@@ -437,6 +437,8 @@ function installScheduledJobsFetchMock(
           stages: {
             ai_processing: {
               mapping_status: 'succeeded',
+              output_preview: { insights: [{ title: '洞察样例' }] },
+              output_preview_source: 'skill_output_schema',
               output_schema: { required: ['insights'], type: 'object' },
               will_call_model_gateway: true,
             },
@@ -449,7 +451,9 @@ function installScheduledJobsFetchMock(
             result_actions: [
               {
                 action_id: 'plugin_action_maxcompute',
-                write_preview: { records_imported: 18, write_target_label: '用户洞察表' },
+                action_name: '写入用户洞察表',
+                write_preview: { candidate_count: 1, records_imported: 1, write_target_label: '用户洞察表' },
+                write_preview_source: 'skill_output_schema',
                 write_target: 'user_feedback_insights',
               },
             ],
@@ -1006,6 +1010,8 @@ describe('ScheduledJobsPage', () => {
     expect(within(dryRunResult).getByText('数据连接预览')).toBeInTheDocument();
     expect(within(dryRunResult).getByText('AI契约校验')).toBeInTheDocument();
     expect(within(dryRunResult).getByText('结果写入预览')).toBeInTheDocument();
+    expect(within(dryRunResult).getAllByText('Skill 输出样例').length).toBeGreaterThan(0);
+    expect(within(dryRunResult).getByText(/预计写入 1 条/)).toBeInTheDocument();
     expect(within(dryRunResult).getByText(/connection_maxcompute_prod/)).toBeInTheDocument();
     expect(within(dryRunResult).getByText(/user_feedback_insights/)).toBeInTheDocument();
   });
