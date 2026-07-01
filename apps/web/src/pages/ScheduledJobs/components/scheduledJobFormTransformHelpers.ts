@@ -74,11 +74,11 @@ export const creatableJobTypeOptions = [
   { label: '代码仓库巡检（质量 / 安全 / 规范）', value: 'code_repository_inspection' },
   { label: '用户反馈洞察抽取（取数 + AI 分析 + 写入）', value: 'user_feedback_insight_extract' },
   { label: '迭代规划建议生成', value: 'iteration_plan_suggestion_generate' },
+  { label: '线上日志 AI 分析', value: 'online_log_ai_analysis' },
   { label: '插件执行调用', value: 'plugin_action_invoke' },
 ];
 
 export const legacyJobTypeOptions = [
-  { label: '线上日志 AI 分析', value: 'online_log_ai_analysis' },
   { label: '用户使用指标采集', value: 'user_usage_metric_collect' },
   { label: '用户反馈采集（仅取数，不调用 AI）', value: 'user_feedback_collect' },
   { label: '线上日志指标采集', value: 'online_log_metric_collect' },
@@ -110,7 +110,12 @@ export const scheduleTypeOptions = [
 export const scheduleTypeLabelByValue = new Map(scheduleTypeOptions.map((option) => [option.value, option.label]));
 
 export const productRequiredJobTypes = ['code_repository_inspection', 'user_feedback_insight_extract'];
-export const pluginRequiredJobTypes = ['code_repository_inspection', 'plugin_action_invoke', 'user_feedback_insight_extract'];
+export const pluginRequiredJobTypes = [
+  'code_repository_inspection',
+  'online_log_ai_analysis',
+  'plugin_action_invoke',
+  'user_feedback_insight_extract',
+];
 export const nativeCodeInspectionScanMode = 'native_full_scan';
 
 export const codeInspectionScanModeOptions = [
@@ -169,7 +174,10 @@ export const codeInspectionResultActionOptions = [
 ];
 
 export const resultActionLabelByValue = new Map(
-  codeInspectionResultActionOptions.map((option) => [option.value, option.label]),
+  [
+    ...codeInspectionResultActionOptions,
+    { label: '仅保存运行结果', value: 'save_scheduled_job_result' },
+  ].map((option) => [option.value, option.label]),
 );
 
 export const severityThresholdOptions = [

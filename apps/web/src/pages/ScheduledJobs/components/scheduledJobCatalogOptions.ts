@@ -157,6 +157,15 @@ export function useScheduledJobCatalogOptions(jobCatalog: ScheduledJobCatalogRec
       : codeInspectionResultActionOptions),
     [jobCatalog],
   );
+  const genericResultActionSelectOptions = useMemo(
+    () => (jobCatalog?.generic_result_actions?.length
+      ? jobCatalog.generic_result_actions
+      : [
+        { label: '仅保存运行结果', value: 'save_scheduled_job_result' },
+        { label: '发送通知记录', value: 'send_notification' },
+      ]),
+    [jobCatalog],
+  );
   const severityThresholdSelectOptions = useMemo(
     () => (jobCatalog?.code_inspection?.severity_thresholds?.length
       ? jobCatalog.code_inspection.severity_thresholds
@@ -190,12 +199,13 @@ export function useScheduledJobCatalogOptions(jobCatalog: ScheduledJobCatalogRec
       const labels = (actions ?? []).map(
         (action) =>
           codeInspectionResultActionLabelMap.get(action.type)
+          ?? genericResultActionSelectOptions.find((option) => option.value === action.type)?.label
           ?? resultActionLabelByValue.get(action.type)
           ?? action.type,
       );
       return labels.join('、');
     },
-    [codeInspectionResultActionLabelMap],
+    [codeInspectionResultActionLabelMap, genericResultActionSelectOptions],
   );
 
   return {
@@ -210,6 +220,7 @@ export function useScheduledJobCatalogOptions(jobCatalog: ScheduledJobCatalogRec
     executionModeLabelMap,
     executionModeSelectOptions,
     formatResultActionLabels,
+    genericResultActionSelectOptions,
     jobTypeLabelMap,
     jobTypeSelectOptions,
     pluginRequiredTypes,

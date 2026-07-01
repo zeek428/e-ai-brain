@@ -284,11 +284,26 @@ def result_write_preview(
         }
 
     preview_value = json_path_value(raw_json, mapping.get("records_imported_path"))
+    if preview_value is None:
+        for path in (
+            mapping.get("anomalies_path"),
+            mapping.get("insights_path"),
+            mapping.get("findings_path"),
+            "$.anomalies",
+            "$.insights",
+            "$.findings",
+        ):
+            preview_value = json_path_value(raw_json, str(path))
+            if preview_value is not None:
+                break
     sample_records = preview_value[:3] if isinstance(preview_value, list) else []
+    records_imported = records_imported_from_mapping(response_summary, mapping)
+    if records_imported == 0 and isinstance(preview_value, list):
+        records_imported = len(preview_value)
     return {
         "candidate_count": len(preview_value) if isinstance(preview_value, list) else 0,
         "preview_value": compact_preview_value(preview_value),
-        "records_imported": records_imported_from_mapping(response_summary, mapping),
+        "records_imported": records_imported,
         "sample_records": [compact_preview_value(record) for record in sample_records],
         "write_target": write_target,
         "write_target_label": write_target_label,

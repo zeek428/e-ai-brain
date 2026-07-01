@@ -7,10 +7,12 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.api.deps import api_error
+from app.services import scheduled_job_result_actions as job_result_actions
+from app.services import scheduled_job_runtime as job_runtime
+from app.services import scheduled_job_store as job_store
 from app.services.code_inspections import (
     execute_code_inspection_result_actions,
     sync_product_git_repository_store,
-    validate_code_inspection_result_actions,
 )
 from app.services.iteration_planning import create_iteration_suggestions_response
 from app.services.native_code_scanner import (
@@ -35,9 +37,9 @@ from app.services.scheduled_job_access import (
 )
 from app.services.scheduled_job_ai_processing import (
     run_scheduled_job_ai_processing,
-    skill_output_schema_sample,
-    skill_output_mapping_contract,
     skill_codes_for_job,
+    skill_output_mapping_contract,
+    skill_output_schema_sample,
     validate_knowledge_document_ids,
     validate_skill_output_mapping_contract,
 )
@@ -71,42 +73,18 @@ from app.services.scheduled_job_execution_engine import (
 from app.services.scheduled_job_native_scan import (
     execute_native_multi_code_inspection_summary,
     native_code_scan_repository_ids,
+)
+from app.services.scheduled_job_native_scan import (
     queued_native_scan_result_summary as native_scan_result_summary,
 )
+from app.services.scheduled_job_online_log import run_online_log_ai_analysis_job
 from app.services.scheduled_job_read_models import (
     list_scheduled_job_runs_response,
     list_scheduled_jobs_response,
     public_scheduled_job_run,
 )
 from app.services.scheduled_job_ref_validation import validate_job_refs, validate_plugin_refs
-from app.services.scheduled_job_refs import (
-    payload_field,
-    scheduled_job_multi_ids,
-)
-from app.services.scheduled_job_runtime import (
-    exception_error_code_and_message,
-    generic_scheduled_job_result_summary,
-    model_gateway_failure_diagnostics,
-    resolve_plugin_input_mapping,
-)
-from app.services.scheduled_job_store import (
-    delete_memory_record as _delete_memory_record,
-)
-from app.services.scheduled_job_store import (
-    persist_record,
-    snapshot,
-    sync_ai_agent_store,
-    sync_ai_skill_store,
-    sync_reference_store,
-    sync_scheduled_job_run_store,
-    sync_scheduled_job_store,
-)
-from app.services.scheduled_job_store import (
-    put_memory_record as _put_memory_record,
-)
-from app.services.scheduled_job_store import (
-    read_memory_dict as _read_memory_dict,
-)
+from app.services.scheduled_job_refs import payload_field, scheduled_job_multi_ids
 from app.services.scheduled_job_templates import STANDARD_WIZARD_STEPS
 from app.services.scheduled_job_user_feedback import (
     resolve_job_plugin_output_mapping,
@@ -114,11 +92,9 @@ from app.services.scheduled_job_user_feedback import (
 )
 from app.services.skill_packages import load_skill_package_snapshot
 
-__all__ = [
-    "list_scheduled_job_runs_response",
-    "list_scheduled_jobs_response",
-    "public_scheduled_job_run",
-]
+__all__ = ["list_scheduled_job_runs_response", "list_scheduled_jobs_response", "public_scheduled_job_run"]  # noqa: E501
+persist_record = job_store.persist_record
+resolve_plugin_input_mapping = job_runtime.resolve_plugin_input_mapping
 
 
 def scheduled_job_template_from_run_response(
@@ -128,8 +104,8 @@ def scheduled_job_template_from_run_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_admin(user)
-    sync_scheduled_job_run_store(current_store)
-    run = _read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
+    job_store.sync_scheduled_job_run_store(current_store)
+    run = job_store.read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
     if run is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job run not found")
     if run.get("status") != "succeeded":
@@ -244,9 +220,7 @@ def create_scheduled_job_response(
         plugin_action_ids,
         plugin_connection_ids,
     ) = validate_plugin_refs(current_store, payload)
-    result_actions = validate_code_inspection_result_actions(
-        payload.result_actions if job_type == "code_repository_inspection" else [],
-    )
+    result_actions = job_result_actions.validate_scheduled_job_result_actions(job_type, payload.result_actions)  # noqa: E501
     knowledge_document_ids = validate_knowledge_document_ids(
         current_store,
         payload.knowledge_document_ids,
@@ -301,7 +275,7 @@ def create_scheduled_job_response(
         "timezone": payload.timezone,
         "updated_at": now,
     }
-    _put_memory_record(current_store, "scheduled_jobs", job)
+    job_store.put_memory_record(current_store, "scheduled_jobs", job)
     audit_event = record_audit_event(
         current_store,
         event_type="scheduled_job.created",
@@ -310,7 +284,7 @@ def create_scheduled_job_response(
         subject_id=job_id,
         payload=scheduled_job_audit_payload(job),
     )
-    persist_record(
+    job_store.persist_record(
         current_store,
         "save_scheduled_job_record",
         job,
@@ -340,6 +314,10 @@ def dry_run_scheduled_job_response(
         plugin_action_ids,
         plugin_connection_ids,
     ) = validate_plugin_refs(current_store, payload)
+    configured_result_actions = job_result_actions.validate_scheduled_job_result_actions(
+        job_type,
+        payload.result_actions,
+    )
     config_json = scheduled_job_config_with_code_inspection_defaults(
         current_store,
         config_json=payload.config_json,
@@ -370,11 +348,12 @@ def dry_run_scheduled_job_response(
         "plugin_input_mapping": payload.plugin_input_mapping,
         "plugin_output_mapping": payload.plugin_output_mapping,
         "product_id": payload.product_id,
+        "result_actions": configured_result_actions,
         "skill_ids": skill_ids,
         "source_system": payload.source_system,
         "timezone": payload.timezone,
     }
-    resolved_input_mapping = resolve_plugin_input_mapping(
+    resolved_input_mapping = job_runtime.resolve_plugin_input_mapping(
         payload.plugin_input_mapping or {},
         job,
     )
@@ -451,7 +430,7 @@ def dry_run_scheduled_job_response(
         result_action_preview_source = "skill_output_schema"
     result_actions = []
     for action_id in plugin_action_ids:
-        action = _read_memory_dict(current_store, "plugin_actions").get(action_id) or {}
+        action = job_store.read_memory_dict(current_store, "plugin_actions").get(action_id) or {}
         action_mapping = action.get("result_mapping") if isinstance(action, dict) else {}
         mapping = action_mapping if isinstance(action_mapping, dict) else {}
         preview = result_write_preview(preview_response_summary, mapping or output_mapping)
@@ -468,6 +447,15 @@ def dry_run_scheduled_job_response(
                 ),
                 "write_target_label": preview.get("write_target_label"),
             },
+        )
+    if configured_result_actions and job_type != "code_repository_inspection":
+        result_actions.extend(
+            job_result_actions.preview_generic_result_actions(
+                output_mapping=output_mapping,
+                preview_response_summary=preview_response_summary,
+                result_actions=configured_result_actions,
+                source=result_action_preview_source,
+            ),
         )
     data_node = (
         JobExecutionEngine.data_connection_execution_node(
@@ -514,8 +502,8 @@ def patch_scheduled_job_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_admin(user)
-    sync_scheduled_job_store(current_store)
-    job = _read_memory_dict(current_store, "scheduled_jobs").get(job_id)
+    job_store.sync_scheduled_job_store(current_store)
+    job = job_store.read_memory_dict(current_store, "scheduled_jobs").get(job_id)
     if job is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
     updates = payload.model_dump(exclude_unset=True)
@@ -533,12 +521,8 @@ def patch_scheduled_job_response(
         plugin_action_ids,
         plugin_connection_ids,
     ) = validate_plugin_refs(current_store, draft)
-    draft_result_actions = (
-        payload_field(draft, "result_actions", [])
-        if job_type == "code_repository_inspection"
-        else []
-    )
-    result_actions = validate_code_inspection_result_actions(draft_result_actions)
+    draft_result_actions = payload_field(draft, "result_actions", [])
+    result_actions = job_result_actions.validate_scheduled_job_result_actions(job_type, draft_result_actions)  # noqa: E501
     knowledge_document_ids = validate_knowledge_document_ids(
         current_store,
         payload_field(draft, "knowledge_document_ids", []),
@@ -575,7 +559,7 @@ def patch_scheduled_job_response(
     if "enabled" in updates:
         updates["status"] = "active" if updates["enabled"] else "disabled"
     job = {**job, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    _put_memory_record(current_store, "scheduled_jobs", job)
+    job_store.put_memory_record(current_store, "scheduled_jobs", job)
     audit_event = record_audit_event(
         current_store,
         event_type="scheduled_job.updated",
@@ -584,7 +568,7 @@ def patch_scheduled_job_response(
         subject_id=job_id,
         payload=scheduled_job_audit_payload(job),
     )
-    persist_record(
+    job_store.persist_record(
         current_store,
         "save_scheduled_job_record",
         job,
@@ -600,11 +584,11 @@ def delete_scheduled_job_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_admin(user)
-    sync_scheduled_job_store(current_store)
-    job = _read_memory_dict(current_store, "scheduled_jobs").get(job_id)
+    job_store.sync_scheduled_job_store(current_store)
+    job = job_store.read_memory_dict(current_store, "scheduled_jobs").get(job_id)
     if job is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
-    _delete_memory_record(current_store, "scheduled_jobs", job_id)
+    job_store.delete_memory_record(current_store, "scheduled_jobs", job_id)
     audit_event = record_audit_event(
         current_store,
         event_type="scheduled_job.deleted",
@@ -622,19 +606,19 @@ def delete_scheduled_job_response(
 
 def resolve_ai_snapshots(current_store: Any, job: dict[str, Any]) -> dict[str, Any]:
     agent = (
-        _read_memory_dict(current_store, "ai_agents").get(job.get("agent_id"))
+        job_store.read_memory_dict(current_store, "ai_agents").get(job.get("agent_id"))
         if job.get("agent_id")
         else None
     )
     skills = []
     for skill_id in job.get("skill_ids", []):
-        skill = dict(_read_memory_dict(current_store, "ai_skills")[skill_id])
+        skill = dict(job_store.read_memory_dict(current_store, "ai_skills")[skill_id])
         package_snapshot = load_skill_package_snapshot(skill)
         if package_snapshot is not None:
             skill["package_snapshot"] = package_snapshot
         skills.append(skill)
     return {
-        "resolved_agent_snapshot": snapshot(current_store, agent or {}),
+        "resolved_agent_snapshot": job_store.snapshot(current_store, agent or {}),
         "resolved_prompt_snapshot": {
             "agent_system_prompt": (agent or {}).get("system_prompt"),
             "skill_prompt_templates": [
@@ -642,8 +626,8 @@ def resolve_ai_snapshots(current_store: Any, job: dict[str, Any]) -> dict[str, A
                 for skill in skills
             ],
         },
-        "resolved_skill_snapshots": snapshot(current_store, skills),
-        "tool_policy_snapshot": snapshot(current_store, (agent or {}).get("tool_policy") or {}),
+        "resolved_skill_snapshots": job_store.snapshot(current_store, skills),
+        "tool_policy_snapshot": job_store.snapshot(current_store, (agent or {}).get("tool_policy") or {}),  # noqa: E501
     }
 
 
@@ -688,7 +672,7 @@ def create_collector_run_for_job(
         "status": "running",
         "updated_at": now,
     }
-    _put_memory_record(current_store, "collector_runs", collector_run)
+    job_store.put_memory_record(current_store, "collector_runs", collector_run)
     audit_event = record_audit_event(
         current_store,
         event_type="collector_run.created",
@@ -697,7 +681,7 @@ def create_collector_run_for_job(
         subject_id=collector_run_id,
         payload={"collector_type": collector_type, "scheduled_job_id": job["id"]},
     )
-    persist_record(
+    job_store.persist_record(
         current_store,
         "save_collector_run_record",
         collector_run,
@@ -731,7 +715,7 @@ def complete_collector_run(
         "status": collector_status,
         "updated_at": now,
     }
-    _put_memory_record(current_store, "collector_runs", updated)
+    job_store.put_memory_record(current_store, "collector_runs", updated)
     audit_event = record_audit_event(
         current_store,
         event_type="collector_run.updated",
@@ -740,7 +724,7 @@ def complete_collector_run(
         subject_id=collector_run["id"],
         payload={"records_imported": records_imported, "status": collector_status},
     )
-    persist_record(
+    job_store.persist_record(
         current_store,
         "save_collector_run_record",
         updated,
@@ -756,7 +740,7 @@ def cancelled_scheduled_job_run_if_requested(
     run_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any] | None:
-    latest_run = _read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
+    latest_run = job_store.read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
     if latest_run is None or latest_run.get("status") != "cancelled":
         return None
     complete_collector_run(
@@ -806,7 +790,7 @@ def plugin_summary_from_log(current_store: Any, plugin_log: dict[str, Any]) -> d
     return {
         "action_id": plugin_log.get("action_id"),
         "connection_environment": (
-            _read_memory_dict(current_store, "plugin_connections").get(
+            job_store.read_memory_dict(current_store, "plugin_connections").get(
                 plugin_log.get("connection_id"),
             )
             or {}
@@ -899,7 +883,7 @@ def queued_native_scan_result_summary(
     repository_id = job_config.get("repository_id")
     sync_product_git_repository_store(current_store, job.get("product_id"))
     repository = (
-        _read_memory_dict(current_store, "product_git_repositories").get(str(repository_id))
+        job_store.read_memory_dict(current_store, "product_git_repositories").get(str(repository_id))  # noqa: E501
         or {}
     )
     return native_scan_result_summary(
@@ -950,19 +934,19 @@ def execute_queued_scheduled_job_run_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_admin(user)
-    sync_scheduled_job_store(current_store)
-    sync_ai_agent_store(current_store)
-    sync_ai_skill_store(current_store)
-    sync_reference_store(current_store)
-    sync_scheduled_job_run_store(current_store)
-    run = _read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
+    job_store.sync_scheduled_job_store(current_store)
+    job_store.sync_ai_agent_store(current_store)
+    job_store.sync_ai_skill_store(current_store)
+    job_store.sync_reference_store(current_store)
+    job_store.sync_scheduled_job_run_store(current_store)
+    run = job_store.read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
     if run is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job run not found")
     if run.get("status") in SCHEDULED_JOB_RUN_TERMINAL_STATUSES:
         raise api_error(409, "SCHEDULED_JOB_RUN_STATE_INVALID", "Terminal run cannot be executed")
     if run.get("status") != "queued":
         raise api_error(409, "SCHEDULED_JOB_RUN_STATE_INVALID", "Only queued runs can be executed")
-    job = _read_memory_dict(current_store, "scheduled_jobs").get(run.get("scheduled_job_id"))
+    job = job_store.read_memory_dict(current_store, "scheduled_jobs").get(run.get("scheduled_job_id"))  # noqa: E501
     if job is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
     if not scheduled_job_uses_async_worker(job):
@@ -971,7 +955,7 @@ def execute_queued_scheduled_job_run_response(
         raise api_error(409, "SCHEDULED_JOB_DISABLED", "Scheduled job is disabled")
 
     now = datetime.now(UTC).isoformat()
-    collector_run = _read_memory_dict(current_store, "collector_runs").get(
+    collector_run = job_store.read_memory_dict(current_store, "collector_runs").get(
         run.get("collector_run_id"),
     )
     if collector_run is None:
@@ -990,8 +974,8 @@ def execute_queued_scheduled_job_run_response(
         "status": "running",
         "updated_at": now,
     }
-    _put_memory_record(current_store, "scheduled_job_runs", run)
-    persist_record(current_store, "save_scheduled_job_run_record", run)
+    job_store.put_memory_record(current_store, "scheduled_job_runs", run)
+    job_store.persist_record(current_store, "save_scheduled_job_run_record", run)
 
     plugin_summary = None
     plugin_output_mapping: dict[str, Any] = {}
@@ -1166,7 +1150,7 @@ def execute_queued_scheduled_job_run_response(
         pass
     except Exception as exc:
         status = "failed"
-        error_code, error_message = exception_error_code_and_message(exc)
+        error_code, error_message = job_runtime.exception_error_code_and_message(exc)
         result_summary = {
             "execution_nodes": {
                 "native_scan": {
@@ -1209,7 +1193,7 @@ def execute_queued_scheduled_job_run_response(
         "status": status,
         "updated_at": updated_at,
     }
-    _put_memory_record(current_store, "scheduled_job_runs", run)
+    job_store.put_memory_record(current_store, "scheduled_job_runs", run)
     complete_collector_run(
         current_store,
         collector_run=collector_run,
@@ -1226,9 +1210,9 @@ def execute_queued_scheduled_job_run_response(
         "last_success_at": finished_at if status == "succeeded" else job.get("last_success_at"),
         "updated_at": updated_at,
     }
-    _put_memory_record(current_store, "scheduled_jobs", job_update)
-    persist_record(current_store, "save_scheduled_job_record", job_update)
-    persist_record(current_store, "save_scheduled_job_run_record", run)
+    job_store.put_memory_record(current_store, "scheduled_jobs", job_update)
+    job_store.persist_record(current_store, "save_scheduled_job_record", job_update)
+    job_store.persist_record(current_store, "save_scheduled_job_run_record", run)
     audit_event = record_audit_event(
         current_store,
         event_type=f"scheduled_job_run.{status}",
@@ -1237,7 +1221,7 @@ def execute_queued_scheduled_job_run_response(
         subject_id=run_id,
         payload=scheduled_job_run_audit_payload(job=job, run=run),
     )
-    persist_record(
+    job_store.persist_record(
         current_store,
         "save_scheduled_job_run_record",
         run,
@@ -1255,20 +1239,20 @@ def run_scheduled_job_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_scheduled_job_runner(user)
-    ensure_enum(trigger_type, SCHEDULED_JOB_RUN_TRIGGER_TYPES, "scheduled job run trigger_type")
-    sync_scheduled_job_store(current_store)
-    sync_ai_agent_store(current_store)
-    sync_ai_skill_store(current_store)
-    sync_reference_store(current_store)
-    job = _read_memory_dict(current_store, "scheduled_jobs").get(job_id)
+    ensure_enum(trigger_type, SCHEDULED_JOB_RUN_TRIGGER_TYPES, "scheduled job run trigger_type")  # noqa: E501
+    job_store.sync_scheduled_job_store(current_store)
+    job_store.sync_ai_agent_store(current_store)
+    job_store.sync_ai_skill_store(current_store)
+    job_store.sync_reference_store(current_store)
+    job = job_store.read_memory_dict(current_store, "scheduled_jobs").get(job_id)
     if job is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
     if not scheduled_job_matches_product_scope(job, user):
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
     source_run = None
     if source_run_id:
-        sync_scheduled_job_run_store(current_store, scheduled_job_id=job_id)
-        source_run = _read_memory_dict(current_store, "scheduled_job_runs").get(source_run_id)
+        job_store.sync_scheduled_job_run_store(current_store, scheduled_job_id=job_id)
+        source_run = job_store.read_memory_dict(current_store, "scheduled_job_runs").get(source_run_id)  # noqa: E501
         if source_run is None:
             raise api_error(404, "NOT_FOUND", "Source scheduled job run not found")
         if source_run.get("scheduled_job_id") != job_id:
@@ -1312,7 +1296,7 @@ def run_scheduled_job_response(
     run = {
         **snapshots,
         "collector_run_id": None,
-        "config_snapshot": snapshot(current_store, job),
+        "config_snapshot": job_store.snapshot(current_store, job),
         "created_at": now,
         "error_code": None,
         "error_message": None,
@@ -1331,7 +1315,7 @@ def run_scheduled_job_response(
         "trigger_type": trigger_type,
         "updated_at": now,
     }
-    _put_memory_record(current_store, "scheduled_job_runs", run)
+    job_store.put_memory_record(current_store, "scheduled_job_runs", run)
     collector_run = create_collector_run_for_job(
         current_store,
         job=job,
@@ -1340,7 +1324,7 @@ def run_scheduled_job_response(
         user=user,
     )
     run["collector_run_id"] = collector_run["id"]
-    persist_record(
+    job_store.persist_record(
         current_store,
         "save_scheduled_job_run_record",
         run,
@@ -1354,7 +1338,7 @@ def run_scheduled_job_response(
             subject_id=run_id,
             payload=scheduled_job_run_audit_payload(job=job, run=run),
         )
-        persist_record(
+        job_store.persist_record(
             current_store,
             "save_scheduled_job_run_record",
             run,
@@ -1399,7 +1383,7 @@ def run_scheduled_job_response(
                 len(native_findings) if isinstance(native_findings, list) else 0
             )
         elif job.get("plugin_action_id"):
-            resolved_plugin_input_mapping = resolve_plugin_input_mapping(
+            resolved_plugin_input_mapping = job_runtime.resolve_plugin_input_mapping(
                 job.get("plugin_input_mapping") or {},
                 job,
             )
@@ -1451,7 +1435,7 @@ def run_scheduled_job_response(
                 records_imported += plugin_records_imported
         elif job["job_type"] == "plugin_action_invoke" and plugin_summary is not None:
             result_summary = {
-                **generic_scheduled_job_result_summary(str(job["job_type"])),
+                **job_runtime.generic_scheduled_job_result_summary(str(job["job_type"])),
                 "execution_nodes": JobExecutionEngine.plugin_action_execution_nodes(
                     job=job,
                     plugin_output_mapping=plugin_output_mapping,
@@ -1465,6 +1449,14 @@ def run_scheduled_job_response(
             records_imported = plugin_records_imported
         elif job["job_type"] == "user_feedback_insight_extract" and plugin_summary is not None:
             result_summary, records_imported = run_user_feedback_insight_extract_job(
+                current_store,
+                job=job,
+                plugin_summary=plugin_summary,
+                resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                user=user,
+            )
+        elif job["job_type"] == "online_log_ai_analysis" and plugin_summary is not None:
+            result_summary, records_imported = run_online_log_ai_analysis_job(
                 current_store,
                 job=job,
                 plugin_summary=plugin_summary,
@@ -1619,7 +1611,7 @@ def run_scheduled_job_response(
                 "task_ids": inspection_result.get("task_ids") or [],
             }
         else:
-            result_summary = generic_scheduled_job_result_summary(str(job["job_type"]))
+            result_summary = job_runtime.generic_scheduled_job_result_summary(str(job["job_type"]))
             if plugin_summary is not None:
                 result_summary["plugin"] = plugin_summary
                 result_summary["execution_nodes"] = (
@@ -1638,18 +1630,26 @@ def run_scheduled_job_response(
         error_message = None
     except Exception as exc:
         status = "failed"
-        error_code, error_message = exception_error_code_and_message(exc)
+        error_code, error_message = job_runtime.exception_error_code_and_message(exc)
         result_summary = {}
-        if job["job_type"] == "user_feedback_insight_extract" and plugin_summary is not None:
-            model_gateway_failure = model_gateway_failure_diagnostics(exc)
+        if (
+            job["job_type"] in {"online_log_ai_analysis", "user_feedback_insight_extract"}
+            and plugin_summary is not None
+        ):
+            model_gateway_failure = job_runtime.model_gateway_failure_diagnostics(exc)
             data_connection_failed = plugin_summary.get("status") == "failed"
+            default_write_target = (
+                "user_feedback_insights"
+                if job["job_type"] == "user_feedback_insight_extract"
+                else "scheduled_job_result"
+            )
             source_row_count = records_imported_from_mapping(
                 plugin_summary.get("response_summary") or {},
                 {"records_imported_path": plugin_output_mapping.get("records_imported_path")},
             )
             skill_processing_status = "not_run" if data_connection_failed else "failed"
             model_gateway_called = bool(model_gateway_failure) or not data_connection_failed
-            model_gateway_config_id = model_gateway_failure.get("model_gateway_config_id") or job.get("model_gateway_config_id")
+            model_gateway_config_id = model_gateway_failure.get("model_gateway_config_id") or job.get("model_gateway_config_id")  # noqa: E501
             skill_processing_note = (
                 "数据连接失败，平台 AI 大模型处理未开始。"
                 if data_connection_failed
@@ -1668,7 +1668,7 @@ def run_scheduled_job_response(
                         "records_imported": 0,
                         "status": "not_run",
                         "write_target": plugin_output_mapping.get("write_target")
-                        or "user_feedback_insights",
+                        or default_write_target,
                     },
                     "skill_processing": {
                         **model_gateway_failure,
@@ -1698,10 +1698,10 @@ def run_scheduled_job_response(
                     "skill_ids": list(job.get("skill_ids", [])),
                 },
                 "write_target": plugin_output_mapping.get("write_target")
-                or "user_feedback_insights",
+                or default_write_target,
             }
         elif job["job_type"] == "code_repository_inspection" and plugin_summary is not None:
-            model_gateway_failure = model_gateway_failure_diagnostics(exc)
+            model_gateway_failure = job_runtime.model_gateway_failure_diagnostics(exc)
             data_connection_failed = plugin_summary.get("status") == "failed"
             code_inspection_output_mapping = resolve_job_plugin_output_mapping(current_store, job)
             source_finding_count = records_imported_from_mapping(
@@ -1731,7 +1731,7 @@ def run_scheduled_job_response(
                 )
             )
             code_inspection_skill_status = "not_run" if data_connection_failed else "failed"
-            model_gateway_config_id = model_gateway_failure.get("model_gateway_config_id") or job.get("model_gateway_config_id")
+            model_gateway_config_id = model_gateway_failure.get("model_gateway_config_id") or job.get("model_gateway_config_id")  # noqa: E501
             code_inspection_note = (
                 "数据连接失败，代码巡检 AI 处理和结果写入未开始。"
                 if data_connection_failed
@@ -1803,7 +1803,7 @@ def run_scheduled_job_response(
         "status": status,
         "updated_at": updated_at,
     }
-    _put_memory_record(current_store, "scheduled_job_runs", run)
+    job_store.put_memory_record(current_store, "scheduled_job_runs", run)
     if status in SCHEDULED_JOB_RUN_TERMINAL_STATUSES:
         complete_collector_run(
             current_store,
@@ -1821,13 +1821,13 @@ def run_scheduled_job_response(
         "last_success_at": finished_at if status == "succeeded" else job.get("last_success_at"),
         "updated_at": updated_at,
     }
-    _put_memory_record(current_store, "scheduled_jobs", job_update)
-    persist_record(
+    job_store.put_memory_record(current_store, "scheduled_jobs", job_update)
+    job_store.persist_record(
         current_store,
         "save_scheduled_job_record",
         job_update,
     )
-    persist_record(
+    job_store.persist_record(
         current_store,
         "save_scheduled_job_run_record",
         run,
@@ -1840,7 +1840,7 @@ def run_scheduled_job_response(
         subject_id=run_id,
         payload=scheduled_job_run_audit_payload(job=job, run=run),
     )
-    persist_record(
+    job_store.persist_record(
         current_store,
         "save_scheduled_job_run_record",
         run,
@@ -1856,18 +1856,18 @@ def cancel_scheduled_job_run_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_admin(user)
-    sync_scheduled_job_run_store(current_store)
-    run = _read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
+    job_store.sync_scheduled_job_run_store(current_store)
+    run = job_store.read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
     if run is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job run not found")
     if run["status"] in SCHEDULED_JOB_RUN_TERMINAL_STATUSES:
         raise api_error(409, "SCHEDULED_JOB_RUN_STATE_INVALID", "Terminal run cannot be cancelled")
     now = datetime.now(UTC).isoformat()
     run = {**run, "finished_at": now, "status": "cancelled", "updated_at": now}
-    _put_memory_record(current_store, "scheduled_job_runs", run)
+    job_store.put_memory_record(current_store, "scheduled_job_runs", run)
     collector_run_id = run.get("collector_run_id")
     collector_run = (
-        _read_memory_dict(current_store, "collector_runs").get(collector_run_id)
+        job_store.read_memory_dict(current_store, "collector_runs").get(collector_run_id)
         if collector_run_id
         else None
     )
@@ -1891,7 +1891,7 @@ def cancel_scheduled_job_run_response(
         subject_type="scheduled_job_run",
         subject_id=run_id,
     )
-    persist_record(
+    job_store.persist_record(
         current_store,
         "save_scheduled_job_run_record",
         run,

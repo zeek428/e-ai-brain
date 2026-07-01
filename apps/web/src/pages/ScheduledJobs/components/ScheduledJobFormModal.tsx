@@ -42,6 +42,7 @@ type ScheduledJobFormModalProps = {
   codeInspectionBuiltinRuleSelectOptions: SelectOption[];
   codeInspectionIgnoreRuleSelectOptions: SelectOption[];
   codeInspectionResultActionOptions: SelectOption[];
+  genericResultActionOptions: SelectOption[];
   codeInspectionScanModeSelectOptions: SelectOption[];
   codeInspectionScannerEngineSelectOptions: SelectOption[];
   dryRunResult?: ScheduledJobDryRunResult;
@@ -88,6 +89,7 @@ export function ScheduledJobFormModal({
   codeInspectionBuiltinRuleSelectOptions,
   codeInspectionIgnoreRuleSelectOptions,
   codeInspectionResultActionOptions,
+  genericResultActionOptions,
   codeInspectionScanModeSelectOptions,
   codeInspectionScannerEngineSelectOptions,
   dryRunResult,
@@ -237,7 +239,9 @@ export function ScheduledJobFormModal({
         />
         <ScheduledJobActionConfigSection
           codeInspectionResultActionOptions={codeInspectionResultActionOptions}
+          genericResultActionOptions={genericResultActionOptions}
           isCodeInspectionJob={selectedJobType === 'code_repository_inspection'}
+          isGenericResultActionJob={selectedJobType === 'online_log_ai_analysis'}
           pluginActions={pluginActions}
           requiredForPluginResource={requiredForPluginResource}
           severityThresholdOptions={severityThresholdSelectOptions}

@@ -40,13 +40,13 @@ SCHEDULED_JOB_TYPE_DEFINITIONS: list[dict[str, Any]] = [
         "value": "iteration_plan_suggestion_generate",
     },
     {
-        "allow_create": False,
+        "allow_create": True,
         "category": "operations",
         "default_execution_mode": "ai_generated",
         "label": "线上日志 AI 分析",
         "requires_ai_assembly": True,
-        "runnable": False,
-        "unavailable_reason": "运行处理器尚未闭环，后续通过线上日志模板补齐后开放。",
+        "requires_plugin_resource": True,
+        "runnable": True,
         "value": "online_log_ai_analysis",
     },
     {
@@ -234,6 +234,10 @@ CODE_INSPECTION_RESULT_ACTION_DEFINITIONS = [
     {"label": "严重问题自动创建整改任务", "value": "create_task_for_severe_findings"},
     {"label": "发送问题消息通知", "value": "send_notification"},
 ]
+GENERIC_RESULT_ACTION_DEFINITIONS = [
+    {"label": "仅保存运行结果", "value": "save_scheduled_job_result"},
+    {"label": "发送通知记录", "value": "send_notification"},
+]
 CODE_INSPECTION_SEVERITY_THRESHOLD_DEFINITIONS = [
     {"label": "critical", "value": "critical"},
     {"label": "high", "value": "high"},
@@ -263,6 +267,7 @@ def list_scheduled_job_catalog_response(*, user: dict[str, Any]) -> dict[str, An
         },
         "connection_environments": deepcopy(CONNECTION_ENVIRONMENT_DEFINITIONS),
         "execution_modes": deepcopy(SCHEDULED_JOB_EXECUTION_MODE_DEFINITIONS),
+        "generic_result_actions": deepcopy(GENERIC_RESULT_ACTION_DEFINITIONS),
         "job_types": deepcopy(SCHEDULED_JOB_TYPE_DEFINITIONS),
         "required_job_types": {
             "ai_processing": sorted(AI_REQUIRED_SCHEDULED_JOB_TYPES),

@@ -14,6 +14,7 @@ from app.services.scheduled_job_ai_capabilities import (
 )
 from app.services.scheduled_job_catalog import (
     AI_REQUIRED_SCHEDULED_JOB_TYPES,
+    PLUGIN_RESOURCE_REQUIRED_SCHEDULED_JOB_TYPES,
     SCHEDULED_JOB_EXECUTION_MODES,
     SCHEDULED_JOB_SCHEDULE_TYPES,
     SCHEDULED_JOB_TYPES,
@@ -98,20 +99,15 @@ def validate_plugin_refs(
                 "PLUGIN_ACTION_REQUIRED",
                 "plugin_connection_ids requires plugin_action_ids",
             )
-        if effective_scheduled_job_type(payload) == "user_feedback_insight_extract":
+        job_type = effective_scheduled_job_type(payload)
+        if job_type in PLUGIN_RESOURCE_REQUIRED_SCHEDULED_JOB_TYPES:
             raise api_error(
                 400,
                 "PLUGIN_ACTION_REQUIRED",
-                "user_feedback_insight_extract requires plugin_action_id",
-            )
-        if effective_scheduled_job_type(payload) == "code_repository_inspection":
-            raise api_error(
-                400,
-                "PLUGIN_ACTION_REQUIRED",
-                "code_repository_inspection requires plugin_action_id",
+                f"{job_type} requires plugin_action_id",
             )
         return None, None, [], []
-    _, connection, _ = ensure_active_plugin_action(
+    plugin, connection, _ = ensure_active_plugin_action(
         current_store,
         action_id,
         connection_id=connection_id,
@@ -127,5 +123,5 @@ def validate_plugin_refs(
             raise api_error(400, "PLUGIN_ACTION_INACTIVE", "Plugin action is inactive")
         ensure_active_plugin(current_store, str(action["plugin_id"]))
     for extra_connection_id in connection_ids[1:]:
-        ensure_active_connection(current_store, extra_connection_id)
+        ensure_active_connection(current_store, extra_connection_id, plugin_id=str(plugin["id"]))
     return action_id, resolved_connection_id, action_ids, connection_ids

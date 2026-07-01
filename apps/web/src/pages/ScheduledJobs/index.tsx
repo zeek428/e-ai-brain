@@ -144,6 +144,7 @@ export default function ScheduledJobsPage() {
     executionModeLabelMap,
     executionModeSelectOptions,
     formatResultActionLabels,
+    genericResultActionSelectOptions,
     jobTypeLabelMap,
     jobTypeSelectOptions,
     pluginRequiredTypes,
@@ -217,21 +218,12 @@ export default function ScheduledJobsPage() {
   const selectedRepositoryDefaultBranch = selectedRepositoryId
     ? productRepositoryById.get(selectedRepositoryId)?.defaultBranch
     : undefined;
-  const selectedPluginActionPluginIds = useMemo(
-    () =>
-      new Set(
-        normalizedSelectedPluginActionIds
-          .map((actionId) => pluginActionById.get(actionId)?.plugin_id)
-          .filter((pluginId): pluginId is string => Boolean(pluginId)),
-      ),
-    [normalizedSelectedPluginActionIds, pluginActionById],
-  );
   const connectionPluginFilterIds = useMemo(
     () =>
       selectedJobType === 'code_repository_inspection' && codeInspectionActionByPluginId.size > 0
         ? new Set(codeInspectionActionByPluginId.keys())
-        : selectedPluginActionPluginIds,
-    [codeInspectionActionByPluginId, selectedJobType, selectedPluginActionPluginIds],
+        : new Set<string>(),
+    [codeInspectionActionByPluginId, selectedJobType],
   );
   const jobById = useMemo(
     () => new Map(jobs.map((job) => [job.id, job])),
@@ -893,6 +885,9 @@ export default function ScheduledJobsPage() {
             },
           }
         : {};
+    const formResultActions = values.result_actions?.length
+      ? values.result_actions
+      : templatePayloadResultActions(selectedTemplate) ?? [];
     const requestPayload: Partial<ScheduledJobRecord> = {
       ...jobValues,
       config_json: scheduledJobConfigWithOrchestration(
@@ -924,10 +919,10 @@ export default function ScheduledJobsPage() {
       knowledge_document_ids: values.knowledge_document_ids ?? [],
       result_actions:
         values.job_type === 'code_repository_inspection'
-          ? values.result_actions?.length
-            ? values.result_actions
-            : templatePayloadResultActions(selectedTemplate) ?? cloneResultActions(defaultCodeInspectionActions)
-          : [],
+          ? formResultActions.length
+            ? formResultActions
+            : cloneResultActions(defaultCodeInspectionActions)
+          : formResultActions,
       skill_ids: values.skill_ids ?? [],
     };
     if (codeInspectionUsesNativeScan(requestPayload.job_type, requestPayload.config_json)) {
@@ -1076,6 +1071,8 @@ export default function ScheduledJobsPage() {
           ? form.getFieldValue('result_actions')
           : cloneResultActions(defaultCodeInspectionActions),
       });
+    } else if (value === 'online_log_ai_analysis' && !form.getFieldValue('result_actions')?.length) {
+      form.setFieldValue('result_actions', [{ type: 'save_scheduled_job_result' }]);
     }
   };
 
@@ -1149,6 +1146,7 @@ export default function ScheduledJobsPage() {
         executionModeSelectOptions={executionModeSelectOptions}
         filteredPluginConnections={filteredPluginConnections}
         form={form}
+        genericResultActionOptions={genericResultActionSelectOptions}
         jobTemplateOptions={jobTemplateOptions}
         jobTypeSelectOptions={jobTypeSelectOptions}
         knowledgeDocuments={knowledgeDocuments}

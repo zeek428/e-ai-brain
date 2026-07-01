@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- 定时作业多数据连接保存时校验额外连接必须归属主插件动作所在插件，跨插件连接混选直接返回 `PLUGIN_CONNECTION_MISMATCH`，避免保存后运行阶段才失败。
 - 定时作业在数据连接阶段失败时，运行摘要不再把 AI 执行节点误标为已调用大模型；`skill_processing` 明确为 `not_run` 且 `model_gateway_called=false`。
 - 定时作业运行入口不再对未闭环作业类型返回伪成功占位结果；历史兼容类型手动运行会明确返回不可运行错误。
 - 内部数据源读取不再因插件管理权限临时注入需求、产品或 Bug 读取权限；缺少业务源读取权限时返回空数据与 `access_issues`，防止越权读取内部业务数据。
@@ -16,6 +17,7 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 通用 AI 分析类定时作业的结果动作执行反馈补齐 `write_preview`，邮件通知记录会在结果写入记录中展示主题、投递状态和收件人样例。
 - 定时作业运行详情基础信息新增“运行摘要”展示，优先呈现后端 `result_summary.message`，插件执行调用成功时无需展开 JSON 即可看到“插件执行调用完成”。
 - 插件执行调用类定时作业成功运行摘要改为“插件执行调用完成”，并保留 `job_type`、插件摘要和三段 `execution_nodes`，不再在运行详情暴露 `No handler implemented` 占位文案。
 - 定时作业模型输出不符合 Skill Schema 时仍保留模型调用日志：失败运行的 `skill_processing` 与 `processing` 返回 `model_gateway_called=true`、`model_log_id`、模型、供应商和耗时，便于区分“未调用模型”和“模型已调用但输出不合约”。
@@ -43,6 +45,7 @@
 - 定时作业配置列表移除“模板来源”列，模板来源继续保留在复制确认、运行详情和审计 payload 中，列表聚焦数据连接、AI执行、动作和调度。
 
 ### Added
+- 定时作业 Catalog 新增 `generic_result_actions[]`，为线上日志异常分析等通用 AI 作业提供“仅保存运行结果”和“发送通知”结果动作选项。
 - 用户反馈洞察定时作业运行摘要新增 `execution_nodes.result_actions` 和 `write_targets`，并让通用结果写入记录按多动作逐条派生，支持同时写用户洞察表和仅保存运行结果。
 - 内部数据源连接 schema 新增“按源过滤”可视化字段：需求状态/优先级、Bug 状态/严重级别可直接在连接表单配置并写入 `source_filters`，高级 JSON 仅用于补充更细粒度过滤。
 - 内部数据源详情字段补齐独立系统权限点 `system.internal_data_source.detail`：默认授予管理员，可在角色管理中授权给专项治理角色；detail 模式只对具备该权限的用户返回受保护字段。

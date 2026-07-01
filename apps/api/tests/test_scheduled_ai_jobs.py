@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import app.services.scheduled_job_ai_capabilities as scheduled_job_ai_capabilities_service
 import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
+import app.services.scheduled_job_result_actions as scheduled_job_result_actions_service
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
 from app.core.security import hash_password
@@ -1058,9 +1059,9 @@ def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
     assert by_type["code_repository_inspection"]["requires_product"] is True
     assert by_type["code_repository_inspection"]["requires_plugin_resource"] is True
     assert by_type["user_feedback_insight_extract"]["requires_ai_assembly"] is True
-    assert by_type["online_log_ai_analysis"]["allow_create"] is False
-    assert by_type["online_log_ai_analysis"]["runnable"] is False
-    assert "尚未闭环" in by_type["online_log_ai_analysis"]["unavailable_reason"]
+    assert by_type["online_log_ai_analysis"]["allow_create"] is True
+    assert by_type["online_log_ai_analysis"]["runnable"] is True
+    assert by_type["online_log_ai_analysis"]["requires_plugin_resource"] is True
     assert catalog["required_job_types"] == {
         "ai_processing": [
             "iteration_plan_suggestion_generate",
@@ -1069,6 +1070,7 @@ def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
         ],
         "plugin_resource": [
             "code_repository_inspection",
+            "online_log_ai_analysis",
             "plugin_action_invoke",
             "user_feedback_insight_extract",
         ],
@@ -1079,11 +1081,22 @@ def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
     assert catalog["code_inspection"]["default_result_actions"][0] == {
         "type": "write_code_inspection_report",
     }
+    assert catalog["generic_result_actions"] == [
+        {"label": "仅保存运行结果", "value": "save_scheduled_job_result"},
+        {"label": "发送通知记录", "value": "send_notification"},
+    ]
     assert {item["value"] for item in catalog["execution_modes"]} == {
         "ai_assisted",
         "ai_generated",
         "deterministic",
     }
+
+
+def test_generic_result_actions_are_not_saved_for_plain_plugin_invoke_jobs():
+    assert scheduled_job_result_actions_service.validate_scheduled_job_result_actions(
+        "plugin_action_invoke",
+        [{"type": "save_scheduled_job_result"}],
+    ) == []
 
 
 def test_unavailable_scheduled_job_types_are_not_creatable_or_runnable():
@@ -1488,6 +1501,88 @@ def test_scheduled_job_preserves_multiple_plugin_connections_and_actions():
     ]
 
 
+def test_scheduled_job_rejects_extra_connection_from_different_plugin():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    primary_plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "primary_warehouse_reader",
+            "name": "主数据源读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    other_plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "other_warehouse_reader",
+            "name": "其他数据源读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    primary_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://primary-warehouse.example.com",
+            "name": "主数据源连接",
+            "plugin_id": primary_plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    other_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://other-warehouse.example.com",
+            "name": "其他数据源连接",
+            "plugin_id": other_plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_weekly_rows",
+            "connection_id": primary_connection["id"],
+            "name": "拉取周数据",
+            "plugin_id": primary_plugin["id"],
+            "request_config": {"method": "GET", "path": "/weekly"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "跨插件连接同步",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": primary_connection["id"],
+            "plugin_connection_ids": [primary_connection["id"], other_connection["id"]],
+            "schedule_type": "manual",
+            "source_system": "warehouse",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "PLUGIN_CONNECTION_MISMATCH"
+
+
 def test_scheduled_job_runs_multiple_data_connections_with_merged_dag_node():
     app.state.store.reset()
     admin_headers = auth_headers()
@@ -1588,7 +1683,7 @@ def test_scheduled_job_runs_multiple_data_connections_with_merged_dag_node():
     assert data_node["response_summary"]["json"]["row_count"] == 4
     assert len(data_node["response_summary"]["json"]["rows"]) == 4
     trace_nodes = run["result_summary"]["trace_graph"]["nodes"]
-    trace_data_nodes = [node for node in trace_nodes if str(node["id"]).startswith("data_connection_")]
+    trace_data_nodes = [node for node in trace_nodes if str(node["id"]).startswith("data_connection_")]  # noqa: E501
     assert [node["id"] for node in trace_data_nodes] == ["data_connection_1", "data_connection_2"]
     assert [node["input"]["connection_id"] for node in trace_data_nodes] == [
         primary_connection["id"],
@@ -3382,6 +3477,228 @@ def test_online_log_ai_analysis_requires_ai_runtime_configuration():
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "AI_AGENT_REQUIRED"
     assert "AI job requires agent_id" in response.text
+
+
+def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    model_gateway = create_model_gateway(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "online_log_anomaly_skill",
+            "input_schema": {"type": "object"},
+            "name": "线上日志异常 Skill",
+            "output_schema": {
+                "properties": {
+                    "anomalies": {
+                        "items": {
+                            "properties": {
+                                "affected_service": {"type": "string"},
+                                "evidence": {"type": "string"},
+                                "recommendation": {"type": "string"},
+                                "severity": {"type": "string"},
+                                "summary": {"type": "string"},
+                            },
+                            "type": "object",
+                        },
+                        "type": "array",
+                    },
+                    "risk_level": {"type": "string"},
+                    "summary": {"type": "string"},
+                },
+                "required": ["summary", "anomalies"],
+                "type": "object",
+            },
+            "prompt_template": "分析日志异常并输出 anomalies。",
+            "status": "active",
+            "version": "1.0.0",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "online_log_anomaly_agent",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "线上日志异常 AI角色",
+            "status": "active",
+            "system_prompt": "分析线上日志。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    class OnlineLogModelResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            content = {
+                "anomalies": [
+                    {
+                        "affected_service": "ai-brain-api",
+                        "evidence": "5xx increased from 0.2% to 3.8%",
+                        "recommendation": "Check the latest deployment and database latency.",
+                        "severity": "high",
+                        "summary": "API 5xx error rate increased",
+                    },
+                ],
+                "risk_level": "high",
+                "summary": "发现 1 条高风险线上日志异常。",
+            }
+            return json.dumps(
+                {
+                    "choices": [
+                        {"message": {"content": json.dumps(content, ensure_ascii=False)}},
+                    ],
+                    "usage": {"completion_tokens": 12, "prompt_tokens": 24, "total_tokens": 36},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        scheduled_job_ai_processing_service,
+        "urlopen",
+        lambda *_args, **_kwargs: OnlineLogModelResponse(),
+    )
+
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "observability",
+            "code": "online_log_reader",
+            "name": "线上日志读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://logs.example.com",
+            "environment": "prod",
+            "name": "线上日志连接",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "query_online_log_metrics",
+            "connection_id": connection["id"],
+            "name": "查询线上日志指标",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {
+                    "row_count": 2,
+                    "rows": [
+                        {"error_rate": 3.8, "service": "ai-brain-api"},
+                        {"p95_latency_ms": 1800, "service": "ai-brain-api"},
+                    ],
+                },
+                "path": "/metrics",
+            },
+            "result_mapping": {
+                "anomalies_path": "$.anomalies",
+                "summary_path": "$.summary",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    job_payload = {
+        "agent_id": agent["id"],
+        "enabled": True,
+        "execution_mode": "ai_generated",
+        "job_type": "online_log_ai_analysis",
+        "model_gateway_config_id": model_gateway["id"],
+        "name": "线上日志异常分析",
+        "plugin_action_id": action["id"],
+        "plugin_connection_id": connection["id"],
+        "result_actions": [
+            {
+                "channels": ["email"],
+                "recipients": ["ops@example.com"],
+                "type": "send_notification",
+            },
+        ],
+        "schedule_type": "manual",
+        "skill_ids": [skill["id"]],
+        "source_system": "online-log",
+    }
+    dry_run_response = client.post(
+        "/api/system/scheduled-jobs/dry-run",
+        json=job_payload,
+        headers=admin_headers,
+    )
+    assert dry_run_response.status_code == 200
+    dry_run = dry_run_response.json()["data"]
+    dry_run_notification = next(
+        item
+        for item in dry_run["stages"]["result_actions"]
+        if item.get("type") == "send_notification"
+    )
+    assert dry_run_notification["write_target"] == "email_notifications"
+    assert dry_run_notification["write_preview_source"] == "skill_output_schema"
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json=job_payload,
+        headers=admin_headers,
+    ).json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert run["status"] == "succeeded"
+    assert run["records_imported"] == 1
+    result_summary = run["result_summary"]
+    assert result_summary["anomaly_count"] == 1
+    execution_nodes = result_summary["execution_nodes"]
+    assert execution_nodes["data_connection"]["records_imported"] == 2
+    assert execution_nodes["skill_processing"]["model_gateway_called"] is True
+    assert execution_nodes["skill_processing"]["output"]["anomaly_count"] == 1
+    assert execution_nodes["result_action"]["write_target"] == "email_notifications"
+    assert execution_nodes["result_action"]["feedback"]["delivery_status"] == "recorded"
+    assert execution_nodes["result_action"]["feedback"]["recipients"] == ["ops@example.com"]
+    assert execution_nodes["result_actions"][0]["type"] == "send_notification"
+    assert result_summary["result_action_policy"] == {
+        "failure_policy": "continue_on_error",
+        "mode": "sequential",
+    }
+    assert result_summary["trace_graph"]["edges"] == [
+        {"from": "data_connection", "to": "skill_processing"},
+        {"from": "skill_processing", "to": "result_action_1"},
+    ]
+    result_records_response = client.get(
+        f"/api/system/result-write-records?scheduled_job_run_id={run['id']}",
+        headers=admin_headers,
+    )
+    assert result_records_response.status_code == 200
+    result_records = result_records_response.json()["data"]
+    assert result_records["total"] == 1
+    result_record = result_records["items"][0]
+    assert result_record["write_target"] == "email_notifications"
+    assert result_record["write_target_label"] == "邮件通知记录"
+    assert result_record["summary_fields"]["delivery_status"] == "recorded"
+    assert result_record["summary_fields"]["subject"] == "发现 1 条高风险线上日志异常。"
+    assert result_record["summary_fields"]["sample_records"] == ["ops@example.com"]
 
 
 def test_ai_scheduled_job_requires_explicit_skill_ids_even_when_agent_has_defaults():

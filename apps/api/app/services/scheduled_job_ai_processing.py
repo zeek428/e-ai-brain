@@ -35,6 +35,7 @@ from app.services.scheduled_job_store import (
 )
 
 SKILL_OUTPUT_MAPPING_PATH_KEYS = (
+    "anomalies_path",
     "branch_path",
     "commit_sha_path",
     "findings_path",
@@ -257,6 +258,17 @@ def _default_array_item_schema(property_name: str) -> dict[str, Any]:
             },
             "type": "object",
         }
+    if lower_name in {"anomalies", "alerts"}:
+        return {
+            "properties": {
+                "affected_service": {"type": "string"},
+                "evidence": {"type": "string"},
+                "recommendation": {"type": "string"},
+                "severity": {"type": "string"},
+                "summary": {"type": "string"},
+            },
+            "type": "object",
+        }
     if lower_name in {"recipients", "emails", "to", "cc"}:
         return {"type": "string", "format": "email"}
     if lower_name in {"rows", "items", "records"}:
@@ -290,6 +302,12 @@ def _sample_string(property_name: str) -> str:
         return "dry_run"
     if lower_name in {"risk_level", "severity"}:
         return "medium"
+    if lower_name in {"affected_service", "service"}:
+        return "ai-brain-api"
+    if lower_name in {"evidence"}:
+        return "dry-run evidence"
+    if lower_name in {"recommendation"}:
+        return "Check recent deployment and error logs"
     if lower_name in {"branch"}:
         return "main"
     if lower_name in {"commit_sha", "sha"}:
@@ -725,6 +743,26 @@ def scheduled_job_ai_messages(
             "risk_level_path": str(output_mapping.get("risk_level_path") or "$.risk_level"),
             "summary_path": str(output_mapping.get("summary_path") or "$.summary"),
             "write_target": output_mapping.get("write_target") or "code_inspection_reports",
+        }
+    elif job.get("job_type") == "online_log_ai_analysis":
+        instructions = [
+            "分析 data_connection_response 中的线上日志、错误率、延迟或告警数据，识别异常和处置建议。",
+            "必须只返回 JSON 对象，不要返回 Markdown。",
+            "返回 JSON 必须包含 summary、risk_level 和 anomalies 数组。",
+            (
+                "anomalies 中每个异常至少包含 severity、summary、affected_service、"
+                "evidence 和 recommendation。"
+            ),
+            "如果没有异常，返回空 anomalies 数组，并在 summary 中说明检查窗口和结论。",
+        ]
+        output_contract = {
+            "anomalies_path": str(output_mapping.get("anomalies_path") or "$.anomalies"),
+            "records_imported_path": str(
+                output_mapping.get("records_imported_path") or "$.row_count",
+            ),
+            "risk_level_path": str(output_mapping.get("risk_level_path") or "$.risk_level"),
+            "summary_path": str(output_mapping.get("summary_path") or "$.summary"),
+            "write_target": output_mapping.get("write_target") or "scheduled_job_result",
         }
     else:
         instructions = [

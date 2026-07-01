@@ -206,6 +206,7 @@ export type ScheduledJobCatalogRecord = {
   };
   connection_environments?: ScheduledJobCatalogOption[];
   execution_modes?: ScheduledJobCatalogOption[];
+  generic_result_actions?: ScheduledJobCatalogOption[];
   job_types?: ScheduledJobCatalogJobType[];
   required_job_types?: {
     ai_processing?: string[];

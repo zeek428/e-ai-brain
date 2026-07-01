@@ -21,7 +21,7 @@ RESULT_WRITE_TARGETS = [
                 "required": False,
             },
         ],
-        "supported_job_types": ["plugin_action_invoke"],
+        "supported_job_types": ["plugin_action_invoke", "online_log_ai_analysis"],
     },
     {
         "code": "user_feedback_insights",
@@ -139,7 +139,11 @@ RESULT_WRITE_TARGETS = [
                 "required": False,
             },
         ],
-        "supported_job_types": ["plugin_action_invoke", "code_repository_inspection"],
+        "supported_job_types": [
+            "plugin_action_invoke",
+            "code_repository_inspection",
+            "online_log_ai_analysis",
+        ],
     },
 ]
 
