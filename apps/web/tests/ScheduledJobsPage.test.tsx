@@ -2076,6 +2076,17 @@ describe('ScheduledJobsPage', () => {
     expect(assistantParams.get('reference_id')).toBe('scheduled_job_run_weekly_feedback');
     expect(assistantParams.get('prompt')).toBe('帮我分析这次运行结果');
 
+    const insightDraftLink = within(dialog).getByRole('link', { name: '转洞察草案' });
+    expect(insightDraftLink).toHaveAttribute('href');
+    const insightDraftHref = insightDraftLink.getAttribute('href') ?? '';
+    expect(insightDraftHref.startsWith('/assistant?')).toBe(true);
+    const insightDraftParams = new URLSearchParams(insightDraftHref.split('?')[1]);
+    expect(insightDraftParams.get('reference_type')).toBe('scheduled_job_run');
+    expect(insightDraftParams.get('reference_id')).toBe('scheduled_job_run_weekly_feedback');
+    expect(insightDraftParams.get('prompt')).toBe(
+      '请基于这次定时作业运行结果生成用户洞察草案，保留数据来源、AI处理结论和结果动作反馈。',
+    );
+
     fireEvent.click(within(dialog).getByRole('button', { name: '导出 JSON' }));
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(clickDownload).toHaveBeenCalledTimes(1);

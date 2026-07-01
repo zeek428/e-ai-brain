@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.476 |
+| 功能版本 | v1.1.477 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.477 | 2026-07-01 | 定时作业运行详情新增“转洞察草案”前端深链契约，复用 `/assistant?reference_type=scheduled_job_run&reference_id=...&prompt=...`，不新增后端接口 | Codex |
 | v1.1.476 | 2026-07-01 | 定时作业运行详情页面新增“导出 JSON”前端契约，基于现有运行记录和结果写入记录响应导出运行记录、执行节点、展示标签和快照，不新增后端接口 | Codex |
 | v1.1.475 | 2026-07-01 | 插件管理 API 新增官方内部数据源插件契约：`protocol=internal_read_model`、`action_type=internal_query`，连接 schema 支持多选内部源数据，连接测试返回 `INTERNAL_READ` 预览与各源行数 | Codex |
 | v1.1.474 | 2026-07-01 | `GET /api/insights/items` 新增 `product_id` 查询参数，用户洞察聚合列表可按所属产品在 SQL read model 层过滤 | Codex |

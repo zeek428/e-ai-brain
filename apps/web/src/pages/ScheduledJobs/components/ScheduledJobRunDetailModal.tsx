@@ -1,4 +1,5 @@
 import {
+  BulbOutlined,
   CopyOutlined,
   DownloadOutlined,
   EditOutlined,
@@ -62,6 +63,10 @@ function assistantRunRepairDraftPrompt() {
 
 function assistantRunComparisonPrompt() {
   return '和上次成功有什么不同？';
+}
+
+function assistantRunInsightDraftPrompt() {
+  return '请基于这次定时作业运行结果生成用户洞察草案，保留数据来源、AI处理结论和结果动作反馈。';
 }
 
 function assistantRunFollowupUrl(run: ScheduledJobRunRecord, prompt = assistantRunFollowupPrompt(run)) {
@@ -186,7 +191,7 @@ export function ScheduledJobRunDetailModal({
     <Modal
       destroyOnHidden
       footer={(
-        <Space>
+        <Space wrap>
           <Button onClick={onClose}>关闭</Button>
           {run?.status === 'succeeded' ? (
             <Button onClick={() => void onGenerateTemplate(run)}>
@@ -210,6 +215,15 @@ export function ScheduledJobRunDetailModal({
               icon={<RobotOutlined />}
             >
               问 AI
+            </Button>
+          ) : null}
+          {run ? (
+            <Button
+              aria-label="转洞察草案"
+              href={assistantRunFollowupUrl(run, assistantRunInsightDraftPrompt())}
+              icon={<BulbOutlined />}
+            >
+              转洞察草案
             </Button>
           ) : null}
           {run?.status === 'failed' ? (

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.795 |
+| 功能版本 | v1.1.796 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.796 | 2026-07-01 | 定时作业运行详情新增“转洞察草案”AI 助手深链，复用 `scheduled_job_run` 引用和预填 prompt 将运行结果转为可确认草案 | Codex |
 | v1.1.795 | 2026-07-01 | 定时作业运行详情前端新增 JSON 导出契约，导出运行记录、展示标签、执行节点、结果写入记录和配置/插件/Skill/Prompt 快照，作为运行结果消费和排障归档入口 | Codex |
 | v1.1.794 | 2026-07-01 | 插件管理新增官方内部数据源插件：协议 `internal_read_model`、动作类型 `internal_query`，连接可多选用户洞察、需求、产品和 Bug 等内部只读源数据，并补充内部业务定时作业模板 | Codex |
 | v1.1.793 | 2026-07-01 | 插件管理连接环境弱化为后台元数据：连接弹窗不展示环境字段，连接列表不展示环境筛选或环境列，动作/试运行连接下拉只显示连接名称，API 仍保留环境用于审计、定时作业筛选和未来隔离 | Codex |
@@ -851,6 +852,8 @@ AI 助手最近对话必须支持服务端分页。`GET /api/assistant/conversat
 AI 助手效果指标明细必须按 `limit` 在服务端下推并只返回当前页脱敏元数据；服务端可继续计算同一筛选范围下的 `total`，但不得为了展示前 50 条而完整构造所有历史草案、运行或消息明细。前端草案卡片的次要操作（应用到表单、打开草案链接、重新生成）默认收纳到“更多”菜单，确认、取消、查看详情和资源追踪保留为主要动作；`/assistant?draft_id=...` 深链加载成功后必须滚动到草案链接状态区域，避免草案被输入框或长消息遮挡。运行状态提醒必须提供手动“重新检测”，并在窗口重新聚焦时刷新必需依赖状态，避免 Redis/PostgreSQL 修复后页面仍停留在旧错误提示。GitHub/GitLab 等语义相近的插件连接或动作草案若无法从用户文本唯一确定提供方，助手必须生成需要用户补齐 provider 的待确认草案或向导提示，不得静默默认到某一提供方。
 
 当用户围绕一次 `scheduled_job_run` 追问“为什么失败/如何诊断”时，助手在模型调用前生成 `assistant.scheduled_job_diagnostic` 工具结果。若用户已经显式引用了 `scheduled_job_run`，后续短追问如“为什么这次失败？”也必须按该引用补足运行上下文，不要求再次出现“任务/作业/运行”关键词。诊断结果按 `data_connection`、`ai_processing`、`result_action` 三段输出状态、摘要、错误信息和关联日志 ID，来源可包括 `scheduled_job_runs.result_summary.execution_nodes`、`plugin_invocation_logs`、`model_gateway_logs` 和从运行结果派生的 `result_write_records`。数据连接段必须优先读取 `execution_nodes.data_connection.plugin_invocation_log_id`，结果动作段必须优先读取 `execution_nodes.result_action.plugin_invocation_log_id`，避免同一次运行存在取数和写入两条插件日志时只能追踪到其中一条。前端诊断卡片必须把三段状态显式呈现为“数据连接是否成功”“AI处理是否成功”“结果动作是否写入成功”的判断，并把 `succeeded/failed/running/queued/warning/skipped` 转成用户可读结果，避免用户只看到状态 Tag 后仍需要自己判断链路是否闭环；前端诊断卡片还必须在对应阶段展示安全的 `log_id`（如模型日志 ID 或插件调用日志 ID），帮助用户从对话继续追到具体日志元数据；结果动作段还必须返回 `result_write_record_id/result_write_status/result_write_target/result_write_target_label` 等安全元数据，帮助用户确认写入目标是否成功；前端诊断卡片必须把 `result_write_record_id` 链接到对应定时作业运行详情并携带写入记录 ID，定时作业页面接收 `result_write_record_id` 后必须自动打开运行详情并展开该结果写入记录，便于继续查看结果写入反馈。诊断卡片还必须提供“生成修复草案”和“对比上次成功”后续追问按钮；AI 助手内的运行记录卡片也必须提供“问这次运行”“生成修复草案”“对比上次成功”快捷追问。用户点击这些入口后，前端必须把当前 `scheduled_job_run` 重新加入“本次上下文”并回填带 `@运行记录标题` 的追问，避免用户手工复制运行 ID；若入口通过 `/assistant?reference_type=scheduled_job_run&reference_id=<run_id>&prompt=<prompt>` 打开，助手页“本次上下文”必须常驻展示该链接引用的解析状态，包括解析中、已从链接带入运行记录或引用不存在/无权限，避免只依赖临时 toast。该工具结果会随助手消息 metadata 持久化并进入模型上下文；完整插件请求/响应、Prompt、模型输出、密钥和外部系统 token 不进入模型日志。
+
+定时作业运行详情的“转洞察草案”必须复用 `/assistant?reference_type=scheduled_job_run&reference_id=<run_id>&prompt=<prompt>` 深链，prompt 固定表达“基于本次运行结果生成用户洞察草案”，让助手在同一 `scheduled_job_run` 引用下读取数据连接、AI执行和动作反馈三段上下文生成草案建议；该入口不得在详情页直接创建用户洞察、需求或其他业务记录，正式落库仍应经过 AI 助手草案确认或用户在目标业务页确认。
 
 当用户围绕已引用的 `scheduled_job_run` 继续追问“和上次成功有什么不同/对比上次成功/差异”时，助手在模型调用前生成 `assistant.scheduled_job_run_comparison` 工具结果。若用户已经显式引用运行记录，短追问“和上次成功有什么不同？”也必须命中该工具。服务端必须按同一 `scheduled_job_id` 找到该运行之前最近一次 `succeeded` 运行作为 baseline，返回当前运行、baseline 运行、状态/导入数/耗时/错误信息和三段执行节点差异；结果动作差异同样只返回写入状态、写入目标和摘要等安全元数据。前端助手气泡必须以“运行对比”卡片展示当前运行、上次成功运行和差异列表，并提供“生成修复草案”和“继续诊断”按钮，点击后带当前运行引用继续追问。
 
