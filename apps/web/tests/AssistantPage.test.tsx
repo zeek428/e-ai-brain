@@ -6903,14 +6903,14 @@ describe('AssistantPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('我已生成一个待确认的 GitHub 代码巡检动作草案。')).toBeInTheDocument();
-    expect(screen.getByText('确认前不会写入插件动作')).toBeInTheDocument();
+    expect(screen.getByText('确认前不会写入动作')).toBeInTheDocument();
     expect(screen.getByText('动作类型')).toBeInTheDocument();
     expect(screen.getByText('http_request')).toBeInTheDocument();
     expect(screen.getByText('scan_github_code_inspection')).toBeInTheDocument();
     expect(screen.getByText('/repos/{{owner}}/{{repo}}/code-scanning/alerts')).toBeInTheDocument();
     expect(await screen.findByText('代码巡检报告')).toBeInTheDocument();
     openDraftMoreMenu();
-    const applyDraftLink = screen.getByRole('link', { name: '应用到插件动作表单' });
+    const applyDraftLink = screen.getByRole('link', { name: '应用到动作表单' });
     expect(applyDraftLink).toHaveAttribute('href', '/tasks/plugins');
     fireEvent.mouseDown(applyDraftLink);
     expect(JSON.parse(
@@ -7028,7 +7028,7 @@ describe('AssistantPage', () => {
     expect(await screen.findByText('邮件通知记录')).toBeInTheDocument();
     expect(screen.getByText('/messages/send')).toBeInTheDocument();
     openDraftMoreMenu();
-    const applyDraftLink = screen.getByRole('link', { name: '应用到插件动作表单' });
+    const applyDraftLink = screen.getByRole('link', { name: '应用到动作表单' });
     fireEvent.mouseDown(applyDraftLink);
     expect(JSON.parse(
       window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY)) ?? '{}',
@@ -7278,12 +7278,12 @@ describe('AssistantPage', () => {
 
     expect(await screen.findByText('我已生成 GitHub 代码巡检的一组待确认配置草案。')).toBeInTheDocument();
     expect(screen.getByText('确认前不会写入插件连接')).toBeInTheDocument();
-    expect(screen.getByText('确认前不会写入插件动作')).toBeInTheDocument();
+    expect(screen.getByText('确认前不会写入动作')).toBeInTheDocument();
     expect(screen.getByText('确认前不会写入作业定义')).toBeInTheDocument();
     openDraftMoreMenu(0);
     expect(screen.getByRole('link', { name: '应用到插件连接表单' })).toHaveAttribute('href', '/tasks/plugins');
     openDraftMoreMenu(1);
-    expect(screen.getByRole('link', { name: '应用到插件动作表单' })).toHaveAttribute('href', '/tasks/plugins');
+    expect(screen.getByRole('link', { name: '应用到动作表单' })).toHaveAttribute('href', '/tasks/plugins');
     openDraftMoreMenu(2);
     expect(screen.getByRole('link', { name: '应用到定时作业表单' })).toHaveAttribute('href', '/tasks/scheduled-jobs');
     expect(await screen.findByText('代码巡检报告')).toBeInTheDocument();
@@ -7347,10 +7347,10 @@ describe('AssistantPage', () => {
                       },
                       {
                         dependencies: ['插件连接'],
-                        description: '为 GitHub、GitLab、邮箱等插件生成结果动作草案，确认前不写入真实动作。',
+                        description: '为 GitHub、GitLab、邮箱等插件连接生成结果动作草案，确认前不写入真实动作。',
                         draft_action: 'create_plugin_action',
-                        prompt: '帮我新增插件动作，先生成可确认的动作草案',
-                        title: '插件动作',
+                        prompt: '帮我新增动作，先生成可确认的动作草案',
+                        title: '动作',
                         type: 'plugin_action',
                         wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
                       },
@@ -7387,7 +7387,7 @@ describe('AssistantPage', () => {
                 '新增研发任务',
                 '新增定时作业',
                 '新增AI能力配置',
-                '新增插件动作',
+                '新增动作',
                 '配置代码巡检定时作业',
                 '配置每周用户反馈洞察定时作业',
               ],
@@ -7415,7 +7415,7 @@ describe('AssistantPage', () => {
     expect(screen.getByText('研发任务')).toBeInTheDocument();
     expect(screen.getByText('定时作业')).toBeInTheDocument();
     expect(screen.getByText('AI能力配置')).toBeInTheDocument();
-    expect(screen.getByText('插件动作')).toBeInTheDocument();
+    expect(screen.getByText('动作')).toBeInTheDocument();
     expect(screen.getByText('代码巡检')).toBeInTheDocument();
     expect(screen.getByText('反馈洞察')).toBeInTheDocument();
     expect(screen.getByText('依赖：数据连接、AI能力、结果动作')).toBeInTheDocument();

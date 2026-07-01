@@ -93,9 +93,9 @@ VALUES
   (
     'assistant_action_reference_config_create_plugin_action',
     'create_plugin_action',
-    '新建插件动作',
-    '生成可确认的插件动作草案。',
-    '请帮我生成插件动作草案，先确认插件连接、请求方法、路径、参数映射和结果写入目标。',
+    '新建动作',
+    '生成可确认的动作草案。',
+    '请帮我生成动作草案，先确认连接、请求方法、路径、参数映射和结果写入目标。',
     '/tasks/plugins',
     jsonb_build_array('新建', '新增', '创建', '插件', '插件动作', '动作', 'plugin action'),
     '[]'::jsonb,

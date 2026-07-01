@@ -129,7 +129,7 @@ function draftResourceLink(resolution?: AssistantDraftResolutionRecord) {
   }
   if (resolution.resource_type === 'plugin_action') {
     return {
-      label: '打开插件动作',
+      label: '打开动作',
       url: `/tasks/plugins?action_id=${resolution.resource_id}`,
     };
   }
@@ -390,7 +390,7 @@ export function AssistantActionDraftCards({
         const writeNotice = isPluginConnectionDraft
           ? '确认前不会写入插件连接'
           : isPluginActionDraft
-            ? '确认前不会写入插件动作'
+            ? '确认前不会写入动作'
             : isAiCapabilityDraft
               ? '确认前不会写入 AI 能力配置'
               : isRdTaskDraft
@@ -427,7 +427,7 @@ export function AssistantActionDraftCards({
                 onClick={() => storePluginActionDraft(draft)}
                 onMouseDown={() => storePluginActionDraft(draft)}
               >
-                应用到插件动作表单
+                应用到动作表单
               </a>
             ),
           });

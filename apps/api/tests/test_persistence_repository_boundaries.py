@@ -198,6 +198,7 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "073_code_inspection_risk_acceptance_expiry.sql" in applied_migrations
     assert "074_internal_data_source_plugin.sql" in applied_migrations
     assert "075_internal_data_source_detail_permission.sql" in applied_migrations
+    assert "076_assistant_action_naming.sql" in applied_migrations
 
 
 def test_assistant_action_draft_constraint_migrations_cover_supported_actions():

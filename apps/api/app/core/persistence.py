@@ -250,6 +250,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "075_internal_data_source_detail_permission.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "076_assistant_action_naming.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

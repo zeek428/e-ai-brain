@@ -29,6 +29,7 @@ def test_assistant_chat_intents_detect_core_deterministic_commands():
         "@新建 Bug 新建一个登录失败问题，关联任务 task_001",
         "@新建插件连接 帮我接入 GitHub",
         "@新建插件动作 新建一个写入飞书的任务动作",
+        "@新建动作 新建一个写入飞书的任务动作",
         "@新建定时作业 每周从用户反馈中提取洞察",
         "@新建知识文档/导入任务 把客服 FAQ 导入知识库",
         (
@@ -65,6 +66,8 @@ def test_assistant_chat_intent_outputs_keep_draft_first_guidance():
     assert output["tool_results"][0]["tool"] == "assistant.task_creation_guide"
     assert output["tool_results"][0]["summary"]["draft_first"] is True
     assert "新增定时作业" in output["suggestions"]
+    assert "新增动作" in output["suggestions"]
+    assert "新增插件动作" not in output["suggestions"]
 
 
 def test_assistant_chat_intent_outputs_prompt_for_unique_scheduled_job_reference():

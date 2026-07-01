@@ -26,7 +26,7 @@ export function referenceTypeLabel(type: string) {
     knowledge_folder: '知识目录',
     knowledge_space: '知识空间',
     model_gateway_log: '模型调用',
-    plugin_action: '插件动作',
+    plugin_action: '动作',
     plugin_connection: '插件连接',
     plugin_invocation_log: '插件调用',
     product: '产品',

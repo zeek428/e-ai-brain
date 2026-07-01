@@ -1347,7 +1347,7 @@ def _provider_choice_draft_item(action: str) -> dict[str, Any]:
         "payload": {
             "action_type": "http_request",
             "code": "",
-            "name": "请选择 GitHub 或 GitLab 插件动作",
+            "name": "请选择 GitHub 或 GitLab 动作",
             "plugin_id": None,
             "provider_candidates": ["github", "gitlab"],
             "requires_human_review": False,
@@ -1355,7 +1355,7 @@ def _provider_choice_draft_item(action: str) -> dict[str, Any]:
         },
         "requires_confirmation": True,
         "risk_level": "medium",
-        "title": "选择代码托管插件动作",
+        "title": "选择代码托管动作",
         "wizard_steps": _provider_choice_wizard_steps("选择后补齐动作模板和连接"),
     }
 
@@ -1551,7 +1551,7 @@ def _scheduled_job_wizard_steps(
     elif data_source_dependency_ids and prerequisite_summary:
         data_source_summary = prerequisite_summary
     elif action is None:
-        data_source_summary = "需补齐插件动作"
+        data_source_summary = "需补齐动作"
     else:
         data_source_summary = "需补齐插件连接"
 

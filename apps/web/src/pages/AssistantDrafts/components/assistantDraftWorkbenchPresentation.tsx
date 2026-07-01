@@ -5,7 +5,7 @@ import { StatusTag } from '../../../components/ManagementListPage';
 export const actionOptions = [
   { label: '定时作业草案', value: 'create_scheduled_job' },
   { label: '插件连接草案', value: 'create_plugin_connection' },
-  { label: '插件动作草案', value: 'create_plugin_action' },
+  { label: '动作草案', value: 'create_plugin_action' },
   { label: 'AI Skill 草案', value: 'create_ai_skill' },
   { label: 'AI角色草案', value: 'create_ai_agent' },
   { label: '研发任务草案', value: 'create_rd_task' },

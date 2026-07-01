@@ -6789,7 +6789,7 @@ def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeyp
         "新增研发任务",
         "新增定时作业",
         "新增AI能力配置",
-        "新增插件动作",
+        "新增动作",
         "配置代码巡检定时作业",
         "配置每周用户反馈洞察定时作业",
     ]

@@ -310,7 +310,7 @@ class ScheduledJobExecutionEngine:
             "skill_processing": {
                 "label": "Skill 处理后内容",
                 "model_gateway_called": False,
-                "note": "当前作业类型未执行平台 Skill/大模型处理，结果直接来自插件动作。",
+                "note": "当前作业类型未执行平台 Skill/大模型处理，结果直接来自动作。",
                 "processing_mode": "plugin_structured_output",
                 "skill_codes": skill_codes,
                 "skill_ids": skill_ids,

@@ -63,11 +63,11 @@ ASSISTANT_ACTION_CANDIDATES = (
         "id": "create_plugin_action",
         "permissions": ("system.plugins.manage",),
         "prompt": (
-            "请帮我生成插件动作草案，先确认插件连接、请求方法、路径、"
+            "请帮我生成动作草案，先确认连接、请求方法、路径、"
             "参数映射和结果写入目标。"
         ),
-        "summary": "生成可确认的插件动作草案。",
-        "title": "新建插件动作",
+        "summary": "生成可确认的动作草案。",
+        "title": "新建动作",
         "url": "/tasks/plugins",
     },
     {
