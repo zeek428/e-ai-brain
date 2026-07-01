@@ -23,10 +23,14 @@ def compact_preview_value(value: Any) -> Any:
 
 
 def json_path_value(payload: Any, path: str | None) -> Any:
-    tokens = _json_path_tokens(path)
+    tokens = json_path_tokens(path)
     if tokens is None:
         return None
     return _json_path_apply(payload, tokens)
+
+
+def json_path_tokens(path: str | None) -> list[tuple[str, Any]] | None:
+    return _json_path_tokens(path)
 
 
 def _json_path_tokens(path: str | None) -> list[tuple[str, Any]] | None:
@@ -150,7 +154,7 @@ def result_mapping_hits(
 ) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
     for key, path in mapping.items():
-        if not isinstance(path, str) or not (path == "$" or path.startswith("$.")):
+        if not isinstance(path, str) or json_path_tokens(path) is None:
             continue
         value = json_path_value(response_summary.get("json"), path)
         hits.append(

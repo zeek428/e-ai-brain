@@ -15,6 +15,7 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 定时作业 Skill 输出 Schema 契约校验复用动作结果映射 JSONPath 解析规则，并在 dry-run 返回 `mapping_contract` 诊断字段，便于定位复杂写入路径不兼容问题。
 - 动作结果映射 JSONPath 子集扩展为支持 bracket key、数组下标和 `[*]` 通配，动作试运行、定时作业 dry-run、正式运行写入预览和结果写入记录统一解析复杂接口响应。
 - 定时作业 Catalog 增加可创建/可运行状态，新增作业表单只展示已闭环类型，历史作业类型仍保留中文标签用于列表和详情兼容显示。
 - 内部数据源连接默认值和 schema 移除产品范围选项，产品范围由服务端按当前用户 scope 自动过滤。

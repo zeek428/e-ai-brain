@@ -25,10 +25,21 @@ from app.services.model_gateway_runtime import (
     read_model_gateway_json_response,
 )
 from app.services.operational_records import record_audit_event
+from app.services.plugin_result_mapping import json_path_tokens
 from app.services.scheduled_job_store import (
     read_memory_dict,
     sync_ai_skill_store,
     sync_reference_store,
+)
+
+SKILL_OUTPUT_MAPPING_PATH_KEYS = (
+    "branch_path",
+    "commit_sha_path",
+    "findings_path",
+    "insights_path",
+    "repository_id_path",
+    "risk_level_path",
+    "summary_path",
 )
 
 
@@ -153,21 +164,112 @@ def merged_skill_output_schema(current_store: Any, job: dict[str, Any]) -> dict[
 def schema_supports_json_path(schema: dict[str, Any], path: str | None) -> bool:
     if not schema or path in {None, "$"}:
         return True
-    if not isinstance(path, str) or not path.startswith("$."):
+    if not isinstance(path, str) or not path.startswith("$"):
         return True
-    current_schema: Any = schema
-    for part in path[2:].split("."):
-        if not isinstance(current_schema, dict):
+    tokens = json_path_tokens(path)
+    if tokens is None:
+        return False
+    return _schema_supports_json_path_tokens(schema, tokens)
+
+
+def _array_item_schema(schema: Any) -> dict[str, Any] | None:
+    if not isinstance(schema, dict):
+        return None
+    if schema.get("type") == "array" or "items" in schema:
+        items = schema.get("items")
+        if isinstance(items, dict):
+            return items
+    return None
+
+
+def _object_property_schema(schema: Any, key: str) -> dict[str, Any] | None:
+    if not isinstance(schema, dict):
+        return None
+    # Preserve compatibility with older mappings that used $.items.id for arrays.
+    array_item = _array_item_schema(schema)
+    if array_item is not None:
+        schema = array_item
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    if isinstance(properties, dict) and key in properties:
+        property_schema = properties[key]
+        return property_schema if isinstance(property_schema, dict) else {}
+    additional_properties = schema.get("additionalProperties") if isinstance(schema, dict) else None
+    if isinstance(additional_properties, dict):
+        return additional_properties
+    return None
+
+
+def _wildcard_schema_options(schema: Any) -> list[dict[str, Any]]:
+    array_item = _array_item_schema(schema)
+    if array_item is not None:
+        return [array_item]
+    if not isinstance(schema, dict):
+        return []
+    additional_properties = schema.get("additionalProperties")
+    if isinstance(additional_properties, dict):
+        return [additional_properties]
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        return [value if isinstance(value, dict) else {} for value in properties.values()]
+    return []
+
+
+def _schema_supports_json_path_tokens(
+    schema: dict[str, Any],
+    tokens: list[tuple[str, Any]],
+) -> bool:
+    if not tokens:
+        return True
+    kind, value = tokens[0]
+    rest = tokens[1:]
+    if kind == "key":
+        next_schema = _object_property_schema(schema, str(value))
+        return next_schema is not None and _schema_supports_json_path_tokens(next_schema, rest)
+    if kind == "index":
+        item_schema = _array_item_schema(schema)
+        return item_schema is not None and _schema_supports_json_path_tokens(item_schema, rest)
+    if kind == "wildcard":
+        options = _wildcard_schema_options(schema)
+        if not options:
             return False
-        properties = current_schema.get("properties")
-        if not isinstance(properties, dict) or part not in properties:
-            return False
-        current_schema = properties[part]
-        if isinstance(current_schema, dict) and current_schema.get("type") == "array":
-            items = current_schema.get("items")
-            if isinstance(items, dict):
-                current_schema = items
-    return True
+        return any(_schema_supports_json_path_tokens(option, rest) for option in options)
+    return False
+
+
+def skill_output_mapping_contract(
+    current_store: Any,
+    *,
+    job: dict[str, Any],
+    output_mapping: dict[str, Any],
+) -> dict[str, Any]:
+    schema = merged_skill_output_schema(current_store, job)
+    if not schema:
+        return {
+            "checked_paths": [],
+            "invalid_fields": [],
+            "output_schema": {},
+            "status": "not_required",
+        }
+    checks: list[dict[str, Any]] = []
+    for key in SKILL_OUTPUT_MAPPING_PATH_KEYS:
+        if key not in output_mapping:
+            continue
+        path = output_mapping.get(key)
+        supported = schema_supports_json_path(schema, path)
+        checks.append(
+            {
+                "field": key,
+                "path": path,
+                "supported": supported,
+            },
+        )
+    invalid_fields = [str(check["field"]) for check in checks if not check["supported"]]
+    return {
+        "checked_paths": checks,
+        "invalid_fields": invalid_fields,
+        "output_schema": schema,
+        "status": "failed" if invalid_fields else "succeeded" if checks else "not_required",
+    }
 
 
 def validate_skill_output_mapping_contract(
@@ -176,23 +278,15 @@ def validate_skill_output_mapping_contract(
     job: dict[str, Any],
     output_mapping: dict[str, Any],
 ) -> dict[str, Any]:
-    schema = merged_skill_output_schema(current_store, job)
+    contract = skill_output_mapping_contract(
+        current_store,
+        job=job,
+        output_mapping=output_mapping,
+    )
+    schema = contract["output_schema"]
     if not schema:
         return {}
-    path_keys = (
-        "branch_path",
-        "commit_sha_path",
-        "findings_path",
-        "insights_path",
-        "repository_id_path",
-        "risk_level_path",
-        "summary_path",
-    )
-    invalid = [
-        key
-        for key in path_keys
-        if key in output_mapping and not schema_supports_json_path(schema, output_mapping.get(key))
-    ]
+    invalid = contract["invalid_fields"]
     if invalid:
         raise api_error(
             400,

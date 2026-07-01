@@ -140,6 +140,63 @@ def test_scheduled_job_refs_merge_legacy_and_orchestration_ids():
     ) == ["action_table", "action_config", "action_legacy"]
 
 
+def test_skill_output_schema_contract_supports_extended_jsonpath():
+    schema = {
+        "properties": {
+            "payload": {
+                "properties": {
+                    "data.rows": {
+                        "items": {
+                            "properties": {
+                                "items": {
+                                    "items": {
+                                        "properties": {
+                                            "insights": {
+                                                "items": {
+                                                    "properties": {
+                                                        "content": {"type": "string"},
+                                                    },
+                                                    "type": "object",
+                                                },
+                                                "type": "array",
+                                            },
+                                        },
+                                        "type": "object",
+                                    },
+                                    "type": "array",
+                                },
+                            },
+                            "type": "object",
+                        },
+                        "type": "array",
+                    },
+                },
+                "type": "object",
+            },
+        },
+        "type": "object",
+    }
+
+    assert scheduled_job_ai_processing_service.schema_supports_json_path(
+        schema,
+        "$['payload']['data.rows'][0].items[*].insights[0].content",
+    )
+    assert not scheduled_job_ai_processing_service.schema_supports_json_path(
+        schema,
+        "$['payload']['missing.rows'][0].items[*].insights",
+    )
+    assert scheduled_job_ai_processing_service.skill_output_mapping_contract(
+        app.state.store,
+        job={"skill_ids": []},
+        output_mapping={"insights_path": "$.insights"},
+    ) == {
+        "checked_paths": [],
+        "invalid_fields": [],
+        "output_schema": {},
+        "status": "not_required",
+    }
+
+
 def test_native_code_scan_repository_ids_merge_multi_and_single_refs():
     assert native_code_scan_repository_ids(
         {
@@ -1642,6 +1699,18 @@ def test_scheduled_job_dry_run_previews_data_ai_contract_and_write_mapping():
     assert data["stages"]["ai_processing"]["will_call_model_gateway"] is True
     assert data["stages"]["ai_processing"]["mapping_status"] == "succeeded"
     assert data["stages"]["ai_processing"]["output_schema"]["required"] == ["insights"]
+    assert data["stages"]["ai_processing"]["mapping_contract"] == {
+        "checked_paths": [
+            {
+                "field": "insights_path",
+                "path": "$.insights",
+                "supported": True,
+            }
+        ],
+        "invalid_fields": [],
+        "output_schema": data["stages"]["ai_processing"]["output_schema"],
+        "status": "succeeded",
+    }
     assert data["stages"]["result_actions"][0]["write_target"] == "user_feedback_insights"
     assert data["stages"]["result_actions"][0]["write_preview"]["records_imported"] == 2
     invocation_log = next(

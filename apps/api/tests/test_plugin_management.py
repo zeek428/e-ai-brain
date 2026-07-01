@@ -21,6 +21,7 @@ from app.services.internal_data_sources import (
 from app.services.plugin_result_mapping import (
     json_path_value,
     records_imported_from_mapping,
+    result_mapping_hits,
     result_write_preview,
 )
 from app.services.plugins import (
@@ -3498,6 +3499,17 @@ def test_json_path_mapping_supports_brackets_indexes_and_wildcards():
             "write_target": "email_notifications",
         },
     )["candidate_count"] == 3
+    assert result_mapping_hits(
+        {"json": {"data.rows": [{"id": "feedback-1"}]}},
+        {"rows_path": "$['data.rows']"},
+    ) == [
+        {
+            "key": "rows_path",
+            "matched": True,
+            "path": "$['data.rows']",
+            "value_preview": [{"id": "feedback-1"}],
+        }
+    ]
 
 
 def test_plugin_action_trial_returns_request_preview_and_mapping_hits():

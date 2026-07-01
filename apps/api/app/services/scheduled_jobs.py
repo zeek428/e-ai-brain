@@ -35,6 +35,7 @@ from app.services.scheduled_job_access import (
 )
 from app.services.scheduled_job_ai_processing import (
     run_scheduled_job_ai_processing,
+    skill_output_mapping_contract,
     skill_codes_for_job,
     validate_knowledge_document_ids,
     validate_skill_output_mapping_contract,
@@ -413,14 +414,25 @@ def dry_run_scheduled_job_response(
         ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
     )
     output_schema = {}
+    mapping_contract = {
+        "checked_paths": [],
+        "invalid_fields": [],
+        "output_schema": {},
+        "status": "not_required",
+    }
     mapping_status = "not_required"
     if will_call_model_gateway:
+        mapping_contract = skill_output_mapping_contract(
+            current_store,
+            job=job,
+            output_mapping=output_mapping,
+        )
         output_schema = validate_skill_output_mapping_contract(
             current_store,
             job=job,
             output_mapping=output_mapping,
         )
-        mapping_status = "succeeded"
+        mapping_status = mapping_contract["status"]
     response_summary = plugin_summary.get("response_summary") if plugin_summary else {}
     result_actions = []
     for action_id in plugin_action_ids:
@@ -461,6 +473,7 @@ def dry_run_scheduled_job_response(
         "stages": {
             "ai_processing": {
                 "agent_id": agent_id,
+                "mapping_contract": mapping_contract,
                 "mapping_status": mapping_status,
                 "model_gateway_config_id": model_gateway_config_id,
                 "output_schema": output_schema,
