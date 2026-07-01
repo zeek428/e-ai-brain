@@ -1,5 +1,6 @@
 import {
   CopyOutlined,
+  DownloadOutlined,
   EditOutlined,
   ReloadOutlined,
   RobotOutlined,
@@ -71,6 +72,84 @@ function assistantRunFollowupUrl(run: ScheduledJobRunRecord, prompt = assistantR
   return `/assistant?${params.toString()}`;
 }
 
+function exportFilename(run: ScheduledJobRunRecord) {
+  const normalizedId = String(run.id || 'scheduled_job_run').replace(/[^\w.-]+/g, '_');
+  return `${normalizedId}_detail.json`;
+}
+
+export function buildScheduledJobRunDetailExportPayload({
+  agentLabel,
+  executionModeLabel,
+  jobTypeLabel,
+  modelLabel,
+  resultWriteRecords,
+  run,
+  skillLabels,
+}: Pick<
+  ScheduledJobRunDetailModalProps,
+  | 'agentLabel'
+  | 'executionModeLabel'
+  | 'jobTypeLabel'
+  | 'modelLabel'
+  | 'resultWriteRecords'
+  | 'run'
+  | 'skillLabels'
+>) {
+  if (!run) {
+    return undefined;
+  }
+  return {
+    export_version: 'scheduled_job_run_detail.v1',
+    exported_at: new Date().toISOString(),
+    labels: {
+      agent: agentLabel,
+      execution_mode: executionModeLabel,
+      job_type: jobTypeLabel,
+      model: modelLabel,
+      skills: skillLabels,
+    },
+    result_write_records: resultWriteRecords,
+    run,
+    sections: {
+      ai_processing: getRunExecutionNode(run, 'skill_processing'),
+      bug_creation: getRunExecutionNode(run, 'bug_creation'),
+      code_inspection_report: getRunExecutionNode(run, 'code_inspection_report'),
+      data_connection: getRunExecutionNode(run, 'data_connection'),
+      notifications: getRunExecutionNode(run, 'notifications'),
+      result_action: getRunExecutionNode(run, 'result_action'),
+      result_actions: getRunExecutionNode(run, 'result_actions'),
+      task_creation: getRunExecutionNode(run, 'task_creation'),
+    },
+    snapshots: {
+      config: run.config_snapshot,
+      plugin: run.resolved_plugin_snapshot,
+      prompt: run.resolved_prompt_snapshot,
+      skills: run.resolved_skill_snapshots,
+    },
+  };
+}
+
+function downloadJsonFile(filename: string, payload: unknown) {
+  const content = JSON.stringify(payload, null, 2);
+  const link = document.createElement('a');
+  const canUseBlobUrl = typeof URL.createObjectURL === 'function';
+  let objectUrl: string | undefined;
+  if (canUseBlobUrl) {
+    objectUrl = URL.createObjectURL(new Blob([content], { type: 'application/json;charset=utf-8' }));
+    link.href = objectUrl;
+  } else {
+    link.href = `data:application/json;charset=utf-8,${encodeURIComponent(content)}`;
+  }
+  link.download = filename;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  if (objectUrl && typeof URL.revokeObjectURL === 'function') {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export function ScheduledJobRunDetailModal({
   agentLabel,
   executionModeLabel,
@@ -85,6 +164,24 @@ export function ScheduledJobRunDetailModal({
   run,
   skillLabels,
 }: ScheduledJobRunDetailModalProps) {
+  const exportRunDetail = () => {
+    if (!run) {
+      return;
+    }
+    downloadJsonFile(
+      exportFilename(run),
+      buildScheduledJobRunDetailExportPayload({
+        agentLabel,
+        executionModeLabel,
+        jobTypeLabel,
+        modelLabel,
+        resultWriteRecords,
+        run,
+        skillLabels,
+      }),
+    );
+  };
+
   return (
     <Modal
       destroyOnHidden
@@ -100,6 +197,11 @@ export function ScheduledJobRunDetailModal({
             <ExecutionTraceLink asButton sourceId={run.id} sourceType="scheduled_job_run">
               执行诊断
             </ExecutionTraceLink>
+          ) : null}
+          {run ? (
+            <Button aria-label="导出 JSON" icon={<DownloadOutlined />} onClick={exportRunDetail}>
+              导出 JSON
+            </Button>
           ) : null}
           {run ? (
             <Button

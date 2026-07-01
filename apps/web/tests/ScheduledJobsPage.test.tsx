@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import './proComponentsMock';
 
 import ScheduledJobsPage from '../src/pages/ScheduledJobs';
+import { buildScheduledJobRunDetailExportPayload } from '../src/pages/ScheduledJobs/components/ScheduledJobRunDetailModal';
 import {
   ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   assistantScopedStorageKey,
+  type ScheduledJobRunRecord,
 } from '../src/services/aiBrain';
 
 function installScheduledJobsFetchMock(
@@ -1864,6 +1866,20 @@ describe('ScheduledJobsPage', () => {
   });
 
   it('shows scheduled job run result details', async () => {
+    const exportedBlobs: Blob[] = [];
+    const createObjectURL = vi.fn((blob: Blob) => {
+      exportedBlobs.push(blob);
+      return 'blob:scheduled-job-run-detail';
+    });
+    const revokeObjectURL = vi.fn();
+    const clickDownload = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined);
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL,
+      revokeObjectURL,
+    });
     installScheduledJobsFetchMock({
       runs: [
         {
@@ -2059,6 +2075,69 @@ describe('ScheduledJobsPage', () => {
     expect(assistantParams.get('reference_type')).toBe('scheduled_job_run');
     expect(assistantParams.get('reference_id')).toBe('scheduled_job_run_weekly_feedback');
     expect(assistantParams.get('prompt')).toBe('帮我分析这次运行结果');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '导出 JSON' }));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(clickDownload).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:scheduled-job-run-detail');
+    expect(exportedBlobs[0]).toBeInstanceOf(Blob);
+    const exportPayload = buildScheduledJobRunDetailExportPayload({
+      agentLabel: '洞察 Agent',
+      executionModeLabel: 'AI 生成',
+      jobTypeLabel: '用户反馈洞察抽取（取数 + AI 分析 + 写入）',
+      modelLabel: '定时作业模型',
+      resultWriteRecords: [],
+      run: {
+        id: 'scheduled_job_run_weekly_feedback',
+        result_summary: {
+          execution_nodes: {
+            data_connection: {
+              records_imported: 18,
+              response_status_code: 200,
+              status: 'succeeded',
+            },
+            result_action: {
+              created_ids: ['insight_001'],
+              status: 'succeeded',
+            },
+            skill_processing: {
+              output: { candidate_count: 1 },
+              status: 'succeeded',
+            },
+          },
+        },
+        status: 'succeeded',
+      } as ScheduledJobRunRecord,
+      skillLabels: '每周反馈分析',
+    });
+    expect(exportPayload).toMatchObject({
+      export_version: 'scheduled_job_run_detail.v1',
+      labels: {
+        agent: '洞察 Agent',
+        execution_mode: 'AI 生成',
+        job_type: '用户反馈洞察抽取（取数 + AI 分析 + 写入）',
+        model: '定时作业模型',
+        skills: '每周反馈分析',
+      },
+      run: {
+        id: 'scheduled_job_run_weekly_feedback',
+      },
+      sections: {
+        ai_processing: {
+          output: { candidate_count: 1 },
+          status: 'succeeded',
+        },
+        data_connection: {
+          records_imported: 18,
+          response_status_code: 200,
+          status: 'succeeded',
+        },
+        result_action: {
+          created_ids: ['insight_001'],
+          status: 'succeeded',
+        },
+      },
+    });
   });
 
   it('generates a scheduled job template from a successful run', async () => {
