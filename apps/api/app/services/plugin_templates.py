@@ -255,7 +255,6 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
             "query": {
                 "field_mode": "summary",
                 "limit": 100,
-                "product_scope": "current_user_scope",
                 "source_types": list(INTERNAL_DATA_SOURCE_DEFAULT_TYPES),
                 "window_end": "{{now}}",
                 "window_start": "{{current_date-30}}",
@@ -524,18 +523,6 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                         "path": "request_config.query.limit",
                         "required": True,
                         "type": "number",
-                    },
-                    {
-                        "description": "默认按当前用户可访问产品范围过滤。",
-                        "key": "product_scope",
-                        "label": "产品范围",
-                        "options": [
-                            {"label": "当前用户可访问产品", "value": "current_user_scope"},
-                            {"label": "全部可访问数据", "value": "all_accessible"},
-                        ],
-                        "path": "request_config.query.product_scope",
-                        "required": True,
-                        "type": "select",
                     },
                 ],
             },

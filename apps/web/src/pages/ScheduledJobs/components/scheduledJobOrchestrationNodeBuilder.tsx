@@ -117,10 +117,9 @@ export function buildScheduledJobOrchestrationNodes({
   const actionStatus = selectedActions.length > 0 ? '已配置' : actionRequired ? '待配置' : '可选';
   const requestSummary = connectionTestResult?.request_summary;
   const requestUrl = typeof requestSummary?.url === 'string' ? requestSummary.url : undefined;
-  const connectionDetails = selectedConnections.flatMap((connection, index) => [
-    `${index + 1}. ${connection.name}`,
-    connection.environment ? `环境 ${connection.environment}` : undefined,
-  ]);
+  const connectionDetails = selectedConnections.map((connection, index) => (
+    `${index + 1}. ${connection.name}`
+  ));
   const actionDetails = compactDetails([
     ...selectedActions.map((action, index) => `${index + 1}. ${action.name}`),
     normalizedResultActions.length ? formatResultActionLabels(normalizedResultActions) : undefined,

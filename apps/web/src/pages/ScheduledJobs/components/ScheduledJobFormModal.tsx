@@ -44,7 +44,6 @@ type ScheduledJobFormModalProps = {
   codeInspectionResultActionOptions: SelectOption[];
   codeInspectionScanModeSelectOptions: SelectOption[];
   codeInspectionScannerEngineSelectOptions: SelectOption[];
-  connectionEnvironmentSelectOptions: SelectOption[];
   dryRunResult?: ScheduledJobDryRunResult;
   dryRunning: boolean;
   editingJob?: ScheduledJobRecord;
@@ -74,7 +73,6 @@ type ScheduledJobFormModalProps = {
   writeStrategyLabelFromAction: (action: PluginActionRecord) => string;
   onApplyJobTemplate: (templateCode?: string) => void;
   onClose: () => void;
-  onConnectionEnvironmentChange: (environment?: string) => void;
   onDryRun: () => void | Promise<void>;
   onJobTypeChange: (jobType?: string) => void;
   onPluginConnectionChange: (connectionIds: unknown) => void;
@@ -92,7 +90,6 @@ export function ScheduledJobFormModal({
   codeInspectionResultActionOptions,
   codeInspectionScanModeSelectOptions,
   codeInspectionScannerEngineSelectOptions,
-  connectionEnvironmentSelectOptions,
   dryRunResult,
   dryRunning,
   editingJob,
@@ -122,7 +119,6 @@ export function ScheduledJobFormModal({
   writeStrategyLabelFromAction,
   onApplyJobTemplate,
   onClose,
-  onConnectionEnvironmentChange,
   onDryRun,
   onJobTypeChange,
   onPluginConnectionChange,
@@ -212,9 +208,7 @@ export function ScheduledJobFormModal({
           productRequiredRule={productRequiredRule}
         />
         <ScheduledJobDataConnectionSection
-          connectionEnvironmentOptions={connectionEnvironmentSelectOptions}
           filteredPluginConnections={filteredPluginConnections}
-          onConnectionEnvironmentChange={onConnectionEnvironmentChange}
           onPluginConnectionChange={onPluginConnectionChange}
           requiredForPluginResource={requiredForPluginResource}
           usesNativeScan={usesNativeScan}

@@ -2,7 +2,6 @@ import {
   resolveAssistantDraftResourceId,
   type AssistantScheduledJobDraft,
   type PluginActionRecord,
-  type PluginConnectionRecord,
   type ScheduledJobRecord,
   type ScheduledJobResultAction,
   type ScheduledJobTemplateRecord,
@@ -10,7 +9,6 @@ import {
 
 export type ScheduledJobFormValues = {
   agent_id?: string;
-  connection_environment?: string;
   config_json?: Record<string, unknown>;
   cron_expression?: string;
   enabled: boolean;
@@ -105,15 +103,6 @@ export const scheduleTypeOptions = [
 ];
 
 export const scheduleTypeLabelByValue = new Map(scheduleTypeOptions.map((option) => [option.value, option.label]));
-
-export const connectionEnvironmentOptions = [
-  { label: '默认', value: 'default' },
-  { label: '开发', value: 'dev' },
-  { label: '测试', value: 'test' },
-  { label: '预发', value: 'staging' },
-  { label: '生产', value: 'prod' },
-  { label: '沙箱', value: 'sandbox' },
-];
 
 export const productRequiredJobTypes = ['code_repository_inspection', 'user_feedback_insight_extract'];
 export const pluginRequiredJobTypes = ['code_repository_inspection', 'plugin_action_invoke', 'user_feedback_insight_extract'];
@@ -516,11 +505,9 @@ export function scheduledJobTemplateValuesFromRecord(
   {
     fallback,
     nameSuffix = '副本',
-    pluginConnectionById,
   }: {
     fallback?: Partial<ScheduledJobRecord>;
     nameSuffix?: string;
-    pluginConnectionById: Map<string, PluginConnectionRecord>;
   },
 ): Partial<ScheduledJobFormValues> {
   const pluginConnectionIds = multiIdsFromRecord(
@@ -531,9 +518,6 @@ export function scheduledJobTemplateValuesFromRecord(
   );
   const pluginActionIds = multiIdsFromRecord(record, 'plugin_action_ids', 'plugin_action_id', fallback);
   const pluginConnectionId = primaryId(pluginConnectionIds);
-  const connectionEnvironment = pluginConnectionId
-    ? pluginConnectionById.get(pluginConnectionId)?.environment ?? 'default'
-    : undefined;
   const name = recordStringValue(record, 'name') ?? fallback?.name ?? '定时作业';
   const resultActions = Array.isArray(record.result_actions)
     ? (record.result_actions as ScheduledJobResultAction[])
@@ -543,7 +527,6 @@ export function scheduledJobTemplateValuesFromRecord(
   return {
     agent_id: recordStringValue(record, 'agent_id') ?? fallback?.agent_id ?? undefined,
     config_json: recordValue(record.config_json) ?? fallback?.config_json ?? {},
-    connection_environment: connectionEnvironment,
     cron_expression: recordStringValue(record, 'cron_expression') ?? fallback?.cron_expression ?? undefined,
     enabled: recordBooleanValue(record, 'enabled', fallback?.enabled ?? true),
     execution_mode: recordStringValue(record, 'execution_mode') ?? fallback?.execution_mode ?? 'deterministic',

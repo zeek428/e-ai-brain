@@ -116,7 +116,6 @@ export default function ScheduledJobsPage() {
   const [testingConnectionId, setTestingConnectionId] = useState<string | undefined>();
   const [dryRunResult, setDryRunResult] = useState<ScheduledJobDryRunResult | undefined>();
   const [dryRunning, setDryRunning] = useState(false);
-  const selectedConnectionEnvironment = Form.useWatch('connection_environment', form);
   const selectedPluginConnectionIds = Form.useWatch('plugin_connection_ids', form);
   const selectedPluginActionIds = Form.useWatch('plugin_action_ids', form);
   const selectedExecutionMode = Form.useWatch('execution_mode', form);
@@ -141,7 +140,6 @@ export default function ScheduledJobsPage() {
     codeInspectionResultActionSelectOptions,
     codeInspectionScanModeSelectOptions,
     codeInspectionScannerEngineSelectOptions,
-    connectionEnvironmentSelectOptions,
     defaultCodeInspectionActions,
     executionModeLabelMap,
     executionModeSelectOptions,
@@ -242,15 +240,12 @@ export default function ScheduledJobsPage() {
   const filteredPluginConnections = useMemo(
     () =>
       pluginConnections.filter((connection) => {
-        const matchesEnvironment =
-          !selectedConnectionEnvironment
-          || (connection.environment ?? 'default') === selectedConnectionEnvironment;
         const matchesSelectedActionPlugin =
           connectionPluginFilterIds.size === 0
           || connectionPluginFilterIds.has(String(connection.plugin_id));
-        return matchesEnvironment && matchesSelectedActionPlugin;
+        return matchesSelectedActionPlugin;
       }),
-    [connectionPluginFilterIds, pluginConnections, selectedConnectionEnvironment],
+    [connectionPluginFilterIds, pluginConnections],
   );
 
   useEffect(() => {
@@ -314,13 +309,10 @@ export default function ScheduledJobsPage() {
       if (!connection) {
         return false;
       }
-      const matchesEnvironment =
-        !selectedConnectionEnvironment
-        || (connection.environment ?? 'default') === selectedConnectionEnvironment;
       const matchesSelectedActionPlugin =
         connectionPluginFilterIds.size === 0
         || connectionPluginFilterIds.has(String(connection.plugin_id));
-      return matchesEnvironment && matchesSelectedActionPlugin;
+      return matchesSelectedActionPlugin;
     });
     if (nextConnectionIds.length !== normalizedSelectedPluginConnectionIds.length) {
       form.setFieldValue('plugin_connection_ids', nextConnectionIds);
@@ -331,7 +323,6 @@ export default function ScheduledJobsPage() {
     connectionPluginFilterIds,
     normalizedSelectedPluginConnectionIds,
     pluginConnectionById,
-    selectedConnectionEnvironment,
   ]);
 
   useEffect(() => {
@@ -471,11 +462,6 @@ export default function ScheduledJobsPage() {
     ],
   );
 
-  const handleConnectionEnvironmentChange = useCallback(() => {
-    form.setFieldValue('plugin_connection_id', undefined);
-    form.setFieldValue('plugin_connection_ids', []);
-  }, [form]);
-
   const orchestrationNodes = useMemo(
     () =>
       buildScheduledJobOrchestrationNodes({
@@ -595,10 +581,6 @@ export default function ScheduledJobsPage() {
       const pluginConnectionIds = payloadConnectionIds.length
         ? payloadConnectionIds
         : uniqueStringList([connection?.id]);
-      const primaryConnectionId = primaryId(pluginConnectionIds);
-      const primaryConnection = primaryConnectionId
-        ? pluginConnectionById.get(primaryConnectionId) ?? connection
-        : connection;
       const jobType = templatePayloadString(template, 'job_type') ?? 'plugin_action_invoke';
       const templateConfigJson = templatePayloadRecordValue(template, 'config_json') ?? {};
       const nativeCodeScan = codeInspectionUsesNativeScan(jobType, templateConfigJson);
@@ -607,7 +589,6 @@ export default function ScheduledJobsPage() {
       form.setFieldsValue({
         agent_id: aiRequired ? agentId : undefined,
         config_json: templateConfigJson,
-        connection_environment: nativeCodeScan ? undefined : primaryConnection?.environment ?? undefined,
         cron_expression: templatePayloadString(template, 'cron_expression'),
         enabled: templatePayloadBoolean(template, 'enabled', true),
         execution_mode: executionMode,
@@ -642,7 +623,6 @@ export default function ScheduledJobsPage() {
       knowledgeDocuments,
       modelGatewayConfigs,
       pluginActionById,
-      pluginConnectionById,
       products,
       skills,
     ],
@@ -719,7 +699,6 @@ export default function ScheduledJobsPage() {
   const openCopyJobModal = (job: ScheduledJobRecord) => {
     const values = scheduledJobTemplateValuesFromRecord(job as unknown as Record<string, unknown>, {
       fallback: job,
-      pluginConnectionById,
     });
     setEditingJob(undefined);
     setAssistantDraftPayload(undefined);
@@ -746,7 +725,6 @@ export default function ScheduledJobsPage() {
     const values = scheduledJobTemplateValuesFromRecord(snapshot, {
       fallback: sourceJob,
       nameSuffix: '运行快照副本',
-      pluginConnectionById,
     });
     closeRunDetail();
     setEditingJob(undefined);
@@ -775,7 +753,6 @@ export default function ScheduledJobsPage() {
       const values = scheduledJobTemplateValuesFromRecord(payloadDefaults, {
         fallback: template.payload_defaults,
         nameSuffix: '',
-        pluginConnectionById,
       });
       const jobType = values.job_type ?? 'user_feedback_insight_extract';
       const executionMode = values.execution_mode ?? 'ai_generated';
@@ -840,9 +817,6 @@ export default function ScheduledJobsPage() {
     form.resetFields();
     form.setFieldsValue({
       agent_id: job.agent_id ?? undefined,
-      connection_environment: !nativeCodeScan && primaryConnectionId
-        ? pluginConnectionById.get(primaryConnectionId)?.environment ?? 'default'
-        : undefined,
       config_json: editConfigJson,
       cron_expression: job.cron_expression ?? undefined,
       enabled: job.enabled ?? true,
@@ -883,7 +857,6 @@ export default function ScheduledJobsPage() {
   const buildJobRequestPayload = (values: ScheduledJobFormValues): Partial<ScheduledJobRecord> => {
     const { template, ...jobValues } = values;
     const selectedTemplate = availableJobTemplates.find((item) => item.code === template);
-    delete jobValues.connection_environment;
     const pluginConnectionIds = uniqueStringList(
       Array.isArray(values.plugin_connection_ids)
         ? values.plugin_connection_ids
@@ -1170,7 +1143,6 @@ export default function ScheduledJobsPage() {
         codeInspectionResultActionOptions={codeInspectionResultActionSelectOptions}
         codeInspectionScanModeSelectOptions={codeInspectionScanModeSelectOptions}
         codeInspectionScannerEngineSelectOptions={codeInspectionScannerEngineSelectOptions}
-        connectionEnvironmentSelectOptions={connectionEnvironmentSelectOptions}
         dryRunResult={dryRunResult}
         dryRunning={dryRunning}
         editingJob={editingJob}
@@ -1203,7 +1175,6 @@ export default function ScheduledJobsPage() {
         writeStrategyLabelFromAction={writeStrategyLabelFromAction}
         onApplyJobTemplate={applyJobTemplate}
         onClose={closeJobModal}
-        onConnectionEnvironmentChange={handleConnectionEnvironmentChange}
         onDryRun={dryRunJob}
         onJobTypeChange={handleJobTypeChange}
         onPluginConnectionChange={handlePluginConnectionChange}

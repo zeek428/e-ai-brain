@@ -8,10 +8,14 @@
 ## [Unreleased]
 
 ### Fixed
+- 内部数据源读取不再因插件管理权限临时注入需求、产品或 Bug 读取权限；缺少业务源读取权限时返回空数据与 `access_issues`，防止越权读取内部业务数据。
+- 内部数据源时间窗口过滤改为在窗口请求时扩大分页扫描，避免先按 limit 取第一页再过滤导致旧数据命中被漏掉。
 - 修正技术规格中 AI 执行器官方连接默认值残留旧口径的问题：官方默认连接应使用系统模型网关 `executor_type=model_gateway` 和 `ai_executor_runner_system_default`，只有本地 Runner 场景才选择 Codex/Claude/Hermes/OpenClaw。
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 内部数据源连接默认值和 schema 移除产品范围选项，产品范围由服务端按当前用户 scope 自动过滤。
+- 定时作业数据连接配置移除连接环境筛选，连接下拉、列表和编排预览只显示连接名称。
 - AI 助手定时作业草案的 `plugin_connection_ids`、`plugin_action_ids` 和 `skill_ids` 引用解析统一跳过 null/空字符串并保序去重，避免空引用阻塞预览或写入定时作业配置。
 - 内部数据源读取解析对 `source_types` 做服务端保序去重，连接测试预览和动作读取响应不再因旧客户端重复传源数据而出现重复摘要。
 - 内部数据源连接测试预览和动作读取按当前 `source_types` 裁剪残留 `source_filters`，旧客户端或旧 JSON 配置带入未选源过滤时，响应过滤摘要只保留实际生效条件。
@@ -22,6 +26,7 @@
 - 定时作业配置列表移除“模板来源”列，模板来源继续保留在复制确认、运行详情和审计 payload 中，列表聚焦数据连接、AI执行、动作和调度。
 
 ### Added
+- 用户反馈洞察定时作业运行摘要新增 `execution_nodes.result_actions` 和 `write_targets`，并让通用结果写入记录按多动作逐条派生，支持同时写用户洞察表和仅保存运行结果。
 - 内部数据源连接 schema 新增“按源过滤”可视化字段：需求状态/优先级、Bug 状态/严重级别可直接在连接表单配置并写入 `source_filters`，高级 JSON 仅用于补充更细粒度过滤。
 - 内部数据源详情字段补齐独立系统权限点 `system.internal_data_source.detail`：默认授予管理员，可在角色管理中授权给专项治理角色；detail 模式只对具备该权限的用户返回受保护字段。
 - AI 助手新增定时作业运行转业务草案确定性工具：携带 `scheduled_job_run` 引用询问洞察、需求或 Bug 草案时，后端返回并持久化 `create_analysis_draft` 草案，确认后归档为助手分析结果，不直接写正式业务表。

@@ -836,7 +836,7 @@ def test_internal_data_source_connection_and_action_read_business_data():
     assert invocation_data["request_summary"]["request_preview"]["method"] == "INTERNAL_READ"
 
 
-def test_internal_data_source_respects_product_scope_for_multi_source_reads():
+def test_internal_data_source_requires_source_permissions_and_respects_product_scope():
     app.state.store.reset()
     store = app.state.store
     store.products["product_sql"] = {
@@ -881,14 +881,89 @@ def test_internal_data_source_respects_product_scope_for_multi_source_reads():
         },
         user=SCOPED_PLUGIN_MANAGER_USER,
     )
+    assert result["datasets"] == {"products": [], "requirements": []}
+    assert result["source_counts"] == {"products": 0, "requirements": 0}
+    assert [issue["missing_permission"] for issue in result["access_issues"]] == [
+        "product.read",
+        "requirement.read",
+    ]
+    assert result["schemas"]["products"]["access_status"] == "denied"
+    assert result["schemas"]["products"]["fields"] == []
+    assert result["schemas"]["requirements"]["access_status"] == "denied"
+    assert result["schemas"]["requirements"]["fields"] == []
+
+    scoped_reader = {
+        **SCOPED_PLUGIN_MANAGER_USER,
+        "permissions": ["product.read", "requirement.read"],
+    }
+    result = read_internal_data_source(
+        current_store=store,
+        input_payload={},
+        request_config={
+            "query": {
+                "field_mode": "detail",
+                "limit": 20,
+                "source_types": ["products", "requirements"],
+            },
+        },
+        user=scoped_reader,
+    )
     assert [row["id"] for row in result["datasets"]["products"]] == ["product_sql"]
     assert [row["id"] for row in result["datasets"]["requirements"]] == [
         "requirement_visible",
     ]
+    assert result["access_issues"] == []
+    assert result["schemas"]["products"]["access_status"] == "granted"
     assert "description" not in result["datasets"]["requirements"][0]
     assert "raw_payload" not in result["datasets"]["requirements"][0]
     assert result["schemas"]["requirements"]["field_mode"] == "detail"
     assert "description" not in result["schemas"]["requirements"]["fields"]
+
+
+def test_internal_data_source_window_filter_scans_beyond_first_limited_page():
+    app.state.store.reset()
+    store = app.state.store
+    store.products["product_sql"] = {
+        "code": "VISIBLE",
+        "id": "product_sql",
+        "name": "可见产品",
+        "status": "active",
+    }
+    store.requirements["requirement_new_outside_window"] = {
+        "created_at": "2026-06-30T00:00:00+00:00",
+        "id": "requirement_new_outside_window",
+        "product_id": "product_sql",
+        "status": "planned",
+        "title": "窗口外较新需求",
+    }
+    store.requirements["requirement_old_inside_window"] = {
+        "created_at": "2026-06-10T00:00:00+00:00",
+        "id": "requirement_old_inside_window",
+        "product_id": "product_sql",
+        "status": "planned",
+        "title": "窗口内较旧需求",
+    }
+
+    result = read_internal_data_source(
+        current_store=store,
+        input_payload={},
+        request_config={
+            "query": {
+                "limit": 1,
+                "source_types": ["requirements"],
+                "window_end": "2026-06-15",
+                "window_start": "2026-06-01",
+            },
+        },
+        user={
+            **SCOPED_PLUGIN_MANAGER_USER,
+            "permissions": ["requirement.read"],
+        },
+    )
+
+    assert [row["id"] for row in result["datasets"]["requirements"]] == [
+        "requirement_old_inside_window",
+    ]
 
 
 def test_internal_data_source_supports_source_filters_and_field_permissions():
@@ -1022,7 +1097,7 @@ def test_internal_data_source_supports_source_filters_and_field_permissions():
         },
         user={
             "id": "internal_data_source_detail_reader",
-            "permissions": ["system.internal_data_source.detail"],
+            "permissions": ["requirement.read", "system.internal_data_source.detail"],
             "roles": [],
         },
     )
@@ -4119,6 +4194,28 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
         },
         headers=admin_headers,
     ).json()["data"]
+    archive_action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "archive_weekly_user_feedback_result",
+            "connection_id": connection["id"],
+            "input_schema": {"type": "object"},
+            "name": "保存本周用户反馈分析结果",
+            "output_schema": {"type": "object"},
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "POST",
+                "path": "/archive",
+            },
+            "result_mapping": {
+                "records_imported_path": "$.row_count",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
     job = client.post(
         "/api/system/scheduled-jobs",
         json={
@@ -4130,6 +4227,7 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
             "model_gateway_config_id": model_gateway["id"],
             "name": "每周 MaxCompute 用户反馈洞察提取",
             "plugin_action_id": action["id"],
+            "plugin_action_ids": [action["id"], archive_action["id"]],
             "plugin_connection_id": connection["id"],
             "plugin_input_mapping": {
                 "time_field": "created_at",
@@ -4193,6 +4291,36 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
     )
     assert execution_nodes["result_action"]["created_ids"][0].startswith("feedback_")
     assert execution_nodes["result_action"]["write_target"] == "user_feedback_insights"
+    assert [item["action_id"] for item in execution_nodes["result_actions"]] == [
+        action["id"],
+        archive_action["id"],
+    ]
+    assert execution_nodes["result_actions"][0]["records_imported"] == 1
+    assert execution_nodes["result_actions"][1]["write_target"] == "scheduled_job_result"
+    assert execution_nodes["result_actions"][1]["feedback"]["candidate_count"] == 1
+    assert execution_nodes["result_actions"][1]["feedback"]["stored_in_run_result"] is True
+    assert execution_nodes["result_actions"][1]["records_imported"] == 0
+    assert run["result_summary"]["write_targets"] == [
+        "user_feedback_insights",
+        "scheduled_job_result",
+    ]
+    result_records = client.get(
+        f"/api/system/result-write-records?scheduled_job_run_id={run['id']}",
+        headers=admin_headers,
+    ).json()["data"]
+    assert result_records["total"] == 2
+    assert [item["id"] for item in result_records["items"]] == [
+        f"result_write_record_{run['id']}",
+        f"result_write_record_{run['id']}_2",
+    ]
+    assert [item["write_target"] for item in result_records["items"]] == [
+        "user_feedback_insights",
+        "scheduled_job_result",
+    ]
+    assert [item["plugin_action_id"] for item in result_records["items"]] == [
+        action["id"],
+        archive_action["id"],
+    ]
 
     feedback_items = client.get(
         f"/api/insights/user-feedback?product_id={product['id']}",
@@ -4215,6 +4343,7 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
     assert audit_payload["model_gateway_config_id"] == model_gateway["id"]
     assert audit_payload["plugin_action_code"] == "fetch_weekly_user_feedback"
     assert audit_payload["plugin_action_id"] == action["id"]
+    assert audit_payload["plugin_action_ids"] == [action["id"], archive_action["id"]]
     assert audit_payload["plugin_code"] == "aliyun_maxcompute"
     assert audit_payload["plugin_connection_environment"] == "prod"
     assert audit_payload["plugin_connection_id"] == connection["id"]

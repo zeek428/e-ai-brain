@@ -813,7 +813,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(scheduleGroup).getByLabelText('Cron 表达式').compareDocumentPosition(
       within(scheduleGroup).getByLabelText('间隔秒数'),
     ) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(dialog).getByLabelText('连接环境')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('连接环境')).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText('数据连接')).toBeInTheDocument();
     expect(within(dialog).getByText('可选择多个连接，运行时按配置顺序作为数据来源')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('执行链路')).toHaveTextContent('数据连接 → AI执行 → 动作 → 运行记录');
@@ -995,7 +995,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(dryRunResult).getByText(/user_feedback_insights/)).toBeInTheDocument();
   });
 
-  it('filters data connection options by selected environment without submitting the filter field', async () => {
+  it('shows data connection options by name without submitting environment metadata', async () => {
     const { jobCreateBodies } = installScheduledJobsFetchMock();
 
     render(<ScheduledJobsPage />);
@@ -1003,15 +1003,11 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
 
     const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
-    await waitFor(() => expect(within(dialog).getByLabelText('连接环境')).toBeInTheDocument());
-
-    fireEvent.mouseDown(within(dialog).getByLabelText('连接环境'));
-    fireEvent.click(await screen.findByText('测试'));
     fireEvent.mouseDown(within(dialog).getByLabelText('数据连接'));
 
-    expect(await screen.findByText('测试 MaxCompute 项目 (test)')).toBeInTheDocument();
+    expect(await screen.findByText('测试 MaxCompute 项目')).toBeInTheDocument();
+    expect(screen.getByText('生产 MaxCompute 项目')).toBeInTheDocument();
     expect(screen.queryByText('生产 MaxCompute 项目 (prod)')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText('测试 MaxCompute 项目 (test)'));
 
     fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
     fireEvent.click(await screen.findByText('每周用户反馈洞察抽取'));
@@ -1039,7 +1035,7 @@ describe('ScheduledJobsPage', () => {
 
     expect(within(feedbackDialog).getByLabelText('名称')).toHaveValue('每周用户反馈洞察抽取');
     expect(within(feedbackDialog).getByText('AI Brain (ai-brain)')).toBeInTheDocument();
-    expect(within(feedbackDialog).getByText('生产 MaxCompute 项目 (prod)')).toBeInTheDocument();
+    expect(within(feedbackDialog).getByText('生产 MaxCompute 项目')).toBeInTheDocument();
     expect(within(feedbackDialog).getByText('定时作业模型 (scheduled-job-model)')).toBeInTheDocument();
     expect(within(feedbackDialog).getByText('洞察 Agent (insight_agent)')).toBeInTheDocument();
     expect(within(feedbackDialog).getByText('每周反馈分析 (weekly_feedback_analysis)')).toBeInTheDocument();
@@ -1049,7 +1045,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(feedbackDialog).getByDisplayValue('aliyun-maxcompute')).toBeInTheDocument();
 
     fireEvent.mouseDown(within(feedbackDialog).getByLabelText('数据连接'));
-    fireEvent.click(await screen.findByText('备用 MaxCompute 项目 (prod)'));
+    fireEvent.click(await screen.findByText('备用 MaxCompute 项目'));
     fireEvent.mouseDown(within(feedbackDialog).getByLabelText('写入策略'));
     fireEvent.click(await screen.findByText('写入用户洞察表'));
 
@@ -1089,7 +1085,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByText('代码仓库质量 / 安全 / 规范巡检'));
 
     expect(within(codeDialog).getByLabelText('名称')).toHaveValue('代码仓库质量安全规范巡检');
-    expect(within(codeDialog).getByText('生产 GitHub 组织 (prod)')).toBeInTheDocument();
+    expect(within(codeDialog).getByText('生产 GitHub 组织')).toBeInTheDocument();
     expect(within(codeDialog).getByText('GitHub 代码巡检')).toBeInTheDocument();
     expect(within(codeDialog).getByDisplayValue('0 2 * * MON')).toBeInTheDocument();
     expect(within(codeDialog).getByDisplayValue('code-inspection')).toBeInTheDocument();
@@ -1125,7 +1121,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByText('AI 执行器仓库任务'));
 
     expect(within(executorDialog).getByLabelText('名称')).toHaveValue('AI 执行器仓库巡检');
-    expect(within(executorDialog).getByText('系统默认 AI 执行器 (default)')).toBeInTheDocument();
+    expect(within(executorDialog).getByText('系统默认 AI 执行器')).toBeInTheDocument();
     expect(within(executorDialog).getByText('AI 执行器下达指令')).toBeInTheDocument();
     expect(within(executorDialog).getByDisplayValue('0 3 * * MON')).toBeInTheDocument();
     expect(within(executorDialog).getByDisplayValue('ai_executor')).toBeInTheDocument();
@@ -1189,7 +1185,7 @@ describe('ScheduledJobsPage', () => {
 
     const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
     expect(within(dialog).getByLabelText('名称')).toHaveValue('每周用户反馈洞察抽取');
-    expect(within(dialog).getByText('生产 MaxCompute 项目 (prod)')).toBeInTheDocument();
+    expect(within(dialog).getByText('生产 MaxCompute 项目')).toBeInTheDocument();
     expect(within(dialog).getByText('洞察 Agent (insight_agent)')).toBeInTheDocument();
     expect(within(dialog).getByText('每周反馈分析 (weekly_feedback_analysis)')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('0 9 * * MON')).toBeInTheDocument();
@@ -1349,7 +1345,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('所属产品'));
     fireEvent.click(await screen.findByText('AI Brain (ai-brain)'));
     fireEvent.mouseDown(within(dialog).getByLabelText('数据连接'));
-    fireEvent.click(await screen.findByText('生产 MaxCompute 项目 (prod)'));
+    fireEvent.click(await screen.findByText('生产 MaxCompute 项目'));
     fireEvent.mouseDown(within(dialog).getByLabelText('AI 模型'));
     fireEvent.click(await screen.findByText('定时作业模型 (scheduled-job-model)'));
     fireEvent.mouseDown(within(dialog).getByLabelText('AI角色'));
@@ -1376,7 +1372,7 @@ describe('ScheduledJobsPage', () => {
     await waitFor(() => expect(within(dialog).getByLabelText('作业模板')).toBeInTheDocument());
     fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
     fireEvent.click(await screen.findByText('代码仓库质量 / 安全 / 规范巡检'));
-    expect(within(dialog).getByText('生产 GitHub 组织 (prod)')).toBeInTheDocument();
+    expect(within(dialog).getByText('生产 GitHub 组织')).toBeInTheDocument();
 
     fireEvent.mouseDown(within(dialog).getByLabelText('AI执行'));
     fireEvent.click(await screen.findByTitle('AI 生成'));
@@ -1422,7 +1418,7 @@ describe('ScheduledJobsPage', () => {
 
     expect(await screen.findByText('每周用户反馈洞察')).toBeInTheDocument();
     expect(screen.getByText('用户反馈洞察抽取（取数 + AI 分析 + 写入）')).toBeInTheDocument();
-    expect(screen.getByText('生产 MaxCompute 项目 (prod)')).toBeInTheDocument();
+    expect(screen.getByText('生产 MaxCompute 项目')).toBeInTheDocument();
     expect(screen.getByText('AI 生成 · 定时作业模型 · 洞察 Agent · 1 Skill')).toBeInTheDocument();
     expect(screen.getByText('获取本周用户反馈数据')).toBeInTheDocument();
     expect(screen.getByText('Cron 定时')).toBeInTheDocument();
@@ -1489,10 +1485,10 @@ describe('ScheduledJobsPage', () => {
 
     fireEvent.mouseDown(within(dialog).getByLabelText('数据连接'));
 
-    await waitFor(() => expect(screen.getAllByText('生产 GitHub 组织 (prod)').length).toBeGreaterThan(0));
-    expect(screen.queryAllByText('生产 GitLab 项目 (prod)').length).toBeGreaterThan(0);
-    expect(screen.queryAllByText('生产 MaxCompute 项目 (prod)')).toHaveLength(0);
-    expect(screen.queryAllByText('备用 MaxCompute 项目 (prod)')).toHaveLength(0);
+    await waitFor(() => expect(screen.getAllByText('生产 GitHub 组织').length).toBeGreaterThan(0));
+    expect(screen.queryAllByText('生产 GitLab 项目').length).toBeGreaterThan(0);
+    expect(screen.queryAllByText('生产 MaxCompute 项目')).toHaveLength(0);
+    expect(screen.queryAllByText('备用 MaxCompute 项目')).toHaveLength(0);
   });
 
   it('switches code inspection action when selecting a GitLab data connection', async () => {
@@ -1522,7 +1518,7 @@ describe('ScheduledJobsPage', () => {
 
     const dialog = await screen.findByRole('dialog', { name: '编辑定时作业' });
     fireEvent.mouseDown(within(dialog).getByLabelText('数据连接'));
-    fireEvent.click(await screen.findByText('生产 GitLab 项目 (prod)'));
+    fireEvent.click(await screen.findByText('生产 GitLab 项目'));
 
     await waitFor(() =>
       expect(within(dialog).getByText('GitLab 代码巡检')).toBeInTheDocument(),
@@ -1676,7 +1672,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('当前复制来源')).toHaveTextContent('作业');
     expect(within(dialog).getByLabelText('当前复制来源')).toHaveTextContent('每周用户反馈洞察');
     expect(within(dialog).getByLabelText('名称')).toHaveValue('每周用户反馈洞察 副本');
-    expect(within(dialog).getByText('生产 MaxCompute 项目 (prod)')).toBeInTheDocument();
+    expect(within(dialog).getByText('生产 MaxCompute 项目')).toBeInTheDocument();
     expect(within(dialog).getByText('定时作业模型 (scheduled-job-model)')).toBeInTheDocument();
     expect(within(dialog).getByText('洞察 Agent (insight_agent)')).toBeInTheDocument();
     expect(within(dialog).getByText('每周反馈分析 (weekly_feedback_analysis)')).toBeInTheDocument();
@@ -1779,7 +1775,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('当前复制来源')).toHaveTextContent('运行记录');
     expect(within(dialog).getByLabelText('当前复制来源')).toHaveTextContent('scheduled_job_run_weekly_feedback');
     expect(within(dialog).getByLabelText('名称')).toHaveValue('每周用户反馈洞察 运行快照副本');
-    expect(within(dialog).getByText('生产 MaxCompute 项目 (prod)')).toBeInTheDocument();
+    expect(within(dialog).getByText('生产 MaxCompute 项目')).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 

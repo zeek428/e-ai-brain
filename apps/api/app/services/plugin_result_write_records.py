@@ -113,25 +113,14 @@ def can_list_result_write_records_from_repository(
     )
 
 
-def result_write_record_from_scheduled_run(
+def _result_write_record_from_scheduled_action(
     current_store: Any,
     run: dict[str, Any],
+    *,
+    result_action: dict[str, Any],
+    result_summary: dict[str, Any],
+    action_index: int = 0,
 ) -> dict[str, Any] | None:
-    result_summary = (
-        run.get("result_summary")
-        if isinstance(run.get("result_summary"), dict)
-        else {}
-    )
-    execution_nodes = (
-        result_summary.get("execution_nodes")
-        if isinstance(result_summary.get("execution_nodes"), dict)
-        else {}
-    )
-    result_action = (
-        execution_nodes.get("result_action")
-        if isinstance(execution_nodes.get("result_action"), dict)
-        else {}
-    )
     if not result_action:
         return None
     feedback = (
@@ -163,10 +152,15 @@ def result_write_record_from_scheduled_run(
     snapshot_action = snapshot.get("action") if isinstance(snapshot.get("action"), dict) else {}
     scheduled_job_id = run.get("scheduled_job_id")
     job = _read_memory_record(current_store, "scheduled_jobs", str(scheduled_job_id))
+    record_id = (
+        f"result_write_record_{run['id']}"
+        if action_index == 0
+        else f"result_write_record_{run['id']}_{action_index + 1}"
+    )
     return {
         "created_at": run.get("finished_at") or run.get("started_at"),
         "feedback": feedback,
-        "id": f"result_write_record_{run['id']}",
+        "id": record_id,
         "plugin_action_id": (
             result_action.get("action_id")
             or snapshot_action.get("id")
@@ -207,6 +201,60 @@ def result_write_record_from_scheduled_run(
             or result_write_target_label(write_target)
         ),
     }
+
+
+def result_write_records_from_scheduled_run(
+    current_store: Any,
+    run: dict[str, Any],
+) -> list[dict[str, Any]]:
+    result_summary = (
+        run.get("result_summary")
+        if isinstance(run.get("result_summary"), dict)
+        else {}
+    )
+    execution_nodes = (
+        result_summary.get("execution_nodes")
+        if isinstance(result_summary.get("execution_nodes"), dict)
+        else {}
+    )
+    result_actions = execution_nodes.get("result_actions")
+    if isinstance(result_actions, list):
+        records: list[dict[str, Any]] = []
+        for index, action in enumerate(result_actions):
+            if not isinstance(action, dict):
+                continue
+            record = _result_write_record_from_scheduled_action(
+                current_store,
+                run,
+                result_action=action,
+                result_summary=result_summary,
+                action_index=index,
+            )
+            if record is not None:
+                records.append(record)
+        if records:
+            return records
+
+    result_action = (
+        execution_nodes.get("result_action")
+        if isinstance(execution_nodes.get("result_action"), dict)
+        else {}
+    )
+    record = _result_write_record_from_scheduled_action(
+        current_store,
+        run,
+        result_action=result_action,
+        result_summary=result_summary,
+    )
+    return [record] if record is not None else []
+
+
+def result_write_record_from_scheduled_run(
+    current_store: Any,
+    run: dict[str, Any],
+) -> dict[str, Any] | None:
+    records = result_write_records_from_scheduled_run(current_store, run)
+    return records[0] if records else None
 
 
 def result_write_record_from_invocation_log(
@@ -366,8 +414,7 @@ def list_result_write_records_payload(
     scoped_product_id_set = set(scoped_product_ids) if scoped_product_ids is not None else None
     records: list[dict[str, Any]] = []
     for run in _read_memory_dict(current_store, "scheduled_job_runs").values():
-        record = result_write_record_from_scheduled_run(current_store, run)
-        if record is not None:
+        for record in result_write_records_from_scheduled_run(current_store, run):
             records.append(normalize_result_write_record(record))
     for log in _read_memory_dict(current_store, "plugin_invocation_logs").values():
         record = result_write_record_from_invocation_log(current_store, log)

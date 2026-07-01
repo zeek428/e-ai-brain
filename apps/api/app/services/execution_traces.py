@@ -19,7 +19,7 @@ from app.services.ai_executor_runners import (
 )
 from app.services.plugin_result_write_records import (
     result_write_record_from_invocation_log,
-    result_write_record_from_scheduled_run,
+    result_write_records_from_scheduled_run,
 )
 
 EXECUTION_TRACE_SORT_FIELDS = {
@@ -238,8 +238,7 @@ def _result_write_records(
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for run in scheduled_job_runs:
-        record = result_write_record_from_scheduled_run(current_store, run)
-        if record is not None:
+        for record in result_write_records_from_scheduled_run(current_store, run):
             records.append(record)
     for log in plugin_invocation_logs:
         record = result_write_record_from_invocation_log(current_store, log)

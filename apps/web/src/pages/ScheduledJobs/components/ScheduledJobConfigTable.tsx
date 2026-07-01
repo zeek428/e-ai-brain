@@ -134,9 +134,7 @@ export function ScheduledJobConfigTable({
               'plugin_connection_id',
             ).map((connectionId) => {
               const connection = pluginConnectionById.get(connectionId);
-              return connection
-                ? `${connection.name} (${connection.environment ?? 'default'})`
-                : connectionId;
+              return connection ? connection.name : connectionId;
             });
             return ellipsisText(connectionLabels.join(' / '));
           },

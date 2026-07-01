@@ -20,6 +20,8 @@ from app.services.user_insights import (
 INTERNAL_DATA_SOURCE_PROTOCOL = "internal_read_model"
 INTERNAL_DATA_SOURCE_ACTION_TYPE = "internal_query"
 INTERNAL_DATA_SOURCE_DETAIL_PERMISSION = "system.internal_data_source.detail"
+INTERNAL_DATA_SOURCE_FETCH_PAGE_SIZE = 500
+INTERNAL_DATA_SOURCE_MAX_SCAN_PAGES = 20
 
 INTERNAL_DATA_SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
     "bugs": {
@@ -47,6 +49,7 @@ INTERNAL_DATA_SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "raw_payload": INTERNAL_DATA_SOURCE_DETAIL_PERMISSION,
         },
         "label": "Bug 数据",
+        "read_permission": "bug.read",
         "summary_fields": [
             "id",
             "title",
@@ -80,6 +83,7 @@ INTERNAL_DATA_SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "description": INTERNAL_DATA_SOURCE_DETAIL_PERMISSION,
         },
         "label": "产品数据",
+        "read_permission": "product.read",
         "summary_fields": [
             "id",
             "code",
@@ -114,6 +118,7 @@ INTERNAL_DATA_SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "raw_payload": INTERNAL_DATA_SOURCE_DETAIL_PERMISSION,
         },
         "label": "需求数据",
+        "read_permission": "requirement.read",
         "summary_fields": [
             "id",
             "title",
@@ -152,6 +157,7 @@ INTERNAL_DATA_SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
             "raw_feedback": INTERNAL_DATA_SOURCE_DETAIL_PERMISSION,
         },
         "label": "用户洞察数据",
+        "read_permission": "insight.read",
         "summary_fields": [
             "id",
             "category",
@@ -336,6 +342,14 @@ def _within_window(
     return True
 
 
+def _window_requested(filters: dict[str, Any]) -> bool:
+    return bool(filters.get("window_start") or filters.get("window_end"))
+
+
+def _source_page_size(limit: int) -> int:
+    return max(1, max(limit, INTERNAL_DATA_SOURCE_FETCH_PAGE_SIZE))
+
+
 def _user_permissions(user: dict[str, Any]) -> set[str]:
     permissions = set(str(item) for item in user.get("permissions") or [])
     roles = set(str(item) for item in user.get("roles") or [])
@@ -344,12 +358,39 @@ def _user_permissions(user: dict[str, Any]) -> set[str]:
     return permissions
 
 
+def _has_permission(user: dict[str, Any], permission: str | None) -> bool:
+    if not permission:
+        return True
+    permissions = set(str(item) for item in user.get("permissions") or [])
+    roles = set(str(item) for item in user.get("roles") or [])
+    return "admin" in roles or "system.admin" in permissions or permission in permissions
+
+
+def _source_read_permission(source_type: str) -> str | None:
+    source_config = INTERNAL_DATA_SOURCE_REGISTRY.get(source_type) or {}
+    permission = source_config.get("read_permission")
+    return str(permission) if permission else None
+
+
+def _source_access_issue(source_type: str) -> dict[str, Any]:
+    label = INTERNAL_DATA_SOURCE_TYPES.get(source_type, source_type)
+    return {
+        "code": "INTERNAL_DATA_SOURCE_PERMISSION_DENIED",
+        "label": label,
+        "message": f"缺少读取{label}的权限",
+        "missing_permission": _source_read_permission(source_type),
+        "source_type": source_type,
+    }
+
+
 def _visible_fields(
     *,
     field_mode: str,
     source_type: str,
     user: dict[str, Any],
 ) -> list[str]:
+    if not _has_permission(user, _source_read_permission(source_type)):
+        return []
     source_config = INTERNAL_DATA_SOURCE_REGISTRY[source_type]
     fields = (
         source_config["detail_fields"]
@@ -422,12 +463,6 @@ def _product_rows(
     )
 
 
-def _internal_read_user(user: dict[str, Any]) -> dict[str, Any]:
-    permissions = set(user.get("permissions") or [])
-    permissions.update({"bug.read", "product.read", "requirement.read"})
-    return {**user, "permissions": sorted(permissions)}
-
-
 def _requirement_rows(
     current_store: Any,
     *,
@@ -435,25 +470,29 @@ def _requirement_rows(
     limit: int,
     user: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    payload = list_requirements_response(
-        current_store=current_store,
-        page=1,
-        page_size=limit,
-        priority=filters.get("priority"),
-        product=filters.get("product"),
-        product_id=filters.get("product_id"),
-        source=filters.get("source"),
-        sort_by="created_at",
-        sort_order="desc",
-        started_at=None,
-        status=filters.get("status"),
-        title=filters.get("keyword"),
-        trace_id="internal_data_source",
-        user=_internal_read_user(user),
-        version=None,
-        version_id=filters.get("version_id"),
-    )
-    return list(payload.get("items") or [])
+    def fetch_page(page: int, page_size: int) -> dict[str, Any]:
+        return list_requirements_response(
+            current_store=current_store,
+            page=page,
+            page_size=page_size,
+            priority=filters.get("priority"),
+            product=filters.get("product"),
+            product_id=filters.get("product_id"),
+            source=filters.get("source"),
+            sort_by="created_at",
+            sort_order="desc",
+            started_at=None,
+            status=filters.get("status"),
+            title=filters.get("keyword"),
+            trace_id="internal_data_source",
+            user=user,
+            version=None,
+            version_id=filters.get("version_id"),
+        )
+
+    if _window_requested(filters):
+        return _windowed_page_rows(fetch_page=fetch_page, filters=filters, limit=limit)
+    return list(fetch_page(1, limit).get("items") or [])
 
 
 def _bug_rows(
@@ -463,25 +502,57 @@ def _bug_rows(
     limit: int,
     user: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    payload = list_bugs_response(
-        current_store=current_store,
-        module=filters.get("module_code"),
-        page=1,
-        page_size=limit,
-        product_id=filters.get("product_id"),
-        severity=filters.get("severity"),
-        sort_by="created_at",
-        sort_order="desc",
-        source=filters.get("source"),
-        started_at=None,
-        status=filters.get("status"),
-        title=filters.get("keyword"),
-        trace_id="internal_data_source",
-        user=_internal_read_user(user),
-        version=None,
-        version_id=filters.get("version_id"),
-    )
-    return list(payload.get("items") or [])
+    def fetch_page(page: int, page_size: int) -> dict[str, Any]:
+        return list_bugs_response(
+            current_store=current_store,
+            module=filters.get("module_code"),
+            page=page,
+            page_size=page_size,
+            product_id=filters.get("product_id"),
+            severity=filters.get("severity"),
+            sort_by="created_at",
+            sort_order="desc",
+            source=filters.get("source"),
+            started_at=None,
+            status=filters.get("status"),
+            title=filters.get("keyword"),
+            trace_id="internal_data_source",
+            user=user,
+            version=None,
+            version_id=filters.get("version_id"),
+        )
+
+    if _window_requested(filters):
+        return _windowed_page_rows(fetch_page=fetch_page, filters=filters, limit=limit)
+    return list(fetch_page(1, limit).get("items") or [])
+
+
+def _windowed_page_rows(
+    *,
+    fetch_page: Any,
+    filters: dict[str, Any],
+    limit: int,
+) -> list[dict[str, Any]]:
+    page_size = _source_page_size(limit)
+    collected: list[dict[str, Any]] = []
+    for page in range(1, INTERNAL_DATA_SOURCE_MAX_SCAN_PAGES + 1):
+        payload = fetch_page(page, page_size)
+        items = list(payload.get("items") or [])
+        for item in items:
+            if _within_window(
+                item,
+                window_end=filters.get("window_end"),
+                window_start=filters.get("window_start"),
+            ):
+                collected.append(item)
+                if len(collected) >= limit:
+                    return collected
+        total = payload.get("total")
+        if isinstance(total, int) and page * page_size >= total:
+            break
+        if len(items) < page_size:
+            break
+    return collected
 
 
 def _user_insight_rows(
@@ -494,29 +565,41 @@ def _user_insight_rows(
     repository = getattr(current_store, "repository", None)
     list_items = getattr(repository, "list_user_insight_items", None)
     if callable(list_items):
-        payload = list_items(
-            category=filters.get("category"),
-            product_id=filters.get("product_id"),
-            summary=filters.get("keyword"),
-            status=filters.get("status"),
-            page=1,
-            page_size=limit,
-            sort_by="updated_at",
-            sort_order="desc",
+        payload = (
+            _windowed_user_insight_payload(list_items=list_items, filters=filters, limit=limit)
+            if _window_requested(filters)
+            else list_items(
+                category=filters.get("category"),
+                product_id=filters.get("product_id"),
+                summary=filters.get("keyword"),
+                status=filters.get("status"),
+                page=1,
+                page_size=limit,
+                sort_by="updated_at",
+                sort_order="desc",
+            )
         )
     else:
-        payload = list_user_insight_items_response(
-            category=filters.get("category"),
-            current_store=current_store,
-            page=1,
-            page_size=limit,
-            product_id=filters.get("product_id"),
-            sort_by="updated_at",
-            sort_order="desc",
-            started_at=None,
-            status=filters.get("status"),
-            summary=filters.get("keyword"),
-            trace_id="internal_data_source",
+        payload = (
+            _windowed_memory_user_insight_payload(
+                current_store=current_store,
+                filters=filters,
+                limit=limit,
+            )
+            if _window_requested(filters)
+            else list_user_insight_items_response(
+                category=filters.get("category"),
+                current_store=current_store,
+                page=1,
+                page_size=limit,
+                product_id=filters.get("product_id"),
+                sort_by="updated_at",
+                sort_order="desc",
+                started_at=None,
+                status=filters.get("status"),
+                summary=filters.get("keyword"),
+                trace_id="internal_data_source",
+            )
         )
     rows = list(payload.get("items") or [])
     if rows:
@@ -532,6 +615,78 @@ def _user_insight_rows(
             if row.get("product_id") is not None and str(row.get("product_id")) in allowed
         ]
     return result_rows
+
+
+def _windowed_user_insight_payload(
+    *,
+    filters: dict[str, Any],
+    limit: int,
+    list_items: Any,
+) -> dict[str, Any]:
+    page_size = _source_page_size(limit)
+    collected: list[dict[str, Any]] = []
+    total: int | None = None
+    for page in range(1, INTERNAL_DATA_SOURCE_MAX_SCAN_PAGES + 1):
+        payload = list_items(
+            category=filters.get("category"),
+            product_id=filters.get("product_id"),
+            summary=filters.get("keyword"),
+            status=filters.get("status"),
+            page=page,
+            page_size=page_size,
+            sort_by="updated_at",
+            sort_order="desc",
+        )
+        page_items = list(payload.get("items") or [])
+        if isinstance(payload.get("total"), int):
+            total = int(payload["total"])
+        for item in page_items:
+            if _within_window(
+                item,
+                window_end=filters.get("window_end"),
+                window_start=filters.get("window_start"),
+            ):
+                collected.append(item)
+                if len(collected) >= limit:
+                    return {**payload, "items": collected, "total": total or len(collected)}
+        if total is not None and page * page_size >= total:
+            break
+        if len(page_items) < page_size:
+            break
+    return {"items": collected, "total": total or len(collected)}
+
+
+def _windowed_memory_user_insight_payload(
+    *,
+    current_store: Any,
+    filters: dict[str, Any],
+    limit: int,
+) -> dict[str, Any]:
+    rows = user_insight_rows(current_store)
+    if filters.get("category"):
+        rows = [row for row in rows if str(row.get("category")) == str(filters["category"])]
+    if filters.get("product_id"):
+        rows = [row for row in rows if str(row.get("product_id")) == str(filters["product_id"])]
+    if filters.get("status"):
+        rows = [row for row in rows if str(row.get("status")) == str(filters["status"])]
+    rows = [
+        row
+        for row in rows
+        if list_text_matches(row, filters.get("keyword"), ("summary", "evidence", "id"))
+        and _within_window(
+            row,
+            window_end=filters.get("window_end"),
+            window_start=filters.get("window_start"),
+        )
+    ]
+    rows = sort_list_items(
+        rows,
+        allowed_fields={"created_at", "id", "updated_at"},
+        default_sort_by="updated_at",
+        sort_by="updated_at",
+        sort_order="desc",
+    )
+    return {"items": rows[:limit], "total": len(rows)}
 
 
 def _source_rows(
@@ -623,7 +778,6 @@ def internal_data_source_filters(
             input_mapping.get("product_id"),
             query.get("product_id"),
         ),
-        "product_scope": _first_value(query.get("product_scope"), "current_user_scope"),
         "severity": _first_value(
             payload.get("severity"),
             input_mapping.get("severity"),
@@ -692,6 +846,14 @@ def internal_data_source_dataset_schemas(
 ) -> dict[str, dict[str, Any]]:
     return {
         source_type: {
+            **(
+                {
+                    "access_status": "denied",
+                    "missing_permission": _source_read_permission(source_type),
+                }
+                if not _has_permission(user, _source_read_permission(source_type))
+                else {"access_status": "granted"}
+            ),
             "field_mode": field_mode,
             "fields": _visible_fields(
                 field_mode=field_mode,
@@ -715,8 +877,14 @@ def read_internal_data_source(
     field_mode = "detail" if filters["field_mode"] == "detail" else "summary"
     limit = int(filters["limit"])
     datasets: dict[str, list[dict[str, Any]]] = {}
+    access_issues: list[dict[str, Any]] = []
     source_counts: dict[str, int] = {}
     for source_type in filters["source_types"]:
+        if not _has_permission(user, _source_read_permission(source_type)):
+            datasets[source_type] = []
+            source_counts[source_type] = 0
+            access_issues.append(_source_access_issue(source_type))
+            continue
         source_filters = _filters_for_source(filters, source_type)
         source_limit = _limit_for_source(source_filters, limit)
         rows = _source_rows(
@@ -748,6 +916,7 @@ def read_internal_data_source(
         source_counts[source_type] = len(safe_rows)
     total_rows = sum(source_counts.values())
     return {
+        "access_issues": access_issues,
         "datasets": datasets,
         "filters": {
             key: value

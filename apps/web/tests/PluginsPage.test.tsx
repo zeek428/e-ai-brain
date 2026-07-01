@@ -463,13 +463,12 @@ function installPluginsFetchMock(
                 max_retries: 0,
                 name: '内部业务数据连接',
                 request_config: {
-                  query: {
-                    field_mode: 'summary',
-                    limit: 100,
-                    product_scope: 'current_user_scope',
-                    source_types: ['user_insights', 'requirements', 'products', 'bugs'],
-                    window_end: '{{now}}',
-                    window_start: '{{current_date-30}}',
+	                  query: {
+	                    field_mode: 'summary',
+	                    limit: 100,
+	                    source_types: ['user_insights', 'requirements', 'products', 'bugs'],
+	                    window_end: '{{now}}',
+	                    window_start: '{{current_date-30}}',
                   },
                 },
                 status: 'active',
@@ -511,19 +510,8 @@ function installPluginsFetchMock(
                         required: true,
                         type: 'number',
                       },
-                      {
-                        key: 'product_scope',
-                        label: '产品范围',
-                        options: [
-                          { label: '当前用户可访问产品', value: 'current_user_scope' },
-                          { label: '全部可访问数据', value: 'all_accessible' },
-                        ],
-                        path: 'request_config.query.product_scope',
-                        required: true,
-                        type: 'select',
-                      },
-                      {
-                        key: 'window_start',
+	                      {
+	                        key: 'window_start',
                         label: '开始时间',
                         path: 'request_config.query.window_start',
                         required: false,
@@ -2504,11 +2492,10 @@ describe('PluginsPage', () => {
           name: '内部数据源连接',
           plugin_id: 'plugin_standard_internal_data_source',
           request_config: {
-            query: {
-              field_mode: 'summary',
-              limit: 100,
-              product_scope: 'current_user_scope',
-              source_filters: {
+	            query: {
+	              field_mode: 'summary',
+	              limit: 100,
+	              source_filters: {
                 bugs: {
                   severity: 'critical',
                   status: 'open',

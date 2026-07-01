@@ -14,7 +14,6 @@ import {
   codeInspectionScanModeOptions,
   codeInspectionScannerEngineOptions,
   codeInspectionUsesNativeScan,
-  connectionEnvironmentOptions,
   defaultCodeInspectionResultActions,
   executionModeOptions,
   hasRequiredFormValue,
@@ -96,12 +95,6 @@ export function useScheduledJobCatalogOptions(jobCatalog: ScheduledJobCatalogRec
   const scheduleTypeLabelMap = useMemo(
     () => new Map(scheduleTypeSelectOptions.map((option) => [option.value, option.label])),
     [scheduleTypeSelectOptions],
-  );
-  const connectionEnvironmentSelectOptions = useMemo(
-    () => (jobCatalog?.connection_environments?.length
-      ? jobCatalog.connection_environments
-      : connectionEnvironmentOptions),
-    [jobCatalog],
   );
   const productRequiredTypes = useMemo(
     () => (jobCatalog?.required_job_types?.product?.length
@@ -211,7 +204,6 @@ export function useScheduledJobCatalogOptions(jobCatalog: ScheduledJobCatalogRec
     productRequiredRuleFactory,
     scheduleTypeLabelMap,
     scheduleTypeSelectOptions,
-    connectionEnvironmentSelectOptions,
     severityThresholdSelectOptions,
   };
 }

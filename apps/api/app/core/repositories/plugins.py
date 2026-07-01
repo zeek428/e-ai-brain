@@ -1182,7 +1182,10 @@ class PluginReadRepository:
         return """
         WITH scheduled_result_write_records AS (
           SELECT
-            CONCAT('result_write_record_', run.id) AS id,
+            CASE
+              WHEN action_node.ordinal <= 1 THEN CONCAT('result_write_record_', run.id)
+              ELSE CONCAT('result_write_record_', run.id, '_', action_node.ordinal)
+            END AS id,
             'scheduled_job_run'::text AS source_type,
             run.scheduled_job_id,
             job.name AS scheduled_job_name,
@@ -1257,11 +1260,35 @@ class PluginReadRepository:
           FROM scheduled_job_runs run
           LEFT JOIN scheduled_jobs job ON job.id = run.scheduled_job_id
           CROSS JOIN LATERAL (
-            SELECT CASE
-              WHEN jsonb_typeof(run.result_summary #> '{execution_nodes,result_action}') = 'object'
-              THEN run.result_summary #> '{execution_nodes,result_action}'
-              ELSE '{}'::jsonb
-            END AS result_action
+            SELECT action_item.result_action, action_item.ordinal
+            FROM (
+              SELECT
+                action_value.value AS result_action,
+                action_value.ordinality::int AS ordinal
+              FROM jsonb_array_elements(
+                CASE
+                  WHEN jsonb_typeof(run.result_summary #> '{execution_nodes,result_actions}') = 'array'
+                  THEN run.result_summary #> '{execution_nodes,result_actions}'
+                  ELSE '[]'::jsonb
+                END
+              ) WITH ORDINALITY AS action_value(value, ordinality)
+              UNION ALL
+              SELECT
+                CASE
+                  WHEN jsonb_typeof(run.result_summary #> '{execution_nodes,result_action}') = 'object'
+                  THEN run.result_summary #> '{execution_nodes,result_action}'
+                  ELSE '{}'::jsonb
+                END AS result_action,
+                1 AS ordinal
+              WHERE jsonb_typeof(run.result_summary #> '{execution_nodes,result_actions}') IS DISTINCT FROM 'array'
+                OR jsonb_array_length(
+                  CASE
+                    WHEN jsonb_typeof(run.result_summary #> '{execution_nodes,result_actions}') = 'array'
+                    THEN run.result_summary #> '{execution_nodes,result_actions}'
+                    ELSE '[]'::jsonb
+                  END
+                ) = 0
+            ) action_item
           ) action_node
           CROSS JOIN LATERAL (
             SELECT CASE
