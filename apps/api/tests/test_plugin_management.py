@@ -4362,6 +4362,16 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
         "user_feedback_insights",
         "scheduled_job_result",
     ]
+    trace_graph = run["result_summary"]["trace_graph"]
+    assert [node["id"] for node in trace_graph["nodes"]] == [
+        "data_connection",
+        "skill_processing",
+        "result_action_1",
+        "result_action_2",
+    ]
+    assert {"from": "skill_processing", "to": "result_action_1"} in trace_graph["edges"]
+    assert trace_graph["nodes"][2]["input"]["action_id"] == action["id"]
+    assert trace_graph["nodes"][3]["input"]["action_id"] == archive_action["id"]
     result_records = client.get(
         f"/api/system/result-write-records?scheduled_job_run_id={run['id']}",
         headers=admin_headers,

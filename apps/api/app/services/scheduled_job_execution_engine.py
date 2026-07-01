@@ -223,10 +223,27 @@ class ScheduledJobExecutionEngine:
             "request_method": request_summary.get("method") or request_preview.get("method"),
             "request_summary": request_summary,
             "request_url": request_summary.get("url") or request_preview.get("url"),
+            "records_imported": ScheduledJobExecutionEngine._response_records_imported(
+                response_summary,
+            ),
             "response_status_code": response_summary.get("status_code"),
             "response_summary": response_summary,
             "status": summary.get("status") or "unknown",
         }
+
+    @staticmethod
+    def _response_records_imported(response_summary: dict[str, Any]) -> int | None:
+        raw_json = response_summary.get("json")
+        if not isinstance(raw_json, dict):
+            return None
+        row_count = raw_json.get("row_count")
+        if isinstance(row_count, int) and row_count >= 0:
+            return row_count
+        for key in ("rows", "items", "records"):
+            value = raw_json.get(key)
+            if isinstance(value, list):
+                return len(value)
+        return None
 
     @staticmethod
     def runner_execution_node(plugin_summary: dict[str, Any]) -> dict[str, Any] | None:
@@ -419,14 +436,34 @@ class ScheduledJobExecutionEngine:
             "write_target": "code_inspection_reports",
         }
 
-    @staticmethod
-    def trace_graph_for_run(run: dict[str, Any]) -> dict[str, Any] | None:
+    @classmethod
+    def trace_graph_for_run(cls, run: dict[str, Any]) -> dict[str, Any] | None:
         result_summary = run.get("result_summary") or {}
         execution_nodes = result_summary.get("execution_nodes")
         if not isinstance(execution_nodes, dict) or not execution_nodes:
             return None
         config_snapshot = run.get("config_snapshot") or {}
         retry_count = int(config_snapshot.get("max_retry_count") or 0)
+        present_entries = cls._trace_graph_entries(execution_nodes)
+        if not present_entries:
+            return None
+        graph_nodes = [
+            ScheduledJobExecutionEngine._trace_graph_node(
+                node_id,
+                node,
+                retry_count=retry_count,
+            )
+            for node_id, node in present_entries
+        ]
+        present_ids = [node_id for node_id, _node in present_entries]
+        graph_edges = [
+            {"from": present_ids[index], "to": present_ids[index + 1]}
+            for index in range(len(present_ids) - 1)
+        ]
+        return {"edges": graph_edges, "nodes": graph_nodes}
+
+    @staticmethod
+    def _trace_graph_entries(execution_nodes: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         ordered_node_ids = [
             "data_connection",
             "native_scan",
@@ -438,23 +475,74 @@ class ScheduledJobExecutionEngine:
             "notifications",
             "code_inspection_report",
         ]
-        present_ids = [node_id for node_id in ordered_node_ids if node_id in execution_nodes]
-        for node_id in execution_nodes:
-            if node_id not in present_ids and isinstance(execution_nodes.get(node_id), dict):
-                present_ids.append(node_id)
-        graph_nodes = [
-            ScheduledJobExecutionEngine._trace_graph_node(
-                node_id,
-                execution_nodes.get(node_id),
-                retry_count=retry_count,
-            )
-            for node_id in present_ids
-        ]
-        graph_edges = [
-            {"from": present_ids[index], "to": present_ids[index + 1]}
-            for index in range(len(present_ids) - 1)
-        ]
-        return {"edges": graph_edges, "nodes": graph_nodes}
+        entries: list[tuple[str, dict[str, Any]]] = []
+        seen: set[str] = set()
+        for node_id in ordered_node_ids:
+            if node_id == "data_connection":
+                for entry in ScheduledJobExecutionEngine._expanded_trace_nodes(
+                    node_id,
+                    execution_nodes.get("data_connection"),
+                    item_key="items",
+                    label_prefix="数据连接获取内容",
+                ):
+                    entries.append(entry)
+                    seen.add(entry[0])
+                if any(entry[0].startswith("data_connection_") for entry in entries):
+                    seen.add(node_id)
+                continue
+            if node_id == "result_action":
+                expanded_result_actions = ScheduledJobExecutionEngine._expanded_trace_nodes(
+                    node_id,
+                    execution_nodes.get("result_actions"),
+                    label_prefix="结果动作反馈内容",
+                )
+                if expanded_result_actions:
+                    for entry in expanded_result_actions:
+                        entries.append(entry)
+                        seen.add(entry[0])
+                    seen.add(node_id)
+                    continue
+            node = execution_nodes.get(node_id)
+            if isinstance(node, dict):
+                entries.append((node_id, node))
+                seen.add(node_id)
+        for node_id, node in execution_nodes.items():
+            if node_id in {"result_actions"} or node_id in seen:
+                continue
+            if isinstance(node, dict):
+                entries.append((node_id, node))
+                seen.add(node_id)
+        return entries
+
+    @staticmethod
+    def _expanded_trace_nodes(
+        node_id: str,
+        raw_node: Any,
+        *,
+        item_key: str | None = None,
+        label_prefix: str,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        if isinstance(raw_node, dict) and item_key:
+            raw_items = raw_node.get(item_key)
+        else:
+            raw_items = raw_node
+        if not isinstance(raw_items, list) or not raw_items:
+            return [(node_id, raw_node)] if isinstance(raw_node, dict) else []
+        entries: list[tuple[str, dict[str, Any]]] = []
+        for index, item in enumerate(raw_items, start=1):
+            if not isinstance(item, dict):
+                continue
+            expanded_node = dict(item)
+            expanded_node.setdefault("label", f"{label_prefix} {index}")
+            expanded_node.setdefault("status", item.get("status") or "unknown")
+            if node_id == "data_connection":
+                expanded_node["connection_index"] = index
+            if node_id == "result_action":
+                expanded_node["action_index"] = index
+            entries.append((f"{node_id}_{index}", expanded_node))
+        if entries:
+            return entries
+        return [(node_id, raw_node)] if isinstance(raw_node, dict) else []
 
     @staticmethod
     def _trace_graph_node(
@@ -465,6 +553,8 @@ class ScheduledJobExecutionEngine:
     ) -> dict[str, Any]:
         node = raw_node if isinstance(raw_node, dict) else {}
         duration_ms = node.get("latency_ms")
+        if not isinstance(duration_ms, int | float):
+            duration_ms = node.get("duration_ms")
         if not isinstance(duration_ms, int | float):
             duration_ms = 0
         status = str(node.get("status") or ("empty" if not node else "available"))
@@ -490,14 +580,23 @@ class ScheduledJobExecutionEngine:
 
     @staticmethod
     def _trace_node_input(node_id: str, node: dict[str, Any]) -> dict[str, Any]:
-        if node_id == "data_connection":
+        canonical_id = ScheduledJobExecutionEngine._canonical_trace_node_id(node_id)
+        if canonical_id == "data_connection":
             value = node.get("input_mapping")
-            return dict(value) if isinstance(value, dict) else {}
-        if node_id == "skill_processing":
+            result = dict(value) if isinstance(value, dict) else {}
+            for key in ("action_id", "connection_id", "connection_index"):
+                if key in node:
+                    result[key] = node.get(key)
+            return result
+        if canonical_id == "skill_processing":
             value = node.get("input")
             return dict(value) if isinstance(value, dict) else {}
-        if node_id == "result_action":
+        if canonical_id == "result_action":
             return {
+                "action_code": node.get("action_code"),
+                "action_id": node.get("action_id"),
+                "action_index": node.get("action_index"),
+                "action_name": node.get("action_name"),
                 "records_imported": node.get("records_imported"),
                 "write_target": node.get("write_target"),
             }
@@ -505,16 +604,17 @@ class ScheduledJobExecutionEngine:
 
     @staticmethod
     def _trace_node_output(node_id: str, node: dict[str, Any]) -> dict[str, Any]:
-        if node_id == "data_connection":
+        canonical_id = ScheduledJobExecutionEngine._canonical_trace_node_id(node_id)
+        if canonical_id == "data_connection":
             return {
                 "connection_count": node.get("connection_count"),
                 "records_imported": node.get("records_imported"),
                 "response_status_code": node.get("response_status_code"),
             }
-        if node_id == "skill_processing":
+        if canonical_id == "skill_processing":
             value = node.get("output")
             return dict(value) if isinstance(value, dict) else {}
-        if node_id in {"result_action", "task_creation", "bug_creation", "notifications"}:
+        if canonical_id in {"result_action", "task_creation", "bug_creation", "notifications"}:
             feedback = node.get("feedback")
             if isinstance(feedback, dict):
                 return dict(feedback)
@@ -523,7 +623,14 @@ class ScheduledJobExecutionEngine:
                 for key in ("created_task_ids", "created_bug_ids", "created_notification_ids")
                 if key in node
             }
-        if node_id == "runner_execution":
+        if canonical_id == "runner_execution":
             result_json = node.get("result_json")
             return dict(result_json) if isinstance(result_json, dict) else {}
         return {}
+
+    @staticmethod
+    def _canonical_trace_node_id(node_id: str) -> str:
+        for prefix in ("data_connection", "result_action"):
+            if node_id == prefix or node_id.startswith(f"{prefix}_"):
+                return prefix
+        return node_id

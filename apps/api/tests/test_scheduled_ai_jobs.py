@@ -124,6 +124,94 @@ def test_scheduled_job_run_projection_adds_trace_graph_and_source_summary():
     assert {node["retry_count"] for node in trace_graph["nodes"]} == {2}
 
 
+def test_scheduled_job_run_projection_expands_multi_connection_and_action_trace_nodes():
+    projected = public_scheduled_job_run_projection(
+        {
+            "config_snapshot": {"max_retry_count": 1},
+            "id": "scheduled_job_run_multi_trace",
+            "result_summary": {
+                "execution_nodes": {
+                    "data_connection": {
+                        "items": [
+                            {
+                                "connection_id": "plugin_connection_a",
+                                "input_mapping": {"week_start": "2026-06-22"},
+                                "latency_ms": 120,
+                                "records_imported": 2,
+                                "response_status_code": 200,
+                                "status": "succeeded",
+                            },
+                            {
+                                "connection_id": "plugin_connection_b",
+                                "input_mapping": {"week_start": "2026-06-22"},
+                                "latency_ms": 180,
+                                "records_imported": 3,
+                                "response_status_code": 200,
+                                "status": "succeeded",
+                            },
+                        ],
+                        "label": "数据连接获取内容",
+                        "status": "succeeded",
+                    },
+                    "result_action": {
+                        "label": "结果动作反馈内容",
+                        "records_imported": 5,
+                        "status": "succeeded",
+                        "write_target": "scheduled_job_result",
+                    },
+                    "result_actions": [
+                        {
+                            "action_id": "plugin_action_write_insight",
+                            "feedback": {"created_ids": ["feedback_001"]},
+                            "records_imported": 1,
+                            "status": "succeeded",
+                            "write_target": "user_feedback_insights",
+                        },
+                        {
+                            "action_id": "plugin_action_archive",
+                            "feedback": {"stored_in_run_result": True},
+                            "records_imported": 0,
+                            "status": "succeeded",
+                            "write_target": "scheduled_job_result",
+                        },
+                    ],
+                    "skill_processing": {
+                        "input": {"source_row_count": 5},
+                        "label": "Skill 处理后内容",
+                        "output": {"candidate_count": 1},
+                        "status": "succeeded",
+                    },
+                },
+            },
+        },
+    )
+
+    trace_graph = projected["result_summary"]["trace_graph"]
+    assert [node["id"] for node in trace_graph["nodes"]] == [
+        "data_connection_1",
+        "data_connection_2",
+        "skill_processing",
+        "result_action_1",
+        "result_action_2",
+    ]
+    assert trace_graph["edges"] == [
+        {"from": "data_connection_1", "to": "data_connection_2"},
+        {"from": "data_connection_2", "to": "skill_processing"},
+        {"from": "skill_processing", "to": "result_action_1"},
+        {"from": "result_action_1", "to": "result_action_2"},
+    ]
+    first_connection = trace_graph["nodes"][0]
+    assert first_connection["duration_ms"] == 120
+    assert first_connection["input"]["connection_id"] == "plugin_connection_a"
+    assert first_connection["input"]["connection_index"] == 1
+    assert first_connection["output"]["records_imported"] == 2
+    second_action = trace_graph["nodes"][-1]
+    assert second_action["input"]["action_id"] == "plugin_action_archive"
+    assert second_action["input"]["action_index"] == 2
+    assert second_action["output"] == {"stored_in_run_result": True}
+    assert {node["retry_count"] for node in trace_graph["nodes"]} == {1}
+
+
 def test_scheduled_job_refs_merge_legacy_and_orchestration_ids():
     assert scheduled_job_multi_ids(
         {
@@ -1464,13 +1552,15 @@ def test_scheduled_job_runs_multiple_data_connections_with_merged_dag_node():
     ]
     assert data_node["response_summary"]["json"]["row_count"] == 4
     assert len(data_node["response_summary"]["json"]["rows"]) == 4
-    trace_data_node = next(
-        node
-        for node in run["result_summary"]["trace_graph"]["nodes"]
-        if node["id"] == "data_connection"
-    )
-    assert trace_data_node["output"]["records_imported"] == 4
-    assert trace_data_node["output"]["connection_count"] == 2
+    trace_nodes = run["result_summary"]["trace_graph"]["nodes"]
+    trace_data_nodes = [node for node in trace_nodes if str(node["id"]).startswith("data_connection_")]
+    assert [node["id"] for node in trace_data_nodes] == ["data_connection_1", "data_connection_2"]
+    assert [node["input"]["connection_id"] for node in trace_data_nodes] == [
+        primary_connection["id"],
+        backup_connection["id"],
+    ]
+    assert [node["input"]["connection_index"] for node in trace_data_nodes] == [1, 2]
+    assert [node["output"]["records_imported"] for node in trace_data_nodes] == [2, 2]
 
 
 def test_scheduled_job_validates_skill_output_schema_before_ai_processing(monkeypatch):
