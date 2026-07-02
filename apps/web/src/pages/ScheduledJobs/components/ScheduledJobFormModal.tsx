@@ -4,6 +4,7 @@ import type { FormInstance, FormItemProps } from 'antd';
 import type { KnowledgeRecord, ModelGatewayConfigRecord } from '../../../data/management';
 import type {
   AiAgentRecord,
+  AiExecutorRunnerRecord,
   AiSkillRecord,
   PluginActionRecord,
   PluginConnectionRecord,
@@ -38,6 +39,7 @@ type SelectOption = {
 
 type ScheduledJobFormModalProps = {
   agents: AiAgentRecord[];
+  aiExecutorRunners: AiExecutorRunnerRecord[];
   aiAssemblyRuleFactory: (message: string) => FormRule;
   codeInspectionBuiltinRuleSelectOptions: SelectOption[];
   codeInspectionIgnoreRuleSelectOptions: SelectOption[];
@@ -224,6 +226,7 @@ function ScheduledJobSampleReuseDraftSummary({
 
 export function ScheduledJobFormModal({
   agents,
+  aiExecutorRunners,
   aiAssemblyRuleFactory,
   codeInspectionBuiltinRuleSelectOptions,
   codeInspectionIgnoreRuleSelectOptions,
@@ -376,6 +379,7 @@ export function ScheduledJobFormModal({
         ) : null}
         <ScheduledJobAiExecutionSection
           agents={agents}
+          aiExecutorRunners={aiExecutorRunners}
           executionModeOptions={executionModeSelectOptions}
           knowledgeDocuments={knowledgeDocuments}
           modelGatewayConfigs={modelGatewayConfigs}

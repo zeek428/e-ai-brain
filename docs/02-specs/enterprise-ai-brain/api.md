@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.531 |
+| 功能版本 | v1.1.532 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.532 | 2026-07-02 | 定时作业 `config_json.ai_executor` 支持选择系统默认执行器或本地 Runner；本地 Runner 可不传模型网关，完成回写后继续结果动作 | Codex |
 | v1.1.531 | 2026-07-02 | 样例复用 `reuse_wizard` 新增进度字段，连接测试、动作试运行和 dry-run 页面展示“已就绪步骤 / 总步骤” | Codex |
 | v1.1.530 | 2026-07-02 | AI 执行器 Runner `readiness_summary` 新增 `sandbox_permission_boundary` 控制项和安装包心跳安全元数据 | Codex |
 | v1.1.529 | 2026-07-02 | 新增 `POST /api/system/plugin-actions/{action_id}/ai-executor-approval`，将高风险审批快照写回动作配置 | Codex |
@@ -3904,6 +3905,8 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 定时作业链路按“数据连接取数 -> AI执行处理 -> 动作写入/通知”理解：作业定义中 `plugin_connection_ids` 表示按顺序配置的数据连接，`execution_mode/model_gateway_config_id/agent_id/skill_ids/knowledge_document_ids` 共同组成 AI执行配置，`plugin_action_ids` 表示按顺序配置的动作模板，`plugin_input_mapping` 表示运行时传给连接/动作的输入参数。`plugin_connection_id` / `plugin_action_id` 是第一项兼容字段。`plugin_output_mapping` 是作业级覆盖项；为空时运行时复用动作模板的 `result_mapping`。插件输出映射第一阶段支持 `records_imported_path` 这类摘要字段映射和 `write_target` 写入目标，JSONPath 子集支持 `$` 根、点路径、`['key']` / `["key"]` bracket key、数组下标和 `[*]` 通配，动作试运行、定时作业 dry-run、正式运行写入预览和结果写入记录必须复用同一解析口径。真实业务入库仍必须通过对应业务 service 完成。
 
 `plugin_input_mapping`、插件连接 `request_config.query/headers` 和动作 `request_config.query/headers` 支持动态时间 token，保存配置时保留语义 token，运行实例触发时按作业 `timezone` 解析。首批 token 包括 `{{current_date}}` / `{{date}}`（输出 `YYYYMMDD`）、`{{date_iso}}`（输出 `YYYY-MM-DD`）、`{{now}}`、`{{today.start}}`、`{{today.end}}`、`{{yesterday.start}}`、`{{yesterday.end}}`、`{{last_7_days.start}}`、`{{last_7_days.end}}`、`{{last_full_week.start}}` 和 `{{last_full_week.end}}`；日期和时间 token 支持简单天数偏移表达式，例如 `{{current_date-7}}` 表示当前日期前 7 天、`{{today.start-7}}` 表示今天零点前 7 天。历史值 `last_monday_00:00:00` 与 `this_monday_00:00:00` 兼容解析为上一完整自然周起止时间。前端配置默认以官方 `connection_schema` 字段作为业务配置展示，例如 GitHub 连接展示“仓库地址”并自动解析 `owner/repo`，GitLab 连接展示“GitLab 地址”并自动解析 Endpoint、`project_id` 与 `project_path`；schema 管理字段保存到 `request_config.query/headers`，但不重复出现在高级 Params 表格。高级 Params/Headers 仅用于补充额外 API query/header，并在高级模式中提供 JSON 同步和反向应用，避免要求业务用户手写复杂 JSON。连接配置作为公共默认值，动作配置作为具体接口覆盖项；同名 query/header 由动作覆盖连接。动作 `request_config.path` 中的 `{{owner}}`、`{{repo}}`、`{{project_id}}`、`{{api_version}}` 等非时间模板变量可从合并后的连接 query、动作 query 和运行输入中的标量值解析，用于 GitHub/GitLab 官方动作路径。
+
+`config_json.ai_executor` 是定时作业 AI 处理阶段的执行器配置。未传时服务端按系统默认执行器补齐 `{runner_id:"ai_executor_runner_system_default", executor_type:"model_gateway"}`；该模式要求可解析 active 模型网关，并在 `skill_processing.runner_execution` 中返回 `model_gateway_called/model_gateway_log_id/result_json`。当 `runner_id` 指向本地 Runner 且 `executor_type` 为 `codex`、`claude`、`hermes` 或 `openclaw` 时，创建/修改/试运行仍必须校验 active AI角色和作业显式 Skills，但允许不传 `model_gateway_config_id`；正式运行在数据连接完成后创建 `ai_executor_task`，任务 `request_config.scheduled_job_ai_execution.stage=ai_processing`，冻结数据连接响应、知识引用、Skill 输出契约和动作映射。运行记录在 Runner `queued/claimed/running` 期间保持 `status=running`，`execution_nodes.skill_processing.status=waiting_runner`，Runner 成功完成后服务端按完成 payload 中的 `result/parsed_output/output_preview` 解析 AI 输出、执行 Skill Schema 校验并继续结果动作；Runner 失败、取消、超时或死信时运行失败，动作节点标记为 `not_run`，并在 `runner_execution` 保留任务 ID、工作区、日志和错误。
 
 `GET /api/system/scheduled-job-runs/observability` 的动作写入口径必须优先消费 `result_summary.execution_nodes.result_actions[]`：`action_write_runs` 按每个动作节点计数，`action_write_success_runs` 按每个动作节点状态统计，`write_target_distribution` 按每个动作节点的写入目标聚合；旧运行缺少 `result_actions[]` 时才回退兼容字段 `result_action`。这样同一运行配置多个邮件通知、用户洞察写入或代码巡检写入动作时，健康概览不会只统计第一个动作。
 

@@ -2443,6 +2443,16 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(tmp_pat
 
     namespace: dict[str, object] = {"__name__": "ai_brain_runner_probe"}
     exec(compile(runner_agent_text, "runner_agent.py", "exec"), namespace)
+    assert namespace["_parsed_json_output"]('```json\n{"summary": "ok"}\n```') == {
+        "summary": "ok",
+    }
+    assert namespace["_executor_result_json"](
+        duration_ms=10,
+        executor_type="openclaw",
+        exit_code=0,
+        output_preview='{"summary": "ok"}',
+        workspace_root=str(tmp_path),
+    )["result"] == {"summary": "ok"}
 
     requests: list[dict[str, object]] = []
 

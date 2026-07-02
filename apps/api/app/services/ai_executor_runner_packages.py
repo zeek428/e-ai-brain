@@ -452,6 +452,59 @@ def _drain_output_queue(
     return reader_done, output_preview
 
 
+def _parsed_json_output(output_preview: str):
+    text = str(output_preview or "").strip()
+    if not text:
+        return None
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    candidates = [text]
+    object_start = text.find("{")
+    object_end = text.rfind("}")
+    if object_start >= 0 and object_end > object_start:
+        candidates.append(text[object_start:object_end + 1])
+    array_start = text.find("[")
+    array_end = text.rfind("]")
+    if array_start >= 0 and array_end > array_start:
+        candidates.append(text[array_start:array_end + 1])
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _executor_result_json(
+    *,
+    duration_ms: int,
+    executor_type: str,
+    exit_code: int,
+    output_preview: str,
+    workspace_root: str,
+) -> dict:
+    result_json = {
+        "command_shell": False,
+        "duration_ms": duration_ms,
+        "executor_type": executor_type,
+        "exit_code": exit_code,
+        "output_preview": output_preview,
+        "workspace_root": workspace_root,
+    }
+    parsed_output = _parsed_json_output(output_preview)
+    if parsed_output is not None:
+        result_json["parsed_output"] = parsed_output
+        result_json["result"] = (
+            parsed_output if isinstance(parsed_output, dict) else {"result": parsed_output}
+        )
+    return result_json
+
+
 def _process_group_popen_kwargs() -> dict:
     if os.name == "nt":
         return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
@@ -734,14 +787,13 @@ def _run_task(task: dict) -> None:
                         "message": f"{executor_type} timed out after {timeout_seconds}s",
                     }
                 ],
-                result_json={
-                    "command_shell": False,
-                    "duration_ms": duration_ms,
-                    "executor_type": executor_type,
-                    "exit_code": exit_code,
-                    "output_preview": preview,
-                    "workspace_root": workspace_root,
-                },
+                result_json=_executor_result_json(
+                    duration_ms=duration_ms,
+                    executor_type=executor_type,
+                    exit_code=exit_code,
+                    output_preview=preview,
+                    workspace_root=workspace_root,
+                ),
             )
             return
         status = "succeeded" if exit_code == 0 else "failed"
@@ -757,14 +809,13 @@ def _run_task(task: dict) -> None:
             error_code=None if exit_code == 0 else "AI_EXECUTOR_COMMAND_FAILED",
             error_message=None if exit_code == 0 else preview,
             logs=logs,
-            result_json={
-                "command_shell": False,
-                "duration_ms": duration_ms,
-                "executor_type": executor_type,
-                "exit_code": exit_code,
-                "output_preview": preview,
-                "workspace_root": workspace_root,
-            },
+            result_json=_executor_result_json(
+                duration_ms=duration_ms,
+                executor_type=executor_type,
+                exit_code=exit_code,
+                output_preview=preview,
+                workspace_root=workspace_root,
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - runner must report failures to AI Brain.
         _complete_task(

@@ -39,6 +39,16 @@ from app.services.scheduled_job_ai_processing import (
     validate_knowledge_document_ids,
     validate_skill_output_mapping_contract,
 )
+from app.services.scheduled_job_ai_executor import (
+    dispatch_scheduled_job_ai_executor_processing,
+    pending_ai_executor_result_summary,
+    scheduled_job_ai_executor_config,
+    scheduled_job_ai_executor_requires_model_gateway,
+    scheduled_job_config_with_ai_executor_defaults,
+    scheduled_job_result_summary_has_pending_runner,
+    scheduled_job_uses_local_ai_executor,
+    system_default_runner_node_from_ai_processing,
+)
 from app.services.scheduled_job_audit import (
     scheduled_job_audit_payload,
     scheduled_job_run_audit_payload,
@@ -68,6 +78,7 @@ from app.services.scheduled_job_execution_engine import (
     ScheduledJobExecutionEngine as JobExecutionEngine,
 )
 from app.services.scheduled_job_native_scan import (
+    code_inspection_single_result_summary,
     execute_native_multi_code_inspection_summary,
     native_code_scan_repository_ids,
 )
@@ -104,6 +115,10 @@ __all__ = [
 ]
 persist_record = job_store.persist_record
 resolve_plugin_input_mapping = job_runtime.resolve_plugin_input_mapping
+
+
+def scheduled_job_uses_ai_processing_config(job_type: str, execution_mode: str) -> bool:
+    return execution_mode in {"ai_assisted", "ai_generated"} or job_type in AI_REQUIRED_SCHEDULED_JOB_TYPES
 
 
 def ensure_scheduled_job_type_available_for_create(job_type: str) -> None:
@@ -166,6 +181,10 @@ def create_scheduled_job_response(
         config_json=payload.config_json,
         job_type=job_type,
         product_id=payload.product_id,
+    )
+    config_json = scheduled_job_config_with_ai_executor_defaults(
+        config_json,
+        ai_processing_job=scheduled_job_uses_ai_processing_config(job_type, execution_mode),
     )
     now = datetime.now(UTC).isoformat()
     job_id = current_store.new_id("scheduled_job")
@@ -259,6 +278,10 @@ def dry_run_scheduled_job_response(
         job_type=job_type,
         product_id=payload.product_id,
     )
+    config_json = scheduled_job_config_with_ai_executor_defaults(
+        config_json,
+        ai_processing_job=scheduled_job_uses_ai_processing_config(job_type, execution_mode),
+    )
     job = {
         "agent_id": agent_id,
         "config_json": scheduled_job_config_with_multi_refs(
@@ -330,10 +353,12 @@ def dry_run_scheduled_job_response(
             if plugin_summary is not None
             else 0
         )
-    will_call_model_gateway = JobExecutionEngine.uses_ai_processing(
+    will_run_ai_processing = JobExecutionEngine.uses_ai_processing(
         job,
         ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
     )
+    will_call_model_gateway = will_run_ai_processing and scheduled_job_ai_executor_requires_model_gateway(job)
+    will_dispatch_runner = will_run_ai_processing and not will_call_model_gateway
     output_schema = {}
     mapping_contract = {
         "checked_paths": [],
@@ -342,7 +367,7 @@ def dry_run_scheduled_job_response(
         "status": "not_required",
     }
     mapping_status = "not_required"
-    if will_call_model_gateway:
+    if will_run_ai_processing:
         mapping_contract = skill_output_mapping_contract(
             current_store,
             job=job,
@@ -434,6 +459,8 @@ def dry_run_scheduled_job_response(
         "stages": {
             "ai_processing": {
                 "agent_id": agent_id,
+                "ai_executor": scheduled_job_ai_executor_config(job),
+                "will_dispatch_runner": will_dispatch_runner,
                 "mapping_contract": mapping_contract,
                 "mapping_status": mapping_status,
                 "model_gateway_config_id": model_gateway_config_id,
@@ -536,6 +563,10 @@ def patch_scheduled_job_response(
         config_json=payload_field(draft, "config_json", {}),
         job_type=job_type,
         product_id=payload_field(draft, "product_id"),
+    )
+    config_json = scheduled_job_config_with_ai_executor_defaults(
+        config_json,
+        ai_processing_job=scheduled_job_uses_ai_processing_config(job_type, execution_mode),
     )
     updates["config_json"] = scheduled_job_config_with_multi_refs(
         config_json,
@@ -958,6 +989,35 @@ def execute_queued_scheduled_job_run_response(
             job,
             ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
         ):
+            if scheduled_job_uses_local_ai_executor(job):
+                ai_processing = dispatch_scheduled_job_ai_executor_processing(
+                    current_store,
+                    job=job,
+                    output_mapping=plugin_output_mapping,
+                    plugin_summary=plugin_summary,
+                    resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                    run_id=run_id,
+                    source_response_json=source_response_json,
+                    source_row_count=source_finding_count,
+                    user=user,
+                )
+                result_summary = pending_ai_executor_result_summary(
+                    current_store,
+                    ai_processing=ai_processing,
+                    job=job,
+                    output_mapping=plugin_output_mapping,
+                    plugin_summary=plugin_summary,
+                    resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                    source_count_key="source_finding_count",
+                    source_row_count=source_finding_count,
+                    wait_note="代码扫描结果已派发给 AI 执行器，等待 Runner 复核后写入代码巡检报告。",
+                    write_target="code_inspection_reports",
+                )
+                records_imported = 0
+                status = "succeeded"
+                error_code = None
+                error_message = None
+                raise StopIteration
             ai_processing = run_scheduled_job_ai_processing(
                 current_store,
                 job=job,
@@ -965,6 +1025,10 @@ def execute_queued_scheduled_job_run_response(
                 source_response_json=source_response_json,
                 source_row_count=source_finding_count,
                 user=user,
+            )
+            ai_processing["runner_node"] = system_default_runner_node_from_ai_processing(
+                ai_processing,
+                job=job,
             )
             effective_plugin_summary = (
                 JobExecutionEngine.code_inspection_plugin_summary_for_ai_output(
@@ -981,83 +1045,20 @@ def execute_queued_scheduled_job_run_response(
             run_id=run_id,
             user=user,
         )
-        report = inspection_result["report"]
         records_imported = int(inspection_result["finding_count"])
-        skill_processing_node = JobExecutionEngine.code_inspection_skill_processing_node(
+        result_summary = code_inspection_single_result_summary(
             ai_processing=ai_processing,
+            async_worker=True,
+            effective_plugin_summary=effective_plugin_summary,
+            include_native_scan=True,
+            inspection_result=inspection_result,
             job=job,
             output_mapping=plugin_output_mapping,
+            plugin_summary=plugin_summary,
+            resolved_plugin_input_mapping=resolved_plugin_input_mapping,
             skill_codes=skill_codes_for_job(current_store, job),
             source_finding_count=source_finding_count,
         )
-        result_action_node = JobExecutionEngine.code_inspection_result_action_node(
-            inspection_result=inspection_result,
-            report=report,
-        )
-        native_scan_summary = (plugin_summary.get("response_summary") or {}).get("native_scan")
-        result_summary = {
-            "bug_ids": inspection_result["bug_ids"],
-            "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
-            "execution_nodes": {
-                "bug_creation": {
-                    "created_bug_ids": inspection_result["bug_ids"],
-                    "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
-                    "label": "严重问题自动创建 Bug",
-                    "records_imported": len(inspection_result["bug_ids"]),
-                    "status": "succeeded",
-                },
-                "task_creation": {
-                    "created_task_ids": inspection_result.get("task_ids") or [],
-                    "label": "严重问题自动创建整改任务",
-                    "records_imported": len(inspection_result.get("task_ids") or []),
-                    "status": "succeeded",
-                },
-                "code_inspection_report": {
-                    "finding_count": report["finding_count"],
-                    "label": "代码巡检报告写入结果",
-                    "report_id": report["id"],
-                    "risk_level": report["risk_level"],
-                    "severe_finding_count": report["severe_finding_count"],
-                    "status": "succeeded",
-                },
-                "data_connection": JobExecutionEngine.data_connection_execution_node(
-                    job=job,
-                    plugin_summary=plugin_summary,
-                    records_imported=source_finding_count,
-                    resolved_plugin_input_mapping=resolved_plugin_input_mapping,
-                ),
-                "native_scan": {
-                    **(native_scan_summary if isinstance(native_scan_summary, dict) else {}),
-                    "label": "本地完整代码静态扫描",
-                    "records_imported": source_finding_count,
-                    "scan_mode": NATIVE_CODE_SCAN_MODE,
-                    "status": "succeeded",
-                },
-                "notifications": {
-                    "created_notification_ids": inspection_result["notification_ids"],
-                    "label": "问题消息通知",
-                    "records_imported": len(inspection_result["notification_ids"]),
-                    "status": "succeeded",
-                },
-                "result_action": result_action_node,
-                "result_actions": inspection_result["action_results"],
-                "skill_processing": skill_processing_node,
-            },
-            "finding_count": report["finding_count"],
-            "notification_ids": inspection_result["notification_ids"],
-            "plugin": effective_plugin_summary,
-            "processing": {
-                "async_worker": True,
-                "model_gateway_called": ai_processing is not None,
-                "skill_codes": skill_codes_for_job(current_store, job),
-                "skill_ids": list(job.get("skill_ids", [])),
-            },
-            "report_id": report["id"],
-            "result_actions": inspection_result["result_actions"],
-            "risk_level": report["risk_level"],
-            "severe_finding_count": report["severe_finding_count"],
-            "task_ids": inspection_result.get("task_ids") or [],
-        }
         status = "succeeded"
         error_code = None
         error_message = None
@@ -1422,6 +1423,35 @@ def run_scheduled_job_response(
                 job,
                 ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
             ):
+                if scheduled_job_uses_local_ai_executor(job):
+                    ai_processing = dispatch_scheduled_job_ai_executor_processing(
+                        current_store,
+                        job=job,
+                        output_mapping=code_inspection_output_mapping,
+                        plugin_summary=plugin_summary,
+                        resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                        run_id=run_id,
+                        source_response_json=source_response_json,
+                        source_row_count=source_finding_count,
+                        user=user,
+                    )
+                    result_summary = pending_ai_executor_result_summary(
+                        current_store,
+                        ai_processing=ai_processing,
+                        job=job,
+                        output_mapping=code_inspection_output_mapping,
+                        plugin_summary=plugin_summary,
+                        resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                        source_count_key="source_finding_count",
+                        source_row_count=source_finding_count,
+                        wait_note="代码扫描结果已派发给 AI 执行器，等待 Runner 复核后写入代码巡检报告。",
+                        write_target="code_inspection_reports",
+                    )
+                    records_imported = 0
+                    status = "succeeded"
+                    error_code = None
+                    error_message = None
+                    raise StopIteration
                 ai_processing = run_scheduled_job_ai_processing(
                     current_store,
                     job=job,
@@ -1429,6 +1459,10 @@ def run_scheduled_job_response(
                     source_response_json=source_response_json,
                     source_row_count=source_finding_count,
                     user=user,
+                )
+                ai_processing["runner_node"] = system_default_runner_node_from_ai_processing(
+                    ai_processing,
+                    job=job,
                 )
                 effective_plugin_summary = (
                     JobExecutionEngine.code_inspection_plugin_summary_for_ai_output(
@@ -1445,98 +1479,19 @@ def run_scheduled_job_response(
                 run_id=run_id,
                 user=user,
             )
-            report = inspection_result["report"]
             records_imported = int(inspection_result["finding_count"])
-            skill_processing_node = (
-                JobExecutionEngine.code_inspection_skill_processing_node(
-                    ai_processing=ai_processing,
-                    job=job,
-                    output_mapping=code_inspection_output_mapping,
-                    skill_codes=skill_codes_for_job(current_store, job),
-                    source_finding_count=source_finding_count,
-                )
-            )
-            result_action_node = JobExecutionEngine.code_inspection_result_action_node(
+            result_summary = code_inspection_single_result_summary(
+                ai_processing=ai_processing,
+                effective_plugin_summary=effective_plugin_summary,
+                include_native_scan=native_code_inspection,
                 inspection_result=inspection_result,
-                report=report,
+                job=job,
+                output_mapping=code_inspection_output_mapping,
+                plugin_summary=plugin_summary,
+                resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                skill_codes=skill_codes_for_job(current_store, job),
+                source_finding_count=source_finding_count,
             )
-            native_scan_summary = (
-                (plugin_summary.get("response_summary") or {}).get("native_scan")
-                if native_code_inspection
-                else None
-            )
-            result_summary = {
-                "bug_ids": inspection_result["bug_ids"],
-                "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
-                "execution_nodes": {
-                    "bug_creation": {
-                        "created_bug_ids": inspection_result["bug_ids"],
-                        "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
-                        "label": "严重问题自动创建 Bug",
-                        "records_imported": len(inspection_result["bug_ids"]),
-                        "status": "succeeded",
-                    },
-                    "task_creation": {
-                        "created_task_ids": inspection_result.get("task_ids") or [],
-                        "label": "严重问题自动创建整改任务",
-                        "records_imported": len(inspection_result.get("task_ids") or []),
-                        "status": "succeeded",
-                    },
-                    "code_inspection_report": {
-                        "finding_count": report["finding_count"],
-                        "label": "代码巡检报告写入结果",
-                        "report_id": report["id"],
-                        "risk_level": report["risk_level"],
-                        "severe_finding_count": report["severe_finding_count"],
-                        "status": "succeeded",
-                    },
-                    "data_connection": JobExecutionEngine.data_connection_execution_node(
-                        job=job,
-                        plugin_summary=plugin_summary,
-                        records_imported=source_finding_count,
-                        resolved_plugin_input_mapping=resolved_plugin_input_mapping,
-                    ),
-                    **(
-                        {
-                            "native_scan": {
-                                **(
-                                    native_scan_summary
-                                    if isinstance(native_scan_summary, dict)
-                                    else {}
-                                ),
-                                "label": "本地完整代码静态扫描",
-                                "records_imported": source_finding_count,
-                                "scan_mode": NATIVE_CODE_SCAN_MODE,
-                                "status": "succeeded",
-                            },
-                        }
-                        if native_code_inspection
-                        else {}
-                    ),
-                    "notifications": {
-                        "created_notification_ids": inspection_result["notification_ids"],
-                        "label": "问题消息通知",
-                        "records_imported": len(inspection_result["notification_ids"]),
-                        "status": "succeeded",
-                    },
-                    "result_action": result_action_node,
-                    "result_actions": inspection_result["action_results"],
-                    "skill_processing": skill_processing_node,
-                },
-                "finding_count": report["finding_count"],
-                "notification_ids": inspection_result["notification_ids"],
-                "plugin": effective_plugin_summary,
-                "processing": {
-                    "model_gateway_called": ai_processing is not None,
-                    "skill_codes": skill_codes_for_job(current_store, job),
-                    "skill_ids": list(job.get("skill_ids", [])),
-                },
-                "report_id": report["id"],
-                "result_actions": inspection_result["result_actions"],
-                "risk_level": report["risk_level"],
-                "severe_finding_count": report["severe_finding_count"],
-                "task_ids": inspection_result.get("task_ids") or [],
-            }
         else:
             result_summary = job_runtime.generic_scheduled_job_result_summary(str(job["job_type"]))
             if plugin_summary is not None:
@@ -1555,6 +1510,8 @@ def run_scheduled_job_response(
         status = "succeeded"
         error_code = None
         error_message = None
+    except StopIteration:
+        pass
     except Exception as exc:
         status = "failed"
         error_code, error_message = job_runtime.exception_error_code_and_message(exc)
@@ -1785,7 +1742,10 @@ def run_scheduled_job_response(
                 "plugin": plugin_summary,
             }
         records_imported = 0
-    if status == "succeeded" and JobExecutionEngine.has_pending_runner(plugin_summary):
+    if status == "succeeded" and (
+        JobExecutionEngine.has_pending_runner(plugin_summary)
+        or scheduled_job_result_summary_has_pending_runner(result_summary)
+    ):
         status = "running"
     finished_at = None if status == "running" else datetime.now(UTC).isoformat()
     updated_at = datetime.now(UTC).isoformat()

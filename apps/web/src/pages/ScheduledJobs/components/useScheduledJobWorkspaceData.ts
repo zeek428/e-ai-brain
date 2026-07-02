@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   fetchActiveProductOptions,
   fetchAiAgents,
+  fetchAiExecutorRunners,
   fetchAiSkills,
   fetchManagementKnowledge,
   fetchModelGatewayConfigs,
@@ -15,6 +16,7 @@ import {
   fetchScheduledJobTemplates,
   fetchScheduledJobs,
   type AiAgentRecord,
+  type AiExecutorRunnerRecord,
   type AiSkillRecord,
   type PluginActionRecord,
   type PluginConnectionRecord,
@@ -70,6 +72,7 @@ export function useScheduledJobWorkspaceData() {
   const [pluginConnections, setPluginConnections] = useState<PluginConnectionRecord[]>([]);
   const [products, setProducts] = useState<ProductFilterOption[]>([]);
   const [agents, setAgents] = useState<AiAgentRecord[]>([]);
+  const [aiExecutorRunners, setAiExecutorRunners] = useState<AiExecutorRunnerRecord[]>([]);
   const [skills, setSkills] = useState<AiSkillRecord[]>([]);
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeRecord[]>([]);
   const [modelGatewayConfigs, setModelGatewayConfigs] = useState<ModelGatewayConfigRecord[]>([]);
@@ -89,6 +92,7 @@ export function useScheduledJobWorkspaceData() {
         nextPluginConnections,
         nextProducts,
         nextAgents,
+        nextAiExecutorRunners,
         nextSkills,
         nextKnowledgeDocuments,
         nextModelGatewayConfigs,
@@ -103,6 +107,7 @@ export function useScheduledJobWorkspaceData() {
           fetchPluginConnections(),
           fetchActiveProductOptions(),
           fetchAiAgents(),
+          fetchAiExecutorRunners({ status: 'active' }),
           fetchAiSkills(),
           fetchManagementKnowledge(),
           fetchModelGatewayConfigs(),
@@ -128,6 +133,7 @@ export function useScheduledJobWorkspaceData() {
       setPluginConnections(nextPluginConnections);
       setProducts(nextProducts);
       setAgents(nextAgents.filter((agent) => agent.status === 'active'));
+      setAiExecutorRunners(nextAiExecutorRunners);
       setSkills(nextSkills.filter((skill) => skill.status === 'active'));
       setKnowledgeDocuments(
         nextKnowledgeDocuments.filter((document) =>
@@ -168,6 +174,7 @@ export function useScheduledJobWorkspaceData() {
 
   return {
     agents,
+    aiExecutorRunners,
     jobCatalog,
     jobListMeta,
     jobTemplates,

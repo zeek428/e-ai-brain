@@ -97,6 +97,7 @@ export default function ScheduledJobsPage() {
   const [form] = Form.useForm<ScheduledJobFormValues>();
   const {
     agents,
+    aiExecutorRunners,
     jobCatalog,
     jobListMeta,
     jobTemplates,
@@ -1211,6 +1212,7 @@ export default function ScheduledJobsPage() {
 
       <ScheduledJobFormModal
         agents={agents}
+        aiExecutorRunners={aiExecutorRunners}
         aiAssemblyRuleFactory={aiAssemblyRuleFactory}
         codeInspectionBuiltinRuleSelectOptions={codeInspectionBuiltinRuleSelectOptions}
         codeInspectionIgnoreRuleSelectOptions={codeInspectionIgnoreRuleSelectOptions}

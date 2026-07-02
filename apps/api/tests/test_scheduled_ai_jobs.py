@@ -2695,6 +2695,218 @@ def test_scheduled_job_rejects_model_output_type_mismatch_before_result_actions(
     assert feedback_items["total"] == 0
 
 
+def test_user_feedback_job_dispatches_local_ai_executor_and_completes_writeback(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product = create_product(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "feedback_codex_skill",
+            "input_schema": {"type": "object"},
+            "name": "反馈 Codex Skill",
+            "output_schema": {
+                "properties": {
+                    "insights": {
+                        "items": {
+                            "properties": {"content": {"type": "string"}},
+                            "required": ["content"],
+                            "type": "object",
+                        },
+                        "type": "array",
+                    },
+                    "summary": {"type": "string"},
+                },
+                "required": ["insights"],
+                "type": "object",
+            },
+            "prompt_template": "从用户反馈中提取 insights。",
+            "status": "active",
+            "version": "1.0.0",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "feedback_codex_agent",
+            "default_skill_ids": [skill["id"]],
+            "name": "反馈 Codex AI角色",
+            "status": "active",
+            "system_prompt": "输出结构化用户洞察。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["codex"],
+            "name": "Codex 本地执行器",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": ["/tmp/e-ai-brain"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "codex_feedback_reader",
+            "name": "Codex 反馈读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://codex-feedback.example.com",
+            "name": "Codex 反馈连接",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_codex_feedback",
+            "connection_id": connection["id"],
+            "name": "拉取 Codex 反馈",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {
+                    "row_count": 2,
+                    "rows": [
+                        {"content": "看板加载慢", "id": "fb-1"},
+                        {"content": "希望支持周报洞察", "id": "fb-2"},
+                    ],
+                },
+                "path": "/feedback",
+            },
+            "result_mapping": {
+                "insights_path": "$.insights",
+                "records_imported_path": "$.row_count",
+                "write_target": "user_feedback_insights",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    model_called = False
+
+    def fail_if_model_called(*_args, **_kwargs):
+        nonlocal model_called
+        model_called = True
+        raise AssertionError("local AI executor should not call model gateway")
+
+    monkeypatch.setattr(scheduled_job_ai_processing_service, "urlopen", fail_if_model_called)
+
+    created_job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "agent_id": agent["id"],
+            "config_json": {
+                "ai_executor": {
+                    "executor_type": "codex",
+                    "instruction_timeout_seconds": 900,
+                    "runner_id": runner["id"],
+                    "workspace_root": "/tmp/e-ai-brain",
+                },
+            },
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "user_feedback_insight_extract",
+            "name": "Codex 用户反馈洞察",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "schedule_type": "manual",
+            "skill_ids": [skill["id"]],
+        },
+        headers=admin_headers,
+    )
+    assert created_job.status_code == 200
+    job = created_job.json()["data"]
+    assert job["model_gateway_config_id"] is None
+    assert job["config_json"]["ai_executor"]["runner_id"] == runner["id"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    )
+    assert run_response.status_code == 200
+    assert model_called is False
+    run = run_response.json()["data"]
+    assert run["status"] == "running"
+    execution_nodes = run["result_summary"]["execution_nodes"]
+    assert execution_nodes["runner_execution"]["status"] == "queued"
+    assert execution_nodes["runner_execution"]["executor_type"] == "codex"
+    assert execution_nodes["skill_processing"]["status"] == "waiting_runner"
+    assert execution_nodes["skill_processing"]["model_gateway_called"] is False
+    assert execution_nodes["result_action"]["status"] == "not_run"
+
+    task_id = execution_nodes["runner_execution"]["runner_task_id"]
+    task = app.state.store.ai_executor_tasks[task_id]
+    assert task["scheduled_job_run_id"] == run["id"]
+    assert task["request_config"]["scheduled_job_ai_execution"]["stage"] == "ai_processing"
+    assert task["input_payload"]["source_row_count"] == 2
+
+    completed = client.post(
+        f"/api/system/ai-executor-tasks/{task_id}/complete",
+        json={
+            "logs": [{"level": "info", "message": "codex finished"}],
+            "result_json": {
+                "result": {
+                    "insights": [
+                        {
+                            "content": "看板加载慢影响客服复盘效率，应优先优化性能。",
+                            "feedback_type": "improvement",
+                            "product_id": product["id"],
+                            "sentiment": "negative",
+                            "source_channel": "codex_runner",
+                            "tags": ["feedback", "performance"],
+                        },
+                    ],
+                    "summary": "Codex 已提取 1 条高价值洞察。",
+                },
+            },
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert completed.status_code == 200
+
+    listed_runs = client.get(
+        f"/api/system/scheduled-job-runs?run_id={run['id']}",
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    completed_run = listed_runs[0]
+    assert completed_run["status"] == "succeeded"
+    completed_nodes = completed_run["result_summary"]["execution_nodes"]
+    assert completed_nodes["runner_execution"]["status"] == "succeeded"
+    assert completed_nodes["skill_processing"]["processing_mode"] == "ai_executor_runner"
+    assert completed_nodes["skill_processing"]["model_gateway_called"] is False
+    assert completed_nodes["result_action"]["status"] == "succeeded"
+    assert completed_nodes["result_action"]["records_imported"] == 1
+    assert completed_run["records_imported"] == 1
+
+    feedback_items = client.get(
+        f"/api/insights/user-feedback?product_id={product['id']}",
+        headers=admin_headers,
+    ).json()["data"]
+    assert feedback_items["total"] == 1
+    assert feedback_items["items"][0]["source_channel"] == "codex_runner"
+
+
 def test_user_feedback_job_continues_after_result_action_mapping_failure(monkeypatch):
     app.state.store.reset()
     admin_headers = auth_headers()

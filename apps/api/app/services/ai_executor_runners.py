@@ -534,6 +534,16 @@ def _sync_runner_completion_to_scheduled_run(
     task: dict[str, Any],
     runner_id: str,
 ) -> None:
+    from app.services.scheduled_job_ai_executor import (
+        sync_ai_executor_completion_to_scheduled_run,
+    )
+
+    if sync_ai_executor_completion_to_scheduled_run(
+        current_store,
+        runner_id=runner_id,
+        task=task,
+    ):
+        return
     run = _load_scheduled_job_run(current_store, task)
     if run is None:
         return

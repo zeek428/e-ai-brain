@@ -12,6 +12,10 @@ from app.services.scheduled_job_ai_capabilities import (
     ensure_active_model_gateway,
     ensure_active_skills,
 )
+from app.services.scheduled_job_ai_executor import (
+    scheduled_job_ai_executor_requires_model_gateway,
+    validate_scheduled_job_ai_executor_config,
+)
 from app.services.scheduled_job_catalog import (
     AI_REQUIRED_SCHEDULED_JOB_TYPES,
     PLUGIN_RESOURCE_REQUIRED_SCHEDULED_JOB_TYPES,
@@ -64,15 +68,26 @@ def validate_job_refs(
         if not skill_ids:
             raise api_error(400, "AI_SKILL_REQUIRED", "AI processing job requires skill_ids")
         ensure_active_skills(current_store, skill_ids)
-        model_gateway_config_id = ensure_active_model_gateway(
+        validate_scheduled_job_ai_executor_config(
             current_store,
-            model_gateway_config_id or agent.get("model_gateway_config_id"),
+            payload,
+            ai_processing_job=True,
         )
-        if ai_required_job and model_gateway_config_id is None:
-            raise api_error(
-                400,
-                "MODEL_GATEWAY_CONFIG_REQUIRED",
-                "AI processing job requires model_gateway_config_id",
+        if scheduled_job_ai_executor_requires_model_gateway(payload):
+            model_gateway_config_id = ensure_active_model_gateway(
+                current_store,
+                model_gateway_config_id or agent.get("model_gateway_config_id"),
+            )
+            if ai_required_job and model_gateway_config_id is None:
+                raise api_error(
+                    400,
+                    "MODEL_GATEWAY_CONFIG_REQUIRED",
+                    "AI processing job requires model_gateway_config_id",
+                )
+        elif model_gateway_config_id or agent.get("model_gateway_config_id"):
+            model_gateway_config_id = ensure_active_model_gateway(
+                current_store,
+                model_gateway_config_id or agent.get("model_gateway_config_id"),
             )
     return agent_id, skill_ids, model_gateway_config_id, job_type, execution_mode
 

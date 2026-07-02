@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.866 |
+| 功能版本 | v1.1.867 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.867 | 2026-07-02 | 定时作业 AI 处理链路新增 `config_json.ai_executor` 执行器选择：系统默认执行器走模型网关，本地 Runner 派发 `ai_executor_task` 并在完成回写后继续结果动作 | Codex |
 | v1.1.866 | 2026-07-02 | 样例复用向导新增进度汇总，连接测试、动作试运行、dry-run 与作业草稿页统一展示“已就绪步骤 / 总步骤” | Codex |
 | v1.1.865 | 2026-07-02 | AI 执行器 Runner 就绪清单新增“沙箱权限边界”控制项，安装包代理心跳上报安全边界元数据 | Codex |
 | v1.1.864 | 2026-07-02 | 插件动作新增 AI 执行器高风险审批写回接口，审批后可自动重新试运行并进入 Runner 队列 | Codex |
@@ -1942,7 +1943,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 - 上传后的 Skill 文件保存到服务端本地 Skill 存储目录，数据库 `ai_skills` 保存 `source_type`、`package_uri`、`package_checksum`、`package_entry`、`package_files`、`package_size_bytes` 和 `manifest`；运行时按 URI 读取本地文件并写入 `resolved_skill_snapshots.package_snapshot`，历史解释以运行快照为准。
 - AI角色（Agent）表示执行角色，包含所属业务大脑、默认模型网关、system_prompt、默认 Skill、执行策略、工具策略和启停状态；支持页面表单维护和 zip Agent 文件包两种来源。Agent 文件包通过 `POST /api/system/ai-agents/upload` 上传，HTTP body 为 `application/zip`，query 中传 `brain_app_id/code/name/version/status/model_gateway_config_id/default_skill_ids`；包内必须包含 `agent.yaml` 和 `AGENT.md`，`AGENT.md` 作为系统提示词，`agent.yaml` 可声明 `code/name/brain_app_id/model_gateway_config_id/default_skill_ids/entry`；脚本资产只允许位于 `scripts/` 目录且不得自动执行。公开 Agent 投影返回 `runtime_capabilities`，文件包上下文与默认 Skill 绑定可参与 AI 编排；脚本只能标记为 `disabled_pending_sandbox`，在沙箱、审批、超时、日志和审计闭环前不得自动执行。
 - 上传后的 Agent 文件保存到服务端本地 Agent 存储目录，数据库 `ai_agents` 保存 `source_type`、`package_uri`、`package_checksum`、`package_entry`、`package_files`、`package_size_bytes` 和 `manifest`；运行时仍按作业快照解释历史，不直接依赖后续可变配置。
-- 定时作业和后续业务大脑配置只引用已启用 AI角色/Skill；运行时必须解析成快照，不直接读取可变配置作为历史解释依据。需求交付下直接使用 Codex、Claude Code、OpenClaw 的研发执行器策略不引用 Agent/Skill。
+- 定时作业和后续业务大脑配置只引用已启用 AI角色/Skill；运行时必须解析成快照，不直接读取可变配置作为历史解释依据。定时作业可通过 `config_json.ai_executor` 显式选择 AI执行器：`ai_executor_runner_system_default + executor_type=model_gateway` 走平台模型网关同步生成结构化输出，本地 Codex/Claude/OpenClaw Runner 则创建 `ai_executor_task`、冻结数据连接结果、Skill/Agent/知识引用和输出契约，运行记录保持 `running` 直到 Runner 完成回写，成功后继续动作写入，失败则停在 AI 处理节点并保留 Runner 日志。需求交付下直接使用 Codex、Claude Code、OpenClaw 的研发执行器策略不引用 Agent/Skill。
 - 高风险 Skill 必须 `requires_human_review=true` 或只写候选结果；正式业务状态变更必须走现有人审或决策流。
 - 管理员可以维护 AI角色/Skill；产品负责人和研发负责人只能在业务允许范围内选择已启用配置，不能修改系统提示词、工具权限或模型网关密钥。
 

@@ -70,6 +70,64 @@ export const assistantDraftTrackedFields = [
   'source_system',
 ] as const;
 
+const systemDefaultAiExecutorRunnerId = 'ai_executor_runner_system_default';
+
+function isSystemDefaultAiExecutorConfig(value: unknown): boolean {
+  const config = recordValue(value);
+  if (!config) {
+    return false;
+  }
+  const allowedKeys = new Set([
+    'executor_type',
+    'instruction_timeout_seconds',
+    'runner_id',
+    'runner_label',
+    'workspace_root',
+  ]);
+  if (Object.keys(config).some((key) => !allowedKeys.has(key))) {
+    return false;
+  }
+  const runnerId = recordStringValue(config, 'runner_id');
+  if (runnerId && runnerId !== systemDefaultAiExecutorRunnerId) {
+    return false;
+  }
+  const executorType = recordStringValue(config, 'executor_type');
+  if (executorType && executorType !== 'model_gateway') {
+    return false;
+  }
+  const runnerLabel = recordStringValue(config, 'runner_label');
+  if (runnerLabel && runnerLabel !== '系统默认执行器') {
+    return false;
+  }
+  const workspaceRoot = recordStringValue(config, 'workspace_root');
+  if (workspaceRoot && workspaceRoot !== 'model-gateway://scheduled-job') {
+    return false;
+  }
+  const timeout = config.instruction_timeout_seconds;
+  if (
+    timeout !== undefined
+    && timeout !== null
+    && timeout !== ''
+    && Number(timeout) !== 1800
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function comparableAssistantDraftFieldValue(field: string, value: unknown): unknown {
+  if (field !== 'config_json') {
+    return comparableDraftValue(value);
+  }
+  const configJson = recordValue(value);
+  if (!configJson || !isSystemDefaultAiExecutorConfig(configJson.ai_executor)) {
+    return comparableDraftValue(value);
+  }
+  const restConfig = { ...configJson };
+  delete restConfig.ai_executor;
+  return comparableDraftValue(restConfig);
+}
+
 export const creatableJobTypeOptions = [
   { label: '代码仓库巡检（质量 / 安全 / 规范）', value: 'code_repository_inspection' },
   { label: '用户反馈洞察抽取（取数 + AI 分析 + 写入）', value: 'user_feedback_insight_extract' },
@@ -462,8 +520,8 @@ export function scheduledJobAssistantDraftModifiedFields(
   const initialRecord = initialPayload as Record<string, unknown>;
   const currentRecord = currentPayload as Record<string, unknown>;
   return assistantDraftTrackedFields.filter((field) => (
-    JSON.stringify(comparableDraftValue(initialRecord[field]))
-    !== JSON.stringify(comparableDraftValue(currentRecord[field]))
+    JSON.stringify(comparableAssistantDraftFieldValue(field, initialRecord[field]))
+    !== JSON.stringify(comparableAssistantDraftFieldValue(field, currentRecord[field]))
   ));
 }
 

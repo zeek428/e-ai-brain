@@ -4,6 +4,9 @@ from typing import Any
 
 from app.services.code_inspections import execute_code_inspection_result_actions
 from app.services.native_code_scanner import NATIVE_CODE_SCAN_MODE, run_native_code_scan
+from app.services.scheduled_job_execution_engine import (
+    ScheduledJobExecutionEngine as JobExecutionEngine,
+)
 
 
 def native_code_scan_repository_ids(job: dict[str, Any]) -> list[str]:
@@ -189,6 +192,105 @@ def execute_native_multi_code_inspection_summary(
         },
         total_findings,
     )
+
+
+def code_inspection_single_result_summary(
+    *,
+    ai_processing: dict[str, Any] | None,
+    async_worker: bool = False,
+    effective_plugin_summary: dict[str, Any],
+    include_native_scan: bool,
+    inspection_result: dict[str, Any],
+    job: dict[str, Any],
+    output_mapping: dict[str, Any],
+    plugin_summary: dict[str, Any],
+    resolved_plugin_input_mapping: dict[str, Any],
+    skill_codes: list[str],
+    source_finding_count: int,
+) -> dict[str, Any]:
+    report = inspection_result["report"]
+    native_scan_summary = (plugin_summary.get("response_summary") or {}).get("native_scan")
+    execution_nodes: dict[str, Any] = {
+        "bug_creation": {
+            "created_bug_ids": inspection_result["bug_ids"],
+            "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
+            "label": "严重问题自动创建 Bug",
+            "records_imported": len(inspection_result["bug_ids"]),
+            "status": "succeeded",
+        },
+        "task_creation": {
+            "created_task_ids": inspection_result.get("task_ids") or [],
+            "label": "严重问题自动创建整改任务",
+            "records_imported": len(inspection_result.get("task_ids") or []),
+            "status": "succeeded",
+        },
+        "code_inspection_report": {
+            "finding_count": report["finding_count"],
+            "label": "代码巡检报告写入结果",
+            "report_id": report["id"],
+            "risk_level": report["risk_level"],
+            "severe_finding_count": report["severe_finding_count"],
+            "status": "succeeded",
+        },
+        "data_connection": JobExecutionEngine.data_connection_execution_node(
+            job=job,
+            plugin_summary=plugin_summary,
+            records_imported=source_finding_count,
+            resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+        ),
+        **(
+            {"runner_execution": ai_processing["runner_node"]}
+            if isinstance((ai_processing or {}).get("runner_node"), dict)
+            else {}
+        ),
+        "notifications": {
+            "created_notification_ids": inspection_result["notification_ids"],
+            "label": "问题消息通知",
+            "records_imported": len(inspection_result["notification_ids"]),
+            "status": "succeeded",
+        },
+        "result_action": JobExecutionEngine.code_inspection_result_action_node(
+            inspection_result=inspection_result,
+            report=report,
+        ),
+        "result_actions": inspection_result["action_results"],
+        "skill_processing": JobExecutionEngine.code_inspection_skill_processing_node(
+            ai_processing=ai_processing,
+            job=job,
+            output_mapping=output_mapping,
+            skill_codes=skill_codes,
+            source_finding_count=source_finding_count,
+        ),
+    }
+    if include_native_scan:
+        execution_nodes["native_scan"] = {
+            **(native_scan_summary if isinstance(native_scan_summary, dict) else {}),
+            "label": "本地完整代码静态扫描",
+            "records_imported": source_finding_count,
+            "scan_mode": NATIVE_CODE_SCAN_MODE,
+            "status": "succeeded",
+        }
+    processing = {
+        "model_gateway_called": ai_processing is not None,
+        "skill_codes": skill_codes,
+        "skill_ids": list(job.get("skill_ids", [])),
+    }
+    if async_worker:
+        processing["async_worker"] = True
+    return {
+        "bug_ids": inspection_result["bug_ids"],
+        "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
+        "execution_nodes": execution_nodes,
+        "finding_count": report["finding_count"],
+        "notification_ids": inspection_result["notification_ids"],
+        "plugin": effective_plugin_summary,
+        "processing": processing,
+        "report_id": report["id"],
+        "result_actions": inspection_result["result_actions"],
+        "risk_level": report["risk_level"],
+        "severe_finding_count": report["severe_finding_count"],
+        "task_ids": inspection_result.get("task_ids") or [],
+    }
 
 
 def queued_native_scan_result_summary(

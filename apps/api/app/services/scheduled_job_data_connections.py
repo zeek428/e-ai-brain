@@ -28,6 +28,8 @@ def plugin_summary_from_log(current_store: Any, plugin_log: dict[str, Any]) -> d
         "latency_ms": plugin_log.get("latency_ms"),
         "request_summary": plugin_log.get("request_summary") or {},
         "response_summary": plugin_log.get("response_summary") or {},
+        "scheduled_job_id": plugin_log.get("scheduled_job_id"),
+        "scheduled_job_run_id": plugin_log.get("scheduled_job_run_id"),
         "status": plugin_log["status"],
     }
 

@@ -268,6 +268,37 @@ function installScheduledJobsFetchMock(
         },
       });
     }
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/system/ai-executor-runners')
+      && init?.method === 'GET'
+    ) {
+      return jsonResponse({
+        data: {
+          items: [
+            {
+              executor_types: ['model_gateway'],
+              health_status: 'managed',
+              id: 'ai_executor_runner_system_default',
+              name: '系统默认执行器',
+              protocol: 'model_gateway',
+              status: 'active',
+              workspace_roots: ['*'],
+            },
+            {
+              executor_types: ['codex'],
+              health_status: 'online',
+              id: 'ai_executor_runner_codex',
+              name: '本地 Codex 执行器',
+              protocol: 'runner_polling',
+              status: 'active',
+              workspace_roots: ['/Users/zeek/source/e-ai-brain'],
+            },
+          ],
+          total: 2,
+        },
+      });
+    }
     if (input === '/api/system/scheduled-job-templates' && init?.method === 'GET') {
       return jsonResponse({
         data: {
@@ -1478,6 +1509,12 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('数据连接配置')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('AI执行配置')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('AI执行')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('AI执行器')).toBeInTheDocument();
+    fireEvent.mouseDown(within(dialog).getByLabelText('AI执行器'));
+    fireEvent.click(await screen.findByText(/本地 Codex 执行器/));
+    await waitFor(() => expect(within(dialog).getByLabelText('工作区')).toBeInTheDocument());
+    expect(within(dialog).getByDisplayValue('/Users/zeek/source/e-ai-brain')).toBeInTheDocument();
+    expect(within(dialog).getByText('Runner 完成后会自动回写任务运行结果，并继续执行后续动作。')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('AI 模型')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('AI角色')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Skills')).toBeInTheDocument();

@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- 定时作业助手草案确认时不再把系统默认 AI 执行器自动补全值误判为用户修改字段，避免草案 `modified_fields` 多出 `config_json`。
 - 插件动作试运行阻断态的样例复用向导不再直接展示 `action_trial_response/write_preview` 等内部字段名，高风险审批诊断也将下一步、阻断操作和审批字段翻译为中文业务文案。
 - 定时作业运行快照补齐 Agent 文件包入口内容：package 类型 AI角色运行时会冻结 `AGENT.md`、manifest、checksum 和文件清单，避免只记录当前 `system_prompt` 而丢失文件包上下文。
 - Agent/Skill 文件包运行快照补齐 `runtime_boundary`：运行记录会冻结脚本资产列表、`disabled_pending_sandbox` 和“不会自动执行”说明，避免只在配置列表页可见脚本安全边界。
@@ -27,6 +28,7 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 定时作业 AI执行配置支持选择系统默认执行器或本地 Runner；本地 Codex/Claude/Hermes/OpenClaw Runner 会在数据连接后接收 AI 处理任务，完成回写后继续结果动作。
 - AI 执行器 Runner 就绪清单和新增/编辑表单新增“协议适配”边界：`runner_polling` 明确为当前安装包和队列闭环支持协议，`runner_websocket`、`mcp_http`、`mcp_stdio` 作为预留协议在表单中标注预留、在就绪清单中标记阻断，避免用户误以为非 polling 协议已可直接运行。
 - AI 执行器 Runner 高风险阻断生成的 `approval_request` 持久化为 `ai_executor_approval_requests`，新增独立查询和审批写回接口；插件管理执行器页可查看待审批请求并审批放行，审批通过后同步更新关联动作审批快照并写入审批请求审计。
 - Trace DAG 复跑提示口径统一为“控制项满足时可单节点复跑，控制项不满足时保护态并建议整条复跑”；PRD 同步改为 AI角色支持 Agent zip 文件包上传。

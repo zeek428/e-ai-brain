@@ -12,6 +12,12 @@ from app.services.scheduled_job_ai_processing import (
     run_scheduled_job_ai_processing,
     skill_codes_for_job,
 )
+from app.services.scheduled_job_ai_executor import (
+    dispatch_scheduled_job_ai_executor_processing,
+    pending_ai_executor_result_summary,
+    scheduled_job_uses_local_ai_executor,
+    system_default_runner_node_from_ai_processing,
+)
 from app.services.scheduled_job_config import (
     scheduled_job_multi_ids,
     scheduled_job_result_action_policy,
@@ -177,12 +183,15 @@ def _failed_result_action(
     }
 
 
-def run_user_feedback_insight_extract_job(
+def user_feedback_result_summary_from_ai_output(
     current_store: Any,
     *,
+    ai_processing: dict[str, Any],
     job: dict[str, Any],
     plugin_summary: dict[str, Any],
+    processed_json: dict[str, Any],
     resolved_plugin_input_mapping: dict[str, Any],
+    source_row_count: int,
     user: dict[str, Any],
 ) -> tuple[dict[str, Any], int]:
     mapping = resolve_job_plugin_output_mapping(current_store, job)
@@ -197,22 +206,6 @@ def run_user_feedback_insight_extract_job(
                 "PLUGIN_WRITE_TARGET_UNSUPPORTED",
                 f"Unsupported write_target for user_feedback_insight_extract: {write_target}",
             )
-    source_response_json = (plugin_summary.get("response_summary") or {}).get("json") or {}
-    if not isinstance(source_response_json, dict):
-        source_response_json = {}
-    source_row_count = records_imported_from_mapping(
-        plugin_summary.get("response_summary") or {},
-        {"records_imported_path": mapping.get("records_imported_path")},
-    )
-    ai_processing = run_scheduled_job_ai_processing(
-        current_store,
-        job=job,
-        output_mapping=mapping,
-        source_response_json=source_response_json,
-        source_row_count=source_row_count,
-        user=user,
-    )
-    processed_json = ai_processing["output_json"]
     insights = json_path_value(processed_json, str(mapping.get("insights_path") or "$.insights"))
     if insights is None:
         insights = []
@@ -299,44 +292,63 @@ def run_user_feedback_insight_extract_job(
 
     skill_ids = list(job.get("skill_ids", []))
     skill_codes = skill_codes_for_job(current_store, job)
-    summary = {
-        "execution_nodes": {
-            "data_connection": JobExecutionEngine.data_connection_execution_node(
-                job=job,
-                plugin_summary=plugin_summary,
-                records_imported=source_row_count,
-                resolved_plugin_input_mapping=resolved_plugin_input_mapping,
-            ),
-            "result_action": primary_result_action,
-            "result_actions": result_actions,
-            "skill_processing": {
-                "input": {
-                    "insights_path": str(mapping.get("insights_path") or "$.insights"),
-                    "knowledge_references": ai_processing.get("knowledge_references") or [],
-                    "source_row_count": source_row_count,
-                },
-                "label": "Skill 处理后内容",
-                "model_gateway_called": True,
-                "model_gateway_config_id": ai_processing["model_gateway_config_id"],
-                "model_log_id": ai_processing["model_log_id"],
-                "note": "数据连接返回内容已通过平台 AI 大模型处理为结果动作可消费的结构化 JSON。",
-                "output": {
-                    "candidate_count": len(insights),
-                    "insights": insights,
-                    "insights_created": len(created_ids),
-                    "processed_json": processed_json,
-                    "skipped_insights": skipped,
-                },
-                "processing_mode": "model_gateway_json_transform",
-                "skill_codes": skill_codes,
-                "skill_ids": skill_ids,
-                "status": ai_processing["status"],
-            },
+    model_gateway_called = bool(
+        ai_processing.get("model_gateway_called", not ai_processing.get("runner_task_id")),
+    )
+    skill_processing_node = {
+        "input": {
+            "insights_path": str(mapping.get("insights_path") or "$.insights"),
+            "knowledge_references": ai_processing.get("knowledge_references") or [],
+            "source_row_count": source_row_count,
         },
+        "label": "Skill 处理后内容",
+        "model_gateway_called": model_gateway_called,
+        "note": "数据连接返回内容已通过 AI 处理为用户洞察写入可消费的结构化 JSON。",
+        "output": {
+            "candidate_count": len(insights),
+            "insights": insights,
+            "insights_created": len(created_ids),
+            "processed_json": processed_json,
+            "skipped_insights": skipped,
+        },
+        "processing_mode": ai_processing.get("processing_mode")
+        or ("model_gateway_json_transform" if model_gateway_called else "ai_executor_runner"),
+        "skill_codes": skill_codes,
+        "skill_ids": skill_ids,
+        "status": ai_processing["status"],
+    }
+    if ai_processing.get("model_gateway_config_id"):
+        skill_processing_node["model_gateway_config_id"] = ai_processing["model_gateway_config_id"]
+    if ai_processing.get("model_log_id"):
+        skill_processing_node["model_log_id"] = ai_processing["model_log_id"]
+    if ai_processing.get("runner_id"):
+        skill_processing_node["runner_id"] = ai_processing["runner_id"]
+    if ai_processing.get("runner_task_id"):
+        skill_processing_node["runner_task_id"] = ai_processing["runner_task_id"]
+
+    execution_nodes = {
+        "data_connection": JobExecutionEngine.data_connection_execution_node(
+            job=job,
+            plugin_summary=plugin_summary,
+            records_imported=source_row_count,
+            resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+        ),
+        "result_action": primary_result_action,
+        "result_actions": result_actions,
+        "skill_processing": skill_processing_node,
+    }
+    runner_node = ai_processing.get("runner_node")
+    if isinstance(runner_node, dict):
+        execution_nodes["runner_execution"] = runner_node
+    summary = {
+        "execution_nodes": execution_nodes,
         "insight_ids": created_ids,
         "insights_created": len(created_ids),
         "plugin": plugin_summary,
         "processing": {
+            "model_gateway_called": model_gateway_called,
+            "runner_id": ai_processing.get("runner_id"),
+            "runner_task_id": ai_processing.get("runner_task_id"),
             "skill_ids": skill_ids,
             "skill_codes": skill_codes,
         },
@@ -347,3 +359,79 @@ def run_user_feedback_insight_extract_job(
         "write_targets": [action["write_target"] for action in result_actions],
     }
     return summary, len(created_ids)
+
+
+def run_user_feedback_insight_extract_job(
+    current_store: Any,
+    *,
+    job: dict[str, Any],
+    plugin_summary: dict[str, Any],
+    resolved_plugin_input_mapping: dict[str, Any],
+    user: dict[str, Any],
+) -> tuple[dict[str, Any], int]:
+    mapping = resolve_job_plugin_output_mapping(current_store, job)
+    result_mappings = resolve_job_plugin_result_mappings(current_store, job)
+    result_action_policy = scheduled_job_result_action_policy(job)
+    for result_mapping in result_mappings:
+        action_mapping = result_mapping.get("mapping") or {}
+        write_target = str(action_mapping.get("write_target") or "user_feedback_insights")
+        if write_target not in USER_FEEDBACK_INSIGHT_WRITE_TARGETS:
+            raise api_error(
+                400,
+                "PLUGIN_WRITE_TARGET_UNSUPPORTED",
+                f"Unsupported write_target for user_feedback_insight_extract: {write_target}",
+            )
+    source_response_json = (plugin_summary.get("response_summary") or {}).get("json") or {}
+    if not isinstance(source_response_json, dict):
+        source_response_json = {}
+    source_row_count = records_imported_from_mapping(
+        plugin_summary.get("response_summary") or {},
+        {"records_imported_path": mapping.get("records_imported_path")},
+    )
+    if scheduled_job_uses_local_ai_executor(job):
+        ai_processing = dispatch_scheduled_job_ai_executor_processing(
+            current_store,
+            job=job,
+            output_mapping=mapping,
+            plugin_summary=plugin_summary,
+            resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+            run_id=str(plugin_summary.get("scheduled_job_run_id") or ""),
+            source_response_json=source_response_json,
+            source_row_count=source_row_count,
+            user=user,
+        )
+        return pending_ai_executor_result_summary(
+            current_store,
+            ai_processing=ai_processing,
+            job=job,
+            output_mapping=mapping,
+            plugin_summary=plugin_summary,
+            resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+            source_count_key="source_row_count",
+            source_row_count=source_row_count,
+            wait_note="用户反馈数据已派发给 AI 执行器，等待 Runner 分析后写入用户洞察表。",
+            write_target="user_feedback_insights",
+        ), 0
+    ai_processing = run_scheduled_job_ai_processing(
+        current_store,
+        job=job,
+        output_mapping=mapping,
+        source_response_json=source_response_json,
+        source_row_count=source_row_count,
+        user=user,
+    )
+    ai_processing["runner_node"] = system_default_runner_node_from_ai_processing(
+        ai_processing,
+        job=job,
+    )
+    processed_json = ai_processing["output_json"]
+    return user_feedback_result_summary_from_ai_output(
+        current_store,
+        ai_processing=ai_processing,
+        job=job,
+        plugin_summary=plugin_summary,
+        processed_json=processed_json,
+        resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+        source_row_count=source_row_count,
+        user=user,
+    )
