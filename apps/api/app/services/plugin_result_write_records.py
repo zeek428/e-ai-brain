@@ -123,6 +123,8 @@ def _result_write_record_from_scheduled_action(
 ) -> dict[str, Any] | None:
     if not result_action:
         return None
+    if result_action.get("status") == "not_run":
+        return None
     feedback = (
         result_action.get("feedback")
         if isinstance(result_action.get("feedback"), dict)

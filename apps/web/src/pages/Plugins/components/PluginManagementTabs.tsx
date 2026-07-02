@@ -53,8 +53,10 @@ type PluginManagementTabsProps = {
   onEditPlugin: (plugin: PluginRecord) => void;
   onEditRunner: (runner: AiExecutorRunnerRecord) => void;
   onOpenRunnerLogs: (runner: AiExecutorRunnerRecord) => void;
+  onOpenRunnerApprovalRequests: () => void;
   onReload: () => void;
   onRotateRunnerToken: (runner: AiExecutorRunnerRecord) => void;
+  onScanRunnerTimeouts: () => void;
   onRunAction: (action: PluginActionRecord) => void;
   onTestConnection: (connection: PluginConnectionRecord) => void;
   onTestRunner: (runner: AiExecutorRunnerRecord) => void;
@@ -71,6 +73,7 @@ type PluginManagementTabsProps = {
   };
   runners: AiExecutorRunnerRecord[];
   onRunnerListChange: (query: AiExecutorRunnerListQuery) => void;
+  runnerTimeoutScanLoading?: boolean;
   testingConnectionId?: string;
   testingRunnerId?: string;
 };
@@ -104,8 +107,10 @@ export function PluginManagementTabs({
   onEditPlugin,
   onEditRunner,
   onOpenRunnerLogs,
+  onOpenRunnerApprovalRequests,
   onReload,
   onRotateRunnerToken,
+  onScanRunnerTimeouts,
   onRunAction,
   onTestConnection,
   onTestRunner,
@@ -115,6 +120,7 @@ export function PluginManagementTabs({
   runnerListMeta,
   runners,
   onRunnerListChange,
+  runnerTimeoutScanLoading,
   testingConnectionId,
   testingRunnerId,
 }: PluginManagementTabsProps) {
@@ -184,10 +190,13 @@ export function PluginManagementTabs({
               onDownloadInstallPackage={onDownloadRunnerInstallPackage}
               onEditRunner={onEditRunner}
               onOpenLogs={onOpenRunnerLogs}
+              onOpenApprovalRequests={onOpenRunnerApprovalRequests}
               onRemoteChange={onRunnerListChange}
               onReload={onReload}
               onRotateToken={onRotateRunnerToken}
+              onTimeoutScan={onScanRunnerTimeouts}
               onTestRunner={onTestRunner}
+              timeoutScanLoading={runnerTimeoutScanLoading}
             />
           ),
         },

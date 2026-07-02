@@ -15,11 +15,13 @@ import {
 
 function installScheduledJobsFetchMock(
   options: {
+    dryRunResponse?: unknown | ((body: Record<string, unknown>) => Promise<unknown> | unknown);
     jobs?: Array<Record<string, unknown>>;
     observability?: unknown;
     resultWriteRecords?: unknown[];
     runResponse?: Promise<unknown>;
     runs?: unknown[];
+    traceNodeRerunMode?: 'protected_skill' | 'ready_all';
   } = {},
 ) {
   const jobCreateBodies: unknown[] = [];
@@ -39,6 +41,8 @@ function installScheduledJobsFetchMock(
   const jobs: Array<Record<string, unknown>> = options.jobs ?? [];
   const resultWriteRecords = options.resultWriteRecords ?? [];
   const runs = options.runs ?? [];
+  const traceNodeRerunCalls: string[] = [];
+  const traceNodeRerunMode = options.traceNodeRerunMode ?? 'protected_skill';
   const observability = options.observability ?? {
     error_distribution: [],
     job_type_distribution: [],
@@ -70,6 +74,78 @@ function installScheduledJobsFetchMock(
       headers: { 'Content-Type': 'application/json' },
       status: 200,
     });
+  const readyTraceNodeRerunPreview = ({
+    controls,
+    nodeId,
+    safeNextAction = 'confirm_single_node_rerun',
+    sideEffectPolicy,
+    snapshotPreview,
+    stage,
+    stageLabel,
+  }: {
+    controls: Array<Record<string, unknown>>;
+    nodeId: string;
+    safeNextAction?: string;
+    sideEffectPolicy: string;
+    snapshotPreview: Record<string, unknown>;
+    stage: string;
+    stageLabel: string;
+  }) => ({
+    blocked_by: [],
+    can_preview_from_snapshot: true,
+    control_summary: {
+      blocked_count: 0,
+      missing_count: 0,
+      needs_review_count: 0,
+      satisfied_count: controls.length,
+      total: controls.length,
+    },
+    execution_policy: {
+      allowed: true,
+      blocking_count: 0,
+      message: '单节点复跑控制项已满足，可以进入执行确认。',
+      missing_control_count: 0,
+      mode: 'single_node_rerun_ready',
+      requires_confirmation: true,
+      side_effect_policy: sideEffectPolicy,
+    },
+    full_run_request: {
+      scheduled_job_id: 'scheduled_job_weekly_feedback',
+      source_run_id: 'scheduled_job_run_weekly_feedback',
+      trigger_type: 'manual_rerun',
+    },
+    missing_controls: [],
+    next_actions: [
+      {
+        description: '节点 input/output/error 快照可用于排障和复制给 AI 分析。',
+        key: 'inspect_node_snapshot',
+        label: '查看节点快照',
+        status: 'available',
+      },
+      {
+        description: '所有必需控制项已满足，可进入单节点执行确认。',
+        key: 'confirm_single_node_rerun',
+        label: '确认单节点复跑',
+        status: 'available',
+      },
+    ],
+    node_id: nodeId,
+    preflight_status: 'ready',
+    rerun_plan: {
+      safe_next_action: safeNextAction,
+      side_effect_policy: sideEffectPolicy,
+      single_node_supported: true,
+    },
+    rerun_controls: controls,
+    rerun_supported: true,
+    run_id: 'scheduled_job_run_weekly_feedback',
+    safe_next_action: safeNextAction,
+    side_effect_policy: sideEffectPolicy,
+    snapshot_preview: snapshotPreview,
+    snapshot_status: { error: false, input: true, output: true },
+    stage,
+    stage_label: stageLabel,
+  });
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
     if (
@@ -431,9 +507,66 @@ function installScheduledJobsFetchMock(
     if (input === '/api/system/scheduled-jobs/dry-run' && init?.method === 'POST') {
       const body = JSON.parse(String(init.body));
       jobDryRunBodies.push(body);
+      if (options.dryRunResponse !== undefined) {
+        const data = typeof options.dryRunResponse === 'function'
+          ? await options.dryRunResponse(body)
+          : options.dryRunResponse;
+        return jsonResponse({ data });
+      }
+      const sampleReuse = typeof body.config_json?.sample_reuse === 'object' && body.config_json.sample_reuse
+        ? body.config_json.sample_reuse
+        : {};
+      const sampleSource = typeof sampleReuse.sample_source === 'string'
+        ? sampleReuse.sample_source
+        : 'live_dry_run_response';
       return jsonResponse({
         data: {
           job_type: body.job_type,
+          sample_reuse: {
+            action_preview_ready: true,
+            data_connection_sample: {
+              records_imported: 18,
+              response_available: true,
+              source: sampleSource,
+              status: 'ready',
+            },
+            output_preview_ready: true,
+            preferred_action_preview_source: 'skill_output_schema',
+            reusable_steps: [
+              { key: 'data_connection_sample', label: '复用数据连接样例', source: sampleSource, status: 'ready' },
+              { key: 'action_write_preview', label: '预览动作写入', source: 'skill_output_schema', status: 'ready' },
+              { key: 'scheduled_job_config', label: '保存为定时作业配置', source: 'current_dry_run_payload', status: 'ready' },
+            ],
+              reuse_wizard: {
+                can_continue: true,
+                current_step_label: '全链路试运行',
+                current_step: 'scheduled_job_dry_run',
+                blocked_steps: 0,
+                completed_steps: 4,
+                handoff_summary: [
+                  { key: 'data_connection_sample', label: '数据连接样例', source: sampleSource, status: 'ready' },
+                  { key: 'ai_output_preview', label: 'AI 输出预览', source: 'skill_output_schema', status: 'ready' },
+                  { key: 'action_write_preview', label: '动作写入预览', source: 'skill_output_schema', status: 'ready' },
+                  { key: 'job_config', label: '作业配置', source: 'current_dry_run_payload', status: 'ready' },
+                ],
+                missing_requirements: [],
+                next_action: 'save_scheduled_job',
+                next_action_description: '保存当前配置为定时作业，后续运行记录将继续展示三段核心节点。',
+                pending_steps: 0,
+                primary_action_label: '保存为定时作业',
+                progress_label: '4/4 步已就绪',
+                progress_percent: 100,
+                sample_source: sampleSource,
+                status: 'ready',
+                steps: [
+                { key: 'connection_test', label: '数据连接样例', source: sampleSource, status: 'succeeded' },
+                { key: 'ai_processing_preview', label: 'AI 处理预览', source: 'skill_output_schema', status: 'succeeded' },
+                { key: 'action_trial', label: '动作写入预览', source: 'skill_output_schema', status: 'succeeded' },
+                  { key: 'scheduled_job_config', label: '生成作业配置', source: 'current_dry_run_payload', status: 'ready' },
+                ],
+                total_steps: 4,
+              },
+          },
           stages: {
             ai_processing: {
               mapping_contract: {
@@ -533,6 +666,406 @@ function installScheduledJobsFetchMock(
     }
     if (input === '/api/system/scheduled-job-runs/observability' && init?.method === 'GET') {
       return jsonResponse({ data: observability });
+    }
+    if (
+      input === '/api/system/scheduled-job-runs/scheduled_job_run_weekly_feedback/trace-nodes/data_connection/rerun-preview'
+      && init?.method === 'GET'
+    ) {
+      return jsonResponse({
+        data: {
+          blocked_by: [],
+          can_preview_from_snapshot: true,
+          control_summary: {
+            blocked_count: 0,
+            missing_count: 0,
+            needs_review_count: 0,
+            satisfied_count: 3,
+            status_counts: { satisfied: 3 },
+            total: 3,
+          },
+          debug_actions: [],
+          execution_policy: {
+            allowed: true,
+            blocking_count: 0,
+            message: '单节点复跑控制项已满足，可以进入执行确认。',
+            missing_control_count: 0,
+            mode: 'single_node_ready',
+            requires_confirmation: true,
+            side_effect_policy: 'external_read_or_fetch',
+          },
+          full_run_request: {
+            scheduled_job_id: 'scheduled_job_weekly_feedback',
+            source_run_id: 'scheduled_job_run_weekly_feedback',
+            trigger_type: 'manual_rerun',
+          },
+          missing_controls: [],
+          node_id: 'data_connection',
+          next_actions: [
+            {
+              description: '节点 input/output/error 快照可用于排障和复制给 AI 分析。',
+              key: 'inspect_node_snapshot',
+              label: '查看节点快照',
+              status: 'available',
+            },
+            {
+              description: '所有必需控制项已满足，可进入单节点执行确认。',
+              key: 'confirm_single_node_rerun',
+              label: '确认单节点复跑',
+              status: 'available',
+            },
+          ],
+          preflight_status: 'ready',
+          rerun_plan: {
+            safe_next_action: 'confirm_single_node_rerun',
+            side_effect_policy: 'external_read_or_fetch',
+            single_node_supported: true,
+          },
+          rerun_controls: [
+            {
+              key: 'request_snapshot',
+              label: '请求快照',
+              reason: '已有可用于预检的节点快照',
+              required: true,
+              satisfied: true,
+              status: 'satisfied',
+            },
+            {
+              key: 'connection_read_idempotency',
+              label: '连接读取幂等',
+              reason: '已使用原插件调用日志生成连接读取幂等键',
+              required: true,
+              satisfied: true,
+              status: 'satisfied',
+            },
+            {
+              key: 'downstream_ai_and_action_invalidation',
+              label: '下游 AI/动作失效策略',
+              reason: '单节点复跑会生成独立运行记录，下游 AI 和动作不执行',
+              required: true,
+              satisfied: true,
+              status: 'satisfied',
+            },
+          ],
+          rerun_supported: true,
+          run_id: 'scheduled_job_run_weekly_feedback',
+          safe_next_action: 'confirm_single_node_rerun',
+          side_effect_policy: 'external_read_or_fetch',
+          snapshot_preview: {
+            error: { available: false, size_bytes: 0, truncated: false, value: null },
+            input: {
+              available: true,
+              size_bytes: 25,
+              truncated: false,
+              value: { week_start: '20260601' },
+            },
+            output: {
+              available: true,
+              size_bytes: 51,
+              truncated: false,
+              value: { records_imported: 18, response_status_code: 200 },
+            },
+          },
+          snapshot_status: { error: false, input: true, output: true },
+          stage: 'data_connection',
+          stage_label: '数据连接',
+        },
+      });
+    }
+    if (
+      input === '/api/system/scheduled-job-runs/scheduled_job_run_weekly_feedback/trace-nodes/skill_processing/rerun-preview'
+      && init?.method === 'GET'
+    ) {
+      if (traceNodeRerunMode === 'ready_all') {
+        return jsonResponse({
+          data: readyTraceNodeRerunPreview({
+            controls: [
+              {
+                key: 'input_snapshot',
+                label: '输入快照',
+                reason: '已有可复用的数据连接响应快照',
+                required: true,
+                satisfied: true,
+                status: 'satisfied',
+              },
+              {
+                key: 'model_gateway_idempotency',
+                label: '模型幂等',
+                reason: '已使用来源运行和节点 ID 生成模型调用幂等键',
+                required: true,
+                satisfied: true,
+                status: 'satisfied',
+              },
+              {
+                key: 'downstream_action_invalidation',
+                label: '下游动作失效策略',
+                reason: '单节点复跑会生成独立运行记录，下游动作不执行',
+                required: true,
+                satisfied: true,
+                status: 'satisfied',
+              },
+            ],
+            nodeId: 'skill_processing',
+            sideEffectPolicy: 'model_gateway_call',
+            snapshotPreview: {
+              error: { available: false, size_bytes: 0, truncated: false, value: null },
+              input: { available: true, size_bytes: 24, truncated: false, value: { source_row_count: 18 } },
+              output: { available: true, size_bytes: 21, truncated: false, value: { candidate_count: 1 } },
+            },
+            stage: 'ai_processing',
+            stageLabel: 'AI执行',
+          }),
+        });
+      }
+      return jsonResponse({
+        data: {
+          blocked_by: ['single_node_rerun_execution_guarded'],
+          can_preview_from_snapshot: true,
+          control_summary: {
+            blocked_count: 1,
+            missing_count: 0,
+            needs_review_count: 1,
+            satisfied_count: 1,
+            total: 3,
+          },
+          execution_policy: {
+            allowed: false,
+            blocking_count: 1,
+            message: '该节点的单节点复跑控制项未全部满足，当前以节点快照预检和整条运行记录复跑作为安全替代。',
+            missing_control_count: 0,
+            mode: 'protected_preview_only',
+            requires_confirmation: true,
+            side_effect_policy: 'model_gateway_call',
+          },
+          full_run_request: {
+            scheduled_job_id: 'scheduled_job_weekly_feedback',
+            source_run_id: 'scheduled_job_run_weekly_feedback',
+            trigger_type: 'manual_rerun',
+          },
+          missing_controls: [],
+          next_actions: [
+            {
+              description: '节点 input/output/error 快照可用于排障和复制给 AI 分析。',
+              key: 'inspect_node_snapshot',
+              label: '查看节点快照',
+              status: 'available',
+            },
+            {
+              description: '重新执行完整作业链路，保留上下游一致性和副作用保护。',
+              key: 'rerun_full_scheduled_job',
+              label: '复跑整条运行记录',
+              request: {
+                scheduled_job_id: 'scheduled_job_weekly_feedback',
+                source_run_id: 'scheduled_job_run_weekly_feedback',
+                trigger_type: 'manual_rerun',
+              },
+              status: 'recommended',
+            },
+            {
+              description: '该节点可能产生模型成本，需额外确认。',
+              key: 'review_side_effect_policy',
+              label: '确认副作用策略',
+              side_effect_policy: 'model_gateway_call',
+              status: 'needs_review',
+            },
+          ],
+          node_id: 'skill_processing',
+          preflight_status: 'blocked',
+          rerun_controls: [
+            {
+              key: 'input_snapshot',
+              label: '输入快照',
+              reason: '已有 AI 处理输入快照',
+              required: true,
+              satisfied: true,
+              status: 'satisfied',
+            },
+            {
+              key: 'model_gateway_idempotency',
+              label: '模型幂等',
+              reason: '模型调用副作用需保护',
+              required: true,
+              satisfied: false,
+              status: 'needs_review',
+            },
+          ],
+          rerun_supported: false,
+          run_id: 'scheduled_job_run_weekly_feedback',
+          safe_next_action: 'rerun_full_scheduled_job',
+          side_effect_policy: 'model_gateway_call',
+          snapshot_preview: {
+            error: { available: false, size_bytes: 0, truncated: false, value: null },
+            input: { available: true, size_bytes: 24, truncated: false, value: { source_row_count: 18 } },
+            output: { available: true, size_bytes: 21, truncated: false, value: { candidate_count: 1 } },
+          },
+          snapshot_status: { error: false, input: true, output: true },
+          stage: 'ai_processing',
+          stage_label: 'AI执行',
+        },
+      });
+    }
+    if (
+      input === '/api/system/scheduled-job-runs/scheduled_job_run_weekly_feedback/trace-nodes/result_action/rerun-preview'
+      && init?.method === 'GET'
+    ) {
+      return jsonResponse({
+        data: readyTraceNodeRerunPreview({
+          controls: [
+            {
+              key: 'action_input_snapshot',
+              label: '动作输入快照',
+              reason: '已有 AI 输出快照可作为动作输入',
+              required: true,
+              satisfied: true,
+              status: 'satisfied',
+            },
+            {
+              key: 'write_idempotency',
+              label: '写入幂等',
+              reason: '已使用来源运行、节点和写入目标生成幂等键',
+              required: true,
+              satisfied: true,
+              status: 'satisfied',
+            },
+            {
+              key: 'side_effect_guard',
+              label: '副作用防重',
+              reason: '结果动作复跑会生成新的写入记录并保留来源运行引用',
+              required: true,
+              satisfied: true,
+              status: 'satisfied',
+            },
+          ],
+          nodeId: 'result_action',
+          sideEffectPolicy: 'idempotent_result_write',
+          snapshotPreview: {
+            error: { available: false, size_bytes: 0, truncated: false, value: null },
+            input: { available: true, size_bytes: 35, truncated: false, value: { write_target: 'user_feedback_insights' } },
+            output: { available: true, size_bytes: 31, truncated: false, value: { created_ids: ['insight_001'] } },
+          },
+          stage: 'result_action',
+          stageLabel: '动作',
+        }),
+      });
+    }
+    if (
+      input === '/api/system/scheduled-job-runs/scheduled_job_run_weekly_feedback/trace-nodes/data_connection/rerun'
+      && init?.method === 'POST'
+    ) {
+      traceNodeRerunCalls.push('data_connection');
+      return jsonResponse({
+        data: {
+          config_snapshot: {
+            execution_mode: 'ai_generated',
+            job_type: 'user_feedback_insight_extract',
+            model_gateway_config_id: 'model_gateway_scheduled',
+            skill_ids: ['skill_feedback'],
+          },
+          id: 'scheduled_job_run_weekly_feedback_data_connection_rerun',
+          records_imported: 18,
+          result_summary: {
+            execution_nodes: {
+              data_connection: {
+                note: '单节点复跑仅重新执行数据连接，下游 AI 和动作未执行。',
+                records_imported: 18,
+                status: 'succeeded',
+              },
+              result_action: { status: 'skipped' },
+              skill_processing: { model_gateway_called: false, status: 'skipped' },
+            },
+            message: 'Trace DAG 数据连接节点单节点复跑完成',
+            trace_node_rerun: {
+              mode: 'single_node_data_connection',
+              node_id: 'data_connection',
+              source_run_id: 'scheduled_job_run_weekly_feedback',
+            },
+          },
+          scheduled_job_id: 'scheduled_job_weekly_feedback',
+          source_run_id: 'scheduled_job_run_weekly_feedback',
+          status: 'succeeded',
+          trigger_type: 'manual_rerun',
+        },
+      });
+    }
+    if (
+      input === '/api/system/scheduled-job-runs/scheduled_job_run_weekly_feedback/trace-nodes/skill_processing/rerun'
+      && init?.method === 'POST'
+    ) {
+      traceNodeRerunCalls.push('skill_processing');
+      return jsonResponse({
+        data: {
+          config_snapshot: {
+            execution_mode: 'ai_generated',
+            job_type: 'user_feedback_insight_extract',
+            model_gateway_config_id: 'model_gateway_scheduled',
+            skill_ids: ['skill_feedback'],
+          },
+          id: 'scheduled_job_run_weekly_feedback_skill_processing_rerun',
+          records_imported: 1,
+          result_summary: {
+            execution_nodes: {
+              data_connection: { note: '单节点复跑复用来源运行数据连接响应快照。', status: 'reused_snapshot' },
+              result_action: { status: 'skipped' },
+              skill_processing: {
+                model_gateway_called: true,
+                note: '单节点复跑仅重新执行 AI 处理，下游动作未执行。',
+                output: { candidate_count: 1 },
+                status: 'succeeded',
+              },
+            },
+            message: 'Trace DAG AI 处理节点单节点复跑完成',
+            trace_node_rerun: {
+              mode: 'single_node_skill_processing',
+              node_id: 'skill_processing',
+              source_run_id: 'scheduled_job_run_weekly_feedback',
+            },
+          },
+          scheduled_job_id: 'scheduled_job_weekly_feedback',
+          source_run_id: 'scheduled_job_run_weekly_feedback',
+          status: 'succeeded',
+          trigger_type: 'manual_rerun',
+        },
+      });
+    }
+    if (
+      input === '/api/system/scheduled-job-runs/scheduled_job_run_weekly_feedback/trace-nodes/result_action/rerun'
+      && init?.method === 'POST'
+    ) {
+      traceNodeRerunCalls.push('result_action');
+      return jsonResponse({
+        data: {
+          config_snapshot: {
+            execution_mode: 'ai_generated',
+            job_type: 'user_feedback_insight_extract',
+            model_gateway_config_id: 'model_gateway_scheduled',
+            skill_ids: ['skill_feedback'],
+          },
+          id: 'scheduled_job_run_weekly_feedback_result_action_rerun',
+          records_imported: 1,
+          result_summary: {
+            execution_nodes: {
+              data_connection: { status: 'not_run' },
+              result_action: {
+                created_ids: ['insight_001'],
+                note: '单节点复跑仅执行结果动作，数据连接和 AI 处理未重新执行。',
+                records_imported: 1,
+                status: 'succeeded',
+                write_target: 'user_feedback_insights',
+              },
+              skill_processing: { status: 'reused_snapshot' },
+            },
+            message: 'Trace DAG 结果动作节点单节点复跑完成',
+            trace_node_rerun: {
+              mode: 'single_node_result_action',
+              node_id: 'result_action',
+              source_run_id: 'scheduled_job_run_weekly_feedback',
+            },
+          },
+          scheduled_job_id: 'scheduled_job_weekly_feedback',
+          source_run_id: 'scheduled_job_run_weekly_feedback',
+          status: 'succeeded',
+          trigger_type: 'manual_rerun',
+        },
+      });
     }
     if (
       typeof input === 'string'
@@ -776,6 +1309,105 @@ function installScheduledJobsFetchMock(
     runJobBodies,
     runJobIds,
     runListCalls,
+    traceNodeRerunCalls,
+  };
+}
+
+function buildReadyTraceNodeRerunRun(): Record<string, unknown> {
+  const commonRerunPlan = {
+    safe_next_action: 'confirm_single_node_rerun',
+    single_node_supported: true,
+    snapshot_status: { error: false, input: true, output: true },
+  };
+  return {
+    config_snapshot: {
+      execution_mode: 'ai_generated',
+      job_type: 'user_feedback_insight_extract',
+      model_gateway_config_id: 'model_gateway_scheduled',
+      skill_ids: ['skill_feedback'],
+    },
+    finished_at: '2026-06-11T10:00:03Z',
+    id: 'scheduled_job_run_weekly_feedback',
+    records_imported: 1,
+    result_summary: {
+      execution_nodes: {
+        data_connection: { records_imported: 18, status: 'succeeded' },
+        result_action: {
+          created_ids: ['insight_001'],
+          records_imported: 1,
+          status: 'succeeded',
+          write_target: 'user_feedback_insights',
+        },
+        skill_processing: {
+          model_gateway_called: true,
+          output: { candidate_count: 1 },
+          status: 'succeeded',
+        },
+      },
+      trace_graph: {
+        edges: [
+          { from: 'data_connection', to: 'skill_processing' },
+          { from: 'skill_processing', to: 'result_action' },
+        ],
+        nodes: [
+          {
+            duration_ms: 318,
+            id: 'data_connection',
+            input: { week_start: '20260601' },
+            label: '数据连接获取内容',
+            output: { records_imported: 18 },
+            retry_count: 0,
+            stage: 'data_connection',
+            stage_label: '数据连接',
+            status: 'succeeded',
+          },
+          {
+            debug_actions: [{ enabled: true, label: '复制复跑计划', type: 'copy_rerun_plan' }],
+            duration_ms: 860,
+            id: 'skill_processing',
+            input: { source_row_count: 18 },
+            label: '经过 Skill 处理后的内容',
+            output: { candidate_count: 1 },
+            rerun_hint: 'AI 处理节点可在控制项满足时单独复跑。',
+            rerun_plan: {
+              ...commonRerunPlan,
+              downstream_invalidation_strategy: 'isolated_single_node_run',
+              side_effect_policy: 'model_gateway_call',
+            },
+            rerun_supported: true,
+            retry_count: 0,
+            snapshot_status: { error: false, input: true, output: true },
+            stage: 'ai_processing',
+            stage_label: 'AI执行',
+            status: 'succeeded',
+          },
+          {
+            debug_actions: [{ enabled: true, label: '复制复跑计划', type: 'copy_rerun_plan' }],
+            duration_ms: 42,
+            id: 'result_action',
+            input: { write_target: 'user_feedback_insights' },
+            label: '结果写入反馈内容',
+            output: { created_ids: ['insight_001'] },
+            rerun_hint: '结果动作节点可在写入幂等满足时单独复跑。',
+            rerun_plan: {
+              ...commonRerunPlan,
+              downstream_invalidation_strategy: 'isolated_single_node_run',
+              side_effect_policy: 'idempotent_result_write',
+            },
+            rerun_supported: true,
+            retry_count: 0,
+            snapshot_status: { error: false, input: true, output: true },
+            stage: 'result_action',
+            stage_label: '动作',
+            status: 'succeeded',
+          },
+        ],
+      },
+    },
+    scheduled_job_id: 'scheduled_job_weekly_feedback',
+    started_at: '2026-06-11T10:00:00Z',
+    status: 'succeeded',
+    trigger_type: 'manual',
   };
 }
 
@@ -1014,6 +1646,17 @@ describe('ScheduledJobsPage', () => {
       }),
     );
     const dryRunResult = await within(dialog).findByLabelText('全链路试运行结果');
+    expect(within(dryRunResult).getByLabelText('样例复用摘要')).toHaveTextContent('数据样例 可复用');
+    expect(within(dryRunResult).getByLabelText('样例复用摘要')).toHaveTextContent('样例行数 18');
+    expect(within(dryRunResult).getByLabelText('样例复用摘要')).toHaveTextContent('进度：4/4 步已就绪');
+    expect(within(dryRunResult).getByLabelText('样例复用摘要')).toHaveTextContent('当前：全链路试运行');
+    expect(within(dryRunResult).getByLabelText('样例复用摘要')).toHaveTextContent('下一步：保存为定时作业');
+    expect(within(dryRunResult).getByLabelText('样例复用摘要')).toHaveTextContent('数据连接样例 · ready');
+    expect(within(dryRunResult).getByLabelText('样例复用摘要')).toHaveTextContent('AI 输出预览 · ready');
+    expect(within(dryRunResult).getByLabelText('样例复用摘要')).toHaveTextContent('作业配置 · ready');
+    expect(within(dryRunResult).getByText('AI 处理预览 · succeeded')).toBeInTheDocument();
+    expect(within(dryRunResult).getByText('动作写入预览 · succeeded')).toBeInTheDocument();
+    expect(within(dryRunResult).getByText('保存为定时作业配置 · ready')).toBeInTheDocument();
     expect(within(dryRunResult).getByText('数据连接预览')).toBeInTheDocument();
     expect(within(dryRunResult).getByText('AI契约校验')).toBeInTheDocument();
     expect(within(dryRunResult).getByText('结果写入预览')).toBeInTheDocument();
@@ -1023,6 +1666,113 @@ describe('ScheduledJobsPage', () => {
     expect(within(dryRunResult).getByText(/预计写入 1 条/)).toBeInTheDocument();
     expect(within(dryRunResult).getByText(/connection_maxcompute_prod/)).toBeInTheDocument();
     expect(within(dryRunResult).getByText(/user_feedback_insights/)).toBeInTheDocument();
+  });
+
+  it('explains blocked sample reuse requirements when scheduled job dry-run cannot build previews', async () => {
+    const { jobDryRunBodies } = installScheduledJobsFetchMock({
+      dryRunResponse: {
+        job_type: 'user_feedback_insight_extract',
+        sample_reuse: {
+          action_preview_ready: false,
+          data_connection_sample: {
+            response_available: false,
+            source: 'not_available',
+            status: 'missing',
+          },
+          output_preview_ready: false,
+          preferred_action_preview_source: 'not_available',
+          reusable_steps: [
+            { key: 'data_connection_sample', label: '复用数据连接样例', source: 'not_available', status: 'missing' },
+            { key: 'action_write_preview', label: '预览动作写入', source: 'not_available', status: 'missing' },
+            { key: 'scheduled_job_config', label: '保存为定时作业配置', source: 'current_dry_run_payload', status: 'pending' },
+          ],
+          reuse_wizard: {
+            blocked_steps: 3,
+            can_continue: false,
+            completed_steps: 0,
+            current_step: 'scheduled_job_dry_run',
+            current_step_label: '全链路试运行',
+            handoff_summary: [
+              { key: 'data_connection_sample', label: '数据连接样例', source: 'not_available', status: 'missing' },
+              { key: 'ai_output_preview', label: 'AI 输出预览', source: 'not_available', status: 'missing' },
+              { key: 'action_write_preview', label: '动作写入预览', source: 'not_available', status: 'missing' },
+              { key: 'job_config', label: '作业配置', source: 'current_dry_run_payload', status: 'pending' },
+            ],
+            missing_requirements: [
+              'data_connection_sample',
+              'ai_output_preview',
+              'action_write_preview',
+            ],
+            next_action: 'review_dry_run_issues',
+            next_action_description: '先处理缺失的样例、AI 输出或动作写入预览，再保存作业。',
+            pending_steps: 1,
+            primary_action_label: '检查试运行问题',
+            progress_label: '0/4 步已就绪',
+            progress_percent: 0,
+            sample_source: 'not_available',
+            status: 'partial',
+            steps: [
+              { key: 'connection_test', label: '数据连接样例', source: 'not_available', status: 'blocked' },
+              { key: 'ai_processing_preview', label: 'AI 处理预览', source: 'not_available', status: 'blocked' },
+              { key: 'action_trial', label: '动作写入预览', source: 'not_available', status: 'blocked' },
+              { key: 'scheduled_job_config', label: '生成作业配置', source: 'current_dry_run_payload', status: 'pending' },
+            ],
+            total_steps: 4,
+          },
+        },
+        stages: {
+          ai_processing: {
+            mapping_contract: {
+              checked_paths: [{ field: 'insights_path', path: '$.insights', supported: false }],
+              invalid_fields: [{ field: 'insights_path', path: '$.insights' }],
+              status: 'failed',
+            },
+            mapping_status: 'failed',
+            output_preview_source: 'not_available',
+            will_call_model_gateway: true,
+          },
+          data_connection: {
+            connection_id: 'connection_maxcompute_prod',
+            error_message: 'HTTP Error 400: Bad Request',
+            status: 'failed',
+          },
+          result_actions: [
+            {
+              action_id: 'plugin_action_maxcompute',
+              action_name: '写入用户洞察表',
+              write_preview_source: 'not_available',
+              write_target: 'user_feedback_insights',
+            },
+          ],
+        },
+        status: 'failed',
+      },
+    });
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
+    await waitFor(() => expect(within(dialog).getByLabelText('作业模板')).toBeInTheDocument());
+    fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
+    fireEvent.click(await screen.findByText('每周用户反馈洞察抽取'));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '全链路试运行' }));
+
+    await waitFor(() => expect(jobDryRunBodies).toHaveLength(1));
+    const dryRunResult = await within(dialog).findByLabelText('全链路试运行结果');
+    const sampleReuseSummary = within(dryRunResult).getByLabelText('样例复用摘要');
+    expect(sampleReuseSummary).toHaveTextContent('样例复用链路暂未就绪');
+    expect(sampleReuseSummary).toHaveTextContent('进度：0/4 步已就绪');
+    expect(sampleReuseSummary).toHaveTextContent('下一步：检查试运行问题');
+    expect(sampleReuseSummary).toHaveTextContent('阻断步骤 3');
+    expect(sampleReuseSummary).toHaveTextContent('需要处理：数据连接样例、AI 输出预览、动作写入预览');
+    expect(sampleReuseSummary).toHaveTextContent('先处理缺失的样例、AI 输出或动作写入预览，再保存作业。');
+    expect(sampleReuseSummary).toHaveTextContent('数据连接样例 · blocked');
+    expect(sampleReuseSummary).toHaveTextContent('AI 处理预览 · blocked');
+    expect(sampleReuseSummary).toHaveTextContent('动作写入预览 · blocked');
+    expect(within(dryRunResult).getByLabelText('Skill 输出映射校验摘要')).toHaveTextContent('异常 1 个');
   });
 
   it('shows data connection options by name without submitting environment metadata', async () => {
@@ -1261,6 +2011,125 @@ describe('ScheduledJobsPage', () => {
     );
     expect(assistantDraftConfirmIds).toEqual(['assistant_draft_weekly_feedback_insight']);
     expect(jobCreateBodies).toEqual([]);
+  });
+
+  it('opens an action trial scheduled job draft with sample reuse guidance', async () => {
+    const { jobDryRunBodies } = installScheduledJobsFetchMock();
+    const storageKey = assistantScopedStorageKey(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY);
+    window.sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        auto_dry_run: true,
+        payload: {
+          config_json: {
+            sample_reuse: {
+              auto_dry_run: true,
+              action_id: 'plugin_action_maxcompute',
+              connection_id: 'connection_maxcompute_prod',
+              response_summary: {
+                json: {
+                  rows: [{ feedback_id: 'fb_001', content: '支付体验很好' }],
+                },
+                status_code: 200,
+              },
+              reuse_wizard: {
+                can_continue: true,
+                current_step: 'action_trial',
+                current_step_label: '动作写入预览',
+                blocked_steps: 0,
+                completed_steps: 4,
+                handoff_summary: [
+                  { key: 'response_sample', label: '响应样例', source: 'connection_test_response', status: 'ready' },
+                  { key: 'input_mapping', label: '连接输入映射', source: 'trial_input_payload', status: 'ready' },
+                  { key: 'output_mapping', label: '结果映射', source: 'plugin_action_result_mapping', status: 'ready' },
+                  { key: 'write_preview', label: '写入预览', source: 'connection_test_response', status: 'ready' },
+                ],
+                missing_requirements: [],
+                next_action: 'create_scheduled_job_draft',
+                next_action_description: '生成定时作业草稿，并带入连接、动作、映射、响应样例和写入预览。',
+                pending_steps: 0,
+                primary_action_label: '生成定时作业草稿',
+                progress_label: '4/4 步已就绪',
+                progress_percent: 100,
+                sample_source: 'connection_test_response',
+                status: 'ready',
+                total_steps: 4,
+              },
+              sample_source: 'connection_test_response',
+              write_preview: {
+                records_imported: 8,
+                write_target: 'scheduled_job_result',
+                write_target_label: '定时作业结果',
+              },
+            },
+          },
+          enabled: true,
+          execution_mode: 'deterministic',
+          job_type: 'plugin_action_invoke',
+          name: '调用反馈 API 定时作业',
+          plugin_action_id: 'plugin_action_maxcompute',
+          plugin_action_ids: ['plugin_action_maxcompute'],
+          plugin_connection_id: 'connection_maxcompute_prod',
+          plugin_connection_ids: ['connection_maxcompute_prod'],
+          plugin_input_mapping: {},
+          plugin_output_mapping: { write_target: 'scheduled_job_result' },
+          product_id: 'product_ai_brain',
+          schedule_type: 'manual',
+          source_system: 'plugin-action-trial',
+        },
+        title: '从动作试运行创建：调用反馈 API',
+      }),
+    );
+
+    render(<ScheduledJobsPage />);
+
+    const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
+    expect(window.sessionStorage.getItem(storageKey)).toBeNull();
+    const sampleReuseSummary = within(dialog).getByLabelText('动作试运行样例');
+    expect(sampleReuseSummary).toHaveTextContent('已载入动作试运行样例');
+    expect(sampleReuseSummary).toHaveTextContent('生产 MaxCompute 项目');
+    expect(sampleReuseSummary).toHaveTextContent('获取本周用户反馈数据');
+    expect(sampleReuseSummary).toHaveTextContent('连接测试响应样例');
+    expect(sampleReuseSummary).toHaveTextContent('定时作业结果');
+    expect(sampleReuseSummary).toHaveTextContent('预计写入 8');
+    expect(sampleReuseSummary).toHaveTextContent('打开后自动试运行');
+    expect(sampleReuseSummary).toHaveTextContent('进度：4/4 步已就绪');
+    expect(sampleReuseSummary).toHaveTextContent('当前：动作写入预览');
+    expect(sampleReuseSummary).toHaveTextContent('下一步：生成定时作业草稿');
+    expect(sampleReuseSummary).toHaveTextContent('连接输入映射 · ready');
+    expect(sampleReuseSummary).toHaveTextContent('写入预览 · ready');
+    expect(within(dialog).getByLabelText('名称')).toHaveValue('调用反馈 API 定时作业');
+
+    await waitFor(() =>
+      expect(jobDryRunBodies[0]).toMatchObject({
+        config_json: {
+          sample_reuse: {
+            auto_dry_run: true,
+            action_id: 'plugin_action_maxcompute',
+            connection_id: 'connection_maxcompute_prod',
+            response_summary: {
+              json: {
+                rows: [{ feedback_id: 'fb_001', content: '支付体验很好' }],
+              },
+              status_code: 200,
+            },
+            sample_source: 'connection_test_response',
+            write_preview: {
+              records_imported: 8,
+              write_target: 'scheduled_job_result',
+              write_target_label: '定时作业结果',
+            },
+          },
+        },
+        job_type: 'plugin_action_invoke',
+        plugin_action_id: 'plugin_action_maxcompute',
+        plugin_connection_id: 'connection_maxcompute_prod',
+        source_system: 'plugin-action-trial',
+      }),
+    );
+    const dryRunResult = await within(dialog).findByLabelText('全链路试运行结果');
+    expect(dryRunResult).toBeInTheDocument();
+    expect(dryRunResult).toHaveTextContent('来源 连接测试响应样例');
   });
 
   it('resolves assistant prerequisite drafts when opening a scheduled job draft', async () => {
@@ -1909,7 +2778,7 @@ describe('ScheduledJobsPage', () => {
       createObjectURL,
       revokeObjectURL,
     });
-    installScheduledJobsFetchMock({
+    const { runJobBodies, runJobIds, traceNodeRerunCalls } = installScheduledJobsFetchMock({
       runs: [
         {
           collector_run_id: 'collector_run_weekly_feedback',
@@ -1935,6 +2804,15 @@ describe('ScheduledJobsPage', () => {
             code: 'insight_agent',
             id: 'agent_insight',
             name: '洞察 Agent',
+            package_snapshot: {
+              entry: 'AGENT.md',
+              runtime_boundary: {
+                script_execution: 'disabled_pending_sandbox',
+                script_files: ['scripts/agent_run.py'],
+                script_note: 'Agent 包中的脚本目录当前不会自动执行；开启脚本执行前需要沙箱、审批和审计。',
+              },
+            },
+            source_type: 'package',
           },
           resolved_prompt_snapshot: {
             skill_prompt_templates: [
@@ -1949,6 +2827,15 @@ describe('ScheduledJobsPage', () => {
               code: 'weekly_feedback_analysis',
               id: 'skill_feedback',
               name: '每周反馈分析',
+              package_snapshot: {
+                entry: 'SKILL.md',
+                runtime_boundary: {
+                  script_execution: 'disabled_pending_sandbox',
+                  script_files: ['scripts/run.py'],
+                  script_note: 'Skill 包中的脚本目录当前不会自动执行；开启脚本执行前需要沙箱、审批和审计。',
+                },
+              },
+              source_type: 'package',
             },
           ],
           result_summary: {
@@ -2013,6 +2900,7 @@ describe('ScheduledJobsPage', () => {
                   debug_actions: [
                     { enabled: true, label: '复制输入', type: 'copy_input' },
                     { enabled: true, label: '复制输出', type: 'copy_output' },
+                    { enabled: true, label: '复制复跑计划', type: 'copy_rerun_plan' },
                   ],
                   duration_ms: 318,
                   error: null,
@@ -2020,9 +2908,50 @@ describe('ScheduledJobsPage', () => {
                   input: { week_start: '20260601' },
                   label: '数据连接获取内容',
                   output: { records_imported: 18, response_status_code: 200 },
+                  rerun_plan: {
+                    control_summary: {
+                      blocked_count: 0,
+                      missing_count: 0,
+                      needs_review_count: 0,
+                      satisfied_count: 3,
+                      status_counts: { satisfied: 3 },
+                      total: 3,
+                    },
+                    rerun_controls: [
+                      {
+                        key: 'request_snapshot',
+                        label: '请求快照',
+                        reason: '已有可用于预检的节点快照',
+                        required: true,
+                        satisfied: true,
+                        status: 'satisfied',
+                      },
+                      {
+                        key: 'connection_read_idempotency',
+                        label: '连接读取幂等',
+                        reason: '已使用原插件调用日志生成连接读取幂等键',
+                        required: true,
+                        satisfied: true,
+                        status: 'satisfied',
+                      },
+                      {
+                        key: 'downstream_ai_and_action_invalidation',
+                        label: '下游 AI/动作失效策略',
+                        reason: '单节点复跑会生成独立运行记录，下游 AI 和动作不执行',
+                        required: true,
+                        satisfied: true,
+                        status: 'satisfied',
+                      },
+                    ],
+                    safe_next_action: 'confirm_single_node_rerun',
+                    side_effect_policy: 'external_read_or_fetch',
+                    single_node_supported: true,
+                    snapshot_status: { error: false, input: true, output: true },
+                  },
                   rerun_hint: '如需重试该节点，请从运行记录复跑整条作业，系统会重新执行数据连接和下游节点。',
-                  rerun_supported: false,
+                  rerun_supported: true,
                   retry_count: 1,
+                  snapshot_status: { error: false, input: true, output: true },
                   stage: 'data_connection',
                   stage_label: '数据连接',
                   status: 'succeeded',
@@ -2097,6 +3026,16 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('流程节点 AI执行处理内容')).toHaveTextContent('1');
     expect(within(dialog).getByLabelText('流程节点 动作反馈内容')).toHaveTextContent('user_feedback_insights');
     expect(within(dialog).getByLabelText('流程节点 动作反馈内容')).toHaveTextContent('insight_001');
+    const packageBoundary = within(dialog).getByLabelText('AI文件包运行边界');
+    expect(packageBoundary).toHaveTextContent('AI角色 洞察 Agent');
+    expect(packageBoundary).toHaveTextContent('入口 AGENT.md');
+    expect(packageBoundary).toHaveTextContent('脚本执行 disabled_pending_sandbox');
+    expect(packageBoundary).toHaveTextContent('脚本文件 scripts/agent_run.py');
+    expect(packageBoundary).toHaveTextContent('Agent 包中的脚本目录当前不会自动执行');
+    expect(packageBoundary).toHaveTextContent('Skill 每周反馈分析');
+    expect(packageBoundary).toHaveTextContent('入口 SKILL.md');
+    expect(packageBoundary).toHaveTextContent('脚本文件 scripts/run.py');
+    expect(packageBoundary).toHaveTextContent('Skill 包中的脚本目录当前不会自动执行');
     expect(within(dialog).getAllByText('数据连接获取内容').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('AI执行处理内容').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('动作反馈内容').length).toBeGreaterThan(0);
@@ -2104,10 +3043,52 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('318ms');
     expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('数据连接');
     expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('复跑整条作业');
+    expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('单节点复跑可用');
+    expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('输入快照 有');
+    expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('输出快照 有');
+    expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('副作用 external_read_or_fetch');
+    expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('建议 confirm_single_node_rerun');
     expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('复制输入');
     expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('复制输出');
+    expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('复制复跑计划');
+    const dataTraceNode = within(dialog).getByLabelText('Trace 节点 数据连接获取内容');
+    fireEvent.click(within(dataTraceNode).getByRole('button', { name: '复跑预检' }));
+    expect(await within(dataTraceNode).findByText('节点复跑预检')).toBeInTheDocument();
+    expect(
+      within(dataTraceNode).getByText(
+        '执行策略：单节点复跑控制项已满足，可以进入执行确认。',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(dataTraceNode).getByText('控制项：已满足 3 / 缺失 0 / 阻断 0 / 待确认 0'),
+    ).toBeInTheDocument();
+    expect(within(dataTraceNode).getByText('请求快照 · satisfied')).toBeInTheDocument();
+    expect(within(dataTraceNode).getByText('连接读取幂等 · satisfied')).toBeInTheDocument();
+    expect(within(dataTraceNode).getByText('下游 AI/动作失效策略 · satisfied')).toBeInTheDocument();
+    expect(within(dataTraceNode).getByText('下一步动作')).toBeInTheDocument();
+    expect(within(dataTraceNode).getByText('查看节点快照 · available')).toBeInTheDocument();
+    expect(within(dataTraceNode).getByText('确认单节点复跑 · available')).toBeInTheDocument();
+    const confirmRerunButton = within(dataTraceNode).getByRole('button', { name: '确认复跑' });
+    expect(confirmRerunButton).toBeInTheDocument();
+    expect(within(dataTraceNode).getByText(/input: 有/)).toBeInTheDocument();
+    expect(within(dataTraceNode).getByText(/output: 有/)).toBeInTheDocument();
+    expect(within(dataTraceNode).getByText('error: 无')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Trace 节点 经过 Skill 处理后的内容')).toHaveTextContent('860ms');
     expect(within(dialog).getByLabelText('Trace 节点 经过 Skill 处理后的内容')).toHaveTextContent('AI执行');
+    const skillTraceNode = within(dialog).getByLabelText('Trace 节点 经过 Skill 处理后的内容');
+    fireEvent.click(within(skillTraceNode).getByRole('button', { name: '复跑预检' }));
+    expect(await within(skillTraceNode).findByText('节点复跑预检')).toBeInTheDocument();
+    expect(
+      within(skillTraceNode).getByText(
+        '执行策略：该节点的单节点复跑控制项未全部满足，当前以节点快照预检和整条运行记录复跑作为安全替代。',
+      ),
+    ).toBeInTheDocument();
+    expect(within(skillTraceNode).getByText('复跑整条运行记录 · recommended')).toBeInTheDocument();
+    fireEvent.click(within(skillTraceNode).getByRole('button', { name: '复跑整条运行记录' }));
+    await waitFor(() => expect(runJobIds).toEqual(['scheduled_job_weekly_feedback']));
+    expect(runJobBodies).toEqual([
+      { source_run_id: 'scheduled_job_run_weekly_feedback', trigger_type: 'manual_rerun' },
+    ]);
     expect(within(dialog).getByText('data_connection → skill_processing')).toBeInTheDocument();
     expect(within(dialog).getByText('skill_processing → result_action')).toBeInTheDocument();
     expect(within(dialog).getByText('动作执行状态')).toBeInTheDocument();
@@ -2175,6 +3156,15 @@ describe('ScheduledJobsPage', () => {
       resultWriteRecords: [],
       run: {
         id: 'scheduled_job_run_weekly_feedback',
+        resolved_agent_snapshot: {
+          code: 'insight_agent',
+          package_snapshot: {
+            runtime_boundary: {
+              script_execution: 'disabled_pending_sandbox',
+              script_files: ['scripts/agent_run.py'],
+            },
+          },
+        },
         result_summary: {
           execution_nodes: {
             data_connection: {
@@ -2223,7 +3213,97 @@ describe('ScheduledJobsPage', () => {
           status: 'succeeded',
         },
       },
+      snapshots: {
+        agent: {
+          code: 'insight_agent',
+          package_snapshot: {
+            runtime_boundary: {
+              script_execution: 'disabled_pending_sandbox',
+              script_files: ['scripts/agent_run.py'],
+            },
+          },
+        },
+      },
     });
+    fireEvent.click(confirmRerunButton);
+    await waitFor(() => expect(traceNodeRerunCalls).toEqual(['data_connection']));
+    expect(await within(dialog).findByText('scheduled_job_run_weekly_feedback_data_connection_rerun')).toBeInTheDocument();
+    expect(within(dialog).getByText('Trace DAG 数据连接节点单节点复跑完成')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('scheduled_job_run_weekly_feedback').length).toBeGreaterThan(0);
+  });
+
+  it('confirms an AI processing Trace DAG node rerun when preflight is ready', async () => {
+    const { traceNodeRerunCalls } = installScheduledJobsFetchMock({
+      runs: [buildReadyTraceNodeRerunRun()],
+      traceNodeRerunMode: 'ready_all',
+    });
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
+    fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_weekly_feedback' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const skillTraceNode = within(dialog).getByLabelText('Trace 节点 经过 Skill 处理后的内容');
+    expect(skillTraceNode).toHaveTextContent('单节点复跑可用');
+    expect(skillTraceNode).toHaveTextContent('副作用 model_gateway_call');
+
+    fireEvent.click(within(skillTraceNode).getByRole('button', { name: '复跑预检' }));
+
+    expect(await within(skillTraceNode).findByText('节点复跑预检')).toBeInTheDocument();
+    expect(
+      within(skillTraceNode).getByText('执行策略：单节点复跑控制项已满足，可以进入执行确认。'),
+    ).toBeInTheDocument();
+    expect(
+      within(skillTraceNode).getByText('控制项：已满足 3 / 缺失 0 / 阻断 0 / 待确认 0'),
+    ).toBeInTheDocument();
+    expect(within(skillTraceNode).getByText('输入快照 · satisfied')).toBeInTheDocument();
+    expect(within(skillTraceNode).getByText('模型幂等 · satisfied')).toBeInTheDocument();
+    expect(within(skillTraceNode).getByText('下游动作失效策略 · satisfied')).toBeInTheDocument();
+    expect(within(skillTraceNode).getByText('确认单节点复跑 · available')).toBeInTheDocument();
+
+    fireEvent.click(within(skillTraceNode).getByRole('button', { name: '确认复跑' }));
+
+    await waitFor(() => expect(traceNodeRerunCalls).toEqual(['skill_processing']));
+    expect(await within(dialog).findByText('scheduled_job_run_weekly_feedback_skill_processing_rerun')).toBeInTheDocument();
+    expect(within(dialog).getByText('Trace DAG AI 处理节点单节点复跑完成')).toBeInTheDocument();
+  });
+
+  it('confirms a result action Trace DAG node rerun when preflight is ready', async () => {
+    const { traceNodeRerunCalls } = installScheduledJobsFetchMock({
+      runs: [buildReadyTraceNodeRerunRun()],
+      traceNodeRerunMode: 'ready_all',
+    });
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
+    fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_weekly_feedback' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const resultActionTraceNode = within(dialog).getByLabelText('Trace 节点 结果写入反馈内容');
+    expect(resultActionTraceNode).toHaveTextContent('单节点复跑可用');
+    expect(resultActionTraceNode).toHaveTextContent('副作用 idempotent_result_write');
+
+    fireEvent.click(within(resultActionTraceNode).getByRole('button', { name: '复跑预检' }));
+
+    expect(await within(resultActionTraceNode).findByText('节点复跑预检')).toBeInTheDocument();
+    expect(
+      within(resultActionTraceNode).getByText('执行策略：单节点复跑控制项已满足，可以进入执行确认。'),
+    ).toBeInTheDocument();
+    expect(
+      within(resultActionTraceNode).getByText('控制项：已满足 3 / 缺失 0 / 阻断 0 / 待确认 0'),
+    ).toBeInTheDocument();
+    expect(within(resultActionTraceNode).getByText('动作输入快照 · satisfied')).toBeInTheDocument();
+    expect(within(resultActionTraceNode).getByText('写入幂等 · satisfied')).toBeInTheDocument();
+    expect(within(resultActionTraceNode).getByText('副作用防重 · satisfied')).toBeInTheDocument();
+    expect(within(resultActionTraceNode).getByText('确认单节点复跑 · available')).toBeInTheDocument();
+
+    fireEvent.click(within(resultActionTraceNode).getByRole('button', { name: '确认复跑' }));
+
+    await waitFor(() => expect(traceNodeRerunCalls).toEqual(['result_action']));
+    expect(await within(dialog).findByText('scheduled_job_run_weekly_feedback_result_action_rerun')).toBeInTheDocument();
+    expect(within(dialog).getByText('Trace DAG 结果动作节点单节点复跑完成')).toBeInTheDocument();
   });
 
   it('generates a scheduled job template from a successful run', async () => {

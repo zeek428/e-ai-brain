@@ -67,7 +67,6 @@ from app.services.plugin_projection import (
     public_plugin,
     redact_plugin_request_summary,
 )
-from app.services.plugin_result_mapping import result_mapping_hits, result_write_preview
 from app.services.plugin_result_write_records import (
     RESULT_WRITE_RECORD_SORT_FIELDS,
     RESULT_WRITE_RECORD_STATUSES,
@@ -85,7 +84,6 @@ from app.services.plugin_store_helpers import (
     ensure_plugin_mutable,
     ensure_standard_plugins,
     merge_masked_config,
-    persist_audit_event,
     persist_record,
     plugin_query_repository,
     require_admin,
@@ -140,7 +138,8 @@ def _connection_with_plugin_projection(
     item = dict(connection)
     if item.get("plugin_name") and item.get("plugin_code"):
         return item
-    plugin = _read_memory_record(current_store, "integration_plugins", str(item.get("plugin_id") or ""))
+    plugin_id = str(item.get("plugin_id") or "")
+    plugin = _read_memory_record(current_store, "integration_plugins", plugin_id)
     if plugin is not None:
         item.setdefault("plugin_name", plugin.get("name"))
         item.setdefault("plugin_code", plugin.get("code"))
@@ -572,7 +571,9 @@ def list_plugin_connections_response(
                 )
             ):
                 continue
-        items.append(public_connection(_connection_with_plugin_projection(current_store, connection)))
+        items.append(
+            public_connection(_connection_with_plugin_projection(current_store, connection)),
+        )
     if sort_by is None and not with_pagination:
         items.sort(
             key=lambda item: (
@@ -931,6 +932,9 @@ def test_plugin_connection_response(
                     "body_preview": body_preview,
                     "status_code": getattr(response, "status", None),
                 }
+                parsed_json = ConnectionDiagnosticsService.json_from_body_preview(body_preview)
+                if parsed_json is not None:
+                    response_summary["json"] = parsed_json
                 diagnostics.append(
                     ConnectionDiagnosticsService.diagnostic_step(
                         "mcp_tools_list",
@@ -953,6 +957,9 @@ def test_plugin_connection_response(
                     "body_preview": body_preview,
                     "status_code": getattr(response, "status", None),
                 }
+                parsed_json = ConnectionDiagnosticsService.json_from_body_preview(body_preview)
+                if parsed_json is not None:
+                    response_summary["json"] = parsed_json
                 diagnostics.append(
                     ConnectionDiagnosticsService.diagnostic_step(
                         "network_request",
@@ -1019,9 +1026,7 @@ def test_plugin_connection_response(
         ConnectionDiagnosticsService.curl_command_from_request_summary(request_summary)
     )
     action_template_draft = ConnectionDiagnosticsService.action_template_draft(
-        connection,
-        plugin,
-        request_summary,
+        connection, plugin, request_summary
     )
     result = {
         "action_template_draft": action_template_draft,
@@ -1038,6 +1043,9 @@ def test_plugin_connection_response(
         "protocol": plugin.get("protocol"),
         "request_summary": request_summary,
         "response_summary": response_summary,
+        "scheduled_job_sample_seed": ConnectionDiagnosticsService.scheduled_job_sample_seed(
+            action_template_draft, connection, plugin, request_summary, response_summary
+        ),
         "status": status,
     }
     result["repair_suggestions"] = ConnectionDiagnosticsService.repair_suggestions(result)
@@ -1423,90 +1431,10 @@ def resolve_plugin_snapshot(
     )
     return {
         "action": public_action(action),
-        "connection": public_connection(_connection_with_plugin_projection(current_store, connection)),
+        "connection": public_connection(
+            _connection_with_plugin_projection(current_store, connection),
+        ),
         "plugin": public_plugin(plugin),
-    }
-
-
-def trial_plugin_action_response(
-    *,
-    action_id: str,
-    connection_id: str | None,
-    current_store: Any,
-    input_payload: dict[str, Any] | None,
-    user: dict[str, Any],
-) -> dict[str, Any]:
-    require_admin(user)
-    plugin, connection, action = ensure_active_plugin_action(
-        current_store,
-        action_id,
-        connection_id=connection_id,
-    )
-    payload = input_payload or {}
-    start = perf_counter()
-    response_summary: dict[str, Any] = {}
-    error_code = None
-    error_message = None
-    status = "succeeded"
-    request_preview = plugin_action_request_preview(plugin, connection, action, payload)
-    try:
-        response_summary = _invoke_action(
-            plugin,
-            connection,
-            action,
-            payload,
-            current_store=current_store,
-            user=user,
-        )
-    except Exception as exc:
-        status = "failed"
-        error_code = exc.__class__.__name__
-        error_message = str(exc)
-        if hasattr(exc, "detail") and isinstance(exc.detail, dict):
-            error_code = exc.detail.get("code", error_code)
-            error_message = exc.detail.get("message", error_message)
-    latency_ms = int((perf_counter() - start) * 1000)
-    mapping_hits = result_mapping_hits(response_summary, action.get("result_mapping") or {})
-    write_preview = result_write_preview(
-        response_summary,
-        action.get("result_mapping") or {},
-    )
-    audit_event = record_audit_event(
-        current_store,
-        event_type=f"plugin_action.trial_{status}",
-        actor_id=user["id"],
-        subject_type="plugin_action",
-        subject_id=action["id"],
-        payload={
-            "action_code": action.get("code"),
-            "action_id": action["id"],
-            "connection_environment": connection.get("environment"),
-            "connection_id": connection["id"],
-            "error_code": error_code,
-            "input_keys": sorted(payload.keys()),
-            "latency_ms": latency_ms,
-            "plugin_code": plugin.get("code"),
-            "plugin_id": plugin["id"],
-            "status": status,
-            "write_target": (action.get("result_mapping") or {}).get(
-                "write_target",
-                "scheduled_job_result",
-            ),
-        },
-    )
-    persist_audit_event(current_store, audit_event)
-    return {
-        "action_id": action["id"],
-        "connection_id": connection["id"],
-        "error_code": error_code,
-        "error_message": error_message,
-        "latency_ms": latency_ms,
-        "mapping_hits": mapping_hits,
-        "plugin_id": plugin["id"],
-        "request_preview": request_preview,
-        "response_summary": response_summary,
-        "status": status,
-        "write_preview": write_preview,
     }
 
 
@@ -1552,6 +1480,7 @@ def invoke_plugin_action_response(
     error_message = None
     status = "succeeded"
     runner_task_id: str | None = None
+    error_extra: dict[str, Any] = {}
     try:
         if plugin["protocol"] in AI_EXECUTOR_RUNNER_PROTOCOLS or (
             plugin.get("code") == "ai_executor" and plugin["protocol"] == "mcp_stdio"
@@ -1581,6 +1510,11 @@ def invoke_plugin_action_response(
         if hasattr(exc, "detail") and isinstance(exc.detail, dict):
             error_code = exc.detail.get("code", error_code)
             error_message = exc.detail.get("message", error_message)
+            error_extra = {
+                key: value
+                for key, value in exc.detail.items()
+                if key not in {"code", "message"}
+            }
     latency_ms = int((perf_counter() - start) * 1000)
     now = datetime.now(UTC).isoformat()
     log_id = current_store.new_id("plugin_invocation_log")
@@ -1654,6 +1588,7 @@ def invoke_plugin_action_response(
             502,
             error_code or "PLUGIN_INVOCATION_FAILED",
             error_message or "Plugin invocation failed",
+            error_extra or None,
         )
     return public_invocation_log(log)
 

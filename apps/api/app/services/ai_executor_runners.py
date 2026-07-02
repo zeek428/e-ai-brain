@@ -39,9 +39,21 @@ from app.services.ai_executor_runner_health import (
     system_default_ai_executor_runner,
 )
 from app.services.ai_executor_runner_packages import build_ai_executor_runner_install_package
+from app.services.ai_executor_runner_queue import (
+    latest_task_for_runner as _latest_task_for_runner,
+)
+from app.services.ai_executor_runner_queue import (
+    runner_queue_summary as _runner_queue_summary,
+)
+from app.services.ai_executor_runner_readiness import (
+    runner_readiness_summary as _runner_readiness_summary,
+)
+from app.services.ai_executor_runner_approvals import (
+    save_pending_ai_executor_approval_request,
+)
+from app.services.ai_executor_runner_safety import runner_task_safety_snapshot
 from app.services.ai_executor_runner_task_context import (
     _ai_executor_task_visible_to_user,
-    _datetime_value,
     _load_ai_task,
     _load_collector_run,
     _load_plugin_invocation_log,
@@ -52,13 +64,13 @@ from app.services.ai_executor_runner_task_context import (
     _status_for_runner_task,
     _task_public,
 )
+from app.services.ai_executor_runner_workspace import (
+    reject_ai_executor_task_workspace,
+    workspace_match_detail,
+)
 from app.services.ai_executor_task_reliability import (
     apply_task_claim_lease,
-    apply_task_dead_letter,
-    apply_task_lease_requeue,
     refresh_task_lease,
-    should_dead_letter_after_lease,
-    task_lease_expired,
 )
 from app.services.operational_records import record_audit_event, save_single_repository_record
 from app.services.product_scope import product_scope_filter
@@ -155,6 +167,7 @@ def _repository(current_store: Any) -> Any | None:
 
 
 RUNNER_RECORD_METHOD_COLLECTIONS = {
+    "save_ai_executor_approval_request_record": "ai_executor_approval_requests",
     "save_ai_executor_runner_record": "ai_executor_runners",
     "save_ai_executor_task_record": "ai_executor_tasks",
     "save_collector_run_record": "collector_runs",
@@ -251,28 +264,18 @@ def _runner_matches_filters(
     return True
 
 
-def _latest_task_for_runner(current_store: Any, runner_id: str | None) -> dict[str, Any] | None:
-    if runner_id is None:
-        return None
-    return max(
-        (
-            task
-            for task in _read_collection(current_store, "ai_executor_tasks").values()
-            if task.get("runner_id") == runner_id
-        ),
-        key=lambda task: (
-            task.get("updated_at") or task.get("created_at") or "",
-            task.get("id") or "",
-        ),
-        default=None,
-    )
-
-
 def _runner_public_with_latest_task(
     current_store: Any,
     runner: dict[str, Any],
 ) -> dict[str, Any]:
     item = _runner_public(runner)
+    queue_summary = _runner_queue_summary(current_store, runner)
+    item["queue_summary"] = queue_summary
+    item["readiness_summary"] = _runner_readiness_summary(
+        public_runner=item,
+        queue_summary=queue_summary,
+        runner=runner,
+    )
     latest_task = _latest_task_for_runner(current_store, runner.get("id"))
     if latest_task is not None:
         item["latest_task_id"] = latest_task.get("id")
@@ -1336,13 +1339,6 @@ def runner_heartbeat_response(
     return _runner_public(runner)
 
 
-def _workspace_allowed(runner: dict[str, Any], workspace_root: str) -> bool:
-    roots = [str(root) for root in runner.get("workspace_roots") or []]
-    if not roots or "*" in roots:
-        return True
-    return workspace_root in roots
-
-
 def find_available_runner(
     current_store: Any,
     *,
@@ -1368,14 +1364,35 @@ def find_available_runner(
     candidates = list(_read_collection(current_store, "ai_executor_runners").values())
     if runner_id:
         candidates = [runner for runner in candidates if runner.get("id") == runner_id]
+    workspace_rejections: list[dict[str, Any]] = []
     for runner in candidates:
         if runner.get("status") != "active":
             continue
         if executor_type not in (runner.get("executor_types") or []):
             continue
-        if not _workspace_allowed(runner, workspace_root):
+        workspace_match = workspace_match_detail(runner, workspace_root)
+        if not workspace_match["allowed"]:
+            workspace_rejections.append(
+                {
+                    **workspace_match,
+                    "runner_id": runner.get("id"),
+                    "runner_name": runner.get("name"),
+                }
+            )
             continue
         return runner
+    if workspace_rejections:
+        rejection = workspace_rejections[0]
+        raise api_error(
+            409,
+            "AI_EXECUTOR_WORKSPACE_NOT_ALLOWED",
+            "Workspace root is outside the runner workspace whitelist",
+            {
+                "runner_id": rejection.get("runner_id"),
+                "workspace_root": rejection.get("workspace_root"),
+                "workspace_roots": rejection.get("workspace_roots"),
+            },
+        )
     raise api_error(
         409,
         "AI_EXECUTOR_RUNNER_UNAVAILABLE",
@@ -1403,6 +1420,63 @@ def create_ai_executor_task(
 ) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
     task_id = current_store.new_id("ai_executor_task")
+    safety_snapshot = runner_task_safety_snapshot(
+        instruction=instruction,
+        request_config=request_config,
+    )
+    if safety_snapshot["approval_required"] and not safety_snapshot["approval"]["approved"]:
+        approval_request = {
+            **dict(safety_snapshot.get("approval_request") or {}),
+            "approval_request_id": current_store.new_id("ai_executor_approval_request"),
+            "action_id": action_id,
+            "connection_id": connection_id,
+            "executor_type": executor_type,
+            "runner_id": runner_id,
+            "scheduled_job_id": scheduled_job_id,
+            "scheduled_job_run_id": scheduled_job_run_id,
+            "workspace_root": workspace_root,
+        }
+        safety_snapshot = {**safety_snapshot, "approval_request": approval_request}
+        save_pending_ai_executor_approval_request(
+            current_store,
+            approval_request=approval_request,
+            requested_by=created_by,
+            safety_snapshot=safety_snapshot,
+        )
+        record_audit_event(
+            current_store,
+            event_type="ai_executor_task.approval_requested",
+            actor_id=created_by,
+            subject_type="ai_executor_runner",
+            subject_id=runner_id,
+            payload={
+                "action_id": action_id,
+                "approval_request": approval_request,
+                "blocked_operations": safety_snapshot["blocked_operations"],
+                "connection_id": connection_id,
+                "executor_type": executor_type,
+                "risk_level": safety_snapshot["risk_level"],
+                "scheduled_job_id": scheduled_job_id,
+                "scheduled_job_run_id": scheduled_job_run_id,
+                "workspace_root": workspace_root,
+            },
+        )
+        raise api_error(
+            409,
+            "AI_EXECUTOR_APPROVAL_REQUIRED",
+            "AI executor instruction requires human approval before Runner dispatch",
+            {
+                "approval": safety_snapshot["approval"],
+                "approval_request": approval_request,
+                "blocked_operations": safety_snapshot["blocked_operations"],
+                "risk_level": safety_snapshot["risk_level"],
+                "safety": safety_snapshot,
+            },
+        )
+    task_request_config = {
+        **dict(request_config or {}),
+        "ai_executor_safety": safety_snapshot,
+    }
     task = {
         "action_id": action_id,
         "ai_task_id": ai_task_id,
@@ -1419,7 +1493,7 @@ def create_ai_executor_task(
         "instruction": instruction,
         "logs": [],
         "plugin_invocation_log_id": plugin_invocation_log_id,
-        "request_config": request_config,
+        "request_config": task_request_config,
         "result_json": {},
         "runner_id": runner_id,
         "scheduled_job_id": scheduled_job_id,
@@ -1441,6 +1515,14 @@ def create_ai_executor_task(
             "scheduled_job_id": scheduled_job_id,
             "scheduled_job_run_id": scheduled_job_run_id,
             "ai_task_id": ai_task_id,
+            "approval_id": (safety_snapshot.get("approval") or {}).get("approval_id"),
+            "approved_by": (safety_snapshot.get("approval") or {}).get("approved_by"),
+            "approved_operations": (safety_snapshot.get("approval") or {}).get(
+                "approved_operations",
+            )
+            or [],
+            "risk_level": safety_snapshot["risk_level"],
+            "safety_status": safety_snapshot["status"],
             "workspace_root": workspace_root,
         },
     )
@@ -1475,13 +1557,31 @@ def claim_ai_executor_task_response(
     queued.sort(key=lambda task: (task.get("created_at") or "", task["id"]))
     if not queued:
         return {"task": None}
-    task = queued[0]
-    if task.get("executor_type") not in (runner.get("executor_types") or []):
-        raise api_error(
-            409,
-            "AI_EXECUTOR_TASK_UNSUPPORTED",
-            "Runner does not support task executor",
-        )
+    task: dict[str, Any] | None = None
+    for candidate in queued:
+        if candidate.get("executor_type") not in (runner.get("executor_types") or []):
+            raise api_error(
+                409,
+                "AI_EXECUTOR_TASK_UNSUPPORTED",
+                "Runner does not support task executor",
+            )
+        workspace_match = workspace_match_detail(runner, candidate.get("workspace_root"))
+        if not workspace_match["allowed"]:
+            reject_ai_executor_task_workspace(
+                current_store,
+                append_task_logs=_append_task_logs,
+                persist_record=_persist_record,
+                runner=runner,
+                sync_ai_task=_sync_runner_completion_to_ai_task,
+                sync_scheduled_run=_sync_runner_completion_to_scheduled_run,
+                task=candidate,
+                workspace_match=workspace_match,
+            )
+            continue
+        task = candidate
+        break
+    if task is None:
+        return {"task": None}
     now_dt = datetime.now(UTC)
     now = now_dt.isoformat()
     task = apply_task_claim_lease(
@@ -1772,183 +1872,6 @@ def retry_ai_executor_task_response(
     return {"source_task": _task_public(source_task), "task": _task_public(retry_task)}
 
 
-def timeout_ai_executor_tasks_response(
-    *,
-    current_store: Any,
-    payload: Any,
-    user: dict[str, Any],
-) -> dict[str, Any]:
-    _ensure_admin(user)
-    now = _datetime_value(getattr(payload, "now", None)) or datetime.now(UTC)
-    task_product_scope_ids = product_scope_filter(user)
-    sync_ai_executor_task_store(current_store, product_scope_ids=task_product_scope_ids)
-    dead_lettered: list[dict[str, Any]] = []
-    requeued: list[dict[str, Any]] = []
-    timed_out: list[dict[str, Any]] = []
-    for task in list(_read_collection(current_store, "ai_executor_tasks").values()):
-        if task_product_scope_ids is not None and not _ai_executor_task_visible_to_user(
-            current_store,
-            task=task,
-            user=user,
-        ):
-            continue
-        if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
-            continue
-        if task_lease_expired(task, now=now):
-            now_iso = now.isoformat()
-            reason = "AI executor task lease expired"
-            if should_dead_letter_after_lease(task):
-                updated_task = apply_task_dead_letter(task, now=now, reason=reason)
-                updated_task = {
-                    **updated_task,
-                    "logs": _append_task_logs(
-                        task,
-                        [
-                            {
-                                "level": "error",
-                                "message": "Task moved to dead letter after lease expired",
-                                "timestamp": now_iso,
-                            }
-                        ],
-                    ),
-                }
-                audit_event = record_audit_event(
-                    current_store,
-                    event_type="ai_executor_task.dead_lettered",
-                    actor_id=user["id"],
-                    subject_type="ai_executor_task",
-                    subject_id=updated_task["id"],
-                    payload={
-                        "runner_id": updated_task.get("runner_id"),
-                        "reason": reason,
-                    },
-                )
-                _persist_record(
-                    current_store,
-                    "save_ai_executor_task_record",
-                    updated_task,
-                    audit_event=audit_event,
-                )
-                _sync_runner_completion_to_scheduled_run(
-                    current_store,
-                    task=updated_task,
-                    runner_id=str(updated_task.get("runner_id") or user["id"]),
-                )
-                _sync_runner_completion_to_ai_task(
-                    current_store,
-                    task=updated_task,
-                    runner_id=str(updated_task.get("runner_id") or user["id"]),
-                )
-                dead_lettered.append(updated_task)
-                continue
-
-            updated_task = apply_task_lease_requeue(task, now=now, reason=reason)
-            updated_task = {
-                **updated_task,
-                "logs": _append_task_logs(
-                    task,
-                    [
-                        {
-                            "level": "warning",
-                            "message": "Task lease expired; requeued for another claim",
-                            "timestamp": now_iso,
-                        }
-                    ],
-                ),
-            }
-            audit_event = record_audit_event(
-                current_store,
-                event_type="ai_executor_task.lease_requeued",
-                actor_id=user["id"],
-                subject_type="ai_executor_task",
-                subject_id=updated_task["id"],
-                payload={
-                    "runner_id": updated_task.get("runner_id"),
-                    "reason": reason,
-                },
-            )
-            _persist_record(
-                current_store,
-                "save_ai_executor_task_record",
-                updated_task,
-                audit_event=audit_event,
-            )
-            _sync_runner_completion_to_scheduled_run(
-                current_store,
-                task=updated_task,
-                runner_id=str(updated_task.get("runner_id") or user["id"]),
-            )
-            _sync_runner_completion_to_ai_task(
-                current_store,
-                task=updated_task,
-                runner_id=str(updated_task.get("runner_id") or user["id"]),
-            )
-            requeued.append(updated_task)
-            continue
-        reference_at = (
-            _datetime_value(task.get("claimed_at"))
-            or _datetime_value(task.get("updated_at"))
-            or _datetime_value(task.get("created_at"))
-            or now
-        )
-        timeout_seconds = int(task.get("timeout_seconds") or 1800)
-        if (now - reference_at).total_seconds() < timeout_seconds:
-            continue
-        now_iso = now.isoformat()
-        updated_task = {
-            **task,
-            "error_code": "AI_EXECUTOR_TASK_TIMEOUT",
-            "error_message": f"AI executor task timed out after {timeout_seconds}s",
-            "finished_at": now_iso,
-            "logs": _append_task_logs(
-                task,
-                [
-                    {
-                        "level": "error",
-                        "message": f"Task timed out after {timeout_seconds}s",
-                        "timestamp": now_iso,
-                    }
-                ],
-            ),
-            "status": "timed_out",
-            "updated_at": now_iso,
-        }
-        audit_event = record_audit_event(
-            current_store,
-            event_type="ai_executor_task.timed_out",
-            actor_id=user["id"],
-            subject_type="ai_executor_task",
-            subject_id=updated_task["id"],
-            payload={
-                "runner_id": updated_task.get("runner_id"),
-                "timeout_seconds": timeout_seconds,
-            },
-        )
-        _persist_record(
-            current_store,
-            "save_ai_executor_task_record",
-            updated_task,
-            audit_event=audit_event,
-        )
-        _sync_runner_completion_to_scheduled_run(
-            current_store,
-            task=updated_task,
-            runner_id=str(updated_task.get("runner_id") or user["id"]),
-        )
-        _sync_runner_completion_to_ai_task(
-            current_store,
-            task=updated_task,
-            runner_id=str(updated_task.get("runner_id") or user["id"]),
-        )
-        timed_out.append(updated_task)
-    return {
-        "dead_letter_task_ids": [task["id"] for task in dead_lettered],
-        "requeued_task_ids": [task["id"] for task in requeued],
-        "timed_out_task_ids": [task["id"] for task in timed_out],
-        "tasks": [_task_public(task) for task in [*timed_out, *requeued, *dead_lettered]],
-    }
-
-
 def complete_ai_executor_task_response(
     *,
     current_store: Any,
@@ -1962,6 +1885,8 @@ def complete_ai_executor_task_response(
     task = _read_record(current_store, "ai_executor_tasks", task_id)
     if task is None or task.get("runner_id") != runner_id:
         raise api_error(404, "NOT_FOUND", "AI executor task not found")
+    if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
+        raise api_error(409, "AI_EXECUTOR_TASK_TERMINAL", "Terminal task cannot be completed")
     status = _ensure_enum(getattr(payload, "status", None), AI_EXECUTOR_TASK_STATUSES, "status")
     if status not in AI_EXECUTOR_TASK_TERMINAL_STATUSES and status != "running":
         raise api_error(400, "VALIDATION_ERROR", "Task completion status is invalid")
@@ -1971,7 +1896,7 @@ def complete_ai_executor_task_response(
         "error_code": getattr(payload, "error_code", None),
         "error_message": getattr(payload, "error_message", None),
         "finished_at": now if status in AI_EXECUTOR_TASK_TERMINAL_STATUSES else None,
-        "logs": list(getattr(payload, "logs", None) or []),
+        "logs": _append_task_logs(task, list(getattr(payload, "logs", None) or [])),
         "result_json": dict(getattr(payload, "result_json", None) or {}),
         "status": status,
         "updated_at": now,

@@ -171,6 +171,7 @@ export type AssistantDraftResolutionRecord = {
 export type AssistantDraftResolutionMap = Record<string, AssistantDraftResolutionRecord>;
 
 export type AssistantScheduledJobDraft = {
+  auto_dry_run?: boolean;
   draftId?: string;
   payload: Record<string, unknown>;
   title?: string;

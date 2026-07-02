@@ -9,7 +9,7 @@ import {
   ReloadOutlined,
   RobotOutlined,
 } from '@ant-design/icons';
-import { Button, Descriptions, Dropdown, Modal, Space } from 'antd';
+import { Button, Descriptions, Dropdown, Modal, Space, Tag, Typography } from 'antd';
 
 import type {
   ResultWriteRecord,
@@ -40,6 +40,8 @@ type ScheduledJobRunDetailModalProps = {
   onClose: () => void;
   onCopyRun: (run: ScheduledJobRunRecord) => void;
   onGenerateTemplate: (run: ScheduledJobRunRecord) => void | Promise<void>;
+  onTraceFullRunRerunRequested?: (request: Record<string, unknown>) => void | Promise<void>;
+  onTraceNodeRerunCreated?: (run: ScheduledJobRunRecord) => void;
   resultWriteRecords: ResultWriteRecord[];
   resultWriteRecordsLoading: boolean;
   run?: ScheduledJobRunRecord;
@@ -63,6 +65,91 @@ function assistantRunFollowupPrompt(run: ScheduledJobRunRecord) {
 function runResultSummaryMessage(run: ScheduledJobRunRecord): string | undefined {
   const message = run.result_summary?.message;
   return typeof message === 'string' && message.trim() ? message : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function arrayOfRecords(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.filter(isTraceRecord) : [];
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item)).filter(Boolean)
+    : [];
+}
+
+function packageBoundaryItems(run: ScheduledJobRunRecord) {
+  const items: Array<{
+    entry?: string;
+    files: string[];
+    label: string;
+    note?: string;
+    scriptExecution?: string;
+  }> = [];
+  const agentSnapshot = recordValue(run.resolved_agent_snapshot);
+  const agentPackage = recordValue(agentSnapshot?.package_snapshot);
+  const agentBoundary = recordValue(agentPackage?.runtime_boundary);
+  if (agentBoundary) {
+    items.push({
+      entry: stringValue(agentPackage?.entry),
+      files: stringArray(agentBoundary.script_files),
+      label: `AI角色 ${stringValue(agentSnapshot?.name) ?? stringValue(agentSnapshot?.code) ?? '-'}`,
+      note: stringValue(agentBoundary.script_note),
+      scriptExecution: stringValue(agentBoundary.script_execution),
+    });
+  }
+  for (const skill of arrayOfRecords(run.resolved_skill_snapshots)) {
+    const skillPackage = recordValue(skill.package_snapshot);
+    const skillBoundary = recordValue(skillPackage?.runtime_boundary);
+    if (!skillBoundary) {
+      continue;
+    }
+    items.push({
+      entry: stringValue(skillPackage?.entry),
+      files: stringArray(skillBoundary.script_files),
+      label: `Skill ${stringValue(skill.name) ?? stringValue(skill.code) ?? '-'}`,
+      note: stringValue(skillBoundary.script_note),
+      scriptExecution: stringValue(skillBoundary.script_execution),
+    });
+  }
+  return items;
+}
+
+function ScriptExecutionBoundary({ run }: { run: ScheduledJobRunRecord }) {
+  const items = packageBoundaryItems(run);
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <Space
+      aria-label="AI文件包运行边界"
+      orientation="vertical"
+      size={8}
+      style={{
+        background: '#f8fafc',
+        border: '1px solid #e5e7eb',
+        borderRadius: 6,
+        padding: 12,
+        width: '100%',
+      }}
+    >
+      <Typography.Text strong>AI文件包运行边界</Typography.Text>
+      {items.map((item) => (
+        <Space key={`${item.label}-${item.entry ?? ''}`} orientation="vertical" size={6} style={{ width: '100%' }}>
+          <Space size={[8, 8]} wrap>
+            <Typography.Text>{item.label}</Typography.Text>
+            {item.entry ? <Tag color="blue">入口 {item.entry}</Tag> : null}
+            {item.scriptExecution ? <Tag color="orange">脚本执行 {item.scriptExecution}</Tag> : null}
+            {item.files.length ? <Tag color="purple">脚本文件 {item.files.join('、')}</Tag> : <Tag>无脚本文件</Tag>}
+          </Space>
+          {item.note ? <Typography.Text type="secondary">{item.note}</Typography.Text> : null}
+        </Space>
+      ))}
+    </Space>
+  );
 }
 
 function assistantRunRepairDraftPrompt() {
@@ -142,6 +229,7 @@ export function buildScheduledJobRunDetailExportPayload({
       task_creation: getRunExecutionNode(run, 'task_creation'),
     },
     snapshots: {
+      agent: run.resolved_agent_snapshot,
       config: run.config_snapshot,
       plugin: run.resolved_plugin_snapshot,
       prompt: run.resolved_prompt_snapshot,
@@ -180,6 +268,8 @@ export function ScheduledJobRunDetailModal({
   onClose,
   onCopyRun,
   onGenerateTemplate,
+  onTraceFullRunRerunRequested,
+  onTraceNodeRerunCreated,
   resultWriteRecords,
   resultWriteRecordsLoading,
   run,
@@ -347,7 +437,12 @@ export function ScheduledJobRunDetailModal({
           />
           <RunSourceComparison run={run} />
           <RunExecutionChain run={run} />
-          <RunTraceDag run={run} />
+          <RunTraceDag
+            onFullRunRerunRequested={onTraceFullRunRerunRequested}
+            onNodeRerunCreated={onTraceNodeRerunCreated}
+            run={run}
+          />
+          <ScriptExecutionBoundary run={run} />
           <ScheduledJobRunResultWriteRecords
             focusedRecordId={focusedResultWriteRecordId}
             loading={resultWriteRecordsLoading}

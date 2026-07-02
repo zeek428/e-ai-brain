@@ -16,7 +16,7 @@ from app.services.scheduled_job_runtime import exception_error_code_and_message
 
 GENERIC_RESULT_ACTION_TYPES = {"save_scheduled_job_result", "send_notification"}
 GENERIC_NOTIFICATION_CHANNELS = {"dingtalk", "email"}
-GENERIC_RESULT_ACTION_JOB_TYPES = {"online_log_ai_analysis"}
+GENERIC_RESULT_ACTION_JOB_TYPES = {"online_log_ai_analysis", "plugin_action_invoke"}
 
 
 def validate_scheduled_job_result_actions(job_type: str, actions: Any) -> list[dict[str, Any]]:

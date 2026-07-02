@@ -72,10 +72,10 @@ const installModeOptionsByTargetOs = new Map([
 ]);
 
 export const aiExecutorRunnerProtocolOptions = [
-  { label: 'Runner Polling', value: 'runner_polling' },
-  { label: 'Runner WebSocket', value: 'runner_websocket' },
-  { label: 'MCP HTTP', value: 'mcp_http' },
-  { label: 'MCP Stdio', value: 'mcp_stdio' },
+  { label: 'Runner Polling（当前支持）', value: 'runner_polling' },
+  { disabled: true, label: 'Runner WebSocket（预留）', value: 'runner_websocket' },
+  { disabled: true, label: 'MCP HTTP（预留）', value: 'mcp_http' },
+  { disabled: true, label: 'MCP Stdio（预留）', value: 'mcp_stdio' },
 ];
 
 function runnerStringValue(value: unknown, fallback = '') {

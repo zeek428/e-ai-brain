@@ -49,6 +49,13 @@ CREATE TABLE IF NOT EXISTS ai_agents (
   default_skill_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
   tool_policy jsonb NOT NULL DEFAULT '{}'::jsonb,
   execution_policy jsonb NOT NULL DEFAULT '{}'::jsonb,
+  source_type text NOT NULL DEFAULT 'inline',
+  package_uri text,
+  package_checksum text,
+  package_entry text,
+  package_files jsonb NOT NULL DEFAULT '[]'::jsonb,
+  package_size_bytes integer NOT NULL DEFAULT 0,
+  manifest jsonb NOT NULL DEFAULT '{}'::jsonb,
   status text NOT NULL DEFAULT 'active',
   created_by text,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -56,6 +63,15 @@ CREATE TABLE IF NOT EXISTS ai_agents (
   UNIQUE (brain_app_id, code),
   CONSTRAINT ck_ai_agents_status CHECK (status IN ('active', 'disabled'))
 );
+
+ALTER TABLE IF EXISTS ai_agents
+  ADD COLUMN IF NOT EXISTS source_type text NOT NULL DEFAULT 'inline',
+  ADD COLUMN IF NOT EXISTS package_uri text,
+  ADD COLUMN IF NOT EXISTS package_checksum text,
+  ADD COLUMN IF NOT EXISTS package_entry text,
+  ADD COLUMN IF NOT EXISTS package_files jsonb NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS package_size_bytes integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS manifest jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_ai_agents_brain_status
   ON ai_agents(brain_app_id, status);

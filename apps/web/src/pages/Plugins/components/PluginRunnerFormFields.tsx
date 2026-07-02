@@ -15,7 +15,12 @@ export function PluginRunnerFormFields({ editingRunner }: { editingRunner: boole
         <Input placeholder="Zeek Mac 本地执行器" />
       </Form.Item>
       <Space wrap>
-        <Form.Item label="协议" name="protocol" rules={[{ required: true }]}>
+        <Form.Item
+          extra="当前本地 Runner 安装包和任务队列闭环使用 Runner Polling；WebSocket/MCP 为预留协议。"
+          label="协议"
+          name="protocol"
+          rules={[{ required: true }]}
+        >
           <Select options={aiExecutorRunnerProtocolOptions} style={{ width: 180 }} />
         </Form.Item>
         <Form.Item label="状态" name="status" rules={[{ required: true }]}>

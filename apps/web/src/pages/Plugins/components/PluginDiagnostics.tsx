@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Alert, Button, Space, Table, Tag, Typography } from 'antd';
 
 import {
@@ -53,6 +54,199 @@ export function JsonDiagnosticsBlock({ title, value }: { title: string; value?: 
         {compactJson(value)}
       </pre>
     </div>
+  );
+}
+
+function wizardStatusColor(status?: string) {
+  if (status === 'ready' || status === 'succeeded') {
+    return 'green';
+  }
+  if (status === 'blocked' || status === 'failed') {
+    return 'red';
+  }
+  if (status === 'partial' || status === 'pending') {
+    return 'orange';
+  }
+  return 'default';
+}
+
+const reuseRequirementLabels: Record<string, string> = {
+  action_trial_response: '动作试运行响应样例',
+  action_trial_succeeded: '动作试运行成功结果',
+  action_write_preview: '动作写入预览',
+  ai_output_preview: 'AI 输出预览',
+  connection_test_response: '连接测试响应样例',
+  data_connection_sample: '数据连接样例',
+  write_preview: '写入预览',
+};
+
+function reuseRequirementLabel(value: string) {
+  return reuseRequirementLabels[value] ?? value;
+}
+
+const approvalNextActionLabels: Record<string, string> = {
+  create_platform_human_approval: '创建平台人工审批',
+};
+
+function approvalNextActionLabel(value: string) {
+  return approvalNextActionLabels[value] ?? value;
+}
+
+const blockedOperationLabels: Record<string, string> = {
+  git_push_or_merge: 'Git 推送或合并',
+};
+
+function blockedOperationLabel(value: string) {
+  return blockedOperationLabels[value] ?? value;
+}
+
+const approvalFieldLabels: Record<string, string> = {
+  approval_id: '审批 ID',
+  approved: '审批通过标记',
+  approved_at: '审批时间',
+  approved_by: '审批人',
+  approved_operations: '批准操作',
+  expires_at: '有效期',
+  mode: '审批模式',
+  policy_version: '策略版本',
+};
+
+function approvalFieldLabel(value: string) {
+  return approvalFieldLabels[value] ?? value;
+}
+
+export function ReuseWizardSummary({ title = '复用向导', value }: { title?: string; value?: unknown }) {
+  const wizard = isPlainRecord(value) ? value : undefined;
+  if (!wizard) {
+    return null;
+  }
+  const steps = Array.isArray(wizard.steps)
+    ? wizard.steps.filter(isPlainRecord)
+    : [];
+  const missingRequirements = Array.isArray(wizard.missing_requirements)
+    ? wizard.missing_requirements.map(String).filter(Boolean)
+    : [];
+  const handoffSummary = Array.isArray(wizard.handoff_summary)
+    ? wizard.handoff_summary.filter(isPlainRecord)
+    : [];
+  const currentStepLabel = typeof wizard.current_step_label === 'string' ? wizard.current_step_label : undefined;
+  const nextActionDescription = typeof wizard.next_action_description === 'string'
+    ? wizard.next_action_description
+    : undefined;
+  const nextAction = typeof wizard.next_action === 'string' ? wizard.next_action : undefined;
+  const primaryLabel = typeof wizard.primary_action_label === 'string' ? wizard.primary_action_label : undefined;
+  const progressLabel = typeof wizard.progress_label === 'string' ? wizard.progress_label : undefined;
+  const progressPercent = typeof wizard.progress_percent === 'number' ? wizard.progress_percent : undefined;
+  const status = typeof wizard.status === 'string' ? wizard.status : undefined;
+  const missingRequirementText = missingRequirements.map(reuseRequirementLabel).join('、');
+  return (
+    <Space orientation="vertical" size={6} style={{ width: '100%' }}>
+      <Space size={[8, 8]} wrap>
+        <Typography.Text type="secondary">{title}</Typography.Text>
+        {progressLabel ? (
+          <Tag color={progressPercent === 100 ? 'green' : 'blue'}>
+            进度：{progressLabel}
+          </Tag>
+        ) : null}
+        {currentStepLabel ? <Tag color="geekblue">当前：{currentStepLabel}</Tag> : null}
+        {status ? <Tag color={wizardStatusColor(status)}>{status}</Tag> : null}
+        {primaryLabel ? <Tag color="blue">下一步：{primaryLabel}</Tag> : null}
+        {nextAction && !primaryLabel ? <Tag color="blue">下一步：{nextAction}</Tag> : null}
+        {missingRequirementText ? (
+          <Tag color="red">缺失 {missingRequirementText}</Tag>
+        ) : null}
+      </Space>
+      {nextActionDescription ? (
+        <Typography.Text type="secondary">{nextActionDescription}</Typography.Text>
+      ) : null}
+      {handoffSummary.length ? (
+        <Space size={[8, 8]} wrap>
+          {handoffSummary.map((item, index) => {
+            const itemStatus = typeof item.status === 'string' ? item.status : undefined;
+            const label = typeof item.label === 'string'
+              ? item.label
+              : typeof item.key === 'string'
+                ? item.key
+                : '已带入';
+            return (
+              <Tag
+                color={wizardStatusColor(itemStatus)}
+                key={`${typeof item.key === 'string' ? item.key : index}-${itemStatus ?? 'unknown'}`}
+              >
+                {label} · {itemStatus ?? '-'}
+              </Tag>
+            );
+          })}
+        </Space>
+      ) : null}
+      {steps.length ? (
+        <Space size={[8, 8]} wrap>
+          {steps.map((step, index) => {
+            const stepStatus = typeof step.status === 'string' ? step.status : undefined;
+            const label = typeof step.label === 'string'
+              ? step.label
+              : typeof step.key === 'string'
+                ? step.key
+                : '步骤';
+            return (
+              <Tag
+                color={wizardStatusColor(stepStatus)}
+                key={`${typeof step.key === 'string' ? step.key : index}-${stepStatus ?? 'unknown'}`}
+              >
+                {label} · {stepStatus ?? '-'}
+              </Tag>
+            );
+          })}
+        </Space>
+      ) : null}
+    </Space>
+  );
+}
+
+export function RunnerApprovalRequestBlock({ action, value }: { action?: ReactNode; value?: unknown }) {
+  const approvalRequest = isPlainRecord(value) ? value : undefined;
+  if (!approvalRequest) {
+    return null;
+  }
+  const title = typeof approvalRequest.title === 'string'
+    ? approvalRequest.title
+    : 'AI 执行器高风险操作审批';
+  const approvalRequestId = typeof approvalRequest.approval_request_id === 'string'
+    ? approvalRequest.approval_request_id
+    : undefined;
+  const nextAction = typeof approvalRequest.next_action === 'string'
+    ? approvalRequest.next_action
+    : undefined;
+  const blockedOperations = Array.isArray(approvalRequest.blocked_operations)
+    ? approvalRequest.blocked_operations.map(String).filter(Boolean)
+    : [];
+  const requiredFields = Array.isArray(approvalRequest.required_fields)
+    ? approvalRequest.required_fields.map(String).filter(Boolean)
+    : [];
+  return (
+    <Alert
+      description={(
+        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+          <Space size={[8, 8]} wrap>
+            {approvalRequestId ? <Tag color="blue">请求：{approvalRequestId}</Tag> : null}
+            {nextAction ? <Tag color="orange">下一步：{approvalNextActionLabel(nextAction)}</Tag> : null}
+            {blockedOperations.map((operation) => (
+              <Tag color="red" key={operation}>{blockedOperationLabel(operation)}</Tag>
+            ))}
+          </Space>
+          {requiredFields.length ? (
+            <Typography.Text type="secondary">
+              审批需补齐：{requiredFields.map(approvalFieldLabel).join('、')}
+            </Typography.Text>
+          ) : null}
+          <JsonDiagnosticsBlock title="审批模板 JSON" value={approvalRequest.approval_template} />
+        </Space>
+      )}
+      action={action}
+      showIcon
+      title={title}
+      type="warning"
+    />
   );
 }
 
@@ -261,6 +455,9 @@ export function PluginConnectionTestDiagnosticsContent({
   onCopyAsActionTemplate?: () => void;
 }) {
   const requestSummary = isPlainRecord(result.request_summary) ? result.request_summary : {};
+  const sampleSeed = isPlainRecord(result.scheduled_job_sample_seed)
+    ? result.scheduled_job_sample_seed
+    : undefined;
   const placeholderHeaders = Array.isArray(requestSummary.masked_placeholder_headers)
     ? requestSummary.masked_placeholder_headers.map(String)
     : [];
@@ -282,6 +479,26 @@ export function PluginConnectionTestDiagnosticsContent({
       ) : null}
       {result.error_message ? (
         <Alert description={result.error_message} showIcon title="错误信息" type="error" />
+      ) : null}
+      {sampleSeed ? (
+        <Alert
+          action={onCopyAsActionTemplate ? (
+            <Button size="small" type="primary" onClick={onCopyAsActionTemplate}>
+              复制并试运行
+            </Button>
+          ) : undefined}
+          description={(
+            <Space orientation="vertical" size={6} style={{ width: '100%' }}>
+              <Typography.Text>
+                本次连接测试已保存最终请求、变量替换结果和远端响应样例。下一步复制为动作后会自动试运行，系统会继续生成动作写入预览和定时作业草稿。
+              </Typography.Text>
+              <ReuseWizardSummary value={sampleSeed.reuse_wizard} />
+            </Space>
+          )}
+          showIcon
+          title="连接样例可复用"
+          type="success"
+        />
       ) : null}
       <Table
         columns={[

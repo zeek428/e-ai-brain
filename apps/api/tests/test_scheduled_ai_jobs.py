@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import app.services.scheduled_job_ai_capabilities as scheduled_job_ai_capabilities_service
 import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
+import app.services.scheduled_job_data_connections as scheduled_job_data_connections_service
 import app.services.scheduled_job_result_actions as scheduled_job_result_actions_service
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
@@ -135,7 +136,59 @@ def test_scheduled_job_run_projection_adds_trace_graph_and_source_summary():
     assert {"enabled": True, "label": "复制输出", "type": "copy_output"} in by_node[
         "data_connection"
     ]["debug_actions"]
+    assert {"enabled": True, "label": "复制复跑计划", "type": "copy_rerun_plan"} in by_node[
+        "data_connection"
+    ]["debug_actions"]
+    assert by_node["data_connection"]["snapshot_status"] == {
+        "error": False,
+        "input": True,
+        "output": True,
+    }
+    assert by_node["data_connection"]["rerun_plan"]["control_summary"] == {
+        "blocked_count": 2,
+        "missing_count": 0,
+        "needs_review_count": 0,
+        "satisfied_count": 1,
+        "status_counts": {"blocked": 2, "satisfied": 1},
+        "total": 3,
+    }
+    assert by_node["data_connection"]["rerun_plan"]["rerun_controls"] == [
+        {
+            "key": "request_snapshot",
+            "label": "请求快照",
+            "reason": "已有可用于预检的节点快照",
+            "required": True,
+            "satisfied": True,
+            "status": "satisfied",
+        },
+        {
+            "key": "connection_read_idempotency",
+            "label": "连接读取幂等",
+            "reason": "缺少原插件调用日志，无法建立连接读取幂等键",
+            "required": True,
+            "satisfied": False,
+            "status": "blocked",
+        },
+        {
+            "key": "downstream_ai_and_action_invalidation",
+            "label": "下游 AI/动作失效策略",
+            "reason": "缺少下游 AI/动作隔离策略",
+            "required": True,
+            "satisfied": False,
+            "status": "blocked",
+        },
+    ]
+    assert by_node["data_connection"]["rerun_plan"]["single_node_supported"] is False
+    assert (
+        by_node["data_connection"]["rerun_plan"]["side_effect_policy"]
+        == "external_read_or_fetch"
+    )
+    assert (
+        by_node["data_connection"]["rerun_plan"]["safe_next_action"]
+        == "rerun_full_scheduled_job"
+    )
     assert by_node["result_action"]["rerun_supported"] is False
+    assert by_node["result_action"]["rerun_plan"]["status"] == "blocked_by_side_effect_guard"
     assert "复跑整条作业" in by_node["result_action"]["rerun_hint"]
 
 
@@ -179,6 +232,9 @@ def test_scheduled_job_run_projection_refreshes_legacy_trace_graph_debug_fields(
     by_node = {node["id"]: node for node in trace_graph["nodes"]}
     assert by_node["data_connection"]["stage_label"] == "数据连接"
     assert by_node["data_connection"]["debug_actions"]
+    assert by_node["data_connection"]["rerun_plan"]["blocked_by"] == [
+        "connection_read_idempotency_missing",
+    ]
     assert "复跑整条作业" in by_node["skill_processing"]["rerun_hint"]
 
 
@@ -269,6 +325,7 @@ def test_scheduled_job_run_projection_expands_multi_connection_and_action_trace_
     assert second_action["input"]["action_index"] == 2
     assert second_action["output"] == {"stored_in_run_result": True}
     assert second_action["stage"] == "result_action"
+    assert second_action["rerun_plan"]["side_effect_policy"] == "external_or_business_write"
     assert {node["retry_count"] for node in trace_graph["nodes"]} == {1}
 
 
@@ -1148,11 +1205,11 @@ def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
     }
 
 
-def test_generic_result_actions_are_not_saved_for_plain_plugin_invoke_jobs():
+def test_generic_result_actions_are_supported_for_plugin_invoke_jobs():
     assert scheduled_job_result_actions_service.validate_scheduled_job_result_actions(
         "plugin_action_invoke",
         [{"type": "save_scheduled_job_result"}],
-    ) == []
+    ) == [{"type": "save_scheduled_job_result"}]
 
 
 def test_unavailable_scheduled_job_types_are_not_creatable_or_runnable():
@@ -1332,6 +1389,185 @@ def test_successful_scheduled_job_run_can_generate_template_and_trace_graph():
         "title": "每周数据同步",
     }
     assert template["wizard_steps"][0]["key"] == "data_connection"
+
+
+def test_plugin_action_invoke_ai_generated_runs_skill_before_result_action(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    model_gateway = create_model_gateway(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "generic_plugin_summary_skill",
+            "input_schema": {"type": "object"},
+            "name": "通用插件摘要 Skill",
+            "output_schema": {
+                "properties": {
+                    "insights": {"type": "array"},
+                    "summary": {"type": "string"},
+                },
+                "required": ["summary", "insights"],
+                "type": "object",
+            },
+            "prompt_template": "把连接数据整理成 summary 和 insights。",
+            "status": "active",
+            "version": "1.0.0",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "generic_plugin_summary_agent",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "通用插件摘要 AI角色",
+            "status": "active",
+            "system_prompt": "输出结构化摘要。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    model_gateway_call_count = 0
+
+    class FakeModelResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            content = {
+                "insights": [
+                    {
+                        "content": "内部业务数据存在一条高价值洞察。",
+                        "feedback_type": "opportunity",
+                        "sentiment": "positive",
+                        "source_channel": "internal_data_source",
+                        "tags": ["internal"],
+                    },
+                ],
+                "summary": "AI 已完成通用插件数据摘要。",
+            }
+            return json.dumps(
+                {
+                    "choices": [
+                        {"message": {"content": json.dumps(content, ensure_ascii=False)}},
+                    ],
+                    "usage": {"completion_tokens": 18, "prompt_tokens": 36, "total_tokens": 54},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(*_args, **_kwargs):
+        nonlocal model_gateway_call_count
+        model_gateway_call_count += 1
+        return FakeModelResponse()
+
+    monkeypatch.setattr(scheduled_job_ai_processing_service, "urlopen", fake_urlopen)
+
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "business_system",
+            "code": "generic_ai_plugin",
+            "name": "通用 AI 插件",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://generic-ai.example.com",
+            "environment": "prod",
+            "name": "通用 AI 连接",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_generic_ai_rows",
+            "connection_id": connection["id"],
+            "name": "读取通用 AI 数据",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {
+                    "row_count": 2,
+                    "rows": [{"content": "反馈 A"}, {"content": "反馈 B"}],
+                },
+                "path": "/rows",
+            },
+            "result_mapping": {
+                "records_imported_path": "$.row_count",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    job_payload = {
+        "agent_id": agent["id"],
+        "enabled": True,
+        "execution_mode": "ai_generated",
+        "job_type": "plugin_action_invoke",
+        "model_gateway_config_id": model_gateway["id"],
+        "name": "通用插件 AI 摘要",
+        "plugin_action_id": action["id"],
+        "plugin_connection_id": connection["id"],
+        "result_actions": [{"type": "save_scheduled_job_result"}],
+        "schedule_type": "manual",
+        "skill_ids": [skill["id"]],
+        "source_system": "generic-plugin",
+    }
+    dry_run = client.post(
+        "/api/system/scheduled-jobs/dry-run",
+        json=job_payload,
+        headers=admin_headers,
+    ).json()["data"]
+    assert dry_run["stages"]["ai_processing"]["will_call_model_gateway"] is True
+    assert dry_run["stages"]["result_actions"][0]["write_preview_source"] == (
+        "skill_output_schema"
+    )
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json=job_payload,
+        headers=admin_headers,
+    ).json()["data"]
+    run = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    ).json()["data"]
+
+    assert run["status"] == "succeeded"
+    assert model_gateway_call_count == 1
+    summary = run["result_summary"]
+    execution_nodes = summary["execution_nodes"]
+    assert execution_nodes["data_connection"]["records_imported"] == 2
+    assert execution_nodes["skill_processing"]["model_gateway_called"] is True
+    assert execution_nodes["skill_processing"]["processing_mode"] == (
+        "model_gateway_json_transform"
+    )
+    assert execution_nodes["skill_processing"]["output"]["summary"] == (
+        "AI 已完成通用插件数据摘要。"
+    )
+    assert execution_nodes["result_action"]["write_target"] == "scheduled_job_result"
+    assert execution_nodes["result_actions"][0]["type"] == "save_scheduled_job_result"
+    assert summary["processing"]["model_gateway_called"] is True
+    assert summary["trace_graph"]["edges"] == [
+        {"from": "data_connection", "to": "skill_processing"},
+        {"from": "skill_processing", "to": "result_action_1"},
+    ]
 
 
 def test_scheduled_job_run_permission_can_trigger_without_manage_permission():
@@ -1850,7 +2086,7 @@ def test_scheduled_job_data_connections_continue_after_failed_connection(monkeyp
         }
 
     monkeypatch.setattr(
-        scheduled_jobs_service,
+        scheduled_job_data_connections_service,
         "invoke_plugin_action_response",
         fake_invoke_plugin_action_response,
     )
@@ -1989,7 +2225,7 @@ def test_scheduled_job_data_connection_fail_fast_keeps_failure_trace(monkeypatch
         }
 
     monkeypatch.setattr(
-        scheduled_jobs_service,
+        scheduled_job_data_connections_service,
         "invoke_plugin_action_response",
         fake_invoke_plugin_action_response,
     )
@@ -2141,7 +2377,7 @@ def test_user_feedback_data_connection_failure_marks_ai_processing_not_run(monke
         raise AssertionError("model gateway should not be called when data connection fails")
 
     monkeypatch.setattr(
-        scheduled_jobs_service,
+        scheduled_job_data_connections_service,
         "invoke_plugin_action_response",
         fake_invoke_plugin_action_response,
     )
@@ -2789,6 +3025,63 @@ def test_scheduled_job_dry_run_previews_data_ai_contract_and_write_mapping():
     assert data["status"] == "succeeded"
     assert data["stages"]["data_connection"]["connection_id"] == connection["id"]
     assert data["stages"]["data_connection"]["records_imported"] == 2
+    assert data["stages"]["data_connection"]["sample_source"] == "live_dry_run_response"
+    assert data["stages"]["data_connection"]["sample_reuse_status"] == "ready"
+    assert data["sample_reuse"]["data_connection_sample"] == {
+        "records_imported": 2,
+        "response_available": True,
+        "source": "live_dry_run_response",
+        "status": "ready",
+    }
+    assert data["sample_reuse"]["preferred_action_preview_source"] == "skill_output_schema"
+    assert data["sample_reuse"]["action_preview_ready"] is True
+    assert data["sample_reuse"]["output_preview_ready"] is True
+    assert [step["status"] for step in data["sample_reuse"]["reusable_steps"]] == [
+        "ready",
+        "ready",
+        "ready",
+    ]
+    assert data["sample_reuse"]["reuse_wizard"]["current_step"] == "scheduled_job_dry_run"
+    assert data["sample_reuse"]["reuse_wizard"]["next_action"] == "save_scheduled_job"
+    assert data["sample_reuse"]["reuse_wizard"]["primary_action_label"] == "保存为定时作业"
+    assert data["sample_reuse"]["reuse_wizard"]["status"] == "ready"
+    assert data["sample_reuse"]["reuse_wizard"]["can_continue"] is True
+    assert data["sample_reuse"]["reuse_wizard"]["current_step_label"] == "全链路试运行"
+    assert data["sample_reuse"]["reuse_wizard"]["completed_steps"] == 4
+    assert data["sample_reuse"]["reuse_wizard"]["blocked_steps"] == 0
+    assert data["sample_reuse"]["reuse_wizard"]["pending_steps"] == 0
+    assert data["sample_reuse"]["reuse_wizard"]["progress_percent"] == 100
+    assert data["sample_reuse"]["reuse_wizard"]["progress_label"] == "4/4 步已就绪"
+    assert data["sample_reuse"]["reuse_wizard"]["total_steps"] == 4
+    assert "保存当前配置为定时作业" in data["sample_reuse"]["reuse_wizard"][
+        "next_action_description"
+    ]
+    assert [
+        (item["key"], item["status"])
+        for item in data["sample_reuse"]["reuse_wizard"]["handoff_summary"]
+    ] == [
+        ("data_connection_sample", "ready"),
+        ("ai_output_preview", "ready"),
+        ("action_write_preview", "ready"),
+        ("job_config", "ready"),
+    ]
+    assert data["sample_reuse"]["reuse_wizard"]["missing_requirements"] == []
+    assert [step["key"] for step in data["sample_reuse"]["reuse_wizard"]["steps"]] == [
+        "connection_test",
+        "ai_processing_preview",
+        "action_trial",
+        "scheduled_job_config",
+    ]
+    assert [step["status"] for step in data["sample_reuse"]["reuse_wizard"]["steps"]] == [
+        "succeeded",
+        "succeeded",
+        "succeeded",
+        "ready",
+    ]
+    assert data["sample_reuse"]["job_config_preview"]["plugin_connection_ids"] == [
+        connection["id"],
+    ]
+    assert data["sample_reuse"]["job_config_preview"]["plugin_action_ids"] == [action["id"]]
     assert data["stages"]["ai_processing"]["will_call_model_gateway"] is True
     assert data["stages"]["ai_processing"]["mapping_status"] == "succeeded"
     assert data["stages"]["ai_processing"]["output_schema"]["required"] == ["insights"]
@@ -2835,6 +3128,110 @@ def test_scheduled_job_dry_run_previews_data_ai_contract_and_write_mapping():
     assert invocation_log["scheduled_job_id"] is None
     assert invocation_log["scheduled_job_run_id"] is None
 
+    invocation_log_count = len(app.state.store.plugin_invocation_logs)
+    sample_response = client.post(
+        "/api/system/scheduled-jobs/dry-run",
+        json={
+            "agent_id": agent["id"],
+            "config_json": {
+                "sample_reuse": {
+                    "action_id": action["id"],
+                    "connection_id": connection["id"],
+                    "response_summary": {
+                        "json": {
+                            "row_count": 4,
+                            "rows": [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}],
+                        },
+                    },
+                    "sample_source": "connection_test_response",
+                },
+            },
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "user_feedback_insight_extract",
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "反馈样例复用试运行草稿",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "schedule_type": "manual",
+            "skill_ids": [skill["id"]],
+        },
+        headers=admin_headers,
+    )
+
+    assert sample_response.status_code == 200
+    sample_data = sample_response.json()["data"]
+    assert sample_data["status"] == "succeeded"
+    assert sample_data["stages"]["data_connection"]["records_imported"] == 4
+    assert sample_data["stages"]["data_connection"]["sample_source"] == (
+        "connection_test_response"
+    )
+    assert sample_data["stages"]["data_connection"]["request_summary"][
+        "processing_mode"
+    ] == "sample_reuse"
+    assert sample_data["sample_reuse"]["data_connection_sample"] == {
+        "records_imported": 4,
+        "response_available": True,
+        "source": "connection_test_response",
+        "status": "ready",
+    }
+    assert sample_data["sample_reuse"]["reuse_wizard"]["sample_source"] == (
+        "connection_test_response"
+    )
+    assert sample_data["sample_reuse"]["reuse_wizard"]["progress_label"] == (
+        "4/4 步已就绪"
+    )
+    assert sample_data["sample_reuse"]["reuse_wizard"]["progress_percent"] == 100
+    assert sample_data["sample_reuse"]["reuse_wizard"]["steps"][0]["source"] == (
+        "connection_test_response"
+    )
+    assert sample_data["stages"]["ai_processing"]["output_preview_source"] == "skill_output_schema"
+    assert len(sample_data["stages"]["ai_processing"]["output_preview"]["insights"]) == 3
+    assert len(app.state.store.plugin_invocation_logs) == invocation_log_count
+
+
+def test_public_skill_marks_package_scripts_as_pending_sandbox():
+    skill = scheduled_job_ai_capabilities_service.public_skill(
+        {
+            "code": "packaged_with_script",
+            "name": "脚本 Skill 包",
+            "package_files": [
+                "SKILL.md",
+                "schemas/output.json",
+                "notes.py",
+                "scripts/run.py",
+            ],
+            "source_type": "package",
+        },
+    )
+
+    assert skill["runtime_capabilities"]["prompt_execution"] == "enabled"
+    assert skill["runtime_capabilities"]["schema_validation"] == "enabled"
+    assert skill["runtime_capabilities"]["script_execution"] == "disabled_pending_sandbox"
+    assert skill["runtime_capabilities"]["script_files"] == ["scripts/run.py"]
+    assert "notes.py" not in skill["runtime_capabilities"]["script_files"]
+    assert "不会自动执行" in skill["runtime_capabilities"]["script_note"]
+
+
+def test_public_agent_marks_package_scripts_as_pending_sandbox():
+    agent = scheduled_job_ai_capabilities_service.public_agent(
+        {
+            "code": "packaged_agent_with_script",
+            "name": "脚本 Agent 包",
+            "package_files": ["AGENT.md", "agent.yaml", "tools.ts", "scripts/run.py"],
+            "source_type": "package",
+        },
+    )
+
+    assert agent["runtime_capabilities"]["default_skill_binding"] == "enabled"
+    assert agent["runtime_capabilities"]["package_context"] == "enabled"
+    assert agent["runtime_capabilities"]["script_execution"] == "disabled_pending_sandbox"
+    assert agent["runtime_capabilities"]["script_files"] == ["scripts/run.py"]
+    assert "tools.ts" not in agent["runtime_capabilities"]["script_files"]
+    assert agent["runtime_capabilities"]["system_prompt_execution"] == "enabled"
+    assert "不会自动执行" in agent["runtime_capabilities"]["script_note"]
+
 
 def build_skill_package() -> bytes:
     buffer = BytesIO()
@@ -2861,6 +3258,51 @@ def build_skill_package() -> bytes:
         )
         package.writestr("schemas/input.json", '{"type":"object"}')
         package.writestr("schemas/output.json", '{"type":"object"}')
+        package.writestr("scripts/run.py", "print('skill script placeholder')\n")
+    return buffer.getvalue()
+
+
+def build_agent_package(
+    *,
+    model_gateway_config_id: str | None = None,
+    skill_id: str | None = None,
+) -> bytes:
+    manifest_lines = [
+        "code: packaged_feedback_agent",
+        "name: 文件包反馈分析角色",
+        "entry: AGENT.md",
+        "brain_app_id: rd_brain",
+    ]
+    if model_gateway_config_id:
+        manifest_lines.append(f"model_gateway_config_id: {model_gateway_config_id}")
+    if skill_id:
+        manifest_lines.extend(["default_skill_ids:", f"  - {skill_id}"])
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as package:
+        package.writestr("agent.yaml", "\n".join(manifest_lines))
+        package.writestr(
+            "AGENT.md",
+            "# 文件包反馈分析角色\n\n你负责将用户反馈整理成可落地洞察。",
+        )
+        package.writestr("scripts/run.py", "print('agent script placeholder')\n")
+    return buffer.getvalue()
+
+
+def build_skill_package_with_root_script() -> bytes:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as package:
+        package.writestr("skill.yaml", "code: invalid_script\nname: 非法脚本\nentry: SKILL.md")
+        package.writestr("SKILL.md", "# 非法脚本")
+        package.writestr("run.py", "print('not allowed')\n")
+    return buffer.getvalue()
+
+
+def build_agent_package_with_root_script() -> bytes:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as package:
+        package.writestr("agent.yaml", "code: invalid_agent\nname: 非法 Agent\nentry: AGENT.md")
+        package.writestr("AGENT.md", "# 非法 Agent")
+        package.writestr("run.py", "print('not allowed')\n")
     return buffer.getvalue()
 
 
@@ -2893,11 +3335,110 @@ def test_ai_skill_package_upload_stores_manifest_and_local_files():
     assert skill["manifest"]["code"] == "packaged_iteration_planning"
     assert skill["package_entry"] == "SKILL.md"
     assert "SKILL.md" in skill["package_files"]
+    assert "scripts/run.py" in skill["package_files"]
     assert skill["prompt_template"].startswith("# 文件包迭代规划")
+    assert skill["runtime_capabilities"]["script_execution"] == "disabled_pending_sandbox"
+    assert skill["runtime_capabilities"]["script_files"] == ["scripts/run.py"]
 
     listed = client.get("/api/system/ai-skills", headers=admin_headers).json()["data"]
     assert listed["total"] == 1
     assert listed["items"][0]["package_checksum"] == skill["package_checksum"]
+
+
+def test_ai_skill_package_rejects_executable_files_outside_scripts_dir():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    response = client.post(
+        "/api/system/ai-skills/upload",
+        params={"code": "invalid_script", "name": "非法脚本"},
+        content=build_skill_package_with_root_script(),
+        headers={**admin_headers, "Content-Type": "application/zip"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "INVALID_SKILL_PACKAGE"
+
+
+def test_ai_agent_package_upload_stores_manifest_and_local_files():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+    model_gateway = create_model_gateway(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "feedback_extract",
+            "input_schema": {"type": "object"},
+            "name": "反馈洞察抽取",
+            "output_schema": {"type": "object"},
+            "prompt_template": "抽取用户反馈洞察",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    package_bytes = build_agent_package(
+        model_gateway_config_id=model_gateway["id"],
+        skill_id=skill["id"],
+    )
+
+    forbidden = client.post(
+        "/api/system/ai-agents/upload",
+        params={"code": "packaged_feedback_agent", "name": "文件包反馈分析角色"},
+        content=package_bytes,
+        headers={**reviewer_headers, "Content-Type": "application/zip"},
+    )
+    assert forbidden.status_code == 403
+
+    response = client.post(
+        "/api/system/ai-agents/upload",
+        params={"code": "packaged_feedback_agent", "name": "文件包反馈分析角色"},
+        content=package_bytes,
+        headers={**admin_headers, "Content-Type": "application/zip"},
+    )
+
+    assert response.status_code == 200
+    agent = response.json()["data"]
+    assert agent["source_type"] == "package"
+    assert agent["package_checksum"]
+    assert agent["package_uri"].startswith("file://")
+    assert agent["manifest"]["entry"] == "AGENT.md"
+    assert agent["manifest"]["code"] == "packaged_feedback_agent"
+    assert agent["default_skill_ids"] == [skill["id"]]
+    assert agent["model_gateway_config_id"] == model_gateway["id"]
+    assert agent["package_entry"] == "AGENT.md"
+    assert "AGENT.md" in agent["package_files"]
+    assert "scripts/run.py" in agent["package_files"]
+    assert agent["system_prompt"].startswith("# 文件包反馈分析角色")
+    assert agent["runtime_capabilities"]["package_context"] == "enabled"
+    assert agent["runtime_capabilities"]["script_execution"] == "disabled_pending_sandbox"
+    assert agent["runtime_capabilities"]["script_files"] == ["scripts/run.py"]
+
+    listed = client.get("/api/system/ai-agents", headers=admin_headers).json()["data"]
+    packaged_agents = [item for item in listed["items"] if item["id"] == agent["id"]]
+    assert packaged_agents
+    assert packaged_agents[0]["package_checksum"] == agent["package_checksum"]
+
+
+def test_ai_agent_package_rejects_executable_files_outside_scripts_dir():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    model_gateway = create_model_gateway(admin_headers)
+
+    response = client.post(
+        "/api/system/ai-agents/upload",
+        params={
+            "brain_app_id": "rd_brain",
+            "code": "invalid_agent",
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "非法 Agent",
+        },
+        content=build_agent_package_with_root_script(),
+        headers={**admin_headers, "Content-Type": "application/zip"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "INVALID_AGENT_PACKAGE"
 
 
 def test_ai_skills_agents_and_scheduled_jobs_are_admin_managed():
@@ -3617,10 +4158,17 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
                 ensure_ascii=False,
             ).encode("utf-8")
 
+    model_gateway_call_count = 0
+
+    def online_log_model_response(*_args, **_kwargs):
+        nonlocal model_gateway_call_count
+        model_gateway_call_count += 1
+        return OnlineLogModelResponse()
+
     monkeypatch.setattr(
         scheduled_job_ai_processing_service,
         "urlopen",
-        lambda *_args, **_kwargs: OnlineLogModelResponse(),
+        online_log_model_response,
     )
 
     plugin = client.post(
@@ -3730,6 +4278,7 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
     assert execution_nodes["data_connection"]["records_imported"] == 2
     assert execution_nodes["skill_processing"]["model_gateway_called"] is True
     assert execution_nodes["skill_processing"]["output"]["anomaly_count"] == 1
+    assert model_gateway_call_count == 1
     assert execution_nodes["result_action"]["write_target"] == "email_notifications"
     assert execution_nodes["result_action"]["feedback"]["delivery_status"] == "recorded"
     assert execution_nodes["result_action"]["feedback"]["recipients"] == ["ops@example.com"]
@@ -3742,6 +4291,276 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
         {"from": "data_connection", "to": "skill_processing"},
         {"from": "skill_processing", "to": "result_action_1"},
     ]
+    node_preview_response = client.get(
+        f"/api/system/scheduled-job-runs/{run['id']}/trace-nodes/data_connection/rerun-preview",
+        headers=admin_headers,
+    )
+    assert node_preview_response.status_code == 200
+    node_preview = node_preview_response.json()["data"]
+    assert node_preview["node_id"] == "data_connection"
+    assert node_preview["preflight_status"] == "ready"
+    assert node_preview["rerun_supported"] is True
+    assert node_preview["blocked_by"] == []
+    assert node_preview["missing_controls"] == []
+    assert node_preview["control_summary"] == {
+        "blocked_count": 0,
+        "missing_count": 0,
+        "needs_review_count": 0,
+        "satisfied_count": 3,
+        "status_counts": {"satisfied": 3},
+        "total": 3,
+    }
+    assert node_preview["execution_policy"] == {
+        "allowed": True,
+        "blocking_count": 0,
+        "message": "单节点复跑控制项已满足，可以进入执行确认。",
+        "missing_control_count": 0,
+        "mode": "single_node_ready",
+        "requires_confirmation": True,
+        "side_effect_policy": "external_read_or_fetch",
+    }
+    assert [action["key"] for action in node_preview["next_actions"]] == [
+        "inspect_node_snapshot",
+        "confirm_single_node_rerun",
+    ]
+    assert [control["label"] for control in node_preview["rerun_controls"]] == [
+        "请求快照",
+        "连接读取幂等",
+        "下游 AI/动作失效策略",
+    ]
+    assert [control["status"] for control in node_preview["rerun_controls"]] == [
+        "satisfied",
+        "satisfied",
+        "satisfied",
+    ]
+    assert node_preview["safe_next_action"] == "confirm_single_node_rerun"
+    assert node_preview["snapshot_status"] == {
+        "error": False,
+        "input": True,
+        "output": True,
+    }
+    assert node_preview["snapshot_preview"]["input"]["available"] is True
+    assert node_preview["snapshot_preview"]["input"]["truncated"] is False
+    assert node_preview["snapshot_preview"]["input"]["value"]["connection_id"] == connection["id"]
+    assert node_preview["snapshot_preview"]["output"]["available"] is True
+    assert node_preview["snapshot_preview"]["output"]["value"]["records_imported"] == 2
+    assert node_preview["snapshot_preview"]["error"]["available"] is False
+    assert node_preview["full_run_request"] == {
+        "scheduled_job_id": job["id"],
+        "source_run_id": run["id"],
+        "trigger_type": "manual_rerun",
+    }
+    node_rerun_response = client.post(
+        f"/api/system/scheduled-job-runs/{run['id']}/trace-nodes/data_connection/rerun",
+        headers=admin_headers,
+    )
+    assert node_rerun_response.status_code == 200
+    node_rerun = node_rerun_response.json()["data"]
+    assert node_rerun["source_run_id"] == run["id"]
+    assert node_rerun["source_run_summary"]["id"] == run["id"]
+    assert node_rerun["status"] == "succeeded"
+    assert node_rerun["trigger_type"] == "manual_rerun"
+    assert node_rerun["records_imported"] == 2
+    assert node_rerun["plugin_invocation_log_id"] != run["plugin_invocation_log_id"]
+    node_rerun_summary = node_rerun["result_summary"]
+    assert node_rerun_summary["trace_node_rerun"] == {
+        "completed_at": node_rerun["finished_at"],
+        "downstream_strategy": "not_executed",
+        "mode": "single_node_data_connection",
+        "source_node_id": "data_connection",
+        "source_run_id": run["id"],
+        "status": "succeeded",
+    }
+    assert node_rerun_summary["execution_nodes"]["data_connection"]["records_imported"] == 2
+    assert node_rerun_summary["execution_nodes"]["skill_processing"]["status"] == "not_run"
+    assert (
+        node_rerun_summary["execution_nodes"]["skill_processing"]["model_gateway_called"]
+        is False
+    )
+    assert node_rerun_summary["execution_nodes"]["result_action"]["status"] == "not_run"
+    assert node_rerun_summary["trace_graph"]["edges"] == [
+        {"from": "data_connection", "to": "skill_processing"},
+        {"from": "skill_processing", "to": "result_action"},
+    ]
+
+    result_action_preview_response = client.get(
+        f"/api/system/scheduled-job-runs/{run['id']}/trace-nodes/result_action_1/rerun-preview",
+        headers=admin_headers,
+    )
+    assert result_action_preview_response.status_code == 200
+    result_action_preview = result_action_preview_response.json()["data"]
+    assert result_action_preview["node_id"] == "result_action_1"
+    assert result_action_preview["preflight_status"] == "ready"
+    assert result_action_preview["rerun_supported"] is True
+    assert result_action_preview["blocked_by"] == []
+    assert result_action_preview["missing_controls"] == []
+    assert result_action_preview["execution_policy"] == {
+        "allowed": True,
+        "blocking_count": 0,
+        "message": "单节点复跑控制项已满足，可以进入执行确认。",
+        "missing_control_count": 0,
+        "mode": "single_node_ready",
+        "requires_confirmation": True,
+        "side_effect_policy": "generic_result_write_record",
+    }
+    assert [control["label"] for control in result_action_preview["rerun_controls"]] == [
+        "动作输入快照",
+        "动作输出快照",
+        "写入目标幂等键",
+    ]
+    assert [control["status"] for control in result_action_preview["rerun_controls"]] == [
+        "satisfied",
+        "satisfied",
+        "satisfied",
+    ]
+    assert result_action_preview["safe_next_action"] == "confirm_single_node_rerun"
+    assert result_action_preview["snapshot_preview"]["output"]["value"]["delivery_status"] == (
+        "recorded"
+    )
+
+    result_action_rerun_response = client.post(
+        f"/api/system/scheduled-job-runs/{run['id']}/trace-nodes/result_action_1/rerun",
+        headers=admin_headers,
+    )
+    assert result_action_rerun_response.status_code == 200
+    result_action_rerun = result_action_rerun_response.json()["data"]
+    assert result_action_rerun["source_run_id"] == run["id"]
+    assert result_action_rerun["source_run_summary"]["id"] == run["id"]
+    assert result_action_rerun["status"] == "succeeded"
+    assert result_action_rerun["trigger_type"] == "manual_rerun"
+    assert result_action_rerun["records_imported"] == 1
+    assert result_action_rerun["plugin_invocation_log_id"] is None
+    result_action_rerun_summary = result_action_rerun["result_summary"]
+    assert result_action_rerun_summary["trace_node_rerun"] == {
+        "completed_at": result_action_rerun["finished_at"],
+        "mode": "single_node_result_action",
+        "source_node_id": "result_action_1",
+        "source_run_id": run["id"],
+        "status": "succeeded",
+        "upstream_strategy": "source_ai_output_snapshot_reused",
+    }
+    assert (
+        result_action_rerun_summary["execution_nodes"]["data_connection"]["status"]
+        == "not_run"
+    )
+    assert (
+        result_action_rerun_summary["execution_nodes"]["skill_processing"]["status"]
+        == "reused_snapshot"
+    )
+    assert (
+        result_action_rerun_summary["execution_nodes"]["skill_processing"][
+            "model_gateway_called"
+        ]
+        is False
+    )
+    assert (
+        result_action_rerun_summary["execution_nodes"]["result_action"]["write_target"]
+        == "email_notifications"
+    )
+    assert (
+        result_action_rerun_summary["execution_nodes"]["result_action"]["feedback"][
+            "delivery_status"
+        ]
+        == "recorded"
+    )
+    result_action_records_response = client.get(
+        f"/api/system/result-write-records?scheduled_job_run_id={result_action_rerun['id']}",
+        headers=admin_headers,
+    )
+    assert result_action_records_response.status_code == 200
+    result_action_records = result_action_records_response.json()["data"]
+    assert result_action_records["total"] == 1
+    assert result_action_records["items"][0]["write_target"] == "email_notifications"
+    assert result_action_records["items"][0]["summary_fields"]["delivery_status"] == "recorded"
+
+    skill_node_preview_response = client.get(
+        f"/api/system/scheduled-job-runs/{run['id']}/trace-nodes/skill_processing/rerun-preview",
+        headers=admin_headers,
+    )
+    assert skill_node_preview_response.status_code == 200
+    skill_node_preview = skill_node_preview_response.json()["data"]
+    assert skill_node_preview["node_id"] == "skill_processing"
+    assert skill_node_preview["preflight_status"] == "ready"
+    assert skill_node_preview["rerun_supported"] is True
+    assert skill_node_preview["blocked_by"] == []
+    assert skill_node_preview["missing_controls"] == []
+    assert skill_node_preview["execution_policy"] == {
+        "allowed": True,
+        "blocking_count": 0,
+        "message": "单节点复跑控制项已满足，可以进入执行确认。",
+        "missing_control_count": 0,
+        "mode": "single_node_ready",
+        "requires_confirmation": True,
+        "side_effect_policy": "model_gateway_cost_and_output_drift",
+    }
+    assert [control["label"] for control in skill_node_preview["rerun_controls"]] == [
+        "数据连接输出快照",
+        "知识引用快照",
+        "模型网关幂等键",
+        "下游失效策略",
+    ]
+    assert [control["status"] for control in skill_node_preview["rerun_controls"]] == [
+        "satisfied",
+        "satisfied",
+        "satisfied",
+        "satisfied",
+    ]
+    assert skill_node_preview["safe_next_action"] == "confirm_single_node_rerun"
+    assert skill_node_preview["snapshot_preview"]["input"]["value"]["source_row_count"] == 2
+    assert skill_node_preview["snapshot_preview"]["output"]["value"]["anomaly_count"] == 1
+
+    skill_node_rerun_response = client.post(
+        f"/api/system/scheduled-job-runs/{run['id']}/trace-nodes/skill_processing/rerun",
+        headers=admin_headers,
+    )
+    assert skill_node_rerun_response.status_code == 200
+    skill_node_rerun = skill_node_rerun_response.json()["data"]
+    assert skill_node_rerun["source_run_id"] == run["id"]
+    assert skill_node_rerun["source_run_summary"]["id"] == run["id"]
+    assert skill_node_rerun["status"] == "succeeded"
+    assert skill_node_rerun["trigger_type"] == "manual_rerun"
+    assert skill_node_rerun["records_imported"] == 1
+    assert skill_node_rerun["plugin_invocation_log_id"] is None
+    assert model_gateway_call_count == 2
+    skill_node_rerun_summary = skill_node_rerun["result_summary"]
+    assert skill_node_rerun_summary["trace_node_rerun"] == {
+        "completed_at": skill_node_rerun["finished_at"],
+        "downstream_strategy": "result_actions_not_executed",
+        "mode": "single_node_skill_processing",
+        "source_node_id": "skill_processing",
+        "source_run_id": run["id"],
+        "status": "succeeded",
+        "upstream_strategy": "source_data_connection_snapshot_reused",
+    }
+    assert (
+        skill_node_rerun_summary["execution_nodes"]["data_connection"]["status"]
+        == "reused_snapshot"
+    )
+    assert (
+        skill_node_rerun_summary["execution_nodes"]["skill_processing"]["model_gateway_called"]
+        is True
+    )
+    assert (
+        skill_node_rerun_summary["execution_nodes"]["skill_processing"]["output"][
+            "anomaly_count"
+        ]
+        == 1
+    )
+    assert skill_node_rerun_summary["execution_nodes"]["result_action"]["status"] == "not_run"
+    skill_node_records_response = client.get(
+        f"/api/system/result-write-records?scheduled_job_run_id={skill_node_rerun['id']}",
+        headers=admin_headers,
+    )
+    assert skill_node_records_response.status_code == 200
+    assert skill_node_records_response.json()["data"]["total"] == 0
+
+    missing_node_rerun_response = client.post(
+        f"/api/system/scheduled-job-runs/{run['id']}/trace-nodes/missing_node/rerun",
+        headers=admin_headers,
+    )
+    assert missing_node_rerun_response.status_code == 404
+    assert missing_node_rerun_response.json()["detail"]["code"] == "TRACE_NODE_NOT_FOUND"
+
     result_records_response = client.get(
         f"/api/system/result-write-records?scheduled_job_run_id={run['id']}",
         headers=admin_headers,
@@ -4003,17 +4822,19 @@ def test_scheduled_ai_job_run_loads_packaged_skill_files_into_snapshot():
         headers={**admin_headers, "Content-Type": "application/zip"},
     ).json()["data"]
     agent = client.post(
-        "/api/system/ai-agents",
-        json={
+        "/api/system/ai-agents/upload",
+        params={
             "brain_app_id": "rd_brain",
             "code": "packaged_iteration_planner",
             "default_skill_ids": [skill["id"]],
             "model_gateway_config_id": model_gateway["id"],
             "name": "文件包迭代规划 Agent",
-            "status": "active",
-            "system_prompt": "你是产品迭代规划助手。",
         },
-        headers=admin_headers,
+        content=build_agent_package(
+            model_gateway_config_id=model_gateway["id"],
+            skill_id=skill["id"],
+        ),
+        headers={**admin_headers, "Content-Type": "application/zip"},
     ).json()["data"]
     job = client.post(
         "/api/system/scheduled-jobs",
@@ -4038,8 +4859,34 @@ def test_scheduled_ai_job_run_loads_packaged_skill_files_into_snapshot():
         headers=admin_headers,
     ).json()["data"]
 
+    agent_snapshot = run["resolved_agent_snapshot"]
+    assert agent_snapshot["source_type"] == "package"
+    assert agent_snapshot["package_snapshot"]["entry"] == "AGENT.md"
+    assert "可落地洞察" in agent_snapshot["package_snapshot"]["entry_content"]
+    assert agent_snapshot["package_snapshot"]["checksum"] == agent["package_checksum"]
+    assert agent_snapshot["package_snapshot"]["runtime_boundary"][
+        "script_execution"
+    ] == "disabled_pending_sandbox"
+    assert agent_snapshot["package_snapshot"]["runtime_boundary"]["script_files"] == [
+        "scripts/run.py",
+    ]
+    assert "不会自动执行" in agent_snapshot["package_snapshot"]["runtime_boundary"][
+        "script_note"
+    ]
+    assert run["resolved_prompt_snapshot"]["agent_system_prompt"].startswith(
+        "# 文件包反馈分析角色"
+    )
     skill_snapshot = run["resolved_skill_snapshots"][0]
     assert skill_snapshot["source_type"] == "package"
     assert skill_snapshot["package_snapshot"]["entry"] == "SKILL.md"
     assert "真实用户反馈" in skill_snapshot["package_snapshot"]["entry_content"]
     assert skill_snapshot["package_snapshot"]["checksum"] == skill["package_checksum"]
+    assert skill_snapshot["package_snapshot"]["runtime_boundary"][
+        "script_execution"
+    ] == "disabled_pending_sandbox"
+    assert skill_snapshot["package_snapshot"]["runtime_boundary"]["script_files"] == [
+        "scripts/run.py",
+    ]
+    assert "不会自动执行" in skill_snapshot["package_snapshot"]["runtime_boundary"][
+        "script_note"
+    ]

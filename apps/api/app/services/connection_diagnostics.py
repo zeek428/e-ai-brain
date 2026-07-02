@@ -8,6 +8,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlparse
 
 from app.services.result_write_targets import result_write_target_default_mapping
+from app.services.scheduled_job_sample_reuse_wizard import connection_test_reuse_wizard
 
 
 class ConnectionDiagnosticsService:
@@ -108,6 +109,28 @@ class ConnectionDiagnosticsService:
         }
 
     @staticmethod
+    def scheduled_job_sample_seed(
+        action_template_draft: dict[str, Any],
+        connection: dict[str, Any],
+        plugin: dict[str, Any],
+        request_summary: dict[str, Any],
+        response_summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        seed_status = "ready" if response_summary or request_summary else "not_available"
+        return {
+            "action_template_draft": action_template_draft,
+            "connection_id": connection["id"],
+            "next_step": "copy_action_template_then_trial",
+            "plugin_connection_id": connection["id"],
+            "plugin_id": plugin["id"],
+            "request_summary": request_summary,
+            "response_summary": response_summary,
+            "reuse_wizard": connection_test_reuse_wizard(seed_status=seed_status),
+            "sample_source": "connection_test_response",
+            "status": seed_status,
+        }
+
+    @staticmethod
     def repair_suggestions(result: dict[str, Any]) -> list[dict[str, str]]:
         suggestions: list[dict[str, str]] = []
         request_summary = (
@@ -204,6 +227,7 @@ class ConnectionDiagnosticsService:
             "repair_suggestions": result.get("repair_suggestions") or [],
             "request_summary": result.get("request_summary") or {},
             "response_summary": result.get("response_summary") or {},
+            "scheduled_job_sample_seed": result.get("scheduled_job_sample_seed"),
             "status": result.get("status"),
         }
 
@@ -226,11 +250,22 @@ class ConnectionDiagnosticsService:
     @staticmethod
     def response_summary_from_http_error(exc: HTTPError) -> dict[str, Any]:
         body = exc.read(2048).decode("utf-8", errors="replace")
-        return {
+        summary: dict[str, Any] = {
             "body_preview": body,
             "reason": getattr(exc, "reason", None),
             "status_code": exc.code,
         }
+        parsed_json = ConnectionDiagnosticsService.json_from_body_preview(body)
+        if parsed_json is not None:
+            summary["json"] = parsed_json
+        return summary
+
+    @staticmethod
+    def json_from_body_preview(body_preview: str) -> Any | None:
+        try:
+            return json.loads(body_preview)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _slug_fragment(value: Any) -> str:

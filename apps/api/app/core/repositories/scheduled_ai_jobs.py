@@ -75,7 +75,8 @@ AI_SKILL_SORT_COLUMNS = {
 AI_AGENT_SELECT = """
 id, brain_app_id, code, name, description, model_gateway_config_id,
 system_prompt, default_skill_ids, tool_policy, execution_policy,
-status, created_by, created_at, updated_at
+source_type, package_uri, package_checksum, package_entry, package_files,
+package_size_bytes, manifest, status, created_by, created_at, updated_at
 """
 
 AI_AGENT_SORT_COLUMNS = {
@@ -84,6 +85,7 @@ AI_AGENT_SORT_COLUMNS = {
     "created_at": "created_at",
     "model_gateway_config_id": "model_gateway_config_id",
     "name": "lower(name)",
+    "source_type": "source_type",
     "status": "status",
     "updated_at": "updated_at",
 }
@@ -708,12 +710,14 @@ class ScheduledAiJobReadRepository:
                 INSERT INTO ai_agents (
                   id, brain_app_id, code, name, description, model_gateway_config_id,
                   system_prompt, default_skill_ids, tool_policy, execution_policy,
-                  status, created_by, created_at, updated_at
+                  source_type, package_uri, package_checksum, package_entry, package_files,
+                  package_size_bytes, manifest, status, created_by, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
                   %s, %s::jsonb, %s::jsonb, %s::jsonb,
-                  %s, %s, COALESCE(%s::timestamptz, now()),
+                  %s, %s, %s, %s, %s::jsonb,
+                  %s, %s::jsonb, %s, %s, COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -726,6 +730,13 @@ class ScheduledAiJobReadRepository:
                   default_skill_ids = EXCLUDED.default_skill_ids,
                   tool_policy = EXCLUDED.tool_policy,
                   execution_policy = EXCLUDED.execution_policy,
+                  source_type = EXCLUDED.source_type,
+                  package_uri = EXCLUDED.package_uri,
+                  package_checksum = EXCLUDED.package_checksum,
+                  package_entry = EXCLUDED.package_entry,
+                  package_files = EXCLUDED.package_files,
+                  package_size_bytes = EXCLUDED.package_size_bytes,
+                  manifest = EXCLUDED.manifest,
                   status = EXCLUDED.status,
                   updated_at = EXCLUDED.updated_at
                 """,
@@ -740,6 +751,13 @@ class ScheduledAiJobReadRepository:
                     _json(agent.get("default_skill_ids"), []),
                     _json(agent.get("tool_policy"), {}),
                     _json(agent.get("execution_policy"), {}),
+                    agent.get("source_type", "inline"),
+                    agent.get("package_uri"),
+                    agent.get("package_checksum"),
+                    agent.get("package_entry"),
+                    _json(agent.get("package_files"), []),
+                    agent.get("package_size_bytes", 0),
+                    _json(agent.get("manifest"), {}),
                     agent.get("status", "active"),
                     agent.get("created_by"),
                     agent.get("created_at"),
@@ -1100,10 +1118,17 @@ class ScheduledAiJobReadRepository:
             "default_skill_ids": row[7] or [],
             "tool_policy": row[8] or {},
             "execution_policy": row[9] or {},
-            "status": row[10],
-            "created_by": row[11],
-            "created_at": row[12].isoformat() if row[12] else None,
-            "updated_at": row[13].isoformat() if row[13] else None,
+            "source_type": row[10],
+            "package_uri": row[11],
+            "package_checksum": row[12],
+            "package_entry": row[13],
+            "package_files": row[14] or [],
+            "package_size_bytes": row[15],
+            "manifest": row[16] or {},
+            "status": row[17],
+            "created_by": row[18],
+            "created_at": row[19].isoformat() if row[19] else None,
+            "updated_at": row[20].isoformat() if row[20] else None,
         }
 
     def _job_from_row(self, row: Any) -> dict[str, Any]:

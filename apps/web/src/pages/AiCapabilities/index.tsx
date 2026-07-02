@@ -14,247 +14,41 @@ import {
   fetchAiSkills,
   updateAiAgent,
   updateAiSkill,
+  uploadAiAgentPackage,
   uploadAiSkillPackage,
-  type AiAgentListQuery,
   type AiAgentRecord,
-  type AiSkillListQuery,
   type AiSkillRecord,
-  type RemoteListPerformance,
 } from '../../services/aiBrain';
-
-type SkillFormValues = {
-  code: string;
-  input_schema_json?: string;
-  name: string;
-  output_schema_json?: string;
-  prompt_template: string;
-  requires_human_review: boolean;
-  risk_level: string;
-  status: string;
-  version: string;
-};
-
-type SkillPackageFormValues = {
-  code: string;
-  name: string;
-  requires_human_review: boolean;
-  risk_level: string;
-  status: string;
-  version: string;
-};
-
-type AgentFormValues = {
-  code: string;
-  default_skill_ids?: string;
-  model_gateway_config_id?: string;
-  name: string;
-  status: string;
-  system_prompt: string;
-};
-
-type AiAgentRow = AiAgentRecord & {
-  defaultSkillText: string;
-  modelGatewayText: string;
-  searchText: string;
-} & Record<string, unknown>;
-
-type AiSkillRow = AiSkillRecord & {
-  reviewValue: string;
-  searchText: string;
-} & Record<string, unknown>;
-
-type RemotePageState = {
-  page: number;
-  pageSize: number;
-  performance?: RemoteListPerformance;
-  total: number;
-};
-
-const DEFAULT_LIST_QUERY: ManagementListQuery = {
-  filters: {},
-  page: 1,
-  pageSize: 10,
-  sortField: 'code',
-  sortOrder: 'ascend',
-};
-
-const SKILL_STATUS_OPTIONS = [
-  { label: '启用', value: 'active' },
-  { label: '草稿', value: 'draft' },
-  { label: '停用', value: 'disabled' },
-];
-
-const AGENT_STATUS_OPTIONS = [
-  { label: '启用', value: 'active' },
-  { label: '停用', value: 'disabled' },
-];
-
-const STATUS_LABELS: Record<string, string> = {
-  active: '启用',
-  disabled: '停用',
-  draft: '草稿',
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  active: 'green',
-  disabled: 'default',
-  draft: 'gold',
-};
-
-const SKILL_SOURCE_OPTIONS = [
-  { label: '表单', value: 'form' },
-  { label: '文件包', value: 'package' },
-];
-
-const REVIEW_OPTIONS = [
-  { label: '需要', value: 'required' },
-  { label: '不需要', value: 'optional' },
-];
-
-const stringValue = (value: unknown) => {
-  if (typeof value === 'string') {
-    return value.trim() || undefined;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-  return undefined;
-};
-
-const filterText = (filters: Record<string, unknown>, key: string) => stringValue(filters[key]);
-
-const agentSortField = (field?: string) => {
-  if (field === 'name' || field === 'status') {
-    return field;
-  }
-  if (field === 'modelGatewayText') {
-    return 'model_gateway_config_id';
-  }
-  return 'code';
-};
-
-const skillSortField = (field?: string) => {
-  if (
-    field === 'name' ||
-    field === 'version' ||
-    field === 'source_type' ||
-    field === 'requires_human_review' ||
-    field === 'status'
-  ) {
-    return field;
-  }
-  return 'code';
-};
-
-const agentListQuery = (query: ManagementListQuery): AiAgentListQuery => {
-  const keyword = [
-    filterText(query.filters, 'searchText'),
-    filterText(query.filters, 'modelGatewayText'),
-  ].filter(Boolean).join(' ');
-  return {
-    keyword: keyword || undefined,
-    page: query.page,
-    pageSize: query.pageSize,
-    sortField: agentSortField(query.sortField),
-    sortOrder: query.sortOrder ?? 'ascend',
-    status: filterText(query.filters, 'status'),
-  };
-};
-
-const skillListQuery = (query: ManagementListQuery): AiSkillListQuery => {
-  const reviewValue = filterText(query.filters, 'reviewValue');
-  return {
-    keyword: filterText(query.filters, 'searchText'),
-    page: query.page,
-    pageSize: query.pageSize,
-    requiresHumanReview:
-      reviewValue === 'required' ? true : reviewValue === 'optional' ? false : undefined,
-    sortField: skillSortField(query.sortField),
-    sortOrder: query.sortOrder ?? 'ascend',
-    sourceType: filterText(query.filters, 'source_type'),
-    status: filterText(query.filters, 'status'),
-  };
-};
-
-const modelGatewayIdFromReference = (value: unknown): string | undefined => {
-  const primitive = stringValue(value);
-  if (primitive) {
-    return primitive;
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    stringValue(record.id)
-    ?? stringValue(record.config_id)
-    ?? stringValue(record.model_gateway_config_id)
-  );
-};
-
-const modelGatewayReferenceCandidates = (agent: AiAgentRecord) => {
-  const record = agent as AiAgentRecord & Record<string, unknown>;
-  return [
-    record.model_gateway_config_id,
-    record.model_gateway_config,
-    record.model_gateway_config_snapshot,
-    record.resolved_model_gateway_config,
-  ];
-};
-
-const modelGatewayIdFromAgent = (agent: AiAgentRecord) => {
-  for (const candidate of modelGatewayReferenceCandidates(agent)) {
-    const configId = modelGatewayIdFromReference(candidate);
-    if (configId) {
-      return configId;
-    }
-  }
-  return undefined;
-};
-
-const modelGatewayLabelFromReference = (value: unknown): string | undefined => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  const name =
-    stringValue(record.name)
-    ?? stringValue(record.label)
-    ?? stringValue(record.title)
-    ?? modelGatewayIdFromReference(record);
-  if (!name) {
-    return undefined;
-  }
-  const model =
-    stringValue(record.defaultChatModel)
-    ?? stringValue(record.default_chat_model)
-    ?? stringValue(record.chat_model)
-    ?? stringValue(record.model);
-  return model ? `${name} (${model})` : name;
-};
-
-const prettyJson = (value: unknown) => JSON.stringify(value && typeof value === 'object' ? value : {}, null, 2);
-
-const parseJsonObject = (value: string | undefined, label: string): Record<string, unknown> => {
-  const rawValue = value?.trim() || '{}';
-  try {
-    const parsed = JSON.parse(rawValue) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error(`${label} 必须是 JSON 对象`);
-    }
-    return parsed as Record<string, unknown>;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('必须是 JSON 对象')) {
-      throw error;
-    }
-    throw new Error(`${label} 不是合法 JSON`);
-  }
-};
+import {
+  AGENT_STATUS_OPTIONS,
+  DEFAULT_LIST_QUERY,
+  REVIEW_OPTIONS,
+  SKILL_SOURCE_OPTIONS,
+  SKILL_STATUS_OPTIONS,
+  STATUS_COLORS,
+  STATUS_LABELS,
+  agentListQuery,
+  modelGatewayIdFromAgent,
+  modelGatewayIdFromReference,
+  modelGatewayLabelFromReference,
+  modelGatewayReferenceCandidates,
+  parseJsonObject,
+  prettyJson,
+  skillListQuery,
+  type AgentFormValues,
+  type AgentPackageFormValues,
+  type AiAgentRow,
+  type AiSkillRow,
+  type RemotePageState,
+  type SkillFormValues,
+  type SkillPackageFormValues,
+} from './components/aiCapabilitiesHelpers';
 
 export default function AiCapabilitiesPage() {
   const [skillForm] = Form.useForm<SkillFormValues>();
   const [skillPackageForm] = Form.useForm<SkillPackageFormValues>();
   const [agentForm] = Form.useForm<AgentFormValues>();
+  const [agentPackageForm] = Form.useForm<AgentPackageFormValues>();
   const [skills, setSkills] = useState<AiSkillRecord[]>([]);
   const [agents, setAgents] = useState<AiAgentRecord[]>([]);
   const skillQueryRef = useRef<ManagementListQuery>(DEFAULT_LIST_QUERY);
@@ -274,6 +68,8 @@ export default function AiCapabilitiesPage() {
   const [skillPackageModalOpen, setSkillPackageModalOpen] = useState(false);
   const [skillPackageFiles, setSkillPackageFiles] = useState<UploadFile[]>([]);
   const [agentModalOpen, setAgentModalOpen] = useState(false);
+  const [agentPackageModalOpen, setAgentPackageModalOpen] = useState(false);
+  const [agentPackageFiles, setAgentPackageFiles] = useState<UploadFile[]>([]);
   const [editingSkill, setEditingSkill] = useState<AiSkillRecord>();
   const [editingAgent, setEditingAgent] = useState<AiAgentRecord>();
   const [modelGatewayConfigs, setModelGatewayConfigs] = useState<ModelGatewayConfigRecord[]>([]);
@@ -395,6 +191,18 @@ export default function AiCapabilitiesPage() {
     setAgentModalOpen(true);
   };
 
+  const openAgentPackageModal = () => {
+    agentPackageForm.resetFields();
+    agentPackageForm.setFieldsValue({
+      brain_app_id: 'rd_brain',
+      default_skill_ids: [],
+      status: 'active',
+      version: '1.0.0',
+    });
+    setAgentPackageFiles([]);
+    setAgentPackageModalOpen(true);
+  };
+
   const openEditAgent = useCallback((record: AiAgentRecord) => {
     setEditingAgent(record);
     agentForm.setFieldsValue({
@@ -489,6 +297,29 @@ export default function AiCapabilitiesPage() {
     await reload();
   };
 
+  const submitAgentPackage = async () => {
+    const values = await agentPackageForm.validateFields();
+    const originFile = agentPackageFiles[0]?.originFileObj;
+    if (!originFile) {
+      message.warning('请选择 Agent 包 zip 文件');
+      return;
+    }
+    await uploadAiAgentPackage(originFile, {
+      brainAppId: values.brain_app_id || 'rd_brain',
+      code: values.code,
+      defaultSkillIds: values.default_skill_ids ?? [],
+      modelGatewayConfigId: values.model_gateway_config_id || undefined,
+      name: values.name,
+      status: values.status,
+      version: values.version,
+    });
+    message.success('Agent 包已上传');
+    setAgentPackageModalOpen(false);
+    setAgentPackageFiles([]);
+    agentPackageForm.resetFields();
+    await reload();
+  };
+
   const disableSkill = useCallback(async (record: AiSkillRecord) => {
     await updateAiSkill(record.id, { status: 'disabled' });
     message.success('Skill 已删除');
@@ -536,6 +367,12 @@ export default function AiCapabilitiesPage() {
       value: config.id,
     })),
   ];
+
+  const skillOptions = skills.map((skill) => ({
+    disabled: skill.status !== 'active',
+    label: `${skill.name} / ${skill.code}${skill.status === 'active' ? '' : ' / 停用'}`,
+    value: skill.id,
+  }));
 
   const agentRows = useMemo<AiAgentRow[]>(
     () =>
@@ -601,6 +438,30 @@ export default function AiCapabilitiesPage() {
         width: 220,
       },
       {
+        dataIndex: 'source_type',
+        title: '来源',
+        width: 120,
+        render: (value) => <Tag>{value === 'package' ? '文件包' : '表单'}</Tag>,
+      },
+      {
+        key: 'runtime_capabilities',
+        title: '运行边界',
+        width: 220,
+        render: (_, record) => {
+          const scriptExecution = record.runtime_capabilities?.script_execution;
+          return (
+            <Space size={4} wrap>
+              <Tag color="blue">系统提示词</Tag>
+              <Tag color="geekblue">默认 Skill</Tag>
+              {record.source_type === 'package' ? <Tag color="cyan">文件包上下文</Tag> : null}
+              {scriptExecution === 'disabled_pending_sandbox' ? (
+                <Tag color="orange">脚本不自动执行</Tag>
+              ) : null}
+            </Space>
+          );
+        },
+      },
+      {
         dataIndex: 'status',
         title: '状态',
         width: 112,
@@ -651,6 +512,22 @@ export default function AiCapabilitiesPage() {
         title: '人工确认',
         width: 120,
         render: (value) => (value ? '需要' : '不需要'),
+      },
+      {
+        key: 'runtime_capabilities',
+        title: '运行边界',
+        width: 180,
+        render: (_, record) => {
+          const scriptExecution = record.runtime_capabilities?.script_execution;
+          return (
+            <Space size={4} wrap>
+              <Tag color="blue">Prompt/Schema</Tag>
+              {scriptExecution === 'disabled_pending_sandbox' ? (
+                <Tag color="orange">脚本不自动执行</Tag>
+              ) : null}
+            </Space>
+          );
+        },
       },
       {
         dataIndex: 'status',
@@ -732,9 +609,14 @@ export default function AiCapabilitiesPage() {
                   total: agentPageState.total,
                 }}
                 rowKey="id"
-                tableScroll={{ x: 1156 }}
+                tableScroll={{ x: 1496 }}
                 tableTitle="AI角色配置"
                 title="AI 能力配置"
+                toolbarActions={[
+                  <Button key="upload-agent" onClick={openAgentPackageModal}>
+                    上传 Agent 包
+                  </Button>,
+                ]}
                 viewStorageKey="tasks.ai-capabilities.agents"
               />
             ),
@@ -786,7 +668,7 @@ export default function AiCapabilitiesPage() {
                   total: skillPageState.total,
                 }}
                 rowKey="id"
-                tableScroll={{ x: 1056 }}
+                tableScroll={{ x: 1236 }}
                 tableTitle="Skill 管理"
                 title="AI 能力配置"
                 toolbarActions={[
@@ -875,7 +757,10 @@ export default function AiCapabilitiesPage() {
           <Form.Item label="版本" name="version" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item label="Skill 包">
+          <Form.Item
+            extra="zip 内需包含 skill.yaml 或 SKILL.md；SKILL.md 会作为 Prompt 模板，Schema 文件参与输出契约校验，scripts/ 目录脚本仅记录运行边界，不会自动执行。"
+            label="Skill 包"
+          >
             <Upload
               accept=".zip"
               beforeUpload={() => false}
@@ -897,6 +782,74 @@ export default function AiCapabilitiesPage() {
               <Select options={SKILL_STATUS_OPTIONS} />
             </Form.Item>
           </Space>
+        </Form>
+      </Modal>
+
+      <Modal
+        open={agentPackageModalOpen}
+        title="上传 Agent 包"
+        onCancel={() => setAgentPackageModalOpen(false)}
+        onOk={submitAgentPackage}
+        width={720}
+      >
+        <Form
+          form={agentPackageForm}
+          layout="vertical"
+          initialValues={{
+            brain_app_id: 'rd_brain',
+            default_skill_ids: [],
+            status: 'active',
+            version: '1.0.0',
+          }}
+        >
+          <Form.Item label="名称" name="name" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="编码" name="code" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Space style={{ width: '100%' }} wrap>
+            <Form.Item label="业务脑" name="brain_app_id" rules={[{ required: true }]}>
+              <Input style={{ width: 180 }} />
+            </Form.Item>
+            <Form.Item label="版本" name="version" rules={[{ required: true }]}>
+              <Input style={{ width: 180 }} />
+            </Form.Item>
+            <Form.Item label="状态" name="status">
+              <Select options={AGENT_STATUS_OPTIONS} style={{ width: 160 }} />
+            </Form.Item>
+          </Space>
+          <Form.Item label="模型网关" name="model_gateway_config_id">
+            <Select
+              optionFilterProp="label"
+              options={modelGatewayOptions}
+              placeholder="可由 agent.yaml 指定"
+              showSearch
+            />
+          </Form.Item>
+          <Form.Item label="默认 Skills" name="default_skill_ids">
+            <Select
+              mode="multiple"
+              optionFilterProp="label"
+              options={skillOptions}
+              placeholder="可由 agent.yaml 指定"
+              showSearch
+            />
+          </Form.Item>
+          <Form.Item
+            extra="zip 内需包含 agent.yaml 和 AGENT.md；AGENT.md 会作为系统提示词，脚本文件仅记录运行边界，不会自动执行。"
+            label="Agent 包"
+          >
+            <Upload
+              accept=".zip"
+              beforeUpload={() => false}
+              fileList={agentPackageFiles}
+              maxCount={1}
+              onChange={({ fileList }) => setAgentPackageFiles(fileList)}
+            >
+              <Button>选择 zip 文件</Button>
+            </Upload>
+          </Form.Item>
         </Form>
       </Modal>
 

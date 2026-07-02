@@ -8,6 +8,8 @@ import {
   PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
+  SafetyCertificateOutlined,
+  FieldTimeOutlined,
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import { Button, Space, Tag, Typography } from 'antd';
@@ -27,9 +29,11 @@ type PluginRunnerTableProps = {
   onDownloadInstallPackage: (runner: AiExecutorRunnerRecord) => void;
   onEditRunner: (runner: AiExecutorRunnerRecord) => void;
   onOpenLogs: (runner: AiExecutorRunnerRecord) => void;
+  onOpenApprovalRequests: () => void;
   onRemoteChange: (query: AiExecutorRunnerListQuery) => void;
   onReload: () => void;
   onRotateToken: (runner: AiExecutorRunnerRecord) => void;
+  onTimeoutScan: () => void;
   onTestRunner: (runner: AiExecutorRunnerRecord) => void;
   remote: {
     page: number;
@@ -40,13 +44,14 @@ type PluginRunnerTableProps = {
     total: number;
   };
   runners: AiExecutorRunnerRecord[];
+  timeoutScanLoading?: boolean;
   testingRunnerId?: string;
 };
 
 const SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID = 'ai_executor_runner_system_default';
 const SYSTEM_DEFAULT_AI_EXECUTOR_TYPE = 'model_gateway';
 const RUNNER_ACTION_COLUMN_WIDTH = 520;
-const RUNNER_TABLE_SCROLL_X = 2540;
+const RUNNER_TABLE_SCROLL_X = 2780;
 
 const aiExecutorTypeLabelByValue = new Map([
   [SYSTEM_DEFAULT_AI_EXECUTOR_TYPE, '系统默认模型'],
@@ -71,6 +76,111 @@ function isSystemDefaultRunner(runner: AiExecutorRunnerRecord) {
 function latestRunnerTaskId(runner: AiExecutorRunnerRecord): string | undefined {
   const metadataTaskId = runner.metadata?.latest_task_id;
   return runner.latest_task_id ?? (typeof metadataTaskId === 'string' ? metadataTaskId : undefined);
+}
+
+function numberValue(value: unknown, fallback = 0) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function runnerReadinessStatusColor(status: string | undefined) {
+  if (status === 'ready') {
+    return 'green';
+  }
+  if (status === 'attention') {
+    return 'orange';
+  }
+  if (status === 'blocked') {
+    return 'red';
+  }
+  return 'default';
+}
+
+function runnerReadinessControlColor(status: string | undefined) {
+  if (status === 'satisfied') {
+    return 'green';
+  }
+  if (status === 'warning' || status === 'needs_review') {
+    return 'orange';
+  }
+  if (status === 'blocked' || status === 'missing') {
+    return 'red';
+  }
+  return 'default';
+}
+
+function RunnerReadinessSummary({ runner }: { runner: AiExecutorRunnerRecord }) {
+  const summary = runner.readiness_summary;
+  if (!summary) {
+    return <Typography.Text type="secondary">暂无就绪清单</Typography.Text>;
+  }
+  return (
+    <Space orientation="vertical" size={4}>
+      <Space size={[4, 4]} wrap>
+        <Tag color={runnerReadinessStatusColor(summary.readiness_status)}>
+          就绪 {summary.readiness_status ?? 'unknown'}
+        </Tag>
+        <Tag>已满足 {numberValue(summary.satisfied_count)}</Tag>
+        <Tag color={numberValue(summary.attention_count) > 0 ? 'orange' : 'default'}>
+          待关注 {numberValue(summary.attention_count)}
+        </Tag>
+        <Tag
+          color={
+            numberValue(summary.missing_count) + numberValue(summary.blocked_count) > 0
+              ? 'red'
+              : 'default'
+          }
+        >
+          阻断 {numberValue(summary.missing_count) + numberValue(summary.blocked_count)}
+        </Tag>
+      </Space>
+      {summary.controls?.length ? (
+        <Space size={[6, 6]} wrap>
+          {summary.controls.map((control) => {
+            const label = control.label ?? control.key ?? '-';
+            const status = control.status ?? 'unknown';
+            return (
+              <Tag
+                color={runnerReadinessControlColor(control.status)}
+                key={`${control.key ?? label}-${status}`}
+                title={control.reason}
+              >
+                {label} · {status}
+              </Tag>
+            );
+          })}
+        </Space>
+      ) : null}
+    </Space>
+  );
+}
+
+function RunnerQueueSummary({ runner }: { runner: AiExecutorRunnerRecord }) {
+  const summary = runner.queue_summary;
+  if (!summary) {
+    return <Typography.Text type="secondary">暂无队列统计</Typography.Text>;
+  }
+  const queued = numberValue(summary.queued);
+  const runningTotal = numberValue(summary.running_total);
+  const failedTotal = numberValue(summary.failed_total);
+  const availableSlots = numberValue(summary.available_slots);
+  return (
+    <Space orientation="vertical" size={2}>
+      <Space size={[4, 4]} wrap>
+        <Tag color={queued > 0 ? 'orange' : 'default'}>排队 {queued}</Tag>
+        <Tag color={runningTotal > 0 ? 'blue' : 'default'}>运行中 {runningTotal}</Tag>
+        <Tag color={failedTotal > 0 ? 'red' : 'default'}>异常 {failedTotal}</Tag>
+        <Tag color="geekblue">可用槽 {availableSlots}</Tag>
+      </Space>
+      {summary.latest_failure?.error_message ? (
+        <Typography.Text
+          ellipsis={{ tooltip: summary.latest_failure.error_message }}
+          type="danger"
+        >
+          最近失败：{summary.latest_failure.error_message}
+        </Typography.Text>
+      ) : null}
+    </Space>
+  );
 }
 
 function normalizeRunnerSorter(
@@ -106,12 +216,15 @@ export function PluginRunnerTable({
   onDownloadInstallPackage,
   onEditRunner,
   onOpenLogs,
+  onOpenApprovalRequests,
   onRemoteChange,
   onReload,
   onRotateToken,
+  onTimeoutScan,
   onTestRunner,
   remote,
   runners,
+  timeoutScanLoading,
   testingRunnerId,
 }: PluginRunnerTableProps) {
   return (
@@ -138,6 +251,11 @@ export function PluginRunnerTable({
                 >
                   {row.health_alert.message}
                 </Typography.Text>
+              ) : null}
+              {row.readiness_summary ? (
+                <Tag color={runnerReadinessStatusColor(row.readiness_summary.readiness_status)}>
+                  就绪 {row.readiness_summary.readiness_status ?? 'unknown'}
+                </Tag>
               ) : null}
             </Space>
           ),
@@ -168,6 +286,12 @@ export function PluginRunnerTable({
           ellipsis: true,
           width: 220,
           render: (_, row) => formatDisplayDateTime(row.last_heartbeat_at),
+        },
+        {
+          dataIndex: 'queue_summary',
+          title: '队列概览',
+          width: 280,
+          render: (_, row) => <RunnerQueueSummary runner={row} />,
         },
         {
           dataIndex: 'token_configured',
@@ -311,6 +435,25 @@ export function PluginRunnerTable({
       expandable={{
         expandedRowRender: (record) => (
           <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+            <Typography.Text strong>运行队列</Typography.Text>
+            <Space size={[8, 8]} wrap>
+              <Tag>总任务 {numberValue(record.queue_summary?.total)}</Tag>
+              <Tag>排队 {numberValue(record.queue_summary?.queued)}</Tag>
+              <Tag>已认领 {numberValue(record.queue_summary?.claimed)}</Tag>
+              <Tag>运行中 {numberValue(record.queue_summary?.running)}</Tag>
+              <Tag>成功 {numberValue(record.queue_summary?.succeeded)}</Tag>
+              <Tag color={numberValue(record.queue_summary?.failed_total) > 0 ? 'red' : 'default'}>
+                异常 {numberValue(record.queue_summary?.failed_total)}
+              </Tag>
+              <Tag>并发上限 {numberValue(record.queue_summary?.max_concurrent_tasks)}</Tag>
+            </Space>
+            {record.queue_summary?.latest_failure ? (
+              <Typography.Text type="danger">
+                最近失败：{record.queue_summary.latest_failure.error_code ?? '-'} · {record.queue_summary.latest_failure.error_message ?? '-'}
+              </Typography.Text>
+            ) : null}
+            <Typography.Text strong>运行就绪清单</Typography.Text>
+            <RunnerReadinessSummary runner={record} />
             <Typography.Text strong>
               {isSystemDefaultRunner(record) ? '系统默认执行器说明' : '本地 Runner 启动命令'}
             </Typography.Text>
@@ -376,6 +519,23 @@ export function PluginRunnerTable({
           type="primary"
         >
           新增执行器
+        </Button>,
+        <Button
+          aria-label="查看执行器审批请求"
+          icon={<SafetyCertificateOutlined />}
+          key="approval-requests"
+          onClick={onOpenApprovalRequests}
+        >
+          审批请求
+        </Button>,
+        <Button
+          aria-label="超时扫描"
+          icon={<FieldTimeOutlined />}
+          key="timeout-scan"
+          loading={timeoutScanLoading}
+          onClick={onTimeoutScan}
+        >
+          超时扫描
         </Button>,
         <Button icon={<ReloadOutlined />} key="reload-runners" onClick={onReload}>
           刷新

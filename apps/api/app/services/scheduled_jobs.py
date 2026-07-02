@@ -25,15 +25,11 @@ from app.services.plugin_result_mapping import (
     records_imported_from_mapping,
     result_write_preview,
 )
-from app.services.plugins import (
-    invoke_plugin_action_response,
-    resolve_plugin_snapshot,
-)
+from app.services.plugins import resolve_plugin_snapshot
 from app.services.scheduled_job_access import (
     require_admin,
     require_scheduled_job_runner,
     scheduled_job_matches_product_scope,
-    scheduled_job_plugin_invocation_user,
 )
 from app.services.scheduled_job_ai_processing import (
     run_scheduled_job_ai_processing,
@@ -60,13 +56,14 @@ from app.services.scheduled_job_config import (
     next_run_at,
     scheduled_job_config_with_code_inspection_defaults,
     scheduled_job_config_with_multi_refs,
-    scheduled_job_data_connection_policy,
     scheduled_job_with_multi_refs,
 )
 from app.services.scheduled_job_constants import (
     SCHEDULED_JOB_RUN_TERMINAL_STATUSES,
     SCHEDULED_JOB_RUN_TRIGGER_TYPES,
 )
+from app.services.scheduled_job_data_connections import invoke_job_data_connections
+from app.services.scheduled_job_dry_run_reuse import dry_run_sample_reuse_summary
 from app.services.scheduled_job_execution_engine import (
     ScheduledJobExecutionEngine as JobExecutionEngine,
 )
@@ -78,97 +75,35 @@ from app.services.scheduled_job_native_scan import (
     queued_native_scan_result_summary as native_scan_result_summary,
 )
 from app.services.scheduled_job_online_log import run_online_log_ai_analysis_job
+from app.services.scheduled_job_plugin_ai import run_plugin_action_ai_processing_job
 from app.services.scheduled_job_read_models import (
     list_scheduled_job_runs_response,
     list_scheduled_jobs_response,
     public_scheduled_job_run,
 )
 from app.services.scheduled_job_ref_validation import validate_job_refs, validate_plugin_refs
-from app.services.scheduled_job_refs import payload_field, scheduled_job_multi_ids
-from app.services.scheduled_job_templates import STANDARD_WIZARD_STEPS
+from app.services.scheduled_job_refs import payload_field
+from app.services.scheduled_job_run_templates import scheduled_job_template_from_run_response
+from app.services.scheduled_job_trace_reruns import (
+    rerun_scheduled_job_trace_node_response,
+    scheduled_job_trace_node_rerun_preview_response,
+)
 from app.services.scheduled_job_user_feedback import (
     resolve_job_plugin_output_mapping,
     run_user_feedback_insight_extract_job,
 )
-from app.services.skill_packages import load_skill_package_snapshot
+from app.services.skill_packages import load_agent_package_snapshot, load_skill_package_snapshot
 
-__all__ = ["list_scheduled_job_runs_response", "list_scheduled_jobs_response", "public_scheduled_job_run"]  # noqa: E501
+__all__ = [
+    "list_scheduled_job_runs_response",
+    "list_scheduled_jobs_response",
+    "public_scheduled_job_run",
+    "rerun_scheduled_job_trace_node_response",
+    "scheduled_job_trace_node_rerun_preview_response",
+    "scheduled_job_template_from_run_response",
+]
 persist_record = job_store.persist_record
 resolve_plugin_input_mapping = job_runtime.resolve_plugin_input_mapping
-
-
-def scheduled_job_template_from_run_response(
-    *,
-    current_store: Any,
-    run_id: str,
-    user: dict[str, Any],
-) -> dict[str, Any]:
-    require_admin(user)
-    job_store.sync_scheduled_job_run_store(current_store)
-    run = job_store.read_memory_dict(current_store, "scheduled_job_runs").get(run_id)
-    if run is None:
-        raise api_error(404, "NOT_FOUND", "Scheduled job run not found")
-    if run.get("status") != "succeeded":
-        raise api_error(
-            409,
-            "SCHEDULED_JOB_RUN_NOT_SUCCESSFUL",
-            "Only successful scheduled job runs can generate templates",
-        )
-    config = dict(run.get("config_snapshot") or {})
-    job_name = str(config.get("name") or run.get("scheduled_job_id") or run_id)
-    payload_keys = (
-        "agent_id",
-        "config_json",
-        "cron_expression",
-        "enabled",
-        "execution_mode",
-        "interval_seconds",
-        "job_type",
-        "knowledge_document_ids",
-        "lock_ttl_seconds",
-        "max_retry_count",
-        "model_gateway_config_id",
-        "plugin_action_id",
-        "plugin_action_ids",
-        "plugin_connection_id",
-        "plugin_connection_ids",
-        "plugin_input_mapping",
-        "plugin_output_mapping",
-        "product_id",
-        "result_actions",
-        "schedule_type",
-        "skill_ids",
-        "source_system",
-        "timeout_seconds",
-        "timezone",
-    )
-    payload_defaults = {
-        key: config.get(key)
-        for key in payload_keys
-        if key in config and config.get(key) is not None
-    }
-    source = {
-        "source_id": run_id,
-        "source_type": "scheduled_job_run",
-        "title": job_name,
-    }
-    config_json = dict(payload_defaults.get("config_json") or {})
-    config_json["template_source"] = source
-    payload_defaults["config_json"] = config_json
-    payload_defaults["enabled"] = True
-    payload_defaults["name"] = f"{job_name} 模板"
-    return {
-        "category": str(config.get("job_type") or "generated"),
-        "code": f"generated_from_{run_id}",
-        "description": f"由成功运行 {run_id} 反向生成，可作为新增定时作业模板。",
-        "name": f"{job_name} 模板",
-        "payload_defaults": payload_defaults,
-        "recommended_scenarios": ["成功运行复用", "配置模板化", "快速创建同类任务"],
-        "resource_selectors": {},
-        "source_run_id": run_id,
-        "template_version": "generated-v1",
-        "wizard_steps": STANDARD_WIZARD_STEPS,
-    }
 
 
 def ensure_scheduled_job_type_available_for_create(job_type: str) -> None:
@@ -357,6 +292,10 @@ def dry_run_scheduled_job_response(
         payload.plugin_input_mapping or {},
         job,
     )
+    sample_plugin_summary = _dry_run_plugin_summary_from_sample_reuse(
+        job=job,
+        resolved_input_mapping=resolved_input_mapping,
+    )
     if code_inspection_uses_native_scan(job):
         resolved_input_mapping = {
             "branch": config_json.get("branch"),
@@ -369,6 +308,8 @@ def dry_run_scheduled_job_response(
             run_id=job["id"],
             user=user,
         )
+    elif sample_plugin_summary is not None:
+        plugin_summary = sample_plugin_summary
     else:
         plugin_summary, _plugin_summaries = invoke_job_data_connections(
             current_store,
@@ -416,7 +357,11 @@ def dry_run_scheduled_job_response(
     response_summary = plugin_summary.get("response_summary") if plugin_summary else {}
     preview_response_summary = response_summary or {}
     output_preview = {}
-    result_action_preview_source = "data_connection_response"
+    result_action_preview_source = (
+        str(plugin_summary.get("sample_source"))
+        if plugin_summary and plugin_summary.get("sample_source")
+        else "data_connection_response"
+    )
     if will_call_model_gateway and output_schema:
         output_preview = skill_output_schema_sample(
             output_schema,
@@ -467,8 +412,20 @@ def dry_run_scheduled_job_response(
         if plugin_summary is not None
         else {"label": "数据连接获取内容", "records_imported": 0, "status": "not_configured"}
     )
+    sample_reuse = dry_run_sample_reuse_summary(
+        job=job,
+        output_preview=output_preview,
+        plugin_summary=plugin_summary,
+        records_imported=records_imported,
+        result_actions=result_actions,
+        result_action_preview_source=result_action_preview_source,
+        resolved_input_mapping=resolved_input_mapping,
+    )
+    data_node["sample_source"] = sample_reuse["data_connection_sample"]["source"]
+    data_node["sample_reuse_status"] = sample_reuse["data_connection_sample"]["status"]
     return {
         "job_type": job_type,
+        "sample_reuse": sample_reuse,
         "status": (
             "succeeded"
             if plugin_summary is None or plugin_summary.get("status") == "succeeded"
@@ -491,6 +448,38 @@ def dry_run_scheduled_job_response(
             "data_connection": data_node,
             "result_actions": result_actions,
         },
+    }
+
+
+def _dry_run_plugin_summary_from_sample_reuse(
+    *,
+    job: dict[str, Any],
+    resolved_input_mapping: dict[str, Any],
+) -> dict[str, Any] | None:
+    config_json = job.get("config_json") if isinstance(job.get("config_json"), dict) else {}
+    sample_reuse = config_json.get("sample_reuse") if isinstance(config_json, dict) else None
+    if not isinstance(sample_reuse, dict):
+        return None
+    response_summary = sample_reuse.get("response_summary")
+    if not isinstance(response_summary, dict) or not response_summary:
+        return None
+    sample_source = str(sample_reuse.get("sample_source") or "action_trial_response")
+    return {
+        "action_id": sample_reuse.get("action_id") or job.get("plugin_action_id"),
+        "connection_environment": None,
+        "connection_id": sample_reuse.get("connection_id") or job.get("plugin_connection_id"),
+        "error_code": None,
+        "error_message": None,
+        "invocation_log_id": None,
+        "latency_ms": 0,
+        "request_summary": {
+            "input_mapping": resolved_input_mapping,
+            "processing_mode": "sample_reuse",
+            "sample_source": sample_source,
+        },
+        "response_summary": dict(response_summary),
+        "sample_source": sample_source,
+        "status": "succeeded",
     }
 
 
@@ -610,6 +599,11 @@ def resolve_ai_snapshots(current_store: Any, job: dict[str, Any]) -> dict[str, A
         if job.get("agent_id")
         else None
     )
+    if agent is not None:
+        agent = dict(agent)
+        package_snapshot = load_agent_package_snapshot(agent)
+        if package_snapshot is not None:
+            agent["package_snapshot"] = package_snapshot
     skills = []
     for skill_id in job.get("skill_ids", []):
         skill = dict(job_store.read_memory_dict(current_store, "ai_skills")[skill_id])
@@ -784,85 +778,6 @@ def run_iteration_plan_job(
         "suggestions_created": result["total"],
     }
     return summary, result["total"]
-
-
-def plugin_summary_from_log(current_store: Any, plugin_log: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "action_id": plugin_log.get("action_id"),
-        "connection_environment": (
-            job_store.read_memory_dict(current_store, "plugin_connections").get(
-                plugin_log.get("connection_id"),
-            )
-            or {}
-        ).get("environment"),
-        "connection_id": plugin_log.get("connection_id"),
-        "error_code": plugin_log.get("error_code"),
-        "error_message": plugin_log.get("error_message"),
-        "invocation_log_id": plugin_log["id"],
-        "latency_ms": plugin_log.get("latency_ms"),
-        "request_summary": plugin_log.get("request_summary") or {},
-        "response_summary": plugin_log.get("response_summary") or {},
-        "status": plugin_log["status"],
-    }
-
-
-def invoke_job_data_connections(
-    current_store: Any,
-    *,
-    job: dict[str, Any],
-    resolved_plugin_input_mapping: dict[str, Any],
-    run_id: str,
-    trigger_type: str,
-    user: dict[str, Any],
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    if not job.get("plugin_action_id"):
-        return None, []
-    connection_ids = scheduled_job_multi_ids(
-        job,
-        "plugin_connection_ids",
-        "plugin_connection_id",
-    )
-    if not connection_ids and job.get("plugin_connection_id"):
-        connection_ids = [str(job["plugin_connection_id"])]
-    policy = scheduled_job_data_connection_policy(job)
-    summaries: list[dict[str, Any]] = []
-    for connection_id in connection_ids or [None]:
-        job_config = job.get("config_json") or {}
-        linked_scheduled_job_id = None if trigger_type == "dry_run" else job["id"]
-        linked_scheduled_job_run_id = None if trigger_type == "dry_run" else run_id
-        plugin_log = invoke_plugin_action_response(
-            action_id=job["plugin_action_id"],
-            connection_id=connection_id,
-            current_store=current_store,
-            input_payload={
-                "branch": resolved_plugin_input_mapping.get("branch") or job_config.get("branch"),
-                "config": job.get("config_json") or {},
-                "input_mapping": resolved_plugin_input_mapping,
-                "job_id": job["id"],
-                "product_id": job.get("product_id"),
-                "repository_id": (
-                    resolved_plugin_input_mapping.get("repository_id")
-                    or job_config.get("repository_id")
-                ),
-                "timezone": job.get("timezone") or "UTC",
-            },
-            raise_on_failed=False,
-            scheduled_job_id=linked_scheduled_job_id,
-            scheduled_job_run_id=linked_scheduled_job_run_id,
-            trigger_type=trigger_type,
-            user=scheduled_job_plugin_invocation_user(user),
-        )
-        summary = plugin_summary_from_log(current_store, plugin_log)
-        summaries.append(summary)
-        if summary["status"] != "succeeded" and policy["failure_policy"] == "fail_fast":
-            break
-    merged = JobExecutionEngine.merged_plugin_summary(
-        summaries,
-        failure_policy=policy["failure_policy"],
-        merge_strategy=policy["merge_strategy"],
-        resolved_plugin_input_mapping=resolved_plugin_input_mapping,
-    )
-    return merged, summaries
 
 
 def scheduled_job_uses_async_worker(job: dict[str, Any]) -> bool:
@@ -1434,19 +1349,31 @@ def run_scheduled_job_response(
                 }
                 records_imported += plugin_records_imported
         elif job["job_type"] == "plugin_action_invoke" and plugin_summary is not None:
-            result_summary = {
-                **job_runtime.generic_scheduled_job_result_summary(str(job["job_type"])),
-                "execution_nodes": JobExecutionEngine.plugin_action_execution_nodes(
+            if JobExecutionEngine.uses_ai_processing(
+                job,
+                ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
+            ):
+                result_summary, records_imported = run_plugin_action_ai_processing_job(
+                    current_store,
                     job=job,
-                    plugin_output_mapping=plugin_output_mapping,
-                    plugin_records_imported=plugin_records_imported,
                     plugin_summary=plugin_summary,
                     resolved_plugin_input_mapping=resolved_plugin_input_mapping,
-                    skill_codes=skill_codes_for_job(current_store, job),
-                ),
-                "plugin": plugin_summary,
-            }
-            records_imported = plugin_records_imported
+                    user=user,
+                )
+            else:
+                result_summary = {
+                    **job_runtime.generic_scheduled_job_result_summary(str(job["job_type"])),
+                    "execution_nodes": JobExecutionEngine.plugin_action_execution_nodes(
+                        job=job,
+                        plugin_output_mapping=plugin_output_mapping,
+                        plugin_records_imported=plugin_records_imported,
+                        plugin_summary=plugin_summary,
+                        resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                        skill_codes=skill_codes_for_job(current_store, job),
+                    ),
+                    "plugin": plugin_summary,
+                }
+                records_imported = plugin_records_imported
         elif job["job_type"] == "user_feedback_insight_extract" and plugin_summary is not None:
             result_summary, records_imported = run_user_feedback_insight_extract_job(
                 current_store,
@@ -1775,6 +1702,75 @@ def run_scheduled_job_response(
                     "skill_ids": list(job.get("skill_ids", [])),
                 },
                 "write_target": "code_inspection_reports",
+            }
+        elif (
+            job["job_type"] == "plugin_action_invoke"
+            and plugin_summary is not None
+            and JobExecutionEngine.uses_ai_processing(
+                job,
+                ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
+            )
+        ):
+            model_gateway_failure = job_runtime.model_gateway_failure_diagnostics(exc)
+            data_connection_failed = plugin_summary.get("status") == "failed"
+            source_row_count = JobExecutionEngine.plugin_records_imported_from_result(
+                plugin_summary,
+                plugin_output_mapping,
+            )
+            model_gateway_called = bool(model_gateway_failure) or not data_connection_failed
+            model_gateway_config_id = (
+                model_gateway_failure.get("model_gateway_config_id")
+                or job.get("model_gateway_config_id")
+            )
+            skill_processing_note = (
+                "数据连接失败，平台 AI 大模型处理未开始。"
+                if data_connection_failed
+                else "数据连接已完成，但平台 AI 大模型处理失败。"
+            )
+            result_summary = {
+                "execution_nodes": {
+                    "data_connection": JobExecutionEngine.data_connection_execution_node(
+                        job=job,
+                        plugin_summary=plugin_summary,
+                        records_imported=source_row_count,
+                        resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                    ),
+                    "result_action": {
+                        "label": "结果动作反馈内容",
+                        "records_imported": 0,
+                        "status": "not_run",
+                        "write_target": plugin_output_mapping.get("write_target")
+                        or "scheduled_job_result",
+                    },
+                    "skill_processing": {
+                        **model_gateway_failure,
+                        "error_code": error_code,
+                        "error_message": error_message,
+                        "label": "Skill 处理后内容",
+                        "model_gateway_called": model_gateway_called,
+                        "model_gateway_config_id": model_gateway_config_id,
+                        "note": skill_processing_note,
+                        "processing_mode": (
+                            "not_started"
+                            if data_connection_failed
+                            else "model_gateway_json_transform"
+                        ),
+                        "skill_codes": skill_codes_for_job(current_store, job),
+                        "skill_ids": list(job.get("skill_ids", [])),
+                        "status": "not_run" if data_connection_failed else "failed",
+                    },
+                },
+                "plugin": plugin_summary,
+                "processing": {
+                    **model_gateway_failure,
+                    "error_code": error_code,
+                    "error_message": error_message,
+                    "model_gateway_called": model_gateway_called,
+                    "skill_codes": skill_codes_for_job(current_store, job),
+                    "skill_ids": list(job.get("skill_ids", [])),
+                },
+                "write_target": plugin_output_mapping.get("write_target")
+                or "scheduled_job_result",
             }
         elif plugin_summary is not None:
             result_summary = {

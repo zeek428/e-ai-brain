@@ -604,8 +604,17 @@ class ScheduledJobExecutionEngine:
         trace_input = ScheduledJobExecutionEngine._trace_node_input(node_id, node)
         trace_output = ScheduledJobExecutionEngine._trace_node_output(node_id, node)
         stage, stage_label = ScheduledJobExecutionEngine._trace_node_stage(canonical_id)
+        rerun_plan = ScheduledJobExecutionEngine._trace_node_rerun_plan(
+            canonical_id=canonical_id,
+            error=error,
+            node=node,
+            node_id=node_id,
+            trace_input=trace_input,
+            trace_output=trace_output,
+        )
         return {
             "debug_actions": ScheduledJobExecutionEngine._trace_node_debug_actions(
+                rerun_plan=rerun_plan,
                 input_payload=trace_input,
                 output_payload=trace_output,
                 error=error,
@@ -617,8 +626,10 @@ class ScheduledJobExecutionEngine:
             "label": node.get("label") or node_id,
             "output": trace_output,
             "rerun_hint": ScheduledJobExecutionEngine._trace_node_rerun_hint(canonical_id),
-            "rerun_supported": False,
+            "rerun_plan": rerun_plan,
+            "rerun_supported": bool(rerun_plan.get("single_node_supported")),
             "retry_count": retry_count,
+            "snapshot_status": rerun_plan["snapshot_status"],
             "stage": stage,
             "stage_label": stage_label,
             "status": status,
@@ -646,6 +657,7 @@ class ScheduledJobExecutionEngine:
     @staticmethod
     def _trace_node_debug_actions(
         *,
+        rerun_plan: dict[str, Any],
         input_payload: dict[str, Any],
         output_payload: dict[str, Any],
         error: dict[str, Any] | None,
@@ -675,17 +687,365 @@ class ScheduledJobExecutionEngine:
                     "type": "copy_error",
                 },
             )
+        if rerun_plan:
+            actions.append(
+                {
+                    "enabled": True,
+                    "label": "复制复跑计划",
+                    "type": "copy_rerun_plan",
+                },
+            )
         return actions
+
+    @staticmethod
+    def _trace_node_rerun_plan(
+        *,
+        canonical_id: str,
+        error: dict[str, Any] | None,
+        node: dict[str, Any],
+        node_id: str,
+        trace_input: dict[str, Any],
+        trace_output: dict[str, Any],
+    ) -> dict[str, Any]:
+        snapshot_status = {
+            "error": error is not None,
+            "input": bool(trace_input),
+            "output": bool(trace_output),
+        }
+        idempotency_key = ScheduledJobExecutionEngine._trace_node_idempotency_key(
+            canonical_id,
+            node,
+            node_id=node_id,
+        )
+        plan = {
+            "blocked_by": ["single_node_rerun_execution_guarded"],
+            "can_preview_from_snapshot": bool(trace_input or trace_output),
+            "full_run_supported": True,
+            "idempotency_key": idempotency_key,
+            "node_id": node_id,
+            "plan_version": "trace_node_rerun_v2",
+            "required_controls": [
+                "node_input_snapshot",
+                "idempotency_guard",
+                "downstream_invalidation",
+            ],
+            "safe_next_action": "rerun_full_scheduled_job",
+            "side_effect_policy": "none",
+            "single_node_supported": False,
+            "snapshot_status": snapshot_status,
+            "status": "planning_required",
+        }
+        if canonical_id == "data_connection":
+            blocked_by: list[str] = []
+            if not snapshot_status["input"]:
+                blocked_by.append("request_snapshot_missing")
+            if not idempotency_key:
+                blocked_by.append("connection_read_idempotency_missing")
+            plan.update(
+                {
+                    "blocked_by": blocked_by,
+                    "downstream_invalidation_strategy": (
+                        "isolated_single_node_run" if not blocked_by else None
+                    ),
+                    "required_controls": [
+                        "request_snapshot",
+                        "connection_read_idempotency",
+                        "downstream_ai_and_action_invalidation",
+                    ],
+                    "safe_next_action": (
+                        "confirm_single_node_rerun"
+                        if not blocked_by
+                        else "rerun_full_scheduled_job"
+                    ),
+                    "side_effect_policy": "external_read_or_fetch",
+                    "single_node_supported": not blocked_by,
+                    "status": "ready" if not blocked_by else "blocked_by_controls",
+                },
+            )
+        elif canonical_id == "skill_processing":
+            blocked_by = []
+            if not snapshot_status["input"]:
+                blocked_by.append("ai_input_snapshot_missing")
+            if not idempotency_key:
+                blocked_by.append("model_gateway_idempotency_missing")
+            plan.update(
+                {
+                    "blocked_by": blocked_by,
+                    "downstream_invalidation_strategy": (
+                        "isolated_single_node_run" if not blocked_by else None
+                    ),
+                    "required_controls": [
+                        "data_connection_output_snapshot",
+                        "knowledge_reference_snapshot",
+                        "model_gateway_idempotency_key",
+                        "downstream_invalidation",
+                    ],
+                    "safe_next_action": (
+                        "confirm_single_node_rerun"
+                        if not blocked_by
+                        else "rerun_full_scheduled_job"
+                    ),
+                    "side_effect_policy": "model_gateway_cost_and_output_drift",
+                    "single_node_supported": not blocked_by,
+                    "status": "ready" if not blocked_by else "blocked_by_controls",
+                },
+            )
+        elif canonical_id == "runner_execution":
+            plan.update(
+                {
+                    "blocked_by": ["trace_node_runner_retry_binding_pending"],
+                    "required_controls": [
+                        "runner_task_snapshot",
+                        "workspace_whitelist_check",
+                        "runner_retry_policy",
+                    ],
+                    "safe_next_action": "retry_ai_executor_task",
+                    "side_effect_policy": "local_workspace_mutation",
+                },
+            )
+        elif canonical_id == "result_action":
+            action_type = str(node.get("type") or node.get("action_type") or "")
+            generic_result_action = action_type in {
+                "save_scheduled_job_result",
+                "send_notification",
+            }
+            blocked_by = []
+            if not generic_result_action:
+                blocked_by.append("write_idempotency_not_confirmed")
+            if not snapshot_status["input"]:
+                blocked_by.append("action_input_snapshot_missing")
+            if not snapshot_status["output"]:
+                blocked_by.append("action_output_snapshot_missing")
+            if not idempotency_key:
+                blocked_by.append("write_target_idempotency_missing")
+            plan.update(
+                {
+                    "blocked_by": blocked_by,
+                    "generic_result_action": generic_result_action,
+                    "required_controls": [
+                        "action_input_snapshot",
+                        "action_output_snapshot",
+                        "write_target_idempotency_key",
+                    ],
+                    "safe_next_action": (
+                        "confirm_single_node_rerun"
+                        if not blocked_by
+                        else "rerun_full_scheduled_job"
+                    ),
+                    "side_effect_policy": (
+                        "generic_result_write_record"
+                        if generic_result_action
+                        else "external_or_business_write"
+                    ),
+                    "single_node_supported": not blocked_by,
+                    "status": "ready" if not blocked_by else "blocked_by_side_effect_guard",
+                },
+            )
+        elif canonical_id in {
+            "bug_creation",
+            "code_inspection_report",
+            "notifications",
+            "task_creation",
+        }:
+            plan.update(
+                {
+                    "blocked_by": ["business_side_effect_node"],
+                    "full_run_supported": False,
+                    "required_controls": [
+                        "business_write_deduplication",
+                        "manual_approval",
+                    ],
+                    "safe_next_action": "inspect_then_manual_repair",
+                    "side_effect_policy": "business_write",
+                    "status": "blocked_by_business_side_effect",
+                },
+            )
+        plan["rerun_controls"] = ScheduledJobExecutionEngine._trace_node_rerun_controls(
+            idempotency_key=idempotency_key,
+            plan=plan,
+            snapshot_status=snapshot_status,
+        )
+        plan["control_summary"] = ScheduledJobExecutionEngine._trace_node_rerun_control_summary(
+            plan["rerun_controls"],
+        )
+        return plan
+
+    @staticmethod
+    def _trace_node_rerun_controls(
+        *,
+        idempotency_key: str | None,
+        plan: dict[str, Any],
+        snapshot_status: dict[str, bool],
+    ) -> list[dict[str, Any]]:
+        return [
+            ScheduledJobExecutionEngine._trace_node_rerun_control(
+                control_key,
+                idempotency_key=idempotency_key,
+                plan=plan,
+                snapshot_status=snapshot_status,
+            )
+            for control_key in plan.get("required_controls") or []
+        ]
+
+    @staticmethod
+    def _trace_node_rerun_control_summary(
+        controls: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        status_counts: dict[str, int] = {}
+        for control in controls:
+            status = str(control.get("status") or "unknown")
+            status_counts[status] = status_counts.get(status, 0) + 1
+        return {
+            "blocked_count": status_counts.get("blocked", 0),
+            "missing_count": status_counts.get("missing", 0),
+            "needs_review_count": status_counts.get("needs_review", 0),
+            "satisfied_count": status_counts.get("satisfied", 0),
+            "status_counts": status_counts,
+            "total": len(controls),
+        }
+
+    @staticmethod
+    def _trace_node_rerun_control(
+        control_key: str,
+        *,
+        idempotency_key: str | None,
+        plan: dict[str, Any],
+        snapshot_status: dict[str, bool],
+    ) -> dict[str, Any]:
+        label_by_key = {
+            "action_input_snapshot": "动作输入快照",
+            "action_output_snapshot": "动作输出快照",
+            "business_write_deduplication": "业务写入去重",
+            "connection_read_idempotency": "连接读取幂等",
+            "data_connection_output_snapshot": "数据连接输出快照",
+            "downstream_ai_and_action_invalidation": "下游 AI/动作失效策略",
+            "downstream_invalidation": "下游失效策略",
+            "human_confirmation_for_side_effect": "副作用人工确认",
+            "idempotency_guard": "幂等防重控制",
+            "knowledge_reference_snapshot": "知识引用快照",
+            "manual_approval": "人工审批",
+            "model_gateway_idempotency_key": "模型网关幂等键",
+            "node_input_snapshot": "节点输入快照",
+            "request_snapshot": "请求快照",
+            "runner_retry_policy": "Runner 重试策略",
+            "runner_task_snapshot": "Runner 任务快照",
+            "workspace_whitelist_check": "工作区白名单校验",
+            "write_target_idempotency_key": "写入目标幂等键",
+        }
+        blocked_controls = {
+            "business_write_deduplication",
+            "connection_read_idempotency",
+            "downstream_ai_and_action_invalidation",
+            "downstream_invalidation",
+            "runner_retry_policy",
+        }
+        review_controls = {
+            "human_confirmation_for_side_effect",
+            "manual_approval",
+            "workspace_whitelist_check",
+        }
+        snapshot_controls = {
+            "action_input_snapshot",
+            "action_output_snapshot",
+            "data_connection_output_snapshot",
+            "knowledge_reference_snapshot",
+            "node_input_snapshot",
+            "request_snapshot",
+            "runner_task_snapshot",
+        }
+        idempotency_controls = {
+            "idempotency_guard",
+            "model_gateway_idempotency_key",
+            "write_target_idempotency_key",
+        }
+        status = "missing"
+        reason = "控制项尚未满足"
+        if control_key in snapshot_controls:
+            has_snapshot = bool(snapshot_status.get("input") or snapshot_status.get("output"))
+            status = "satisfied" if has_snapshot else "missing"
+            reason = "已有可用于预检的节点快照" if has_snapshot else "缺少节点快照"
+        elif control_key == "connection_read_idempotency":
+            status = "satisfied" if idempotency_key else "blocked"
+            reason = (
+                "已使用原插件调用日志生成连接读取幂等键"
+                if idempotency_key
+                else "缺少原插件调用日志，无法建立连接读取幂等键"
+            )
+        elif control_key in {
+            "downstream_ai_and_action_invalidation",
+            "downstream_invalidation",
+        }:
+            isolated = plan.get("downstream_invalidation_strategy") == "isolated_single_node_run"
+            status = "satisfied" if isolated else "blocked"
+            reason = (
+                "单节点复跑会生成独立运行记录，下游 AI 和动作不执行"
+                if isolated
+                else "缺少下游 AI/动作隔离策略"
+            )
+        elif control_key in idempotency_controls:
+            status = "satisfied" if idempotency_key else "missing"
+            reason = "已生成幂等键" if idempotency_key else "缺少幂等键"
+        elif control_key in blocked_controls:
+            status = "blocked"
+            reason = "需要服务端执行保护后才能开放单节点复跑"
+        elif control_key in review_controls:
+            status = "needs_review"
+            reason = "需要运行时校验或人工确认"
+
+        return {
+            "key": control_key,
+            "label": label_by_key.get(control_key, control_key),
+            "reason": reason,
+            "required": True,
+            "satisfied": status == "satisfied",
+            "status": status,
+        }
+
+    @staticmethod
+    def _trace_node_idempotency_key(
+        canonical_id: str,
+        node: dict[str, Any],
+        *,
+        node_id: str,
+    ) -> str | None:
+        if canonical_id == "runner_execution" and node.get("runner_task_id"):
+            return f"ai_executor_task:{node['runner_task_id']}"
+        if canonical_id == "skill_processing":
+            model_log_id = node.get("model_log_id") or node.get("model_gateway_log_id")
+            if model_log_id:
+                return f"model_gateway_log:{model_log_id}"
+            model_gateway_config_id = node.get("model_gateway_config_id")
+            if model_gateway_config_id:
+                return f"skill_processing:{node_id}:{model_gateway_config_id}"
+            if node.get("model_gateway_called") is True:
+                return f"skill_processing:{node_id}:model_gateway"
+        feedback = node.get("feedback")
+        if isinstance(feedback, dict) and feedback.get("plugin_invocation_log_id"):
+            return f"plugin_invocation_log:{feedback['plugin_invocation_log_id']}"
+        if node.get("plugin_invocation_log_id"):
+            return f"plugin_invocation_log:{node['plugin_invocation_log_id']}"
+        if canonical_id == "result_action" and (
+            node.get("type") or node.get("action_type") or node.get("write_target")
+        ):
+            return (
+                "result_action:"
+                f"{node_id}:"
+                f"{node.get('type') or node.get('action_type') or 'unknown'}:"
+                f"{node.get('write_target') or 'scheduled_job_result'}"
+            )
+        if canonical_id == "result_action" and node.get("action_id"):
+            return f"result_action:{node.get('action_id')}:{node.get('write_target') or 'unknown'}"
+        return None
 
     @staticmethod
     def _trace_node_rerun_hint(canonical_id: str) -> str:
         if canonical_id == "data_connection":
-            return "如需重试该节点，请从运行记录复跑整条作业，系统会重新执行数据连接和下游节点。"
+            return "可先做复跑预检；请求快照、读取幂等和下游隔离满足时可单独重跑数据连接，否则请复跑整条作业。"
         if canonical_id == "skill_processing":
-            return "如需重试 AI 处理，请从运行记录复跑整条作业，避免跳过数据上下文和知识引用。"
+            return "可先做复跑预检；输入快照、模型幂等和下游隔离满足时可单独重跑 AI 处理，否则请复跑整条作业。"
         if canonical_id == "result_action":
-            return "如需重新写入结果，请先确认目标幂等策略，再从运行记录复跑整条作业。"
-        return "当前版本支持运行记录级复跑，暂不支持单节点复跑。"
+            return "可先做复跑预检；动作输入输出快照和写入幂等满足时可单独重跑结果动作，否则请复跑整条作业。"
+        return "可先做复跑预检；控制项满足时支持单节点复跑，否则请复跑整条运行记录。"
 
     @staticmethod
     def _trace_node_input(node_id: str, node: dict[str, Any]) -> dict[str, Any]:

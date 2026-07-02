@@ -104,6 +104,13 @@ export type AiSkillRecord = {
   prompt_template?: string;
   requires_human_review?: boolean;
   risk_level?: string;
+  runtime_capabilities?: {
+    prompt_execution?: string;
+    schema_validation?: string;
+    script_execution?: string;
+    script_files?: string[];
+    script_note?: string;
+  };
   source_type?: string;
   status: string;
   version?: string;
@@ -129,15 +136,42 @@ export type AiAgentRecord = {
   brain_app_id?: string;
   code: string;
   default_skill_ids?: string[];
+  description?: string | null;
+  execution_policy?: Record<string, unknown>;
   id: string;
+  manifest?: Record<string, unknown>;
   model_gateway_config?: Record<string, unknown> | null;
   model_gateway_config_id?: string | Record<string, unknown> | null;
   model_gateway_config_snapshot?: Record<string, unknown> | null;
   name: string;
+  package_checksum?: string | null;
+  package_entry?: string | null;
+  package_files?: string[];
+  package_size_bytes?: number;
+  package_uri?: string | null;
   resolved_model_gateway_config?: Record<string, unknown> | null;
+  runtime_capabilities?: {
+    default_skill_binding?: string;
+    package_context?: string;
+    script_execution?: string;
+    script_files?: string[];
+    script_note?: string;
+    system_prompt_execution?: string;
+  };
+  source_type?: string;
   status: string;
   system_prompt?: string;
   tool_policy?: Record<string, unknown>;
+};
+
+export type AiAgentPackageUploadOptions = {
+  brainAppId?: string;
+  code: string;
+  defaultSkillIds?: string[];
+  modelGatewayConfigId?: string;
+  name: string;
+  status?: string;
+  version?: string;
 };
 
 export type ScheduledJobRecord = {
@@ -240,6 +274,7 @@ export type ScheduledJobTemplateRecord = {
 
 export type ScheduledJobDryRunResult = {
   job_type?: string;
+  sample_reuse?: Record<string, unknown>;
   stages?: {
     ai_processing?: Record<string, unknown>;
     data_connection?: Record<string, unknown>;
@@ -279,6 +314,57 @@ export type ScheduledJobRunRecord = {
   tool_policy_snapshot?: Record<string, unknown>;
   trigger_type?: string;
   updated_at?: string | null;
+};
+
+export type ScheduledJobTraceNodeRerunControl = {
+  key?: string;
+  label?: string;
+  reason?: string;
+  required?: boolean;
+  satisfied?: boolean;
+  status?: string;
+};
+
+export type ScheduledJobTraceNodeRerunControlSummary = {
+  blocked_count?: number;
+  missing_count?: number;
+  needs_review_count?: number;
+  satisfied_count?: number;
+  status_counts?: Record<string, number>;
+  total?: number;
+};
+
+export type ScheduledJobTraceNodeRerunNextAction = {
+  description?: string;
+  key?: string;
+  label?: string;
+  missing_controls?: string[];
+  request?: Record<string, unknown>;
+  side_effect_policy?: string;
+  status?: string;
+};
+
+export type ScheduledJobTraceNodeRerunPreview = {
+  blocked_by?: string[];
+  can_preview_from_snapshot?: boolean;
+  control_summary?: ScheduledJobTraceNodeRerunControlSummary;
+  debug_actions?: Array<Record<string, unknown>>;
+  execution_policy?: Record<string, unknown>;
+  full_run_request?: Record<string, unknown>;
+  missing_controls?: string[];
+  next_actions?: ScheduledJobTraceNodeRerunNextAction[];
+  node_id?: string;
+  preflight_status?: string;
+  rerun_plan?: Record<string, unknown>;
+  rerun_controls?: ScheduledJobTraceNodeRerunControl[];
+  rerun_supported?: boolean;
+  run_id?: string;
+  safe_next_action?: string;
+  side_effect_policy?: string;
+  snapshot_preview?: Record<string, unknown>;
+  snapshot_status?: Record<string, unknown>;
+  stage?: string;
+  stage_label?: string;
 };
 
 export type ScheduledJobRunObservability = {
@@ -515,6 +601,7 @@ export type PluginConnectionTestHistoryRecord = {
   repair_suggestions?: PluginConnectionRepairSuggestion[];
   request_summary?: Record<string, unknown>;
   response_summary?: Record<string, unknown>;
+  scheduled_job_sample_seed?: Record<string, unknown>;
   status?: string;
 };
 
@@ -541,6 +628,7 @@ export type PluginConnectionTestResult = {
   request_summary?: Record<string, unknown>;
   repair_suggestions?: PluginConnectionRepairSuggestion[];
   response_summary?: Record<string, unknown>;
+  scheduled_job_sample_seed?: Record<string, unknown>;
   status: string;
   test_history?: PluginConnectionTestHistoryRecord[];
 };
@@ -599,6 +687,48 @@ export type AiExecutorRunnerRecord = {
   metadata?: Record<string, unknown>;
   name: string;
   protocol?: string;
+  queue_summary?: {
+    available_slots?: number;
+    cancelled?: number;
+    claimed?: number;
+    counts_by_status?: Record<string, number>;
+    dead_letter?: number;
+    failed?: number;
+    failed_total?: number;
+    latest_failure?: {
+      error_code?: string | null;
+      error_message?: string | null;
+      finished_at?: string | null;
+      id?: string | null;
+      status?: string | null;
+      updated_at?: string | null;
+    };
+    max_concurrent_tasks?: number;
+    queued?: number;
+    running?: number;
+    running_total?: number;
+    succeeded?: number;
+    terminal_total?: number;
+    timed_out?: number;
+    total?: number;
+  };
+  readiness_summary?: {
+    attention_count?: number;
+    blocked_count?: number;
+    controls?: Array<{
+      key?: string;
+      label?: string;
+      reason?: string;
+      required?: boolean;
+      satisfied?: boolean;
+      status?: string;
+    }>;
+    missing_count?: number;
+    readiness_status?: string;
+    satisfied_count?: number;
+    status_counts?: Record<string, number>;
+    total?: number;
+  };
   runner_token?: string;
   setup_command?: string;
   status: string;
@@ -638,6 +768,43 @@ export type AiExecutorTaskRecord = {
   timed_out_at?: string | null;
   updated_at?: string | null;
   workspace_root?: string | null;
+};
+
+export type AiExecutorApprovalRequestRecord = {
+  action_id?: string | null;
+  ai_task_id?: string | null;
+  approval?: Record<string, unknown>;
+  approval_request?: Record<string, unknown>;
+  approved_at?: string | null;
+  approved_by?: string | null;
+  blocked_operations?: string[];
+  connection_id?: string | null;
+  created_at?: string | null;
+  executor_type?: string;
+  expires_at?: string | null;
+  id: string;
+  reason?: string | null;
+  requested_at?: string | null;
+  requested_by?: string | null;
+  risk_level?: string;
+  runner_id?: string | null;
+  scheduled_job_id?: string | null;
+  scheduled_job_run_id?: string | null;
+  status: string;
+  updated_at?: string | null;
+  workspace_root?: string;
+};
+
+export type AiExecutorApprovalRequestListQuery = RemoteListQuery & {
+  actionId?: string;
+  runnerId?: string;
+  status?: string;
+};
+
+export type AiExecutorApprovalRequestApprovalResponse = {
+  action?: PluginActionRecord | null;
+  approval: Record<string, unknown>;
+  approval_request: AiExecutorApprovalRequestRecord;
 };
 
 export type RdTaskExecutorPolicyRecord = {
@@ -698,6 +865,34 @@ export type AiExecutorTaskRetryResponse = {
   task: AiExecutorTaskRecord;
 };
 
+export type AiExecutorTaskTimeoutScanNextAction = {
+  description?: string;
+  key: string;
+  label: string;
+  severity?: string;
+  task_ids?: string[];
+};
+
+export type AiExecutorTaskTimeoutScanSummary = {
+  dead_letter_count: number;
+  manual_attention_required: boolean;
+  message: string;
+  requeued_count: number;
+  scanned_at: string;
+  status: string;
+  timed_out_count: number;
+  total_affected: number;
+};
+
+export type AiExecutorTaskTimeoutScanResponse = {
+  dead_letter_task_ids: string[];
+  next_actions: AiExecutorTaskTimeoutScanNextAction[];
+  requeued_task_ids: string[];
+  summary: AiExecutorTaskTimeoutScanSummary;
+  timed_out_task_ids: string[];
+  tasks: AiExecutorTaskRecord[];
+};
+
 export type AiExecutorRunnerInstallPackageOptions = {
   arch?: string;
   install_mode?: string;
@@ -733,6 +928,7 @@ export type PluginActionTrialResult = {
   action_id: string;
   connection_id: string;
   error_code?: string | null;
+  error_detail?: Record<string, unknown> | null;
   error_message?: string | null;
   latency_ms: number;
   mapping_hits?: Array<{
@@ -744,6 +940,8 @@ export type PluginActionTrialResult = {
   plugin_id: string;
   request_preview?: Record<string, unknown>;
   response_summary?: Record<string, unknown>;
+  sample_source?: string;
+  scheduled_job_dry_run_seed?: Record<string, unknown>;
   status: string;
   write_preview?: {
     candidate_count?: number;
@@ -922,6 +1120,48 @@ export async function fetchAiExecutorTaskLogs(taskId: string): Promise<AiExecuto
   });
 }
 
+export async function fetchAiExecutorApprovalRequestsPage(
+  query: AiExecutorApprovalRequestListQuery = {},
+): Promise<RemoteListResult<AiExecutorApprovalRequestRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'action_id', query.actionId);
+  appendQueryParam(params, 'runner_id', query.runnerId);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const response = await apiRequest<ListResponse<AiExecutorApprovalRequestRecord>>(
+    `/api/system/ai-executor-approval-requests?${params.toString()}`,
+    { token },
+  );
+  return {
+    page: response.page ?? query.page ?? 1,
+    pageSize: response.page_size ?? query.pageSize ?? 10,
+    performance: response.performance,
+    rows: response.items,
+    total: response.total,
+  };
+}
+
+export async function approveAiExecutorApprovalRequest(
+  approvalRequestId: string,
+  payload: {
+    approval_id?: string;
+    approved_operations?: string[];
+    expires_at?: string;
+    reason?: string;
+  } = {},
+): Promise<AiExecutorApprovalRequestApprovalResponse> {
+  const token = requireAccessToken();
+  return apiRequest<AiExecutorApprovalRequestApprovalResponse>(
+    `/api/system/ai-executor-approval-requests/${approvalRequestId}/approve`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+}
+
 export async function fetchRdTaskExecutorPolicies(
   query: Pick<RdTaskExecutorPolicyListQuery, 'productId' | 'status' | 'taskType'> = {},
 ): Promise<RdTaskExecutorPolicyRecord[]> {
@@ -1017,6 +1257,17 @@ export async function retryAiExecutorTask(
   const token = requireAccessToken();
   return apiRequest<AiExecutorTaskRetryResponse>(`/api/system/ai-executor-tasks/${taskId}/retry`, {
     body: { reason },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function timeoutAiExecutorTasks(
+  payload: { now?: string | null } = {},
+): Promise<AiExecutorTaskTimeoutScanResponse> {
+  const token = requireAccessToken();
+  return apiRequest<AiExecutorTaskTimeoutScanResponse>('/api/system/ai-executor-tasks/timeout-scan', {
+    body: payload,
     method: 'POST',
     token,
   });
@@ -1235,6 +1486,27 @@ export async function updatePluginAction(actionId: string, payload: Partial<Plug
   });
 }
 
+export async function approvePluginActionAiExecutor(
+  actionId: string,
+  payload: {
+    approval_id?: string;
+    approval_request?: Record<string, unknown>;
+    approved_operations?: string[];
+    expires_at?: string;
+    reason?: string;
+  },
+) {
+  const token = requireAccessToken();
+  return apiRequest<{ action: PluginActionRecord; approval: Record<string, unknown> }>(
+    `/api/system/plugin-actions/${actionId}/ai-executor-approval`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+}
+
 export async function deletePluginAction(actionId: string) {
   const token = requireAccessToken();
   return apiRequest<{ deleted: boolean; id: string }>(`/api/system/plugin-actions/${actionId}`, {
@@ -1254,14 +1526,22 @@ export async function invokePluginAction(actionId: string, inputPayload: Record<
 
 export async function trialPluginAction(
   actionId: string,
-  payload: { connection_id?: string | null; input_payload?: Record<string, unknown> } = {},
+  payload: {
+    connection_id?: string | null;
+    input_payload?: Record<string, unknown>;
+    sample_response_summary?: Record<string, unknown>;
+  } = {},
 ) {
   const token = requireAccessToken();
+  const body: Record<string, unknown> = {
+    connection_id: payload.connection_id,
+    input_payload: payload.input_payload ?? {},
+  };
+  if (payload.sample_response_summary) {
+    body.sample_response_summary = payload.sample_response_summary;
+  }
   return apiRequest<PluginActionTrialResult>(`/api/system/plugin-actions/${actionId}/trial`, {
-    body: {
-      connection_id: payload.connection_id,
-      input_payload: payload.input_payload ?? {},
-    },
+    body,
     method: 'POST',
     token,
   });
@@ -1424,6 +1704,49 @@ export async function createAiAgent(payload: Partial<AiAgentRecord>) {
   });
 }
 
+export async function uploadAiAgentPackage(
+  file: File,
+  options: AiAgentPackageUploadOptions,
+) {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'brain_app_id', options.brainAppId ?? 'rd_brain');
+  appendQueryParam(params, 'code', options.code);
+  appendQueryParam(params, 'name', options.name);
+  appendQueryParam(params, 'version', options.version ?? '1.0.0');
+  appendQueryParam(params, 'status', options.status ?? 'active');
+  appendQueryParam(params, 'model_gateway_config_id', options.modelGatewayConfigId);
+  for (const skillId of options.defaultSkillIds ?? []) {
+    if (skillId) {
+      params.append('default_skill_ids', skillId);
+    }
+  }
+  const response = await fetch(`${API_BASE_URL}/api/system/ai-agents/upload?${params}`, {
+    body: await readUploadFileBytes(file),
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/zip',
+    },
+    method: 'POST',
+  });
+  if (!response.ok) {
+    let payload: ApiErrorPayload | undefined;
+    try {
+      payload = (await response.json()) as ApiErrorPayload;
+    } catch {
+      payload = undefined;
+    }
+    throw new ApiRequestError({
+      code: payload?.detail?.code,
+      message: payload?.detail?.message ?? `API request failed: ${response.status}`,
+      status: response.status,
+      traceId: payload?.detail?.trace_id,
+    });
+  }
+  const payload = (await response.json()) as ApiEnvelope<AiAgentRecord>;
+  return payload.data;
+}
+
 export async function updateAiAgent(agentId: string, payload: Partial<AiAgentRecord>) {
   const token = requireAccessToken();
   return apiRequest<AiAgentRecord>(`/api/system/ai-agents/${agentId}`, {
@@ -1491,6 +1814,31 @@ export async function generateScheduledJobTemplateFromRun(runId: string): Promis
     method: 'POST',
     token,
   });
+}
+
+export async function fetchScheduledJobTraceNodeRerunPreview(
+  runId: string,
+  nodeId: string,
+): Promise<ScheduledJobTraceNodeRerunPreview> {
+  const token = requireAccessToken();
+  return apiRequest<ScheduledJobTraceNodeRerunPreview>(
+    `/api/system/scheduled-job-runs/${encodeURIComponent(runId)}/trace-nodes/${encodeURIComponent(nodeId)}/rerun-preview`,
+    { token },
+  );
+}
+
+export async function rerunScheduledJobTraceNode(
+  runId: string,
+  nodeId: string,
+): Promise<ScheduledJobRunRecord> {
+  const token = requireAccessToken();
+  return apiRequest<ScheduledJobRunRecord>(
+    `/api/system/scheduled-job-runs/${encodeURIComponent(runId)}/trace-nodes/${encodeURIComponent(nodeId)}/rerun`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
 }
 
 export async function createScheduledJob(payload: Partial<ScheduledJobRecord>) {

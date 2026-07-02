@@ -61,6 +61,7 @@ vi.mock('@ant-design/pro-components', async () => {
     className,
     columns,
     dataSource,
+    expandable,
     headerTitle,
     onReset,
     onSubmit,
@@ -87,6 +88,10 @@ vi.mock('@ant-design/pro-components', async () => {
       width?: number;
     }>;
     dataSource: Row[];
+    expandable?: {
+      expandedRowRender?: (record: Row) => React.ReactNode;
+      rowExpandable?: (record: Row) => boolean;
+    };
     headerTitle?: React.ReactNode;
     onReset?: () => void;
     onSubmit?: (values: Record<string, unknown>) => void;
@@ -103,6 +108,8 @@ vi.mock('@ant-design/pro-components', async () => {
   }) {
     const searchColumns = search === false ? [] : columns.filter((column) => column.search !== false);
     const tableColumns = columns.filter((column) => !column.hideInTable);
+    const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(() => new Set());
+    const hasExpandable = typeof expandable?.expandedRowRender === 'function';
     const selectedKeys = new Set((rowSelection?.selectedRowKeys ?? []).map(String));
     const toggleSelection = (row: Row, checked: boolean) => {
       const rowId = String(row[rowKey]);
@@ -113,6 +120,17 @@ vi.mock('@ant-design/pro-components', async () => {
         nextKeys,
         dataSource.filter((item) => nextKeys.includes(String(item[rowKey]))),
       );
+    };
+    const toggleExpanded = (rowId: string) => {
+      setExpandedKeys((current) => {
+        const next = new Set(current);
+        if (next.has(rowId)) {
+          next.delete(rowId);
+        } else {
+          next.add(rowId);
+        }
+        return next;
+      });
     };
 
     return React.createElement(
@@ -206,6 +224,7 @@ vi.mock('@ant-design/pro-components', async () => {
           React.createElement(
             'tr',
             null,
+            hasExpandable ? React.createElement('th', { key: '__expand' }, '展开') : null,
             rowSelection ? React.createElement('th', { key: '__selection' }, '选择') : null,
             tableColumns.map((column) =>
               React.createElement(
@@ -224,35 +243,79 @@ vi.mock('@ant-design/pro-components', async () => {
         React.createElement(
           'tbody',
           null,
-          dataSource.map((row) =>
-            React.createElement(
-              'tr',
-              { key: String(row[rowKey]) },
-              rowSelection
-                ? React.createElement(
+          dataSource.map((row) => {
+            const rowId = String(row[rowKey]);
+            const canExpand = hasExpandable && (expandable?.rowExpandable?.(row) ?? true);
+            const isExpanded = expandedKeys.has(rowId);
+            return React.createElement(
+              React.Fragment,
+              { key: rowId },
+              React.createElement(
+                'tr',
+                null,
+                hasExpandable
+                  ? React.createElement(
+                      'td',
+                      { key: '__expand' },
+                      canExpand
+                        ? React.createElement(
+                            'button',
+                            {
+                              'aria-label': `${isExpanded ? '收起' : '展开'} ${rowId}`,
+                              className: [
+                                'ant-table-row-expand-icon',
+                                isExpanded
+                                  ? 'ant-table-row-expand-icon-expanded'
+                                  : 'ant-table-row-expand-icon-collapsed',
+                              ].join(' '),
+                              onClick: () => toggleExpanded(rowId),
+                              type: 'button',
+                            },
+                            isExpanded ? '-' : '+',
+                          )
+                        : null,
+                    )
+                  : null,
+                rowSelection
+                  ? React.createElement(
+                      'td',
+                      { key: '__selection' },
+                      React.createElement('input', {
+                        'aria-label': `选择 ${rowId}`,
+                        checked: selectedKeys.has(rowId),
+                        disabled: rowSelection.getCheckboxProps?.(row).disabled,
+                        onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
+                          toggleSelection(row, event.currentTarget.checked),
+                        type: 'checkbox',
+                      }),
+                    )
+                  : null,
+                tableColumns.map((column) =>
+                  React.createElement(
                     'td',
-                    { key: '__selection' },
-                    React.createElement('input', {
-                      'aria-label': `选择 ${String(row[rowKey])}`,
-                      checked: selectedKeys.has(String(row[rowKey])),
-                      disabled: rowSelection.getCheckboxProps?.(row).disabled,
-                      onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
-                        toggleSelection(row, event.currentTarget.checked),
-                      type: 'checkbox',
-                    }),
-                  )
-                : null,
-              tableColumns.map((column) =>
-                React.createElement(
-                  'td',
-                  { key: String(column.key ?? column.dataIndex ?? column.title) },
-                  column.render
-                    ? column.render(column.dataIndex ? row[column.dataIndex] : undefined, row)
-                    : String(column.dataIndex ? row[column.dataIndex] : ''),
+                    { key: String(column.key ?? column.dataIndex ?? column.title) },
+                    column.render
+                      ? column.render(column.dataIndex ? row[column.dataIndex] : undefined, row)
+                      : String(column.dataIndex ? row[column.dataIndex] : ''),
+                  ),
                 ),
               ),
-            ),
-          ),
+              canExpand && isExpanded
+                ? React.createElement(
+                    'tr',
+                    { key: `${rowId}__expanded` },
+                    React.createElement(
+                      'td',
+                      {
+                        colSpan:
+                          tableColumns.length + (rowSelection ? 1 : 0) + (hasExpandable ? 1 : 0),
+                      },
+                      expandable?.expandedRowRender?.(row),
+                    ),
+                  )
+                : null,
+            );
+          }),
         ),
       ),
     );

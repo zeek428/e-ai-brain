@@ -1,7 +1,15 @@
-import { CopyOutlined } from '@ant-design/icons';
-import { Button, Descriptions, message, Space, Tag, Typography } from 'antd';
+import { CopyOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { useState } from 'react';
+import { Alert, Button, Descriptions, message, Space, Tag, Typography } from 'antd';
 
 import { type ScheduledJobRunRecord } from '../../../services/aiBrain';
+import {
+  fetchScheduledJobTraceNodeRerunPreview,
+  rerunScheduledJobTraceNode,
+  type ScheduledJobTraceNodeRerunControl,
+  type ScheduledJobTraceNodeRerunNextAction,
+  type ScheduledJobTraceNodeRerunPreview,
+} from '../../../services/systemOperationsClient';
 import { formatDisplayDateTime } from '../../../utils/dateTime';
 import {
   formatTraceJsonValue,
@@ -56,6 +64,136 @@ function copyTraceJson(label: string, value: unknown) {
     () => message.success(`${label}已复制`),
     () => message.error(`${label}复制失败`),
   );
+}
+
+function snapshotReadyText(snapshot: Record<string, unknown> | undefined, key: string) {
+  return snapshot?.[key] ? '有' : '无';
+}
+
+function traceStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function traceRerunControls(value: unknown): ScheduledJobTraceNodeRerunControl[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(isTraceRecord).map((control) => ({
+    key: nodeFieldText(control.key),
+    label: nodeFieldText(control.label),
+    reason: nodeFieldText(control.reason),
+    required: control.required === true,
+    satisfied: control.satisfied === true,
+    status: nodeFieldText(control.status),
+  }));
+}
+
+function rerunControlStatusColor(status: string | undefined) {
+  if (status === 'satisfied') {
+    return 'green';
+  }
+  if (status === 'blocked') {
+    return 'red';
+  }
+  if (status === 'needs_review') {
+    return 'orange';
+  }
+  if (status === 'missing') {
+    return 'volcano';
+  }
+  return 'default';
+}
+
+function rerunNextActionStatusColor(status: string | undefined) {
+  if (status === 'available') {
+    return 'green';
+  }
+  if (status === 'recommended') {
+    return 'blue';
+  }
+  if (status === 'blocked') {
+    return 'red';
+  }
+  if (status === 'needs_review') {
+    return 'orange';
+  }
+  return 'default';
+}
+
+function traceRerunNextActions(value: unknown): ScheduledJobTraceNodeRerunNextAction[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(isTraceRecord).map((action) => ({
+    description: nodeFieldText(action.description),
+    key: nodeFieldText(action.key),
+    label: nodeFieldText(action.label),
+    missing_controls: Array.isArray(action.missing_controls)
+      ? action.missing_controls.map(String).filter(Boolean)
+      : undefined,
+    request: isTraceRecord(action.request) ? action.request : undefined,
+    side_effect_policy: nodeFieldText(action.side_effect_policy),
+    status: nodeFieldText(action.status),
+  }));
+}
+
+function executionPolicyText(policy: unknown) {
+  const record = isTraceRecord(policy) ? policy : undefined;
+  if (!record) {
+    return undefined;
+  }
+  return nodeFieldText(record.message) ?? (
+    record.allowed === true ? '单节点复跑可执行' : '单节点复跑仍受保护'
+  );
+}
+
+function controlSummaryNumber(summary: unknown, key: string, fallback: number) {
+  const record = isTraceRecord(summary) ? summary : undefined;
+  const value = record?.[key];
+  return typeof value === 'number' ? value : fallback;
+}
+
+function rerunControlSummaryText(
+  summary: unknown,
+  controls: ScheduledJobTraceNodeRerunControl[],
+) {
+  if (!controls.length && !isTraceRecord(summary)) {
+    return undefined;
+  }
+  const fallbackCounts = controls.reduce(
+    (counts, control) => {
+      if (control.status === 'satisfied') {
+        counts.satisfied += 1;
+      } else if (control.status === 'blocked') {
+        counts.blocked += 1;
+      } else if (control.status === 'needs_review') {
+        counts.needsReview += 1;
+      } else if (control.status === 'missing') {
+        counts.missing += 1;
+      }
+      return counts;
+    },
+    { blocked: 0, missing: 0, needsReview: 0, satisfied: 0 },
+  );
+  const satisfied = controlSummaryNumber(summary, 'satisfied_count', fallbackCounts.satisfied);
+  const missing = controlSummaryNumber(summary, 'missing_count', fallbackCounts.missing);
+  const blocked = controlSummaryNumber(summary, 'blocked_count', fallbackCounts.blocked);
+  const needsReview = controlSummaryNumber(
+    summary,
+    'needs_review_count',
+    fallbackCounts.needsReview,
+  );
+  return `控制项：已满足 ${satisfied} / 缺失 ${missing} / 阻断 ${blocked} / 待确认 ${needsReview}`;
+}
+
+function snapshotPreviewText(preview: unknown, key: string) {
+  const snapshotPreview = isTraceRecord(preview) ? preview : undefined;
+  const item = isTraceRecord(snapshotPreview?.[key]) ? snapshotPreview[key] : undefined;
+  if (!item?.available) {
+    return `${key}: 无`;
+  }
+  const size = typeof item.size_bytes === 'number' ? `${item.size_bytes}B` : '-';
+  return `${key}: 有 · ${size}${item.truncated ? ' · 已截断' : ''}`;
 }
 
 export function TemplateSourceSummary({ source }: { source: TemplateSourceView | undefined }) {
@@ -201,7 +339,15 @@ export function RunExecutionChain({ run }: { run: ScheduledJobRunRecord }) {
   );
 }
 
-export function RunTraceDag({ run }: { run: ScheduledJobRunRecord }) {
+export function RunTraceDag({
+  onFullRunRerunRequested,
+  onNodeRerunCreated,
+  run,
+}: {
+  onFullRunRerunRequested?: (request: Record<string, unknown>) => void | Promise<void>;
+  onNodeRerunCreated?: (run: ScheduledJobRunRecord) => void;
+  run: ScheduledJobRunRecord;
+}) {
   const rawTraceGraph = run.result_summary?.trace_graph;
   const traceGraph = isTraceRecord(rawTraceGraph) ? rawTraceGraph : undefined;
   const nodes = Array.isArray(traceGraph?.nodes)
@@ -210,9 +356,59 @@ export function RunTraceDag({ run }: { run: ScheduledJobRunRecord }) {
   const edges = Array.isArray(traceGraph?.edges)
     ? traceGraph.edges.filter(isTraceRecord)
     : [];
+  const [previewByNodeId, setPreviewByNodeId] = useState<Record<string, ScheduledJobTraceNodeRerunPreview>>({});
+  const [previewErrorByNodeId, setPreviewErrorByNodeId] = useState<Record<string, string>>({});
+  const [previewLoadingNodeId, setPreviewLoadingNodeId] = useState<string>();
+  const [fullRunLoadingNodeId, setFullRunLoadingNodeId] = useState<string>();
+  const [rerunLoadingNodeId, setRerunLoadingNodeId] = useState<string>();
+  const [rerunResultByNodeId, setRerunResultByNodeId] = useState<Record<string, ScheduledJobRunRecord>>({});
   if (!nodes.length && !edges.length) {
     return null;
   }
+  const loadRerunPreview = async (nodeId: string) => {
+    setPreviewLoadingNodeId(nodeId);
+    setPreviewErrorByNodeId((previous) => {
+      const next = { ...previous };
+      delete next[nodeId];
+      return next;
+    });
+    try {
+      const preview = await fetchScheduledJobTraceNodeRerunPreview(run.id, nodeId);
+      setPreviewByNodeId((previous) => ({ ...previous, [nodeId]: preview }));
+    } catch (error) {
+      setPreviewErrorByNodeId((previous) => ({
+        ...previous,
+        [nodeId]: error instanceof Error ? error.message : '复跑预检失败',
+      }));
+    } finally {
+      setPreviewLoadingNodeId(undefined);
+    }
+  };
+  const confirmNodeRerun = async (nodeId: string) => {
+    setRerunLoadingNodeId(nodeId);
+    try {
+      const rerunResult = await rerunScheduledJobTraceNode(run.id, nodeId);
+      setRerunResultByNodeId((previous) => ({ ...previous, [nodeId]: rerunResult }));
+      onNodeRerunCreated?.(rerunResult);
+      void message.success('单节点复跑已创建');
+    } catch (error) {
+      void message.error(error instanceof Error ? error.message : '单节点复跑失败');
+    } finally {
+      setRerunLoadingNodeId(undefined);
+    }
+  };
+  const confirmFullRunRerun = async (nodeId: string, request: Record<string, unknown>) => {
+    if (!onFullRunRerunRequested) {
+      void message.warning('当前页面未提供整条复跑入口，请回到运行记录列表发起复跑');
+      return;
+    }
+    setFullRunLoadingNodeId(nodeId);
+    try {
+      await onFullRunRerunRequested(request);
+    } finally {
+      setFullRunLoadingNodeId(undefined);
+    }
+  };
   return (
     <Space orientation="vertical" size={10} style={{ width: '100%' }}>
       <Typography.Text strong>运行 Trace DAG</Typography.Text>
@@ -231,6 +427,36 @@ export function RunTraceDag({ run }: { run: ScheduledJobRunRecord }) {
           const error = nodeFieldText(node.error);
           const debugActionTypes = traceDebugActionTypes(node);
           const rerunHint = nodeFieldText(node.rerun_hint);
+          const rerunPlan = isTraceRecord(node.rerun_plan) ? node.rerun_plan : undefined;
+          const canLoadRerunPreview = Boolean(
+            rerunPlan || typeof node.rerun_supported === 'boolean' || rerunHint,
+          );
+          const snapshotStatus = isTraceRecord(node.snapshot_status)
+            ? node.snapshot_status
+            : isTraceRecord(rerunPlan?.snapshot_status)
+              ? rerunPlan.snapshot_status
+              : undefined;
+          const rerunPreview = previewByNodeId[id];
+          const rerunPreviewError = previewErrorByNodeId[id];
+          const rerunResult = rerunResultByNodeId[id];
+          const blockedBy = traceStringList(rerunPreview?.blocked_by);
+          const missingControls = traceStringList(rerunPreview?.missing_controls);
+          const rerunControls = traceRerunControls(rerunPreview?.rerun_controls);
+          const rerunNextActions = traceRerunNextActions(rerunPreview?.next_actions);
+          const fullRunRequest = rerunNextActions.find(
+            (action) => action.key === 'rerun_full_scheduled_job' && action.request,
+          )?.request ?? (
+            isTraceRecord(rerunPreview?.full_run_request)
+              ? rerunPreview.full_run_request
+              : undefined
+          );
+          const rerunAllowed = isTraceRecord(rerunPreview?.execution_policy)
+            && rerunPreview?.execution_policy.allowed === true;
+          const policyText = executionPolicyText(rerunPreview?.execution_policy);
+          const controlSummaryText = rerunControlSummaryText(
+            rerunPreview?.control_summary,
+            rerunControls,
+          );
           const stageLabel = nodeFieldText(node.stage_label);
           const status = nodeFieldText(node.status) ?? 'unknown';
           return (
@@ -284,7 +510,159 @@ export function RunTraceDag({ run }: { run: ScheduledJobRunRecord }) {
                       复制错误
                     </Button>
                   ) : null}
+                  {debugActionTypes.has('copy_rerun_plan') ? (
+                    <Button
+                      icon={<CopyOutlined />}
+                      onClick={() => copyTraceJson('复跑计划', rerunPlan)}
+                      size="small"
+                    >
+                      复制复跑计划
+                    </Button>
+                  ) : null}
+                  {canLoadRerunPreview ? (
+                    <Button
+                      aria-label="复跑预检"
+                      icon={<SafetyCertificateOutlined />}
+                      loading={previewLoadingNodeId === id}
+                      onClick={() => void loadRerunPreview(id)}
+                      size="small"
+                    >
+                      复跑预检
+                    </Button>
+                  ) : null}
                 </Space>
+                {rerunPlan ? (
+                  <Space wrap size={8}>
+                    <Tag color={rerunPlan.single_node_supported ? 'green' : 'orange'}>
+                      单节点复跑{rerunPlan.single_node_supported ? '可用' : '待保护'}
+                    </Tag>
+                    <Tag>输入快照 {snapshotReadyText(snapshotStatus, 'input')}</Tag>
+                    <Tag>输出快照 {snapshotReadyText(snapshotStatus, 'output')}</Tag>
+                    {nodeFieldText(rerunPlan.side_effect_policy) ? (
+                      <Tag color="purple">副作用 {nodeFieldText(rerunPlan.side_effect_policy)}</Tag>
+                    ) : null}
+                    {nodeFieldText(rerunPlan.safe_next_action) ? (
+                      <Tag color="blue">建议 {nodeFieldText(rerunPlan.safe_next_action)}</Tag>
+                    ) : null}
+                  </Space>
+                ) : null}
+                {rerunPreview ? (
+                  <Alert
+                    description={(
+                      <Space orientation="vertical" size={6} style={{ width: '100%' }}>
+                        <Space size={[8, 8]} wrap>
+                          <Tag color={rerunPreview.preflight_status === 'ready' ? 'green' : 'orange'}>
+                            {rerunPreview.preflight_status ?? 'unknown'}
+                          </Tag>
+                          {rerunPreview.safe_next_action ? (
+                            <Tag color="blue">建议 {rerunPreview.safe_next_action}</Tag>
+                          ) : null}
+                          {rerunPreview.side_effect_policy ? (
+                            <Tag color="purple">副作用 {rerunPreview.side_effect_policy}</Tag>
+                          ) : null}
+                        </Space>
+                        {blockedBy.length ? (
+                          <Typography.Text type="secondary">
+                            阻断原因：{blockedBy.join('、')}
+                          </Typography.Text>
+                        ) : null}
+                        {policyText ? (
+                          <Typography.Text type="secondary">
+                            执行策略：{policyText}
+                          </Typography.Text>
+                        ) : null}
+                        {missingControls.length ? (
+                          <Typography.Text type="secondary">
+                            缺失控制：{missingControls.join('、')}
+                          </Typography.Text>
+                        ) : null}
+                        {controlSummaryText ? (
+                          <Typography.Text type="secondary">{controlSummaryText}</Typography.Text>
+                        ) : null}
+                        {rerunControls.length ? (
+                          <Space size={[8, 8]} wrap>
+                            {rerunControls.map((control) => {
+                              const label = control.label ?? control.key ?? '-';
+                              const statusText = control.status ?? 'unknown';
+                              return (
+                                <Tag
+                                  color={rerunControlStatusColor(control.status)}
+                                  key={`${control.key ?? label}-${statusText}`}
+                                  title={control.reason}
+                                >
+                                  {label} · {statusText}
+                                </Tag>
+                              );
+                            })}
+                          </Space>
+                        ) : null}
+                        {rerunNextActions.length ? (
+                          <Space orientation="vertical" size={4} style={{ width: '100%' }}>
+                            <Typography.Text type="secondary">下一步动作</Typography.Text>
+                            <Space size={[8, 8]} wrap>
+                              {rerunNextActions.map((action, index) => {
+                                const label = action.label ?? action.key ?? '动作';
+                                const statusText = action.status ?? 'unknown';
+                                return (
+                                  <Tag
+                                    color={rerunNextActionStatusColor(action.status)}
+                                    key={`${action.key ?? label}-${index}`}
+                                    title={action.description}
+                                  >
+                                    {label} · {statusText}
+                                  </Tag>
+                                );
+                              })}
+                              {rerunAllowed ? (
+                                <Button
+                                  loading={rerunLoadingNodeId === id}
+                                  onClick={() => void confirmNodeRerun(id)}
+                                  size="small"
+                                  type="primary"
+                                >
+                                  确认复跑
+                                </Button>
+                              ) : null}
+                              {fullRunRequest ? (
+                                <Button
+                                  loading={fullRunLoadingNodeId === id}
+                                  onClick={() => void confirmFullRunRerun(id, fullRunRequest)}
+                                  size="small"
+                                >
+                                  复跑整条运行记录
+                                </Button>
+                              ) : null}
+                            </Space>
+                          </Space>
+                        ) : null}
+                        <Space size={[8, 8]} wrap>
+                          <Tag>{snapshotPreviewText(rerunPreview.snapshot_preview, 'input')}</Tag>
+                          <Tag>{snapshotPreviewText(rerunPreview.snapshot_preview, 'output')}</Tag>
+                          <Tag>{snapshotPreviewText(rerunPreview.snapshot_preview, 'error')}</Tag>
+                        </Space>
+                      </Space>
+                    )}
+                    showIcon
+                    type={rerunPreview.preflight_status === 'ready' ? 'success' : 'warning'}
+                    title="节点复跑预检"
+                  />
+                ) : null}
+                {rerunResult ? (
+                  <Alert
+                    description={`新运行记录：${rerunResult.id}，状态：${rerunResult.status}`}
+                    showIcon
+                    title="单节点复跑已创建"
+                    type={rerunResult.status === 'succeeded' ? 'success' : 'info'}
+                  />
+                ) : null}
+                {rerunPreviewError ? (
+                  <Alert
+                    description={rerunPreviewError}
+                    showIcon
+                    title="复跑预检失败"
+                    type="error"
+                  />
+                ) : null}
                 {rerunHint ? (
                   <Typography.Text type="secondary">{rerunHint}</Typography.Text>
                 ) : null}

@@ -158,18 +158,19 @@
 |------|------|----------|
 | 1 | 管理员调用 `POST /api/system/ai-skills` 创建 `iteration_planning` Skill | 写入 `ai_skills`，返回输入/输出 schema、允许工具、所需上下文、人工确认要求和 active 状态；不包含任何密钥。 |
 | 2 | 管理员调用 `POST /api/system/ai-skills/upload` 上传包含 `skill.yaml` 和 `SKILL.md` 的 zip Skill 包 | 写入 package 类型 Skill，返回 `package_uri`、`package_checksum`、`manifest`、`package_entry` 和文件清单；本地文件落盘，记录 `ai_skill.package_uploaded` 审计。 |
-| 3 | 管理员调用 `POST /api/system/ai-agents` 创建 `agent_iteration_planner`，绑定默认模型网关和上一步 Skill | 写入 `ai_agents`，返回默认 Skill、执行策略、工具策略和 active 状态；记录 `ai_agent.created` 审计。 |
-| 4 | 管理员调用 `POST /api/system/scheduled-jobs` 创建 `iteration_plan_suggestion_generate` 作业，设置 cron、Agent、Skill、execution_mode=`ai_generated` | 写入 `scheduled_jobs`，计算 `next_run_at`，记录作业配置和 `scheduled_job.created` 审计。 |
-| 5 | 管理员进入 AI 能力配置页，分别在 AI角色和 Skill 管理页签使用关键词、状态、模型网关、来源或人工确认查询，并保存本地筛选视图 | 两个页签均复用统一管理列表底座，保留新增/编辑/停用和 Skill 包上传入口；筛选仅影响当前列表，本地视图分别按页签保存。 |
-| 6 | 产品负责人或 viewer 尝试创建/修改 Agent、Skill 或系统级定时作业 | 返回 `FORBIDDEN`，不得写入配置或审计成功事件。 |
-| 7 | 停用 Skill 后再次启用引用该 Skill 的定时作业 | 返回配置校验错误，提示引用的 Skill 不可用。 |
+| 3 | 管理员调用 `POST /api/system/ai-agents/upload` 上传包含 `agent.yaml` 和 `AGENT.md` 的 zip Agent 包，绑定默认模型网关和上一步 Skill | 写入 package 类型 `ai_agents`，返回 `source_type=package`、默认 Skill、模型网关、`package_uri`、`package_checksum`、`manifest`、运行边界和 active 状态；记录 `ai_agent.package_uploaded` 审计。 |
+| 4 | 管理员调用 `POST /api/system/ai-agents` 创建 `agent_iteration_planner`，绑定默认模型网关和上一步 Skill | 写入 inline 类型 `ai_agents`，返回默认 Skill、执行策略、工具策略和 active 状态；记录 `ai_agent.created` 审计。 |
+| 5 | 管理员调用 `POST /api/system/scheduled-jobs` 创建 `iteration_plan_suggestion_generate` 作业，设置 cron、Agent、Skill、execution_mode=`ai_generated` | 写入 `scheduled_jobs`，计算 `next_run_at`，记录作业配置和 `scheduled_job.created` 审计。 |
+| 6 | 管理员进入 AI 能力配置页，分别在 AI角色和 Skill 管理页签使用关键词、状态、模型网关、来源或人工确认查询，并保存本地筛选视图 | 两个页签均复用统一管理列表底座，保留新增/编辑/停用、Agent 包上传和 Skill 包上传入口；筛选仅影响当前列表，本地视图分别按页签保存；文件包脚本展示为“不自动执行”。 |
+| 7 | 产品负责人或 viewer 尝试创建/修改 Agent、Skill 或系统级定时作业 | 返回 `FORBIDDEN`，不得写入配置或审计成功事件。 |
+| 8 | 停用 Skill 后再次启用引用该 Skill 的定时作业 | 返回配置校验错误，提示引用的 Skill 不可用。 |
 
 **预期结果**:
 1. Agent/Skill 作为平台级配置独立维护，普通业务用户不能修改 Prompt、工具策略或模型网关。
 2. 定时 AI 作业只能引用 active Agent、active Skill 和 active 模型网关。
 3. 配置变更必须写审计，API 响应不泄露密钥、外部系统 token 或完整历史 prompt 输出。
 
-**状态**: 基础自动化已覆盖 Agent/Skill/定时作业配置、Skill 包上传、管理员写入和非管理员拒绝；周期 worker 自动扫描和抢锁调度另行补充集成用例。
+**状态**: 基础自动化已覆盖 Agent/Skill/定时作业配置、Agent/Skill 包上传、管理员写入和非管理员拒绝；周期 worker 自动扫描和抢锁调度另行补充集成用例。
 
 ---
 

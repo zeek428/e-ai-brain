@@ -7,7 +7,16 @@ import './proComponentsMock';
 import AiCapabilitiesPage from '../src/pages/AiCapabilities';
 
 function installCapabilitiesFetchMock() {
+  const agentPackageUploads: Array<{
+    bodyByteLength: number;
+    defaultSkillIds: string[];
+    params: Record<string, string>;
+  }> = [];
   const agentPatchBodies: unknown[] = [];
+  const skillPackageUploads: Array<{
+    bodyByteLength: number;
+    params: Record<string, string>;
+  }> = [];
   const skillPatchBodies: unknown[] = [];
   const requestedPaths: string[] = [];
   const jsonResponse = (body: unknown) =>
@@ -44,7 +53,7 @@ function installCapabilitiesFetchMock() {
               prompt_template: '采集用户反馈',
               requires_human_review: true,
               risk_level: 'high',
-              source_type: 'form',
+              source_type: 'inline',
               status: 'active',
               version: '1.0.0',
             },
@@ -69,6 +78,13 @@ function installCapabilitiesFetchMock() {
           id: 'agent_001',
           model_gateway_config_id: 'gateway_default',
           name: '洞察 Agent',
+          runtime_capabilities: {
+            default_skill_binding: 'enabled',
+            package_context: 'not_applicable',
+            script_execution: 'not_applicable',
+            system_prompt_execution: 'enabled',
+          },
+          source_type: 'inline',
           status: 'active',
           system_prompt: '分析用户反馈',
         },
@@ -83,6 +99,14 @@ function installCapabilitiesFetchMock() {
             name: '默认模型网关',
           },
           name: '反馈 Agent',
+          runtime_capabilities: {
+            default_skill_binding: 'enabled',
+            package_context: 'enabled',
+            script_execution: 'disabled_pending_sandbox',
+            script_files: ['scripts/run.py'],
+            system_prompt_execution: 'enabled',
+          },
+          source_type: 'package',
           status: 'active',
           system_prompt: '分析反馈数据',
         },
@@ -135,15 +159,56 @@ function installCapabilitiesFetchMock() {
       agentPatchBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({ data: { id: 'agent_001', status: 'disabled' } });
     }
+    if (requestPath.startsWith('/api/system/ai-agents/upload?') && init?.method === 'POST') {
+      const params = new URLSearchParams(requestPath.split('?')[1] ?? '');
+      agentPackageUploads.push({
+        bodyByteLength: (init.body as ArrayBuffer).byteLength,
+        defaultSkillIds: params.getAll('default_skill_ids'),
+        params: Object.fromEntries(params.entries()),
+      });
+      return jsonResponse({
+        data: {
+          code: params.get('code'),
+          id: 'agent_uploaded',
+          name: params.get('name'),
+          package_files: ['agent.yaml', 'AGENT.md'],
+          source_type: 'package',
+          status: params.get('status'),
+        },
+      });
+    }
     if (requestPath === '/api/system/ai-skills/skill_001' && init?.method === 'PATCH') {
       skillPatchBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({ data: { id: 'skill_001', status: 'disabled' } });
+    }
+    if (requestPath.startsWith('/api/system/ai-skills/upload?') && init?.method === 'POST') {
+      const params = new URLSearchParams(requestPath.split('?')[1] ?? '');
+      skillPackageUploads.push({
+        bodyByteLength: (init.body as ArrayBuffer).byteLength,
+        params: Object.fromEntries(params.entries()),
+      });
+      return jsonResponse({
+        data: {
+          code: params.get('code'),
+          id: 'skill_uploaded',
+          name: params.get('name'),
+          package_files: ['skill.yaml', 'SKILL.md'],
+          source_type: 'package',
+          status: params.get('status'),
+        },
+      });
     }
     throw new Error(`Unexpected fetch call: ${String(input)}`);
   });
   window.localStorage.setItem('ai_brain_access_token', 'token-admin');
   vi.stubGlobal('fetch', fetchMock);
-  return { agentPatchBodies, requestedPaths, skillPatchBodies };
+  return {
+    agentPackageUploads,
+    agentPatchBodies,
+    requestedPaths,
+    skillPackageUploads,
+    skillPatchBodies,
+  };
 }
 
 describe('AI capabilities page', () => {
@@ -167,6 +232,9 @@ describe('AI capabilities page', () => {
     expect(screen.queryByRole('tab', { name: 'Agent 管理' })).not.toBeInTheDocument();
     expect(await screen.findByText('洞察 Agent')).toBeInTheDocument();
     expect(await screen.findByText('反馈 Agent')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '上传 Agent 包' })).toBeInTheDocument();
+    expect(screen.getByText('文件包上下文')).toBeInTheDocument();
+    expect(screen.getByText('脚本不自动执行')).toBeInTheDocument();
     expect(screen.queryByText('[object Object]')).not.toBeInTheDocument();
     expect(screen.getAllByText('默认模型网关 (gpt-4.1-mini)')).toHaveLength(2);
     const agentRow = screen.getByText('洞察 Agent').closest('tr');
@@ -236,6 +304,60 @@ describe('AI capabilities page', () => {
         },
       ]);
     });
+  });
+
+  it('opens the Agent package upload dialog from the AI role toolbar', async () => {
+    installCapabilitiesFetchMock();
+
+    render(<AiCapabilitiesPage />);
+
+    expect(await screen.findByText('洞察 Agent')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '上传 Agent 包' }));
+
+    const uploadDialog = await screen.findByRole('dialog', { name: '上传 Agent 包' });
+    expect(within(uploadDialog).getByLabelText('名称')).toBeInTheDocument();
+    expect(within(uploadDialog).getByLabelText('编码')).toBeInTheDocument();
+    expect(within(uploadDialog).getByText(/zip 内需包含 agent\.yaml 和 AGENT\.md/)).toBeInTheDocument();
+    expect(within(uploadDialog).getByRole('button', { name: '选择 zip 文件' })).toBeInTheDocument();
+  });
+
+  it('uploads an Agent package with form metadata from the AI role toolbar', async () => {
+    const { agentPackageUploads } = installCapabilitiesFetchMock();
+
+    render(<AiCapabilitiesPage />);
+
+    expect(await screen.findByText('洞察 Agent')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '上传 Agent 包' }));
+
+    const uploadDialog = await screen.findByRole('dialog', { name: '上传 Agent 包' });
+    fireEvent.change(within(uploadDialog).getByLabelText('名称'), {
+      target: { value: '文件包反馈分析角色' },
+    });
+    fireEvent.change(within(uploadDialog).getByLabelText('编码'), {
+      target: { value: 'packaged_feedback_agent' },
+    });
+    const uploadInput = uploadDialog.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(uploadInput).not.toBeNull();
+    fireEvent.change(uploadInput as HTMLInputElement, {
+      target: {
+        files: [new File(['agent-zip-bytes'], 'agent.zip', { type: 'application/zip' })],
+      },
+    });
+    expect(await within(uploadDialog).findByText('agent.zip')).toBeInTheDocument();
+    fireEvent.click(within(uploadDialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() => expect(agentPackageUploads).toHaveLength(1));
+    expect(agentPackageUploads[0]).toMatchObject({
+      defaultSkillIds: [],
+      params: expect.objectContaining({
+        brain_app_id: 'rd_brain',
+        code: 'packaged_feedback_agent',
+        name: '文件包反馈分析角色',
+        status: 'active',
+        version: '1.0.0',
+      }),
+    });
+    expect(agentPackageUploads[0].bodyByteLength).toBeGreaterThan(0);
   });
 
   it('normalizes object shaped model gateway references when editing an AI role', async () => {
@@ -323,6 +445,48 @@ describe('AI capabilities page', () => {
         }),
       ]),
     );
+  });
+
+  it('uploads a Skill package with schema execution metadata from the Skill toolbar', async () => {
+    const { skillPackageUploads } = installCapabilitiesFetchMock();
+
+    render(<AiCapabilitiesPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Skill 管理' }));
+    expect(await screen.findByText('用户洞察采集')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '上传 Skill 包' }));
+
+    const uploadDialog = await screen.findByRole('dialog', { name: '上传 Skill 包' });
+    expect(within(uploadDialog).getByText(/zip 内需包含 skill\.yaml 或 SKILL\.md/)).toBeInTheDocument();
+    expect(within(uploadDialog).getByText(/scripts\/ 目录脚本仅记录运行边界，不会自动执行/)).toBeInTheDocument();
+    fireEvent.change(within(uploadDialog).getByLabelText('名称'), {
+      target: { value: '文件包迭代规划' },
+    });
+    fireEvent.change(within(uploadDialog).getByLabelText('编码'), {
+      target: { value: 'packaged_iteration_planning' },
+    });
+    const uploadInput = uploadDialog.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(uploadInput).not.toBeNull();
+    fireEvent.change(uploadInput as HTMLInputElement, {
+      target: {
+        files: [new File(['skill-zip-bytes'], 'skill.zip', { type: 'application/zip' })],
+      },
+    });
+    expect(await within(uploadDialog).findByText('skill.zip')).toBeInTheDocument();
+    fireEvent.click(within(uploadDialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() => expect(skillPackageUploads).toHaveLength(1));
+    expect(skillPackageUploads[0]).toMatchObject({
+      params: expect.objectContaining({
+        code: 'packaged_iteration_planning',
+        name: '文件包迭代规划',
+        requires_human_review: 'false',
+        risk_level: 'medium',
+        status: 'active',
+        version: '1.0.0',
+      }),
+    });
+    expect(skillPackageUploads[0].bodyByteLength).toBeGreaterThan(0);
   });
 
   it('deletes an existing AI role by disabling it', async () => {

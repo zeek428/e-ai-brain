@@ -36,5 +36,8 @@ src/.umi-production/
 # Logs
 *.log
 
+# Local database backups
+backups/
+
 # Local assistant workspace
 .claude/

@@ -344,6 +344,19 @@ def product_has_related_records(current_store: Any, product_id: str) -> bool:
     )
 
 
+def product_related_record_counts(current_store: Any, product_id: str) -> dict[str, int]:
+    requirements = getattr(current_store, "requirements", {})
+    tasks = getattr(current_store, "ai_tasks", {})
+    bugs = getattr(current_store, "bugs", {})
+    return {
+        "ai_tasks": sum(1 for item in tasks.values() if item.get("product_id") == product_id),
+        "bugs": sum(1 for item in bugs.values() if item.get("product_id") == product_id),
+        "requirements": sum(
+            1 for item in requirements.values() if item.get("product_id") == product_id
+        ),
+    }
+
+
 def product_version_has_related_records(current_store: Any, version_id: str) -> bool:
     has_related_records = getattr(
         runtime_repository(current_store),

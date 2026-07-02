@@ -9,6 +9,7 @@ import {
   ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
   ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
+  ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   assistantScopedStorageKey,
 } from '../src/services/aiBrain';
 
@@ -104,6 +105,42 @@ function pluginConnectionTestBody() {
         ],
       },
       response_summary: { body_preview: '{"ok":true}', status_code: 200 },
+      scheduled_job_sample_seed: {
+        connection_id: 'connection_maxcompute_prod',
+        next_step: 'copy_action_template_then_trial',
+        plugin_connection_id: 'connection_maxcompute_prod',
+        plugin_id: 'plugin_maxcompute',
+        reuse_wizard: {
+          can_continue: true,
+          current_step_label: '连接测试样例',
+          current_step: 'connection_test',
+          blocked_steps: 0,
+          completed_steps: 2,
+          handoff_summary: [
+            { key: 'request_preview', label: '最终请求', source: 'request_summary', status: 'ready' },
+            { key: 'response_sample', label: '响应样例', source: 'response_summary', status: 'ready' },
+            { key: 'action_template', label: '动作模板草案', source: 'connection_test', status: 'ready' },
+          ],
+          missing_requirements: [],
+          next_action: 'copy_action_template_then_trial',
+          next_action_description: '复制动作模板并自动使用连接测试响应样例试运行，生成写入预览。',
+          pending_steps: 2,
+          primary_action_label: '复制动作模板并试运行',
+          progress_label: '2/4 步已就绪',
+          progress_percent: 50,
+          sample_source: 'connection_test_response',
+          status: 'ready',
+          steps: [
+            { key: 'connection_test', label: '连接测试样例', source: 'connection_test_response', status: 'succeeded' },
+            { key: 'action_trial', label: '动作写入预览', status: 'ready' },
+            { key: 'scheduled_job_dry_run', label: '全链路试运行', status: 'pending' },
+            { key: 'scheduled_job_config', label: '生成作业配置', status: 'pending' },
+          ],
+          total_steps: 4,
+        },
+        sample_source: 'connection_test_response',
+        status: 'ready',
+      },
       status: 'succeeded',
       test_history: [
         {
@@ -155,6 +192,7 @@ function installPluginsFetchMock(
     includeMultiResourceScheduledJob?: boolean;
     includeOutOfPageConnection?: boolean;
     includeProjectedPluginConnection?: boolean;
+    failActionTrialWithApproval?: boolean;
   } = {},
 ) {
   const actionBodies: unknown[] = [];
@@ -162,6 +200,8 @@ function installPluginsFetchMock(
   const actionListCalls: string[] = [];
   const actionTrialBodies: unknown[] = [];
   const actionUpdateBodies: unknown[] = [];
+  const aiExecutorApprovalBodies: unknown[] = [];
+  let aiExecutorApproved = false;
   const assistantDraftConfirmIds: string[] = [];
   const assistantDraftPatchBodies: unknown[] = [];
   const connectionBodies: unknown[] = [];
@@ -173,6 +213,7 @@ function installPluginsFetchMock(
   const pluginDeleteIds: string[] = [];
   const pluginUpdateBodies: unknown[] = [];
   const runnerBodies: unknown[] = [];
+  const runnerApprovalRequestBodies: unknown[] = [];
   const runnerDeleteIds: string[] = [];
   const runnerListCalls: string[] = [];
   const runnerPackageCalls: string[] = [];
@@ -180,7 +221,9 @@ function installPluginsFetchMock(
   const runnerTaskCancelBodies: unknown[] = [];
   const runnerTaskRetryBodies: unknown[] = [];
   const runnerTestCalls: string[] = [];
+  const runnerTimeoutScanBodies: unknown[] = [];
   const runnerUpdateBodies: unknown[] = [];
+  let runnerApprovalRequestApproved = false;
   const connectionTestDeferred = options.deferConnectionTest
     ? createDeferred<Response>()
     : undefined;
@@ -820,6 +863,41 @@ function installPluginsFetchMock(
               metadata: { is_system: true, managed_by: 'ai_brain' },
               name: '系统默认执行器',
               protocol: 'model_gateway',
+              queue_summary: {
+                available_slots: 0,
+                failed_total: 0,
+                max_concurrent_tasks: 0,
+                queued: 0,
+                running: 0,
+                running_total: 0,
+                total: 0,
+              },
+              readiness_summary: {
+                attention_count: 0,
+                blocked_count: 0,
+                controls: [
+                  {
+                    key: 'managed_model_gateway',
+                    label: '系统默认模型托管',
+                    reason: '由平台模型网关托管执行，无需本地 Runner 心跳或 Token。',
+                    required: true,
+                    satisfied: true,
+                    status: 'satisfied',
+                  },
+                  {
+                    key: 'completion_callback',
+                    label: '结果回写',
+                    reason: '系统默认执行器直接写回运行结果和模型日志。',
+                    required: true,
+                    satisfied: true,
+                    status: 'satisfied',
+                  },
+                ],
+                missing_count: 0,
+                readiness_status: 'ready',
+                satisfied_count: 2,
+                total: 2,
+              },
               setup_command: '使用系统默认 AI 大模型执行，无需启动本地 Runner',
               status: 'active',
               token_configured: false,
@@ -851,6 +929,49 @@ function installPluginsFetchMock(
               },
               name: 'Zeek Mac 本地执行器',
               protocol: 'runner_polling',
+              queue_summary: {
+                available_slots: 0,
+                failed_total: 1,
+                latest_failure: {
+                  error_code: 'AI_EXECUTOR_TASK_FAILED',
+                  error_message: 'OpenClaw 命令执行失败',
+                  id: 'ai_executor_task_failed',
+                  status: 'failed',
+                  updated_at: '2026-06-13T09:20:00Z',
+                },
+                max_concurrent_tasks: 1,
+                queued: 2,
+                running: 1,
+                running_total: 1,
+                succeeded: 5,
+                total: 9,
+              },
+              readiness_summary: {
+                attention_count: 1,
+                blocked_count: 0,
+                controls: [
+                  {
+                    key: 'protocol_adapter',
+                    label: '协议适配',
+                    reason: '当前 Runner 安装包和任务队列使用 polling 协议完成心跳、认领、日志和结果回写。',
+                    required: true,
+                    satisfied: true,
+                    status: 'satisfied',
+                  },
+                  {
+                    key: 'sandbox_permission_boundary',
+                    label: '沙箱权限边界',
+                    reason: '已启用命令白名单、禁用 shell、stdin 指令传递、进程组隔离、超时进程树清理、工作区白名单和高风险审批。',
+                    required: true,
+                    satisfied: true,
+                    status: 'satisfied',
+                  },
+                ],
+                missing_count: 0,
+                readiness_status: 'attention',
+                satisfied_count: 12,
+                total: 13,
+              },
               setup_command: 'ai-brain-runner start --runner-id ai_executor_runner_001 --token <runner_token> --server http://127.0.0.1:8000',
               status: 'active',
               token_configured: true,
@@ -882,6 +1003,23 @@ function installPluginsFetchMock(
               },
               name: '未连接 Runner',
               protocol: 'runner_polling',
+              queue_summary: {
+                available_slots: 1,
+                failed_total: 0,
+                max_concurrent_tasks: 1,
+                queued: 0,
+                running: 0,
+                running_total: 0,
+                total: 0,
+              },
+              readiness_summary: {
+                attention_count: 2,
+                blocked_count: 0,
+                missing_count: 1,
+                readiness_status: 'blocked',
+                satisfied_count: 8,
+                total: 12,
+              },
               setup_command: 'ai-brain-runner start --runner-id ai_executor_runner_cold --token <runner_token> --server http://192.168.110.34:8000',
               status: 'active',
               token_configured: true,
@@ -934,6 +1072,64 @@ function installPluginsFetchMock(
           },
           runner_id: 'ai_executor_runner_001',
           status: 'succeeded',
+        },
+      });
+    }
+    if (
+      input === '/api/system/ai-executor-approval-requests?status=pending&page=1&page_size=20&sort_by=updated_at&sort_order=desc'
+      && init?.method === 'GET'
+    ) {
+      return jsonResponse({
+        data: {
+          items: runnerApprovalRequestApproved
+            ? []
+            : [
+              {
+                action_id: 'plugin_action_runner_push',
+                approval: null,
+                approval_request: {
+                  approval_request_id: 'ai_executor_approval_request_001',
+                  title: 'AI 执行器高风险操作审批',
+                },
+                blocked_operations: ['git_push'],
+                connection_id: 'connection_runner_001',
+                created_at: '2026-06-13T09:31:00Z',
+                executor_type: 'codex',
+                id: 'ai_executor_approval_request_001',
+                requested_at: '2026-06-13T09:31:00Z',
+                requested_by: 'admin',
+                risk_level: 'high',
+                runner_id: 'ai_executor_runner_001',
+                status: 'pending',
+                updated_at: '2026-06-13T09:31:00Z',
+                workspace_root: '/Users/zeek/source/e-ai-brain',
+              },
+            ],
+          page: 1,
+          page_size: 20,
+          total: runnerApprovalRequestApproved ? 0 : 1,
+        },
+      });
+    }
+    if (
+      input === '/api/system/ai-executor-approval-requests/ai_executor_approval_request_001/approve'
+      && init?.method === 'POST'
+    ) {
+      runnerApprovalRequestBodies.push(JSON.parse(String(init.body)));
+      runnerApprovalRequestApproved = true;
+      return jsonResponse({
+        data: {
+          action: null,
+          approval: {
+            approval_id: 'ai_executor_approval_request_001',
+            approved: true,
+            approved_by: 'admin',
+            mode: 'platform_human_approval',
+          },
+          approval_request: {
+            id: 'ai_executor_approval_request_001',
+            status: 'approved',
+          },
         },
       });
     }
@@ -1038,6 +1234,43 @@ function installPluginsFetchMock(
             scheduled_job_run_id: 'scheduled_job_run_runner_trace',
             status: 'queued',
           },
+        },
+      });
+    }
+    if (input === '/api/system/ai-executor-tasks/timeout-scan' && init?.method === 'POST') {
+      runnerTimeoutScanBodies.push(JSON.parse(String(init.body ?? '{}')));
+      return jsonResponse({
+        data: {
+          dead_letter_task_ids: [],
+          next_actions: [
+            {
+              description: '等待 Runner 重新认领并继续执行任务。',
+              key: 'watch_requeued_tasks',
+              label: '等待 Runner 重新认领',
+              severity: 'warning',
+              task_ids: ['ai_executor_task_001'],
+            },
+          ],
+          requeued_task_ids: ['ai_executor_task_001'],
+          summary: {
+            dead_letter_count: 0,
+            manual_attention_required: false,
+            message: '已重派 1 个 Runner 任务，等待 Runner 重新认领。',
+            requeued_count: 1,
+            scanned_at: '2026-06-13T09:35:00Z',
+            status: 'requeued',
+            timed_out_count: 0,
+            total_affected: 1,
+          },
+          tasks: [
+            {
+              id: 'ai_executor_task_001',
+              runner_id: 'ai_executor_runner_001',
+              scheduled_job_run_id: 'scheduled_job_run_runner_trace',
+              status: 'queued',
+            },
+          ],
+          timed_out_task_ids: [],
         },
       });
     }
@@ -1366,15 +1599,150 @@ function installPluginsFetchMock(
       actionUpdateBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({ data: { id: 'action_feedback_api', status: 'active' } });
     }
+    if (
+      input === '/api/system/plugin-actions/action_feedback_api/ai-executor-approval'
+      && init?.method === 'POST'
+    ) {
+      const body = JSON.parse(String(init.body));
+      aiExecutorApprovalBodies.push(body);
+      aiExecutorApproved = true;
+      return jsonResponse({
+        data: {
+          action: {
+            action_type: 'mcp_tool',
+            code: 'fetch_feedback_api',
+            connection_id: 'connection_maxcompute_prod',
+            id: 'action_feedback_api',
+            name: '调用反馈 API',
+            plugin_id: 'plugin_standard_ai_executor',
+            request_config: {
+              ai_executor_approval: {
+                approval_id: 'ai_executor_approval_001',
+                approval_request_id: body.approval_request?.approval_request_id,
+                approved: true,
+                approved_at: '2026-07-02T10:00:00+00:00',
+                approved_by: 'user_admin',
+                approved_operations: ['git_push_or_merge'],
+                expires_at: '2026-07-02T11:00:00+00:00',
+                mode: 'platform_human_approval',
+                policy_version: 'runner_safety_v1',
+                reason: body.reason,
+              },
+              instruction: '完成检查后执行 git push origin main。',
+            },
+            requires_human_review: true,
+            result_mapping: { write_target: 'scheduled_job_result' },
+            status: 'active',
+          },
+          approval: {
+            approval_id: 'ai_executor_approval_001',
+            approved: true,
+            approved_operations: ['git_push_or_merge'],
+          },
+        },
+      });
+    }
     if (input === '/api/system/plugin-actions/action_feedback_api' && init?.method === 'DELETE') {
       actionDeleteIds.push('action_feedback_api');
       return jsonResponse({ data: { deleted: true, id: 'action_feedback_api' } });
     }
-    if (input === '/api/system/plugin-actions/action_feedback_api/trial' && init?.method === 'POST') {
-      actionTrialBodies.push(JSON.parse(String(init.body)));
+    const actionTrialMatch = String(input).match(/^\/api\/system\/plugin-actions\/([^/]+)\/trial$/);
+    if (actionTrialMatch && init?.method === 'POST') {
+      const requestBody = JSON.parse(String(init.body));
+      actionTrialBodies.push(requestBody);
+      const actionId = actionTrialMatch[1];
+      if (options.failActionTrialWithApproval && !aiExecutorApproved) {
+        return jsonResponse({
+          data: {
+            action_id: actionId,
+            connection_id: 'connection_maxcompute_prod',
+            error_code: 'AI_EXECUTOR_APPROVAL_REQUIRED',
+            error_detail: {
+              approval_request: {
+                approval_request_id: 'ai_executor_approval_request_001',
+                approval_template: {
+                  approved: true,
+                  approved_operations: ['git_push_or_merge'],
+                  mode: 'platform_human_approval',
+                  policy_version: 'runner_safety_v1',
+                },
+                blocked_operations: ['git_push_or_merge'],
+                next_action: 'create_platform_human_approval',
+                required_fields: [
+                  'approval_id',
+                  'approved',
+                  'approved_at',
+                  'approved_by',
+                  'approved_operations',
+                  'expires_at',
+                  'mode',
+                  'policy_version',
+                ],
+                status: 'approval_required',
+                title: 'AI 执行器高风险操作审批',
+              },
+            },
+            error_message: 'AI executor instruction requires human approval before Runner dispatch',
+            latency_ms: 8,
+            mapping_hits: [],
+            plugin_id: 'plugin_standard_ai_executor',
+            request_preview: { method: 'MCP', tool_name: 'ai_executor.run_instruction' },
+            response_summary: {},
+            sample_source: 'action_trial_response',
+            scheduled_job_dry_run_seed: {
+              connection_id: 'connection_maxcompute_prod',
+              input_payload: requestBody.input_payload ?? {},
+              plugin_action_id: actionId,
+              plugin_connection_id: 'connection_maxcompute_prod',
+              plugin_input_mapping: requestBody.input_payload ?? {},
+              plugin_output_mapping: { write_target: 'scheduled_job_result' },
+              response_summary: {},
+              reuse_wizard: {
+                can_continue: false,
+                current_step: 'action_trial',
+                current_step_label: '动作写入预览',
+                blocked_steps: 1,
+                completed_steps: 1,
+                draft_payload_ready: false,
+                handoff_summary: [
+                  { key: 'response_sample', label: '响应样例', source: 'not_available', status: 'missing' },
+                  { key: 'input_mapping', label: '连接输入映射', source: 'trial_input_payload', status: 'missing' },
+                  { key: 'output_mapping', label: '结果映射', source: 'plugin_action_result_mapping', status: 'missing' },
+                  { key: 'write_preview', label: '写入预览', source: 'not_available', status: 'missing' },
+                ],
+                missing_requirements: ['action_trial_succeeded', 'action_trial_response', 'write_preview'],
+                next_action: 'fix_action_trial',
+                next_action_description: '先修复动作试运行，确保响应样例和写入预览都可用。',
+                pending_steps: 2,
+                primary_action_label: '修复动作试运行',
+                progress_label: '1/4 步已就绪',
+                progress_percent: 25,
+                sample_source: 'action_trial_response',
+                status: 'blocked',
+                steps: [
+                  { key: 'connection_test', label: '连接测试样例', source: 'action_trial_response', status: 'not_used' },
+                  { key: 'action_trial', label: '动作写入预览', source: 'action_trial_response', status: 'failed' },
+                  { key: 'scheduled_job_dry_run', label: '全链路试运行', status: 'pending' },
+                  { key: 'scheduled_job_config', label: '生成作业配置', status: 'pending' },
+                ],
+                total_steps: 4,
+              },
+              sample_source: 'action_trial_response',
+              write_preview: {},
+            },
+            status: 'failed',
+            write_preview: undefined,
+          },
+        });
+      }
+      const responseSummary = requestBody.sample_response_summary ?? { json: { commits: 8 } };
+      const previewValue = responseSummary?.json?.commits ?? 8;
+      const sampleSource = requestBody.sample_response_summary
+        ? 'connection_test_response'
+        : 'action_trial_response';
       return jsonResponse({
         data: {
-          action_id: 'action_feedback_api',
+          action_id: actionId,
           connection_id: 'connection_maxcompute_prod',
           latency_ms: 12,
           mapping_hits: [
@@ -1382,7 +1750,7 @@ function installPluginsFetchMock(
               key: 'records_imported_path',
               matched: true,
               path: '$.commits',
-              value_preview: 8,
+              value_preview: previewValue,
             },
           ],
           plugin_id: 'plugin_maxcompute',
@@ -1391,12 +1759,65 @@ function installPluginsFetchMock(
             query: { start_pt: '20260604' },
             url: 'https://ai-brain-maxcompute-mcp.internal/mcp?start_pt=20260604',
           },
-          response_summary: { json: { commits: 8 } },
+          response_summary: responseSummary,
+          sample_source: sampleSource,
+          scheduled_job_dry_run_seed: {
+            connection_id: 'connection_maxcompute_prod',
+            input_payload: requestBody.input_payload ?? {},
+            plugin_action_id: actionId,
+            plugin_connection_id: 'connection_maxcompute_prod',
+            plugin_input_mapping: requestBody.input_payload ?? {},
+            plugin_output_mapping: { records_imported_path: '$.commits', write_target: 'scheduled_job_result' },
+            response_summary: responseSummary,
+            reuse_wizard: {
+              can_continue: true,
+              current_step_label: '动作写入预览',
+              current_step: 'action_trial',
+              blocked_steps: 0,
+              completed_steps: 4,
+              handoff_summary: [
+                { key: 'response_sample', label: '响应样例', source: sampleSource, status: 'ready' },
+                { key: 'input_mapping', label: '连接输入映射', source: 'trial_input_payload', status: 'ready' },
+                { key: 'output_mapping', label: '结果映射', source: 'plugin_action_result_mapping', status: 'ready' },
+                { key: 'write_preview', label: '写入预览', source: sampleSource, status: 'ready' },
+              ],
+              missing_requirements: [],
+              next_action: 'create_scheduled_job_draft',
+              next_action_description: '生成定时作业草稿，并带入连接、动作、映射、响应样例和写入预览。',
+              pending_steps: 0,
+              primary_action_label: '生成定时作业草稿',
+              progress_label: '4/4 步已就绪',
+              progress_percent: 100,
+              sample_source: sampleSource,
+              status: 'ready',
+              steps: [
+                {
+                  key: 'connection_test',
+                  label: '连接测试样例',
+                  source: sampleSource,
+                  status: sampleSource === 'connection_test_response' ? 'succeeded' : 'not_used',
+                },
+                { key: 'action_trial', label: '动作写入预览', source: sampleSource, status: 'succeeded' },
+                { key: 'scheduled_job_dry_run', label: '全链路试运行', status: 'ready' },
+                { key: 'scheduled_job_config', label: '生成作业配置', status: 'ready' },
+              ],
+              total_steps: 4,
+            },
+            sample_source: sampleSource,
+            write_preview: {
+              candidate_count: 0,
+              preview_value: previewValue,
+              records_imported: previewValue,
+              sample_records: [],
+              write_target: 'scheduled_job_result',
+              write_target_label: '定时作业结果',
+            },
+          },
           status: 'succeeded',
           write_preview: {
             candidate_count: 0,
-            preview_value: 8,
-            records_imported: 8,
+            preview_value: previewValue,
+            records_imported: previewValue,
             sample_records: [],
             write_target: 'scheduled_job_result',
             write_target_label: '定时作业结果',
@@ -1414,6 +1835,7 @@ function installPluginsFetchMock(
     actionListCalls,
     actionTrialBodies,
     actionUpdateBodies,
+    aiExecutorApprovalBodies,
     assistantDraftConfirmIds,
     assistantDraftPatchBodies,
     connectionBodies,
@@ -1429,6 +1851,7 @@ function installPluginsFetchMock(
       connectionTestDeferred?.resolve(jsonResponse(pluginConnectionTestBody()));
     },
     runnerBodies,
+    runnerApprovalRequestBodies,
     runnerDeleteIds,
     runnerListCalls,
     runnerPackageCalls,
@@ -1436,6 +1859,7 @@ function installPluginsFetchMock(
     runnerTaskCancelBodies,
     runnerTaskRetryBodies,
     runnerTestCalls,
+    runnerTimeoutScanBodies,
     runnerUpdateBodies,
   };
 }
@@ -1534,10 +1958,25 @@ describe('PluginsPage', () => {
     expect(screen.getByText('查询 8ms')).toBeInTheDocument();
     expect(screen.getByText('Zeek Mac 本地执行器')).toBeInTheDocument();
     expect(screen.getByText('online')).toBeInTheDocument();
+    expect(screen.getByText('就绪 attention')).toBeInTheDocument();
+    const runnerExpandButtons = Array.from(
+      document.querySelectorAll<HTMLElement>('.ant-table-row-expand-icon'),
+    );
+    expect(runnerExpandButtons.length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(runnerExpandButtons[1]);
+    expect(await screen.findByText('运行就绪清单')).toBeInTheDocument();
+    expect(screen.getByText('协议适配 · satisfied')).toBeInTheDocument();
+    expect(screen.getByText('沙箱权限边界 · satisfied')).toBeInTheDocument();
     expect(screen.getByText('未连接 Runner')).toBeInTheDocument();
     expect(screen.getByText('never_connected')).toBeInTheDocument();
+    expect(screen.getByText('就绪 blocked')).toBeInTheDocument();
     expect(screen.getByText('Runner 尚未上报心跳，请启动本地 Runner 或检查安装包配置。')).toBeInTheDocument();
-    expect(screen.getByText('ai-brain-runner start --runner-id ai_executor_runner_001 --token <runner_token> --server http://127.0.0.1:8000')).toBeInTheDocument();
+    expect(screen.getAllByText('排队 2').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('运行中 1').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('异常 1').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('可用槽 0').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('最近失败：OpenClaw 命令执行失败')).toBeInTheDocument();
+    expect(screen.getAllByText('ai-brain-runner start --runner-id ai_executor_runner_001 --token <runner_token> --server http://127.0.0.1:8000').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Codex').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Claude Code')).toBeInTheDocument();
     expect(screen.getByText('Hermes')).toBeInTheDocument();
@@ -1556,6 +1995,9 @@ describe('PluginsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '新增执行器' }));
 
     const dialog = await findDialogByTitle('新增执行器');
+    expect(within(dialog).getByText(
+      '当前本地 Runner 安装包和任务队列闭环使用 Runner Polling；WebSocket/MCP 为预留协议。',
+    )).toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText('名称'), {
       target: { value: '本地 OpenClaw 执行器' },
     });
@@ -1609,6 +2051,7 @@ describe('PluginsPage', () => {
     expect(await screen.findByText('系统默认执行器')).toBeInTheDocument();
     expect(screen.getAllByText('model_gateway').length).toBeGreaterThan(0);
     expect(screen.getByText('managed')).toBeInTheDocument();
+    expect(screen.getByText('就绪 ready')).toBeInTheDocument();
     expect(screen.getByText('使用系统默认 AI 大模型执行，无需启动本地 Runner')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '测试执行器 系统默认执行器' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '测试执行器 Zeek Mac 本地执行器' })).toBeInTheDocument();
@@ -1635,8 +2078,37 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByText('Runner 心跳正常，12 秒前上报')).toBeInTheDocument();
   });
 
+  it('shows and approves pending AI executor approval requests from the runner list', async () => {
+    const { runnerApprovalRequestBodies } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '执行器' }));
+    fireEvent.click(await screen.findByRole('button', { name: '查看执行器审批请求' }));
+
+    const dialog = await findDialogByTitle('AI 执行器审批请求');
+    expect(within(dialog).getByText('AI 执行器高风险操作审批')).toBeInTheDocument();
+    expect(within(dialog).getByText('ai_executor_approval_request_001')).toBeInTheDocument();
+    expect(within(dialog).getByText('git_push')).toBeInTheDocument();
+    expect(within(dialog).getByText('工作区：/Users/zeek/source/e-ai-brain')).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '审批请求 ai_executor_approval_request_001' }));
+
+    await waitFor(() =>
+      expect(runnerApprovalRequestBodies).toEqual([
+        { reason: '管理员从插件管理执行器页审批放行' },
+      ]),
+    );
+    expect(await screen.findByText('审批请求已放行')).toBeInTheDocument();
+  });
+
   it('rotates runner tokens and shows streaming task logs with cancellation', async () => {
-    const { runnerRotateBodies, runnerTaskCancelBodies, runnerTaskRetryBodies } = installPluginsFetchMock();
+    const {
+      runnerRotateBodies,
+      runnerTaskCancelBodies,
+      runnerTaskRetryBodies,
+      runnerTimeoutScanBodies,
+    } = installPluginsFetchMock();
 
     render(<PluginsPage />);
 
@@ -1644,6 +2116,14 @@ describe('PluginsPage', () => {
 
     expect(await screen.findByText('Token v2')).toBeInTheDocument();
     expect(screen.getByText('2026-06-13 17:10')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '超时扫描' }));
+    await waitFor(() => expect(runnerTimeoutScanBodies).toEqual([{}]));
+    const timeoutDialog = await findDialogByTitle('Runner 超时扫描');
+    expect(within(timeoutDialog).getByText('重派 1')).toBeInTheDocument();
+    expect(within(timeoutDialog).getByText('等待 Runner 重新认领')).toBeInTheDocument();
+    expect(within(timeoutDialog).getByText('已重派 1 个 Runner 任务，等待 Runner 重新认领。')).toBeInTheDocument();
+    fireEvent.click(within(timeoutDialog).getByRole('button', { name: /知道了|OK|确\s*定/ }));
 
     fireEvent.click(screen.getByRole('button', { name: '轮换 Token Zeek Mac 本地执行器' }));
     const rotateDialog = await findDialogByTitle('轮换 Runner Token');
@@ -2097,7 +2577,7 @@ describe('PluginsPage', () => {
   });
 
   it('keeps connection environment hidden and can test a connection', async () => {
-    const { connectionBodies, connectionTestCalls } = installPluginsFetchMock();
+    const { actionBodies, actionTrialBodies, connectionBodies, connectionTestCalls } = installPluginsFetchMock();
 
     render(<PluginsPage />);
 
@@ -2112,9 +2592,19 @@ describe('PluginsPage', () => {
     expect(await screen.findByText('请求调试台')).toBeInTheDocument();
     expect(screen.getByText('请求回放台')).toBeInTheDocument();
     expect(screen.getByText('最近测试记录')).toBeInTheDocument();
+    expect(screen.getByText('连接样例可复用')).toBeInTheDocument();
+    expect(screen.getByText('进度：2/4 步已就绪')).toBeInTheDocument();
+    expect(screen.getByText('当前：连接测试样例')).toBeInTheDocument();
+    expect(screen.getByText('下一步：复制动作模板并试运行')).toBeInTheDocument();
+    expect(screen.getByText('最终请求 · ready')).toBeInTheDocument();
+    expect(screen.getByText('响应样例 · ready')).toBeInTheDocument();
+    expect(screen.getByText('动作模板草案 · ready')).toBeInTheDocument();
+    expect(screen.getByText('复制动作模板并自动使用连接测试响应样例试运行，生成写入预览。')).toBeInTheDocument();
+    expect(screen.getByText('动作写入预览 · ready')).toBeInTheDocument();
     expect(screen.getByText('变量解析前 / 后差异')).toBeInTheDocument();
     expect(screen.getAllByText('解析前').length).toBeGreaterThan(0);
     expect(screen.getAllByText('解析后').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: '复制并试运行' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '复制为动作模板' })).toBeInTheDocument();
     expect(screen.getByText('最终请求 URL')).toBeInTheDocument();
     expect(screen.getByText('可复制 cURL')).toBeInTheDocument();
@@ -2148,13 +2638,39 @@ describe('PluginsPage', () => {
     expect(within(resolvedTestDialog).getByText('历史完整请求 JSON')).toBeInTheDocument();
     expect(within(resolvedTestDialog).getByText('历史远端响应信息')).toBeInTheDocument();
     expect(within(resolvedTestDialog).getByText('历史动作模板草案')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '复制为动作模板' }));
+    fireEvent.click(screen.getByRole('button', { name: '复制并试运行' }));
     const actionDialogFromReplay = await findDialogByTitle('新增动作');
     expect(within(actionDialogFromReplay).getByLabelText('名称')).toHaveValue('生产 MaxCompute 项目 请求动作');
     expect(within(actionDialogFromReplay).getByLabelText('编码')).toHaveValue('test_connection_maxcompute_prod');
     expect(within(actionDialogFromReplay).queryByLabelText('插件')).not.toBeInTheDocument();
     expect(within(actionDialogFromReplay).getByText('生产 MaxCompute 项目')).toBeInTheDocument();
-    fireEvent.click(within(actionDialogFromReplay).getByRole('button', { name: /取\s*消/ }));
+    fireEvent.click(within(actionDialogFromReplay).getByRole('button', { name: /OK|确\s*定/ }));
+    await waitFor(() =>
+      expect(actionBodies.at(-1)).toEqual(
+        expect.objectContaining({
+          code: 'test_connection_maxcompute_prod',
+          connection_id: 'connection_maxcompute_prod',
+          name: '生产 MaxCompute 项目 请求动作',
+        }),
+      ),
+    );
+    const trialDialogFromConnectionSample = await findDialogByTitle('动作试运行：生产 MaxCompute 项目 请求动作');
+    expect(within(trialDialogFromConnectionSample).getByText('使用连接测试响应样例')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(actionTrialBodies.at(-1)).toEqual({
+        connection_id: 'connection_maxcompute_prod',
+        input_payload: {},
+        sample_response_summary: { body_preview: '{"ok":true}', status_code: 200 },
+      }),
+    );
+    expect(await within(trialDialogFromConnectionSample).findByText('可复用到定时作业 dry-run')).toBeInTheDocument();
+    expect(within(trialDialogFromConnectionSample).getByText('进度：4/4 步已就绪')).toBeInTheDocument();
+    expect(within(trialDialogFromConnectionSample).getByText('当前：动作写入预览')).toBeInTheDocument();
+    expect(within(trialDialogFromConnectionSample).getByText('下一步：生成定时作业草稿')).toBeInTheDocument();
+    expect(within(trialDialogFromConnectionSample).getByText('连接输入映射 · ready')).toBeInTheDocument();
+    expect(within(trialDialogFromConnectionSample).getByText('结果映射 · ready')).toBeInTheDocument();
+    expect(within(trialDialogFromConnectionSample).getByText('全链路试运行 · ready')).toBeInTheDocument();
+    fireEvent.click(within(trialDialogFromConnectionSample).getByRole('button', { name: /Cancel|取\s*消/ }));
 
     fireEvent.click(screen.getByRole('button', { name: '新增连接' }));
     const dialog = await findDialogByTitle('新增连接');
@@ -2926,6 +3442,7 @@ describe('PluginsPage', () => {
 
   it('shows write preview in action trial diagnostics', async () => {
     const { actionTrialBodies } = installPluginsFetchMock();
+    window.history.pushState({}, '', '/tasks/plugins');
 
     render(<PluginsPage />);
 
@@ -2943,10 +3460,91 @@ describe('PluginsPage', () => {
         },
       ]),
     );
+    expect(await within(dialog).findByText('可复用到定时作业 dry-run')).toBeInTheDocument();
+    expect(within(dialog).getByText('进度：4/4 步已就绪')).toBeInTheDocument();
+    expect(within(dialog).getByText('下一步：生成定时作业草稿')).toBeInTheDocument();
+    expect(within(dialog).getByText('写入预览 · ready')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: '生成作业草稿' })).toHaveAttribute(
+      'href',
+      '/tasks/scheduled-jobs?tab=jobs',
+    );
+    fireEvent.click(within(dialog).getByRole('link', { name: '生成作业草稿' }));
+    const scheduledJobDraft = JSON.parse(
+      window.sessionStorage.getItem(
+        assistantScopedStorageKey(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY),
+      ) ?? '{}',
+    );
+    expect(scheduledJobDraft).toMatchObject({
+      auto_dry_run: true,
+      payload: {
+        config_json: {
+          sample_reuse: {
+            auto_dry_run: true,
+            connection_id: 'connection_maxcompute_prod',
+            response_summary: {
+              json: {
+                commits: 8,
+              },
+            },
+            sample_source: 'action_trial_response',
+          },
+        },
+      },
+    });
+    expect(window.location.pathname).toBe('/tasks/scheduled-jobs');
+    expect(window.location.search).toBe('?tab=jobs');
     expect(await within(dialog).findByText('写入预览')).toBeInTheDocument();
     expect(within(dialog).getByText('写入目标：定时作业结果')).toBeInTheDocument();
     expect(within(dialog).getByText('预计写入：8')).toBeInTheDocument();
     expect(within(dialog).getByText('候选记录：0')).toBeInTheDocument();
     expect(within(dialog).getByText('预览值')).toBeInTheDocument();
+  });
+
+  it('shows runner approval request details when an action trial is blocked', async () => {
+    const { actionTrialBodies, aiExecutorApprovalBodies } = installPluginsFetchMock({
+      failActionTrialWithApproval: true,
+    });
+    window.history.pushState({}, '', '/tasks/plugins');
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(await screen.findByText('试运行'));
+
+    const dialog = await findDialogByTitle('动作试运行：调用反馈 API');
+    fireEvent.click(within(dialog).getByRole('button', { name: '试运行' }));
+
+    await waitFor(() => expect(actionTrialBodies).toHaveLength(1));
+    expect(await within(dialog).findByText('AI 执行器高风险操作审批')).toBeInTheDocument();
+    expect(within(dialog).getByText('动作试运行未就绪')).toBeInTheDocument();
+    expect(within(dialog).getByText('进度：1/4 步已就绪')).toBeInTheDocument();
+    expect(within(dialog).getByText('当前：动作写入预览')).toBeInTheDocument();
+    expect(within(dialog).getByText('下一步：修复动作试运行')).toBeInTheDocument();
+    expect(within(dialog).getByText('缺失 动作试运行成功结果、动作试运行响应样例、写入预览')).toBeInTheDocument();
+    expect(within(dialog).queryByText('缺失 action_trial_succeeded、action_trial_response、write_preview')).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('link', { name: '生成作业草稿' })).not.toBeInTheDocument();
+    expect(within(dialog).getByText('请求：ai_executor_approval_request_001')).toBeInTheDocument();
+    expect(within(dialog).getByText('下一步：创建平台人工审批')).toBeInTheDocument();
+    expect(within(dialog).getByText('Git 推送或合并')).toBeInTheDocument();
+    expect(within(dialog).getByText(/审批需补齐：审批 ID、审批通过标记、审批时间/)).toBeInTheDocument();
+    expect(within(dialog).getByText('审批模板 JSON')).toBeInTheDocument();
+    expect(within(dialog).getByText(/runner_safety_v1/)).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '审批并重新试运行' }));
+    await waitFor(() =>
+      expect(aiExecutorApprovalBodies).toEqual([
+        {
+          approval_request: expect.objectContaining({
+            approval_request_id: 'ai_executor_approval_request_001',
+            blocked_operations: ['git_push_or_merge'],
+          }),
+          reason: '插件动作试运行高风险操作审批',
+        },
+      ]),
+    );
+    await waitFor(() => expect(actionTrialBodies).toHaveLength(2));
+    expect(await within(dialog).findByText('可复用到定时作业 dry-run')).toBeInTheDocument();
+    expect(within(dialog).getByText('进度：4/4 步已就绪')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: '生成作业草稿' })).toBeInTheDocument();
   });
 });

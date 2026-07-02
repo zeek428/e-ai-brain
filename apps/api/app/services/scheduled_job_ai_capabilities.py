@@ -17,7 +17,11 @@ from app.services.scheduled_job_store import (
     sync_ai_skill_store,
     sync_reference_store,
 )
-from app.services.skill_packages import store_skill_package
+from app.services.skill_packages import (
+    package_runtime_boundary,
+    store_agent_package,
+    store_skill_package,
+)
 
 AI_SKILL_STATUSES = {"active", "draft", "disabled"}
 AI_AGENT_STATUSES = {"active", "disabled"}
@@ -38,6 +42,7 @@ AI_AGENT_SORT_FIELDS = {
     "created_at",
     "model_gateway_config_id",
     "name",
+    "source_type",
     "status",
     "updated_at",
 }
@@ -48,11 +53,38 @@ def require_ai_capabilities_manager(user: dict[str, Any]) -> None:
 
 
 def public_skill(skill: dict[str, Any]) -> dict[str, Any]:
-    return dict(skill)
+    public = dict(skill)
+    package_files = [str(item) for item in public.get("package_files") or []]
+    runtime_boundary = package_runtime_boundary(
+        entity_label="Skill",
+        package_files=package_files,
+    )
+    public["runtime_capabilities"] = {
+        "prompt_execution": "enabled",
+        "schema_validation": "enabled",
+        **runtime_boundary,
+    }
+    return public
 
 
 def public_agent(agent: dict[str, Any]) -> dict[str, Any]:
-    return dict(agent)
+    public = dict(agent)
+    package_files = [str(item) for item in public.get("package_files") or []]
+    runtime_boundary = package_runtime_boundary(
+        entity_label="Agent",
+        package_files=package_files,
+    )
+    public.setdefault("source_type", "inline")
+    public.setdefault("package_files", package_files)
+    public["runtime_capabilities"] = {
+        "default_skill_binding": "enabled",
+        "package_context": (
+            "enabled" if public.get("source_type") == "package" else "not_applicable"
+        ),
+        **runtime_boundary,
+        "system_prompt_execution": "enabled",
+    }
+    return public
 
 
 def list_ai_skills_response(
@@ -507,8 +539,15 @@ def create_ai_agent_response(
         "description": payload.description,
         "execution_policy": payload.execution_policy,
         "id": agent_id,
+        "manifest": {},
         "model_gateway_config_id": payload.model_gateway_config_id,
         "name": ensure_non_blank(payload.name, "name"),
+        "package_checksum": None,
+        "package_entry": None,
+        "package_files": [],
+        "package_size_bytes": 0,
+        "package_uri": None,
+        "source_type": "inline",
         "status": payload.status,
         "system_prompt": ensure_non_blank(payload.system_prompt, "system_prompt"),
         "tool_policy": payload.tool_policy,
@@ -522,6 +561,95 @@ def create_ai_agent_response(
         subject_type="ai_agent",
         subject_id=agent_id,
         payload={"code": agent["code"], "status": agent["status"]},
+    )
+    persist_record(
+        current_store,
+        "save_ai_agent_record",
+        agent,
+        audit_event=audit_event,
+    )
+    return public_agent(agent)
+
+
+def create_ai_agent_package_response(
+    *,
+    brain_app_id: str,
+    code: str,
+    current_store: Any,
+    default_skill_ids: list[str],
+    model_gateway_config_id: str | None,
+    name: str,
+    package_bytes: bytes,
+    status: str,
+    user: dict[str, Any],
+    version: str,
+) -> dict[str, Any]:
+    require_ai_capabilities_manager(user)
+    sync_ai_skill_store(current_store)
+    sync_reference_store(current_store)
+    ensure_enum(status, AI_AGENT_STATUSES, "status")
+    agent_code = ensure_non_blank(code, "code")
+    package_version = ensure_non_blank(version, "version")
+    agent_id = current_store.new_id("agent")
+    stored_package = store_agent_package(
+        agent_code=agent_code,
+        package_bytes=package_bytes,
+        version=package_version,
+    )
+    manifest = dict(stored_package.manifest)
+    manifest_skill_ids = [
+        str(item)
+        for item in manifest.get("default_skill_ids") or []
+        if str(item).strip()
+    ]
+    resolved_skill_ids = manifest_skill_ids or list(default_skill_ids)
+    resolved_model_gateway_config_id = (
+        str(manifest.get("model_gateway_config_id"))
+        if manifest.get("model_gateway_config_id")
+        else model_gateway_config_id
+    )
+    ensure_active_model_gateway(current_store, resolved_model_gateway_config_id)
+    ensure_active_skills(current_store, resolved_skill_ids)
+    now = datetime.now(UTC).isoformat()
+    agent = {
+        "brain_app_id": ensure_non_blank(
+            str(manifest.get("brain_app_id") or brain_app_id),
+            "brain_app_id",
+        ),
+        "code": str(manifest.get("code") or agent_code),
+        "created_at": now,
+        "created_by": user["id"],
+        "default_skill_ids": resolved_skill_ids,
+        "description": manifest.get("description"),
+        "execution_policy": {},
+        "id": agent_id,
+        "manifest": manifest,
+        "model_gateway_config_id": resolved_model_gateway_config_id,
+        "name": ensure_non_blank(str(manifest.get("name") or name), "name"),
+        "package_checksum": stored_package.checksum,
+        "package_entry": stored_package.entry,
+        "package_files": stored_package.files,
+        "package_size_bytes": stored_package.size_bytes,
+        "package_uri": stored_package.package_uri,
+        "source_type": "package",
+        "status": status,
+        "system_prompt": stored_package.entry_content,
+        "tool_policy": {},
+        "updated_at": now,
+    }
+    put_memory_record(current_store, "ai_agents", agent)
+    audit_event = record_audit_event(
+        current_store,
+        event_type="ai_agent.package_uploaded",
+        actor_id=user["id"],
+        subject_type="ai_agent",
+        subject_id=agent_id,
+        payload={
+            "checksum": agent["package_checksum"],
+            "code": agent["code"],
+            "file_count": len(agent["package_files"]),
+            "status": agent["status"],
+        },
     )
     persist_record(
         current_store,

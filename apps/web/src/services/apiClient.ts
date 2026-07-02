@@ -13,6 +13,7 @@ export type ApiErrorPayload = {
     code?: string;
     message?: string;
     trace_id?: string;
+    [key: string]: unknown;
   };
 };
 
@@ -64,16 +65,19 @@ export function setUnauthorizedApiResponseHandler(
 
 export class ApiRequestError extends Error {
   code?: string;
+  detail?: ApiErrorPayload['detail'];
   status: number;
   traceId?: string;
 
   constructor({
     code,
+    detail,
     message,
     status,
     traceId,
   }: {
     code?: string;
+    detail?: ApiErrorPayload['detail'];
     message: string;
     status: number;
     traceId?: string;
@@ -81,6 +85,7 @@ export class ApiRequestError extends Error {
     super(message);
     this.name = 'ApiRequestError';
     this.code = code;
+    this.detail = detail;
     this.status = status;
     this.traceId = traceId;
   }
@@ -113,6 +118,7 @@ export async function apiRequest<T>(
     }
     const requestError = new ApiRequestError({
       code: payload?.detail?.code,
+      detail: payload?.detail,
       message: payload?.detail?.message ?? `API request failed: ${response.status}`,
       status: response.status,
       traceId: payload?.detail?.trace_id,

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
 from app.services.scheduled_job_ai_capabilities import (
+    create_ai_agent_package_response,
     create_ai_agent_response,
     create_ai_skill_package_response,
     create_ai_skill_response,
@@ -28,8 +29,10 @@ from app.services.scheduled_jobs import (
     list_scheduled_job_runs_response,
     list_scheduled_jobs_response,
     patch_scheduled_job_response,
+    rerun_scheduled_job_trace_node_response,
     run_scheduled_job_response,
     scheduled_job_template_from_run_response,
+    scheduled_job_trace_node_rerun_preview_response,
 )
 
 router = APIRouter(tags=["scheduled-jobs"])
@@ -286,6 +289,36 @@ def create_ai_agent(
     )
 
 
+@router.post("/api/system/ai-agents/upload")
+def upload_ai_agent_package(
+    request: Request,
+    package_bytes: bytes = Body(..., media_type="application/zip"),
+    brain_app_id: str = Query("rd_brain"),
+    code: str = Query(...),
+    default_skill_ids: Annotated[list[str] | None, Query()] = None,
+    model_gateway_config_id: str | None = Query(None),
+    name: str = Query(...),
+    status: str = Query("active"),
+    user: dict[str, Any] = CurrentUser,
+    version: str = Query("1.0.0"),
+) -> dict[str, Any]:
+    return envelope(
+        create_ai_agent_package_response(
+            brain_app_id=brain_app_id,
+            code=code,
+            current_store=store(request),
+            default_skill_ids=default_skill_ids or [],
+            model_gateway_config_id=model_gateway_config_id,
+            name=name,
+            package_bytes=package_bytes,
+            status=status,
+            user=user,
+            version=version,
+        ),
+        get_trace_id(request),
+    )
+
+
 @router.patch("/api/system/ai-agents/{agent_id}")
 def patch_ai_agent(
     agent_id: str,
@@ -489,6 +522,42 @@ def scheduled_job_run_template(
     return envelope(
         scheduled_job_template_from_run_response(
             current_store=store(request),
+            run_id=run_id,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/scheduled-job-runs/{run_id}/trace-nodes/{node_id}/rerun-preview")
+def preview_scheduled_job_trace_node_rerun(
+    request: Request,
+    run_id: str,
+    node_id: str,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        scheduled_job_trace_node_rerun_preview_response(
+            current_store=store(request),
+            node_id=node_id,
+            run_id=run_id,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/scheduled-job-runs/{run_id}/trace-nodes/{node_id}/rerun")
+def rerun_scheduled_job_trace_node(
+    request: Request,
+    run_id: str,
+    node_id: str,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        rerun_scheduled_job_trace_node_response(
+            current_store=store(request),
+            node_id=node_id,
             run_id=run_id,
             user=user,
         ),

@@ -11,9 +11,11 @@ from zipfile import BadZipFile, ZipFile
 from app.api.deps import api_error
 
 ALLOWED_SKILL_PACKAGE_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml"}
+ALLOWED_SCRIPT_PACKAGE_SUFFIXES = {".js", ".ps1", ".py", ".sh", ".ts"}
 MAX_SKILL_PACKAGE_BYTES = 2 * 1024 * 1024
 MAX_SKILL_PACKAGE_FILE_COUNT = 50
 MAX_SKILL_PACKAGE_UNCOMPRESSED_BYTES = 5 * 1024 * 1024
+PACKAGE_SCRIPT_EXECUTION_DISABLED = "disabled_pending_sandbox"
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,10 @@ class StoredSkillPackage:
 
 def skill_package_storage_root() -> Path:
     return Path(os.getenv("AI_SKILL_STORAGE_DIR", "/tmp/ai-brain/skills"))
+
+
+def agent_package_storage_root() -> Path:
+    return Path(os.getenv("AI_AGENT_STORAGE_DIR", "/tmp/ai-brain/agents"))
 
 
 def parse_simple_yaml(raw: str) -> dict[str, Any]:
@@ -65,58 +71,109 @@ def _parse_scalar(value: str) -> Any:
     return normalized
 
 
-def safe_skill_package_path(member_name: str) -> str:
+def safe_skill_package_path(
+    member_name: str,
+    *,
+    entity_label: str = "Skill",
+    invalid_code: str = "INVALID_SKILL_PACKAGE",
+) -> str:
     normalized = PurePosixPath(member_name)
     if normalized.is_absolute() or ".." in normalized.parts:
-        raise api_error(400, "INVALID_SKILL_PACKAGE", "Skill package contains unsafe paths")
+        raise api_error(400, invalid_code, f"{entity_label} package contains unsafe paths")
     if not normalized.name:
-        raise api_error(400, "INVALID_SKILL_PACKAGE", "Skill package contains empty paths")
+        raise api_error(400, invalid_code, f"{entity_label} package contains empty paths")
     suffix = normalized.suffix.lower()
-    if suffix not in ALLOWED_SKILL_PACKAGE_SUFFIXES:
-        raise api_error(400, "INVALID_SKILL_PACKAGE", "Skill package contains unsupported files")
+    is_script_asset = (
+        len(normalized.parts) >= 2
+        and normalized.parts[0] == "scripts"
+        and suffix in ALLOWED_SCRIPT_PACKAGE_SUFFIXES
+    )
+    if suffix not in ALLOWED_SKILL_PACKAGE_SUFFIXES and not is_script_asset:
+        raise api_error(400, invalid_code, f"{entity_label} package contains unsupported files")
     return str(normalized)
 
 
-def store_skill_package(
+def package_script_files(package_files: list[Any]) -> list[str]:
+    return [
+        file_name
+        for file_name in (str(item) for item in package_files)
+        if file_name.startswith("scripts/")
+        and Path(file_name).suffix.lower() in ALLOWED_SCRIPT_PACKAGE_SUFFIXES
+    ]
+
+
+def package_runtime_boundary(
     *,
+    entity_label: str,
+    package_files: list[Any],
+) -> dict[str, Any]:
+    script_files = package_script_files(package_files)
+    script_note = (
+        f"{entity_label} 包中的脚本目录当前不会自动执行；开启脚本执行前需要沙箱、审批和审计。"
+        if script_files
+        else f"当前 {entity_label} 文件包只作为提示词、Schema 和上下文资产参与运行。"
+    )
+    return {
+        "script_execution": (
+            PACKAGE_SCRIPT_EXECUTION_DISABLED if script_files else "not_applicable"
+        ),
+        "script_files": script_files,
+        "script_note": script_note,
+    }
+
+
+def _store_text_package(
+    *,
+    code: str,
+    default_entry: str,
+    entity_label: str,
+    invalid_code: str,
+    manifest_name: str,
     package_bytes: bytes,
-    skill_code: str,
-    skill_id: str,
+    required_entries: set[str],
+    storage_root: Path,
     version: str,
 ) -> StoredSkillPackage:
     if not package_bytes:
-        raise api_error(400, "INVALID_SKILL_PACKAGE", "Skill package is required")
+        raise api_error(400, invalid_code, f"{entity_label} package is required")
     if len(package_bytes) > MAX_SKILL_PACKAGE_BYTES:
-        raise api_error(400, "INVALID_SKILL_PACKAGE", "Skill package is too large")
+        raise api_error(400, invalid_code, f"{entity_label} package is too large")
 
     checksum = hashlib.sha256(package_bytes).hexdigest()
     try:
         with ZipFile(BytesIO(package_bytes)) as package:
             file_infos = [info for info in package.infolist() if not info.is_dir()]
             if len(file_infos) > MAX_SKILL_PACKAGE_FILE_COUNT:
-                raise api_error(400, "INVALID_SKILL_PACKAGE", "Skill package has too many files")
+                raise api_error(400, invalid_code, f"{entity_label} package has too many files")
             total_size = sum(info.file_size for info in file_infos)
             if total_size > MAX_SKILL_PACKAGE_UNCOMPRESSED_BYTES:
-                raise api_error(400, "INVALID_SKILL_PACKAGE", "Skill package content is too large")
-            files = [safe_skill_package_path(info.filename) for info in file_infos]
-            if "skill.yaml" not in files and "SKILL.md" not in files:
+                raise api_error(400, invalid_code, f"{entity_label} package content is too large")
+            files = [
+                safe_skill_package_path(
+                    info.filename,
+                    entity_label=entity_label,
+                    invalid_code=invalid_code,
+                )
+                for info in file_infos
+            ]
+            if not any(entry in files for entry in required_entries):
                 raise api_error(
                     400,
-                    "INVALID_SKILL_PACKAGE",
-                    "Skill package must contain skill.yaml or SKILL.md",
+                    invalid_code,
+                    f"{entity_label} package must contain {', '.join(sorted(required_entries))}",
                 )
 
             manifest = {}
-            if "skill.yaml" in files:
-                manifest = parse_simple_yaml(package.read("skill.yaml").decode("utf-8"))
-            entry = str(manifest.get("entry") or "SKILL.md")
+            if manifest_name in files:
+                manifest = parse_simple_yaml(package.read(manifest_name).decode("utf-8"))
+            entry = str(manifest.get("entry") or default_entry)
             if entry not in files:
-                raise api_error(400, "INVALID_SKILL_PACKAGE", "Skill package entry file not found")
+                raise api_error(400, invalid_code, f"{entity_label} package entry file not found")
             entry_content = package.read(entry).decode("utf-8")
 
             target_dir = (
-                skill_package_storage_root()
-                / skill_code
+                storage_root
+                / code
                 / version
                 / checksum[:16]
             )
@@ -126,12 +183,12 @@ def store_skill_package(
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_bytes(package.read(file_name))
     except BadZipFile as exc:
-        raise api_error(400, "INVALID_SKILL_PACKAGE", "Skill package must be a zip file") from exc
+        raise api_error(400, invalid_code, f"{entity_label} package must be a zip file") from exc
     except UnicodeDecodeError as exc:
         raise api_error(
             400,
-            "INVALID_SKILL_PACKAGE",
-            "Skill package manifest and entry must be UTF-8 text",
+            invalid_code,
+            f"{entity_label} package manifest and entry must be UTF-8 text",
         ) from exc
 
     return StoredSkillPackage(
@@ -142,6 +199,45 @@ def store_skill_package(
         manifest=manifest,
         package_uri=f"file://{target_dir}",
         size_bytes=len(package_bytes),
+    )
+
+
+def store_skill_package(
+    *,
+    package_bytes: bytes,
+    skill_code: str,
+    skill_id: str,
+    version: str,
+) -> StoredSkillPackage:
+    return _store_text_package(
+        code=skill_code,
+        default_entry="SKILL.md",
+        entity_label="Skill",
+        invalid_code="INVALID_SKILL_PACKAGE",
+        manifest_name="skill.yaml",
+        package_bytes=package_bytes,
+        required_entries={"skill.yaml", "SKILL.md"},
+        storage_root=skill_package_storage_root(),
+        version=version,
+    )
+
+
+def store_agent_package(
+    *,
+    agent_code: str,
+    package_bytes: bytes,
+    version: str,
+) -> StoredSkillPackage:
+    return _store_text_package(
+        code=agent_code,
+        default_entry="AGENT.md",
+        entity_label="Agent",
+        invalid_code="INVALID_AGENT_PACKAGE",
+        manifest_name="agent.yaml",
+        package_bytes=package_bytes,
+        required_entries={"AGENT.md", "agent.yaml"},
+        storage_root=agent_package_storage_root(),
+        version=version,
     )
 
 
@@ -163,4 +259,37 @@ def load_skill_package_snapshot(skill: dict[str, Any]) -> dict[str, Any] | None:
         "files": list(skill.get("package_files") or []),
         "manifest": dict(skill.get("manifest") or {}),
         "package_uri": package_uri,
+        "runtime_boundary": package_runtime_boundary(
+            entity_label="Skill",
+            package_files=list(skill.get("package_files") or []),
+        ),
+    }
+
+
+def load_agent_package_snapshot(agent: dict[str, Any]) -> dict[str, Any] | None:
+    if agent.get("source_type") != "package":
+        return None
+    package_uri = agent.get("package_uri")
+    entry = agent.get("package_entry") or (agent.get("manifest") or {}).get("entry") or "AGENT.md"
+    if not package_uri or not str(package_uri).startswith("file://"):
+        raise api_error(400, "INVALID_AGENT_PACKAGE", "Agent package URI is invalid")
+    package_dir = Path(str(package_uri).removeprefix("file://"))
+    entry_path = package_dir / safe_skill_package_path(
+        str(entry),
+        entity_label="Agent",
+        invalid_code="INVALID_AGENT_PACKAGE",
+    )
+    if not entry_path.exists():
+        raise api_error(400, "INVALID_AGENT_PACKAGE", "Agent package entry file is missing")
+    return {
+        "checksum": agent.get("package_checksum"),
+        "entry": str(entry),
+        "entry_content": entry_path.read_text(encoding="utf-8"),
+        "files": list(agent.get("package_files") or []),
+        "manifest": dict(agent.get("manifest") or {}),
+        "package_uri": package_uri,
+        "runtime_boundary": package_runtime_boundary(
+            entity_label="Agent",
+            package_files=list(agent.get("package_files") or []),
+        ),
     }

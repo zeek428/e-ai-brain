@@ -75,6 +75,24 @@ function writeStrategyLabelFromAction(action: PluginActionRecord): string {
   return action.name || writeTargetLabel || writeTarget || action.id;
 }
 
+function scheduledJobDraftHasReusableResponse(payload: Record<string, unknown>) {
+  const configJson = recordFromDraftPayload(payload, 'config_json');
+  const sampleReuse = recordValue(configJson?.sample_reuse);
+  return Boolean(recordValue(sampleReuse?.response_summary));
+}
+
+function scheduledJobDraftRequestsAutoDryRun(draft: AssistantScheduledJobDraft) {
+  if (draft.auto_dry_run === true) {
+    return true;
+  }
+  if (draft.payload.auto_dry_run === true) {
+    return true;
+  }
+  const configJson = recordFromDraftPayload(draft.payload, 'config_json');
+  const sampleReuse = recordValue(configJson?.sample_reuse);
+  return sampleReuse?.auto_dry_run === true;
+}
+
 export default function ScheduledJobsPage() {
   const [form] = Form.useForm<ScheduledJobFormValues>();
   const {
@@ -116,6 +134,7 @@ export default function ScheduledJobsPage() {
   const [testingConnectionId, setTestingConnectionId] = useState<string | undefined>();
   const [dryRunResult, setDryRunResult] = useState<ScheduledJobDryRunResult | undefined>();
   const [dryRunning, setDryRunning] = useState(false);
+  const [pendingAutoDryRun, setPendingAutoDryRun] = useState(false);
   const selectedPluginConnectionIds = Form.useWatch('plugin_connection_ids', form);
   const selectedPluginActionIds = Form.useWatch('plugin_action_ids', form);
   const selectedExecutionMode = Form.useWatch('execution_mode', form);
@@ -132,6 +151,10 @@ export default function ScheduledJobsPage() {
     () => recordValue(selectedConfigJson) ?? {},
     [selectedConfigJson],
   );
+  const sampleReuseDraft = useMemo(() => {
+    const draftConfigJson = recordFromDraftPayload(assistantDraftPayload ?? {}, 'config_json');
+    return recordValue(draftConfigJson?.sample_reuse);
+  }, [assistantDraftPayload]);
   const {
     aiAssemblyRuleFactory,
     aiProcessingRequiredTypes,
@@ -291,6 +314,14 @@ export default function ScheduledJobsPage() {
     skillById,
     onRouteTabChange: setActiveTab,
   });
+  const handleTraceNodeRerunCreated = useCallback(
+    (run: ScheduledJobRunRecord) => {
+      setActiveTab('runs');
+      openRunDetail(run);
+      void reload();
+    },
+    [openRunDetail, reload],
+  );
 
   useEffect(() => {
     if (normalizedSelectedPluginConnectionIds.length === 0) {
@@ -646,22 +677,27 @@ export default function ScheduledJobsPage() {
         throw new Error('Invalid scheduled job draft payload');
       }
       const draftValues = scheduledJobValuesFromAssistantDraft(draft);
+      const shouldAutoDryRun =
+        scheduledJobDraftRequestsAutoDryRun(draft)
+        && scheduledJobDraftHasReusableResponse(draft.payload);
       queueMicrotask(() => {
         setEditingJob(undefined);
         setAssistantDraftPayload(draft.payload);
         setAssistantDraftInitialValues(draftValues);
         setAssistantDraftSource({ draftId: draft.draftId, title: draft.title });
         setConnectionTestResult(undefined);
+        setDryRunResult(undefined);
+        setPendingAutoDryRun(shouldAutoDryRun);
         form.resetFields();
         form.setFieldsValue(draftValues);
         setModalOpen(true);
-        message.success('已载入 AI 助手生成的定时作业草案，请确认后保存');
       });
     } catch {
       queueMicrotask(() => {
         setAssistantDraftPayload(undefined);
         setAssistantDraftInitialValues(undefined);
         setAssistantDraftSource(undefined);
+        setPendingAutoDryRun(false);
         message.error('AI 助手定时作业草案格式无效');
       });
     }
@@ -676,6 +712,7 @@ export default function ScheduledJobsPage() {
     setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
     setDryRunResult(undefined);
+    setPendingAutoDryRun(false);
     form.resetFields();
     form.setFieldsValue({
       enabled: true,
@@ -699,6 +736,7 @@ export default function ScheduledJobsPage() {
     setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
     setDryRunResult(undefined);
+    setPendingAutoDryRun(false);
     setTemplateSource({
       sourceId: job.id,
       sourceType: 'scheduled_job',
@@ -726,6 +764,7 @@ export default function ScheduledJobsPage() {
     setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
     setDryRunResult(undefined);
+    setPendingAutoDryRun(false);
     setTemplateSource({
       sourceId: run.id,
       sourceType: 'scheduled_job_run',
@@ -770,6 +809,7 @@ export default function ScheduledJobsPage() {
       setAssistantDraftSource(undefined);
       setConnectionTestResult(undefined);
       setDryRunResult(undefined);
+      setPendingAutoDryRun(false);
       setGeneratedRunTemplate(template);
       setTemplateSource({
         sourceId: run.id,
@@ -806,6 +846,7 @@ export default function ScheduledJobsPage() {
     setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
     setDryRunResult(undefined);
+    setPendingAutoDryRun(false);
     form.resetFields();
     form.setFieldsValue({
       agent_id: job.agent_id ?? undefined,
@@ -843,6 +884,7 @@ export default function ScheduledJobsPage() {
     setConnectionTestResult(undefined);
     setDryRunning(false);
     setDryRunResult(undefined);
+    setPendingAutoDryRun(false);
     form.resetFields();
   };
 
@@ -876,7 +918,7 @@ export default function ScheduledJobsPage() {
           }
         : {};
     const assistantDraftConfig =
-      assistantDraftPayload && !editingJob
+      assistantDraftPayload && assistantDraftSource?.draftId && !editingJob
         ? {
             assistant_draft: {
               draft_id: assistantDraftSource?.draftId,
@@ -939,15 +981,17 @@ export default function ScheduledJobsPage() {
     return requestPayload;
   };
 
-  const currentValidatedJobPayload = async () => {
-    await form.validateFields();
+  const currentValidatedJobPayload = async (options: { validate?: boolean } = {}) => {
+    if (options.validate !== false) {
+      await form.validateFields();
+    }
     return buildJobRequestPayload(form.getFieldsValue(true) as ScheduledJobFormValues);
   };
 
-  const dryRunJob = async () => {
+  const dryRunJob = async (options: { validate?: boolean } = {}) => {
     let requestPayload: Partial<ScheduledJobRecord>;
     try {
-      requestPayload = await currentValidatedJobPayload();
+      requestPayload = await currentValidatedJobPayload({ validate: options.validate });
     } catch {
       return;
     }
@@ -968,6 +1012,25 @@ export default function ScheduledJobsPage() {
       setDryRunning(false);
     }
   };
+
+  useEffect(() => {
+    if (
+      !modalOpen
+      || editingJob
+      || !pendingAutoDryRun
+      || dryRunning
+      || dryRunResult
+      || !sampleReuseDraft
+      || !recordValue(sampleReuseDraft.response_summary)
+    ) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setPendingAutoDryRun(false);
+      void dryRunJob({ validate: false });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [dryRunResult, dryRunning, editingJob, modalOpen, pendingAutoDryRun, sampleReuseDraft]);
 
   const submitJob = async () => {
     let requestPayload: Partial<ScheduledJobRecord>;
@@ -1038,6 +1101,20 @@ export default function ScheduledJobsPage() {
 
   const triggerJob = async (job: ScheduledJobRecord) => {
     await triggerJobRun(job.id);
+  };
+
+  const handleTraceFullRunRerunRequested = async (request: Record<string, unknown>) => {
+    const jobId = recordStringValue(request, 'scheduled_job_id');
+    if (!jobId) {
+      message.error('复跑请求缺少定时作业 ID');
+      return;
+    }
+    const triggerTypeValue = recordStringValue(request, 'trigger_type');
+    await triggerJobRun(
+      jobId,
+      triggerTypeValue === 'manual_rerun' ? 'manual_rerun' : 'manual',
+      recordStringValue(request, 'source_run_id'),
+    );
   };
 
   const confirmDeleteJob = (job: ScheduledJobRecord) => {
@@ -1163,6 +1240,7 @@ export default function ScheduledJobsPage() {
         productRequiredRule={productRequiredRuleFactory('请选择产品')}
         requiredForPluginResource={pluginResourceRuleFactory}
         scheduleTypeSelectOptions={scheduleTypeSelectOptions}
+        sampleReuseDraft={sampleReuseDraft}
         selectedJobTemplate={selectedJobTemplate}
         selectedJobType={selectedJobType}
         selectedRepositoryDefaultBranch={selectedRepositoryDefaultBranch}
@@ -1191,6 +1269,8 @@ export default function ScheduledJobsPage() {
         onClose={closeRunDetail}
         onCopyRun={openCopyRunModal}
         onGenerateTemplate={generateTemplateFromRun}
+        onTraceFullRunRerunRequested={handleTraceFullRunRerunRequested}
+        onTraceNodeRerunCreated={handleTraceNodeRerunCreated}
         resultWriteRecords={selectedRunResultWriteRecords}
         resultWriteRecordsLoading={selectedRunResultWriteRecordsLoading}
         run={selectedRun}

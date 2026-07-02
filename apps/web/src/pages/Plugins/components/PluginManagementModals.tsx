@@ -1,6 +1,7 @@
 import type { FormInstance } from 'antd';
 
 import type {
+  AiExecutorApprovalRequestRecord,
   AiExecutorRunnerRecord,
   AiExecutorTaskLogRecord,
   AiExecutorTaskRecord,
@@ -22,6 +23,7 @@ import { PluginRunnerModal } from './PluginRunnerModal';
 import type { AiExecutorRunnerFormValues } from './pluginRunnerHelpers';
 import {
   PluginActionTrialModal,
+  RunnerApprovalRequestsModal,
   RunnerLogModal,
   RunnerTokenRotationModal,
   RunnerTokenRotationNotice,
@@ -62,6 +64,10 @@ type PluginManagementModalsProps = {
   resultWriteTargetOptions: SelectOption[];
   resultWriteTargets: ResultWriteTargetRecord[];
   rotatedRunnerToken?: string;
+  approvingRunnerApprovalRequestId?: string;
+  runnerApprovalRequestRows: AiExecutorApprovalRequestRecord[];
+  runnerApprovalRequestsLoading: boolean;
+  runnerApprovalRequestsOpen: boolean;
   rotatingRunner?: AiExecutorRunnerRecord;
   rotatingRunnerLoading: boolean;
   runnerForm: FormInstance<AiExecutorRunnerFormValues>;
@@ -80,16 +86,20 @@ type PluginManagementModalsProps = {
   trialModalOpen: boolean;
   trialResult?: PluginActionTrialResult;
   trialRunning: boolean;
+  trialSampleResponseSummary?: Record<string, unknown>;
   onActionValuesChange: (
     changedValues: Partial<PluginActionFormValues>,
     allValues: PluginActionFormValues,
   ) => void;
+  onApproveTrialAiExecutor: () => void | Promise<void>;
   onApplyActionJsonToVisual: () => void;
   onApplyActionScenario: (scenario?: string) => void;
   onApplyConnectionAuthJsonToVisual: () => void;
   onApplyConnectionPluginDefaults: (pluginId: string) => void;
   onApplyConnectionRequestJsonToVisual: () => void;
   onCancelRunnerTask: () => void;
+  onApproveRunnerApprovalRequest: (record: AiExecutorApprovalRequestRecord) => void | Promise<void>;
+  onCloseRunnerApprovalRequests: () => void;
   onCloseActionModal: () => void;
   onCloseConnectionModal: () => void;
   onClosePluginModal: () => void;
@@ -100,10 +110,12 @@ type PluginManagementModalsProps = {
     changedValues: Partial<PluginConnectionFormValues>,
     allValues: PluginConnectionFormValues,
   ) => void;
+  onCreateScheduledJobDraftFromTrial: () => void;
   onRotateRunnerTokenCancel: () => void;
   onRotateRunnerTokenSubmit: () => void | Promise<void>;
   onRunActionTrial: () => void | Promise<void>;
   onRetryRunnerTask: () => void;
+  onRefreshRunnerApprovalRequests: () => void | Promise<void>;
   onSubmitAction: () => void | Promise<void>;
   onSubmitConnection: () => void | Promise<void>;
   onSubmitConnectionAndTest: () => void | Promise<void>;
@@ -147,6 +159,10 @@ export function PluginManagementModals({
   resultWriteTargetOptions,
   resultWriteTargets,
   rotatedRunnerToken,
+  approvingRunnerApprovalRequestId,
+  runnerApprovalRequestRows,
+  runnerApprovalRequestsLoading,
+  runnerApprovalRequestsOpen,
   rotatingRunner,
   rotatingRunnerLoading,
   runnerForm,
@@ -165,13 +181,17 @@ export function PluginManagementModals({
   trialModalOpen,
   trialResult,
   trialRunning,
+  trialSampleResponseSummary,
   onActionValuesChange,
+  onApproveTrialAiExecutor,
   onApplyActionJsonToVisual,
   onApplyActionScenario,
   onApplyConnectionAuthJsonToVisual,
   onApplyConnectionPluginDefaults,
   onApplyConnectionRequestJsonToVisual,
   onCancelRunnerTask,
+  onApproveRunnerApprovalRequest,
+  onCloseRunnerApprovalRequests,
   onCloseActionModal,
   onCloseConnectionModal,
   onClosePluginModal,
@@ -179,10 +199,12 @@ export function PluginManagementModals({
   onCloseRunnerLogModal,
   onCloseRunnerModal,
   onConnectionValuesChange,
+  onCreateScheduledJobDraftFromTrial,
   onRotateRunnerTokenCancel,
   onRotateRunnerTokenSubmit,
   onRunActionTrial,
   onRetryRunnerTask,
+  onRefreshRunnerApprovalRequests,
   onSubmitAction,
   onSubmitConnection,
   onSubmitConnectionAndTest,
@@ -221,6 +243,16 @@ export function PluginManagementModals({
         open={runnerLogModalOpen}
         rows={runnerLogRows}
         task={runnerLogTask}
+      />
+
+      <RunnerApprovalRequestsModal
+        approvingId={approvingRunnerApprovalRequestId}
+        loading={runnerApprovalRequestsLoading}
+        onApprove={onApproveRunnerApprovalRequest}
+        onClose={onCloseRunnerApprovalRequests}
+        onRefresh={onRefreshRunnerApprovalRequests}
+        open={runnerApprovalRequestsOpen}
+        rows={runnerApprovalRequestRows}
       />
 
       <PluginModal
@@ -294,13 +326,16 @@ export function PluginManagementModals({
         connectionId={trialConnectionId}
         connectionOptions={connectionOptions}
         inputJson={trialInputJson}
+        onApproveAiExecutor={onApproveTrialAiExecutor}
         onClose={onTrialModalClose}
         onConnectionChange={onTrialConnectionChange}
+        onCreateScheduledJobDraft={onCreateScheduledJobDraftFromTrial}
         onInputJsonChange={onTrialInputJsonChange}
         onRun={onRunActionTrial}
         open={trialModalOpen}
         result={trialResult}
         running={trialRunning}
+        sampleResponseSummary={trialSampleResponseSummary}
       />
     </>
   );

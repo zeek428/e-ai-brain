@@ -16,7 +16,19 @@ def _trace_graph_needs_debug_projection(trace_graph: Any) -> bool:
     for node in nodes:
         if not isinstance(node, dict):
             return True
-        if "stage" not in node or "debug_actions" not in node or "rerun_hint" not in node:
+        if (
+            "stage" not in node
+            or "debug_actions" not in node
+            or "rerun_hint" not in node
+            or "rerun_plan" not in node
+            or "snapshot_status" not in node
+        ):
+            return True
+        rerun_plan = node.get("rerun_plan")
+        if (
+            not isinstance(rerun_plan, dict)
+            or rerun_plan.get("plan_version") != "trace_node_rerun_v2"
+        ):
             return True
     return False
 

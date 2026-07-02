@@ -7,6 +7,15 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
+from app.services.ai_executor_runner_task_status import (
+    runner_ai_executor_task_status_response,
+)
+from app.services.ai_executor_runner_timeout import timeout_ai_executor_tasks_response
+from app.services.ai_executor_runner_approvals import (
+    approve_ai_executor_approval_request_response,
+    approve_plugin_action_ai_executor_response,
+    list_ai_executor_approval_requests_response,
+)
 from app.services.ai_executor_runners import (
     append_ai_executor_task_logs_response,
     cancel_ai_executor_task_response,
@@ -23,8 +32,8 @@ from app.services.ai_executor_runners import (
     rotate_ai_executor_runner_token_response,
     runner_heartbeat_response,
     test_ai_executor_runner_response,
-    timeout_ai_executor_tasks_response,
 )
+from app.services.plugin_action_trials import trial_plugin_action_response
 from app.services.plugins import (
     copy_plugin_response,
     create_plugin_action_response,
@@ -47,7 +56,6 @@ from app.services.plugins import (
     patch_plugin_response,
     plugin_system_variables_response,
     test_plugin_connection_response,
-    trial_plugin_action_response,
 )
 
 router = APIRouter(tags=["plugins"])
@@ -153,6 +161,15 @@ class PluginInvokeRequest(BaseModel):
 class PluginActionTrialRequest(BaseModel):
     connection_id: str | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
+    sample_response_summary: dict[str, Any] | None = None
+
+
+class PluginActionAiExecutorApprovalRequest(BaseModel):
+    approval_id: str | None = None
+    approval_request: dict[str, Any] | None = None
+    approved_operations: list[str] = Field(default_factory=list)
+    expires_at: str | None = None
+    reason: str | None = None
 
 
 class AiExecutorRunnerRequest(BaseModel):
@@ -419,6 +436,23 @@ def list_ai_executor_task_logs(
             current_store=store(request),
             task_id=task_id,
             user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/ai-executor-tasks/{task_id}/runner-status")
+def get_ai_executor_task_runner_status(
+    request: Request,
+    task_id: str,
+    runner_id: str = Query(...),
+) -> dict[str, Any]:
+    return envelope(
+        runner_ai_executor_task_status_response(
+            current_store=store(request),
+            request=request,
+            runner_id=runner_id,
+            task_id=task_id,
         ),
         get_trace_id(request),
     )
@@ -846,6 +880,53 @@ def delete_plugin_action(
     )
 
 
+@router.get("/api/system/ai-executor-approval-requests")
+def list_ai_executor_approval_requests(
+    request: Request,
+    action_id: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    runner_id: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    status: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        list_ai_executor_approval_requests_response(
+            action_id=action_id,
+            current_store=store(request),
+            page=page,
+            page_size=page_size,
+            runner_id=runner_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            started_at=_request_started_at(request),
+            status=status,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-approval-requests/{approval_request_id}/approve")
+def approve_ai_executor_approval_request(
+    approval_request_id: str,
+    payload: PluginActionAiExecutorApprovalRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        approve_ai_executor_approval_request_response(
+            approval_request_id=approval_request_id,
+            current_store=store(request),
+            payload=payload,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
 @router.post("/api/system/plugin-actions/{action_id}/invoke")
 def invoke_plugin_action(
     action_id: str,
@@ -880,6 +961,25 @@ def trial_plugin_action(
             connection_id=payload.connection_id,
             current_store=store(request),
             input_payload=payload.input_payload,
+            sample_response_summary=payload.sample_response_summary,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/plugin-actions/{action_id}/ai-executor-approval")
+def approve_plugin_action_ai_executor(
+    action_id: str,
+    payload: PluginActionAiExecutorApprovalRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        approve_plugin_action_ai_executor_response(
+            action_id=action_id,
+            current_store=store(request),
+            payload=payload,
             user=user,
         ),
         get_trace_id(request),

@@ -1,4 +1,4 @@
-import { Space, Tag, Typography } from 'antd';
+import { Alert, Space, Tag, Typography } from 'antd';
 
 import type { ScheduledJobDryRunResult } from '../../../services/aiBrain';
 import { ScheduledJobJsonPreview } from './ScheduledJobJsonPreview';
@@ -22,6 +22,12 @@ function numberValue(value: unknown): number | undefined {
 }
 
 function previewSourceLabel(source: unknown): string {
+  if (source === 'connection_test_response') {
+    return '连接测试响应样例';
+  }
+  if (source === 'action_trial_response') {
+    return '动作试运行响应';
+  }
   if (source === 'skill_output_schema') {
     return 'Skill 输出样例';
   }
@@ -55,6 +61,33 @@ function checkedPathLabel(path: Record<string, unknown>): string {
   const jsonPath = stringValue(path.path) ?? '-';
   const supported = path.supported === false ? '未命中' : '已命中';
   return `${field}: ${jsonPath} ${supported}`;
+}
+
+function statusColor(status?: string) {
+  if (status === 'ready' || status === 'succeeded') {
+    return 'green';
+  }
+  if (status === 'blocked' || status === 'failed') {
+    return 'red';
+  }
+  if (status === 'partial' || status === 'pending') {
+    return 'orange';
+  }
+  return 'default';
+}
+
+const missingRequirementLabels: Record<string, string> = {
+  action_trial_response: '动作试运行响应样例',
+  action_trial_succeeded: '动作试运行成功结果',
+  action_write_preview: '动作写入预览',
+  ai_output_preview: 'AI 输出预览',
+  connection_test_response: '连接测试响应样例',
+  data_connection_sample: '数据连接样例',
+  write_preview: '写入预览',
+};
+
+function requirementLabel(value: string): string {
+  return missingRequirementLabels[value] ?? value;
 }
 
 function ScheduledJobDryRunMappingSummary({ result }: { result: ScheduledJobDryRunResult }) {
@@ -126,6 +159,123 @@ function ScheduledJobDryRunSourceSummary({ result }: { result: ScheduledJobDryRu
   );
 }
 
+function ScheduledJobDryRunSampleReuseSummary({ result }: { result: ScheduledJobDryRunResult }) {
+  const sampleReuse = recordValue(result.sample_reuse);
+  if (!sampleReuse) {
+    return null;
+  }
+  const steps = Array.isArray(sampleReuse.reusable_steps)
+    ? sampleReuse.reusable_steps.map(recordValue).filter(isRecordValue)
+    : [];
+  const dataConnectionSample = recordValue(sampleReuse.data_connection_sample);
+  const reuseWizard = recordValue(sampleReuse.reuse_wizard);
+  const wizardSteps = Array.isArray(reuseWizard?.steps)
+    ? reuseWizard.steps.map(recordValue).filter(isRecordValue)
+    : [];
+  const missingRequirements = Array.isArray(reuseWizard?.missing_requirements)
+    ? reuseWizard.missing_requirements.map(String).filter(Boolean)
+    : [];
+  const handoffSummary = Array.isArray(reuseWizard?.handoff_summary)
+    ? reuseWizard.handoff_summary.map(recordValue).filter(isRecordValue)
+    : [];
+  const preferredSource = previewSourceLabel(sampleReuse.preferred_action_preview_source);
+  const dataSampleSource = previewSourceLabel(dataConnectionSample?.source);
+  const recordsImported = numberValue(dataConnectionSample?.records_imported);
+  const currentStepLabel = stringValue(reuseWizard?.current_step_label);
+  const nextActionDescription = stringValue(reuseWizard?.next_action_description);
+  const progressLabel = stringValue(reuseWizard?.progress_label);
+  const progressPercent = numberValue(reuseWizard?.progress_percent);
+  const wizardStatus = stringValue(reuseWizard?.status);
+  const primaryActionLabel = stringValue(reuseWizard?.primary_action_label);
+  const canContinue = reuseWizard?.can_continue === true;
+  const blockedSteps = numberValue(reuseWizard?.blocked_steps);
+  const missingRequirementText = missingRequirements.map(requirementLabel).join('、');
+  return (
+    <Space aria-label="样例复用摘要" orientation="vertical" size={8} style={{ width: '100%' }}>
+      <Space size={[8, 8]} wrap>
+        <Typography.Text type="secondary">样例复用</Typography.Text>
+        <Tag color={dataConnectionSample?.status === 'ready' ? 'green' : 'default'}>
+          数据样例 {dataConnectionSample?.status === 'ready' ? '可复用' : '未生成'}
+        </Tag>
+        {recordsImported !== undefined ? <Tag color="blue">样例行数 {recordsImported}</Tag> : null}
+        <Tag color="geekblue">来源 {dataSampleSource}</Tag>
+        <Tag color="purple">动作预览 {preferredSource}</Tag>
+        {progressLabel ? (
+          <Tag color={progressPercent === 100 ? 'green' : 'blue'}>
+            进度：{progressLabel}
+          </Tag>
+        ) : null}
+      </Space>
+      {reuseWizard ? (
+        <Space orientation="vertical" size={6} style={{ width: '100%' }}>
+          <Space size={[8, 8]} wrap>
+            {currentStepLabel ? <Tag color="geekblue">当前：{currentStepLabel}</Tag> : null}
+            {wizardStatus ? <Tag color={statusColor(wizardStatus)}>向导 {wizardStatus}</Tag> : null}
+            {primaryActionLabel ? <Tag color="blue">下一步：{primaryActionLabel}</Tag> : null}
+            {missingRequirements.length ? (
+              <Tag color="red">缺失 {missingRequirementText}</Tag>
+            ) : null}
+            {blockedSteps ? (
+              <Tag color="red">阻断步骤 {blockedSteps}</Tag>
+            ) : null}
+          </Space>
+          <Alert
+            title={canContinue ? '样例复用链路已就绪' : '样例复用链路暂未就绪'}
+            description={(
+              <Space orientation="vertical" size={4}>
+                {missingRequirementText ? (
+                  <Typography.Text>需要处理：{missingRequirementText}</Typography.Text>
+                ) : null}
+                {nextActionDescription ? (
+                  <Typography.Text type="secondary">{nextActionDescription}</Typography.Text>
+                ) : null}
+              </Space>
+            )}
+            showIcon
+            type={canContinue ? 'success' : 'warning'}
+          />
+          {handoffSummary.length ? (
+            <Space size={[8, 8]} wrap>
+              {handoffSummary.map((item, index) => {
+                const status = stringValue(item.status) ?? 'unknown';
+                return (
+                  <Tag color={statusColor(status)} key={`${stringValue(item.key) ?? index}-${status}`}>
+                    {stringValue(item.label) ?? stringValue(item.key) ?? '已带入'} · {status}
+                  </Tag>
+                );
+              })}
+            </Space>
+          ) : null}
+        </Space>
+      ) : null}
+      {wizardSteps.length ? (
+        <Space size={[8, 8]} wrap>
+          {wizardSteps.map((step, index) => {
+            const status = stringValue(step.status) ?? 'unknown';
+            return (
+              <Tag color={statusColor(status)} key={`${stringValue(step.key) ?? index}-${status}`}>
+                {stringValue(step.label) ?? stringValue(step.key) ?? '复用步骤'} · {status}
+              </Tag>
+            );
+          })}
+        </Space>
+      ) : null}
+      {steps.length ? (
+        <Space size={[8, 8]} wrap>
+          {steps.map((step, index) => {
+            const status = stringValue(step.status) ?? 'unknown';
+            return (
+              <Tag color={status === 'ready' ? 'green' : status === 'not_configured' ? 'orange' : 'default'} key={`${stringValue(step.key) ?? index}-${status}`}>
+                {stringValue(step.label) ?? stringValue(step.key) ?? '复用步骤'} · {status}
+              </Tag>
+            );
+          })}
+        </Space>
+      ) : null}
+    </Space>
+  );
+}
+
 export function ScheduledJobDryRunResultPanel({ result }: { result: ScheduledJobDryRunResult }) {
   return (
     <div
@@ -144,6 +294,7 @@ export function ScheduledJobDryRunResultPanel({ result }: { result: ScheduledJob
           <Tag color={result.status === 'succeeded' ? 'green' : 'red'}>{result.status}</Tag>
           <Typography.Text type="secondary">{result.job_type}</Typography.Text>
         </Space>
+        <ScheduledJobDryRunSampleReuseSummary result={result} />
         <ScheduledJobDryRunSourceSummary result={result} />
         <ScheduledJobDryRunMappingSummary result={result} />
         <ScheduledJobJsonPreview title="数据连接预览" value={result.stages?.data_connection} />

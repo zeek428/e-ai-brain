@@ -11,8 +11,16 @@ from app.core.store import MemoryStore
 settings = get_settings()
 
 
-def api_error(status_code: int, code: str, message: str) -> HTTPException:
-    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
+def api_error(
+    status_code: int,
+    code: str,
+    message: str,
+    extra: dict[str, Any] | None = None,
+) -> HTTPException:
+    detail = {"code": code, "message": message}
+    if extra:
+        detail.update(extra)
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 def store(request: Request) -> MemoryStore:

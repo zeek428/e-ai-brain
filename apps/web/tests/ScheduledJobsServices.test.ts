@@ -14,6 +14,7 @@ import {
   runScheduledJob,
   updateAiAgent,
   updateAiSkill,
+  uploadAiAgentPackage,
   uploadAiSkillPackage,
 } from '../src/services/aiBrain';
 
@@ -85,6 +86,26 @@ describe('scheduled AI job service mappings', () => {
       }
       if (input === '/api/system/ai-agents' && init?.method === 'POST') {
         return jsonResponse({ data: { id: 'agent_001', status: 'active' } });
+      }
+      if (
+        input ===
+          '/api/system/ai-agents/upload?brain_app_id=rd_brain&code=packaged_feedback_agent&name=%E6%96%87%E4%BB%B6%E5%8C%85%E5%8F%8D%E9%A6%88%E5%88%86%E6%9E%90%E8%A7%92%E8%89%B2&version=1.0.0&status=active&model_gateway_config_id=gateway_default&default_skill_ids=skill_001' &&
+        init?.method === 'POST'
+      ) {
+        expect(init.headers).toMatchObject({
+          Authorization: 'Bearer token-admin',
+          'Content-Type': 'application/zip',
+        });
+        expect(init.body).toBeInstanceOf(ArrayBuffer);
+        return jsonResponse({
+          data: {
+            code: 'packaged_feedback_agent',
+            id: 'agent_package_001',
+            package_checksum: 'sha256-agent',
+            source_type: 'package',
+            status: 'active',
+          },
+        });
       }
       if (input === '/api/system/ai-agents/agent_001' && init?.method === 'PATCH') {
         expect(init.body).toBe(JSON.stringify({ status: 'disabled' }));
@@ -196,6 +217,16 @@ describe('scheduled AI job service mappings', () => {
     await expect(createAiAgent({ code: 'iteration_planner', name: '迭代规划 Agent', system_prompt: 'x' })).resolves.toMatchObject({
       id: 'agent_001',
     });
+    await expect(
+      uploadAiAgentPackage(new File(['zip-bytes'], 'agent.zip', { type: 'application/zip' }), {
+        code: 'packaged_feedback_agent',
+        defaultSkillIds: ['skill_001'],
+        modelGatewayConfigId: 'gateway_default',
+        name: '文件包反馈分析角色',
+        status: 'active',
+        version: '1.0.0',
+      }),
+    ).resolves.toMatchObject({ id: 'agent_package_001', source_type: 'package' });
     await expect(updateAiAgent('agent_001', { status: 'disabled' })).resolves.toMatchObject({
       id: 'agent_001',
       status: 'disabled',

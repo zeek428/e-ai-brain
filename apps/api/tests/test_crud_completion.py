@@ -98,7 +98,14 @@ def test_product_children_support_full_delete_crud_and_dependency_guards():
         headers=headers,
     )
     assert blocked_product_delete.status_code == 409
-    assert blocked_product_delete.json()["detail"]["code"] == "RESOURCE_IN_USE"
+    blocked_delete_detail = blocked_product_delete.json()["detail"]
+    assert blocked_delete_detail["code"] == "RESOURCE_IN_USE"
+    assert blocked_delete_detail["related_counts"] == {
+        "ai_tasks": 0,
+        "bugs": 0,
+        "requirements": 1,
+    }
+    assert blocked_delete_detail["related_total"] == 1
 
 
 def test_requirements_documents_bugs_and_users_support_update_and_delete():

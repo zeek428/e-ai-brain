@@ -141,6 +141,78 @@ describe('ProductsPage', () => {
     expect(screen.getByText(/trace_denied/)).toBeInTheDocument();
   });
 
+  it('shows related record counts when product deletion is blocked', async () => {
+    const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => null as never);
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path === '/api/products' || path.startsWith('/api/products?')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  code: 'AI-BRAIN',
+                  id: 'product_ai_brain',
+                  name: 'AI Brain',
+                  owner_team: 'AI Platform',
+                  status: 'active',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      if (path === '/api/products/product_ai_brain' && method === 'DELETE') {
+        return new Response(
+          JSON.stringify({
+            detail: {
+              code: 'RESOURCE_IN_USE',
+              message: 'Product still has related records',
+              related_counts: { ai_tasks: 2, bugs: 1, requirements: 3 },
+              related_total: 6,
+              trace_id: 'trace_product_delete',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 409,
+          },
+        );
+      }
+      if (path === '/api/product-versions' || path.startsWith('/api/product-versions?')) {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path} ${method}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ProductsPage />);
+
+    expect(await screen.findByText('AI Brain')).toBeInTheDocument();
+    const productRow = screen.getByText('AI Brain').closest('tr');
+    expect(productRow).not.toBeNull();
+    fireEvent.click(within(productRow as HTMLElement).getByRole('button', { name: /删除/ }));
+    await screen.findByText('删除产品 AI-BRAIN？');
+    fireEvent.click(screen.getAllByRole('button', { name: /删\s*除/ }).at(-1)!);
+
+    await waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith(
+        '无法删除产品，仍关联 3 条需求、2 个AI任务、1 个Bug。请先迁移或删除关联业务记录，也可以将产品状态改为停用。',
+      ),
+    );
+  });
+
   it('manages product versions modules and git resources from the product page', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

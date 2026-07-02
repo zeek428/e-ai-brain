@@ -1,4 +1,5 @@
 import json
+import sys
 import zipfile
 from datetime import UTC, datetime
 from io import BytesIO
@@ -1213,6 +1214,8 @@ def test_ai_executor_runner_list_supports_server_pagination_sort_filters_and_obs
     assert runner_item["health_alert"]["severity"] == "critical"
     assert runner_item["health_alert"]["heartbeat_timeout_seconds"] == 120
     assert "Runner 心跳超时" in runner_item["health_alert"]["message"]
+    assert runner_item["queue_summary"]["total"] == 0
+    assert runner_item["queue_summary"]["available_slots"] == 1
     assert response["page"] == 2
     assert response["page_size"] == 1
     assert response["total"] == 2
@@ -1234,6 +1237,42 @@ def test_ai_executor_runner_list_supports_server_pagination_sort_filters_and_obs
         "sort_order": "asc",
         "status": "active",
     }
+
+
+def test_ai_executor_runner_readiness_blocks_reserved_protocol_until_adapter_exists():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    created_runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["codex"],
+            "name": "WebSocket 预留执行器",
+            "protocol": "runner_websocket",
+            "runner_token": "runner-secret",
+            "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+        },
+        headers=admin_headers,
+    )
+    assert created_runner.status_code == 200
+    runner = created_runner.json()["data"]
+
+    listed_runners = client.get(
+        "/api/system/ai-executor-runners",
+        headers=admin_headers,
+    ).json()["data"]
+    listed_runner = next(item for item in listed_runners["items"] if item["id"] == runner["id"])
+    protocol_control = next(
+        control
+        for control in listed_runner["readiness_summary"]["controls"]
+        if control["key"] == "protocol_adapter"
+    )
+
+    assert listed_runner["readiness_summary"]["readiness_status"] == "blocked"
+    assert protocol_control["label"] == "协议适配"
+    assert protocol_control["status"] == "blocked"
+    assert "协议预留" in protocol_control["reason"]
+    assert "runner_polling" in protocol_control["reason"]
 
 
 def test_ai_executor_runner_test_endpoint_reports_managed_and_runner_health():
@@ -1435,7 +1474,18 @@ def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
 
     heartbeat = client.post(
         f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
-        json={"metadata": {"openclaw_path": "/usr/local/bin/openclaw"}},
+        json={
+            "metadata": {
+                "command_allowlist_enforced": True,
+                "instruction_passed_via_stdin": True,
+                "openclaw_path": "/usr/local/bin/openclaw",
+                "process_group_isolation": True,
+                "server_high_risk_approval_required": True,
+                "shell_disabled": True,
+                "terminate_process_tree_on_timeout": True,
+                "workspace_roots_enforced": True,
+            },
+        },
         headers={"X-Runner-Token": "runner-secret"},
     )
     assert heartbeat.status_code == 200
@@ -1504,6 +1554,17 @@ def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
     assert task["instruction"].startswith("扫描仓库质量")
     assert task["plugin_invocation_log_id"] == log["id"]
 
+    running_log = client.post(
+        f"/api/system/ai-executor-tasks/{task_id}/logs",
+        json={
+            "logs": [{"level": "info", "message": "openclaw started"}],
+            "runner_id": runner["id"],
+            "status": "running",
+        },
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert running_log.status_code == 200
+
     completed = client.post(
         f"/api/system/ai-executor-tasks/{task_id}/complete",
         json={
@@ -1518,6 +1579,40 @@ def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
     completed_task = completed.json()["data"]["task"]
     assert completed_task["status"] == "succeeded"
     assert completed_task["result_json"]["summary"] == "未发现高风险问题"
+    assert [entry["message"] for entry in completed_task["logs"]] == [
+        "openclaw started",
+        "openclaw finished",
+    ]
+
+    failed_invocation = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"source": "manual-failed"}},
+        headers=admin_headers,
+    )
+    assert failed_invocation.status_code == 200
+    failed_task_id = failed_invocation.json()["data"]["response_summary"]["json"][
+        "runner_task_id"
+    ]
+    failed_claim = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert failed_claim.status_code == 200
+    assert failed_claim.json()["data"]["task"]["id"] == failed_task_id
+    failed_completion = client.post(
+        f"/api/system/ai-executor-tasks/{failed_task_id}/complete",
+        json={
+            "error_code": "OPENCLAW_FAILED",
+            "error_message": "OpenClaw 命令执行失败",
+            "logs": [{"level": "error", "message": "openclaw failed"}],
+            "result_json": {"summary": "执行失败"},
+            "runner_id": runner["id"],
+            "status": "failed",
+        },
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert failed_completion.status_code == 200
 
     listed_runners = client.get(
         "/api/system/ai-executor-runners",
@@ -1529,6 +1624,422 @@ def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
     assert listed_runner["health_status"] == "online"
     assert isinstance(listed_runner["heartbeat_age_seconds"], int)
     assert "ai-brain-runner" in listed_runner["setup_command"]
+    assert listed_runner["queue_summary"]["total"] == 2
+    assert listed_runner["queue_summary"]["succeeded"] == 1
+    assert listed_runner["queue_summary"]["failed"] == 1
+    assert listed_runner["queue_summary"]["failed_total"] == 1
+    assert listed_runner["queue_summary"]["running_total"] == 0
+    assert listed_runner["queue_summary"]["available_slots"] == 1
+    readiness = listed_runner["readiness_summary"]
+    assert readiness["readiness_status"] == "attention"
+    assert readiness["satisfied_count"] == 12
+    assert readiness["attention_count"] == 1
+    assert readiness["missing_count"] == 0
+    assert readiness["blocked_count"] == 0
+    assert [control["key"] for control in readiness["controls"]] == [
+        "runner_registration",
+        "protocol_adapter",
+        "heartbeat",
+        "runner_token",
+        "workspace_whitelist",
+        "command_allowlist",
+        "command_shell_disabled",
+        "sandbox_permission_boundary",
+        "queue_capacity",
+        "timeout_guard",
+        "log_streaming",
+        "completion_callback",
+        "approval_gate",
+    ]
+    assert readiness["controls"][1]["label"] == "协议适配"
+    assert readiness["controls"][1]["status"] == "satisfied"
+    assert "polling 协议" in readiness["controls"][1]["reason"]
+    assert readiness["controls"][2]["label"] == "心跳在线"
+    assert readiness["controls"][2]["status"] == "satisfied"
+    assert readiness["controls"][5]["label"] == "命令白名单"
+    assert readiness["controls"][5]["status"] == "satisfied"
+    assert readiness["controls"][6]["label"] == "禁用 shell 执行"
+    assert readiness["controls"][6]["status"] == "satisfied"
+    assert readiness["controls"][7]["label"] == "沙箱权限边界"
+    assert readiness["controls"][7]["status"] == "satisfied"
+    assert readiness["controls"][-1]["label"] == "高风险操作审批"
+    assert readiness["controls"][-1]["status"] == "needs_review"
+    assert "审批写回" in readiness["controls"][-1]["reason"]
+    assert "完整人工审批流仍需继续接入" not in readiness["controls"][-1]["reason"]
+    assert readiness["controls"][-1]["required"] is False
+    latest_failure = listed_runner["queue_summary"]["latest_failure"]
+    assert latest_failure["error_code"] == "OPENCLAW_FAILED"
+    assert latest_failure["error_message"] == "OpenClaw 命令执行失败"
+    assert latest_failure["id"] == failed_task_id
+    assert latest_failure["status"] == "failed"
+    assert latest_failure["finished_at"]
+    assert latest_failure["updated_at"]
+
+
+def test_ai_executor_runner_workspace_whitelist_allows_descendants_and_rejects_claim_drift():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    client.get("/api/system/plugin-marketplace", headers=admin_headers)
+
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["openclaw"],
+            "name": "OpenClaw 工作区白名单执行器",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": ["/Users/zeek/source"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
+        json={"metadata": {"pid": 789}},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "runner://ai-executor",
+            "name": "OpenClaw 子仓库连接",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "query": {
+                    "executor_type": "openclaw",
+                    "runner_id": runner["id"],
+                    "workspace_root": "/Users/zeek/source/e-ai-brain",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "openclaw_workspace_whitelist",
+            "connection_id": connection["id"],
+            "name": "OpenClaw 工作区白名单",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "instruction": "验证工作区白名单后执行扫描。",
+                "tool_name": "ai_executor.run_instruction",
+            },
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    invoked = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"source": "workspace-whitelist"}},
+        headers=admin_headers,
+    )
+    assert invoked.status_code == 200
+    task_id = invoked.json()["data"]["response_summary"]["json"]["runner_task_id"]
+
+    updated_runner = client.patch(
+        f"/api/system/ai-executor-runners/{runner['id']}",
+        json={"workspace_roots": ["/tmp/locked"]},
+        headers=admin_headers,
+    )
+    assert updated_runner.status_code == 200
+
+    claim = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert claim.status_code == 200
+    assert claim.json()["data"]["task"] is None
+
+    logs = client.get(
+        f"/api/system/ai-executor-tasks/{task_id}/logs",
+        headers=admin_headers,
+    ).json()["data"]
+    assert logs["task"]["status"] == "failed"
+    assert logs["task"]["error_code"] == "AI_EXECUTOR_WORKSPACE_NOT_ALLOWED"
+    assert logs["logs"][-1]["level"] == "error"
+    assert "/tmp/locked" in logs["logs"][-1]["message"]
+
+    blocked = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"source": "workspace-rejected"}},
+        headers=admin_headers,
+    )
+    assert blocked.status_code == 502
+    assert blocked.json()["detail"]["code"] == "AI_EXECUTOR_WORKSPACE_NOT_ALLOWED"
+    assert blocked.json()["detail"]["workspace_roots"] == ["/tmp/locked"]
+
+
+def test_ai_executor_runner_blocks_high_risk_instruction_before_queue():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    client.get("/api/system/plugin-marketplace", headers=admin_headers)
+
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["openclaw"],
+            "name": "OpenClaw 高风险拦截执行器",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "runner://ai-executor",
+            "name": "OpenClaw 高风险连接",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "query": {
+                    "executor_type": "openclaw",
+                    "runner_id": runner["id"],
+                    "workspace_root": "/Users/zeek/source/e-ai-brain",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "openclaw_high_risk_instruction",
+            "connection_id": connection["id"],
+            "name": "OpenClaw 高风险指令",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "instruction": "完成检查后执行 git push origin main。",
+                "tool_name": "ai_executor.run_instruction",
+            },
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"source": "manual"}},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail["code"] == "AI_EXECUTOR_APPROVAL_REQUIRED"
+    assert detail["risk_level"] == "high"
+    assert detail["blocked_operations"] == ["git_push_or_merge"]
+    assert detail["approval_request"]["status"] == "approval_required"
+    assert detail["approval_request"]["title"] == "AI 执行器高风险操作审批"
+    assert detail["approval_request"]["next_action"] == "create_platform_human_approval"
+    assert detail["approval_request"]["approval_template"] == {
+        "approved": True,
+        "approved_operations": ["git_push_or_merge"],
+        "mode": "platform_human_approval",
+        "policy_version": "runner_safety_v1",
+    }
+    assert detail["approval_request"]["action_id"] == action["id"]
+    assert detail["approval_request"]["connection_id"] == connection["id"]
+    assert detail["approval_request"]["executor_type"] == "openclaw"
+    assert detail["approval_request"]["runner_id"] == runner["id"]
+    assert detail["approval_request"]["workspace_root"] == "/Users/zeek/source/e-ai-brain"
+    assert detail["approval_request"]["approval_request_id"].startswith(
+        "ai_executor_approval_request",
+    )
+    approval_request_id = detail["approval_request"]["approval_request_id"]
+    assert detail["safety"]["status"] == "blocked"
+    assert detail["safety"]["execution_allowed"] is False
+    assert detail["approval"]["missing_fields"] == [
+        "approval_id",
+        "approved",
+        "approved_at",
+        "approved_by",
+        "approved_operations",
+        "expires_at",
+        "mode",
+        "policy_version",
+    ]
+    assert app.state.store.ai_executor_tasks == {}
+    approval_requests = app.state.store.ai_executor_approval_requests
+    assert list(approval_requests) == [approval_request_id]
+    assert approval_requests[approval_request_id]["status"] == "pending"
+    assert approval_requests[approval_request_id]["blocked_operations"] == [
+        "git_push_or_merge",
+    ]
+    approval_request_list = client.get(
+        "/api/system/ai-executor-approval-requests?status=pending",
+        headers=admin_headers,
+    ).json()["data"]
+    assert approval_request_list["total"] == 1
+    assert approval_request_list["items"][0]["id"] == approval_request_id
+    assert approval_request_list["items"][0]["action_id"] == action["id"]
+    assert approval_request_list["items"][0]["runner_id"] == runner["id"]
+    audit_events = client.get(
+        (
+            "/api/audit/events?event_type=ai_executor_task.approval_requested"
+            f"&subject_id={runner['id']}"
+        ),
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    assert len(audit_events) == 1
+    assert audit_events[0]["payload"]["approval_request"]["approval_request_id"] == (
+        detail["approval_request"]["approval_request_id"]
+    )
+    assert audit_events[0]["payload"]["blocked_operations"] == ["git_push_or_merge"]
+    assert audit_events[0]["payload"]["action_id"] == action["id"]
+    assert audit_events[0]["payload"]["connection_id"] == connection["id"]
+
+    approval_response = client.post(
+        f"/api/system/ai-executor-approval-requests/{approval_request_id}/approve",
+        json={
+            "expires_at": "2099-01-01T00:00:00+00:00",
+            "reason": "允许本次受控 Runner 高风险操作",
+        },
+        headers=admin_headers,
+    )
+    assert approval_response.status_code == 200
+    approval_payload = approval_response.json()["data"]
+    approval = approval_payload["approval"]
+    assert approval["approval_request_id"] == detail["approval_request"]["approval_request_id"]
+    assert approval["approved"] is True
+    assert approval["approved_by"] == "user_admin"
+    assert approval["approved_operations"] == ["git_push_or_merge"]
+    assert approval["mode"] == "platform_human_approval"
+    assert approval["policy_version"] == "runner_safety_v1"
+    assert approval_payload["approval_request"]["status"] == "approved"
+    assert approval_payload["approval_request"]["approval"] == approval
+    assert approval_payload["action"]["request_config"]["ai_executor_approval"] == approval
+    approved_request_list = client.get(
+        "/api/system/ai-executor-approval-requests?status=approved",
+        headers=admin_headers,
+    ).json()["data"]
+    assert approved_request_list["total"] == 1
+    assert approved_request_list["items"][0]["approval"]["approval_id"] == approval["approval_id"]
+
+    approved_response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"source": "manual"}},
+        headers=admin_headers,
+    )
+    assert approved_response.status_code == 200
+    approved_summary = approved_response.json()["data"]["response_summary"]["json"]
+    approved_task = app.state.store.ai_executor_tasks[approved_summary["runner_task_id"]]
+    assert approved_task["status"] == "queued"
+    assert (
+        approved_task["request_config"]["ai_executor_safety"]["approval"]["approval_request_id"]
+        == detail["approval_request"]["approval_request_id"]
+    )
+    approval_audit_events = client.get(
+        (
+            "/api/audit/events?event_type=plugin_action.ai_executor_approved"
+            f"&subject_id={action['id']}"
+        ),
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    assert len(approval_audit_events) == 1
+    assert approval_audit_events[0]["payload"]["approved_operations"] == [
+        "git_push_or_merge",
+    ]
+
+
+def test_ai_executor_runner_allows_high_risk_instruction_with_approval_snapshot():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    client.get("/api/system/plugin-marketplace", headers=admin_headers)
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["openclaw"],
+            "name": "OpenClaw 已审批执行器",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "runner://ai-executor",
+            "name": "OpenClaw 已审批连接",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "query": {
+                    "executor_type": "openclaw",
+                    "runner_id": runner["id"],
+                    "workspace_root": "/Users/zeek/source/e-ai-brain",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "openclaw_approved_high_risk_instruction",
+            "connection_id": connection["id"],
+            "name": "OpenClaw 已审批高风险指令",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "ai_executor_approval": {
+                    "approval_id": "runner_approval_001",
+                    "approved": True,
+                    "approved_at": "2026-07-02T12:00:00+08:00",
+                    "approved_by": "security_admin",
+                    "approved_operations": ["git_push_or_merge"],
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                    "mode": "platform_human_approval",
+                    "policy_version": "runner_safety_v1",
+                },
+                "instruction": "完成检查后执行 git push origin main。",
+                "tool_name": "ai_executor.run_instruction",
+            },
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"source": "manual"}},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    response_summary = response.json()["data"]["response_summary"]["json"]
+    runner_task_id = response_summary["runner_task_id"]
+    task = app.state.store.ai_executor_tasks[runner_task_id]
+    safety = task["request_config"]["ai_executor_safety"]
+    assert safety["approval_required"] is True
+    assert safety["execution_allowed"] is True
+    assert safety["status"] == "approved"
+    assert safety["approval"]["approval_id"] == "runner_approval_001"
+    assert safety["approval"]["approved_by"] == "security_admin"
+    assert safety["approval"]["missing_fields"] == []
+    assert safety["approval"]["missing_operations"] == []
+    assert task["status"] == "queued"
+
+    audit_events = client.get(
+        f"/api/audit/events?event_type=ai_executor_task.queued&subject_id={runner_task_id}",
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    assert audit_events[0]["payload"]["approval_id"] == "runner_approval_001"
+    assert audit_events[0]["payload"]["approved_by"] == "security_admin"
+    assert audit_events[0]["payload"]["approved_operations"] == ["git_push_or_merge"]
+    assert audit_events[0]["payload"]["safety_status"] == "approved"
 
 
 def test_ai_executor_task_list_supports_remote_pagination_sort_and_observability():
@@ -1676,18 +2187,51 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
             "ai-brain-runner.env",
             "install.sh",
             "manifest.json",
+            "runner_agent.py",
             "runner_config.json",
             "skills/ai-brain-runner/SKILL.md",
             "systemd/ai-brain-runner.service",
         }.issubset(names)
         env_text = archive.read("ai-brain-runner.env").decode("utf-8")
+        install_text = archive.read("install.sh").decode("utf-8")
         config = json.loads(archive.read("runner_config.json").decode("utf-8"))
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         readme_text = archive.read("README.md").decode("utf-8")
+        runner_agent_text = archive.read("runner_agent.py").decode("utf-8")
         start_stop_text = archive.read("START_STOP.md").decode("utf-8")
         skill_text = archive.read("skills/ai-brain-runner/SKILL.md").decode("utf-8")
 
     assert "START_STOP.md" in readme_text
+    assert "runner_agent.py" in readme_text
+    compile(runner_agent_text, "runner_agent.py", "exec")
+    assert 'f"{API_ROOT}/ai-executor-tasks/claim"' in runner_agent_text
+    assert 'f"{API_ROOT}/ai-executor-tasks/{task_id}/runner-status' in runner_agent_text
+    assert 'f"{API_ROOT}/ai-executor-tasks/{task_id}/complete"' in runner_agent_text
+    assert "subprocess.Popen" in runner_agent_text
+    assert "queue.Queue" in runner_agent_text
+    assert "_task_status" in runner_agent_text
+    assert "CANCEL_CHECK_INTERVAL_SECONDS" in runner_agent_text
+    assert "SERVER_TERMINAL_STATUSES" in runner_agent_text
+    assert "_flush_log_batch" in runner_agent_text
+    assert "_process_group_popen_kwargs" in runner_agent_text
+    assert "_terminate_process_tree" in runner_agent_text
+    assert "start_new_session" in runner_agent_text
+    assert "CREATE_NEW_PROCESS_GROUP" in runner_agent_text
+    assert "os.killpg" in runner_agent_text
+    assert "AI_EXECUTOR_APPROVAL_REQUIRED" in runner_agent_text
+    assert "AI_EXECUTOR_COMMAND_NOT_ALLOWED" in runner_agent_text
+    assert "HIGH_RISK_PATTERNS" in runner_agent_text
+    assert "command_allowlist_enforced" in runner_agent_text
+    assert "instruction_passed_via_stdin" in runner_agent_text
+    assert "process_group_isolation" in runner_agent_text
+    assert "server_high_risk_approval_required" in runner_agent_text
+    assert "terminate_process_tree_on_timeout" in runner_agent_text
+    assert "workspace_roots_enforced" in runner_agent_text
+    assert "urllib.request.ProxyHandler({})" in runner_agent_text
+    assert "_endpoint_is_loopback" in runner_agent_text
+    assert "AI_BRAIN_BYPASS_PROXY" in runner_agent_text
+    assert "subprocess.run" not in runner_agent_text
+    assert 'exec "${PYTHON:-python3}" runner_agent.py' in install_text
     assert "启动 Runner" in start_stop_text
     assert "停止 Runner" in start_stop_text
     assert "sudo systemctl start ai-brain-runner" in start_stop_text
@@ -1700,6 +2244,9 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     )
     assert "AI_BRAIN_RUNNER_TOKEN=<runner_token>" in env_text
     assert "AI_BRAIN_RUNNER_PACKAGE_VERSION=v1" in env_text
+    assert "AI_BRAIN_POLL_INTERVAL_SECONDS=5" in env_text
+    assert "AI_BRAIN_BYPASS_PROXY=auto" in env_text
+    assert "NO_PROXY=127.0.0.1,localhost,::1" in env_text
     assert "AI_BRAIN_EXECUTORS=codex,claude,hermes,openclaw" in env_text
     assert "AI_BRAIN_WORKSPACE_ROOTS=/data/repos/e-ai-brain,/data/repos/service-a" in env_text
     assert config["executor_commands"]["codex"] == "codex"
@@ -1711,6 +2258,18 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     }
     assert config["runner"]["heartbeat_timeout_seconds"] == 180
     assert config["runner"]["max_concurrent_tasks"] == 2
+    assert config["safety"]["command_allowlist_enforced"] is True
+    assert config["safety"]["command_shell_disabled"] is True
+    assert config["safety"]["cancel_check_interval_seconds"] == 2
+    assert config["safety"]["cancel_process_tree_on_server_cancel"] is True
+    assert config["safety"]["instruction_passed_via_stdin"] is True
+    assert config["safety"]["max_output_preview_chars"] == 4000
+    assert config["safety"]["process_group_isolation"] is True
+    assert config["safety"]["reject_unconfigured_executor"] is True
+    assert config["safety"]["server_high_risk_approval_required"] is True
+    assert config["safety"]["stream_logs"] is True
+    assert config["safety"]["terminate_process_tree_on_timeout"] is True
+    assert config["safety"]["workspace_roots_enforced"] is True
     assert manifest["package"]["target_os"] == "linux"
     assert manifest["package"]["arch"] == "amd64"
     assert manifest["package"]["install_mode"] == "systemd"
@@ -1780,11 +2339,14 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
         assert "START_STOP.md" in names
         assert "Dockerfile" in names
         assert "docker-compose.runner.yml" in names
+        assert "runner_agent.py" in names
         assert "systemd/ai-brain-runner.service" not in names
+        dockerfile_text = archive.read("Dockerfile").decode("utf-8")
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         start_stop_text = archive.read("START_STOP.md").decode("utf-8")
     assert manifest["package"]["target_os"] == "docker"
     assert manifest["package"]["install_mode"] == "docker"
+    assert "runner_agent.py" in dockerfile_text
     assert "docker compose -f docker-compose.runner.yml up -d --build" in start_stop_text
     assert "docker compose -f docker-compose.runner.yml down" in start_stop_text
     assert "docker compose -f docker-compose.runner.yml logs -f" in start_stop_text
@@ -1798,12 +2360,17 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     with zipfile.ZipFile(BytesIO(manual_response.content)) as archive:
         names = set(archive.namelist())
         assert "START_STOP.md" in names
+        assert "runner_agent.py" in names
         assert "scripts/start-runner.sh" in names
         assert "scripts/start-runner.ps1" in names
         assert "systemd/ai-brain-runner.service" not in names
         assert "launchd/com.ai-brain.runner.plist" not in names
         assert "windows/ai-brain-runner-service.xml" not in names
+        shell_text = archive.read("scripts/start-runner.sh").decode("utf-8")
+        powershell_text = archive.read("scripts/start-runner.ps1").decode("utf-8")
         start_stop_text = archive.read("START_STOP.md").decode("utf-8")
+    assert 'exec "${PYTHON:-python3}" runner_agent.py' in shell_text
+    assert '& $python ".\\runner_agent.py"' in powershell_text
     assert "./scripts/start-runner.sh" in start_stop_text
     assert "Ctrl + C" in start_stop_text
     assert "./scripts/start-runner.ps1" in start_stop_text
@@ -1815,6 +2382,161 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     )
     assert invalid_response.status_code == 400
     assert invalid_response.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
+def test_ai_executor_runner_agent_executes_configured_command_with_stdin(tmp_path, monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    probe_script = tmp_path / "runner_probe.py"
+    stdin_capture = tmp_path / "instruction.txt"
+    probe_script.write_text(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                "import sys",
+                "instruction = sys.stdin.read()",
+                "Path(sys.argv[1]).write_text(instruction, encoding='utf-8')",
+                "print('runner-probe-started')",
+                "print(instruction)",
+            ],
+        ),
+        encoding="utf-8",
+    )
+    command = f'"{sys.executable}" "{probe_script}" "{stdin_capture}"'
+    created_runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "endpoint_url": "http://127.0.0.1:8000/api/system/ai-executor-runners",
+            "executor_types": ["openclaw"],
+            "metadata": {"executor_commands": {"openclaw": command}},
+            "name": "本地 Runner 探针",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": [str(tmp_path)],
+        },
+        headers=admin_headers,
+    )
+    assert created_runner.status_code == 200
+    runner = created_runner.json()["data"]
+    package_response = client.get(
+        f"/api/system/ai-executor-runners/{runner['id']}/install-package"
+        "?target_os=manual&arch=universal&install_mode=manual",
+        headers=admin_headers,
+    )
+    assert package_response.status_code == 200
+
+    with zipfile.ZipFile(BytesIO(package_response.content)) as archive:
+        runner_agent_text = archive.read("runner_agent.py").decode("utf-8")
+        runner_config_text = archive.read("runner_config.json").decode("utf-8")
+
+    config_path = tmp_path / "runner_config.json"
+    config_path.write_text(runner_config_text, encoding="utf-8")
+    monkeypatch.setenv("AI_BRAIN_RUNNER_ID", runner["id"])
+    monkeypatch.setenv("AI_BRAIN_RUNNER_TOKEN", "runner-secret")
+    monkeypatch.setenv(
+        "AI_BRAIN_ENDPOINT",
+        "http://127.0.0.1:8000/api/system/ai-executor-runners",
+    )
+    monkeypatch.setenv("AI_BRAIN_RUNNER_CONFIG", str(config_path))
+    monkeypatch.setenv("AI_BRAIN_BYPASS_PROXY", "1")
+
+    namespace: dict[str, object] = {"__name__": "ai_brain_runner_probe"}
+    exec(compile(runner_agent_text, "runner_agent.py", "exec"), namespace)
+
+    requests: list[dict[str, object]] = []
+
+    def fake_request_json(method: str, url: str, payload: dict | None = None) -> dict:
+        requests.append({"method": method, "payload": payload or {}, "url": url})
+        if url.endswith("/logs"):
+            return {"data": {"task": {"status": payload.get("status") if payload else None}}}
+        if url.endswith("/complete"):
+            return {"data": {"task": {"status": payload.get("status") if payload else None}}}
+        if "/runner-status" in url:
+            return {"data": {"task": {"status": "running"}}}
+        return {}
+
+    namespace["_request_json"] = fake_request_json
+
+    instruction = "请扫描仓库质量并输出摘要"
+    namespace["_run_task"](
+        {
+            "executor_type": "openclaw",
+            "id": "runner_task_probe",
+            "instruction": instruction,
+            "request_config": {},
+            "timeout_seconds": 5,
+            "workspace_root": str(tmp_path),
+        },
+    )
+
+    assert stdin_capture.read_text(encoding="utf-8") == instruction
+    log_requests = [item for item in requests if str(item["url"]).endswith("/logs")]
+    assert log_requests[0]["payload"]["logs"][0]["message"].startswith("Starting openclaw")
+    assert any(
+        log["message"] == "runner-probe-started"
+        for request in log_requests
+        for log in request["payload"]["logs"]
+    )
+    complete_requests = [
+        item for item in requests if str(item["url"]).endswith("/complete")
+    ]
+    assert len(complete_requests) == 1
+    complete_payload = complete_requests[0]["payload"]
+    assert complete_payload["runner_id"] == runner["id"]
+    assert complete_payload["status"] == "succeeded"
+    assert complete_payload["error_code"] is None
+    assert complete_payload["result_json"]["command_shell"] is False
+    assert complete_payload["result_json"]["exit_code"] == 0
+    assert "runner-probe-started" in complete_payload["result_json"]["output_preview"]
+    assert complete_payload["result_json"]["workspace_root"] == str(tmp_path)
+
+    stdin_capture.write_text("previous instruction", encoding="utf-8")
+    requests.clear()
+    namespace["_run_task"](
+        {
+            "executor_type": "openclaw",
+            "id": "runner_task_high_risk_blocked",
+            "instruction": "git push origin main",
+            "request_config": {},
+            "timeout_seconds": 5,
+            "workspace_root": str(tmp_path),
+        },
+    )
+    assert stdin_capture.read_text(encoding="utf-8") == "previous instruction"
+    blocked_complete_requests = [
+        item for item in requests if str(item["url"]).endswith("/complete")
+    ]
+    assert len(blocked_complete_requests) == 1
+    blocked_payload = blocked_complete_requests[0]["payload"]
+    assert blocked_payload["status"] == "failed"
+    assert blocked_payload["error_code"] == "AI_EXECUTOR_APPROVAL_REQUIRED"
+    assert blocked_payload["result_json"]["blocked_operations"] == ["git_push_or_merge"]
+
+    requests.clear()
+    namespace["_run_task"](
+        {
+            "executor_type": "openclaw",
+            "id": "runner_task_high_risk_approved",
+            "instruction": "git push origin main",
+            "request_config": {
+                "ai_executor_safety": {
+                    "approval": {"approval_id": "runner_approval_001"},
+                    "status": "approved",
+                },
+            },
+            "timeout_seconds": 5,
+            "workspace_root": str(tmp_path),
+        },
+    )
+    assert stdin_capture.read_text(encoding="utf-8") == "git push origin main"
+    approved_complete_requests = [
+        item for item in requests if str(item["url"]).endswith("/complete")
+    ]
+    assert len(approved_complete_requests) == 1
+    approved_payload = approved_complete_requests[0]["payload"]
+    assert approved_payload["status"] == "succeeded"
+    assert approved_payload["error_code"] is None
 
 
 def test_ai_executor_runner_token_rotation_logs_cancel_and_timeout_controls():
@@ -1942,6 +2664,27 @@ def test_ai_executor_runner_token_rotation_logs_cancel_and_timeout_controls():
     assert cancelled.status_code == 200
     assert cancelled.json()["data"]["task"]["status"] == "cancelled"
     assert cancelled.json()["data"]["task"]["error_code"] == "AI_EXECUTOR_TASK_CANCELLED"
+
+    runner_status = client.get(
+        f"/api/system/ai-executor-tasks/{task_id}/runner-status?runner_id={runner['id']}",
+        headers={"X-Runner-Token": "runner-secret-v2"},
+    )
+    assert runner_status.status_code == 200
+    assert runner_status.json()["data"]["task"]["status"] == "cancelled"
+    assert runner_status.json()["data"]["task"]["error_code"] == "AI_EXECUTOR_TASK_CANCELLED"
+
+    late_complete = client.post(
+        f"/api/system/ai-executor-tasks/{task_id}/complete",
+        json={
+            "logs": [{"level": "info", "message": "late success"}],
+            "result_json": {"ok": True},
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": "runner-secret-v2"},
+    )
+    assert late_complete.status_code == 409
+    assert late_complete.json()["detail"]["code"] == "AI_EXECUTOR_TASK_TERMINAL"
 
     retried = client.post(
         f"/api/system/ai-executor-tasks/{task_id}/retry",
@@ -2102,6 +2845,25 @@ def test_ai_executor_task_lease_requeue_and_dead_letter_controls():
     requeue_data = requeue_scan.json()["data"]
     assert task_id in requeue_data["requeued_task_ids"]
     assert task_id not in requeue_data["timed_out_task_ids"]
+    assert requeue_data["summary"] == {
+        "dead_letter_count": 0,
+        "manual_attention_required": False,
+        "message": "已将租约过期任务重派回队列，等待 Runner 重新认领。",
+        "requeued_count": 1,
+        "scanned_at": "2099-01-01T00:00:00+00:00",
+        "status": "requeued",
+        "timed_out_count": 0,
+        "total_affected": 1,
+    }
+    assert requeue_data["next_actions"] == [
+        {
+            "description": "重派任务已回到 queued，在线 Runner 会在后续轮询中重新认领。",
+            "key": "watch_requeued_tasks",
+            "label": "等待 Runner 重新认领",
+            "severity": "info",
+            "task_ids": [task_id],
+        },
+    ]
     requeued_task = next(task for task in requeue_data["tasks"] if task["id"] == task_id)
     assert requeued_task["status"] == "queued"
     assert requeued_task["claimed_at"] is None
@@ -2123,6 +2885,25 @@ def test_ai_executor_task_lease_requeue_and_dead_letter_controls():
     assert dead_letter_scan.status_code == 200
     dead_letter_data = dead_letter_scan.json()["data"]
     assert task_id in dead_letter_data["dead_letter_task_ids"]
+    assert dead_letter_data["summary"] == {
+        "dead_letter_count": 1,
+        "manual_attention_required": True,
+        "message": "发现需要人工处理的 Runner 任务，请查看死信或超时任务日志。",
+        "requeued_count": 0,
+        "scanned_at": "2099-01-01T00:00:00+00:00",
+        "status": "attention_required",
+        "timed_out_count": 0,
+        "total_affected": 1,
+    }
+    assert dead_letter_data["next_actions"] == [
+        {
+            "description": "死信任务已超过最大重派次数，需要查看日志、修复 Runner 或手动重试。",
+            "key": "inspect_dead_letter_tasks",
+            "label": "查看死信任务日志",
+            "severity": "error",
+            "task_ids": [task_id],
+        },
+    ]
     dead_letter_task = next(task for task in dead_letter_data["tasks"] if task["id"] == task_id)
     assert dead_letter_task["status"] == "dead_letter"
     assert dead_letter_task["error_code"] == "AI_EXECUTOR_TASK_LEASE_EXPIRED"
@@ -3124,6 +3905,48 @@ def test_plugin_connection_can_be_tested_with_structured_result_and_audit():
         "result_mapping": {"write_target": "scheduled_job_result"},
         "status": "draft",
     }
+    assert result["scheduled_job_sample_seed"]["connection_id"] == connection["id"]
+    assert result["scheduled_job_sample_seed"]["next_step"] == "copy_action_template_then_trial"
+    assert result["scheduled_job_sample_seed"]["plugin_connection_id"] == connection["id"]
+    assert result["scheduled_job_sample_seed"]["sample_source"] == "connection_test_response"
+    assert result["scheduled_job_sample_seed"]["status"] == "ready"
+    reuse_wizard = result["scheduled_job_sample_seed"]["reuse_wizard"]
+    assert reuse_wizard["current_step"] == "connection_test"
+    assert reuse_wizard["next_action"] == "copy_action_template_then_trial"
+    assert reuse_wizard["primary_action_label"] == "复制动作模板并试运行"
+    assert reuse_wizard["sample_source"] == "connection_test_response"
+    assert reuse_wizard["status"] == "ready"
+    assert reuse_wizard["can_continue"] is True
+    assert reuse_wizard["current_step_label"] == "连接测试样例"
+    assert reuse_wizard["completed_steps"] == 2
+    assert reuse_wizard["blocked_steps"] == 0
+    assert reuse_wizard["pending_steps"] == 2
+    assert reuse_wizard["progress_percent"] == 50
+    assert reuse_wizard["progress_label"] == "2/4 步已就绪"
+    assert reuse_wizard["total_steps"] == 4
+    assert "自动使用连接测试响应样例" in reuse_wizard["next_action_description"]
+    assert [(item["key"], item["status"]) for item in reuse_wizard["handoff_summary"]] == [
+        ("request_preview", "ready"),
+        ("response_sample", "ready"),
+        ("action_template", "ready"),
+    ]
+    assert reuse_wizard["missing_requirements"] == []
+    assert [step["key"] for step in reuse_wizard["steps"]] == [
+        "connection_test",
+        "action_trial",
+        "scheduled_job_dry_run",
+        "scheduled_job_config",
+    ]
+    assert [step["status"] for step in reuse_wizard["steps"]] == [
+        "succeeded",
+        "ready",
+        "pending",
+        "pending",
+    ]
+    assert (
+        result["scheduled_job_sample_seed"]["action_template_draft"]
+        == result["action_template_draft"]
+    )
     assert result["repair_suggestions"] == []
     assert result["test_history"][0]["checked_at"] == result["checked_at"]
     assert result["test_history"][0]["status"] == "succeeded"
@@ -3131,6 +3954,10 @@ def test_plugin_connection_can_be_tested_with_structured_result_and_audit():
     assert history_request["url"] == result["request_summary"]["url"]
     assert history_request["original_request_config"]["query"]["start_pt"] == "{{current_date-7}}"
     assert result["test_history"][0]["action_template_draft"]["code"] == "test_sandbox_maxcompute"
+    assert (
+        result["test_history"][0]["scheduled_job_sample_seed"]["sample_source"]
+        == "connection_test_response"
+    )
     assert "{{" not in result["request_summary"]["url"]
     assert result["response_summary"] == {}
     assert [step["name"] for step in result["diagnostics"]] == [
@@ -3564,12 +4391,79 @@ def test_plugin_action_trial_returns_request_preview_and_mapping_hits():
         "write_target": "scheduled_job_result",
         "write_target_label": "定时作业结果",
     }
+    dry_run_seed = result["scheduled_job_dry_run_seed"]
+    assert dry_run_seed["connection_id"] == connection["id"]
+    assert dry_run_seed["input_payload"] == {"timezone": "Asia/Shanghai"}
+    assert dry_run_seed["plugin_action_id"] == action["id"]
+    assert dry_run_seed["plugin_connection_id"] == connection["id"]
+    assert dry_run_seed["plugin_input_mapping"] == {"timezone": "Asia/Shanghai"}
+    assert dry_run_seed["plugin_output_mapping"] == action["result_mapping"]
+    assert dry_run_seed["response_summary"] == result["response_summary"]
+    assert dry_run_seed["sample_source"] == "action_trial_response"
+    assert dry_run_seed["write_preview"] == result["write_preview"]
+    assert dry_run_seed["reuse_wizard"]["current_step"] == "action_trial"
+    assert dry_run_seed["reuse_wizard"]["next_action"] == "create_scheduled_job_draft"
+    assert dry_run_seed["reuse_wizard"]["sample_source"] == "action_trial_response"
+    assert dry_run_seed["reuse_wizard"]["status"] == "ready"
+    assert dry_run_seed["reuse_wizard"]["can_continue"] is True
+    assert dry_run_seed["reuse_wizard"]["current_step_label"] == "动作写入预览"
+    assert dry_run_seed["reuse_wizard"]["completed_steps"] == 4
+    assert dry_run_seed["reuse_wizard"]["blocked_steps"] == 0
+    assert dry_run_seed["reuse_wizard"]["pending_steps"] == 0
+    assert dry_run_seed["reuse_wizard"]["progress_percent"] == 100
+    assert dry_run_seed["reuse_wizard"]["progress_label"] == "4/4 步已就绪"
+    assert dry_run_seed["reuse_wizard"]["total_steps"] == 4
+    assert "连接、动作、映射" in dry_run_seed["reuse_wizard"]["next_action_description"]
+    assert [
+        (item["key"], item["status"])
+        for item in dry_run_seed["reuse_wizard"]["handoff_summary"]
+    ] == [
+        ("response_sample", "ready"),
+        ("input_mapping", "ready"),
+        ("output_mapping", "ready"),
+        ("write_preview", "ready"),
+    ]
+    assert dry_run_seed["reuse_wizard"]["missing_requirements"] == []
+    sample_response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/trial",
+        json={
+            "connection_id": connection["id"],
+            "input_payload": {"timezone": "Asia/Shanghai"},
+            "sample_response_summary": {"json": {"commits": 3}},
+        },
+        headers=admin_headers,
+    )
+
+    assert sample_response.status_code == 200
+    sample_result = sample_response.json()["data"]
+    assert sample_result["status"] == "succeeded"
+    assert sample_result["sample_source"] == "connection_test_response"
+    assert sample_result["response_summary"] == {"json": {"commits": 3}}
+    assert sample_result["mapping_hits"][0]["value_preview"] == 3
+    assert sample_result["write_preview"]["records_imported"] == 3
+    assert sample_result["scheduled_job_dry_run_seed"]["sample_source"] == (
+        "connection_test_response"
+    )
+    assert sample_result["scheduled_job_dry_run_seed"]["reuse_wizard"]["sample_source"] == (
+        "connection_test_response"
+    )
+    assert sample_result["scheduled_job_dry_run_seed"]["reuse_wizard"]["progress_label"] == (
+        "4/4 步已就绪"
+    )
+    assert sample_result["scheduled_job_dry_run_seed"]["reuse_wizard"]["progress_percent"] == 100
+    assert sample_result["scheduled_job_dry_run_seed"]["reuse_wizard"]["steps"][0][
+        "status"
+    ] == "succeeded"
     audit_events = client.get(
         f"/api/audit/events?event_type=plugin_action.trial_succeeded&subject_id={action['id']}",
         headers=admin_headers,
     ).json()["data"]["items"]
-    assert len(audit_events) == 1
-    audit_payload = audit_events[0]["payload"]
+    assert len(audit_events) == 2
+    audit_payload = next(
+        event["payload"]
+        for event in audit_events
+        if event["payload"].get("sample_source") == "action_trial_response"
+    )
     assert audit_payload == {
         "action_code": "fetch_daily_metrics",
         "action_id": action["id"],
@@ -3580,9 +4474,14 @@ def test_plugin_action_trial_returns_request_preview_and_mapping_hits():
         "latency_ms": audit_payload["latency_ms"],
         "plugin_code": "gitlab_metrics",
         "plugin_id": action["plugin_id"],
+        "sample_source": "action_trial_response",
         "status": "succeeded",
         "write_target": "scheduled_job_result",
     }
+    assert any(
+        event["payload"].get("sample_source") == "connection_test_response"
+        for event in audit_events
+    )
     assert isinstance(audit_payload["latency_ms"], int)
     assert "vault/gitlab/token" not in str(audit_events)
     assert "PRIVATE-TOKEN" not in str(audit_events)
@@ -3662,6 +4561,7 @@ def test_plugin_action_trial_failure_writes_lightweight_audit():
         "latency_ms": audit_payload["latency_ms"],
         "plugin_code": "local_scanner",
         "plugin_id": plugin["id"],
+        "sample_source": "action_trial_response",
         "status": "failed",
         "write_target": "code_inspection_reports",
     }

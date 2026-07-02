@@ -15,6 +15,7 @@ import type {
 } from '../../data/management';
 import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
+  ApiRequestError,
   createManagementProduct,
   createProductGitRepository,
   createProductModule,
@@ -122,6 +123,22 @@ const productSortFieldMap: Record<string, string> = {
   status: 'status',
   version: 'current_version_name',
 };
+
+function formatProductDeleteError(error: unknown) {
+  if (error instanceof ApiRequestError && error.code === 'RESOURCE_IN_USE') {
+    const relatedCounts = error.detail?.related_counts as Record<string, unknown> | undefined;
+    const countItems = [
+      { count: Number(relatedCounts?.requirements ?? 0), unit: '条需求' },
+      { count: Number(relatedCounts?.ai_tasks ?? 0), unit: '个AI任务' },
+      { count: Number(relatedCounts?.bugs ?? 0), unit: '个Bug' },
+    ].filter((item) => item.count > 0);
+    const summary = countItems.map((item) => `${item.count} ${item.unit}`).join('、');
+    return summary
+      ? `无法删除产品，仍关联 ${summary}。请先迁移或删除关联业务记录，也可以将产品状态改为停用。`
+      : '无法删除产品，仍有关联业务记录。请先迁移或删除关联业务记录，也可以将产品状态改为停用。';
+  }
+  return formatMutationError(error);
+}
 
 function normalizeFilterText(value: unknown) {
   return String(value ?? '').trim() || undefined;
@@ -325,7 +342,7 @@ export default function ProductsPage() {
       message.success('产品已删除');
       await reload();
     } catch (deleteError) {
-      message.error(formatMutationError(deleteError));
+      message.error(formatProductDeleteError(deleteError));
     }
   }, [reload]);
 

@@ -1,4 +1,4 @@
-import { Button, Form, Input, Modal, Select, Space, Typography } from 'antd';
+import { Alert, Button, Form, Input, Modal, Select, Space, Tag, Typography } from 'antd';
 import type { FormInstance, FormItemProps } from 'antd';
 
 import type { KnowledgeRecord, ModelGatewayConfigRecord } from '../../../data/management';
@@ -64,6 +64,7 @@ type ScheduledJobFormModalProps = {
   productRequiredRule: FormRule;
   requiredForPluginResource: (message: string) => FormRule;
   scheduleTypeSelectOptions: SelectOption[];
+  sampleReuseDraft?: Record<string, unknown>;
   selectedJobTemplate?: ScheduledJobTemplateRecord;
   selectedJobType?: string;
   selectedRepositoryDefaultBranch?: string;
@@ -82,6 +83,144 @@ type ScheduledJobFormModalProps = {
   onScanModeChange: (scanMode?: string) => void;
   onSubmit: () => void | Promise<void>;
 };
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function statusColor(status?: string) {
+  if (status === 'ready' || status === 'succeeded') {
+    return 'green';
+  }
+  if (status === 'blocked' || status === 'failed' || status === 'missing') {
+    return 'red';
+  }
+  if (status === 'partial' || status === 'pending') {
+    return 'orange';
+  }
+  return 'default';
+}
+
+function sampleSourceLabel(value: unknown): string {
+  if (value === 'connection_test_response') {
+    return '连接测试响应样例';
+  }
+  if (value === 'action_trial_response') {
+    return '动作试运行响应';
+  }
+  return stringValue(value) ?? '样例响应';
+}
+
+function resourceLabel(
+  id: unknown,
+  items: Array<{ id: string; name?: string }>,
+) {
+  const resolvedId = stringValue(id);
+  if (!resolvedId) {
+    return '-';
+  }
+  const item = items.find((candidate) => candidate.id === resolvedId);
+  return item?.name ? `${item.name} (${resolvedId})` : resolvedId;
+}
+
+function ScheduledJobSampleReuseDraftSummary({
+  pluginActions,
+  pluginConnections,
+  sampleReuseDraft,
+}: {
+  pluginActions: PluginActionRecord[];
+  pluginConnections: PluginConnectionRecord[];
+  sampleReuseDraft?: Record<string, unknown>;
+}) {
+  if (!sampleReuseDraft) {
+    return null;
+  }
+  const writePreview = recordValue(sampleReuseDraft.write_preview);
+  const writeTarget =
+    stringValue(writePreview?.write_target_label)
+    ?? stringValue(writePreview?.write_target);
+  const writeCount =
+    numberValue(writePreview?.records_imported)
+    ?? numberValue(writePreview?.candidate_count);
+  const reuseWizard = recordValue(sampleReuseDraft.reuse_wizard);
+  const autoDryRun = sampleReuseDraft.auto_dry_run === true;
+  const currentStepLabel = stringValue(reuseWizard?.current_step_label);
+  const primaryActionLabel = stringValue(reuseWizard?.primary_action_label);
+  const nextActionDescription = stringValue(reuseWizard?.next_action_description);
+  const progressLabel = stringValue(reuseWizard?.progress_label);
+  const progressPercent = numberValue(reuseWizard?.progress_percent);
+  const handoffSummary = Array.isArray(reuseWizard?.handoff_summary)
+    ? reuseWizard.handoff_summary
+      .map(recordValue)
+      .filter((item): item is Record<string, unknown> => Boolean(item))
+    : [];
+  return (
+    <Alert
+      aria-label="动作试运行样例"
+      description={(
+        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+          <Typography.Text>
+            已带入动作试运行生成的连接、动作、输入映射和写入预览。请补充必填配置后继续执行全链路试运行，再保存作业。
+          </Typography.Text>
+          <Space size={[8, 8]} wrap>
+            {autoDryRun ? <Tag color="green">打开后自动试运行</Tag> : null}
+            <Tag color="blue">连接 {resourceLabel(sampleReuseDraft.connection_id, pluginConnections)}</Tag>
+            <Tag color="purple">动作 {resourceLabel(sampleReuseDraft.action_id, pluginActions)}</Tag>
+            <Tag color="geekblue">样例来源 {sampleSourceLabel(sampleReuseDraft.sample_source)}</Tag>
+            {writeTarget ? <Tag color="cyan">写入目标 {writeTarget}</Tag> : null}
+            {writeCount !== undefined ? <Tag color="green">预计写入 {writeCount}</Tag> : null}
+            {progressLabel ? (
+              <Tag color={progressPercent === 100 ? 'green' : 'blue'}>
+                进度：{progressLabel}
+              </Tag>
+            ) : null}
+          </Space>
+          {reuseWizard ? (
+            <Space aria-label="样例复用向导" orientation="vertical" size={6} style={{ width: '100%' }}>
+              <Space size={[8, 8]} wrap>
+                {currentStepLabel ? <Tag color="geekblue">当前：{currentStepLabel}</Tag> : null}
+                {primaryActionLabel ? <Tag color="blue">下一步：{primaryActionLabel}</Tag> : null}
+              </Space>
+              {nextActionDescription ? (
+                <Typography.Text type="secondary">{nextActionDescription}</Typography.Text>
+              ) : null}
+              {handoffSummary.length ? (
+                <Space size={[8, 8]} wrap>
+                  {handoffSummary.map((item, index) => {
+                    const itemStatus = stringValue(item.status);
+                    const label = stringValue(item.label) ?? stringValue(item.key) ?? '已带入';
+                    return (
+                      <Tag
+                        color={statusColor(itemStatus)}
+                        key={`${stringValue(item.key) ?? index}-${itemStatus ?? 'unknown'}`}
+                      >
+                        {label} · {itemStatus ?? '-'}
+                      </Tag>
+                    );
+                  })}
+                </Space>
+              ) : null}
+            </Space>
+          ) : null}
+        </Space>
+      )}
+      showIcon
+      style={{ marginBottom: 16 }}
+      title="已载入动作试运行样例"
+      type="info"
+    />
+  );
+}
 
 export function ScheduledJobFormModal({
   agents,
@@ -111,6 +250,7 @@ export function ScheduledJobFormModal({
   productRequiredRule,
   requiredForPluginResource,
   scheduleTypeSelectOptions,
+  sampleReuseDraft,
   selectedJobTemplate,
   selectedJobType,
   selectedRepositoryDefaultBranch,
@@ -174,6 +314,11 @@ export function ScheduledJobFormModal({
           </Space>
         </div>
       ) : null}
+      <ScheduledJobSampleReuseDraftSummary
+        pluginActions={pluginActions}
+        pluginConnections={filteredPluginConnections}
+        sampleReuseDraft={sampleReuseDraft}
+      />
       <Form
         form={form}
         layout="vertical"

@@ -3,17 +3,16 @@ import { Form, Modal, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
+  ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
   ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
   assistantScopedStorageKey,
+  approvePluginActionAiExecutor,
   confirmAssistantActionDraft,
   copyPlugin,
   createPlugin,
   createPluginAction,
   createPluginConnection,
-  deletePlugin,
-  deletePluginAction,
-  deletePluginConnection,
   fetchAiExecutorRunnersPage,
   fetchPluginActionsPage,
   fetchPluginActionTemplates,
@@ -47,6 +46,7 @@ import {
   type ResultWriteTargetRecord,
   type ScheduledJobRecord,
 } from '../../services/aiBrain';
+import { navigateTo } from '../../utils/navigation';
 import {
   type PluginConnectionFormValues,
 } from './components/PluginConnectionModal';
@@ -96,14 +96,8 @@ import {
   stringValue,
 } from './components/pluginFormTransformHelpers';
 import { SYSTEM_VARIABLE_OPTIONS } from './components/pluginSystemVariableOptions';
-import {
-  actionDeleteUsageGroups,
-  connectionDeleteUsageGroups,
-  deleteUsageContent,
-  hasDeleteUsage,
-  pluginDeleteUsageGroups,
-  type DeleteUsageGroup,
-} from './components/pluginDeleteUsageHelpers';
+import { scheduledJobDraftFromTrial } from './components/pluginTrialDraftHelpers';
+import { usePluginDeleteOperations } from './components/usePluginDeleteOperations';
 import { usePluginRunnerOperations } from './components/usePluginRunnerOperations';
 
 type ConnectionFormValues = PluginConnectionFormValues;
@@ -191,6 +185,8 @@ export default function PluginsPage() {
   const [trialInputJson, setTrialInputJson] = useState('{}');
   const [trialResult, setTrialResult] = useState<PluginActionTrialResult | undefined>();
   const [trialRunning, setTrialRunning] = useState(false);
+  const [trialSampleResponseSummary, setTrialSampleResponseSummary] = useState<Record<string, unknown> | undefined>();
+  const [pendingConnectionTestSeed, setPendingConnectionTestSeed] = useState<Record<string, unknown> | undefined>();
   const [actionScenario, setActionScenario] = useState<string | undefined>();
   const [advancedConnectionJsonOpen, setAdvancedConnectionJsonOpen] = useState(false);
   const [advancedConnectionRequestJsonOpen, setAdvancedConnectionRequestJsonOpen] = useState(false);
@@ -326,9 +322,12 @@ export default function PluginsPage() {
   }, [reload]);
 
   const {
+    approveRunnerApprovalRequest,
+    approvingRunnerApprovalRequestId,
     cancelRotateRunnerToken,
     cancelRunnerTask,
     closeRotatedRunnerToken,
+    closeRunnerApprovalRequests,
     closeRunnerLogModal,
     closeRunnerModal,
     confirmDeleteRunner,
@@ -337,7 +336,9 @@ export default function PluginsPage() {
     editingRunner,
     openCreateRunnerModal,
     openEditRunnerModal,
+    openRunnerApprovalRequests,
     openRunnerLogs,
+    refreshRunnerApprovalRequests,
     retryRunnerTask,
     rotateRunnerToken,
     rotatedRunnerToken,
@@ -348,7 +349,12 @@ export default function PluginsPage() {
     runnerLogRows,
     runnerLogTask,
     runnerModalOpen,
+    runnerApprovalRequestRows,
+    runnerApprovalRequestsLoading,
+    runnerApprovalRequestsOpen,
     runRunnerTest,
+    scanRunnerTimeouts,
+    scanningRunnerTimeouts,
     submitRotateRunnerToken,
     submitRunner,
     testingRunnerId,
@@ -434,90 +440,16 @@ export default function PluginsPage() {
     await reload();
   };
 
-  const warnDeleteUsage = (title: string, groups: DeleteUsageGroup[]) => {
-    Modal.warning({
-      content: deleteUsageContent(groups),
-      okText: '知道了',
-      title,
-      width: 640,
-    });
-  };
-
-  const confirmDeletePlugin = (plugin: PluginRecord) => {
-    if (plugin.is_system) {
-      message.info('官方标准插件不能删除，请在连接里维护接入参数');
-      return;
-    }
-    const usageGroups = pluginDeleteUsageGroups({ actions, connections, plugin, scheduledJobs });
-    if (hasDeleteUsage(usageGroups)) {
-      warnDeleteUsage(`插件「${plugin.name}」正在使用中`, usageGroups);
-      return;
-    }
-    Modal.confirm({
-      cancelText: '取消',
-      content: `确定删除插件「${plugin.name}」吗？`,
-      okText: '删除',
-      okType: 'danger',
-      title: '删除插件',
-      onOk: async () => {
-        try {
-          await deletePlugin(plugin.id);
-          message.success('插件已删除');
-          await reload();
-        } catch (error) {
-          message.error(error instanceof Error ? error.message : '插件删除失败');
-        }
-      },
-    });
-  };
-
-  const confirmDeleteConnection = (connection: PluginConnectionRecord) => {
-    const usageGroups = connectionDeleteUsageGroups({ actions, connection, scheduledJobs });
-    if (hasDeleteUsage(usageGroups)) {
-      warnDeleteUsage(`连接「${connection.name}」正在使用中`, usageGroups);
-      return;
-    }
-    Modal.confirm({
-      cancelText: '取消',
-      content: `确定删除连接「${connection.name}」吗？`,
-      okText: '删除',
-      okType: 'danger',
-      title: '删除连接',
-      onOk: async () => {
-        try {
-          await deletePluginConnection(connection.id);
-          message.success('连接已删除');
-          await reload();
-        } catch (error) {
-          message.error(error instanceof Error ? error.message : '连接删除失败');
-        }
-      },
-    });
-  };
-
-  const confirmDeleteAction = (action: PluginActionRecord) => {
-    const usageGroups = actionDeleteUsageGroups({ action, scheduledJobs });
-    if (hasDeleteUsage(usageGroups)) {
-      warnDeleteUsage(`动作「${action.name}」正在使用中`, usageGroups);
-      return;
-    }
-    Modal.confirm({
-      cancelText: '取消',
-      content: `确定删除动作「${action.name}」吗？`,
-      okText: '删除',
-      okType: 'danger',
-      title: '删除动作',
-      onOk: async () => {
-        try {
-          await deletePluginAction(action.id);
-          message.success('动作已删除');
-          await reload();
-        } catch (error) {
-          message.error(error instanceof Error ? error.message : '动作删除失败');
-        }
-      },
-    });
-  };
+  const {
+    confirmDeleteAction,
+    confirmDeleteConnection,
+    confirmDeletePlugin,
+  } = usePluginDeleteOperations({
+    actions,
+    connections,
+    reload,
+    scheduledJobs,
+  });
 
   const openCreateConnectionModal = useCallback(() => {
     setEditingConnection(undefined);
@@ -751,6 +683,88 @@ export default function PluginsPage() {
     }
   };
 
+  const runActionTrialWithPayload = async ({
+    action,
+    connectionId,
+    inputPayload,
+    sampleResponseSummary,
+    successMessage = '试运行完成',
+  }: {
+    action: PluginActionRecord;
+    connectionId?: string;
+    inputPayload: Record<string, unknown>;
+    sampleResponseSummary?: Record<string, unknown>;
+    successMessage?: string;
+  }) => {
+    try {
+      setTrialRunning(true);
+      const result = await trialPluginAction(action.id, {
+        connection_id: connectionId,
+        input_payload: inputPayload,
+        sample_response_summary: sampleResponseSummary,
+      });
+      setTrialResult(result);
+      if (result.status === 'succeeded') {
+        message.success(successMessage);
+      } else {
+        message.error(result.error_message || '试运行失败');
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '试运行失败');
+    } finally {
+      setTrialRunning(false);
+    }
+  };
+
+  const approveTrialAiExecutor = useCallback(async () => {
+    const errorDetail = isPlainRecord(trialResult?.error_detail)
+      ? trialResult.error_detail
+      : undefined;
+    const approvalRequest = isPlainRecord(errorDetail?.approval_request)
+      ? errorDetail.approval_request
+      : undefined;
+    if (!trialAction || !approvalRequest) {
+      message.warning('当前试运行没有可审批的 AI 执行器请求');
+      return;
+    }
+    let parsedInput: Record<string, unknown>;
+    try {
+      parsedInput = parseJsonObject(trialInputJson, '试运行输入');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '试运行输入解析失败');
+      return;
+    }
+    try {
+      setTrialRunning(true);
+      const approved = await approvePluginActionAiExecutor(trialAction.id, {
+        approval_request: approvalRequest,
+        reason: '插件动作试运行高风险操作审批',
+      });
+      const approvedAction = { ...trialAction, ...approved.action };
+      setTrialAction(approvedAction);
+      setActions((current) =>
+        current.map((item) => (item.id === approvedAction.id ? approvedAction : item)),
+      );
+      message.success('审批已写回动作配置，正在重新试运行');
+      const result = await trialPluginAction(approvedAction.id, {
+        connection_id: trialConnectionId,
+        input_payload: parsedInput,
+        sample_response_summary: trialSampleResponseSummary,
+      });
+      setTrialResult(result);
+      if (result.status === 'succeeded') {
+        message.success('审批后试运行完成');
+      } else {
+        message.error(result.error_message || '审批后试运行失败');
+      }
+      await reload();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'AI 执行器审批失败');
+    } finally {
+      setTrialRunning(false);
+    }
+  }, [reload, trialAction, trialConnectionId, trialInputJson, trialResult, trialSampleResponseSummary]);
+
   const submitAction = async () => {
     try {
       const values = await actionForm.validateFields();
@@ -774,6 +788,8 @@ export default function PluginsPage() {
         ? mergeWriteTarget(parseJsonObject(normalizedValues.result_mapping, '结果映射'), normalizedValues.write_target)
         : buildVisualResultMapping(normalizedValues, resultWriteTargets);
       const payload = buildActionPayload(normalizedValues, requestConfig, resultMapping);
+      let createdActionForTrial: PluginActionRecord | undefined;
+      const connectionTestSeedForTrial = pendingConnectionTestSeed;
       if (editingAction) {
         await updatePluginAction(editingAction.id, payload);
         message.success('动作已更新');
@@ -797,6 +813,14 @@ export default function PluginsPage() {
         message.success('助手草案已确认并创建动作');
       } else {
         const createdAction = await createPluginAction(payload);
+        createdActionForTrial = {
+          ...(payload as PluginActionRecord),
+          ...createdAction,
+          connection_id: createdAction.connection_id ?? payload.connection_id,
+          id: createdAction.id,
+          name: createdAction.name ?? payload.name ?? '动作试运行',
+          result_mapping: createdAction.result_mapping ?? resultMapping,
+        };
         rememberAssistantDraftResolution({
           draftId: assistantActionDraftSource?.draftId,
           resourceId: createdAction.id,
@@ -807,6 +831,29 @@ export default function PluginsPage() {
       }
       closeActionModal();
       await reload();
+      if (createdActionForTrial && connectionTestSeedForTrial) {
+        const sampleResponseSummary = isPlainRecord(connectionTestSeedForTrial.response_summary)
+          ? connectionTestSeedForTrial.response_summary
+          : undefined;
+        const connectionId = stringValue(
+          connectionTestSeedForTrial.plugin_connection_id,
+          createdActionForTrial.connection_id ?? undefined,
+        );
+        setTrialAction(createdActionForTrial);
+        setTrialConnectionId(connectionId);
+        setTrialInputJson('{}');
+        setTrialResult(undefined);
+        setTrialSampleResponseSummary(sampleResponseSummary);
+        setTrialModalOpen(true);
+        message.info('动作已创建，正在使用连接测试样例试运行');
+        void runActionTrialWithPayload({
+          action: createdActionForTrial,
+          connectionId,
+          inputPayload: {},
+          sampleResponseSummary,
+          successMessage: '已使用连接测试样例完成动作试运行',
+        });
+      }
     } catch (error) {
       message.error(error instanceof Error ? error.message : editingAction ? '动作更新失败' : '动作创建失败');
     }
@@ -815,6 +862,7 @@ export default function PluginsPage() {
   const openCreateActionModal = useCallback(() => {
     setEditingAction(undefined);
     setAssistantActionDraftSource(undefined);
+    setPendingConnectionTestSeed(undefined);
     setActionScenario(undefined);
     setAdvancedActionJsonOpen(false);
     actionForm.resetFields();
@@ -934,6 +982,7 @@ export default function PluginsPage() {
       : actionScenarioForExistingAction(action, actionTemplates, plugins);
     setEditingAction(action);
     setAssistantActionDraftSource(undefined);
+    setPendingConnectionTestSeed(undefined);
     setActionScenario(scenario);
     setAdvancedActionJsonOpen(!isMaxComputeAction && action.action_type === 'mcp_tool');
     actionForm.resetFields();
@@ -968,6 +1017,7 @@ export default function PluginsPage() {
     setActionModalOpen(false);
     setEditingAction(undefined);
     setAssistantActionDraftSource(undefined);
+    setPendingConnectionTestSeed(undefined);
     setActionScenario(undefined);
     setAdvancedActionJsonOpen(false);
     actionForm.resetFields();
@@ -1158,6 +1208,19 @@ export default function PluginsPage() {
     Modal.destroyAll();
     setEditingAction(undefined);
     setAssistantActionDraftSource(undefined);
+    const sampleSeed = isPlainRecord(result.scheduled_job_sample_seed)
+      ? result.scheduled_job_sample_seed
+      : undefined;
+    setPendingConnectionTestSeed(
+      sampleSeed
+        ? {
+            ...sampleSeed,
+            response_summary: isPlainRecord(sampleSeed.response_summary)
+              ? sampleSeed.response_summary
+              : result.response_summary,
+          }
+        : undefined,
+    );
     setActionScenario(undefined);
     setAdvancedActionJsonOpen(false);
     actionForm.resetFields();
@@ -1315,6 +1378,7 @@ export default function PluginsPage() {
     setTrialConnectionId(action.connection_id ?? undefined);
     setTrialInputJson('{}');
     setTrialResult(undefined);
+    setTrialSampleResponseSummary(undefined);
     setTrialModalOpen(true);
   };
 
@@ -1323,24 +1387,35 @@ export default function PluginsPage() {
       return;
     }
     try {
-      setTrialRunning(true);
       const parsedInput = parseJsonObject(trialInputJson, '试运行输入');
-      const result = await trialPluginAction(trialAction.id, {
-        connection_id: trialConnectionId,
-        input_payload: parsedInput,
+      await runActionTrialWithPayload({
+        action: trialAction,
+        connectionId: trialConnectionId,
+        inputPayload: parsedInput,
+        sampleResponseSummary: trialSampleResponseSummary,
       });
-      setTrialResult(result);
-      if (result.status === 'succeeded') {
-        message.success('试运行完成');
-      } else {
-        message.error(result.error_message || '试运行失败');
-      }
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '试运行失败');
-    } finally {
-      setTrialRunning(false);
+      message.error(error instanceof Error ? error.message : '试运行输入解析失败');
     }
   };
+
+  const createScheduledJobDraftFromTrial = useCallback(() => {
+    const draft = scheduledJobDraftFromTrial({
+      trialAction,
+      trialConnectionId,
+      trialResult,
+    });
+    if (!draft) {
+      message.warning('动作试运行尚未就绪，请先处理缺失项后重新试运行');
+      return;
+    }
+    window.sessionStorage.setItem(
+      assistantScopedStorageKey(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY),
+      JSON.stringify({ auto_dry_run: true, ...draft }),
+    );
+    navigateTo('/tasks/scheduled-jobs?tab=jobs');
+    message.success('已生成定时作业草稿，正在打开定时作业配置');
+  }, [trialAction, trialConnectionId, trialResult]);
 
   return (
     <PageContainer title={false}>
@@ -1359,6 +1434,7 @@ export default function PluginsPage() {
         pluginById={pluginById}
         plugins={plugins}
         runnerListMeta={runnerListMeta}
+        runnerTimeoutScanLoading={scanningRunnerTimeouts}
         runners={runners}
         testingConnectionId={testingConnectionId}
         testingRunnerId={testingRunnerId}
@@ -1382,9 +1458,11 @@ export default function PluginsPage() {
         onEditPlugin={openEditPluginModal}
         onEditRunner={openEditRunnerModal}
         onOpenRunnerLogs={(runner) => void openRunnerLogs(runner)}
+        onOpenRunnerApprovalRequests={() => void openRunnerApprovalRequests()}
         onRunnerListChange={handleRunnerListChange}
         onReload={reload}
         onRotateRunnerToken={rotateRunnerToken}
+        onScanRunnerTimeouts={() => void scanRunnerTimeouts()}
         onRunAction={runAction}
         onTestConnection={runConnectionTest}
         onTestRunner={(runner) => void runRunnerTest(runner)}
@@ -1419,6 +1497,10 @@ export default function PluginsPage() {
         resultWriteTargetOptions={resultWriteTargetOptions}
         resultWriteTargets={resultWriteTargets}
         rotatedRunnerToken={rotatedRunnerToken}
+        approvingRunnerApprovalRequestId={approvingRunnerApprovalRequestId}
+        runnerApprovalRequestRows={runnerApprovalRequestRows}
+        runnerApprovalRequestsLoading={runnerApprovalRequestsLoading}
+        runnerApprovalRequestsOpen={runnerApprovalRequestsOpen}
         rotatingRunner={rotatingRunner}
         rotatingRunnerLoading={rotatingRunnerLoading}
         runnerForm={runnerForm}
@@ -1439,13 +1521,17 @@ export default function PluginsPage() {
         trialModalOpen={trialModalOpen}
         trialResult={trialResult}
         trialRunning={trialRunning}
+        trialSampleResponseSummary={trialSampleResponseSummary}
         onActionValuesChange={handleActionValuesChange}
+        onApproveTrialAiExecutor={approveTrialAiExecutor}
+        onApproveRunnerApprovalRequest={approveRunnerApprovalRequest}
         onApplyActionJsonToVisual={applyActionJsonToVisual}
         onApplyActionScenario={applyActionScenario}
         onApplyConnectionAuthJsonToVisual={applyConnectionJsonToVisual}
         onApplyConnectionPluginDefaults={applyConnectionPluginDefaults}
         onApplyConnectionRequestJsonToVisual={applyConnectionRequestJsonToVisual}
         onCancelRunnerTask={cancelRunnerTask}
+        onCloseRunnerApprovalRequests={closeRunnerApprovalRequests}
         onCloseActionModal={closeActionModal}
         onCloseConnectionModal={closeConnectionModal}
         onClosePluginModal={closePluginModal}
@@ -1453,10 +1539,12 @@ export default function PluginsPage() {
         onCloseRunnerLogModal={closeRunnerLogModal}
         onCloseRunnerModal={closeRunnerModal}
         onConnectionValuesChange={handleConnectionValuesChange}
+        onCreateScheduledJobDraftFromTrial={createScheduledJobDraftFromTrial}
         onRotateRunnerTokenCancel={cancelRotateRunnerToken}
         onRotateRunnerTokenSubmit={submitRotateRunnerToken}
         onRunActionTrial={runActionTrial}
         onRetryRunnerTask={retryRunnerTask}
+        onRefreshRunnerApprovalRequests={refreshRunnerApprovalRequests}
         onSubmitAction={submitAction}
         onSubmitConnection={() => submitConnection()}
         onSubmitConnectionAndTest={() => submitConnection({ testAfterSave: true })}
@@ -1468,9 +1556,15 @@ export default function PluginsPage() {
         onToggleActionAdvancedJson={toggleAdvancedActionJson}
         onToggleConnectionAdvancedAuthJson={toggleAdvancedConnectionJson}
         onToggleConnectionAdvancedRequestJson={toggleAdvancedConnectionRequestJson}
-        onTrialConnectionChange={setTrialConnectionId}
+        onTrialConnectionChange={(connectionId?: string) => {
+          setTrialConnectionId(connectionId);
+          setTrialSampleResponseSummary(undefined);
+        }}
         onTrialInputJsonChange={setTrialInputJson}
-        onTrialModalClose={() => setTrialModalOpen(false)}
+        onTrialModalClose={() => {
+          setTrialModalOpen(false);
+          setTrialSampleResponseSummary(undefined);
+        }}
         onWriteTargetChange={applyWriteTargetDefaults}
       />
     </PageContainer>

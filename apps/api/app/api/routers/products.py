@@ -18,6 +18,7 @@ from app.services.product_config_context import (
     payload_updates,
     product_config_write_store,
     product_has_related_records,
+    product_related_record_counts,
     record_audit_event,
     save_product_config_record,
 )
@@ -215,7 +216,16 @@ def delete_product(
     if get_product_record(current_store, product_id) is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product_has_related_records(current_store, product_id):
-        raise api_error(409, "RESOURCE_IN_USE", "Product still has related records")
+        related_counts = product_related_record_counts(current_store, product_id)
+        raise api_error(
+            409,
+            "RESOURCE_IN_USE",
+            "Product still has related records",
+            extra={
+                "related_counts": related_counts,
+                "related_total": sum(related_counts.values()),
+            },
+        )
     for collection_name in [
         "product_versions",
         "product_modules",

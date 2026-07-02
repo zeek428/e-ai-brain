@@ -57,6 +57,18 @@ AI_EXECUTOR_RUNNER_SORT_COLUMNS = {
     "updated_at": "updated_at",
 }
 
+AI_EXECUTOR_APPROVAL_REQUEST_SORT_COLUMNS = {
+    "approved_at": "approved_at",
+    "created_at": "created_at",
+    "executor_type": "executor_type",
+    "id": "id",
+    "requested_at": "requested_at",
+    "risk_level": "risk_level",
+    "runner_id": "runner_id",
+    "status": "status",
+    "updated_at": "updated_at",
+}
+
 PLUGIN_INVOCATION_LOG_SORT_COLUMNS = {
     "action_id": "action_id",
     "connection_id": "connection_id",
@@ -753,6 +765,114 @@ class PluginReadRepository:
                 self.upsert_ai_executor_tasks(cursor, {task["id"]: task})
                 self._upsert_audit(cursor, audit_event)
 
+    def list_ai_executor_approval_requests(
+        self,
+        *,
+        action_id: str | None = None,
+        runner_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._where(
+            {
+                "action_id": action_id,
+                "runner_id": runner_id,
+                "status": status,
+            },
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, action_id, connection_id, runner_id, scheduled_job_id,
+                           scheduled_job_run_id, ai_task_id, executor_type, workspace_root,
+                           risk_level, blocked_operations, approval_request, approval,
+                           status, requested_by, requested_at, approved_by, approved_at,
+                           expires_at, reason, created_at, updated_at
+                    FROM ai_executor_approval_requests
+                    {where}
+                    ORDER BY updated_at DESC, id ASC
+                    """,
+                    tuple(params),
+                )
+                return [self._ai_executor_approval_request_from_row(row) for row in cursor.fetchall()]
+
+    def count_ai_executor_approval_requests(
+        self,
+        *,
+        action_id: str | None = None,
+        runner_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where, params = self._where(
+            {
+                "action_id": action_id,
+                "runner_id": runner_id,
+                "status": status,
+            },
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM ai_executor_approval_requests {where}",
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_ai_executor_approval_requests_page(
+        self,
+        *,
+        action_id: str | None = None,
+        limit: int,
+        offset: int,
+        runner_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._where(
+            {
+                "action_id": action_id,
+                "runner_id": runner_id,
+                "status": status,
+            },
+        )
+        sort_column = AI_EXECUTOR_APPROVAL_REQUEST_SORT_COLUMNS.get(sort_by, "updated_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, action_id, connection_id, runner_id, scheduled_job_id,
+                           scheduled_job_run_id, ai_task_id, executor_type, workspace_root,
+                           risk_level, blocked_operations, approval_request, approval,
+                           status, requested_by, requested_at, approved_by, approved_at,
+                           expires_at, reason, created_at, updated_at
+                    FROM ai_executor_approval_requests
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
+                    """,
+                    tuple(params),
+                )
+                return [self._ai_executor_approval_request_from_row(row) for row in cursor.fetchall()]
+
+    def save_ai_executor_approval_request_record(
+        self,
+        approval_request: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                self.upsert_ai_executor_approval_requests(
+                    cursor,
+                    {approval_request["id"]: approval_request},
+                )
+                self._upsert_audit(cursor, audit_event)
+
     def save_plugin_invocation_log_record(
         self,
         log: dict[str, Any],
@@ -1076,6 +1196,77 @@ class PluginReadRepository:
                     task.get("created_at"),
                     task.get("updated_at") or task.get("created_at"),
                     task.get("ai_task_id"),
+                ),
+            )
+
+    def upsert_ai_executor_approval_requests(
+        self,
+        cursor,
+        approval_requests: dict[str, dict[str, Any]],
+    ) -> None:
+        for approval_request in approval_requests.values():
+            cursor.execute(
+                """
+                INSERT INTO ai_executor_approval_requests (
+                  id, action_id, connection_id, runner_id, scheduled_job_id,
+                  scheduled_job_run_id, ai_task_id, executor_type, workspace_root,
+                  risk_level, blocked_operations, approval_request, approval,
+                  status, requested_by, requested_at, approved_by, approved_at,
+                  expires_at, reason, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s,
+                  %s, %s::jsonb, %s::jsonb, %s::jsonb,
+                  %s, %s, %s::timestamptz, %s, %s::timestamptz,
+                  %s::timestamptz, %s, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  action_id = EXCLUDED.action_id,
+                  connection_id = EXCLUDED.connection_id,
+                  runner_id = EXCLUDED.runner_id,
+                  scheduled_job_id = EXCLUDED.scheduled_job_id,
+                  scheduled_job_run_id = EXCLUDED.scheduled_job_run_id,
+                  ai_task_id = EXCLUDED.ai_task_id,
+                  executor_type = EXCLUDED.executor_type,
+                  workspace_root = EXCLUDED.workspace_root,
+                  risk_level = EXCLUDED.risk_level,
+                  blocked_operations = EXCLUDED.blocked_operations,
+                  approval_request = EXCLUDED.approval_request,
+                  approval = EXCLUDED.approval,
+                  status = EXCLUDED.status,
+                  requested_by = EXCLUDED.requested_by,
+                  requested_at = EXCLUDED.requested_at,
+                  approved_by = EXCLUDED.approved_by,
+                  approved_at = EXCLUDED.approved_at,
+                  expires_at = EXCLUDED.expires_at,
+                  reason = EXCLUDED.reason,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    approval_request["id"],
+                    approval_request.get("action_id"),
+                    approval_request.get("connection_id"),
+                    approval_request.get("runner_id"),
+                    approval_request.get("scheduled_job_id"),
+                    approval_request.get("scheduled_job_run_id"),
+                    approval_request.get("ai_task_id"),
+                    approval_request["executor_type"],
+                    approval_request["workspace_root"],
+                    approval_request.get("risk_level", "high"),
+                    _json(approval_request.get("blocked_operations"), []),
+                    _json(approval_request.get("approval_request"), {}),
+                    _json(approval_request.get("approval"), {}),
+                    approval_request.get("status", "pending"),
+                    approval_request.get("requested_by"),
+                    approval_request.get("requested_at"),
+                    approval_request.get("approved_by"),
+                    approval_request.get("approved_at"),
+                    approval_request.get("expires_at"),
+                    approval_request.get("reason"),
+                    approval_request.get("created_at"),
+                    approval_request.get("updated_at") or approval_request.get("created_at"),
                 ),
             )
 
@@ -1659,4 +1850,30 @@ class PluginReadRepository:
             "created_at": row[19].isoformat() if row[19] else None,
             "updated_at": row[20].isoformat() if row[20] else None,
             "ai_task_id": row[21] if len(row) > 21 else None,
+        }
+
+    def _ai_executor_approval_request_from_row(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row[0],
+            "action_id": row[1],
+            "connection_id": row[2],
+            "runner_id": row[3],
+            "scheduled_job_id": row[4],
+            "scheduled_job_run_id": row[5],
+            "ai_task_id": row[6],
+            "executor_type": row[7],
+            "workspace_root": row[8],
+            "risk_level": row[9],
+            "blocked_operations": row[10] or [],
+            "approval_request": row[11] or {},
+            "approval": row[12] or {},
+            "status": row[13],
+            "requested_by": row[14],
+            "requested_at": row[15].isoformat() if row[15] else None,
+            "approved_by": row[16],
+            "approved_at": row[17].isoformat() if row[17] else None,
+            "expires_at": row[18].isoformat() if row[18] else None,
+            "reason": row[19],
+            "created_at": row[20].isoformat() if row[20] else None,
+            "updated_at": row[21].isoformat() if row[21] else None,
         }

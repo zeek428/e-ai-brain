@@ -1,20 +1,25 @@
-import { Modal, Space, Typography, message, type FormInstance } from 'antd';
+import { Modal, Space, Tag, Typography, message, type FormInstance } from 'antd';
 import { useState } from 'react';
 
 import {
+  approveAiExecutorApprovalRequest,
   cancelAiExecutorTask,
   createAiExecutorRunner,
   deleteAiExecutorRunner,
   downloadAiExecutorRunnerInstallPackage,
+  fetchAiExecutorApprovalRequestsPage,
   fetchAiExecutorTaskLogs,
   retryAiExecutorTask,
   rotateAiExecutorRunnerToken,
   testAiExecutorRunner,
+  timeoutAiExecutorTasks,
   updateAiExecutorRunner,
+  type AiExecutorApprovalRequestRecord,
   type AiExecutorRunnerRecord,
   type AiExecutorRunnerTestResult,
   type AiExecutorTaskLogRecord,
   type AiExecutorTaskRecord,
+  type AiExecutorTaskTimeoutScanResponse,
 } from '../../../services/aiBrain';
 import {
   arrayToLines,
@@ -40,6 +45,61 @@ function latestRunnerTaskId(runner: AiExecutorRunnerRecord): string | undefined 
   return runner.latest_task_id ?? (typeof metadataTaskId === 'string' ? metadataTaskId : undefined);
 }
 
+function timeoutScanStatusColor(status?: string) {
+  if (status === 'attention_required') {
+    return 'red';
+  }
+  if (status === 'requeued') {
+    return 'orange';
+  }
+  if (status === 'no_changes') {
+    return 'green';
+  }
+  return 'default';
+}
+
+function actionSeverityColor(severity?: string) {
+  if (severity === 'error') {
+    return 'red';
+  }
+  if (severity === 'warning') {
+    return 'orange';
+  }
+  if (severity === 'success') {
+    return 'green';
+  }
+  if (severity === 'info') {
+    return 'blue';
+  }
+  return 'default';
+}
+
+function RunnerTimeoutScanResultContent({ result }: { result: AiExecutorTaskTimeoutScanResponse }) {
+  const summary = result.summary;
+  return (
+    <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+      <Space size={[8, 8]} wrap>
+        <Tag color={timeoutScanStatusColor(summary?.status)}>状态 {summary?.status ?? '-'}</Tag>
+        <Tag>影响 {summary?.total_affected ?? 0}</Tag>
+        <Tag color={summary?.requeued_count ? 'orange' : 'default'}>重派 {summary?.requeued_count ?? 0}</Tag>
+        <Tag color={summary?.dead_letter_count ? 'red' : 'default'}>死信 {summary?.dead_letter_count ?? 0}</Tag>
+        <Tag color={summary?.timed_out_count ? 'red' : 'default'}>超时 {summary?.timed_out_count ?? 0}</Tag>
+      </Space>
+      <Typography.Text>{summary?.message ?? 'Runner 超时扫描完成。'}</Typography.Text>
+      {result.next_actions?.length ? (
+        <Space aria-label="Runner 超时扫描下一步" orientation="vertical" size={6}>
+          {result.next_actions.map((action) => (
+            <Space key={action.key} size={[8, 8]} wrap>
+              <Tag color={actionSeverityColor(action.severity)}>{action.label}</Tag>
+              <Typography.Text type="secondary">{action.description}</Typography.Text>
+            </Space>
+          ))}
+        </Space>
+      ) : null}
+    </Space>
+  );
+}
+
 export function usePluginRunnerOperations({
   reload,
   runnerForm,
@@ -56,7 +116,12 @@ export function usePluginRunnerOperations({
   const [runnerLogLoading, setRunnerLogLoading] = useState(false);
   const [runnerLogTask, setRunnerLogTask] = useState<AiExecutorTaskRecord | undefined>();
   const [runnerLogRows, setRunnerLogRows] = useState<AiExecutorTaskLogRecord[]>([]);
+  const [scanningRunnerTimeouts, setScanningRunnerTimeouts] = useState(false);
   const [testingRunnerId, setTestingRunnerId] = useState<string | undefined>();
+  const [runnerApprovalRequestsOpen, setRunnerApprovalRequestsOpen] = useState(false);
+  const [runnerApprovalRequestsLoading, setRunnerApprovalRequestsLoading] = useState(false);
+  const [runnerApprovalRequestRows, setRunnerApprovalRequestRows] = useState<AiExecutorApprovalRequestRecord[]>([]);
+  const [approvingRunnerApprovalRequestId, setApprovingRunnerApprovalRequestId] = useState<string | undefined>();
 
   const openCreateRunnerModal = () => {
     setEditingRunner(undefined);
@@ -319,9 +384,103 @@ export function usePluginRunnerOperations({
     }
   };
 
+  const refreshRunnerApprovalRequests = async () => {
+    setRunnerApprovalRequestsLoading(true);
+    try {
+      const result = await fetchAiExecutorApprovalRequestsPage({
+        page: 1,
+        pageSize: 20,
+        sortField: 'updated_at',
+        sortOrder: 'descend',
+        status: 'pending',
+      });
+      setRunnerApprovalRequestRows(result.rows);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '审批请求加载失败');
+    } finally {
+      setRunnerApprovalRequestsLoading(false);
+    }
+  };
+
+  const openRunnerApprovalRequests = async () => {
+    setRunnerApprovalRequestsOpen(true);
+    await refreshRunnerApprovalRequests();
+  };
+
+  const approveRunnerApprovalRequest = async (record: AiExecutorApprovalRequestRecord) => {
+    if (approvingRunnerApprovalRequestId) {
+      return;
+    }
+    setApprovingRunnerApprovalRequestId(record.id);
+    try {
+      await approveAiExecutorApprovalRequest(record.id, {
+        reason: '管理员从插件管理执行器页审批放行',
+      });
+      message.success('审批请求已放行');
+      await refreshRunnerApprovalRequests();
+      await reload();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '审批请求放行失败');
+    } finally {
+      setApprovingRunnerApprovalRequestId(undefined);
+    }
+  };
+
+  const scanRunnerTimeouts = async () => {
+    if (scanningRunnerTimeouts) {
+      return;
+    }
+    const messageKey = 'ai-executor-timeout-scan';
+    setScanningRunnerTimeouts(true);
+    message.loading({
+      content: '正在扫描 Runner 超时和租约过期任务...',
+      duration: 0,
+      key: messageKey,
+    });
+    try {
+      const result = await timeoutAiExecutorTasks();
+      Modal.info({
+        content: <RunnerTimeoutScanResultContent result={result} />,
+        title: 'Runner 超时扫描',
+        width: 760,
+      });
+      const affected = result.summary?.total_affected ?? 0;
+      if (result.summary?.manual_attention_required) {
+        message.warning({
+          content: result.summary.message,
+          duration: 5,
+          key: messageKey,
+        });
+      } else if (affected > 0) {
+        message.success({
+          content: result.summary?.message ?? `已处理 ${affected} 个 Runner 任务`,
+          duration: 4,
+          key: messageKey,
+        });
+      } else {
+        message.info({
+          content: result.summary?.message ?? '未发现需要处理的 Runner 任务',
+          duration: 3,
+          key: messageKey,
+        });
+      }
+      await reload();
+    } catch (error) {
+      message.error({
+        content: error instanceof Error ? error.message : 'Runner 超时扫描失败',
+        duration: 5,
+        key: messageKey,
+      });
+    } finally {
+      setScanningRunnerTimeouts(false);
+    }
+  };
+
   return {
     cancelRunnerTask,
+    approveRunnerApprovalRequest,
     closeRotatedRunnerToken: () => setRotatedRunnerToken(undefined),
+    closeRunnerApprovalRequests: () => setRunnerApprovalRequestsOpen(false),
     closeRunnerLogModal: () => setRunnerLogModalOpen(false),
     closeRunnerModal,
     confirmDeleteRunner,
@@ -330,7 +489,9 @@ export function usePluginRunnerOperations({
     editingRunner,
     openCreateRunnerModal,
     openEditRunnerModal,
+    openRunnerApprovalRequests,
     openRunnerLogs,
+    refreshRunnerApprovalRequests,
     retryRunnerTask,
     rotateRunnerToken,
     rotatedRunnerToken,
@@ -341,10 +502,16 @@ export function usePluginRunnerOperations({
     runnerLogRows,
     runnerLogTask,
     runnerModalOpen,
+    runnerApprovalRequestRows,
+    runnerApprovalRequestsLoading,
+    runnerApprovalRequestsOpen,
     runRunnerTest,
+    scanRunnerTimeouts,
+    scanningRunnerTimeouts,
     submitRotateRunnerToken,
     submitRunner,
     testingRunnerId,
+    approvingRunnerApprovalRequestId,
     cancelRotateRunnerToken: () => setRotatingRunner(undefined),
   };
 }

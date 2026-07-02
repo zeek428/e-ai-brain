@@ -8,6 +8,16 @@
 ## [Unreleased]
 
 ### Fixed
+- 插件动作试运行阻断态的样例复用向导不再直接展示 `action_trial_response/write_preview` 等内部字段名，高风险审批诊断也将下一步、阻断操作和审批字段翻译为中文业务文案。
+- 定时作业运行快照补齐 Agent 文件包入口内容：package 类型 AI角色运行时会冻结 `AGENT.md`、manifest、checksum 和文件清单，避免只记录当前 `system_prompt` 而丢失文件包上下文。
+- Agent/Skill 文件包运行快照补齐 `runtime_boundary`：运行记录会冻结脚本资产列表、`disabled_pending_sandbox` 和“不会自动执行”说明，避免只在配置列表页可见脚本安全边界。
+- 定时作业运行详情新增“AI文件包运行边界”摘要，并在导出 JSON 的 `snapshots.agent` 中补充 Agent 快照，便于直接确认 Agent/Skill 包脚本不会自动执行。
+- 定时作业全链路试运行的样例复用失败态补充业务化说明：页面将 `data_connection_sample`、`ai_output_preview`、`action_write_preview` 等内部缺失项翻译为中文处理项，并展示阻断步骤和下一步修复建议。
+- 动作试运行失败但返回 blocked 的样例复用向导时，插件管理弹窗不再误展示“可复用到定时作业 dry-run”和“生成作业草稿”，改为展示缺失项和修复下一步。
+- AI 执行器 Runner 安装包在 Endpoint 指向 localhost/127.0.0.1/::1 时默认绕过系统 HTTP/HTTPS 代理，并在 env 中写入 `NO_PROXY`，避免本机代理导致心跳请求 `Connection reset by peer`。
+- AI 执行器任务完成回写不再覆盖运行中已追加的 Runner 日志，完成日志会按顺序追加，便于查看完整执行过程。
+- 插件动作调用失败包装为 `502` 时保留底层错误的额外诊断字段，例如 Runner 工作区越界时的 `workspace_root/workspace_roots`，便于页面和日志直接定位配置问题。
+- 产品管理删除被需求、AI 任务或 Bug 占用的产品时，后端 `RESOURCE_IN_USE` 错误补充 `related_counts/related_total`，前端改为展示可处理的占用清单与停用建议，避免只暴露英文错误码。
 - 定时作业多数据连接保存时校验额外连接必须归属主插件动作所在插件，跨插件连接混选直接返回 `PLUGIN_CONNECTION_MISMATCH`，避免保存后运行阶段才失败。
 - 定时作业在数据连接阶段失败时，运行摘要不再把 AI 执行节点误标为已调用大模型；`skill_processing` 明确为 `not_run` 且 `model_gateway_called=false`。
 - 定时作业运行入口不再对未闭环作业类型返回伪成功占位结果；历史兼容类型手动运行会明确返回不可运行错误。
@@ -17,7 +27,52 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
-- 定时作业运行 Trace DAG 节点补齐 `stage/stage_label/debug_actions/rerun_supported/rerun_hint`，运行详情可直接复制节点输入、输出或错误，并明确当前支持运行记录级复跑而非单节点复跑。
+- AI 执行器 Runner 就绪清单和新增/编辑表单新增“协议适配”边界：`runner_polling` 明确为当前安装包和队列闭环支持协议，`runner_websocket`、`mcp_http`、`mcp_stdio` 作为预留协议在表单中标注预留、在就绪清单中标记阻断，避免用户误以为非 polling 协议已可直接运行。
+- AI 执行器 Runner 高风险阻断生成的 `approval_request` 持久化为 `ai_executor_approval_requests`，新增独立查询和审批写回接口；插件管理执行器页可查看待审批请求并审批放行，审批通过后同步更新关联动作审批快照并写入审批请求审计。
+- Trace DAG 复跑提示口径统一为“控制项满足时可单节点复跑，控制项不满足时保护态并建议整条复跑”；PRD 同步改为 AI角色支持 Agent zip 文件包上传。
+- 样例复用向导新增统一进度展示：连接测试、动作试运行、定时作业 dry-run 和作业草稿页展示“进度：N/4 步已就绪”，让用户更容易判断链路已走到哪一步。
+- AI 执行器 Runner 就绪清单新增“沙箱权限边界”，安装包代理心跳上报命令白名单、stdin 指令传递、进程组隔离、超时进程树清理、工作区白名单和高风险审批等安全元数据。
+- 插件管理动作试运行遇到 AI 执行器高风险审批阻断时，可点击“审批并重新试运行”；后端写回 `request_config.ai_executor_approval`、记录 `plugin_action.ai_executor_approved` 审计，并自动沿用原输入重新试运行。
+- AI 执行器 Runner 高风险指令阻断响应新增 `approval_request` 审批草案，并写入 `ai_executor_task.approval_requested` 审计事件；未审批任务仍不进入 Runner 队列。
+- 定时作业 Trace DAG 保护态节点也会展示“复跑预检”，预检返回整条复跑建议时可直接点击“复跑整条运行记录”，沿用现有运行记录复跑链路打开新结果。
+- 定时作业 Trace DAG 单节点复跑成功后，运行详情会切到新运行记录并刷新运行列表，让用户可以直接查看复跑后的数据连接、AI 执行和动作反馈。
+- 普通插件执行调用在 `ai_assisted/ai_generated` 模式下和 dry-run 保持一致：正式运行会先通过 Skill/模型处理数据连接响应，再执行 `save_scheduled_job_result/send_notification` 通用结果动作。
+- Agent/Skill 文件包公开运行边界与上传校验保持一致：`runtime_capabilities.script_files` 只展示 `scripts/` 目录下的合法脚本资产，根目录或非 scripts 可执行文件继续拒绝上传，避免页面误判脚本会进入待沙箱执行。
+- AI 执行器 Runner 安装包代理新增真实执行探针回归：从 ZIP 解出 `runner_agent.py` 和 `runner_config.json` 后实际启动本地命令，验证指令通过 stdin 传入、stdout 日志追加和完成 payload 回写，避免仅靠字符串断言误判 Runner 可用。
+- AI 执行器 Runner 高风险指令从“全部预检阻断”升级为审批快照契约：未携带完整审批继续返回 `AI_EXECUTOR_APPROVAL_REQUIRED`，审批操作覆盖、策略版本和有效期校验通过后可进入 Runner 队列，并在任务安全快照与排队审计中记录审批信息。
+- 插件管理执行器列表新增“超时扫描”入口，管理员可在页面直接触发 Runner 租约/超时扫描，并查看重派、死信、超时摘要和下一步处理建议。
+- AI 执行器任务超时扫描返回结构化 `summary/next_actions`，直接说明本次重派、死信、超时数量和“等待重新认领 / 查看死信日志 / 检查超时任务”等后续处理建议。
+- 定时作业 dry-run 可直接复用动作试运行草稿中的 `config_json.sample_reuse.response_summary`，跳过重复第三方连接调用，并在样例复用向导中延续连接测试或动作试运行来源。
+- 动作试运行生成定时作业草稿时携带 `auto_dry_run`，新增作业页在存在响应样例时自动复用样例触发全链路 dry-run，减少“生成草稿后再手动试运行”的重复操作。
+- 插件动作试运行弹窗点击“生成作业草稿”后改为写入草稿并通过应用内导航直接打开定时作业配置页，避免只保存草稿但停留在插件管理页面。
+- 样例复用向导补齐 `current_step_label`、`next_action_description`、`can_continue` 和 `handoff_summary`，连接测试、动作试运行、定时作业 dry-run 与新增作业草稿页统一展示当前步骤、下一步说明和已带入项。
+- AI 执行器 Runner 增加高风险指令预检：`git push`、批量删除、强制 reset、发布部署等未审批指令会被服务端和本地 Runner agent 双重拦截，不再进入执行队列。
+- AI 执行器 Runner 安装包强制 `executor_commands` 命令白名单，未配置的执行器不再兜底为同名本机命令执行；运行就绪清单拆分命令白名单、禁用 shell 和高风险操作审批状态，便于判断本地 Runner 还缺哪些安全控制。
+- AI 执行器 Runner 安装包启用执行器进程组隔离，任务超时后会终止整棵进程树并回写清理状态日志，减少本地 Codex/Claude/Hermes/OpenClaw 子进程残留风险。
+- AI 执行器 Runner 安装包新增运行中任务状态轮询，服务端取消、超时或死信后会终止本地进程树并跳过完成回写，避免迟到结果覆盖平台终态。
+- 定时作业 Trace DAG AI 处理节点在复跑预检 ready 后支持受控单节点复跑：复用来源运行数据连接响应快照重新调用模型，生成独立 `manual_rerun` 运行记录，并明确跳过下游动作和结果写入记录。
+- 定时作业 Trace DAG 通用结果动作节点在复跑预检 ready 后支持受控单节点复跑：复用来源运行 AI 输出快照重新执行结果动作，生成独立 `manual_rerun` 运行记录和结果写入记录。
+- 定时作业 Trace DAG 数据连接节点在复跑预检 ready 后支持受控单节点复跑：创建新的 `manual_rerun` 运行记录、重新执行数据连接、保留来源运行对比，并明确跳过下游 AI 处理和结果动作。
+- 定时作业 Trace DAG 复跑预检新增执行策略和下一步动作，页面直接展示保护态说明、推荐整条复跑、需补齐控制项和副作用确认要求。
+- 插件连接测试样例复用链路提速：诊断页“复制并试运行”保存动作后会自动携带连接测试响应样例发起动作试运行，直接展示写入预览和生成定时作业草稿入口。
+- AI 执行器 Runner 列表新增 `queue_summary` 队列摘要，前端执行器表格展示排队、运行中、异常、可用槽和最近失败原因，方便判断本地 Runner 是否积压或异常。
+- AI 执行器 Runner 列表新增 `readiness_summary` 运行就绪清单，前端展示 ready/attention/blocked 和注册、心跳、Token、工作区、队列、超时、日志、回写、沙箱边界控制项。
+- 定时作业 Trace DAG 复跑预检补齐结构化控制项清单和摘要，页面展示已满足、缺失、阻断和待确认控制项，`missing_controls` 只保留未满足项。
+- 定时作业 Trace DAG 节点级复跑新增只读预检接口和运行详情“复跑预检”展示，返回并展示输入/输出/错误快照预览、缺失控制项、阻断原因和整条复跑回退请求；数据连接节点满足控制项后可进入确认复跑，其余有副作用节点仍保持保护态。
+- 连接测试、动作试运行和定时作业 dry-run 的样例复用响应统一补齐 `reuse_wizard`，返回当前步骤、下一步动作、缺失项和四段向导状态，减少从连接样例生成作业配置时阅读原始 JSON 的成本。
+- 定时作业 Trace DAG 新增节点级复跑受保护 API：命中节点时返回 `TRACE_NODE_RERUN_PROTECTED`、节点快照/阻断原因/整条复跑替代请求，并写入 `scheduled_job_run.trace_node_rerun_blocked` 审计，避免前端误触发有副作用的局部重跑。
+- AI 执行器 Runner 代理从结束后收集输出升级为执行中流式追加 stdout/stderr 日志；安装包 `runner_config.safety` 声明无 shell 执行、stdin 指令传递、日志 flush 和输出预览策略，为后续沙箱权限和长任务日志流打底。
+- AI Agent/Skill 文件包允许携带 `scripts/` 目录下的脚本资产并落盘展示运行边界；非 `scripts/` 目录的可执行脚本仍被拒绝，脚本仍不会自动执行。
+- AI 角色支持上传 Agent zip 文件包：`agent.yaml` 与 `AGENT.md` 落盘保存，列表展示文件包来源和运行边界；Agent 包脚本仍标记为待沙箱/审批，不会自动执行。
+- AI 执行器 Runner 安装包内置轻量 `runner_agent.py` 代理脚本，启动脚本直接使用 Python 代理完成心跳、认领、执行本机 Codex/Claude/Hermes/OpenClaw 命令、日志追加和结果回写，不再要求目标机器预装额外 `ai-brain-runner` CLI。
+- AI 执行器 Runner 工作区白名单改为服务端双重校验：派发时允许白名单目录及其子目录，越界返回 `AI_EXECUTOR_WORKSPACE_NOT_ALLOWED`；认领时若任务因白名单变更变为越界，任务会失败、写入日志并继续查找下一条可认领任务，避免队列卡住。
+- 动作试运行支持连接测试响应样例预览：传入 `sample_response_summary` 时不再次请求第三方，直接计算映射命中、写入预览和定时作业 dry-run 种子。
+- 插件连接测试响应新增 `scheduled_job_sample_seed`，连接测试诊断页展示“连接样例可复用”，引导用户从连接样例继续复制动作模板、动作试运行并生成定时作业草稿。
+- 定时作业运行 Trace DAG 节点新增 `rerun_plan/snapshot_status`，页面展示输入/输出快照状态、副作用策略和安全下一步；数据连接节点、AI 处理节点和通用结果动作节点已支持隔离单节点复跑，本地工作区、外部写入和业务写入等高副作用节点仍推荐整条运行记录复跑或人工修复。
+- 动作试运行响应新增 `scheduled_job_dry_run_seed`，插件管理弹窗可将连接、动作、输入/输出映射和写入预览生成定时作业草稿，定时作业 dry-run 同步展示样例复用摘要。
+- 动作试运行生成的定时作业草稿进入新增作业页后，顶部展示动作试运行样例摘要，包含连接、动作、样例来源、写入目标和预计写入，引导用户补齐配置后继续全链路试运行。
+- AI Skill 列表新增 `runtime_capabilities` 运行边界；Prompt 和 Schema 可参与 AI 处理，Skill 包中的脚本文件标记为待沙箱/审批，不会自动执行。
+- 定时作业运行 Trace DAG 节点补齐 `stage/stage_label/debug_actions/rerun_supported/rerun_hint`，运行详情可直接复制节点输入、输出或错误，并区分数据连接可控单节点复跑与副作用节点保护态。
 - 定时作业全链路试运行结果面板新增 Skill 输出映射校验摘要，直接展示校验状态、已校验字段数、异常字段数和命中的 JSONPath。
 - 定时作业作业配置和运行记录列表在拉取数据时展示明确加载提示，避免移动端或弱网下把“暂无数据”误判为真实空列表。
 - 通用 AI 分析类定时作业的结果动作执行反馈补齐 `write_preview`，邮件通知记录会在结果写入记录中展示主题、投递状态和收件人样例。
@@ -772,7 +827,7 @@
 - MaxCompute 每周用户反馈洞察场景落地：通过普通 HTTP 插件连接和自定义 HTTP 动作配置取数接口，Params/Headers 可视化维护、高级 JSON 精修；定时作业新增 `user_feedback_insight_extract`，可将插件返回并经 AI 处理后的洞察写入用户反馈洞察表。
 - 插件管理第一阶段落地：新增系统插件、连接、动作和调用日志管理，支持 HTTP/MCP HTTP 协议配置、密钥配置、调用审计，并允许定时作业通过 `plugin_action_id` 调用动作和保存运行快照。
 - 定时系统作业与 AI 能力装配：PRD/API/技术规格/测试用例补充 AI角色、Skill、定时作业、运行实例、AI 配置快照、collector run 关联、锁租约、失败重试和人工确认边界，并落地基础 API、菜单和页面入口。
-- AI 能力配置第一阶段落地：AI角色（Agent）继续表单配置，Skill 支持 zip 文件包上传、本地存储、checksum/manifest 持久化，并在定时 AI 作业运行时加载本地 Skill 文件内容写入快照。
+- AI 能力配置第一阶段落地：AI角色（Agent）支持表单配置和 zip 文件包上传，Skill 支持 zip 文件包上传、本地存储、checksum/manifest 持久化，并在定时 AI 作业运行时加载本地 Agent/Skill 文件内容写入快照；包内脚本默认不自动执行。
 - 迭代版本新增代码分支配置：版本页提供“代码分支”入口，可按同产品多个 GitHub/GitLab 代码库维护基准分支、开发分支、状态和创建来源；后端新增 `product_version_branch_configs` 结构表和对应 API，并纳入产品配置 DB-first 读写与审计。
 - Task 4 角色治理 UI 和动态菜单落地：角色管理页接入 `/api/system/roles`、权限点、菜单和范围授权接口，支持新增、复制、编辑、启停、权限/菜单/范围配置；前端布局根据 `/api/auth/me.menu_tree` 过滤左侧导航。
 - Task 3 系统 RBAC API 落地：新增权限点、菜单、角色治理、用户角色/范围授权和用户有效权限查询接口，角色变更同步写入 `role_change_events` 与 `audit_events`。
