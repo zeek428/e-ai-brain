@@ -600,16 +600,92 @@ class ScheduledJobExecutionEngine:
             or status in {"failed", "timed_out", "cancelled", "dead_letter"}
             else None
         )
+        canonical_id = ScheduledJobExecutionEngine._canonical_trace_node_id(node_id)
+        trace_input = ScheduledJobExecutionEngine._trace_node_input(node_id, node)
+        trace_output = ScheduledJobExecutionEngine._trace_node_output(node_id, node)
+        stage, stage_label = ScheduledJobExecutionEngine._trace_node_stage(canonical_id)
         return {
+            "debug_actions": ScheduledJobExecutionEngine._trace_node_debug_actions(
+                input_payload=trace_input,
+                output_payload=trace_output,
+                error=error,
+            ),
             "duration_ms": max(0, int(duration_ms)),
             "error": error,
             "id": node_id,
-            "input": ScheduledJobExecutionEngine._trace_node_input(node_id, node),
+            "input": trace_input,
             "label": node.get("label") or node_id,
-            "output": ScheduledJobExecutionEngine._trace_node_output(node_id, node),
+            "output": trace_output,
+            "rerun_hint": ScheduledJobExecutionEngine._trace_node_rerun_hint(canonical_id),
+            "rerun_supported": False,
             "retry_count": retry_count,
+            "stage": stage,
+            "stage_label": stage_label,
             "status": status,
         }
+
+    @staticmethod
+    def _trace_node_stage(canonical_id: str) -> tuple[str, str]:
+        if canonical_id in {"data_connection", "native_scan"}:
+            return "data_connection", "数据连接"
+        if canonical_id == "runner_execution":
+            return "ai_executor", "AI执行器"
+        if canonical_id == "skill_processing":
+            return "ai_processing", "AI执行"
+        if canonical_id == "result_action":
+            return "result_action", "动作"
+        if canonical_id in {
+            "bug_creation",
+            "code_inspection_report",
+            "notifications",
+            "task_creation",
+        }:
+            return "business_side_effect", "业务副作用"
+        return "other", "其他"
+
+    @staticmethod
+    def _trace_node_debug_actions(
+        *,
+        input_payload: dict[str, Any],
+        output_payload: dict[str, Any],
+        error: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        actions: list[dict[str, Any]] = []
+        if input_payload:
+            actions.append(
+                {
+                    "enabled": True,
+                    "label": "复制输入",
+                    "type": "copy_input",
+                },
+            )
+        if output_payload:
+            actions.append(
+                {
+                    "enabled": True,
+                    "label": "复制输出",
+                    "type": "copy_output",
+                },
+            )
+        if error:
+            actions.append(
+                {
+                    "enabled": True,
+                    "label": "复制错误",
+                    "type": "copy_error",
+                },
+            )
+        return actions
+
+    @staticmethod
+    def _trace_node_rerun_hint(canonical_id: str) -> str:
+        if canonical_id == "data_connection":
+            return "如需重试该节点，请从运行记录复跑整条作业，系统会重新执行数据连接和下游节点。"
+        if canonical_id == "skill_processing":
+            return "如需重试 AI 处理，请从运行记录复跑整条作业，避免跳过数据上下文和知识引用。"
+        if canonical_id == "result_action":
+            return "如需重新写入结果，请先确认目标幂等策略，再从运行记录复跑整条作业。"
+        return "当前版本支持运行记录级复跑，暂不支持单节点复跑。"
 
     @staticmethod
     def _trace_node_input(node_id: str, node: dict[str, Any]) -> dict[str, Any]:

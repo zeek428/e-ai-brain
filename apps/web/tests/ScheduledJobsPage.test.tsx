@@ -436,6 +436,13 @@ function installScheduledJobsFetchMock(
           job_type: body.job_type,
           stages: {
             ai_processing: {
+              mapping_contract: {
+                checked_paths: [
+                  { field: 'insights_path', path: '$.insights', supported: true },
+                ],
+                invalid_fields: [],
+                status: 'succeeded',
+              },
               mapping_status: 'succeeded',
               output_preview: { insights: [{ title: '洞察样例' }] },
               output_preview_source: 'skill_output_schema',
@@ -1010,6 +1017,8 @@ describe('ScheduledJobsPage', () => {
     expect(within(dryRunResult).getByText('数据连接预览')).toBeInTheDocument();
     expect(within(dryRunResult).getByText('AI契约校验')).toBeInTheDocument();
     expect(within(dryRunResult).getByText('结果写入预览')).toBeInTheDocument();
+    expect(within(dryRunResult).getByLabelText('Skill 输出映射校验摘要')).toHaveTextContent('已校验 1 个字段');
+    expect(within(dryRunResult).getByText('insights_path: $.insights 已命中')).toBeInTheDocument();
     expect(within(dryRunResult).getAllByText('Skill 输出样例').length).toBeGreaterThan(0);
     expect(within(dryRunResult).getByText(/预计写入 1 条/)).toBeInTheDocument();
     expect(within(dryRunResult).getByText(/connection_maxcompute_prod/)).toBeInTheDocument();
@@ -2001,33 +2010,57 @@ describe('ScheduledJobsPage', () => {
               ],
               nodes: [
                 {
+                  debug_actions: [
+                    { enabled: true, label: '复制输入', type: 'copy_input' },
+                    { enabled: true, label: '复制输出', type: 'copy_output' },
+                  ],
                   duration_ms: 318,
                   error: null,
                   id: 'data_connection',
                   input: { week_start: '20260601' },
                   label: '数据连接获取内容',
                   output: { records_imported: 18, response_status_code: 200 },
+                  rerun_hint: '如需重试该节点，请从运行记录复跑整条作业，系统会重新执行数据连接和下游节点。',
+                  rerun_supported: false,
                   retry_count: 1,
+                  stage: 'data_connection',
+                  stage_label: '数据连接',
                   status: 'succeeded',
                 },
                 {
+                  debug_actions: [
+                    { enabled: true, label: '复制输入', type: 'copy_input' },
+                    { enabled: true, label: '复制输出', type: 'copy_output' },
+                  ],
                   duration_ms: 860,
                   error: null,
                   id: 'skill_processing',
                   input: { source_row_count: 18 },
                   label: '经过 Skill 处理后的内容',
                   output: { candidate_count: 1 },
+                  rerun_hint: '如需重试 AI 处理，请从运行记录复跑整条作业，避免跳过数据上下文和知识引用。',
+                  rerun_supported: false,
                   retry_count: 1,
+                  stage: 'ai_processing',
+                  stage_label: 'AI执行',
                   status: 'succeeded',
                 },
                 {
+                  debug_actions: [
+                    { enabled: true, label: '复制输入', type: 'copy_input' },
+                    { enabled: true, label: '复制输出', type: 'copy_output' },
+                  ],
                   duration_ms: 42,
                   error: null,
                   id: 'result_action',
                   input: { write_target: 'user_feedback_insights' },
                   label: '结果写入反馈内容',
                   output: { created_ids: ['insight_001'] },
+                  rerun_hint: '如需重新写入结果，请先确认目标幂等策略，再从运行记录复跑整条作业。',
+                  rerun_supported: false,
                   retry_count: 1,
+                  stage: 'result_action',
+                  stage_label: '动作',
                   status: 'succeeded',
                 },
               ],
@@ -2069,7 +2102,12 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getAllByText('动作反馈内容').length).toBeGreaterThan(0);
     expect(within(dialog).getByText('运行 Trace DAG')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('318ms');
+    expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('数据连接');
+    expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('复跑整条作业');
+    expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('复制输入');
+    expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('复制输出');
     expect(within(dialog).getByLabelText('Trace 节点 经过 Skill 处理后的内容')).toHaveTextContent('860ms');
+    expect(within(dialog).getByLabelText('Trace 节点 经过 Skill 处理后的内容')).toHaveTextContent('AI执行');
     expect(within(dialog).getByText('data_connection → skill_processing')).toBeInTheDocument();
     expect(within(dialog).getByText('skill_processing → result_action')).toBeInTheDocument();
     expect(within(dialog).getByText('动作执行状态')).toBeInTheDocument();

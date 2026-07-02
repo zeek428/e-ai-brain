@@ -7,7 +7,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
-import { Button, Space, Tag, Typography } from 'antd';
+import { Button, Space, Spin, Tag, Typography } from 'antd';
 import type { TablePaginationConfig } from 'antd';
 import type { SorterResult } from 'antd/es/table/interface';
 
@@ -105,7 +105,14 @@ export function ScheduledJobConfigTable({
   scheduleTypeLabelMap,
 }: ScheduledJobConfigTableProps) {
   return (
-    <ProTable<ScheduledJobRecord>
+    <>
+      {loading ? (
+        <Space aria-label="作业配置加载中" aria-live="polite" size={8} style={{ marginBottom: 12 }}>
+          <Spin size="small" />
+          <Typography.Text type="secondary">正在加载作业配置...</Typography.Text>
+        </Space>
+      ) : null}
+      <ProTable<ScheduledJobRecord>
       cardBordered
       className="management-list-table"
       columns={[
@@ -249,6 +256,7 @@ export function ScheduledJobConfigTable({
       dataSource={jobs}
       dateFormatter="string"
       headerTitle="作业配置"
+      locale={{ emptyText: loading ? '正在加载作业配置...' : '暂无作业配置' }}
       loading={loading}
       onChange={(
         pagination: TablePaginationConfig,
@@ -286,6 +294,7 @@ export function ScheduledJobConfigTable({
           刷新
         </Button>,
       ]}
-    />
+      />
+    </>
   );
 }

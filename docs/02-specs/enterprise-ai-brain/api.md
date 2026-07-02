@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.503 |
+| 功能版本 | v1.1.504 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.504 | 2026-07-02 | 定时作业运行 `result_summary.trace_graph.nodes[]` 补齐 `stage/stage_label/debug_actions/rerun_supported/rerun_hint`，用于运行详情节点复制、阶段识别和复跑边界提示 | Codex |
 | v1.1.503 | 2026-07-02 | 定时作业 catalog 返回 `generic_result_actions[]`，通用 AI 分析作业支持结果保存/通知动作写入预览，并收紧多连接同插件校验 | Codex |
 | v1.1.502 | 2026-07-02 | 插件执行调用类定时作业成功响应摘要返回 `job_type` 与“插件执行调用完成”，不再暴露旧占位文案 | Codex |
 | v1.1.501 | 2026-07-02 | 定时作业 `SKILL_OUTPUT_SCHEMA_INVALID` 失败摘要补齐 `model_log_id`，用于区分模型未调用和模型输出契约失败 | Codex |

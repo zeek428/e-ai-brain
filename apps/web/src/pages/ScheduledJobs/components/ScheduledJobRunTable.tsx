@@ -4,7 +4,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
-import { Button, Space } from 'antd';
+import { Button, Space, Spin, Typography } from 'antd';
 import type { TablePaginationConfig } from 'antd';
 import type { SorterResult } from 'antd/es/table/interface';
 
@@ -71,6 +71,12 @@ export function ScheduledJobRunTable({
   return (
     <>
       <ScheduledJobRunObservabilityOverview loading={loading} observability={observability} />
+      {loading ? (
+        <Space aria-label="运行记录加载中" aria-live="polite" size={8} style={{ marginBottom: 12 }}>
+          <Spin size="small" />
+          <Typography.Text type="secondary">正在加载运行记录...</Typography.Text>
+        </Space>
+      ) : null}
       <ProTable<ScheduledJobRunRecord>
         cardBordered
         className="management-list-table"
@@ -145,6 +151,7 @@ export function ScheduledJobRunTable({
         dataSource={runs}
         dateFormatter="string"
         headerTitle="运行记录"
+        locale={{ emptyText: loading ? '正在加载运行记录...' : '暂无运行记录' }}
         loading={loading}
         onChange={(
           pagination: TablePaginationConfig,

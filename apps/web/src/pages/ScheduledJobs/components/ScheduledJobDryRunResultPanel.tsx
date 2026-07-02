@@ -50,6 +50,49 @@ function actionPreviewCount(action: Record<string, unknown>): number | undefined
   return numberValue(writePreview?.candidate_count) ?? numberValue(writePreview?.records_imported);
 }
 
+function checkedPathLabel(path: Record<string, unknown>): string {
+  const field = stringValue(path.field) ?? '字段';
+  const jsonPath = stringValue(path.path) ?? '-';
+  const supported = path.supported === false ? '未命中' : '已命中';
+  return `${field}: ${jsonPath} ${supported}`;
+}
+
+function ScheduledJobDryRunMappingSummary({ result }: { result: ScheduledJobDryRunResult }) {
+  const aiProcessing = recordValue(result.stages?.ai_processing);
+  const mappingContract = recordValue(aiProcessing?.mapping_contract);
+  if (!mappingContract) {
+    return null;
+  }
+  const checkedPaths = Array.isArray(mappingContract.checked_paths)
+    ? mappingContract.checked_paths.map(recordValue).filter(isRecordValue)
+    : [];
+  const invalidFields = Array.isArray(mappingContract.invalid_fields)
+    ? mappingContract.invalid_fields.map(recordValue).filter(isRecordValue)
+    : [];
+  const status = stringValue(mappingContract.status) ?? stringValue(aiProcessing?.mapping_status) ?? 'not_required';
+  return (
+    <Space aria-label="Skill 输出映射校验摘要" orientation="vertical" size={8} style={{ width: '100%' }}>
+      <Space size={[8, 8]} wrap>
+        <Typography.Text type="secondary">Skill 输出映射</Typography.Text>
+        <Tag color={status === 'succeeded' ? 'green' : status === 'failed' ? 'red' : 'default'}>
+          {status}
+        </Tag>
+        <Tag color="blue">已校验 {checkedPaths.length} 个字段</Tag>
+        {invalidFields.length ? <Tag color="red">异常 {invalidFields.length} 个</Tag> : null}
+      </Space>
+      {checkedPaths.length ? (
+        <Space size={[8, 8]} wrap>
+          {checkedPaths.map((path, index) => (
+            <Tag color={path.supported === false ? 'red' : 'green'} key={`${checkedPathLabel(path)}-${index}`}>
+              {checkedPathLabel(path)}
+            </Tag>
+          ))}
+        </Space>
+      ) : null}
+    </Space>
+  );
+}
+
 function ScheduledJobDryRunSourceSummary({ result }: { result: ScheduledJobDryRunResult }) {
   const aiProcessing = recordValue(result.stages?.ai_processing);
   const resultActions = Array.isArray(result.stages?.result_actions)
@@ -102,6 +145,7 @@ export function ScheduledJobDryRunResultPanel({ result }: { result: ScheduledJob
           <Typography.Text type="secondary">{result.job_type}</Typography.Text>
         </Space>
         <ScheduledJobDryRunSourceSummary result={result} />
+        <ScheduledJobDryRunMappingSummary result={result} />
         <ScheduledJobJsonPreview title="数据连接预览" value={result.stages?.data_connection} />
         <ScheduledJobJsonPreview title="AI契约校验" value={result.stages?.ai_processing} />
         <ScheduledJobJsonPreview title="结果写入预览" value={result.stages?.result_actions} />

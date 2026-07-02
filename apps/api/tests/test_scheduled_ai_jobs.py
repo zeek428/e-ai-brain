@@ -126,6 +126,60 @@ def test_scheduled_job_run_projection_adds_trace_graph_and_source_summary():
         "result_action",
     ]
     assert {node["retry_count"] for node in trace_graph["nodes"]} == {2}
+    by_node = {node["id"]: node for node in trace_graph["nodes"]}
+    assert by_node["data_connection"]["stage"] == "data_connection"
+    assert by_node["data_connection"]["stage_label"] == "数据连接"
+    assert {"enabled": True, "label": "复制输入", "type": "copy_input"} in by_node[
+        "data_connection"
+    ]["debug_actions"]
+    assert {"enabled": True, "label": "复制输出", "type": "copy_output"} in by_node[
+        "data_connection"
+    ]["debug_actions"]
+    assert by_node["result_action"]["rerun_supported"] is False
+    assert "复跑整条作业" in by_node["result_action"]["rerun_hint"]
+
+
+def test_scheduled_job_run_projection_refreshes_legacy_trace_graph_debug_fields():
+    projected = public_scheduled_job_run_projection(
+        {
+            "config_snapshot": {"max_retry_count": 0},
+            "id": "scheduled_job_run_legacy_trace",
+            "result_summary": {
+                "execution_nodes": {
+                    "data_connection": {
+                        "input_mapping": {"week_start": "2026-06-22"},
+                        "label": "数据连接获取内容",
+                        "records_imported": 3,
+                        "status": "succeeded",
+                    },
+                    "skill_processing": {
+                        "input": {"source_row_count": 3},
+                        "label": "Skill 处理后内容",
+                        "output": {"candidate_count": 1},
+                        "status": "succeeded",
+                    },
+                },
+                "trace_graph": {
+                    "edges": [{"from": "data_connection", "to": "skill_processing"}],
+                    "nodes": [
+                        {
+                            "id": "data_connection",
+                            "input": {"week_start": "2026-06-22"},
+                            "label": "数据连接获取内容",
+                            "output": {"records_imported": 3},
+                            "status": "succeeded",
+                        },
+                    ],
+                },
+            },
+        },
+    )
+
+    trace_graph = projected["result_summary"]["trace_graph"]
+    by_node = {node["id"]: node for node in trace_graph["nodes"]}
+    assert by_node["data_connection"]["stage_label"] == "数据连接"
+    assert by_node["data_connection"]["debug_actions"]
+    assert "复跑整条作业" in by_node["skill_processing"]["rerun_hint"]
 
 
 def test_scheduled_job_run_projection_expands_multi_connection_and_action_trace_nodes():
@@ -209,10 +263,12 @@ def test_scheduled_job_run_projection_expands_multi_connection_and_action_trace_
     assert first_connection["input"]["connection_id"] == "plugin_connection_a"
     assert first_connection["input"]["connection_index"] == 1
     assert first_connection["output"]["records_imported"] == 2
+    assert first_connection["stage_label"] == "数据连接"
     second_action = trace_graph["nodes"][-1]
     assert second_action["input"]["action_id"] == "plugin_action_archive"
     assert second_action["input"]["action_index"] == 2
     assert second_action["output"] == {"stored_in_run_result": True}
+    assert second_action["stage"] == "result_action"
     assert {node["retry_count"] for node in trace_graph["nodes"]} == {1}
 
 

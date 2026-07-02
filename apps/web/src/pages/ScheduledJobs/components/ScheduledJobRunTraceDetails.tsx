@@ -1,4 +1,5 @@
-import { Descriptions, Space, Tag, Typography } from 'antd';
+import { CopyOutlined } from '@ant-design/icons';
+import { Button, Descriptions, message, Space, Tag, Typography } from 'antd';
 
 import { type ScheduledJobRunRecord } from '../../../services/aiBrain';
 import { formatDisplayDateTime } from '../../../utils/dateTime';
@@ -28,6 +29,33 @@ const templateSourceTypeLabelByValue = new Map([
 function templateSourceDisplayText(source: TemplateSourceView): string {
   const title = source.title || source.sourceId || '-';
   return source.sourceId && source.sourceId !== title ? `${title} (${source.sourceId})` : title;
+}
+
+function traceDebugActionTypes(node: Record<string, unknown>): Set<string> {
+  const rawActions = Array.isArray(node.debug_actions) ? node.debug_actions : [];
+  return new Set(
+    rawActions
+      .filter(isTraceRecord)
+      .filter((action) => action.enabled !== false)
+      .map((action) => nodeFieldText(action.type))
+      .filter((type): type is string => Boolean(type)),
+  );
+}
+
+function copyTraceJson(label: string, value: unknown) {
+  const text = formatTraceJsonValue(value);
+  if (text === '暂无数据') {
+    void message.warning(`${label}暂无可复制内容`);
+    return;
+  }
+  if (!navigator.clipboard?.writeText) {
+    void message.warning('当前浏览器不支持直接复制，请从 JSON 区域手动复制');
+    return;
+  }
+  void navigator.clipboard.writeText(text).then(
+    () => message.success(`${label}已复制`),
+    () => message.error(`${label}复制失败`),
+  );
 }
 
 export function TemplateSourceSummary({ source }: { source: TemplateSourceView | undefined }) {
@@ -201,6 +229,9 @@ export function RunTraceDag({ run }: { run: ScheduledJobRunRecord }) {
           const duration = typeof node.duration_ms === 'number' ? `${node.duration_ms}ms` : '-';
           const retryCount = typeof node.retry_count === 'number' ? node.retry_count : 0;
           const error = nodeFieldText(node.error);
+          const debugActionTypes = traceDebugActionTypes(node);
+          const rerunHint = nodeFieldText(node.rerun_hint);
+          const stageLabel = nodeFieldText(node.stage_label);
           const status = nodeFieldText(node.status) ?? 'unknown';
           return (
             <div
@@ -216,6 +247,7 @@ export function RunTraceDag({ run }: { run: ScheduledJobRunRecord }) {
               <Space orientation="vertical" size={8} style={{ width: '100%' }}>
                 <Space wrap>
                   <Tag color={runNodeTagColor(status)}>{status}</Tag>
+                  {stageLabel ? <Tag color="geekblue">{stageLabel}</Tag> : null}
                   <Typography.Text strong>{label}</Typography.Text>
                 </Space>
                 <Space wrap size={8}>
@@ -223,6 +255,39 @@ export function RunTraceDag({ run }: { run: ScheduledJobRunRecord }) {
                   <Tag>重试 {retryCount}</Tag>
                   {error ? <Tag color="red">{error}</Tag> : null}
                 </Space>
+                <Space wrap size={8}>
+                  {debugActionTypes.has('copy_input') ? (
+                    <Button
+                      icon={<CopyOutlined />}
+                      onClick={() => copyTraceJson('节点输入', node.input)}
+                      size="small"
+                    >
+                      复制输入
+                    </Button>
+                  ) : null}
+                  {debugActionTypes.has('copy_output') ? (
+                    <Button
+                      icon={<CopyOutlined />}
+                      onClick={() => copyTraceJson('节点输出', node.output)}
+                      size="small"
+                    >
+                      复制输出
+                    </Button>
+                  ) : null}
+                  {debugActionTypes.has('copy_error') ? (
+                    <Button
+                      danger
+                      icon={<CopyOutlined />}
+                      onClick={() => copyTraceJson('节点错误', node.error)}
+                      size="small"
+                    >
+                      复制错误
+                    </Button>
+                  ) : null}
+                </Space>
+                {rerunHint ? (
+                  <Typography.Text type="secondary">{rerunHint}</Typography.Text>
+                ) : null}
                 <Typography.Paragraph
                   style={{
                     background: '#fff',

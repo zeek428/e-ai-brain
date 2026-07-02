@@ -17,6 +17,9 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 定时作业运行 Trace DAG 节点补齐 `stage/stage_label/debug_actions/rerun_supported/rerun_hint`，运行详情可直接复制节点输入、输出或错误，并明确当前支持运行记录级复跑而非单节点复跑。
+- 定时作业全链路试运行结果面板新增 Skill 输出映射校验摘要，直接展示校验状态、已校验字段数、异常字段数和命中的 JSONPath。
+- 定时作业作业配置和运行记录列表在拉取数据时展示明确加载提示，避免移动端或弱网下把“暂无数据”误判为真实空列表。
 - 通用 AI 分析类定时作业的结果动作执行反馈补齐 `write_preview`，邮件通知记录会在结果写入记录中展示主题、投递状态和收件人样例。
 - 定时作业运行详情基础信息新增“运行摘要”展示，优先呈现后端 `result_summary.message`，插件执行调用成功时无需展开 JSON 即可看到“插件执行调用完成”。
 - 插件执行调用类定时作业成功运行摘要改为“插件执行调用完成”，并保留 `job_type`、插件摘要和三段 `execution_nodes`，不再在运行详情暴露 `No handler implemented` 占位文案。
