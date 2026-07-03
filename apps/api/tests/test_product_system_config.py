@@ -169,6 +169,23 @@ def test_product_config_supports_list_patch_and_active_filters():
     assert patched_repository["status"] == "inactive"
     assert "credential_ref" not in patched_repository
     assert patched_repository["credential_ref_configured"] is True
+    patched_repository_path = client.patch(
+        f"/api/product-git-repositories/{repository['id']}",
+        json={"project_path": "rd/ai-brain-explicit"},
+        headers=headers,
+    ).json()["data"]
+    assert patched_repository_path["project_path"] == "rd/ai-brain-explicit"
+    patched_repository_remote = client.patch(
+        f"/api/product-git-repositories/{repository['id']}",
+        json={"remote_url": "https://gitlab.internal/rd/ai-brain-worker.git"},
+        headers=headers,
+    ).json()["data"]
+    assert patched_repository_remote["project_path"] == "rd/ai-brain-worker"
+    repositories_after_remote_patch = client.get(
+        f"/api/products/{product['id']}/git-repositories?active_only=false",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert repositories_after_remote_patch[0]["project_path"] == "rd/ai-brain-worker"
 
 
 def test_product_detail_endpoint_returns_single_product():

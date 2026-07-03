@@ -485,12 +485,25 @@ describe('ProductsPage', () => {
     );
   }, 10_000);
 
-  it('saves GitHub provider when editing product Git resources', async () => {
+  it('saves Project Path when editing product Git resources', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
         headers: { 'Content-Type': 'application/json' },
         status: 200,
       });
+    const repositoryRecord = {
+      credential_ref_configured: true,
+      default_branch: 'main',
+      git_provider: 'gitlab',
+      id: 'repo_api',
+      name: 'AI Brain 仓库',
+      project_path: 'platform/ai-brain',
+      remote_url: 'https://gitlab.example.com/platform/ai-brain.git',
+      repo_type: 'code',
+      root_path: '/',
+      status: 'active',
+    };
+    let patchBody: Record<string, unknown> | undefined;
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
@@ -527,44 +540,18 @@ describe('ProductsPage', () => {
       if (path === '/api/products/product_api/git-repositories' && method === 'GET') {
         return jsonResponse({
           data: {
-            items: [
-              {
-                credential_ref_configured: true,
-                default_branch: 'main',
-                git_provider: 'gitlab',
-                id: 'repo_api',
-                name: 'AI Brain 仓库',
-                project_path: 'platform/ai-brain',
-                remote_url: 'https://gitlab.example.com/platform/ai-brain.git',
-                repo_type: 'code',
-                root_path: '/',
-                status: 'active',
-              },
-            ],
+            items: [repositoryRecord],
             total: 1,
           },
         });
       }
       if (path === '/api/product-git-repositories/repo_api' && method === 'PATCH') {
-        expect(JSON.parse(String(init?.body))).toMatchObject({
-          git_provider: 'github',
-          name: 'AI Brain 仓库',
-          project_path: 'zeek428/e-ai-brain',
-          remote_url: 'git@github.com:zeek428/e-ai-brain.git',
+        patchBody = JSON.parse(String(init?.body));
+        Object.assign(repositoryRecord, patchBody, {
+          credential_ref_configured: true,
         });
         return jsonResponse({
-          data: {
-            credential_ref_configured: true,
-            default_branch: 'main',
-            git_provider: 'github',
-            id: 'repo_api',
-            name: 'AI Brain 仓库',
-            project_path: 'zeek428/e-ai-brain',
-            remote_url: 'git@github.com:zeek428/e-ai-brain.git',
-            repo_type: 'code',
-            root_path: '/',
-            status: 'active',
-          },
+          data: repositoryRecord,
         });
       }
       throw new Error(`Unexpected fetch call: ${path} ${method}`);
@@ -583,10 +570,8 @@ describe('ProductsPage', () => {
       within(repositoryRow.closest('tr') as HTMLElement).getByRole('button', { name: /编辑/ }),
     );
 
-    fireEvent.mouseDown(screen.getByLabelText('代码平台'));
-    fireEvent.click(await screen.findByRole('option', { name: 'GitHub' }));
     fireEvent.change(screen.getByLabelText('Remote URL'), {
-      target: { value: 'git@github.com:zeek428/e-ai-brain.git' },
+      target: { value: 'https://gitlab.example.com/zeek428/e-ai-brain.git' },
     });
     fireEvent.change(screen.getByLabelText('Project Path'), {
       target: { value: 'zeek428/e-ai-brain' },
@@ -599,5 +584,104 @@ describe('ProductsPage', () => {
         'PATCH',
       ]),
     );
+    expect(patchBody).toMatchObject({
+      git_provider: 'gitlab',
+      name: 'AI Brain 仓库',
+      project_path: 'zeek428/e-ai-brain',
+      remote_url: 'https://gitlab.example.com/zeek428/e-ai-brain.git',
+    });
+    await waitFor(() => expect(repositoryRecord.project_path).toBe('zeek428/e-ai-brain'));
+  });
+
+  it('lets the backend rederive Project Path when only Remote URL is changed', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const repositoryRecord = {
+      credential_ref_configured: true,
+      default_branch: 'main',
+      git_provider: 'gitlab',
+      id: 'repo_api',
+      name: 'AI Brain 仓库',
+      project_path: 'platform/ai-brain',
+      remote_url: 'https://gitlab.example.com/platform/ai-brain.git',
+      repo_type: 'code',
+      root_path: '/',
+      status: 'active',
+    };
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if ((path === '/api/products' || path.startsWith('/api/products?')) && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'AI-BRAIN',
+                id: 'product_api',
+                module_count: 1,
+                name: 'AI Brain',
+                owner_team: 'AI Platform',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/versions' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/product-versions' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/products/product_api/modules' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/system/related-systems?product_id=product_api' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/products/product_api/git-repositories' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [repositoryRecord],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-git-repositories/repo_api' && method === 'PATCH') {
+        const body = JSON.parse(String(init?.body));
+        expect(body.remote_url).toBe('https://gitlab.example.com/platform/ai-brain-web.git');
+        expect(body.project_path).toBeUndefined();
+        Object.assign(repositoryRecord, body, {
+          credential_ref_configured: true,
+          project_path: 'platform/ai-brain-web',
+        });
+        return jsonResponse({ data: repositoryRecord });
+      }
+      throw new Error(`Unexpected fetch call: ${path} ${method}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ProductsPage />);
+
+    expect(await screen.findByText('AI Brain')).toBeInTheDocument();
+    const productRow = screen.getByText('AI Brain').closest('tr');
+    expect(productRow).not.toBeNull();
+    fireEvent.click(within(productRow as HTMLElement).getByRole('button', { name: '配置' }));
+    const repositoryRow = await screen.findByText('AI Brain 仓库');
+    fireEvent.click(
+      within(repositoryRow.closest('tr') as HTMLElement).getByRole('button', { name: /编辑/ }),
+    );
+    fireEvent.change(screen.getByLabelText('Remote URL'), {
+      target: { value: 'https://gitlab.example.com/platform/ai-brain-web.git' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => expect(repositoryRecord.project_path).toBe('platform/ai-brain-web'));
   });
 });

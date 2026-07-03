@@ -142,7 +142,9 @@ def create_product_git_repository(
     ensure_enum(payload.status, GIT_REPO_STATUSES, "product Git repository status")
     remote_url = _optional_text(payload.remote_url)
     project_id = _optional_text(payload.project_id)
-    project_path = _optional_text(payload.project_path) or _repository_path_from_remote_url(remote_url)
+    project_path = _optional_text(payload.project_path) or _repository_path_from_remote_url(
+        remote_url
+    )
     _validate_git_repository_binding(
         payload.git_provider,
         project_id=project_id,
@@ -202,10 +204,20 @@ def patch_product_git_repository(
     for key in ("credential_ref", "project_id", "project_path", "remote_url"):
         if key in updates:
             updates[key] = _optional_text(updates[key])
+    remote_url_updated = "remote_url" in updates
+    project_path_updated = "project_path" in updates
     next_provider = updates.get("git_provider", repository["git_provider"])
     next_project_id = updates.get("project_id", repository.get("project_id"))
     next_project_path = updates.get("project_path", repository.get("project_path"))
     next_remote_url = updates.get("remote_url", repository.get("remote_url"))
+    remote_url_changed = remote_url_updated and next_remote_url != _optional_text(
+        repository.get("remote_url")
+    )
+    if remote_url_changed and not project_path_updated:
+        derived_project_path = _repository_path_from_remote_url(next_remote_url)
+        if derived_project_path:
+            updates["project_path"] = derived_project_path
+            next_project_path = derived_project_path
     if not next_project_path:
         next_project_path = _repository_path_from_remote_url(next_remote_url)
         if next_project_path:

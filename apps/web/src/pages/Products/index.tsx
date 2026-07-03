@@ -511,13 +511,18 @@ export default function ProductsPage() {
         }
       }
       if (resourceEditor.kind === 'repository') {
+        const projectPathValue = trimText(values.project_path);
+        const originalProjectPath = resourceEditor.record
+          ? trimText(resourceEditor.record.projectPath ?? undefined)
+          : undefined;
+        const projectPathChanged = projectPathValue !== originalProjectPath;
         const payload: ProductGitRepositoryMutationPayload = {
           credential_ref: trimText(values.credential_ref),
           default_branch: trimText(values.default_branch) ?? 'main',
           git_provider: values.git_provider ?? 'gitlab',
           name: values.name.trim(),
           project_id: trimText(values.project_id),
-          project_path: trimText(values.project_path),
+          project_path: projectPathValue,
           remote_url: trimText(values.remote_url),
           repo_type: trimText(values.repo_type) ?? 'code',
           root_path: trimText(values.root_path) ?? '/',
@@ -526,6 +531,11 @@ export default function ProductsPage() {
         if (resourceEditor.record) {
           if (!payload.credential_ref) {
             delete payload.credential_ref;
+          }
+          if (projectPathChanged) {
+            payload.project_path = projectPathValue ?? null;
+          } else {
+            delete payload.project_path;
           }
           await updateProductGitRepository(resourceEditor.record.id, payload);
         } else {

@@ -960,7 +960,7 @@ export type ProductGitRepositoryMutationPayload = {
   git_provider?: string;
   name: string;
   project_id?: string;
-  project_path?: string;
+  project_path?: string | null;
   remote_url?: string;
   repo_type?: string;
   root_path?: string;
