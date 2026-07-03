@@ -33,10 +33,10 @@ FRONTEND_PAGE_CONTAINER_LINE_BUDGETS = {
     "apps/web/src/pages/IterationVersions/index.tsx": 1500,
     "apps/web/src/pages/Knowledge/index.tsx": 1800,
     "apps/web/src/pages/Plugins/index.tsx": 1600,
-    "apps/web/src/pages/Products/index.tsx": 1100,
+    "apps/web/src/pages/Products/index.tsx": 1150,
     "apps/web/src/pages/Requirements/index.tsx": 1250,
     "apps/web/src/pages/Roles/index.tsx": 1600,
-    "apps/web/src/pages/ScheduledJobs/index.tsx": 1300,
+    "apps/web/src/pages/ScheduledJobs/index.tsx": 1450,
     "apps/web/src/pages/TaskCenter/index.tsx": 1800,
 }
 

@@ -362,16 +362,22 @@ function applySchemaValuesToRequestConfig(
     }
     if (field.type === 'github_repository_url') {
       const parsed = parseGitRepositoryAddress(value);
-      setValueAtPath(root, 'request_config.query.owner', parsed?.owner ?? '');
-      setValueAtPath(root, 'request_config.query.repo', parsed?.repo ?? '');
+      if (!parsed) {
+        return;
+      }
+      setValueAtPath(root, 'request_config.query.owner', parsed.owner);
+      setValueAtPath(root, 'request_config.query.repo', parsed.repo);
       return;
     }
     if (field.type === 'gitlab_project_url') {
       const parsed = parseGitLabProjectAddress(value);
+      if (!parsed) {
+        return;
+      }
       setValueAtPath(root, 'request_config.query.api_version', 'v4');
-      setValueAtPath(root, 'request_config.query.group_id', parsed?.projectPath.split('/', 1)[0] ?? '');
-      setValueAtPath(root, 'request_config.query.project_id', parsed?.projectId ?? '');
-      setValueAtPath(root, 'request_config.query.project_path', parsed?.projectPath ?? '');
+      setValueAtPath(root, 'request_config.query.group_id', parsed.projectPath.split('/', 1)[0]);
+      setValueAtPath(root, 'request_config.query.project_id', parsed.projectId);
+      setValueAtPath(root, 'request_config.query.project_path', parsed.projectPath);
       return;
     }
     if (!field.path?.startsWith('request_config.')) {

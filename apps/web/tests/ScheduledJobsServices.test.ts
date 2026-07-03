@@ -151,7 +151,13 @@ describe('scheduled AI job service mappings', () => {
       if (input === '/api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_001' && init?.method === 'GET') {
         return jsonResponse({
           data: {
-            items: [{ id: 'scheduled_job_run_001', status: 'succeeded' }],
+            items: [
+              {
+                id: 'scheduled_job_run_001',
+                scheduled_job_name: '每周建议',
+                status: 'succeeded',
+              },
+            ],
             total: 1,
           },
         });
@@ -250,7 +256,7 @@ describe('scheduled AI job service mappings', () => {
     ).resolves.toMatchObject({ id: 'scheduled_job_001' });
     await expect(runScheduledJob('scheduled_job_001')).resolves.toMatchObject({ id: 'scheduled_job_run_001' });
     await expect(fetchScheduledJobRuns({ scheduledJobId: 'scheduled_job_001' })).resolves.toEqual([
-      expect.objectContaining({ id: 'scheduled_job_run_001' }),
+      expect.objectContaining({ id: 'scheduled_job_run_001', scheduled_job_name: '每周建议' }),
     ]);
     await expect(
       fetchScheduledJobRuns({ runIds: ['scheduled_job_run_001', 'scheduled_job_run_002'] }),

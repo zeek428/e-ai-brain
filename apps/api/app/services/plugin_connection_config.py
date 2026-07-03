@@ -12,13 +12,28 @@ def ensure_plugin_connection_auth_requirements(
     auth_type: str,
     plugin: dict[str, Any],
 ) -> None:
-    if plugin.get("code") != "github":
+    plugin_code = plugin.get("code")
+    if plugin_code == "github":
+        if auth_type != "bearer":
+            raise api_error(400, "VALIDATION_ERROR", "GitHub connection requires bearer auth_type")
+        token_ref = (auth_config or {}).get("token_ref")
+        if not isinstance(token_ref, str) or not token_ref.strip():
+            raise api_error(400, "VALIDATION_ERROR", "GitHub token_ref is required")
         return
-    if auth_type != "bearer":
-        raise api_error(400, "VALIDATION_ERROR", "GitHub connection requires bearer auth_type")
-    token_ref = (auth_config or {}).get("token_ref")
-    if not isinstance(token_ref, str) or not token_ref.strip():
-        raise api_error(400, "VALIDATION_ERROR", "GitHub token_ref is required")
+    if plugin_code != "gitlab":
+        return
+    if auth_type != "api_key_header":
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "GitLab connection requires api_key_header auth_type",
+        )
+    header_name = (auth_config or {}).get("header_name")
+    if not isinstance(header_name, str) or not header_name.strip():
+        raise api_error(400, "VALIDATION_ERROR", "GitLab header_name is required")
+    secret_ref = (auth_config or {}).get("secret_ref")
+    if not isinstance(secret_ref, str) or not secret_ref.strip():
+        raise api_error(400, "VALIDATION_ERROR", "GitLab secret_ref is required")
 
 
 def parse_git_repository_address(value: Any) -> dict[str, str] | None:

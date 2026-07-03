@@ -142,17 +142,17 @@ export function ConnectionSchemaFields({
     <Space orientation="vertical" size={12} style={{ width: '100%' }}>
       {pluginCode === 'github' ? (
         <Alert
-          description="Params 属于高级查询参数，只有需要补充 GitHub API query 时再填写，例如 state、per_page、ref。Headers 默认保留 Accept 和 X-GitHub-Api-Version。"
+          description="仓库地址为可选项，仅在 GitHub API 动作需要默认 owner/repo 时填写；代码巡检使用产品代码库 Remote URL，Token 由本连接统一维护。Params 只用于补充 state、per_page、ref 等额外 query。"
           showIcon
-          title="GitHub 连接只需要粘贴仓库地址；系统会自动解析 owner/repo，Params 不用再填。"
+          title="GitHub 连接只需要配置 Token；仓库地址不用重复填写。"
           type="info"
         />
       ) : null}
       {pluginCode === 'gitlab' ? (
         <Alert
-          description="填写本地 GitLab 项目地址后，系统会自动同步 Endpoint URL，并解析 project_id/project_path 给 GitLab API 使用。Params 只用于补充额外查询参数。"
+          description="GitLab 地址为可选项，仅在 GitLab API 动作需要默认 project_id/project_path 时填写；代码巡检使用产品代码库 Remote URL，Token 由本连接统一维护。Params 只用于补充额外 query。"
           showIcon
-          title="GitLab 连接只需要粘贴本地项目地址。"
+          title="GitLab 连接只需要配置 Endpoint 和 Token；项目地址不用重复填写。"
           type="info"
         />
       ) : null}

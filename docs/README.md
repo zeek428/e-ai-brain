@@ -11,16 +11,16 @@ AI Brain 是企业 AI 大脑平台项目。v1 以“研发大脑”为样板，M
 | [CLAUDE.md](CLAUDE.md) | 面向 AI 编码助手的文档阅读入口。 |
 | [01-prd/enterprise-ai-brain/prd.md](01-prd/enterprise-ai-brain/prd.md) | 项目级 PRD，描述产品目标、范围、用户故事和验收标准。 |
 | [01-prd/enterprise-ai-brain/solution-overview.html](01-prd/enterprise-ai-brain/solution-overview.html) | 面向管理层和非技术人员的 HTML 方案说明，包含业务价值、AI 赋能机制、核心闭环、总体架构图、企业级扩展架构、组件可更替性、项目风险、实施路线、阶段边界和治理要点。 |
-| [02-specs/enterprise-ai-brain/spec.md](02-specs/enterprise-ai-brain/spec.md) | 项目级技术规格，描述模块、数据、状态、风险和测试策略。 |
-| [02-specs/enterprise-ai-brain/api.md](02-specs/enterprise-ai-brain/api.md) | 项目级 API 文档，描述接口契约和错误码。 |
-| [02-specs/enterprise-ai-brain/test-case.md](02-specs/enterprise-ai-brain/test-case.md) | 项目级测试用例，映射 PRD 验收标准。 |
+| [02-specs/enterprise-ai-brain/spec.md](02-specs/enterprise-ai-brain/spec.md) | 项目级技术规格入口，保留跨域架构、数据、状态、风险和测试策略，业务域细节见 `domains/`。 |
+| [02-specs/enterprise-ai-brain/api.md](02-specs/enterprise-ai-brain/api.md) | 项目级 API 文档入口，接口细节按业务域拆入 `api/` 分册。 |
+| [02-specs/enterprise-ai-brain/test-case.md](02-specs/enterprise-ai-brain/test-case.md) | 项目级测试用例入口，详细用例按业务域拆入 `test-cases/`。 |
 
 ## 推荐阅读顺序
 
 1. [01-prd/enterprise-ai-brain/prd.md](01-prd/enterprise-ai-brain/prd.md) — 理解产品范围和验收标准。
 2. [02-specs/enterprise-ai-brain/spec.md](02-specs/enterprise-ai-brain/spec.md) — 理解技术实现边界。
-3. [02-specs/enterprise-ai-brain/api.md](02-specs/enterprise-ai-brain/api.md) — 理解前后端接口契约。
-4. [02-specs/enterprise-ai-brain/test-case.md](02-specs/enterprise-ai-brain/test-case.md) — 理解测试与验收要求。
+3. [02-specs/enterprise-ai-brain/api.md](02-specs/enterprise-ai-brain/api.md) — 进入 API 分册索引，再按业务域阅读接口契约。
+4. [02-specs/enterprise-ai-brain/test-case.md](02-specs/enterprise-ai-brain/test-case.md) — 进入测试用例索引，再按业务域阅读验收要求。
 5. [02-specs/architecture/system-overview.md](02-specs/architecture/system-overview.md) 和 [02-specs/architecture/tech-stack.md](02-specs/architecture/tech-stack.md) — 快速查看架构和技术栈摘要。
 
 ## 实现者最短路径
@@ -61,7 +61,26 @@ docs/
 │   └── enterprise-ai-brain/
 │       ├── spec.md
 │       ├── api.md
-│       └── test-case.md
+│       ├── test-case.md
+│       ├── api/
+│       │   ├── README.md
+│       │   ├── common-and-auth.md
+│       │   ├── catalog.md
+│       │   ├── system-governance-and-platform.md
+│       │   ├── system-rbac-and-settings.md
+│       │   ├── product-config.md
+│       │   ├── platform-settings-and-model-gateway.md
+│       │   ├── assistant-workbench.md
+│       │   ├── delivery-and-tasks.md
+│       │   ├── review-and-knowledge.md
+│       │   ├── quality-operations-and-insights.md
+│       │   ├── devops-quality-and-code-inspection.md
+│       │   ├── user-insights-and-bugs.md
+│       │   ├── lifecycle-dashboard-and-diagnostics.md
+│       │   └── audit-and-errors.md
+│       ├── domains/
+│       ├── history/
+│       └── test-cases/
 ├── 03-guides/
 ├── 04-decisions/
 ├── 05-runbooks/
@@ -71,11 +90,11 @@ docs/
 
 ## 文档维护规则
 
-- 项目级文档是唯一维护源，后续版本直接维护 PRD、spec、API 和 test-case。
+- 项目级入口文档仍是维护源：PRD 保持单文件，spec/API/test-case 通过入口文件索引到业务域分册和历史归档。
 - 每个 PRD 验收标准必须映射到至少一个测试用例。
-- 每个新增模块必须同步补充 API、数据模型、权限和审计说明。
+- 每个新增模块必须同步补充对应业务域规格、API 分册、数据模型、权限、审计说明和测试用例。
 - 所有高影响 AI 动作必须保留明确人工确认点。
-- 当实现与文档不一致时，先更新项目级文档，再更新代码；完成后同步 changelog。
+- 当实现与文档不一致时，先更新项目级入口和对应分册，再更新代码；完成后同步 changelog。
 - 部署、监控和故障响应 runbook 同时记录 local、staging 和 production-readiness 门禁；当前实现状态必须以代码、`scripts/production_readiness_check.py` 和目标环境验证结果为准。
 
 ## 本地开发
@@ -96,4 +115,4 @@ uv run pytest
 ```
 
 ---
-最后更新: 2026-06-04
+最后更新: 2026-07-03

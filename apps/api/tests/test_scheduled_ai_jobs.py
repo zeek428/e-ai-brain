@@ -792,6 +792,7 @@ def test_scheduled_job_repository_supports_paged_filtered_queries():
     run_page_query, run_page_params = cursor.calls[3]
     assert "SELECT count(*) FROM scheduled_job_runs run" in run_count_query
     assert "JOIN scheduled_jobs job ON job.id = run.scheduled_job_id" in run_count_query
+    assert "job.name AS scheduled_job_name" in run_page_query
     assert "run.scheduled_job_id = %s" in run_count_query
     assert "run.status = %s" in run_count_query
     assert "run.id = ANY(%s)" in run_count_query

@@ -103,6 +103,7 @@ export function PluginConnectionModal({
   systemVariableOptions,
 }: PluginConnectionModalProps) {
   const isInternalDataSourceConnection = pluginCode === 'internal_data_source';
+  const isGitlabConnection = pluginCode === 'gitlab';
   return (
     <Modal
       footer={[
@@ -186,7 +187,20 @@ export function PluginConnectionModal({
             <Form.Item label="Header 名" name="header_name">
               <Input placeholder="Authorization" />
             </Form.Item>
-            <Form.Item label="Header 值/密钥引用" name="secret_ref">
+            <Form.Item
+              extra={
+                isGitlabConnection
+                  ? '填写 GitLab Personal Access Token，或平台可解析的密钥引用。本地联调可直接填 glpat_xxx；生产建议填 vault/gitlab/token 或 env:GITLAB_TOKEN。'
+                  : undefined
+              }
+              label="Header 值/密钥引用"
+              name="secret_ref"
+              rules={
+                isGitlabConnection
+                  ? [{ required: true, message: '请填写 GitLab Token 或密钥引用' }]
+                  : undefined
+              }
+            >
               <Input placeholder="vault/path/to/token 或 APPCODE xxx" style={{ width: 320 }} />
             </Form.Item>
           </Space>

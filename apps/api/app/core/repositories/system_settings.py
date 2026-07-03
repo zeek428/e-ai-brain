@@ -33,8 +33,10 @@ class SystemSettingsRepository:
         if row is None:
             return {}
         value = row[0] if isinstance(row[0], dict) else {}
+        admin_email = value.get("admin_email", value.get("email"))
         return {
-            "admin_email": value.get("email"),
+            "admin_email": admin_email,
+            "email_delivery": value.get("email_delivery"),
             "updated_at": row[2].isoformat() if row[2] else None,
             "updated_by": row[1],
         }
@@ -47,7 +49,11 @@ class SystemSettingsRepository:
         actor_id: str | None = None,
     ) -> dict[str, Any]:
         admin_email = settings.get("admin_email")
-        setting_value = {"email": admin_email}
+        setting_value = {
+            "admin_email": admin_email,
+            "email": admin_email,
+            "email_delivery": settings.get("email_delivery"),
+        }
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -79,8 +85,10 @@ class SystemSettingsRepository:
                         raise RuntimeError("Audit upsert callback is not configured")
                     self._upsert_audit_events(cursor, [audit_event])
         value = row[0] if row and isinstance(row[0], dict) else {}
+        admin_email = value.get("admin_email", value.get("email"))
         return {
-            "admin_email": value.get("email"),
+            "admin_email": admin_email,
+            "email_delivery": value.get("email_delivery"),
             "updated_at": row[2].isoformat() if row and row[2] else None,
             "updated_by": row[1] if row else actor_id,
         }

@@ -82,7 +82,13 @@ export function ScheduledJobRunTable({
         className="management-list-table"
         columns={[
           { dataIndex: 'id', title: '运行 ID', ellipsis: true, width: 220 },
-          { dataIndex: 'scheduled_job_id', title: '作业 ID', ellipsis: true, width: 220 },
+          {
+            dataIndex: 'scheduled_job_name',
+            title: '作业名称',
+            ellipsis: true,
+            width: 260,
+            render: (_, row) => row.scheduled_job_name || row.scheduled_job_id || '-',
+          },
           { dataIndex: 'status', sorter: true, title: '状态', width: 120 },
           {
             dataIndex: 'trigger_type',

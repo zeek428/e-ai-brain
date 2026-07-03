@@ -212,13 +212,23 @@ def public_scheduled_job_run(
     *,
     current_store: Any,
 ) -> dict[str, Any]:
+    public_run = dict(run)
+    if not public_run.get("scheduled_job_name"):
+        scheduled_job_id = public_run.get("scheduled_job_id")
+        job = (
+            _read_memory_dict(current_store, "scheduled_jobs").get(str(scheduled_job_id))
+            if scheduled_job_id
+            else None
+        )
+        if isinstance(job, dict):
+            public_run["scheduled_job_name"] = job.get("name")
     source_run_id = run.get("source_run_id")
     source_run = (
         _read_memory_dict(current_store, "scheduled_job_runs").get(str(source_run_id))
         if source_run_id
         else None
     )
-    return public_scheduled_job_run_projection(run, source_run=source_run)
+    return public_scheduled_job_run_projection(public_run, source_run=source_run)
 
 
 def list_scheduled_job_runs_response(

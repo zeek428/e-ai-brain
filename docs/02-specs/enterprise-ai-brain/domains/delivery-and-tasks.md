@@ -33,7 +33,7 @@
 - 研发任务：`/delivery/rd-tasks`
 - 需求全链路：`/delivery/requirements/:requirementId/full-chain`
 - 统一需求全链路工作台：`/delivery/full-chain?subject_type=<type>&subject_id=<id>`
-- 核心接口见 [../api.md](../api.md) 的 requirement、task、review、product config、git review 和 export 章节。
+- 核心接口见 [../api/delivery-and-tasks.md](../api/delivery-and-tasks.md) 的 requirement、task、review、export 章节，[../api/product-config.md](../api/product-config.md) 的 product config 章节，以及 [../api/review-and-knowledge.md](../api/review-and-knowledge.md) 的 git review 章节。
 
 ## 当前落地要求
 

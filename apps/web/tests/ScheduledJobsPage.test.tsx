@@ -1479,7 +1479,17 @@ describe('ScheduledJobsPage', () => {
   });
 
   it('loads scheduled job tables through server-side pagination', async () => {
-    const { jobListCalls, runListCalls } = installScheduledJobsFetchMock();
+    const { jobListCalls, runListCalls } = installScheduledJobsFetchMock({
+      runs: [
+        {
+          id: 'scheduled_job_run_weekly_feedback',
+          scheduled_job_id: 'scheduled_job_weekly_feedback',
+          scheduled_job_name: '每周用户反馈洞察抽取',
+          status: 'succeeded',
+          trigger_type: 'manual',
+        },
+      ],
+    });
 
     render(<ScheduledJobsPage />);
 
@@ -1493,6 +1503,11 @@ describe('ScheduledJobsPage', () => {
         '/api/system/scheduled-job-runs?page=1&page_size=10&sort_by=started_at&sort_order=desc',
       ),
     );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
+    expect(await screen.findByText('作业名称')).toBeInTheDocument();
+    expect(screen.getByText('每周用户反馈洞察抽取')).toBeInTheDocument();
+    expect(screen.queryByText('作业 ID')).not.toBeInTheDocument();
   });
 
   it('uses selectable references instead of requiring raw ids in the create dialog', async () => {

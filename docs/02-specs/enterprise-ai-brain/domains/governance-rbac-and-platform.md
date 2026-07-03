@@ -24,6 +24,7 @@
 - 用户权限诊断：`GET /api/system/permissions/diagnostics`
 - 菜单树：`GET /api/auth/me`
 - 模型网关：`/api/system/model-gateway-configs`
+- 系统治理、平台配置和审计接口分册见 [../api/system-rbac-and-settings.md](../api/system-rbac-and-settings.md)、[../api/platform-settings-and-model-gateway.md](../api/platform-settings-and-model-gateway.md)、[../api/review-and-knowledge.md](../api/review-and-knowledge.md) 与 [../api/audit-and-errors.md](../api/audit-and-errors.md)。
 
 ## 当前落地要求
 

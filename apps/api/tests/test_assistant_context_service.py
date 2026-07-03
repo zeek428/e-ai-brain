@@ -897,10 +897,7 @@ def test_assistant_tool_results_can_generate_plugin_connection_draft():
                     "Accept": "application/vnd.github+json",
                     "X-GitHub-Api-Version": "2022-11-28",
                 },
-                "query": {
-                    "owner": "",
-                    "repo": "",
-                },
+                "query": {},
             },
             "status": "active",
             "timeout_seconds": 30,

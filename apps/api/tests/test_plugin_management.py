@@ -497,9 +497,11 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert by_code["github"]["connection_defaults"]["auth_type"] == "bearer"
     assert by_code["github"]["connection_defaults"]["auth_config"] == {}
     assert by_code["github"]["connection_defaults"]["endpoint_url"] == "https://api.github.com"
+    assert by_code["github"]["connection_defaults"]["request_config"]["query"] == {}
     github_repository_field = by_code["github"]["connection_schema"]["sections"][0]["fields"][0]
     assert github_repository_field["key"] == "repository_url"
     assert github_repository_field["label"] == "仓库地址"
+    assert github_repository_field["required"] is False
     assert github_repository_field["managed_query_keys"] == ["owner", "repo"]
     assert (
         by_code["github"]["connection_defaults"]["request_config"]["headers"][
@@ -507,11 +509,15 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
         ]
         == "2022-11-28"
     )
-    assert by_code["gitlab"]["connection_defaults"]["auth_config"]["header_name"] == "PRIVATE-TOKEN"
+    assert by_code["gitlab"]["connection_defaults"]["auth_config"] == {
+        "header_name": "PRIVATE-TOKEN"
+    }
     assert by_code["gitlab"]["connection_defaults"]["endpoint_url"] == "http://gitlab.local"
+    assert by_code["gitlab"]["connection_defaults"]["request_config"]["query"] == {}
     gitlab_project_field = by_code["gitlab"]["connection_schema"]["sections"][0]["fields"][0]
     assert gitlab_project_field["key"] == "gitlab_project_url"
     assert gitlab_project_field["label"] == "GitLab 地址"
+    assert gitlab_project_field["required"] is False
     assert gitlab_project_field["managed_query_keys"] == [
         "api_version",
         "group_id",
@@ -615,6 +621,10 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
         },
         headers=admin_headers,
     ).json()["data"]
+    assert connection["auth_config"] == {"token_ref": "vault/github/token"}
+    github_token_only_query = (connection.get("request_config") or {}).get("query") or {}
+    assert "owner" not in github_token_only_query
+    assert "repo" not in github_token_only_query
     client.post(
         "/api/system/plugin-actions",
         json={
@@ -3438,6 +3448,49 @@ def test_standard_plugin_connections_store_platform_parameters():
     admin_headers = auth_headers()
     plugins = client.get("/api/system/plugins", headers=admin_headers).json()["data"]["items"]
     by_code = {plugin["code"]: plugin for plugin in plugins}
+
+    missing_gitlab_token = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {"header_name": "PRIVATE-TOKEN"},
+            "auth_type": "api_key_header",
+            "endpoint_url": "http://gitlab.local",
+            "environment": "prod",
+            "name": "GitLab 缺少 Token",
+            "plugin_id": by_code["gitlab"]["id"],
+            "request_config": {"query": {}},
+            "status": "active",
+        },
+        headers=admin_headers,
+    )
+    assert missing_gitlab_token.status_code == 400
+    assert missing_gitlab_token.json()["detail"]["message"] == "GitLab secret_ref is required"
+
+    gitlab_token_only_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {
+                "header_name": "PRIVATE-TOKEN",
+                "secret_ref": "vault/gitlab/prod-token",
+            },
+            "auth_type": "api_key_header",
+            "endpoint_url": "http://gitlab.local",
+            "environment": "prod",
+            "name": "生产 GitLab Token",
+            "plugin_id": by_code["gitlab"]["id"],
+            "request_config": {"headers": {"X-GitLab-Instance": "corp"}, "query": {}},
+            "status": "active",
+        },
+        headers=admin_headers,
+    )
+    assert gitlab_token_only_connection.status_code == 200
+    gitlab_token_only_query = gitlab_token_only_connection.json()["data"]["request_config"][
+        "query"
+    ]
+    assert "api_version" not in gitlab_token_only_query
+    assert "group_id" not in gitlab_token_only_query
+    assert "project_id" not in gitlab_token_only_query
+    assert "project_path" not in gitlab_token_only_query
 
     gitlab_connection = client.post(
         "/api/system/plugin-connections",

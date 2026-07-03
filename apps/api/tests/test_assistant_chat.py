@@ -9,7 +9,7 @@ import app.services.assistant_action_drafts as assistant_action_drafts_service
 import app.services.assistant_chat as assistant_chat_service
 import app.services.assistant_metrics as assistant_metrics_service
 import app.services.assistant_role_quick_tasks as assistant_role_quick_tasks_service
-import app.services.scheduled_jobs as scheduled_jobs_service
+import app.services.scheduled_job_data_connections as scheduled_job_data_connections_service
 from app.api.deps import api_error
 from app.core.repositories.authorization import CompatibilityAuthorizationRepository
 from app.core.security import hash_password
@@ -202,7 +202,7 @@ def stub_successful_scheduled_job_plugin_action(monkeypatch) -> None:
         return log
 
     monkeypatch.setattr(
-        scheduled_jobs_service,
+        scheduled_job_data_connections_service,
         "invoke_plugin_action_response",
         fake_invoke_plugin_action_response,
     )

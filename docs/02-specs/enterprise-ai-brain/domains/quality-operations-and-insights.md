@@ -24,6 +24,7 @@
 - 用户洞察：`/governance/insights`
 - Bug 管理：`/governance/bugs`
 - 团队看板：首页工作台
+- 质量、运营、洞察和执行诊断接口分册见 [../api/devops-quality-and-code-inspection.md](../api/devops-quality-and-code-inspection.md)、[../api/user-insights-and-bugs.md](../api/user-insights-and-bugs.md) 与 [../api/lifecycle-dashboard-and-diagnostics.md](../api/lifecycle-dashboard-and-diagnostics.md)。
 
 ## 当前落地要求
 

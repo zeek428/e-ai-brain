@@ -92,12 +92,42 @@ export type MenuResourceMutationPayload = {
 export type SystemSettingsRecord = {
   admin_email?: string | null;
   admin_email_configured?: boolean;
+  email_delivery?: SystemEmailDeliverySettings | null;
+  email_delivery_configured?: boolean;
   updated_at?: string | null;
   updated_by?: string | null;
 };
 
+export type SystemEmailDeliverySettings = {
+  default_from?: string | null;
+  enabled?: boolean;
+  reply_to?: string | null;
+  sender_email?: string | null;
+  smtp_host?: string | null;
+  smtp_password?: string | null;
+  smtp_password_configured?: boolean;
+  smtp_port?: number | null;
+  smtp_secret_ref?: string | null;
+  smtp_secret_ref_configured?: boolean;
+  smtp_tls?: string | null;
+  smtp_username?: string | null;
+};
+
 export type SystemSettingsMutationPayload = {
   admin_email?: string | null;
+  email_delivery?: SystemEmailDeliverySettings | null;
+};
+
+export type SystemEmailDeliveryTestPayload = {
+  recipient_email?: string | null;
+};
+
+export type SystemEmailDeliveryTestResult = {
+  delivery_status: string;
+  recipient_email: string;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_tls: string;
 };
 
 export type RoleAccessPreview = {
@@ -360,6 +390,17 @@ export async function updateSystemSettings(
   return apiRequest<SystemSettingsRecord>('/api/system/settings', {
     body: payload,
     method: 'PATCH',
+    token,
+  });
+}
+
+export async function testSystemEmailDelivery(
+  payload: SystemEmailDeliveryTestPayload,
+): Promise<SystemEmailDeliveryTestResult> {
+  const token = requireAccessToken();
+  return apiRequest<SystemEmailDeliveryTestResult>('/api/system/settings/email/test', {
+    body: payload,
+    method: 'POST',
     token,
   });
 }

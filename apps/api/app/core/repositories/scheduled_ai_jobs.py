@@ -39,7 +39,8 @@ run.resolved_prompt_snapshot, run.tool_policy_snapshot, run.result_summary,
 run.created_at, run.updated_at, run.resolved_plugin_snapshot,
 run.plugin_invocation_log_id, run.assistant_action_run_id,
 run.assistant_action_draft_id, run.assistant_source_message_id,
-run.triggered_by_assistant
+run.triggered_by_assistant,
+job.name AS scheduled_job_name
 """
 
 SCHEDULED_JOB_RUN_SORT_COLUMNS = {
@@ -509,7 +510,7 @@ class ScheduledAiJobReadRepository:
                     f"""
                     SELECT {SCHEDULED_JOB_RUN_SELECT}
                     FROM scheduled_job_runs run
-                    {join_clause}
+                    {join_clause or "LEFT JOIN scheduled_jobs job ON job.id = run.scheduled_job_id"}
                     {where}
                     ORDER BY {sort_column} {direction} {nulls}, run.id {direction}
                     LIMIT %s OFFSET %s
@@ -1196,4 +1197,5 @@ class ScheduledAiJobReadRepository:
             "assistant_action_draft_id": row[23],
             "assistant_source_message_id": row[24],
             "triggered_by_assistant": bool(row[25]),
+            "scheduled_job_name": row[26] if len(row) > 26 else None,
         }

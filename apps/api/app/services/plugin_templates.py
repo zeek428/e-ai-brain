@@ -236,10 +236,7 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
-            "query": {
-                "owner": "",
-                "repo": "",
-            },
+            "query": {},
         },
         "status": "active",
         "timeout_seconds": 30,
@@ -266,20 +263,13 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
     "gitlab": {
         "auth_config": {
             "header_name": "PRIVATE-TOKEN",
-            "secret_ref": "vault/gitlab/token",
         },
         "auth_type": "api_key_header",
         "endpoint_url": "http://gitlab.local",
         "environment": "prod",
         "max_retries": 1,
         "name": "生产 GitLab 连接",
-        "request_config": {
-            "query": {
-                "api_version": "v4",
-                "project_id": "",
-                "project_path": "",
-            },
-        },
+        "request_config": {"query": {}},
         "status": "active",
         "timeout_seconds": 30,
     },
@@ -445,14 +435,14 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                 "fields": [
                     {
                         "description": (
-                            "可粘贴 https://github.com/acme/ai-brain.git、"
-                            "git@github.com:acme/ai-brain.git，或直接填写 acme/ai-brain。"
+                            "可选；仅当 GitHub API 动作需要默认 owner/repo 时填写。"
+                            "代码巡检 clone 使用产品代码库 Remote URL，Token 由本连接统一维护。"
                         ),
                         "key": "repository_url",
                         "label": "仓库地址",
                         "managed_query_keys": ["owner", "repo"],
                         "placeholder": "https://github.com/acme/ai-brain.git",
-                        "required": True,
+                        "required": False,
                         "type": "github_repository_url",
                     },
                 ],
@@ -468,9 +458,8 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                 "fields": [
                     {
                         "description": (
-                            "填写本地 GitLab 项目地址，例如 "
-                            "http://gitlab.local/acme/ai-brain.git；"
-                            "系统会自动解析 Endpoint 和项目路径。"
+                            "可选；仅当 GitLab API 动作需要默认 project_id/project_path 时填写。"
+                            "代码巡检 clone 使用产品代码库 Remote URL，Token 由本连接统一维护。"
                         ),
                         "key": "gitlab_project_url",
                         "label": "GitLab 地址",
@@ -481,7 +470,7 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                             "project_path",
                         ],
                         "placeholder": "http://gitlab.local/acme/ai-brain.git",
-                        "required": True,
+                        "required": False,
                         "type": "gitlab_project_url",
                     },
                 ],

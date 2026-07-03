@@ -1617,7 +1617,11 @@ def test_native_repository_inspection_worker_does_not_overwrite_cancelled_run(
             "status": "succeeded",
         }
 
-    monkeypatch.setattr(scheduled_jobs_service, "run_native_code_scan", fake_native_scan)
+    monkeypatch.setattr(
+        scheduled_job_code_inspection_runtime,
+        "run_native_code_scan",
+        fake_native_scan,
+    )
 
     worker_run = scheduled_jobs_service.execute_queued_scheduled_job_run_response(
         current_store=app.state.store,

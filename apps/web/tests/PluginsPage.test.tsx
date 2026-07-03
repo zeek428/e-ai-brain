@@ -318,20 +318,13 @@ function installPluginsFetchMock(
               connection_defaults: {
                 auth_config: {
                   header_name: 'PRIVATE-TOKEN',
-                  secret_ref: 'vault/gitlab/token',
                 },
                 auth_type: 'api_key_header',
                 endpoint_url: 'http://gitlab.local',
                 environment: 'prod',
                 max_retries: 1,
                 name: '生产 GitLab 连接',
-                request_config: {
-                  query: {
-                    api_version: 'v4',
-                    project_id: '',
-                    project_path: '',
-                  },
-                },
+                request_config: { query: {} },
                 status: 'active',
                 timeout_seconds: 30,
               },
@@ -341,12 +334,12 @@ function installPluginsFetchMock(
                   {
                     fields: [
                       {
-                        description: '填写本地 GitLab 项目地址。',
+                        description: '可选；仅当 GitLab API 动作需要默认 project_id/project_path 时填写。',
                         key: 'gitlab_project_url',
                         label: 'GitLab 地址',
                         managed_query_keys: ['api_version', 'group_id', 'project_id', 'project_path'],
                         placeholder: 'http://gitlab.local/acme/ai-brain.git',
-                        required: true,
+                        required: false,
                         type: 'gitlab_project_url',
                       },
                     ],
@@ -390,10 +383,7 @@ function installPluginsFetchMock(
                     Accept: 'application/vnd.github+json',
                     'X-GitHub-Api-Version': '2022-11-28',
                   },
-                  query: {
-                    owner: '',
-                    repo: '',
-                  },
+                  query: {},
                 },
                 status: 'active',
                 timeout_seconds: 30,
@@ -404,11 +394,11 @@ function installPluginsFetchMock(
                   {
                     fields: [
                       {
-                        description: '可粘贴 HTTPS/SSH 仓库地址。',
+                        description: '可选；GitHub API 动作需要默认 owner/repo 时填写。',
                         key: 'repository_url',
                         label: '仓库地址',
                         managed_query_keys: ['owner', 'repo'],
-                        required: true,
+                        required: false,
                         type: 'github_repository_url',
                       },
                     ],
@@ -2188,12 +2178,9 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByLabelText('Token / 密钥引用')).toHaveValue('');
     expect(within(dialog).getByText(/本地联调可直接填 ghp_xxx/)).toBeInTheDocument();
     expect(within(dialog).getByLabelText('仓库地址')).toBeInTheDocument();
-    expect(within(dialog).getByText(/只需要粘贴仓库地址/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/只需要配置 Token/)).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('application/vnd.github+json')).toBeInTheDocument();
 
-    fireEvent.change(within(dialog).getByLabelText('仓库地址'), {
-      target: { value: 'https://github.com/acme/ai-brain.git' },
-    });
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 
     expect(await screen.findByText('请填写 GitHub Token 或密钥引用')).toBeInTheDocument();
@@ -2214,10 +2201,6 @@ describe('PluginsPage', () => {
             headers: {
               Accept: 'application/vnd.github+json',
               'X-GitHub-Api-Version': '2022-11-28',
-            },
-            query: {
-              owner: 'acme',
-              repo: 'ai-brain',
             },
           },
         }),
@@ -2394,7 +2377,7 @@ describe('PluginsPage', () => {
               Accept: 'application/vnd.github+json',
               'X-GitHub-Api-Version': '2022-11-28',
             },
-            query: { owner: '', repo: '' },
+            query: {},
           },
           status: 'active',
           timeout_seconds: 30,
@@ -2479,9 +2462,6 @@ describe('PluginsPage', () => {
 
     const connectionDialog = await findDialogByTitle('新增连接');
     await waitFor(() => expect(within(connectionDialog).getByLabelText('仓库地址')).toBeInTheDocument());
-    fireEvent.change(within(connectionDialog).getByLabelText('仓库地址'), {
-      target: { value: 'acme/ai-brain' },
-    });
     fireEvent.click(within(connectionDialog).getByRole('button', { name: /OK|确\s*定/ }));
 
     await waitFor(() => expect(assistantDraftConfirmIds).toEqual(['assistant_draft_github_plugin_connection']));
@@ -2897,14 +2877,41 @@ describe('PluginsPage', () => {
 
     expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('http://gitlab.local');
     expect(await within(dialog).findByLabelText('Header 名')).toHaveValue('PRIVATE-TOKEN');
+    expect(within(dialog).getByLabelText('Header 值/密钥引用')).toHaveValue('');
     expect(within(dialog).getByLabelText('GitLab 地址')).toBeInTheDocument();
-    expect(within(dialog).getByText(/只需要粘贴本地项目地址/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/只需要配置 Endpoint 和 Token/)).toBeInTheDocument();
     expect(within(dialog).queryByLabelText('GitLab 项目 ID')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('API 版本')).not.toBeInTheDocument();
     expect(within(dialog).queryByDisplayValue('group_id')).not.toBeInTheDocument();
 
-    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '生产 GitLab' } });
-    fireEvent.change(within(dialog).getByLabelText('GitLab 地址'), {
+    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '生产 GitLab Token' } });
+    fireEvent.change(within(dialog).getByLabelText('Header 值/密钥引用'), {
+      target: { value: 'vault/gitlab/prod-token' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() =>
+      expect(connectionBodies.at(-1)).toEqual(
+        expect.objectContaining({
+          auth_config: {
+            header_name: 'PRIVATE-TOKEN',
+            secret_ref: 'vault/gitlab/prod-token',
+          },
+          auth_type: 'api_key_header',
+          endpoint_url: 'http://gitlab.local',
+          name: '生产 GitLab Token',
+          plugin_id: 'plugin_standard_gitlab',
+          request_config: {},
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '新增连接' }));
+    dialog = await findDialogByTitle('新增连接');
+    fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
+    fireEvent.click(await screen.findByText('GitLab (http)'));
+    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '生产 GitLab 项目默认' } });
+    fireEvent.change(await within(dialog).findByLabelText('GitLab 地址'), {
       target: { value: 'http://gitlab.local/rd-platform/ai-brain.git' },
     });
     expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('http://gitlab.local');
@@ -2922,7 +2929,7 @@ describe('PluginsPage', () => {
           },
           auth_type: 'api_key_header',
           endpoint_url: 'http://gitlab.local',
-          name: '生产 GitLab',
+          name: '生产 GitLab 项目默认',
           plugin_id: 'plugin_standard_gitlab',
           request_config: {
             query: {

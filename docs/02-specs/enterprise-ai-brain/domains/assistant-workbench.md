@@ -21,6 +21,7 @@
 - 引用候选：`/assistant/action-references`
 - @ 能力配置：`/system/assistant-action-references`
 - 关键接口：`POST /api/assistant/chat`、`GET /api/assistant/conversations`、`GET /api/assistant/action-drafts`、`POST /api/assistant/action-drafts/{draft_id}/confirm`、`POST /api/assistant/action-drafts/{draft_id}/retry`
+- 助手聊天、草案、运行诊断和模型日志接口分册见 [../api/assistant-workbench.md](../api/assistant-workbench.md)、[../api/lifecycle-dashboard-and-diagnostics.md](../api/lifecycle-dashboard-and-diagnostics.md) 与 [../api/platform-settings-and-model-gateway.md](../api/platform-settings-and-model-gateway.md)。
 
 ## 当前落地要求
 

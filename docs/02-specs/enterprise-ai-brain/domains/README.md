@@ -6,7 +6,7 @@
 
 - 主规格保留跨域事实源：架构图、模块边界、DB-first 原则、状态机、缓存策略、安全策略和提交前真实页面验证门禁。
 - 业务域文档承接高频迭代内容：页面职责、关键 API、核心表、权限边界、已落地组件和后续演进项。
-- API 契约仍以 [../api.md](../api.md) 为准；测试验收仍以 [../test-case.md](../test-case.md) 和 [../test-cases/](../test-cases/) 为准。
+- API 入口为 [../api.md](../api.md)，接口细节按业务域维护在 [../api/](../api/)；测试验收仍以 [../test-case.md](../test-case.md) 和 [../test-cases/](../test-cases/) 为准。
 - 当域文档与主规格不一致时，先更新主规格中的跨域原则，再同步域文档和 changelog。
 
 ## 业务域
@@ -19,6 +19,16 @@
 | 质量、运营与洞察 | [quality-operations-and-insights.md](quality-operations-and-insights.md) | 执行诊断、代码巡检、Bug、用户洞察、生命周期上下文、团队看板 |
 | 系统治理、RBAC 与平台配置 | [governance-rbac-and-platform.md](governance-rbac-and-platform.md) | 用户、角色、菜单、权限矩阵、模型网关、知识、审计、DB-first 迁移约束 |
 
+## API 分册映射
+
+| 业务域 | API 分册 |
+|------|----------|
+| 需求交付与研发任务 | [../api/delivery-and-tasks.md](../api/delivery-and-tasks.md)、[../api/product-config.md](../api/product-config.md)、[../api/review-and-knowledge.md](../api/review-and-knowledge.md) |
+| AI 助手与草案工作台 | [../api/assistant-workbench.md](../api/assistant-workbench.md)、[../api/lifecycle-dashboard-and-diagnostics.md](../api/lifecycle-dashboard-and-diagnostics.md) |
+| 插件、定时作业与执行器 | [../api/system-governance-and-platform.md](../api/system-governance-and-platform.md)、[../api/lifecycle-dashboard-and-diagnostics.md](../api/lifecycle-dashboard-and-diagnostics.md) |
+| 质量、运营与洞察 | [../api/devops-quality-and-code-inspection.md](../api/devops-quality-and-code-inspection.md)、[../api/user-insights-and-bugs.md](../api/user-insights-and-bugs.md)、[../api/lifecycle-dashboard-and-diagnostics.md](../api/lifecycle-dashboard-and-diagnostics.md) |
+| 系统治理、RBAC 与平台配置 | [../api/system-rbac-and-settings.md](../api/system-rbac-and-settings.md)、[../api/platform-settings-and-model-gateway.md](../api/platform-settings-and-model-gateway.md)、[../api/review-and-knowledge.md](../api/review-and-knowledge.md)、[../api/audit-and-errors.md](../api/audit-and-errors.md) |
+
 ## 后续维护
 
-新增或重构业务模块时，优先在对应域文档补齐“当前落地”和“验收映射”；只有涉及跨域原则、表结构主索引、状态机或安全边界时才扩写主 `spec.md`。
+新增或重构业务模块时，优先在对应域文档补齐“当前落地”和“验收映射”，并同步对应 `api/*.md` 与 `test-cases/*.md`；只有涉及跨域原则、表结构主索引、状态机或安全边界时才扩写主 `spec.md`。

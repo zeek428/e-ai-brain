@@ -481,7 +481,11 @@ export function ScheduledJobRunDetailModal({
               },
               { key: 'collector_run_id', label: '采集运行', children: run.collector_run_id || '-' },
               { key: 'plugin_invocation_log_id', label: '插件调用', children: run.plugin_invocation_log_id || '-' },
-              { key: 'scheduled_job_id', label: '作业 ID', children: run.scheduled_job_id || '-' },
+              {
+                key: 'scheduled_job_name',
+                label: '作业名称',
+                children: run.scheduled_job_name || run.scheduled_job_id || '-',
+              },
               { key: 'started_at', label: '开始时间', children: formatDisplayDateTime(run.started_at) },
               { key: 'finished_at', label: '结束时间', children: formatDisplayDateTime(run.finished_at) },
               { key: 'error_code', label: '错误码', children: run.error_code || '-' },

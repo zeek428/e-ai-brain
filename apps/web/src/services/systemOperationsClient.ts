@@ -298,6 +298,7 @@ export type ScheduledJobRunRecord = {
   resolved_skill_snapshots?: Array<Record<string, unknown>>;
   result_summary?: Record<string, unknown>;
   scheduled_job_id?: string;
+  scheduled_job_name?: string | null;
   source_run_id?: string | null;
   source_run_summary?: {
     error_code?: string | null;

@@ -52,7 +52,7 @@ type: feat | fix | refactor | docs | test | chore | perf
 - 按 [测试规范](../06-standards/testing.md) 编写用例
 - 用例编号格式: `TC-{模块}-{功能}-{类型}-{序号}`
 - 每个验收标准至少对应一个测试用例
-- 详见 [测试用例模板](../02-specs/_template/test-case.md)
+- 详见 [测试用例入口](../02-specs/enterprise-ai-brain/test-case.md)
 
 ## Review 标准
 - 代码质量
