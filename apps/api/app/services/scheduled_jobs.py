@@ -59,6 +59,11 @@ from app.services.scheduled_job_catalog import (
     scheduled_job_type_definition,
     scheduled_job_type_is_runnable,
 )
+from app.services.scheduled_job_code_inspection_runtime import (
+    code_inspection_multi_ai_processor,
+    result_summary_with_worker_retry,
+    run_native_code_scan_with_worker_retry,
+)
 from app.services.scheduled_job_common import ensure_enum, ensure_non_blank
 from app.services.scheduled_job_config import (
     effective_scheduled_job_execution_mode,
@@ -81,8 +86,6 @@ from app.services.scheduled_job_native_scan import (
     code_inspection_single_result_summary,
     execute_native_multi_code_inspection_summary,
     native_code_scan_repository_ids,
-)
-from app.services.scheduled_job_native_scan import (
     queued_native_scan_result_summary as native_scan_result_summary,
 )
 from app.services.scheduled_job_online_log import run_online_log_ai_analysis_job
@@ -828,6 +831,18 @@ def queued_native_scan_result_summary(
     job_config = job.get("config_json") or {}
     repository_id = job_config.get("repository_id")
     sync_product_git_repository_store(current_store, job.get("product_id"))
+    repository_ids = native_code_scan_repository_ids(job, current_store=current_store)
+    repositories = [
+        repository
+        for repository_id_item in repository_ids
+        if (
+            repository := job_store.read_memory_dict(
+                current_store,
+                "product_git_repositories",
+            ).get(str(repository_id_item))
+        )
+        is not None
+    ]
     repository = (
         job_store.read_memory_dict(current_store, "product_git_repositories").get(str(repository_id))  # noqa: E501
         or {}
@@ -835,6 +850,7 @@ def queued_native_scan_result_summary(
     return native_scan_result_summary(
         job=job,
         repository=repository,
+        repositories=repositories,
         skill_codes=skill_codes_for_job(current_store, job),
     )
 
@@ -927,15 +943,29 @@ def execute_queued_scheduled_job_run_response(
     plugin_output_mapping: dict[str, Any] = {}
     records_imported = 0
     resolved_plugin_input_mapping: dict[str, Any] = {}
+    worker_retry_state: dict[str, Any] = {"attempts": 0, "errors": []}
     try:
-        native_repository_ids = native_code_scan_repository_ids(job)
+        native_repository_ids = native_code_scan_repository_ids(job, current_store=current_store)
         if len(native_repository_ids) > 1:
             result_summary, records_imported = execute_native_multi_code_inspection_summary(
                 current_store,
+                ai_processor=code_inspection_multi_ai_processor(
+                    current_store,
+                    job=job,
+                    run_id=run_id,
+                    user=user,
+                ),
                 collector_run_id=collector_run["id"],
                 job=job,
                 repository_ids=native_repository_ids,
                 run_id=run_id,
+                scan_runner=lambda current_store, job, run_id, user: run_native_code_scan_with_worker_retry(  # noqa: E501
+                    current_store,
+                    job=job,
+                    retry_state=worker_retry_state,
+                    run_id=run_id,
+                    user=user,
+                ),
                 skill_codes=skill_codes_for_job(current_store, job),
                 user=user,
             )
@@ -957,9 +987,10 @@ def execute_queued_scheduled_job_run_response(
             "repository_id": job_config.get("repository_id"),
             "scan_mode": NATIVE_CODE_SCAN_MODE,
         }
-        plugin_summary = run_native_code_scan(
+        plugin_summary = run_native_code_scan_with_worker_retry(
             current_store,
             job=job,
+            retry_state=worker_retry_state,
             run_id=run_id,
             user=user,
         )
@@ -1097,6 +1128,10 @@ def execute_queued_scheduled_job_run_response(
         }
         records_imported = 0
 
+    result_summary = result_summary_with_worker_retry(
+        result_summary,
+        retry_state=worker_retry_state,
+    )
     finished_at = datetime.now(UTC).isoformat()
     updated_at = datetime.now(UTC).isoformat()
     run = {
@@ -1202,7 +1237,9 @@ def run_scheduled_job_response(
         and code_inspection_uses_native_scan(job)
     )
     native_repository_ids = (
-        native_code_scan_repository_ids(job) if native_code_inspection else []
+        native_code_scan_repository_ids(job, current_store=current_store)
+        if native_code_inspection
+        else []
     )
     native_multi_inspection = native_code_inspection and len(native_repository_ids) > 1
     use_async_worker = scheduled_job_uses_async_worker(job)
@@ -1271,6 +1308,12 @@ def run_scheduled_job_response(
         if native_multi_inspection:
             result_summary, records_imported = execute_native_multi_code_inspection_summary(
                 current_store,
+                ai_processor=code_inspection_multi_ai_processor(
+                    current_store,
+                    job=job,
+                    run_id=run_id,
+                    user=user,
+                ),
                 collector_run_id=collector_run["id"],
                 job=job,
                 repository_ids=native_repository_ids,

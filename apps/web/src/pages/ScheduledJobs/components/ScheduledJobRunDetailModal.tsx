@@ -58,6 +58,16 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
   return isTraceRecord(value) ? value : undefined;
 }
 
+function scalarText(value: unknown, fallback = '-') {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return fallback;
+}
+
 function assistantRunFollowupPrompt(run: ScheduledJobRunRecord) {
   return run.status === 'failed' ? '为什么这次任务失败？' : '帮我分析这次运行结果';
 }
@@ -148,6 +158,54 @@ function ScriptExecutionBoundary({ run }: { run: ScheduledJobRunRecord }) {
           {item.note ? <Typography.Text type="secondary">{item.note}</Typography.Text> : null}
         </Space>
       ))}
+    </Space>
+  );
+}
+
+function RepositoryExecutionDetails({ run }: { run: ScheduledJobRunRecord }) {
+  const repositoryExecution = recordValue(run.result_summary?.repository_execution);
+  const entries = repositoryExecution ? Object.entries(repositoryExecution) : [];
+  if (!entries.length) {
+    return null;
+  }
+  return (
+    <Space
+      aria-label="代码仓库执行明细"
+      orientation="vertical"
+      size={10}
+      style={{ width: '100%' }}
+    >
+      <Typography.Text strong>代码仓库执行明细</Typography.Text>
+      {entries.map(([repositoryId, rawValue]) => {
+        const value = recordValue(rawValue) ?? {};
+        const nativeScan = recordValue(value.native_scan) ?? {};
+        const skillProcessing = recordValue(value.skill_processing) ?? {};
+        const resultAction = recordValue(value.result_action) ?? {};
+        const resultFeedback = recordValue(resultAction.feedback) ?? {};
+        const report = recordValue(value.code_inspection_report) ?? {};
+        return (
+          <Descriptions
+            bordered
+            column={2}
+            items={[
+              { key: 'repository_id', label: '仓库', children: repositoryId },
+              { key: 'scan_status', label: '扫描状态', children: scalarText(nativeScan.status) },
+              { key: 'commit_sha', label: 'Commit', children: scalarText(nativeScan.commit_sha) },
+              { key: 'scan_count', label: '扫描问题数', children: scalarText(nativeScan.finding_count ?? nativeScan.records_imported, '0') },
+              { key: 'ai_status', label: 'AI 状态', children: scalarText(skillProcessing.status) },
+              {
+                key: 'model_gateway_called',
+                label: '调用大模型',
+                children: skillProcessing.model_gateway_called ? '是' : '否',
+              },
+              { key: 'write_status', label: '写入状态', children: scalarText(resultAction.status) },
+              { key: 'report_id', label: '报告', children: scalarText(report.report_id ?? resultFeedback.report_id) },
+            ]}
+            key={repositoryId}
+            size="small"
+          />
+        );
+      })}
     </Space>
   );
 }
@@ -437,6 +495,7 @@ export function ScheduledJobRunDetailModal({
           />
           <RunSourceComparison run={run} />
           <RunExecutionChain run={run} />
+          <RepositoryExecutionDetails run={run} />
           <RunTraceDag
             onFullRunRerunRequested={onTraceFullRunRerunRequested}
             onNodeRerunCreated={onTraceNodeRerunCreated}

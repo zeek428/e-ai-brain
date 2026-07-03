@@ -274,6 +274,27 @@ export function ScheduledJobFormModal({
   onScanModeChange,
   onSubmit,
 }: ScheduledJobFormModalProps) {
+  const editingCodeRepositoryConfig = recordValue(editingJob?.config_json);
+  const showAdvancedRepositoryConfigInitially = Boolean(
+    selectedJobType === 'code_repository_inspection'
+    && editingCodeRepositoryConfig
+    && [
+      'repository_id',
+      'repository_ids',
+      'branch',
+      'scanner_engines',
+      'scan_rules',
+      'severity_threshold',
+      'ignore_dirs',
+      'ignore_rules',
+      'baseline_fingerprints',
+      'accepted_risk_fingerprints',
+      'quality_gate',
+      'incremental_from_commit',
+      'async_execution',
+    ].some((key) => editingCodeRepositoryConfig[key] !== undefined),
+  );
+
   return (
     <Modal
       aria-label={editingJob ? '编辑定时作业' : '新增定时作业'}
@@ -367,6 +388,7 @@ export function ScheduledJobFormModal({
         />
         {selectedJobType === 'code_repository_inspection' ? (
           <ScheduledJobCodeRepositorySection
+            advancedInitiallyVisible={showAdvancedRepositoryConfigInitially}
             builtinRuleOptions={codeInspectionBuiltinRuleSelectOptions}
             ignoreRuleOptions={codeInspectionIgnoreRuleSelectOptions}
             loadingRepositories={loadingRepositories}

@@ -410,12 +410,7 @@ export default function ScheduledJobsPage() {
         const config = recordValue(form.getFieldValue('config_json')) ?? {};
         const currentRepositoryId = recordStringValue(config, 'repository_id');
         const currentBranch = recordStringValue(config, 'branch');
-        const selectedRepository =
-          repositories.find((repository) => repository.id === currentRepositoryId)
-          ?? (!currentRepositoryId ? repositories[0] : undefined);
-        if (!currentRepositoryId && selectedRepository) {
-          form.setFieldValue(['config_json', 'repository_id'], selectedRepository.id);
-        }
+        const selectedRepository = repositories.find((repository) => repository.id === currentRepositoryId);
         if (!currentBranch && selectedRepository?.defaultBranch) {
           form.setFieldValue(['config_json', 'branch'], selectedRepository.defaultBranch);
         }
@@ -459,6 +454,11 @@ export default function ScheduledJobsPage() {
     const selectedRepositoryIds = stringArrayFromUnknown(config.repository_ids);
     const currentRepositoryId = recordStringValue(config, 'repository_id');
     const currentBranch = recordStringValue(config, 'branch');
+    if (!currentRepositoryId && selectedRepositoryIds.length === 0) {
+      if (productRepositoriesProductId === productId && productRepositories.length > 0) {
+        return;
+      }
+    }
     if ((currentRepositoryId || selectedRepositoryIds.length > 0) && currentBranch) {
       return;
     }
@@ -495,7 +495,7 @@ export default function ScheduledJobsPage() {
       throw new Error('Missing product code repository');
     }
     if (!currentRepositoryId && selectedRepositoryIds.length === 0) {
-      form.setFieldValue(['config_json', 'repository_id'], repository.id);
+      return;
     }
     if (!currentBranch && repository.defaultBranch) {
       form.setFieldValue(['config_json', 'branch'], repository.defaultBranch);
@@ -1289,6 +1289,7 @@ export default function ScheduledJobsPage() {
   const handleProductChange = () => {
     if (selectedJobType === 'code_repository_inspection') {
       form.setFieldValue(['config_json', 'repository_id'], undefined);
+      form.setFieldValue(['config_json', 'repository_ids'], []);
       form.setFieldValue(['config_json', 'branch'], undefined);
     }
   };

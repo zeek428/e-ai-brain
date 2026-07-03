@@ -434,6 +434,36 @@ def test_skill_output_json_contract_rejects_nested_array_item_type_mismatch():
     )
 
 
+def test_code_inspection_ai_processing_has_default_output_schema_without_skill_schema():
+    current_store = SimpleNamespace(
+        ai_skills={
+            "skill_code_inspection": {
+                "code": "code_inspection_analysis",
+                "id": "skill_code_inspection",
+                "name": "代码巡检分析",
+                "status": "active",
+            },
+        },
+        repository=None,
+    )
+
+    schema = scheduled_job_ai_processing_service.merged_skill_output_schema(
+        current_store,
+        {
+            "job_type": "code_repository_inspection",
+            "skill_ids": ["skill_code_inspection"],
+        },
+    )
+
+    assert schema["type"] == "object"
+    assert schema["required"] == ["findings", "risk_level", "summary"]
+    assert schema["properties"]["findings"]["type"] == "array"
+    finding_schema = schema["properties"]["findings"]["items"]
+    assert finding_schema["properties"]["rule_id"]["type"] == "string"
+    assert finding_schema["properties"]["severity"]["type"] == "string"
+    assert finding_schema["properties"]["recommendation"]["type"] == "string"
+
+
 def test_native_code_scan_repository_ids_merge_multi_and_single_refs():
     assert native_code_scan_repository_ids(
         {
@@ -443,6 +473,57 @@ def test_native_code_scan_repository_ids_merge_multi_and_single_refs():
             },
         },
     ) == ["repo_a", "repo_b", "repo_c"]
+
+
+def test_native_code_scan_repository_ids_expand_product_active_repositories():
+    current_store = SimpleNamespace(
+        product_git_repositories={
+            "repo_web": {
+                "id": "repo_web",
+                "name": "Web",
+                "product_id": "product_code_scan",
+                "repo_type": "code",
+                "status": "active",
+            },
+            "repo_backend": {
+                "id": "repo_backend",
+                "name": "Backend",
+                "product_id": "product_code_scan",
+                "repo_type": "code",
+                "status": "active",
+            },
+            "repo_inactive": {
+                "id": "repo_inactive",
+                "name": "Inactive",
+                "product_id": "product_code_scan",
+                "repo_type": "code",
+                "status": "inactive",
+            },
+            "repo_docs": {
+                "id": "repo_docs",
+                "name": "Docs",
+                "product_id": "product_code_scan",
+                "repo_type": "document",
+                "status": "active",
+            },
+            "repo_other_product": {
+                "id": "repo_other_product",
+                "name": "Other",
+                "product_id": "product_other",
+                "repo_type": "code",
+                "status": "active",
+            },
+        },
+        repository=None,
+    )
+
+    assert native_code_scan_repository_ids(
+        {
+            "config_json": {"scan_mode": "native_full_scan"},
+            "product_id": "product_code_scan",
+        },
+        current_store=current_store,
+    ) == ["repo_backend", "repo_web"]
 
 
 def test_queued_native_scan_result_summary_uses_repository_default_branch():

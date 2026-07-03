@@ -1558,6 +1558,9 @@ describe('ScheduledJobsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
     fireEvent.click(await screen.findByText('代码仓库质量 / 安全 / 规范巡检'));
 
+    expect(await within(dialog).findByText('默认扫描该产品下 1 个 active 代码仓库')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('代码仓库')).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: '高级仓库配置' }));
     await waitFor(() => expect(within(dialog).getByLabelText('代码仓库')).toBeInTheDocument());
     expect(within(dialog).getByLabelText('批量代码仓库')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('扫描引擎')).toBeInTheDocument();
@@ -1926,6 +1929,10 @@ describe('ScheduledJobsPage', () => {
     expect(within(codeDialog).queryByText('请选择 Skills')).not.toBeInTheDocument();
     expect(within(codeDialog).getByDisplayValue('0 2 * * MON')).toBeInTheDocument();
     expect(within(codeDialog).getByDisplayValue('code-inspection')).toBeInTheDocument();
+    expect(await within(codeDialog).findByText('默认扫描该产品下 1 个 active 代码仓库')).toBeInTheDocument();
+    expect(within(codeDialog).queryByLabelText('代码仓库')).not.toBeInTheDocument();
+    fireEvent.click(within(codeDialog).getByRole('button', { name: '高级仓库配置' }));
+    expect(within(codeDialog).getByLabelText('代码仓库')).toBeInTheDocument();
 
     fireEvent.click(within(codeDialog).getByRole('button', { name: /OK|确\s*定/ }));
     await waitFor(() =>
@@ -1938,8 +1945,6 @@ describe('ScheduledJobsPage', () => {
         name: '代码仓库质量安全规范巡检',
         agent_id: 'agent_code_reviewer',
         config_json: {
-          branch: 'main',
-          repository_id: 'repo_zqf',
           scan_mode: 'native_full_scan',
           scan_rules: ['secrets', 'internal_addresses'],
         },
@@ -1962,6 +1967,15 @@ describe('ScheduledJobsPage', () => {
       plugin_connection_id: null,
       plugin_connection_ids: [],
     });
+    expect(jobCreateBodies[1]).toEqual(
+      expect.objectContaining({
+        config_json: expect.not.objectContaining({
+          branch: expect.anything(),
+          repository_id: expect.anything(),
+          repository_ids: expect.anything(),
+        }),
+      }),
+    );
 
     fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
 
@@ -2967,6 +2981,27 @@ describe('ScheduledJobsPage', () => {
             processing: {
               skill_codes: ['weekly_feedback_analysis'],
             },
+            repository_execution: {
+              repo_zqf: {
+                code_inspection_report: {
+                  report_id: 'code_inspection_report_001',
+                },
+                native_scan: {
+                  commit_sha: 'abc123',
+                  finding_count: 2,
+                  repository_id: 'repo_zqf',
+                  status: 'succeeded',
+                },
+                result_action: {
+                  feedback: { report_id: 'code_inspection_report_001' },
+                  status: 'succeeded',
+                },
+                skill_processing: {
+                  model_gateway_called: true,
+                  status: 'succeeded',
+                },
+              },
+            },
             trace_graph: {
               edges: [
                 { from: 'data_connection', to: 'skill_processing' },
@@ -3113,6 +3148,12 @@ describe('ScheduledJobsPage', () => {
     expect(packageBoundary).toHaveTextContent('入口 SKILL.md');
     expect(packageBoundary).toHaveTextContent('脚本文件 scripts/run.py');
     expect(packageBoundary).toHaveTextContent('Skill 包中的脚本目录当前不会自动执行');
+    const repositoryDetails = within(dialog).getByLabelText('代码仓库执行明细');
+    expect(repositoryDetails).toHaveTextContent('repo_zqf');
+    expect(repositoryDetails).toHaveTextContent('abc123');
+    expect(repositoryDetails).toHaveTextContent('调用大模型');
+    expect(repositoryDetails).toHaveTextContent('是');
+    expect(repositoryDetails).toHaveTextContent('code_inspection_report_001');
     expect(within(dialog).getAllByText('数据连接获取内容').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('AI执行处理内容').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('动作反馈内容').length).toBeGreaterThan(0);

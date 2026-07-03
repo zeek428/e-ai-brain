@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import app.services.native_code_scanner as native_code_scanner
+import app.services.scheduled_job_code_inspection_runtime as scheduled_job_code_inspection_runtime
 import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.core.repositories.code_inspections import CodeInspectionReadRepository
@@ -1331,6 +1332,138 @@ def test_native_repository_inspection_queues_run_and_worker_completes_scan(
     assert worker_run["result_summary"]["execution_nodes"]["native_scan"]["scan_finished_at"]
 
 
+def test_native_repository_inspection_worker_retries_failed_scan(monkeypatch):
+    app.state.store.reset()
+    monkeypatch.setenv("SCHEDULED_JOB_ASYNC_WORKER_DISABLED", "1")
+    headers = auth_headers()
+    product = create_product(headers, code="native-scan-retry-product", name="Native Scan Retry")
+    repository = create_repository(headers, product["id"])
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "repository_id": repository["id"],
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "max_retry_count": 1,
+            "name": "Async retry native repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+    queued_run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers).json()[
+        "data"
+    ]
+    attempts = 0
+
+    def flaky_native_scan(current_store, *, job, run_id, user):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary clone failure")
+        return {
+            "action_id": None,
+            "connection_id": None,
+            "invocation_log_id": None,
+            "latency_ms": 5,
+            "request_summary": {},
+            "response_summary": {
+                "json": {
+                    "branch": "main",
+                    "commit_sha": "retry123",
+                    "findings": [],
+                    "repository_id": repository["id"],
+                    "risk_level": "low",
+                    "summary": "retry worker fixture",
+                },
+                "native_scan": {
+                    "branch": "main",
+                    "commit_sha": "retry123",
+                    "repository_id": repository["id"],
+                    "scan_mode": "native_full_scan",
+                },
+                "status_code": None,
+            },
+            "status": "succeeded",
+        }
+
+    monkeypatch.setattr(
+        scheduled_job_code_inspection_runtime,
+        "run_native_code_scan",
+        flaky_native_scan,
+    )
+
+    worker_run = scheduled_jobs_service.execute_queued_scheduled_job_run_response(
+        current_store=app.state.store,
+        run_id=queued_run["id"],
+        user={"id": "system_scheduled_job_worker", "roles": ["admin"]},
+    )
+
+    assert attempts == 2
+    assert worker_run["status"] == "succeeded"
+    assert worker_run["result_summary"]["processing"]["worker_attempts"] == 2
+    assert worker_run["result_summary"]["processing"]["worker_retry_count"] == 1
+    assert worker_run["result_summary"]["processing"]["worker_retry_errors"] == [
+        {
+            "attempt": 1,
+            "error_code": "RuntimeError",
+            "error_message": "temporary clone failure",
+        }
+    ]
+
+
+def test_product_level_native_repository_inspection_queued_summary_lists_repositories(
+    monkeypatch,
+):
+    app.state.store.reset()
+    monkeypatch.setenv("SCHEDULED_JOB_ASYNC_WORKER_DISABLED", "1")
+    headers = auth_headers()
+    product = create_product(headers, code="native-scan-queued-product", name="Native Queued")
+    repository_a = create_repository(headers, product["id"], name="api", project_path="demo/api")
+    repository_b = create_repository(headers, product["id"], name="web", project_path="demo/web")
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Queued product level native repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    queued_run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers).json()[
+        "data"
+    ]
+
+    assert queued_run["status"] == "queued"
+    execution_nodes = queued_run["result_summary"]["execution_nodes"]
+    assert execution_nodes["native_scan"]["repository_count"] == 2
+    assert {item["repository_id"] for item in execution_nodes["native_scan"]["items"]} == {
+        repository_a["id"],
+        repository_b["id"],
+    }
+    assert {item["repository_id"] for item in execution_nodes["result_action"]["items"]} == {
+        repository_a["id"],
+        repository_b["id"],
+    }
+
+
 def test_native_repository_inspection_worker_does_not_overwrite_cancelled_run(
     monkeypatch,
     tmp_path,
@@ -1848,6 +1981,191 @@ def test_native_repository_inspection_runs_multiple_repositories_from_one_job(
         run["result_summary"]["reports_by_repository"][repository_b["id"]]["report_id"],
     }
     assert set(run["result_summary"]["reports_by_repository"]) == {
+        repository_a["id"],
+        repository_b["id"],
+    }
+
+
+def test_product_level_native_repository_inspection_expands_repositories_and_runs_ai(
+    monkeypatch,
+    tmp_path,
+):
+    app.state.store.reset()
+    monkeypatch.setenv("CODE_SCAN_WORKDIR", str(tmp_path / "code-scan-workdir"))
+    headers = auth_headers()
+    product = create_product(
+        headers,
+        code="native-scan-product-level",
+        name="Native Scan Product Level",
+    )
+    local_repo_url = create_local_git_repository(tmp_path)
+    repository_a = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+    repository_b = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+    inactive_repository = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+    client.patch(
+        f"/api/product-git-repositories/{inactive_repository['id']}",
+        json={"status": "inactive"},
+        headers=headers,
+    )
+    model_gateway = create_model_gateway(headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "code_inspection_analysis",
+            "input_schema": {"type": "object"},
+            "name": "代码巡检分析",
+            "output_schema": {
+                "properties": {
+                    "findings": {
+                        "items": {
+                            "properties": {
+                                "description": {"type": "string"},
+                                "file_path": {"type": "string"},
+                                "line_number": {"type": "integer"},
+                                "recommendation": {"type": "string"},
+                                "risk_level": {"type": "string"},
+                                "rule_id": {"type": "string"},
+                                "severity": {"type": "string"},
+                                "title": {"type": "string"},
+                            },
+                            "type": "object",
+                        },
+                        "type": "array",
+                    },
+                    "risk_level": {"type": "string"},
+                    "summary": {"type": "string"},
+                },
+                "required": ["findings", "risk_level", "summary"],
+                "type": "object",
+            },
+            "prompt_template": "复核代码扫描结果并输出 findings/risk_level/summary。",
+            "status": "active",
+            "version": "1.0.0",
+        },
+        headers=headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "code_reviewer",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "代码审查角色",
+            "status": "active",
+            "system_prompt": "你负责代码巡检复核。",
+        },
+        headers=headers,
+    ).json()["data"]
+    ai_calls: list[str] = []
+
+    def fake_ai_processing(
+        current_store,
+        *,
+        job,
+        output_mapping,
+        source_response_json,
+        source_row_count,
+        user,
+    ):
+        repository_id = source_response_json["repository_id"]
+        ai_calls.append(repository_id)
+        source_findings = source_response_json.get("findings") or []
+        return {
+            "knowledge_references": [],
+            "model": "code-inspection-model",
+            "model_gateway_config_id": model_gateway["id"],
+            "model_log_id": f"model_log_{repository_id}",
+            "output_json": {
+                "findings": source_findings[:1],
+                "risk_level": "critical",
+                "summary": f"AI reviewed {repository_id}",
+            },
+            "provider": "openai_compatible",
+            "status": "succeeded",
+            "tokens": {"completion": 1, "prompt": 1, "total": 2},
+        }
+
+    monkeypatch.setattr(
+        scheduled_job_code_inspection_runtime,
+        "run_scheduled_job_ai_processing",
+        fake_ai_processing,
+    )
+
+    job_response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "agent_id": agent["id"],
+            "config_json": {
+                "async_execution": False,
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
+            "enabled": True,
+            "execution_mode": "ai_assisted",
+            "job_type": "code_repository_inspection",
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "Product level native repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "skill_ids": [skill["id"]],
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    )
+    assert job_response.status_code == 200
+    job = job_response.json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert run["status"] == "succeeded"
+    assert set(ai_calls) == {repository_a["id"], repository_b["id"]}
+    assert run["result_summary"]["report_count"] == 2
+    assert run["result_summary"]["processing"]["model_gateway_called"] is True
+    assert run["result_summary"]["processing"]["repository_count"] == 2
+    assert set(run["result_summary"]["reports_by_repository"]) == {
+        repository_a["id"],
+        repository_b["id"],
+    }
+    assert inactive_repository["id"] not in run["result_summary"]["reports_by_repository"]
+
+    execution_nodes = run["result_summary"]["execution_nodes"]
+    assert execution_nodes["native_scan"]["repository_count"] == 2
+    assert {item["repository_id"] for item in execution_nodes["native_scan"]["items"]} == {
+        repository_a["id"],
+        repository_b["id"],
+    }
+    assert {item["repository_id"] for item in execution_nodes["skill_processing"]["items"]} == {
+        repository_a["id"],
+        repository_b["id"],
+    }
+    assert all(
+        item["model_gateway_called"] is True
+        for item in execution_nodes["skill_processing"]["items"]
+    )
+    assert {item["repository_id"] for item in execution_nodes["result_action"]["items"]} == {
+        repository_a["id"],
+        repository_b["id"],
+    }
+    assert set(run["result_summary"]["repository_execution"]) == {
         repository_a["id"],
         repository_b["id"],
     }

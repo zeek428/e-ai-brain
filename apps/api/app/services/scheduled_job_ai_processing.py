@@ -45,6 +45,34 @@ SKILL_OUTPUT_MAPPING_PATH_KEYS = (
     "summary_path",
 )
 
+CODE_INSPECTION_DEFAULT_OUTPUT_SCHEMA = {
+    "properties": {
+        "findings": {
+            "items": {
+                "properties": {
+                    "category": {"type": "string"},
+                    "committer_email": {"type": ["string", "null"]},
+                    "committer_name": {"type": ["string", "null"]},
+                    "description": {"type": "string"},
+                    "file_path": {"type": "string"},
+                    "line_number": {"type": "integer"},
+                    "recommendation": {"type": "string"},
+                    "risk_level": {"type": "string"},
+                    "rule_id": {"type": "string"},
+                    "severity": {"type": "string"},
+                    "title": {"type": "string"},
+                },
+                "type": "object",
+            },
+            "type": "array",
+        },
+        "risk_level": {"type": "string"},
+        "summary": {"type": "string"},
+    },
+    "required": ["findings", "risk_level", "summary"],
+    "type": "object",
+}
+
 
 def normalized_knowledge_document_ids(value: Any) -> list[str]:
     if value is None:
@@ -142,6 +170,9 @@ def merged_skill_output_schema(current_store: Any, job: dict[str, Any]) -> dict[
     sync_ai_skill_store(current_store)
     required: list[str] = []
     properties: dict[str, Any] = {}
+    if job.get("job_type") == "code_repository_inspection":
+        properties.update(CODE_INSPECTION_DEFAULT_OUTPUT_SCHEMA["properties"])
+        required.extend(CODE_INSPECTION_DEFAULT_OUTPUT_SCHEMA["required"])
     for skill_id in job.get("skill_ids") or []:
         skill = read_memory_dict(current_store, "ai_skills").get(skill_id)
         schema = skill.get("output_schema") if isinstance(skill, dict) else None
