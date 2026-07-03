@@ -5,7 +5,10 @@ from typing import Any
 from app.api.deps import api_error, require_any_permission
 from app.services.bugs import bug_summary_projection
 from app.services.code_inspections import user_can_read_product
-from app.services.lifecycle_subjects import lifecycle_subject_tasks, subject_product_id
+from app.services.full_chain_subject_resolution import (
+    resolve_requirement_id_from_full_chain_subject,
+)
+from app.services.lifecycle_subjects import subject_product_id
 from app.services.requirements import requirement_summary_projection
 from app.services.task_access import can_read_task
 from app.services.task_listing import task_summary_projection
@@ -143,23 +146,6 @@ def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dic
     return collection if isinstance(collection, dict) else {}
 
 
-def _latest_requirement_id_for_version(current_store: Any, version_id: Any) -> str | None:
-    if version_id is None:
-        return None
-    version_requirements = sort_by_lifecycle_time(
-        [
-            requirement
-            for requirement in _read_memory_dict(current_store, "requirements").values()
-            if str(requirement.get("version_id")) == str(version_id)
-        ],
-        "updated_at",
-        "created_at",
-    )
-    if not version_requirements:
-        return None
-    return str(version_requirements[-1]["id"])
-
-
 def _trace_matches_full_chain_subjects(
     trace: dict[str, Any],
     *,
@@ -242,78 +228,10 @@ def _requirement_id_from_subject(
     subject_type: str,
     subject_id: str,
 ) -> str:
-    normalized_type = subject_type.strip()
-    normalized_id = subject_id.strip()
-    if not normalized_type or not normalized_id:
-        raise api_error(400, "VALIDATION_ERROR", "subject_type and subject_id are required")
-    if normalized_type == "requirement":
-        if _read_memory_dict(current_store, "requirements").get(normalized_id) is None:
-            raise api_error(404, "NOT_FOUND", "Requirement not found")
-        return normalized_id
-    if normalized_type in {"product_version", "iteration_version"}:
-        if _read_memory_dict(current_store, "product_versions").get(normalized_id) is None:
-            raise api_error(404, "NOT_FOUND", "Iteration version not found")
-        requirement_id = _latest_requirement_id_for_version(current_store, normalized_id)
-        if requirement_id is None:
-            raise api_error(
-                404,
-                "NO_REQUIREMENT_CONTEXT",
-                "Iteration version has no requirements to display in full chain",
-            )
-        return requirement_id
-    if normalized_type in {"branch_config", "product_version_branch_config"}:
-        branch_config = _read_memory_dict(
-            current_store,
-            "product_version_branch_configs",
-        ).get(normalized_id)
-        if branch_config is None:
-            raise api_error(404, "NOT_FOUND", "Branch config not found")
-        requirement_id = _latest_requirement_id_for_version(current_store, branch_config.get("version_id"))
-        if requirement_id is None:
-            raise api_error(
-                404,
-                "NO_REQUIREMENT_CONTEXT",
-                "Branch config version has no requirements to display in full chain",
-            )
-        return requirement_id
-    if normalized_type == "code_inspection_report":
-        report = _read_memory_dict(current_store, "code_inspection_reports").get(normalized_id)
-        if report is None:
-            raise api_error(404, "NOT_FOUND", "Code inspection report not found")
-        for bug_id in report.get("created_bug_ids") or []:
-            bug = _read_memory_dict(current_store, "bugs").get(str(bug_id))
-            if bug is not None and bug.get("requirement_id"):
-                return str(bug["requirement_id"])
-        for task_id in report.get("created_task_ids") or []:
-            task = _read_memory_dict(current_store, "ai_tasks").get(str(task_id))
-            if task is not None and task.get("requirement_id"):
-                return str(task["requirement_id"])
-        report_key = (str(report.get("repository_id") or ""), str(report.get("branch") or ""))
-        if all(report_key):
-            for branch_config in _read_memory_dict(current_store, "product_version_branch_configs").values():
-                if str(branch_config.get("product_id") or "") != str(report.get("product_id") or ""):
-                    continue
-                branch_key = (
-                    str(branch_config.get("repository_id") or ""),
-                    str(branch_config.get("working_branch") or ""),
-                )
-                if branch_key != report_key:
-                    continue
-                requirement_id = _latest_requirement_id_for_version(current_store, branch_config.get("version_id"))
-                if requirement_id is not None:
-                    return requirement_id
-    tasks = lifecycle_subject_tasks(
+    return resolve_requirement_id_from_full_chain_subject(
         current_store,
-        subject_type=normalized_type,
-        subject_id=normalized_id,
-    )
-    for task in tasks:
-        if task.get("requirement_id"):
-            return str(task["requirement_id"])
-    raise api_error(
-        404,
-        "NO_REQUIREMENT_CONTEXT",
-        "Subject is not linked to a requirement full chain",
+        subject_id=subject_id,
+        subject_type=subject_type,
     )
 
 

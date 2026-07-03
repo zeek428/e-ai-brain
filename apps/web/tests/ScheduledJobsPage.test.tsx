@@ -19,6 +19,7 @@ function installScheduledJobsFetchMock(
     jobs?: Array<Record<string, unknown>>;
     observability?: unknown;
     resultWriteRecords?: unknown[];
+    deferRunListReload?: boolean;
     runResponse?: Promise<unknown>;
     runs?: unknown[];
     traceNodeRerunMode?: 'protected_skill' | 'ready_all';
@@ -37,6 +38,7 @@ function installScheduledJobsFetchMock(
   const runJobBodies: unknown[] = [];
   const runJobIds: string[] = [];
   const runListCalls: string[] = [];
+  let runListCallCount = 0;
   const resultWriteRecordCalls: string[] = [];
   const jobs: Array<Record<string, unknown>> = options.jobs ?? [];
   const resultWriteRecords = options.resultWriteRecords ?? [];
@@ -1119,6 +1121,10 @@ function installScheduledJobsFetchMock(
       && init?.method === 'GET'
     ) {
       runListCalls.push(input);
+      runListCallCount += 1;
+      if (options.deferRunListReload && runListCallCount > 1) {
+        return new Promise<Response>(() => undefined);
+      }
       return jsonResponse({ data: { items: runs, total: runs.length } });
     }
     if (
@@ -4114,6 +4120,48 @@ describe('ScheduledJobsPage', () => {
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
     expect(dialog).toHaveTextContent('model_log_110');
     await waitFor(() => expect(runButton).not.toBeDisabled());
+  });
+
+  it('shows a returned queued run in the run table before the full reload finishes', async () => {
+    const { runJobBodies } = installScheduledJobsFetchMock({
+      deferRunListReload: true,
+      jobs: [
+        {
+          enabled: true,
+          execution_mode: 'ai_assisted',
+          id: 'scheduled_job_weekly_feedback',
+          job_type: 'code_repository_inspection',
+          name: '代码仓库质量安全规范巡检',
+          schedule_type: 'manual',
+          status: 'active',
+        },
+      ],
+      runResponse: Promise.resolve({
+        id: 'scheduled_job_run_immediate',
+        records_imported: 0,
+        result_summary: {
+          execution_nodes: {
+            native_scan: { status: 'queued' },
+          },
+        },
+        scheduled_job_id: 'scheduled_job_weekly_feedback',
+        scheduled_job_name: '代码仓库质量安全规范巡检',
+        status: 'queued',
+        trigger_type: 'manual',
+      }),
+      runs: [],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    expect(await screen.findByText('代码仓库质量安全规范巡检')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: '运行作业 代码仓库质量安全规范巡检' }));
+
+    await waitFor(() => expect(runJobBodies).toEqual([{ trigger_type: 'manual' }]));
+    expect(await screen.findByRole('tab', { name: '运行记录' })).toHaveAttribute('aria-selected', 'true');
+    expect(
+      await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_immediate' }),
+    ).toBeInTheDocument();
   });
 
   it('shows a failure message when a scheduled job run returns failed', async () => {

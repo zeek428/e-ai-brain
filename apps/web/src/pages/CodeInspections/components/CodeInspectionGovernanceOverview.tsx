@@ -40,6 +40,39 @@ function governanceStatusTag(value?: string | null) {
   return <Tag color={colorByStatus.get(text) ?? 'default'}>{textByStatus.get(text) ?? text}</Tag>;
 }
 
+function countTag(label: string, value: unknown, color = 'orange') {
+  const count = metricValue(typeof value === 'number' ? value : Number(value));
+  return <Tag color={count > 0 ? color : 'default'}>{`${label} ${count}`}</Tag>;
+}
+
+function issueGapTags(row: Record<string, unknown>) {
+  return (
+    <Space className="code-inspection-table-tags" size={[4, 4]} wrap>
+      {countTag('缺 Bug', row.uncovered_bug_finding_count, 'red')}
+      {countTag('缺任务', row.uncovered_task_finding_count, 'orange')}
+    </Space>
+  );
+}
+
+function qualityGateTags(row: Record<string, unknown>) {
+  return (
+    <Space className="code-inspection-table-tags" size={[4, 4]} wrap>
+      {countTag('报告', row.quality_gate_failed_report_count, 'red')}
+      {countTag('失败项', row.quality_gate_violation_count, 'red')}
+    </Space>
+  );
+}
+
+function suppressionRiskTags(row: Record<string, unknown>) {
+  return (
+    <Space className="code-inspection-table-tags" size={[4, 4]} wrap>
+      {countTag('待审批', row.pending_suppression_count, 'gold')}
+      {countTag('已接受风险', row.accepted_risk_count, 'blue')}
+      {countTag('到期风险', row.expired_accepted_risk_count, 'orange')}
+    </Space>
+  );
+}
+
 function compactMetricTable<Row extends Record<string, unknown>>({
   columns,
   dataSource,
@@ -54,14 +87,17 @@ function compactMetricTable<Row extends Record<string, unknown>>({
   dataSource: Row[];
   rowKey: (keyof Row & string) | ((record: Row, index?: number) => string);
 }) {
+  const scrollX = columns.reduce((total, column) => total + (column.width ?? 140), 0);
   return (
     <Table<Row>
+      className="code-inspection-metric-table"
       columns={columns}
       dataSource={dataSource}
       pagination={false}
       rowKey={rowKey}
-      scroll={{ x: columns.reduce((total, column) => total + (column.width ?? 140), 0) }}
+      scroll={{ x: scrollX }}
       size="small"
+      tableLayout="fixed"
     />
   );
 }
@@ -480,12 +516,12 @@ export function CodeInspectionGovernanceOverview({
           <Card loading={loading} size="small" title="分支治理待办">
             {compactMetricTable({
               columns: [
-                { dataIndex: 'branch', title: '分支', width: 160 },
+                { dataIndex: 'branch', title: '分支', width: 140 },
                 {
                   dataIndex: 'repository_name',
                   render: (_, row) => compactText(String(row.repository_name ?? row.repository_id ?? '-')),
                   title: '仓库',
-                  width: 220,
+                  width: 210,
                 },
                 {
                   dataIndex: 'status',
@@ -495,17 +531,29 @@ export function CodeInspectionGovernanceOverview({
                 },
                 { dataIndex: 'report_count', title: '报告', width: 80 },
                 { dataIndex: 'active_severe_finding_count', title: '活跃严重', width: 110 },
-                { dataIndex: 'uncovered_bug_finding_count', title: '缺 Bug', width: 90 },
-                { dataIndex: 'uncovered_task_finding_count', title: '缺整改任务', width: 120 },
-                { dataIndex: 'quality_gate_failed_report_count', title: '门禁失败报告', width: 130 },
-                { dataIndex: 'quality_gate_violation_count', title: '门禁失败项', width: 120 },
-                { dataIndex: 'pending_suppression_count', title: '待审批忽略', width: 120 },
-                { dataIndex: 'expired_accepted_risk_count', title: '到期风险', width: 100 },
+                {
+                  dataIndex: 'uncovered_bug_finding_count',
+                  render: (_, row) => issueGapTags(row),
+                  title: '闭环缺口',
+                  width: 170,
+                },
+                {
+                  dataIndex: 'quality_gate_failed_report_count',
+                  render: (_, row) => qualityGateTags(row),
+                  title: '门禁',
+                  width: 150,
+                },
+                {
+                  dataIndex: 'pending_suppression_count',
+                  render: (_, row) => suppressionRiskTags(row),
+                  title: '忽略/风险',
+                  width: 220,
+                },
                 {
                   dataIndex: 'latest_report_summary',
                   render: (_, row) => compactText(String(row.latest_report_summary ?? row.latest_report_id ?? '-')),
                   title: '最近报告',
-                  width: 260,
+                  width: 360,
                 },
               ],
               dataSource: dashboard?.branch_governance ?? [],
@@ -550,16 +598,23 @@ export function CodeInspectionGovernanceOverview({
                 },
                 { dataIndex: 'report_count', title: '报告', width: 80 },
                 { dataIndex: 'active_severe_finding_count', title: '活跃严重', width: 110 },
-                { dataIndex: 'uncovered_bug_finding_count', title: '缺 Bug', width: 90 },
-                { dataIndex: 'uncovered_task_finding_count', title: '缺整改任务', width: 120 },
-                { dataIndex: 'pending_suppression_count', title: '待审批忽略', width: 120 },
-                { dataIndex: 'accepted_risk_count', title: '已接受风险', width: 120 },
-                { dataIndex: 'expired_accepted_risk_count', title: '到期风险', width: 100 },
+                {
+                  dataIndex: 'uncovered_bug_finding_count',
+                  render: (_, row) => issueGapTags(row),
+                  title: '闭环缺口',
+                  width: 170,
+                },
+                {
+                  dataIndex: 'pending_suppression_count',
+                  render: (_, row) => suppressionRiskTags(row),
+                  title: '忽略/风险',
+                  width: 220,
+                },
                 {
                   dataIndex: 'latest_report_summary',
                   render: (_, row) => compactText(String(row.latest_report_summary ?? row.latest_report_id ?? '-')),
                   title: '最近报告',
-                  width: 260,
+                  width: 360,
                 },
               ],
               dataSource: dashboard?.committer_governance ?? [],

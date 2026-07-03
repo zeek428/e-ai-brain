@@ -27,7 +27,11 @@ from app.services.code_inspection_detail_projection import (
     finding_accepted_risk_is_expired,
     finding_suppression_is_effective,
 )
+from app.services.full_chain_subject_resolution import (
+    resolve_code_inspection_report_requirement_id,
+)
 from app.services.product_scope import user_product_access
+from app.services.task_workflow_context import task_workflow_read_store
 
 
 def _read_memory_collection(
@@ -62,8 +66,42 @@ def code_inspection_query_repository(current_store: Any) -> Any | None:
     return None
 
 
-def public_code_inspection_report(report: dict[str, Any], current_store: Any) -> dict[str, Any]:
+def _code_inspection_full_chain_metadata(
+    report: dict[str, Any],
+    current_store: Any,
+) -> dict[str, Any]:
+    report_id = report.get("id")
+    if report_id is None:
+        return {
+            "full_chain_available": False,
+            "full_chain_subject_id": None,
+            "full_chain_subject_type": None,
+            "full_chain_unavailable_reason": "NO_REQUIREMENT_CONTEXT",
+        }
+    requirement_id = resolve_code_inspection_report_requirement_id(current_store, report)
+    if requirement_id is None:
+        return {
+            "full_chain_available": False,
+            "full_chain_subject_id": None,
+            "full_chain_subject_type": None,
+            "full_chain_unavailable_reason": "NO_REQUIREMENT_CONTEXT",
+        }
+    return {
+        "full_chain_available": True,
+        "full_chain_subject_id": str(report_id),
+        "full_chain_subject_type": "code_inspection_report",
+        "full_chain_unavailable_reason": None,
+    }
+
+
+def public_code_inspection_report(
+    report: dict[str, Any],
+    current_store: Any,
+    *,
+    full_chain_store: Any | None = None,
+) -> dict[str, Any]:
     repository_id = report.get("repository_id")
+    product_id = report.get("product_id")
     repository = (
         report.get("repository")
         or _read_memory_record(
@@ -73,8 +111,25 @@ def public_code_inspection_report(report: dict[str, Any], current_store: Any) ->
         )
         or {}
     )
+    product = (
+        report.get("product")
+        or _read_memory_record(
+            current_store,
+            "products",
+            product_id,
+        )
+        or {}
+    )
+    chain_store = (
+        full_chain_store
+        if full_chain_store is not None
+        else task_workflow_read_store(current_store)
+    )
     return {
         **report,
+        **_code_inspection_full_chain_metadata(report, chain_store),
+        "product_code": product.get("code"),
+        "product_name": product.get("name"),
         "repository_name": repository.get("name"),
         "repository_path": repository.get("project_path") or repository.get("remote_url"),
     }
@@ -117,7 +172,11 @@ def scoped_code_inspection_reports(
             if item.get("product_id") is not None
             and str(item.get("product_id")) in product_scope_ids
         ]
-    return [public_code_inspection_report(item, current_store) for item in items]
+    full_chain_store = task_workflow_read_store(current_store)
+    return [
+        public_code_inspection_report(item, current_store, full_chain_store=full_chain_store)
+        for item in items
+    ]
 
 
 def findings_for_code_inspection_reports(
@@ -941,8 +1000,9 @@ def list_code_inspection_reports_response(
             "title": title,
         }
         total = repository.count_code_inspection_reports(**query_filters)
+        full_chain_store = task_workflow_read_store(current_store)
         items = [
-            public_code_inspection_report(item, current_store)
+            public_code_inspection_report(item, current_store, full_chain_store=full_chain_store)
             for item in repository.list_code_inspection_reports_page(
                 **query_filters,
                 limit=resolved_page_size,

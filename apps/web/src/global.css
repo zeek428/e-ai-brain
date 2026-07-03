@@ -645,6 +645,69 @@ body {
   white-space: nowrap;
 }
 
+.code-inspections-page .management-list-table .ant-pro-table-list-toolbar-container {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.code-inspections-page .management-list-table .ant-pro-table-list-toolbar-right {
+  flex: 1 1 auto;
+}
+
+.code-inspections-scope-bar {
+  margin-bottom: 12px;
+}
+
+.code-inspection-metric-table {
+  max-width: 100%;
+}
+
+.code-inspection-metric-table .ant-table {
+  max-width: 100%;
+}
+
+.code-inspection-metric-table .ant-table-container {
+  min-width: 0;
+}
+
+.code-inspection-metric-table .ant-table-content {
+  overflow-x: auto;
+}
+
+.code-inspection-metric-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.code-inspection-metric-table .ant-table-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.code-inspection-metric-table .ant-typography {
+  margin: 0;
+}
+
+.code-inspection-table-tags {
+  max-width: 100%;
+}
+
+.code-inspection-table-tags .ant-tag {
+  margin-inline-end: 0;
+  white-space: nowrap;
+}
+
+.code-inspections-product-select {
+  min-width: 260px;
+}
+
+@media (max-width: 640px) {
+  .code-inspections-product-select {
+    width: 100%;
+  }
+}
+
 .management-list-table .ant-table-cell {
   overflow-wrap: anywhere;
 }

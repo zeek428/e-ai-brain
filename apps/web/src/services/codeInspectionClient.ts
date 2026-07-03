@@ -24,6 +24,10 @@ export type CodeInspectionReportRecord = {
   created_bug_ids?: string[];
   created_task_ids?: string[];
   finding_count: number;
+  full_chain_available?: boolean;
+  full_chain_subject_id?: string | null;
+  full_chain_subject_type?: string | null;
+  full_chain_unavailable_reason?: string | null;
   id: string;
   incremental_file_count?: number | null;
   incremental_from_commit?: string | null;
@@ -35,7 +39,9 @@ export type CodeInspectionReportRecord = {
   plugin_invocation_log_id?: string | null;
   previous_comparison?: Record<string, unknown>;
   previous_report_id?: string | null;
+  product_code?: string | null;
   product_id?: string | null;
+  product_name?: string | null;
   quality_gate?: Record<string, unknown>;
   repository_id?: string | null;
   repository_name?: string | null;

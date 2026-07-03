@@ -166,6 +166,26 @@ export function useScheduledJobWorkspaceData() {
     }));
   }, []);
 
+  const showRunImmediately = useCallback((run: ScheduledJobRunRecord) => {
+    const alreadyVisible = runs.some((item) => item.id === run.id);
+    const nextPageSize = runListQuery.pageSize ?? 10;
+    setRunListQuery((current) => ({
+      ...current,
+      page: 1,
+      sortField: 'started_at',
+      sortOrder: 'descend',
+    }));
+    setRuns((current) => [
+      run,
+      ...current.filter((item) => item.id !== run.id),
+    ].slice(0, nextPageSize));
+    setRunListMeta((current) => ({
+      ...current,
+      page: 1,
+      total: alreadyVisible ? current.total : Math.max(current.total + 1, 1),
+    }));
+  }, [runListQuery.pageSize, runs]);
+
   useEffect(() => {
     queueMicrotask(() => {
       void reload();
@@ -191,6 +211,7 @@ export function useScheduledJobWorkspaceData() {
     runs,
     onJobListChange: handleJobListChange,
     onRunListChange: handleRunListChange,
+    showRunImmediately,
     skills,
   };
 }

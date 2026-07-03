@@ -172,6 +172,7 @@ export default function ScheduledJobsPage() {
     runs,
     onJobListChange,
     onRunListChange,
+    showRunImmediately,
     skills,
   } = useScheduledJobWorkspaceData();
   const [productRepositories, setProductRepositories] = useState<ProductGitRepositoryOption[]>([]);
@@ -1228,6 +1229,8 @@ export default function ScheduledJobsPage() {
     setRunningJobId(jobId);
     try {
       const run = await runScheduledJob(jobId, triggerType, sourceRunId);
+      showRunImmediately(run);
+      setActiveTab('runs');
       openRunDetail(run);
       if (run.status === 'succeeded') {
         message.success('作业运行完成');
@@ -1236,7 +1239,7 @@ export default function ScheduledJobsPage() {
       } else {
         message.error(run.error_message ? `作业运行失败：${run.error_message}` : `作业运行 ${run.status}`);
       }
-      await reload();
+      void reload();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '作业运行失败');
     } finally {

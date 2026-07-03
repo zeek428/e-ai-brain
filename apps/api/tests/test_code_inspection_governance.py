@@ -390,6 +390,8 @@ def test_code_inspection_report_list_uses_repository_pagination_and_product_scop
     assert payload["page"] == 2
     assert payload["page_size"] == 5
     assert payload["items"][0]["repository_name"] == "AI Brain"
+    assert payload["items"][0]["full_chain_available"] is False
+    assert payload["items"][0]["full_chain_unavailable_reason"] == "NO_REQUIREMENT_CONTEXT"
     assert repository.count_filters == {
         "committer": "alice",
         "product_id": None,
@@ -406,6 +408,125 @@ def test_code_inspection_report_list_uses_repository_pagination_and_product_scop
         "sort_by": "finding_count",
         "sort_order": "asc",
     }
+
+
+def test_code_inspection_report_list_marks_full_chain_availability():
+    current_store = SimpleNamespace(
+        ai_tasks={
+            "task_linked_requirement": {
+                "id": "task_linked_requirement",
+                "product_id": "product_ai_brain",
+                "requirement_id": "requirement_task_context",
+            }
+        },
+        bugs={},
+        code_inspection_reports={
+            "code_inspection_report_task_context": {
+                "branch": "main",
+                "created_at": "2026-06-24T00:00:00+00:00",
+                "created_task_ids": ["task_linked_requirement"],
+                "finding_count": 1,
+                "id": "code_inspection_report_task_context",
+                "product_id": "product_ai_brain",
+                "repository_id": "repo_ai_brain",
+                "risk_level": "high",
+                "severe_finding_count": 1,
+                "status": "completed",
+                "summary": "linked by remediation task",
+            },
+            "code_inspection_report_branch_context": {
+                "branch": "release/1.0",
+                "created_at": "2026-06-24T00:01:00+00:00",
+                "finding_count": 1,
+                "id": "code_inspection_report_branch_context",
+                "product_id": "product_branch",
+                "repository_id": "repo_branch",
+                "risk_level": "medium",
+                "severe_finding_count": 0,
+                "status": "completed",
+                "summary": "linked by version branch config",
+            },
+            "code_inspection_report_detached": {
+                "branch": "detached",
+                "created_at": "2026-06-24T00:02:00+00:00",
+                "finding_count": 0,
+                "id": "code_inspection_report_detached",
+                "product_id": "product_detached",
+                "repository_id": "repo_detached",
+                "risk_level": "low",
+                "severe_finding_count": 0,
+                "status": "completed",
+                "summary": "no requirement context",
+            },
+        },
+        product_git_repositories={},
+        products={
+            "product_ai_brain": {
+                "code": "AI-BRAIN",
+                "id": "product_ai_brain",
+                "name": "AI Brain",
+            }
+        },
+        product_version_branch_configs={
+            "branch_config_release_1": {
+                "id": "branch_config_release_1",
+                "product_id": "product_branch",
+                "repository_id": "repo_branch",
+                "version_id": "version_release_1",
+                "working_branch": "release/1.0",
+            }
+        },
+        requirements={
+            "requirement_task_context": {
+                "id": "requirement_task_context",
+                "product_id": "product_ai_brain",
+                "title": "Task linked requirement",
+            },
+            "requirement_branch_context": {
+                "created_at": "2026-06-23T00:00:00+00:00",
+                "id": "requirement_branch_context",
+                "product_id": "product_branch",
+                "title": "Branch linked requirement",
+                "version_id": "version_release_1",
+            },
+        },
+    )
+
+    payload = list_code_inspection_reports_response(
+        committer=None,
+        current_store=current_store,
+        page=1,
+        page_size=10,
+        product_id=None,
+        repository_id=None,
+        risk_level=None,
+        sort_by="created_at",
+        sort_order="asc",
+        started_at=None,
+        status=None,
+        title=None,
+        trace_id="trace_code_inspection_full_chain_marker",
+        user={"id": "admin", "permissions": ["code_inspection.read"], "roles": ["admin"]},
+    )
+
+    reports_by_id = {item["id"]: item for item in payload["items"]}
+    assert reports_by_id["code_inspection_report_task_context"]["full_chain_available"] is True
+    assert reports_by_id["code_inspection_report_task_context"]["product_code"] == "AI-BRAIN"
+    assert reports_by_id["code_inspection_report_task_context"]["product_name"] == "AI Brain"
+    assert (
+        reports_by_id["code_inspection_report_task_context"]["full_chain_subject_id"]
+        == "code_inspection_report_task_context"
+    )
+    assert (
+        reports_by_id["code_inspection_report_task_context"]["full_chain_subject_type"]
+        == "code_inspection_report"
+    )
+    assert reports_by_id["code_inspection_report_branch_context"]["full_chain_available"] is True
+    assert reports_by_id["code_inspection_report_detached"]["full_chain_available"] is False
+    assert (
+        reports_by_id["code_inspection_report_detached"]["full_chain_unavailable_reason"]
+        == "NO_REQUIREMENT_CONTEXT"
+    )
 
 
 def create_model_gateway(headers: dict[str, str]) -> dict:

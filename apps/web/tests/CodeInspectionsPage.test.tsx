@@ -6,7 +6,11 @@ import './proComponentsMock';
 
 import CodeInspectionsPage from '../src/pages/CodeInspections';
 
-function installCodeInspectionsFetchMock() {
+function installCodeInspectionsFetchMock({
+  additionalReports = [],
+}: {
+  additionalReports?: Array<Record<string, unknown>>;
+} = {}) {
   const report = {
     artifact_ref: 'workdir://checkouts/scheduled_job_run_001__repo_ai_brain__main__abc1234',
     branch: 'main',
@@ -27,6 +31,10 @@ function installCodeInspectionsFetchMock() {
     created_bug_ids: ['bug_code_001'],
     created_task_ids: ['task_code_fix_001'],
     finding_count: 1,
+    full_chain_available: true,
+    full_chain_subject_id: 'code_inspection_report_001',
+    full_chain_subject_type: 'code_inspection_report',
+    full_chain_unavailable_reason: null,
     id: 'code_inspection_report_001',
     incremental_file_count: 3,
     incremental_from_commit: 'base1234',
@@ -37,7 +45,9 @@ function installCodeInspectionsFetchMock() {
     plugin_action_id: 'plugin_action_github_scan',
     plugin_connection_id: 'plugin_connection_github_prod',
     plugin_invocation_log_id: 'plugin_invocation_log_001',
+    product_code: 'AI-BRAIN',
     product_id: 'product_ai_brain',
+    product_name: 'AI Brain',
     repository_id: 'repo_ai_brain',
     repository_name: 'AI Brain',
     repository_path: 'example/ai-brain',
@@ -97,8 +107,24 @@ function installCodeInspectionsFetchMock() {
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
     const url = String(input);
+    if (url === '/api/products?active_only=true&page_size=100' && init?.method === 'GET') {
+      return jsonResponse({
+        data: {
+          items: [
+            { code: 'AI-BRAIN', id: 'product_ai_brain', name: 'AI Brain', status: 'active' },
+            { code: 'OPS', id: 'product_ops', name: 'Operations', status: 'active' },
+          ],
+          page: 1,
+          page_size: 100,
+          total: 2,
+        },
+      });
+    }
     if (url.startsWith('/api/governance/code-inspections?') && init?.method === 'GET') {
-      return jsonResponse({ data: { items: [report], page: 1, page_size: 10, total: 1 } });
+      const reports = [report, ...additionalReports];
+      return jsonResponse({
+        data: { items: reports, page: 1, page_size: 10, total: reports.length },
+      });
     }
     if (url.startsWith('/api/governance/code-inspections/dashboard') && init?.method === 'GET') {
       return jsonResponse({
@@ -513,7 +539,26 @@ function installCodeInspectionsFetchMock() {
   });
   window.localStorage.setItem('ai_brain_access_token', 'token-admin');
   vi.stubGlobal('fetch', fetchMock);
-  return { fetchMock };
+  return { fetchMock, report };
+}
+
+async function findReportDetailDialog() {
+  const title = await screen.findByText('代码巡检详情');
+  const dialog = title.closest('.ant-modal');
+  expect(dialog).not.toBeNull();
+  return dialog as HTMLElement;
+}
+
+async function openReportDetail(reportId = 'code_inspection_report_001') {
+  const reportRows = (await screen.findAllByText(reportId))
+    .map((item) => item.closest('tr'))
+    .filter((row): row is HTMLTableRowElement => Boolean(row));
+  const reportRow = reportRows.find((row) =>
+    Boolean(within(row).queryByRole('button', { name: '详情' })),
+  );
+  expect(reportRow).toBeDefined();
+  fireEvent.click(within(reportRow as HTMLElement).getByRole('button', { name: '详情' }));
+  await findReportDetailDialog();
 }
 
 describe('CodeInspectionsPage', () => {
@@ -543,6 +588,73 @@ describe('CodeInspectionsPage', () => {
     expect(
       screen.getByText('下一步动作：先查看“门禁失败原因”和最近失败报告，完成修复或风险接受后再重跑巡检。'),
     ).toBeInTheDocument();
+    expect(screen.getByText('产品范围')).toBeInTheDocument();
+    expect(screen.getByText('当前范围：全部产品')).toBeInTheDocument();
+    expect(screen.getAllByText('AI-BRAIN · AI Brain').length).toBeGreaterThan(0);
+  });
+
+  it('reloads list and dashboard by selected product scope', async () => {
+    const { fetchMock } = installCodeInspectionsFetchMock();
+
+    render(<CodeInspectionsPage />);
+
+    await screen.findByText('code_inspection_report_001');
+    fireEvent.mouseDown(await screen.findByLabelText('产品范围'));
+    const productOption = (await screen.findAllByText('AI-BRAIN · AI Brain')).at(-1);
+    expect(productOption).toBeDefined();
+    fireEvent.click(productOption as HTMLElement);
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path]) => String(path))).toEqual(
+        expect.arrayContaining([
+          '/api/governance/code-inspections?page=1&page_size=10&product_id=product_ai_brain&sort_by=created_at&sort_order=desc',
+          '/api/governance/code-inspections/dashboard?product_id=product_ai_brain',
+        ]),
+      ),
+    );
+    expect(screen.getByText('当前范围：AI-BRAIN · AI Brain')).toBeInTheDocument();
+  });
+
+  it('disables full-chain action when a report has no requirement context', async () => {
+    installCodeInspectionsFetchMock({
+      additionalReports: [
+        {
+          branch: 'detached',
+          created_at: '2026-06-12T08:00:00Z',
+          finding_count: 0,
+          full_chain_available: false,
+          full_chain_subject_id: null,
+          full_chain_subject_type: null,
+          full_chain_unavailable_reason: 'NO_REQUIREMENT_CONTEXT',
+          id: 'code_inspection_report_detached',
+          product_id: 'product_detached',
+          repository_id: 'repo_detached',
+          repository_name: 'Detached Repo',
+          risk_level: 'low',
+          severe_finding_count: 0,
+          status: 'completed',
+          summary: '未关联需求上下文的独立巡检。',
+        },
+      ],
+    });
+
+    render(<CodeInspectionsPage />);
+
+    const linkedRow = (await screen.findByText('code_inspection_report_001')).closest('tr');
+    const detachedRow = (await screen.findByText('code_inspection_report_detached')).closest('tr');
+
+    expect(linkedRow).not.toBeNull();
+    expect(detachedRow).not.toBeNull();
+    expect(within(linkedRow as HTMLElement).getByRole('link', { name: '全链路' })).toHaveAttribute(
+      'href',
+      '/delivery/full-chain?subject_id=code_inspection_report_001&subject_type=code_inspection_report',
+    );
+    expect(within(detachedRow as HTMLElement).queryByRole('link', { name: '全链路' })).not.toBeInTheDocument();
+    const disabledFullChainButton = within(detachedRow as HTMLElement).getByRole('button', {
+      name: '全链路',
+    });
+    expect(disabledFullChainButton).toBeDisabled();
+    expect(disabledFullChainButton).toHaveAttribute('title', '该巡检报告未关联需求全链路');
   });
 
   it('shows scheduled job and plugin source trace in the detail dialog', async () => {
@@ -571,10 +683,15 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getByText('分支治理待办')).toBeInTheDocument();
     expect(screen.getByText('提交人风险排行')).toBeInTheDocument();
     expect(screen.getByText('提交人治理待办')).toBeInTheDocument();
+    expect(screen.getAllByText('闭环缺口').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('忽略/风险').length).toBeGreaterThan(0);
+    const branchGovernanceCard = screen.getByText('分支治理待办').closest('.ant-card');
+    expect(branchGovernanceCard?.querySelector('.code-inspection-metric-table')).not.toBeNull();
+    expect(branchGovernanceCard?.querySelector('table')).toHaveStyle({ tableLayout: 'fixed' });
     expect(screen.getAllByText('活跃严重').length).toBeGreaterThan(0);
     expect(screen.getAllByText('缺整改任务').length).toBeGreaterThan(0);
     expect(screen.getAllByText('健康').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('到期风险').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/到期风险/).length).toBeGreaterThan(0);
     expect(screen.getByText('质量门禁趋势')).toBeInTheDocument();
     expect(screen.getByText('门禁失败原因')).toBeInTheDocument();
     expect(screen.getByText('严重问题 SLA')).toBeInTheDocument();
@@ -587,9 +704,9 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getByText('2026-06-12')).toBeInTheDocument();
     expect(screen.getAllByText('100%').length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole('button', { name: '详情' }));
+    await openReportDetail();
 
-    const dialog = await screen.findByRole('dialog', { name: '代码巡检详情' });
+    const dialog = await findReportDetailDialog();
     await waitFor(() => expect(within(dialog).getByText('来源链路')).toBeInTheDocument());
 
     expect(within(dialog).getByText('执行诊断')).toBeInTheDocument();
@@ -671,7 +788,7 @@ describe('CodeInspectionsPage', () => {
 
     render(<CodeInspectionsPage />);
 
-    const dialog = await screen.findByRole('dialog', { name: '代码巡检详情' });
+    const dialog = await findReportDetailDialog();
     await waitFor(() => expect(within(dialog).getByText('来源链路')).toBeInTheDocument());
     expect(within(dialog).getByText('code_inspection_report_001')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
@@ -686,9 +803,9 @@ describe('CodeInspectionsPage', () => {
     render(<CodeInspectionsPage />);
 
     await screen.findByText('code_inspection_report_001');
-    fireEvent.click(screen.getByRole('button', { name: '详情' }));
+    await openReportDetail();
 
-    const dialog = await screen.findByRole('dialog', { name: '代码巡检详情' });
+    const dialog = await findReportDetailDialog();
     const findingTitle = await within(dialog).findByText('扫描输入数据不完整，无法进行文件级代码审计');
     const findingsTable = findingTitle.closest('table');
 
@@ -711,9 +828,9 @@ describe('CodeInspectionsPage', () => {
     render(<CodeInspectionsPage />);
 
     await screen.findByText('code_inspection_report_001');
-    fireEvent.click(screen.getByRole('button', { name: '详情' }));
+    await openReportDetail();
 
-    const dialog = await screen.findByRole('dialog', { name: '代码巡检详情' });
+    const dialog = await findReportDetailDialog();
     const requestButton = await within(dialog).findByRole('button', { name: '申请误报' });
     fireEvent.click(requestButton);
 
@@ -759,9 +876,9 @@ describe('CodeInspectionsPage', () => {
     render(<CodeInspectionsPage />);
 
     await screen.findByText('code_inspection_report_001');
-    fireEvent.click(screen.getByRole('button', { name: '详情' }));
+    await openReportDetail();
 
-    const dialog = await screen.findByRole('dialog', { name: '代码巡检详情' });
+    const dialog = await findReportDetailDialog();
     const acceptRiskButton = await within(dialog).findByRole('button', { name: '接受风险' });
     fireEvent.click(acceptRiskButton);
 
