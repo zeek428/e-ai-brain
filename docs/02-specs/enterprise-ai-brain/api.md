@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.533 |
+| 功能版本 | v1.1.534 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.534 | 2026-07-03 | 新增 `GET /api/bugs/images/preview`，已上传 Bug 图片通过受 `bug.read` 权限保护的后端代理预览 | Codex |
 | v1.1.533 | 2026-07-03 | 新增 `POST /api/bugs/images/upload`，Bug 图片证据写入 MinIO/S3-compatible 对象存储后以元数据关联到 evidence | Codex |
 | v1.1.532 | 2026-07-02 | 定时作业 `config_json.ai_executor` 支持选择系统默认执行器或本地 Runner；本地 Runner 可不传模型网关，完成回写后继续结果动作 | Codex |
 | v1.1.531 | 2026-07-02 | 样例复用 `reuse_wizard` 新增进度字段，连接测试、动作试运行和 dry-run 页面展示“已就绪步骤 / 总步骤” | Codex |
@@ -953,6 +954,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Bug | GET | `/api/bugs` | 查询 Bug 列表；校验 `bug.read`，支持产品、迭代版本、状态、严重程度和来源过滤，并按当前用户产品 scope 过滤。 |
 | Bug | POST | `/api/bugs` | v1.1 基础接口，登记 AI 自动测试或人工测试 Bug。 |
 | Bug | POST | `/api/bugs/images/upload` | 上传 Bug 图片证据；请求包含 `filename/content_base64/mime_type/source`，仅支持 PNG、JPEG、GIF、WebP 且单文件不超过 10MB；成功后返回对象存储 bucket、object_key、content_hash、文件名、MIME、大小、上传人、上传时间和来源，供 `POST/PATCH /api/bugs` 写入 `evidence.images[]`。 |
+| Bug | GET | `/api/bugs/images/preview` | 预览已上传 Bug 图片证据；校验 `bug.read`，请求携带 `bucket/object_key/mime_type`，仅代理当前对象存储 bucket 下 `bugs/evidence/` 前缀图片对象并返回图片二进制。 |
 | Bug | POST | `/api/bugs/batch-update` | 批量更新 Bug 状态、严重级别或处理人，返回 updated/skipped 明细并写入批次审计。 |
 | Bug | PATCH | `/api/bugs/{bug_id}` | v1.1 基础接口，更新 Bug 状态、分派人、复现信息或重复归并关系。 |
 | Bug | DELETE | `/api/bugs/{bug_id}` | 删除 Bug 记录。 |
@@ -4246,6 +4248,7 @@ POST /api/planning/iteration-suggestions/{suggestion_id}/decide
 GET /api/bugs?product_id=product_001&version_id=version_001&status=open
 POST /api/bugs
 POST /api/bugs/images/upload
+GET /api/bugs/images/preview?bucket=ai-brain-knowledge&object_key=bugs%2Fevidence%2Fuser_admin%2F2026-07-03%2Fd7b7aa...%2Ffailure.png&mime_type=image%2Fpng
 POST /api/bugs/batch-update
 PATCH /api/bugs/{bug_id}
 ```
@@ -4323,6 +4326,8 @@ PATCH /api/bugs/{bug_id}
 
 `POST /api/bugs/images/upload` 要求 Bug 写权限，仅接受 `image/png`、`image/jpeg`、`image/gif`、`image/webp`，单张最大 10MB。生产环境通过 `OBJECT_STORAGE_PROVIDER=minio` 写入 MinIO/S3-compatible bucket，响应返回 `id`、`storage_provider`、`bucket`、`object_key`、`content_hash`、`filename`、`mime_type`、`size_bytes`、`source`、`uploaded_at` 和 `uploaded_by`。登记或编辑 Bug 时前端将这些对象引用写入 `evidence.images[]`，不得把图片二进制或 data URL 写入 `bugs.evidence`。
 
+`GET /api/bugs/images/preview` 要求 `bug.read`，通过 query 传入上传响应中的 `bucket`、`object_key` 和 `mime_type`。服务端只允许读取当前配置 bucket 下 `bugs/evidence/` 前缀且 MIME 属于图片白名单的对象，返回对应图片二进制和 `Content-Type`；对象不存在返回 `404 NOT_FOUND`，bucket、前缀或 MIME 非法返回 `400 VALIDATION_ERROR`。前端应使用该接口生成本地 Blob URL 预览图片，不得直接暴露 MinIO URL。
+
 状态和枚举：
 
 - 来源：`ai_auto_test | ai_post_release | manual_test`。
@@ -4331,7 +4336,7 @@ PATCH /api/bugs/{bug_id}
 - AI 自动测试来源缺少 `reproduce_steps` 时初始状态为 `needs_info`；人工登记或带复现步骤的 Bug 初始状态为 `open`。
 - 提交 `duplicate_of_bug_id` 时重复 Bug 初始状态为 `closed`，并保留主 Bug 关联，避免重复进入修复队列。
 - 状态更新必须符合状态机约束，非法跨越返回 `BUG_STATE_INVALID`；创建和更新均写入 `bug.created` 或 `bug.updated` 审计事件。
-- Bug 管理工作台必须从真实 `/api/bugs` 响应映射 `version_code`、`version_name`、`reproduce_steps`、`evidence`、`duplicate_of_bug_id`、`requirement_id` 和 `related_task_id`；列表展示迭代版本并支持按版本名、编码或未关联状态过滤；登记弹窗允许录入复现步骤、对象型证据 JSON、关联需求和关联任务，目标版本选项读取同产品未归档迭代版本，支持 `planning`、`active`、`testing` 和 `released`，过滤 `archived`；登记和编辑弹窗支持本地多选图片与剪贴板粘贴图片，保存前先调用 `/api/bugs/images/upload` 获得 MinIO 对象引用并写入 `evidence.images[]`；编辑弹窗允许维护复现步骤、证据 JSON、状态、处理人和重复归并，重复归并候选仅展示同产品 Bug，来源只读展示，不允许把 AI 自动测试或上线后分析来源在前端改写为人工来源；列表勾选多条 Bug 后可打开“批量处理”，调用 `/api/bugs/batch-update` 更新状态、严重级别或处理人，并展示批量结果。
+- Bug 管理工作台必须从真实 `/api/bugs` 响应映射 `version_code`、`version_name`、`reproduce_steps`、`evidence`、`duplicate_of_bug_id`、`requirement_id` 和 `related_task_id`；列表展示迭代版本并支持按版本名、编码或未关联状态过滤；登记弹窗允许录入复现步骤、对象型证据 JSON、关联需求和关联任务，目标版本选项读取同产品未归档迭代版本，支持 `planning`、`active`、`testing` 和 `released`，过滤 `archived`；登记和编辑弹窗支持本地多选图片与剪贴板粘贴图片，保存前先调用 `/api/bugs/images/upload` 获得 MinIO 对象引用并写入 `evidence.images[]`，已上传图片点击后调用 `/api/bugs/images/preview` 预览；编辑弹窗允许维护复现步骤、证据 JSON、状态、处理人和重复归并，重复归并候选仅展示同产品 Bug，来源只读展示，不允许把 AI 自动测试或上线后分析来源在前端改写为人工来源；列表勾选多条 Bug 后可打开“批量处理”，调用 `/api/bugs/batch-update` 更新状态、严重级别或处理人，并展示批量结果。
 
 ### 软件研发全流程感知
 

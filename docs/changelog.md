@@ -9,6 +9,7 @@
 
 ### Added
 - Bug 管理登记和编辑弹窗支持选择或粘贴图片证据，图片先上传对象存储，再以 `evidence.images[]` 元数据关联到 Bug。
+- Bug 管理已上传图片支持点击预览，预览通过 `/api/bugs/images/preview` 受权限保护地代理读取 MinIO/S3-compatible 图片对象。
 
 ### Fixed
 - 插件连接、动作和插件删除保护不再把历史插件调用日志当作硬阻断；删除配置时保留历史调用记录并将插件/连接/动作引用置空，定时作业仍引用时继续返回占用提示。
@@ -32,7 +33,8 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
-- Bug 管理登记和编辑支持多张图片证据；本地多选或剪贴板粘贴的图片会先上传到 MinIO/S3-compatible 对象存储，Bug `evidence.images[]` 仅保存对象引用。
+- 定时作业代码巡检的仓库配置在未选择产品或产品未维护 Git 资源时给出明确提示，并支持从空状态直接跳转到产品管理新增该产品的 Git 资源。
+- Bug 管理登记和编辑支持多张图片证据；本地多选或剪贴板粘贴的图片会先上传到 MinIO/S3-compatible 对象存储，Bug `evidence.images[]` 仅保存对象引用，已上传图片可在弹窗内点击预览。
 - 定时作业 AI执行配置支持选择系统默认执行器或本地 Runner；本地 Codex/Claude/Hermes/OpenClaw Runner 会在数据连接后接收 AI 处理任务，完成回写后继续结果动作。
 - AI 执行器 Runner 就绪清单和新增/编辑表单新增“协议适配”边界：`runner_polling` 明确为当前安装包和队列闭环支持协议，`runner_websocket`、`mcp_http`、`mcp_stdio` 作为预留协议在表单中标注预留、在就绪清单中标记阻断，避免用户误以为非 polling 协议已可直接运行。
 - AI 执行器 Runner 高风险阻断生成的 `approval_request` 持久化为 `ai_executor_approval_requests`，新增独立查询和审批写回接口；插件管理执行器页可查看待审批请求并审批放行，审批通过后同步更新关联动作审批快照并写入审批请求审计。

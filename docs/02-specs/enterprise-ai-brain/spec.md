@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.869 |
+| 功能版本 | v1.1.870 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.870 | 2026-07-03 | Bug 管理已上传图片支持点击预览，预览接口校验 `bug.read` 并仅代理 Bug 图片证据对象 | Codex |
 | v1.1.869 | 2026-07-03 | Bug 管理新增图片证据上传接口和页面上传/粘贴能力，图片进入 MinIO/S3-compatible 对象存储并以 evidence 元数据关联 Bug | Codex |
 | v1.1.868 | 2026-07-03 | 插件配置删除保护不再将历史插件调用日志作为硬阻断，删除插件/连接/动作时保留日志并置空对应引用 | Codex |
 | v1.1.867 | 2026-07-02 | 定时作业 AI 处理链路新增 `config_json.ai_executor` 执行器选择：系统默认执行器走模型网关，本地 Runner 派发 `ai_executor_task` 并在完成回写后继续结果动作 | Codex |
@@ -1022,7 +1023,7 @@ DB-first 迁移状态：上述结构化持久化不代表所有 API 已经直连
 
 任务失败恢复必须复用单任务启动状态机：只有 `status=failed` 且 `current_step` 为 `model_gateway_failed` 或 `code_review_executor_failed` 的任务允许重试。任务管理批量重试接口逐条校验任务状态，合法任务调用同一 `/start` 逻辑；成功进入待确认的任务返回 `updated`，已尝试但模型网关或代码评审执行器仍失败的任务返回 `retried` 并携带错误码，不可重试、重复或不存在的任务返回 `skipped`。批次级审计事件为 `ai_task.batch_retried`，逐任务重试沿用 `ai_task.retry_started`。任务管理批量取消和批量重试完成后，前端必须展示结果弹窗；取消结果展示批次号、取消数、跳过数和 skipped 明细，重试结果展示批次号、重试数、成功数、仍失败数、失败错误码/错误信息和 skipped 明细，避免用户只能从 toast 推断任务是否恢复成功。
 
-Bug 来源、严重级别、状态机、初始状态和产品/版本/模块/需求/任务/重复缺陷上下文校验由 `app.services.bug_lifecycle` domain service 承载，Bug 创建、单条更新和批量处理 handler 只负责权限、审计、repository 写入和响应拼装；后续 Bug 状态规则调整应优先修改该服务并补充 service 层单测。Bug 图片证据上传由独立 `POST /api/bugs/images/upload` 承载，复用 Bug 写权限校验，只接受 PNG、JPEG、GIF、WebP 且单文件不超过 10MB；服务端解码 base64 后写入 MinIO/S3-compatible 对象存储，返回 bucket、object_key、content_hash、文件名、MIME、大小、上传人、上传时间和来源，Bug 创建或编辑时把这些元数据写入 `evidence.images[]`，不得把图片二进制写入 `bugs` 表。Bug 管理批量处理完成后，前端必须与需求、任务批量操作共用结果弹窗展示批次号、更新数、跳过数和每条 skipped 的 Bug ID、错误码和原因，避免用户只能从 toast 判断哪些缺陷未处理。
+Bug 来源、严重级别、状态机、初始状态和产品/版本/模块/需求/任务/重复缺陷上下文校验由 `app.services.bug_lifecycle` domain service 承载，Bug 创建、单条更新和批量处理 handler 只负责权限、审计、repository 写入和响应拼装；后续 Bug 状态规则调整应优先修改该服务并补充 service 层单测。Bug 图片证据上传由独立 `POST /api/bugs/images/upload` 承载，复用 Bug 写权限校验，只接受 PNG、JPEG、GIF、WebP 且单文件不超过 10MB；服务端解码 base64 后写入 MinIO/S3-compatible 对象存储，返回 bucket、object_key、content_hash、文件名、MIME、大小、上传人、上传时间和来源，Bug 创建或编辑时把这些元数据写入 `evidence.images[]`，不得把图片二进制写入 `bugs` 表。Bug 图片预览由 `GET /api/bugs/images/preview` 承载，必须校验 `bug.read`，仅允许读取当前对象存储 bucket 下 `bugs/evidence/` 前缀且 MIME 属于图片白名单的对象，并返回图片二进制，前端不得直接暴露 MinIO URL。Bug 管理批量处理完成后，前端必须与需求、任务批量操作共用结果弹窗展示批次号、更新数、跳过数和每条 skipped 的 Bug ID、错误码和原因，避免用户只能从 toast 判断哪些缺陷未处理。
 
 需求批量排期的目标版本选择应与后端校验一致：需求管理页读取该产品全部版本并仅保留 `planning`/`active`，过滤 `testing`、`released` 和 `archived`；批量接口必须以追加/upsert 方式保存 `requirement.batch_scheduled` 审计事件，不能使用覆盖式审计快照保存导致历史批次审计被删除。
 
@@ -1754,7 +1755,7 @@ AI 助手聊天生成必须以 `assistant_chat_runs` 作为服务端运行真相
 | 定时系统作业 | GET/POST/PATCH/DELETE/POST(run/dry-run) | /api/system/scheduled-jobs, /api/system/scheduled-jobs/dry-run, /api/system/scheduled-jobs/{job_id}, /api/system/scheduled-jobs/{job_id}/run | 管理采集、AI 分析、动作调用、迭代建议、看板刷新等作业计划；列表和手动运行必须由服务端校验 `system.scheduled_jobs.run`、`system.scheduled_jobs.manage` 或系统管理员权限，并按当前用户产品 scope 过滤作业，用户不得查看或运行 scope 外产品作业；支持手动触发、从运行记录复跑、编辑、删除、启停、重试策略、动作和 AI角色/Skill 装配；新增/编辑配置可先执行 dry-run 预览数据连接、AI 契约校验和写入策略；删除作业定义时必须写审计。 |
 | 定时作业运行 | GET/POST(cancel/template/trace-node-rerun) | /api/system/scheduled-job-runs, /api/system/scheduled-job-runs/observability, /api/system/scheduled-job-runs/{run_id}/cancel, /api/system/scheduled-job-runs/{run_id}/template, /api/system/scheduled-job-runs/{run_id}/trace-nodes/{node_id}/rerun | 查询定时作业运行实例、AI 配置快照、collector run 关联、结果摘要和失败原因；运行列表必须由服务端校验 `system.scheduled_jobs.run`、`system.scheduled_jobs.manage` 或系统管理员权限，并按所属作业产品 scope 过滤；运行可观测性接口允许 `system.scheduled_jobs.run`、`system.scheduled_jobs.manage` 或系统管理员访问，健康汇总、成功率、失败率、平均耗时、AI/Token/插件调用、动作写入成功率、失败原因、最近失败和慢运行都必须按当前用户产品 scope 过滤，供运行记录页签顶部概览展示且不得泄露无权产品运行；前端运行记录必须提供详情、复跑和“问 AI”入口，详情展示作业类型、AI执行、AI 模型、AI角色、Skills、运行链路、结果摘要、插件调用、Skill/Prompt 快照、作业配置快照、Trace DAG 和错误信息，并提供“导出 JSON”入口，把运行记录、展示标签、数据连接/AI执行/动作/业务副作用节点、结果写入记录和配置/插件/Skill/Prompt 快照导出为单个 JSON 文件；复跑使用记录中的 `scheduled_job_id` 调用作业运行接口并传入 `trigger_type=manual_rerun` 与 `source_run_id=<当前运行 ID>` 后打开新运行详情；Trace DAG 节点级复跑必须先返回预检和执行策略，控制项满足时允许数据连接、AI 处理和通用结果动作节点按快照/幂等策略单节点复跑，控制未满足或存在本地工作区、外部写入、业务写入等副作用时返回受保护响应、写审计并提供整条运行复跑替代请求；失败运行详情必须额外提供“生成修复草案”和“对比上次成功”快捷入口，跳转 AI 助手时携带 `reference_type=scheduled_job_run`、`reference_id=<当前运行 ID>` 和对应 prompt，让用户不需要手工复制运行 ID；若响应包含 `source_run_summary`，详情页必须展示“复跑对比”，对比来源运行与本次运行的状态、导入数和错误码；成功运行可生成新作业模板草稿，保留运行来源；手动触发或复跑期间必须显示执行中状态并禁用重复触发；运行中作业可由具备管理权限的用户取消。 |
 | 待归属数据队列 | GET/POST/POST | /api/attribution/pending-items, /api/attribution/pending-items/{item_id}/resolve | 历史兼容 API：查询、登记、归属或忽略无法映射产品/模块/需求的数据，不自动生成业务指标；当前前端不提供入口。 |
-| Bug 管理 | GET/POST/PATCH/DELETE | /api/bugs, /api/bugs/images/upload, /api/bugs/batch-update, /api/bugs/{bug_id} | 查询、登记、图片证据上传、批量处理、更新和删除 Bug；端点由 `app.api.routers.bugs` 单一路由承载，列表必须校验 `bug.read`，写入和图片上传必须校验 Bug 写权限；图片证据上传只返回对象存储元数据，Bug 记录通过 `evidence.images[]` 关联图片。 |
+| Bug 管理 | GET/POST/PATCH/DELETE | /api/bugs, /api/bugs/images/upload, /api/bugs/images/preview, /api/bugs/batch-update, /api/bugs/{bug_id} | 查询、登记、图片证据上传与预览、批量处理、更新和删除 Bug；端点由 `app.api.routers.bugs` 单一路由承载，列表和图片预览必须校验 `bug.read`，写入和图片上传必须校验 Bug 写权限；图片证据上传只返回对象存储元数据，Bug 记录通过 `evidence.images[]` 关联图片，预览接口只代理 Bug 图片证据对象二进制。 |
 | 需求全链路 | GET | /api/requirements/{requirement_id}/full-chain, /api/lifecycle/full-chain | 需求级聚合时间线，返回需求到版本代码分支、发布、代码巡检、知识沉淀和审计事件的关联主体；统一主体入口支持按 Bug、迭代版本、代码巡检报告或 AI 助手引用跳转并回显 anchor，`iteration_version` 作为 `product_version` 兼容别名处理。 |
 | 全流程感知 | GET | /api/lifecycle/context | 查询研发上下文关系、上下游影响和风险信号。 |
 | 首页看板 | GET | /api/dashboard/it-team | 查询 IT 团队首页指标。 |

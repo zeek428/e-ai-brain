@@ -1,4 +1,4 @@
-import { CheckSquareOutlined, DeleteOutlined, EditOutlined, UploadOutlined } from '@ant-design/icons';
+import { CheckSquareOutlined, DeleteOutlined, EditOutlined, EyeOutlined, UploadOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Tag, message } from 'antd';
 import {
@@ -25,6 +25,7 @@ import {
   deleteManagementBug,
   fetchBugProductContextOptions,
   fullChainSubjectHref,
+  fetchManagementBugImagePreview,
   fetchManagementBugs,
   fetchManagementBugList,
   type BugImageEvidenceItem,
@@ -274,6 +275,8 @@ export default function BugsPage() {
   const [batchResult, setBatchResult] = useState<ManagementBatchResult | null>(null);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [isBatchSaving, setIsBatchSaving] = useState(false);
+  const [imagePreview, setImagePreview] = useState<{ title: string; url: string }>();
+  const [previewingImageKey, setPreviewingImageKey] = useState<string>();
   const [isImageUploading, setIsImageUploading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -319,6 +322,7 @@ export default function BugsPage() {
     () => productContexts.find((product) => product.id === selectedProductId),
     [productContexts, selectedProductId],
   );
+  const previewUrlRef = useRef<string | undefined>(undefined);
   const productOptions = useMemo(
     () =>
       productContexts.map((product) => ({
@@ -373,6 +377,24 @@ export default function BugsPage() {
     }
   }, [listQuery]);
 
+  const replaceBugImagePreview = useCallback((nextPreview?: { title: string; url: string }) => {
+    if (previewUrlRef.current && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(previewUrlRef.current);
+    }
+    previewUrlRef.current = nextPreview?.url;
+    setImagePreview(nextPreview);
+  }, []);
+
+  const closeBugImagePreview = useCallback(() => {
+    replaceBugImagePreview(undefined);
+  }, [replaceBugImagePreview]);
+
+  useEffect(() => () => {
+    if (previewUrlRef.current && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(previewUrlRef.current);
+    }
+  }, []);
+
   useEffect(() => {
     let isCurrent = true;
     setListState((current) => ({ ...current, status: 'loading' }));
@@ -407,6 +429,7 @@ export default function BugsPage() {
   const openCreateModal = () => {
     setEditingBug(null);
     setBugImages([]);
+    closeBugImagePreview();
     form.resetFields();
     const firstProduct =
       productContexts.find((product) => product.code?.toUpperCase() === 'AI-BRAIN') ??
@@ -440,6 +463,7 @@ export default function BugsPage() {
   const openEditModal = useCallback((row: BugRecord) => {
     setEditingBug(row);
     setBugImages(evidenceImages(row.evidence));
+    closeBugImagePreview();
     form.resetFields();
     form.setFieldsValue({
       assignee: row.assignee === '-' ? undefined : row.assignee,
@@ -452,7 +476,7 @@ export default function BugsPage() {
       title: row.title,
     });
     setIsModalOpen(true);
-  }, [form]);
+  }, [closeBugImagePreview, form]);
 
   const handleSave = async () => {
     try {
@@ -492,6 +516,7 @@ export default function BugsPage() {
         message.success('Bug 已登记');
       }
       setIsModalOpen(false);
+      closeBugImagePreview();
       void reloadDuplicateBugs();
       void reload();
     } catch (saveError) {
@@ -503,6 +528,23 @@ export default function BugsPage() {
       setIsSaving(false);
     }
   };
+
+  const openBugImagePreview = useCallback(async (image: BugImageEvidenceItem) => {
+    if (typeof URL.createObjectURL !== 'function') {
+      message.error('当前浏览器不支持图片预览');
+      return;
+    }
+    setPreviewingImageKey(image.object_key);
+    try {
+      const blob = await fetchManagementBugImagePreview(image);
+      const url = URL.createObjectURL(blob);
+      replaceBugImagePreview({ title: image.filename, url });
+    } catch (previewError) {
+      message.error(formatMutationError(previewError));
+    } finally {
+      setPreviewingImageKey(undefined);
+    }
+  }, [replaceBugImagePreview]);
 
   const uploadBugImageFiles = useCallback(async (
     files: File[],
@@ -819,7 +861,10 @@ export default function BugsPage() {
         cancelText="取消"
         confirmLoading={isSaving}
         destroyOnHidden
-        onCancel={() => setIsModalOpen(false)}
+        onCancel={() => {
+          setIsModalOpen(false);
+          closeBugImagePreview();
+        }}
         okText="保存"
         okButtonProps={{ disabled: isImageUploading }}
         onOk={handleSave}
@@ -964,7 +1009,24 @@ export default function BugsPage() {
                         width: '100%',
                       }}
                     >
-                      <span>{image.filename}</span>
+                      <Button
+                        aria-label={`预览图片 ${image.filename}`}
+                        icon={<EyeOutlined />}
+                        loading={previewingImageKey === image.object_key}
+                        onClick={() => void openBugImagePreview(image)}
+                        size="small"
+                        style={{
+                          maxWidth: 360,
+                          overflow: 'hidden',
+                          paddingInline: 0,
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                        title={image.filename}
+                        type="link"
+                      >
+                        {image.filename}
+                      </Button>
                       <Space size={4}>
                         <Tag>{image.storage_provider}</Tag>
                         <Button
@@ -985,6 +1047,27 @@ export default function BugsPage() {
             <Input.TextArea rows={3} />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        destroyOnHidden
+        footer={null}
+        onCancel={closeBugImagePreview}
+        open={Boolean(imagePreview)}
+        title={imagePreview?.title ?? '图片预览'}
+        width={720}
+      >
+        {imagePreview ? (
+          <img
+            alt={imagePreview.title}
+            src={imagePreview.url}
+            style={{
+              display: 'block',
+              margin: '0 auto',
+              maxHeight: '70vh',
+              maxWidth: '100%',
+            }}
+          />
+        ) : null}
       </Modal>
     </>
   );

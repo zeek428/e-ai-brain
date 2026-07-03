@@ -1,13 +1,16 @@
 import type { BugRecord } from '../data/management';
 import { formatDisplayDateTime } from '../utils/dateTime';
 import {
+  API_BASE_URL,
+  ApiRequestError,
+  type ApiErrorPayload,
   apiRequest,
   appendQueryParam,
   appendRemoteListParams,
   type ListResponse,
   type RemoteListPerformance,
 } from './apiClient';
-import { requireAccessToken } from './authClient';
+import { handleUnauthorizedApiResponse, requireAccessToken } from './authClient';
 
 type RemoteSortOrder = 'ascend' | 'descend';
 
@@ -254,6 +257,46 @@ export async function uploadManagementBugImage(
     method: 'POST',
     token,
   });
+}
+
+function bugImagePreviewPath(image: BugImageEvidenceItem) {
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'bucket', image.bucket);
+  appendQueryParam(params, 'object_key', image.object_key);
+  appendQueryParam(params, 'mime_type', image.mime_type);
+  return `/api/bugs/images/preview?${params.toString()}`;
+}
+
+export async function fetchManagementBugImagePreview(
+  image: BugImageEvidenceItem,
+): Promise<Blob> {
+  const token = requireAccessToken();
+  const response = await fetch(`${API_BASE_URL}${bugImagePreviewPath(image)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    method: 'GET',
+  });
+  if (!response.ok) {
+    let payload: ApiErrorPayload | undefined;
+    try {
+      payload = (await response.json()) as ApiErrorPayload;
+    } catch {
+      payload = undefined;
+    }
+    const requestError = new ApiRequestError({
+      code: payload?.detail?.code,
+      detail: payload?.detail,
+      message: payload?.detail?.message ?? `API request failed: ${response.status}`,
+      status: response.status,
+      traceId: payload?.detail?.trace_id,
+    });
+    if (response.status === 401) {
+      handleUnauthorizedApiResponse();
+    }
+    throw requestError;
+  }
+  return response.blob();
 }
 
 export async function updateManagementBug(bugId: string, payload: BugMutationPayload) {

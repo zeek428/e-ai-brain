@@ -151,6 +151,7 @@ export {
   batchUpdateManagementBugs,
   createManagementBug,
   deleteManagementBug,
+  fetchManagementBugImagePreview,
   fetchManagementBugList,
   fetchManagementBugs,
   uploadManagementBugImage,

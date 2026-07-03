@@ -6,6 +6,9 @@ import './proComponentsMock';
 
 import BugsPage from '../src/pages/Bugs';
 
+const originalCreateObjectURL = URL.createObjectURL;
+const originalRevokeObjectURL = URL.revokeObjectURL;
+
 describe('bug management page', () => {
   afterEach(() => {
     Modal.destroyAll();
@@ -15,6 +18,14 @@ describe('bug management page', () => {
     window.localStorage.clear();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreateObjectURL,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevokeObjectURL,
+    });
   });
 
   it('edits bug lifecycle evidence and duplicate merge fields from backend data', async () => {
@@ -438,8 +449,9 @@ describe('bug management page', () => {
       new Response(JSON.stringify(body), {
         headers: { 'Content-Type': 'application/json' },
         status: 200,
-      });
+    });
     const uploadBodies: Array<Record<string, unknown>> = [];
+    const previewRequests: string[] = [];
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
@@ -506,6 +518,13 @@ describe('bug management page', () => {
           },
         });
       }
+      if (path.startsWith('/api/bugs/images/preview?') && method === 'GET') {
+        previewRequests.push(path);
+        return new Response(new Blob(['preview'], { type: 'image/png' }), {
+          headers: { 'Content-Type': 'image/png' },
+          status: 200,
+        });
+      }
       if (path === '/api/bugs' && method === 'POST') {
         return jsonResponse({ data: { id: 'bug_with_images' } });
       }
@@ -513,6 +532,16 @@ describe('bug management page', () => {
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     vi.stubGlobal('fetch', fetchMock);
+    const createObjectURL = vi.fn(() => 'blob:bug-preview');
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    });
 
     render(<BugsPage />);
 
@@ -534,6 +563,18 @@ describe('bug management page', () => {
     await waitFor(() => expect(uploadBodies).toHaveLength(2));
     expect(within(dialog).getByText('first.png')).toBeInTheDocument();
     expect(within(dialog).getByText('second.jpg')).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '预览图片 first.png' }));
+    const previewImage = await screen.findByRole('img', { name: 'first.png' });
+    const previewDialog = previewImage.closest('[role="dialog"]');
+    expect(previewDialog).not.toBeNull();
+    expect(previewRequests).toHaveLength(1);
+    expect(previewRequests[0]).toContain('/api/bugs/images/preview?');
+    expect(previewRequests[0]).toContain('object_key=bugs%2Fevidence%2Ffirst.png');
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(previewImage).toHaveAttribute('src', 'blob:bug-preview');
+    fireEvent.click(within(previewDialog as HTMLElement).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:bug-preview'));
 
     const pastedImage = new File(['pasted-image'], 'clipboard.png', { type: 'image/png' });
     fireEvent.paste(within(dialog).getByLabelText('粘贴图片区域'), {

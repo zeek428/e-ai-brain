@@ -161,6 +161,31 @@ def test_bug_image_upload_stores_image_in_object_storage(tmp_path, monkeypatch):
         object_key=image["object_key"],
     ) == content
 
+    preview = client.get(
+        "/api/bugs/images/preview",
+        params={
+            "bucket": image["bucket"],
+            "mime_type": image["mime_type"],
+            "object_key": image["object_key"],
+        },
+        headers=headers,
+    )
+    assert preview.status_code == 200
+    assert preview.content == content
+    assert preview.headers["content-type"].startswith("image/png")
+    assert preview.headers["cache-control"] == "private, max-age=300"
+
+    invalid_preview = client.get(
+        "/api/bugs/images/preview",
+        params={
+            "bucket": image["bucket"],
+            "mime_type": image["mime_type"],
+            "object_key": "../secrets.png",
+        },
+        headers=headers,
+    )
+    assert invalid_preview.status_code == 400
+
 
 def test_bug_duplicate_merge_keeps_duplicate_out_of_open_queue():
     headers = auth_headers()

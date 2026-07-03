@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_permissions, require_roles
 from app.core.config import get_settings
 from app.services.bug_lifecycle import (
     ensure_bug_status_transition,
@@ -28,6 +28,7 @@ BUG_IMAGE_MIME_TYPES = {
 }
 BUG_IMAGE_UPLOAD_SOURCES = {"clipboard", "file_picker"}
 MAX_BUG_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
+BUG_IMAGE_OBJECT_PREFIX = "bugs/evidence/"
 
 
 def uses_repository_context(current_store: Any) -> bool:
@@ -122,6 +123,47 @@ def upload_bug_image_result(
         "uploaded_at": uploaded_at,
         "uploaded_by": user["id"],
     }
+
+
+def _is_object_storage_missing_error(exc: Exception) -> bool:
+    if isinstance(exc, FileNotFoundError):
+        return True
+    if exc.__class__.__name__ != "S3Error":
+        return False
+    return getattr(exc, "code", None) in {"NoSuchBucket", "NoSuchKey", "NoSuchObject"}
+
+
+def preview_bug_image_result(
+    *,
+    bucket: str | None,
+    mime_type: str | None,
+    object_key: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_permissions(user, {"bug.read"})
+    normalized_bucket = ensure_non_blank(bucket, "bucket")
+    normalized_object_key = ensure_non_blank(object_key, "object_key")
+    normalized_mime_type = ensure_non_blank(mime_type, "mime_type")
+    settings = get_settings()
+    if normalized_bucket != settings.object_storage_bucket:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported image bucket")
+    if normalized_mime_type not in BUG_IMAGE_MIME_TYPES:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported image MIME type")
+    if not normalized_object_key.startswith(BUG_IMAGE_OBJECT_PREFIX):
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported image object key")
+    if any(part in {"", ".", ".."} for part in normalized_object_key.split("/")):
+        raise api_error(400, "VALIDATION_ERROR", "Invalid image object key")
+
+    try:
+        content = object_storage().get_bytes(
+            bucket=normalized_bucket,
+            object_key=normalized_object_key,
+        )
+    except Exception as exc:
+        if _is_object_storage_missing_error(exc):
+            raise api_error(404, "NOT_FOUND", "Bug image not found") from exc
+        raise
+    return {"content": content, "mime_type": normalized_mime_type}
 
 
 def record_audit_event(

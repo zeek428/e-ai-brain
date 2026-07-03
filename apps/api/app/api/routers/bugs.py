@@ -3,7 +3,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, store
@@ -15,6 +15,7 @@ from app.services.bugs import (
     create_bug_result,
     delete_bug_result,
     patch_bug_result,
+    preview_bug_image_result,
     upload_bug_image_result,
 )
 
@@ -140,6 +141,30 @@ def upload_bug_image(
         user=user,
     )
     return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/bugs/images/preview")
+def preview_bug_image(
+    request: Request,
+    bucket: str,
+    object_key: str,
+    mime_type: str,
+    user: dict[str, Any] = CurrentUser,
+) -> Response:
+    result = preview_bug_image_result(
+        bucket=bucket,
+        mime_type=mime_type,
+        object_key=object_key,
+        user=user,
+    )
+    return Response(
+        content=result["content"],
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "X-Trace-Id": get_trace_id(request),
+        },
+        media_type=result["mime_type"],
+    )
 
 
 @router.patch("/api/bugs/{bug_id}")
