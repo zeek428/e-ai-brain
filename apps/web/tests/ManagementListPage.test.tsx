@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import './proComponentsMock';
 
@@ -7,6 +7,7 @@ import { ManagementListPage } from '../src/components/ManagementListPage';
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
 
 describe('ManagementListPage', () => {
@@ -146,5 +147,50 @@ describe('ManagementListPage', () => {
     expect(screen.getByText('查询 620ms')).toBeInTheDocument();
     expect(screen.getByText('列表查询较慢')).toBeInTheDocument();
     expect(screen.getByText(/当前查询耗时 620ms，慢查询阈值 300ms/)).toBeInTheDocument();
+  });
+
+  it('scrolls remote lists back to the table top when changing pages', () => {
+    const onChange = vi.fn();
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = window.HTMLElement.prototype.scrollIntoView;
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    try {
+      render(
+        <ManagementListPage
+          breadcrumbGroup="系统管理"
+          columns={[{ dataIndex: 'name', title: '名称' }]}
+          dataSource={[{ id: 'row_1', name: '第一页任务' }]}
+          filters={[]}
+          remote={{
+            onChange,
+            page: 1,
+            pageSize: 10,
+            total: 21,
+          }}
+          rowKey="id"
+          tableTitle="测试列表"
+          title="测试管理"
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: '2' }));
+
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' });
+      expect(onChange).toHaveBeenCalledWith({ filters: {}, page: 2, pageSize: 10 });
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+          configurable: true,
+          value: originalScrollIntoView,
+        });
+      } else {
+        delete (window.HTMLElement.prototype as { scrollIntoView?: Element['scrollIntoView'] })
+          .scrollIntoView;
+      }
+    }
   });
 });

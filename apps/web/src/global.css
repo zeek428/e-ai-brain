@@ -612,6 +612,39 @@ body {
   min-width: 160px;
 }
 
+.requirements-management-list .management-list-table .ant-pro-table-list-toolbar-container {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.requirements-management-list .management-list-table .ant-pro-table-list-toolbar-left {
+  display: none;
+}
+
+.requirements-management-list .management-list-table .ant-pro-table-list-toolbar-right {
+  flex: 1 1 auto;
+  overflow-x: auto;
+}
+
+.requirements-management-list .management-list-table .ant-pro-table-list-toolbar-setting-items,
+.requirements-management-list .management-list-table .ant-pro-table-list-toolbar-right,
+.requirements-management-list .management-list-table .ant-pro-table-list-toolbar-right > div,
+.requirements-management-list .management-list-filter-views {
+  align-items: center;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+}
+
+.requirements-management-list .management-list-filter-views {
+  flex: 0 0 auto;
+}
+
+.requirements-management-list .management-list-table .ant-btn,
+.requirements-management-list .management-list-table .ant-tag,
+.requirements-management-list .management-list-filter-views .ant-select {
+  white-space: nowrap;
+}
+
 .management-list-table .ant-table-cell {
   overflow-wrap: anywhere;
 }

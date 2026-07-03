@@ -24,6 +24,7 @@ import {
   batchScheduleRequirements,
   createManagementRequirement,
   deleteManagementRequirement,
+  ApiRequestError,
   fetchManagementRequirementList,
   fetchRequirementFullChain,
   fetchRequirementProductContextOptions,
@@ -137,6 +138,17 @@ const requirementSourceLabels = requirementSourceOptions.reduce<Record<string, s
   (labels, option) => ({ ...labels, [option.value]: option.label }),
   {},
 );
+
+function formatRequirementDeleteError(error: unknown) {
+  if (error instanceof ApiRequestError && error.code === 'RESOURCE_IN_USE') {
+    const relatedCounts = error.detail?.related_counts as Record<string, unknown> | undefined;
+    const taskCount = Number(relatedCounts?.ai_tasks ?? relatedCounts?.tasks ?? 0);
+    const taskSummary =
+      Number.isFinite(taskCount) && taskCount > 0 ? ` ${taskCount} 个 AI 任务` : ' AI 任务';
+    return `无法删除需求，已生成${taskSummary}。请先在全链路或任务中心处理关联任务；如需求不再推进，可将需求关闭或取消。`;
+  }
+  return formatMutationError(error);
+}
 
 function normalizeFilterText(value: unknown) {
   return String(value ?? '').trim() || undefined;
@@ -391,7 +403,7 @@ export default function RequirementsPage() {
       message.success('需求已删除');
       await reload();
     } catch (deleteError) {
-      message.error(formatMutationError(deleteError));
+      message.error(formatRequirementDeleteError(deleteError));
     }
   }, [reload]);
 
@@ -674,6 +686,7 @@ export default function RequirementsPage() {
 
   const openDeleteConfirm = useCallback((row: RequirementRecord) => {
     Modal.confirm({
+      content: '仅未生成 AI 任务的需求可以删除。已生成任务的需求请先通过全链路或任务中心处理关联任务；如需求不再推进，可关闭或取消需求。',
       okText: '删除',
       okButtonProps: { danger: true },
       title: `删除需求 ${row.id}？`,
@@ -896,86 +909,87 @@ export default function RequirementsPage() {
 
   return (
     <>
-      <ManagementListPage<RequirementRecord>
-        breadcrumbGroup="需求交付"
-        columns={columns}
-        dataSource={listState.rows}
-        viewStorageKey="delivery.requirements"
-        filters={[
-          { label: '需求标题', name: 'title', type: 'text' },
-          {
-            label: '所属产品',
-            name: 'productId',
-            options: productOptions,
-            type: 'select',
-          },
-          { label: '迭代版本', name: 'versionName', type: 'text' },
-          {
-            label: '需求来源',
-            name: 'source',
-            options: requirementSourceOptions,
-            type: 'select',
-          },
-          {
-            label: '状态',
-            name: 'status',
-            options: [
-              { label: '草稿', value: 'draft' },
-              { label: '待评审', value: 'submitted' },
-              { label: '需求池', value: 'approved' },
-              { label: '已排期', value: 'planned' },
-              { label: '设计中', value: 'designing' },
-              { label: '待开发', value: 'ready_for_dev' },
-              { label: '开发中', value: 'developing' },
-              { label: '代码评审中', value: 'code_reviewing' },
-              { label: '测试中', value: 'testing' },
-              { label: '待发布', value: 'ready_for_release' },
-              { label: '已发布', value: 'released' },
-              { label: '已验收', value: 'accepted' },
-              { label: '已拒绝', value: 'rejected' },
-              { label: '暂缓', value: 'deferred' },
-              { label: '已取消', value: 'cancelled' },
-              { label: '已关闭', value: 'closed' },
-            ],
-            type: 'select',
-          },
-          {
-            label: '优先级',
-            name: 'priority',
-            options: [
-              { label: 'P0', value: 'P0' },
-              { label: 'P1', value: 'P1' },
-              { label: 'P2', value: 'P2' },
-            ],
-            type: 'select',
-          },
-        ]}
-        loading={listState.status === 'loading'}
-        notice={formatRemoteRowsError(listState.error ?? productContextError)}
-        onPrimaryAction={openCreateModal}
-        onReload={() => void reload()}
-        primaryAction="新增需求"
-        remote={{
-          onChange: setListQuery,
-          page: listState.page,
-          pageSize: listState.pageSize,
-          performance: listState.performance,
-          total: listState.total,
-        }}
-        rowKey="id"
-        rowSelection={{
-          getCheckboxProps: (row) => ({
-            disabled: !batchAssignableStatuses.has(row.status),
-          }),
-          onChange: (keys) => setSelectedRowKeys(keys),
-          selectedRowKeys,
-        }}
-        tableLayout="fixed"
-        tableScroll={{ x: 1720 }}
-        tableTitle="需求列表"
-        title="需求管理"
-        toolbarActions={toolbarActions}
-      />
+      <div className="requirements-management-list">
+        <ManagementListPage<RequirementRecord>
+          breadcrumbGroup="需求交付"
+          columns={columns}
+          dataSource={listState.rows}
+          viewStorageKey="delivery.requirements"
+          filters={[
+            { label: '需求标题', name: 'title', type: 'text' },
+            {
+              label: '所属产品',
+              name: 'productId',
+              options: productOptions,
+              type: 'select',
+            },
+            { label: '迭代版本', name: 'versionName', type: 'text' },
+            {
+              label: '需求来源',
+              name: 'source',
+              options: requirementSourceOptions,
+              type: 'select',
+            },
+            {
+              label: '状态',
+              name: 'status',
+              options: [
+                { label: '草稿', value: 'draft' },
+                { label: '待评审', value: 'submitted' },
+                { label: '需求池', value: 'approved' },
+                { label: '已排期', value: 'planned' },
+                { label: '设计中', value: 'designing' },
+                { label: '待开发', value: 'ready_for_dev' },
+                { label: '开发中', value: 'developing' },
+                { label: '代码评审中', value: 'code_reviewing' },
+                { label: '测试中', value: 'testing' },
+                { label: '待发布', value: 'ready_for_release' },
+                { label: '已发布', value: 'released' },
+                { label: '已验收', value: 'accepted' },
+                { label: '已拒绝', value: 'rejected' },
+                { label: '暂缓', value: 'deferred' },
+                { label: '已取消', value: 'cancelled' },
+                { label: '已关闭', value: 'closed' },
+              ],
+              type: 'select',
+            },
+            {
+              label: '优先级',
+              name: 'priority',
+              options: [
+                { label: 'P0', value: 'P0' },
+                { label: 'P1', value: 'P1' },
+                { label: 'P2', value: 'P2' },
+              ],
+              type: 'select',
+            },
+          ]}
+          loading={listState.status === 'loading'}
+          notice={formatRemoteRowsError(listState.error ?? productContextError)}
+          onPrimaryAction={openCreateModal}
+          onReload={() => void reload()}
+          primaryAction="新增需求"
+          remote={{
+            onChange: setListQuery,
+            page: listState.page,
+            pageSize: listState.pageSize,
+            total: listState.total,
+          }}
+          rowKey="id"
+          rowSelection={{
+            getCheckboxProps: (row) => ({
+              disabled: !batchAssignableStatuses.has(row.status),
+            }),
+            onChange: (keys) => setSelectedRowKeys(keys),
+            selectedRowKeys,
+          }}
+          tableLayout="fixed"
+          tableScroll={{ x: 1720 }}
+          tableTitle=""
+          title="需求管理"
+          toolbarActions={toolbarActions}
+        />
+      </div>
       <Modal
         className="requirement-full-chain-modal"
         destroyOnHidden

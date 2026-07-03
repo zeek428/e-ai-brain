@@ -391,8 +391,18 @@ def delete_requirement_result(
     requirement = _read_memory_record(current_store, "requirements", requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
-    if requirement.get("task_ids"):
-        raise api_error(409, "RESOURCE_IN_USE", "Requirement already has tasks")
+    task_ids = requirement.get("task_ids")
+    task_count = len(task_ids) if isinstance(task_ids, list) else 1 if task_ids else 0
+    if task_count:
+        raise api_error(
+            409,
+            "RESOURCE_IN_USE",
+            "Requirement already has tasks",
+            extra={
+                "related_counts": {"ai_tasks": task_count},
+                "related_total": task_count,
+            },
+        )
     audit_event = record_audit_event(
         current_store,
         event_type="requirement.deleted",

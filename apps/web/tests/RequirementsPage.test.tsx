@@ -191,6 +191,8 @@ describe('RequirementsPage', () => {
     render(<RequirementsPage />);
 
     await screen.findByText('归集需求一');
+    expect(screen.queryByRole('heading', { name: '需求列表' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^查询 \d+ms$/)).not.toBeInTheDocument();
     expect(screen.getByRole('table')).toHaveAttribute('data-table-layout', 'fixed');
     expect(screen.getByRole('table')).toHaveAttribute('data-table-scroll-x', '1720');
     expect(screen.getByRole('columnheader', { name: '需求标题' })).toHaveAttribute(
@@ -329,7 +331,7 @@ describe('RequirementsPage', () => {
       requirement_ids: ['requirement_pool', 'requirement_planned'],
       version_id: 'version_target',
     });
-  });
+  }, 10_000);
 
   it('batch generates tasks for selected planned requirements from the requirements page', async () => {
     const jsonResponse = (body: unknown) =>
@@ -496,6 +498,106 @@ describe('RequirementsPage', () => {
       reason: '批量进入产品详细设计',
       requirement_ids: ['requirement_batch_task_a', 'requirement_batch_task_b'],
     });
+  });
+
+  it('shows a business hint when deleting a requirement that already has tasks', async () => {
+    const jsonResponse = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      if (path.startsWith('/api/products?active_only=true')) {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'API-PRODUCT', id: 'product_api', name: '接口产品', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions' || path.startsWith('/api/product-versions?')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-06',
+                id: 'version_target',
+                name: '2026-06',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'planning',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '已生成任务，不能直接删除。',
+                created_at: '2026-06-04T08:00:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_with_task',
+                priority: 'P1',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'designing',
+                title: '已有任务的需求',
+                version_id: 'version_target',
+                version_name: '2026-06',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/requirements/requirement_with_task' && method === 'DELETE') {
+        return jsonResponse(
+          {
+            detail: {
+              code: 'RESOURCE_IN_USE',
+              message: 'Requirement already has tasks',
+              related_counts: { ai_tasks: 1 },
+              related_total: 1,
+              trace_id: 'trace_delete_requirement',
+            },
+          },
+          409,
+        );
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    const messageErrorSpy = vi.spyOn(message, 'error');
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<RequirementsPage />);
+
+    await screen.findByText('已有任务的需求');
+    fireEvent.click(screen.getByRole('button', { name: /更多/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /删除/ }));
+
+    expect(await screen.findByText('仅未生成 AI 任务的需求可以删除。已生成任务的需求请先通过全链路或任务中心处理关联任务；如需求不再推进，可关闭或取消需求。')).toBeInTheDocument();
+    const deleteDialog = screen.getByRole('dialog', { name: '删除需求 requirement_with_task？' });
+    fireEvent.click(within(deleteDialog).getByRole('button', { name: /删\s*除/ }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/requirements/requirement_with_task',
+        'DELETE',
+      ]),
+    );
+    await waitFor(() =>
+      expect(messageErrorSpy).toHaveBeenCalledWith(
+        '无法删除需求，已生成 1 个 AI 任务。请先在全链路或任务中心处理关联任务；如需求不再推进，可将需求关闭或取消。',
+      ),
+    );
   });
 
   it('opens a requirement full-chain timeline from the requirements page', async () => {

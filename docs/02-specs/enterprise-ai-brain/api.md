@@ -13,7 +13,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
-| v1.1.536 | 2026-07-03 | 产品 Git 资源配置默认使用 `remote_url` 并推导 `project_path`；代码巡检模板和作业类型默认改为本地扫描后的 `ai_assisted` | Codex |
+| v1.1.536 | 2026-07-03 | 产品 Git 资源配置默认使用 `remote_url`，后端从可解析 Remote URL 推导 `project_path`，Project Path 不再作为前端必填项 | Codex |
+| v1.1.535 | 2026-07-03 | `DELETE /api/requirements/{requirement_id}` 在需求已有 AI 任务时返回 `related_counts.ai_tasks/related_total`，前端需展示中文占用处理提示 | Codex |
 | v1.1.534 | 2026-07-03 | 新增 `GET /api/bugs/images/preview`，已上传 Bug 图片通过受 `bug.read` 权限保护的后端代理预览 | Codex |
 | v1.1.533 | 2026-07-03 | 新增 `POST /api/bugs/images/upload`，Bug 图片证据写入 MinIO/S3-compatible 对象存储后以元数据关联到 evidence | Codex |
 | v1.1.532 | 2026-07-02 | 定时作业 `config_json.ai_executor` 支持选择系统默认执行器或本地 Runner；本地 Runner 可不传模型网关，完成回写后继续结果动作 | Codex |
@@ -814,7 +815,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Requirement | GET | `/api/requirements/{requirement_id}` | 需求详情。 |
 | Requirement | GET | `/api/requirements/{requirement_id}/full-chain`, `/api/lifecycle/full-chain` | 需求全链路详情，按时间线聚合需求、迭代版本、版本代码分支、AI 任务、Review、PR/MR 快照、代码评审、代码巡检报告、Bug、执行诊断、发布、知识沉淀和审计事件；统一主体入口可按 Bug、迭代版本、版本代码分支配置、代码巡检报告、执行诊断主体或 AI 助手引用解析到同一链路，并返回 `anchor`，其中 `iteration_version` 作为 `product_version` 兼容别名处理，`product_version_branch_config` / `branch_config` 按版本分支配置解析到同版本需求链路；接口要求 `requirement.read`、`task.read` 或 `workspace.read` 任一读权限，并按需求或入口主体所属产品 scope 校验，缺权限返回 403，产品范围不匹配返回 404。 |
 | Requirement | PATCH | `/api/requirements/{requirement_id}` | 更新待审批或已驳回需求。 |
-| Requirement | DELETE | `/api/requirements/{requirement_id}` | 删除未生成任务的需求。 |
+| Requirement | DELETE | `/api/requirements/{requirement_id}` | 删除未生成任务的需求；已生成 AI 任务时返回 `409 RESOURCE_IN_USE`，错误详情包含 `related_counts.ai_tasks` 与 `related_total`，前端提示先通过全链路或任务中心处理关联任务，或关闭/取消需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/approve` | 审批通过需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/reject` | 驳回需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/close` | 关闭需求。 |
@@ -2506,6 +2507,7 @@ POST /api/requirements
 - 只有 `planned` 需求可以调用 `POST /api/requirements/{requirement_id}/generate-task` 或被批量生成任务接口处理。
 - 生成产品详细设计任务后需求状态进入 `designing`，后续 AI 任务创建和人工确认会继续推进到 `ready_for_dev`、`developing`、`code_reviewing`、`testing`、`ready_for_release`、`released` 或 `accepted`。需求仍保留原始输入和审批结论。
 - 关闭需求后不得再生成新 AI 任务。
+- 删除需求仅允许未生成 AI 任务的记录；已有 `task_ids` 时返回 `409 RESOURCE_IN_USE`，并在错误详情中返回 `related_counts.ai_tasks` 与 `related_total`，供前端展示占用数量和处理建议。
 
 生成任务请求体：
 

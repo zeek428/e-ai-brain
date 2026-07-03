@@ -65,6 +65,8 @@ vi.mock('@ant-design/pro-components', async () => {
     headerTitle,
     onReset,
     onSubmit,
+    onChange,
+    pagination,
     rowKey,
     rowSelection,
     search,
@@ -95,6 +97,17 @@ vi.mock('@ant-design/pro-components', async () => {
     headerTitle?: React.ReactNode;
     onReset?: () => void;
     onSubmit?: (values: Record<string, unknown>) => void;
+    onChange?: (
+      pagination: { current?: number; pageSize?: number },
+      filters: Record<string, unknown>,
+      sorter: Record<string, unknown>,
+    ) => void;
+    pagination?: {
+      current?: number;
+      pageSize?: number;
+      showTotal?: (total: number) => React.ReactNode;
+      total?: number;
+    };
     rowKey: keyof Row;
     rowSelection?: {
       getCheckboxProps?: (record: Row) => { disabled?: boolean };
@@ -132,6 +145,10 @@ vi.mock('@ant-design/pro-components', async () => {
         return next;
       });
     };
+
+    const pageSize = pagination?.pageSize ?? 10;
+    const total = pagination?.total ?? dataSource.length;
+    const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
     return React.createElement(
       'section',
@@ -318,6 +335,27 @@ vi.mock('@ant-design/pro-components', async () => {
           }),
         ),
       ),
+      pagination
+        ? React.createElement(
+            'nav',
+            { 'aria-label': '分页' },
+            pagination.showTotal?.(total),
+            Array.from({ length: pageCount }, (_, index) => {
+              const page = index + 1;
+              return React.createElement(
+                'button',
+                {
+                  'aria-current': page === pagination.current ? 'page' : undefined,
+                  key: page,
+                  onClick: () =>
+                    onChange?.({ current: page, pageSize }, {}, {}),
+                  type: 'button',
+                },
+                String(page),
+              );
+            }),
+          )
+        : null,
     );
   }
 

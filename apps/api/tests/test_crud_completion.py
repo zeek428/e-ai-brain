@@ -202,6 +202,34 @@ def test_requirements_documents_bugs_and_users_support_update_and_delete():
     assert login.status_code == 401
 
 
+def test_requirement_delete_blocks_existing_ai_tasks_with_related_counts():
+    app.state.store.reset()
+    headers = auth_headers()
+    context = create_product_context(headers)
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "content": "生成任务后需求不能被直接删除",
+            "priority": "P1",
+            "product_id": context["product_id"],
+            "title": "任务占用需求",
+            "version_id": context["version_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
+    client.post(f"/api/requirements/{requirement['id']}/generate-task", headers=headers)
+
+    blocked_delete = client.delete(f"/api/requirements/{requirement['id']}", headers=headers)
+
+    assert blocked_delete.status_code == 409
+    blocked_delete_detail = blocked_delete.json()["detail"]
+    assert blocked_delete_detail["code"] == "RESOURCE_IN_USE"
+    assert blocked_delete_detail["message"] == "Requirement already has tasks"
+    assert blocked_delete_detail["related_counts"] == {"ai_tasks": 1}
+    assert blocked_delete_detail["related_total"] == 1
+
+
 def test_product_version_and_module_delete_block_existing_ai_tasks():
     app.state.store.reset()
     headers = auth_headers()

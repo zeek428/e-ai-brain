@@ -4,7 +4,7 @@ import type { ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Input, Modal, Select, Space, Tag } from 'antd';
 import type { TableProps } from 'antd';
 import type { SorterResult, TableRowSelection } from 'antd/es/table/interface';
-import { isValidElement, type ReactNode, useId, useMemo, useState } from 'react';
+import { isValidElement, type ReactNode, useId, useMemo, useRef, useState } from 'react';
 
 type FilterField = {
   label: string;
@@ -292,6 +292,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
   const [isSaveViewOpen, setIsSaveViewOpen] = useState(false);
   const [saveViewName, setSaveViewName] = useState('');
   const [tableFormVersion, setTableFormVersion] = useState(0);
+  const tableTopRef = useRef<HTMLDivElement>(null);
   const resolvedTableLayout = tableLayout ?? 'fixed';
   const selectedSavedView = savedFilterViews.find((view) => view.id === selectedSavedViewId);
   const queryPerformance = remote?.performance;
@@ -499,6 +500,13 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
         查询 {formatDuration(queryPerformance.duration_ms)}
       </Tag>
     ) : null;
+  const scrollTableTopIntoView = () => {
+    const target = tableTopRef.current;
+    if (!target || typeof target.scrollIntoView !== 'function') {
+      return;
+    }
+    target.scrollIntoView({ block: 'start' });
+  };
 
   const listContent = (
     <>
@@ -513,6 +521,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
         />
       ) : null}
       {beforeTable}
+      <div className="management-list-table-anchor" ref={tableTopRef} />
       <ProTable<Row>
         cardBordered
         className="management-list-table"
@@ -527,12 +536,22 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
             return;
           }
           const nextSortState = normalizeSorter(sorter);
+          const nextPage = pagination.current ?? remote.page;
+          const nextPageSize = pagination.pageSize ?? remote.pageSize;
+          if (
+            nextPage !== remote.page
+            || nextPageSize !== remote.pageSize
+            || nextSortState.sortField !== sortState.sortField
+            || nextSortState.sortOrder !== sortState.sortOrder
+          ) {
+            scrollTableTopIntoView();
+          }
           setSortState(nextSortState);
           setSelectedSavedViewId(undefined);
           remote.onChange({
             filters: filterValues,
-            page: pagination.current ?? remote.page,
-            pageSize: pagination.pageSize ?? remote.pageSize,
+            page: nextPage,
+            pageSize: nextPageSize,
             ...nextSortState,
           });
         }}

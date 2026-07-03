@@ -99,7 +99,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       screen.queryByText('按产品、标题、状态和优先级查询需求台账，并从列表进入审批、关闭和生成 AI 任务操作。'),
     ).not.toBeInTheDocument();
     expect(screen.getByRole('form', { name: '查询表格' })).toBeInTheDocument();
-    expect(screen.getByText('需求列表')).toBeInTheDocument();
+    expect(screen.queryByText('需求列表')).not.toBeInTheDocument();
     expect(screen.getAllByText('需求标题')).not.toHaveLength(0);
     expect(screen.getByText('创建时间')).toBeInTheDocument();
     expect(screen.queryByText('更新时间')).not.toBeInTheDocument();
