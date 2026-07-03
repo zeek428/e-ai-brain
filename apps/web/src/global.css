@@ -653,6 +653,30 @@ body {
   white-space: nowrap;
 }
 
+.system-settings-page {
+  display: grid;
+  gap: 16px;
+}
+
+.system-settings-panel {
+  display: grid;
+  gap: 18px;
+  max-width: 840px;
+  padding: 24px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.system-settings-header {
+  justify-content: space-between;
+  width: 100%;
+}
+
+.system-settings-header .ant-typography {
+  margin: 0;
+}
+
 .management-table-cell .ant-space {
   max-width: 100%;
 }

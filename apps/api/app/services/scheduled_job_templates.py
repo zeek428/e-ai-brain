@@ -110,7 +110,8 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
         "recommended_scenarios": ["本地完整代码扫描", "安全漏洞扫描", "研发规范治理"],
         "resource_selectors": {
             "agent": {
-                "code_candidates": ["code_reviewer", "code_inspection_agent"],
+                "code_candidates": ["code-reviewer"],
+                "fallback_code_candidates": ["code_reviewer", "code_inspection_agent"],
                 "text_candidates": ["代码审查", "代码巡检", "code review", "code inspection"],
             },
             "model_gateway_config": {"strategy": "default_or_first_active"},
@@ -124,8 +125,16 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
             "plugin_connection": {"strategy": "same_plugin_as_action"},
             "product": {"strategy": "first_active"},
             "skill": {
-                "code_candidates": ["code_inspection_analysis", "code_review"],
-                "text_candidates": ["代码巡检", "代码审查", "code inspection", "code review"],
+                "code_candidates": ["code_analysis_skill"],
+                "fallback_code_candidates": ["code_inspection_analysis", "code_review"],
+                "text_candidates": [
+                    "代码分析skill",
+                    "代码分析",
+                    "代码巡检",
+                    "代码审查",
+                    "code inspection",
+                    "code review",
+                ],
             },
         },
         "template_version": "v1",

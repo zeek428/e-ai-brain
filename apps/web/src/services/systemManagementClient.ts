@@ -89,6 +89,17 @@ export type MenuResourceMutationPayload = {
   status?: string;
 };
 
+export type SystemSettingsRecord = {
+  admin_email?: string | null;
+  admin_email_configured?: boolean;
+  updated_at?: string | null;
+  updated_by?: string | null;
+};
+
+export type SystemSettingsMutationPayload = {
+  admin_email?: string | null;
+};
+
 export type RoleAccessPreview = {
   diagnostics: Array<{
     code: string;
@@ -335,6 +346,22 @@ export async function fetchSystemMenus(): Promise<MenuResourceRecord[]> {
   const token = requireAccessToken();
   const menus = await apiRequest<{ items: MenuResourceRecord[] }>('/api/system/menus', { token });
   return menus.items;
+}
+
+export async function fetchSystemSettings(): Promise<SystemSettingsRecord> {
+  const token = requireAccessToken();
+  return apiRequest<SystemSettingsRecord>('/api/system/settings', { token });
+}
+
+export async function updateSystemSettings(
+  payload: SystemSettingsMutationPayload,
+): Promise<SystemSettingsRecord> {
+  const token = requireAccessToken();
+  return apiRequest<SystemSettingsRecord>('/api/system/settings', {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
 }
 
 export async function fetchSystemMenuList(

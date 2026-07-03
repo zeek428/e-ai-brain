@@ -266,6 +266,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "079_plugin_invocation_log_nullable_config_refs.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "080_system_settings.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -284,6 +288,22 @@ class PostgresSnapshotRepository:
 
     def save(self, payload: dict[str, Any]) -> None:
         self._system_state_repository.save_snapshot(payload)
+
+    def get_system_settings(self) -> dict[str, Any]:
+        return self._system_settings_repository.get_system_settings()
+
+    def upsert_system_settings(
+        self,
+        settings: dict[str, Any],
+        *,
+        actor_id: str | None = None,
+        audit_event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._system_settings_repository.upsert_system_settings(
+            settings,
+            actor_id=actor_id,
+            audit_event=audit_event,
+        )
 
     def load_product_config(self) -> dict[str, Any]:
         return self._product_config_read_repository.load_product_config()

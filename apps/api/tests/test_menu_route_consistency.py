@@ -14,6 +14,7 @@ CRITICAL_MENU_PATHS = {
     "diagnostics.execution_traces": "/governance/execution-traces",
     "system.ai_capabilities": "/tasks/ai-capabilities",
     "system.menus": "/system/menus",
+    "system.settings": "/system/settings",
     "system.plugins": "/tasks/plugins",
     "system.scheduled_jobs": "/tasks/scheduled-jobs",
     "task.center": "/delivery/rd-tasks",

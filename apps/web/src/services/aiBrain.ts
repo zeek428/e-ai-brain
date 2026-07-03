@@ -390,6 +390,7 @@ export {
   fetchSystemPermissionMatrix,
   fetchSystemPermissions,
   fetchSystemRoleList,
+  fetchSystemSettings,
   reorderSystemMenus,
   setSystemMenuStatus,
   setSystemRoleStatus,
@@ -399,6 +400,7 @@ export {
   updateSystemRoleMenus,
   updateSystemRolePermissions,
   updateSystemRoleScopes,
+  updateSystemSettings,
 } from './systemManagementClient';
 export type {
   MenuListQuery,
@@ -409,6 +411,8 @@ export type {
   RbacPolicyMatrixRow,
   RoleListQuery,
   SystemRoleRecord,
+  SystemSettingsMutationPayload,
+  SystemSettingsRecord,
   UserListQuery,
   UserMutationPayload,
   UserPermissionDiagnostic,

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.873 |
+| 功能版本 | v1.1.874 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.874 | 2026-07-03 | 系统管理新增系统设置页，管理员邮箱写入 `system_settings`，通过 `system.settings.manage` 权限和审计事件治理 | Codex |
 | v1.1.873 | 2026-07-03 | 代码巡检定时作业支持产品级默认多仓扫描、Worker 重试、默认 AI 输出 Schema 和按仓库运行节点明细 | Codex |
 | v1.1.872 | 2026-07-03 | 产品管理 Git 资源配置以 Remote URL 为默认必填输入，后端自动推导 `project_path` 并保留显式覆盖能力 | Codex |
 | v1.1.871 | 2026-07-03 | 需求删除保护补充 AI 任务占用数量，前端将 `RESOURCE_IN_USE` 转为中文处理建议 | Codex |
@@ -1636,6 +1637,8 @@ RBAC 策略矩阵为只读聚合能力，不新增生产写表；服务端基于
 
 系统菜单管理主列表属于 RBAC 治理列表，带 `page/page_size` 的请求必须走菜单资源 count/page read model，并在数据库侧完成菜单、父级、路由、权限点、类型、状态筛选和白名单排序；无分页参数的 `/api/system/menus` 继续作为角色授权、权限矩阵和父级菜单下拉的目录接口兼容返回全量。
 
+`080_system_settings.sql` 新增 `system_settings` 全局系统设置表，当前首个配置项为 `setting_key='system_admin_email'`，`setting_value.email` 保存系统管理员邮箱，用于后续 AI Brain 系统邮件发送。迁移同时新增 `system.settings.manage` 权限点、系统管理 / 系统设置菜单 `/system/settings`，并为 admin 授权菜单和权限。系统设置写入必须通过 repository 直接写 PostgreSQL 并同步写入 `system.settings.updated` 审计事件；MemoryStore 仅作为测试 helper 保留同名字段。
+
 `035_scheduled_ai_jobs.sql` 补齐 `ai_skills`、`ai_agents`、`scheduled_jobs` 和 `scheduled_job_runs` 结构表，包含运行状态、作业类型、执行模式、启停、due job、锁租约、产品归属、时间窗口、AI角色（Agent）/Skill 引用和配置快照 JSONB 字段；`044_scheduled_job_run_source.sql` 为既有库补充 `scheduled_job_runs.source_run_id` 与查询索引，用于追踪复跑来源；`045_scheduled_job_collector_types.sql` 重新收敛 `collector_runs.collector_type` 约束，补齐 `code_inspection`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry` 等定时作业运行类型，避免旧库运行新作业时在 collector run 写入阶段 500；所有新增表仍必须包含 `created_at` 与 `updated_at` 标准字段，并通过 repository/source rows 读取，不得回退到 `app_state_snapshots`。
 
 `061_assistant_metrics_and_role_quick_tasks.sql` 为 `scheduled_job_runs` 增加 `assistant_action_run_id`、`assistant_action_draft_id`、`assistant_source_message_id` 和 `triggered_by_assistant`，用于把助手触发运行和普通调度运行拆开归因；该迁移同时创建 `assistant_role_quick_tasks` 配置表，包含企业、模板版本、灰度 JSON、创建人和更新人字段，并创建企业、任务组排序和企业/任务/版本唯一索引，支持角色快捷任务按配置、启停、企业、版本和灰度读取。
@@ -1693,6 +1696,7 @@ RBAC 策略矩阵为只读聚合能力，不新增生产写表；服务端基于
 | 产品模块 | GET/POST/PATCH/DELETE | /api/products/{product_id}/modules, /api/product-modules/{module_id} | 管理产品模块；列表要求 `product.read`，创建、更新和删除要求 `product.manage`，并按当前用户产品 scope 校验嵌套产品和模块归属产品；同一产品内模块编码唯一，删除前校验需求、AI 任务和 Bug 依赖。 |
 | 产品 Git 资源 | GET/POST/PATCH/DELETE | /api/products/{product_id}/git-repositories, /api/product-git-repositories/{repo_id} | 管理产品仓库资源；列表要求 `product.read`，创建、更新和删除要求 `product.manage`，并按当前用户产品 scope 校验嵌套产品和仓库归属产品，scope 外返回 404。 |
 | 相关系统 | GET/POST/PATCH/DELETE | /api/system/related-systems, /api/system/related-systems/{system_id} | 管理相关系统配置，可按 `product_id` 过滤并写入任务产品上下文；列表要求 `product.read` 并按产品 scope 过滤，创建、更新和删除要求 `product.manage`，指定或变更到 scope 外产品时返回 404。 |
+| 系统设置 | GET/PATCH | /api/system/settings | 管理全局系统配置，当前维护系统管理员邮箱；要求 `system.settings.manage`，邮箱可为空，非空必须通过格式校验，写入 `system_settings` 并记录 `system.settings.updated` 审计。 |
 | 模型网关配置 | GET/POST/PATCH/DELETE/POST(test) | /api/system/model-gateway-configs, /api/system/model-gateway-configs/test, /api/system/model-gateway-configs/{config_id} | 管理平台默认模型网关，并使用临时参数检测连接；要求 `system.model_gateway.manage`，端点由 `app.api.routers.model_gateway` 单一路由承载。 |
 | 模型调用日志 | GET | /api/model-gateway/logs | 查询模型调用元数据；要求 `system.model_gateway.manage`，不返回完整 prompt、输出或密钥；端点由 `app.api.routers.model_gateway` 单一路由承载。 |
 | AI 助手会话列表 | GET | /api/assistant/conversations | 返回当前登录用户最近助手会话。 |
@@ -1900,6 +1904,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 | `AiExecutorRunnerService` | 管理系统默认执行器与隔离 Runner：系统默认执行器 `ai_executor_runner_system_default` 使用 `model_gateway` 执行类型，直接调用平台默认 AI 大模型并返回结构化执行结果，不参与 Runner Token、心跳或任务认领；本地 Runner 负责注册、心跳、Token 校验和轮换、任务队列、OpenClaw/Codex/Claude/Hermes 执行类型校验、任务认领、租约写入、日志续租、租约过期重派、死信、管理员取消、超时熔断和完成回写；管理员侧测试接口只读取 Runner 配置与健康投影，返回诊断项并写轻量审计，不下发真实任务；完成回写不得执行外部命令，只更新任务状态、插件日志、定时作业运行、collector run 和作业最近运行字段。 |
 | `ScheduledJobObservabilityService` | 聚合运行健康概览、失败原因、慢运行和 AI/插件/动作写入指标；只读取运行实例、作业定义和模型日志元数据，不参与作业执行。 |
 | `ConnectionDiagnosticsService` | 构造插件连接测试诊断步骤、请求回放 cURL、动作模板草案、定时作业样例种子、失败修复建议、最近测试历史和轻量测试摘要；真实网络请求、审计和连接记录持久化仍由插件服务编排。 |
+| `ScheduledJobTemplateSelector` | 代码巡检模板默认 AI 资源优先匹配 `code-reviewer` AI角色和“代码分析skill” Skill；旧 `code_reviewer`、`code_inspection_agent`、`code_inspection_analysis` 和 `code_review` 只作为兼容兜底，前端按模板候选顺序而非列表顺序选择默认资源。 |
 | `AssistantDraftBuilder` | 构造 AI 助手确认式配置草案，包括研发任务、AI Skill、AI角色、插件连接、动作、每周反馈洞察作业、代码巡检作业、邮件摘要收取作业和分析类草案；研发任务草案使用 `create_rd_task`，优先从显式 `@需求` 解析 `requirement_id`，只生成 `product_detail_design` 任务草案，并同样返回“数据来源、AI处理、结果动作、调度策略、确认执行”五步 `wizard_steps[]`，其中调度策略为 `skipped`，用于说明研发任务是一次性确认动作；复用插件连接默认模板、动作模板目录和定时作业模板目录，代码巡检 AI 模式在缺少可用代码巡检 Skill 或 AI角色时必须先生成 `create_ai_skill` / `create_ai_agent` 前置草案，再生成依赖前置草案的 `create_scheduled_job`；所有助手生成的 `create_scheduled_job` 草案必须返回 `wizard_steps[]`，按数据来源、AI处理、结果动作、调度策略、确认执行给出 `ready/needs_prerequisite/pending/skipped/blocked` 状态、摘要和依赖，确定性插件任务的 AI处理步骤展示为 `skipped`，前端对 `needs_prerequisite/blocked` 步骤提供生成前置草案提示回填入口；配置向导每个步骤还必须提供“AI生成<步骤>草案”和“手动调整<步骤>”入口，ready/pending/skipped 步骤也可一键回填 AI 调整提示，数据来源和结果动作手动跳转任务中心 / 插件管理，AI处理跳转 AI 能力配置，调度策略和确认执行跳转任务中心 / 定时作业，让用户可在 AI 生成草案与人工调整之间切换；邮件摘要意图必须使用 `scheduled_job_templates.email_digest` 默认 payload，并绑定可用 `receive_email_messages` 动作和同插件邮箱连接生成 `create_scheduled_job` 草案；发布风险分析和知识库巡检生成 `create_analysis_draft`，草案同样返回“数据来源、AI处理、结果动作、调度策略、确认执行”五步 `wizard_steps[]`，其中调度策略为 `skipped`，确认后只生成可追踪 `assistant_analysis` 结果，不写业务配置表；`assistant_tools` 保留意图识别、读模型工具、插件连接失败诊断和结果汇总；泛化“新增任务”或未指定场景的“新增 AI能力配置”由 AI 助手确定性返回任务类型向导，引导用户选择草案路径后再生成具体配置，建议按钮与向导卡片均覆盖研发任务、定时作业、AI能力配置、插件动作、代码巡检和反馈洞察，且每个任务项都使用统一五步闭环；已通过 @ 候选明确选择新建需求、Bug、插件连接/动作、定时作业、知识文档/导入任务或 AI 能力配置时，不得再回退到通用任务类型选择向导，应进入对应草案或字段补齐流程；插件连接失败诊断必须只读取 `last_test_summary/test_history.repair_suggestions` 等脱敏摘要，不注入认证配置、完整 Header、完整请求体或密钥。 |
 | `AIExecutionConfigResolver` | 解析 AI角色（Agent）、Skill、模型网关和作业覆盖项，生成不可变运行快照。 |
 | `SkillOrchestrator` | 合并 agent system prompt、skill prompt、工具结果和 expected output schema，调用模型网关前做脱敏和限长，输出后做 schema 校验。 |

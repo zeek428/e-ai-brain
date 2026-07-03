@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 系统管理新增“系统设置”页面，首个全局配置项为系统管理员邮箱，后端提供 `GET/PATCH /api/system/settings` 并写入审计。
 - Bug 管理登记和编辑弹窗支持选择或粘贴图片证据，图片先上传对象存储，再以 `evidence.images[]` 元数据关联到 Bug。
 - Bug 管理已上传图片支持点击预览，预览通过 `/api/bugs/images/preview` 受权限保护地代理读取 MinIO/S3-compatible 图片对象。
 - 代码巡检定时作业支持只选择产品即可扫描该产品下全部 active 代码仓库，仓库和分支改为高级配置，运行详情按仓库展示扫描、AI 处理、写入反馈和 Worker 重试摘要。
@@ -35,6 +36,7 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 代码仓库质量 / 安全 / 规范巡检作业模板的 AI 资源默认优先匹配 `code-reviewer` AI角色和“代码分析skill” Skill，旧 `code_reviewer`、`code_inspection_analysis` 等资源仅作为兼容兜底。
 - 代码仓库巡检定时作业默认改为本地扫描后的 AI 辅助处理：模板、手工选择类型和 AI 助手草案会优先带出模型网关、AI角色和 Skill；明确“不调用 AI/纯扫描”时仍保留确定性扫描路径。
 - 产品管理 Git 资源配置默认改为填写 Remote URL：Project Path 不再作为前端必填项，后端会从可解析的 HTTPS/SSH Remote URL 推导 `project_path` 并继续支持显式覆盖。
 - 定时作业代码巡检的仓库配置在未选择产品或产品未维护 Git 资源时给出明确提示，并支持从空状态直接跳转到产品管理新增该产品的 Git 资源。

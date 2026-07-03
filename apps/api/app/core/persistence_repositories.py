@@ -20,6 +20,7 @@ from app.core.repositories.product_config import ProductConfigReadRepository
 from app.core.repositories.requirements import RequirementReadRepository
 from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
 from app.core.repositories.system_state import SystemStateRepository
+from app.core.repositories.system_settings import SystemSettingsRepository
 from app.core.repositories.table_maintenance import TableMaintenanceRepository
 from app.core.repositories.tasks import TaskReadRepository
 from app.core.repositories.user_insights import UserInsightReadRepository
@@ -28,6 +29,13 @@ from app.core.repository_callbacks import RepositoryCallbackHub
 
 def install_snapshot_repositories(repository: Any) -> None:
     repository._system_state_repository = SystemStateRepository(repository._connect)
+    repository._system_settings_repository = SystemSettingsRepository(
+        repository._connect,
+        upsert_audit_events=lambda cursor, audit_events: repository._upsert_audit_events(
+            cursor,
+            audit_events,
+        ),
+    )
     repository._table_maintenance_repository = TableMaintenanceRepository()
     repository._repository_callbacks = RepositoryCallbackHub(
         repository._table_maintenance_repository,

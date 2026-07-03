@@ -1165,13 +1165,20 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
         "type": "write_code_inspection_report",
     }
     assert code_inspection["resource_selectors"]["agent"]["code_candidates"] == [
+        "code-reviewer",
+    ]
+    assert code_inspection["resource_selectors"]["agent"]["fallback_code_candidates"] == [
         "code_reviewer",
         "code_inspection_agent",
     ]
     assert code_inspection["resource_selectors"]["skill"]["code_candidates"] == [
+        "code_analysis_skill",
+    ]
+    assert code_inspection["resource_selectors"]["skill"]["fallback_code_candidates"] == [
         "code_inspection_analysis",
         "code_review",
     ]
+    assert code_inspection["resource_selectors"]["skill"]["text_candidates"][0] == "代码分析skill"
     assert code_inspection["resource_selectors"]["plugin_action"]["code_candidates"] == [
         "scan_github_code_inspection",
         "scan_gitlab_code_inspection",
@@ -1656,7 +1663,8 @@ def test_plugin_action_invoke_ai_generated_runs_skill_before_result_action(monke
     assert execution_nodes["result_actions"][0]["type"] == "save_scheduled_job_result"
     assert summary["processing"]["model_gateway_called"] is True
     assert summary["trace_graph"]["edges"] == [
-        {"from": "data_connection", "to": "skill_processing"},
+        {"from": "data_connection", "to": "runner_execution"},
+        {"from": "runner_execution", "to": "skill_processing"},
         {"from": "skill_processing", "to": "result_action_1"},
     ]
 
@@ -4591,7 +4599,8 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
         "mode": "sequential",
     }
     assert result_summary["trace_graph"]["edges"] == [
-        {"from": "data_connection", "to": "skill_processing"},
+        {"from": "data_connection", "to": "runner_execution"},
+        {"from": "runner_execution", "to": "skill_processing"},
         {"from": "skill_processing", "to": "result_action_1"},
     ]
     node_preview_response = client.get(

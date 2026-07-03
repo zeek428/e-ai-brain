@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.537 |
+| 功能版本 | v1.1.538 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.538 | 2026-07-03 | 新增 `GET/PATCH /api/system/settings`，系统管理统一维护系统管理员邮箱，写入 `system_settings` 并记录 `system.settings.updated` 审计 | Codex |
 | v1.1.537 | 2026-07-03 | 代码巡检作业请求可省略仓库 ID 以按产品扫描全部 active 代码仓库，运行摘要返回按仓库扫描、AI 处理、写入和 Worker 重试明细 | Codex |
 | v1.1.536 | 2026-07-03 | 产品 Git 资源配置默认使用 `remote_url`，后端从可解析 Remote URL 推导 `project_path`，Project Path 不再作为前端必填项 | Codex |
 | v1.1.535 | 2026-07-03 | `DELETE /api/requirements/{requirement_id}` 在需求已有 AI 任务时返回 `related_counts.ai_tasks/related_total`，前端需展示中文占用处理提示 | Codex |
@@ -729,6 +730,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | System RBAC | DELETE | `/api/system/menus/{menu_code}` | 删除非系统且无子菜单的菜单资源。 |
 | System RBAC | POST | `/api/system/menus/{menu_code}/disable` | 停用菜单资源。 |
 | System RBAC | POST | `/api/system/menus/{menu_code}/enable` | 启用菜单资源。 |
+| System Settings | GET | `/api/system/settings` | 查询全局系统设置，当前返回系统管理员邮箱配置状态。 |
+| System Settings | PATCH | `/api/system/settings` | 更新全局系统设置，当前支持维护系统管理员邮箱。 |
 | System RBAC | GET | `/api/system/roles` | 查询系统角色列表。 |
 | System RBAC | POST | `/api/system/roles` | 创建非系统角色。 |
 | System RBAC | POST | `/api/system/roles/{role_id}/copy` | 从现有角色复制角色、权限、菜单和范围。 |
@@ -1118,6 +1121,8 @@ v1.2 目标态按 [RBAC 重设计](rbac-redesign.md) 演进：`GET /api/auth/rol
 ### 系统 RBAC API
 
 Task 3 提供最小可用角色治理接口，用于系统管理员维护角色、角色权限点、角色菜单、角色数据范围以及用户授权。`GET /api/system/menus` 允许具备 `system.menus.read`、`system.menus.manage` 或历史兼容 `system.roles.manage` 的用户读取；带 `page/page_size` 时支持菜单、父级、路由、权限点、类型、状态筛选，`sort_by=sort_order|code|name|parent_code|path|menu_type|status`，并返回 `query/performance`；菜单资源写接口要求 `system.menus.manage`；角色治理接口要求 `system.roles.manage`；`/api/users/{user_id}/permissions`、`/api/users/{user_id}/roles` 和 `/api/users/{user_id}/scopes` 要求 `system.users.manage`。非授权用户返回 `403 FORBIDDEN`。系统角色（尤其 `admin`）当前不可停用，系统菜单当前不可删除；角色和菜单变更写入 `role_change_events` / `audit_events` 或对应菜单变更审计事件。`admin` 是内置超级管理员角色：有效权限和可见菜单运行时按所有 active 权限点与菜单资源动态展开，不依赖角色权限/菜单配置，角色页无需额外维护 admin 的权限矩阵。
+
+系统设置接口用于维护全局系统级配置。`GET /api/system/settings` 和 `PATCH /api/system/settings` 均要求 `system.settings.manage` 权限；当前字段为 `admin_email`，可为空，非空时必须为合法邮箱格式，非法值返回 `400 VALIDATION_ERROR`。`PATCH` 请求体示例：`{"admin_email": "ops@example.com"}`；响应返回 `admin_email`、`admin_email_configured`、`updated_at` 和 `updated_by`。PostgreSQL 运行态写入 `system_settings(setting_key='system_admin_email')`，并记录 `system.settings.updated` 审计事件，payload 只保存是否已配置和变更字段，不记录邮件正文或后续邮件内容。
 
 `GET /api/system/permissions/matrix` 为只读策略矩阵接口，允许 `system.roles.read` 或 `system.roles.manage` 访问。响应聚合 `roles`、`permissions`、`menus`、`rows` 和 `summary`：每个 `rows[]` 项按角色返回 `permission_count`、`granted_permission_codes`、`high_risk_permission_codes`、`menu_count`、`granted_menu_codes`、`required_permission_codes`、`missing_menu_permission_codes`、`scope_summary`、`scopes` 和 `diagnostics`。当角色被授权某菜单但缺少该菜单 `required_permissions` 时，`diagnostics` 必须包含 `menu_permission_gap`；当角色包含高风险权限时，必须包含 `high_risk_permission`。该接口不写入数据，角色管理页用于权限审计、范围检查和授权缺口排障。
 
@@ -3919,6 +3924,8 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 MaxCompute 每周用户反馈场景使用 `job_type=user_feedback_insight_extract`，数据连接作为普通 HTTP 插件连接保存 endpoint、认证和公共 Params/Headers，结果写入动作通常为 `action_type=http_request` 的自定义 HTTP 动作；请求时间参数优先在连接/动作 Params 中配置，作业级 `plugin_input_mapping` 仅作为兼容和高级覆盖。作业必须选择 `model_gateway_config_id`、`agent_id` 和 `skill_ids`，页面展示为 AI 模型、AI角色和 Skills，可选选择知识引用文档。动作 `result_mapping` 默认包含 `write_target=user_feedback_insights`、`insights_path`、`records_imported_path` 和 `rows_path`，作业 `plugin_output_mapping` 仅用于覆盖。运行顺序为数据连接取数、读取知识引用、模型网关按 AI角色/Skill 处理为结构化 JSON、结果写入。运行成功后 `records_imported` 为实际新增洞察数，`result_summary.plugin.response_summary.json.row_count` 保留源表读取行数摘要；`result_summary.execution_nodes` 必须按 `data_connection`、`skill_processing`、`result_action` 三段保存数据连接获取内容、Skill 处理内容和结果写入反馈内容。`skill_processing.model_gateway_called=true`，并包含 `model_gateway_config_id`、`model_log_id`、`processing_mode=model_gateway_json_transform`、`input.knowledge_references` 和模型输出 JSON 摘要。
 
 代码仓库巡检场景使用 `job_type=code_repository_inspection`。创建或修改请求必须携带 `product_id`；`config_json.repository_id`、`config_json.repository_ids` 和 `config_json.branch` 均为高级可选项，省略仓库 ID 时服务端按产品下 active 且 `repo_type=code` 的 Git 仓库自动展开扫描，省略分支时按每个仓库 `default_branch` 兜底；显式传 `repository_id/repository_ids` 时仅扫描指定仓库。新增作业类型、服务端模板目录和 AI 助手草案默认给出 `execution_mode=ai_assisted`，并按资源选择器带出系统默认模型网关、代码审查 AI角色和代码巡检 Skill；页面提交前不得为产品级默认扫描自动写入第一仓库 ID。用户显式切换确定性执行或表达“不调用 AI、纯扫描、只扫描、静态扫描”时才使用 `deterministic`。`native_full_scan` 使用平台内置本地扫描器，`sync_existing_alerts` 和 `trigger_platform_scan` 使用 `plugin_connection_id` / `plugin_action_id` 调用仓库扫描器、SonarQube、SAST 或自建质量扫描服务。运行时插件输入顶层携带实际 `repository_id/branch`，AI 处理上下文携带 `configured_repository_id/configured_repository_ids/configured_branch`。插件响应推荐返回 `repository_id`、`branch`、`commit_sha`、`risk_level`、`summary` 和 `findings[]`；若响应未返回 `branch`，报告写入使用作业分支或仓库默认分支兜底。每个 finding 至少包含 `rule_id`、`category`、`severity`、`title`、`description`、`file_path`、`line_number` 和 `recommendation`，并推荐包含 `committer_name`、`committer_email`、`committer_username`。动作 `request_config.severity_mapping` 或作业 `config_json.severity_mapping` 可把外部扫描器等级映射为平台 `info/low/medium/high/critical`。示例 `result_actions`：
+
+补充约定：代码巡检作业模板选择默认 AI 资源时，AI角色优先匹配编码 `code-reviewer`，Skill 优先匹配“代码分析skill”或编码 `code_analysis_skill`；找不到时再兼容旧 `code_reviewer`、`code_inspection_agent`、`code_inspection_analysis` 和 `code_review`。
 
 当 `config_json.scan_mode=native_full_scan` 时，服务端使用内置扫描器在 `CODE_SCAN_WORKDIR` 下维护 `mirrors/` 仓库缓存，并按 repository + branch + commit checkout 到单次运行目录；HTTP(S) 私有仓库使用产品 Git 仓库 `credential_ref` 或 provider 级环境变量 token 通过临时 Git askpass 执行 clone/fetch，API 响应、运行摘要、报告和错误信息不得返回 token 或带凭据 remote_url；扫描 `config_json.scan_rules`，按 `ignore_dirs` / `ignore_rules` 过滤目录和规则，按 `severity_threshold`、`baseline_fingerprints`、`accepted_risk_fingerprints` 和 `ignored_finding_fingerprints` 过滤低级别、历史、已接受或单条忽略问题，按 `incremental_from_commit` 做增量文件扫描，并通过 git blame 回填提交人。该模式不要求 `plugin_connection_id` / `plugin_action_id`，保存请求可传 `null` 或空数组清空插件字段；`repository_ids` 可一次绑定多个同产品仓库并生成多份报告，`repository_id/repository_ids` 均为空时按产品所有 active 代码仓库生成多份报告。未传 `scan_mode` 时按 `sync_existing_alerts` 兼容旧插件模式。默认运行先返回 queued，再由后台 worker 执行；运行成功后 `plugin_invocation_log_id` 为空，`result_summary.execution_nodes.native_scan` 返回 `repository_id/branch/commit_sha/files_scanned/lines_scanned/finding_count/scanner_name/scanner_version/rules_version/remote_url_hash/remote_url_summary/artifact_ref/checkout_path_retained/scan_started_at/scan_finished_at/incremental_from_commit/incremental_file_count/suppression_summary/suppressed_finding_count/quality_gate/scan_profile`，多仓库运行必须同时返回 `execution_nodes.native_scan.items[]`；`execution_nodes.data_connection.processing_mode=native_full_scan`；多仓库运行还返回 `report_ids/report_count/reports_by_repository/repository_execution`。报告额外返回同名快照字段，以及 `scan_mode/scanner_name/is_full_scan/incremental_from_commit/incremental_file_count/files_scanned/lines_scanned/rules_loaded/coverage_warning/suppressed_finding_count/suppression_summary/quality_gate/scan_profile/previous_report_id/previous_comparison`；当 `ai_assisted/ai_generated` 对 native 扫描结果做模型归一化时，模型输出可覆盖 `risk_level/summary/findings`，但上述 native 快照字段必须以扫描源结果为准。`GET /api/governance/code-inspections/{report_id}` 额外返回 `scan_summary.coverage/rule_distribution/file_distribution/committer_distribution/quality_gate/previous_comparison/scan_profile/suppression_summary` 和 `governance_summary`，其中 `scan_summary.coverage` 必须包含 `is_full_scan/incremental_from_commit/incremental_file_count/files_scanned/lines_scanned/suppressed_finding_count`，`governance_summary` 以 high/critical 且未审批忽略的 finding 为有效严重问题，计算 Bug 覆盖率、整改任务覆盖率、待审批忽略、已接受风险和治理待办。`scanner_engines` 可声明 `builtin/gitleaks/semgrep/trivy/npm/pip-audit/dependency-check`，已安装外部引擎会执行并解析 JSON 输出，结果归一为 `scanner_name=<engine>` 的 finding；未安装、超时或输出不可解析时写入 `coverage_warning`，并在 `scan_profile.external_scanner_status` 返回 `configured/executed/skipped/failed` 以及可选原因映射后继续内置扫描。异步运行被取消时，取消接口返回 `status=cancelled`，后台 worker 检测到取消后不得写入代码巡检报告或覆盖取消终态。内置规则当前包括 `secrets.hardcoded_credential` 和 `metadata.internal_address_exposure`，finding 原始证据必须脱敏，不得保存明文密钥。
 

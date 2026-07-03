@@ -199,6 +199,12 @@ const routes = [
         component: './Menus',
       },
       {
+        path: '/system/settings',
+        name: '系统设置',
+        icon: 'SettingOutlined',
+        component: './SystemSettings',
+      },
+      {
         path: '/system/model-gateway',
         name: '模型网关',
         icon: 'ApiOutlined',

@@ -358,7 +358,8 @@ function installScheduledJobsFetchMock(
               },
               resource_selectors: {
                 agent: {
-                  code_candidates: ['code_reviewer', 'code_inspection_agent'],
+                  code_candidates: ['code-reviewer'],
+                  fallback_code_candidates: ['code_reviewer', 'code_inspection_agent'],
                   text_candidates: ['代码审查', '代码巡检', 'code review', 'code inspection'],
                 },
                 model_gateway_config: { strategy: 'default_or_first_active' },
@@ -367,8 +368,9 @@ function installScheduledJobsFetchMock(
                   text_candidates: ['code_inspection', '代码巡检'],
                 },
                 skill: {
-                  code_candidates: ['code_inspection_analysis', 'code_review'],
-                  text_candidates: ['代码巡检', '代码审查', 'code inspection', 'code review'],
+                  code_candidates: ['code_analysis_skill'],
+                  fallback_code_candidates: ['code_inspection_analysis', 'code_review'],
+                  text_candidates: ['代码分析skill', '代码分析', '代码巡检', '代码审查', 'code inspection', 'code review'],
                 },
               },
               template_version: 'v1',
@@ -1288,9 +1290,10 @@ function installScheduledJobsFetchMock(
         data: {
           items: [
             { code: 'insight_agent', id: 'agent_insight', name: '洞察 Agent', status: 'active' },
-            { code: 'code_reviewer', id: 'agent_code_reviewer', name: '代码审查角色', status: 'active' },
+            { code: 'code_reviewer', id: 'agent_legacy_code_reviewer', name: '旧代码审查角色', status: 'active' },
+            { code: 'code-reviewer', id: 'agent_code_reviewer', name: '代码审查角色', status: 'active' },
           ],
-          total: 2,
+          total: 3,
         },
       });
     }
@@ -1299,9 +1302,10 @@ function installScheduledJobsFetchMock(
         data: {
           items: [
             { code: 'weekly_feedback_analysis', id: 'skill_feedback', name: '每周反馈分析', status: 'active' },
-            { code: 'code_inspection_analysis', id: 'skill_code_inspection', name: '代码巡检分析', status: 'active' },
+            { code: 'code_inspection_analysis', id: 'skill_legacy_code_inspection', name: '代码巡检分析', status: 'active' },
+            { code: 'code_analysis_skill', id: 'skill_code_inspection', name: '代码分析skill', status: 'active' },
           ],
-          total: 2,
+          total: 3,
         },
       });
     }
@@ -1925,7 +1929,7 @@ describe('ScheduledJobsPage', () => {
 
     expect(within(codeDialog).getByLabelText('名称')).toHaveValue('代码仓库质量安全规范巡检');
     expect(within(codeDialog).getByText('AI 辅助')).toBeInTheDocument();
-    expect(within(codeDialog).getByText('代码审查角色 (code_reviewer)')).toBeInTheDocument();
+    expect(within(codeDialog).getByText('代码审查角色 (code-reviewer)')).toBeInTheDocument();
     expect(within(codeDialog).queryByText('请选择 Skills')).not.toBeInTheDocument();
     expect(within(codeDialog).getByDisplayValue('0 2 * * MON')).toBeInTheDocument();
     expect(within(codeDialog).getByDisplayValue('code-inspection')).toBeInTheDocument();
@@ -2360,7 +2364,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByText('代码仓库质量 / 安全 / 规范巡检'));
 
     expect(within(dialog).getByText('AI 辅助')).toBeInTheDocument();
-    expect(within(dialog).getByText('代码审查角色 (code_reviewer)')).toBeInTheDocument();
+    expect(within(dialog).getByText('代码审查角色 (code-reviewer)')).toBeInTheDocument();
     expect(within(dialog).queryByText('请选择 AI 模型')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('请选择 AI角色')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('请选择 Skills')).not.toBeInTheDocument();

@@ -93,21 +93,48 @@ function findByTemplateSelector<T extends TemplateSelectableRecord>(
   selector: Record<string, unknown>,
 ): T | undefined {
   const codeCandidates = stringArrayFromUnknown(selector.code_candidates);
+  const fallbackCodeCandidates = stringArrayFromUnknown(selector.fallback_code_candidates);
   const textCandidates = stringArrayFromUnknown(selector.text_candidates).map((candidate) =>
     candidate.toLowerCase(),
   );
-  const matchesCode = (item: T) =>
-    codeCandidates.includes(String(item.code ?? '')) || codeCandidates.includes(String(item.id ?? ''));
-  const matchesText = (item: T) => {
-    const text = `${item.code ?? ''} ${item.name ?? ''} ${item.id ?? ''}`.toLowerCase();
-    return textCandidates.some((candidate) => text.includes(candidate));
+  const isActive = (item: T) => item.status === 'active';
+  const findByCodeCandidate = (candidates: string[], activeOnly: boolean) => {
+    for (const candidate of candidates) {
+      const matched = items.find((item) => {
+        if (activeOnly && !isActive(item)) {
+          return false;
+        }
+        return String(item.code ?? '') === candidate || String(item.id ?? '') === candidate;
+      });
+      if (matched) {
+        return matched;
+      }
+    }
+    return undefined;
+  };
+  const findByTextCandidate = (activeOnly: boolean) => {
+    for (const candidate of textCandidates) {
+      const matched = items.find((item) => {
+        if (activeOnly && !isActive(item)) {
+          return false;
+        }
+        const text = `${item.code ?? ''} ${item.name ?? ''} ${item.id ?? ''}`.toLowerCase();
+        return text.includes(candidate);
+      });
+      if (matched) {
+        return matched;
+      }
+    }
+    return undefined;
   };
   return (
-    items.find((item) => item.status === 'active' && matchesCode(item))
-    ?? items.find(matchesCode)
-    ?? items.find((item) => item.status === 'active' && matchesText(item))
-    ?? items.find(matchesText)
-    ?? items.find((item) => item.status === 'active')
+    findByCodeCandidate(codeCandidates, true)
+    ?? findByCodeCandidate(codeCandidates, false)
+    ?? findByTextCandidate(true)
+    ?? findByTextCandidate(false)
+    ?? findByCodeCandidate(fallbackCodeCandidates, true)
+    ?? findByCodeCandidate(fallbackCodeCandidates, false)
+    ?? items.find(isActive)
     ?? items[0]
   );
 }
