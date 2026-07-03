@@ -294,29 +294,29 @@ export function CodeInspectionGovernanceOverview({
         type={governanceConclusion.level}
       />
       <Row className="code-inspection-kpi-row" gutter={[12, 12]}>
-        <Col lg={6} md={12} xs={24}>
+        <Col lg={6} md={12} xs={12}>
           <Card className="code-inspection-kpi-card" loading={loading} size="small">
             <Statistic title="巡检报告" value={reportCount} />
             <Text type="secondary">{`发现问题 ${findingCount}`}</Text>
           </Card>
         </Col>
-        <Col lg={6} md={12} xs={24}>
+        <Col lg={6} md={12} xs={12}>
           <Card className="code-inspection-kpi-card" loading={loading} size="small">
             <Statistic title="严重问题" value={severeFindingCount} />
             <Text type="secondary">{`严重阈值 ${sla?.severe_threshold ?? '-'}`}</Text>
           </Card>
         </Col>
-        <Col lg={6} md={12} xs={24}>
+        <Col lg={6} md={12} xs={12}>
           <Card className="code-inspection-kpi-card" loading={loading} size="small">
             <Statistic
               suffix={<Tag color={coverageStatusColor}>整体 {sla?.status ?? '-'}</Tag>}
               title="Bug 覆盖率"
               value={percentText(sla?.bug_coverage_rate)}
             />
-            <Text type="secondary">{`整改任务覆盖率 ${percentText(sla?.task_coverage_rate)}`}</Text>
+            <Text type="secondary">{`整改 ${percentText(sla?.task_coverage_rate)}`}</Text>
           </Card>
         </Col>
-        <Col lg={6} md={12} xs={24}>
+        <Col lg={6} md={12} xs={12}>
           <Card className="code-inspection-kpi-card" loading={loading} size="small">
             <Statistic
               suffix={<Tag color={openGovernanceCount > 0 ? 'orange' : 'green'}>待处理</Tag>}

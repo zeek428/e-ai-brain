@@ -687,7 +687,7 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getAllByText('健康').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/到期风险/).length).toBeGreaterThan(0);
     expect(screen.getByText('严重问题 SLA')).toBeInTheDocument();
-    expect(screen.getByText('整改任务覆盖率 100%')).toBeInTheDocument();
+    expect(screen.getByText('整改 100%')).toBeInTheDocument();
     expect(screen.getByText('已生成整改任务')).toBeInTheDocument();
     expect(screen.getAllByText('整体 healthy').length).toBeGreaterThan(0);
 
