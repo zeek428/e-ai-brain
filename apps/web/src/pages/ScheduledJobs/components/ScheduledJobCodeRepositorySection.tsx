@@ -1,5 +1,5 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Alert, Button, Col, Form, Input, InputNumber, Row, Select, Switch } from 'antd';
 
 import type { ProductGitRepositoryOption } from '../../../services/aiBrain';
@@ -48,9 +48,6 @@ export function ScheduledJobCodeRepositorySection({
     : '/assets/products';
   const repositorySelectDisabled = !selectedProductId || (!loadingRepositories && repositories.length === 0);
   const [advancedVisible, setAdvancedVisible] = useState(advancedInitiallyVisible);
-  useEffect(() => {
-    setAdvancedVisible(advancedInitiallyVisible);
-  }, [advancedInitiallyVisible]);
 
   return (
     <FormSection label="代码仓库配置" marker="仓库">

@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from app.api.deps import api_error
 from app.services.code_inspections import sync_product_git_repository_store
 from app.services.git_review import credential_ref_token
+from app.services.plugin_store_helpers import sync_plugin_connection_store, sync_plugin_store
 from app.services.product_config_context import get_product_git_repository_record
 
 NATIVE_CODE_SCAN_MODE = "native_full_scan"
@@ -141,12 +142,180 @@ def _git_auth_username(provider: str) -> str:
     return "oauth2"
 
 
-def _git_auth_context(repository: dict[str, Any], *, workdir: Path) -> dict[str, str] | None:
+def _repository_git_provider(repository: dict[str, Any]) -> str:
+    provider = str(repository.get("git_provider") or "").strip().lower()
+    if provider:
+        return provider
+    hostname = (urlparse(str(repository.get("remote_url") or "")).hostname or "").lower()
+    if "github" in hostname:
+        return "github"
+    if "gitlab" in hostname:
+        return "gitlab"
+    return ""
+
+
+def _selected_plugin_connection_ids(job: dict[str, Any] | None) -> list[str]:
+    if not isinstance(job, dict):
+        return []
+    selected: list[str] = []
+
+    def append(value: Any) -> None:
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                append(item)
+            return
+        text = str(value or "").strip()
+        if text and text not in selected:
+            selected.append(text)
+
+    append(job.get("plugin_connection_ids"))
+    append(job.get("plugin_connection_id"))
+    config = job.get("config_json")
+    if isinstance(config, dict):
+        append(config.get("plugin_connection_ids"))
+        append(config.get("plugin_connection_id"))
+        orchestration = config.get("orchestration")
+        if isinstance(orchestration, dict):
+            append(orchestration.get("plugin_connection_ids"))
+            append(orchestration.get("plugin_connection_id"))
+    return selected
+
+
+def _read_plugin_connection(current_store: Any, connection_id: str) -> dict[str, Any] | None:
+    connections = getattr(current_store, "plugin_connections", {})
+    connection = connections.get(connection_id) if isinstance(connections, dict) else None
+    if isinstance(connection, dict):
+        return connection
+    sync_plugin_connection_store(current_store, status="active")
+    connections = getattr(current_store, "plugin_connections", {})
+    connection = connections.get(connection_id) if isinstance(connections, dict) else None
+    return connection if isinstance(connection, dict) else None
+
+
+def _connection_plugin_code(current_store: Any, connection: dict[str, Any]) -> str:
+    plugin_code = str(connection.get("plugin_code") or "").strip().lower()
+    if plugin_code:
+        return plugin_code
+    sync_plugin_store(current_store, status="active")
+    plugins = getattr(current_store, "integration_plugins", {})
+    plugin = plugins.get(connection.get("plugin_id")) if isinstance(plugins, dict) else None
+    if isinstance(plugin, dict):
+        return str(plugin.get("code") or plugin.get("source_plugin_code") or "").strip().lower()
+    return ""
+
+
+def _connection_matches_git_provider(
+    current_store: Any,
+    connection: dict[str, Any],
+    provider: str,
+) -> bool:
+    normalized_provider = provider.strip().lower()
+    plugin_code = _connection_plugin_code(current_store, connection)
+    if plugin_code:
+        return plugin_code == normalized_provider or normalized_provider in plugin_code
+    hostname = (urlparse(str(connection.get("endpoint_url") or "")).hostname or "").lower()
+    if normalized_provider == "github":
+        return "github" in hostname
+    if normalized_provider == "gitlab":
+        return "gitlab" in hostname
+    return False
+
+
+def _non_placeholder_secret(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or set(text) == {"*"}:
+        return None
+    if text.lower().startswith("bearer "):
+        text = text[7:].strip()
+    if not text or set(text) == {"*"}:
+        return None
+    return text
+
+
+def _connection_token_candidates(connection: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+
+    def append(value: Any) -> None:
+        text = _non_placeholder_secret(value)
+        if text and text not in candidates:
+            candidates.append(text)
+
+    auth_config = connection.get("auth_config")
+    if isinstance(auth_config, dict):
+        for key in ("token_ref", "secret_ref", "token", "access_token", "api_key"):
+            append(auth_config.get(key))
+    request_config = connection.get("request_config")
+    if isinstance(request_config, dict):
+        headers = request_config.get("headers")
+        if isinstance(headers, dict):
+            for key, value in headers.items():
+                normalized_key = str(key).strip().lower()
+                if normalized_key in {
+                    "authorization",
+                    "private-token",
+                    "x-github-token",
+                    "x-gitlab-token",
+                }:
+                    append(value)
+    return candidates
+
+
+def _token_from_plugin_connection(connection: dict[str, Any]) -> str | None:
+    for candidate in _connection_token_candidates(connection):
+        token = credential_ref_token(candidate, fallback_env_names=[])
+        if token:
+            return token
+    return None
+
+
+def _job_plugin_connection_auth_context(
+    current_store: Any,
+    job: dict[str, Any] | None,
+    *,
+    provider: str,
+    workdir: Path,
+) -> dict[str, str] | None:
+    if current_store is None or provider not in {"github", "gitlab"}:
+        return None
+    for connection_id in _selected_plugin_connection_ids(job):
+        connection = _read_plugin_connection(current_store, connection_id)
+        if not connection or connection.get("status") != "active":
+            continue
+        if not _connection_matches_git_provider(current_store, connection, provider):
+            continue
+        token = _token_from_plugin_connection(connection)
+        if not token:
+            continue
+        return {
+            "askpass_path": str(_ensure_git_askpass_script(workdir)),
+            "password": token,
+            "username": _git_auth_username(provider),
+        }
+    return None
+
+
+def _git_auth_context(
+    repository: dict[str, Any],
+    *,
+    current_store: Any | None = None,
+    job: dict[str, Any] | None = None,
+    workdir: Path,
+) -> dict[str, str] | None:
     remote_url = str(repository.get("remote_url") or "").strip()
     parsed = urlparse(remote_url)
     if parsed.scheme not in {"http", "https"}:
         return None
-    provider = str(repository.get("git_provider") or "").strip().lower()
+    provider = _repository_git_provider(repository)
+    connection_auth_context = _job_plugin_connection_auth_context(
+        current_store,
+        job,
+        provider=provider,
+        workdir=workdir,
+    )
+    if connection_auth_context:
+        return connection_auth_context
     credential_ref = str(repository.get("credential_ref") or "").strip()
     token = credential_ref_token(
         credential_ref,
@@ -1227,7 +1396,12 @@ def run_native_code_scan(
     artifact_ref: str | None = None
     checkout_path_retained = False
     mirror_cache_hit = False
-    auth_context = _git_auth_context(repository, workdir=workdir)
+    auth_context = _git_auth_context(
+        repository,
+        current_store=current_store,
+        job=job,
+        workdir=workdir,
+    )
     try:
         mirror_cache_hit = _ensure_mirror(
             auth_context=auth_context,

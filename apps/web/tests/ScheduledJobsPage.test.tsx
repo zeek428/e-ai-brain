@@ -1968,8 +1968,8 @@ describe('ScheduledJobsPage', () => {
     expect(jobCreateBodies[1]).toMatchObject({
       plugin_action_id: null,
       plugin_action_ids: [],
-      plugin_connection_id: null,
-      plugin_connection_ids: [],
+      plugin_connection_id: 'connection_github_prod',
+      plugin_connection_ids: ['connection_github_prod'],
     });
     expect(jobCreateBodies[1]).toEqual(
       expect.objectContaining({
@@ -2626,6 +2626,61 @@ describe('ScheduledJobsPage', () => {
         plugin_action_ids: [],
         plugin_connection_id: null,
         plugin_connection_ids: [],
+      }),
+    );
+  });
+
+  it('submits native full scan mode with a selected GitHub credential connection', async () => {
+    const { jobUpdateBodies } = installScheduledJobsFetchMock({
+      jobs: [
+        {
+          config_json: {
+            branch: 'main',
+            repository_id: 'repo_zqf',
+            scan_mode: 'native_full_scan',
+          },
+          enabled: true,
+          execution_mode: 'deterministic',
+          id: 'scheduled_job_native_scan',
+          job_type: 'code_repository_inspection',
+          name: '醉清风APP本地完整代码扫描',
+          plugin_action_id: undefined,
+          plugin_connection_id: undefined,
+          product_id: 'product_ai_brain',
+          schedule_type: 'manual',
+          source_system: 'native-code-scanner',
+          status: 'active',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    expect(await screen.findByText('醉清风APP本地完整代码扫描')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '编辑作业 醉清风APP本地完整代码扫描' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '编辑定时作业' });
+    await waitFor(() => expect(within(dialog).getByLabelText('代码仓库')).toBeInTheDocument());
+    fireEvent.mouseDown(within(dialog).getByLabelText('数据连接'));
+    fireEvent.click(await screen.findByText('生产 GitHub 组织'));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() =>
+      expect(jobUpdateBodies[0]).toMatchObject({
+        config_json: {
+          branch: 'main',
+          orchestration: {
+            plugin_action_ids: [],
+            plugin_connection_ids: ['connection_github_prod'],
+          },
+          repository_id: 'repo_zqf',
+          scan_mode: 'native_full_scan',
+        },
+        plugin_action_id: null,
+        plugin_action_ids: [],
+        plugin_connection_id: 'connection_github_prod',
+        plugin_connection_ids: ['connection_github_prod'],
       }),
     );
   });

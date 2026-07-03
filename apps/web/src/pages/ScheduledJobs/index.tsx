@@ -303,10 +303,12 @@ export default function ScheduledJobsPage() {
     : undefined;
   const connectionPluginFilterIds = useMemo(
     () =>
-      selectedJobType === 'code_repository_inspection' && codeInspectionActionByPluginId.size > 0
+      selectedJobType === 'code_repository_inspection'
+      && !selectedCodeInspectionUsesNativeScan
+      && codeInspectionActionByPluginId.size > 0
         ? new Set(codeInspectionActionByPluginId.keys())
         : new Set<string>(),
-    [codeInspectionActionByPluginId, selectedJobType],
+    [codeInspectionActionByPluginId, selectedCodeInspectionUsesNativeScan, selectedJobType],
   );
   const jobById = useMemo(
     () => new Map(jobs.map((job) => [job.id, job])),
@@ -327,10 +329,6 @@ export default function ScheduledJobsPage() {
     if (!selectedCodeInspectionUsesNativeScan) {
       return;
     }
-    if (normalizedSelectedPluginConnectionIds.length > 0) {
-      form.setFieldValue('plugin_connection_id', undefined);
-      form.setFieldValue('plugin_connection_ids', []);
-    }
     if (normalizedSelectedPluginActionIds.length > 0) {
       form.setFieldValue('plugin_action_id', undefined);
       form.setFieldValue('plugin_action_ids', []);
@@ -338,7 +336,6 @@ export default function ScheduledJobsPage() {
   }, [
     form,
     normalizedSelectedPluginActionIds.length,
-    normalizedSelectedPluginConnectionIds.length,
     selectedCodeInspectionUsesNativeScan,
   ]);
   const modelGatewayConfigById = useMemo(
@@ -554,14 +551,14 @@ export default function ScheduledJobsPage() {
 
   const handlePluginConnectionChange = useCallback(
     (value: unknown) => {
+      let nextConnectionIds = uniqueStringList(stringArrayFromUnknown(value));
       if (selectedCodeInspectionUsesNativeScan) {
-        form.setFieldValue('plugin_connection_id', undefined);
-        form.setFieldValue('plugin_connection_ids', []);
         form.setFieldValue('plugin_action_id', undefined);
         form.setFieldValue('plugin_action_ids', []);
+        form.setFieldValue('plugin_connection_id', primaryId(nextConnectionIds));
+        form.setFieldValue('plugin_connection_ids', nextConnectionIds);
         return;
       }
-      let nextConnectionIds = uniqueStringList(stringArrayFromUnknown(value));
       if (selectedJobType === 'code_repository_inspection') {
         const addedConnectionId = nextConnectionIds.find(
           (connectionId) => !normalizedSelectedPluginConnectionIds.includes(connectionId),
@@ -772,8 +769,8 @@ export default function ScheduledJobsPage() {
         name: templatePayloadString(template, 'name') ?? template.name,
         plugin_action_id: nativeCodeScan ? undefined : primaryId(pluginActionIds),
         plugin_action_ids: nativeCodeScan ? [] : pluginActionIds,
-        plugin_connection_id: nativeCodeScan ? undefined : primaryId(pluginConnectionIds),
-        plugin_connection_ids: nativeCodeScan ? [] : pluginConnectionIds,
+        plugin_connection_id: primaryId(pluginConnectionIds),
+        plugin_connection_ids: pluginConnectionIds,
         plugin_input_mapping: templatePayloadRecordValue(template, 'plugin_input_mapping'),
         plugin_output_mapping: templatePayloadRecordValue(template, 'plugin_output_mapping'),
         product_id: productId,
@@ -1010,8 +1007,8 @@ export default function ScheduledJobsPage() {
       name: job.name,
       plugin_action_id: nativeCodeScan ? undefined : primaryId(pluginActionIds),
       plugin_action_ids: nativeCodeScan ? [] : pluginActionIds,
-      plugin_connection_id: nativeCodeScan ? undefined : primaryConnectionId,
-      plugin_connection_ids: nativeCodeScan ? [] : pluginConnectionIds,
+      plugin_connection_id: primaryConnectionId,
+      plugin_connection_ids: pluginConnectionIds,
       product_id: job.product_id ?? undefined,
       result_actions: job.result_actions?.length ? job.result_actions : defaultCodeInspectionActions,
       schedule_type: job.schedule_type ?? 'manual',
@@ -1119,11 +1116,9 @@ export default function ScheduledJobsPage() {
     if (codeInspectionUsesNativeScan(requestPayload.job_type, requestPayload.config_json)) {
       requestPayload.plugin_action_id = null;
       requestPayload.plugin_action_ids = [];
-      requestPayload.plugin_connection_id = null;
-      requestPayload.plugin_connection_ids = [];
       requestPayload.config_json = scheduledJobConfigWithOrchestration(
         recordValue(requestPayload.config_json) ?? {},
-        [],
+        requestPayload.plugin_connection_ids ?? [],
         [],
       );
     }
@@ -1301,8 +1296,6 @@ export default function ScheduledJobsPage() {
         model_gateway_config_id: modelGatewayConfigId,
         plugin_action_id: undefined,
         plugin_action_ids: [],
-        plugin_connection_id: undefined,
-        plugin_connection_ids: [],
         result_actions: form.getFieldValue('result_actions')?.length
           ? form.getFieldValue('result_actions')
           : cloneResultActions(defaultCodeInspectionActions),
@@ -1323,8 +1316,6 @@ export default function ScheduledJobsPage() {
 
   const handleScanModeChange = (value?: string) => {
     if (value === nativeCodeInspectionScanMode) {
-      form.setFieldValue('plugin_connection_id', undefined);
-      form.setFieldValue('plugin_connection_ids', []);
       form.setFieldValue('plugin_action_id', undefined);
       form.setFieldValue('plugin_action_ids', []);
       form.setFieldValue(['config_json', 'async_execution'], true);

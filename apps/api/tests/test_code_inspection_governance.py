@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import app.services.native_code_scanner as native_code_scanner
-import app.services.scheduled_job_code_inspection_runtime as scheduled_job_code_inspection_runtime
 import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
+import app.services.scheduled_job_code_inspection_runtime as scheduled_job_code_inspection_runtime
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.core.repositories.code_inspections import CodeInspectionReadRepository
 from app.main import app
@@ -1207,6 +1207,87 @@ def test_native_repository_inspection_uses_repository_credential_ref_for_git_clo
     assert captured_auth_context["password"] == "gitlab-private-token"
     assert captured_auth_context["username"] == "oauth2"
     assert "GITLAB_READONLY_TOKEN" not in captured_auth_context
+
+
+def test_native_repository_inspection_uses_job_github_connection_token_for_git_clone(
+    monkeypatch,
+    tmp_path,
+):
+    scan_workdir = tmp_path / "code-scan-workdir"
+    monkeypatch.setenv("CODE_SCAN_WORKDIR", str(scan_workdir))
+    monkeypatch.setenv("GITHUB_CONNECTION_TOKEN", "github-connection-token")
+    monkeypatch.setenv("GITHUB_REPOSITORY_TOKEN", "github-repository-token")
+    captured_auth_context = {}
+
+    def fake_ensure_mirror(*, mirror_path, remote_url, auth_context):
+        captured_auth_context.update(auth_context or {})
+        mirror_path.mkdir(parents=True)
+        assert remote_url == "https://github.com/acme/private-service.git"
+        return False
+
+    def fake_checkout_commit(*, checkout_path, commit_sha, mirror_path):
+        checkout_path.mkdir(parents=True)
+        (checkout_path / "README.md").write_text("# Fixture\n", encoding="utf-8")
+
+    monkeypatch.setattr(native_code_scanner, "_ensure_mirror", fake_ensure_mirror)
+    monkeypatch.setattr(
+        native_code_scanner,
+        "_resolve_mirror_branch_commit",
+        lambda mirror_path, branch: "b" * 40,
+    )
+    monkeypatch.setattr(native_code_scanner, "_checkout_commit", fake_checkout_commit)
+
+    result = native_code_scanner.run_native_code_scan(
+        SimpleNamespace(
+            integration_plugins={
+                "plugin_github": {
+                    "code": "github",
+                    "id": "plugin_github",
+                    "status": "active",
+                },
+            },
+            plugin_connections={
+                "plugin_connection_github": {
+                    "auth_config": {"token_ref": "env:GITHUB_CONNECTION_TOKEN"},
+                    "auth_type": "bearer",
+                    "endpoint_url": "https://api.github.com",
+                    "id": "plugin_connection_github",
+                    "plugin_id": "plugin_github",
+                    "status": "active",
+                },
+            },
+            product_git_repositories={
+                "repo_private": {
+                    "credential_ref": "env:GITHUB_REPOSITORY_TOKEN",
+                    "default_branch": "main",
+                    "git_provider": "github",
+                    "id": "repo_private",
+                    "product_id": "product_private",
+                    "remote_url": "https://github.com/acme/private-service.git",
+                    "root_path": "/",
+                }
+            },
+        ),
+        job={
+            "config_json": {
+                "async_execution": False,
+                "repository_id": "repo_private",
+                "scan_mode": "native_full_scan",
+            },
+            "id": "scheduled_job_private",
+            "plugin_connection_id": "plugin_connection_github",
+            "plugin_connection_ids": ["plugin_connection_github"],
+            "product_id": "product_private",
+        },
+        run_id="scheduled_job_run_private",
+        user={"id": "user_admin"},
+    )
+
+    assert result["status"] == "succeeded"
+    assert captured_auth_context["password"] == "github-connection-token"
+    assert captured_auth_context["username"] == "x-access-token"
+    assert "GITHUB_CONNECTION_TOKEN" not in captured_auth_context
+    assert captured_auth_context["password"] != "github-repository-token"
 
 
 def test_ai_processed_code_inspection_preserves_native_scan_metadata():

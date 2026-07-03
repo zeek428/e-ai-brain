@@ -104,7 +104,9 @@ def validate_plugin_refs(
         "plugin_connection_id",
     )
     if native_code_inspection:
-        return None, None, [], []
+        for connection_id in connection_ids:
+            ensure_active_connection(current_store, connection_id)
+        return None, connection_ids[0] if connection_ids else None, [], connection_ids
     action_id = action_ids[0] if action_ids else None
     connection_id = connection_ids[0] if connection_ids else None
     if action_id is None:

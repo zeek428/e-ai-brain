@@ -545,6 +545,63 @@ def test_queued_native_scan_result_summary_uses_repository_default_branch():
     assert summary["processing"]["skill_ids"] == ["skill_001"]
 
 
+def test_native_code_scan_job_preserves_github_connection_without_plugin_action():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugins = client.get("/api/system/plugins", headers=admin_headers).json()["data"]["items"]
+    github_plugin = next((plugin for plugin in plugins if plugin["code"] == "github"), None)
+    if github_plugin is None:
+        github_plugin = client.post(
+            "/api/system/plugins",
+            json={
+                "category": "devops",
+                "code": "github",
+                "name": "GitHub",
+                "protocol": "http",
+                "status": "active",
+            },
+            headers=admin_headers,
+        ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {"token_ref": "env:GITHUB_READONLY_TOKEN"},
+            "auth_type": "bearer",
+            "endpoint_url": "https://api.github.com",
+            "environment": "prod",
+            "name": "GitHub 只读 Token",
+            "plugin_id": github_plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {"scan_mode": "native_full_scan"},
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "本地完整代码巡检",
+            "plugin_connection_id": connection["id"],
+            "plugin_connection_ids": [connection["id"]],
+            "schedule_type": "manual",
+            "source_system": "ai-brain",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    job = response.json()["data"]
+    assert job["plugin_action_id"] is None
+    assert job["plugin_action_ids"] == []
+    assert job["plugin_connection_id"] == connection["id"]
+    assert job["plugin_connection_ids"] == [connection["id"]]
+    assert job["config_json"]["orchestration"]["plugin_action_ids"] == []
+    assert job["config_json"]["orchestration"]["plugin_connection_ids"] == [connection["id"]]
+
+
 def test_scheduled_job_run_audit_payload_preserves_execution_context():
     payload = scheduled_job_run_audit_payload(
         job={
