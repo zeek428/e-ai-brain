@@ -20,7 +20,6 @@ from app.services.bug_listing import bug_summary_projection
 from app.services.object_storage import object_storage
 from app.services.task_workflow_context import task_workflow_write_store
 
-
 BUG_IMAGE_MIME_TYPES = {
     "image/gif",
     "image/jpeg",
@@ -85,7 +84,11 @@ def upload_bug_image_result(
     require_bug_write_role(user)
     mime_type = ensure_non_blank(payload.mime_type, "mime_type")
     if mime_type not in BUG_IMAGE_MIME_TYPES:
-        raise api_error(400, "VALIDATION_ERROR", "Only PNG, JPEG, GIF, or WebP images are supported")
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "Only PNG, JPEG, GIF, or WebP images are supported",
+        )
     source = ensure_non_blank(payload.source, "source")
     if source not in BUG_IMAGE_UPLOAD_SOURCES:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported image upload source")
