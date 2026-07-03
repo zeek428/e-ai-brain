@@ -73,6 +73,74 @@ function suppressionRiskTags(row: Record<string, unknown>) {
   );
 }
 
+function pressureStatusMetric(value?: string | null) {
+  const isHealthy = value === 'healthy';
+  return (
+    <div
+      className={
+        isHealthy
+          ? 'code-inspection-pressure-item is-status'
+          : 'code-inspection-pressure-item is-status is-active'
+      }
+    >
+      <Text type="secondary">闭环状态</Text>
+      <strong>{isHealthy ? '健康' : '待处理'}</strong>
+      {governanceStatusTag(value)}
+    </div>
+  );
+}
+
+function pressureMetric(label: string, value: unknown, color = 'orange') {
+  const count = metricValue(typeof value === 'number' ? value : Number(value));
+  return (
+    <div className={count > 0 ? 'code-inspection-pressure-item is-active' : 'code-inspection-pressure-item'}>
+      <Text type="secondary">{label}</Text>
+      <strong>{count}</strong>
+      <Tag color={count > 0 ? color : 'default'}>{count > 0 ? '待处理' : '无'}</Tag>
+    </div>
+  );
+}
+
+function emptyRiskList() {
+  return <Text type="secondary">暂无数据</Text>;
+}
+
+function compactRiskListItem({
+  count,
+  countLabel,
+  itemKey,
+  meta,
+  tags,
+  title,
+}: {
+  count: number;
+  countLabel: string;
+  itemKey: string;
+  meta?: ReactNode;
+  tags?: ReactNode;
+  title: string;
+}) {
+  return (
+    <div className="code-inspection-risk-list-item" key={itemKey}>
+      <Space className="code-inspection-risk-list-main" orientation="vertical" size={4}>
+        <Text className="code-inspection-risk-list-title" ellipsis={{ tooltip: title }} strong>
+          {title}
+        </Text>
+        {meta ? <div className="code-inspection-risk-list-meta">{meta}</div> : null}
+        {tags ? (
+          <Space className="code-inspection-risk-list-tags" size={[4, 4]} wrap>
+            {tags}
+          </Space>
+        ) : null}
+      </Space>
+      <div className="code-inspection-risk-list-count">
+        <strong>{count}</strong>
+        <Text type="secondary">{countLabel}</Text>
+      </div>
+    </div>
+  );
+}
+
 function compactMetricTable<Row extends Record<string, unknown>>({
   columns,
   dataSource,
@@ -267,19 +335,31 @@ export function CodeInspectionGovernanceOverview({
     metricValue(governancePressure?.pending_suppression_count) +
     metricValue(governancePressure?.expired_accepted_risk_count);
   const coverageStatusColor = sla?.status === 'healthy' ? 'green' : 'orange';
+  const branchRanking = dashboard?.branch_ranking ?? [];
+  const committerRanking = dashboard?.committer_ranking ?? [];
+  const repositoryRanking = dashboard?.repository_ranking ?? [];
+  const ruleDistribution = dashboard?.rule_distribution ?? [];
+
   return (
     <Space className="code-inspection-governance-overview" orientation="vertical" size={12}>
       <Alert
         className="code-inspection-decision-panel"
         description={
           <Space orientation="vertical" size={8} style={{ width: '100%' }}>
-            <Text>{governanceConclusion.detail}</Text>
             <Space className="code-inspection-risk-tags" size={[6, 6]} wrap>
               {governanceConclusion.risks.map((risk) => (
                 <Tag key={risk}>{risk}</Tag>
               ))}
             </Space>
-            <Text type="secondary">{`下一步动作：${governanceConclusion.nextAction}`}</Text>
+            <Text className="code-inspection-decision-next-action" type="secondary">
+              {`下一步动作：${governanceConclusion.nextAction}`}
+            </Text>
+            <details className="code-inspection-decision-details">
+              <summary>查看治理依据</summary>
+              <div className="code-inspection-decision-detail-body">
+                <Text>{governanceConclusion.detail}</Text>
+              </div>
+            </details>
           </Space>
         }
         title={
@@ -337,62 +417,18 @@ export function CodeInspectionGovernanceOverview({
             children: (
               <Space className="code-inspection-governance-tab-pane" orientation="vertical" size={12}>
                 <Card loading={loading} size="small" title="治理压力总览">
-                  <Descriptions
-                    column={{ lg: 5, md: 2, xs: 1 }}
-                    items={[
-                      {
-                        key: 'status',
-                        label: '闭环状态',
-                        children: governanceStatusTag(governancePressure?.status),
-                      },
-                      {
-                        key: 'action_required_committers',
-                        label: '待闭环提交人',
-                        children: governancePressure?.action_required_committer_count ?? 0,
-                      },
-                      {
-                        key: 'action_required_branches',
-                        label: '待闭环分支',
-                        children: governancePressure?.action_required_branch_count ?? 0,
-                      },
-                      {
-                        key: 'pending_review_branches',
-                        label: '待审批分支',
-                        children: governancePressure?.pending_review_branch_count ?? 0,
-                      },
-                      {
-                        key: 'pending_suppression',
-                        label: '待审批忽略',
-                        children: governancePressure?.pending_suppression_count ?? 0,
-                      },
-                      {
-                        key: 'uncovered_bug',
-                        label: '缺 Bug',
-                        children: governancePressure?.uncovered_bug_finding_count ?? 0,
-                      },
-                      {
-                        key: 'uncovered_task',
-                        label: '缺整改任务',
-                        children: governancePressure?.uncovered_task_finding_count ?? 0,
-                      },
-                      {
-                        key: 'quality_gate_failed',
-                        label: '门禁失败报告',
-                        children: governancePressure?.quality_gate_failed_report_count ?? 0,
-                      },
-                      {
-                        key: 'quality_gate_violations',
-                        label: '门禁失败项',
-                        children: governancePressure?.quality_gate_violation_count ?? 0,
-                      },
-                      {
-                        key: 'expired_risk',
-                        label: '到期接受风险',
-                        children: governancePressure?.expired_accepted_risk_count ?? 0,
-                      },
-                    ]}
-                    size="small"
-                  />
+                  <div className="code-inspection-pressure-grid">
+                    {pressureStatusMetric(governancePressure?.status)}
+                    {pressureMetric('待闭环提交人', governancePressure?.action_required_committer_count)}
+                    {pressureMetric('待闭环分支', governancePressure?.action_required_branch_count)}
+                    {pressureMetric('待审批分支', governancePressure?.pending_review_branch_count, 'gold')}
+                    {pressureMetric('待审批忽略', governancePressure?.pending_suppression_count, 'gold')}
+                    {pressureMetric('缺 Bug', governancePressure?.uncovered_bug_finding_count, 'red')}
+                    {pressureMetric('缺整改任务', governancePressure?.uncovered_task_finding_count)}
+                    {pressureMetric('门禁失败报告', governancePressure?.quality_gate_failed_report_count, 'red')}
+                    {pressureMetric('门禁失败项', governancePressure?.quality_gate_violation_count, 'red')}
+                    {pressureMetric('到期接受风险', governancePressure?.expired_accepted_risk_count)}
+                  </div>
                 </Card>
                 <Row gutter={[12, 12]}>
                   <Col lg={24} xs={24}>
@@ -514,85 +550,102 @@ export function CodeInspectionGovernanceOverview({
               <Row className="code-inspection-governance-tab-pane" gutter={[12, 12]}>
                 <Col lg={12} xs={24}>
                   <Card loading={loading} size="small" title="规则维度统计">
-                    {compactMetricTable({
-                      columns: [
-                        { dataIndex: 'rule_id', title: '规则', width: 180 },
-                        {
-                          dataIndex: 'severity',
-                          render: (value) => severityTag(String(value ?? '')),
-                          title: '最高级别',
-                          width: 120,
-                        },
-                        { dataIndex: 'category', title: '分类', width: 120 },
-                        { dataIndex: 'finding_count', title: '问题数', width: 100 },
-                        { dataIndex: 'severe_finding_count', title: '严重', width: 90 },
-                      ],
-                      dataSource: dashboard?.rule_distribution ?? [],
-                      rowKey: 'rule_id',
-                    })}
+                    {ruleDistribution.length ? (
+                      <div className="code-inspection-risk-list">
+                        {ruleDistribution.slice(0, 5).map((row) =>
+                          compactRiskListItem({
+                            count: metricValue(row.finding_count),
+                            countLabel: '问题',
+                            itemKey: row.rule_id,
+                            meta: <Text type="secondary">{row.category || '-'}</Text>,
+                            tags: (
+                              <>
+                                {severityTag(row.severity)}
+                                <Tag color={metricValue(row.severe_finding_count) > 0 ? 'red' : 'default'}>
+                                  严重 {metricValue(row.severe_finding_count)}
+                                </Tag>
+                              </>
+                            ),
+                            title: row.rule_id,
+                          }),
+                        )}
+                      </div>
+                    ) : (
+                      emptyRiskList()
+                    )}
                   </Card>
                 </Col>
                 <Col lg={12} xs={24}>
                   <Card loading={loading} size="small" title="仓库风险排行">
-                    {compactMetricTable({
-                      columns: [
-                        {
-                          dataIndex: 'repository_name',
-                          render: (_, row) => compactText(String(row.repository_name ?? row.repository_id ?? '-')),
-                          title: '仓库',
-                          width: 220,
-                        },
-                        {
-                          dataIndex: 'risk_level',
-                          render: (value) => severityTag(String(value ?? '')),
-                          title: '最高风险',
-                          width: 120,
-                        },
-                        { dataIndex: 'report_count', title: '报告', width: 90 },
-                        { dataIndex: 'finding_count', title: '问题数', width: 100 },
-                        { dataIndex: 'severe_finding_count', title: '严重', width: 90 },
-                      ],
-                      dataSource: dashboard?.repository_ranking ?? [],
-                      rowKey: 'repository_id',
-                    })}
+                    {repositoryRanking.length ? (
+                      <div className="code-inspection-risk-list">
+                        {repositoryRanking.slice(0, 5).map((row) =>
+                          compactRiskListItem({
+                            count: metricValue(row.finding_count),
+                            countLabel: '问题',
+                            itemKey: row.repository_id || row.repository_name || '-',
+                            meta: (
+                              <Text type="secondary">
+                                {`报告 ${metricValue(row.report_count)} / 严重 ${metricValue(row.severe_finding_count)}`}
+                              </Text>
+                            ),
+                            tags: severityTag(row.risk_level),
+                            title: row.repository_name || row.repository_id || '-',
+                          }),
+                        )}
+                      </div>
+                    ) : (
+                      emptyRiskList()
+                    )}
                   </Card>
                 </Col>
                 <Col lg={12} xs={24}>
                   <Card loading={loading} size="small" title="分支风险排行">
-                    {compactMetricTable({
-                      columns: [
-                        { dataIndex: 'branch', title: '分支', width: 160 },
-                        {
-                          dataIndex: 'repository_name',
-                          render: (_, row) => compactText(String(row.repository_name ?? row.repository_id ?? '-')),
-                          title: '仓库',
-                          width: 220,
-                        },
-                        { dataIndex: 'finding_count', title: '问题数', width: 100 },
-                        { dataIndex: 'severe_finding_count', title: '严重', width: 90 },
-                      ],
-                      dataSource: dashboard?.branch_ranking ?? [],
-                      rowKey: (row) => `${row.repository_id ?? row.repository_name ?? '-'}:${row.branch ?? '-'}`,
-                    })}
+                    {branchRanking.length ? (
+                      <div className="code-inspection-risk-list">
+                        {branchRanking.slice(0, 5).map((row) =>
+                          compactRiskListItem({
+                            count: metricValue(row.finding_count),
+                            countLabel: '问题',
+                            itemKey: `${row.repository_id ?? row.repository_name ?? '-'}:${row.branch ?? '-'}`,
+                            meta: (
+                              <Text type="secondary">
+                                {`${row.repository_name || row.repository_id || '-'} / 严重 ${metricValue(
+                                  row.severe_finding_count,
+                                )}`}
+                              </Text>
+                            ),
+                            tags: <Tag>报告 {metricValue(row.report_count)}</Tag>,
+                            title: row.branch || '-',
+                          }),
+                        )}
+                      </div>
+                    ) : (
+                      emptyRiskList()
+                    )}
                   </Card>
                 </Col>
                 <Col lg={12} xs={24}>
                   <Card loading={loading} size="small" title="提交人风险排行">
-                    {compactMetricTable({
-                      columns: [
-                        {
-                          dataIndex: 'email',
-                          render: (_, row) => compactText(committerLabel(row)),
-                          title: '提交人',
-                          width: 260,
-                        },
-                        { dataIndex: 'finding_count', title: '问题数', width: 100 },
-                        { dataIndex: 'severe_finding_count', title: '严重', width: 90 },
-                        { dataIndex: 'bug_count', title: 'Bug', width: 90 },
-                      ],
-                      dataSource: dashboard?.committer_ranking ?? [],
-                      rowKey: (row) => row.email ?? row.username ?? row.name ?? 'unknown',
-                    })}
+                    {committerRanking.length ? (
+                      <div className="code-inspection-risk-list">
+                        {committerRanking.slice(0, 5).map((row) =>
+                          compactRiskListItem({
+                            count: metricValue(row.finding_count),
+                            countLabel: '问题',
+                            itemKey: row.email || row.username || row.name || 'unknown',
+                            meta: (
+                              <Text type="secondary">
+                                {`严重 ${metricValue(row.severe_finding_count)} / Bug ${metricValue(row.bug_count)}`}
+                              </Text>
+                            ),
+                            title: committerLabel(row),
+                          }),
+                        )}
+                      </div>
+                    ) : (
+                      emptyRiskList()
+                    )}
                   </Card>
                 </Col>
               </Row>

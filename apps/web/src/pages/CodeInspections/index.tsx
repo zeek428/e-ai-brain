@@ -759,7 +759,7 @@ export default function CodeInspectionsPage() {
           beforeTable={
             <>
               <div className="code-inspections-scope-bar">
-                <Space size={12} wrap>
+                <Space className="code-inspections-scope-main" size={12} wrap>
                   <Typography.Text strong>产品范围</Typography.Text>
                   <Select
                     aria-label="产品范围"
@@ -774,6 +774,14 @@ export default function CodeInspectionsPage() {
                     当前范围：{selectedProductLabel}
                   </Typography.Text>
                 </Space>
+                <Button
+                  aria-label="刷新代码巡检"
+                  className="code-inspections-scope-refresh"
+                  loading={listState.status === 'loading' || dashboardState.status === 'loading'}
+                  onClick={() => void reload()}
+                >
+                  刷新
+                </Button>
               </div>
               <CodeInspectionGovernanceOverview
                 dashboard={dashboardState.dashboard}
@@ -822,11 +830,6 @@ export default function CodeInspectionsPage() {
           rowKey="id"
           tableTitle="代码巡检"
           title="代码巡检"
-          toolbarActions={[
-            <Button key="reload" onClick={reload}>
-              刷新
-            </Button>,
-          ]}
         />
       </div>
 

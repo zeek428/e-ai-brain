@@ -588,8 +588,10 @@ describe('CodeInspectionsPage', () => {
     expect(
       screen.getByText('下一步动作：先查看“门禁失败原因”和最近失败报告，完成修复或风险接受后再重跑巡检。'),
     ).toBeInTheDocument();
+    expect(screen.getByText('查看治理依据')).toBeInTheDocument();
     expect(screen.getByText('产品范围')).toBeInTheDocument();
     expect(screen.getByText('当前范围：全部产品')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '刷新代码巡检' })).toBeInTheDocument();
     expect(screen.getAllByText('AI-BRAIN · AI Brain').length).toBeGreaterThan(0);
   });
 
@@ -668,6 +670,9 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getByRole('tab', { name: '风险分布' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '趋势与规则' })).toBeInTheDocument();
     expect(screen.getByText('治理压力总览')).toBeInTheDocument();
+    const governancePressureCard = screen.getByText('治理压力总览').closest('.ant-card');
+    expect(governancePressureCard?.querySelector('.code-inspection-pressure-grid')).not.toBeNull();
+    expect(governancePressureCard?.querySelectorAll('.code-inspection-pressure-item').length).toBeGreaterThan(0);
     expect(screen.getByText('闭环状态')).toBeInTheDocument();
     expect(screen.getAllByText('待闭环').length).toBeGreaterThan(0);
     expect(screen.getByText('待闭环提交人')).toBeInTheDocument();
@@ -693,6 +698,8 @@ describe('CodeInspectionsPage', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '风险分布' }));
     expect(screen.getByText('规则维度统计')).toBeInTheDocument();
+    const ruleRiskCard = screen.getByText('规则维度统计').closest('.ant-card');
+    expect(ruleRiskCard?.querySelector('.code-inspection-risk-list')).not.toBeNull();
     expect(screen.getByText('仓库风险排行')).toBeInTheDocument();
     expect(screen.getByText('分支风险排行')).toBeInTheDocument();
     expect(screen.getByText('提交人风险排行')).toBeInTheDocument();

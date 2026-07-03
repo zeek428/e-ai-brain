@@ -655,11 +655,34 @@ body {
 }
 
 .code-inspections-scope-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
   padding: 12px 16px;
   margin-bottom: 12px;
   border: 1px solid #edf1f7;
   border-radius: 8px;
   background: #ffffff;
+}
+
+.code-inspections-scope-main {
+  min-width: 0;
+  flex: 1 1 520px;
+}
+
+.code-inspections-scope-main .ant-space-item {
+  min-width: 0;
+}
+
+.code-inspections-scope-main .ant-typography {
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.code-inspections-scope-refresh {
+  flex: 0 0 auto;
 }
 
 .code-inspection-governance-overview {
@@ -675,9 +698,55 @@ body {
   margin-bottom: 4px;
 }
 
+.code-inspection-decision-panel .ant-alert-content,
+.code-inspection-decision-panel .ant-alert-description,
+.code-inspection-decision-panel .ant-alert-message {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.code-inspection-decision-panel .ant-alert-description .ant-space,
+.code-inspection-decision-panel .ant-alert-message .ant-space {
+  max-width: 100%;
+}
+
+.code-inspection-decision-panel .ant-space-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.code-inspection-risk-tags {
+  max-width: 100%;
+}
+
 .code-inspection-risk-tags .ant-tag {
   margin-inline-end: 0;
   white-space: nowrap;
+}
+
+.code-inspection-decision-next-action {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.code-inspection-decision-details {
+  max-width: 100%;
+}
+
+.code-inspection-decision-details summary {
+  width: max-content;
+  max-width: 100%;
+  cursor: pointer;
+  color: #1677ff;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.code-inspection-decision-detail-body {
+  display: grid;
+  gap: 8px;
+  padding-top: 6px;
 }
 
 .code-inspection-kpi-card {
@@ -715,6 +784,105 @@ body {
 
 .code-inspection-governance-tab-pane {
   width: 100%;
+}
+
+.code-inspection-pressure-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.code-inspection-pressure-item {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.code-inspection-pressure-item strong {
+  overflow: hidden;
+  color: #1f2329;
+  font-size: 20px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-inspection-pressure-item .ant-tag {
+  width: max-content;
+  max-width: 100%;
+  margin-inline-end: 0;
+}
+
+.code-inspection-pressure-item.is-active {
+  border-color: #ffd8bf;
+  background: #fff7f0;
+}
+
+.code-inspection-pressure-item.is-status {
+  background: #f7fbff;
+}
+
+.code-inspection-risk-list {
+  display: grid;
+  gap: 4px;
+}
+
+.code-inspection-risk-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.code-inspection-risk-list-item:last-child {
+  border-bottom: 0;
+}
+
+.code-inspection-risk-list-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.code-inspection-risk-list-title {
+  max-width: 100%;
+}
+
+.code-inspection-risk-list-meta {
+  min-width: 0;
+}
+
+.code-inspection-risk-list-meta .ant-typography {
+  display: block;
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-inspection-risk-list-tags .ant-tag {
+  margin-inline-end: 0;
+  white-space: nowrap;
+}
+
+.code-inspection-risk-list-count {
+  display: grid;
+  min-width: 64px;
+  flex: 0 0 auto;
+  gap: 2px;
+  text-align: right;
+}
+
+.code-inspection-risk-list-count strong {
+  color: #1f2329;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .code-inspection-metric-table {
@@ -766,6 +934,18 @@ body {
     padding: 12px;
   }
 
+  .code-inspections-scope-main {
+    flex-basis: 100%;
+  }
+
+  .code-inspections-scope-refresh {
+    width: 100%;
+  }
+
+  .code-inspection-decision-panel .ant-alert-description {
+    font-size: 13px;
+  }
+
   .code-inspection-kpi-card .ant-card-body {
     min-height: 104px;
     padding: 12px;
@@ -779,6 +959,28 @@ body {
     display: block;
     margin-inline-start: 0;
     margin-top: 4px;
+  }
+
+  .code-inspection-governance-tabs .ant-tabs-nav {
+    position: sticky;
+    top: 56px;
+    z-index: 5;
+    margin-inline: -4px;
+    padding: 6px 4px;
+    border-bottom: 1px solid #edf1f7;
+    background: #f7f8fb;
+  }
+
+  .code-inspection-pressure-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .code-inspection-pressure-item {
+    padding: 9px 10px;
+  }
+
+  .code-inspection-risk-list-item {
+    align-items: flex-start;
   }
 
   .code-inspections-product-select {
