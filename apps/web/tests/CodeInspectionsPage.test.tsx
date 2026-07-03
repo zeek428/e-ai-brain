@@ -664,24 +664,18 @@ describe('CodeInspectionsPage', () => {
 
     await screen.findByText('code_inspection_report_001');
     expect(screen.getAllByText('2026-06-12 17:00').length).toBeGreaterThan(0);
-    expect(screen.getByText('规则维度统计')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '治理待办' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '风险分布' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '趋势与规则' })).toBeInTheDocument();
     expect(screen.getByText('治理压力总览')).toBeInTheDocument();
     expect(screen.getByText('闭环状态')).toBeInTheDocument();
     expect(screen.getAllByText('待闭环').length).toBeGreaterThan(0);
     expect(screen.getByText('待闭环提交人')).toBeInTheDocument();
     expect(screen.getAllByText('门禁失败报告').length).toBeGreaterThan(0);
     expect(screen.getAllByText('门禁失败项').length).toBeGreaterThan(0);
-    expect(screen.getByText('规则包与误报治理')).toBeInTheDocument();
-    expect(screen.getByText('最近规则版本')).toBeInTheDocument();
-    expect(screen.getByText('版本不一致')).toBeInTheDocument();
-    expect(screen.getByText('已过滤问题')).toBeInTheDocument();
     expect(screen.getAllByText('到期接受风险').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('过滤原因').length).toBeGreaterThan(0);
-    expect(screen.getByText('accepted_risk')).toBeInTheDocument();
-    expect(screen.getByText('仓库风险排行')).toBeInTheDocument();
     expect(screen.getByText('待闭环分支')).toBeInTheDocument();
     expect(screen.getByText('分支治理待办')).toBeInTheDocument();
-    expect(screen.getByText('提交人风险排行')).toBeInTheDocument();
     expect(screen.getByText('提交人治理待办')).toBeInTheDocument();
     expect(screen.getAllByText('闭环缺口').length).toBeGreaterThan(0);
     expect(screen.getAllByText('忽略/风险').length).toBeGreaterThan(0);
@@ -692,13 +686,27 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getAllByText('缺整改任务').length).toBeGreaterThan(0);
     expect(screen.getAllByText('健康').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/到期风险/).length).toBeGreaterThan(0);
-    expect(screen.getByText('质量门禁趋势')).toBeInTheDocument();
-    expect(screen.getByText('门禁失败原因')).toBeInTheDocument();
     expect(screen.getByText('严重问题 SLA')).toBeInTheDocument();
-    expect(screen.getByText('整改任务覆盖率')).toBeInTheDocument();
+    expect(screen.getByText('整改任务覆盖率 100%')).toBeInTheDocument();
     expect(screen.getByText('已生成整改任务')).toBeInTheDocument();
     expect(screen.getAllByText('整体 healthy').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('tab', { name: '风险分布' }));
+    expect(screen.getByText('规则维度统计')).toBeInTheDocument();
+    expect(screen.getByText('仓库风险排行')).toBeInTheDocument();
+    expect(screen.getByText('分支风险排行')).toBeInTheDocument();
+    expect(screen.getByText('提交人风险排行')).toBeInTheDocument();
     expect(screen.getAllByText('SEC001').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('tab', { name: '趋势与规则' }));
+    expect(screen.getByText('质量门禁趋势')).toBeInTheDocument();
+    expect(screen.getByText('门禁失败原因')).toBeInTheDocument();
+    expect(screen.getByText('规则包与误报治理')).toBeInTheDocument();
+    expect(screen.getByText('最近规则版本')).toBeInTheDocument();
+    expect(screen.getByText('版本不一致')).toBeInTheDocument();
+    expect(screen.getByText('已过滤问题')).toBeInTheDocument();
+    expect(screen.getAllByText('过滤原因').length).toBeGreaterThan(0);
+    expect(screen.getByText('accepted_risk')).toBeInTheDocument();
     expect(screen.getAllByText('实际/阈值').length).toBeGreaterThan(0);
     expect(screen.getAllByText('1 / 0').length).toBeGreaterThan(0);
     expect(screen.getByText('2026-06-12')).toBeInTheDocument();

@@ -655,7 +655,64 @@ body {
 }
 
 .code-inspections-scope-bar {
+  padding: 12px 16px;
   margin-bottom: 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.code-inspection-governance-overview {
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.code-inspection-decision-panel {
+  border-radius: 8px;
+}
+
+.code-inspection-decision-panel .ant-alert-message {
+  margin-bottom: 4px;
+}
+
+.code-inspection-risk-tags .ant-tag {
+  margin-inline-end: 0;
+  white-space: nowrap;
+}
+
+.code-inspection-kpi-card {
+  height: 100%;
+}
+
+.code-inspection-kpi-card .ant-card-body {
+  display: flex;
+  min-height: 112px;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.code-inspection-kpi-card .ant-statistic-title {
+  white-space: nowrap;
+}
+
+.code-inspection-governance-tabs {
+  padding: 12px 16px 16px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.code-inspection-governance-tabs .ant-tabs-nav {
+  margin-bottom: 12px;
+}
+
+.code-inspection-governance-tabs .ant-tabs-tab {
+  padding-inline: 4px;
+}
+
+.code-inspection-governance-tab-pane {
+  width: 100%;
 }
 
 .code-inspection-metric-table {
@@ -703,6 +760,15 @@ body {
 }
 
 @media (max-width: 640px) {
+  .code-inspections-scope-bar,
+  .code-inspection-governance-tabs {
+    padding: 12px;
+  }
+
+  .code-inspection-kpi-card .ant-card-body {
+    min-height: auto;
+  }
+
   .code-inspections-product-select {
     width: 100%;
   }
