@@ -199,6 +199,9 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "074_internal_data_source_plugin.sql" in applied_migrations
     assert "075_internal_data_source_detail_permission.sql" in applied_migrations
     assert "076_assistant_action_naming.sql" in applied_migrations
+    assert "077_ai_agent_packages.sql" in applied_migrations
+    assert "078_ai_executor_approval_requests.sql" in applied_migrations
+    assert "079_plugin_invocation_log_nullable_config_refs.sql" in applied_migrations
 
 
 def test_assistant_action_draft_constraint_migrations_cover_supported_actions():

@@ -3117,12 +3117,13 @@ def test_plugin_resources_delete_requires_unused_dependencies():
     assert "连接" in blocked_plugin_delete.text
     assert "动作" in blocked_plugin_delete.text
 
-    blocked_connection_delete = client.delete(
+    deleted_connection = client.delete(
         f"/api/system/plugin-connections/{connection['id']}",
         headers=admin_headers,
     )
-    assert blocked_connection_delete.status_code == 409
-    assert "动作" in blocked_connection_delete.text
+    assert deleted_connection.status_code == 200
+    assert deleted_connection.json()["data"] == {"deleted": True, "id": connection["id"]}
+    assert app.state.store.plugin_actions[action["id"]]["connection_id"] is None
 
     deleted_action = client.delete(
         f"/api/system/plugin-actions/{action['id']}",
@@ -3130,13 +3131,6 @@ def test_plugin_resources_delete_requires_unused_dependencies():
     )
     assert deleted_action.status_code == 200
     assert deleted_action.json()["data"] == {"deleted": True, "id": action["id"]}
-
-    deleted_connection = client.delete(
-        f"/api/system/plugin-connections/{connection['id']}",
-        headers=admin_headers,
-    )
-    assert deleted_connection.status_code == 200
-    assert deleted_connection.json()["data"] == {"deleted": True, "id": connection["id"]}
 
     deleted_plugin = client.delete(
         f"/api/system/plugins/{plugin['id']}",
@@ -3150,6 +3144,51 @@ def test_plugin_resources_delete_requires_unused_dependencies():
     assert "plugin_action.deleted" in event_types
     assert "plugin_connection.deleted" in event_types
     assert "plugin.deleted" in event_types
+
+
+def test_plugin_resource_delete_preserves_historical_invocation_logs():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugin, connection, action = create_plugin_bundle(admin_headers)
+
+    invoke_response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        headers=admin_headers,
+        json={"connection_id": connection["id"], "input_payload": {"timezone": "Asia/Shanghai"}},
+    )
+    assert invoke_response.status_code == 200
+    invocation_log = invoke_response.json()["data"]
+
+    deleted_connection = client.delete(
+        f"/api/system/plugin-connections/{connection['id']}",
+        headers=admin_headers,
+    )
+    assert deleted_connection.status_code == 200
+    stored_action = app.state.store.plugin_actions[action["id"]]
+    stored_log = app.state.store.plugin_invocation_logs[invocation_log["id"]]
+    assert stored_action["connection_id"] is None
+    assert stored_log["connection_id"] is None
+    assert stored_log["action_id"] == action["id"]
+    assert stored_log["plugin_id"] == plugin["id"]
+
+    deleted_action = client.delete(
+        f"/api/system/plugin-actions/{action['id']}",
+        headers=admin_headers,
+    )
+    assert deleted_action.status_code == 200
+    stored_log = app.state.store.plugin_invocation_logs[invocation_log["id"]]
+    assert stored_log["action_id"] is None
+    assert stored_log["plugin_id"] == plugin["id"]
+
+    deleted_plugin = client.delete(
+        f"/api/system/plugins/{plugin['id']}",
+        headers=admin_headers,
+    )
+    assert deleted_plugin.status_code == 200
+    stored_log = app.state.store.plugin_invocation_logs[invocation_log["id"]]
+    assert stored_log["id"] == invocation_log["id"]
+    assert stored_log["plugin_id"] is None
+    assert stored_log["response_summary"]["json"]["commits"] == 8
 
 
 def test_plugin_resource_delete_detects_scheduled_job_multi_references():
@@ -5283,13 +5322,15 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
     trace_graph = run["result_summary"]["trace_graph"]
     assert [node["id"] for node in trace_graph["nodes"]] == [
         "data_connection",
+        "runner_execution",
         "skill_processing",
         "result_action_1",
         "result_action_2",
     ]
     assert {"from": "skill_processing", "to": "result_action_1"} in trace_graph["edges"]
-    assert trace_graph["nodes"][2]["input"]["action_id"] == action["id"]
-    assert trace_graph["nodes"][3]["input"]["action_id"] == archive_action["id"]
+    trace_nodes_by_id = {node["id"]: node for node in trace_graph["nodes"]}
+    assert trace_nodes_by_id["result_action_1"]["input"]["action_id"] == action["id"]
+    assert trace_nodes_by_id["result_action_2"]["input"]["action_id"] == archive_action["id"]
     result_records = client.get(
         f"/api/system/result-write-records?scheduled_job_run_id={run['id']}",
         headers=admin_headers,

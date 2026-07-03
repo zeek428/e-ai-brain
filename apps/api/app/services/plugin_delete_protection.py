@@ -92,18 +92,10 @@ def plugin_delete_usages(current_store: Any, plugin_id: str) -> dict[str, list[d
             connection_ids=connection_ids,
         )
     ]
-    logs = [
-        log
-        for log in _read_memory_dict(current_store, "plugin_invocation_logs").values()
-        if log.get("plugin_id") == plugin_id
-        or log.get("action_id") in action_ids
-        or log.get("connection_id") in connection_ids
-    ]
     return {
         "connections": connections,
         "actions": actions,
         "scheduled_jobs": scheduled_jobs,
-        "logs": logs,
     }
 
 
@@ -116,17 +108,17 @@ def connection_delete_usages(
         for action in _read_memory_dict(current_store, "plugin_actions").values()
         if action.get("connection_id") == connection_id
     ]
+    action_ids = {action["id"] for action in actions}
     scheduled_jobs = [
         job
         for job in _read_memory_dict(current_store, "scheduled_jobs").values()
-        if _scheduled_job_references_any(job, connection_ids={connection_id})
+        if _scheduled_job_references_any(
+            job,
+            action_ids=action_ids,
+            connection_ids={connection_id},
+        )
     ]
-    logs = [
-        log
-        for log in _read_memory_dict(current_store, "plugin_invocation_logs").values()
-        if log.get("connection_id") == connection_id
-    ]
-    return {"actions": actions, "scheduled_jobs": scheduled_jobs, "logs": logs}
+    return {"scheduled_jobs": scheduled_jobs}
 
 
 def action_delete_usages(current_store: Any, action_id: str) -> dict[str, list[dict[str, Any]]]:
@@ -135,9 +127,4 @@ def action_delete_usages(current_store: Any, action_id: str) -> dict[str, list[d
         for job in _read_memory_dict(current_store, "scheduled_jobs").values()
         if _scheduled_job_references_any(job, action_ids={action_id})
     ]
-    logs = [
-        log
-        for log in _read_memory_dict(current_store, "plugin_invocation_logs").values()
-        if log.get("action_id") == action_id
-    ]
-    return {"scheduled_jobs": scheduled_jobs, "logs": logs}
+    return {"scheduled_jobs": scheduled_jobs}

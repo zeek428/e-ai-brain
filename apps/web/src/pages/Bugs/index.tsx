@@ -1,7 +1,16 @@
-import { CheckSquareOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { CheckSquareOutlined, DeleteOutlined, EditOutlined, UploadOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
-import { type Key, useCallback, useEffect, useMemo, useState } from 'react';
+import { Button, Form, Input, Modal, Popconfirm, Select, Space, Tag, message } from 'antd';
+import {
+  type ChangeEvent,
+  type ClipboardEvent as ReactClipboardEvent,
+  type Key,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   ManagementBatchResultModal,
@@ -18,9 +27,12 @@ import {
   fullChainSubjectHref,
   fetchManagementBugs,
   fetchManagementBugList,
+  type BugImageEvidenceItem,
+  type BugImageUploadSource,
   type BugListQuery,
   type RemoteListPerformance,
   updateManagementBug,
+  uploadManagementBugImage,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
 
@@ -73,6 +85,22 @@ type BugBatchFormValues = {
   status?: BugRecord['status'];
 };
 
+const bugImageEvidenceKeys: Array<keyof BugImageEvidenceItem> = [
+  'bucket',
+  'content_hash',
+  'filename',
+  'id',
+  'mime_type',
+  'object_key',
+  'size_bytes',
+  'source',
+  'storage_provider',
+  'uploaded_at',
+  'uploaded_by',
+];
+
+const bugImageMimeTypes = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp']);
+
 function formatEvidenceJson(evidence?: Record<string, unknown>) {
   if (!evidence || Object.keys(evidence).length === 0) {
     return '';
@@ -90,6 +118,88 @@ function parseEvidenceJson(value?: string): Record<string, unknown> {
     throw new Error('证据 JSON 请输入对象 JSON');
   }
   return parsed as Record<string, unknown>;
+}
+
+function evidenceWithoutImages(evidence?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!evidence) {
+    return undefined;
+  }
+  const nextEvidence = { ...evidence };
+  delete nextEvidence.images;
+  return nextEvidence;
+}
+
+function isBugImageEvidenceItem(value: unknown): value is BugImageEvidenceItem {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const image = value as Partial<BugImageEvidenceItem>;
+  return (
+    typeof image.bucket === 'string' &&
+    typeof image.content_hash === 'string' &&
+    typeof image.filename === 'string' &&
+    typeof image.id === 'string' &&
+    typeof image.mime_type === 'string' &&
+    typeof image.object_key === 'string' &&
+    typeof image.size_bytes === 'number' &&
+    (image.source === 'clipboard' || image.source === 'file_picker') &&
+    typeof image.storage_provider === 'string' &&
+    typeof image.uploaded_at === 'string' &&
+    typeof image.uploaded_by === 'string'
+  );
+}
+
+function evidenceImages(evidence?: Record<string, unknown>): BugImageEvidenceItem[] {
+  const images = evidence?.images;
+  if (!Array.isArray(images)) {
+    return [];
+  }
+  return images.filter(isBugImageEvidenceItem);
+}
+
+function evidenceWithImages(
+  evidence: Record<string, unknown>,
+  images: BugImageEvidenceItem[],
+): Record<string, unknown> {
+  if (images.length === 0) {
+    return evidence;
+  }
+  return {
+    ...evidence,
+    images: images.map((image) =>
+      bugImageEvidenceKeys.reduce<Record<string, unknown>>((payload, key) => {
+        payload[key] = image[key];
+        return payload;
+      }, {}),
+    ),
+  };
+}
+
+function readFileAsBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('图片读取失败'));
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const [, contentBase64 = result] = result.split(',', 2);
+      resolve(contentBase64);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function clipboardImageFiles(event: ReactClipboardEvent<HTMLElement>) {
+  const clipboardData = event.clipboardData;
+  const files = Array.from(clipboardData.files ?? []).filter((file) =>
+    bugImageMimeTypes.has(file.type),
+  );
+  if (files.length > 0) {
+    return files;
+  }
+  return Array.from(clipboardData.items ?? [])
+    .filter((item) => item.kind === 'file' && bugImageMimeTypes.has(item.type))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
 }
 
 function evidenceJsonRule() {
@@ -158,10 +268,13 @@ function buildBugListQuery(query: ManagementListQuery): BugListQuery {
 export default function BugsPage() {
   const [form] = Form.useForm<BugFormValues>();
   const [batchForm] = Form.useForm<BugBatchFormValues>();
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [editingBug, setEditingBug] = useState<BugRecord | null>(null);
+  const [bugImages, setBugImages] = useState<BugImageEvidenceItem[]>([]);
   const [batchResult, setBatchResult] = useState<ManagementBatchResult | null>(null);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [isBatchSaving, setIsBatchSaving] = useState(false);
+  const [isImageUploading, setIsImageUploading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
@@ -293,6 +406,7 @@ export default function BugsPage() {
 
   const openCreateModal = () => {
     setEditingBug(null);
+    setBugImages([]);
     form.resetFields();
     const firstProduct =
       productContexts.find((product) => product.code?.toUpperCase() === 'AI-BRAIN') ??
@@ -325,12 +439,13 @@ export default function BugsPage() {
 
   const openEditModal = useCallback((row: BugRecord) => {
     setEditingBug(row);
+    setBugImages(evidenceImages(row.evidence));
     form.resetFields();
     form.setFieldsValue({
       assignee: row.assignee === '-' ? undefined : row.assignee,
       description: row.description ?? '',
       duplicate_of_bug_id: row.duplicateOfBugId,
-      evidence_json: formatEvidenceJson(row.evidence),
+      evidence_json: formatEvidenceJson(evidenceWithoutImages(row.evidence)),
       reproduce_steps_text: formatReproduceSteps(row.reproduceSteps),
       severity: row.severity,
       status: row.status,
@@ -343,7 +458,7 @@ export default function BugsPage() {
     try {
       const values = await form.validateFields();
       const duplicateOfBugId = trimText(values.duplicate_of_bug_id);
-      const evidence = parseEvidenceJson(values.evidence_json);
+      const evidence = evidenceWithImages(parseEvidenceJson(values.evidence_json), bugImages);
       const reproduceSteps = parseReproduceSteps(values.reproduce_steps_text);
       setIsSaving(true);
       if (editingBug) {
@@ -388,6 +503,54 @@ export default function BugsPage() {
       setIsSaving(false);
     }
   };
+
+  const uploadBugImageFiles = useCallback(async (
+    files: File[],
+    source: BugImageUploadSource,
+  ) => {
+    const imageFiles = files.filter((file) => bugImageMimeTypes.has(file.type));
+    if (imageFiles.length === 0) {
+      message.warning('请选择 PNG、JPEG、GIF 或 WebP 图片');
+      return;
+    }
+    setIsImageUploading(true);
+    try {
+      const uploadedImages = await Promise.all(
+        imageFiles.map(async (file) =>
+          uploadManagementBugImage({
+            content_base64: await readFileAsBase64(file),
+            filename: file.name,
+            mime_type: file.type,
+            source,
+          }),
+        ),
+      );
+      setBugImages((current) => [...current, ...uploadedImages]);
+    } catch (uploadError) {
+      message.error(formatMutationError(uploadError));
+    } finally {
+      setIsImageUploading(false);
+    }
+  }, []);
+
+  const handleImageFileChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = '';
+    void uploadBugImageFiles(files, 'file_picker');
+  }, [uploadBugImageFiles]);
+
+  const handleImagePaste = useCallback((event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+    const files = clipboardImageFiles(event);
+    if (files.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    void uploadBugImageFiles(files, 'clipboard');
+  }, [uploadBugImageFiles]);
+
+  const removeBugImage = useCallback((objectKey: string) => {
+    setBugImages((current) => current.filter((image) => image.object_key !== objectKey));
+  }, []);
 
   const handleDelete = useCallback(async (row: BugRecord) => {
     try {
@@ -658,6 +821,7 @@ export default function BugsPage() {
         destroyOnHidden
         onCancel={() => setIsModalOpen(false)}
         okText="保存"
+        okButtonProps={{ disabled: isImageUploading }}
         onOk={handleSave}
         open={isModalOpen}
         title={editingBug ? '编辑 Bug' : '登记 Bug'}
@@ -757,6 +921,65 @@ export default function BugsPage() {
           </Form.Item>
           <Form.Item label="复现步骤" name="reproduce_steps_text">
             <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item label="Bug 图片">
+            <Space orientation="vertical" style={{ width: '100%' }}>
+              <Space wrap>
+                <Button
+                  icon={<UploadOutlined />}
+                  loading={isImageUploading}
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  选择图片
+                </Button>
+                <Tag>{bugImages.length} 张</Tag>
+                <input
+                  accept="image/*"
+                  aria-label="选择图片文件"
+                  multiple
+                  onChange={handleImageFileChange}
+                  ref={imageInputRef}
+                  style={{ display: 'none' }}
+                  type="file"
+                />
+              </Space>
+              <Input.TextArea
+                aria-label="粘贴图片区域"
+                onPaste={handleImagePaste}
+                placeholder="粘贴图片"
+                readOnly
+                rows={2}
+                value=""
+              />
+              {bugImages.length ? (
+                <Space orientation="vertical" style={{ width: '100%' }}>
+                  {bugImages.map((image) => (
+                    <Space
+                      key={`${image.id}:${image.object_key}`}
+                      style={{
+                        border: '1px solid #d9d9d9',
+                        borderRadius: 6,
+                        justifyContent: 'space-between',
+                        padding: '6px 8px',
+                        width: '100%',
+                      }}
+                    >
+                      <span>{image.filename}</span>
+                      <Space size={4}>
+                        <Tag>{image.storage_provider}</Tag>
+                        <Button
+                          aria-label={`移除图片 ${image.filename}`}
+                          icon={<DeleteOutlined />}
+                          onClick={() => removeBugImage(image.object_key)}
+                          size="small"
+                          type="text"
+                        />
+                      </Space>
+                    </Space>
+                  ))}
+                </Space>
+              ) : null}
+            </Space>
           </Form.Item>
           <Form.Item label="证据 JSON" name="evidence_json" rules={[evidenceJsonRule()]}>
             <Input.TextArea rows={3} />

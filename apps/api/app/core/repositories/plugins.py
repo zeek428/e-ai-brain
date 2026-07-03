@@ -1062,9 +1062,9 @@ class PluginReadRepository:
                 """,
                 (
                     log["id"],
-                    log["plugin_id"],
+                    log.get("plugin_id"),
                     log.get("connection_id"),
-                    log["action_id"],
+                    log.get("action_id"),
                     log.get("scheduled_job_id"),
                     log.get("scheduled_job_run_id"),
                     log.get("trigger_type", "manual"),
@@ -1536,7 +1536,7 @@ class PluginReadRepository:
             COALESCE(log.updated_at, log.created_at) AS updated_at,
             job.product_id
           FROM plugin_invocation_logs log
-          JOIN plugin_actions action ON action.id = log.action_id
+          LEFT JOIN plugin_actions action ON action.id = log.action_id
           LEFT JOIN integration_plugins plugin ON plugin.id = log.plugin_id
           LEFT JOIN scheduled_jobs job ON job.id = log.scheduled_job_id
           WHERE log.scheduled_job_run_id IS NULL

@@ -153,11 +153,15 @@ export {
   deleteManagementBug,
   fetchManagementBugList,
   fetchManagementBugs,
+  uploadManagementBugImage,
   updateManagementBug,
 } from './bugClient';
 export type {
   BugBatchUpdatePayload,
   BugBatchUpdateResult,
+  BugImageEvidenceItem,
+  BugImageUploadPayload,
+  BugImageUploadSource,
   BugListQuery,
   BugMutationPayload,
 } from './bugClient';

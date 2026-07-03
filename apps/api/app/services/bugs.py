@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import re
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
 
 from app.api.deps import api_error, require_roles
+from app.core.config import get_settings
 from app.services.bug_lifecycle import (
     ensure_bug_status_transition,
     initial_bug_status,
@@ -13,7 +17,18 @@ from app.services.bug_lifecycle import (
     validate_bug_enums,
 )
 from app.services.bug_listing import bug_summary_projection
+from app.services.object_storage import object_storage
 from app.services.task_workflow_context import task_workflow_write_store
+
+
+BUG_IMAGE_MIME_TYPES = {
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+}
+BUG_IMAGE_UPLOAD_SOURCES = {"clipboard", "file_picker"}
+MAX_BUG_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
 
 
 def uses_repository_context(current_store: Any) -> bool:
@@ -26,6 +41,30 @@ def ensure_non_blank(value: str | None, field: str) -> str:
     return value.strip()
 
 
+def decode_bug_image_content(content_base64: str) -> bytes:
+    try:
+        content = base64.b64decode(content_base64.encode("ascii"), validate=True)
+    except Exception as exc:  # noqa: BLE001
+        raise api_error(400, "VALIDATION_ERROR", "content_base64 is invalid") from exc
+    if not content:
+        raise api_error(400, "VALIDATION_ERROR", "Image content is required")
+    if len(content) > MAX_BUG_IMAGE_SIZE_BYTES:
+        raise api_error(400, "VALIDATION_ERROR", "Image is larger than 10MB")
+    return content
+
+
+def normalize_bug_image_filename(filename: str | None) -> str:
+    normalized = (filename or "bug-image").replace("\\", "/").split("/")[-1].strip()
+    if not normalized:
+        return "bug-image"
+    return normalized[:160]
+
+
+def safe_object_filename(filename: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip(".-")
+    return sanitized or "bug-image"
+
+
 def payload_updates(payload: Any) -> dict[str, Any]:
     return payload.model_dump(exclude_unset=True)
 
@@ -36,6 +75,50 @@ def require_bug_write_role(user: dict[str, Any]) -> None:
 
 def bug_write_store(current_store: Any) -> Any:
     return task_workflow_write_store(current_store)
+
+
+def upload_bug_image_result(
+    *,
+    payload: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_bug_write_role(user)
+    mime_type = ensure_non_blank(payload.mime_type, "mime_type")
+    if mime_type not in BUG_IMAGE_MIME_TYPES:
+        raise api_error(400, "VALIDATION_ERROR", "Only PNG, JPEG, GIF, or WebP images are supported")
+    source = ensure_non_blank(payload.source, "source")
+    if source not in BUG_IMAGE_UPLOAD_SOURCES:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported image upload source")
+
+    filename = normalize_bug_image_filename(payload.filename)
+    content = decode_bug_image_content(payload.content_base64)
+    digest = hashlib.sha256(content).hexdigest()
+    settings = get_settings()
+    storage = object_storage()
+    uploaded_at = datetime.now(UTC).isoformat()
+    date_path = uploaded_at[:10]
+    object_key = (
+        f"bugs/evidence/{user['id']}/{date_path}/{digest}/{safe_object_filename(filename)}"
+    )
+    stored = storage.put_bytes(
+        bucket=settings.object_storage_bucket,
+        content=content,
+        mime_type=mime_type,
+        object_key=object_key,
+    )
+    return {
+        "id": f"bug_image_{digest[:16]}",
+        "bucket": stored.bucket,
+        "content_hash": digest,
+        "filename": filename,
+        "mime_type": mime_type,
+        "object_key": stored.object_key,
+        "size_bytes": stored.size_bytes,
+        "source": source,
+        "storage_provider": storage.provider,
+        "uploaded_at": uploaded_at,
+        "uploaded_by": user["id"],
+    }
 
 
 def record_audit_event(

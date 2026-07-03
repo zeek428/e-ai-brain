@@ -15,6 +15,7 @@ from app.services.bugs import (
     create_bug_result,
     delete_bug_result,
     patch_bug_result,
+    upload_bug_image_result,
 )
 
 router = APIRouter(tags=["bugs"])
@@ -45,6 +46,13 @@ class BugPatchRequest(BaseModel):
     reproduce_steps: list[str] | None = None
     evidence: dict[str, Any] | None = None
     duplicate_of_bug_id: str | None = None
+
+
+class BugImageUploadRequest(BaseModel):
+    filename: str
+    content_base64: str
+    mime_type: str
+    source: str = "file_picker"
 
 
 class BugBatchUpdateRequest(BaseModel):
@@ -115,6 +123,19 @@ def batch_update_bugs(
 ) -> dict[str, Any]:
     result = batch_update_bugs_result(
         current_store=bug_write_store(store(request)),
+        payload=payload,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/bugs/images/upload")
+def upload_bug_image(
+    request: Request,
+    payload: BugImageUploadRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = upload_bug_image_result(
         payload=payload,
         user=user,
     )

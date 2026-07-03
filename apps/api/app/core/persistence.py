@@ -258,6 +258,14 @@ class PostgresSnapshotRepository:
                     cursor,
                     "077_ai_agent_packages.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "078_ai_executor_approval_requests.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "079_plugin_invocation_log_nullable_config_refs.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

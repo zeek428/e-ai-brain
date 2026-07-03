@@ -432,4 +432,190 @@ describe('bug management page', () => {
       ]),
     );
   });
+
+  it('uploads multiple selected and pasted bug images before registering a bug', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const uploadBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      if (path.startsWith('/api/products?') && path.includes('active_only=true')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'AI-BRAIN',
+                id: 'product_ai_brain',
+                name: 'AI Brain',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-07',
+                id: 'version_testing',
+                name: '2026-07 测试迭代',
+                product_id: 'product_ai_brain',
+                status: 'testing',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if ((path === '/api/bugs' || path.startsWith('/api/bugs?')) && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/bugs/images/upload' && method === 'POST') {
+        const body = JSON.parse(String(init?.body)) as {
+          filename: string;
+          mime_type: string;
+          source: string;
+        };
+        uploadBodies.push(body);
+        return jsonResponse({
+          data: {
+            bucket: 'ai-brain-knowledge',
+            content_hash: `hash-${body.filename}`,
+            filename: body.filename,
+            id: `bug_image_${uploadBodies.length}`,
+            mime_type: body.mime_type,
+            object_key: `bugs/evidence/${body.filename}`,
+            size_bytes: 128,
+            source: body.source,
+            storage_provider: 'minio',
+            uploaded_at: '2026-07-03T08:00:00+00:00',
+            uploaded_by: 'user_admin',
+          },
+        });
+      }
+      if (path === '/api/bugs' && method === 'POST') {
+        return jsonResponse({ data: { id: 'bug_with_images' } });
+      }
+      throw new Error(`Unexpected fetch call: ${path} ${method}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<BugsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /登记 Bug/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Bug 标题'), {
+      target: { value: '图片上传 Bug' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('描述'), {
+      target: { value: '登记 Bug 时需要上传多张截图。' },
+    });
+
+    const firstImage = new File(['first-image'], 'first.png', { type: 'image/png' });
+    const secondImage = new File(['second-image'], 'second.jpg', { type: 'image/jpeg' });
+    fireEvent.change(within(dialog).getByLabelText('选择图片文件'), {
+      target: { files: [firstImage, secondImage] },
+    });
+
+    await waitFor(() => expect(uploadBodies).toHaveLength(2));
+    expect(within(dialog).getByText('first.png')).toBeInTheDocument();
+    expect(within(dialog).getByText('second.jpg')).toBeInTheDocument();
+
+    const pastedImage = new File(['pasted-image'], 'clipboard.png', { type: 'image/png' });
+    fireEvent.paste(within(dialog).getByLabelText('粘贴图片区域'), {
+      clipboardData: {
+        files: [pastedImage],
+        items: [
+          {
+            getAsFile: () => pastedImage,
+            kind: 'file',
+            type: 'image/png',
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => expect(uploadBodies).toHaveLength(3));
+    expect(uploadBodies.map((body) => body.source)).toEqual([
+      'file_picker',
+      'file_picker',
+      'clipboard',
+    ]);
+    expect(within(dialog).getByText('clipboard.png')).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /保\s*存/ }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/bugs',
+        'POST',
+        JSON.stringify({
+          description: '登记 Bug 时需要上传多张截图。',
+          evidence: {
+            images: [
+              {
+                bucket: 'ai-brain-knowledge',
+                content_hash: 'hash-first.png',
+                filename: 'first.png',
+                id: 'bug_image_1',
+                mime_type: 'image/png',
+                object_key: 'bugs/evidence/first.png',
+                size_bytes: 128,
+                source: 'file_picker',
+                storage_provider: 'minio',
+                uploaded_at: '2026-07-03T08:00:00+00:00',
+                uploaded_by: 'user_admin',
+              },
+              {
+                bucket: 'ai-brain-knowledge',
+                content_hash: 'hash-second.jpg',
+                filename: 'second.jpg',
+                id: 'bug_image_2',
+                mime_type: 'image/jpeg',
+                object_key: 'bugs/evidence/second.jpg',
+                size_bytes: 128,
+                source: 'file_picker',
+                storage_provider: 'minio',
+                uploaded_at: '2026-07-03T08:00:00+00:00',
+                uploaded_by: 'user_admin',
+              },
+              {
+                bucket: 'ai-brain-knowledge',
+                content_hash: 'hash-clipboard.png',
+                filename: 'clipboard.png',
+                id: 'bug_image_3',
+                mime_type: 'image/png',
+                object_key: 'bugs/evidence/clipboard.png',
+                size_bytes: 128,
+                source: 'clipboard',
+                storage_provider: 'minio',
+                uploaded_at: '2026-07-03T08:00:00+00:00',
+                uploaded_by: 'user_admin',
+              },
+            ],
+          },
+          product_id: 'product_ai_brain',
+          reproduce_steps: [],
+          severity: 'major',
+          source: 'manual_test',
+          title: '图片上传 Bug',
+          version_id: 'version_testing',
+        }),
+      ]),
+    );
+  });
 });

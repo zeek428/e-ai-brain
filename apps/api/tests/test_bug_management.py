@@ -1,6 +1,9 @@
+import base64
+
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import app, settings
+from app.services.object_storage import object_storage
 
 client = TestClient(app)
 
@@ -122,6 +125,41 @@ def test_bug_management_creates_filters_and_updates_state_machine():
         "bug.updated",
         "bug.created",
     ]
+
+
+def test_bug_image_upload_stores_image_in_object_storage(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "object_storage_provider", "local")
+    monkeypatch.setattr(settings, "object_storage_local_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "object_storage_bucket", "ai-brain-knowledge")
+    headers = auth_headers()
+    create_product_context(headers)
+
+    content = b"fake-png-bytes"
+    upload = client.post(
+        "/api/bugs/images/upload",
+        json={
+            "content_base64": base64.b64encode(content).decode("ascii"),
+            "filename": "failure screenshot.png",
+            "mime_type": "image/png",
+            "source": "file_picker",
+        },
+        headers=headers,
+    )
+
+    assert upload.status_code == 200
+    image = upload.json()["data"]
+    assert image["id"].startswith("bug_image_")
+    assert image["storage_provider"] == "local"
+    assert image["bucket"] == "ai-brain-knowledge"
+    assert image["filename"] == "failure screenshot.png"
+    assert image["mime_type"] == "image/png"
+    assert image["size_bytes"] == len(content)
+    assert image["source"] == "file_picker"
+    assert image["object_key"].startswith("bugs/evidence/")
+    assert object_storage().get_bytes(
+        bucket=image["bucket"],
+        object_key=image["object_key"],
+    ) == content
 
 
 def test_bug_duplicate_merge_keeps_duplicate_out_of_open_queue():

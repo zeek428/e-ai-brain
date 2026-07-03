@@ -446,6 +446,7 @@ def delete_plugin_response(
         plugin_delete_usages(current_store, plugin_id),
         object_label=f"插件「{plugin['name']}」",
     )
+    _clear_plugin_invocation_log_references(current_store, plugin_id=plugin_id)
     _delete_memory_record(current_store, "integration_plugins", plugin_id)
     audit_event = record_audit_event(
         current_store,
@@ -460,6 +461,43 @@ def delete_plugin_response(
     if callable(delete_record):
         delete_record(plugin_id, audit_event=audit_event)
     return {"deleted": True, "id": plugin_id}
+
+
+def _clear_plugin_invocation_log_references(
+    current_store: Any,
+    *,
+    action_id: str | None = None,
+    connection_id: str | None = None,
+    plugin_id: str | None = None,
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    for log in list(_read_memory_dict(current_store, "plugin_invocation_logs").values()):
+        updates: dict[str, Any] = {}
+        if action_id is not None and log.get("action_id") == action_id:
+            updates["action_id"] = None
+        if connection_id is not None and log.get("connection_id") == connection_id:
+            updates["connection_id"] = None
+        if plugin_id is not None and log.get("plugin_id") == plugin_id:
+            updates["plugin_id"] = None
+        if updates:
+            _put_memory_record(
+                current_store,
+                "plugin_invocation_logs",
+                {**log, **updates, "updated_at": now},
+            )
+
+
+def _clear_plugin_connection_references(current_store: Any, connection_id: str) -> None:
+    now = datetime.now(UTC).isoformat()
+    for action in list(_read_memory_dict(current_store, "plugin_actions").values()):
+        if action.get("connection_id") != connection_id:
+            continue
+        _put_memory_record(
+            current_store,
+            "plugin_actions",
+            {**action, "connection_id": None, "updated_at": now},
+        )
+    _clear_plugin_invocation_log_references(current_store, connection_id=connection_id)
 
 
 def ensure_active_plugin(current_store: Any, plugin_id: str) -> dict[str, Any]:
@@ -781,6 +819,7 @@ def delete_plugin_connection_response(
         connection_delete_usages(current_store, connection_id),
         object_label=f"连接「{connection['name']}」",
     )
+    _clear_plugin_connection_references(current_store, connection_id)
     _delete_memory_record(current_store, "plugin_connections", connection_id)
     audit_event = record_audit_event(
         current_store,
@@ -1375,6 +1414,7 @@ def delete_plugin_action_response(
         action_delete_usages(current_store, action_id),
         object_label=f"动作「{action['name']}」",
     )
+    _clear_plugin_invocation_log_references(current_store, action_id=action_id)
     _delete_memory_record(current_store, "plugin_actions", action_id)
     audit_event = record_audit_event(
         current_store,

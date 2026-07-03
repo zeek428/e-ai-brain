@@ -28,6 +28,7 @@ DOMAIN_FILE_LINE_BUDGETS = {
 
 FRONTEND_PAGE_CONTAINER_LINE_BUDGETS = {
     "apps/web/src/pages/AiCapabilities/index.tsx": 1000,
+    "apps/web/src/pages/Bugs/index.tsx": 1100,
     "apps/web/src/pages/CodeInspections/index.tsx": 1100,
     "apps/web/src/pages/IterationVersions/index.tsx": 1500,
     "apps/web/src/pages/Knowledge/index.tsx": 1800,

@@ -50,6 +50,29 @@ export type BugBatchUpdateResult = {
   updatedCount: number;
 };
 
+export type BugImageUploadSource = 'clipboard' | 'file_picker';
+
+export type BugImageEvidenceItem = {
+  bucket: string;
+  content_hash: string;
+  filename: string;
+  id: string;
+  mime_type: string;
+  object_key: string;
+  size_bytes: number;
+  source: BugImageUploadSource;
+  storage_provider: string;
+  uploaded_at: string;
+  uploaded_by: string;
+};
+
+export type BugImageUploadPayload = {
+  content_base64: string;
+  filename: string;
+  mime_type: string;
+  source: BugImageUploadSource;
+};
+
 export type BugMutationPayload = {
   assignee?: string;
   description?: string;
@@ -216,6 +239,17 @@ export async function fetchManagementBugList(
 export async function createManagementBug(payload: BugMutationPayload) {
   const token = requireAccessToken();
   return apiRequest<{ id: string }>('/api/bugs', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function uploadManagementBugImage(
+  payload: BugImageUploadPayload,
+): Promise<BugImageEvidenceItem> {
+  const token = requireAccessToken();
+  return apiRequest<BugImageEvidenceItem>('/api/bugs/images/upload', {
     body: payload,
     method: 'POST',
     token,
