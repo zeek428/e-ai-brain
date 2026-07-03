@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.870 |
+| 功能版本 | v1.1.872 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.872 | 2026-07-03 | 产品管理 Git 资源配置以 Remote URL 为默认必填输入，后端自动推导 `project_path` 并保留显式覆盖能力 | Codex |
+| v1.1.871 | 2026-07-03 | 需求删除保护补充 AI 任务占用数量，前端将 `RESOURCE_IN_USE` 转为中文处理建议 | Codex |
 | v1.1.870 | 2026-07-03 | Bug 管理已上传图片支持点击预览，预览接口校验 `bug.read` 并仅代理 Bug 图片证据对象 | Codex |
 | v1.1.869 | 2026-07-03 | Bug 管理新增图片证据上传接口和页面上传/粘贴能力，图片进入 MinIO/S3-compatible 对象存储并以 evidence 元数据关联 Bug | Codex |
 | v1.1.868 | 2026-07-03 | 插件配置删除保护不再将历史插件调用日志作为硬阻断，删除插件/连接/动作时保留日志并置空对应引用 | Codex |
@@ -1268,7 +1270,7 @@ requirements ──< ai_tasks
 | product_versions | 产品迭代版本 | 同一产品内 `code` 唯一，在需求交付菜单集中维护；主状态为 `planning / active / testing / released`，`archived` 仅用于历史归档；仅 `planning / active` 可用于需求排期或新开发任务。 |
 | product_version_branch_configs | 迭代版本代码分支配置 | 归属于产品迭代版本和产品 Git 资源；同一版本同一仓库只允许一条分支配置，记录 `base_branch`、`working_branch`、`branch_status`、`creation_source` 和说明；用于让开发任务、PR/MR 快照和代码 Review 继承版本级代码上下文。 |
 | product_modules | 产品模块 | 同一产品内 `code` 唯一，模块可选。 |
-| product_git_repositories | 产品 Git 资源 | 记录代码、文档、PRD、测试仓库上下文；GitLab 资源需保存 project_id 或 project_path，GitHub 资源需保存 owner/repo 形式 project_path 或可解析 remote_url，同时保存 provider、默认分支、凭据引用和启用状态。 |
+| product_git_repositories | 产品 Git 资源 | 记录代码、文档、PRD、测试仓库上下文；产品配置默认填写 remote_url，后端从可解析的 HTTPS/SSH Remote URL 推导 project_path；GitLab 资源也可显式保存 project_id 或 project_path，GitHub 资源也可显式保存 owner/repo 形式 project_path，同时保存 provider、默认分支、凭据引用和启用状态。 |
 | requirements | 需求实体 | 状态为 `draft / submitted / approved / planned / designing / ready_for_dev / developing / code_reviewing / testing / ready_for_release / released / accepted / rejected / deferred / cancelled / closed`；`source` 记录需求来源，覆盖业务部门、产品规划、用户反馈、内部调研和其他；`version_id` 可为空，未排期需求不能生成 AI 任务。历史 `pending_approval` 和 `task_created` 在运行时分别兼容为 `submitted` 和 `designing`。 |
 | related_systems | 相关系统配置 | `code` 唯一，可写入任务输入上下文。 |
 | model_gateway_configs | 平台模型网关配置 | 支持一个默认启用配置，API 响应只返回 API Key 是否已配置，不返回明文或密钥片段。 |
@@ -1709,7 +1711,7 @@ AI 助手前端发送包含 `执行一次/立即运行` 等意图的 `@定时作
 AI 助手聊天生成必须以 `assistant_chat_runs` 作为服务端运行真相：前端刷新或重新进入页面时通过 `GET /api/assistant/chat-runs?status=running,cancelled` 恢复未完成或最近停止的生成，并允许用户打开所属会话继续处理；用户点击停止或发送停止类命令时，服务端必须先写入运行取消状态，再尝试中断模型网关请求，后续模型返回不得把已取消消息改写为完成态。`GET /api/assistant/metrics` 必须把聊天运行成功率、取消率、失败率、平均耗时和模型失败率纳入助手效果指标，且只按当前登录用户归因。
 | 需求列表 | GET | /api/requirements | 查询需求台账；端点由 `app.api.routers.requirements` 单一路由承载，列表必须校验 `requirement.read`，优先使用 SQL read model 完成产品 scope、分页、筛选、排序和查询观测。 |
 | 需求详情 | GET | /api/requirements/{id} | 查询单条需求详情和任务引用；端点由 `app.api.routers.requirements` 单一路由承载。 |
-| 需求维护 | POST/PATCH/DELETE | /api/requirements, /api/requirements/{id} | 创建、更新待审批/已驳回需求，删除未生成任务的需求；端点由 `app.api.routers.requirements` 单一路由承载。 |
+| 需求维护 | POST/PATCH/DELETE | /api/requirements, /api/requirements/{id} | 创建、更新待审批/已驳回需求，删除未生成任务的需求；已有 AI 任务时返回 `409 RESOURCE_IN_USE` 和 `related_counts.ai_tasks/related_total`，前端提示先处理关联任务或关闭/取消需求；端点由 `app.api.routers.requirements` 单一路由承载。 |
 | 需求批量分配负责人 | POST | /api/requirements/batch-assign-owner | 为非关闭/非取消需求批量更新 `assignee`，逐条返回 updated/skipped 明细并记录批次级与逐需求审计；端点由 `app.api.routers.requirements` 单一路由承载。静态路径必须先于 `/api/requirements/{id}` 动态路由注册。 |
 | 需求批量推进状态 | POST | /api/requirements/batch-advance-status | 按研发流程前进路径批量推进需求状态，逐条返回 updated/skipped 明细并记录批次级与逐需求审计；进入交付链路状态前要求需求已归属迭代版本，未排期项返回 skipped；端点由 `app.api.routers.requirements` 单一路由承载。静态路径必须先于 `/api/requirements/{id}` 动态路由注册。 |
 | 迭代版本状态推进 | POST | /api/product-versions/{version_id}/advance-status | 预览并推进版本状态，按版本阶段同步可推进需求状态，阻塞项返回风险明细。 |
@@ -1927,6 +1929,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 **职责**: 承载运营治理下的代码仓库巡检报告，面向仓库质量、安全和规范问题提供报告列表、finding 明细、通知反馈和严重问题 Bug 派生。
 
 **核心规则**:
+- 新增作业选择代码巡检类型、代码巡检场景模板或 AI 助手生成代码巡检作业草案时，默认执行模式为 `ai_assisted`：先执行本地完整扫描并冻结 native 扫描快照，再通过系统默认 AI 执行器/模型网关和已启用 AI角色、Skill 归一化风险摘要与 finding，最后进入代码巡检报告、Bug、整改任务和通知等结果动作；仅当用户显式选择确定性执行或表达“不调用 AI、纯扫描、只扫描、静态扫描”时，才创建 `deterministic` 纯扫描作业。
 - `code_repository_inspection` 支持两类取数模式：`config_json.scan_mode=native_full_scan` 为平台内置本地完整扫描，服务端根据产品 Git 仓库 `remote_url` 在 `CODE_SCAN_WORKDIR` 下维护 `mirrors/` 裸仓库缓存，并按 repository + branch + commit 在 `checkouts/` 创建单次运行工作副本；HTTP(S) 私有仓库必须优先使用同仓库 `credential_ref` 解析出的只读 token，通过临时 `GIT_ASKPASS` 注入 `git clone/fetch`，未配置仓库凭据时再读取 provider 级环境变量（GitLab: `GITLAB_READONLY_TOKEN/GITLAB_TOKEN`，GitHub: `GITHUB_READONLY_TOKEN/GITHUB_TOKEN`，通用: `GIT_READONLY_TOKEN/GIT_TOKEN`），凭据不得写入 remote_url、运行摘要、报告或错误信息。默认点击运行先创建 `scheduled_job_run(status=queued)`，后台 worker 再执行 clone/fetch、checkout、scan 和报告写入，显式 `config_json.async_execution=false` 时可用于测试/调试同步执行。成功扫描默认只保留 mirror，不保留 checkout；失败 checkout 按 `CODE_SCAN_FAILED_CHECKOUT_RETENTION_DAYS` 短期保留，后台清理按保留天数和 `CODE_SCAN_MAX_CHECKOUT_BYTES` 控制磁盘。扫描器 checkout `config_json.branch` 或仓库 `default_branch`，按 `config_json.scan_rules` 执行内置规则，按 `config_json.ignore_dirs` 和 `config_json.ignore_rules` 忽略目录或规则，按 `config_json.severity_threshold`、`baseline_fingerprints`、`accepted_risk_fingerprints` 和 `ignored_finding_fingerprints` 过滤低级别、历史、已接受或单条忽略问题，按 `config_json.incremental_from_commit` 只扫描增量变更文件，并通过 `git blame --line-porcelain` 回填 finding 提交人；`config_json.scanner_engines` 可声明 `builtin/gitleaks/semgrep/trivy/npm/pip-audit/dependency-check` 等引擎，已安装的外部引擎必须执行并解析标准 JSON 输出，归一为平台 finding，未安装、超时或输出不可解析时写入 `coverage_warning` 与 `scan_profile.external_scanner_status.skipped/failed` 后继续内置扫描。`config_json.quality_gate` 记录质量门禁上限和违规项；`config_json.repository_ids` 可让一个作业逐仓扫描多个同产品仓库并生成多份报告。该模式不要求 `plugin_connection_id/plugin_action_id`，运行摘要必须包含 `execution_nodes.native_scan`，节点记录 repository_id、branch、commit_sha、remote_url_hash、remote_url_summary、artifact_ref、checkout_path_retained、scan_started_at、scan_finished_at、scanner_version、rules_version、增量基线、增量文件数、suppression_summary、quality_gate 和 scan_profile；`execution_nodes.data_connection.processing_mode=native_full_scan`。异步运行被取消后，worker 必须在写报告前检查取消终态，不得覆盖为成功或继续创建报告。`sync_existing_alerts` 和 `trigger_platform_scan` 继续使用插件连接/动作对接 GitHub/GitLab/SonarQube/SAST 或自建扫描服务。内置扫描器当前规则集包括 `secrets.hardcoded_credential` 和 `metadata.internal_address_exposure`，输出仍归一为 `repository_id/branch/commit_sha/risk_level/summary/findings`，不得把原始密钥明文写入报告。
 - 代码巡检报告来源于 `code_repository_inspection` 定时作业，不替代单个 MR/PR 的 `code_review` 人工确认报告；前者是周期性治理，后者是交付链路评审。
 - 巡检结果必须保存到 `code_inspection_reports` 和 `code_inspection_findings`，不得只保存在 `scheduled_job_runs.result_summary` 或 `plugin_invocation_logs.response_summary`。

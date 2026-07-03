@@ -295,7 +295,7 @@ function installScheduledJobsFetchMock(
               workspace_roots: ['/Users/zeek/source/e-ai-brain'],
             },
           ],
-          total: 2,
+          total: 1,
         },
       });
     }
@@ -336,9 +336,13 @@ function installScheduledJobsFetchMock(
               code: 'code_repository_inspection',
               name: '代码仓库质量 / 安全 / 规范巡检',
               payload_defaults: {
+                config_json: {
+                  scan_mode: 'native_full_scan',
+                  scan_rules: ['secrets', 'internal_addresses'],
+                },
                 cron_expression: '0 2 * * MON',
                 enabled: true,
-                execution_mode: 'deterministic',
+                execution_mode: 'ai_assisted',
                 job_type: 'code_repository_inspection',
                 knowledge_document_ids: [],
                 name: '代码仓库质量安全规范巡检',
@@ -353,9 +357,18 @@ function installScheduledJobsFetchMock(
                 source_system: 'code-inspection',
               },
               resource_selectors: {
+                agent: {
+                  code_candidates: ['code_reviewer', 'code_inspection_agent'],
+                  text_candidates: ['代码审查', '代码巡检', 'code review', 'code inspection'],
+                },
+                model_gateway_config: { strategy: 'default_or_first_active' },
                 plugin_action: {
                   code_candidates: ['scan_github_code_inspection', 'scan_gitlab_code_inspection'],
                   text_candidates: ['code_inspection', '代码巡检'],
+                },
+                skill: {
+                  code_candidates: ['code_inspection_analysis', 'code_review'],
+                  text_candidates: ['代码巡检', '代码审查', 'code inspection', 'code review'],
                 },
               },
               template_version: 'v1',
@@ -1266,23 +1279,29 @@ function installScheduledJobsFetchMock(
               status: 'active',
             },
           ],
-          total: 1,
+          total: 2,
         },
       });
     }
     if (input === '/api/system/ai-agents' && init?.method === 'GET') {
       return jsonResponse({
         data: {
-          items: [{ code: 'insight_agent', id: 'agent_insight', name: '洞察 Agent', status: 'active' }],
-          total: 1,
+          items: [
+            { code: 'insight_agent', id: 'agent_insight', name: '洞察 Agent', status: 'active' },
+            { code: 'code_reviewer', id: 'agent_code_reviewer', name: '代码审查角色', status: 'active' },
+          ],
+          total: 2,
         },
       });
     }
     if (input === '/api/system/ai-skills' && init?.method === 'GET') {
       return jsonResponse({
         data: {
-          items: [{ code: 'weekly_feedback_analysis', id: 'skill_feedback', name: '每周反馈分析', status: 'active' }],
-          total: 1,
+          items: [
+            { code: 'weekly_feedback_analysis', id: 'skill_feedback', name: '每周反馈分析', status: 'active' },
+            { code: 'code_inspection_analysis', id: 'skill_code_inspection', name: '代码巡检分析', status: 'active' },
+          ],
+          total: 2,
         },
       });
     }
@@ -1902,8 +1921,9 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByText('代码仓库质量 / 安全 / 规范巡检'));
 
     expect(within(codeDialog).getByLabelText('名称')).toHaveValue('代码仓库质量安全规范巡检');
-    expect(within(codeDialog).getByText('生产 GitHub 组织')).toBeInTheDocument();
-    expect(within(codeDialog).getByText('GitHub 代码巡检')).toBeInTheDocument();
+    expect(within(codeDialog).getByText('AI 辅助')).toBeInTheDocument();
+    expect(within(codeDialog).getByText('代码审查角色 (code_reviewer)')).toBeInTheDocument();
+    expect(within(codeDialog).queryByText('请选择 Skills')).not.toBeInTheDocument();
     expect(within(codeDialog).getByDisplayValue('0 2 * * MON')).toBeInTheDocument();
     expect(within(codeDialog).getByDisplayValue('code-inspection')).toBeInTheDocument();
 
@@ -1912,11 +1932,17 @@ describe('ScheduledJobsPage', () => {
       expect(jobCreateBodies[1]).toMatchObject({
         cron_expression: '0 2 * * MON',
         enabled: true,
-        execution_mode: 'deterministic',
+        execution_mode: 'ai_assisted',
         job_type: 'code_repository_inspection',
+        model_gateway_config_id: 'model_gateway_scheduled_job',
         name: '代码仓库质量安全规范巡检',
-        plugin_action_id: 'plugin_action_github_scan',
-        plugin_connection_id: 'connection_github_prod',
+        agent_id: 'agent_code_reviewer',
+        config_json: {
+          branch: 'main',
+          repository_id: 'repo_zqf',
+          scan_mode: 'native_full_scan',
+          scan_rules: ['secrets', 'internal_addresses'],
+        },
         product_id: 'product_ai_brain',
         result_actions: [
           { type: 'write_code_inspection_report' },
@@ -1925,10 +1951,17 @@ describe('ScheduledJobsPage', () => {
           { channels: ['email'], recipients: [], type: 'send_notification' },
         ],
         schedule_type: 'cron',
+        skill_ids: ['skill_code_inspection'],
         source_system: 'code-inspection',
       }),
     );
     expect(jobCreateBodies[1]).not.toHaveProperty('connection_environment');
+    expect(jobCreateBodies[1]).toMatchObject({
+      plugin_action_id: null,
+      plugin_action_ids: [],
+      plugin_connection_id: null,
+      plugin_connection_ids: [],
+    });
 
     fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
 
@@ -2300,7 +2333,7 @@ describe('ScheduledJobsPage', () => {
     expect(jobCreateBodies).toEqual([]);
   });
 
-  it('requires AI assembly when code inspection switches to AI execution mode', async () => {
+  it('defaults code inspection templates to AI-assisted processing', async () => {
     const { jobCreateBodies } = installScheduledJobsFetchMock();
 
     render(<ScheduledJobsPage />);
@@ -2311,17 +2344,24 @@ describe('ScheduledJobsPage', () => {
     await waitFor(() => expect(within(dialog).getByLabelText('作业模板')).toBeInTheDocument());
     fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
     fireEvent.click(await screen.findByText('代码仓库质量 / 安全 / 规范巡检'));
-    expect(within(dialog).getByText('生产 GitHub 组织')).toBeInTheDocument();
 
-    fireEvent.mouseDown(within(dialog).getByLabelText('AI执行'));
-    fireEvent.click(await screen.findByTitle('AI 生成'));
+    expect(within(dialog).getByText('AI 辅助')).toBeInTheDocument();
+    expect(within(dialog).getByText('代码审查角色 (code_reviewer)')).toBeInTheDocument();
+    expect(within(dialog).queryByText('请选择 AI 模型')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('请选择 AI角色')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('请选择 Skills')).not.toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 
-    await waitFor(() => expect(within(dialog).getByText('请选择 AI 模型')).toBeInTheDocument());
-    expect(within(dialog).getByText('请选择 AI角色')).toBeInTheDocument();
-    expect(within(dialog).getByText('请选择 Skills')).toBeInTheDocument();
-    expect(jobCreateBodies).toEqual([]);
+    await waitFor(() =>
+      expect(jobCreateBodies[0]).toMatchObject({
+        agent_id: 'agent_code_reviewer',
+        execution_mode: 'ai_assisted',
+        job_type: 'code_repository_inspection',
+        model_gateway_config_id: 'model_gateway_scheduled_job',
+        skill_ids: ['skill_code_inspection'],
+      }),
+    );
   });
 
   it('can edit and delete scheduled jobs from the list', async () => {

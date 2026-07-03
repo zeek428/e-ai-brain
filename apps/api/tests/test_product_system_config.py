@@ -116,7 +116,6 @@ def test_product_config_supports_list_patch_and_active_filters():
             "name": "ai-brain-api",
             "remote_url": "https://gitlab.internal/rd/ai-brain-api.git",
             "git_provider": "gitlab",
-            "project_path": "rd/ai-brain-api",
             "credential_ref": "secret://gitlab/readonly",
             "default_branch": "main",
             "root_path": "/",
@@ -125,6 +124,7 @@ def test_product_config_supports_list_patch_and_active_filters():
     ).json()["data"]
     assert "credential_ref" not in repository
     assert repository["credential_ref_configured"] is True
+    assert repository["project_path"] == "rd/ai-brain-api"
     repositories = client.get(
         f"/api/products/{product['id']}/git-repositories?active_only=true",
         headers=headers,

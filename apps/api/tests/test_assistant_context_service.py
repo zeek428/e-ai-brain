@@ -461,83 +461,33 @@ def test_assistant_tool_results_can_generate_code_inspection_job_action_draft():
     )
 
     assert tool_results[0]["tool"] == "assistant.action_draft"
-    assert tool_results[0]["items"][0] == {
-        "action": "create_scheduled_job",
-        "draft_id": "assistant_draft_code_repository_inspection",
-        "payload": {
-            "cron_expression": "0 2 * * MON",
-            "enabled": True,
-            "execution_mode": "deterministic",
-            "job_type": "code_repository_inspection",
-            "name": "代码仓库质量安全规范巡检",
-            "plugin_action_id": "plugin_action_github_scan",
-            "plugin_connection_id": "connection_github_prod",
-            "product_id": "product_ai_brain",
-            "result_actions": [
-                {"type": "write_code_inspection_report"},
-                {
-                    "severity_threshold": "critical",
-                    "type": "create_bug_for_severe_findings",
-                },
-                {
-                    "severity_threshold": "high",
-                    "type": "create_task_for_severe_findings",
-                },
-                {"channels": ["email"], "recipients": [], "type": "send_notification"},
-            ],
-            "schedule_type": "cron",
-            "skill_ids": [],
-            "source_system": "code-inspection",
-        },
-        "requires_confirmation": True,
-        "risk_level": "medium",
-        "title": "代码仓库质量安全规范巡检",
-        "wizard_steps": [
-            {
-                "depends_on": [],
-                "key": "data_source",
-                "status": "ready",
-                "summary": "已选择 GitHub 代码巡检",
-                "title": "数据来源",
-            },
-            {
-                "depends_on": [],
-                "key": "ai_processing",
-                "status": "skipped",
-                "summary": "不调用 AI",
-                "title": "AI处理",
-            },
-            {
-                "depends_on": [],
-                "key": "result_action",
-                "status": "ready",
-                "summary": "写代码巡检报告、严重问题建 Bug、发送通知",
-                "title": "结果动作",
-            },
-            {
-                "depends_on": [],
-                "key": "schedule",
-                "status": "ready",
-                "summary": "cron: 0 2 * * MON",
-                "title": "调度策略",
-            },
-            {
-                "depends_on": [],
-                "key": "confirm",
-                "status": "pending",
-                "summary": "确认后创建定时作业",
-                "title": "确认执行",
-            },
-        ],
-    }
-    assert tool_results[0]["references"] == [
-        {
-            "id": "assistant_draft_code_repository_inspection",
-            "title": "代码仓库质量安全规范巡检",
-            "type": "assistant_action_draft",
-            "url": "/assistant?draft_id=assistant_draft_code_repository_inspection",
-        }
+    assert [item["action"] for item in tool_results[0]["items"]] == [
+        "create_ai_skill",
+        "create_ai_agent",
+        "create_scheduled_job",
     ]
+    skill_item, agent_item, job_item = tool_results[0]["items"]
+    assert skill_item["draft_id"] == "assistant_draft_code_inspection_ai_skill"
+    assert agent_item["draft_id"] == "assistant_draft_code_inspection_ai_agent"
+    assert agent_item["payload"]["assistant_prerequisite_draft_ids"] == [
+        "assistant_draft_code_inspection_ai_skill",
+    ]
+    assert job_item["draft_id"] == "assistant_draft_ai_code_repository_inspection"
+    assert job_item["payload"]["execution_mode"] == "ai_assisted"
+    assert job_item["payload"]["plugin_action_id"] == "plugin_action_github_scan"
+    assert job_item["payload"]["plugin_connection_id"] == "connection_github_prod"
+    assert job_item["payload"]["assistant_prerequisite_draft_ids"] == [
+        "assistant_draft_code_inspection_ai_skill",
+        "assistant_draft_code_inspection_ai_agent",
+    ]
+    ai_step = next(step for step in job_item["wizard_steps"] if step["key"] == "ai_processing")
+    assert ai_step["status"] == "needs_prerequisite"
+    assert tool_results[0]["references"][-1] == {
+        "id": "assistant_draft_ai_code_repository_inspection",
+        "title": "AI 代码仓库质量安全规范巡检",
+        "type": "assistant_action_draft",
+        "url": "/assistant?draft_id=assistant_draft_ai_code_repository_inspection",
+    }
     assert store.scheduled_jobs == {}
 
 
@@ -584,16 +534,18 @@ def test_assistant_tool_results_generate_code_inspection_setup_drafts_without_pr
     assert tool_results[0]["tool"] == "assistant.action_draft"
     assert tool_results[0]["intent"] == "code_inspection_setup_draft"
     assert tool_results[0]["summary"] == {
-        "draft_count": 3,
+        "draft_count": 5,
         "requires_confirmation": True,
         "target": "code_inspection_setup",
     }
     assert [item["action"] for item in tool_results[0]["items"]] == [
         "create_plugin_connection",
         "create_plugin_action",
+        "create_ai_skill",
+        "create_ai_agent",
         "create_scheduled_job",
     ]
-    connection_item, action_item, job_item = tool_results[0]["items"]
+    connection_item, action_item, skill_item, agent_item, job_item = tool_results[0]["items"]
     assert connection_item["draft_id"] == "assistant_draft_github_plugin_connection"
     assert connection_item["payload"]["plugin_id"] == "plugin_standard_github"
     assert connection_item["payload"]["endpoint_url"] == "https://api.github.com"
@@ -606,14 +558,22 @@ def test_assistant_tool_results_generate_code_inspection_setup_drafts_without_pr
     assert action_item["payload"]["request_config"]["path"] == (
         "/repos/{{owner}}/{{repo}}/code-scanning/alerts"
     )
-    assert job_item["draft_id"] == "assistant_draft_code_repository_inspection"
+    assert skill_item["draft_id"] == "assistant_draft_code_inspection_ai_skill"
+    assert agent_item["draft_id"] == "assistant_draft_code_inspection_ai_agent"
+    assert agent_item["payload"]["assistant_prerequisite_draft_ids"] == [
+        "assistant_draft_code_inspection_ai_skill",
+    ]
+    assert job_item["draft_id"] == "assistant_draft_ai_code_repository_inspection"
+    assert job_item["payload"]["execution_mode"] == "ai_assisted"
     assert job_item["payload"]["plugin_action_id"] is None
     assert job_item["payload"]["plugin_connection_id"] is None
     assert job_item["payload"]["assistant_prerequisite_draft_ids"] == [
         "assistant_draft_github_plugin_connection",
         "assistant_draft_github_plugin_action",
+        "assistant_draft_code_inspection_ai_skill",
+        "assistant_draft_code_inspection_ai_agent",
     ]
-    assert tool_results[0]["references"] == [
+    assert tool_results[0]["references"][:2] == [
         {
             "id": "assistant_draft_github_plugin_connection",
             "title": "GitHub API 连接",
@@ -626,13 +586,13 @@ def test_assistant_tool_results_generate_code_inspection_setup_drafts_without_pr
             "type": "assistant_action_draft",
             "url": "/assistant?draft_id=assistant_draft_github_plugin_action",
         },
-        {
-            "id": "assistant_draft_code_repository_inspection",
-            "title": "代码仓库质量安全规范巡检",
-            "type": "assistant_action_draft",
-            "url": "/assistant?draft_id=assistant_draft_code_repository_inspection",
-        },
     ]
+    assert tool_results[0]["references"][-1] == {
+        "id": "assistant_draft_ai_code_repository_inspection",
+        "title": "AI 代码仓库质量安全规范巡检",
+        "type": "assistant_action_draft",
+        "url": "/assistant?draft_id=assistant_draft_ai_code_repository_inspection",
+    }
     assert store.plugin_connections == {}
     assert store.plugin_actions == {}
     assert store.scheduled_jobs == {}

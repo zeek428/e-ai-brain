@@ -69,6 +69,7 @@ type ScheduledJobFormModalProps = {
   sampleReuseDraft?: Record<string, unknown>;
   selectedJobTemplate?: ScheduledJobTemplateRecord;
   selectedJobType?: string;
+  selectedProductId?: string;
   selectedRepositoryDefaultBranch?: string;
   severityThresholdSelectOptions: SelectOption[];
   skills: AiSkillRecord[];
@@ -256,6 +257,7 @@ export function ScheduledJobFormModal({
   sampleReuseDraft,
   selectedJobTemplate,
   selectedJobType,
+  selectedProductId,
   selectedRepositoryDefaultBranch,
   severityThresholdSelectOptions,
   skills,
@@ -373,6 +375,7 @@ export function ScheduledJobFormModal({
             repositories={productRepositories}
             scanModeOptions={codeInspectionScanModeSelectOptions}
             scannerEngineOptions={codeInspectionScannerEngineSelectOptions}
+            selectedProductId={selectedProductId}
             selectedRepositoryDefaultBranch={selectedRepositoryDefaultBranch}
             severityThresholdOptions={severityThresholdSelectOptions}
           />

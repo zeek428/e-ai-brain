@@ -12,7 +12,7 @@ SCHEDULED_JOB_TYPE_DEFINITIONS: list[dict[str, Any]] = [
     {
         "allow_create": True,
         "category": "governance",
-        "default_execution_mode": "deterministic",
+        "default_execution_mode": "ai_assisted",
         "label": "代码仓库巡检（质量 / 安全 / 规范）",
         "requires_product": True,
         "requires_plugin_resource": True,

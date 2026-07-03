@@ -87,7 +87,7 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
             },
             "cron_expression": "0 2 * * MON",
             "enabled": True,
-            "execution_mode": "deterministic",
+            "execution_mode": "ai_assisted",
             "job_type": "code_repository_inspection",
             "knowledge_document_ids": [],
             "name": "代码仓库质量安全规范巡检",
@@ -109,6 +109,11 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
         },
         "recommended_scenarios": ["本地完整代码扫描", "安全漏洞扫描", "研发规范治理"],
         "resource_selectors": {
+            "agent": {
+                "code_candidates": ["code_reviewer", "code_inspection_agent"],
+                "text_candidates": ["代码审查", "代码巡检", "code review", "code inspection"],
+            },
+            "model_gateway_config": {"strategy": "default_or_first_active"},
             "plugin_action": {
                 "code_candidates": [
                     "scan_github_code_inspection",
@@ -118,6 +123,10 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
             },
             "plugin_connection": {"strategy": "same_plugin_as_action"},
             "product": {"strategy": "first_active"},
+            "skill": {
+                "code_candidates": ["code_inspection_analysis", "code_review"],
+                "text_candidates": ["代码巡检", "代码审查", "code inspection", "code review"],
+            },
         },
         "template_version": "v1",
         "wizard_steps": STANDARD_WIZARD_STEPS,

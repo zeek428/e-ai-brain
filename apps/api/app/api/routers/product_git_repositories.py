@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -66,10 +67,41 @@ def _validate_git_repository_binding(
     remote_url: str | None,
 ) -> None:
     ensure_enum(provider, GIT_REPO_PROVIDERS, "git provider")
-    if provider == "gitlab" and not project_id and not project_path:
-        raise api_error(400, "VALIDATION_ERROR", "GitLab project_id or project_path is required")
-    if provider == "github" and not project_path and not remote_url:
-        raise api_error(400, "VALIDATION_ERROR", "GitHub project_path or remote_url is required")
+    remote_project_path = _repository_path_from_remote_url(remote_url)
+    if provider == "gitlab" and not project_id and not project_path and not remote_project_path:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "GitLab remote_url, project_id, or project_path is required",
+        )
+    if provider == "github" and not project_path and not remote_project_path:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "GitHub remote_url or project_path is required",
+        )
+
+
+def _optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _repository_path_from_remote_url(remote_url: str | None) -> str | None:
+    remote_url = _optional_text(remote_url)
+    if not remote_url:
+        return None
+    if remote_url.startswith("git@") and ":" in remote_url:
+        candidate = remote_url.split(":", 1)[1]
+    else:
+        parsed = urlparse(remote_url)
+        candidate = parsed.path if parsed.scheme else remote_url
+    project_path = unquote(candidate).strip().strip("/")
+    if project_path.endswith(".git"):
+        project_path = project_path[:-4]
+    return project_path if "/" in project_path else None
 
 
 def _ensure_product_scope(user: dict[str, Any], product_id: Any) -> None:
@@ -108,11 +140,14 @@ def create_product_git_repository(
         raise api_error(404, "NOT_FOUND", "Product not found")
     name = ensure_non_blank(payload.name, "name")
     ensure_enum(payload.status, GIT_REPO_STATUSES, "product Git repository status")
+    remote_url = _optional_text(payload.remote_url)
+    project_id = _optional_text(payload.project_id)
+    project_path = _optional_text(payload.project_path) or _repository_path_from_remote_url(remote_url)
     _validate_git_repository_binding(
         payload.git_provider,
-        project_id=payload.project_id,
-        project_path=payload.project_path,
-        remote_url=payload.remote_url,
+        project_id=project_id,
+        project_path=project_path,
+        remote_url=remote_url,
     )
 
     repository_id = current_store.new_id("repo")
@@ -121,11 +156,11 @@ def create_product_git_repository(
         "product_id": product_id,
         "repo_type": payload.repo_type,
         "name": name,
-        "remote_url": payload.remote_url,
+        "remote_url": remote_url,
         "git_provider": payload.git_provider,
-        "project_id": payload.project_id,
-        "project_path": payload.project_path,
-        "credential_ref": payload.credential_ref,
+        "project_id": project_id,
+        "project_path": project_path,
+        "credential_ref": _optional_text(payload.credential_ref),
         "default_branch": payload.default_branch,
         "root_path": payload.root_path,
         "status": payload.status,
@@ -164,10 +199,17 @@ def patch_product_git_repository(
         updates["name"] = ensure_non_blank(updates["name"], "name")
     if "status" in updates:
         ensure_enum(updates["status"], GIT_REPO_STATUSES, "product Git repository status")
+    for key in ("credential_ref", "project_id", "project_path", "remote_url"):
+        if key in updates:
+            updates[key] = _optional_text(updates[key])
     next_provider = updates.get("git_provider", repository["git_provider"])
     next_project_id = updates.get("project_id", repository.get("project_id"))
     next_project_path = updates.get("project_path", repository.get("project_path"))
     next_remote_url = updates.get("remote_url", repository.get("remote_url"))
+    if not next_project_path:
+        next_project_path = _repository_path_from_remote_url(next_remote_url)
+        if next_project_path:
+            updates["project_path"] = next_project_path
     _validate_git_repository_binding(
         next_provider,
         project_id=next_project_id,

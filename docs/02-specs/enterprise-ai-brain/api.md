@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.534 |
+| 功能版本 | v1.1.536 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.536 | 2026-07-03 | 产品 Git 资源配置默认使用 `remote_url` 并推导 `project_path`；代码巡检模板和作业类型默认改为本地扫描后的 `ai_assisted` | Codex |
 | v1.1.534 | 2026-07-03 | 新增 `GET /api/bugs/images/preview`，已上传 Bug 图片通过受 `bug.read` 权限保护的后端代理预览 | Codex |
 | v1.1.533 | 2026-07-03 | 新增 `POST /api/bugs/images/upload`，Bug 图片证据写入 MinIO/S3-compatible 对象存储后以元数据关联到 evidence | Codex |
 | v1.1.532 | 2026-07-02 | 定时作业 `config_json.ai_executor` 支持选择系统默认执行器或本地 Runner；本地 Runner 可不传模型网关，完成回写后继续结果动作 | Codex |
@@ -1359,8 +1360,6 @@ Git 资源请求体：
   "name": "ai-brain-api",
   "remote_url": "https://gitlab.internal/rd/ai-brain-api.git",
   "git_provider": "gitlab",
-  "project_id": "123",
-  "project_path": "rd/ai-brain-api",
   "credential_ref": "secret://gitlab/ai-brain-readonly-token",
   "default_branch": "main",
   "root_path": "/",
@@ -1374,7 +1373,7 @@ Git 资源请求体：
 - 版本主状态：`planning | active | testing | released`；`archived` 仅作为历史归档状态。
 - Git 资源类型：`code | docs | prd | test`。
 - Git 资源状态：`active | inactive`。
-- `git_provider` 支持 `gitlab` 和 `github`。GitLab 绑定需提供 `project_id` 或 `project_path`；GitHub 绑定需提供 `project_path=owner/repo` 或可解析 owner/repo 的 `remote_url`。
+- `git_provider` 支持 `gitlab` 和 `github`。产品配置默认填写 `remote_url`，后端会从可解析的 HTTPS/SSH Remote URL 推导 `project_path`；GitLab 绑定也可显式提供 `project_id` 或 `project_path` 覆盖，GitHub 绑定也可显式提供 `project_path=owner/repo`。
 - `credential_ref` 推荐使用 `env:GITLAB_READONLY_TOKEN`、`env:GITHUB_READONLY_TOKEN` 或服务端密钥引用；本地联调可直填只读 token，API 响应仍只返回 `credential_ref_configured`，不返回密钥引用或明文 token。
 - 前端产品配置弹窗可提交 `credential_ref`，编辑时留空表示保留服务端已有凭据；列表只显示“已配置/未配置”状态。
 - 仅 `planning` 和 `active` 版本可用于新需求排期；`testing`、`released` 和 `archived` 版本不可用于新需求或新开发任务，历史任务继续使用生成时保存的产品上下文快照。
@@ -3916,7 +3915,7 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 
 MaxCompute 每周用户反馈场景使用 `job_type=user_feedback_insight_extract`，数据连接作为普通 HTTP 插件连接保存 endpoint、认证和公共 Params/Headers，结果写入动作通常为 `action_type=http_request` 的自定义 HTTP 动作；请求时间参数优先在连接/动作 Params 中配置，作业级 `plugin_input_mapping` 仅作为兼容和高级覆盖。作业必须选择 `model_gateway_config_id`、`agent_id` 和 `skill_ids`，页面展示为 AI 模型、AI角色和 Skills，可选选择知识引用文档。动作 `result_mapping` 默认包含 `write_target=user_feedback_insights`、`insights_path`、`records_imported_path` 和 `rows_path`，作业 `plugin_output_mapping` 仅用于覆盖。运行顺序为数据连接取数、读取知识引用、模型网关按 AI角色/Skill 处理为结构化 JSON、结果写入。运行成功后 `records_imported` 为实际新增洞察数，`result_summary.plugin.response_summary.json.row_count` 保留源表读取行数摘要；`result_summary.execution_nodes` 必须按 `data_connection`、`skill_processing`、`result_action` 三段保存数据连接获取内容、Skill 处理内容和结果写入反馈内容。`skill_processing.model_gateway_called=true`，并包含 `model_gateway_config_id`、`model_log_id`、`processing_mode=model_gateway_json_transform`、`input.knowledge_references` 和模型输出 JSON 摘要。
 
-代码仓库巡检场景使用 `job_type=code_repository_inspection`，通过 `config_json.repository_id` 绑定产品 Git 仓库，通过 `config_json.branch` 指定扫描分支；`native_full_scan` 使用平台内置本地扫描器，`sync_existing_alerts` 和 `trigger_platform_scan` 使用 `plugin_connection_id` / `plugin_action_id` 调用仓库扫描器、SonarQube、SAST 或自建质量扫描服务。若请求未传 `config_json.branch`，服务端创建、更新和 dry-run 会按仓库 `default_branch` 补齐；运行时插件输入顶层携带 `repository_id/branch`，AI 处理上下文携带 `configured_repository_id/configured_branch`。插件响应推荐返回 `repository_id`、`branch`、`commit_sha`、`risk_level`、`summary` 和 `findings[]`；若响应未返回 `branch`，报告写入使用作业分支或仓库默认分支兜底。每个 finding 至少包含 `rule_id`、`category`、`severity`、`title`、`description`、`file_path`、`line_number` 和 `recommendation`，并推荐包含 `committer_name`、`committer_email`、`committer_username`。动作 `request_config.severity_mapping` 或作业 `config_json.severity_mapping` 可把外部扫描器等级映射为平台 `info/low/medium/high/critical`。示例 `result_actions`：
+代码仓库巡检场景使用 `job_type=code_repository_inspection`，通过 `config_json.repository_id` 绑定产品 Git 仓库，通过 `config_json.branch` 指定扫描分支；新增作业类型、服务端模板目录和 AI 助手草案默认给出 `execution_mode=ai_assisted`，并按资源选择器带出系统默认模型网关、代码审查 AI角色和代码巡检 Skill；页面提交前若产品已有 Git 仓库但仓库/分支尚未挂载完成，必须兜底补齐默认仓库和默认分支。用户显式切换确定性执行或表达“不调用 AI、纯扫描、只扫描、静态扫描”时才使用 `deterministic`。`native_full_scan` 使用平台内置本地扫描器，`sync_existing_alerts` 和 `trigger_platform_scan` 使用 `plugin_connection_id` / `plugin_action_id` 调用仓库扫描器、SonarQube、SAST 或自建质量扫描服务。若请求未传 `config_json.branch`，服务端创建、更新和 dry-run 会按仓库 `default_branch` 补齐；运行时插件输入顶层携带 `repository_id/branch`，AI 处理上下文携带 `configured_repository_id/configured_branch`。插件响应推荐返回 `repository_id`、`branch`、`commit_sha`、`risk_level`、`summary` 和 `findings[]`；若响应未返回 `branch`，报告写入使用作业分支或仓库默认分支兜底。每个 finding 至少包含 `rule_id`、`category`、`severity`、`title`、`description`、`file_path`、`line_number` 和 `recommendation`，并推荐包含 `committer_name`、`committer_email`、`committer_username`。动作 `request_config.severity_mapping` 或作业 `config_json.severity_mapping` 可把外部扫描器等级映射为平台 `info/low/medium/high/critical`。示例 `result_actions`：
 
 当 `config_json.scan_mode=native_full_scan` 时，服务端使用内置扫描器在 `CODE_SCAN_WORKDIR` 下维护 `mirrors/` 仓库缓存，并按 repository + branch + commit checkout 到单次运行目录；HTTP(S) 私有仓库使用产品 Git 仓库 `credential_ref` 或 provider 级环境变量 token 通过临时 Git askpass 执行 clone/fetch，API 响应、运行摘要、报告和错误信息不得返回 token 或带凭据 remote_url；扫描 `config_json.scan_rules`，按 `ignore_dirs` / `ignore_rules` 过滤目录和规则，按 `severity_threshold`、`baseline_fingerprints`、`accepted_risk_fingerprints` 和 `ignored_finding_fingerprints` 过滤低级别、历史、已接受或单条忽略问题，按 `incremental_from_commit` 做增量文件扫描，并通过 git blame 回填提交人。该模式不要求 `plugin_connection_id` / `plugin_action_id`，保存请求可传 `null` 或空数组清空插件字段；`repository_ids` 可一次绑定多个同产品仓库并生成多份报告。未传 `scan_mode` 时按 `sync_existing_alerts` 兼容旧插件模式。默认运行先返回 queued，再由后台 worker 执行；运行成功后 `plugin_invocation_log_id` 为空，`result_summary.execution_nodes.native_scan` 返回 `repository_id/branch/commit_sha/files_scanned/lines_scanned/finding_count/scanner_name/scanner_version/rules_version/remote_url_hash/remote_url_summary/artifact_ref/checkout_path_retained/scan_started_at/scan_finished_at/incremental_from_commit/incremental_file_count/suppression_summary/suppressed_finding_count/quality_gate/scan_profile`，`execution_nodes.data_connection.processing_mode=native_full_scan`；多仓库运行还返回 `report_ids/report_count/reports_by_repository`。报告额外返回同名快照字段，以及 `scan_mode/scanner_name/is_full_scan/incremental_from_commit/incremental_file_count/files_scanned/lines_scanned/rules_loaded/coverage_warning/suppressed_finding_count/suppression_summary/quality_gate/scan_profile/previous_report_id/previous_comparison`；当 `ai_assisted/ai_generated` 对 native 扫描结果做模型归一化时，模型输出可覆盖 `risk_level/summary/findings`，但上述 native 快照字段必须以扫描源结果为准。`GET /api/governance/code-inspections/{report_id}` 额外返回 `scan_summary.coverage/rule_distribution/file_distribution/committer_distribution/quality_gate/previous_comparison/scan_profile/suppression_summary` 和 `governance_summary`，其中 `scan_summary.coverage` 必须包含 `is_full_scan/incremental_from_commit/incremental_file_count/files_scanned/lines_scanned/suppressed_finding_count`，`governance_summary` 以 high/critical 且未审批忽略的 finding 为有效严重问题，计算 Bug 覆盖率、整改任务覆盖率、待审批忽略、已接受风险和治理待办。`scanner_engines` 可声明 `builtin/gitleaks/semgrep/trivy/npm/pip-audit/dependency-check`，已安装外部引擎会执行并解析 JSON 输出，结果归一为 `scanner_name=<engine>` 的 finding；未安装、超时或输出不可解析时写入 `coverage_warning`，并在 `scan_profile.external_scanner_status` 返回 `configured/executed/skipped/failed` 以及可选原因映射后继续内置扫描。异步运行被取消时，取消接口返回 `status=cancelled`，后台 worker 检测到取消后不得写入代码巡检报告或覆盖取消终态。内置规则当前包括 `secrets.hardcoded_credential` 和 `metadata.internal_address_exposure`，finding 原始证据必须脱敏，不得保存明文密钥。
 

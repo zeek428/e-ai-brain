@@ -26,6 +26,7 @@ import {
   deleteProductModule,
   deleteProductRelatedSystem,
   deleteProductVersion,
+  fetchManagementProduct,
   fetchManagementProductList,
   fetchProductGitRepositoryRecords,
   fetchProductModules,
@@ -170,6 +171,22 @@ export default function ProductsPage() {
   const [relatedSystemRows, setRelatedSystemRows] = useState<ProductRelatedSystemRecord[]>([]);
   const [repositoryRows, setRepositoryRows] = useState<ProductGitRepositoryRecord[]>([]);
   const [resourceEditor, setResourceEditor] = useState<ProductResourceEditor>();
+  const [handledProductConfigDeepLink, setHandledProductConfigDeepLink] = useState<string>();
+  const productConfigDeepLink = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    const productId = params.get('product_id')?.trim();
+    if (!productId) {
+      return undefined;
+    }
+    const action = params.get('action')?.trim();
+    const resource = params.get('resource')?.trim();
+    return {
+      action,
+      key: `${productId}:${resource ?? ''}:${action ?? ''}`,
+      productId,
+      resource,
+    };
+  }, []);
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
     filters: {},
     page: 1,
@@ -397,6 +414,57 @@ export default function ProductsPage() {
     });
     setResourceEditor({ kind, record: repository, submitting: false });
   }, [resourceForm]);
+
+  useEffect(() => {
+    if (!productConfigDeepLink || handledProductConfigDeepLink === productConfigDeepLink.key) {
+      return undefined;
+    }
+    let cancelled = false;
+    const openDeepLinkedProductConfig = (product: ProductRecord) => {
+      if (cancelled) {
+        return;
+      }
+      setHandledProductConfigDeepLink(productConfigDeepLink.key);
+      openConfigModal(product);
+      if (
+        productConfigDeepLink.resource === 'repository'
+        && productConfigDeepLink.action === 'create'
+      ) {
+        queueMicrotask(() => {
+          if (!cancelled) {
+            openResourceEditor('repository');
+          }
+        });
+      }
+    };
+    const listedProduct = listState.rows.find(
+      (product) => product.id === productConfigDeepLink.productId,
+    );
+    if (listedProduct) {
+      openDeepLinkedProductConfig(listedProduct);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void fetchManagementProduct(productConfigDeepLink.productId)
+      .then(openDeepLinkedProductConfig)
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setHandledProductConfigDeepLink(productConfigDeepLink.key);
+        message.error(formatMutationError(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    handledProductConfigDeepLink,
+    listState.rows,
+    openConfigModal,
+    openResourceEditor,
+    productConfigDeepLink,
+  ]);
 
   const reloadConfigAfterMutation = useCallback(async () => {
     if (!configProduct) {
@@ -968,11 +1036,20 @@ export default function ProductsPage() {
                   ]}
                 />
               </Form.Item>
-              <Form.Item label="Remote URL" name="remote_url">
-                <Input />
+              <Form.Item
+                extra="优先填写仓库克隆地址，系统会自动推导 Project Path。"
+                label="Remote URL"
+                name="remote_url"
+                rules={[{ required: true, message: '请输入 Remote URL' }]}
+              >
+                <Input placeholder="https://gitlab.example.com/group/project.git" />
               </Form.Item>
-              <Form.Item label="Project Path" name="project_path" rules={[{ required: true, message: '请输入 Project Path' }]}>
-                <Input />
+              <Form.Item
+                extra="可选；仅在 Remote URL 无法推导或需要覆盖时填写。"
+                label="Project Path"
+                name="project_path"
+              >
+                <Input placeholder="group/project" />
               </Form.Item>
               <Form.Item label="Project ID" name="project_id">
                 <Input />

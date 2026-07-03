@@ -1,4 +1,5 @@
-import { Col, Form, Input, InputNumber, Row, Select, Switch } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
+import { Alert, Button, Col, Form, Input, InputNumber, Row, Select, Switch } from 'antd';
 
 import type { ProductGitRepositoryOption } from '../../../services/aiBrain';
 import { ScheduledJobFormSection as FormSection } from './ScheduledJobFormSection';
@@ -17,6 +18,7 @@ type ScheduledJobCodeRepositorySectionProps = {
   repositories: ProductGitRepositoryOption[];
   scanModeOptions: SelectOption[];
   scannerEngineOptions: SelectOption[];
+  selectedProductId?: string;
   selectedRepositoryDefaultBranch?: string | null;
   severityThresholdOptions: SelectOption[];
 };
@@ -30,6 +32,7 @@ export function ScheduledJobCodeRepositorySection({
   repositories,
   scanModeOptions,
   scannerEngineOptions,
+  selectedProductId,
   selectedRepositoryDefaultBranch,
   severityThresholdOptions,
 }: ScheduledJobCodeRepositorySectionProps) {
@@ -37,10 +40,42 @@ export function ScheduledJobCodeRepositorySection({
     label: repository.label,
     value: repository.id,
   }));
+  const productRepositoryConfigHref = selectedProductId
+    ? `/assets/products?product_id=${encodeURIComponent(selectedProductId)}&resource=repository&action=create`
+    : '/assets/products';
+  const repositorySelectDisabled = !selectedProductId || (!loadingRepositories && repositories.length === 0);
 
   return (
     <FormSection label="代码仓库配置" marker="仓库">
       <Row gutter={12}>
+        {!selectedProductId ? (
+          <Col span={24}>
+            <Alert
+              showIcon
+              title="请先选择产品，系统会加载该产品下维护的代码仓库。"
+              type="info"
+            />
+          </Col>
+        ) : null}
+        {selectedProductId && !loadingRepositories && repositories.length === 0 ? (
+          <Col span={24}>
+            <Alert
+              action={(
+                <Button
+                  href={productRepositoryConfigHref}
+                  icon={<PlusOutlined />}
+                  size="small"
+                  type="primary"
+                >
+                  新增 Git 资源
+                </Button>
+              )}
+              showIcon
+              title="当前产品还没有维护代码仓库。请先在产品管理的产品配置里新增 Git 资源，再创建代码巡检作业。"
+              type="warning"
+            />
+          </Col>
+        ) : null}
         <Col span={24}>
           <Form.Item label="扫描方式" name={['config_json', 'scan_mode']}>
             <Select options={scanModeOptions} onChange={onScanModeChange} />
@@ -53,11 +88,12 @@ export function ScheduledJobCodeRepositorySection({
           >
             <Select
               allowClear
+              disabled={repositorySelectDisabled}
               loading={loadingRepositories}
               onChange={onRepositoryChange}
               optionFilterProp="label"
               options={repositoryOptions}
-              placeholder="请选择代码仓库"
+              placeholder={selectedProductId ? '请选择代码仓库' : '请先选择产品'}
               showSearch
             />
           </Form.Item>
@@ -79,6 +115,7 @@ export function ScheduledJobCodeRepositorySection({
           >
             <Select
               allowClear
+              disabled={repositorySelectDisabled}
               loading={loadingRepositories}
               mode="multiple"
               optionFilterProp="label"

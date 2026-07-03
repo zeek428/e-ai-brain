@@ -1079,9 +1079,18 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
 
     code_inspection = by_code["code_repository_inspection"]
     assert code_inspection["payload_defaults"]["job_type"] == "code_repository_inspection"
+    assert code_inspection["payload_defaults"]["execution_mode"] == "ai_assisted"
     assert code_inspection["payload_defaults"]["result_actions"][0] == {
         "type": "write_code_inspection_report",
     }
+    assert code_inspection["resource_selectors"]["agent"]["code_candidates"] == [
+        "code_reviewer",
+        "code_inspection_agent",
+    ]
+    assert code_inspection["resource_selectors"]["skill"]["code_candidates"] == [
+        "code_inspection_analysis",
+        "code_review",
+    ]
     assert code_inspection["resource_selectors"]["plugin_action"]["code_candidates"] == [
         "scan_github_code_inspection",
         "scan_gitlab_code_inspection",
@@ -1168,6 +1177,7 @@ def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
 
     assert by_type["code_repository_inspection"]["label"] == "代码仓库巡检（质量 / 安全 / 规范）"
     assert by_type["code_repository_inspection"]["allow_create"] is True
+    assert by_type["code_repository_inspection"]["default_execution_mode"] == "ai_assisted"
     assert by_type["code_repository_inspection"]["runnable"] is True
     assert by_type["code_repository_inspection"]["requires_product"] is True
     assert by_type["code_repository_inspection"]["requires_plugin_resource"] is True

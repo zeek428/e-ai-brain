@@ -33,11 +33,11 @@ def test_gitlab_mr_preview_reads_real_gitlab_api_when_remote_url_is_configured(m
             "name": "AI Brain API",
             "remote_url": "https://gitlab.example.com/platform/ai-brain.git",
             "git_provider": "gitlab",
-            "project_path": "platform/ai-brain",
             "credential_ref": "env:GITLAB_READONLY_TOKEN",
         },
         headers=headers,
     ).json()["data"]
+    assert repository["project_path"] == "platform/ai-brain"
 
     preview = client.get(
         f"/api/devops/gitlab/merge-requests/{repository['id']}/7/preview",

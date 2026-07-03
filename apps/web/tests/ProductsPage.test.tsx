@@ -382,14 +382,15 @@ describe('ProductsPage', () => {
         });
       }
       if (path === '/api/products/product_api/git-repositories' && method === 'POST') {
-        expect(JSON.parse(String(init?.body))).toMatchObject({
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({
           credential_ref: 'env:GITLAB_READONLY_TOKEN',
           git_provider: 'gitlab',
           name: '测试仓库',
-          project_path: 'platform/test',
           remote_url: 'https://gitlab.example.com/platform/test.git',
           status: 'active',
         });
+        expect(body.project_path).toBeUndefined();
         return jsonResponse({
           data: {
             credential_ref_configured: true,
@@ -457,7 +458,6 @@ describe('ProductsPage', () => {
     fireEvent.change(screen.getByLabelText('Remote URL'), {
       target: { value: 'https://gitlab.example.com/platform/test.git' },
     });
-    fireEvent.change(screen.getByLabelText('Project Path'), { target: { value: 'platform/test' } });
     fireEvent.change(screen.getByLabelText('凭据引用'), {
       target: { value: 'env:GITLAB_READONLY_TOKEN' },
     });

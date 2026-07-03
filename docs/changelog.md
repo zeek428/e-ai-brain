@@ -33,6 +33,8 @@
 - PostgreSQL 兼容启动迁移补执行 `074_internal_data_source_plugin.sql` 与 `075_internal_data_source_detail_permission.sql`，并修正旧迁移重建 `ck_integration_plugins_protocol` 时漏掉 `internal_read_model` 的问题，确保已有内部数据源插件数据的环境可正常重启。
 
 ### Changed
+- 代码仓库巡检定时作业默认改为本地扫描后的 AI 辅助处理：模板、手工选择类型和 AI 助手草案会优先带出模型网关、AI角色和 Skill；明确“不调用 AI/纯扫描”时仍保留确定性扫描路径。
+- 产品管理 Git 资源配置默认改为填写 Remote URL：Project Path 不再作为前端必填项，后端会从可解析的 HTTPS/SSH Remote URL 推导 `project_path` 并继续支持显式覆盖。
 - 定时作业代码巡检的仓库配置在未选择产品或产品未维护 Git 资源时给出明确提示，并支持从空状态直接跳转到产品管理新增该产品的 Git 资源。
 - Bug 管理登记和编辑支持多张图片证据；本地多选或剪贴板粘贴的图片会先上传到 MinIO/S3-compatible 对象存储，Bug `evidence.images[]` 仅保存对象引用，已上传图片可在弹窗内点击预览。
 - 定时作业 AI执行配置支持选择系统默认执行器或本地 Runner；本地 Codex/Claude/Hermes/OpenClaw Runner 会在数据连接后接收 AI 处理任务，完成回写后继续结果动作。

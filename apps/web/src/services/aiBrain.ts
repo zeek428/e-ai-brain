@@ -1508,6 +1508,18 @@ export async function fetchManagementProductList(
   };
 }
 
+export async function fetchManagementProduct(productId: string): Promise<ProductRecord> {
+  const token = requireAccessToken();
+  const product = await apiRequest<ProductResponse>(`/api/products/${productId}`, { token });
+  return mapProductRecord({
+    code: product.code,
+    id: product.id,
+    name: product.name ?? product.id,
+    owner_team: product.owner_team,
+    status: product.status,
+  });
+}
+
 export async function createManagementProduct(payload: ProductMutationPayload) {
   const token = requireAccessToken();
   return apiRequest<ProductResponse>('/api/products', {

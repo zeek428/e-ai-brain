@@ -776,7 +776,9 @@ class AssistantDraftBuilder:
                     prerequisite_draft_ids=action_prerequisite_draft_ids,
                 ),
             )
-        ai_requested = _ai_processing_draft_requested(message.lower())
+        normalized_message = message.lower()
+        ai_requested = not _ai_processing_draft_skipped(normalized_message)
+        ai_explicitly_requested = _ai_processing_draft_requested(normalized_message)
         model_gateway = _first_active(
             self.context["model_gateway_configs"],
             predicate=lambda item: item.get("is_default") is True,
@@ -809,7 +811,11 @@ class AssistantDraftBuilder:
             "agent_id": agent.get("id") if ai_requested and agent else None,
             "cron_expression": defaults.get("cron_expression") or "0 2 * * MON",
             "enabled": defaults.get("enabled", True),
-            "execution_mode": "ai_generated" if ai_requested else "deterministic",
+            "execution_mode": (
+                "ai_generated"
+                if ai_explicitly_requested
+                else "ai_assisted" if ai_requested else "deterministic"
+            ),
             "job_type": defaults.get("job_type") or "code_repository_inspection",
             "model_gateway_config_id": (
                 model_gateway.get("id") if ai_requested and model_gateway else None
@@ -1487,6 +1493,26 @@ def _ai_processing_draft_requested(normalized_message: str) -> bool:
             "自动分析",
             "归一化",
             "llm",
+        )
+    )
+
+
+def _ai_processing_draft_skipped(normalized_message: str) -> bool:
+    return any(
+        keyword in normalized_message
+        for keyword in (
+            "不调用 ai",
+            "不调用ai",
+            "不用 ai",
+            "不用ai",
+            "无需 ai",
+            "无需ai",
+            "不需要 ai",
+            "不需要ai",
+            "纯扫描",
+            "只扫描",
+            "静态扫描",
+            "deterministic",
         )
     )
 

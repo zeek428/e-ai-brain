@@ -81,6 +81,37 @@ function scheduledJobDraftHasReusableResponse(payload: Record<string, unknown>) 
   return Boolean(recordValue(sampleReuse?.response_summary));
 }
 
+type TemplateSelectableRecord = {
+  code?: string;
+  id?: string;
+  name?: string;
+  status?: string;
+};
+
+function findByTemplateSelector<T extends TemplateSelectableRecord>(
+  items: T[],
+  selector: Record<string, unknown>,
+): T | undefined {
+  const codeCandidates = stringArrayFromUnknown(selector.code_candidates);
+  const textCandidates = stringArrayFromUnknown(selector.text_candidates).map((candidate) =>
+    candidate.toLowerCase(),
+  );
+  const matchesCode = (item: T) =>
+    codeCandidates.includes(String(item.code ?? '')) || codeCandidates.includes(String(item.id ?? ''));
+  const matchesText = (item: T) => {
+    const text = `${item.code ?? ''} ${item.name ?? ''} ${item.id ?? ''}`.toLowerCase();
+    return textCandidates.some((candidate) => text.includes(candidate));
+  };
+  return (
+    items.find((item) => item.status === 'active' && matchesCode(item))
+    ?? items.find(matchesCode)
+    ?? items.find((item) => item.status === 'active' && matchesText(item))
+    ?? items.find(matchesText)
+    ?? items.find((item) => item.status === 'active')
+    ?? items[0]
+  );
+}
+
 function scheduledJobDraftRequestsAutoDryRun(draft: AssistantScheduledJobDraft) {
   if (draft.auto_dry_run === true) {
     return true;
@@ -117,6 +148,7 @@ export default function ScheduledJobsPage() {
     skills,
   } = useScheduledJobWorkspaceData();
   const [productRepositories, setProductRepositories] = useState<ProductGitRepositoryOption[]>([]);
+  const [productRepositoriesProductId, setProductRepositoriesProductId] = useState<string | undefined>();
   const [productRepositoriesLoading, setProductRepositoriesLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<ScheduledJobRecord | undefined>();
@@ -359,6 +391,7 @@ export default function ScheduledJobsPage() {
     if (!modalOpen || selectedJobType !== 'code_repository_inspection' || !selectedProductId) {
       queueMicrotask(() => {
         setProductRepositories([]);
+        setProductRepositoriesProductId(undefined);
         setProductRepositoriesLoading(false);
       });
       return;
@@ -373,6 +406,7 @@ export default function ScheduledJobsPage() {
           return;
         }
         setProductRepositories(repositories);
+        setProductRepositoriesProductId(selectedProductId);
         const config = recordValue(form.getFieldValue('config_json')) ?? {};
         const currentRepositoryId = recordStringValue(config, 'repository_id');
         const currentBranch = recordStringValue(config, 'branch');
@@ -390,6 +424,7 @@ export default function ScheduledJobsPage() {
         if (!ignore) {
           message.error(error instanceof Error ? error.message : '代码仓库加载失败');
           setProductRepositories([]);
+          setProductRepositoriesProductId(undefined);
         }
       })
       .finally(() => {
@@ -410,6 +445,62 @@ export default function ScheduledJobsPage() {
     },
     [form, productRepositoryById],
   );
+
+  const ensureNativeCodeRepositoryDefaults = useCallback(async () => {
+    const values = form.getFieldsValue(true) as ScheduledJobFormValues;
+    const config = recordValue(values.config_json) ?? {};
+    if (!codeInspectionUsesNativeScan(values.job_type, config)) {
+      return;
+    }
+    const productId = recordStringValue(values, 'product_id');
+    if (!productId) {
+      return;
+    }
+    const selectedRepositoryIds = stringArrayFromUnknown(config.repository_ids);
+    const currentRepositoryId = recordStringValue(config, 'repository_id');
+    const currentBranch = recordStringValue(config, 'branch');
+    if ((currentRepositoryId || selectedRepositoryIds.length > 0) && currentBranch) {
+      return;
+    }
+
+    let repositories = productRepositoriesProductId === productId ? productRepositories : [];
+    if (repositories.length === 0) {
+      setProductRepositoriesLoading(true);
+      try {
+        repositories = await fetchProductGitRepositories(productId);
+        setProductRepositories(repositories);
+        setProductRepositoriesProductId(productId);
+      } catch (error) {
+        setProductRepositories([]);
+        setProductRepositoriesProductId(undefined);
+        message.error(error instanceof Error ? error.message : '代码仓库加载失败');
+        throw error;
+      } finally {
+        setProductRepositoriesLoading(false);
+      }
+    }
+
+    const preferredRepositoryId = currentRepositoryId || selectedRepositoryIds[0];
+    const repository =
+      repositories.find((item) => item.id === preferredRepositoryId)
+      ?? repositories[0];
+    if (!repository) {
+      form.setFields([
+        {
+          errors: ['请先在产品配置中维护代码仓库'],
+          name: ['config_json', 'repository_id'],
+        },
+      ]);
+      message.warning('请先在产品配置中维护代码仓库');
+      throw new Error('Missing product code repository');
+    }
+    if (!currentRepositoryId && selectedRepositoryIds.length === 0) {
+      form.setFieldValue(['config_json', 'repository_id'], repository.id);
+    }
+    if (!currentBranch && repository.defaultBranch) {
+      form.setFieldValue(['config_json', 'branch'], repository.defaultBranch);
+    }
+  }, [form, productRepositories, productRepositoriesProductId]);
 
   const testSelectedConnection = useCallback(async () => {
     if (!selectedPrimaryPluginConnectionId) {
@@ -578,6 +669,33 @@ export default function ScheduledJobsPage() {
     [pluginActions],
   );
 
+  const findModelGatewayForTemplate = useCallback(
+    (template: ScheduledJobTemplateRecord | undefined) => {
+      const selector = templateSelector(template, 'model_gateway_config');
+      return (
+        (selector.strategy === 'default_or_first_active'
+          ? modelGatewayConfigs.find((config) => config.status === 'active' && config.isDefault)
+          : undefined)
+        ?? findByTemplateSelector(modelGatewayConfigs, selector)
+        ?? modelGatewayConfigs.find((config) => config.status === 'active')
+        ?? modelGatewayConfigs[0]
+      );
+    },
+    [modelGatewayConfigs],
+  );
+
+  const findAgentForTemplate = useCallback(
+    (template: ScheduledJobTemplateRecord | undefined) =>
+      findByTemplateSelector(agents, templateSelector(template, 'agent')),
+    [agents],
+  );
+
+  const findSkillForTemplate = useCallback(
+    (template: ScheduledJobTemplateRecord | undefined) =>
+      findByTemplateSelector(skills, templateSelector(template, 'skill')),
+    [skills],
+  );
+
   const applyJobTemplate = useCallback(
     (templateCode?: string) => {
       const template = availableJobTemplates.find((item) => item.code === templateCode);
@@ -585,9 +703,10 @@ export default function ScheduledJobsPage() {
         return;
       }
       const productId = products[0]?.id;
-      const modelGatewayConfigId = modelGatewayConfigs[0]?.id;
-      const agentId = agents[0]?.id;
-      const skillIds = skills[0]?.id ? [skills[0].id] : [];
+      const modelGatewayConfigId = findModelGatewayForTemplate(template)?.id;
+      const agentId = findAgentForTemplate(template)?.id;
+      const selectedSkillId = findSkillForTemplate(template)?.id;
+      const skillIds = selectedSkillId ? [selectedSkillId] : [];
       const knowledgeDocumentIds = knowledgeDocuments[0]?.id ? [knowledgeDocuments[0].id] : [];
 
       const action = findActionForTemplate(template);
@@ -610,6 +729,7 @@ export default function ScheduledJobsPage() {
       const nativeCodeScan = codeInspectionUsesNativeScan(jobType, templateConfigJson);
       const executionMode = templatePayloadString(template, 'execution_mode') ?? 'deterministic';
       const aiRequired = requiresAiAssembly(jobType, executionMode, aiProcessingRequiredTypes);
+      const templateSkillIds = templatePayloadList(template, 'skill_ids');
       form.setFieldsValue({
         agent_id: aiRequired ? agentId : undefined,
         config_json: templateConfigJson,
@@ -632,7 +752,7 @@ export default function ScheduledJobsPage() {
         product_id: productId,
         result_actions: templatePayloadResultActions(template) ?? [],
         schedule_type: templatePayloadString(template, 'schedule_type') ?? 'manual',
-        skill_ids: templatePayloadList(template, 'skill_ids') ?? (aiRequired ? skillIds : []),
+        skill_ids: templateSkillIds?.length ? templateSkillIds : (aiRequired ? skillIds : []),
         source_system: templatePayloadString(template, 'source_system') ?? 'ai-brain',
         template: template.code,
       });
@@ -641,14 +761,15 @@ export default function ScheduledJobsPage() {
       agents,
       aiProcessingRequiredTypes,
       findActionForTemplate,
+      findAgentForTemplate,
       findConnectionForAction,
+      findModelGatewayForTemplate,
+      findSkillForTemplate,
       form,
       availableJobTemplates,
       knowledgeDocuments,
-      modelGatewayConfigs,
       pluginActionById,
       products,
-      skills,
     ],
   );
 
@@ -983,6 +1104,7 @@ export default function ScheduledJobsPage() {
   };
 
   const currentValidatedJobPayload = async (options: { validate?: boolean } = {}) => {
+    await ensureNativeCodeRepositoryDefaults();
     if (options.validate !== false) {
       await form.validateFields();
     }
@@ -1037,6 +1159,7 @@ export default function ScheduledJobsPage() {
     let requestPayload: Partial<ScheduledJobRecord>;
     let formValues: ScheduledJobFormValues;
     try {
+      await ensureNativeCodeRepositoryDefaults();
       await form.validateFields();
       formValues = form.getFieldsValue(true) as ScheduledJobFormValues;
       requestPayload = buildJobRequestPayload(formValues);
@@ -1135,12 +1258,20 @@ export default function ScheduledJobsPage() {
 
   const handleJobTypeChange = (value?: string) => {
     if (value === 'code_repository_inspection') {
+      const codeInspectionTemplate = availableJobTemplates.find(
+        (template) => template.code === 'code_repository_inspection',
+      );
+      const modelGatewayConfigId = findModelGatewayForTemplate(codeInspectionTemplate)?.id;
+      const agentId = findAgentForTemplate(codeInspectionTemplate)?.id;
+      const selectedSkillId = findSkillForTemplate(codeInspectionTemplate)?.id;
       form.setFieldsValue({
+        agent_id: agentId,
         config_json: {
           ...(recordValue(form.getFieldValue('config_json')) ?? {}),
           scan_mode: nativeCodeInspectionScanMode,
         },
-        execution_mode: 'deterministic',
+        execution_mode: 'ai_assisted',
+        model_gateway_config_id: modelGatewayConfigId,
         plugin_action_id: undefined,
         plugin_action_ids: [],
         plugin_connection_id: undefined,
@@ -1148,6 +1279,7 @@ export default function ScheduledJobsPage() {
         result_actions: form.getFieldValue('result_actions')?.length
           ? form.getFieldValue('result_actions')
           : cloneResultActions(defaultCodeInspectionActions),
+        skill_ids: selectedSkillId ? [selectedSkillId] : [],
       });
     } else if (value === 'online_log_ai_analysis' && !form.getFieldValue('result_actions')?.length) {
       form.setFieldValue('result_actions', [{ type: 'save_scheduled_job_result' }]);
@@ -1245,6 +1377,7 @@ export default function ScheduledJobsPage() {
         sampleReuseDraft={sampleReuseDraft}
         selectedJobTemplate={selectedJobTemplate}
         selectedJobType={selectedJobType}
+        selectedProductId={selectedProductId}
         selectedRepositoryDefaultBranch={selectedRepositoryDefaultBranch}
         severityThresholdSelectOptions={severityThresholdSelectOptions}
         skills={skills}

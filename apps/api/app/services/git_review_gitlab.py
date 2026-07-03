@@ -39,14 +39,33 @@ def gitlab_access_token(
 
 
 def gitlab_project_key(repository: dict[str, Any]) -> str:
-    project_key = repository.get("project_id") or repository.get("project_path")
+    project_key = (
+        repository.get("project_id")
+        or repository.get("project_path")
+        or gitlab_project_path_from_remote_url(repository.get("remote_url"))
+    )
     if not project_key:
         raise api_error(
             400,
             "GITLAB_CONFIG_INVALID",
-            "GitLab project_id or project_path is required",
+            "GitLab remote_url, project_id, or project_path is required",
         )
     return str(project_key)
+
+
+def gitlab_project_path_from_remote_url(remote_url: Any) -> str | None:
+    remote_url = str(remote_url or "").strip()
+    if not remote_url:
+        return None
+    if remote_url.startswith("git@") and ":" in remote_url:
+        candidate = remote_url.split(":", 1)[1]
+    else:
+        parsed = urlparse(remote_url)
+        candidate = parsed.path if parsed.scheme else remote_url
+    project_path = unquote(candidate).strip().strip("/")
+    if project_path.endswith(".git"):
+        project_path = project_path[:-4]
+    return project_path if "/" in project_path else None
 
 
 def gitlab_request_json(
@@ -170,7 +189,11 @@ def real_gitlab_preview(
     diff_refs = mr.get("diff_refs") if isinstance(mr.get("diff_refs"), dict) else {}
     base_sha = diff_refs.get("base_sha") or diff_refs.get("start_sha") or mr.get("sha")
     head_sha = diff_refs.get("head_sha") or mr.get("sha")
-    project_path = repository.get("project_path") or str(repository.get("project_id") or "")
+    project_path = (
+        repository.get("project_path")
+        or gitlab_project_path_from_remote_url(repository.get("remote_url"))
+        or str(repository.get("project_id") or "")
+    )
     return {
         "repository_id": repository["id"],
         "project_id": repository.get("project_id"),
