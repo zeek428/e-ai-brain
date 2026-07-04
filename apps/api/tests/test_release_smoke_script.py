@@ -605,6 +605,10 @@ def test_full_chain_regression_failed_json_report_keeps_suite_coverage_steps(
             "all-targeted",
             "--json-output",
             str(report_path),
+            "--username",
+            "qa-admin@example.com",
+            "--password",
+            "qa-secret",
         ],
     )
 
@@ -615,6 +619,42 @@ def test_full_chain_regression_failed_json_report_keeps_suite_coverage_steps(
     assert report["suite"] == "all-targeted"
     assert report["error"] == "boom"
     assert report["coverage"]["is_complete_chain"] is False
+    assert [step["name"] for step in report["steps"]] == ["suite", "coverage"]
+
+
+def test_full_chain_regression_missing_credentials_writes_failed_json_report(
+    monkeypatch,
+    tmp_path,
+):
+    module = _load_full_chain_regression_module()
+    report_path = tmp_path / "full-chain-missing-credentials.json"
+    for env_name in [
+        "FULL_CHAIN_USERNAME",
+        "FULL_CHAIN_PASSWORD",
+        "READINESS_USERNAME",
+        "READINESS_PASSWORD",
+    ]:
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "full_chain_regression.py",
+            "--suite",
+            "permission-visibility",
+            "--json-output",
+            str(report_path),
+        ],
+    )
+
+    assert module.main() == 1
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert report["status"] == "failed"
+    assert report["suite"] == "permission-visibility"
+    assert "Missing full-chain login credentials" in report["error"]
+    assert "FULL_CHAIN_USERNAME" in report["error"]
+    assert "FULL_CHAIN_PASSWORD" in report["error"]
     assert [step["name"] for step in report["steps"]] == ["suite", "coverage"]
 
 
@@ -644,6 +684,10 @@ def test_full_chain_regression_failed_json_report_catches_helper_assertion(
             "version-dashboard",
             "--json-output",
             str(report_path),
+            "--username",
+            "qa-admin@example.com",
+            "--password",
+            "qa-secret",
         ],
     )
 

@@ -17,6 +17,8 @@
 - 钉钉官方 MCP 插件增强授权配置向导、`tools/list` 动态能力发现、高风险动作治理、插件健康看板和 AI Brain 业务场景模板，并新增动态发现与钉钉观测 API。
 
 ### Changed
+- DB-first MemoryStore 巡检增强：`audit_memory_store_usage.py` 现在会识别 `setattr(current_store, ...)` 动态写入，并只允许显式白名单中的 PostgreSQL 可重建派生缓存作为 P2。
+- 全链路回归脚本在执行前校验真实登录凭据，缺少 `FULL_CHAIN_USERNAME/FULL_CHAIN_PASSWORD` 或 `READINESS_USERNAME/READINESS_PASSWORD` 时会给出清晰失败原因并继续写出 JSON 失败报告。
 - 加固运行时安全默认值：`.env.example` 不再默认启用 readiness 种子账号，非本地/非测试环境启动时会拒绝占位或过短 `APP_SECRET_KEY`，并拒绝 `ALLOW_SEEDED_USERS=true`。
 - 生产就绪门禁不再接受 `admin@example.com` / `admin123` 内置种子账号凭据，推荐使用 `READINESS_BEARER_TOKEN` 或真实管理员账号。
 - 拆分 Bug、产品、需求和任务中心页面的纯 helper 逻辑，页面容器重新回到架构行数预算内。

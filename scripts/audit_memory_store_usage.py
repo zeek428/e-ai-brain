@@ -12,6 +12,85 @@ from typing import Any
 DEFAULT_SCAN_PATH = "apps/api/app"
 HELPER_ATTRS = {"audit", "new_id", "snapshot"}
 MUTATING_METHODS = {"append", "clear", "extend", "pop", "popitem", "remove", "setdefault", "update"}
+UNKNOWN_DYNAMIC_ATTR = "<dynamic>"
+
+# Explicitly permitted compatibility cache refreshes. These entries must be
+# rebuildable from PostgreSQL and must not be treated as durable write sources.
+ALLOWED_DERIVED_CACHE_WRITES = {
+    (
+        "apps/api/app/services/ai_executor_runner_approvals.py",
+        "ai_executor_approval_requests",
+    ),
+}
+ALLOWED_DERIVED_CACHE_SETATTR_FUNCTIONS = {
+    (
+        "apps/api/app/services/ai_executor_runner_approvals.py",
+        "sync_ai_executor_approval_request_store",
+    ),
+    (
+        "apps/api/app/services/assistant_knowledge_references.py",
+        "refresh_knowledge_scope_collections_from_repository",
+    ),
+    ("apps/api/app/services/execution_traces.py", "_remember_trace_snapshot_refresh"),
+}
+ALLOWED_MEMORY_FALLBACK_SETATTR_FUNCTIONS = {
+    ("apps/api/app/services/ai_executor_runner_approvals.py", "_memory_dict"),
+    ("apps/api/app/services/ai_executor_runners.py", "_replace_collection"),
+    ("apps/api/app/services/assistant_action_drafts.py", "_memory_audit_events"),
+    ("apps/api/app/services/assistant_action_drafts.py", "_memory_collection"),
+    ("apps/api/app/services/assistant_chat.py", "_memory_collection"),
+    ("apps/api/app/services/assistant_chat.py", "_memory_list"),
+    ("apps/api/app/services/assistant_history.py", "_memory_collection"),
+    ("apps/api/app/services/assistant_references.py", "_memory_collection"),
+    ("apps/api/app/services/assistant_references.py", "_memory_list"),
+    ("apps/api/app/services/assistant_request_context.py", "_memory_collection"),
+    ("apps/api/app/services/assistant_request_context.py", "_memory_list"),
+    ("apps/api/app/services/assistant_role_quick_tasks.py", "_memory_collection"),
+    ("apps/api/app/services/assistant_role_quick_tasks.py", "_memory_list"),
+    ("apps/api/app/services/bugs.py", "_memory_collection"),
+    ("apps/api/app/services/bugs.py", "_memory_list"),
+    ("apps/api/app/services/code_inspections.py", "_memory_collection"),
+    ("apps/api/app/services/code_inspections.py", "_memory_list"),
+    ("apps/api/app/services/devops_metrics.py", "_memory_dict"),
+    ("apps/api/app/services/git_review_snapshots.py", "_memory_collection"),
+    ("apps/api/app/services/git_review_snapshots.py", "_memory_list"),
+    ("apps/api/app/services/iteration_planning.py", "_memory_collection"),
+    ("apps/api/app/services/iteration_planning.py", "_memory_list"),
+    ("apps/api/app/services/knowledge_management.py", "_memory_collection"),
+    ("apps/api/app/services/lifecycle_risks.py", "_memory_collection"),
+    ("apps/api/app/services/mock_writeback.py", "_memory_dict"),
+    ("apps/api/app/services/mock_writeback.py", "_memory_list"),
+    ("apps/api/app/services/model_gateway_config_context.py", "_memory_dict"),
+    ("apps/api/app/services/model_gateway_config_context.py", "_memory_list"),
+    ("apps/api/app/services/model_gateway_logging.py", "_memory_list"),
+    ("apps/api/app/services/operational_records.py", "_memory_list"),
+    ("apps/api/app/services/operational_records.py", "read_memory_dict"),
+    ("apps/api/app/services/plugin_store_helpers.py", "_memory_dict"),
+    ("apps/api/app/services/plugin_store_helpers.py", "replace_collection"),
+    ("apps/api/app/services/product_config_context.py", "_memory_dict"),
+    ("apps/api/app/services/product_config_context.py", "_memory_list"),
+    ("apps/api/app/services/product_git_repository_listing.py", "_memory_dict"),
+    ("apps/api/app/services/product_listing.py", "_memory_dict"),
+    ("apps/api/app/services/product_module_listing.py", "_memory_dict"),
+    ("apps/api/app/services/product_version_listing.py", "_memory_dict"),
+    ("apps/api/app/services/rd_task_executor_policies.py", "_memory_dict"),
+    ("apps/api/app/services/related_system_listing.py", "_memory_dict"),
+    ("apps/api/app/services/requirement_listing.py", "_memory_dict"),
+    ("apps/api/app/services/requirements.py", "_memory_dict"),
+    ("apps/api/app/services/requirements.py", "_memory_list"),
+    ("apps/api/app/services/scheduled_job_store.py", "memory_dict"),
+    ("apps/api/app/services/scheduled_job_store.py", "replace_collection"),
+    ("apps/api/app/services/task_code_review_execution.py", "_memory_dict"),
+    ("apps/api/app/services/task_graph_runtime.py", "_memory_dict"),
+    ("apps/api/app/services/task_listing.py", "_memory_dict"),
+    ("apps/api/app/services/task_persistence_helpers.py", "_memory_list"),
+    ("apps/api/app/services/task_review_artifacts.py", "_memory_dict"),
+    ("apps/api/app/services/user_feedback.py", "_memory_dict"),
+    ("apps/api/app/services/user_insights.py", "_memory_dict"),
+    ("apps/api/app/services/user_insights.py", "_memory_list"),
+    ("apps/api/app/services/user_usage_metrics.py", "_memory_dict"),
+    ("apps/api/app/services/version_status.py", "_memory_dict"),
+}
 
 
 @dataclass(frozen=True)
@@ -19,6 +98,7 @@ class MemoryStoreUsage:
     attr: str
     column: int
     context: str
+    function: str | None
     kind: str
     line: int
     path: str
@@ -55,6 +135,12 @@ def _is_current_store_attr(node: ast.AST) -> bool:
 def _attribute_line(lines: list[str], node: ast.Attribute) -> str:
     if 1 <= node.lineno <= len(lines):
         return lines[node.lineno - 1].strip()
+    return ""
+
+
+def _source_line(lines: list[str], lineno: int) -> str:
+    if 1 <= lineno <= len(lines):
+        return lines[lineno - 1].strip()
     return ""
 
 
@@ -112,11 +198,87 @@ def _usage_kind(node: ast.Attribute, parents: dict[ast.AST, ast.AST]) -> str:
 
 
 def _risk_for(kind: str, attr: str) -> str:
+    if kind == "derived_cache_sync":
+        return "P2"
     if kind == "write" or attr == "audit":
         return "P0"
     if kind == "read":
         return "P1"
     return "P2"
+
+
+def _string_bindings(tree: ast.AST) -> dict[str, str]:
+    bindings: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not isinstance(node.value, ast.Constant) or not isinstance(node.value.value, str):
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    ambiguous.add(target.id)
+            continue
+        for target in targets:
+            if not isinstance(target, ast.Name):
+                continue
+            existing = bindings.get(target.id)
+            if existing is not None and existing != node.value.value:
+                ambiguous.add(target.id)
+            bindings[target.id] = node.value.value
+    for name in ambiguous:
+        bindings.pop(name, None)
+    return bindings
+
+
+def _setattr_current_store_attr(node: ast.AST, bindings: dict[str, str]) -> str | None:
+    if not isinstance(node, ast.Call):
+        return None
+    if not isinstance(node.func, ast.Name) or node.func.id != "setattr":
+        return None
+    if len(node.args) < 2:
+        return None
+    target = node.args[0]
+    if not isinstance(target, ast.Name) or target.id != "current_store":
+        return None
+    attr_arg = node.args[1]
+    if isinstance(attr_arg, ast.Constant) and isinstance(attr_arg.value, str):
+        return attr_arg.value
+    if isinstance(attr_arg, ast.Name):
+        return bindings.get(attr_arg.id, UNKNOWN_DYNAMIC_ATTR)
+    return UNKNOWN_DYNAMIC_ATTR
+
+
+def _enclosing_function_name(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str | None:
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current.name
+    return None
+
+
+def _classify_usage(
+    path: str,
+    kind: str,
+    attr: str,
+    function_name: str | None = None,
+) -> tuple[str, str]:
+    if kind == "write" and (
+        (path, attr) in ALLOWED_DERIVED_CACHE_WRITES
+        or (
+            function_name is not None
+            and (path, function_name) in ALLOWED_DERIVED_CACHE_SETATTR_FUNCTIONS
+        )
+    ):
+        kind = "derived_cache_sync"
+    elif (
+        kind == "write"
+        and function_name is not None
+        and (path, function_name) in ALLOWED_MEMORY_FALLBACK_SETATTR_FUNCTIONS
+    ):
+        kind = "helper"
+    return kind, _risk_for(kind, attr)
 
 
 def scan_memory_store_usage(
@@ -129,22 +291,43 @@ def scan_memory_store_usage(
         lines = source.splitlines()
         tree = ast.parse(source, filename=str(path))
         parents = _parents(tree)
+        string_bindings = _string_bindings(tree)
+        relative_path = str(path.relative_to(root))
         for node in ast.walk(tree):
-            if not _is_current_store_attr(node):
-                continue
-            assert isinstance(node, ast.Attribute)
-            kind = _usage_kind(node, parents)
-            findings.append(
-                MemoryStoreUsage(
-                    attr=node.attr,
-                    column=node.col_offset + 1,
-                    context=_attribute_line(lines, node),
-                    kind=kind,
-                    line=node.lineno,
-                    path=str(path.relative_to(root)),
-                    risk=_risk_for(kind, node.attr),
+            setattr_attr = _setattr_current_store_attr(node, string_bindings)
+            if setattr_attr is not None:
+                function_name = _enclosing_function_name(node, parents)
+                kind, risk = _classify_usage(relative_path, "write", setattr_attr, function_name)
+                findings.append(
+                    MemoryStoreUsage(
+                        attr=setattr_attr,
+                        column=node.col_offset + 1,
+                        context=_source_line(lines, node.lineno),
+                        function=function_name,
+                        kind=kind,
+                        line=node.lineno,
+                        path=relative_path,
+                        risk=risk,
+                    )
                 )
-            )
+                continue
+            if _is_current_store_attr(node):
+                assert isinstance(node, ast.Attribute)
+                function_name = _enclosing_function_name(node, parents)
+                kind = _usage_kind(node, parents)
+                kind, risk = _classify_usage(relative_path, kind, node.attr, function_name)
+                findings.append(
+                    MemoryStoreUsage(
+                        attr=node.attr,
+                        column=node.col_offset + 1,
+                        context=_attribute_line(lines, node),
+                        function=function_name,
+                        kind=kind,
+                        line=node.lineno,
+                        path=relative_path,
+                        risk=risk,
+                    )
+                )
     return sorted(findings, key=lambda item: (item.risk, item.path, item.line, item.column))
 
 

@@ -49,7 +49,7 @@
 - 模型网关配置新增、编辑、删除由 repository 单记录写入或删除；MemoryStore 测试 fallback 的配置替换和模型调用日志追加必须通过模型网关配置集合/日志集合 helper 操作，不得直接赋值 `current_store.model_gateway_configs` 或 append `current_store.model_gateway_logs`。
 - 通用审计 helper 在轻量上下文 fallback 中必须通过审计事件列表 helper 写入，不得直接 append `current_store.audit_events`；repository 运行态的审计事件由业务写入 helper 或仓储事务显式携带提交。
 - 只读缓存允许用于看板等汇总视图，但必须可重建、权限过滤清晰，且不得作为写入事实源。
-- DB-first 收口专项审计使用 `python scripts/audit_memory_store_usage.py --format text --fail-on-p1` 扫描 `apps/api/app` 内 `current_store.*` 残留；报告按 `P0/write|helper`、`P1/read` 和 `P2/helper` 分级，生产路径 P0/P1 必须清零并由单测扫描当前仓库持续兜底，剩余 P2 仅允许 helper/test fallback、可重建只读缓存入口或 `MemoryStore` 自身测试辅助代码。
+- DB-first 收口专项审计使用 `python scripts/audit_memory_store_usage.py --format text --fail-on-p1` 扫描 `apps/api/app` 内 `current_store.*` 与 `setattr(current_store, ...)` 残留；报告按 `P0/write|helper`、`P1/read` 和 `P2/helper|derived_cache_sync` 分级，生产路径 P0/P1 必须清零并由单测扫描当前仓库持续兜底，剩余 P2 仅允许 helper/test fallback、显式白名单的可重建只读缓存入口或 `MemoryStore` 自身测试辅助代码。
 
 ## 验收映射
 

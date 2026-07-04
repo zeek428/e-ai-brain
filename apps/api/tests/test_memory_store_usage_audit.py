@@ -49,14 +49,43 @@ def demo(current_store):
     assert summary["by_risk"]["P2"] == 2
 
 
+def test_memory_store_usage_audit_detects_setattr_writes(tmp_path: Path):
+    module = _load_audit_module()
+    service_dir = tmp_path / "apps" / "api" / "app" / "services"
+    service_dir.mkdir(parents=True)
+    (service_dir / "demo.py").write_text(
+        """
+def demo(current_store):
+    collection_name = "products"
+    setattr(current_store, collection_name, {"product_001": {"id": "product_001"}})
+    setattr(current_store, get_collection_name(), {})
+""",
+        encoding="utf-8",
+    )
+
+    findings = module.scan_memory_store_usage(tmp_path)
+    indexed = {(item.attr, item.kind, item.risk) for item in findings}
+
+    assert ("products", "write", "P0") in indexed
+    assert (module.UNKNOWN_DYNAMIC_ATTR, "write", "P0") in indexed
+
+
 def test_memory_store_usage_audit_current_api_has_no_p0_or_p1_usage():
     module = _load_audit_module()
     repo_root = Path(__file__).resolve().parents[3]
 
     findings = module.scan_memory_store_usage(repo_root)
     blocking_findings = [item for item in findings if item.risk in {"P0", "P1"}]
+    derived_cache_findings = [
+        item
+        for item in findings
+        if item.attr == "ai_executor_approval_requests"
+        and item.kind == "derived_cache_sync"
+        and item.path == "apps/api/app/services/ai_executor_runner_approvals.py"
+    ]
 
     assert blocking_findings == []
+    assert derived_cache_findings
 
 
 def test_memory_store_usage_audit_fail_on_p1_blocks_p0_and_p1(tmp_path: Path):

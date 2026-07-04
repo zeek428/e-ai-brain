@@ -129,6 +129,21 @@ def write_json_report(path: str, report: dict[str, Any]) -> None:
     )
 
 
+def validate_login_credentials(username: str | None, password: str | None) -> tuple[str, str]:
+    missing: list[str] = []
+    if not username or not str(username).strip():
+        missing.append("--username or FULL_CHAIN_USERNAME/READINESS_USERNAME")
+    if not password or not str(password).strip():
+        missing.append("--password or FULL_CHAIN_PASSWORD/READINESS_PASSWORD")
+    if missing:
+        raise RegressionError(
+            "Missing full-chain login credentials: provide "
+            + " and ".join(missing)
+            + "."
+        )
+    return str(username).strip(), str(password)
+
+
 class ApiClient:
     def __init__(self, base_url: str, *, timeout: float = 60.0):
         self.base_url = base_url.rstrip("/")
@@ -1646,17 +1661,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    client = ApiClient(args.api_base_url, timeout=args.timeout)
     results: list[StepResult] = []
     started_at_iso = _utc_now_iso()
     started_at = time.perf_counter()
     try:
+        username, password = validate_login_credentials(args.username, args.password)
+        client = ApiClient(args.api_base_url, timeout=args.timeout)
         results = run_regression_suite(
             client,
             suite=args.suite,
             task_execution_mode=args.task_execution_mode,
-            username=args.username,
-            password=args.password,
+            username=username,
+            password=password,
         )
     except (RegressionError, AssertionError) as exc:
         finished_at_iso = _utc_now_iso()

@@ -39,7 +39,7 @@ MVP 只定义六个可分配系统角色。运行时角色目录以 `/api/auth/r
 ### Token 管理
 
 - `ACCESS_TOKEN_EXPIRE_SECONDS` 控制访问令牌有效期。
-- `APP_SECRET_KEY` 必须来自环境变量，不能提交真实值。
+- `APP_SECRET_KEY` 必须来自环境变量，不能提交真实值；非本地/非测试环境必须使用至少 32 位的非占位密钥。
 - Token 不写入日志，不出现在错误响应中。
 
 ## 密钥管理
@@ -48,7 +48,8 @@ MVP 只定义六个可分配系统角色。运行时角色目录以 `/api/auth/r
 
 | 变量 | 用途 | 要求 |
 |------|------|------|
-| APP_SECRET_KEY | 应用签名密钥 | 必填，真实值只放 `.env` 或密钥管理系统。 |
+| APP_SECRET_KEY | 应用签名密钥 | 必填，真实值只放 `.env` 或密钥管理系统；非本地/非测试环境必须至少 32 位且不能使用占位值。 |
+| ALLOW_SEEDED_USERS | 是否允许内置种子账号登录 | 仅允许受信任本地开发临时开启；非本地/非测试环境必须保持 `false`。 |
 | DATABASE_URL | PostgreSQL 连接 | 不提交真实密码。 |
 | REDIS_URL | Redis 连接 | 不提交真实密码。 |
 | MODEL_GATEWAY_API_KEY | 模型供应商密钥 | 不入库、不进日志。 |
@@ -158,7 +159,8 @@ MVP 只定义六个可分配系统角色。运行时角色目录以 `/api/auth/r
 ### 上线阶段
 
 - [ ] `.env` 未提交真实密钥。
-- [ ] `APP_SECRET_KEY`、模型 API Key 和 GitLab 只读凭据已配置。
+- [ ] `APP_SECRET_KEY` 已配置为至少 32 位非占位值，模型 API Key 和 GitLab 只读凭据已配置。
+- [ ] `ALLOW_SEEDED_USERS=false`，生产就绪门禁和全链路回归使用真实管理员 Token 或真实管理员账号。
 - [ ] `/health` 可用但不泄露敏感配置。
 - [ ] 数据库和 Redis 不对公网暴露。
 - [ ] code_review 任务验证不会向 GitLab 回写评论、审批状态、request changes、合并状态或分支。
