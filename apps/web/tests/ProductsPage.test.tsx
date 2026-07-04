@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import './proComponentsMock';
 
 import ProductsPage from '../src/pages/Products';
+import { saveCurrentUser } from '../src/services/aiBrain';
 
 afterEach(() => {
   Modal.destroyAll();
@@ -113,7 +114,115 @@ describe('ProductsPage', () => {
     expect(await screen.findByText('AI-BRAIN')).toBeInTheDocument();
   });
 
-  it('shows backend load failures without local product example rows', async () => {
+  it('renders product management as read-only for viewer users', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-viewer' });
+      if ((path === '/api/products' || path.startsWith('/api/products?')) && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'VIEWER-PRODUCT',
+                id: 'product_viewer',
+                module_count: 1,
+                name: '查看者可读产品',
+                owner_team: 'AI Platform',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions' || path.startsWith('/api/product-versions?')) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/products/product_viewer/versions' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'v1', id: 'version_viewer', name: '只读版本', product_id: 'product_viewer', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_viewer/modules' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'module', id: 'module_viewer', name: '只读模块', product_id: 'product_viewer', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/system/related-systems?product_id=product_viewer' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'crm', id: 'related_viewer', name: '只读系统', product_id: 'product_viewer', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_viewer/git-repositories' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                credential_ref_configured: true,
+                git_provider: 'gitlab',
+                id: 'repo_viewer',
+                name: '只读仓库',
+                project_path: 'platform/viewer',
+                remote_url: 'https://gitlab.example.com/platform/viewer.git',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path} ${method}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-viewer');
+    saveCurrentUser({
+      display_name: '查看者',
+      id: 'user_viewer',
+      permissions: ['product.read'],
+      roles: ['viewer'],
+      username: 'viewer@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ProductsPage />);
+
+    expect(await screen.findByText('查看者可读产品')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '新增产品' })).not.toBeInTheDocument();
+    const productRow = screen.getByText('查看者可读产品').closest('tr');
+    expect(productRow).not.toBeNull();
+    expect(within(productRow as HTMLElement).getByRole('button', { name: '配置' })).toBeInTheDocument();
+    expect(within(productRow as HTMLElement).queryByRole('button', { name: /编辑/ })).not.toBeInTheDocument();
+    expect(within(productRow as HTMLElement).queryByRole('button', { name: /删除/ })).not.toBeInTheDocument();
+
+    fireEvent.click(within(productRow as HTMLElement).getByRole('button', { name: '配置' }));
+    const dialog = await screen.findByRole('dialog', { name: '产品配置：查看者可读产品' });
+    expect(within(dialog).getByText('只读版本')).toBeInTheDocument();
+    expect(within(dialog).getByText('只读模块')).toBeInTheDocument();
+    expect(within(dialog).getByText('只读仓库')).toBeInTheDocument();
+    expect(within(dialog).getByText('只读系统')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: '新增版本' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: '新增模块' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: '新增 Git 资源' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: '新增相关系统' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: /编辑/ })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: /删除/ })).not.toBeInTheDocument();
+  });
+
+  it('shows authorization refresh notice for stale role-denied product loads', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       return new Response(
@@ -136,9 +245,9 @@ describe('ProductsPage', () => {
     render(<ProductsPage />);
 
     expect(screen.queryByText('AI-BRAIN')).not.toBeInTheDocument();
-    expect(await screen.findByText(/接口异常，未加载到数据/)).toBeInTheDocument();
-    expect(screen.getByText(/FORBIDDEN/)).toBeInTheDocument();
-    expect(screen.getByText(/trace_denied/)).toBeInTheDocument();
+    expect(await screen.findByText('权限已更新，正在返回可访问页面')).toBeInTheDocument();
+    expect(screen.queryByText(/FORBIDDEN/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/trace_denied/)).not.toBeInTheDocument();
   });
 
   it('shows related record counts when product deletion is blocked', async () => {

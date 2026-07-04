@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -9,6 +11,62 @@ def auth_headers(username: str = "admin@example.com", password: str = "admin123"
     response = client.post("/api/auth/login", json={"username": username, "password": password})
     token = response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_viewer_can_read_product_management_without_write_permission():
+    app.state.store.reset()
+    headers = auth_headers()
+    unique = uuid4().hex[:8]
+    product = client.post(
+        "/api/products",
+        json={"code": f"viewer-read-{unique}", "name": "Viewer Read Product"},
+        headers=headers,
+    ).json()["data"]
+    viewer_username = f"viewer-product-{unique}@example.com"
+    viewer_password = "viewer123"
+    viewer_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Viewer Product Read",
+            "password": viewer_password,
+            "roles": ["viewer"],
+            "username": viewer_username,
+        },
+        headers=headers,
+    ).json()["data"]
+    viewer_headers = auth_headers(viewer_username, viewer_password)
+    try:
+        me = client.get("/api/auth/me", headers=viewer_headers).json()["data"]
+        assert "product.read" in me["permissions"]
+        assert "product.manage" not in me["permissions"]
+        menu_codes = {
+            child["code"]
+            for item in me["menu_tree"]
+            for child in item.get("children", [])
+        }
+        assert "product.products" in menu_codes
+
+        product_list = client.get("/api/products", headers=viewer_headers)
+        assert product_list.status_code == 200
+        assert product["id"] in [item["id"] for item in product_list.json()["data"]["items"]]
+        product_detail = client.get(f"/api/products/{product['id']}", headers=viewer_headers)
+        assert product_detail.status_code == 200
+        assert product_detail.json()["data"]["id"] == product["id"]
+
+        denied_create = client.post(
+            "/api/products",
+            json={"code": f"viewer-write-{unique}", "name": "Denied"},
+            headers=viewer_headers,
+        )
+        assert denied_create.status_code == 403
+        denied_update = client.patch(
+            f"/api/products/{product['id']}",
+            json={"name": "Viewer Should Not Update"},
+            headers=viewer_headers,
+        )
+        assert denied_update.status_code == 403
+    finally:
+        client.delete(f"/api/users/{viewer_user['id']}", headers=headers)
 
 
 def test_product_config_supports_list_patch_and_active_filters():

@@ -15,6 +15,7 @@ import type {
 } from '../../data/management';
 import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
+  AUTH_STATE_EVENT,
   ApiRequestError,
   createManagementProduct,
   createProductGitRepository,
@@ -32,6 +33,8 @@ import {
   fetchProductModules,
   fetchProductRelatedSystems,
   fetchProductVersions,
+  getStoredCurrentUser,
+  type CurrentUserResponse,
   updateManagementProduct,
   updateProductGitRepository,
   updateProductModule,
@@ -141,6 +144,20 @@ function formatProductDeleteError(error: unknown) {
   return formatMutationError(error);
 }
 
+function canManageProductResources(user: CurrentUserResponse | undefined) {
+  if (!user) {
+    return true;
+  }
+  const roles = new Set(user.roles ?? []);
+  const permissions = new Set(user.permissions ?? []);
+  return (
+    roles.has('admin') ||
+    roles.has('product_owner') ||
+    permissions.has('system.admin') ||
+    permissions.has('product.manage')
+  );
+}
+
 function normalizeFilterText(value: unknown) {
   return String(value ?? '').trim() || undefined;
 }
@@ -172,6 +189,11 @@ export default function ProductsPage() {
   const [repositoryRows, setRepositoryRows] = useState<ProductGitRepositoryRecord[]>([]);
   const [resourceEditor, setResourceEditor] = useState<ProductResourceEditor>();
   const [handledProductConfigDeepLink, setHandledProductConfigDeepLink] = useState<string>();
+  const [currentUser, setCurrentUser] = useState<CurrentUserResponse | undefined>(() => getStoredCurrentUser());
+  const canManageProducts = useMemo(
+    () => canManageProductResources(currentUser),
+    [currentUser],
+  );
   const productConfigDeepLink = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const productId = params.get('product_id')?.trim();
@@ -232,6 +254,15 @@ export default function ProductsPage() {
   }, [listQuery]);
 
   useEffect(() => {
+    const syncCurrentUser = () => setCurrentUser(getStoredCurrentUser());
+    syncCurrentUser();
+    globalThis.addEventListener?.(AUTH_STATE_EVENT, syncCurrentUser);
+    return () => {
+      globalThis.removeEventListener?.(AUTH_STATE_EVENT, syncCurrentUser);
+    };
+  }, []);
+
+  useEffect(() => {
     let isCurrent = true;
     setListState((current) => ({ ...current, status: 'loading' }));
     fetchManagementProductList(buildProductListQuery(listQuery))
@@ -283,6 +314,10 @@ export default function ProductsPage() {
   }, []);
 
   const openCreateModal = () => {
+    if (!canManageProducts) {
+      message.warning('当前账号只有产品只读权限，不能新增产品');
+      return;
+    }
     setEditingProduct(null);
     form.resetFields();
     form.setFieldsValue({
@@ -294,6 +329,10 @@ export default function ProductsPage() {
   };
 
   const openEditModal = useCallback((row: ProductRecord) => {
+    if (!canManageProducts) {
+      message.warning('当前账号只有产品只读权限，不能编辑产品');
+      return;
+    }
     setEditingProduct(row);
     form.setFieldsValue({
       code: row.code,
@@ -302,7 +341,7 @@ export default function ProductsPage() {
       status: row.status,
     });
     setIsModalOpen(true);
-  }, [form]);
+  }, [canManageProducts, form]);
 
   const openConfigModal = useCallback((row: ProductRecord) => {
     setConfigProduct(row);
@@ -318,6 +357,10 @@ export default function ProductsPage() {
   }, []);
 
   const handleSave = async () => {
+    if (!canManageProducts) {
+      message.warning('当前账号只有产品只读权限，不能保存产品');
+      return;
+    }
     const values = await form.validateFields();
     const payload = {
       code: trimText(values.code),
@@ -354,6 +397,10 @@ export default function ProductsPage() {
   };
 
   const handleDelete = useCallback(async (row: ProductRecord) => {
+    if (!canManageProducts) {
+      message.warning('当前账号只有产品只读权限，不能删除产品');
+      return;
+    }
     try {
       await deleteManagementProduct(row.id);
       message.success('产品已删除');
@@ -361,9 +408,13 @@ export default function ProductsPage() {
     } catch (deleteError) {
       message.error(formatProductDeleteError(deleteError));
     }
-  }, [reload]);
+  }, [canManageProducts, reload]);
 
   const openResourceEditor = useCallback((kind: ResourceKind, record?: ProductResourceEditor['record']) => {
+    if (!canManageProducts) {
+      message.warning('当前账号只有产品只读权限，不能维护产品配置');
+      return;
+    }
     resourceForm.resetFields();
     if (kind === 'version') {
       const version = record as ProductVersionRecord | undefined;
@@ -413,7 +464,7 @@ export default function ProductsPage() {
       status: repository?.status ?? 'active',
     });
     setResourceEditor({ kind, record: repository, submitting: false });
-  }, [resourceForm]);
+  }, [canManageProducts, resourceForm]);
 
   useEffect(() => {
     if (!productConfigDeepLink || handledProductConfigDeepLink === productConfigDeepLink.key) {
@@ -475,6 +526,10 @@ export default function ProductsPage() {
   }, [configProduct, loadProductResources, reload]);
 
   const handleSaveResource = async () => {
+    if (!canManageProducts) {
+      message.warning('当前账号只有产品只读权限，不能保存产品配置');
+      return;
+    }
     if (!configProduct || !resourceEditor) {
       return;
     }
@@ -566,6 +621,10 @@ export default function ProductsPage() {
   };
 
   const handleDeleteResource = useCallback(async (kind: ResourceKind, id: string) => {
+    if (!canManageProducts) {
+      message.warning('当前账号只有产品只读权限，不能删除产品配置');
+      return;
+    }
     try {
       if (kind === 'version') {
         await deleteProductVersion(id);
@@ -584,7 +643,7 @@ export default function ProductsPage() {
     } catch (deleteError) {
       message.error(formatMutationError(deleteError));
     }
-  }, [reloadConfigAfterMutation]);
+  }, [canManageProducts, reloadConfigAfterMutation]);
 
   const versionColumns = useMemo<ProColumns<ProductVersionRecord>[]>(
     () => [
@@ -599,26 +658,30 @@ export default function ProductsPage() {
           return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
         },
       },
-      {
-        key: 'actions',
-        search: false,
-        title: '操作',
-        valueType: 'option',
-        render: (_, row) => (
-          <Space size={4}>
-            <Button icon={<EditOutlined />} onClick={() => openResourceEditor('version', row)} type="link">
-              编辑
-            </Button>
-            <Popconfirm okText="删除" onConfirm={() => handleDeleteResource('version', row.id)} title={`删除版本 ${row.code}？`}>
-              <Button danger icon={<DeleteOutlined />} type="link">
-                删除
-              </Button>
-            </Popconfirm>
-          </Space>
-        ),
-      },
+      ...(canManageProducts
+        ? [
+            {
+              key: 'actions',
+              search: false,
+              title: '操作',
+              valueType: 'option' as const,
+              render: (_: unknown, row: ProductVersionRecord) => (
+                <Space size={4}>
+                  <Button icon={<EditOutlined />} onClick={() => openResourceEditor('version', row)} type="link">
+                    编辑
+                  </Button>
+                  <Popconfirm okText="删除" onConfirm={() => handleDeleteResource('version', row.id)} title={`删除版本 ${row.code}？`}>
+                    <Button danger icon={<DeleteOutlined />} type="link">
+                      删除
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]
+        : []),
     ],
-    [handleDeleteResource, openResourceEditor],
+    [canManageProducts, handleDeleteResource, openResourceEditor],
   );
 
   const moduleColumns = useMemo<ProColumns<ProductModuleRecord>[]>(
@@ -635,26 +698,30 @@ export default function ProductsPage() {
           return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
         },
       },
-      {
-        key: 'actions',
-        search: false,
-        title: '操作',
-        valueType: 'option',
-        render: (_, row) => (
-          <Space size={4}>
-            <Button icon={<EditOutlined />} onClick={() => openResourceEditor('module', row)} type="link">
-              编辑
-            </Button>
-            <Popconfirm okText="删除" onConfirm={() => handleDeleteResource('module', row.id)} title={`删除模块 ${row.code}？`}>
-              <Button danger icon={<DeleteOutlined />} type="link">
-                删除
-              </Button>
-            </Popconfirm>
-          </Space>
-        ),
-      },
+      ...(canManageProducts
+        ? [
+            {
+              key: 'actions',
+              search: false,
+              title: '操作',
+              valueType: 'option' as const,
+              render: (_: unknown, row: ProductModuleRecord) => (
+                <Space size={4}>
+                  <Button icon={<EditOutlined />} onClick={() => openResourceEditor('module', row)} type="link">
+                    编辑
+                  </Button>
+                  <Popconfirm okText="删除" onConfirm={() => handleDeleteResource('module', row.id)} title={`删除模块 ${row.code}？`}>
+                    <Button danger icon={<DeleteOutlined />} type="link">
+                      删除
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]
+        : []),
     ],
-    [handleDeleteResource, openResourceEditor],
+    [canManageProducts, handleDeleteResource, openResourceEditor],
   );
 
   const repositoryColumns = useMemo<ProColumns<ProductGitRepositoryRecord>[]>(
@@ -673,26 +740,30 @@ export default function ProductsPage() {
           return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
         },
       },
-      {
-        key: 'actions',
-        search: false,
-        title: '操作',
-        valueType: 'option',
-        render: (_, row) => (
-          <Space size={4}>
-            <Button icon={<EditOutlined />} onClick={() => openResourceEditor('repository', row)} type="link">
-              编辑
-            </Button>
-            <Popconfirm okText="删除" onConfirm={() => handleDeleteResource('repository', row.id)} title={`删除 Git 资源 ${row.name}？`}>
-              <Button danger icon={<DeleteOutlined />} type="link">
-                删除
-              </Button>
-            </Popconfirm>
-          </Space>
-        ),
-      },
+      ...(canManageProducts
+        ? [
+            {
+              key: 'actions',
+              search: false,
+              title: '操作',
+              valueType: 'option' as const,
+              render: (_: unknown, row: ProductGitRepositoryRecord) => (
+                <Space size={4}>
+                  <Button icon={<EditOutlined />} onClick={() => openResourceEditor('repository', row)} type="link">
+                    编辑
+                  </Button>
+                  <Popconfirm okText="删除" onConfirm={() => handleDeleteResource('repository', row.id)} title={`删除 Git 资源 ${row.name}？`}>
+                    <Button danger icon={<DeleteOutlined />} type="link">
+                      删除
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]
+        : []),
     ],
-    [handleDeleteResource, openResourceEditor],
+    [canManageProducts, handleDeleteResource, openResourceEditor],
   );
 
   const relatedSystemColumns = useMemo<ProColumns<ProductRelatedSystemRecord>[]>(
@@ -709,34 +780,38 @@ export default function ProductsPage() {
           return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
         },
       },
-      {
-        key: 'actions',
-        search: false,
-        title: '操作',
-        valueType: 'option',
-        render: (_, row) => (
-          <Space size={4}>
-            <Button
-              icon={<EditOutlined />}
-              onClick={() => openResourceEditor('relatedSystem', row)}
-              type="link"
-            >
-              编辑
-            </Button>
-            <Popconfirm
-              okText="删除"
-              onConfirm={() => handleDeleteResource('relatedSystem', row.id)}
-              title={`删除相关系统 ${row.code}？`}
-            >
-              <Button danger icon={<DeleteOutlined />} type="link">
-                删除
-              </Button>
-            </Popconfirm>
-          </Space>
-        ),
-      },
+      ...(canManageProducts
+        ? [
+            {
+              key: 'actions',
+              search: false,
+              title: '操作',
+              valueType: 'option' as const,
+              render: (_: unknown, row: ProductRelatedSystemRecord) => (
+                <Space size={4}>
+                  <Button
+                    icon={<EditOutlined />}
+                    onClick={() => openResourceEditor('relatedSystem', row)}
+                    type="link"
+                  >
+                    编辑
+                  </Button>
+                  <Popconfirm
+                    okText="删除"
+                    onConfirm={() => handleDeleteResource('relatedSystem', row.id)}
+                    title={`删除相关系统 ${row.code}？`}
+                  >
+                    <Button danger icon={<DeleteOutlined />} type="link">
+                      删除
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]
+        : []),
     ],
-    [handleDeleteResource, openResourceEditor],
+    [canManageProducts, handleDeleteResource, openResourceEditor],
   );
 
   const columns = useMemo<ProColumns<ProductRecord>[]>(
@@ -791,23 +866,27 @@ export default function ProductsPage() {
             >
               配置
             </Button>
-            <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
-              编辑
-            </Button>
-            <Popconfirm
-              okText="删除"
-              onConfirm={() => handleDelete(row)}
-              title={`删除产品 ${row.code}？`}
-            >
-              <Button danger icon={<DeleteOutlined />} type="link">
-                删除
-              </Button>
-            </Popconfirm>
+            {canManageProducts ? (
+              <>
+                <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
+                  编辑
+                </Button>
+                <Popconfirm
+                  okText="删除"
+                  onConfirm={() => handleDelete(row)}
+                  title={`删除产品 ${row.code}？`}
+                >
+                  <Button danger icon={<DeleteOutlined />} type="link">
+                    删除
+                  </Button>
+                </Popconfirm>
+              </>
+            ) : null}
           </Space>
         ),
       },
     ],
-    [handleDelete, openConfigModal, openEditModal],
+    [canManageProducts, handleDelete, openConfigModal, openEditModal],
   );
 
   return (
@@ -833,9 +912,9 @@ export default function ProductsPage() {
         ]}
         loading={listState.status === 'loading'}
         notice={formatRemoteRowsError(listState.error)}
-        onPrimaryAction={openCreateModal}
+        onPrimaryAction={canManageProducts ? openCreateModal : undefined}
         onReload={() => void reload()}
-        primaryAction="新增产品"
+        primaryAction={canManageProducts ? '新增产品' : undefined}
         remote={{
           onChange: setListQuery,
           page: listState.page,
@@ -906,16 +985,20 @@ export default function ProductsPage() {
             pagination={false}
             rowKey="id"
             search={false}
-            toolBarRender={() => [
-              <Button
-                aria-label="新增版本"
-                icon={<PlusOutlined />}
-                key="add-version"
-                onClick={() => openResourceEditor('version')}
-              >
-                新增版本
-              </Button>,
-            ]}
+            toolBarRender={() =>
+              canManageProducts
+                ? [
+                    <Button
+                      aria-label="新增版本"
+                      icon={<PlusOutlined />}
+                      key="add-version"
+                      onClick={() => openResourceEditor('version')}
+                    >
+                      新增版本
+                    </Button>,
+                  ]
+                : []
+            }
           />
           <ProTable<ProductModuleRecord>
             columns={moduleColumns}
@@ -926,16 +1009,20 @@ export default function ProductsPage() {
             pagination={false}
             rowKey="id"
             search={false}
-            toolBarRender={() => [
-              <Button
-                aria-label="新增模块"
-                icon={<PlusOutlined />}
-                key="add-module"
-                onClick={() => openResourceEditor('module')}
-              >
-                新增模块
-              </Button>,
-            ]}
+            toolBarRender={() =>
+              canManageProducts
+                ? [
+                    <Button
+                      aria-label="新增模块"
+                      icon={<PlusOutlined />}
+                      key="add-module"
+                      onClick={() => openResourceEditor('module')}
+                    >
+                      新增模块
+                    </Button>,
+                  ]
+                : []
+            }
           />
           <ProTable<ProductGitRepositoryRecord>
             columns={repositoryColumns}
@@ -946,16 +1033,20 @@ export default function ProductsPage() {
             pagination={false}
             rowKey="id"
             search={false}
-            toolBarRender={() => [
-              <Button
-                aria-label="新增 Git 资源"
-                icon={<PlusOutlined />}
-                key="add-repository"
-                onClick={() => openResourceEditor('repository')}
-              >
-                新增 Git 资源
-              </Button>,
-            ]}
+            toolBarRender={() =>
+              canManageProducts
+                ? [
+                    <Button
+                      aria-label="新增 Git 资源"
+                      icon={<PlusOutlined />}
+                      key="add-repository"
+                      onClick={() => openResourceEditor('repository')}
+                    >
+                      新增 Git 资源
+                    </Button>,
+                  ]
+                : []
+            }
           />
           <ProTable<ProductRelatedSystemRecord>
             columns={relatedSystemColumns}
@@ -966,16 +1057,20 @@ export default function ProductsPage() {
             pagination={false}
             rowKey="id"
             search={false}
-            toolBarRender={() => [
-              <Button
-                aria-label="新增相关系统"
-                icon={<PlusOutlined />}
-                key="add-related-system"
-                onClick={() => openResourceEditor('relatedSystem')}
-              >
-                新增相关系统
-              </Button>,
-            ]}
+            toolBarRender={() =>
+              canManageProducts
+                ? [
+                    <Button
+                      aria-label="新增相关系统"
+                      icon={<PlusOutlined />}
+                      key="add-related-system"
+                      onClick={() => openResourceEditor('relatedSystem')}
+                    >
+                      新增相关系统
+                    </Button>,
+                  ]
+                : []
+            }
           />
         </Space>
       </Modal>

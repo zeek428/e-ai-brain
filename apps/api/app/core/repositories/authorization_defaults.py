@@ -453,6 +453,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
         "delivery.requirements",
         "delivery.bugs",
         "product.assets",
+        "product.products",
         "knowledge.center",
         "knowledge.search",
     },

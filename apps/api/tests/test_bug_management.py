@@ -1,4 +1,5 @@
 import base64
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -377,3 +378,66 @@ def test_bug_management_rejects_invalid_context_state_and_roles():
     )
     assert invalid_version.status_code == 404
     assert invalid_version.json()["detail"]["code"] == "NOT_FOUND"
+
+
+def test_viewer_can_read_bugs_but_cannot_mutate_bug_management():
+    headers = auth_headers()
+    context = create_product_context(headers)
+    bug = create_bug(headers, context, source="manual_test")
+    unique = uuid4().hex[:8]
+    viewer_username = f"viewer-bug-{unique}@example.com"
+    viewer_password = "viewer123"
+    viewer_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Viewer Bug Read",
+            "password": viewer_password,
+            "roles": ["viewer"],
+            "username": viewer_username,
+        },
+        headers=headers,
+    ).json()["data"]
+    viewer_headers = auth_headers(viewer_username, viewer_password)
+    try:
+        readable = client.get(
+            f"/api/bugs?product_id={context['product_id']}",
+            headers=viewer_headers,
+        )
+        assert readable.status_code == 200
+        assert bug["id"] in [item["id"] for item in readable.json()["data"]["items"]]
+
+        denied_create = client.post(
+            "/api/bugs",
+            json={
+                "description": "viewer 不应登记 Bug。",
+                "product_id": context["product_id"],
+                "severity": "major",
+                "source": "manual_test",
+                "title": "越权登记",
+            },
+            headers=viewer_headers,
+        )
+        assert denied_create.status_code == 403
+        assert denied_create.json()["detail"]["code"] == "FORBIDDEN"
+
+        denied_patch = client.patch(
+            f"/api/bugs/{bug['id']}",
+            json={"title": "Viewer Should Not Update"},
+            headers=viewer_headers,
+        )
+        assert denied_patch.status_code == 403
+        assert denied_patch.json()["detail"]["code"] == "FORBIDDEN"
+
+        denied_batch = client.post(
+            "/api/bugs/batch-update",
+            json={"bug_ids": [bug["id"]], "status": "triaged"},
+            headers=viewer_headers,
+        )
+        assert denied_batch.status_code == 403
+        assert denied_batch.json()["detail"]["code"] == "FORBIDDEN"
+
+        denied_delete = client.delete(f"/api/bugs/{bug['id']}", headers=viewer_headers)
+        assert denied_delete.status_code == 403
+        assert denied_delete.json()["detail"]["code"] == "FORBIDDEN"
+    finally:
+        client.delete(f"/api/users/{viewer_user['id']}", headers=headers)

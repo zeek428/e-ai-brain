@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import './proComponentsMock';
 
 import BugsPage from '../src/pages/Bugs';
+import { saveCurrentUser } from '../src/services/aiBrain';
 
 const originalCreateObjectURL = URL.createObjectURL;
 const originalRevokeObjectURL = URL.revokeObjectURL;
@@ -333,6 +334,100 @@ describe('bug management page', () => {
     expect(
       within(resultDialog).getByText('BUG_STATE_INVALID · Bug cannot move to requested status'),
     ).toBeInTheDocument();
+  });
+
+  it('renders bug management as read-only for viewer users', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-viewer' });
+      if (path.startsWith('/api/products?') && path.includes('active_only=true')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'API-PRODUCT',
+                id: 'product_api',
+                name: '接口产品',
+                owner_team: 'API Team',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions' || path.startsWith('/api/product-versions?')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'v1',
+                id: 'version_api',
+                name: 'v1 MVP',
+                product_id: 'product_api',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if ((path === '/api/bugs' || path.startsWith('/api/bugs?')) && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                assignee: 'qa@example.com',
+                created_at: '2026-06-04T08:00:00+00:00',
+                description: 'viewer 只能查看 Bug。',
+                id: 'bug_viewer',
+                module_code: 'checkout',
+                product_id: 'product_api',
+                reproduce_steps: [],
+                severity: 'major',
+                source: 'manual_test',
+                status: 'open',
+                title: '只读 Bug',
+                version_id: 'version_api',
+                version_name: 'v1 MVP',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path} ${method}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-viewer');
+    saveCurrentUser({
+      display_name: '查看者',
+      id: 'user_viewer',
+      permissions: ['bug.read'],
+      roles: ['viewer'],
+      username: 'viewer@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<BugsPage />);
+
+    expect(await screen.findByText('只读 Bug')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /登记 Bug/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /批量处理/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: '选择 bug_viewer' })).not.toBeInTheDocument();
+
+    const bugRow = screen.getByText('只读 Bug').closest('tr');
+    expect(bugRow).not.toBeNull();
+    expect(within(bugRow as HTMLElement).getByRole('link', { name: '全链路' })).toBeInTheDocument();
+    expect(within(bugRow as HTMLElement).queryByRole('button', { name: /编辑/ })).not.toBeInTheDocument();
+    expect(within(bugRow as HTMLElement).queryByRole('button', { name: /删除/ })).not.toBeInTheDocument();
   });
 
   it('allows selecting a testing iteration version when registering a bug', async () => {

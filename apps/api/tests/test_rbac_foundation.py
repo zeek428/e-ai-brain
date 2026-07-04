@@ -15,6 +15,7 @@ VIEWER_TASK_BOUNDARY_MIGRATION = Path("app/db/migrations/083_viewer_menu_task_bo
 VIEWER_ASSISTANT_BOUNDARY_MIGRATION = Path(
     "app/db/migrations/084_viewer_assistant_menu_boundary.sql"
 )
+VIEWER_PRODUCT_READ_MENU_MIGRATION = Path("app/db/migrations/085_viewer_product_read_menu.sql")
 
 
 def _role_permissions(role_code: str) -> set[str]:
@@ -465,6 +466,19 @@ def test_viewer_assistant_menu_boundary_migration_removes_assistant_grants():
     assert "menu_code IN ('assistant.chat', 'assistant.drafts')" in sql
     assert "assistant.chat" not in COMPATIBILITY_ROLE_MENU_GRANTS["viewer"]
     assert "assistant.drafts" not in COMPATIBILITY_ROLE_MENU_GRANTS["viewer"]
+
+
+def test_viewer_product_read_menu_migration_adds_product_management_read_access():
+    sql = VIEWER_PRODUCT_READ_MENU_MIGRATION.read_text(encoding="utf-8")
+
+    assert "INSERT INTO role_permissions" in sql
+    assert "permissions.code = 'product.read'" in sql
+    assert "roles.code = 'viewer'" in sql
+    assert "INSERT INTO role_menu_grants" in sql
+    assert "menu_resources.code IN ('product.assets', 'product.products')" in sql
+    assert "product.read" in _role_permissions("viewer")
+    assert "product.manage" not in _role_permissions("viewer")
+    assert "product.products" in COMPATIBILITY_ROLE_MENU_GRANTS["viewer"]
 
 
 def test_postgres_authorization_queries_filter_user_role_effective_window():

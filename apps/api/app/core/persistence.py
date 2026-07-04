@@ -288,6 +288,10 @@ class PostgresSnapshotRepository:
                 )
                 self._apply_additive_migration(
                     cursor,
+                    "085_viewer_product_read_menu.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
                     "086_dingtalk_oauth_ephemeral_states.sql",
                 )
 

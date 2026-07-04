@@ -20,6 +20,7 @@ import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../c
 import type { BugRecord } from '../../data/management';
 import { formatRemoteRowsError, normalizeRemoteRowsError, useRemoteRows, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
+  AUTH_STATE_EVENT,
   batchUpdateManagementBugs,
   createManagementBug,
   deleteManagementBug,
@@ -28,8 +29,10 @@ import {
   fetchManagementBugImagePreview,
   fetchManagementBugs,
   fetchManagementBugList,
+  getStoredCurrentUser,
   type BugImageEvidenceItem,
   type BugImageUploadSource,
+  type CurrentUserResponse,
   type BugListQuery,
   type RemoteListPerformance,
   updateManagementBug,
@@ -266,6 +269,21 @@ function buildBugListQuery(query: ManagementListQuery): BugListQuery {
   };
 }
 
+function canManageBugResources(user: CurrentUserResponse | undefined) {
+  if (!user) {
+    return true;
+  }
+  const roles = new Set(user.roles ?? []);
+  const permissions = new Set(user.permissions ?? []);
+  return (
+    roles.has('admin') ||
+    roles.has('product_owner') ||
+    roles.has('rd_owner') ||
+    permissions.has('system.admin') ||
+    permissions.has('bug.manage')
+  );
+}
+
 export default function BugsPage() {
   const [form] = Form.useForm<BugFormValues>();
   const [batchForm] = Form.useForm<BugBatchFormValues>();
@@ -313,7 +331,12 @@ export default function BugsPage() {
     reload: reloadDuplicateBugs,
     rows: duplicateBugs,
   } = useRemoteRows(fetchManagementBugs);
+  const [currentUser, setCurrentUser] = useState<CurrentUserResponse | undefined>(() => getStoredCurrentUser());
   const selectedProductId = Form.useWatch('product_id', form);
+  const canManageBugs = useMemo(
+    () => canManageBugResources(currentUser),
+    [currentUser],
+  );
   const selectedBugIds = useMemo(
     () => selectedRowKeys.map((key) => String(key)),
     [selectedRowKeys],
@@ -396,6 +419,56 @@ export default function BugsPage() {
   }, []);
 
   useEffect(() => {
+    const syncCurrentUser = () => setCurrentUser(getStoredCurrentUser());
+    syncCurrentUser();
+    globalThis.addEventListener?.(AUTH_STATE_EVENT, syncCurrentUser);
+    return () => {
+      globalThis.removeEventListener?.(AUTH_STATE_EVENT, syncCurrentUser);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (canManageBugs) {
+      return;
+    }
+    setSelectedRowKeys([]);
+    setIsBatchModalOpen(false);
+    setIsModalOpen(false);
+    closeBugImagePreview();
+  }, [canManageBugs, closeBugImagePreview]);
+
+  const ensureCanManageBugs = useCallback((actionLabel: string) => {
+    if (canManageBugs) {
+      return true;
+    }
+    message.warning(`当前账号只有 Bug 只读权限，不能${actionLabel}`);
+    return false;
+  }, [canManageBugs]);
+
+  const openCreateModal = () => {
+    if (!ensureCanManageBugs('登记 Bug')) {
+      return;
+    }
+    setEditingBug(null);
+    setBugImages([]);
+    closeBugImagePreview();
+    form.resetFields();
+    const firstProduct =
+      productContexts.find((product) => product.code?.toUpperCase() === 'AI-BRAIN') ??
+      productContexts[0];
+    form.setFieldsValue({
+      duplicate_of_bug_id: undefined,
+      evidence_json: '',
+      product_id: firstProduct?.id,
+      reproduce_steps_text: '',
+      severity: 'major',
+      source: 'manual_test',
+      version_id: firstProduct?.versions[0]?.id,
+    });
+    setIsModalOpen(true);
+  };
+
+  useEffect(() => {
     let isCurrent = true;
     setListState((current) => ({ ...current, status: 'loading' }));
     fetchManagementBugList(buildBugListQuery(listQuery))
@@ -426,26 +499,6 @@ export default function BugsPage() {
     };
   }, [listQuery]);
 
-  const openCreateModal = () => {
-    setEditingBug(null);
-    setBugImages([]);
-    closeBugImagePreview();
-    form.resetFields();
-    const firstProduct =
-      productContexts.find((product) => product.code?.toUpperCase() === 'AI-BRAIN') ??
-      productContexts[0];
-    form.setFieldsValue({
-      duplicate_of_bug_id: undefined,
-      evidence_json: '',
-      product_id: firstProduct?.id,
-      reproduce_steps_text: '',
-      severity: 'major',
-      source: 'manual_test',
-      version_id: firstProduct?.versions[0]?.id,
-    });
-    setIsModalOpen(true);
-  };
-
   const handleProductChange = useCallback((productId: string) => {
     const product = productContexts.find((item) => item.id === productId);
     form.setFieldsValue({
@@ -461,6 +514,9 @@ export default function BugsPage() {
   }, [editingBug, form]);
 
   const openEditModal = useCallback((row: BugRecord) => {
+    if (!ensureCanManageBugs('编辑 Bug')) {
+      return;
+    }
     setEditingBug(row);
     setBugImages(evidenceImages(row.evidence));
     closeBugImagePreview();
@@ -476,9 +532,12 @@ export default function BugsPage() {
       title: row.title,
     });
     setIsModalOpen(true);
-  }, [closeBugImagePreview, form]);
+  }, [closeBugImagePreview, ensureCanManageBugs, form]);
 
   const handleSave = async () => {
+    if (!ensureCanManageBugs(editingBug ? '编辑 Bug' : '登记 Bug')) {
+      return;
+    }
     try {
       const values = await form.validateFields();
       const duplicateOfBugId = trimText(values.duplicate_of_bug_id);
@@ -550,6 +609,9 @@ export default function BugsPage() {
     files: File[],
     source: BugImageUploadSource,
   ) => {
+    if (!ensureCanManageBugs('上传 Bug 图片')) {
+      return;
+    }
     const imageFiles = files.filter((file) => bugImageMimeTypes.has(file.type));
     if (imageFiles.length === 0) {
       message.warning('请选择 PNG、JPEG、GIF 或 WebP 图片');
@@ -573,7 +635,7 @@ export default function BugsPage() {
     } finally {
       setIsImageUploading(false);
     }
-  }, []);
+  }, [ensureCanManageBugs]);
 
   const handleImageFileChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files ?? []);
@@ -591,10 +653,16 @@ export default function BugsPage() {
   }, [uploadBugImageFiles]);
 
   const removeBugImage = useCallback((objectKey: string) => {
+    if (!ensureCanManageBugs('移除 Bug 图片')) {
+      return;
+    }
     setBugImages((current) => current.filter((image) => image.object_key !== objectKey));
-  }, []);
+  }, [ensureCanManageBugs]);
 
   const handleDelete = useCallback(async (row: BugRecord) => {
+    if (!ensureCanManageBugs('删除 Bug')) {
+      return;
+    }
     try {
       await deleteManagementBug(row.id);
       message.success('Bug 已删除');
@@ -603,18 +671,24 @@ export default function BugsPage() {
     } catch (deleteError) {
       message.error(formatMutationError(deleteError));
     }
-  }, [reload, reloadDuplicateBugs]);
+  }, [ensureCanManageBugs, reload, reloadDuplicateBugs]);
 
   const openBatchModal = useCallback(() => {
+    if (!ensureCanManageBugs('批量处理 Bug')) {
+      return;
+    }
     if (selectedBugIds.length === 0) {
       message.warning('请选择需要批量处理的 Bug');
       return;
     }
     batchForm.resetFields();
     setIsBatchModalOpen(true);
-  }, [batchForm, selectedBugIds.length]);
+  }, [batchForm, ensureCanManageBugs, selectedBugIds.length]);
 
   const handleBatchUpdate = useCallback(async () => {
+    if (!ensureCanManageBugs('批量处理 Bug')) {
+      return;
+    }
     try {
       const values = await batchForm.validateFields();
       const payload = {
@@ -650,10 +724,10 @@ export default function BugsPage() {
     } finally {
       setIsBatchSaving(false);
     }
-  }, [batchForm, reload, reloadDuplicateBugs, selectedBugIds]);
+  }, [batchForm, ensureCanManageBugs, reload, reloadDuplicateBugs, selectedBugIds]);
 
   const toolbarActions = useMemo(
-    () => [
+    () => canManageBugs ? [
       <Button
         disabled={selectedRowKeys.length === 0}
         icon={<CheckSquareOutlined />}
@@ -662,8 +736,8 @@ export default function BugsPage() {
       >
         批量处理
       </Button>,
-    ],
-    [openBatchModal, selectedRowKeys.length],
+    ] : [],
+    [canManageBugs, openBatchModal, selectedRowKeys.length],
   );
 
   const columns = useMemo<ProColumns<BugRecord>[]>(
@@ -734,19 +808,23 @@ export default function BugsPage() {
             <Button href={fullChainSubjectHref('bug', row.id)} type="link">
               全链路
             </Button>
-            <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
-              编辑
-            </Button>
-            <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除 Bug ${row.id}？`}>
-              <Button danger icon={<DeleteOutlined />} type="link">
-                删除
-              </Button>
-            </Popconfirm>
+            {canManageBugs ? (
+              <>
+                <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
+                  编辑
+                </Button>
+                <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除 Bug ${row.id}？`}>
+                  <Button danger icon={<DeleteOutlined />} type="link">
+                    删除
+                  </Button>
+                </Popconfirm>
+              </>
+            ) : null}
           </Space>
         ),
       },
     ],
-    [handleDelete, openEditModal],
+    [canManageBugs, handleDelete, openEditModal],
   );
 
   return (
@@ -789,9 +867,9 @@ export default function BugsPage() {
         ]}
         loading={listState.status === 'loading'}
         notice={formatRemoteRowsError(listState.error ?? productContextError ?? duplicateBugsError)}
-        onPrimaryAction={openCreateModal}
+        onPrimaryAction={canManageBugs ? openCreateModal : undefined}
         onReload={() => void reload()}
-        primaryAction="登记 Bug"
+        primaryAction={canManageBugs ? '登记 Bug' : undefined}
         remote={{
           onChange: setListQuery,
           page: listState.page,
@@ -800,10 +878,12 @@ export default function BugsPage() {
           total: listState.total,
         }}
         rowKey="id"
-        rowSelection={{
-          onChange: setSelectedRowKeys,
-          selectedRowKeys,
-        }}
+        rowSelection={canManageBugs
+          ? {
+              onChange: setSelectedRowKeys,
+              selectedRowKeys,
+            }
+          : undefined}
         tableTitle="Bug 列表"
         title="Bug 管理"
         toolbarActions={toolbarActions}

@@ -28,6 +28,8 @@
 - 修复通过局域网 IP 访问本机开发前端时登录失败：前端会按当前访问主机选择局域网 API 地址，本地/开发后端 CORS 默认允许私网前端源预检请求。
 - 修复 viewer 角色菜单与接口权限不一致：不再展示空的“任务中心”父菜单和研发任务写操作入口，历史 RBAC 迁移会移除 viewer 的 `task.read` 与任务菜单授权。
 - 修复 viewer 角色误显示 AI 助手草案入口：历史 RBAC 迁移会移除 viewer 的 `assistant.chat` 与 `assistant.chat`/`assistant.drafts` 菜单授权，避免点击草案任务台后返回角色拒绝。
+- viewer 角色新增产品管理只读入口：默认授予 `product.read` 与 `product.products` 菜单，仅展示产品、版本、模块、Git 资源和相关系统列表，前端隐藏新增、编辑和删除操作。
+- 修复 viewer 在 Bug 管理页面仍显示写操作：viewer 只展示 Bug 列表与全链路入口，隐藏登记、编辑、删除、批量处理和行选择，后端补充 viewer 写接口拒绝测试。
 
 ## 历史归档
 
