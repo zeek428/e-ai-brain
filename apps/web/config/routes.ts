@@ -1,5 +1,11 @@
 const routes = [
   {
+    path: '/login/dingtalk/callback',
+    component: './DingTalkLoginCallback',
+    hideInMenu: true,
+    layout: false,
+  },
+  {
     path: '/login',
     component: './Login',
     hideInMenu: true,

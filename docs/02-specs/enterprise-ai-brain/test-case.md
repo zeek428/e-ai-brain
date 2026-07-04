@@ -89,6 +89,20 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 
 ---
 
+### 钉钉登录 P0 验收
+
+以下用例适用于钉钉登录 P0 集成验收。钉钉 OAuth 只作为外部身份认证入口，登录成功后必须换发 AI Brain 自有 Bearer Token；业务权限、菜单、数据范围和高风险动作仍以 AI Brain 内部用户、RBAC 和审计策略为准。自动化回归见 `apps/api/tests/test_dingtalk_auth.py` 和 `apps/web/tests/AuthFlow.test.tsx`。
+
+| 编号 | 阶段 | 优先级 | 用例 | 预期 |
+|------|------|--------|------|------|
+| TC-AIBRAIN-AUTH-FUNC-020 | v1.2 | P0 | 登录页查询认证 provider 并展示钉钉入口 | `GET /api/auth/providers` 只返回是否启用、展示名、start URL 和 bind URL 等非敏感配置；未配置完整时前端不展示“钉钉登录”，配置完整时展示入口并跳转到后端 start URL；响应不得包含 app secret、access token、refresh token、URL Key 或其它外部凭据。 |
+| TC-AIBRAIN-AUTH-BOUND-021 | v1.2 | P0 | 发起钉钉登录并校验 redirect、state 和企业白名单 | `GET /api/auth/dingtalk/start` 必须生成短期 state 并清洗 `redirect`，拒绝外部跳转、双斜杠和登录页循环；callback 必须一次性消费 state，缺失 code、用户拒绝授权、上游失败和 corp 不在白名单时返回结构化错误，不签发 AI Brain Token。 |
+| TC-AIBRAIN-AUTH-FUNC-022 | v1.2 | P0 | 已绑定或允许自动开户的钉钉身份完成登录 | callback 根据 `provider=dingtalk`、`provider_subject` 查找 active 绑定；已绑定用户可获得一次性 ticket，前端通过 `POST /api/auth/dingtalk/exchange-ticket` 换取与本地登录一致的 AI Brain Token 和用户信息；ticket 必须短期有效、一次性使用，并记录 `dingtalk_login.succeeded` 审计。 |
+| TC-AIBRAIN-AUTH-FUNC-023 | v1.2 | P0 | 用户自助绑定、解绑钉钉身份 | 已登录用户可发起 bind start/callback，把当前钉钉身份绑定到自己的 AI Brain 账号；同一钉钉身份不能绑定多个用户，同一用户同一 provider 只能保留一条 active 绑定；解绑只影响当前用户自己的 active 绑定，并记录 `dingtalk_account.bound` / `dingtalk_account.unbound` 审计。 |
+| TC-AIBRAIN-AUTH-ERR-024 | v1.2 | P0 | 钉钉账号待审批、停用、冲突和失败页处理 | 待审批账号返回 `DINGTALK_ACCOUNT_PENDING_APPROVAL`，停用用户返回 `DINGTALK_ACCOUNT_INACTIVE`，绑定冲突返回 `EXTERNAL_IDENTITY_CONFLICT`，无绑定且未开启自动开户返回 `DINGTALK_ACCOUNT_NOT_BOUND`；前端回调页展示可读错误并允许返回登录页，不泄露 code、ticket、token 或密钥。 |
+
+---
+
 ### AI 助手工作台升级验收
 
 以下用例适用于 AI 助手从问答页升级为可引用、可配置、可调度工作台的实现与回归。已落地 P0 自动化测试应拆入 `test_assistant_chat.py`、`test_assistant_chat_persistence.py`、`test_scheduled_ai_jobs.py`、`test_plugin_management.py` 和 `AssistantPage.test.tsx`，并补充真实浏览器页面 smoke。

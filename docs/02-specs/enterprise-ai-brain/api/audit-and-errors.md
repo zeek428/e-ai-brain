@@ -56,6 +56,11 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 接口/动作 | HTTP 状态 | 错误码 | 可重试 | 审计要求 | 前端处理建议 |
 |-----------|-----------|--------|--------|----------|--------------|
+| GET `/api/auth/dingtalk/start` | 503 | DINGTALK_LOGIN_NOT_CONFIGURED | 否 | 记录可选，不记录 redirect 明文以外的敏感字段。 | 隐藏或禁用钉钉登录入口，提示管理员配置认证提供方。 |
+| GET `/api/auth/dingtalk/callback` | 302 回前端错误页 | DINGTALK_STATE_INVALID / DINGTALK_AUTH_DENIED / DINGTALK_CODE_MISSING / DINGTALK_UPSTREAM_ERROR / DINGTALK_PROFILE_INCOMPLETE | 视错误而定 | 成功记录 `dingtalk_login.succeeded`；失败可按安全策略记录摘要，不保存 auth code、access token 或 refresh token。 | 回到登录页或回调页展示错误，允许重新发起钉钉登录。 |
+| GET `/api/auth/dingtalk/callback` | 302 回前端错误页 | DINGTALK_CORP_NOT_ALLOWED / DINGTALK_ACCOUNT_NOT_BOUND / DINGTALK_ACCOUNT_PENDING_APPROVAL / DINGTALK_ACCOUNT_INACTIVE / EXTERNAL_IDENTITY_CONFLICT | 否 | 自动开户成功记录 `dingtalk_account.provisioned`；拒绝只保存 corp_id 等非敏感摘要。 | 展示企业不允许、未绑定、待审批、账号停用或绑定冲突的明确提示。 |
+| POST `/api/auth/dingtalk/exchange-ticket` | 401 | DINGTALK_TICKET_INVALID | 否 | 记录失败摘要可选；不得记录 ticket 明文。 | 回到登录页重新发起钉钉登录。 |
+| POST `/api/auth/dingtalk/bind/start` / bind callback | 302/409 | EXTERNAL_IDENTITY_CONFLICT | 否 | 绑定成功记录 `dingtalk_account.bound`，解绑成功记录 `dingtalk_account.unbound`；冲突不返回被占用用户敏感信息。 | 提示该钉钉账号已绑定其它 AI Brain 账号，联系管理员处理。 |
 | POST `/api/ai-tasks` 创建任务 | 400 | VALIDATION_ERROR / PRODUCT_VERSION_ARCHIVED | 否 | 写入校验失败审计可选，成功必须审计。 | 标出无效字段或提示选择有效产品版本。 |
 | POST `/api/ai-tasks/{task_id}/start` | 409 | TASK_STATE_INVALID | 否 | 记录启动失败和当前状态。 | 刷新任务详情并禁用不可用动作。 |
 | POST `/api/ai-tasks/{task_id}/start` | 400 | MODEL_GATEWAY_CONFIG_INVALID | 否 | 记录任务失败和配置缺陷，不记录密钥明文。 | 提示管理员补齐 active/default 模型网关密钥或配置。 |
@@ -103,6 +108,18 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | TOKEN_EXPIRED | Token 已过期。 |
 | FORBIDDEN | 角色权限不足。 |
 | NOT_FOUND | 资源不存在。 |
+| DINGTALK_LOGIN_NOT_CONFIGURED | 钉钉登录未启用或未配置完整。 |
+| DINGTALK_STATE_INVALID | 钉钉 OAuth state 缺失、过期、不匹配或已使用。 |
+| DINGTALK_AUTH_DENIED | 用户在钉钉授权页拒绝授权或钉钉返回授权错误。 |
+| DINGTALK_CODE_MISSING | 钉钉 OAuth callback 缺少授权码。 |
+| DINGTALK_UPSTREAM_ERROR | 钉钉 token 或用户信息接口调用失败。 |
+| DINGTALK_PROFILE_INCOMPLETE | 钉钉用户信息缺少可绑定的外部主体标识。 |
+| DINGTALK_CORP_NOT_ALLOWED | 钉钉企业不在 AI Brain 允许登录的 corp 白名单中。 |
+| DINGTALK_ACCOUNT_NOT_BOUND | 钉钉身份未绑定 AI Brain 用户，且未启用自动开户。 |
+| DINGTALK_ACCOUNT_PENDING_APPROVAL | 钉钉身份登录申请等待管理员审批。 |
+| DINGTALK_ACCOUNT_INACTIVE | 钉钉身份绑定的 AI Brain 用户已停用。 |
+| EXTERNAL_IDENTITY_CONFLICT | 同一个外部身份已经绑定其它 AI Brain 用户。 |
+| DINGTALK_TICKET_INVALID | 一次性登录 ticket 缺失、过期、无效或已使用。 |
 | PRODUCT_VERSION_NOT_SCHEDULABLE | 目标迭代版本不是 `planning` 或 `active`，不能用于新需求排期。 |
 | PRODUCT_VERSION_STATUS_ADVANCE_REQUIRED | 迭代版本状态变更必须走状态推进接口，不能通过普通 PATCH 修改。 |
 | PRODUCT_VERSION_STATUS_BLOCKED | 迭代版本推进存在阻塞需求，必须处理阻塞项或在允许的阶段强制推进。 |

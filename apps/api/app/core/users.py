@@ -51,6 +51,12 @@ class MemoryUserRepository:
             return None
         return deepcopy(user)
 
+    def get_by_id(self, user_id: str) -> dict[str, Any] | None:
+        user = next((item for item in self.users.values() if item["id"] == user_id), None)
+        if user is None or user.get("status") != "active":
+            return None
+        return deepcopy(user)
+
     def list_users(self) -> list[dict[str, Any]]:
         return [self._public_user(user) for user in self.users.values()]
 
@@ -187,6 +193,30 @@ class PostgresUserRepository:
         return {
             "display_name": display_name,
             "id": user_id,
+            "password_hash": password_hash,
+            "roles": list(roles),
+            "status": status,
+            "username": email,
+        }
+
+    def get_by_id(self, user_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, email, display_name, roles, password_hash, status
+                    FROM users
+                    WHERE id = %s AND status = 'active'
+                    """,
+                    (user_id,),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        found_user_id, email, display_name, roles, password_hash, status = row
+        return {
+            "display_name": display_name,
+            "id": found_user_id,
             "password_hash": password_hash,
             "roles": list(roles),
             "status": status,

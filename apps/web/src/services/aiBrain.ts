@@ -30,7 +30,10 @@ export { ApiRequestError, apiRequest };
 export type { RemoteListPerformance, RemoteListQueryEcho };
 export {
   AUTH_STATE_EVENT,
+  buildDingTalkStartUrl,
   clearAccessToken,
+  exchangeDingTalkTicket,
+  fetchAuthProviders,
   fetchCurrentUser,
   getAccessToken,
   getStoredCurrentUser,
@@ -40,6 +43,8 @@ export {
   saveCurrentUser,
 } from './authClient';
 export type {
+  AuthProviderConfig,
+  AuthProvidersResponse,
   CurrentUserResponse,
   LoginResponse,
   MenuTreeNode,

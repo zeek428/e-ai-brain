@@ -274,6 +274,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "081_dingtalk_mcp_plugins.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "082_dingtalk_login_external_identities.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

@@ -18,6 +18,7 @@
 | [domains/README.md](domains/README.md) | 业务域规格索引 |
 | [api.md](api.md) | API 分册入口 |
 | [test-case.md](test-case.md) | 测试用例入口 |
+| [dingtalk-login-integration-design.md](dingtalk-login-integration-design.md) | 钉钉登录集成设计与后续演进 |
 | [history/spec-version-history.md](history/spec-version-history.md) | 技术规格版本历史 |
 
 ## 概述
@@ -383,6 +384,7 @@ requirements ──< ai_tasks
 | role_permissions | 角色权限授权 | `role_id + permission_code` 唯一，整体替换授权时写入审计。 |
 | role_menu_grants | 角色菜单授权 | `role_id + menu_code` 唯一，控制 `/api/auth/me.menu_tree` 和左侧导航可见性，不能替代后端接口权限校验。 |
 | users | 本地用户和角色 | email 唯一。 |
+| user_external_identities | 外部登录身份绑定 | 记录 `provider=dingtalk`、`provider_subject`、`union_id/open_id/corp_id`、`user_id` 和状态；`provider + provider_subject` 唯一，同一用户同一 provider 只能有一条 active 绑定；钉钉登录后仍以 AI Brain `users.id` 和 RBAC 权限作为业务授权边界。 |
 | brain_apps | 业务大脑配置 | `code` 唯一，v1 默认 `rd_brain`。 |
 | products | 产品配置 | `code` 唯一，提交需求必须选择启用产品。 |
 | product_versions | 产品迭代版本 | 同一产品内 `code` 唯一，在需求交付菜单集中维护；主状态为 `planning / active / testing / released`，`archived` 仅用于历史归档；仅 `planning / active` 可用于需求排期或新开发任务。 |
@@ -771,7 +773,7 @@ RBAC 策略矩阵为只读聚合能力，不新增生产写表；服务端基于
 
 `042_code_inspection_committer_dimension.sql` 为代码巡检报告增加 `committer_count` 和 `committer_summary`，为 finding 增加 `committer_name`、`committer_email`、`committer_username`，补充提交人索引，并把菜单/权限显示名称从“代码审查”收窄为“代码巡检”。
 
-`043_official_devops_plugins.sql` 为 `integration_plugins` 增加 `is_system` 字段，并种子化 `gitlab`、`github`、`email`、`ai_executor` 官方标准插件；`074_internal_data_source_plugin.sql` 将 `internal_read_model` 纳入插件协议、将 `internal_query` 纳入动作类型，并种子化 `internal_data_source` 官方内部数据源插件；`075_internal_data_source_detail_permission.sql` 种子化 `system.internal_data_source.detail` 权限并默认授予管理员，用于控制内部数据源 detail 模式中的受保护字段；`081_dingtalk_mcp_plugins.sql` 将 `mcp_streamable_http` 纳入插件协议、将 `url_key` 纳入连接认证类型，并种子化钉钉文档、知识库、钉盘、AI 表格、机器人消息和通讯录官方 MCP 标准插件。官方插件定义由系统维护，用户只能新增连接配置 endpoint、认证、Params/Headers、URL Key 或内部只读过滤条件，不能修改或删除插件定义。`ai_executor` 默认协议为 `runner_polling`，表示必须通过隔离 Runner 承接 Codex/Claude/Hermes/OpenClaw 等执行器，不能在 Web/API 进程中直接执行本机命令。
+`043_official_devops_plugins.sql` 为 `integration_plugins` 增加 `is_system` 字段，并种子化 `gitlab`、`github`、`email`、`ai_executor` 官方标准插件；`074_internal_data_source_plugin.sql` 将 `internal_read_model` 纳入插件协议、将 `internal_query` 纳入动作类型，并种子化 `internal_data_source` 官方内部数据源插件；`075_internal_data_source_detail_permission.sql` 种子化 `system.internal_data_source.detail` 权限并默认授予管理员，用于控制内部数据源 detail 模式中的受保护字段；`081_dingtalk_mcp_plugins.sql` 将 `mcp_streamable_http` 纳入插件协议、将 `url_key` 纳入连接认证类型，并种子化钉钉文档、知识库、钉盘、AI 表格、机器人消息和通讯录官方 MCP 标准插件；`082_dingtalk_login_external_identities.sql` 新增 `user_external_identities`，用于保存钉钉登录身份与 AI Brain 用户的绑定关系、企业 corp 元数据和 active/unbound 状态。官方插件定义由系统维护，用户只能新增连接配置 endpoint、认证、Params/Headers、URL Key 或内部只读过滤条件，不能修改或删除插件定义。`ai_executor` 默认协议为 `runner_polling`，表示必须通过隔离 Runner 承接 Codex/Claude/Hermes/OpenClaw 等执行器，不能在 Web/API 进程中直接执行本机命令。
 
 `049_ai_executor_runners.sql` 补齐 AI 执行器 Runner 运行时结构：`ai_executor_runners` 保存 Runner 名称、协议、endpoint、支持执行器类型、工作区白名单、Token hash、心跳超时、并发和状态；`ai_executor_tasks` 保存下发给 Runner 的指令、工作区、输入 payload、请求配置、执行结果、日志、状态、插件调用日志、定时作业和运行关联。该迁移同时放开插件协议枚举，允许 `runner_polling` 与 `runner_websocket`。Runner 通过心跳、认领和完成回写接口更新任务状态；完成回写必须同步更新插件调用日志、`scheduled_job_runs.result_summary.execution_nodes.runner_execution`、结果动作反馈、collector run 和作业最近运行状态。
 

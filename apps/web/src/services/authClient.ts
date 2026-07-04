@@ -1,5 +1,6 @@
 import { navigateTo } from '../utils/navigation';
 import {
+  API_BASE_URL,
   ApiRequestError,
   apiRequest,
   setUnauthorizedApiResponseHandler,
@@ -38,6 +39,19 @@ export type CurrentUserResponse = {
 export type LoginResponse = {
   access_token: string;
   user: CurrentUserResponse;
+};
+
+export type AuthProviderConfig = {
+  bind_start_url?: string | null;
+  configured?: boolean;
+  display_name: string;
+  enabled: boolean;
+  start_url?: string | null;
+};
+
+export type AuthProvidersResponse = {
+  dingtalk?: AuthProviderConfig;
+  local: AuthProviderConfig;
 };
 
 type AuthLocalCacheClearHandler = () => void;
@@ -136,9 +150,7 @@ export async function login(username: string, password: string): Promise<LoginRe
     body: { username, password },
     method: 'POST',
   });
-  saveAccessToken(loginResponse.access_token);
-  saveCurrentUser(loginResponse.user);
-  return loginResponse;
+  return persistLoginResponse(loginResponse);
 }
 
 export async function fetchCurrentUser(): Promise<CurrentUserResponse> {
@@ -146,6 +158,24 @@ export async function fetchCurrentUser(): Promise<CurrentUserResponse> {
   const user = await apiRequest<CurrentUserResponse>('/api/auth/me', { token });
   saveCurrentUser(user);
   return user;
+}
+
+export async function fetchAuthProviders(): Promise<AuthProvidersResponse> {
+  return apiRequest<AuthProvidersResponse>('/api/auth/providers');
+}
+
+export function buildDingTalkStartUrl(redirectPath: string) {
+  const params = new URLSearchParams();
+  params.set('redirect', redirectPath);
+  return `${API_BASE_URL}/api/auth/dingtalk/start?${params.toString()}`;
+}
+
+export async function exchangeDingTalkTicket(ticket: string): Promise<LoginResponse> {
+  const loginResponse = await apiRequest<LoginResponse>('/api/auth/dingtalk/exchange-ticket', {
+    body: { ticket },
+    method: 'POST',
+  });
+  return persistLoginResponse(loginResponse);
 }
 
 export async function logout(): Promise<void> {
@@ -162,4 +192,10 @@ export async function logout(): Promise<void> {
   } catch {
     // Local logout should still complete if the server token is already expired.
   }
+}
+
+function persistLoginResponse(loginResponse: LoginResponse) {
+  saveAccessToken(loginResponse.access_token);
+  saveCurrentUser(loginResponse.user);
+  return loginResponse;
 }

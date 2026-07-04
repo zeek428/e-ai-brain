@@ -1,4 +1,6 @@
-const configuredApiBaseUrl = process.env.UMI_APP_API_BASE_URL ?? '';
+const defaultApiBaseUrl =
+  process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8000' : '';
+const configuredApiBaseUrl = process.env.UMI_APP_API_BASE_URL ?? defaultApiBaseUrl;
 
 export const API_BASE_URL = configuredApiBaseUrl.endsWith('/')
   ? configuredApiBaseUrl.slice(0, -1)
@@ -123,13 +125,21 @@ export async function apiRequest<T>(
       status: response.status,
       traceId: payload?.detail?.trace_id,
     });
-    if (response.status === 401 && !path.startsWith('/api/auth/login')) {
+    if (response.status === 401 && shouldHandleUnauthorizedResponse(path)) {
       unauthorizedApiResponseHandler?.();
     }
     throw requestError;
   }
   const payload = (await response.json()) as ApiEnvelope<T>;
   return payload.data;
+}
+
+function shouldHandleUnauthorizedResponse(path: string) {
+  return !(
+    path.startsWith('/api/auth/login') ||
+    path.startsWith('/api/auth/dingtalk/exchange-ticket') ||
+    path.startsWith('/api/auth/providers')
+  );
 }
 
 export function appendQueryParam(

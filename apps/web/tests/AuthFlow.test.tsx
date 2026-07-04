@@ -8,9 +8,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import './proComponentsMock';
 
 import { getInitialState, layout } from '../src/app';
+import DingTalkLoginCallbackPage from '../src/pages/DingTalkLoginCallback';
 import LoginPage from '../src/pages/Login';
 import { handleLogout, redirectToLoginIfNeeded } from '../src/runtimeAuth';
-import { AUTH_STATE_EVENT, clearAccessToken, saveCurrentUser } from '../src/services/aiBrain';
+import {
+  AUTH_STATE_EVENT,
+  buildDingTalkStartUrl,
+  clearAccessToken,
+  saveCurrentUser,
+} from '../src/services/aiBrain';
 
 describe('AI Brain auth flow and routes', () => {
   afterEach(() => {
@@ -27,6 +33,8 @@ describe('AI Brain auth flow and routes', () => {
   it('registers the MVP workbench entries through Umi route config', () => {
     const routes = readFileSync(join(__dirname, '..', 'config', 'routes.ts'), 'utf8');
 
+    expect(routes).toContain("path: '/login/dingtalk/callback'");
+    expect(routes).toContain("component: './DingTalkLoginCallback'");
     expect(routes).toContain("path: '/login'");
     expect(routes).toContain("component: './Login'");
     expect(routes).toContain('layout: false');
@@ -90,6 +98,26 @@ describe('AI Brain auth flow and routes', () => {
   it('logs in with the development account and redirects to the requested page', async () => {
     window.history.pushState({}, '', '/login?redirect=%2Fdelivery%2Fbugs');
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/auth/providers') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              dingtalk: {
+                display_name: '钉钉登录',
+                enabled: false,
+              },
+              local: {
+                display_name: '账号密码登录',
+                enabled: true,
+              },
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
       if (input === '/api/auth/me') {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
         return new Response(
@@ -137,10 +165,102 @@ describe('AI Brain auth flow and routes', () => {
     render(<LoginPage />);
     fireEvent.click(screen.getByRole('button', { name: /登\s*录/ }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(window.localStorage.getItem('ai_brain_access_token')).toBe('token-admin');
     expect(window.localStorage.getItem('ai_brain_current_user')).toContain('menu_tree');
     expect(window.location.pathname).toBe('/delivery/bugs');
+  });
+
+  it('shows the DingTalk login option when the backend enables the provider', async () => {
+    window.history.pushState({}, '', '/login?redirect=%2Fdelivery%2Fbugs');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (input) => {
+        expect(input).toBe('/api/auth/providers');
+        return new Response(
+          JSON.stringify({
+            data: {
+              dingtalk: {
+                display_name: '钉钉登录',
+                enabled: true,
+                start_url: '/api/auth/dingtalk/start',
+              },
+              local: {
+                display_name: '账号密码登录',
+                enabled: true,
+              },
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }),
+    );
+
+    render(<LoginPage />);
+
+    expect(await screen.findByRole('button', { name: /钉钉登录/ })).toBeInTheDocument();
+    expect(buildDingTalkStartUrl('/delivery/bugs')).toBe(
+      '/api/auth/dingtalk/start?redirect=%2Fdelivery%2Fbugs',
+    );
+  });
+
+  it('exchanges a DingTalk callback ticket and redirects to the requested page', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/login/dingtalk/callback?ticket=ticket-001&redirect=%2Fdelivery%2Fbugs',
+    );
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/auth/dingtalk/exchange-ticket') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({ ticket: 'ticket-001' });
+        return new Response(
+          JSON.stringify({
+            data: {
+              access_token: 'token-dingtalk',
+              user: {
+                display_name: '钉钉张三',
+                id: 'user_dingtalk',
+                roles: ['viewer'],
+                username: 'zhangsan@example.com',
+              },
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      expect(input).toBe('/api/auth/me');
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-dingtalk' });
+      return new Response(
+        JSON.stringify({
+          data: {
+            display_name: '钉钉张三',
+            id: 'user_dingtalk',
+            menu_tree: [{ code: 'workspace.dashboard', name: '团队看板', path: '/welcome' }],
+            roles: ['viewer'],
+            username: 'zhangsan@example.com',
+          },
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DingTalkLoginCallbackPage />);
+
+    await waitFor(() => expect(window.location.pathname).toBe('/delivery/bugs'));
+    expect(window.localStorage.getItem('ai_brain_access_token')).toBe('token-dingtalk');
+    expect(window.localStorage.getItem('ai_brain_current_user')).toContain('menu_tree');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('hydrates the layout user from the authenticated current-user API', async () => {
@@ -459,6 +579,7 @@ describe('AI Brain auth flow and routes', () => {
   });
 
   it('redirects anonymous users to login and clears the session on logout', async () => {
+    expect(redirectToLoginIfNeeded('/login/dingtalk/callback', '?ticket=abc')).toBe(false);
     expect(redirectToLoginIfNeeded('/delivery/bugs', '?severity=critical')).toBe(true);
     expect(window.location.pathname).toBe('/login');
     expect(window.location.search).toBe('?redirect=%2Fdelivery%2Fbugs%3Fseverity%3Dcritical');

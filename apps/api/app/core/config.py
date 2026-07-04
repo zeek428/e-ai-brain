@@ -4,14 +4,14 @@ import os
 from functools import lru_cache
 
 
+def _env_bool(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).lower() in {"1", "true", "yes"}
+
+
 class Settings:
     def __init__(self) -> None:
         self.app_env = os.getenv("APP_ENV", "local")
-        self.allow_seeded_users = os.getenv("ALLOW_SEEDED_USERS", "").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        self.allow_seeded_users = _env_bool("ALLOW_SEEDED_USERS", "")
         self.app_secret_key = os.getenv("APP_SECRET_KEY", "change-me-in-local-env")
         self.access_token_expire_seconds = int(os.getenv("ACCESS_TOKEN_EXPIRE_SECONDS", "28800"))
         self.database_url = os.getenv(
@@ -32,22 +32,14 @@ class Settings:
         self.object_storage_endpoint = os.getenv("OBJECT_STORAGE_ENDPOINT", "")
         self.object_storage_access_key = os.getenv("OBJECT_STORAGE_ACCESS_KEY", "")
         self.object_storage_secret_key = os.getenv("OBJECT_STORAGE_SECRET_KEY", "")
-        self.object_storage_secure = os.getenv("OBJECT_STORAGE_SECURE", "false").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        self.object_storage_secure = _env_bool("OBJECT_STORAGE_SECURE")
         default_import_worker_enabled = (
             "false" if self.app_env.lower() in {"test", "testing", "pytest"} else "true"
         )
-        self.knowledge_import_worker_enabled = os.getenv(
+        self.knowledge_import_worker_enabled = _env_bool(
             "KNOWLEDGE_IMPORT_WORKER_ENABLED",
             default_import_worker_enabled,
-        ).lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        )
         self.knowledge_import_worker_poll_interval_seconds = float(
             os.getenv("KNOWLEDGE_IMPORT_WORKER_POLL_INTERVAL_SECONDS", "1.0"),
         )
@@ -80,10 +72,75 @@ class Settings:
             "CORS_ORIGINS",
             "http://localhost:5173,http://127.0.0.1:5173",
         )
+        self.dingtalk_login_enabled = _env_bool("DINGTALK_LOGIN_ENABLED")
+        self.dingtalk_client_id = os.getenv("DINGTALK_CLIENT_ID", "")
+        self.dingtalk_client_secret = os.getenv("DINGTALK_CLIENT_SECRET", "")
+        self.dingtalk_client_secret_ref = os.getenv("DINGTALK_CLIENT_SECRET_REF", "")
+        self.dingtalk_redirect_uri = os.getenv("DINGTALK_REDIRECT_URI", "")
+        self.dingtalk_bind_redirect_uri = os.getenv("DINGTALK_BIND_REDIRECT_URI", "")
+        self.dingtalk_allowed_corp_ids = os.getenv("DINGTALK_ALLOWED_CORP_IDS", "")
+        self.dingtalk_auto_provision = _env_bool("DINGTALK_AUTO_PROVISION")
+        self.dingtalk_auto_provision_role = os.getenv(
+            "DINGTALK_AUTO_PROVISION_ROLE",
+            "viewer",
+        )
+        self.dingtalk_pending_approval = _env_bool("DINGTALK_PENDING_APPROVAL")
+        self.dingtalk_auth_url = os.getenv(
+            "DINGTALK_AUTH_URL",
+            "https://login.dingtalk.com/oauth2/auth",
+        )
+        self.dingtalk_token_url = os.getenv(
+            "DINGTALK_TOKEN_URL",
+            "https://api.dingtalk.com/v1.0/oauth2/userAccessToken",
+        )
+        self.dingtalk_userinfo_url = os.getenv(
+            "DINGTALK_USERINFO_URL",
+            "https://api.dingtalk.com/v1.0/contact/users/me",
+        )
+        self.dingtalk_frontend_callback_path = os.getenv(
+            "DINGTALK_FRONTEND_CALLBACK_PATH",
+            "/login/dingtalk/callback",
+        )
+        self.dingtalk_frontend_base_url = os.getenv("DINGTALK_FRONTEND_BASE_URL", "")
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def dingtalk_allowed_corp_id_set(self) -> set[str]:
+        return {
+            corp_id.strip()
+            for corp_id in self.dingtalk_allowed_corp_ids.split(",")
+            if corp_id.strip()
+        }
+
+    @property
+    def dingtalk_client_secret_value(self) -> str:
+        if self.dingtalk_client_secret:
+            return self.dingtalk_client_secret
+        if self.dingtalk_client_secret_ref.startswith("env:"):
+            return os.getenv(self.dingtalk_client_secret_ref.removeprefix("env:"), "")
+        return ""
+
+    @property
+    def dingtalk_login_configured(self) -> bool:
+        return all(
+            [
+                self.dingtalk_login_enabled,
+                self.dingtalk_client_id,
+                self.dingtalk_client_secret_value,
+                self.dingtalk_redirect_uri,
+            ]
+        )
+
+    @property
+    def dingtalk_bind_redirect_uri_value(self) -> str:
+        if self.dingtalk_bind_redirect_uri:
+            return self.dingtalk_bind_redirect_uri
+        if self.dingtalk_redirect_uri.endswith("/callback"):
+            return f"{self.dingtalk_redirect_uri.removesuffix('/callback')}/bind/callback"
+        return self.dingtalk_redirect_uri
 
     @property
     def model_gateway_status(self) -> str:

@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import secrets
 from time import perf_counter
+from time import time as now_timestamp
 from typing import Any
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, api_error
 from app.core.authorization import AuthorizationSnapshot, build_menu_tree
 from app.core.config import get_settings
+from app.core.dingtalk_oauth import DingTalkOAuthError, DingTalkProfile
 from app.core.listing import (
     ensure_list_enum,
     list_payload,
@@ -21,9 +26,13 @@ from app.core.roles import list_role_definitions
 from app.core.security import create_access_token, verify_password
 from app.core.trace import envelope, get_trace_id
 from app.core.users import SEEDED_USERS
+from app.services.operational_records import record_audit_event
 
 settings = get_settings()
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+DINGTALK_PROVIDER = "dingtalk"
+DINGTALK_STATE_TTL_SECONDS = 600
+DINGTALK_TICKET_TTL_SECONDS = 300
 ROLE_CATEGORIES = {
     "delivery",
     "knowledge",
@@ -41,6 +50,10 @@ ROLE_STATUSES = {"active", "inactive"}
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class DingTalkTicketExchangeRequest(BaseModel):
+    ticket: str
 
 
 def _public_user(user: dict[str, Any]) -> dict[str, Any]:
@@ -148,18 +161,7 @@ def _seeded_users_enabled() -> bool:
     return settings.allow_seeded_users or settings.app_env in {"local", "test", "development"}
 
 
-@router.post("/login")
-def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
-    if payload.username in SEEDED_USERS and not _seeded_users_enabled():
-        raise api_error(
-            403,
-            "DEFAULT_CREDENTIALS_DISABLED",
-            "Seeded local users are disabled outside local environments",
-        )
-    user = request.app.state.user_repository.get_by_username(payload.username)
-    if user is None or not verify_password(payload.password, user["password_hash"]):
-        raise api_error(401, "INVALID_CREDENTIALS", "Invalid username or password")
-
+def _issue_login_response(request: Request, user: dict[str, Any]) -> dict[str, Any]:
     access_token = create_access_token(
         {"sub": user["id"], "username": user["username"], "roles": user["roles"]},
         secret_key=settings.app_secret_key,
@@ -174,6 +176,542 @@ def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
         },
         get_trace_id(request),
     )
+
+
+def _safe_redirect_path(redirect: str | None, *, default: str = "/welcome") -> str:
+    if (
+        redirect
+        and redirect.startswith("/")
+        and not redirect.startswith("//")
+        and redirect != "/login"
+        and not redirect.startswith("/login/dingtalk/callback")
+    ):
+        return redirect
+    return default
+
+
+def _frontend_base_url() -> str:
+    if getattr(settings, "dingtalk_frontend_base_url", ""):
+        return settings.dingtalk_frontend_base_url.rstrip("/")
+    origins = settings.cors_origin_list
+    return origins[0].rstrip("/") if origins else ""
+
+
+def _frontend_location(path: str, params: dict[str, str | None]) -> str:
+    query = urlencode({key: value for key, value in params.items() if value})
+    location = f"{path}?{query}" if query else path
+    base_url = _frontend_base_url()
+    if base_url:
+        return f"{base_url}{location}"
+    return location
+
+
+def _frontend_callback_location(params: dict[str, str | None]) -> str:
+    return _frontend_location(settings.dingtalk_frontend_callback_path, params)
+
+
+def _dingtalk_configured() -> bool:
+    return settings.dingtalk_login_configured
+
+
+def _require_dingtalk_configured() -> None:
+    if _dingtalk_configured():
+        return
+    raise api_error(
+        503,
+        "DINGTALK_LOGIN_NOT_CONFIGURED",
+        "DingTalk login is not configured",
+    )
+
+
+def _cleanup_expired(mapping: dict[str, dict[str, Any]]) -> None:
+    current_time = now_timestamp()
+    for key, value in list(mapping.items()):
+        if float(value.get("expires_at", 0)) <= current_time:
+            mapping.pop(key, None)
+
+
+def _state_mapping(request: Request, attribute_name: str) -> dict[str, dict[str, Any]]:
+    mapping = getattr(request.app.state, attribute_name, None)
+    if not isinstance(mapping, dict):
+        mapping = {}
+        setattr(request.app.state, attribute_name, mapping)
+    _cleanup_expired(mapping)
+    return mapping
+
+
+def _create_oauth_state(
+    request: Request,
+    *,
+    attribute_name: str,
+    purpose: str,
+    redirect: str,
+    user_id: str | None = None,
+) -> str:
+    state = secrets.token_urlsafe(32)
+    _state_mapping(request, attribute_name)[state] = {
+        "expires_at": now_timestamp() + DINGTALK_STATE_TTL_SECONDS,
+        "purpose": purpose,
+        "redirect": redirect,
+        "user_id": user_id,
+    }
+    return state
+
+
+def _consume_oauth_state(
+    request: Request,
+    *,
+    attribute_name: str,
+    purpose: str,
+    state: str | None,
+) -> dict[str, Any]:
+    if not state:
+        raise api_error(400, "DINGTALK_STATE_INVALID", "DingTalk state is required")
+    payload = _state_mapping(request, attribute_name).pop(state, None)
+    if payload is None or payload.get("purpose") != purpose:
+        raise api_error(400, "DINGTALK_STATE_INVALID", "DingTalk state is invalid or expired")
+    return payload
+
+
+def _create_login_ticket(request: Request, *, redirect: str, user_id: str) -> str:
+    ticket = secrets.token_urlsafe(32)
+    _state_mapping(request, "dingtalk_login_tickets")[ticket] = {
+        "expires_at": now_timestamp() + DINGTALK_TICKET_TTL_SECONDS,
+        "redirect": redirect,
+        "user_id": user_id,
+    }
+    return ticket
+
+
+def _consume_login_ticket(request: Request, ticket: str) -> dict[str, Any]:
+    if not ticket:
+        raise api_error(400, "DINGTALK_TICKET_INVALID", "DingTalk login ticket is required")
+    payload = _state_mapping(request, "dingtalk_login_tickets").pop(ticket, None)
+    if payload is None:
+        raise api_error(401, "DINGTALK_TICKET_INVALID", "DingTalk login ticket is invalid")
+    return payload
+
+
+def _dingtalk_oauth_client(request: Request) -> Any:
+    client = getattr(request.app.state, "dingtalk_oauth_client", None)
+    if client is None:
+        raise api_error(503, "DINGTALK_LOGIN_NOT_CONFIGURED", "DingTalk login is not configured")
+    return client
+
+
+def _profile_from_exchange_result(result: Any) -> DingTalkProfile:
+    if isinstance(result, DingTalkProfile):
+        return result
+    if not isinstance(result, dict):
+        raise api_error(502, "DINGTALK_PROFILE_INCOMPLETE", "DingTalk profile is invalid")
+    union_id = _first_profile_text(result, "union_id", "unionId", "unionid")
+    open_id = _first_profile_text(result, "open_id", "openId", "openid")
+    subject = _first_profile_text(result, "subject") or union_id or open_id
+    if not subject:
+        raise api_error(502, "DINGTALK_PROFILE_INCOMPLETE", "DingTalk subject missing")
+    return DingTalkProfile(
+        avatar_url=_first_profile_text(result, "avatar_url", "avatarUrl", "avatar"),
+        corp_id=_first_profile_text(result, "corp_id", "corpId"),
+        display_name=_first_profile_text(result, "display_name", "displayName", "name", "nick"),
+        email=_first_profile_text(result, "email"),
+        open_id=open_id,
+        subject=subject,
+        union_id=union_id,
+    )
+
+
+def _first_profile_text(payload: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _ensure_dingtalk_corp_allowed(profile: DingTalkProfile) -> None:
+    allowed_corp_ids = settings.dingtalk_allowed_corp_id_set
+    if not allowed_corp_ids:
+        return
+    if profile.corp_id in allowed_corp_ids:
+        return
+    raise api_error(403, "DINGTALK_CORP_NOT_ALLOWED", "DingTalk corp is not allowed")
+
+
+def _record_auth_audit(
+    request: Request,
+    *,
+    actor_id: str,
+    event_type: str,
+    payload: dict[str, Any] | None = None,
+    subject_id: str,
+    subject_type: str,
+) -> None:
+    current_store = request.app.state.store
+    event = record_audit_event(
+        current_store,
+        actor_id=actor_id,
+        event_type=event_type,
+        payload=payload,
+        subject_id=subject_id,
+        subject_type=subject_type,
+    )
+    repository = getattr(current_store, "repository", None)
+    audit_repository = getattr(repository, "_audit_read_repository", None)
+    append_audit_event = getattr(audit_repository, "append_audit_event", None)
+    if callable(append_audit_event):
+        append_audit_event(event)
+
+
+def _dingtalk_generated_username(profile: DingTalkProfile) -> str:
+    if profile.email:
+        return profile.email
+    normalized_subject = "".join(
+        character if character.isalnum() else "_"
+        for character in profile.subject.lower()
+    )
+    return f"dingtalk_{normalized_subject}@dingtalk.local"
+
+
+def _dingtalk_display_name(profile: DingTalkProfile) -> str:
+    return profile.display_name or profile.email or f"DingTalk {profile.subject[-6:]}"
+
+
+def _resolve_dingtalk_user(request: Request, profile: DingTalkProfile) -> dict[str, Any]:
+    identity_repository = request.app.state.external_identity_repository
+    identity = identity_repository.find_active(DINGTALK_PROVIDER, profile.subject)
+    if identity is not None:
+        user = request.app.state.user_repository.get_by_id(identity["user_id"])
+        if user is None:
+            raise api_error(403, "DINGTALK_ACCOUNT_INACTIVE", "DingTalk account is inactive")
+        return user
+
+    if not settings.dingtalk_auto_provision:
+        raise api_error(
+            403,
+            "DINGTALK_ACCOUNT_NOT_BOUND",
+            "DingTalk account is not bound to an AI Brain user",
+        )
+
+    status = "pending_approval" if settings.dingtalk_pending_approval else "active"
+    try:
+        user = request.app.state.user_repository.create_user(
+            display_name=_dingtalk_display_name(profile),
+            password=secrets.token_urlsafe(32),
+            roles=[settings.dingtalk_auto_provision_role or "viewer"],
+            status=status,
+            username=_dingtalk_generated_username(profile),
+        )
+    except ValueError as exc:
+        raise api_error(
+            403,
+            "DINGTALK_ACCOUNT_NOT_BOUND",
+            "Existing AI Brain user must bind DingTalk explicitly",
+        ) from exc
+
+    try:
+        identity_repository.upsert_identity(
+            provider=DINGTALK_PROVIDER,
+            provider_subject=profile.subject,
+            profile=profile.identity_profile(),
+            user_id=user["id"],
+        )
+    except ValueError as exc:
+        raise api_error(
+            409,
+            "EXTERNAL_IDENTITY_CONFLICT",
+            "DingTalk account is already bound",
+        ) from exc
+    _record_auth_audit(
+        request,
+        actor_id="system",
+        event_type="dingtalk_account.provisioned",
+        payload={"corp_id": profile.corp_id, "status": status},
+        subject_id=user["id"],
+        subject_type="user",
+    )
+    if status != "active":
+        raise api_error(
+            403,
+            "DINGTALK_ACCOUNT_PENDING_APPROVAL",
+            "DingTalk account is pending approval",
+        )
+    return user
+
+
+def _callback_error_redirect(
+    code: str,
+    message: str,
+    *,
+    redirect: str = "/welcome",
+) -> RedirectResponse:
+    return RedirectResponse(
+        _frontend_callback_location(
+            {
+                "error": code,
+                "message": message,
+                "redirect": _safe_redirect_path(redirect),
+            }
+        ),
+        status_code=302,
+    )
+
+
+@router.post("/login")
+def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
+    if payload.username in SEEDED_USERS and not _seeded_users_enabled():
+        raise api_error(
+            403,
+            "DEFAULT_CREDENTIALS_DISABLED",
+            "Seeded local users are disabled outside local environments",
+        )
+    user = request.app.state.user_repository.get_by_username(payload.username)
+    if user is None or not verify_password(payload.password, user["password_hash"]):
+        raise api_error(401, "INVALID_CREDENTIALS", "Invalid username or password")
+
+    return _issue_login_response(request, user)
+
+
+@router.get("/providers")
+def providers(request: Request) -> dict[str, Any]:
+    dingtalk_configured = _dingtalk_configured()
+    return envelope(
+        {
+            "dingtalk": {
+                "bind_start_url": "/api/auth/dingtalk/bind/start"
+                if dingtalk_configured
+                else None,
+                "configured": dingtalk_configured,
+                "display_name": "钉钉登录",
+                "enabled": dingtalk_configured,
+                "start_url": "/api/auth/dingtalk/start" if dingtalk_configured else None,
+            },
+            "local": {
+                "display_name": "账号密码登录",
+                "enabled": True,
+                "start_url": "/api/auth/login",
+            },
+        },
+        get_trace_id(request),
+    )
+
+
+@router.get("/dingtalk/start")
+def dingtalk_start(
+    request: Request,
+    redirect: str | None = Query(default=None),
+) -> RedirectResponse:
+    _require_dingtalk_configured()
+    safe_redirect = _safe_redirect_path(redirect)
+    state = _create_oauth_state(
+        request,
+        attribute_name="dingtalk_oauth_states",
+        purpose="login",
+        redirect=safe_redirect,
+    )
+    authorize_url = _dingtalk_oauth_client(request).build_authorize_url(
+        redirect_uri=settings.dingtalk_redirect_uri,
+        state=state,
+    )
+    return RedirectResponse(authorize_url, status_code=302)
+
+
+@router.get("/dingtalk/callback")
+def dingtalk_callback(
+    request: Request,
+    code: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+) -> RedirectResponse:
+    try:
+        state_payload = _consume_oauth_state(
+            request,
+            attribute_name="dingtalk_oauth_states",
+            purpose="login",
+            state=state,
+        )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        return _callback_error_redirect(
+            str(detail.get("code") or "DINGTALK_STATE_INVALID"),
+            str(detail.get("message") or "DingTalk state is invalid"),
+        )
+
+    redirect = _safe_redirect_path(str(state_payload.get("redirect") or ""))
+    if error:
+        return _callback_error_redirect("DINGTALK_AUTH_DENIED", error, redirect=redirect)
+    if not code:
+        return _callback_error_redirect(
+            "DINGTALK_CODE_MISSING",
+            "DingTalk authorization code is missing",
+            redirect=redirect,
+        )
+
+    try:
+        profile = _profile_from_exchange_result(
+            _dingtalk_oauth_client(request).exchange_code_for_profile(code)
+        )
+        _ensure_dingtalk_corp_allowed(profile)
+        user = _resolve_dingtalk_user(request, profile)
+    except DingTalkOAuthError as exc:
+        return _callback_error_redirect(exc.code, exc.message, redirect=redirect)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        return _callback_error_redirect(
+            str(detail.get("code") or "DINGTALK_LOGIN_FAILED"),
+            str(detail.get("message") or "DingTalk login failed"),
+            redirect=redirect,
+        )
+
+    ticket = _create_login_ticket(request, redirect=redirect, user_id=user["id"])
+    _record_auth_audit(
+        request,
+        actor_id=user["id"],
+        event_type="dingtalk_login.succeeded",
+        payload={"corp_id": profile.corp_id},
+        subject_id=user["id"],
+        subject_type="user",
+    )
+    return RedirectResponse(
+        _frontend_callback_location({"redirect": redirect, "ticket": ticket}),
+        status_code=302,
+    )
+
+
+@router.post("/dingtalk/exchange-ticket")
+def dingtalk_exchange_ticket(
+    request: Request,
+    payload: DingTalkTicketExchangeRequest,
+) -> dict[str, Any]:
+    ticket_payload = _consume_login_ticket(request, payload.ticket)
+    user = request.app.state.user_repository.get_by_id(str(ticket_payload.get("user_id") or ""))
+    if user is None:
+        raise api_error(401, "DINGTALK_TICKET_INVALID", "DingTalk login ticket is invalid")
+    return _issue_login_response(request, user)
+
+
+@router.post("/dingtalk/bind/start")
+def dingtalk_bind_start(
+    request: Request,
+    redirect: str | None = Query(default=None),
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_dingtalk_configured()
+    safe_redirect = _safe_redirect_path(redirect)
+    state = _create_oauth_state(
+        request,
+        attribute_name="dingtalk_bind_states",
+        purpose="bind",
+        redirect=safe_redirect,
+        user_id=user["id"],
+    )
+    authorize_url = _dingtalk_oauth_client(request).build_authorize_url(
+        redirect_uri=settings.dingtalk_bind_redirect_uri_value,
+        state=state,
+    )
+    return envelope(
+        {
+            "authorize_url": authorize_url,
+            "expires_in": DINGTALK_STATE_TTL_SECONDS,
+        },
+        get_trace_id(request),
+    )
+
+
+@router.get("/dingtalk/bind/callback")
+def dingtalk_bind_callback(
+    request: Request,
+    code: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+) -> RedirectResponse:
+    try:
+        state_payload = _consume_oauth_state(
+            request,
+            attribute_name="dingtalk_bind_states",
+            purpose="bind",
+            state=state,
+        )
+    except HTTPException:
+        return RedirectResponse(
+            _frontend_location(
+                "/welcome",
+                {"dingtalk_bind_error": "DINGTALK_STATE_INVALID"},
+            ),
+            status_code=302,
+        )
+    redirect = _safe_redirect_path(str(state_payload.get("redirect") or ""))
+    if error:
+        return RedirectResponse(
+            _frontend_location(redirect, {"dingtalk_bind_error": "DINGTALK_AUTH_DENIED"}),
+            status_code=302,
+        )
+    if not code:
+        return RedirectResponse(
+            _frontend_location(redirect, {"dingtalk_bind_error": "DINGTALK_CODE_MISSING"}),
+            status_code=302,
+        )
+    try:
+        profile = _profile_from_exchange_result(
+            _dingtalk_oauth_client(request).exchange_code_for_profile(code)
+        )
+        _ensure_dingtalk_corp_allowed(profile)
+    except (DingTalkOAuthError, HTTPException):
+        return RedirectResponse(
+            _frontend_location(redirect, {"dingtalk_bind_error": "DINGTALK_BIND_FAILED"}),
+            status_code=302,
+        )
+    user_id = str(state_payload.get("user_id") or "")
+    user = request.app.state.user_repository.get_by_id(user_id)
+    if user is None:
+        return RedirectResponse(
+            _frontend_location(redirect, {"dingtalk_bind_error": "DINGTALK_ACCOUNT_INACTIVE"}),
+            status_code=302,
+        )
+    try:
+        request.app.state.external_identity_repository.upsert_identity(
+            provider=DINGTALK_PROVIDER,
+            provider_subject=profile.subject,
+            profile=profile.identity_profile(),
+            user_id=user_id,
+        )
+    except ValueError:
+        return RedirectResponse(
+            _frontend_location(redirect, {"dingtalk_bind_error": "EXTERNAL_IDENTITY_CONFLICT"}),
+            status_code=302,
+        )
+    _record_auth_audit(
+        request,
+        actor_id=user_id,
+        event_type="dingtalk_account.bound",
+        payload={"corp_id": profile.corp_id},
+        subject_id=user_id,
+        subject_type="user",
+    )
+    return RedirectResponse(
+        _frontend_location(redirect, {"dingtalk_bound": "true"}),
+        status_code=302,
+    )
+
+
+@router.post("/dingtalk/unbind")
+def dingtalk_unbind(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    unbound = request.app.state.external_identity_repository.unbind(
+        provider=DINGTALK_PROVIDER,
+        user_id=user["id"],
+    )
+    if not unbound:
+        raise api_error(404, "DINGTALK_ACCOUNT_NOT_BOUND", "DingTalk account is not bound")
+    _record_auth_audit(
+        request,
+        actor_id=user["id"],
+        event_type="dingtalk_account.unbound",
+        subject_id=user["id"],
+        subject_type="user",
+    )
+    return envelope({"success": True}, get_trace_id(request))
 
 
 @router.get("/me")

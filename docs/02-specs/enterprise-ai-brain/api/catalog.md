@@ -9,6 +9,13 @@
 | Health | GET | `/health` | 健康检查。 |
 | Long Memory | GET | `/api/long-memory/status` | 查询 GBrain 长期记忆连接器配置状态和可用能力。 |
 | Auth | POST | `/api/auth/login` | 登录。 |
+| Auth | GET | `/api/auth/providers` | 查询登录页可展示的认证提供方；当前用于按后端配置展示本地登录和钉钉登录入口。 |
+| Auth | GET | `/api/auth/dingtalk/start` | 创建钉钉 OAuth state 并跳转钉钉授权页；只接受站内 `redirect`。 |
+| Auth | GET | `/api/auth/dingtalk/callback` | 处理钉钉 OAuth 回调，完成外部身份绑定查找、企业白名单校验和一次性登录 ticket 生成。 |
+| Auth | POST | `/api/auth/dingtalk/exchange-ticket` | 使用一次性 ticket 换取 AI Brain Bearer Token，响应结构与本地登录一致。 |
+| Auth | POST | `/api/auth/dingtalk/bind/start` | 已登录用户发起钉钉账号自助绑定，返回钉钉授权 URL。 |
+| Auth | GET | `/api/auth/dingtalk/bind/callback` | 处理钉钉自助绑定回调，绑定成功或失败后跳回前端站内路径。 |
+| Auth | POST | `/api/auth/dingtalk/unbind` | 已登录用户解绑自己的钉钉外部身份，不删除内部用户账号。 |
 | Auth | GET | `/api/auth/me` | 当前用户。 |
 | Auth | POST | `/api/auth/logout` | 前端退出登录辅助接口。 |
 | Auth | GET | `/api/auth/roles` | 查询 MVP 可分配用户角色目录。 |

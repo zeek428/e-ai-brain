@@ -1,0 +1,373 @@
+from __future__ import annotations
+
+from urllib.parse import parse_qs, urlparse
+
+from test_database_persistence import app, client
+
+from app.api.routers import auth as auth_router
+from app.core.dingtalk_oauth import DingTalkProfile
+from app.core.external_identities import MemoryExternalIdentityRepository
+from app.core.security import hash_password
+from app.core.store import MemoryStore
+from app.core.users import MemoryUserRepository
+
+
+class FakeDingTalkOAuthClient:
+    def __init__(self, profile: DingTalkProfile) -> None:
+        self.profile = profile
+        self.authorize_requests: list[dict[str, str]] = []
+
+    def build_authorize_url(self, *, redirect_uri: str, state: str) -> str:
+        self.authorize_requests.append({"redirect_uri": redirect_uri, "state": state})
+        return f"https://dingtalk.test/oauth?redirect_uri={redirect_uri}&state={state}"
+
+    def exchange_code_for_profile(self, code: str) -> DingTalkProfile:
+        if code == "denied":
+            raise AssertionError("unexpected exchange for denied code")
+        return self.profile
+
+
+SETTING_NAMES = (
+    "dingtalk_allowed_corp_ids",
+    "dingtalk_auth_url",
+    "dingtalk_auto_provision",
+    "dingtalk_auto_provision_role",
+    "dingtalk_bind_redirect_uri",
+    "dingtalk_client_id",
+    "dingtalk_client_secret",
+    "dingtalk_client_secret_ref",
+    "dingtalk_frontend_base_url",
+    "dingtalk_frontend_callback_path",
+    "dingtalk_login_enabled",
+    "dingtalk_pending_approval",
+    "dingtalk_redirect_uri",
+)
+
+
+def _install_dingtalk_test_state(
+    profile: DingTalkProfile,
+    *,
+    auto_provision: bool = False,
+    allowed_corp_ids: str = "",
+    user_repository: MemoryUserRepository | None = None,
+):
+    original_state = {
+        "dingtalk_bind_states": app.state.dingtalk_bind_states,
+        "dingtalk_login_tickets": app.state.dingtalk_login_tickets,
+        "dingtalk_oauth_client": app.state.dingtalk_oauth_client,
+        "dingtalk_oauth_states": app.state.dingtalk_oauth_states,
+        "external_identity_repository": app.state.external_identity_repository,
+        "store": app.state.store,
+        "user_repository": app.state.user_repository,
+    }
+    original_settings = {
+        name: getattr(auth_router.settings, name)
+        for name in SETTING_NAMES
+    }
+    fake_client = FakeDingTalkOAuthClient(profile)
+    app.state.store = MemoryStore()
+    app.state.user_repository = user_repository or MemoryUserRepository.seeded()
+    app.state.external_identity_repository = MemoryExternalIdentityRepository()
+    app.state.dingtalk_bind_states = {}
+    app.state.dingtalk_login_tickets = {}
+    app.state.dingtalk_oauth_client = fake_client
+    app.state.dingtalk_oauth_states = {}
+
+    auth_router.settings.dingtalk_allowed_corp_ids = allowed_corp_ids
+    auth_router.settings.dingtalk_auth_url = "https://dingtalk.test/oauth"
+    auth_router.settings.dingtalk_auto_provision = auto_provision
+    auth_router.settings.dingtalk_auto_provision_role = "viewer"
+    auth_router.settings.dingtalk_bind_redirect_uri = ""
+    auth_router.settings.dingtalk_client_id = "ding-client-id"
+    auth_router.settings.dingtalk_client_secret = "ding-secret"
+    auth_router.settings.dingtalk_client_secret_ref = ""
+    auth_router.settings.dingtalk_frontend_base_url = "http://localhost:5173"
+    auth_router.settings.dingtalk_frontend_callback_path = "/login/dingtalk/callback"
+    auth_router.settings.dingtalk_login_enabled = True
+    auth_router.settings.dingtalk_pending_approval = False
+    auth_router.settings.dingtalk_redirect_uri = (
+        "http://localhost:8000/api/auth/dingtalk/callback"
+    )
+
+    def restore() -> None:
+        for name, value in original_state.items():
+            setattr(app.state, name, value)
+        for name, value in original_settings.items():
+            setattr(auth_router.settings, name, value)
+
+    return fake_client, restore
+
+
+def _start_dingtalk_login(redirect: str = "/welcome") -> tuple[str, str]:
+    response = client.get(
+        f"/api/auth/dingtalk/start?redirect={redirect}",
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    location = response.headers["location"]
+    query = parse_qs(urlparse(location).query)
+    return location, query["state"][0]
+
+
+def test_dingtalk_provider_is_hidden_until_configured():
+    profile = DingTalkProfile(subject="union_hidden", union_id="union_hidden")
+    fake_client, restore = _install_dingtalk_test_state(profile)
+    try:
+        auth_router.settings.dingtalk_login_enabled = False
+        disabled = client.get("/api/auth/providers")
+        assert disabled.status_code == 200
+        assert disabled.json()["data"]["local"]["enabled"] is True
+        assert disabled.json()["data"]["dingtalk"]["enabled"] is False
+
+        auth_router.settings.dingtalk_login_enabled = True
+        enabled = client.get("/api/auth/providers")
+        assert enabled.status_code == 200
+        data = enabled.json()["data"]
+        assert data["dingtalk"]["enabled"] is True
+        assert data["dingtalk"]["start_url"] == "/api/auth/dingtalk/start"
+        assert "ding-secret" not in str(data)
+        assert fake_client.authorize_requests == []
+    finally:
+        restore()
+
+
+def test_dingtalk_start_sanitizes_redirect_and_creates_state():
+    profile = DingTalkProfile(subject="union_start", union_id="union_start")
+    fake_client, restore = _install_dingtalk_test_state(profile)
+    try:
+        location, state = _start_dingtalk_login("https://evil.test/phish")
+        assert location.startswith("https://dingtalk.test/oauth")
+        assert app.state.dingtalk_oauth_states[state]["redirect"] == "/welcome"
+        assert fake_client.authorize_requests == [
+            {
+                "redirect_uri": "http://localhost:8000/api/auth/dingtalk/callback",
+                "state": state,
+            }
+        ]
+    finally:
+        restore()
+
+
+def test_dingtalk_callback_auto_provisions_user_and_exchanges_one_time_ticket():
+    profile = DingTalkProfile(
+        corp_id="corp_allowed",
+        display_name="钉钉张三",
+        email="zhangsan@example.com",
+        subject="union_zhangsan",
+        union_id="union_zhangsan",
+    )
+    _fake_client, restore = _install_dingtalk_test_state(
+        profile,
+        allowed_corp_ids="corp_allowed",
+        auto_provision=True,
+        user_repository=MemoryUserRepository({}),
+    )
+    try:
+        _location, state = _start_dingtalk_login("/delivery/bugs")
+        callback = client.get(
+            f"/api/auth/dingtalk/callback?code=ok&state={state}",
+            follow_redirects=False,
+        )
+        assert callback.status_code == 302
+        callback_url = urlparse(callback.headers["location"])
+        callback_query = parse_qs(callback_url.query)
+        assert callback_url.path == "/login/dingtalk/callback"
+        assert callback_query["redirect"] == ["/delivery/bugs"]
+        ticket = callback_query["ticket"][0]
+
+        exchanged = client.post(
+            "/api/auth/dingtalk/exchange-ticket",
+            json={"ticket": ticket},
+        )
+        assert exchanged.status_code == 200
+        login_data = exchanged.json()["data"]
+        assert login_data["user"]["username"] == "zhangsan@example.com"
+        assert login_data["user"]["roles"] == ["viewer"]
+
+        replay = client.post(
+            "/api/auth/dingtalk/exchange-ticket",
+            json={"ticket": ticket},
+        )
+        assert replay.status_code == 401
+
+        me = client.get(
+            "/api/auth/me",
+            headers={"Authorization": f"Bearer {login_data['access_token']}"},
+        )
+        assert me.status_code == 200
+        assert me.json()["data"]["display_name"] == "钉钉张三"
+        assert [
+            event["event_type"]
+            for event in app.state.store.audit_events
+        ] == ["dingtalk_account.provisioned", "dingtalk_login.succeeded"]
+    finally:
+        restore()
+
+
+def test_dingtalk_callback_rejects_unapproved_corp():
+    profile = DingTalkProfile(
+        corp_id="corp_denied",
+        display_name="钉钉李四",
+        subject="union_lisi",
+        union_id="union_lisi",
+    )
+    _fake_client, restore = _install_dingtalk_test_state(
+        profile,
+        allowed_corp_ids="corp_allowed",
+        auto_provision=True,
+    )
+    try:
+        _location, state = _start_dingtalk_login("/delivery/bugs")
+        callback = client.get(
+            f"/api/auth/dingtalk/callback?code=ok&state={state}",
+            follow_redirects=False,
+        )
+        assert callback.status_code == 302
+        callback_query = parse_qs(urlparse(callback.headers["location"]).query)
+        assert callback_query["error"] == ["DINGTALK_CORP_NOT_ALLOWED"]
+        assert "ticket" not in callback_query
+    finally:
+        restore()
+
+
+def test_dingtalk_bind_and_unbind_current_user():
+    profile = DingTalkProfile(
+        corp_id="corp_allowed",
+        display_name="AI Brain Admin",
+        subject="union_admin",
+        union_id="union_admin",
+    )
+    fake_client, restore = _install_dingtalk_test_state(
+        profile,
+        allowed_corp_ids="corp_allowed",
+    )
+    try:
+        login = client.post(
+            "/api/auth/login",
+            json={"password": "admin123", "username": "admin@example.com"},
+        )
+        token = login.json()["data"]["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        started = client.post(
+            "/api/auth/dingtalk/bind/start?redirect=/welcome",
+            headers=headers,
+        )
+        assert started.status_code == 200
+        authorize_url = started.json()["data"]["authorize_url"]
+        state = parse_qs(urlparse(authorize_url).query)["state"][0]
+        assert fake_client.authorize_requests[-1]["redirect_uri"] == (
+            "http://localhost:8000/api/auth/dingtalk/bind/callback"
+        )
+
+        callback = client.get(
+            f"/api/auth/dingtalk/bind/callback?code=ok&state={state}",
+            follow_redirects=False,
+        )
+        assert callback.status_code == 302
+        assert parse_qs(urlparse(callback.headers["location"]).query)["dingtalk_bound"] == [
+            "true"
+        ]
+
+        unbound = client.post("/api/auth/dingtalk/unbind", headers=headers)
+        assert unbound.status_code == 200
+        assert unbound.json()["data"]["success"] is True
+
+        second_unbind = client.post("/api/auth/dingtalk/unbind", headers=headers)
+        assert second_unbind.status_code == 404
+    finally:
+        restore()
+
+
+def test_dingtalk_bind_rejects_identity_bound_to_another_user():
+    profile = DingTalkProfile(
+        corp_id="corp_allowed",
+        display_name="AI Brain Reviewer",
+        subject="union_reviewer",
+        union_id="union_reviewer",
+    )
+    _fake_client, restore = _install_dingtalk_test_state(
+        profile,
+        allowed_corp_ids="corp_allowed",
+    )
+    try:
+        app.state.external_identity_repository.upsert_identity(
+            provider="dingtalk",
+            provider_subject="union_reviewer",
+            profile=profile.identity_profile(),
+            user_id="user_reviewer",
+        )
+        login = client.post(
+            "/api/auth/login",
+            json={"password": "admin123", "username": "admin@example.com"},
+        )
+        token = login.json()["data"]["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        started = client.post(
+            "/api/auth/dingtalk/bind/start?redirect=/welcome",
+            headers=headers,
+        )
+        state = parse_qs(urlparse(started.json()["data"]["authorize_url"]).query)["state"][0]
+        callback = client.get(
+            f"/api/auth/dingtalk/bind/callback?code=ok&state={state}",
+            follow_redirects=False,
+        )
+        assert callback.status_code == 302
+        assert parse_qs(urlparse(callback.headers["location"]).query)[
+            "dingtalk_bind_error"
+        ] == ["EXTERNAL_IDENTITY_CONFLICT"]
+        identity = app.state.external_identity_repository.find_active(
+            "dingtalk",
+            "union_reviewer",
+        )
+        assert identity["user_id"] == "user_reviewer"
+    finally:
+        restore()
+
+
+def test_dingtalk_bound_identity_can_login_without_auto_provision():
+    profile = DingTalkProfile(
+        corp_id="corp_allowed",
+        display_name="绑定用户",
+        subject="union_bound",
+        union_id="union_bound",
+    )
+    user_repository = MemoryUserRepository(
+        {
+            "bound@example.com": {
+                "display_name": "绑定用户",
+                "id": "user_bound",
+                "password_hash": hash_password("bound-secret", salt="bound-user-salt"),
+                "roles": ["reviewer"],
+                "status": "active",
+                "username": "bound@example.com",
+            }
+        }
+    )
+    _fake_client, restore = _install_dingtalk_test_state(
+        profile,
+        allowed_corp_ids="corp_allowed",
+        user_repository=user_repository,
+    )
+    try:
+        app.state.external_identity_repository.upsert_identity(
+            provider="dingtalk",
+            provider_subject="union_bound",
+            profile=profile.identity_profile(),
+            user_id="user_bound",
+        )
+        _location, state = _start_dingtalk_login("/welcome")
+        callback = client.get(
+            f"/api/auth/dingtalk/callback?code=ok&state={state}",
+            follow_redirects=False,
+        )
+        ticket = parse_qs(urlparse(callback.headers["location"]).query)["ticket"][0]
+        exchanged = client.post(
+            "/api/auth/dingtalk/exchange-ticket",
+            json={"ticket": ticket},
+        )
+        assert exchanged.status_code == 200
+        assert exchanged.json()["data"]["user"]["id"] == "user_bound"
+    finally:
+        restore()

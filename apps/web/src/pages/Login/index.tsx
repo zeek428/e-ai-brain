@@ -1,8 +1,15 @@
-import { LockOutlined, UserOutlined } from '@ant-design/icons';
-import { Alert, Button, Card, Form, Input, Typography } from 'antd';
+import { LockOutlined, QrcodeOutlined, UserOutlined } from '@ant-design/icons';
+import { Alert, Button, Card, Divider, Form, Input, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 
-import { ApiRequestError, fetchCurrentUser, getAccessToken, login } from '../../services/aiBrain';
+import {
+  ApiRequestError,
+  buildDingTalkStartUrl,
+  fetchAuthProviders,
+  fetchCurrentUser,
+  getAccessToken,
+  login,
+} from '../../services/aiBrain';
 import { navigateTo } from '../../utils/navigation';
 
 type LoginFormValues = {
@@ -20,13 +27,26 @@ function getRedirectPath() {
 }
 
 export default function LoginPage() {
+  const [dingtalkLoginEnabled, setDingtalkLoginEnabled] = useState(false);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
+  const [providerLoading, setProviderLoading] = useState(true);
 
   useEffect(() => {
     if (!getAccessToken()) {
+      void fetchAuthProviders()
+        .then((providers) => {
+          setDingtalkLoginEnabled(Boolean(providers.dingtalk?.enabled));
+        })
+        .catch(() => {
+          setDingtalkLoginEnabled(false);
+        })
+        .finally(() => {
+          setProviderLoading(false);
+        });
       return;
     }
+    setProviderLoading(false);
     void fetchCurrentUser()
       .then(() => {
         navigateTo(getRedirectPath());
@@ -35,6 +55,10 @@ export default function LoginPage() {
         // Invalid stored tokens are cleared by the shared API request layer.
       });
   }, []);
+
+  const handleDingTalkLogin = () => {
+    window.location.assign(buildDingTalkStartUrl(getRedirectPath()));
+  };
 
   const handleFinish = async (values: LoginFormValues) => {
     setError(undefined);
@@ -61,7 +85,7 @@ export default function LoginPage() {
           <Typography.Title level={1}>Enterprise AI Brain</Typography.Title>
           <Typography.Text>开发环境登录</Typography.Text>
         </div>
-        {error ? <Alert message={error} showIcon type="error" /> : null}
+        {error ? <Alert showIcon title={error} type="error" /> : null}
         <Form<LoginFormValues>
           initialValues={{ password: 'admin123', username: 'admin@example.com' }}
           layout="vertical"
@@ -86,6 +110,19 @@ export default function LoginPage() {
             登录
           </Button>
         </Form>
+        {dingtalkLoginEnabled ? (
+          <>
+            <Divider plain>或</Divider>
+            <Button
+              block
+              icon={<QrcodeOutlined />}
+              loading={providerLoading}
+              onClick={handleDingTalkLogin}
+            >
+              钉钉登录
+            </Button>
+          </>
+        ) : null}
       </Card>
     </main>
   );
