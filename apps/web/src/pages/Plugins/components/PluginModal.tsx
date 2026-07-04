@@ -52,6 +52,7 @@ export function PluginModal({
             options={[
               { label: 'HTTP', value: 'http' },
               { label: 'MCP HTTP', value: 'mcp_http' },
+              { label: 'MCP Streamable HTTP', value: 'mcp_streamable_http' },
               { label: 'MCP Stdio', value: 'mcp_stdio' },
               { label: 'Runner Polling', value: 'runner_polling' },
               { label: 'Runner WebSocket', value: 'runner_websocket' },

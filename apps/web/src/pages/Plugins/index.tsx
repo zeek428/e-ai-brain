@@ -523,6 +523,7 @@ export default function PluginsPage() {
       name: connection.name,
       password_ref: typeof authConfig.password_ref === 'string' ? authConfig.password_ref : undefined,
       plugin_id: connection.plugin_id,
+      query_key: typeof authConfig.query_key === 'string' ? authConfig.query_key : undefined,
       request_config: stableJson(requestConfig),
       schema_values: schemaValuesFromPayload(connection, schema),
       secret_ref: typeof authConfig.secret_ref === 'string' ? authConfig.secret_ref : undefined,
@@ -557,6 +558,7 @@ export default function PluginsPage() {
       header_name: undefined,
       password_ref: undefined,
       plugin_id: pluginId,
+      query_key: undefined,
       schema_values: {},
       secret_ref: undefined,
       token_ref: undefined,
@@ -1160,6 +1162,7 @@ export default function PluginsPage() {
       connectionForm.setFieldsValue({
         header_name: typeof config.header_name === 'string' ? config.header_name : undefined,
         password_ref: typeof config.password_ref === 'string' ? config.password_ref : undefined,
+        query_key: typeof config.query_key === 'string' ? config.query_key : undefined,
         secret_ref: typeof config.secret_ref === 'string' ? config.secret_ref : undefined,
         token_ref: typeof config.token_ref === 'string' ? config.token_ref : undefined,
         username_ref: typeof config.username_ref === 'string' ? config.username_ref : undefined,

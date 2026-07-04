@@ -30,6 +30,7 @@ export type PluginConnectionFormValues = {
   name: string;
   password_ref?: string;
   plugin_id: string;
+  query_key?: string;
   request_config?: string;
   schema_values?: Record<string, unknown>;
   secret_ref?: string;
@@ -104,6 +105,7 @@ export function PluginConnectionModal({
 }: PluginConnectionModalProps) {
   const isInternalDataSourceConnection = pluginCode === 'internal_data_source';
   const isGitlabConnection = pluginCode === 'gitlab';
+  const isDingTalkConnection = pluginCode?.startsWith('dingtalk_') ?? false;
   return (
     <Modal
       footer={[
@@ -174,6 +176,7 @@ export function PluginConnectionModal({
                 { label: 'bearer', value: 'bearer' },
                 { label: 'api_key_header', value: 'api_key_header' },
                 { label: 'basic', value: 'basic' },
+                { label: 'url_key', value: 'url_key' },
               ]}
             />
           </Form.Item>
@@ -230,6 +233,29 @@ export function PluginConnectionModal({
             </Form.Item>
             <Form.Item label="密码引用" name="password_ref">
               <Input placeholder="vault/path/to/password" />
+            </Form.Item>
+          </Space>
+        ) : null}
+        {!isInternalDataSourceConnection && !advancedAuthJsonOpen && authType === 'url_key' ? (
+          <Space wrap>
+            <Form.Item label="查询参数名" name="query_key">
+              <Input placeholder="key" />
+            </Form.Item>
+            <Form.Item
+              extra={
+                isDingTalkConnection
+                  ? '填写钉钉 MCP 网关授权 URL 中的 key 值；不同授权主体可使用个人、系统或应用独立 key。'
+                  : '填写 URL 查询参数形式的密钥，保存后调用时会自动追加到请求 URL。'
+              }
+              label="URL Key / 密钥引用"
+              name="secret_ref"
+              rules={
+                isDingTalkConnection
+                  ? [{ required: true, message: '请填写钉钉 MCP URL Key 或密钥引用' }]
+                  : undefined
+              }
+            >
+              <Input placeholder="dingtalk key / vault/dingtalk/doc/key / env:DINGTALK_MCP_KEY" />
             </Form.Item>
           </Space>
         ) : null}

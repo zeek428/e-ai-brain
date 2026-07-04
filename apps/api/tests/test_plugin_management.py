@@ -4,10 +4,12 @@ import zipfile
 from datetime import UTC, datetime
 from io import BytesIO
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
 import app.services.plugins as plugin_services
+import app.services.plugin_invocation_runtime as plugin_invocation_runtime
 import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
 from app.main import app
 from app.services.ai_executor_runners import (
@@ -262,6 +264,200 @@ def auth_headers(username: str = "admin@example.com", password: str = "admin123"
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_dingtalk_p0_marketplace_exposes_standard_mcp_capabilities():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    payload = client.get("/api/system/plugin-marketplace", headers=headers).json()["data"]
+    by_code = {item["code"]: item for item in payload["items"]}
+
+    expected = {
+        "dingtalk_aitable": ("9555", "aitable", "钉钉 AI 表格"),
+        "dingtalk_bot": ("9595", "bot", "钉钉机器人消息"),
+        "dingtalk_contact": ("2400", "contact", "钉钉通讯录"),
+        "dingtalk_doc": ("9629", "doc", "钉钉文档"),
+        "dingtalk_drive": ("9638", "drive", "钉钉钉盘"),
+        "dingtalk_wiki": ("9730", "wiki", "钉钉知识库"),
+    }
+    for code, (mcp_id, server_name, name) in expected.items():
+        item = by_code[code]
+        assert item["name"] == name
+        assert item["protocol"] == "mcp_streamable_http"
+        assert item["publisher"] == "钉钉官方"
+        assert item["connection_defaults"]["auth_type"] == "url_key"
+        assert item["connection_defaults"]["endpoint_url"].startswith(
+            "https://mcp-gw.dingtalk.com/mserver/",
+        )
+        query = item["connection_defaults"]["request_config"]["query"]
+        assert query["provider"] == "dingtalk"
+        assert query["mcp_id"] == mcp_id
+        assert query["server_name"] == server_name
+        assert query["auth_subject_type"] in {"user", "system", "app"}
+        assert item["connection_schema"]["sections"][0]["key"] == "dingtalk_mcp"
+
+
+def test_dingtalk_p0_action_templates_include_risk_tiers_and_tool_metadata():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    payload = client.get("/api/system/plugin-action-templates", headers=headers).json()["data"]
+    by_code = {item["code"]: item for item in payload["items"]}
+
+    expected_templates = {
+        "dingtalk_aitable_query_records": ("dingtalk_aitable", "aitable.search_records", "read"),
+        "dingtalk_bot_send_message": (
+            "dingtalk_bot",
+            "bot.batch_send_robot_msg_to_users",
+            "notify",
+        ),
+        "dingtalk_contact_search_user": (
+            "dingtalk_contact",
+            "contact.search_user_by_key_word",
+            "read",
+        ),
+        "dingtalk_doc_create_document": ("dingtalk_doc", "doc.create_document", "write"),
+        "dingtalk_doc_get_content": (
+            "dingtalk_doc",
+            "doc.get_document_content",
+            "sensitive_read",
+        ),
+        "dingtalk_doc_search": ("dingtalk_doc", "doc.search_documents", "read"),
+        "dingtalk_drive_list_files": ("dingtalk_drive", "drive.list_files", "read"),
+        "dingtalk_wiki_search_spaces": ("dingtalk_wiki", "wiki.search_wikiSpaces", "read"),
+    }
+    for code, (plugin_code, tool_name, risk_tier) in expected_templates.items():
+        template = by_code[code]
+        assert template["plugin_code"] == plugin_code
+        assert template["action_type"] == "mcp_tool"
+        assert template["risk_tier"] == risk_tier
+        assert template["request_config"]["tool_name"] == tool_name
+        assert template["request_config"]["mcp"]["provider"] == "dingtalk"
+        assert template["result_mapping"]["write_target"] == "scheduled_job_result"
+
+
+def test_mcp_streamable_http_url_key_invocation_uses_query_key_and_redacts_log(
+    monkeypatch,
+):
+    app.state.store.reset()
+    headers = auth_headers()
+    captured_requests: list[dict[str, object]] = []
+
+    plugin_response = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "collaboration",
+            "code": "custom_dingtalk_doc",
+            "description": "测试钉钉文档 Streamable HTTP MCP",
+            "name": "测试钉钉文档",
+            "protocol": "mcp_streamable_http",
+            "risk_level": "high",
+            "status": "active",
+        },
+        headers=headers,
+    )
+    assert plugin_response.status_code == 200, plugin_response.text
+    plugin = plugin_response.json()["data"]
+    connection_response = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {"query_key": "key", "secret_ref": "dingtalk-url-key-secret"},
+            "auth_type": "url_key",
+            "endpoint_url": "https://mcp-gw.dingtalk.com/mserver/doc",
+            "environment": "prod",
+            "name": "钉钉文档个人授权",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "query": {
+                    "auth_subject_type": "user",
+                    "mcp_id": "9629",
+                    "provider": "dingtalk",
+                    "server_name": "doc",
+                },
+            },
+            "status": "active",
+        },
+        headers=headers,
+    )
+    assert connection_response.status_code == 200, connection_response.text
+    connection = connection_response.json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "search_dingtalk_doc",
+            "connection_id": connection["id"],
+            "name": "搜索钉钉文档",
+            "plugin_id": plugin["id"],
+            "request_config": {"tool_name": "doc.search_documents"},
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "id": action["id"],
+                    "jsonrpc": "2.0",
+                    "result": {"content": [{"text": "found"}]},
+                },
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured_requests.append(
+            {
+                "body": json.loads(request.data.decode("utf-8")),
+                "headers": dict(request.header_items()),
+                "timeout": timeout,
+                "url": request.full_url,
+            },
+        )
+        return FakeResponse()
+
+    monkeypatch.setattr(plugin_invocation_runtime, "urlopen", fake_urlopen)
+
+    invoked = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"keyword": "AI Brain"}},
+        headers=headers,
+    )
+
+    assert invoked.status_code == 200, invoked.text
+    parsed_url = urlparse(str(captured_requests[0]["url"]))
+    assert f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}" == (
+        "https://mcp-gw.dingtalk.com/mserver/doc"
+    )
+    assert parse_qs(parsed_url.query) == {
+        "auth_subject_type": ["user"],
+        "key": ["dingtalk-url-key-secret"],
+        "mcp_id": ["9629"],
+        "provider": ["dingtalk"],
+        "server_name": ["doc"],
+    }
+    request_body = captured_requests[0]["body"]
+    assert request_body["method"] == "tools/call"
+    assert request_body["params"] == {
+        "arguments": {"keyword": "AI Brain"},
+        "name": "doc.search_documents",
+    }
+    assert captured_requests[0]["headers"]["Accept"] == "application/json, text/event-stream"
+    data = invoked.json()["data"]
+    request_preview = data["request_summary"]["request_preview"]
+    assert request_preview["protocol"] == "mcp_streamable_http"
+    assert request_preview["query"]["key"] == "***"
+    assert "dingtalk-url-key-secret" not in str(data)
+
+
 def create_plugin_bundle(headers: dict[str, str]) -> tuple[dict, dict, dict]:
     plugin = client.post(
         "/api/system/plugins",
@@ -443,6 +639,12 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     by_code = {item["code"]: item for item in items}
     assert set(by_code) == {
         "ai_executor",
+        "dingtalk_aitable",
+        "dingtalk_bot",
+        "dingtalk_contact",
+        "dingtalk_doc",
+        "dingtalk_drive",
+        "dingtalk_wiki",
         "email",
         "github",
         "gitlab",

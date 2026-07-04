@@ -29,6 +29,7 @@ from app.services.plugin_connection_config import (
 )
 from app.services.plugin_constants import (
     AI_EXECUTOR_RUNNER_PROTOCOLS,
+    MCP_HTTP_PROTOCOLS,
     PLUGIN_ACTION_SORT_FIELDS,
     PLUGIN_ACTION_TYPES,
     PLUGIN_AUTH_TYPES,
@@ -51,6 +52,7 @@ from app.services.plugin_invocation_runtime import (
     _dict_config_section,
     _invoke_action,
     _invoke_ai_executor_runner,
+    _query_with_url_key,
     _url_with_query,
     connection_request_variable_resolutions,
     plugin_action_request_preview,
@@ -885,28 +887,40 @@ def test_plugin_connection_response(
         now=resolution_now,
     )
     request_query = _dict_config_section(request_config.get("query"))
+    is_mcp_http_protocol = plugin.get("protocol") in MCP_HTTP_PROTOCOLS
+    network_query = _query_with_url_key(connection, request_query)
+    summary_query = _query_with_url_key(connection, request_query, mask=True)
     request_method = (
         "INTERNAL_READ"
         if plugin.get("protocol") == INTERNAL_DATA_SOURCE_PROTOCOL
         else "POST"
-        if plugin.get("protocol") == "mcp_http"
+        if is_mcp_http_protocol
         else "GET"
     )
-    request_url = _url_with_query(str(connection.get("endpoint_url") or ""), request_query)
+    network_request_url = _url_with_query(str(connection.get("endpoint_url") or ""), network_query)
+    summary_request_url = _url_with_query(str(connection.get("endpoint_url") or ""), summary_query)
     request_body: dict[str, Any] | None = None
     request_headers, header_sources = _build_headers_with_sources(
         connection,
         {"request_config": {}},
     )
-    if plugin.get("protocol") == "mcp_http":
+    if is_mcp_http_protocol:
         request_body = {
             "id": f"connection_test_{connection_id}",
             "jsonrpc": "2.0",
             "method": "tools/list",
             "params": {},
         }
-        request_headers = {**request_headers, "Content-Type": "application/json"}
-        header_sources = {**header_sources, "Content-Type": "system.default"}
+        request_headers = {
+            **request_headers,
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        header_sources = {
+            **header_sources,
+            "Accept": "system.default",
+            "Content-Type": "system.default",
+        }
     masked_placeholder_headers = [
         header_name
         for header_name, header_value in request_headers.items()
@@ -956,10 +970,10 @@ def test_plugin_connection_response(
                 "PLUGIN_PROTOCOL_UNSUPPORTED",
                 "mcp_stdio connection test requires isolated command execution and is not enabled",
             )
-        elif plugin.get("protocol") == "mcp_http":
+        elif is_mcp_http_protocol:
             step_start = perf_counter()
             request = Request(
-                request_url,
+                network_request_url,
                 data=json.dumps(request_body or {}, ensure_ascii=False).encode("utf-8"),
                 headers=request_headers,
                 method=request_method,
@@ -985,7 +999,7 @@ def test_plugin_connection_response(
         else:
             step_start = perf_counter()
             request = Request(
-                request_url,
+                network_request_url,
                 headers=request_headers,
                 method=request_method,
             )
@@ -1014,7 +1028,7 @@ def test_plugin_connection_response(
         response_summary = ConnectionDiagnosticsService.response_summary_from_http_error(exc)
         diagnostics.append(
             ConnectionDiagnosticsService.diagnostic_step(
-                "network_request" if plugin.get("protocol") != "mcp_http" else "mcp_tools_list",
+                "mcp_tools_list" if is_mcp_http_protocol else "network_request",
                 detail=error_message,
                 status="failed",
                 error_code=error_code,
@@ -1030,7 +1044,7 @@ def test_plugin_connection_response(
             error_message = exc.detail.get("message", error_message)
         diagnostics.append(
             ConnectionDiagnosticsService.diagnostic_step(
-                "network_request" if plugin.get("protocol") != "mcp_http" else "mcp_tools_list",
+                "mcp_tools_list" if is_mcp_http_protocol else "network_request",
                 detail=error_message,
                 status="failed",
                 error_code=error_code,
@@ -1038,7 +1052,7 @@ def test_plugin_connection_response(
         )
     latency_ms = int((perf_counter() - start) * 1000)
     request_summary = {
-        "auth_config": auth_config,
+        "auth_config": redact_plugin_request_summary(auth_config),
         "auth_type": auth_type,
         "body": request_body,
         "header_sources": header_sources,
@@ -1048,10 +1062,10 @@ def test_plugin_connection_response(
         "method": request_method,
         "original_request_config": connection.get("request_config") or {},
         "protocol": plugin.get("protocol"),
-        "query": request_query,
+        "query": summary_query,
         "request_config": request_config,
         "scheme": parsed_endpoint.scheme,
-        "url": request_url,
+        "url": summary_request_url,
         "variable_resolution_timezone": variable_timezone,
         "variable_resolutions": variable_resolutions,
     }

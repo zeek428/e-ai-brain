@@ -13,6 +13,284 @@ from app.services.internal_data_sources import (
 )
 from app.services.result_write_targets import result_write_target_default_mapping
 
+DINGTALK_MCP_PROTOCOL = "mcp_streamable_http"
+
+DINGTALK_MCP_P0_CAPABILITIES: dict[str, dict[str, Any]] = {
+    "dingtalk_aitable": {
+        "action_templates": ["查询钉钉 AI 表格记录"],
+        "category": "business_system",
+        "description": "钉钉官方 AI 表格 MCP 插件，用于查询 AI 表格记录作为定时作业输入。",
+        "mcp_id": "9555",
+        "name": "钉钉 AI 表格",
+        "recommended_scenarios": ["业务台账定时读取", "项目数据汇总", "AI 表格记录分析"],
+        "risk_level": "medium",
+        "server_name": "aitable",
+        "summary": "通过钉钉官方 MCP 连接 AI 表格记录查询能力。",
+    },
+    "dingtalk_bot": {
+        "action_templates": ["钉钉机器人消息发送"],
+        "category": "collaboration",
+        "description": "钉钉官方机器人消息 MCP 插件，用于向用户发送作业结果和业务提醒。",
+        "mcp_id": "9595",
+        "name": "钉钉机器人消息",
+        "recommended_scenarios": ["定时作业通知", "代码巡检提醒", "审批和发布结果通知"],
+        "risk_level": "high",
+        "server_name": "bot",
+        "summary": "通过钉钉官方 MCP 连接机器人消息发送能力。",
+    },
+    "dingtalk_contact": {
+        "action_templates": ["钉钉通讯录用户搜索"],
+        "category": "collaboration",
+        "description": "钉钉官方通讯录 MCP 插件，用于按关键词搜索用户和组织成员。",
+        "mcp_id": "2400",
+        "name": "钉钉通讯录",
+        "recommended_scenarios": ["通知收件人解析", "负责人查找", "组织成员上下文补全"],
+        "risk_level": "medium",
+        "server_name": "contact",
+        "summary": "通过钉钉官方 MCP 连接通讯录用户搜索能力。",
+    },
+    "dingtalk_doc": {
+        "action_templates": ["钉钉文档搜索", "钉钉文档读取", "钉钉文档创建"],
+        "category": "knowledge_base",
+        "description": "钉钉官方文档 MCP 插件，用于搜索、读取和创建钉钉文档。",
+        "mcp_id": "9629",
+        "name": "钉钉文档",
+        "recommended_scenarios": ["需求文档检索", "方案文档生成", "会议纪要沉淀"],
+        "risk_level": "high",
+        "server_name": "doc",
+        "summary": "通过钉钉官方 MCP 连接文档搜索、读取和创建能力。",
+    },
+    "dingtalk_drive": {
+        "action_templates": ["钉钉钉盘文件列表"],
+        "category": "knowledge_base",
+        "description": "钉钉官方钉盘 MCP 插件，用于列出钉盘文件并作为知识输入。",
+        "mcp_id": "9638",
+        "name": "钉钉钉盘",
+        "recommended_scenarios": ["项目文件枚举", "知识沉淀输入", "交付物清单分析"],
+        "risk_level": "medium",
+        "server_name": "drive",
+        "summary": "通过钉钉官方 MCP 连接钉盘文件列表能力。",
+    },
+    "dingtalk_wiki": {
+        "action_templates": ["钉钉知识库空间搜索"],
+        "category": "knowledge_base",
+        "description": "钉钉官方知识库 MCP 插件，用于搜索知识库空间和知识入口。",
+        "mcp_id": "9730",
+        "name": "钉钉知识库",
+        "recommended_scenarios": ["知识库入口检索", "研发规范查找", "团队空间发现"],
+        "risk_level": "medium",
+        "server_name": "wiki",
+        "summary": "通过钉钉官方 MCP 连接知识库空间搜索能力。",
+    },
+}
+
+
+def _dingtalk_standard_plugins() -> list[dict[str, Any]]:
+    return [
+        {
+            "category": capability["category"],
+            "code": code,
+            "description": capability["description"],
+            "id": f"plugin_standard_{code}",
+            "is_system": True,
+            "name": capability["name"],
+            "protocol": DINGTALK_MCP_PROTOCOL,
+            "risk_level": capability["risk_level"],
+            "status": "active",
+        }
+        for code, capability in DINGTALK_MCP_P0_CAPABILITIES.items()
+    ]
+
+
+def _dingtalk_marketplace_metadata() -> dict[str, dict[str, Any]]:
+    return {
+        code: {
+            "action_templates": list(capability["action_templates"]),
+            "publisher": "钉钉官方",
+            "recommended_scenarios": list(capability["recommended_scenarios"]),
+            "summary": capability["summary"],
+        }
+        for code, capability in DINGTALK_MCP_P0_CAPABILITIES.items()
+    }
+
+
+def _dingtalk_connection_defaults() -> dict[str, dict[str, Any]]:
+    return {
+        code: {
+            "auth_config": {"query_key": "key"},
+            "auth_type": "url_key",
+            "endpoint_url": (
+                f"https://mcp-gw.dingtalk.com/mserver/{capability['server_name']}"
+            ),
+            "environment": "prod",
+            "max_retries": 1,
+            "name": f"{capability['name']} MCP 连接",
+            "protocol": DINGTALK_MCP_PROTOCOL,
+            "request_config": {
+                "query": {
+                    "auth_subject_type": "user",
+                    "mcp_id": capability["mcp_id"],
+                    "provider": "dingtalk",
+                    "server_name": capability["server_name"],
+                },
+            },
+            "status": "active",
+            "timeout_seconds": 30,
+        }
+        for code, capability in DINGTALK_MCP_P0_CAPABILITIES.items()
+    }
+
+
+def _dingtalk_connection_schemas() -> dict[str, dict[str, Any]]:
+    return {
+        code: {
+            "schema_version": "v1",
+            "sections": [
+                {
+                    "key": "dingtalk_mcp",
+                    "title": "钉钉 MCP 授权",
+                    "fields": [
+                        {
+                            "description": "个人使用填 user；企业统一连接可按授权实例选择 system 或 app。",
+                            "key": "auth_subject_type",
+                            "label": "授权主体",
+                            "options": [
+                                {"label": "个人授权", "value": "user"},
+                                {"label": "系统授权", "value": "system"},
+                                {"label": "应用授权", "value": "app"},
+                            ],
+                            "path": "request_config.query.auth_subject_type",
+                            "required": True,
+                            "type": "select",
+                        },
+                    ],
+                },
+            ],
+        }
+        for code in DINGTALK_MCP_P0_CAPABILITIES
+    }
+
+
+def _dingtalk_mcp_action_template(
+    *,
+    code: str,
+    default_code: str,
+    default_name: str,
+    description: str,
+    form_defaults: dict[str, Any] | None = None,
+    plugin_code: str,
+    risk_tier: str,
+    tool_name: str,
+) -> dict[str, Any]:
+    capability = DINGTALK_MCP_P0_CAPABILITIES[plugin_code]
+    return {
+        "action_type": "mcp_tool",
+        "code": code,
+        "default_code": default_code,
+        "default_name": default_name,
+        "description": description,
+        "form_defaults": form_defaults or {},
+        "name": default_name,
+        "plugin_code": plugin_code,
+        "request_config": {
+            "mcp": {
+                "mcp_id": capability["mcp_id"],
+                "provider": "dingtalk",
+                "server_name": capability["server_name"],
+            },
+            "tool_name": tool_name,
+        },
+        "result_mapping": result_write_target_default_mapping("scheduled_job_result"),
+        "risk_tier": risk_tier,
+        "template_version": "v1",
+    }
+
+
+def _dingtalk_action_templates() -> list[dict[str, Any]]:
+    return [
+        _dingtalk_mcp_action_template(
+            code="dingtalk_aitable_query_records",
+            default_code="query_dingtalk_aitable_records",
+            default_name="查询钉钉 AI 表格记录",
+            description="调用钉钉 AI 表格 MCP 查询记录，作为定时作业结构化输入。",
+            form_defaults={"keyword": "", "max_rows": 100},
+            plugin_code="dingtalk_aitable",
+            risk_tier="read",
+            tool_name="aitable.search_records",
+        ),
+        _dingtalk_mcp_action_template(
+            code="dingtalk_bot_send_message",
+            default_code="send_dingtalk_bot_message",
+            default_name="发送钉钉机器人消息",
+            description="调用钉钉机器人 MCP 向用户发送通知消息。",
+            form_defaults={"message": "{{result_summary}}", "user_ids": ""},
+            plugin_code="dingtalk_bot",
+            risk_tier="notify",
+            tool_name="bot.batch_send_robot_msg_to_users",
+        ),
+        _dingtalk_mcp_action_template(
+            code="dingtalk_contact_search_user",
+            default_code="search_dingtalk_contact_user",
+            default_name="搜索钉钉通讯录用户",
+            description="调用钉钉通讯录 MCP 按关键词搜索用户。",
+            form_defaults={"keyword": ""},
+            plugin_code="dingtalk_contact",
+            risk_tier="read",
+            tool_name="contact.search_user_by_key_word",
+        ),
+        _dingtalk_mcp_action_template(
+            code="dingtalk_doc_create_document",
+            default_code="create_dingtalk_document",
+            default_name="创建钉钉文档",
+            description="调用钉钉文档 MCP 创建协作文档。",
+            form_defaults={"content": "{{result_summary}}", "title": "{{job_name}}"},
+            plugin_code="dingtalk_doc",
+            risk_tier="write",
+            tool_name="doc.create_document",
+        ),
+        _dingtalk_mcp_action_template(
+            code="dingtalk_doc_get_content",
+            default_code="get_dingtalk_document_content",
+            default_name="读取钉钉文档内容",
+            description="调用钉钉文档 MCP 读取文档内容，返回内容可能包含敏感业务信息。",
+            form_defaults={"document_id": ""},
+            plugin_code="dingtalk_doc",
+            risk_tier="sensitive_read",
+            tool_name="doc.get_document_content",
+        ),
+        _dingtalk_mcp_action_template(
+            code="dingtalk_doc_search",
+            default_code="search_dingtalk_documents",
+            default_name="搜索钉钉文档",
+            description="调用钉钉文档 MCP 按关键词搜索文档。",
+            form_defaults={"keyword": "", "max_rows": 20},
+            plugin_code="dingtalk_doc",
+            risk_tier="read",
+            tool_name="doc.search_documents",
+        ),
+        _dingtalk_mcp_action_template(
+            code="dingtalk_drive_list_files",
+            default_code="list_dingtalk_drive_files",
+            default_name="列出钉钉钉盘文件",
+            description="调用钉钉钉盘 MCP 列出文件。",
+            form_defaults={"folder_id": "", "max_rows": 50},
+            plugin_code="dingtalk_drive",
+            risk_tier="read",
+            tool_name="drive.list_files",
+        ),
+        _dingtalk_mcp_action_template(
+            code="dingtalk_wiki_search_spaces",
+            default_code="search_dingtalk_wiki_spaces",
+            default_name="搜索钉钉知识库空间",
+            description="调用钉钉知识库 MCP 搜索知识库空间。",
+            form_defaults={"keyword": ""},
+            plugin_code="dingtalk_wiki",
+            risk_tier="read",
+            tool_name="wiki.search_wikiSpaces",
+        ),
+    ]
+
+
 STANDARD_PLUGINS = [
     {
         "category": "ai_service",
@@ -95,7 +373,7 @@ STANDARD_PLUGINS = [
         "risk_level": "low",
         "status": "active",
     },
-]
+] + _dingtalk_standard_plugins()
 
 STANDARD_PLUGIN_IDS_BY_CODE = {
     str(plugin["code"]): str(plugin["id"])
@@ -158,6 +436,7 @@ STANDARD_PLUGIN_MARKETPLACE_METADATA = {
         "summary": "连接可观测平台，读取线上日志、错误率、延迟和异常指标。",
     },
 }
+STANDARD_PLUGIN_MARKETPLACE_METADATA.update(_dingtalk_marketplace_metadata())
 
 STANDARD_PLUGIN_CONNECTION_TEMPLATE_VERSION = "v1"
 
@@ -296,6 +575,7 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
         "timeout_seconds": 30,
     },
 }
+STANDARD_PLUGIN_CONNECTION_DEFAULTS.update(_dingtalk_connection_defaults())
 
 STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
     "ai_executor": {
@@ -639,6 +919,7 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
         ],
     },
 }
+STANDARD_PLUGIN_CONNECTION_SCHEMAS.update(_dingtalk_connection_schemas())
 
 STANDARD_PLUGIN_ACTION_TEMPLATES = [
     {
@@ -842,7 +1123,7 @@ STANDARD_PLUGIN_ACTION_TEMPLATES = [
         "result_mapping": result_write_target_default_mapping("scheduled_job_result"),
         "template_version": "v1",
     },
-]
+] + _dingtalk_action_templates()
 
 DEFAULT_ACTION_TEMPLATE_BY_PLUGIN_CODE = {
     "ai_executor": "ai_executor_command",
@@ -851,6 +1132,12 @@ DEFAULT_ACTION_TEMPLATE_BY_PLUGIN_CODE = {
     "internal_data_source": "internal_business_data_query",
     "gitlab": "gitlab_code_inspection",
     "observability": "observability_online_log_metrics",
+    "dingtalk_aitable": "dingtalk_aitable_query_records",
+    "dingtalk_bot": "dingtalk_bot_send_message",
+    "dingtalk_contact": "dingtalk_contact_search_user",
+    "dingtalk_doc": "dingtalk_doc_search",
+    "dingtalk_drive": "dingtalk_drive_list_files",
+    "dingtalk_wiki": "dingtalk_wiki_search_spaces",
 }
 
 

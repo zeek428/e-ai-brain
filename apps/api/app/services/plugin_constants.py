@@ -4,6 +4,7 @@ PLUGIN_PROTOCOLS = {
     "http",
     "internal_read_model",
     "mcp_http",
+    "mcp_streamable_http",
     "mcp_stdio",
     "runner_polling",
     "runner_websocket",
@@ -20,11 +21,12 @@ PLUGIN_CATEGORIES = {
     "observability",
 }
 PLUGIN_STATUSES = {"active", "disabled", "draft"}
-PLUGIN_AUTH_TYPES = {"none", "bearer", "api_key_header", "basic"}
+PLUGIN_AUTH_TYPES = {"none", "bearer", "api_key_header", "basic", "url_key"}
 PLUGIN_ACTION_TYPES = {"http_request", "internal_query", "mcp_tool"}
 PLUGIN_CONNECTION_ENVIRONMENTS = {"default", "dev", "test", "staging", "prod", "sandbox"}
 PLUGIN_INVOCATION_STATUSES = {"failed", "succeeded"}
 AI_EXECUTOR_RUNNER_PROTOCOLS = {"runner_polling", "runner_websocket"}
+MCP_HTTP_PROTOCOLS = {"mcp_http", "mcp_streamable_http"}
 MASKED_SECRET_PLACEHOLDER = "***"
 DEPRECATED_STANDARD_PLUGIN_CODES = {"aliyun_maxcompute"}
 PLUGIN_CONNECTION_SORT_FIELDS = {

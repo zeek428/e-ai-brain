@@ -13,6 +13,21 @@ def ensure_plugin_connection_auth_requirements(
     plugin: dict[str, Any],
 ) -> None:
     plugin_code = plugin.get("code")
+    if auth_type == "url_key":
+        secret_ref = (auth_config or {}).get("secret_ref")
+        if not isinstance(secret_ref, str) or not secret_ref.strip():
+            raise api_error(400, "VALIDATION_ERROR", "URL key secret_ref is required")
+    if str(plugin_code or "").startswith("dingtalk_"):
+        if auth_type != "url_key":
+            raise api_error(
+                400,
+                "VALIDATION_ERROR",
+                "DingTalk MCP connection requires url_key auth_type",
+            )
+        query_key = (auth_config or {}).get("query_key") or "key"
+        if not isinstance(query_key, str) or not query_key.strip():
+            raise api_error(400, "VALIDATION_ERROR", "DingTalk URL key query_key is required")
+        return
     if plugin_code == "github":
         if auth_type != "bearer":
             raise api_error(400, "VALIDATION_ERROR", "GitHub connection requires bearer auth_type")

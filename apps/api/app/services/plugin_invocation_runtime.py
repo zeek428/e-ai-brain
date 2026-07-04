@@ -32,7 +32,7 @@ from app.services.internal_data_sources import (
     internal_data_source_request_preview,
     read_internal_data_source,
 )
-from app.services.plugin_constants import AI_EXECUTOR_RUNNER_PROTOCOLS
+from app.services.plugin_constants import AI_EXECUTOR_RUNNER_PROTOCOLS, MCP_HTTP_PROTOCOLS
 from app.services.plugin_store_helpers import _set_header, ensure_non_blank
 
 
@@ -112,6 +112,49 @@ def _url_with_query(url: str, query: dict[str, Any]) -> str:
         return url
     separator = "&" if "?" in url else "?"
     return f"{url}{separator}{urlencode(query)}"
+
+
+def _url_key_query_parameters(
+    connection: dict[str, Any],
+    *,
+    mask: bool = False,
+) -> dict[str, str]:
+    if connection.get("auth_type") != "url_key":
+        return {}
+    auth_config = connection.get("auth_config") or {}
+    query_key = str(auth_config.get("query_key") or "key").strip() or "key"
+    secret_ref = (
+        auth_config.get("secret_ref")
+        or auth_config.get("token_ref")
+        or auth_config.get("url_key")
+    )
+    if not secret_ref:
+        return {}
+    return {query_key: "***" if mask else str(secret_ref)}
+
+
+def _query_with_url_key(
+    connection: dict[str, Any],
+    query: dict[str, Any],
+    *,
+    mask: bool = False,
+) -> dict[str, Any]:
+    url_key_query = _url_key_query_parameters(connection, mask=mask)
+    if not url_key_query:
+        return dict(query)
+    return {**query, **url_key_query}
+
+
+def _mcp_headers(
+    connection: dict[str, Any],
+    action: dict[str, Any],
+    input_payload: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    return {
+        **_build_headers(connection, action, input_payload),
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
 
 
 def _scalar_template_parameters(*sources: dict[str, Any] | None) -> dict[str, str]:
@@ -213,6 +256,7 @@ def _invoke_http(
     path = str(request_config.get("path") or "")
     url = urljoin(connection["endpoint_url"].rstrip("/") + "/", path.lstrip("/"))
     query = _dict_config_section(request_config.get("query"))
+    query = _query_with_url_key(connection, query)
     url = _url_with_query(url, query)
     body = input_payload if method not in {"GET", "HEAD"} else None
     request_body = (
@@ -249,7 +293,10 @@ def _invoke_mcp_http(
     tool_name = ensure_non_blank(request_config.get("tool_name"), "tool_name")
     url = _url_with_query(
         str(connection["endpoint_url"]),
-        _dict_config_section(request_config.get("query")),
+        _query_with_url_key(
+            connection,
+            _dict_config_section(request_config.get("query")),
+        ),
     )
     request = Request(
         url,
@@ -262,10 +309,7 @@ def _invoke_mcp_http(
             },
             ensure_ascii=False,
         ).encode("utf-8"),
-        headers={
-            **_build_headers(connection, action, input_payload),
-            "Content-Type": "application/json",
-        },
+        headers=_mcp_headers(connection, action, input_payload),
         method="POST",
     )
     with urlopen(request, timeout=connection.get("timeout_seconds", 30)) as response:
@@ -492,7 +536,7 @@ def _invoke_action(
             "PLUGIN_PROTOCOL_UNSUPPORTED",
             "mcp_stdio invocation requires isolated command execution and is not enabled",
         )
-    if plugin["protocol"] == "mcp_http":
+    if plugin["protocol"] in MCP_HTTP_PROTOCOLS:
         return _invoke_mcp_http(connection, action, input_payload)
     return _invoke_http(plugin, connection, action, input_payload)
 
@@ -544,8 +588,12 @@ def plugin_action_request_preview(
             "tool_name": request_config.get("tool_name"),
             "workspace_root": _config_value(request_config, "workspace_root"),
         }
-    if plugin["protocol"] == "mcp_http":
-        query = _dict_config_section(request_config.get("query"))
+    if plugin["protocol"] in MCP_HTTP_PROTOCOLS:
+        query = _query_with_url_key(
+            connection,
+            _dict_config_section(request_config.get("query")),
+            mask=True,
+        )
         endpoint_url = str(connection.get("endpoint_url") or "")
         return {
             "arguments": input_payload,
@@ -568,6 +616,7 @@ def plugin_action_request_preview(
     path = str(request_config.get("path") or "")
     url = urljoin(str(connection.get("endpoint_url", "")).rstrip("/") + "/", path.lstrip("/"))
     query = _dict_config_section(request_config.get("query"))
+    query = _query_with_url_key(connection, query, mask=True)
     url = _url_with_query(url, query)
     return {
         "body": input_payload if method not in {"GET", "HEAD"} else None,

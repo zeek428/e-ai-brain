@@ -7,6 +7,7 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import urlparse
 
+from app.services.plugin_constants import MCP_HTTP_PROTOCOLS
 from app.services.result_write_targets import result_write_target_default_mapping
 from app.services.scheduled_job_sample_reuse_wizard import connection_test_reuse_wizard
 
@@ -70,6 +71,22 @@ class ConnectionDiagnosticsService:
                 "name": f"{connection['name']} 读取内部业务数据",
                 "plugin_id": plugin["id"],
                 "request_config": {"tool_name": "internal_data_source.query"},
+                "requires_human_review": False,
+                "result_mapping": result_write_target_default_mapping("scheduled_job_result"),
+                "status": "draft",
+            }
+        if plugin.get("protocol") in MCP_HTTP_PROTOCOLS:
+            return {
+                "action_type": "mcp_tool",
+                "code": ConnectionDiagnosticsService._connection_test_action_code(
+                    connection,
+                    plugin,
+                ),
+                "connection_id": connection["id"],
+                "description": "由 MCP 连接测试生成，请确认 tool_name 和入参后保存。",
+                "name": f"{connection['name']} MCP 工具动作",
+                "plugin_id": plugin["id"],
+                "request_config": {"tool_name": "tools/list"},
                 "requires_human_review": False,
                 "result_mapping": result_write_target_default_mapping("scheduled_job_result"),
                 "status": "draft",

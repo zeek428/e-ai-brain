@@ -464,6 +464,12 @@ export function buildConnectionAuthConfig(
       ...(values.password_ref?.trim() ? { password_ref: values.password_ref.trim() } : {}),
     };
   }
+  if (values.auth_type === 'url_key') {
+    return {
+      query_key: values.query_key?.trim() || 'key',
+      ...(values.secret_ref?.trim() ? { secret_ref: values.secret_ref.trim() } : {}),
+    };
+  }
   return {};
 }
 
@@ -744,6 +750,7 @@ export function pluginConnectionDraftFormValues(
     name: stringValue(payload.name),
     password_ref: stringValue(authConfig.password_ref) || undefined,
     plugin_id: stringValue(payload.plugin_id),
+    query_key: stringValue(authConfig.query_key, 'key') || 'key',
     request_config: stableJson(requestConfig),
     schema_values: schemaValuesFromPayload(payload, schema),
     secret_ref: stringValue(authConfig.secret_ref) || undefined,

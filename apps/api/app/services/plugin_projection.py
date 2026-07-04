@@ -49,6 +49,8 @@ def public_invocation_log(log: dict[str, Any]) -> dict[str, Any]:
 
 def is_sensitive_request_key(key: str) -> bool:
     normalized = key.lower().replace("_", "-")
+    if normalized == "key":
+        return True
     return any(
         marker in normalized
         for marker in (

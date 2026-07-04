@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS integration_plugins (
       'http',
       'internal_read_model',
       'mcp_http',
+      'mcp_streamable_http',
       'mcp_stdio',
       'runner_polling',
       'runner_websocket'
