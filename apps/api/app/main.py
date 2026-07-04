@@ -38,6 +38,7 @@ from app.api.routers.related_systems import router as related_systems_router
 from app.api.routers.requirements import router as requirements_router
 from app.api.routers.scheduled_jobs import router as scheduled_jobs_router
 from app.api.routers.system_rbac import router as system_rbac_router
+from app.api.routers.system_external_identities import router as system_external_identities_router
 from app.api.routers.system_settings import router as system_settings_router
 from app.api.routers.tasks import router as tasks_router
 from app.api.routers.user_insights import router as user_insights_router
@@ -201,6 +202,7 @@ app.include_router(related_systems_router)
 app.include_router(requirements_router)
 app.include_router(scheduled_jobs_router)
 app.include_router(system_rbac_router)
+app.include_router(system_external_identities_router)
 app.include_router(system_settings_router)
 app.include_router(tasks_router)
 app.include_router(user_insights_router)

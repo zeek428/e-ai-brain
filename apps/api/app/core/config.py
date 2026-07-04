@@ -8,6 +8,21 @@ def _env_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).lower() in {"1", "true", "yes"}
 
 
+def _env_key_value_map(name: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for item in os.getenv(name, "").split(","):
+        text = item.strip()
+        if not text:
+            continue
+        separator = "=" if "=" in text else ":"
+        if separator not in text:
+            continue
+        key, value = text.split(separator, 1)
+        if key.strip() and value.strip():
+            mapping[key.strip()] = value.strip()
+    return mapping
+
+
 LOCAL_NETWORK_CORS_ENVIRONMENTS = {"dev", "development", "local", "pytest", "test", "testing"}
 LOCAL_NETWORK_CORS_ORIGIN_REGEX = (
     r"^https?://("
@@ -99,6 +114,7 @@ class Settings:
         self.dingtalk_redirect_uri = os.getenv("DINGTALK_REDIRECT_URI", "")
         self.dingtalk_bind_redirect_uri = os.getenv("DINGTALK_BIND_REDIRECT_URI", "")
         self.dingtalk_allowed_corp_ids = os.getenv("DINGTALK_ALLOWED_CORP_IDS", "")
+        self.dingtalk_corp_name_map = _env_key_value_map("DINGTALK_CORP_NAME_MAP")
         self.dingtalk_auto_provision = _env_bool("DINGTALK_AUTO_PROVISION")
         self.dingtalk_auto_provision_role = os.getenv(
             "DINGTALK_AUTO_PROVISION_ROLE",

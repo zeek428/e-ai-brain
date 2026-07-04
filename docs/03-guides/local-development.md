@@ -80,6 +80,7 @@ DINGTALK_REDIRECT_URI=http://<public-callback-domain>/api/auth/dingtalk/callback
 DINGTALK_BIND_REDIRECT_URI=http://<public-callback-domain>/api/auth/dingtalk/bind/callback
 DINGTALK_FRONTEND_BASE_URL=http://localhost:5173
 DINGTALK_ALLOWED_CORP_IDS=<corp-id-1,corp-id-2>
+DINGTALK_CORP_NAME_MAP=<corp-id-1=企业名称,corp-id-2=另一个企业>
 DINGTALK_AUTO_PROVISION=false
 DINGTALK_AUTO_PROVISION_ROLE=viewer
 DINGTALK_PENDING_APPROVAL=true

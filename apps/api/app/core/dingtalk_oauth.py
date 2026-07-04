@@ -21,6 +21,7 @@ class DingTalkProfile:
     subject: str
     avatar_url: str | None = None
     corp_id: str | None = None
+    corp_name: str | None = None
     display_name: str | None = None
     email: str | None = None
     open_id: str | None = None
@@ -30,6 +31,7 @@ class DingTalkProfile:
         return {
             "avatar_url": self.avatar_url,
             "corp_id": self.corp_id,
+            "corp_name": self.corp_name,
             "display_name": self.display_name,
             "email": self.email,
             "open_id": self.open_id,
@@ -100,9 +102,20 @@ class DingTalkOAuthClient:
         subject = union_id or open_id
         if not subject:
             raise DingTalkOAuthError("DINGTALK_PROFILE_INCOMPLETE", "DingTalk subject missing")
+        corp_id = _first_text(payload, "corpId", "corp_id", "corpIdList")
+        corp_name = _first_text(
+            payload,
+            "corpName",
+            "corp_name",
+            "companyName",
+            "organizationName",
+            "orgName",
+            "tenantName",
+        )
         return DingTalkProfile(
             avatar_url=_first_text(payload, "avatarUrl", "avatar_url", "avatar"),
-            corp_id=_first_text(payload, "corpId", "corp_id", "corpIdList"),
+            corp_id=corp_id,
+            corp_name=corp_name or self.settings.dingtalk_corp_name_map.get(corp_id or ""),
             display_name=_first_text(payload, "nick", "name", "displayName", "display_name"),
             email=_first_text(payload, "email"),
             open_id=open_id,

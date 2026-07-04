@@ -21,6 +21,7 @@ describe('AccountProfilePage', () => {
       dingtalk_binding: {
         bound: true,
         corp_id: 'ding-corp',
+        corp_name: '青锋科技',
         display_name: '钉钉管理员',
         email: 'admin.dingtalk@example.com',
         provider: 'dingtalk',
@@ -109,8 +110,9 @@ describe('AccountProfilePage', () => {
     render(<AccountProfilePage />);
 
     expect(await screen.findByText('admin@example.com')).toBeInTheDocument();
+    expect(screen.getByLabelText('登录名')).toHaveValue('admin@example.com');
     expect(screen.getByText('钉钉管理员')).toBeInTheDocument();
-    expect(screen.getByText('ding-corp')).toBeInTheDocument();
+    expect(screen.getByText('青锋科技')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('显示名称'), {
       target: { value: 'AI Brain Owner' },

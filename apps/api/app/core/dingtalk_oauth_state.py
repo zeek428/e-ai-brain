@@ -22,6 +22,7 @@ class MemoryDingTalkOAuthStateRepository:
         redirect: str,
         user_id: str | None = None,
     ) -> str:
+        self._cleanup_expired()
         state = secrets.token_urlsafe(32)
         self.states[state] = {
             "expires_at": now_timestamp() + expires_in_seconds,
@@ -48,6 +49,7 @@ class MemoryDingTalkOAuthStateRepository:
         redirect: str,
         user_id: str,
     ) -> str:
+        self._cleanup_expired()
         ticket = secrets.token_urlsafe(32)
         self.tickets[ticket] = {
             "expires_at": now_timestamp() + expires_in_seconds,
@@ -65,6 +67,19 @@ class MemoryDingTalkOAuthStateRepository:
         if float(payload.get("expires_at", 0)) <= now_timestamp():
             return None
         return deepcopy(payload)
+
+    def _cleanup_expired(self) -> None:
+        current_time = now_timestamp()
+        self.states = {
+            state: payload
+            for state, payload in self.states.items()
+            if float(payload.get("expires_at", 0)) > current_time
+        }
+        self.tickets = {
+            ticket: payload
+            for ticket, payload in self.tickets.items()
+            if float(payload.get("expires_at", 0)) > current_time
+        }
 
 
 class PostgresDingTalkOAuthStateRepository:
@@ -101,6 +116,7 @@ class PostgresDingTalkOAuthStateRepository:
         state = secrets.token_urlsafe(32)
         with self._connect() as connection:
             with connection.cursor() as cursor:
+                self._delete_expired(cursor)
                 cursor.execute(
                     """
                     INSERT INTO dingtalk_oauth_ephemeral_states (
@@ -143,6 +159,7 @@ class PostgresDingTalkOAuthStateRepository:
         ticket = secrets.token_urlsafe(32)
         with self._connect() as connection:
             with connection.cursor() as cursor:
+                self._delete_expired(cursor)
                 cursor.execute(
                     """
                     INSERT INTO dingtalk_oauth_ephemeral_states (
@@ -173,6 +190,14 @@ class PostgresDingTalkOAuthStateRepository:
                 )
                 row = cursor.fetchone()
         return _payload_from_row(row)
+
+    def _delete_expired(self, cursor: Any) -> None:
+        cursor.execute(
+            """
+            DELETE FROM dingtalk_oauth_ephemeral_states
+            WHERE expires_at <= now()
+            """
+        )
 
 
 def _payload_from_row(row: Any) -> dict[str, Any] | None:

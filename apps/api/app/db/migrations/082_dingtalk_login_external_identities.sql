@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS user_external_identities (
   union_id text,
   open_id text,
   corp_id text,
+  corp_name text,
   display_name text,
   email text,
   avatar_url text,

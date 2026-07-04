@@ -409,6 +409,7 @@ export {
   setSystemMenuStatus,
   setSystemRoleStatus,
   testSystemEmailDelivery,
+  unbindSystemExternalIdentity,
   updateManagementUser,
   updateSystemMenu,
   updateSystemRole,

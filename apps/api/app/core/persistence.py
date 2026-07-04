@@ -298,6 +298,14 @@ class PostgresSnapshotRepository:
                     cursor,
                     "087_user_profile_contact.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "088_dingtalk_corp_name.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "089_user_password_login_state.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

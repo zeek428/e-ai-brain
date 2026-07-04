@@ -258,6 +258,7 @@ def test_dingtalk_callback_auto_provisions_pending_user_without_ticket():
             for item in app.state.user_repository.list_users()
             if item["username"] == "zhangsan@example.com"
         )
+        assert user["local_password_configured"] is False
         assert user["roles"] == ["viewer"]
         assert user["status"] == "pending_approval"
         assert [
@@ -308,6 +309,12 @@ def test_dingtalk_pending_auto_provision_login_remains_pending_until_user_is_act
             if item["username"] == "zhangsan@example.com"
         )
         user_repository.update_user(pending_user["id"], {"status": "active"})
+        local_login = client.post(
+            "/api/auth/login",
+            json={"password": "unknown-random-password", "username": "zhangsan@example.com"},
+        )
+        assert local_login.status_code == 403
+        assert local_login.json()["detail"]["code"] == "PASSWORD_LOGIN_DISABLED"
 
         _location, approved_state = _start_dingtalk_login("/delivery/bugs")
         approved_callback = client.get(
@@ -396,10 +403,138 @@ def test_dingtalk_bind_and_unbind_current_user():
         restore()
 
 
+def test_dingtalk_only_user_sets_local_password_before_unbind():
+    profile = DingTalkProfile(
+        corp_id="corp_allowed",
+        display_name="钉钉张三",
+        email="zhangsan@example.com",
+        subject="union_sso_only",
+        union_id="union_sso_only",
+    )
+    user_repository = MemoryUserRepository({})
+    _fake_client, restore = _install_dingtalk_test_state(
+        profile,
+        allowed_corp_ids="corp_allowed",
+        auto_provision=True,
+        user_repository=user_repository,
+    )
+    try:
+        _location, pending_state = _start_dingtalk_login("/account/profile")
+        pending_callback = client.get(
+            f"/api/auth/dingtalk/callback?code=ok&state={pending_state}",
+            follow_redirects=False,
+        )
+        assert parse_qs(urlparse(pending_callback.headers["location"]).query)["error"] == [
+            "DINGTALK_ACCOUNT_PENDING_APPROVAL"
+        ]
+        pending_user = next(
+            item
+            for item in user_repository.list_users()
+            if item["username"] == "zhangsan@example.com"
+        )
+        assert pending_user["local_password_configured"] is False
+        user_repository.update_user(pending_user["id"], {"status": "active"})
+
+        _location, approved_state = _start_dingtalk_login("/account/profile")
+        approved_callback = client.get(
+            f"/api/auth/dingtalk/callback?code=ok&state={approved_state}",
+            follow_redirects=False,
+        )
+        ticket = parse_qs(urlparse(approved_callback.headers["location"]).query)["ticket"][0]
+        exchanged = client.post("/api/auth/dingtalk/exchange-ticket", json={"ticket": ticket})
+        token = exchanged.json()["data"]["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        profile_response = client.get("/api/auth/profile", headers=headers)
+        assert profile_response.json()["data"]["local_password_configured"] is False
+
+        blocked_unbind = client.post("/api/auth/dingtalk/unbind", headers=headers)
+        assert blocked_unbind.status_code == 409
+        assert blocked_unbind.json()["detail"]["code"] == "DINGTALK_UNBIND_LOGIN_LOCKOUT_RISK"
+
+        password_setup = client.patch(
+            "/api/auth/profile",
+            json={"new_password": "local-sso-secret"},
+            headers=headers,
+        )
+        assert password_setup.status_code == 200
+        assert password_setup.json()["data"]["user"]["local_password_configured"] is True
+
+        unbound = client.post("/api/auth/dingtalk/unbind", headers=headers)
+        assert unbound.status_code == 200
+
+        local_login = client.post(
+            "/api/auth/login",
+            json={"password": "local-sso-secret", "username": "zhangsan@example.com"},
+        )
+        assert local_login.status_code == 200
+    finally:
+        restore()
+
+
+def test_dingtalk_rebind_replaces_current_user_identity():
+    initial_profile = DingTalkProfile(
+        corp_id="corp_allowed",
+        display_name="AI Brain Admin Old",
+        subject="union_admin_old",
+        union_id="union_admin_old",
+    )
+    fake_client, restore = _install_dingtalk_test_state(
+        initial_profile,
+        allowed_corp_ids="corp_allowed",
+    )
+    try:
+        app.state.external_identity_repository.upsert_identity(
+            provider="dingtalk",
+            provider_subject="union_admin_old",
+            profile=initial_profile.identity_profile(),
+            user_id="user_admin",
+        )
+        fake_client.profile = DingTalkProfile(
+            corp_id="corp_allowed",
+            display_name="AI Brain Admin New",
+            subject="union_admin_new",
+            union_id="union_admin_new",
+        )
+        login = client.post(
+            "/api/auth/login",
+            json={"password": "admin123", "username": "admin@example.com"},
+        )
+        token = login.json()["data"]["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        started = client.post(
+            "/api/auth/dingtalk/bind/start?redirect=/account/profile",
+            headers=headers,
+        )
+        state = parse_qs(urlparse(started.json()["data"]["authorize_url"]).query)["state"][0]
+        callback = client.get(
+            f"/api/auth/dingtalk/bind/callback?code=ok&state={state}",
+            follow_redirects=False,
+        )
+        assert callback.status_code == 302
+        assert parse_qs(urlparse(callback.headers["location"]).query)["dingtalk_bound"] == [
+            "true"
+        ]
+        assert app.state.external_identity_repository.find_active(
+            "dingtalk",
+            "union_admin_old",
+        ) is None
+        rebound_identity = app.state.external_identity_repository.find_active(
+            "dingtalk",
+            "union_admin_new",
+        )
+        assert rebound_identity["user_id"] == "user_admin"
+        assert app.state.store.audit_events[-1]["event_type"] == "dingtalk_account.rebound"
+    finally:
+        restore()
+
+
 def test_current_user_profile_updates_contact_password_and_binding_status():
     profile = DingTalkProfile(
         avatar_url="https://static.example.com/avatar.png",
         corp_id="corp_allowed",
+        corp_name="青锋科技",
         display_name="AI Brain Admin DingTalk",
         email="admin.dingtalk@example.com",
         subject="union_admin_profile",
@@ -442,6 +577,7 @@ def test_current_user_profile_updates_contact_password_and_binding_status():
 
         bound_profile = client.get("/api/auth/profile", headers=headers).json()["data"]
         assert bound_profile["dingtalk_binding"]["bound"] is True
+        assert bound_profile["dingtalk_binding"]["corp_name"] == "青锋科技"
         assert bound_profile["dingtalk_binding"]["display_name"] == "AI Brain Admin DingTalk"
         assert "provider_subject" not in bound_profile["dingtalk_binding"]
 
@@ -620,5 +756,78 @@ def test_dingtalk_bound_identity_can_login_without_auto_provision():
         )
         assert exchanged.status_code == 200
         assert exchanged.json()["data"]["user"]["id"] == "user_bound"
+    finally:
+        restore()
+
+
+def test_system_external_identity_admin_list_and_force_unbind():
+    profile = DingTalkProfile(
+        corp_id="corp_allowed",
+        corp_name="青锋科技",
+        display_name="SSO Viewer",
+        email="sso@example.com",
+        subject="union_sso_admin",
+        union_id="union_sso_admin",
+    )
+    user_repository = MemoryUserRepository.seeded()
+    sso_user = user_repository.create_user(
+        display_name="SSO Viewer",
+        password="unusable-random-password",
+        password_login_enabled=False,
+        roles=["viewer"],
+        status="active",
+        username="sso@example.com",
+    )
+    _fake_client, restore = _install_dingtalk_test_state(
+        profile,
+        allowed_corp_ids="corp_allowed",
+        user_repository=user_repository,
+    )
+    try:
+        identity = app.state.external_identity_repository.upsert_identity(
+            provider="dingtalk",
+            provider_subject="union_sso_admin",
+            profile=profile.identity_profile(),
+            user_id=sso_user["id"],
+        )
+        login = client.post(
+            "/api/auth/login",
+            json={"password": "admin123", "username": "admin@example.com"},
+        )
+        headers = {"Authorization": f"Bearer {login.json()['data']['access_token']}"}
+
+        users = client.get("/api/users?page=1&page_size=10", headers=headers)
+        listed_sso_user = next(
+            item for item in users.json()["data"]["items"] if item["id"] == sso_user["id"]
+        )
+        assert listed_sso_user["local_password_configured"] is False
+        assert listed_sso_user["login_methods"] == ["dingtalk"]
+        assert listed_sso_user["dingtalk_binding"]["corp_name"] == "青锋科技"
+        assert listed_sso_user["dingtalk_binding"]["identity_id"] == identity["id"]
+
+        identities = client.get(
+            "/api/system/external-identities?provider=dingtalk&status=active",
+            headers=headers,
+        )
+        assert identities.status_code == 200
+        identity_payload = identities.json()["data"]["items"][0]
+        assert identity_payload["id"] == identity["id"]
+        assert "provider_subject" not in identity_payload
+        assert identity_payload["provider_subject_hint"]
+
+        blocked = client.delete(
+            f"/api/system/external-identities/{identity['id']}",
+            headers=headers,
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "DINGTALK_UNBIND_LOGIN_LOCKOUT_RISK"
+
+        forced = client.delete(
+            f"/api/system/external-identities/{identity['id']}?force=true",
+            headers=headers,
+        )
+        assert forced.status_code == 200
+        assert app.state.external_identity_repository.find_active("dingtalk", "union_sso_admin") is None
+        assert app.state.store.audit_events[-1]["event_type"] == "dingtalk_account.admin_unbound"
     finally:
         restore()

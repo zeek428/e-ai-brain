@@ -272,8 +272,19 @@ export type UserMutationPayload = {
 };
 
 type UserListItem = {
+  dingtalk_binding?: {
+    bound: boolean;
+    corp_id?: string | null;
+    corp_name?: string | null;
+    display_name?: string | null;
+    email?: string | null;
+    identity_id?: string | null;
+    provider?: string;
+  };
   display_name: string;
   id: string;
+  local_password_configured?: boolean;
+  login_methods?: string[];
   mobile?: string;
   roles?: string[];
   status?: string;
@@ -657,7 +668,10 @@ export async function fetchManagementUsers(
     const roles = user.roles ?? [];
     return {
       displayName: user.display_name,
+      dingtalkBinding: user.dingtalk_binding,
       id: user.id,
+      localPasswordConfigured: user.local_password_configured ?? true,
+      loginMethods: user.login_methods ?? [],
       mobile: user.mobile ?? '',
       roles,
       rolesText: formatUserRoles(roles, roleDefinitions),
@@ -692,7 +706,10 @@ export async function fetchManagementUserList(
       const roles = user.roles ?? [];
       return {
         displayName: user.display_name,
+        dingtalkBinding: user.dingtalk_binding,
         id: user.id,
+        localPasswordConfigured: user.local_password_configured ?? true,
+        loginMethods: user.login_methods ?? [],
         mobile: user.mobile ?? '',
         roles,
         rolesText: formatUserRoles(roles, roleDefinitions),
@@ -728,4 +745,16 @@ export async function deleteManagementUser(userId: string) {
     method: 'DELETE',
     token,
   });
+}
+
+export async function unbindSystemExternalIdentity(identityId: string, force = false) {
+  const token = requireAccessToken();
+  const query = force ? '?force=true' : '';
+  return apiRequest<{ deleted: boolean; id: string }>(
+    `/api/system/external-identities/${identityId}${query}`,
+    {
+      method: 'DELETE',
+      token,
+    },
+  );
 }

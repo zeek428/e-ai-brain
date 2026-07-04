@@ -30,6 +30,7 @@ export type CurrentUserResponse = {
   display_name: string;
   email?: string;
   id: string;
+  local_password_configured?: boolean;
   menu_tree?: MenuTreeNode[];
   mobile?: string;
   permissions?: string[];
@@ -43,8 +44,10 @@ export type DingTalkBindingSummary = {
   avatar_url?: string | null;
   bound: boolean;
   corp_id?: string | null;
+  corp_name?: string | null;
   display_name?: string | null;
   email?: string | null;
+  identity_id?: string | null;
   provider?: string;
 };
 

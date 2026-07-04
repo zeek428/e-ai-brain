@@ -276,7 +276,7 @@ GET /api/auth/dingtalk/callback?code=<auth_code>&state=<state>
 
 - 校验 state 存在、未过期、未使用、provider 匹配。
 - 使用钉钉应用凭证和 code 换取用户 token。
-- 获取用户身份信息，解析 `corp_id/external_user_id/union_id/open_id/display_name/avatar_url` 等安全字段。
+- 获取用户身份信息，解析 `corp_id/corp_name/external_user_id/union_id/open_id/display_name/avatar_url` 等安全字段；企业名称优先使用钉钉返回值，其次使用 `DINGTALK_CORP_NAME_MAP`。
 - 执行登录决策。
 - 成功时生成一次性 `login_ticket`，302 回前端：
 
@@ -333,9 +333,9 @@ ticket 必须一次性、短有效期。当前 P0 实现为 5 分钟有效，重
 4. 若该钉钉身份未被其它用户绑定，写入 `user_external_identities`。
 5. 若已绑定其它用户，返回 `EXTERNAL_IDENTITY_CONFLICT`。
 
-自助绑定不改变用户角色和权限。
+自助绑定不改变用户角色和权限。已绑定用户再次发起绑定时按重新绑定处理：服务端先停用当前用户旧 active 钉钉身份，再绑定新的钉钉身份；若新身份已被其它 AI Brain 用户占用，仍返回 `EXTERNAL_IDENTITY_CONFLICT`。重新绑定审计事件使用 `dingtalk_account.rebound`。
 
-个人中心同时展示当前用户基础资料和钉钉绑定摘要。用户可维护自己的显示名称、邮箱、手机号和登录密码；修改邮箱或密码必须校验当前密码。邮箱变更后后端返回新的 AI Brain Token，前端立即刷新本地登录态。资料变更审计只记录 `changed_fields`，不记录密码明文或钉钉密钥。
+个人中心同时展示当前用户基础资料和钉钉绑定摘要。用户可维护自己的显示名称、邮箱、手机号和登录密码；修改邮箱或已有本地密码的密码必须校验当前密码。钉钉自动开户用户的 `local_password_configured=false`，首次设置本地密码可不传当前密码，设置成功后才能自助解绑钉钉。邮箱变更后后端返回新的 AI Brain Token，前端立即刷新本地登录态。资料变更审计只记录 `changed_fields`，不记录密码明文或钉钉密钥。
 
 ### 管理员绑定
 
@@ -343,6 +343,8 @@ ticket 必须一次性、短有效期。当前 P0 实现为 5 分钟有效，重
 
 - 管理员可搜索待审批身份。
 - 管理员可绑定到指定 AI Brain 用户。
+- 管理员可通过 `/api/system/external-identities` 查询外部身份绑定摘要，接口只返回 `provider_subject/open_id/union_id` 的脱敏 hint。
+- 管理员可按外部身份 ID 解绑；默认会阻止 SSO-only 用户被解绑到无法登录，确需救援处理时必须显式 `force=true`，并记录 `dingtalk_account.admin_unbound` 审计。
 - 管理员不能把一个钉钉身份同时绑定给多个用户。
 - 管理员解绑最后一个登录方式前需确认，避免用户无法登录。
 
@@ -363,6 +365,7 @@ ticket 必须一次性、短有效期。当前 P0 实现为 5 分钟有效，重
 | `DINGTALK_REDIRECT_URI` | 钉钉开放平台配置的回调地址。 |
 | `DINGTALK_BIND_REDIRECT_URI` | 自助绑定回调地址；未配置且登录回调以 `/callback` 结尾时自动推导为 `/bind/callback`。 |
 | `DINGTALK_ALLOWED_CORP_IDS` | 允许登录的企业 corp id 列表。 |
+| `DINGTALK_CORP_NAME_MAP` | 企业名称展示兜底映射，格式 `corp_id=企业名称,corp_id2=企业名称2`；当钉钉用户信息未返回企业名称时用于个人中心展示。 |
 | `DINGTALK_AUTO_PROVISION` | 是否允许首次登录自动创建用户。 |
 | `DINGTALK_AUTO_PROVISION_ROLE` | 自动创建用户默认角色，默认 `viewer`。 |
 | `DINGTALK_PENDING_APPROVAL` | 自动开户治理开关；当前 P1 实现中未绑定身份自动开户始终创建待审批用户，建议显式配置为 `true`。 |
@@ -417,7 +420,9 @@ ticket 必须一次性、短有效期。当前 P0 实现为 5 分钟有效，重
 | `dingtalk_login.succeeded` | 钉钉登录生成一次性 ticket 前 | user_id、corp_id |
 | `dingtalk_account.provisioned` | 自动创建 AI Brain 用户并绑定钉钉身份 | user_id、corp_id、status |
 | `dingtalk_account.bound` | 当前用户自助绑定成功 | user_id、corp_id |
+| `dingtalk_account.rebound` | 当前用户重新绑定到新的钉钉身份 | user_id、corp_id、previous_corp_id |
 | `dingtalk_account.unbound` | 当前用户解绑成功 | user_id |
+| `dingtalk_account.admin_unbound` | 管理员解除用户钉钉绑定 | actor_id、user_id、provider、corp_id、force |
 | `auth.profile.updated` | 当前用户修改个人资料、邮箱、手机号或密码 | user_id、changed_fields；不得记录旧密码或新密码 |
 | `auth.dingtalk.login_started` / `auth.dingtalk.login_failed` | 后续可选增强 | provider、redirect_hash、state_valid、reason；不得保存 code/token/secret |
 
@@ -438,6 +443,8 @@ payload 禁止保存 auth code、access token、refresh token、client secret、
 | `DINGTALK_ACCOUNT_PENDING_APPROVAL` | 403 | 登录申请等待管理员审批。 |
 | `DINGTALK_ACCOUNT_INACTIVE` | 403 | 绑定的内部用户被停用。 |
 | `EXTERNAL_IDENTITY_CONFLICT` | 409 | 钉钉身份已绑定其它 AI Brain 用户。 |
+| `DINGTALK_UNBIND_LOGIN_LOCKOUT_RISK` | 409 | 解绑后用户没有其它可用登录方式。 |
+| `PASSWORD_LOGIN_DISABLED` | 403 | 用户未配置本地密码登录，不能走账号密码登录。 |
 | `DINGTALK_TICKET_INVALID` | 401 | 一次性 ticket 缺失、过期、无效或已使用。 |
 
 ## 前端交互设计
@@ -454,18 +461,18 @@ payload 禁止保存 auth code、access token、refresh token、client secret、
 
 - 展示钉钉绑定状态、企业、钉钉显示名和邮箱摘要。
 - 支持绑定、重新绑定、解绑。
-- 支持维护显示名称、邮箱、手机号和登录密码；邮箱和密码变更必须校验当前密码。
+- 支持维护显示名称、邮箱、手机号和登录密码；邮箱和已有本地密码的密码变更必须校验当前密码。
 - 解绑前提示若没有其它登录方式会导致无法登录。
 
 系统管理：
 
-- 用户详情展示外部身份绑定列表。
-- 支持管理员绑定、解绑、审批待绑定身份。
+- 用户列表展示本地密码状态、登录方式和钉钉绑定企业。
+- 支持管理员查看外部身份绑定列表、解绑或强制解绑异常绑定；管理员绑定和审批待绑定身份仍属于后续扩展。
 - 系统设置展示钉钉登录配置和回调地址检查。
 
 ## 安全设计
 
-- P0 的 `state` 和 `login_ticket` 保存在服务端短期内存容器中，生产多实例部署时应升级为 Redis 或等价共享短期存储，并优先保存 hash。
+- `state` 和 `login_ticket` 保存在服务端短期仓储；PostgreSQL 运行态使用 `dingtalk_oauth_ephemeral_states` 原子删除消费，并在创建新 state/ticket 时清理过期记录。测试内存仓储仅用于本地单测。
 - 当前 `state` 有效期 10 分钟，`login_ticket` 有效期 5 分钟，均一次性使用。
 - OAuth 回调只接受配置中的 `redirect_uri`，生产必须 HTTPS。
 - `redirect` 只允许站内相对路径，拒绝协议头和双斜杠路径。

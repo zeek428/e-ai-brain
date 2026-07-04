@@ -14,6 +14,7 @@ from app.core.listing import (
     paginated_list_payload,
     sort_list_items,
 )
+from app.core.config import get_settings
 from app.core.roles import ASSIGNABLE_ROLE_CODES
 from app.core.trace import envelope, get_trace_id
 
@@ -21,6 +22,8 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 USER_MANAGE_PERMISSION = "system.users.manage"
 USER_STATUSES = {"active", "inactive"}
 USER_LIST_SORT_FIELDS = {"created_at", "display_name", "id", "status", "username"}
+DINGTALK_PROVIDER = "dingtalk"
+settings = get_settings()
 
 
 class UserCreateRequest(BaseModel):
@@ -38,6 +41,7 @@ class UserPatchRequest(BaseModel):
     password: str | None = None
     roles: list[str] | None = None
     status: str | None = None
+    username: str | None = None
 
 
 def _ensure_non_blank(value: str | None, field: str) -> str:
@@ -71,6 +75,49 @@ def _ensure_roles(roles: list[str]) -> None:
     invalid_roles = sorted(set(roles) - ASSIGNABLE_ROLE_CODES)
     if invalid_roles:
         raise api_error(400, "VALIDATION_ERROR", f"Unsupported roles: {', '.join(invalid_roles)}")
+
+
+def _dingtalk_binding_for_user(request: Request, user_id: str) -> dict[str, Any]:
+    identity_repository = getattr(request.app.state, "external_identity_repository", None)
+    find_active_by_user = getattr(identity_repository, "find_active_by_user", None)
+    if not callable(find_active_by_user):
+        return {"bound": False}
+    identity = find_active_by_user(DINGTALK_PROVIDER, user_id)
+    if identity is None:
+        return {"bound": False}
+    corp_id = identity.get("corp_id")
+    return {
+        "avatar_url": identity.get("avatar_url"),
+        "bound": True,
+        "corp_id": corp_id,
+        "corp_name": identity.get("corp_name") or settings.dingtalk_corp_name_map.get(corp_id or ""),
+        "display_name": identity.get("display_name"),
+        "email": identity.get("email"),
+        "identity_id": identity.get("id"),
+        "provider": DINGTALK_PROVIDER,
+    }
+
+
+def _enrich_user_auth_summary(request: Request, item: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(item)
+    local_password_configured = bool(
+        enriched.get("local_password_configured", enriched.get("password_login_enabled", True))
+    )
+    dingtalk_binding = _dingtalk_binding_for_user(request, str(enriched.get("id") or ""))
+    login_methods: list[str] = []
+    if local_password_configured:
+        login_methods.append("password")
+    if dingtalk_binding.get("bound"):
+        login_methods.append(DINGTALK_PROVIDER)
+    enriched["dingtalk_binding"] = dingtalk_binding
+    enriched["local_password_configured"] = local_password_configured
+    enriched["login_methods"] = login_methods
+    enriched.pop("password_login_enabled", None)
+    return enriched
+
+
+def _enrich_user_auth_summaries(request: Request, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_enrich_user_auth_summary(request, item) for item in items]
 
 
 @router.get("")
@@ -113,6 +160,7 @@ def list_users(
             status=status,
             username=username,
         )
+        payload["items"] = _enrich_user_auth_summaries(request, payload.get("items") or [])
         return envelope(
             add_list_observability(
                 payload,
@@ -142,6 +190,7 @@ def list_users(
         sort_by=sort_by,
         sort_order=sort_order,
     )
+    sorted_items = _enrich_user_auth_summaries(request, sorted_items)
     return paginated_list_payload(
         sorted_items,
         filters=filters,
@@ -186,7 +235,7 @@ def create_user(
         if str(exc) == "user_exists":
             raise api_error(409, "USER_EXISTS", "User already exists") from exc
         raise
-    return envelope(created, get_trace_id(request))
+    return envelope(_enrich_user_auth_summary(request, created), get_trace_id(request))
 
 
 @router.patch("/{user_id}")
@@ -204,6 +253,8 @@ def patch_user(
         updates["mobile"] = _normalize_mobile(updates["mobile"])
     if "password" in updates:
         updates["password"] = _ensure_non_blank(updates["password"], "password")
+    if "username" in updates:
+        updates["username"] = _ensure_non_blank(updates["username"], "username")
     if "roles" in updates:
         _ensure_roles(updates["roles"])
     if "status" in updates:
@@ -211,7 +262,7 @@ def patch_user(
     updated = request.app.state.user_repository.update_user(user_id, updates)
     if updated is None:
         raise api_error(404, "NOT_FOUND", "User not found")
-    return envelope(updated, get_trace_id(request))
+    return envelope(_enrich_user_auth_summary(request, updated), get_trace_id(request))
 
 
 @router.delete("/{user_id}")

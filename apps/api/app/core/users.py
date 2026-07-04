@@ -21,6 +21,7 @@ SEEDED_USERS = {
     "admin@example.com": {
         "display_name": "AI Brain Admin",
         "id": "user_admin",
+        "password_login_enabled": True,
         "password_hash": ADMIN_PASSWORD_HASH,
         "roles": ["admin"],
         "status": "active",
@@ -29,6 +30,7 @@ SEEDED_USERS = {
     "reviewer@example.com": {
         "display_name": "AI Brain Reviewer",
         "id": "user_reviewer",
+        "password_login_enabled": True,
         "password_hash": REVIEWER_PASSWORD_HASH,
         "roles": ["reviewer"],
         "status": "active",
@@ -104,6 +106,7 @@ class MemoryUserRepository:
         roles: list[str],
         status: str,
         username: str,
+        password_login_enabled: bool = True,
     ) -> dict[str, Any]:
         if username in self.users:
             raise ValueError("user_exists")
@@ -111,6 +114,7 @@ class MemoryUserRepository:
             "display_name": display_name,
             "id": f"user_{len(self.users) + 1:03d}",
             "mobile": "",
+            "password_login_enabled": password_login_enabled,
             "password_hash": hash_password(password),
             "roles": roles,
             "status": status,
@@ -142,6 +146,9 @@ class MemoryUserRepository:
             user["status"] = updates["status"]
         if "password" in updates:
             user["password_hash"] = hash_password(updates["password"])
+            user["password_login_enabled"] = True
+        if "password_login_enabled" in updates:
+            user["password_login_enabled"] = bool(updates["password_login_enabled"])
         return self._public_user(user)
 
     def delete_user(self, user_id: str) -> bool:
@@ -158,7 +165,9 @@ class MemoryUserRepository:
         return {
             "display_name": user["display_name"],
             "id": user["id"],
+            "local_password_configured": bool(user.get("password_login_enabled", True)),
             "mobile": user.get("mobile") or "",
+            "password_login_enabled": bool(user.get("password_login_enabled", True)),
             "roles": list(user["roles"]),
             "status": user.get("status", "active"),
             "username": user["username"],
@@ -193,7 +202,8 @@ class PostgresUserRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, email, display_name, roles, password_hash, status, mobile
+                    SELECT id, email, display_name, roles, password_hash, status, mobile,
+                           password_login_enabled
                     FROM users
                     WHERE email = %s AND status = 'active'
                     """,
@@ -202,11 +212,12 @@ class PostgresUserRepository:
                 row = cursor.fetchone()
         if row is None:
             return None
-        user_id, email, display_name, roles, password_hash, status, mobile = row
+        user_id, email, display_name, roles, password_hash, status, mobile, password_login_enabled = row
         return {
             "display_name": display_name,
             "id": user_id,
             "mobile": mobile or "",
+            "password_login_enabled": bool(password_login_enabled),
             "password_hash": password_hash,
             "roles": list(roles),
             "status": status,
@@ -218,7 +229,8 @@ class PostgresUserRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, email, display_name, roles, password_hash, status, mobile
+                    SELECT id, email, display_name, roles, password_hash, status, mobile,
+                           password_login_enabled
                     FROM users
                     WHERE id = %s AND status = 'active'
                     """,
@@ -227,11 +239,21 @@ class PostgresUserRepository:
                 row = cursor.fetchone()
         if row is None:
             return None
-        found_user_id, email, display_name, roles, password_hash, status, mobile = row
+        (
+            found_user_id,
+            email,
+            display_name,
+            roles,
+            password_hash,
+            status,
+            mobile,
+            password_login_enabled,
+        ) = row
         return {
             "display_name": display_name,
             "id": found_user_id,
             "mobile": mobile or "",
+            "password_login_enabled": bool(password_login_enabled),
             "password_hash": password_hash,
             "roles": list(roles),
             "status": status,
@@ -243,7 +265,7 @@ class PostgresUserRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, email, display_name, roles, status, mobile
+                    SELECT id, email, display_name, roles, status, mobile, password_login_enabled
                     FROM users
                     ORDER BY created_at DESC, email ASC
                     """
@@ -253,12 +275,14 @@ class PostgresUserRepository:
             {
                 "display_name": display_name,
                 "id": user_id,
+                "local_password_configured": bool(password_login_enabled),
                 "mobile": mobile or "",
+                "password_login_enabled": bool(password_login_enabled),
                 "roles": list(roles),
                 "status": status,
                 "username": email,
             }
-            for user_id, email, display_name, roles, status, mobile in rows
+            for user_id, email, display_name, roles, status, mobile, password_login_enabled in rows
         ]
 
     def list_user_summaries(
@@ -319,7 +343,7 @@ class PostgresUserRepository:
                 total = int(cursor.fetchone()[0])
                 cursor.execute(
                     f"""
-                    SELECT id, email, display_name, roles, status, mobile
+                    SELECT id, email, display_name, roles, status, mobile, password_login_enabled
                     FROM users
                     {where_sql}
                     ORDER BY {resolved_sort_by} {sort_order.upper()}, email ASC
@@ -333,12 +357,22 @@ class PostgresUserRepository:
                 {
                     "display_name": display_name_value,
                     "id": user_id,
+                    "local_password_configured": bool(password_login_enabled),
                     "mobile": mobile or "",
+                    "password_login_enabled": bool(password_login_enabled),
                     "roles": list(roles),
                     "status": status_value,
                     "username": email,
                 }
-                for user_id, email, display_name_value, roles, status_value, mobile in rows
+                for (
+                    user_id,
+                    email,
+                    display_name_value,
+                    roles,
+                    status_value,
+                    mobile,
+                    password_login_enabled,
+                ) in rows
             ],
             "page": page,
             "page_size": page_size,
@@ -353,6 +387,7 @@ class PostgresUserRepository:
         roles: list[str],
         status: str,
         username: str,
+        password_login_enabled: bool = True,
     ) -> dict[str, Any]:
         user_id = f"user_{username.replace('@', '_').replace('.', '_')}"
         try:
@@ -360,8 +395,11 @@ class PostgresUserRepository:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """
-                        INSERT INTO users (id, email, display_name, roles, password_hash, status)
-                        VALUES (%s, %s, %s, %s::jsonb, %s, %s)
+                        INSERT INTO users (
+                          id, email, display_name, roles, password_hash, status,
+                          password_login_enabled
+                        )
+                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
                         """,
                         (
                             user_id,
@@ -370,6 +408,7 @@ class PostgresUserRepository:
                             _json_dumps(roles),
                             hash_password(password),
                             status,
+                            password_login_enabled,
                         ),
                     )
         except Exception as exc:
@@ -379,6 +418,9 @@ class PostgresUserRepository:
         return {
             "display_name": display_name,
             "id": user_id,
+            "local_password_configured": bool(password_login_enabled),
+            "mobile": "",
+            "password_login_enabled": bool(password_login_enabled),
             "roles": roles,
             "status": status,
             "username": username,
@@ -408,6 +450,10 @@ class PostgresUserRepository:
         if "password" in updates:
             fields.append("password_hash = %s")
             values.append(hash_password(updates["password"]))
+            fields.append("password_login_enabled = true")
+        if "password_login_enabled" in updates:
+            fields.append("password_login_enabled = %s")
+            values.append(bool(updates["password_login_enabled"]))
         if fields:
             values.append(user_id)
             with self._connect() as connection:

@@ -70,6 +70,7 @@ PATCH /api/auth/profile
     "username": "admin@example.com",
     "email": "admin@example.com",
     "display_name": "AI Brain Admin",
+    "local_password_configured": true,
     "mobile": "+86 13800000000",
     "roles": ["admin"],
     "permissions": ["system.admin"],
@@ -79,6 +80,7 @@ PATCH /api/auth/profile
       "bound": true,
       "provider": "dingtalk",
       "corp_id": "dingxxx",
+      "corp_name": "示例科技",
       "display_name": "张三",
       "email": "zhangsan@example.com",
       "avatar_url": null
@@ -88,7 +90,9 @@ PATCH /api/auth/profile
 }
 ```
 
-`PATCH /api/auth/profile` 只允许当前登录用户修改自己的 `display_name/email/mobile/password`。修改邮箱或密码必须提交 `current_password` 并通过校验；修改邮箱成功时响应会同时返回新的 AI Brain Bearer Token，前端必须刷新本地登录态，避免旧 token 中的 username 失效。修改资料会记录 `auth.profile.updated` 审计事件，payload 只包含 `changed_fields`，不得记录旧密码、新密码、钉钉密钥或 OAuth code。
+`PATCH /api/auth/profile` 只允许当前登录用户修改自己的 `display_name/email/mobile/password`。修改邮箱或已有本地密码的密码必须提交 `current_password` 并通过校验；修改邮箱成功时响应会同时返回新的 AI Brain Bearer Token，前端必须刷新本地登录态，避免旧 token 中的 username 失效。修改资料会记录 `auth.profile.updated` 审计事件，payload 只包含 `changed_fields`，不得记录旧密码、新密码、钉钉密钥或 OAuth code。
+
+钉钉自动开户或管理员创建的 SSO-only 用户会返回 `local_password_configured=false`，此时允许已登录用户首次设置本地密码时不传 `current_password`；首次设置成功后 `local_password_configured=true`，后续密码或邮箱变更仍需校验当前密码。账号密码登录会拒绝 `local_password_configured=false` 的用户并返回 `PASSWORD_LOGIN_DISABLED`。
 
 请求示例：
 
@@ -112,6 +116,7 @@ PATCH /api/auth/profile
       "username": "zhangsan@example.com",
       "email": "zhangsan@example.com",
       "display_name": "张三",
+      "local_password_configured": true,
       "mobile": "+86 13800000000",
       "roles": ["admin"],
       "dingtalk_binding": {
@@ -397,7 +402,7 @@ POST /api/auth/dingtalk/exchange-ticket
 }
 ```
 
-成功响应与 `POST /api/auth/login` 保持一致。主要错误码包括 `DINGTALK_LOGIN_NOT_CONFIGURED`、`DINGTALK_STATE_INVALID`、`DINGTALK_AUTH_DENIED`、`DINGTALK_CODE_MISSING`、`DINGTALK_UPSTREAM_ERROR`、`DINGTALK_PROFILE_INCOMPLETE`、`DINGTALK_CORP_NOT_ALLOWED`、`DINGTALK_ACCOUNT_NOT_BOUND`、`DINGTALK_ACCOUNT_PENDING_APPROVAL`、`DINGTALK_ACCOUNT_INACTIVE`、`EXTERNAL_IDENTITY_CONFLICT` 和 `DINGTALK_TICKET_INVALID`。OAuth callback 的失败会通过前端回调页 query 参数展示，`exchange-ticket` 失败返回 JSON API 错误。
+成功响应与 `POST /api/auth/login` 保持一致。主要错误码包括 `PASSWORD_LOGIN_DISABLED`、`DINGTALK_LOGIN_NOT_CONFIGURED`、`DINGTALK_STATE_INVALID`、`DINGTALK_AUTH_DENIED`、`DINGTALK_CODE_MISSING`、`DINGTALK_UPSTREAM_ERROR`、`DINGTALK_PROFILE_INCOMPLETE`、`DINGTALK_CORP_NOT_ALLOWED`、`DINGTALK_ACCOUNT_NOT_BOUND`、`DINGTALK_ACCOUNT_PENDING_APPROVAL`、`DINGTALK_ACCOUNT_INACTIVE`、`DINGTALK_UNBIND_LOGIN_LOCKOUT_RISK`、`EXTERNAL_IDENTITY_CONFLICT` 和 `DINGTALK_TICKET_INVALID`。OAuth callback 的失败会通过前端回调页 query 参数展示，`exchange-ticket` 失败返回 JSON API 错误。
 
 ### 钉钉账号绑定
 
@@ -407,7 +412,9 @@ GET /api/auth/dingtalk/bind/callback?code=<auth_code>&state=<state>
 POST /api/auth/dingtalk/unbind
 ```
 
-自助绑定要求当前用户已登录。绑定成功只写入或更新外部身份绑定，不改变用户角色、权限和数据范围。若该钉钉身份已经绑定其它 AI Brain 用户，返回 `409 EXTERNAL_IDENTITY_CONFLICT`。解绑只停用或删除外部身份绑定，不删除 `users` 账号和历史审计 actor。
+自助绑定要求当前用户已登录。绑定成功只写入或更新外部身份绑定，不改变用户角色、权限和数据范围。服务端会优先保存钉钉返回的企业名称 `corp_name`，若上游未返回名称，可通过 `DINGTALK_CORP_NAME_MAP` 按 corp id 配置展示名，前端“企业”优先显示企业名称并回退到 `corp_id`。若该钉钉身份已经绑定其它 AI Brain 用户，返回 `409 EXTERNAL_IDENTITY_CONFLICT`。解绑只停用或删除外部身份绑定，不删除 `users` 账号和历史审计 actor。
+
+已绑定用户再次发起绑定时按“重新绑定”处理：若新钉钉身份未被其他 AI Brain 用户占用，服务端会停用当前用户旧的 active 钉钉身份并绑定新身份，审计事件为 `dingtalk_account.rebound`；若新身份已被其他用户占用，返回 `EXTERNAL_IDENTITY_CONFLICT`。当当前用户没有本地密码登录能力时，自助解绑会返回 `409 DINGTALK_UNBIND_LOGIN_LOCKOUT_RISK`，要求先设置本地密码，避免解绑后无法登录。
 
 ### 角色目录
 

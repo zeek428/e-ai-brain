@@ -466,6 +466,21 @@ describe('AI Brain Ant Design Pro workbench', () => {
       throw new Error(`Unexpected fetch call: ${path}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    window.localStorage.setItem(
+      'ai_brain_current_user',
+      JSON.stringify({
+        display_name: 'AI Brain Admin',
+        id: 'user_admin',
+        permissions: [
+          'bugs.manage',
+          'knowledge.manage',
+          'requirements.manage',
+          'system.users.manage',
+        ],
+        roles: ['admin'],
+        username: 'admin@example.com',
+      }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     const { rerender } = render(<RequirementsPage />);

@@ -52,7 +52,10 @@ const DINGTALK_BIND_ERROR_MESSAGES: Record<string, string> = {
   DINGTALK_AUTH_DENIED: '你取消了钉钉授权。如需绑定，请重新点击“绑定钉钉”。',
   DINGTALK_BIND_FAILED: '钉钉授权信息获取失败，请稍后重试或联系管理员检查钉钉应用配置。',
   DINGTALK_CODE_MISSING: '钉钉没有返回授权码，请重新发起绑定。',
+  DINGTALK_CORP_NOT_ALLOWED: '当前钉钉企业不在 AI Brain 允许绑定范围内。',
   DINGTALK_STATE_INVALID: '绑定会话已过期，请从个人中心重新点击“绑定钉钉”。',
+  DINGTALK_USER_ALREADY_BOUND: '当前 AI Brain 用户已经绑定了其他钉钉账号，请先解绑后再重新绑定。',
+  DINGTALK_UNBIND_LOGIN_LOCKOUT_RISK: '请先设置本地登录密码，再解绑钉钉账号。',
   EXTERNAL_IDENTITY_CONFLICT:
     '这个钉钉账号已经绑定到其他 AI Brain 用户。请先登录原账号解绑，或联系管理员处理。',
 };
@@ -158,7 +161,7 @@ function AccountProfileContent() {
     setIsPasswordSaving(true);
     try {
       const response = await updateAuthProfile({
-        current_password: values.current_password,
+        current_password: values.current_password || undefined,
         new_password: values.new_password,
       });
       populateProfile(response.user);
@@ -190,13 +193,19 @@ function AccountProfileContent() {
       populateProfile(nextProfile);
       message.success('钉钉账号已解绑');
     } catch (unbindError) {
-      message.error(formatMutationError(unbindError));
+      const code =
+        unbindError instanceof Error
+          ? (unbindError as Error & { code?: string }).code
+          : undefined;
+      message.error(code ? dingtalkBindErrorMessage(code) : formatMutationError(unbindError));
     } finally {
       setIsUnbinding(false);
     }
   };
 
   const dingtalkBinding = profile?.dingtalk_binding;
+  const dingtalkCorpDisplay = dingtalkBinding?.corp_name || dingtalkBinding?.corp_id || '-';
+  const localPasswordConfigured = profile?.local_password_configured ?? true;
 
   return (
     <main className="account-profile-page">
@@ -214,6 +223,9 @@ function AccountProfileContent() {
         <section className="account-profile-grid">
           <Card className="account-profile-panel" title="账号资料">
             <Form<BasicProfileFormValues> form={basicForm} layout="vertical" requiredMark={false}>
+              <Form.Item label="登录名">
+                <Input aria-label="登录名" readOnly value={profile?.username ?? ''} />
+              </Form.Item>
               <Form.Item
                 label="显示名称"
                 name="display_name"
@@ -251,9 +263,11 @@ function AccountProfileContent() {
           <Card className="account-profile-panel" title="登录密码">
             <Form<PasswordFormValues> form={passwordForm} layout="vertical" requiredMark={false}>
               <Form.Item
-                label="当前密码"
+                label={localPasswordConfigured ? '当前密码' : '当前密码（首次设置可留空）'}
                 name="current_password"
-                rules={[{ message: '请输入当前密码', required: true }]}
+                rules={
+                  localPasswordConfigured ? [{ message: '请输入当前密码', required: true }] : []
+                }
               >
                 <Input.Password
                   aria-label="密码当前密码"
@@ -315,7 +329,7 @@ function AccountProfileContent() {
                   </Tag>
                 </Space>
                 <Descriptions column={1} size="small">
-                  <Descriptions.Item label="企业">{dingtalkBinding?.corp_id || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="企业">{dingtalkCorpDisplay}</Descriptions.Item>
                   <Descriptions.Item label="邮箱">{dingtalkBinding?.email || '-'}</Descriptions.Item>
                 </Descriptions>
               </div>
@@ -331,11 +345,11 @@ function AccountProfileContent() {
                 {dingtalkBinding?.bound ? '重新绑定' : '绑定钉钉'}
               </Button>
               {dingtalkBinding?.bound ? (
-                <Popconfirm
-                  okText="解绑"
-                  onConfirm={() => void handleDingTalkUnbind()}
-                  title="解绑当前钉钉账号？"
-                >
+                  <Popconfirm
+                    okText="解绑"
+                    onConfirm={() => void handleDingTalkUnbind()}
+                    title="解绑当前钉钉账号？请确认本地登录密码可用。"
+                  >
                   <Button danger loading={isUnbinding}>
                     解绑
                   </Button>

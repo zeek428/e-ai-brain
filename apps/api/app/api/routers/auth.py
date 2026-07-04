@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import secrets
 from time import perf_counter
 from typing import Any
@@ -69,8 +70,10 @@ def _public_user(user: dict[str, Any]) -> dict[str, Any]:
         "username": user["username"],
         "email": user["username"],
         "display_name": user["display_name"],
+        "local_password_configured": bool(user.get("password_login_enabled", True)),
         "mobile": user.get("mobile") or "",
         "roles": user["roles"],
+        "status": user.get("status", "active"),
     }
 
 
@@ -306,7 +309,7 @@ def _dingtalk_oauth_client(request: Request) -> Any:
 
 def _profile_from_exchange_result(result: Any) -> DingTalkProfile:
     if isinstance(result, DingTalkProfile):
-        return result
+        return _profile_with_configured_corp_name(result)
     if not isinstance(result, dict):
         raise api_error(502, "DINGTALK_PROFILE_INCOMPLETE", "DingTalk profile is invalid")
     union_id = _first_profile_text(result, "union_id", "unionId", "unionid")
@@ -314,14 +317,26 @@ def _profile_from_exchange_result(result: Any) -> DingTalkProfile:
     subject = _first_profile_text(result, "subject") or union_id or open_id
     if not subject:
         raise api_error(502, "DINGTALK_PROFILE_INCOMPLETE", "DingTalk subject missing")
-    return DingTalkProfile(
-        avatar_url=_first_profile_text(result, "avatar_url", "avatarUrl", "avatar"),
-        corp_id=_first_profile_text(result, "corp_id", "corpId"),
-        display_name=_first_profile_text(result, "display_name", "displayName", "name", "nick"),
-        email=_first_profile_text(result, "email"),
-        open_id=open_id,
-        subject=subject,
-        union_id=union_id,
+    corp_id = _first_profile_text(result, "corp_id", "corpId")
+    return _profile_with_configured_corp_name(
+        DingTalkProfile(
+            avatar_url=_first_profile_text(result, "avatar_url", "avatarUrl", "avatar"),
+            corp_id=corp_id,
+            corp_name=_first_profile_text(
+                result,
+                "corp_name",
+                "corpName",
+                "companyName",
+                "organizationName",
+                "orgName",
+                "tenantName",
+            ),
+            display_name=_first_profile_text(result, "display_name", "displayName", "name", "nick"),
+            email=_first_profile_text(result, "email"),
+            open_id=open_id,
+            subject=subject,
+            union_id=union_id,
+        )
     )
 
 
@@ -331,6 +346,15 @@ def _first_profile_text(payload: dict[str, Any], *keys: str) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _profile_with_configured_corp_name(profile: DingTalkProfile) -> DingTalkProfile:
+    if profile.corp_name or not profile.corp_id:
+        return profile
+    corp_name = settings.dingtalk_corp_name_map.get(profile.corp_id)
+    if not corp_name:
+        return profile
+    return replace(profile, corp_name=corp_name)
 
 
 def _ensure_dingtalk_corp_allowed(profile: DingTalkProfile) -> None:
@@ -404,10 +428,12 @@ def _dingtalk_binding_summary(request: Request, user_id: str) -> dict[str, Any]:
     identity = find_active_by_user(DINGTALK_PROVIDER, user_id)
     if identity is None:
         return {"bound": False}
+    corp_id = identity.get("corp_id")
     return {
         "avatar_url": identity.get("avatar_url"),
         "bound": True,
-        "corp_id": identity.get("corp_id"),
+        "corp_id": corp_id,
+        "corp_name": identity.get("corp_name") or settings.dingtalk_corp_name_map.get(corp_id or ""),
         "display_name": identity.get("display_name"),
         "email": identity.get("email"),
         "provider": DINGTALK_PROVIDER,
@@ -417,6 +443,7 @@ def _dingtalk_binding_summary(request: Request, user_id: str) -> dict[str, Any]:
 def _profile_payload(request: Request, user: dict[str, Any]) -> dict[str, Any]:
     payload = _authorized_user(request, user)
     payload["dingtalk_binding"] = _dingtalk_binding_summary(request, user["id"])
+    payload["local_password_configured"] = bool(user.get("password_login_enabled", True))
     return payload
 
 
@@ -472,6 +499,7 @@ def _resolve_dingtalk_user(request: Request, profile: DingTalkProfile) -> dict[s
         user = request.app.state.user_repository.create_user(
             display_name=_dingtalk_display_name(profile),
             password=secrets.token_urlsafe(32),
+            password_login_enabled=False,
             roles=[settings.dingtalk_auto_provision_role or "viewer"],
             status=status,
             username=_dingtalk_generated_username(profile),
@@ -540,7 +568,11 @@ def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
             "Seeded local users are disabled outside local environments",
         )
     user = request.app.state.user_repository.get_by_username(payload.username)
-    if user is None or not verify_password(payload.password, user["password_hash"]):
+    if user is None:
+        raise api_error(401, "INVALID_CREDENTIALS", "Invalid username or password")
+    if not user.get("password_login_enabled", True):
+        raise api_error(403, "PASSWORD_LOGIN_DISABLED", "Password login is not configured")
+    if not verify_password(payload.password, user["password_hash"]):
         raise api_error(401, "INVALID_CREDENTIALS", "Invalid username or password")
 
     return _issue_login_response(request, user)
@@ -730,9 +762,18 @@ def dingtalk_bind_callback(
             _dingtalk_oauth_client(request).exchange_code_for_profile(code)
         )
         _ensure_dingtalk_corp_allowed(profile)
-    except (DingTalkOAuthError, HTTPException):
+    except DingTalkOAuthError:
         return RedirectResponse(
             _frontend_location(redirect, {"dingtalk_bind_error": "DINGTALK_BIND_FAILED"}),
+            status_code=302,
+        )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        return RedirectResponse(
+            _frontend_location(
+                redirect,
+                {"dingtalk_bind_error": str(detail.get("code") or "DINGTALK_BIND_FAILED")},
+            ),
             status_code=302,
         )
     user_id = str(state_payload.get("user_id") or "")
@@ -742,23 +783,40 @@ def dingtalk_bind_callback(
             _frontend_location(redirect, {"dingtalk_bind_error": "DINGTALK_ACCOUNT_INACTIVE"}),
             status_code=302,
         )
+    previous_identity = request.app.state.external_identity_repository.find_active_by_user(
+        DINGTALK_PROVIDER,
+        user_id,
+    )
     try:
         request.app.state.external_identity_repository.upsert_identity(
             provider=DINGTALK_PROVIDER,
             provider_subject=profile.subject,
             profile=profile.identity_profile(),
+            replace_existing_user_identity=True,
             user_id=user_id,
         )
-    except ValueError:
+    except ValueError as exc:
+        error_code = (
+            "DINGTALK_USER_ALREADY_BOUND"
+            if str(exc) == "user_identity_exists"
+            else "EXTERNAL_IDENTITY_CONFLICT"
+        )
         return RedirectResponse(
-            _frontend_location(redirect, {"dingtalk_bind_error": "EXTERNAL_IDENTITY_CONFLICT"}),
+            _frontend_location(redirect, {"dingtalk_bind_error": error_code}),
             status_code=302,
         )
+    rebound = (
+        previous_identity is not None
+        and previous_identity.get("provider_subject") != profile.subject
+    )
     _record_auth_audit(
         request,
         actor_id=user_id,
-        event_type="dingtalk_account.bound",
-        payload={"corp_id": profile.corp_id},
+        event_type="dingtalk_account.rebound" if rebound else "dingtalk_account.bound",
+        payload={
+            "corp_id": profile.corp_id,
+            "previous_corp_id": previous_identity.get("corp_id") if rebound else None,
+        },
         subject_id=user_id,
         subject_type="user",
     )
@@ -773,6 +831,12 @@ def dingtalk_unbind(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    if not user.get("password_login_enabled", True):
+        raise api_error(
+            409,
+            "DINGTALK_UNBIND_LOGIN_LOCKOUT_RISK",
+            "Set a local password before unbinding DingTalk",
+        )
     unbound = request.app.state.external_identity_repository.unbind(
         provider=DINGTALK_PROVIDER,
         user_id=user["id"],
@@ -829,7 +893,7 @@ def update_profile(
             raise api_error(400, "VALIDATION_ERROR", "new_password is too short")
         updates["password"] = new_password
         changed_fields.append("password")
-        require_current_password = True
+        require_current_password = bool(user.get("password_login_enabled", True))
 
     if require_current_password:
         current_password = _normalize_profile_text(

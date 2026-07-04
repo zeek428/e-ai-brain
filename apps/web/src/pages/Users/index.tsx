@@ -1,4 +1,9 @@
-import { DeleteOutlined, EditOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import {
+  DeleteOutlined,
+  DisconnectOutlined,
+  EditOutlined,
+  SafetyCertificateOutlined,
+} from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -17,6 +22,7 @@ import {
   deleteManagementUser,
   fetchRoleDefinitions,
   fetchManagementUserList,
+  unbindSystemExternalIdentity,
   updateManagementUser,
   type RemoteListPerformance,
 } from '../../services/aiBrain';
@@ -36,6 +42,11 @@ const userSortFieldMap: Record<string, string> = {
   displayName: 'display_name',
   status: 'status',
   username: 'username',
+};
+
+const loginMethodLabels: Record<string, string> = {
+  dingtalk: '钉钉',
+  password: '账号密码',
 };
 
 function normalizeFilterText(value: unknown) {
@@ -224,6 +235,34 @@ export default function UsersPage() {
     }
   }, [reload]);
 
+  const handleUnbindDingTalk = useCallback(async (row: UserRecord, force = false) => {
+    const identityId = row.dingtalkBinding?.identity_id;
+    if (!identityId) {
+      return;
+    }
+    try {
+      await unbindSystemExternalIdentity(identityId, force);
+      message.success('钉钉账号已解绑');
+      await reload();
+    } catch (unbindError) {
+      const errorCode =
+        unbindError instanceof Error
+          ? (unbindError as Error & { code?: string }).code
+          : undefined;
+      if (errorCode === 'DINGTALK_UNBIND_LOGIN_LOCKOUT_RISK' && !force) {
+        Modal.confirm({
+          content: '该用户未配置本地密码，解绑后可能无法自行登录。确认要以管理员身份强制解绑？',
+          okText: '强制解绑',
+          okButtonProps: { danger: true },
+          onOk: () => handleUnbindDingTalk(row, true),
+          title: '存在登录锁定风险',
+        });
+        return;
+      }
+      message.error(formatMutationError(unbindError));
+    }
+  }, [reload]);
+
   const columns = useMemo<ProColumns<UserRecord>[]>(
     () => [
       {
@@ -243,6 +282,50 @@ export default function UsersPage() {
         title: '手机号',
         width: 150,
         render: (_, row) => row.mobile || '-',
+      },
+      {
+        dataIndex: 'loginMethods',
+        title: '登录方式',
+        width: 180,
+        render: (_, row) => {
+          const methods = row.loginMethods.length
+            ? row.loginMethods
+            : row.localPasswordConfigured
+              ? ['password']
+              : [];
+          return methods.length ? (
+            <Space size={[4, 4]} wrap>
+              {methods.map((method) => (
+                <Tag color={method === 'dingtalk' ? 'blue' : 'green'} key={method}>
+                  {loginMethodLabels[method] ?? method}
+                </Tag>
+              ))}
+            </Space>
+          ) : (
+            <Tag color="red">未配置</Tag>
+          );
+        },
+      },
+      {
+        dataIndex: ['dingtalkBinding', 'bound'],
+        title: '钉钉绑定',
+        width: 220,
+        render: (_, row) => {
+          if (!row.dingtalkBinding?.bound) {
+            return <Tag>未绑定</Tag>;
+          }
+          const corpDisplay =
+            row.dingtalkBinding.corp_name ||
+            row.dingtalkBinding.corp_id ||
+            row.dingtalkBinding.display_name ||
+            '已绑定';
+          return (
+            <Space size={4} wrap>
+              <Tag color="blue">已绑定</Tag>
+              <span>{corpDisplay}</span>
+            </Space>
+          );
+        },
       },
       {
         dataIndex: 'rolesText',
@@ -286,11 +369,22 @@ export default function UsersPage() {
                 删除
               </Button>
             </Popconfirm>
+            {row.dingtalkBinding?.bound && row.dingtalkBinding.identity_id ? (
+              <Popconfirm
+                okText="解绑"
+                onConfirm={() => void handleUnbindDingTalk(row)}
+                title={`解绑用户 ${row.username} 的钉钉账号？`}
+              >
+                <Button icon={<DisconnectOutlined />} type="link">
+                  解绑钉钉
+                </Button>
+              </Popconfirm>
+            ) : null}
           </Space>
         ),
       },
     ],
-    [handleDelete, openEditModal, roleByCode],
+    [handleDelete, handleUnbindDingTalk, openEditModal, roleByCode],
   );
 
   return (
@@ -426,6 +520,18 @@ export default function UsersPage() {
           <Form.Item label="手机号" name="mobile">
             <Input autoComplete="tel" />
           </Form.Item>
+          {editingUser ? (
+            <Form.Item label="认证状态">
+              <Space size={[4, 4]} wrap>
+                <Tag color={editingUser.localPasswordConfigured ? 'green' : 'default'}>
+                  {editingUser.localPasswordConfigured ? '本地密码已配置' : '本地密码未配置'}
+                </Tag>
+                <Tag color={editingUser.dingtalkBinding?.bound ? 'blue' : 'default'}>
+                  {editingUser.dingtalkBinding?.bound ? '钉钉已绑定' : '钉钉未绑定'}
+                </Tag>
+              </Space>
+            </Form.Item>
+          ) : null}
           <Form.Item
             label={editingUser ? '重置密码' : '登录密码'}
             name="password"

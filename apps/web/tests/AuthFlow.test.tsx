@@ -268,6 +268,21 @@ describe('AI Brain auth flow and routes', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('shows a readable DingTalk login error', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/login/dingtalk/callback?error=DINGTALK_ACCOUNT_NOT_BOUND&message=raw-upstream-message',
+    );
+
+    render(<DingTalkLoginCallbackPage />);
+
+    expect(
+      await screen.findByText(/该钉钉账号尚未绑定 AI Brain 用户/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/raw-upstream-message/)).not.toBeInTheDocument();
+  });
+
   it('hydrates the layout user from the authenticated current-user API', async () => {
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {

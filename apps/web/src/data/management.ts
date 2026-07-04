@@ -188,8 +188,19 @@ export type AuditRecord = {
 };
 
 export type UserRecord = {
+  dingtalkBinding?: {
+    bound: boolean;
+    corp_id?: string | null;
+    corp_name?: string | null;
+    display_name?: string | null;
+    email?: string | null;
+    identity_id?: string | null;
+    provider?: string;
+  };
   displayName: string;
   id: string;
+  localPasswordConfigured: boolean;
+  loginMethods: string[];
   mobile?: string;
   roles: string[];
   rolesText: string;

@@ -76,10 +76,28 @@ describe('system management pages', () => {
       return new Response(
         JSON.stringify({
           data: {
-            items: [],
+            items: [
+              {
+                dingtalk_binding: {
+                  bound: true,
+                  corp_name: '青锋科技',
+                  display_name: '钉钉查看者',
+                  identity_id: 'external_identity_viewer',
+                  provider: 'dingtalk',
+                },
+                display_name: '查看者',
+                id: 'user_viewer',
+                local_password_configured: false,
+                login_methods: ['dingtalk'],
+                mobile: '+86 13800000000',
+                roles: ['viewer'],
+                status: 'active',
+                username: 'viewer@example.com',
+              },
+            ],
             page: 1,
             page_size: 10,
-            total: 0,
+            total: 1,
           },
         }),
         {
@@ -95,6 +113,10 @@ describe('system management pages', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /新增用户/ }));
 
+    expect(await screen.findByText('viewer@example.com')).toBeInTheDocument();
+    expect(screen.getByText('钉钉')).toBeInTheDocument();
+    expect(screen.getByText('青锋科技')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /解绑钉钉/ })).toBeInTheDocument();
     expect((await screen.findAllByText(/查看者/)).length).toBeGreaterThan(0);
     expect(screen.queryByPlaceholderText('admin, product_owner, rd_owner')).not.toBeInTheDocument();
   });
