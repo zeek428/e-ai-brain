@@ -64,6 +64,35 @@ LOG_LEVEL=INFO
 
 默认配置不访问外部模型时，`/health` 返回 `model_gateway=not_configured`，AI 任务启动会返回明确错误，不生成本地兜底输出。配置 `MODEL_GATEWAY_BASE_URL` 和 `MODEL_GATEWAY_API_KEY` 后，`/health` 返回 `model_gateway=configured`，任务启动才会进入真实 OpenAI-compatible 网关路径。
 
+### 钉钉登录本地配置
+
+登录页的“钉钉登录”入口由后端 `GET /api/auth/providers` 动态控制。后端进程未重启到最新代码时，该接口会返回 404；钉钉配置未启用或不完整时，该接口会返回 `dingtalk.enabled=false`，前端不会展示入口。
+
+启用本地钉钉登录前，先在钉钉开放平台配置应用和回调地址，然后在本地 `.env` 中填写：
+
+```bash
+DINGTALK_LOGIN_ENABLED=true
+DINGTALK_CLIENT_ID=<dingtalk-client-id-or-app-key>
+DINGTALK_CLIENT_SECRET=<dingtalk-client-secret>
+# 或使用密钥引用，二选一：
+# DINGTALK_CLIENT_SECRET_REF=env:LOCAL_DINGTALK_CLIENT_SECRET
+DINGTALK_REDIRECT_URI=http://<public-callback-domain>/api/auth/dingtalk/callback
+DINGTALK_BIND_REDIRECT_URI=http://<public-callback-domain>/api/auth/dingtalk/bind/callback
+DINGTALK_FRONTEND_BASE_URL=http://localhost:5173
+DINGTALK_ALLOWED_CORP_IDS=<corp-id-1,corp-id-2>
+DINGTALK_AUTO_PROVISION=false
+DINGTALK_AUTO_PROVISION_ROLE=viewer
+DINGTALK_PENDING_APPROVAL=false
+```
+
+修改 `.env` 后必须重启 API 进程，再确认：
+
+```bash
+curl http://localhost:8000/api/auth/providers
+```
+
+预期 `data.dingtalk.enabled=true` 后，刷新 `http://localhost:5173/login` 才会看到“钉钉登录”按钮。钉钉 OAuth 回调需要钉钉能访问到后端回调地址，本机 `localhost` 不能直接作为钉钉开放平台回调地址；本地联调用 ngrok、frp 或公网网关映射到 `/api/auth/dingtalk/callback`。
+
 真实 `.env` 不提交到仓库。
 
 本地内置种子账号仅在 `APP_ENV=local|test|development` 时启用；非本地环境默认拒绝这些账号登录。前端不会自动使用种子账号登录，若要在本地直接调用管理列表 API，可通过登录接口获取 token 后写入浏览器 `localStorage.ai_brain_access_token`。
