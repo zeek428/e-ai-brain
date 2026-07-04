@@ -294,6 +294,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "086_dingtalk_oauth_ephemeral_states.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "087_user_profile_contact.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

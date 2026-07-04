@@ -42,8 +42,10 @@ export default function DingTalkLoginCallbackPage() {
     const ticket = params.get('ticket');
 
     if (!ticket) {
-      setError(callbackErrorMessage(params));
-      return;
+      const timer = window.setTimeout(() => {
+        setError(callbackErrorMessage(params));
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
 
     void exchangeDingTalkTicket(ticket)

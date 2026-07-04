@@ -43,17 +43,19 @@ export default function LoginPage() {
         })
         .finally(() => {
           setProviderLoading(false);
-        });
+      });
       return;
     }
-    setProviderLoading(false);
-    void fetchCurrentUser()
-      .then(() => {
-        navigateTo(getRedirectPath());
-      })
-      .catch(() => {
-        // Invalid stored tokens are cleared by the shared API request layer.
-      });
+    void Promise.resolve().then(() => {
+      setProviderLoading(false);
+      return fetchCurrentUser()
+        .then(() => {
+          navigateTo(getRedirectPath());
+        })
+        .catch(() => {
+          // Invalid stored tokens are cleared by the shared API request layer.
+        });
+    });
   }, []);
 
   const handleDingTalkLogin = () => {

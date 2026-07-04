@@ -1,4 +1,4 @@
-import { ClusterOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons';
+import { ClusterOutlined, LogoutOutlined, ProfileOutlined, UserOutlined } from '@ant-design/icons';
 import { ConfigProvider, Dropdown, theme } from 'antd';
 import type { ReactNode } from 'react';
 
@@ -6,6 +6,7 @@ import { CurrentUserTitle } from './components/CurrentUserTitle';
 import { handleLogout, redirectToLoginIfNeeded } from './runtimeAuth';
 import type { MenuTreeNode } from './services/aiBrain';
 import { fetchCurrentUser, getAccessToken, getStoredCurrentUser } from './services/aiBrain';
+import { navigateTo } from './utils/navigation';
 import './global.css';
 
 type InitialState = {
@@ -170,12 +171,20 @@ export const layout = ({ initialState }: { initialState?: InitialState }) => ({
         menu={{
           items: [
             {
+              icon: <ProfileOutlined />,
+              key: 'profile',
+              label: '个人中心',
+            },
+            {
               icon: <LogoutOutlined />,
               key: 'logout',
               label: '退出登录',
             },
           ],
           onClick: ({ key }) => {
+            if (key === 'profile') {
+              navigateTo('/account/profile');
+            }
             if (key === 'logout') {
               void handleLogout();
             }

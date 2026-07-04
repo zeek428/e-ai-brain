@@ -396,6 +396,140 @@ def test_dingtalk_bind_and_unbind_current_user():
         restore()
 
 
+def test_current_user_profile_updates_contact_password_and_binding_status():
+    profile = DingTalkProfile(
+        avatar_url="https://static.example.com/avatar.png",
+        corp_id="corp_allowed",
+        display_name="AI Brain Admin DingTalk",
+        email="admin.dingtalk@example.com",
+        subject="union_admin_profile",
+        union_id="union_admin_profile",
+    )
+    fake_client, restore = _install_dingtalk_test_state(
+        profile,
+        allowed_corp_ids="corp_allowed",
+    )
+    try:
+        login = client.post(
+            "/api/auth/login",
+            json={"password": "admin123", "username": "admin@example.com"},
+        )
+        token = login.json()["data"]["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        initial_profile = client.get("/api/auth/profile", headers=headers)
+        assert initial_profile.status_code == 200
+        initial_data = initial_profile.json()["data"]
+        assert initial_data["email"] == "admin@example.com"
+        assert initial_data["mobile"] == ""
+        assert initial_data["dingtalk_binding"] == {"bound": False}
+
+        started = client.post(
+            "/api/auth/dingtalk/bind/start?redirect=/account/profile",
+            headers=headers,
+        )
+        assert started.status_code == 200
+        state = parse_qs(urlparse(started.json()["data"]["authorize_url"]).query)["state"][0]
+        assert fake_client.authorize_requests[-1]["redirect_uri"] == (
+            "http://localhost:8000/api/auth/dingtalk/bind/callback"
+        )
+        callback = client.get(
+            f"/api/auth/dingtalk/bind/callback?code=ok&state={state}",
+            follow_redirects=False,
+        )
+        assert callback.status_code == 302
+        assert urlparse(callback.headers["location"]).path == "/account/profile"
+
+        bound_profile = client.get("/api/auth/profile", headers=headers).json()["data"]
+        assert bound_profile["dingtalk_binding"]["bound"] is True
+        assert bound_profile["dingtalk_binding"]["display_name"] == "AI Brain Admin DingTalk"
+        assert "provider_subject" not in bound_profile["dingtalk_binding"]
+
+        contact_update = client.patch(
+            "/api/auth/profile",
+            json={
+                "display_name": "AI Brain Owner",
+                "mobile": "+86 13800000000",
+            },
+            headers=headers,
+        )
+        assert contact_update.status_code == 200
+        assert contact_update.json()["data"]["user"]["display_name"] == "AI Brain Owner"
+        assert contact_update.json()["data"]["user"]["mobile"] == "+86 13800000000"
+        assert "access_token" not in contact_update.json()["data"]
+
+        missing_password = client.patch(
+            "/api/auth/profile",
+            json={"email": "admin.renamed@example.com"},
+            headers=headers,
+        )
+        assert missing_password.status_code == 400
+        assert missing_password.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+        wrong_password = client.patch(
+            "/api/auth/profile",
+            json={
+                "current_password": "wrong-password",
+                "email": "admin.renamed@example.com",
+            },
+            headers=headers,
+        )
+        assert wrong_password.status_code == 403
+        assert wrong_password.json()["detail"]["code"] == "CURRENT_PASSWORD_INVALID"
+
+        duplicate_email = client.patch(
+            "/api/auth/profile",
+            json={
+                "current_password": "admin123",
+                "email": "reviewer@example.com",
+            },
+            headers=headers,
+        )
+        assert duplicate_email.status_code == 409
+        assert duplicate_email.json()["detail"]["code"] == "USER_EXISTS"
+
+        secure_update = client.patch(
+            "/api/auth/profile",
+            json={
+                "current_password": "admin123",
+                "email": "admin.renamed@example.com",
+                "new_password": "new-admin-secret",
+            },
+            headers=headers,
+        )
+        assert secure_update.status_code == 200
+        secure_data = secure_update.json()["data"]
+        assert secure_data["access_token"]
+        assert secure_data["user"]["email"] == "admin.renamed@example.com"
+        assert secure_data["user"]["username"] == "admin.renamed@example.com"
+
+        old_login = client.post(
+            "/api/auth/login",
+            json={"password": "admin123", "username": "admin@example.com"},
+        )
+        assert old_login.status_code == 401
+        new_login = client.post(
+            "/api/auth/login",
+            json={
+                "password": "new-admin-secret",
+                "username": "admin.renamed@example.com",
+            },
+        )
+        assert new_login.status_code == 200
+
+        profile_events = [
+            event
+            for event in app.state.store.audit_events
+            if event["event_type"] == "auth.profile.updated"
+        ]
+        assert profile_events[-1]["payload"] == {
+            "changed_fields": ["email", "password"]
+        }
+        assert "new-admin-secret" not in str(profile_events)
+    finally:
+        restore()
+
+
 def test_dingtalk_bind_rejects_identity_bound_to_another_user():
     profile = DingTalkProfile(
         corp_id="corp_allowed",

@@ -28,8 +28,10 @@ export type ScopeGrant = {
 
 export type CurrentUserResponse = {
   display_name: string;
+  email?: string;
   id: string;
   menu_tree?: MenuTreeNode[];
+  mobile?: string;
   permissions?: string[];
   route_permissions?: Record<string, string[]>;
   roles: string[];
@@ -37,9 +39,42 @@ export type CurrentUserResponse = {
   username: string;
 };
 
+export type DingTalkBindingSummary = {
+  avatar_url?: string | null;
+  bound: boolean;
+  corp_id?: string | null;
+  display_name?: string | null;
+  email?: string | null;
+  provider?: string;
+};
+
+export type AuthProfileResponse = CurrentUserResponse & {
+  dingtalk_binding: DingTalkBindingSummary;
+};
+
 export type LoginResponse = {
   access_token: string;
   user: CurrentUserResponse;
+};
+
+export type AuthProfileUpdatePayload = {
+  current_password?: string;
+  display_name?: string;
+  email?: string;
+  mobile?: string;
+  new_password?: string;
+};
+
+export type AuthProfileUpdateResponse = {
+  access_token?: string;
+  expires_in?: number;
+  token_type?: string;
+  user: AuthProfileResponse;
+};
+
+export type DingTalkBindStartResponse = {
+  authorize_url: string;
+  expires_in: number;
 };
 
 export type AuthProviderConfig = {
@@ -219,6 +254,29 @@ export async function fetchCurrentUser(): Promise<CurrentUserResponse> {
   return user;
 }
 
+export async function fetchAuthProfile(): Promise<AuthProfileResponse> {
+  const token = requireAccessToken();
+  const profile = await apiRequest<AuthProfileResponse>('/api/auth/profile', { token });
+  saveCurrentUser(profile);
+  return profile;
+}
+
+export async function updateAuthProfile(
+  payload: AuthProfileUpdatePayload,
+): Promise<AuthProfileUpdateResponse> {
+  const token = requireAccessToken();
+  const response = await apiRequest<AuthProfileUpdateResponse>('/api/auth/profile', {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+  if (response.access_token) {
+    saveAccessToken(response.access_token);
+  }
+  saveCurrentUser(response.user);
+  return response;
+}
+
 export async function fetchAuthProviders(): Promise<AuthProvidersResponse> {
   return apiRequest<AuthProvidersResponse>('/api/auth/providers');
 }
@@ -227,6 +285,19 @@ export function buildDingTalkStartUrl(redirectPath: string) {
   const params = new URLSearchParams();
   params.set('redirect', redirectPath);
   return `${API_BASE_URL}/api/auth/dingtalk/start?${params.toString()}`;
+}
+
+export async function startDingTalkBind(redirectPath: string): Promise<DingTalkBindStartResponse> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  params.set('redirect', redirectPath);
+  return apiRequest<DingTalkBindStartResponse>(
+    `/api/auth/dingtalk/bind/start?${params.toString()}`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
 }
 
 export async function exchangeDingTalkTicket(ticket: string): Promise<LoginResponse> {
@@ -251,6 +322,14 @@ export async function logout(): Promise<void> {
   } catch {
     // Local logout should still complete if the server token is already expired.
   }
+}
+
+export async function unbindDingTalkAccount(): Promise<{ success: boolean }> {
+  const token = requireAccessToken();
+  return apiRequest<{ success: boolean }>('/api/auth/dingtalk/unbind', {
+    method: 'POST',
+    token,
+  });
 }
 
 function persistLoginResponse(loginResponse: LoginResponse) {

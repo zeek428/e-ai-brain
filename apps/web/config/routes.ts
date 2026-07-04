@@ -12,6 +12,11 @@ const routes = [
     layout: false,
   },
   {
+    path: '/account/profile',
+    component: './AccountProfile',
+    hideInMenu: true,
+  },
+  {
     path: '/',
     redirect: '/login',
   },

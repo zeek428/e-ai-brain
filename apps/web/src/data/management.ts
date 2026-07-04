@@ -190,6 +190,7 @@ export type AuditRecord = {
 export type UserRecord = {
   displayName: string;
   id: string;
+  mobile?: string;
   roles: string[];
   rolesText: string;
   status: 'active' | 'inactive';

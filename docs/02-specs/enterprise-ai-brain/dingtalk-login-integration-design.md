@@ -5,13 +5,13 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.2-p0 |
-| 适用系统版本 | 当前主干 P0 已实现，管理端扩展待后续迭代 |
-| 文档状态 | P0 Implemented / Evolving |
+| 功能版本 | v1.2-p1 |
+| 适用系统版本 | 当前主干已实现 P0 登录与 P1 个人中心绑定 |
+| 文档状态 | Implemented / Evolving |
 
 ## 文档定位
 
-本文是 AI Brain 集成钉钉登录的方案设计与演进记录。当前主干已落地 P0：登录 provider 查询、钉钉 OAuth start/callback、一次性 ticket 换取 AI Brain Token、`user_external_identities` 绑定表、登录页钉钉入口、回调页和用户自助绑定/解绑后端接口。系统设置管理页、个人中心绑定 UI、管理员外部身份审批和多企业深度治理按后续迭代推进。
+本文是 AI Brain 集成钉钉登录的方案设计与演进记录。当前主干已落地 P0 登录能力与 P1 个人中心自助绑定：登录 provider 查询、钉钉 OAuth start/callback、一次性 ticket 换取 AI Brain Token、`user_external_identities` 绑定表、登录页钉钉入口、回调页、用户自助绑定/解绑后端接口，以及个人中心中的资料维护、密码修改和钉钉绑定状态 UI。系统设置管理页、管理员外部身份审批和多企业深度治理按后续迭代推进。
 
 当前 AI Brain 已具备本地账号登录和 Bearer Token 鉴权。钉钉登录目标是在保留本地管理员兜底入口的前提下，允许企业用户通过钉钉 OAuth 或扫码完成身份认证，并映射到 AI Brain 内部用户、角色、权限和数据范围。
 
@@ -22,7 +22,7 @@
 当前认证能力：
 
 - 后端 `POST /api/auth/login` 通过本地用户名密码校验用户并签发 AI Brain 自有 JWT。
-- 用户主表 `users` 保存 `email/display_name/roles/password_hash/status`。
+- 用户主表 `users` 保存 `email/display_name/mobile/roles/password_hash/status`。
 - 前端登录页只有本地账号密码入口。
 - 钉钉 MCP 插件已经作为外部能力集成方向存在，但插件授权 token 与 AI Brain 登录身份尚未打通。
 
@@ -182,7 +182,7 @@ CREATE TABLE user_oauth_tokens (
 | 策略 | 说明 | 推荐阶段 |
 |------|------|----------|
 | 管理员预绑定 | 管理员在用户管理中把 AI Brain 用户绑定到钉钉身份。 | 企业正式上线、关键角色 |
-| 用户自助绑定 | 用户先用本地账号登录，再从个人中心发起钉钉绑定。 | P1 |
+| 用户自助绑定 | 用户先用本地账号登录，再从个人中心发起钉钉绑定。 | P1 已落地 |
 | 首次登录自动创建 | 钉钉身份未绑定时自动创建 AI Brain 用户。 | P0 可选 |
 | 首次登录待审批 | 钉钉身份未绑定时创建 pending 记录，管理员审核后启用。 | P1 |
 
@@ -191,7 +191,7 @@ CREATE TABLE user_oauth_tokens (
 - 生产环境默认 `auto_provision=false`，由管理员预绑定或待审批。
 - 内部试点可启用 `auto_provision=true`，但首次登录只创建待审批 `viewer` 用户；管理员激活后才能签发登录态。
 - 自动创建用户时 `username` 推荐使用 `dingtalk:<corp_id>:<external_user_id>` 或已验证邮箱；展示名使用钉钉昵称。
-- 不能仅凭邮箱、手机号或 unionId 静默绑定已有高权限账号；匹配到已有账号时进入待确认绑定。
+- 不能仅凭邮箱、手机号或钉钉资料中的展示信息静默绑定已有高权限账号；已有 AI Brain 账号必须先完成账号密码登录，再由当前登录用户在个人中心发起 OAuth 自助绑定。服务端绑定依据是钉钉 OAuth 返回的稳定身份 `provider_subject`（当前实现优先取 `union_id/open_id/subject`），并通过 `provider + provider_subject` 与 AI Brain `users.id` 建立一对一 active 绑定。
 
 ### 登录决策
 
@@ -335,6 +335,8 @@ ticket 必须一次性、短有效期。当前 P0 实现为 5 分钟有效，重
 
 自助绑定不改变用户角色和权限。
 
+个人中心同时展示当前用户基础资料和钉钉绑定摘要。用户可维护自己的显示名称、邮箱、手机号和登录密码；修改邮箱或密码必须校验当前密码。邮箱变更后后端返回新的 AI Brain Token，前端立即刷新本地登录态。资料变更审计只记录 `changed_fields`，不记录密码明文或钉钉密钥。
+
 ### 管理员绑定
 
 系统管理用户详情页支持管理员绑定或解绑外部身份：
@@ -416,6 +418,7 @@ ticket 必须一次性、短有效期。当前 P0 实现为 5 分钟有效，重
 | `dingtalk_account.provisioned` | 自动创建 AI Brain 用户并绑定钉钉身份 | user_id、corp_id、status |
 | `dingtalk_account.bound` | 当前用户自助绑定成功 | user_id、corp_id |
 | `dingtalk_account.unbound` | 当前用户解绑成功 | user_id |
+| `auth.profile.updated` | 当前用户修改个人资料、邮箱、手机号或密码 | user_id、changed_fields；不得记录旧密码或新密码 |
 | `auth.dingtalk.login_started` / `auth.dingtalk.login_failed` | 后续可选增强 | provider、redirect_hash、state_valid、reason；不得保存 code/token/secret |
 
 payload 禁止保存 auth code、access token、refresh token、client secret、完整手机号、完整邮箱以外的敏感资料。手机号只允许 hash。
@@ -449,8 +452,9 @@ payload 禁止保存 auth code、access token、refresh token、client secret、
 
 个人中心：
 
-- 展示钉钉绑定状态、企业名称、绑定时间、最近登录时间。
-- 支持绑定、重新授权、解绑。
+- 展示钉钉绑定状态、企业、钉钉显示名和邮箱摘要。
+- 支持绑定、重新绑定、解绑。
+- 支持维护显示名称、邮箱、手机号和登录密码；邮箱和密码变更必须校验当前密码。
 - 解绑前提示若没有其它登录方式会导致无法登录。
 
 系统管理：
@@ -512,9 +516,13 @@ https://brain.company.com/api/auth/dingtalk/callback
 - 写入自动开户、登录成功、绑定和解绑审计。
 - 保留本地账号密码登录。
 
-### P1 管理与绑定
+### P1 已落地
 
 - 个人中心自助绑定/解绑 UI。
+- 个人中心资料维护和密码修改。
+
+### P1 后续管理能力
+
 - 系统管理外部身份列表、管理员绑定、待审批处理。
 - 自动开户策略可视化配置。
 - 登录失败和绑定冲突排障视图。
@@ -547,7 +555,7 @@ https://brain.company.com/api/auth/dingtalk/callback
 - 启用钉钉时展示按钮并携带 redirect。
 - 回调页成功保存 access token 并跳转原路径。
 - 回调页失败展示可读错误。
-- 个人中心展示绑定状态。
+- 个人中心展示绑定状态，并支持资料、邮箱、手机号和密码修改。
 - 管理员用户详情展示外部身份绑定。
 
 ### 安全与回归
@@ -567,7 +575,6 @@ https://brain.company.com/api/auth/dingtalk/callback
 
 ## 后续待实现清单
 
-- 个人中心展示钉钉绑定状态，并提供绑定、重新授权和解绑 UI。
 - 系统设置维护钉钉登录配置、回调地址和健康检查。
 - 系统管理用户详情展示外部身份绑定列表，支持管理员绑定和待审批处理。
 - 多实例生产部署时将 OAuth `state` 和 `login_ticket` 从进程内存迁移到 Redis 或等价共享短期存储。

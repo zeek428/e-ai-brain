@@ -55,11 +55,21 @@ class DingTalkTicketExchangeRequest(BaseModel):
     ticket: str
 
 
+class ProfilePatchRequest(BaseModel):
+    current_password: str | None = None
+    display_name: str | None = None
+    email: str | None = None
+    mobile: str | None = None
+    new_password: str | None = None
+
+
 def _public_user(user: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": user["id"],
         "username": user["username"],
+        "email": user["username"],
         "display_name": user["display_name"],
+        "mobile": user.get("mobile") or "",
         "roles": user["roles"],
     }
 
@@ -160,12 +170,16 @@ def _seeded_users_enabled() -> bool:
     return settings.allow_seeded_users or settings.app_env in {"local", "test", "development"}
 
 
-def _issue_login_response(request: Request, user: dict[str, Any]) -> dict[str, Any]:
-    access_token = create_access_token(
+def _issue_access_token(user: dict[str, Any]) -> str:
+    return create_access_token(
         {"sub": user["id"], "username": user["username"], "roles": user["roles"]},
         secret_key=settings.app_secret_key,
         expires_in_seconds=settings.access_token_expire_seconds,
     )
+
+
+def _issue_login_response(request: Request, user: dict[str, Any]) -> dict[str, Any]:
+    access_token = _issue_access_token(user)
     return envelope(
         {
             "access_token": access_token,
@@ -351,6 +365,59 @@ def _record_auth_audit(
     append_audit_event = getattr(audit_repository, "append_audit_event", None)
     if callable(append_audit_event):
         append_audit_event(event)
+
+
+def _normalize_profile_text(value: str | None, field: str) -> str:
+    if value is None or not value.strip():
+        raise api_error(400, "VALIDATION_ERROR", f"{field} is required")
+    return value.strip()
+
+
+def _normalize_optional_profile_text(value: str | None) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_profile_email(value: str | None) -> str:
+    email = _normalize_profile_text(value, "email")
+    if "@" not in email or email.startswith("@") or email.endswith("@"):
+        raise api_error(400, "VALIDATION_ERROR", "email is invalid")
+    return email.lower()
+
+
+def _normalize_profile_mobile(value: str | None) -> str:
+    mobile = _normalize_optional_profile_text(value)
+    if not mobile:
+        return ""
+    if len(mobile) > 32:
+        raise api_error(400, "VALIDATION_ERROR", "mobile is too long")
+    allowed_characters = set("0123456789+- ()")
+    if any(character not in allowed_characters for character in mobile):
+        raise api_error(400, "VALIDATION_ERROR", "mobile is invalid")
+    return mobile
+
+
+def _dingtalk_binding_summary(request: Request, user_id: str) -> dict[str, Any]:
+    identity_repository = getattr(request.app.state, "external_identity_repository", None)
+    find_active_by_user = getattr(identity_repository, "find_active_by_user", None)
+    if not callable(find_active_by_user):
+        return {"bound": False}
+    identity = find_active_by_user(DINGTALK_PROVIDER, user_id)
+    if identity is None:
+        return {"bound": False}
+    return {
+        "avatar_url": identity.get("avatar_url"),
+        "bound": True,
+        "corp_id": identity.get("corp_id"),
+        "display_name": identity.get("display_name"),
+        "email": identity.get("email"),
+        "provider": DINGTALK_PROVIDER,
+    }
+
+
+def _profile_payload(request: Request, user: dict[str, Any]) -> dict[str, Any]:
+    payload = _authorized_user(request, user)
+    payload["dingtalk_binding"] = _dingtalk_binding_summary(request, user["id"])
+    return payload
 
 
 def _dingtalk_generated_username(profile: DingTalkProfile) -> str:
@@ -720,6 +787,87 @@ def dingtalk_unbind(
         subject_type="user",
     )
     return envelope({"success": True}, get_trace_id(request))
+
+
+@router.get("/profile")
+def profile(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
+    return envelope(_profile_payload(request, user), get_trace_id(request))
+
+
+@router.patch("/profile")
+def update_profile(
+    request: Request,
+    payload: ProfilePatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    changed_fields: list[str] = []
+    require_current_password = False
+
+    if "display_name" in payload.model_fields_set:
+        display_name = _normalize_profile_text(payload.display_name, "display_name")
+        if display_name != user.get("display_name"):
+            updates["display_name"] = display_name
+            changed_fields.append("display_name")
+
+    if "mobile" in payload.model_fields_set:
+        mobile = _normalize_profile_mobile(payload.mobile)
+        if mobile != (user.get("mobile") or ""):
+            updates["mobile"] = mobile
+            changed_fields.append("mobile")
+
+    if "email" in payload.model_fields_set:
+        email = _normalize_profile_email(payload.email)
+        if email != user.get("username"):
+            updates["username"] = email
+            changed_fields.append("email")
+            require_current_password = True
+
+    if "new_password" in payload.model_fields_set:
+        new_password = _normalize_profile_text(payload.new_password, "new_password")
+        if len(new_password) < 8:
+            raise api_error(400, "VALIDATION_ERROR", "new_password is too short")
+        updates["password"] = new_password
+        changed_fields.append("password")
+        require_current_password = True
+
+    if require_current_password:
+        current_password = _normalize_profile_text(
+            payload.current_password,
+            "current_password",
+        )
+        if not verify_password(current_password, user["password_hash"]):
+            raise api_error(403, "CURRENT_PASSWORD_INVALID", "Current password is invalid")
+
+    try:
+        updated_user = request.app.state.user_repository.update_user(user["id"], updates)
+    except ValueError as exc:
+        if str(exc) == "user_exists":
+            raise api_error(409, "USER_EXISTS", "User already exists") from exc
+        raise
+    if updated_user is None:
+        raise api_error(404, "NOT_FOUND", "User not found")
+
+    if changed_fields:
+        _record_auth_audit(
+            request,
+            actor_id=user["id"],
+            event_type="auth.profile.updated",
+            payload={"changed_fields": sorted(changed_fields)},
+            subject_id=user["id"],
+            subject_type="user",
+        )
+
+    response_payload: dict[str, Any] = {"user": _profile_payload(request, updated_user)}
+    if "email" in changed_fields:
+        response_payload.update(
+            {
+                "access_token": _issue_access_token(updated_user),
+                "expires_in": settings.access_token_expire_seconds,
+                "token_type": "bearer",
+            }
+        )
+    return envelope(response_payload, get_trace_id(request))
 
 
 @router.get("/me")

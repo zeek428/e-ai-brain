@@ -26,6 +26,7 @@ USER_LIST_SORT_FIELDS = {"created_at", "display_name", "id", "status", "username
 class UserCreateRequest(BaseModel):
     username: str
     display_name: str
+    mobile: str | None = None
     password: str
     roles: list[str] = Field(default_factory=lambda: ["viewer"])
     status: str = "active"
@@ -33,6 +34,7 @@ class UserCreateRequest(BaseModel):
 
 class UserPatchRequest(BaseModel):
     display_name: str | None = None
+    mobile: str | None = None
     password: str | None = None
     roles: list[str] | None = None
     status: str | None = None
@@ -42,6 +44,18 @@ def _ensure_non_blank(value: str | None, field: str) -> str:
     if value is None or not value.strip():
         raise api_error(400, "VALIDATION_ERROR", f"{field} is required")
     return value.strip()
+
+
+def _normalize_mobile(value: str | None) -> str:
+    mobile = str(value or "").strip()
+    if not mobile:
+        return ""
+    if len(mobile) > 32:
+        raise api_error(400, "VALIDATION_ERROR", "mobile is too long")
+    allowed_characters = set("0123456789+- ()")
+    if any(character not in allowed_characters for character in mobile):
+        raise api_error(400, "VALIDATION_ERROR", "mobile is invalid")
+    return mobile
 
 
 def _ensure_enum(value: str | None, allowed_values: set[str], field: str) -> None:
@@ -154,6 +168,7 @@ def create_user(
     password = _ensure_non_blank(payload.password, "password")
     _ensure_enum(payload.status, USER_STATUSES, "user status")
     _ensure_roles(payload.roles)
+    mobile = _normalize_mobile(payload.mobile)
     try:
         created = request.app.state.user_repository.create_user(
             display_name=display_name,
@@ -162,6 +177,11 @@ def create_user(
             status=payload.status,
             username=username,
         )
+        if payload.mobile is not None:
+            created = request.app.state.user_repository.update_user(
+                created["id"],
+                {"mobile": mobile},
+            ) or created
     except ValueError as exc:
         if str(exc) == "user_exists":
             raise api_error(409, "USER_EXISTS", "User already exists") from exc
@@ -180,6 +200,8 @@ def patch_user(
     updates = payload.model_dump(exclude_unset=True)
     if "display_name" in updates:
         updates["display_name"] = _ensure_non_blank(updates["display_name"], "display_name")
+    if "mobile" in updates:
+        updates["mobile"] = _normalize_mobile(updates["mobile"])
     if "password" in updates:
         updates["password"] = _ensure_non_blank(updates["password"], "password")
     if "roles" in updates:

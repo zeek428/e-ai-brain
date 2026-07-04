@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### Added
+- 新增个人中心账号资料维护：登录用户可修改显示名称、邮箱、手机号和登录密码，并可查看、绑定、重新绑定或解绑钉钉账号；已有 AI Brain 账号必须先本地登录再显式绑定钉钉，服务端按钉钉稳定身份写入 `user_external_identities`，资料变更审计仅记录变更字段。
 - 新增钉钉登录 P0：支持认证 provider 查询、钉钉 OAuth start/callback、一次性 ticket 换取 AI Brain Token、外部身份绑定表、登录页钉钉入口、回调页和自助绑定/解绑后端接口，并同步设计文档、API 契约和错误语义。
 - 钉钉登录 P1 加固：OAuth state 与一次性 login ticket 改为后端仓储持久化并原子消费，新增 PostgreSQL 迁移承载多 worker / 重启场景下的回调状态。
 - 补充钉钉登录本地启用配置示例，明确 `GET /api/auth/providers` 与 `DINGTALK_*` 环境变量决定登录页入口展示。

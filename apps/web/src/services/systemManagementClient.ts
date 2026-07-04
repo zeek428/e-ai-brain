@@ -264,6 +264,7 @@ export type UserPermissionDiagnostic = {
 
 export type UserMutationPayload = {
   display_name?: string;
+  mobile?: string;
   password?: string;
   roles?: string[];
   status?: string;
@@ -273,6 +274,7 @@ export type UserMutationPayload = {
 type UserListItem = {
   display_name: string;
   id: string;
+  mobile?: string;
   roles?: string[];
   status?: string;
   username: string;
@@ -656,6 +658,7 @@ export async function fetchManagementUsers(
     return {
       displayName: user.display_name,
       id: user.id,
+      mobile: user.mobile ?? '',
       roles,
       rolesText: formatUserRoles(roles, roleDefinitions),
       status: user.status === 'inactive' ? 'inactive' : 'active',
@@ -690,6 +693,7 @@ export async function fetchManagementUserList(
       return {
         displayName: user.display_name,
         id: user.id,
+        mobile: user.mobile ?? '',
         roles,
         rolesText: formatUserRoles(roles, roleDefinitions),
         status: user.status === 'inactive' ? 'inactive' : 'active',

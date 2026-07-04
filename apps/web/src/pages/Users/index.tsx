@@ -25,6 +25,7 @@ import { formatMutationError, trimText } from '../../utils/managementCrud';
 
 type UserFormValues = {
   display_name: string;
+  mobile?: string;
   password?: string;
   roles?: string[];
   status: UserRecord['status'];
@@ -175,6 +176,7 @@ export default function UsersPage() {
     setEditingUser(row);
     form.setFieldsValue({
       display_name: row.displayName,
+      mobile: row.mobile ?? '',
       roles: row.roles,
       status: row.status,
       username: row.username,
@@ -187,6 +189,7 @@ export default function UsersPage() {
     const roles = values.roles ?? [];
     const payload = {
       display_name: values.display_name.trim(),
+      mobile: values.mobile?.trim() ?? '',
       password: trimText(values.password),
       roles: roles.length ? roles : ['viewer'],
       status: values.status,
@@ -234,6 +237,12 @@ export default function UsersPage() {
         sorter: true,
         title: '显示名称',
         width: 180,
+      },
+      {
+        dataIndex: 'mobile',
+        title: '手机号',
+        width: 150,
+        render: (_, row) => row.mobile || '-',
       },
       {
         dataIndex: 'rolesText',
@@ -413,6 +422,9 @@ export default function UsersPage() {
           </Form.Item>
           <Form.Item label="显示名称" name="display_name" rules={[{ required: true, message: '请输入显示名称' }]}>
             <Input />
+          </Form.Item>
+          <Form.Item label="手机号" name="mobile">
+            <Input autoComplete="tel" />
           </Form.Item>
           <Form.Item
             label={editingUser ? '重置密码' : '登录密码'}

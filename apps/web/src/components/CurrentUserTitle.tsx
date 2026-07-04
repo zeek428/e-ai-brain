@@ -21,5 +21,5 @@ export function CurrentUserTitle({ fallback }: { fallback: string }) {
     };
   }, [fallback]);
 
-  return <span>{name}</span>;
+  return <span className="current-user-title">{name}</span>;
 }

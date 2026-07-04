@@ -22,11 +22,22 @@ body {
 .avatar-menu-trigger {
   display: inline-flex;
   align-items: center;
+  max-width: 220px;
+  min-width: 0;
   padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
   cursor: pointer;
+}
+
+.current-user-title {
+  display: inline-block;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .menu-footer {
@@ -66,6 +77,81 @@ body {
 
 .login-card .ant-alert {
   margin-bottom: 16px;
+}
+
+.account-profile-page {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+}
+
+.account-profile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.account-profile-header h2 {
+  margin: 0;
+}
+
+.account-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.account-profile-panel {
+  border-radius: 8px;
+}
+
+.account-profile-dingtalk {
+  display: grid;
+  gap: 16px;
+}
+
+.account-profile-binding {
+  width: 100%;
+}
+
+.account-profile-binding > div:last-child {
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .layout-action {
+    display: none;
+  }
+
+  .avatar-menu-trigger {
+    max-width: 128px;
+  }
+
+  .current-user-title {
+    max-width: 86px;
+  }
+
+  .account-profile-page {
+    padding: 16px;
+  }
+
+  .account-profile-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .account-profile-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 420px) {
+  .current-user-title {
+    display: none;
+  }
 }
 
 .capability-row h3 {

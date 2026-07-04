@@ -110,6 +110,7 @@ class MemoryUserRepository:
         user = {
             "display_name": display_name,
             "id": f"user_{len(self.users) + 1:03d}",
+            "mobile": "",
             "password_hash": hash_password(password),
             "roles": roles,
             "status": status,
@@ -124,6 +125,17 @@ class MemoryUserRepository:
             return None
         if "display_name" in updates:
             user["display_name"] = updates["display_name"]
+        if "mobile" in updates:
+            user["mobile"] = updates["mobile"]
+        if "username" in updates:
+            next_username = updates["username"]
+            if next_username != user["username"] and next_username in self.users:
+                raise ValueError("user_exists")
+            current_username = user["username"]
+            user["username"] = next_username
+            self.users[next_username] = user
+            if current_username != next_username:
+                del self.users[current_username]
         if "roles" in updates:
             user["roles"] = updates["roles"]
         if "status" in updates:
@@ -146,6 +158,7 @@ class MemoryUserRepository:
         return {
             "display_name": user["display_name"],
             "id": user["id"],
+            "mobile": user.get("mobile") or "",
             "roles": list(user["roles"]),
             "status": user.get("status", "active"),
             "username": user["username"],
@@ -180,7 +193,7 @@ class PostgresUserRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, email, display_name, roles, password_hash, status
+                    SELECT id, email, display_name, roles, password_hash, status, mobile
                     FROM users
                     WHERE email = %s AND status = 'active'
                     """,
@@ -189,10 +202,11 @@ class PostgresUserRepository:
                 row = cursor.fetchone()
         if row is None:
             return None
-        user_id, email, display_name, roles, password_hash, status = row
+        user_id, email, display_name, roles, password_hash, status, mobile = row
         return {
             "display_name": display_name,
             "id": user_id,
+            "mobile": mobile or "",
             "password_hash": password_hash,
             "roles": list(roles),
             "status": status,
@@ -204,7 +218,7 @@ class PostgresUserRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, email, display_name, roles, password_hash, status
+                    SELECT id, email, display_name, roles, password_hash, status, mobile
                     FROM users
                     WHERE id = %s AND status = 'active'
                     """,
@@ -213,10 +227,11 @@ class PostgresUserRepository:
                 row = cursor.fetchone()
         if row is None:
             return None
-        found_user_id, email, display_name, roles, password_hash, status = row
+        found_user_id, email, display_name, roles, password_hash, status, mobile = row
         return {
             "display_name": display_name,
             "id": found_user_id,
+            "mobile": mobile or "",
             "password_hash": password_hash,
             "roles": list(roles),
             "status": status,
@@ -228,7 +243,7 @@ class PostgresUserRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, email, display_name, roles, status
+                    SELECT id, email, display_name, roles, status, mobile
                     FROM users
                     ORDER BY created_at DESC, email ASC
                     """
@@ -238,11 +253,12 @@ class PostgresUserRepository:
             {
                 "display_name": display_name,
                 "id": user_id,
+                "mobile": mobile or "",
                 "roles": list(roles),
                 "status": status,
                 "username": email,
             }
-            for user_id, email, display_name, roles, status in rows
+            for user_id, email, display_name, roles, status, mobile in rows
         ]
 
     def list_user_summaries(
@@ -303,7 +319,7 @@ class PostgresUserRepository:
                 total = int(cursor.fetchone()[0])
                 cursor.execute(
                     f"""
-                    SELECT id, email, display_name, roles, status
+                    SELECT id, email, display_name, roles, status, mobile
                     FROM users
                     {where_sql}
                     ORDER BY {resolved_sort_by} {sort_order.upper()}, email ASC
@@ -317,11 +333,12 @@ class PostgresUserRepository:
                 {
                     "display_name": display_name_value,
                     "id": user_id,
+                    "mobile": mobile or "",
                     "roles": list(roles),
                     "status": status_value,
                     "username": email,
                 }
-                for user_id, email, display_name_value, roles, status_value in rows
+                for user_id, email, display_name_value, roles, status_value, mobile in rows
             ],
             "page": page,
             "page_size": page_size,
@@ -376,6 +393,12 @@ class PostgresUserRepository:
         if "display_name" in updates:
             fields.append("display_name = %s")
             values.append(updates["display_name"])
+        if "mobile" in updates:
+            fields.append("mobile = %s")
+            values.append(updates["mobile"])
+        if "username" in updates:
+            fields.append("email = %s")
+            values.append(updates["username"])
         if "roles" in updates:
             fields.append("roles = %s::jsonb")
             values.append(_json_dumps(updates["roles"]))
@@ -389,10 +412,15 @@ class PostgresUserRepository:
             values.append(user_id)
             with self._connect() as connection:
                 with connection.cursor() as cursor:
-                    cursor.execute(
-                        f"UPDATE users SET {', '.join(fields)}, updated_at = now() WHERE id = %s",
-                        values,
-                    )
+                    try:
+                        cursor.execute(
+                            f"UPDATE users SET {', '.join(fields)}, updated_at = now() WHERE id = %s",
+                            values,
+                        )
+                    except Exception as exc:
+                        if getattr(exc, "sqlstate", "") == "23505":
+                            raise ValueError("user_exists") from exc
+                        raise
         return next((user for user in self.list_users() if user["id"] == user_id), None)
 
     def delete_user(self, user_id: str) -> bool:
