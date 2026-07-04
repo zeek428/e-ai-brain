@@ -5,6 +5,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import './proComponentsMock';
 
 import RequirementsPage from '../src/pages/Requirements';
+import { saveCurrentUser } from '../src/services/aiBrain';
+
+function grantRequirementWriteAccess() {
+  window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+  saveCurrentUser({
+    display_name: 'Product Owner',
+    id: 'user_product_owner',
+    roles: ['product_owner'],
+    username: 'product.owner@example.com',
+  });
+}
 
 afterEach(() => {
   Modal.destroyAll();
@@ -185,7 +196,7 @@ describe('RequirementsPage', () => {
       }
       return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
     });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    grantRequirementWriteAccess();
     vi.stubGlobal('fetch', fetchMock);
 
     render(<RequirementsPage />);
@@ -468,7 +479,7 @@ describe('RequirementsPage', () => {
       }
       return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
     });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    grantRequirementWriteAccess();
     vi.stubGlobal('fetch', fetchMock);
 
     render(<RequirementsPage />);
@@ -574,7 +585,7 @@ describe('RequirementsPage', () => {
       return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
     });
     const messageErrorSpy = vi.spyOn(message, 'error');
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    grantRequirementWriteAccess();
     vi.stubGlobal('fetch', fetchMock);
 
     render(<RequirementsPage />);

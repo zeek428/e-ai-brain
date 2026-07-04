@@ -1,5 +1,39 @@
-const defaultApiBaseUrl =
-  process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8000' : '';
+const loopbackHostnames = new Set(['127.0.0.1', 'localhost', '::1']);
+
+function isPrivateIpv4Hostname(hostname: string) {
+  const parts = hostname.split('.').map((part) => Number(part));
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
+    return false;
+  }
+  const [first, second] = parts;
+  return (
+    first === 10 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
+}
+
+function defaultDevelopmentApiBaseUrl() {
+  if (process.env.NODE_ENV !== 'development') {
+    return '';
+  }
+  if (typeof window === 'undefined') {
+    return 'http://127.0.0.1:8000';
+  }
+  const { hostname, protocol } = window.location;
+  if (isPrivateIpv4Hostname(hostname)) {
+    return `${protocol}//${hostname}:8000`;
+  }
+  if (hostname && !loopbackHostnames.has(hostname)) {
+    return '';
+  }
+  return 'http://127.0.0.1:8000';
+}
+
+const defaultApiBaseUrl = defaultDevelopmentApiBaseUrl();
 const configuredApiBaseUrl = process.env.UMI_APP_API_BASE_URL ?? defaultApiBaseUrl;
 
 export const API_BASE_URL = configuredApiBaseUrl.endsWith('/')
@@ -56,8 +90,10 @@ type RemoteListQueryParams = {
 };
 
 type UnauthorizedApiResponseHandler = () => void;
+type ForbiddenApiResponseHandler = (error: ApiRequestError, path: string) => boolean;
 
 let unauthorizedApiResponseHandler: UnauthorizedApiResponseHandler | undefined;
+let forbiddenApiResponseHandler: ForbiddenApiResponseHandler | undefined;
 
 export function setUnauthorizedApiResponseHandler(
   handler: UnauthorizedApiResponseHandler | undefined,
@@ -65,7 +101,14 @@ export function setUnauthorizedApiResponseHandler(
   unauthorizedApiResponseHandler = handler;
 }
 
+export function setForbiddenApiResponseHandler(
+  handler: ForbiddenApiResponseHandler | undefined,
+) {
+  forbiddenApiResponseHandler = handler;
+}
+
 export class ApiRequestError extends Error {
+  authorizationRefreshHandled?: boolean;
   code?: string;
   detail?: ApiErrorPayload['detail'];
   status: number;
@@ -128,6 +171,14 @@ export async function apiRequest<T>(
     if (response.status === 401 && shouldHandleUnauthorizedResponse(path)) {
       unauthorizedApiResponseHandler?.();
     }
+    if (
+      response.status === 403 &&
+      requestError.code === 'FORBIDDEN' &&
+      shouldHandleForbiddenResponse(path)
+    ) {
+      requestError.authorizationRefreshHandled =
+        forbiddenApiResponseHandler?.(requestError, path) === true;
+    }
     throw requestError;
   }
   const payload = (await response.json()) as ApiEnvelope<T>;
@@ -136,6 +187,15 @@ export async function apiRequest<T>(
 
 function shouldHandleUnauthorizedResponse(path: string) {
   return !(
+    path.startsWith('/api/auth/login') ||
+    path.startsWith('/api/auth/dingtalk/exchange-ticket') ||
+    path.startsWith('/api/auth/providers')
+  );
+}
+
+function shouldHandleForbiddenResponse(path: string) {
+  return !(
+    path.startsWith('/api/auth/me') ||
     path.startsWith('/api/auth/login') ||
     path.startsWith('/api/auth/dingtalk/exchange-ticket') ||
     path.startsWith('/api/auth/providers')

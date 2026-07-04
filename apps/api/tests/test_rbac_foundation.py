@@ -5,11 +5,16 @@ from pathlib import Path
 
 from app.core.authorization import AuthorizationSnapshot, build_menu_tree, has_permission
 from app.core.repositories import authorization as authorization_repository
+from app.core.repositories.authorization_defaults import COMPATIBILITY_ROLE_MENU_GRANTS
 from app.core.roles import ROLE_DEFINITIONS
 
 MIGRATION = Path("app/db/migrations/031_rbac_foundation.sql")
 LEGACY_ROLE_BACKFILL_MIGRATION = Path("app/db/migrations/033_backfill_legacy_user_roles.sql")
 RD_TASK_MENU_MOVE_MIGRATION = Path("app/db/migrations/052_move_rd_tasks_menu.sql")
+VIEWER_TASK_BOUNDARY_MIGRATION = Path("app/db/migrations/083_viewer_menu_task_boundary.sql")
+VIEWER_ASSISTANT_BOUNDARY_MIGRATION = Path(
+    "app/db/migrations/084_viewer_assistant_menu_boundary.sql"
+)
 
 
 def _role_permissions(role_code: str) -> set[str]:
@@ -409,6 +414,57 @@ def test_build_menu_tree_adds_parent_chain_for_authorized_page():
             ],
         }
     ]
+
+
+def test_build_menu_tree_drops_empty_authorized_group():
+    menu_tree = build_menu_tree(
+        granted_codes={"task"},
+        resources=[
+            {
+                "code": "task",
+                "name": "任务中心",
+                "path": "/tasks",
+                "parent_code": None,
+                "menu_type": "group",
+                "sort_order": 20,
+                "required_permissions": [],
+            },
+            {
+                "code": "system.scheduled_jobs",
+                "name": "定时作业",
+                "path": "/tasks/scheduled-jobs",
+                "parent_code": "task",
+                "menu_type": "page",
+                "sort_order": 21,
+                "required_permissions": ["system.scheduled_jobs.manage"],
+            },
+        ],
+        permissions={"workspace.read"},
+    )
+
+    assert menu_tree == []
+
+
+def test_viewer_task_menu_boundary_migration_removes_task_grants():
+    sql = VIEWER_TASK_BOUNDARY_MIGRATION.read_text(encoding="utf-8")
+
+    assert "DELETE FROM role_permissions" in sql
+    assert "code = 'viewer'" in sql
+    assert "permission_code = 'task.read'" in sql
+    assert "DELETE FROM role_menu_grants" in sql
+    assert "menu_code IN ('task', 'task.center')" in sql
+
+
+def test_viewer_assistant_menu_boundary_migration_removes_assistant_grants():
+    sql = VIEWER_ASSISTANT_BOUNDARY_MIGRATION.read_text(encoding="utf-8")
+
+    assert "DELETE FROM role_permissions" in sql
+    assert "code = 'viewer'" in sql
+    assert "permission_code = 'assistant.chat'" in sql
+    assert "DELETE FROM role_menu_grants" in sql
+    assert "menu_code IN ('assistant.chat', 'assistant.drafts')" in sql
+    assert "assistant.chat" not in COMPATIBILITY_ROLE_MENU_GRANTS["viewer"]
+    assert "assistant.drafts" not in COMPATIBILITY_ROLE_MENU_GRANTS["viewer"]
 
 
 def test_postgres_authorization_queries_filter_user_role_effective_window():

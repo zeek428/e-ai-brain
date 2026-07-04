@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 export type RemoteRowsError = {
+  authorizationRefreshHandled?: boolean;
   code?: string;
   message: string;
   traceId?: string;
@@ -19,10 +20,12 @@ export type RemoteRowsResult<Row> = RemoteRowsState<Row> & {
 export function normalizeRemoteRowsError(error: unknown): RemoteRowsError {
   if (error instanceof Error) {
     const errorWithDetails = error as Error & {
+      authorizationRefreshHandled?: boolean;
       code?: string;
       traceId?: string;
     };
     return {
+      authorizationRefreshHandled: errorWithDetails.authorizationRefreshHandled,
       code: errorWithDetails.code,
       message: error.message,
       traceId: errorWithDetails.traceId,
@@ -34,6 +37,9 @@ export function normalizeRemoteRowsError(error: unknown): RemoteRowsError {
 export function formatRemoteRowsError(error?: RemoteRowsError) {
   if (!error) {
     return undefined;
+  }
+  if (error.authorizationRefreshHandled) {
+    return '权限已更新，正在返回可访问页面';
   }
   const details = [error.code, error.message, error.traceId ? `trace_id=${error.traceId}` : undefined]
     .filter(Boolean)

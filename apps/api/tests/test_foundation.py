@@ -22,6 +22,31 @@ def test_settings_default_to_postgres_outside_tests(monkeypatch):
     assert Settings().persistence_mode == "postgres"
 
 
+def test_local_network_cors_origin_regex_defaults_to_local_dev_only(monkeypatch):
+    monkeypatch.delenv("CORS_ALLOW_LOCAL_NETWORK_ORIGINS", raising=False)
+    monkeypatch.setenv("APP_ENV", "local")
+
+    assert Settings().cors_origin_regex is not None
+
+    monkeypatch.setenv("APP_ENV", "production")
+
+    assert Settings().cors_origin_regex is None
+
+
+def test_cors_preflight_allows_local_network_frontend_origin():
+    response = client.options(
+        "/api/auth/providers",
+        headers={
+            "Access-Control-Request-Headers": "content-type",
+            "Access-Control-Request-Method": "GET",
+            "Origin": "http://192.168.71.198:5173",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://192.168.71.198:5173"
+
+
 def test_build_store_rejects_memory_mode_outside_tests(monkeypatch):
     monkeypatch.setattr(main.settings, "app_env", "local")
     monkeypatch.setattr(main.settings, "persistence_mode", "memory")

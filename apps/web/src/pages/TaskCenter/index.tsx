@@ -42,6 +42,7 @@ import {
   createTechnicalSolutionTask,
   createTaskWritebackResult,
   editApproveTaskCenterReview,
+  AUTH_STATE_EVENT,
   fetchCodeReviewReport,
   fetchProductContextOptions,
   fetchProductGitRepositories,
@@ -51,6 +52,7 @@ import {
   fetchTaskCenterTaskDetail,
   fetchTaskCenterTasks,
   fetchTaskWritebackResult,
+  getStoredCurrentUser,
   previewCodeReviewPullRequest,
   rejectTaskCenterReview,
   requestTaskCenterReviewMoreInfo,
@@ -59,6 +61,7 @@ import {
   type GitLabMergeRequestSnapshot,
   type GitLabMergeRequestPreview,
   type ProductGitRepositoryOption,
+  type CurrentUserResponse,
   type RemoteListPerformance,
   type TaskWritebackResultRecord,
   startTaskCenterTask,
@@ -114,6 +117,16 @@ const writebackStatusLabels: Record<string, { color: string; label: string }> = 
   failed: { color: 'red', label: '失败' },
   not_written: { color: 'default', label: '未写回' },
 };
+
+const taskOperationRoles = new Set(['product_owner', 'rd_owner', 'reviewer']);
+
+function hasTaskOperationRole(user: CurrentUserResponse | undefined) {
+  const roles = new Set(user?.roles ?? []);
+  if (roles.has('admin')) {
+    return true;
+  }
+  return Array.from(taskOperationRoles).some((role) => roles.has(role));
+}
 
 type TaskActionItem = {
   key: string;
@@ -376,6 +389,8 @@ export default function TaskCenterPage() {
     rows: [],
     status: 'ready',
   });
+  const [currentUser, setCurrentUser] = useState<CurrentUserResponse | undefined>(() => getStoredCurrentUser());
+  const canOperateTasks = useMemo(() => hasTaskOperationRole(currentUser), [currentUser]);
   const loadPendingReviews = useCallback(
     () =>
       fetchTaskCenterPendingReviews({
@@ -396,6 +411,15 @@ export default function TaskCenterPage() {
     rows: reviewRows,
     status: reviewsStatus,
   } = useRemoteRows(loadPendingReviews);
+
+  useEffect(() => {
+    const syncCurrentUser = () => setCurrentUser(getStoredCurrentUser());
+    syncCurrentUser();
+    globalThis.addEventListener?.(AUTH_STATE_EVENT, syncCurrentUser);
+    return () => {
+      globalThis.removeEventListener?.(AUTH_STATE_EVENT, syncCurrentUser);
+    };
+  }, []);
 
   useEffect(() => {
     let isCurrent = true;
@@ -1006,6 +1030,10 @@ export default function TaskCenterPage() {
       onClick: closeAndRun(() => handleOpenTaskDetail(selectedActionTask)),
     });
 
+    if (!canOperateTasks) {
+      return actions;
+    }
+
     if (selectedActionTask.status === 'draft') {
       actions.push({
         key: 'start',
@@ -1133,6 +1161,7 @@ export default function TaskCenterPage() {
     handleOpenTaskDetail,
     handleOpenWriteback,
     handleStartTask,
+    canOperateTasks,
     openSubmitMoreInfoDialog,
     openReviewDialog,
     selectedActionTask,
@@ -1230,26 +1259,33 @@ export default function TaskCenterPage() {
         key: 'actions',
         title: '操作',
         valueType: 'option',
-        render: (_, row) => (
-          <Space size={4}>
-            <Button onClick={() => handleApproveReview(row)} type="link">
-              确认通过
-            </Button>
-            <Button onClick={() => openEditApproveDialog(row)} type="link">
-              修改后通过
-            </Button>
-            <Button danger onClick={() => openRejectReviewDialog(row)} type="link">
-              拒绝
-            </Button>
-            <Button onClick={() => openRequestMoreInfoDialog(row)} type="link">
-              要求补充
-            </Button>
-          </Space>
-        ),
+        render: (_, row) =>
+          canOperateTasks ? (
+            <Space size={4}>
+              <Button onClick={() => handleApproveReview(row)} type="link">
+                确认通过
+              </Button>
+              <Button onClick={() => openEditApproveDialog(row)} type="link">
+                修改后通过
+              </Button>
+              <Button danger onClick={() => openRejectReviewDialog(row)} type="link">
+                拒绝
+              </Button>
+              <Button onClick={() => openRequestMoreInfoDialog(row)} type="link">
+                要求补充
+              </Button>
+            </Space>
+          ) : null,
         width: 280,
       },
     ],
-    [handleApproveReview, openEditApproveDialog, openRejectReviewDialog, openRequestMoreInfoDialog],
+    [
+      canOperateTasks,
+      handleApproveReview,
+      openEditApproveDialog,
+      openRejectReviewDialog,
+      openRequestMoreInfoDialog,
+    ],
   );
 
   return (
@@ -1308,41 +1344,45 @@ export default function TaskCenterPage() {
           total: taskRowsState.total,
         }}
         rowKey="id"
-        rowSelection={{
-          getCheckboxProps: (row) => ({
-            disabled:
-              !taskBatchCancellableStatuses.has(row.status) &&
-              !(
-                row.status === 'failed' &&
-                row.currentStep !== undefined &&
-                taskBatchRetryableFailureSteps.has(row.currentStep)
-              ),
-          }),
-          onChange: (keys) => setSelectedTaskRowKeys(keys),
-          selectedRowKeys: selectedTaskRowKeys,
-        }}
+        rowSelection={canOperateTasks
+          ? {
+              getCheckboxProps: (row) => ({
+                disabled:
+                  !taskBatchCancellableStatuses.has(row.status) &&
+                  !(
+                    row.status === 'failed' &&
+                    row.currentStep !== undefined &&
+                    taskBatchRetryableFailureSteps.has(row.currentStep)
+                  ),
+              }),
+              onChange: (keys) => setSelectedTaskRowKeys(keys),
+              selectedRowKeys: selectedTaskRowKeys,
+            }
+          : undefined}
         tableTitle="任务列表"
         title="研发任务"
-        toolbarActions={[
-          <Button
-            disabled={!selectedBatchRetryableTasks.length}
-            key="batch-retry"
-            onClick={() => void handleBatchRetryTasks()}
-          >
-            批量重试
-          </Button>,
-          <Button
-            danger
-            disabled={!selectedBatchCancellableTasks.length}
-            key="batch-cancel"
-            onClick={() => void handleBatchCancelTasks()}
-          >
-            批量取消
-          </Button>,
-          <Button key="pending-reviews" onClick={() => openReviewDialog()}>
-            待确认
-          </Button>,
-        ]}
+        toolbarActions={canOperateTasks
+          ? [
+              <Button
+                disabled={!selectedBatchRetryableTasks.length}
+                key="batch-retry"
+                onClick={() => void handleBatchRetryTasks()}
+              >
+                批量重试
+              </Button>,
+              <Button
+                danger
+                disabled={!selectedBatchCancellableTasks.length}
+                key="batch-cancel"
+                onClick={() => void handleBatchCancelTasks()}
+              >
+                批量取消
+              </Button>,
+              <Button key="pending-reviews" onClick={() => openReviewDialog()}>
+                待确认
+              </Button>,
+            ]
+          : []}
       />
 
       <Modal

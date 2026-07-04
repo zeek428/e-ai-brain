@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -5,10 +7,10 @@ from app.main import app
 client = TestClient(app)
 
 
-def auth_headers() -> dict[str, str]:
+def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
     response = client.post(
         "/api/auth/login",
-        json={"username": "admin@example.com", "password": "admin123"},
+        json={"username": username, "password": password},
     )
     token = response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
@@ -30,6 +32,100 @@ def create_product_and_version(
         headers=headers,
     ).json()["data"]
     return product, version
+
+
+def test_viewer_cannot_mutate_requirement_management():
+    app.state.store.reset()
+    headers = auth_headers()
+    product, version = create_product_and_version(headers)
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "content": "只读角色不能修改需求管理数据。",
+            "product_id": product["id"],
+            "title": "Viewer 权限边界",
+            "version_id": version["id"],
+        },
+        headers=headers,
+    ).json()["data"]
+
+    viewer_username = f"requirement-viewer-{uuid4().hex[:8]}@example.com"
+    created_viewer = client.post(
+        "/api/users",
+        json={
+            "display_name": "Requirement Viewer",
+            "password": "password123",
+            "roles": ["viewer"],
+            "status": "active",
+            "username": viewer_username,
+        },
+        headers=headers,
+    )
+    assert created_viewer.status_code == 200, created_viewer.text
+    viewer_headers = auth_headers(viewer_username, "password123")
+
+    mutation_attempts = [
+        (
+            "post",
+            "/api/requirements",
+            {
+                "content": "viewer 不应能新增需求。",
+                "product_id": product["id"],
+                "title": "Viewer 新增需求",
+            },
+        ),
+        (
+            "patch",
+            f"/api/requirements/{requirement['id']}",
+            {"title": "viewer 不应能编辑需求"},
+        ),
+        ("delete", f"/api/requirements/{requirement['id']}", None),
+        (
+            "post",
+            f"/api/requirements/{requirement['id']}/approve",
+            {"comment": "viewer 不应能审批"},
+        ),
+        (
+            "post",
+            f"/api/requirements/{requirement['id']}/reject",
+            {"rejection_reason": "viewer 不应能驳回"},
+        ),
+        ("post", f"/api/requirements/{requirement['id']}/generate-task", None),
+        (
+            "post",
+            "/api/requirements/batch-schedule",
+            {
+                "product_id": product["id"],
+                "requirement_ids": [requirement["id"]],
+                "version_id": version["id"],
+            },
+        ),
+        (
+            "post",
+            "/api/requirements/batch-assign-owner",
+            {"assignee": "viewer", "requirement_ids": [requirement["id"]]},
+        ),
+        (
+            "post",
+            "/api/requirements/batch-advance-status",
+            {"requirement_ids": [requirement["id"]], "target_status": "ready_for_dev"},
+        ),
+        (
+            "post",
+            "/api/requirements/batch-generate-tasks",
+            {"product_id": product["id"], "requirement_ids": [requirement["id"]]},
+        ),
+    ]
+
+    for method_name, path, payload in mutation_attempts:
+        request = getattr(client, method_name)
+        response = (
+            request(path, json=payload, headers=viewer_headers)
+            if payload is not None
+            else request(path, headers=viewer_headers)
+        )
+        assert response.status_code == 403, f"{method_name.upper()} {path}: {response.text}"
+        assert response.json()["detail"]["code"] == "FORBIDDEN"
 
 
 def test_requirement_list_detail_reject_and_close_state_machine():

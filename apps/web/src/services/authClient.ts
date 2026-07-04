@@ -3,6 +3,7 @@ import {
   API_BASE_URL,
   ApiRequestError,
   apiRequest,
+  setForbiddenApiResponseHandler,
   setUnauthorizedApiResponseHandler,
 } from './apiClient';
 
@@ -143,7 +144,65 @@ export function handleUnauthorizedApiResponse() {
   navigateTo(`/login?redirect=${encodeURIComponent(target)}`);
 }
 
+function collectAuthorizedPaths(nodes: MenuTreeNode[] | undefined) {
+  const paths = new Set<string>();
+  const visit = (node: MenuTreeNode) => {
+    if (node.path) {
+      paths.add(node.path);
+    }
+    node.children?.forEach(visit);
+  };
+  nodes?.forEach(visit);
+  return paths;
+}
+
+function pathMatchesPattern(pattern: string, pathname: string) {
+  const patternParts = pattern.split('/').filter(Boolean);
+  const pathParts = pathname.split('/').filter(Boolean);
+  if (patternParts.length !== pathParts.length) {
+    return false;
+  }
+  return patternParts.every((part, index) => part.startsWith(':') || part === pathParts[index]);
+}
+
+function canCurrentPathRemain(user: CurrentUserResponse, pathname: string) {
+  if (pathname === '/login' || pathname === '/login/dingtalk/callback') {
+    return true;
+  }
+  const menuPaths = collectAuthorizedPaths(user.menu_tree);
+  if (menuPaths.has(pathname)) {
+    return true;
+  }
+  return Object.keys(user.route_permissions ?? {}).some((pattern) =>
+    pathMatchesPattern(pattern, pathname),
+  );
+}
+
+let forbiddenRefreshInFlight: Promise<void> | undefined;
+
+export function handleForbiddenApiResponse(error: ApiRequestError) {
+  if (error.message !== 'Role permission denied' || typeof window === 'undefined') {
+    return false;
+  }
+  if (!forbiddenRefreshInFlight) {
+    forbiddenRefreshInFlight = fetchCurrentUser()
+      .then((user) => {
+        if (!canCurrentPathRemain(user, window.location.pathname)) {
+          navigateTo('/welcome');
+        }
+      })
+      .catch(() => {
+        // Keep the original 403 visible if refreshing the authorization snapshot fails.
+      })
+      .finally(() => {
+        forbiddenRefreshInFlight = undefined;
+      });
+  }
+  return true;
+}
+
 setUnauthorizedApiResponseHandler(handleUnauthorizedApiResponse);
+setForbiddenApiResponseHandler(handleForbiddenApiResponse);
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
   const loginResponse = await apiRequest<LoginResponse>('/api/auth/login', {

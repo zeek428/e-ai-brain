@@ -8,6 +8,19 @@ def _env_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).lower() in {"1", "true", "yes"}
 
 
+LOCAL_NETWORK_CORS_ENVIRONMENTS = {"dev", "development", "local", "pytest", "test", "testing"}
+LOCAL_NETWORK_CORS_ORIGIN_REGEX = (
+    r"^https?://("
+    r"localhost|"
+    r"127(?:\.\d{1,3}){3}|"
+    r"0\.0\.0\.0|"
+    r"10(?:\.\d{1,3}){3}|"
+    r"192\.168(?:\.\d{1,3}){2}|"
+    r"172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}"
+    r")(?::\d+)?$"
+)
+
+
 class Settings:
     def __init__(self) -> None:
         self.app_env = os.getenv("APP_ENV", "local")
@@ -72,6 +85,13 @@ class Settings:
             "CORS_ORIGINS",
             "http://localhost:5173,http://127.0.0.1:5173",
         )
+        default_local_network_cors = (
+            "true" if self.app_env.lower() in LOCAL_NETWORK_CORS_ENVIRONMENTS else "false"
+        )
+        self.cors_allow_local_network_origins = _env_bool(
+            "CORS_ALLOW_LOCAL_NETWORK_ORIGINS",
+            default_local_network_cors,
+        )
         self.dingtalk_login_enabled = _env_bool("DINGTALK_LOGIN_ENABLED")
         self.dingtalk_client_id = os.getenv("DINGTALK_CLIENT_ID", "")
         self.dingtalk_client_secret = os.getenv("DINGTALK_CLIENT_SECRET", "")
@@ -106,6 +126,12 @@ class Settings:
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def cors_origin_regex(self) -> str | None:
+        if self.cors_allow_local_network_origins:
+            return LOCAL_NETWORK_CORS_ORIGIN_REGEX
+        return None
 
     @property
     def dingtalk_allowed_corp_id_set(self) -> set[str]:

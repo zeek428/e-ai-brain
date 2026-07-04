@@ -449,10 +449,6 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
     },
     "viewer": {
         "workspace.dashboard",
-        "assistant.chat",
-        "assistant.drafts",
-        "task",
-        "task.center",
         "delivery",
         "delivery.requirements",
         "delivery.bugs",

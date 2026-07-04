@@ -12,11 +12,14 @@ import DingTalkLoginCallbackPage from '../src/pages/DingTalkLoginCallback';
 import LoginPage from '../src/pages/Login';
 import { handleLogout, redirectToLoginIfNeeded } from '../src/runtimeAuth';
 import {
+  ApiRequestError,
   AUTH_STATE_EVENT,
+  apiRequest,
   buildDingTalkStartUrl,
   clearAccessToken,
   saveCurrentUser,
 } from '../src/services/aiBrain';
+import { formatMutationError } from '../src/utils/managementCrud';
 
 describe('AI Brain auth flow and routes', () => {
   afterEach(() => {
@@ -414,7 +417,44 @@ describe('AI Brain auth flow and routes', () => {
     ]);
   });
 
-  it('uses the latest stored menu tree instead of stale initial state menus', () => {
+  it('hides authorized parent menu entries when no child route is visible', () => {
+    const menuConfig = layout({
+      initialState: {
+        currentUser: {
+          menuTree: [
+            {
+              children: [],
+              code: 'task',
+              name: '任务中心',
+              path: '/tasks',
+            },
+          ],
+          isAuthenticated: true,
+          name: '查看者',
+          role: 'viewer',
+        },
+      },
+    });
+    const menuDataRender = menuConfig.menuDataRender as (routes: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
+    const filteredMenu = menuDataRender([
+      {
+        name: '任务中心',
+        path: '/tasks',
+        children: [
+          { name: 'AI 能力配置', path: '/tasks/ai-capabilities' },
+          { name: '定时作业', path: '/tasks/scheduled-jobs' },
+        ],
+        routes: [
+          { name: 'AI 能力配置', path: '/tasks/ai-capabilities' },
+          { name: '定时作业', path: '/tasks/scheduled-jobs' },
+        ],
+      },
+    ]);
+
+    expect(filteredMenu).toEqual([]);
+  });
+
+  it('uses the latest stored menu tree when layout initial state belongs to an older user', () => {
     saveCurrentUser({
       display_name: '产品负责人',
       id: 'user_produce',
@@ -473,6 +513,39 @@ describe('AI Brain auth flow and routes', () => {
     });
   });
 
+  it('prefers a fresh initial menu tree over stale stored menus for the same user', () => {
+    saveCurrentUser({
+      display_name: '查看者',
+      id: 'user_viewer',
+      menu_tree: [
+        { code: 'assistant.chat', name: 'AI 助手', path: '/assistant' },
+        { code: 'assistant.drafts', name: '草案任务台', path: '/assistant/drafts' },
+      ],
+      roles: ['viewer'],
+      username: 'viewer@example.com',
+    });
+    const menuConfig = layout({
+      initialState: {
+        currentUser: {
+          id: 'user_viewer',
+          isAuthenticated: true,
+          menuTree: [{ code: 'workspace.dashboard', name: '团队看板', path: '/welcome' }],
+          name: '查看者',
+          role: 'viewer',
+          username: 'viewer@example.com',
+        },
+      },
+    });
+    const menuDataRender = menuConfig.menuDataRender as (routes: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
+    const filteredMenu = menuDataRender([
+      { name: '团队看板', path: '/welcome' },
+      { name: 'AI 助手', path: '/assistant' },
+      { name: '草案任务台', path: '/assistant/drafts' },
+    ]);
+
+    expect(filteredMenu.map((item) => item.name)).toEqual(['团队看板']);
+  });
+
   it('hides the left menu for authenticated users without granted menus', () => {
     const menuConfig = layout({
       initialState: {
@@ -514,6 +587,76 @@ describe('AI Brain auth flow and routes', () => {
 
     window.removeEventListener(AUTH_STATE_EVENT, listener);
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes authorization and leaves a stale forbidden route after role denial', async () => {
+    window.history.pushState({}, '', '/assistant');
+    window.localStorage.setItem('ai_brain_access_token', 'token-viewer');
+    saveCurrentUser({
+      display_name: '查看者',
+      id: 'user_viewer',
+      menu_tree: [{ code: 'assistant.chat', name: 'AI 助手', path: '/assistant' }],
+      roles: ['viewer'],
+      username: 'viewer@example.com',
+    });
+    const listener = vi.fn();
+    window.addEventListener(AUTH_STATE_EVENT, listener);
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/assistant/runtime-status') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-viewer' });
+        return new Response(
+          JSON.stringify({
+            detail: {
+              code: 'FORBIDDEN',
+              message: 'Role permission denied',
+              trace_id: 'trace_forbidden',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 403,
+          },
+        );
+      }
+      if (input === '/api/auth/me') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-viewer' });
+        return new Response(
+          JSON.stringify({
+            data: {
+              display_name: '查看者',
+              id: 'user_viewer',
+              menu_tree: [{ code: 'workspace.dashboard', name: '团队看板', path: '/welcome' }],
+              roles: ['viewer'],
+              username: 'viewer@example.com',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    let deniedError: unknown;
+    try {
+      await apiRequest('/api/assistant/runtime-status', { token: 'token-viewer' });
+    } catch (error) {
+      deniedError = error;
+    }
+    expect(deniedError).toMatchObject({
+      authorizationRefreshHandled: true,
+      code: 'FORBIDDEN',
+      message: 'Role permission denied',
+    } as Partial<ApiRequestError>);
+    expect(formatMutationError(deniedError)).toBe('权限已更新，正在返回可访问页面');
+
+    await waitFor(() => expect(window.location.pathname).toBe('/welcome'));
+    expect(window.localStorage.getItem('ai_brain_current_user')).not.toContain('AI 助手');
+    expect(listener).toHaveBeenCalled();
+    window.removeEventListener(AUTH_STATE_EVENT, listener);
   });
 
   it('sends already authenticated users away from the login page', async () => {

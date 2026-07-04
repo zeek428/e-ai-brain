@@ -19,7 +19,14 @@ export function joinTextList(value?: string[]) {
 
 export function formatMutationError(error: unknown) {
   if (error instanceof Error) {
-    const detail = error as Error & { code?: string; traceId?: string };
+    const detail = error as Error & {
+      authorizationRefreshHandled?: boolean;
+      code?: string;
+      traceId?: string;
+    };
+    if (detail.authorizationRefreshHandled) {
+      return '权限已更新，正在返回可访问页面';
+    }
     return [detail.code, error.message, detail.traceId ? `trace_id=${detail.traceId}` : undefined]
       .filter(Boolean)
       .join(' · ');

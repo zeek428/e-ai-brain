@@ -1,10 +1,22 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { message, Modal, notification } from 'antd';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './proComponentsMock';
 
 import TaskCenterPage from '../src/pages/TaskCenter';
+
+beforeEach(() => {
+  window.localStorage.setItem(
+    'ai_brain_current_user',
+    JSON.stringify({
+      display_name: 'Admin',
+      id: 'user_admin',
+      roles: ['admin'],
+      username: 'admin@example.com',
+    }),
+  );
+});
 
 afterEach(() => {
   cleanup();
@@ -17,6 +29,80 @@ afterEach(() => {
 });
 
 describe('TaskCenterPage', () => {
+  it('hides task mutation actions for viewer users', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-viewer' });
+      const path = String(input);
+      if (path.startsWith('/api/reviews/pending')) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (
+        path === '/api/products?active_only=true' ||
+        path === '/api/products?active_only=true&page_size=100'
+      ) {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'AI-BRAIN', id: 'product_api', name: 'AI Brain 产品' }],
+            total: 1,
+          },
+        });
+      }
+      if (path.startsWith('/api/ai-tasks?page=1&page_size=10')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_at: '2026-06-04T09:00:00+00:00',
+                current_step: 'completed',
+                id: 'task_viewer',
+                product_id: 'product_api',
+                product_name: 'AI Brain 产品',
+                requirement_id: 'requirement_api',
+                status: 'completed',
+                task_type: 'technical_solution',
+                title: 'Viewer 只读任务',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-viewer');
+    window.localStorage.setItem(
+      'ai_brain_current_user',
+      JSON.stringify({
+        display_name: 'Viewer',
+        id: 'user_viewer',
+        roles: ['viewer'],
+        username: 'viewer@example.com',
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    const taskRow = (await screen.findByText('Viewer 只读任务')).closest('tr');
+    expect(taskRow).not.toBeNull();
+    expect(screen.queryByRole('button', { name: '批量重试' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '批量取消' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '待确认' })).not.toBeInTheDocument();
+
+    fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
+    const operationDialog = await screen.findByTestId('task-operation-dialog');
+    expect(within(operationDialog).getByRole('button', { name: '查看详情' })).toBeInTheDocument();
+    expect(within(operationDialog).queryByRole('button', { name: '模拟 Issue' })).not.toBeInTheDocument();
+    expect(within(operationDialog).queryByRole('button', { name: '生成开发计划' })).not.toBeInTheDocument();
+  });
+
   it('opens a Code Review report with a requirement full-chain link', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
@@ -658,10 +744,16 @@ describe('TaskCenterPage', () => {
       if (String(input).startsWith('/api/reviews/pending')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products?active_only=true') {
+      if (
+        input === '/api/products?active_only=true' ||
+        input === '/api/products?active_only=true&page_size=100'
+      ) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/product-versions?active_only=true') {
+      if (
+        input === '/api/product-versions?active_only=true' ||
+        input === '/api/product-versions?active_only=true&page_size=100'
+      ) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/ai-tasks' || (typeof input === 'string' && input.startsWith('/api/ai-tasks?'))) {
@@ -917,10 +1009,16 @@ describe('TaskCenterPage', () => {
       if (String(input).startsWith('/api/reviews/pending')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products?active_only=true') {
+      if (
+        input === '/api/products?active_only=true' ||
+        input === '/api/products?active_only=true&page_size=100'
+      ) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/product-versions?active_only=true') {
+      if (
+        input === '/api/product-versions?active_only=true' ||
+        input === '/api/product-versions?active_only=true&page_size=100'
+      ) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/ai-tasks' || (typeof input === 'string' && input.startsWith('/api/ai-tasks?'))) {

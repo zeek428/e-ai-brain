@@ -82,7 +82,7 @@ function selectCurrentMenuTree(
   if (initialUser.username && storedUser.username && initialUser.username !== storedUser.username) {
     return storedUser.menu_tree;
   }
-  return storedUser.menu_tree ?? initialUser.menuTree;
+  return initialUser.menuTree ?? storedUser.menu_tree;
 }
 
 function filterMenuDataByAuthorization(
@@ -101,6 +101,9 @@ function filterMenuDataByAuthorization(
     }
     const sourceChildren = route.routes ?? route.children;
     const children = sourceChildren?.map(filterRoute).filter(Boolean) as MenuRoute[] | undefined;
+    if (sourceChildren?.length && !children?.length) {
+      return undefined;
+    }
     const isAuthorized = route.path ? authorizedPaths.has(route.path) : false;
     if (!isAuthorized && !children?.length) {
       return undefined;

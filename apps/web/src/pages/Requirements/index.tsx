@@ -24,12 +24,15 @@ import {
   batchScheduleRequirements,
   createManagementRequirement,
   deleteManagementRequirement,
+  AUTH_STATE_EVENT,
   ApiRequestError,
   fetchManagementRequirementList,
   fetchRequirementFullChain,
   fetchRequirementProductContextOptions,
   generateRequirementTask,
+  getStoredCurrentUser,
   rejectManagementRequirement,
+  type CurrentUserResponse,
   type RemoteListPerformance,
   type RequirementFullChainRecord,
   type RequirementListQuery,
@@ -139,6 +142,20 @@ const requirementSourceLabels = requirementSourceOptions.reduce<Record<string, s
   {},
 );
 
+const requirementWriteRoles = new Set(['product_owner', 'rd_owner']);
+const requirementRejectRoles = new Set(['product_owner']);
+
+function hasAnyRequirementRole(
+  user: CurrentUserResponse | undefined,
+  allowedRoles: Set<string>,
+) {
+  const roles = new Set(user?.roles ?? []);
+  if (roles.has('admin')) {
+    return true;
+  }
+  return Array.from(allowedRoles).some((role) => roles.has(role));
+}
+
 function formatRequirementDeleteError(error: unknown) {
   if (error instanceof ApiRequestError && error.code === 'RESOURCE_IN_USE') {
     const relatedCounts = error.detail?.related_counts as Record<string, unknown> | undefined;
@@ -224,8 +241,17 @@ export default function RequirementsPage() {
     rows: productContexts,
     status: productContextStatus,
   } = useRemoteRows(fetchRequirementProductContextOptions);
+  const [currentUser, setCurrentUser] = useState<CurrentUserResponse | undefined>(() => getStoredCurrentUser());
   const selectedProductId = Form.useWatch('product_id', form);
   const selectedBatchProductId = Form.useWatch('product_id', batchForm);
+  const canWriteRequirements = useMemo(
+    () => hasAnyRequirementRole(currentUser, requirementWriteRoles),
+    [currentUser],
+  );
+  const canRejectRequirements = useMemo(
+    () => hasAnyRequirementRole(currentUser, requirementRejectRoles),
+    [currentUser],
+  );
   const selectedProduct = useMemo(
     () => productContexts.find((product) => product.id === selectedProductId),
     [productContexts, selectedProductId],
@@ -326,7 +352,35 @@ export default function RequirementsPage() {
     }));
   }, [selectedBatchProduct]);
 
-  const openCreateModal = () => {
+  useEffect(() => {
+    const syncCurrentUser = () => setCurrentUser(getStoredCurrentUser());
+    syncCurrentUser();
+    globalThis.addEventListener?.(AUTH_STATE_EVENT, syncCurrentUser);
+    return () => {
+      globalThis.removeEventListener?.(AUTH_STATE_EVENT, syncCurrentUser);
+    };
+  }, []);
+
+  const ensureCanWriteRequirements = useCallback((actionLabel: string) => {
+    if (canWriteRequirements) {
+      return true;
+    }
+    message.warning(`当前账号没有需求写权限，不能${actionLabel}`);
+    return false;
+  }, [canWriteRequirements]);
+
+  const ensureCanRejectRequirements = useCallback((actionLabel: string) => {
+    if (canRejectRequirements) {
+      return true;
+    }
+    message.warning(`当前账号没有需求驳回权限，不能${actionLabel}`);
+    return false;
+  }, [canRejectRequirements]);
+
+  const openCreateModal = useCallback(() => {
+    if (!ensureCanWriteRequirements('新增需求')) {
+      return;
+    }
     setEditingRequirement(null);
     form.resetFields();
     const firstProduct = productContexts[0];
@@ -337,7 +391,7 @@ export default function RequirementsPage() {
       version_id: undefined,
     });
     setIsModalOpen(true);
-  };
+  }, [ensureCanWriteRequirements, form, productContexts]);
 
   const handleProductChange = useCallback(() => {
     form.setFieldsValue({
@@ -353,6 +407,9 @@ export default function RequirementsPage() {
   }, []);
 
   const openEditModal = useCallback((row: RequirementRecord) => {
+    if (!ensureCanWriteRequirements('编辑需求')) {
+      return;
+    }
     setEditingRequirement(row);
     form.setFieldsValue({
       content: row.content ?? '',
@@ -364,9 +421,12 @@ export default function RequirementsPage() {
       version_id: row.versionId,
     });
     setIsModalOpen(true);
-  }, [form]);
+  }, [ensureCanWriteRequirements, form]);
 
   const handleSave = async () => {
+    if (!ensureCanWriteRequirements(editingRequirement ? '编辑需求' : '新增需求')) {
+      return;
+    }
     const values = await form.validateFields();
     const payload = {
       content: values.content.trim(),
@@ -398,6 +458,9 @@ export default function RequirementsPage() {
   };
 
   const handleDelete = useCallback(async (row: RequirementRecord) => {
+    if (!ensureCanWriteRequirements('删除需求')) {
+      return;
+    }
     try {
       await deleteManagementRequirement(row.id);
       message.success('需求已删除');
@@ -405,9 +468,12 @@ export default function RequirementsPage() {
     } catch (deleteError) {
       message.error(formatRequirementDeleteError(deleteError));
     }
-  }, [reload]);
+  }, [ensureCanWriteRequirements, reload]);
 
   const openBatchScheduleModal = useCallback(() => {
+    if (!ensureCanWriteRequirements('批量排期')) {
+      return;
+    }
     if (selectedRequirements.length === 0) {
       message.warning('请先选择要排期的需求');
       return;
@@ -433,9 +499,12 @@ export default function RequirementsPage() {
         productContext?.versions.length === 1 ? productContext.versions[0].id : undefined,
     });
     setIsBatchModalOpen(true);
-  }, [batchForm, productContexts, selectedRequirements]);
+  }, [batchForm, ensureCanWriteRequirements, productContexts, selectedRequirements]);
 
   const handleBatchSchedule = async () => {
+    if (!ensureCanWriteRequirements('批量排期')) {
+      return;
+    }
     let values: BatchScheduleFormValues;
     try {
       values = await batchForm.validateFields();
@@ -469,15 +538,21 @@ export default function RequirementsPage() {
   };
 
   const openBatchAssignOwnerModal = useCallback(() => {
+    if (!ensureCanWriteRequirements('批量分配负责人')) {
+      return;
+    }
     if (selectedRequirements.length === 0) {
       message.warning('请先选择要分配负责人的需求');
       return;
     }
     batchAssignOwnerForm.resetFields();
     setIsBatchAssignOwnerModalOpen(true);
-  }, [batchAssignOwnerForm, selectedRequirements.length]);
+  }, [batchAssignOwnerForm, ensureCanWriteRequirements, selectedRequirements.length]);
 
   const handleBatchAssignOwner = async () => {
+    if (!ensureCanWriteRequirements('批量分配负责人')) {
+      return;
+    }
     let values: BatchAssignOwnerFormValues;
     try {
       values = await batchAssignOwnerForm.validateFields();
@@ -509,6 +584,9 @@ export default function RequirementsPage() {
   };
 
   const openBatchAdvanceStatusModal = useCallback(() => {
+    if (!ensureCanWriteRequirements('批量推进状态')) {
+      return;
+    }
     if (selectedRequirements.length === 0) {
       message.warning('请先选择要推进状态的需求');
       return;
@@ -516,9 +594,12 @@ export default function RequirementsPage() {
     batchAdvanceStatusForm.resetFields();
     batchAdvanceStatusForm.setFieldsValue({ target_status: 'ready_for_dev' });
     setIsBatchAdvanceStatusModalOpen(true);
-  }, [batchAdvanceStatusForm, selectedRequirements.length]);
+  }, [batchAdvanceStatusForm, ensureCanWriteRequirements, selectedRequirements.length]);
 
   const handleBatchAdvanceStatus = async () => {
+    if (!ensureCanWriteRequirements('批量推进状态')) {
+      return;
+    }
     let values: BatchAdvanceStatusFormValues;
     try {
       values = await batchAdvanceStatusForm.validateFields();
@@ -551,6 +632,9 @@ export default function RequirementsPage() {
   };
 
   const openBatchGenerateTaskModal = useCallback(() => {
+    if (!ensureCanWriteRequirements('批量生成任务')) {
+      return;
+    }
     if (selectedRequirements.length === 0) {
       message.warning('请先选择要生成任务的需求');
       return;
@@ -572,9 +656,12 @@ export default function RequirementsPage() {
     }
     batchGenerateForm.resetFields();
     setIsBatchGenerateModalOpen(true);
-  }, [batchGenerateForm, selectedBatchGeneratableRequirements.length, selectedRequirements]);
+  }, [batchGenerateForm, ensureCanWriteRequirements, selectedBatchGeneratableRequirements.length, selectedRequirements]);
 
   const handleBatchGenerateTasks = async () => {
+    if (!ensureCanWriteRequirements('批量生成任务')) {
+      return;
+    }
     let values: BatchGenerateTaskFormValues;
     try {
       values = await batchGenerateForm.validateFields();
@@ -611,6 +698,9 @@ export default function RequirementsPage() {
   };
 
   const handleApprove = useCallback(async (row: RequirementRecord) => {
+    if (!ensureCanWriteRequirements('审批需求')) {
+      return;
+    }
     try {
       await approveManagementRequirement(row.id);
       message.success('需求已审批通过');
@@ -618,15 +708,21 @@ export default function RequirementsPage() {
     } catch (decisionError) {
       message.error(formatMutationError(decisionError));
     }
-  }, [reload]);
+  }, [ensureCanWriteRequirements, reload]);
 
   const openRejectModal = useCallback((row: RequirementRecord) => {
+    if (!ensureCanRejectRequirements('驳回需求')) {
+      return;
+    }
     setRejectingRequirement(row);
     rejectForm.resetFields();
-  }, [rejectForm]);
+  }, [ensureCanRejectRequirements, rejectForm]);
 
   const handleReject = async () => {
     if (!rejectingRequirement) {
+      return;
+    }
+    if (!ensureCanRejectRequirements('驳回需求')) {
       return;
     }
     const values = await rejectForm.validateFields();
@@ -644,6 +740,9 @@ export default function RequirementsPage() {
   };
 
   const handleGenerateTask = useCallback(async (row: RequirementRecord) => {
+    if (!ensureCanWriteRequirements('生成任务')) {
+      return;
+    }
     try {
       const result = await generateRequirementTask(row.id);
       message.success(`已生成 ${result.task_type} 任务：${result.task_id}`);
@@ -651,7 +750,7 @@ export default function RequirementsPage() {
     } catch (decisionError) {
       message.error(formatMutationError(decisionError));
     }
-  }, [reload]);
+  }, [ensureCanWriteRequirements, reload]);
 
   const openFullChainModal = useCallback(async (row: RequirementRecord) => {
     setFullChainRequirement(row);
@@ -685,6 +784,9 @@ export default function RequirementsPage() {
   }, []);
 
   const openDeleteConfirm = useCallback((row: RequirementRecord) => {
+    if (!ensureCanWriteRequirements('删除需求')) {
+      return;
+    }
     Modal.confirm({
       content: '仅未生成 AI 任务的需求可以删除。已生成任务的需求请先通过全链路或任务中心处理关联任务；如需求不再推进，可关闭或取消需求。',
       okText: '删除',
@@ -692,10 +794,10 @@ export default function RequirementsPage() {
       title: `删除需求 ${row.id}？`,
       onOk: () => handleDelete(row),
     });
-  }, [handleDelete]);
+  }, [ensureCanWriteRequirements, handleDelete]);
 
   const toolbarActions = useMemo(
-    () => [
+    () => canWriteRequirements ? [
       <Button
         disabled={selectedRowKeys.length === 0}
         key="batch-assign-owner"
@@ -726,8 +828,9 @@ export default function RequirementsPage() {
       >
         批量生成任务
       </Button>,
-    ],
+    ] : [],
     [
+      canWriteRequirements,
       openBatchAdvanceStatusModal,
       openBatchAssignOwnerModal,
       openBatchGenerateTaskModal,
@@ -829,17 +932,25 @@ export default function RequirementsPage() {
                     key: 'detail-page',
                     label: <a href={`/delivery/requirements/${row.id}/full-chain`}>详情页</a>,
                   },
-                  {
-                    icon: <EditOutlined />,
-                    key: 'edit',
-                    label: '编辑',
-                  },
-                  ...(row.status === 'submitted'
+                  ...(canWriteRequirements
+                    ? [
+                        {
+                          icon: <EditOutlined />,
+                          key: 'edit',
+                          label: '编辑',
+                        },
+                      ]
+                    : []),
+                  ...(canWriteRequirements && row.status === 'submitted'
                     ? [
                         {
                           key: 'approve',
                           label: '审批通过',
                         },
+                      ]
+                    : []),
+                  ...(canRejectRequirements && row.status === 'submitted'
+                    ? [
                         {
                           danger: true,
                           key: 'reject',
@@ -847,7 +958,7 @@ export default function RequirementsPage() {
                         },
                       ]
                     : []),
-                  ...(row.status === 'planned'
+                  ...(canWriteRequirements && row.status === 'planned'
                     ? [
                         {
                           key: 'generate-task',
@@ -855,12 +966,16 @@ export default function RequirementsPage() {
                         },
                       ]
                     : []),
-                  {
-                    danger: true,
-                    icon: <DeleteOutlined />,
-                    key: 'delete',
-                    label: '删除',
-                  },
+                  ...(canWriteRequirements
+                    ? [
+                        {
+                          danger: true,
+                          icon: <DeleteOutlined />,
+                          key: 'delete',
+                          label: '删除',
+                        },
+                      ]
+                    : []),
                 ],
                 onClick: ({ key }) => {
                   if (key === 'detail-page') {
@@ -898,6 +1013,8 @@ export default function RequirementsPage() {
       },
     ],
     [
+      canRejectRequirements,
+      canWriteRequirements,
       handleApprove,
       handleGenerateTask,
       openDeleteConfirm,
@@ -966,9 +1083,9 @@ export default function RequirementsPage() {
           ]}
           loading={listState.status === 'loading'}
           notice={formatRemoteRowsError(listState.error ?? productContextError)}
-          onPrimaryAction={openCreateModal}
+          onPrimaryAction={canWriteRequirements ? openCreateModal : undefined}
           onReload={() => void reload()}
-          primaryAction="新增需求"
+          primaryAction={canWriteRequirements ? '新增需求' : undefined}
           remote={{
             onChange: setListQuery,
             page: listState.page,
@@ -976,13 +1093,15 @@ export default function RequirementsPage() {
             total: listState.total,
           }}
           rowKey="id"
-          rowSelection={{
-            getCheckboxProps: (row) => ({
-              disabled: !batchAssignableStatuses.has(row.status),
-            }),
-            onChange: (keys) => setSelectedRowKeys(keys),
-            selectedRowKeys,
-          }}
+          rowSelection={canWriteRequirements
+            ? {
+                getCheckboxProps: (row) => ({
+                  disabled: !batchAssignableStatuses.has(row.status),
+                }),
+                onChange: (keys) => setSelectedRowKeys(keys),
+                selectedRowKeys,
+              }
+            : undefined}
           tableLayout="fixed"
           tableScroll={{ x: 1720 }}
           tableTitle=""

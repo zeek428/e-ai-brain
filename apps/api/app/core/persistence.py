@@ -278,6 +278,14 @@ class PostgresSnapshotRepository:
                     cursor,
                     "082_dingtalk_login_external_identities.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "083_viewer_menu_task_boundary.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "084_viewer_assistant_menu_boundary.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

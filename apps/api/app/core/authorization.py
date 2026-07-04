@@ -55,14 +55,18 @@ def build_menu_tree(
             visible_codes.add(current_code)
             current_code = current.get("parent_code")
 
-    def build_node(item: dict[str, Any]) -> dict[str, Any]:
+    def build_node(item: dict[str, Any]) -> dict[str, Any] | None:
         children = [
-            build_node(child)
+            child_node
             for child in sorted_resources
             if child.get("parent_code") == item["code"]
             and child["code"] in visible_codes
             and child.get("menu_type") != "hidden_page"
+            for child_node in [build_node(child)]
+            if child_node is not None
         ]
+        if item.get("menu_type") == "group" and not children:
+            return None
         return {
             "code": item["code"],
             "name": item["name"],
@@ -77,4 +81,9 @@ def build_menu_tree(
         and not item.get("parent_code")
         and item.get("menu_type") != "hidden_page"
     ]
-    return [build_node(item) for item in roots]
+    return [
+        root_node
+        for item in roots
+        for root_node in [build_node(item)]
+        if root_node is not None
+    ]
