@@ -144,7 +144,11 @@ def _scope_resource_name_map(records: list[dict[str, Any]]) -> dict[str, str]:
 
 
 def _list_knowledge_space_records(current_store: Any) -> list[dict[str, Any]]:
-    list_knowledge_spaces = getattr(runtime_repository(current_store), "list_knowledge_spaces", None)
+    list_knowledge_spaces = getattr(
+        runtime_repository(current_store),
+        "list_knowledge_spaces",
+        None,
+    )
     if callable(list_knowledge_spaces):
         return list_knowledge_spaces(active_only=False)
     knowledge_spaces = getattr(current_store, "knowledge_spaces", {})

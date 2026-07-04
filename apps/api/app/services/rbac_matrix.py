@@ -159,10 +159,14 @@ def build_role_access_preview(
 
     permissions = list(repository.list_permissions())
     menus = list(repository.menu_resources())
-    permission_by_code = {str(permission.get("code") or ""): permission for permission in permissions}
+    permission_by_code = {
+        str(permission.get("code") or ""): permission for permission in permissions
+    }
     menu_by_code = {str(menu.get("code") or ""): menu for menu in menus}
 
-    granted_permission_codes = _string_list(role.get("permission_codes") or role.get("permissions") or [])
+    granted_permission_codes = _string_list(
+        role.get("permission_codes") or role.get("permissions") or [],
+    )
     granted_menu_codes = _string_list(role.get("menu_codes") or role.get("menu_scope") or [])
     scopes = _enrich_scopes(
         [

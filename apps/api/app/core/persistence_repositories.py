@@ -19,8 +19,8 @@ from app.core.repositories.plugins import PluginReadRepository
 from app.core.repositories.product_config import ProductConfigReadRepository
 from app.core.repositories.requirements import RequirementReadRepository
 from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
-from app.core.repositories.system_state import SystemStateRepository
 from app.core.repositories.system_settings import SystemSettingsRepository
+from app.core.repositories.system_state import SystemStateRepository
 from app.core.repositories.table_maintenance import TableMaintenanceRepository
 from app.core.repositories.tasks import TaskReadRepository
 from app.core.repositories.user_insights import UserInsightReadRepository

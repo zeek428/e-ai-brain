@@ -12,6 +12,8 @@ from urllib.request import Request, urlopen
 
 CommandRunner = Callable[..., tuple[int, str, str]]
 HttpRequest = Callable[..., tuple[int, dict[str, Any]]]
+DEFAULT_SEEDED_USERNAME = "admin@example.com"
+DEFAULT_SEEDED_PASSWORD = "admin123"
 
 
 @dataclass(frozen=True)
@@ -287,6 +289,13 @@ def _auth_headers(
             "auth_token",
             False,
             "provide READINESS_BEARER_TOKEN or READINESS_USERNAME/READINESS_PASSWORD",
+        ), None
+    if options.username == DEFAULT_SEEDED_USERNAME and options.password == DEFAULT_SEEDED_PASSWORD:
+        return GateResult(
+            "auth_token",
+            False,
+            "default seeded admin credentials are not allowed for readiness gates; "
+            "provide READINESS_BEARER_TOKEN or non-default admin credentials",
         ), None
     status, payload = http_request(
         "POST",

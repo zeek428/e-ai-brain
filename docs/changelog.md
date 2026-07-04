@@ -16,7 +16,14 @@
 - 插件市场新增钉钉官方 MCP P0 标准插件：文档、知识库、钉盘、AI 表格、机器人消息和通讯录能力按独立标准插件接入，支持 `mcp_streamable_http`、URL Key 鉴权、P0 动作模板和请求摘要脱敏。
 - 钉钉官方 MCP 插件增强授权配置向导、`tools/list` 动态能力发现、高风险动作治理、插件健康看板和 AI Brain 业务场景模板，并新增动态发现与钉钉观测 API。
 
+### Changed
+- 加固运行时安全默认值：`.env.example` 不再默认启用 readiness 种子账号，非本地/非测试环境启动时会拒绝占位或过短 `APP_SECRET_KEY`，并拒绝 `ALLOW_SEEDED_USERS=true`。
+- 生产就绪门禁不再接受 `admin@example.com` / `admin123` 内置种子账号凭据，推荐使用 `READINESS_BEARER_TOKEN` 或真实管理员账号。
+- 拆分 Bug、产品、需求和任务中心页面的纯 helper 逻辑，页面容器重新回到架构行数预算内。
+
 ### Fixed
+- 修复后端服务导入链中的插件模板与 AI 执行器循环依赖，避免测试和启动阶段出现 partially initialized module。
+- 修复前端 lint 中 Fast Refresh 和 hooks 依赖警告，Runner 超时扫描结果组件拆出独立文件，定时作业 dry-run 逻辑使用稳定 callback。
 - 钉钉账号绑定摘要新增企业名称 `corp_name`，个人中心“钉钉账号”卡片优先展示企业名称，并支持 `DINGTALK_CORP_NAME_MAP` 在钉钉未返回名称时按 CorpId 配置展示名。
 - 钉钉登录集成补齐账号治理：自动开户用户标记为 SSO-only，本地密码未配置时禁止账号密码登录和自助解绑；用户可在已登录状态首次设置本地密码后再解绑钉钉。
 - 钉钉重新绑定改为真实更换当前用户 active 外部身份，绑定冲突、企业白名单、登录失败和解绑锁定风险均返回更清晰的错误码与前端中文提示。

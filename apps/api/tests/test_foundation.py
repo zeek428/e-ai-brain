@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
@@ -8,9 +9,9 @@ from app.core.config import Settings
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.store import MemoryStore
 from app.main import app
+from app.services.platform_status import runtime_data_access_mode, tcp_endpoint_from_url
 from app.services.plugin_constants import PLUGIN_PROTOCOLS
 from app.services.plugin_templates import STANDARD_PLUGIN_CONNECTION_DEFAULTS
-from app.services.platform_status import runtime_data_access_mode, tcp_endpoint_from_url
 from app.services.task_workflow_context import task_workflow_read_store, task_workflow_source_store
 
 client = TestClient(app)
@@ -31,6 +32,31 @@ def test_local_network_cors_origin_regex_defaults_to_local_dev_only(monkeypatch)
     monkeypatch.setenv("APP_ENV", "production")
 
     assert Settings().cors_origin_regex is None
+
+
+def test_runtime_security_rejects_placeholder_secret_outside_local_env(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("APP_SECRET_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="APP_SECRET_KEY"):
+        Settings().validate_runtime_security()
+
+
+def test_runtime_security_rejects_seeded_users_outside_local_env(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("APP_SECRET_KEY", "production-secret-key-with-more-than-32-characters")
+    monkeypatch.setenv("ALLOW_SEEDED_USERS", "true")
+
+    with pytest.raises(RuntimeError, match="ALLOW_SEEDED_USERS"):
+        Settings().validate_runtime_security()
+
+
+def test_runtime_security_allows_strong_secret_outside_local_env(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("APP_SECRET_KEY", "production-secret-key-with-more-than-32-characters")
+    monkeypatch.delenv("ALLOW_SEEDED_USERS", raising=False)
+
+    Settings().validate_runtime_security()
 
 
 def test_cors_preflight_allows_local_network_frontend_origin():

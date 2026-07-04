@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import secrets
+from dataclasses import replace
 from time import perf_counter
 from typing import Any
 from urllib.parse import urlencode
@@ -170,7 +170,7 @@ def _authorized_user(request: Request, user: dict[str, Any]) -> dict[str, Any]:
 
 
 def _seeded_users_enabled() -> bool:
-    return settings.allow_seeded_users or settings.app_env in {"local", "test", "development"}
+    return settings.is_test_env or settings.allow_seeded_users
 
 
 def _issue_access_token(user: dict[str, Any]) -> str:
@@ -433,7 +433,8 @@ def _dingtalk_binding_summary(request: Request, user_id: str) -> dict[str, Any]:
         "avatar_url": identity.get("avatar_url"),
         "bound": True,
         "corp_id": corp_id,
-        "corp_name": identity.get("corp_name") or settings.dingtalk_corp_name_map.get(corp_id or ""),
+        "corp_name": identity.get("corp_name")
+        or settings.dingtalk_corp_name_map.get(corp_id or ""),
         "display_name": identity.get("display_name"),
         "email": identity.get("email"),
         "provider": DINGTALK_PROVIDER,

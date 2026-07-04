@@ -31,14 +31,6 @@ from app.services.scheduled_job_access import (
     require_scheduled_job_runner,
     scheduled_job_matches_product_scope,
 )
-from app.services.scheduled_job_ai_processing import (
-    run_scheduled_job_ai_processing,
-    skill_codes_for_job,
-    skill_output_mapping_contract,
-    skill_output_schema_sample,
-    validate_knowledge_document_ids,
-    validate_skill_output_mapping_contract,
-)
 from app.services.scheduled_job_ai_executor import (
     dispatch_scheduled_job_ai_executor_processing,
     pending_ai_executor_result_summary,
@@ -49,15 +41,20 @@ from app.services.scheduled_job_ai_executor import (
     scheduled_job_uses_local_ai_executor,
     system_default_runner_node_from_ai_processing,
 )
+from app.services.scheduled_job_ai_processing import (
+    run_scheduled_job_ai_processing,
+    skill_codes_for_job,
+    skill_output_mapping_contract,
+    skill_output_schema_sample,
+    validate_knowledge_document_ids,
+    validate_skill_output_mapping_contract,
+)
 from app.services.scheduled_job_audit import (
     scheduled_job_audit_payload,
     scheduled_job_run_audit_payload,
 )
 from app.services.scheduled_job_catalog import (
     AI_REQUIRED_SCHEDULED_JOB_TYPES,
-    scheduled_job_type_allows_create,
-    scheduled_job_type_definition,
-    scheduled_job_type_is_runnable,
 )
 from app.services.scheduled_job_code_inspection_runtime import (
     code_inspection_multi_ai_processor,
@@ -86,6 +83,8 @@ from app.services.scheduled_job_native_scan import (
     code_inspection_single_result_summary,
     execute_native_multi_code_inspection_summary,
     native_code_scan_repository_ids,
+)
+from app.services.scheduled_job_native_scan import (
     queued_native_scan_result_summary as native_scan_result_summary,
 )
 from app.services.scheduled_job_online_log import run_online_log_ai_analysis_job
@@ -101,6 +100,11 @@ from app.services.scheduled_job_run_templates import scheduled_job_template_from
 from app.services.scheduled_job_trace_reruns import (
     rerun_scheduled_job_trace_node_response,
     scheduled_job_trace_node_rerun_preview_response,
+)
+from app.services.scheduled_job_type_guards import (
+    ensure_scheduled_job_type_available_for_create,
+    ensure_scheduled_job_type_runnable,
+    scheduled_job_uses_ai_processing_config,
 )
 from app.services.scheduled_job_user_feedback import (
     resolve_job_plugin_output_mapping,
@@ -118,38 +122,6 @@ __all__ = [
 ]
 persist_record = job_store.persist_record
 resolve_plugin_input_mapping = job_runtime.resolve_plugin_input_mapping
-
-
-def scheduled_job_uses_ai_processing_config(job_type: str, execution_mode: str) -> bool:
-    return execution_mode in {"ai_assisted", "ai_generated"} or job_type in AI_REQUIRED_SCHEDULED_JOB_TYPES
-
-
-def ensure_scheduled_job_type_available_for_create(job_type: str) -> None:
-    if scheduled_job_type_allows_create(job_type):
-        return
-    definition = scheduled_job_type_definition(job_type) or {}
-    raise api_error(
-        400,
-        "SCHEDULED_JOB_TYPE_UNAVAILABLE",
-        str(
-            definition.get("unavailable_reason")
-            or "Scheduled job type is not available for manual creation",
-        ),
-    )
-
-
-def ensure_scheduled_job_type_runnable(job_type: str) -> None:
-    if scheduled_job_type_is_runnable(job_type):
-        return
-    definition = scheduled_job_type_definition(job_type) or {}
-    raise api_error(
-        400,
-        "SCHEDULED_JOB_TYPE_NOT_RUNNABLE",
-        str(
-            definition.get("unavailable_reason")
-            or "Scheduled job type does not have a completed runtime handler",
-        ),
-    )
 
 
 def create_scheduled_job_response(
@@ -360,7 +332,9 @@ def dry_run_scheduled_job_response(
         job,
         ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
     )
-    will_call_model_gateway = will_run_ai_processing and scheduled_job_ai_executor_requires_model_gateway(job)
+    will_call_model_gateway = (
+        will_run_ai_processing and scheduled_job_ai_executor_requires_model_gateway(job)
+    )
     will_dispatch_runner = will_run_ai_processing and not will_call_model_gateway
     output_schema = {}
     mapping_contract = {
@@ -1041,7 +1015,10 @@ def execute_queued_scheduled_job_run_response(
                     resolved_plugin_input_mapping=resolved_plugin_input_mapping,
                     source_count_key="source_finding_count",
                     source_row_count=source_finding_count,
-                    wait_note="代码扫描结果已派发给 AI 执行器，等待 Runner 复核后写入代码巡检报告。",
+                    wait_note=(
+                        "代码扫描结果已派发给 AI 执行器，"
+                        "等待 Runner 复核后写入代码巡检报告。"
+                    ),
                     write_target="code_inspection_reports",
                 )
                 records_imported = 0
@@ -1487,7 +1464,10 @@ def run_scheduled_job_response(
                         resolved_plugin_input_mapping=resolved_plugin_input_mapping,
                         source_count_key="source_finding_count",
                         source_row_count=source_finding_count,
-                        wait_note="代码扫描结果已派发给 AI 执行器，等待 Runner 复核后写入代码巡检报告。",
+                        wait_note=(
+                            "代码扫描结果已派发给 AI 执行器，"
+                            "等待 Runner 复核后写入代码巡检报告。"
+                        ),
                         write_target="code_inspection_reports",
                     )
                     records_imported = 0

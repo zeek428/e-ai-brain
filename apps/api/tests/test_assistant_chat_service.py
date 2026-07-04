@@ -17,7 +17,6 @@ from app.services.assistant_chat import (
 )
 from app.services.assistant_history import ensure_assistant_conversation
 
-
 ASSISTANT_RUNNABLE_PLUGIN_ID = "plugin_assistant_http"
 ASSISTANT_RUNNABLE_CONNECTION_ID = "plugin_connection_assistant_test"
 ASSISTANT_RUNNABLE_ACTION_ID = "plugin_action_assistant_test"

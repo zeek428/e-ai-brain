@@ -144,10 +144,10 @@ def _strict_options() -> ReadinessOptions:
         gitlab_repository_id="repository_001",
         gitlab_requirement_id="requirement_001",
         gitlab_technical_solution_task_id="task_001",
-        password="admin123",
+        password="readiness-secret",
         project_root="/repo",
         web_base_url="http://web.test",
-        username="admin@example.com",
+        username="readiness-admin@example.com",
     )
 
 
@@ -262,9 +262,9 @@ def test_production_readiness_fails_when_model_gateway_response_exposes_secret_f
 def test_production_readiness_requires_gitlab_inputs_for_strict_gate():
     options = ReadinessOptions(
         api_base_url="http://api.test",
-        password="admin123",
+        password="readiness-secret",
         project_root="/repo",
-        username="admin@example.com",
+        username="readiness-admin@example.com",
     )
 
     report = run_production_readiness_checks(
@@ -277,3 +277,16 @@ def test_production_readiness_requires_gitlab_inputs_for_strict_gate():
     assert report.ok is False
     assert failed.ok is False
     assert "READINESS_GITLAB_REPOSITORY_ID" in failed.detail
+
+
+def test_production_readiness_rejects_default_seeded_admin_credentials():
+    report = run_production_readiness_checks(
+        replace(_strict_options(), password="admin123", username="admin@example.com"),
+        run_command=_successful_runner([]),
+        http_request=_successful_http_requests([]),
+    )
+
+    failed = [item for item in report.results if item.name == "auth_token"][0]
+    assert report.ok is False
+    assert failed.ok is False
+    assert "default seeded admin credentials" in failed.detail

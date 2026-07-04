@@ -331,7 +331,9 @@ class AssistantChatReadRepository:
                           'unknown'
                         ) AS validation_status,
                         CASE
-                          WHEN jsonb_typeof(d.metadata_json #> '{{preview,validation,issues}}') = 'array'
+                          WHEN jsonb_typeof(
+                            d.metadata_json #> '{{preview,validation,issues}}'
+                          ) = 'array'
                           THEN d.metadata_json #> '{{preview,validation,issues}}'
                           ELSE '[]'::jsonb
                         END AS validation_issues,
@@ -395,30 +397,66 @@ class AssistantChatReadRepository:
                         WHERE COALESCE(metadata_json ->> 'user_modified', 'false') = 'true'
                            OR modified_field_count > 0
                       )::int AS modified_count,
-                      COUNT(*) FILTER (WHERE validation_status = 'blocked')::int AS validation_blocked_count,
-                      COUNT(*) FILTER (WHERE validation_status = 'passed')::int AS validation_passed_count,
-                      COUNT(*) FILTER (WHERE validation_status = 'unknown')::int AS validation_unknown_count,
-                      COUNT(*) FILTER (WHERE validation_status = 'warning')::int AS validation_warning_count,
-                      COUNT(*) FILTER (WHERE COALESCE(risk_level, 'unknown') = 'critical')::int AS risk_critical_count,
-                      COUNT(*) FILTER (WHERE COALESCE(risk_level, 'unknown') = 'high')::int AS risk_high_count,
-                      COUNT(*) FILTER (WHERE COALESCE(risk_level, 'unknown') = 'low')::int AS risk_low_count,
-                      COUNT(*) FILTER (WHERE COALESCE(risk_level, 'unknown') = 'medium')::int AS risk_medium_count,
-                      COUNT(*) FILTER (WHERE COALESCE(risk_level, 'unknown') = 'unknown')::int AS risk_unknown_count,
-                      COUNT(*) FILTER (WHERE permission_issue_count > 0)::int AS permission_blocked_count,
-                      COUNT(*) FILTER (WHERE permission_issue_count = 0)::int AS permission_passed_count,
+                      COUNT(*) FILTER (
+                        WHERE validation_status = 'blocked'
+                      )::int AS validation_blocked_count,
+                      COUNT(*) FILTER (
+                        WHERE validation_status = 'passed'
+                      )::int AS validation_passed_count,
+                      COUNT(*) FILTER (
+                        WHERE validation_status = 'unknown'
+                      )::int AS validation_unknown_count,
+                      COUNT(*) FILTER (
+                        WHERE validation_status = 'warning'
+                      )::int AS validation_warning_count,
+                      COUNT(*) FILTER (
+                        WHERE COALESCE(risk_level, 'unknown') = 'critical'
+                      )::int AS risk_critical_count,
+                      COUNT(*) FILTER (
+                        WHERE COALESCE(risk_level, 'unknown') = 'high'
+                      )::int AS risk_high_count,
+                      COUNT(*) FILTER (
+                        WHERE COALESCE(risk_level, 'unknown') = 'low'
+                      )::int AS risk_low_count,
+                      COUNT(*) FILTER (
+                        WHERE COALESCE(risk_level, 'unknown') = 'medium'
+                      )::int AS risk_medium_count,
+                      COUNT(*) FILTER (
+                        WHERE COALESCE(risk_level, 'unknown') = 'unknown'
+                      )::int AS risk_unknown_count,
+                      COUNT(*) FILTER (
+                        WHERE permission_issue_count > 0
+                      )::int AS permission_blocked_count,
+                      COUNT(*) FILTER (
+                        WHERE permission_issue_count = 0
+                      )::int AS permission_passed_count,
                       0::int AS permission_unknown_count,
                       0::int AS permission_warning_count,
                       COALESCE(SUM(audit_event_count), 0)::int AS audit_event_total,
                       COALESCE(SUM(permission_issue_count), 0)::int AS permission_issue_total,
                       COALESCE(SUM(retry_count), 0)::int AS retry_total,
                       COALESCE(SUM(validation_issue_count), 0)::int AS validation_issue_total,
-                      COUNT(*) FILTER (WHERE decision_status = 'blocked')::int AS decision_blocked_count,
-                      COUNT(*) FILTER (WHERE decision_status = 'expired')::int AS decision_expired_count,
-                      COUNT(*) FILTER (WHERE decision_status = 'failed')::int AS decision_failed_count,
-                      COUNT(*) FILTER (WHERE decision_status = 'ready')::int AS decision_ready_count,
-                      COUNT(*) FILTER (WHERE decision_status = 'terminal')::int AS decision_terminal_count,
-                      COUNT(*) FILTER (WHERE decision_status = 'unknown')::int AS decision_unknown_count,
-                      COUNT(*) FILTER (WHERE decision_status = 'warning')::int AS decision_warning_count
+                      COUNT(*) FILTER (
+                        WHERE decision_status = 'blocked'
+                      )::int AS decision_blocked_count,
+                      COUNT(*) FILTER (
+                        WHERE decision_status = 'expired'
+                      )::int AS decision_expired_count,
+                      COUNT(*) FILTER (
+                        WHERE decision_status = 'failed'
+                      )::int AS decision_failed_count,
+                      COUNT(*) FILTER (
+                        WHERE decision_status = 'ready'
+                      )::int AS decision_ready_count,
+                      COUNT(*) FILTER (
+                        WHERE decision_status = 'terminal'
+                      )::int AS decision_terminal_count,
+                      COUNT(*) FILTER (
+                        WHERE decision_status = 'unknown'
+                      )::int AS decision_unknown_count,
+                      COUNT(*) FILTER (
+                        WHERE decision_status = 'warning'
+                      )::int AS decision_warning_count
                     FROM decisions
                     """,
                     params,

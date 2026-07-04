@@ -99,9 +99,10 @@ def sync_ai_executor_approval_request_store(
         runner_id=runner_id,
         status=status,
     )
+    collection_name = "ai_executor_approval_requests"
     setattr(
         current_store,
-        "ai_executor_approval_requests",
+        collection_name,
         {str(record["id"]): dict(record) for record in records if record.get("id")},
     )
 

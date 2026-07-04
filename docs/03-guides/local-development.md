@@ -45,8 +45,8 @@ https://registry.npmjs.org
 
 ```bash
 APP_ENV=local
-APP_SECRET_KEY=<local-secret>
-ALLOW_SEEDED_USERS=
+APP_SECRET_KEY=<至少 32 位本地随机字符串>
+ALLOW_SEEDED_USERS=false
 ACCESS_TOKEN_EXPIRE_SECONDS=28800
 
 DATABASE_URL=postgresql://ai_brain:<password>@postgres:5432/ai_brain
@@ -96,7 +96,7 @@ curl http://localhost:8000/api/auth/providers
 
 真实 `.env` 不提交到仓库。
 
-本地内置种子账号仅在 `APP_ENV=local|test|development` 时启用；非本地环境默认拒绝这些账号登录。前端不会自动使用种子账号登录，若要在本地直接调用管理列表 API，可通过登录接口获取 token 后写入浏览器 `localStorage.ai_brain_access_token`。
+内置种子账号默认仅供自动化测试使用。本地开发如需临时使用种子账号，必须在受信任的本机环境显式设置 `ALLOW_SEEDED_USERS=true` 并重启 API；通过 ngrok、花生壳、frp 或局域网 IP 暴露服务时不要启用。非本地/非测试环境会拒绝占位 `APP_SECRET_KEY`、过短密钥和 `ALLOW_SEEDED_USERS=true`。前端不会自动使用种子账号登录，若要在本地直接调用管理列表 API，可通过登录接口获取 token 后写入浏览器 `localStorage.ai_brain_access_token`。
 
 ### 网络受限环境
 

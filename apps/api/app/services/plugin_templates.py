@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from app.services.ai_executor_runners import (
+from app.services.ai_executor_runner_constants import (
     SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
     SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
 )

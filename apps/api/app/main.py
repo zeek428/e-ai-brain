@@ -37,8 +37,8 @@ from app.api.routers.products import router as products_router
 from app.api.routers.related_systems import router as related_systems_router
 from app.api.routers.requirements import router as requirements_router
 from app.api.routers.scheduled_jobs import router as scheduled_jobs_router
-from app.api.routers.system_rbac import router as system_rbac_router
 from app.api.routers.system_external_identities import router as system_external_identities_router
+from app.api.routers.system_rbac import router as system_rbac_router
 from app.api.routers.system_settings import router as system_settings_router
 from app.api.routers.tasks import router as tasks_router
 from app.api.routers.user_insights import router as user_insights_router
@@ -73,7 +73,11 @@ logger = logging.getLogger(__name__)
 
 
 def _is_test_env() -> bool:
-    return settings.app_env.lower() in {"test", "testing", "pytest"}
+    return settings.is_test_env
+
+
+def _ensure_runtime_security_config() -> None:
+    settings.validate_runtime_security()
 
 
 def _ensure_memory_mode_allowed() -> None:
@@ -157,6 +161,8 @@ async def lifespan(application: FastAPI):
     finally:
         stop_knowledge_import_worker(application)
 
+
+_ensure_runtime_security_config()
 
 app = FastAPI(title="Enterprise AI Brain API", version="0.1.0", lifespan=lifespan)
 app.state.store = build_store()

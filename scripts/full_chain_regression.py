@@ -1580,8 +1580,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--password",
-        default=os.getenv("FULL_CHAIN_PASSWORD", os.getenv("READINESS_PASSWORD", "admin123")),
-        help="Login password. Defaults to FULL_CHAIN_PASSWORD, READINESS_PASSWORD, or admin123.",
+        default=os.getenv("FULL_CHAIN_PASSWORD", os.getenv("READINESS_PASSWORD")),
+        help="Login password. Defaults to FULL_CHAIN_PASSWORD or READINESS_PASSWORD.",
     )
     parser.add_argument(
         "--timeout",
@@ -1641,8 +1641,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--username",
-        default=os.getenv("FULL_CHAIN_USERNAME", os.getenv("READINESS_USERNAME", "admin@example.com")),
-        help="Login username. Defaults to FULL_CHAIN_USERNAME, READINESS_USERNAME, or admin@example.com.",
+        default=os.getenv("FULL_CHAIN_USERNAME", os.getenv("READINESS_USERNAME")),
+        help="Login username. Defaults to FULL_CHAIN_USERNAME or READINESS_USERNAME.",
     )
     args = parser.parse_args()
 

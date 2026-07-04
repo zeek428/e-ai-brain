@@ -827,7 +827,10 @@ def test_system_external_identity_admin_list_and_force_unbind():
             headers=headers,
         )
         assert forced.status_code == 200
-        assert app.state.external_identity_repository.find_active("dingtalk", "union_sso_admin") is None
+        assert (
+            app.state.external_identity_repository.find_active("dingtalk", "union_sso_admin")
+            is None
+        )
         assert app.state.store.audit_events[-1]["event_type"] == "dingtalk_account.admin_unbound"
     finally:
         restore()

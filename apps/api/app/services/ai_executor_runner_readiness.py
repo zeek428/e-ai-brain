@@ -94,7 +94,10 @@ def _sandbox_boundary_control(runner: dict[str, Any]) -> dict[str, Any]:
         "sandbox_permission_boundary",
         "沙箱权限边界",
         "satisfied",
-        "已启用命令白名单、禁用 shell、stdin 指令传递、进程组隔离、超时进程树清理、工作区白名单和高风险审批。",
+        (
+            "已启用命令白名单、禁用 shell、stdin 指令传递、进程组隔离、"
+            "超时进程树清理、工作区白名单和高风险审批。"
+        ),
     )
 
 
@@ -117,7 +120,10 @@ def _protocol_adapter_control(runner: dict[str, Any]) -> dict[str, Any]:
             "protocol_adapter",
             "协议适配",
             "blocked",
-            f"{protocol_label} 目前仅作为协议预留；当前本地 Runner 安装包和任务队列闭环请使用 runner_polling。",
+            (
+                f"{protocol_label} 目前仅作为协议预留；当前本地 Runner 安装包和"
+                "任务队列闭环请使用 runner_polling。"
+            ),
         )
     return _readiness_control(
         "protocol_adapter",
@@ -281,7 +287,10 @@ def runner_readiness_summary(
                 "approval_gate",
                 "高风险操作审批",
                 "needs_review",
-                "服务端和 Runner 会拦截 push、发布、删除等高风险指令；动作试运行支持审批写回，定时作业需携带有效审批快照后才会入队。",
+                (
+                    "服务端和 Runner 会拦截 push、发布、删除等高风险指令；"
+                    "动作试运行支持审批写回，定时作业需携带有效审批快照后才会入队。"
+                ),
                 required=False,
             ),
         ],

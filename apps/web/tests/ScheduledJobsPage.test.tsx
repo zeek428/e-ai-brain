@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import './proComponentsMock';
 
 import ScheduledJobsPage from '../src/pages/ScheduledJobs';
-import { buildScheduledJobRunDetailExportPayload } from '../src/pages/ScheduledJobs/components/ScheduledJobRunDetailModal';
+import { buildScheduledJobRunDetailExportPayload } from '../src/pages/ScheduledJobs/components/scheduledJobRunDetailExport';
 import {
   ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,

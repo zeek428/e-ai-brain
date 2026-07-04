@@ -67,89 +67,12 @@ import {
   type ScheduledJobTemplateSource,
 } from './components/scheduledJobFormTransformHelpers';
 import { useScheduledJobRunDetailState } from './components/useScheduledJobRunDetailState';
-
-function writeStrategyLabelFromAction(action: PluginActionRecord): string {
-  const mapping = action.result_mapping ?? {};
-  const writeTargetLabel = typeof mapping.write_target_label === 'string' ? mapping.write_target_label : undefined;
-  const writeTarget = typeof mapping.write_target === 'string' ? mapping.write_target : undefined;
-  return action.name || writeTargetLabel || writeTarget || action.id;
-}
-
-function scheduledJobDraftHasReusableResponse(payload: Record<string, unknown>) {
-  const configJson = recordFromDraftPayload(payload, 'config_json');
-  const sampleReuse = recordValue(configJson?.sample_reuse);
-  return Boolean(recordValue(sampleReuse?.response_summary));
-}
-
-type TemplateSelectableRecord = {
-  code?: string;
-  id?: string;
-  name?: string;
-  status?: string;
-};
-
-function findByTemplateSelector<T extends TemplateSelectableRecord>(
-  items: T[],
-  selector: Record<string, unknown>,
-): T | undefined {
-  const codeCandidates = stringArrayFromUnknown(selector.code_candidates);
-  const fallbackCodeCandidates = stringArrayFromUnknown(selector.fallback_code_candidates);
-  const textCandidates = stringArrayFromUnknown(selector.text_candidates).map((candidate) =>
-    candidate.toLowerCase(),
-  );
-  const isActive = (item: T) => item.status === 'active';
-  const findByCodeCandidate = (candidates: string[], activeOnly: boolean) => {
-    for (const candidate of candidates) {
-      const matched = items.find((item) => {
-        if (activeOnly && !isActive(item)) {
-          return false;
-        }
-        return String(item.code ?? '') === candidate || String(item.id ?? '') === candidate;
-      });
-      if (matched) {
-        return matched;
-      }
-    }
-    return undefined;
-  };
-  const findByTextCandidate = (activeOnly: boolean) => {
-    for (const candidate of textCandidates) {
-      const matched = items.find((item) => {
-        if (activeOnly && !isActive(item)) {
-          return false;
-        }
-        const text = `${item.code ?? ''} ${item.name ?? ''} ${item.id ?? ''}`.toLowerCase();
-        return text.includes(candidate);
-      });
-      if (matched) {
-        return matched;
-      }
-    }
-    return undefined;
-  };
-  return (
-    findByCodeCandidate(codeCandidates, true)
-    ?? findByCodeCandidate(codeCandidates, false)
-    ?? findByTextCandidate(true)
-    ?? findByTextCandidate(false)
-    ?? findByCodeCandidate(fallbackCodeCandidates, true)
-    ?? findByCodeCandidate(fallbackCodeCandidates, false)
-    ?? items.find(isActive)
-    ?? items[0]
-  );
-}
-
-function scheduledJobDraftRequestsAutoDryRun(draft: AssistantScheduledJobDraft) {
-  if (draft.auto_dry_run === true) {
-    return true;
-  }
-  if (draft.payload.auto_dry_run === true) {
-    return true;
-  }
-  const configJson = recordFromDraftPayload(draft.payload, 'config_json');
-  const sampleReuse = recordValue(configJson?.sample_reuse);
-  return sampleReuse?.auto_dry_run === true;
-}
+import {
+  findByTemplateSelector,
+  scheduledJobDraftHasReusableResponse,
+  scheduledJobDraftRequestsAutoDryRun,
+  writeStrategyLabelFromAction,
+} from './scheduledJobPageHelpers';
 
 export default function ScheduledJobsPage() {
   const [form] = Form.useForm<ScheduledJobFormValues>();
@@ -783,7 +706,6 @@ export default function ScheduledJobsPage() {
       });
     },
     [
-      agents,
       aiProcessingRequiredTypes,
       findActionForTemplate,
       findAgentForTemplate,
@@ -1035,106 +957,117 @@ export default function ScheduledJobsPage() {
     form.resetFields();
   };
 
-  const buildJobRequestPayload = (values: ScheduledJobFormValues): Partial<ScheduledJobRecord> => {
-    const { template, ...jobValues } = values;
-    const selectedTemplate = availableJobTemplates.find((item) => item.code === template);
-    const pluginConnectionIds = uniqueStringList(
-      Array.isArray(values.plugin_connection_ids)
-        ? values.plugin_connection_ids
-        : [values.plugin_connection_id],
-    );
-    const pluginActionIds = uniqueStringList(
-      Array.isArray(values.plugin_action_ids)
-        ? values.plugin_action_ids
-        : [values.plugin_action_id],
-    );
-    jobValues.plugin_connection_id = primaryId(pluginConnectionIds) ?? null;
-    jobValues.plugin_connection_ids = pluginConnectionIds;
-    jobValues.plugin_action_id = primaryId(pluginActionIds) ?? null;
-    jobValues.plugin_action_ids = pluginActionIds;
-    const draftConfigJson = recordFromDraftPayload(assistantDraftPayload ?? {}, 'config_json') ?? {};
-    const templateConfigJson = templateSource?.values.config_json ?? {};
-    const templateSourceConfig =
-      templateSource && !editingJob
-        ? {
-            template_source: {
-              source_id: templateSource.sourceId,
-              source_type: templateSource.sourceType,
-              title: templateSource.title,
-            },
-          }
-        : {};
-    const assistantDraftConfig =
-      assistantDraftPayload && assistantDraftSource?.draftId && !editingJob
-        ? {
-            assistant_draft: {
-              draft_id: assistantDraftSource?.draftId,
-              source: 'assistant.action_draft',
-              title: assistantDraftSource?.title,
-            },
-          }
-        : {};
-    const formResultActions = values.result_actions?.length
-      ? values.result_actions
-      : templatePayloadResultActions(selectedTemplate) ?? [];
-    const requestPayload: Partial<ScheduledJobRecord> = {
-      ...jobValues,
-      config_json: scheduledJobConfigWithOrchestration(
-        {
-          ...(editingJob?.config_json ?? {}),
-          ...templateConfigJson,
-          ...draftConfigJson,
-          ...(values.config_json ?? {}),
-          ...templateSourceConfig,
-          ...assistantDraftConfig,
-        },
-        pluginConnectionIds,
-        pluginActionIds,
-      ),
-      plugin_input_mapping:
-        editingJob?.plugin_input_mapping
-        ?? templateSource?.values.plugin_input_mapping
-        ?? values.plugin_input_mapping
-        ?? recordFromDraftPayload(assistantDraftPayload ?? {}, 'plugin_input_mapping')
-        ?? templatePayloadRecordValue(selectedTemplate, 'plugin_input_mapping')
-        ?? {},
-      plugin_output_mapping:
-        editingJob?.plugin_output_mapping
-        ?? templateSource?.values.plugin_output_mapping
-        ?? values.plugin_output_mapping
-        ?? recordFromDraftPayload(assistantDraftPayload ?? {}, 'plugin_output_mapping')
-        ?? templatePayloadRecordValue(selectedTemplate, 'plugin_output_mapping')
-        ?? {},
-      knowledge_document_ids: values.knowledge_document_ids ?? [],
-      result_actions:
-        values.job_type === 'code_repository_inspection'
-          ? formResultActions.length
-            ? formResultActions
-            : cloneResultActions(defaultCodeInspectionActions)
-          : formResultActions,
-      skill_ids: values.skill_ids ?? [],
-    };
-    if (codeInspectionUsesNativeScan(requestPayload.job_type, requestPayload.config_json)) {
-      requestPayload.plugin_action_id = null;
-      requestPayload.plugin_action_ids = [];
-      requestPayload.config_json = scheduledJobConfigWithOrchestration(
-        recordValue(requestPayload.config_json) ?? {},
-        requestPayload.plugin_connection_ids ?? [],
-        [],
+  const buildJobRequestPayload = useCallback(
+    (values: ScheduledJobFormValues): Partial<ScheduledJobRecord> => {
+      const { template, ...jobValues } = values;
+      const selectedTemplate = availableJobTemplates.find((item) => item.code === template);
+      const pluginConnectionIds = uniqueStringList(
+        Array.isArray(values.plugin_connection_ids)
+          ? values.plugin_connection_ids
+          : [values.plugin_connection_id],
       );
-    }
-    return requestPayload;
-  };
+      const pluginActionIds = uniqueStringList(
+        Array.isArray(values.plugin_action_ids)
+          ? values.plugin_action_ids
+          : [values.plugin_action_id],
+      );
+      jobValues.plugin_connection_id = primaryId(pluginConnectionIds) ?? null;
+      jobValues.plugin_connection_ids = pluginConnectionIds;
+      jobValues.plugin_action_id = primaryId(pluginActionIds) ?? null;
+      jobValues.plugin_action_ids = pluginActionIds;
+      const draftConfigJson = recordFromDraftPayload(assistantDraftPayload ?? {}, 'config_json') ?? {};
+      const templateConfigJson = templateSource?.values.config_json ?? {};
+      const templateSourceConfig =
+        templateSource && !editingJob
+          ? {
+              template_source: {
+                source_id: templateSource.sourceId,
+                source_type: templateSource.sourceType,
+                title: templateSource.title,
+              },
+            }
+          : {};
+      const assistantDraftConfig =
+        assistantDraftPayload && assistantDraftSource?.draftId && !editingJob
+          ? {
+              assistant_draft: {
+                draft_id: assistantDraftSource?.draftId,
+                source: 'assistant.action_draft',
+                title: assistantDraftSource?.title,
+              },
+            }
+          : {};
+      const formResultActions = values.result_actions?.length
+        ? values.result_actions
+        : templatePayloadResultActions(selectedTemplate) ?? [];
+      const requestPayload: Partial<ScheduledJobRecord> = {
+        ...jobValues,
+        config_json: scheduledJobConfigWithOrchestration(
+          {
+            ...(editingJob?.config_json ?? {}),
+            ...templateConfigJson,
+            ...draftConfigJson,
+            ...(values.config_json ?? {}),
+            ...templateSourceConfig,
+            ...assistantDraftConfig,
+          },
+          pluginConnectionIds,
+          pluginActionIds,
+        ),
+        plugin_input_mapping:
+          editingJob?.plugin_input_mapping
+          ?? templateSource?.values.plugin_input_mapping
+          ?? values.plugin_input_mapping
+          ?? recordFromDraftPayload(assistantDraftPayload ?? {}, 'plugin_input_mapping')
+          ?? templatePayloadRecordValue(selectedTemplate, 'plugin_input_mapping')
+          ?? {},
+        plugin_output_mapping:
+          editingJob?.plugin_output_mapping
+          ?? templateSource?.values.plugin_output_mapping
+          ?? values.plugin_output_mapping
+          ?? recordFromDraftPayload(assistantDraftPayload ?? {}, 'plugin_output_mapping')
+          ?? templatePayloadRecordValue(selectedTemplate, 'plugin_output_mapping')
+          ?? {},
+        knowledge_document_ids: values.knowledge_document_ids ?? [],
+        result_actions:
+          values.job_type === 'code_repository_inspection'
+            ? formResultActions.length
+              ? formResultActions
+              : cloneResultActions(defaultCodeInspectionActions)
+            : formResultActions,
+        skill_ids: values.skill_ids ?? [],
+      };
+      if (codeInspectionUsesNativeScan(requestPayload.job_type, requestPayload.config_json)) {
+        requestPayload.plugin_action_id = null;
+        requestPayload.plugin_action_ids = [];
+        requestPayload.config_json = scheduledJobConfigWithOrchestration(
+          recordValue(requestPayload.config_json) ?? {},
+          requestPayload.plugin_connection_ids ?? [],
+          [],
+        );
+      }
+      return requestPayload;
+    },
+    [
+      assistantDraftPayload,
+      assistantDraftSource?.draftId,
+      assistantDraftSource?.title,
+      availableJobTemplates,
+      defaultCodeInspectionActions,
+      editingJob,
+      templateSource,
+    ],
+  );
 
-  const currentValidatedJobPayload = async (options: { validate?: boolean } = {}) => {
+  const currentValidatedJobPayload = useCallback(async (options: { validate?: boolean } = {}) => {
     await ensureNativeCodeRepositoryDefaults();
     if (options.validate !== false) {
       await form.validateFields();
     }
     return buildJobRequestPayload(form.getFieldsValue(true) as ScheduledJobFormValues);
-  };
+  }, [buildJobRequestPayload, ensureNativeCodeRepositoryDefaults, form]);
 
-  const dryRunJob = async (options: { validate?: boolean } = {}) => {
+  const dryRunJob = useCallback(async (options: { validate?: boolean } = {}) => {
     let requestPayload: Partial<ScheduledJobRecord>;
     try {
       requestPayload = await currentValidatedJobPayload({ validate: options.validate });
@@ -1157,7 +1090,7 @@ export default function ScheduledJobsPage() {
       hide();
       setDryRunning(false);
     }
-  };
+  }, [currentValidatedJobPayload]);
 
   useEffect(() => {
     if (
@@ -1176,7 +1109,7 @@ export default function ScheduledJobsPage() {
       void dryRunJob({ validate: false });
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [dryRunResult, dryRunning, editingJob, modalOpen, pendingAutoDryRun, sampleReuseDraft]);
+  }, [dryRunJob, dryRunResult, dryRunning, editingJob, modalOpen, pendingAutoDryRun, sampleReuseDraft]);
 
   const submitJob = async () => {
     let requestPayload: Partial<ScheduledJobRecord>;

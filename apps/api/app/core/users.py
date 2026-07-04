@@ -212,7 +212,16 @@ class PostgresUserRepository:
                 row = cursor.fetchone()
         if row is None:
             return None
-        user_id, email, display_name, roles, password_hash, status, mobile, password_login_enabled = row
+        (
+            user_id,
+            email,
+            display_name,
+            roles,
+            password_hash,
+            status,
+            mobile,
+            password_login_enabled,
+        ) = row
         return {
             "display_name": display_name,
             "id": user_id,
@@ -460,7 +469,8 @@ class PostgresUserRepository:
                 with connection.cursor() as cursor:
                     try:
                         cursor.execute(
-                            f"UPDATE users SET {', '.join(fields)}, updated_at = now() WHERE id = %s",
+                            "UPDATE users SET "
+                            f"{', '.join(fields)}, updated_at = now() WHERE id = %s",
                             values,
                         )
                     except Exception as exc:

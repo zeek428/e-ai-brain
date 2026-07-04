@@ -203,7 +203,9 @@ def _policy_public(current_store: Any, policy: dict[str, Any]) -> dict[str, Any]
     )
     product = _read_memory_dict(current_store, "products").get(policy.get("product_id"))
     public["runner_name"] = runner.get("name") if runner else public.get("runner_name")
-    public["repository_name"] = repository.get("name") if repository else public.get("repository_name")
+    public["repository_name"] = (
+        repository.get("name") if repository else public.get("repository_name")
+    )
     public["repository_default_branch"] = (
         repository.get("default_branch")
         if repository

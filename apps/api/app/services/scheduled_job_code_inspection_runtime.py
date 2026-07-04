@@ -4,11 +4,11 @@ from typing import Any
 
 from app.services import scheduled_job_runtime as job_runtime
 from app.services.native_code_scanner import run_native_code_scan
-from app.services.scheduled_job_ai_processing import run_scheduled_job_ai_processing
 from app.services.scheduled_job_ai_executor import (
     scheduled_job_uses_local_ai_executor,
     system_default_runner_node_from_ai_processing,
 )
+from app.services.scheduled_job_ai_processing import run_scheduled_job_ai_processing
 from app.services.scheduled_job_catalog import AI_REQUIRED_SCHEDULED_JOB_TYPES
 from app.services.scheduled_job_execution_engine import (
     ScheduledJobExecutionEngine as JobExecutionEngine,

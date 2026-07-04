@@ -265,7 +265,9 @@ def dispatch_scheduled_job_ai_executor_processing(
         runner_id=runner["id"],
         scheduled_job_id=job.get("id"),
         scheduled_job_run_id=run_id,
-        timeout_seconds=int(config.get("instruction_timeout_seconds") or job.get("timeout_seconds") or 1800),
+        timeout_seconds=int(
+            config.get("instruction_timeout_seconds") or job.get("timeout_seconds") or 1800,
+        ),
         workspace_root=workspace_root,
     )
     return {
@@ -376,7 +378,9 @@ def pending_ai_executor_result_summary(
 
 
 def scheduled_job_result_summary_has_pending_runner(result_summary: dict[str, Any]) -> bool:
-    execution_nodes = result_summary.get("execution_nodes") if isinstance(result_summary, dict) else {}
+    execution_nodes = (
+        result_summary.get("execution_nodes") if isinstance(result_summary, dict) else {}
+    )
     if not isinstance(execution_nodes, dict):
         return False
     runner_node = execution_nodes.get("runner_execution")
@@ -699,7 +703,9 @@ def sync_ai_executor_completion_to_scheduled_run(
     runner_id: str,
     task: dict[str, Any],
 ) -> bool:
-    request_config = task.get("request_config") if isinstance(task.get("request_config"), dict) else {}
+    request_config = (
+        task.get("request_config") if isinstance(task.get("request_config"), dict) else {}
+    )
     stage_context = request_config.get(AI_EXECUTOR_STAGE_MARKER)
     if not isinstance(stage_context, dict) or stage_context.get("stage") != "ai_processing":
         return False
@@ -770,7 +776,9 @@ def sync_ai_executor_completion_to_scheduled_run(
         )
         execution_nodes["skill_processing"] = skill_node
         result_action = dict(execution_nodes.get("result_action") or {})
-        result_action.update({"label": "结果动作反馈内容", "records_imported": 0, "status": "not_run"})
+        result_action.update(
+            {"label": "结果动作反馈内容", "records_imported": 0, "status": "not_run"},
+        )
         execution_nodes["result_action"] = result_action
         result_summary["execution_nodes"] = execution_nodes
         run_status = "failed" if status != "cancelled" else "cancelled"
@@ -817,7 +825,9 @@ def sync_ai_executor_completion_to_scheduled_run(
             else:
                 result_summary, records_imported = _generic_ai_executor_result_summary(
                     current_store,
-                    ai_processing={"knowledge_references": stage_context.get("knowledge_references") or []},
+                    ai_processing={
+                        "knowledge_references": stage_context.get("knowledge_references") or [],
+                    },
                     job=job,
                     output_mapping=output_mapping,
                     output_json=output_json,
@@ -877,9 +887,13 @@ def sync_ai_executor_completion_to_scheduled_run(
         job_update = {
             **job,
             "last_error_message": error_message,
-            "last_failure_at": finished_at if run_status == "failed" else job.get("last_failure_at"),
+            "last_failure_at": (
+                finished_at if run_status == "failed" else job.get("last_failure_at")
+            ),
             "last_run_at": finished_at or now,
-            "last_success_at": finished_at if run_status == "succeeded" else job.get("last_success_at"),
+            "last_success_at": (
+                finished_at if run_status == "succeeded" else job.get("last_success_at")
+            ),
             "updated_at": now,
         }
         put_memory_record(current_store, "scheduled_jobs", job_update)

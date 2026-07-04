@@ -7,7 +7,6 @@ import app.services.assistant_action_drafts as assistant_action_drafts_service
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.users import MemoryUserRepository
 
-
 ASSISTANT_RUNNABLE_PLUGIN_ID = "plugin_assistant_http"
 ASSISTANT_RUNNABLE_CONNECTION_ID = "plugin_connection_assistant_test"
 ASSISTANT_RUNNABLE_ACTION_ID = "plugin_action_assistant_test"

@@ -30,6 +30,7 @@
 - [ ] 已配置内部 GitLab 只读凭据引用和产品 Git 资源绑定；凭据不得出现在 API 响应、执行器输入或日志中。
 - [ ] 已配置 code-review 执行器适配器；未配置时必须让 code_review 任务失败为可排查状态，而不是静默跳过。
 - [ ] 已准备生产就绪门禁脚本所需变量：`READINESS_BEARER_TOKEN` 或 `READINESS_USERNAME`/`READINESS_PASSWORD`，以及 `READINESS_GITLAB_REPOSITORY_ID`、`READINESS_GITLAB_MR_IID`、`READINESS_REQUIREMENT_ID`、`READINESS_TECHNICAL_SOLUTION_TASK_ID`。如 `docker` 不在 PATH，设置 `READINESS_DOCKER_BIN=/Applications/Docker.app/Contents/Resources/bin/docker`。
+- [ ] 非本地/非测试环境已配置至少 32 位且非占位的 `APP_SECRET_KEY`，并保持 `ALLOW_SEEDED_USERS=false`。
 
 ## 发布准入门禁
 
@@ -37,6 +38,7 @@
 - [ ] 数据库迁移脚本和回滚脚本已评审。
 - [ ] 最近一次备份恢复演练通过，恢复数据可被应用读取。
 - [ ] 模型 API Key、GitLab 只读凭据和 APP_SECRET_KEY 不出现在仓库、日志或 API 响应中。
+- [ ] 生产就绪门禁使用真实管理员 Token 或真实管理员账号，不使用 `admin@example.com` / `admin123` 等内置种子账号。
 - [ ] GitLab MR Code Review 只读链路验证通过，不会回写评论、审批状态、request changes、合并状态或分支。
 - [ ] 监控告警、trace_id 关联和审计查询可用。
 - [ ] 回滚负责人、审批人和沟通渠道已确认。
@@ -77,8 +79,7 @@ docker compose logs api
 推荐使用固定入口，默认会重建本地 Docker Compose 栈并运行 API + Web 真实页面门禁：
 
 ```bash
-READINESS_USERNAME=admin@example.com \
-READINESS_PASSWORD=admin123 \
+READINESS_BEARER_TOKEN=<admin-bearer-token> \
 READINESS_GITLAB_REPOSITORY_ID=<repository_id> \
 READINESS_GITLAB_MR_IID=<mr_iid> \
 READINESS_REQUIREMENT_ID=<requirement_id> \
@@ -100,8 +101,7 @@ READINESS_DOCKER_BIN=/Applications/Docker.app/Contents/Resources/bin/docker \
 ```bash
 READINESS_API_BASE_URL=http://localhost:8000 \
 READINESS_DOCKER_BIN=/Applications/Docker.app/Contents/Resources/bin/docker \
-READINESS_USERNAME=admin@example.com \
-READINESS_PASSWORD=admin123 \
+READINESS_BEARER_TOKEN=<admin-bearer-token> \
 READINESS_GITLAB_REPOSITORY_ID=<repository_id> \
 READINESS_GITLAB_MR_IID=<mr_iid> \
 READINESS_REQUIREMENT_ID=<requirement_id> \
@@ -109,11 +109,13 @@ READINESS_TECHNICAL_SOLUTION_TASK_ID=<technical_solution_task_id> \
 ./scripts/production_readiness_check.py --rebuild --web-smoke
 ```
 
-`release_smoke.sh` 固定调用 `scripts/production_readiness_check.py --rebuild --web-smoke`。该脚本会先执行 `docker compose up -d --build`，随后验证 `docker compose config --quiet`、compose 中 `api/web/postgres/redis` 运行状态、`/health`、Redis `PONG`、PostgreSQL `pgcrypto`/`vector` 扩展、Web shell HTML、模型网关配置脱敏和 active/default 配置、需求/任务/Bug/用户洞察/研发运营核心列表、GitLab MR preview 与 snapshot 只读链路；并调用 `scripts/web_page_smoke.mjs`，通过真实 Chrome/Chromium 登录并打开 `/welcome`、需求、迭代版本、Bug、任务、用户洞察、研发运营和角色管理等核心页面，检查非空渲染、未跳回登录页、无框架错误覆盖层、无 console/runtime error，并监听浏览器网络响应，任一路由期间出现非 favicon 的 4xx/5xx 请求都会让该路由 smoke 失败。生产就绪门禁默认额外断言角色管理页出现“系统管理员”；其他页面可通过 `--expect-text ROUTE=TEXT` 增加关键内容断言，避免页面壳非空但核心数据未渲染的假阳性。脚本任一检查失败即返回非 0；不得在失败时宣称环境可发布。可通过 `READINESS_WEB_BASE_URL` 或 `--web-base-url` 指向非默认 Web 地址；如 Chrome 不在默认路径，设置 `READINESS_CHROME_PATH`。
+`release_smoke.sh` 固定调用 `scripts/production_readiness_check.py --rebuild --web-smoke`。该脚本会先执行 `docker compose up -d --build`，随后验证 `docker compose config --quiet`、compose 中 `api/web/postgres/redis` 运行状态、`/health`、Redis `PONG`、PostgreSQL `pgcrypto`/`vector` 扩展、Web shell HTML、模型网关配置脱敏和 active/default 配置、需求/任务/Bug/用户洞察/研发运营核心列表、GitLab MR preview 与 snapshot 只读链路；并调用 `scripts/web_page_smoke.mjs`，通过真实 Chrome/Chromium 登录并打开 `/welcome`、需求、迭代版本、Bug、任务、用户洞察、研发运营和角色管理等核心页面，检查非空渲染、未跳回登录页、无框架错误覆盖层、无 console/runtime error，并监听浏览器网络响应，任一路由期间出现非 favicon 的 4xx/5xx 请求都会让该路由 smoke 失败。生产就绪门禁默认额外断言角色管理页出现“系统管理员”；其他页面可通过 `--expect-text ROUTE=TEXT` 增加关键内容断言，避免页面壳非空但核心数据未渲染的假阳性。脚本任一检查失败即返回非 0；不得在失败时宣称环境可发布。门禁不接受内置种子账号默认凭据，推荐使用 `READINESS_BEARER_TOKEN`；若使用 `READINESS_USERNAME`/`READINESS_PASSWORD`，必须是已创建的真实管理员账号。可通过 `READINESS_WEB_BASE_URL` 或 `--web-base-url` 指向非默认 Web 地址；如 Chrome 不在默认路径，设置 `READINESS_CHROME_PATH`。
 
 本地代码启动 API 时，可用真实全链路回归脚本验证业务闭环：
 
 ```bash
+FULL_CHAIN_USERNAME=<real-admin-email> \
+FULL_CHAIN_PASSWORD=<real-admin-password> \
 ./scripts/full_chain_regression.py \
   --api-base-url http://localhost:8000 \
   --json-output /tmp/ai-brain-full-chain-report.json
@@ -187,7 +189,7 @@ docker compose down
 - [ ] Redis 可连接。
 - [ ] API 日志无启动错误。
 - [ ] `./scripts/release_smoke.sh` 通过，核心页面真实浏览器 smoke 无空白页、无控制台错误。
-- [ ] 本地代码运行态执行 `./scripts/full_chain_regression.py --api-base-url http://localhost:8000` 通过，确认真实全链路业务写入、代码巡检和 full-chain 聚合正常；日常快速治理回归可补充执行 `./scripts/full_chain_regression.py --suite all-targeted --api-base-url http://localhost:8000`，其中包含确定性 AI 助手问答 smoke，但不能替代完整主链路验收。
+- [ ] 本地代码运行态使用真实管理员 `FULL_CHAIN_USERNAME`/`FULL_CHAIN_PASSWORD` 执行 `./scripts/full_chain_regression.py --api-base-url http://localhost:8000` 通过，确认真实全链路业务写入、代码巡检和 full-chain 聚合正常；日常快速治理回归可补充执行 `./scripts/full_chain_regression.py --suite all-targeted --api-base-url http://localhost:8000`，其中包含确定性 AI 助手问答 smoke，但不能替代完整主链路验收。
 - [ ] 模型网关配置可查询，API Key 只返回 configured 标记，不返回明文或密钥片段。
 - [ ] 产品 Git 资源可绑定内部 GitLab 项目，凭据不在 API 响应或日志中出现。
 - [ ] MR preview 能返回标题、作者、分支、diff refs 和变更文件数。

@@ -794,7 +794,10 @@ class PluginReadRepository:
                     """,
                     tuple(params),
                 )
-                return [self._ai_executor_approval_request_from_row(row) for row in cursor.fetchall()]
+                return [
+                    self._ai_executor_approval_request_from_row(row)
+                    for row in cursor.fetchall()
+                ]
 
     def count_ai_executor_approval_requests(
         self,
@@ -857,7 +860,10 @@ class PluginReadRepository:
                     """,
                     tuple(params),
                 )
-                return [self._ai_executor_approval_request_from_row(row) for row in cursor.fetchall()]
+                return [
+                    self._ai_executor_approval_request_from_row(row)
+                    for row in cursor.fetchall()
+                ]
 
     def save_ai_executor_approval_request_record(
         self,
@@ -1458,7 +1464,9 @@ class PluginReadRepository:
                 action_value.ordinality::int AS ordinal
               FROM jsonb_array_elements(
                 CASE
-                  WHEN jsonb_typeof(run.result_summary #> '{execution_nodes,result_actions}') = 'array'
+                  WHEN jsonb_typeof(
+                    run.result_summary #> '{execution_nodes,result_actions}'
+                  ) = 'array'
                   THEN run.result_summary #> '{execution_nodes,result_actions}'
                   ELSE '[]'::jsonb
                 END
@@ -1466,15 +1474,21 @@ class PluginReadRepository:
               UNION ALL
               SELECT
                 CASE
-                  WHEN jsonb_typeof(run.result_summary #> '{execution_nodes,result_action}') = 'object'
+                  WHEN jsonb_typeof(
+                    run.result_summary #> '{execution_nodes,result_action}'
+                  ) = 'object'
                   THEN run.result_summary #> '{execution_nodes,result_action}'
                   ELSE '{}'::jsonb
                 END AS result_action,
                 1 AS ordinal
-              WHERE jsonb_typeof(run.result_summary #> '{execution_nodes,result_actions}') IS DISTINCT FROM 'array'
+              WHERE jsonb_typeof(
+                  run.result_summary #> '{execution_nodes,result_actions}'
+                ) IS DISTINCT FROM 'array'
                 OR jsonb_array_length(
                   CASE
-                    WHEN jsonb_typeof(run.result_summary #> '{execution_nodes,result_actions}') = 'array'
+                    WHEN jsonb_typeof(
+                      run.result_summary #> '{execution_nodes,result_actions}'
+                    ) = 'array'
                     THEN run.result_summary #> '{execution_nodes,result_actions}'
                     ELSE '[]'::jsonb
                   END

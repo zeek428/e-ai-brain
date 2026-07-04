@@ -8,15 +8,15 @@ from app.services.plugin_result_mapping import (
     json_path_value,
     records_imported_from_mapping,
 )
-from app.services.scheduled_job_ai_processing import (
-    run_scheduled_job_ai_processing,
-    skill_codes_for_job,
-)
 from app.services.scheduled_job_ai_executor import (
     dispatch_scheduled_job_ai_executor_processing,
     pending_ai_executor_result_summary,
     scheduled_job_uses_local_ai_executor,
     system_default_runner_node_from_ai_processing,
+)
+from app.services.scheduled_job_ai_processing import (
+    run_scheduled_job_ai_processing,
+    skill_codes_for_job,
 )
 from app.services.scheduled_job_config import (
     scheduled_job_multi_ids,
@@ -371,7 +371,6 @@ def run_user_feedback_insight_extract_job(
 ) -> tuple[dict[str, Any], int]:
     mapping = resolve_job_plugin_output_mapping(current_store, job)
     result_mappings = resolve_job_plugin_result_mappings(current_store, job)
-    result_action_policy = scheduled_job_result_action_policy(job)
     for result_mapping in result_mappings:
         action_mapping = result_mapping.get("mapping") or {}
         write_target = str(action_mapping.get("write_target") or "user_feedback_insights")

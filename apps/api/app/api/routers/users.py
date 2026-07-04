@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, api_error, require_permissions
+from app.core.config import get_settings
 from app.core.listing import (
     add_list_observability,
     ensure_list_enum,
@@ -14,7 +15,6 @@ from app.core.listing import (
     paginated_list_payload,
     sort_list_items,
 )
-from app.core.config import get_settings
 from app.core.roles import ASSIGNABLE_ROLE_CODES
 from app.core.trace import envelope, get_trace_id
 
@@ -90,7 +90,8 @@ def _dingtalk_binding_for_user(request: Request, user_id: str) -> dict[str, Any]
         "avatar_url": identity.get("avatar_url"),
         "bound": True,
         "corp_id": corp_id,
-        "corp_name": identity.get("corp_name") or settings.dingtalk_corp_name_map.get(corp_id or ""),
+        "corp_name": identity.get("corp_name")
+        or settings.dingtalk_corp_name_map.get(corp_id or ""),
         "display_name": identity.get("display_name"),
         "email": identity.get("email"),
         "identity_id": identity.get("id"),
@@ -116,7 +117,10 @@ def _enrich_user_auth_summary(request: Request, item: dict[str, Any]) -> dict[st
     return enriched
 
 
-def _enrich_user_auth_summaries(request: Request, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _enrich_user_auth_summaries(
+    request: Request,
+    items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     return [_enrich_user_auth_summary(request, item) for item in items]
 
 

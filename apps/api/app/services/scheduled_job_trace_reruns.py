@@ -101,7 +101,10 @@ def _trace_node_rerun_execution_policy(
         "message": (
             "单节点复跑控制项已满足，可以进入执行确认。"
             if rerun_supported
-            else "该节点的单节点复跑控制项未全部满足，当前以节点快照预检和整条运行记录复跑作为安全替代。"
+            else (
+                "该节点的单节点复跑控制项未全部满足，"
+                "当前以节点快照预检和整条运行记录复跑作为安全替代。"
+            )
         ),
         "missing_control_count": len(missing_controls),
         "mode": mode,

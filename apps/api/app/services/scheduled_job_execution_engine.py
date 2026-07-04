@@ -1040,11 +1040,20 @@ class ScheduledJobExecutionEngine:
     @staticmethod
     def _trace_node_rerun_hint(canonical_id: str) -> str:
         if canonical_id == "data_connection":
-            return "可先做复跑预检；请求快照、读取幂等和下游隔离满足时可单独重跑数据连接，否则请复跑整条作业。"
+            return (
+                "可先做复跑预检；请求快照、读取幂等和下游隔离满足时"
+                "可单独重跑数据连接，否则请复跑整条作业。"
+            )
         if canonical_id == "skill_processing":
-            return "可先做复跑预检；输入快照、模型幂等和下游隔离满足时可单独重跑 AI 处理，否则请复跑整条作业。"
+            return (
+                "可先做复跑预检；输入快照、模型幂等和下游隔离满足时"
+                "可单独重跑 AI 处理，否则请复跑整条作业。"
+            )
         if canonical_id == "result_action":
-            return "可先做复跑预检；动作输入输出快照和写入幂等满足时可单独重跑结果动作，否则请复跑整条作业。"
+            return (
+                "可先做复跑预检；动作输入输出快照和写入幂等满足时"
+                "可单独重跑结果动作，否则请复跑整条作业。"
+            )
         return "可先做复跑预检；控制项满足时支持单节点复跑，否则请复跑整条运行记录。"
 
     @staticmethod

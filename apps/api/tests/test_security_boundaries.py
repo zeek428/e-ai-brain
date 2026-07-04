@@ -2008,7 +2008,9 @@ def test_audit_events_filter_by_actor_and_time_range():
 def test_seeded_default_users_are_disabled_outside_local_env():
     original_env = settings.app_env
     original_persistence_mode = settings.persistence_mode
+    original_allow_seeded_users = settings.allow_seeded_users
     settings.app_env = "production"
+    settings.allow_seeded_users = False
     try:
         response = client.post(
             "/api/auth/login",
@@ -2022,11 +2024,36 @@ def test_seeded_default_users_are_disabled_outside_local_env():
     finally:
         settings.app_env = original_env
         settings.persistence_mode = original_persistence_mode
+        settings.allow_seeded_users = original_allow_seeded_users
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "DEFAULT_CREDENTIALS_DISABLED"
     assert postgres_response.status_code == 403
     assert postgres_response.json()["detail"]["code"] == "DEFAULT_CREDENTIALS_DISABLED"
+
+
+def test_seeded_default_users_require_explicit_opt_in_outside_tests():
+    original_env = settings.app_env
+    original_allow_seeded_users = settings.allow_seeded_users
+    settings.app_env = "local"
+    settings.allow_seeded_users = False
+    try:
+        disabled = client.post(
+            "/api/auth/login",
+            json={"username": "admin@example.com", "password": "admin123"},
+        )
+        settings.allow_seeded_users = True
+        enabled = client.post(
+            "/api/auth/login",
+            json={"username": "admin@example.com", "password": "admin123"},
+        )
+    finally:
+        settings.app_env = original_env
+        settings.allow_seeded_users = original_allow_seeded_users
+
+    assert disabled.status_code == 403
+    assert disabled.json()["detail"]["code"] == "DEFAULT_CREDENTIALS_DISABLED"
+    assert enabled.status_code == 200
 
 
 def test_reviewer_cannot_start_or_read_product_design_tasks_and_reviews():

@@ -84,7 +84,11 @@ def list_external_identities(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_permissions(user, {USER_MANAGE_PERMISSION})
-    list_identities = getattr(request.app.state.external_identity_repository, "list_identities", None)
+    list_identities = getattr(
+        request.app.state.external_identity_repository,
+        "list_identities",
+        None,
+    )
     if not callable(list_identities):
         return envelope({"items": [], "total": 0}, get_trace_id(request))
     items = [

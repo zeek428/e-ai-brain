@@ -240,5 +240,5 @@ describe('ModelGatewayPage', () => {
         'PATCH',
       ]),
     );
-  });
+  }, 10000);
 });

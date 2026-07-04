@@ -23,7 +23,10 @@ def _env_key_value_map(name: str) -> dict[str, str]:
     return mapping
 
 
-LOCAL_NETWORK_CORS_ENVIRONMENTS = {"dev", "development", "local", "pytest", "test", "testing"}
+DEFAULT_APP_SECRET_KEY = "change-me-in-local-env"
+LOCAL_APP_ENVIRONMENTS = {"dev", "development", "local"}
+TEST_APP_ENVIRONMENTS = {"pytest", "test", "testing"}
+LOCAL_NETWORK_CORS_ENVIRONMENTS = LOCAL_APP_ENVIRONMENTS | TEST_APP_ENVIRONMENTS
 LOCAL_NETWORK_CORS_ORIGIN_REGEX = (
     r"^https?://("
     r"localhost|"
@@ -40,7 +43,7 @@ class Settings:
     def __init__(self) -> None:
         self.app_env = os.getenv("APP_ENV", "local")
         self.allow_seeded_users = _env_bool("ALLOW_SEEDED_USERS", "")
-        self.app_secret_key = os.getenv("APP_SECRET_KEY", "change-me-in-local-env")
+        self.app_secret_key = os.getenv("APP_SECRET_KEY", DEFAULT_APP_SECRET_KEY)
         self.access_token_expire_seconds = int(os.getenv("ACCESS_TOKEN_EXPIRE_SECONDS", "28800"))
         self.database_url = os.getenv(
             "DATABASE_URL",
@@ -138,6 +141,46 @@ class Settings:
             "/login/dingtalk/callback",
         )
         self.dingtalk_frontend_base_url = os.getenv("DINGTALK_FRONTEND_BASE_URL", "")
+
+    @property
+    def normalized_app_env(self) -> str:
+        return self.app_env.lower()
+
+    @property
+    def is_local_env(self) -> bool:
+        return self.normalized_app_env in LOCAL_APP_ENVIRONMENTS
+
+    @property
+    def is_test_env(self) -> bool:
+        return self.normalized_app_env in TEST_APP_ENVIRONMENTS
+
+    @property
+    def is_local_or_test_env(self) -> bool:
+        return self.is_local_env or self.is_test_env
+
+    @property
+    def app_secret_key_is_placeholder(self) -> bool:
+        secret = self.app_secret_key.strip().lower()
+        return (
+            not secret
+            or secret == DEFAULT_APP_SECRET_KEY
+            or "change-me" in secret
+            or secret.startswith("replace-with")
+            or secret in {"local-secret", "<local-secret>"}
+        )
+
+    def validate_runtime_security(self) -> None:
+        if self.is_local_or_test_env:
+            return
+        if self.app_secret_key_is_placeholder or len(self.app_secret_key.strip()) < 32:
+            raise RuntimeError(
+                "APP_SECRET_KEY must be set to a non-placeholder value with at least "
+                "32 characters outside local/test environments",
+            )
+        if self.allow_seeded_users:
+            raise RuntimeError(
+                "ALLOW_SEEDED_USERS is only allowed in local/test environments",
+            )
 
     @property
     def cors_origin_list(self) -> list[str]:

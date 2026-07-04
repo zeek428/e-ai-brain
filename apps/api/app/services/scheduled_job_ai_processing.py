@@ -777,7 +777,10 @@ def scheduled_job_ai_messages(
         }
     elif job.get("job_type") == "online_log_ai_analysis":
         instructions = [
-            "分析 data_connection_response 中的线上日志、错误率、延迟或告警数据，识别异常和处置建议。",
+            (
+                "分析 data_connection_response 中的线上日志、错误率、"
+                "延迟或告警数据，识别异常和处置建议。"
+            ),
             "必须只返回 JSON 对象，不要返回 Markdown。",
             "返回 JSON 必须包含 summary、risk_level 和 anomalies 数组。",
             (

@@ -322,7 +322,7 @@ GET /api/long-memory/status
 POST /api/auth/login
 ```
 
-当前 MVP 内置种子账号仅用于 `APP_ENV=local|test|development` 的本地验证；非本地环境默认拒绝种子账号登录，除非显式设置受控的 `ALLOW_SEEDED_USERS=true`。
+当前 MVP 内置种子账号默认仅用于自动化测试；本地开发如需临时启用，必须显式设置 `ALLOW_SEEDED_USERS=true`。非本地/非测试环境默认拒绝种子账号登录，并在启动时拒绝 `ALLOW_SEEDED_USERS=true`、占位 `APP_SECRET_KEY` 或过短密钥。
 
 请求体：
 

@@ -10,6 +10,9 @@ from fastapi import Request
 
 from app.api.deps import api_error, require_permissions
 from app.core.listing import add_list_observability, sort_list_items
+from app.services.ai_executor_runner_approvals import (
+    save_pending_ai_executor_approval_request,
+)
 from app.services.ai_executor_runner_constants import (
     AI_EXECUTOR_LOCAL_RUNNER_TYPES,
     AI_EXECUTOR_RUNNER_PROTOCOLS,
@@ -47,9 +50,6 @@ from app.services.ai_executor_runner_queue import (
 )
 from app.services.ai_executor_runner_readiness import (
     runner_readiness_summary as _runner_readiness_summary,
-)
-from app.services.ai_executor_runner_approvals import (
-    save_pending_ai_executor_approval_request,
 )
 from app.services.ai_executor_runner_safety import runner_task_safety_snapshot
 from app.services.ai_executor_runner_task_context import (

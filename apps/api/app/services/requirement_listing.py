@@ -10,8 +10,8 @@ from app.core.listing import (
     paginated_list_payload,
     sort_list_items,
 )
-from app.services.task_workflow_context import task_workflow_read_store
 from app.services.product_scope import product_scope_filter, user_can_read_product
+from app.services.task_workflow_context import task_workflow_read_store
 from app.services.version_status import canonical_requirement_status
 
 REQUIREMENT_SOURCE_VALUES = {

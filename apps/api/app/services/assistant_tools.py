@@ -21,7 +21,9 @@ def _read_memory_list(current_store: Any, collection_name: str) -> list[dict[str
     return collection if isinstance(collection, list) else []
 
 
-def _records_by_scheduled_job_run_id(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def _records_by_scheduled_job_run_id(
+    records: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for record in records:
         run_id = record.get("scheduled_job_run_id")
