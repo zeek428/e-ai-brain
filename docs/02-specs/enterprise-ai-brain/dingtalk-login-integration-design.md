@@ -109,7 +109,7 @@ React 登录页
 
 | 模块 | 职责 |
 |------|------|
-| `auth` | OAuth state、钉钉回调、login ticket、AI Brain JWT 签发、登录审计。 |
+| `auth` | OAuth state、钉钉回调、login ticket、AI Brain JWT 签发、登录审计；OAuth state 与 login ticket 通过服务端仓储保存并原子消费，避免多进程或重启导致回调丢失。 |
 | `users` | 内部用户创建、状态、角色和账号管理。 |
 | `external_identity` | 外部身份绑定、解绑、查找、待审批和冲突检测。 |
 | `secret` | 钉钉应用密钥、用户 token 和 refresh token 的密钥引用管理。 |
@@ -189,7 +189,7 @@ CREATE TABLE user_oauth_tokens (
 默认建议：
 
 - 生产环境默认 `auto_provision=false`，由管理员预绑定或待审批。
-- 内部试点可启用 `auto_provision=true`，默认角色只能是 `viewer`。
+- 内部试点可启用 `auto_provision=true`，但首次登录只创建待审批 `viewer` 用户；管理员激活后才能签发登录态。
 - 自动创建用户时 `username` 推荐使用 `dingtalk:<corp_id>:<external_user_id>` 或已验证邮箱；展示名使用钉钉昵称。
 - 不能仅凭邮箱、手机号或 unionId 静默绑定已有高权限账号；匹配到已有账号时进入待确认绑定。
 
@@ -208,10 +208,7 @@ CREATE TABLE user_oauth_tokens (
       -> 签发 AI Brain login ticket
    -> 绑定不存在:
       -> auto_provision=true:
-         -> 创建 viewer 用户和 active 绑定
-         -> 签发 login ticket
-      -> pending_approval=true:
-         -> 创建 pending 外部身份或登录申请
+         -> 创建 pending_approval viewer 用户和 active 外部身份绑定
          -> 返回 DINGTALK_ACCOUNT_PENDING_APPROVAL
       -> 否则:
          -> 返回 DINGTALK_ACCOUNT_NOT_BOUND
@@ -366,7 +363,7 @@ ticket 必须一次性、短有效期。当前 P0 实现为 5 分钟有效，重
 | `DINGTALK_ALLOWED_CORP_IDS` | 允许登录的企业 corp id 列表。 |
 | `DINGTALK_AUTO_PROVISION` | 是否允许首次登录自动创建用户。 |
 | `DINGTALK_AUTO_PROVISION_ROLE` | 自动创建用户默认角色，默认 `viewer`。 |
-| `DINGTALK_PENDING_APPROVAL` | 未绑定身份是否进入待审批。 |
+| `DINGTALK_PENDING_APPROVAL` | 自动开户治理开关；当前 P1 实现中未绑定身份自动开户始终创建待审批用户，建议显式配置为 `true`。 |
 | `DINGTALK_FRONTEND_BASE_URL` | OAuth callback 完成后跳回前端的 base URL；未配置时默认使用 CORS origin 第一项。 |
 | `DINGTALK_FRONTEND_CALLBACK_PATH` | 前端钉钉登录回调页路径，默认 `/login/dingtalk/callback`。 |
 | `DINGTALK_AUTH_URL` / `DINGTALK_TOKEN_URL` / `DINGTALK_USERINFO_URL` | 钉钉 OAuth 授权、换 token 和读取用户信息的服务端点，默认使用钉钉开放平台当前接口地址。 |

@@ -385,6 +385,7 @@ requirements ──< ai_tasks
 | role_menu_grants | 角色菜单授权 | `role_id + menu_code` 唯一，控制 `/api/auth/me.menu_tree` 和左侧导航可见性，不能替代后端接口权限校验。 |
 | users | 本地用户和角色 | email 唯一。 |
 | user_external_identities | 外部登录身份绑定 | 记录 `provider=dingtalk`、`provider_subject`、`union_id/open_id/corp_id`、`user_id` 和状态；`provider + provider_subject` 唯一，同一用户同一 provider 只能有一条 active 绑定；钉钉登录后仍以 AI Brain `users.id` 和 RBAC 权限作为业务授权边界。 |
+| dingtalk_oauth_ephemeral_states | 钉钉登录临时凭证 | 保存 OAuth state 和一次性 login ticket 的短期服务端状态，包含 `state_type/purpose/redirect_path/user_id/expires_at`；消费时通过数据库原子删除，避免多进程、重启或重复提交导致状态不一致。 |
 | brain_apps | 业务大脑配置 | `code` 唯一，v1 默认 `rd_brain`。 |
 | products | 产品配置 | `code` 唯一，提交需求必须选择启用产品。 |
 | product_versions | 产品迭代版本 | 同一产品内 `code` 唯一，在需求交付菜单集中维护；主状态为 `planning / active / testing / released`，`archived` 仅用于历史归档；仅 `planning / active` 可用于需求排期或新开发任务。 |

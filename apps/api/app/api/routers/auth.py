@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import secrets
 from time import perf_counter
-from time import time as now_timestamp
 from typing import Any
 from urllib.parse import urlencode
 
@@ -224,20 +223,11 @@ def _require_dingtalk_configured() -> None:
     )
 
 
-def _cleanup_expired(mapping: dict[str, dict[str, Any]]) -> None:
-    current_time = now_timestamp()
-    for key, value in list(mapping.items()):
-        if float(value.get("expires_at", 0)) <= current_time:
-            mapping.pop(key, None)
-
-
-def _state_mapping(request: Request, attribute_name: str) -> dict[str, dict[str, Any]]:
-    mapping = getattr(request.app.state, attribute_name, None)
-    if not isinstance(mapping, dict):
-        mapping = {}
-        setattr(request.app.state, attribute_name, mapping)
-    _cleanup_expired(mapping)
-    return mapping
+def _dingtalk_oauth_state_repository(request: Request) -> Any:
+    repository = getattr(request.app.state, "dingtalk_oauth_state_repository", None)
+    if repository is None:
+        raise api_error(503, "DINGTALK_LOGIN_NOT_CONFIGURED", "DingTalk login is not configured")
+    return repository
 
 
 def _create_oauth_state(
@@ -248,14 +238,13 @@ def _create_oauth_state(
     redirect: str,
     user_id: str | None = None,
 ) -> str:
-    state = secrets.token_urlsafe(32)
-    _state_mapping(request, attribute_name)[state] = {
-        "expires_at": now_timestamp() + DINGTALK_STATE_TTL_SECONDS,
-        "purpose": purpose,
-        "redirect": redirect,
-        "user_id": user_id,
-    }
-    return state
+    del attribute_name
+    return _dingtalk_oauth_state_repository(request).create_state(
+        expires_in_seconds=DINGTALK_STATE_TTL_SECONDS,
+        purpose=purpose,
+        redirect=redirect,
+        user_id=user_id,
+    )
 
 
 def _consume_oauth_state(
@@ -267,26 +256,28 @@ def _consume_oauth_state(
 ) -> dict[str, Any]:
     if not state:
         raise api_error(400, "DINGTALK_STATE_INVALID", "DingTalk state is required")
-    payload = _state_mapping(request, attribute_name).pop(state, None)
-    if payload is None or payload.get("purpose") != purpose:
+    del attribute_name
+    payload = _dingtalk_oauth_state_repository(request).consume_state(
+        purpose=purpose,
+        state=state,
+    )
+    if payload is None:
         raise api_error(400, "DINGTALK_STATE_INVALID", "DingTalk state is invalid or expired")
     return payload
 
 
 def _create_login_ticket(request: Request, *, redirect: str, user_id: str) -> str:
-    ticket = secrets.token_urlsafe(32)
-    _state_mapping(request, "dingtalk_login_tickets")[ticket] = {
-        "expires_at": now_timestamp() + DINGTALK_TICKET_TTL_SECONDS,
-        "redirect": redirect,
-        "user_id": user_id,
-    }
-    return ticket
+    return _dingtalk_oauth_state_repository(request).create_ticket(
+        expires_in_seconds=DINGTALK_TICKET_TTL_SECONDS,
+        redirect=redirect,
+        user_id=user_id,
+    )
 
 
 def _consume_login_ticket(request: Request, ticket: str) -> dict[str, Any]:
     if not ticket:
         raise api_error(400, "DINGTALK_TICKET_INVALID", "DingTalk login ticket is required")
-    payload = _state_mapping(request, "dingtalk_login_tickets").pop(ticket, None)
+    payload = _dingtalk_oauth_state_repository(request).consume_ticket(ticket)
     if payload is None:
         raise api_error(401, "DINGTALK_TICKET_INVALID", "DingTalk login ticket is invalid")
     return payload
@@ -376,12 +367,29 @@ def _dingtalk_display_name(profile: DingTalkProfile) -> str:
     return profile.display_name or profile.email or f"DingTalk {profile.subject[-6:]}"
 
 
+def _find_user_any_status(request: Request, user_id: str) -> dict[str, Any] | None:
+    list_users = getattr(request.app.state.user_repository, "list_users", None)
+    if not callable(list_users):
+        return None
+    return next(
+        (user for user in list_users() if user.get("id") == user_id),
+        None,
+    )
+
+
 def _resolve_dingtalk_user(request: Request, profile: DingTalkProfile) -> dict[str, Any]:
     identity_repository = request.app.state.external_identity_repository
     identity = identity_repository.find_active(DINGTALK_PROVIDER, profile.subject)
     if identity is not None:
         user = request.app.state.user_repository.get_by_id(identity["user_id"])
         if user is None:
+            inactive_user = _find_user_any_status(request, str(identity["user_id"]))
+            if inactive_user is not None and inactive_user.get("status") == "pending_approval":
+                raise api_error(
+                    403,
+                    "DINGTALK_ACCOUNT_PENDING_APPROVAL",
+                    "DingTalk account is pending approval",
+                )
             raise api_error(403, "DINGTALK_ACCOUNT_INACTIVE", "DingTalk account is inactive")
         return user
 
@@ -392,7 +400,7 @@ def _resolve_dingtalk_user(request: Request, profile: DingTalkProfile) -> dict[s
             "DingTalk account is not bound to an AI Brain user",
         )
 
-    status = "pending_approval" if settings.dingtalk_pending_approval else "active"
+    status = "pending_approval"
     try:
         user = request.app.state.user_repository.create_user(
             display_name=_dingtalk_display_name(profile),

@@ -204,6 +204,7 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "079_plugin_invocation_log_nullable_config_refs.sql" in applied_migrations
     assert "083_viewer_menu_task_boundary.sql" in applied_migrations
     assert "084_viewer_assistant_menu_boundary.sql" in applied_migrations
+    assert "086_dingtalk_oauth_ephemeral_states.sql" in applied_migrations
 
 
 def test_assistant_action_draft_constraint_migrations_cover_supported_actions():

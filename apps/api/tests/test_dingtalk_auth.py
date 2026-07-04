@@ -6,6 +6,7 @@ from test_database_persistence import app, client
 
 from app.api.routers import auth as auth_router
 from app.core.dingtalk_oauth import DingTalkProfile
+from app.core.dingtalk_oauth_state import MemoryDingTalkOAuthStateRepository
 from app.core.external_identities import MemoryExternalIdentityRepository
 from app.core.security import hash_password
 from app.core.store import MemoryStore
@@ -49,13 +50,20 @@ def _install_dingtalk_test_state(
     *,
     auto_provision: bool = False,
     allowed_corp_ids: str = "",
+    pending_approval: bool = False,
+    state_repository: MemoryDingTalkOAuthStateRepository | None = None,
     user_repository: MemoryUserRepository | None = None,
 ):
     original_state = {
-        "dingtalk_bind_states": app.state.dingtalk_bind_states,
-        "dingtalk_login_tickets": app.state.dingtalk_login_tickets,
+        "dingtalk_bind_states": getattr(app.state, "dingtalk_bind_states", None),
+        "dingtalk_login_tickets": getattr(app.state, "dingtalk_login_tickets", None),
         "dingtalk_oauth_client": app.state.dingtalk_oauth_client,
-        "dingtalk_oauth_states": app.state.dingtalk_oauth_states,
+        "dingtalk_oauth_state_repository": getattr(
+            app.state,
+            "dingtalk_oauth_state_repository",
+            None,
+        ),
+        "dingtalk_oauth_states": getattr(app.state, "dingtalk_oauth_states", None),
         "external_identity_repository": app.state.external_identity_repository,
         "store": app.state.store,
         "user_repository": app.state.user_repository,
@@ -71,6 +79,9 @@ def _install_dingtalk_test_state(
     app.state.dingtalk_bind_states = {}
     app.state.dingtalk_login_tickets = {}
     app.state.dingtalk_oauth_client = fake_client
+    app.state.dingtalk_oauth_state_repository = (
+        state_repository or MemoryDingTalkOAuthStateRepository()
+    )
     app.state.dingtalk_oauth_states = {}
 
     auth_router.settings.dingtalk_allowed_corp_ids = allowed_corp_ids
@@ -84,7 +95,7 @@ def _install_dingtalk_test_state(
     auth_router.settings.dingtalk_frontend_base_url = "http://localhost:5173"
     auth_router.settings.dingtalk_frontend_callback_path = "/login/dingtalk/callback"
     auth_router.settings.dingtalk_login_enabled = True
-    auth_router.settings.dingtalk_pending_approval = False
+    auth_router.settings.dingtalk_pending_approval = pending_approval
     auth_router.settings.dingtalk_redirect_uri = (
         "http://localhost:8000/api/auth/dingtalk/callback"
     )
@@ -137,7 +148,9 @@ def test_dingtalk_start_sanitizes_redirect_and_creates_state():
     try:
         location, state = _start_dingtalk_login("https://evil.test/phish")
         assert location.startswith("https://dingtalk.test/oauth")
-        assert app.state.dingtalk_oauth_states[state]["redirect"] == "/welcome"
+        state_payload = app.state.dingtalk_oauth_state_repository.states[state]
+        assert state_payload["redirect"] == "/welcome"
+        assert state_payload["purpose"] == "login"
         assert fake_client.authorize_requests == [
             {
                 "redirect_uri": "http://localhost:8000/api/auth/dingtalk/callback",
@@ -148,7 +161,71 @@ def test_dingtalk_start_sanitizes_redirect_and_creates_state():
         restore()
 
 
-def test_dingtalk_callback_auto_provisions_user_and_exchanges_one_time_ticket():
+def test_dingtalk_login_state_and_ticket_are_backed_by_shared_repository():
+    profile = DingTalkProfile(
+        corp_id="corp_allowed",
+        display_name="钉钉张三",
+        email="zhangsan@example.com",
+        subject="union_zhangsan",
+        union_id="union_zhangsan",
+    )
+    state_repository = MemoryDingTalkOAuthStateRepository()
+    _fake_client, restore = _install_dingtalk_test_state(
+        profile,
+        allowed_corp_ids="corp_allowed",
+        auto_provision=False,
+        pending_approval=False,
+        state_repository=state_repository,
+        user_repository=MemoryUserRepository(
+            {
+                "zhangsan@example.com": {
+                    "display_name": "钉钉张三",
+                    "id": "user_zhangsan",
+                    "password_hash": hash_password("local-secret", salt="zhangsan-salt"),
+                    "roles": ["viewer"],
+                    "status": "active",
+                    "username": "zhangsan@example.com",
+                }
+            }
+        ),
+    )
+    try:
+        app.state.external_identity_repository.upsert_identity(
+            provider="dingtalk",
+            provider_subject="union_zhangsan",
+            profile=profile.identity_profile(),
+            user_id="user_zhangsan",
+        )
+        _location, state = _start_dingtalk_login("/delivery/bugs")
+        assert state in state_repository.states
+
+        callback = client.get(
+            f"/api/auth/dingtalk/callback?code=ok&state={state}",
+            follow_redirects=False,
+        )
+        assert callback.status_code == 302
+        callback_query = parse_qs(urlparse(callback.headers["location"]).query)
+        ticket = callback_query["ticket"][0]
+        assert ticket in state_repository.tickets
+
+        app.state.dingtalk_oauth_states = {}
+        app.state.dingtalk_login_tickets = {}
+        exchanged = client.post(
+            "/api/auth/dingtalk/exchange-ticket",
+            json={"ticket": ticket},
+        )
+        assert exchanged.status_code == 200
+        assert exchanged.json()["data"]["user"]["id"] == "user_zhangsan"
+        replay = client.post(
+            "/api/auth/dingtalk/exchange-ticket",
+            json={"ticket": ticket},
+        )
+        assert replay.status_code == 401
+    finally:
+        restore()
+
+
+def test_dingtalk_callback_auto_provisions_pending_user_without_ticket():
     profile = DingTalkProfile(
         corp_id="corp_allowed",
         display_name="钉钉张三",
@@ -160,6 +237,7 @@ def test_dingtalk_callback_auto_provisions_user_and_exchanges_one_time_ticket():
         profile,
         allowed_corp_ids="corp_allowed",
         auto_provision=True,
+        pending_approval=False,
         user_repository=MemoryUserRepository({}),
     )
     try:
@@ -173,33 +251,72 @@ def test_dingtalk_callback_auto_provisions_user_and_exchanges_one_time_ticket():
         callback_query = parse_qs(callback_url.query)
         assert callback_url.path == "/login/dingtalk/callback"
         assert callback_query["redirect"] == ["/delivery/bugs"]
-        ticket = callback_query["ticket"][0]
-
-        exchanged = client.post(
-            "/api/auth/dingtalk/exchange-ticket",
-            json={"ticket": ticket},
+        assert callback_query["error"] == ["DINGTALK_ACCOUNT_PENDING_APPROVAL"]
+        assert "ticket" not in callback_query
+        user = next(
+            item
+            for item in app.state.user_repository.list_users()
+            if item["username"] == "zhangsan@example.com"
         )
-        assert exchanged.status_code == 200
-        login_data = exchanged.json()["data"]
-        assert login_data["user"]["username"] == "zhangsan@example.com"
-        assert login_data["user"]["roles"] == ["viewer"]
-
-        replay = client.post(
-            "/api/auth/dingtalk/exchange-ticket",
-            json={"ticket": ticket},
-        )
-        assert replay.status_code == 401
-
-        me = client.get(
-            "/api/auth/me",
-            headers={"Authorization": f"Bearer {login_data['access_token']}"},
-        )
-        assert me.status_code == 200
-        assert me.json()["data"]["display_name"] == "钉钉张三"
+        assert user["roles"] == ["viewer"]
+        assert user["status"] == "pending_approval"
         assert [
             event["event_type"]
             for event in app.state.store.audit_events
-        ] == ["dingtalk_account.provisioned", "dingtalk_login.succeeded"]
+        ] == ["dingtalk_account.provisioned"]
+    finally:
+        restore()
+
+
+def test_dingtalk_pending_auto_provision_login_remains_pending_until_user_is_active():
+    profile = DingTalkProfile(
+        corp_id="corp_allowed",
+        display_name="钉钉张三",
+        email="zhangsan@example.com",
+        subject="union_zhangsan",
+        union_id="union_zhangsan",
+    )
+    user_repository = MemoryUserRepository({})
+    _fake_client, restore = _install_dingtalk_test_state(
+        profile,
+        allowed_corp_ids="corp_allowed",
+        auto_provision=True,
+        user_repository=user_repository,
+    )
+    try:
+        _location, state = _start_dingtalk_login("/delivery/bugs")
+        first_callback = client.get(
+            f"/api/auth/dingtalk/callback?code=ok&state={state}",
+            follow_redirects=False,
+        )
+        assert parse_qs(urlparse(first_callback.headers["location"]).query)["error"] == [
+            "DINGTALK_ACCOUNT_PENDING_APPROVAL"
+        ]
+
+        _location, second_state = _start_dingtalk_login("/delivery/bugs")
+        second_callback = client.get(
+            f"/api/auth/dingtalk/callback?code=ok&state={second_state}",
+            follow_redirects=False,
+        )
+        assert parse_qs(urlparse(second_callback.headers["location"]).query)["error"] == [
+            "DINGTALK_ACCOUNT_PENDING_APPROVAL"
+        ]
+
+        pending_user = next(
+            item
+            for item in user_repository.list_users()
+            if item["username"] == "zhangsan@example.com"
+        )
+        user_repository.update_user(pending_user["id"], {"status": "active"})
+
+        _location, approved_state = _start_dingtalk_login("/delivery/bugs")
+        approved_callback = client.get(
+            f"/api/auth/dingtalk/callback?code=ok&state={approved_state}",
+            follow_redirects=False,
+        )
+        approved_query = parse_qs(urlparse(approved_callback.headers["location"]).query)
+        assert "ticket" in approved_query
+        assert "error" not in approved_query
     finally:
         restore()
 

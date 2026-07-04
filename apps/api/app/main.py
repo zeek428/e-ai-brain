@@ -45,6 +45,10 @@ from app.api.routers.users import router as users_router
 from app.api.routers.writeback import router as writeback_router
 from app.core.config import get_settings
 from app.core.dingtalk_oauth import DingTalkOAuthClient
+from app.core.dingtalk_oauth_state import (
+    MemoryDingTalkOAuthStateRepository,
+    PostgresDingTalkOAuthStateRepository,
+)
 from app.core.external_identities import (
     MemoryExternalIdentityRepository,
     PostgresExternalIdentityRepository,
@@ -116,6 +120,20 @@ def build_external_identity_repository() -> (
     return MemoryExternalIdentityRepository()
 
 
+def build_dingtalk_oauth_state_repository() -> (
+    MemoryDingTalkOAuthStateRepository | PostgresDingTalkOAuthStateRepository
+):
+    if settings.persistence_mode == "postgres":
+        return PostgresDingTalkOAuthStateRepository(
+            settings.database_url,
+            pool_max_size=settings.database_pool_max_size,
+        )
+    _ensure_memory_mode_allowed()
+    if settings.persistence_mode != "memory":
+        raise RuntimeError(f"Unsupported PERSISTENCE_MODE={settings.persistence_mode}")
+    return MemoryDingTalkOAuthStateRepository()
+
+
 def build_authorization_repository() -> (
     CompatibilityAuthorizationRepository | PostgresAuthorizationRepository
 ):
@@ -143,13 +161,11 @@ app = FastAPI(title="Enterprise AI Brain API", version="0.1.0", lifespan=lifespa
 app.state.store = build_store()
 app.state.user_repository = build_user_repository()
 app.state.external_identity_repository = build_external_identity_repository()
+app.state.dingtalk_oauth_state_repository = build_dingtalk_oauth_state_repository()
 app.state.authorization_repository = build_authorization_repository()
 app.state.code_review_executor = None
 app.state.dashboard_cache = {}
-app.state.dingtalk_bind_states = {}
-app.state.dingtalk_login_tickets = {}
 app.state.dingtalk_oauth_client = DingTalkOAuthClient(settings)
-app.state.dingtalk_oauth_states = {}
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
