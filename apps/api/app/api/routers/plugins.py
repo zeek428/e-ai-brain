@@ -7,15 +7,15 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
-from app.services.ai_executor_runner_task_status import (
-    runner_ai_executor_task_status_response,
-)
-from app.services.ai_executor_runner_timeout import timeout_ai_executor_tasks_response
 from app.services.ai_executor_runner_approvals import (
     approve_ai_executor_approval_request_response,
     approve_plugin_action_ai_executor_response,
     list_ai_executor_approval_requests_response,
 )
+from app.services.ai_executor_runner_task_status import (
+    runner_ai_executor_task_status_response,
+)
+from app.services.ai_executor_runner_timeout import timeout_ai_executor_tasks_response
 from app.services.ai_executor_runners import (
     append_ai_executor_task_logs_response,
     cancel_ai_executor_task_response,
@@ -34,6 +34,10 @@ from app.services.ai_executor_runners import (
     test_ai_executor_runner_response,
 )
 from app.services.plugin_action_trials import trial_plugin_action_response
+from app.services.plugin_dingtalk_operations import (
+    discover_plugin_connection_tools_response,
+    plugin_observability_response,
+)
 from app.services.plugins import (
     copy_plugin_response,
     create_plugin_action_response,
@@ -600,6 +604,22 @@ def list_plugin_action_templates(
     )
 
 
+@router.get("/api/system/plugin-observability")
+def get_plugin_observability(
+    request: Request,
+    provider: str | None = Query(default="dingtalk"),
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        plugin_observability_response(
+            current_store=store(request),
+            provider=provider,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
 @router.get("/api/system/result-write-targets")
 def list_result_write_targets(
     request: Request,
@@ -797,6 +817,22 @@ def test_plugin_connection(
 ) -> dict[str, Any]:
     return envelope(
         test_plugin_connection_response(
+            connection_id=connection_id,
+            current_store=store(request),
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/plugin-connections/{connection_id}/discover-tools")
+def discover_plugin_connection_tools(
+    connection_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        discover_plugin_connection_tools_response(
             connection_id=connection_id,
             current_store=store(request),
             user=user,

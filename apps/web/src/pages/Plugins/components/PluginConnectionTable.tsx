@@ -1,4 +1,5 @@
 import {
+  ApiOutlined,
   DeleteOutlined,
   EditOutlined,
   PlayCircleOutlined,
@@ -28,9 +29,11 @@ type PluginConnectionTableProps = {
   loading: boolean;
   pluginById: Map<string, PluginRecord>;
   remote: PluginConnectionRemoteMeta;
+  discoveringConnectionId?: string;
   testingConnectionId?: string;
   onCreateConnection: () => void;
   onDeleteConnection: (connection: PluginConnectionRecord) => void;
+  onDiscoverTools: (connection: PluginConnectionRecord) => void | Promise<void>;
   onEditConnection: (connection: PluginConnectionRecord) => void;
   onRemoteChange: (query: PluginConnectionListQuery) => void;
   onReload: () => void;
@@ -78,12 +81,14 @@ function pluginDisplayName(
 
 export function PluginConnectionTable({
   connections,
+  discoveringConnectionId,
   loading,
   pluginById,
   remote,
   testingConnectionId,
   onCreateConnection,
   onDeleteConnection,
+  onDiscoverTools,
   onEditConnection,
   onRemoteChange,
   onReload,
@@ -117,14 +122,19 @@ export function PluginConnectionTable({
             key: 'actions',
             title: '操作',
             valueType: 'option',
-            width: 260,
+            width: 340,
             render: (_, row) => {
               const isTestingConnection = testingConnectionId === row.id;
+              const isDiscoveringConnection = discoveringConnectionId === row.id;
+              const plugin = pluginById.get(row.plugin_id);
+              const pluginCode = row.plugin_code ?? plugin?.code ?? '';
+              const isDingTalkMcpConnection = pluginCode.startsWith('dingtalk_');
+              const hasBusyConnection = Boolean(testingConnectionId || discoveringConnectionId);
               return (
                 <Space className="management-row-actions" size={0}>
                   <Button
                     aria-label={`编辑连接 ${row.name}`}
-                    disabled={Boolean(testingConnectionId)}
+                    disabled={hasBusyConnection}
                     htmlType="button"
                     icon={<EditOutlined />}
                     onClick={() => onEditConnection(row)}
@@ -136,7 +146,7 @@ export function PluginConnectionTable({
                     aria-label={
                       isTestingConnection ? `连接测试中 ${row.name}` : `测试连接 ${row.name}`
                     }
-                    disabled={Boolean(testingConnectionId)}
+                    disabled={hasBusyConnection}
                     htmlType="button"
                     icon={<PlayCircleOutlined />}
                     loading={isTestingConnection}
@@ -145,10 +155,27 @@ export function PluginConnectionTable({
                   >
                     {isTestingConnection ? '测试中' : '测试'}
                   </Button>
+                  {isDingTalkMcpConnection ? (
+                    <Button
+                      aria-label={
+                        isDiscoveringConnection
+                          ? `发现能力中 ${row.name}`
+                          : `发现能力 ${row.name}`
+                      }
+                      disabled={hasBusyConnection}
+                      htmlType="button"
+                      icon={<ApiOutlined />}
+                      loading={isDiscoveringConnection}
+                      onClick={() => void onDiscoverTools(row)}
+                      type="link"
+                    >
+                      {isDiscoveringConnection ? '发现中' : '发现能力'}
+                    </Button>
+                  ) : null}
                   <Button
                     aria-label={`删除连接 ${row.name}`}
                     danger
-                    disabled={Boolean(testingConnectionId)}
+                    disabled={hasBusyConnection}
                     htmlType="button"
                     icon={<DeleteOutlined />}
                     onClick={() => onDeleteConnection(row)}
@@ -190,7 +217,7 @@ export function PluginConnectionTable({
         total: remote.total,
       }}
       rowKey="id"
-      scroll={{ x: 1460 }}
+      scroll={{ x: 1540 }}
       search={false}
       tableLayout="fixed"
       toolBarRender={() => [

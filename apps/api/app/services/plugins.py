@@ -176,6 +176,9 @@ def list_plugin_marketplace_response(
             {
                 "action_count": len(plugin_actions),
                 "action_templates": metadata.get("action_templates", []),
+                "authorization_guide": metadata.get("authorization_guide"),
+                "business_scenario_templates": metadata.get("business_scenario_templates", []),
+                "capability_discovery": metadata.get("capability_discovery"),
                 "category": template["category"],
                 "code": template["code"],
                 "connection_defaults": standard_plugin_connection_defaults(str(template["code"])),
@@ -192,6 +195,8 @@ def list_plugin_marketplace_response(
                 "protocol": template["protocol"],
                 "publisher": metadata.get("publisher", "AI Brain 官方"),
                 "recommended_scenarios": metadata.get("recommended_scenarios", []),
+                "governance_policy": metadata.get("governance_policy"),
+                "observability": metadata.get("observability"),
                 "risk_level": template["risk_level"],
                 "status": plugin.get("status") if plugin else "not_installed",
                 "summary": metadata.get("summary") or template["description"],

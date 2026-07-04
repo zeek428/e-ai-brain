@@ -207,12 +207,14 @@ function installPluginsFetchMock(
   const assistantDraftPatchBodies: unknown[] = [];
   const connectionBodies: unknown[] = [];
   const connectionDeleteIds: string[] = [];
+  const connectionDiscoveryCalls: string[] = [];
   const connectionListCalls: string[] = [];
   const connectionUpdateBodies: unknown[] = [];
   const connectionTestCalls: string[] = [];
   const pluginCopyBodies: unknown[] = [];
   const pluginDeleteIds: string[] = [];
   const pluginUpdateBodies: unknown[] = [];
+  const pluginObservabilityCalls: string[] = [];
   const runnerBodies: unknown[] = [];
   const runnerApprovalRequestBodies: unknown[] = [];
   const runnerDeleteIds: string[] = [];
@@ -661,6 +663,46 @@ function installPluginsFetchMock(
                   {
                     action_count: 0,
                     action_templates: ['钉钉文档搜索', '钉钉文档创建'],
+                    authorization_guide: {
+                      credential_reuse: {
+                        example_refs: ['vault/dingtalk/shared/url_key', 'env:DINGTALK_MCP_KEY'],
+                        supports_vault_ref: true,
+                      },
+                      subjects: [
+                        { label: '个人授权', scenario: '个人访问自己的钉钉文档', type: 'user' },
+                        { label: '系统授权', scenario: '团队共享巡检连接', type: 'system' },
+                        { label: '应用授权', scenario: '企业应用统一接入', type: 'app' },
+                      ],
+                      url_key: {
+                        query_key: 'key',
+                        steps: ['打开钉钉 MCP 市场能力详情', '复制授权 URL 中的 key 参数'],
+                        title: 'URL Key 获取方式',
+                      },
+                    },
+                    business_scenario_templates: [
+                      {
+                        code: 'dingtalk_knowledge_import',
+                        name: '从钉钉文档/知识库导入知识',
+                      },
+                      {
+                        code: 'dingtalk_inspection_bot_notice',
+                        name: '巡检结果发钉钉机器人',
+                      },
+                      {
+                        code: 'dingtalk_solution_doc_generation',
+                        name: '生成方案文档到钉钉文档',
+                      },
+                    ],
+                    capability_discovery: {
+                      drift_policy: {
+                        missing_tool: 'warn_disable_action',
+                        new_tool: 'suggest_action_template',
+                        schema_changed: 'mark_needs_review',
+                      },
+                      jsonrpc_method: 'tools/list',
+                      known_tools: ['doc.search_documents', 'doc.get_document_content', 'doc.create_document'],
+                      mode: 'tools_list',
+                    },
                     category: 'collaboration',
                     code: 'dingtalk_doc',
                     connection_defaults: {
@@ -711,11 +753,31 @@ function installPluginsFetchMock(
                     connection_count: 0,
                     connection_template_version: 'v1',
                     description: '连接钉钉文档 MCP。',
+                    governance_policy: {
+                      allowed_roles: ['admin', 'rd_owner', 'product_owner'],
+                      high_risk_controls: [
+                        'sensitive_read_audit',
+                        'write_before_execute_review',
+                        'notify_anti_mis_send',
+                      ],
+                      product_scope_required: true,
+                    },
                     id: 'marketplace_dingtalk_doc',
                     installed: true,
                     is_system: true,
                     latest_template_version: 'v1',
                     name: '钉钉文档',
+                    observability: {
+                      health_dashboard: { enabled: true },
+                      metrics: [
+                        'success_rate',
+                        'latency_p95_ms',
+                        'failure_reason_distribution',
+                        'key_expiry_alerts',
+                        'action_trend',
+                        'redacted_replay',
+                      ],
+                    },
                     plugin_id: 'plugin_standard_dingtalk_doc',
                     protocol: 'mcp_streamable_http',
                     publisher: '钉钉官方',
@@ -1438,6 +1500,33 @@ function installPluginsFetchMock(
               },
               status: 'active',
             },
+            ...(options.includeDingTalkPlugins
+              ? [
+                  {
+                    auth_config: {
+                      query_key: 'key',
+                      secret_ref: '***',
+                    },
+                    auth_type: 'url_key',
+                    endpoint_url: 'https://mcp-gw.dingtalk.com/mserver/doc',
+                    environment: 'prod',
+                    id: 'connection_dingtalk_doc',
+                    name: '钉钉文档个人授权',
+                    plugin_code: 'dingtalk_doc',
+                    plugin_id: 'plugin_standard_dingtalk_doc',
+                    plugin_name: '钉钉文档',
+                    request_config: {
+                      query: {
+                        auth_subject_type: 'user',
+                        mcp_id: '9629',
+                        provider: 'dingtalk',
+                        server_name: 'doc',
+                      },
+                    },
+                    status: 'active',
+                  },
+                ]
+              : []),
           ]
         : [];
       const outOfPageConnections = options.includeOutOfPageConnection
@@ -1520,6 +1609,54 @@ function installPluginsFetchMock(
         data: {
           ...pluginConnectionTestBody().data,
           connection_id: 'connection_created',
+        },
+      });
+    }
+    if (input === '/api/system/plugin-connections/connection_dingtalk_doc/discover-tools' && init?.method === 'POST') {
+      connectionDiscoveryCalls.push(String(input));
+      return jsonResponse({
+        data: {
+          discovered_tools: [
+            { name: 'doc.search_documents' },
+            { name: 'doc.create_document' },
+            { name: 'doc.export_document' },
+          ],
+          missing_tools: ['doc.get_document_content'],
+          new_tools: ['doc.export_document'],
+          request_summary: {
+            method: 'POST',
+            query: { key: '***', provider: 'dingtalk' },
+          },
+          schema_changed_tools: ['doc.create_document'],
+          status: 'drift_detected',
+          suggestions: [
+            { detail: '新增工具 doc.export_document 可生成动作模板', type: 'suggest_action_template' },
+          ],
+          tool_count: 3,
+        },
+      });
+    }
+    if (input === '/api/system/plugin-observability?provider=dingtalk' && init?.method === 'GET') {
+      pluginObservabilityCalls.push(String(input));
+      return jsonResponse({
+        data: {
+          action_trend: [{ action_code: 'read_dingtalk_doc', count: 2 }],
+          failure_reason_distribution: [{ count: 1, reason: 'HTTPError' }],
+          key_expiry_alerts: [{ connection_id: 'connection_dingtalk_doc', days_left: 8 }],
+          provider: 'dingtalk',
+          redacted_recent_replays: [
+            {
+              request_preview: {
+                query: { key: '***', provider: 'dingtalk' },
+                tool_name: 'doc.get_document_content',
+              },
+            },
+          ],
+          summary: {
+            latency_p95_ms: 360,
+            success_rate: 0.5,
+            total_invocations: 2,
+          },
         },
       });
     }
@@ -1920,12 +2057,14 @@ function installPluginsFetchMock(
     assistantDraftPatchBodies,
     connectionBodies,
     connectionDeleteIds,
+    connectionDiscoveryCalls,
     connectionListCalls,
     connectionTestCalls,
     connectionUpdateBodies,
     fetchMock,
     pluginDeleteIds,
     pluginCopyBodies,
+    pluginObservabilityCalls,
     pluginUpdateBodies,
     resolveConnectionTest: () => {
       connectionTestDeferred?.resolve(jsonResponse(pluginConnectionTestBody()));
@@ -2352,6 +2491,78 @@ describe('PluginsPage', () => {
         }),
       ]),
     );
+  });
+
+  it('shows DingTalk authorization guide, governance, observability, and business scenarios', async () => {
+    const { pluginObservabilityCalls } = installPluginsFetchMock({
+      includeDingTalkPlugins: true,
+      includeOfficialPlugins: true,
+    });
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '插件市场' }));
+    expect((await screen.findAllByText('钉钉文档')).length).toBeGreaterThan(0);
+
+    await waitFor(() =>
+      expect(pluginObservabilityCalls).toEqual(['/api/system/plugin-observability?provider=dingtalk']),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '展开 marketplace_dingtalk_doc' }));
+
+    expect(await screen.findByText('授权配置向导')).toBeInTheDocument();
+    expect(screen.getByText('个人授权')).toBeInTheDocument();
+    expect(screen.getByText('系统授权')).toBeInTheDocument();
+    expect(screen.getByText('应用授权')).toBeInTheDocument();
+    expect(screen.getByText('URL Key 获取方式')).toBeInTheDocument();
+    expect(screen.getByText('vault/dingtalk/shared/url_key')).toBeInTheDocument();
+    expect(screen.getByText('动态能力发现')).toBeInTheDocument();
+    expect(screen.getByText('tools/list')).toBeInTheDocument();
+    expect(screen.getByText('新增工具生成动作模板')).toBeInTheDocument();
+    expect(screen.getByText('高风险动作治理')).toBeInTheDocument();
+    expect(screen.getByText('敏感读审计')).toBeInTheDocument();
+    expect(screen.getByText('通知防误发')).toBeInTheDocument();
+    expect(screen.getByText('插件健康看板')).toBeInTheDocument();
+    expect(screen.getByText('连接成功率 50%')).toBeInTheDocument();
+    expect(screen.getByText('P95 延迟 360ms')).toBeInTheDocument();
+    expect(screen.getByText('脱敏请求回放')).toBeInTheDocument();
+    expect(screen.getByText('从钉钉文档/知识库导入知识')).toBeInTheDocument();
+    expect(screen.getByText('巡检结果发钉钉机器人')).toBeInTheDocument();
+    expect(screen.getByText('生成方案文档到钉钉文档')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '配置市场插件 钉钉文档' }));
+    const dialog = await findDialogByTitle('新增连接');
+    expect(within(dialog).getByText('授权配置向导')).toBeInTheDocument();
+    expect(within(dialog).getByText('URL Key 获取方式')).toBeInTheDocument();
+    expect(within(dialog).getByText(/复用 Vault 引用/)).toBeInTheDocument();
+  });
+
+  it('discovers DingTalk MCP tools from the connection list and shows drift hints', async () => {
+    const { connectionDiscoveryCalls } = installPluginsFetchMock({
+      includeDingTalkPlugins: true,
+      includeOfficialPlugins: true,
+    });
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '连接' }));
+    expect(await screen.findByText('钉钉文档个人授权')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '发现能力 钉钉文档个人授权' }));
+
+    await waitFor(() =>
+      expect(connectionDiscoveryCalls).toEqual([
+        '/api/system/plugin-connections/connection_dingtalk_doc/discover-tools',
+      ]),
+    );
+    const dialog = await findDialogByTitle('钉钉动态能力发现');
+    expect(within(dialog).getByText('drift_detected')).toBeInTheDocument();
+    expect(within(dialog).getByText('doc.export_document')).toBeInTheDocument();
+    expect(within(dialog).getByText('doc.get_document_content')).toBeInTheDocument();
+    expect(within(dialog).getByText('doc.create_document')).toBeInTheDocument();
+    expect(within(dialog).getByText('新增工具生成动作模板')).toBeInTheDocument();
+    expect(within(dialog).getByText('key')).toBeInTheDocument();
+    expect(within(dialog).getByText('***')).toBeInTheDocument();
   });
 
   it('shows template version status and copies an official plugin as custom', async () => {

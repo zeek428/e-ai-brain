@@ -1,6 +1,6 @@
 import { PlayCircleOutlined } from '@ant-design/icons';
 import type { FormInstance } from 'antd';
-import { Button, Form, Input, InputNumber, Modal, Select, Space } from 'antd';
+import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Tag, Typography } from 'antd';
 
 import type {
   PluginConnectionSchemaRecord,
@@ -237,27 +237,50 @@ export function PluginConnectionModal({
           </Space>
         ) : null}
         {!isInternalDataSourceConnection && !advancedAuthJsonOpen && authType === 'url_key' ? (
-          <Space wrap>
-            <Form.Item label="查询参数名" name="query_key">
-              <Input placeholder="key" />
-            </Form.Item>
-            <Form.Item
-              extra={
-                isDingTalkConnection
-                  ? '填写钉钉 MCP 网关授权 URL 中的 key 值；不同授权主体可使用个人、系统或应用独立 key。'
-                  : '填写 URL 查询参数形式的密钥，保存后调用时会自动追加到请求 URL。'
-              }
-              label="URL Key / 密钥引用"
-              name="secret_ref"
-              rules={
-                isDingTalkConnection
-                  ? [{ required: true, message: '请填写钉钉 MCP URL Key 或密钥引用' }]
-                  : undefined
-              }
-            >
-              <Input placeholder="dingtalk key / vault/dingtalk/doc/key / env:DINGTALK_MCP_KEY" />
-            </Form.Item>
-          </Space>
+          <>
+            {isDingTalkConnection ? (
+              <Alert
+                description={(
+                  <Space orientation="vertical" size={6}>
+                    <Space size={[6, 6]} wrap>
+                      <Tag color="blue">个人授权</Tag>
+                      <Tag color="blue">系统授权</Tag>
+                      <Tag color="blue">应用授权</Tag>
+                    </Space>
+                    <Typography.Text>URL Key 获取方式</Typography.Text>
+                    <Typography.Text type="secondary">
+                      完成钉钉 MCP 授权后复制授权 URL 中的 key 参数；同一主体可复用 Vault 引用，例如 vault/dingtalk/shared/url_key。
+                    </Typography.Text>
+                  </Space>
+                )}
+                showIcon
+                style={{ marginBottom: 12 }}
+                title="授权配置向导"
+                type="info"
+              />
+            ) : null}
+            <Space wrap>
+              <Form.Item label="查询参数名" name="query_key">
+                <Input placeholder="key" />
+              </Form.Item>
+              <Form.Item
+                extra={
+                  isDingTalkConnection
+                    ? '填写钉钉 MCP 网关授权 URL 中的 key 值；不同授权主体可使用个人、系统或应用独立 key。'
+                    : '填写 URL 查询参数形式的密钥，保存后调用时会自动追加到请求 URL。'
+                }
+                label="URL Key / 密钥引用"
+                name="secret_ref"
+                rules={
+                  isDingTalkConnection
+                    ? [{ required: true, message: '请填写钉钉 MCP URL Key 或密钥引用' }]
+                    : undefined
+                }
+              >
+                <Input placeholder="dingtalk key / vault/dingtalk/doc/key / env:DINGTALK_MCP_KEY" />
+              </Form.Item>
+            </Space>
+          </>
         ) : null}
         {!isInternalDataSourceConnection ? (
           <Button onClick={onToggleAdvancedAuthJson} type="link">

@@ -19,6 +19,7 @@ import {
   fetchPluginConnections,
   fetchPluginConnectionsPage,
   fetchPluginMarketplace,
+  fetchPluginObservability,
   fetchPlugins,
   fetchResultWriteTargets,
   fetchScheduledJobs,
@@ -42,6 +43,7 @@ import {
   type PluginConnectionRecord,
   type PluginConnectionTestResult,
   type PluginMarketplaceItem,
+  type PluginObservabilityResult,
   type PluginRecord,
   type ResultWriteTargetRecord,
   type ScheduledJobRecord,
@@ -97,6 +99,7 @@ import {
 } from './components/pluginFormTransformHelpers';
 import { SYSTEM_VARIABLE_OPTIONS } from './components/pluginSystemVariableOptions';
 import { scheduledJobDraftFromTrial } from './components/pluginTrialDraftHelpers';
+import { useDingTalkToolDiscovery } from './components/useDingTalkToolDiscovery';
 import { usePluginDeleteOperations } from './components/usePluginDeleteOperations';
 import { usePluginRunnerOperations } from './components/usePluginRunnerOperations';
 
@@ -134,6 +137,7 @@ export default function PluginsPage() {
   const [runnerForm] = Form.useForm<AiExecutorRunnerFormValues>();
   const [plugins, setPlugins] = useState<PluginRecord[]>([]);
   const [marketplaceItems, setMarketplaceItems] = useState<PluginMarketplaceItem[]>([]);
+  const [dingtalkObservability, setDingtalkObservability] = useState<PluginObservabilityResult | undefined>();
   const [actionTemplates, setActionTemplates] = useState<PluginActionTemplateRecord[]>([]);
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [runners, setRunners] = useState<AiExecutorRunnerRecord[]>([]);
@@ -264,6 +268,7 @@ export default function PluginsPage() {
       const [
         nextPlugins,
         nextMarketplaceItems,
+        nextDingtalkObservability,
         nextActionTemplates,
         nextResultWriteTargets,
         nextRunnersPage,
@@ -274,6 +279,7 @@ export default function PluginsPage() {
       ] = await Promise.all([
         fetchPlugins(),
         fetchPluginMarketplace(),
+        fetchPluginObservability('dingtalk'),
         fetchPluginActionTemplates(),
         fetchResultWriteTargets(),
         fetchAiExecutorRunnersPage(runnerListQuery),
@@ -284,6 +290,7 @@ export default function PluginsPage() {
       ]);
       setPlugins(nextPlugins);
       setMarketplaceItems(nextMarketplaceItems);
+      setDingtalkObservability(nextDingtalkObservability);
       setActionTemplates(nextActionTemplates);
       setResultWriteTargets(nextResultWriteTargets);
       setRunners(nextRunnersPage.rows);
@@ -359,6 +366,12 @@ export default function PluginsPage() {
     submitRunner,
     testingRunnerId,
   } = usePluginRunnerOperations({ reload, runnerForm });
+
+  const {
+    discoveringConnectionId,
+    discoverConnectionTools,
+    discoveryModal,
+  } = useDingTalkToolDiscovery();
 
   const handleConnectionListChange = useCallback((query: PluginConnectionListQuery) => {
     setConnectionListQuery((currentQuery) => ({
@@ -1428,6 +1441,8 @@ export default function PluginsPage() {
         connectionById={connectionById}
         connectionListMeta={connectionListMeta}
         connections={connections}
+        dingtalkObservability={dingtalkObservability}
+        discoveringConnectionId={discoveringConnectionId}
         formatWriteTarget={(writeTarget) => resultWriteTargetLabel(
           writeTarget ?? DEFAULT_RESULT_WRITE_TARGET,
           resultWriteTargets,
@@ -1460,6 +1475,7 @@ export default function PluginsPage() {
         onEditConnection={openEditConnectionModal}
         onEditPlugin={openEditPluginModal}
         onEditRunner={openEditRunnerModal}
+        onDiscoverConnectionTools={(connection) => void discoverConnectionTools(connection)}
         onOpenRunnerLogs={(runner) => void openRunnerLogs(runner)}
         onOpenRunnerApprovalRequests={() => void openRunnerApprovalRequests()}
         onRunnerListChange={handleRunnerListChange}
@@ -1471,6 +1487,8 @@ export default function PluginsPage() {
         onTestRunner={(runner) => void runRunnerTest(runner)}
         onTrialAction={openTrialModal}
       />
+
+      {discoveryModal}
 
       <PluginManagementModals
         actionForm={actionForm}

@@ -2,19 +2,21 @@ import { PlusOutlined } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import { Button, Space, Tag, Typography } from 'antd';
 
-import type { PluginMarketplaceItem } from '../../../services/aiBrain';
+import type { PluginMarketplaceItem, PluginObservabilityResult } from '../../../services/aiBrain';
 import {
   OFFICIAL_PLUGIN_LABEL,
   pluginCategoryLabel,
   pluginVersionStatusTag,
 } from './pluginCatalogHelpers';
 import {
+  DingTalkMarketplaceEnhancements,
   MarketplaceConnectionSchemaDetail,
   MarketplaceConnectionSchemaSummary,
 } from './PluginDiagnostics';
 
 type PluginMarketplaceTableProps = {
   items: PluginMarketplaceItem[];
+  dingtalkObservability?: PluginObservabilityResult;
   loading: boolean;
   onCreateAction: (item: PluginMarketplaceItem) => void;
   onCreateConnection: (pluginId?: string | null) => void;
@@ -22,6 +24,7 @@ type PluginMarketplaceTableProps = {
 };
 
 export function PluginMarketplaceTable({
+  dingtalkObservability,
   items,
   loading,
   onCreateAction,
@@ -158,6 +161,10 @@ export function PluginMarketplaceTable({
       expandable={{
         expandedRowRender: (record) => (
           <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+            <DingTalkMarketplaceEnhancements
+              item={record}
+              observability={dingtalkObservability}
+            />
             <Typography.Text strong>连接表单 schema</Typography.Text>
             <MarketplaceConnectionSchemaDetail item={record} />
           </Space>

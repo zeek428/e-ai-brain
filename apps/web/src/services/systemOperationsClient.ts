@@ -434,6 +434,35 @@ export type PluginRecord = {
 export type PluginMarketplaceItem = {
   action_count: number;
   action_templates?: string[];
+  authorization_guide?: {
+    credential_reuse?: {
+      description?: string;
+      example_refs?: string[];
+      supports_vault_ref?: boolean;
+    };
+    subjects?: Array<{
+      label?: string;
+      scenario?: string;
+      type?: string;
+    }>;
+    url_key?: {
+      description?: string;
+      query_key?: string;
+      steps?: string[];
+      title?: string;
+    };
+  };
+  business_scenario_templates?: Array<{
+    code?: string;
+    name?: string;
+    steps?: string[];
+  }>;
+  capability_discovery?: {
+    drift_policy?: Record<string, string>;
+    jsonrpc_method?: string;
+    known_tools?: string[];
+    mode?: string;
+  };
   category: string;
   code: string;
   connection_schema?: PluginConnectionSchemaRecord;
@@ -450,6 +479,18 @@ export type PluginMarketplaceItem = {
   protocol: string;
   publisher?: string;
   recommended_scenarios?: string[];
+  governance_policy?: {
+    allowed_roles?: string[];
+    high_risk_controls?: string[];
+    product_scope_required?: boolean;
+  };
+  observability?: {
+    health_dashboard?: {
+      enabled?: boolean;
+      title?: string;
+    };
+    metrics?: string[];
+  };
   risk_level?: string;
   status: string;
   summary?: string;
@@ -490,12 +531,61 @@ export type PluginActionTemplateRecord = {
   default_name?: string;
   description?: string | null;
   form_defaults?: Record<string, unknown>;
+  governance?: Record<string, unknown>;
   name: string;
   plugin_code: string;
   plugin_id?: string | null;
   request_config?: Record<string, unknown>;
+  requires_human_review?: boolean;
+  risk_tier?: string;
   result_mapping?: Record<string, unknown>;
   template_version?: string;
+};
+
+export type PluginConnectionToolDiscoveryResult = {
+  checked_at?: string;
+  connection_id: string;
+  discovered_tools?: Array<{
+    description?: string | null;
+    input_schema?: Record<string, unknown>;
+    name: string;
+  }>;
+  known_tools?: string[];
+  latency_ms?: number;
+  missing_tools?: string[];
+  new_tools?: string[];
+  plugin_id?: string;
+  request_summary?: Record<string, unknown>;
+  response_summary?: Record<string, unknown>;
+  schema_changed_tools?: string[];
+  status: string;
+  suggestions?: Array<{
+    detail?: string;
+    tool_name?: string;
+    type?: string;
+  }>;
+  tool_count?: number;
+};
+
+export type PluginObservabilityResult = {
+  action_trend?: Array<{ action_code?: string; count?: number }>;
+  connection_health?: Array<Record<string, unknown>>;
+  failure_reason_distribution?: Array<{ count?: number; reason?: string }>;
+  key_expiry_alerts?: Array<Record<string, unknown>>;
+  provider: string;
+  redacted_recent_replays?: Array<{
+    request_preview?: Record<string, unknown>;
+    status?: string;
+    trace_id?: string;
+  }>;
+  summary?: {
+    average_latency_ms?: number | null;
+    failed_invocations?: number;
+    latency_p95_ms?: number | null;
+    success_rate?: number | null;
+    succeeded_invocations?: number;
+    total_invocations?: number;
+  };
 };
 
 export type ResultWriteTargetFieldRecord = {
@@ -968,6 +1058,18 @@ export async function fetchPluginMarketplace(): Promise<PluginMarketplaceItem[]>
   return response.items;
 }
 
+export async function fetchPluginObservability(
+  provider = 'dingtalk',
+): Promise<PluginObservabilityResult> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'provider', provider);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return apiRequest<PluginObservabilityResult>(`/api/system/plugin-observability${suffix}`, {
+    token,
+  });
+}
+
 export async function fetchPluginActionTemplates(): Promise<PluginActionTemplateRecord[]> {
   const token = requireAccessToken();
   const response = await apiRequest<ListResponse<PluginActionTemplateRecord>>('/api/system/plugin-action-templates', { token });
@@ -1420,6 +1522,17 @@ export async function testPluginConnection(connectionId: string) {
     method: 'POST',
     token,
   });
+}
+
+export async function discoverPluginConnectionTools(connectionId: string) {
+  const token = requireAccessToken();
+  return apiRequest<PluginConnectionToolDiscoveryResult>(
+    `/api/system/plugin-connections/${connectionId}/discover-tools`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
 }
 
 export async function fetchPluginSystemVariables(timezone = 'Asia/Shanghai') {

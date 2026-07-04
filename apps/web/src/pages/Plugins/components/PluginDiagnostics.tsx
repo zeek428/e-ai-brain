@@ -9,7 +9,9 @@ import {
   type PluginConnectionRepairSuggestion,
   type PluginConnectionTestHistoryRecord,
   type PluginConnectionTestResult,
+  type PluginConnectionToolDiscoveryResult,
   type PluginMarketplaceItem,
+  type PluginObservabilityResult,
 } from '../../../services/aiBrain';
 import {
   compactJson,
@@ -358,6 +360,174 @@ export function MarketplaceConnectionSchemaDetail({ item }: { item: PluginMarket
       scroll={{ x: 920 }}
       size="small"
     />
+  );
+}
+
+const dingTalkControlLabels: Record<string, string> = {
+  notify_anti_mis_send: '通知防误发',
+  sensitive_read_audit: '敏感读审计',
+  write_before_execute_review: '写入前人工确认',
+};
+
+const dingTalkDriftPolicyLabels: Record<string, string> = {
+  mark_needs_review: '标记需要复核',
+  suggest_action_template: '新增工具生成动作模板',
+  warn_disable_action: '下线工具预警',
+};
+
+const dingTalkMetricLabels: Record<string, string> = {
+  action_trend: '动作调用趋势',
+  failure_reason_distribution: '失败原因分布',
+  key_expiry_alerts: '密钥过期预警',
+  latency_p95_ms: '钉钉 API P95 延迟',
+  redacted_replay: '脱敏请求回放',
+  success_rate: '连接成功率',
+};
+
+function labelFromMap(value: string, labels: Record<string, string>) {
+  return labels[value] ?? value;
+}
+
+function percentageText(value?: number | null) {
+  if (typeof value !== 'number') {
+    return '-';
+  }
+  return `${Math.round(value * 100)}%`;
+}
+
+export function DingTalkMarketplaceEnhancements({
+  item,
+  observability,
+}: {
+  item: PluginMarketplaceItem;
+  observability?: PluginObservabilityResult;
+}) {
+  const isDingTalk = item.code.startsWith('dingtalk_');
+  if (!isDingTalk) {
+    return null;
+  }
+  const guide = item.authorization_guide;
+  const discovery = item.capability_discovery;
+  const governance = item.governance_policy;
+  const observabilityTemplate = item.observability;
+  const scenarioTemplates = item.business_scenario_templates ?? [];
+  const driftPolicy = discovery?.drift_policy ?? {};
+  const successRate = observability?.summary?.success_rate;
+  const p95Latency = observability?.summary?.latency_p95_ms;
+  return (
+    <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+      <Typography.Text strong>授权配置向导</Typography.Text>
+      <Space size={[8, 8]} wrap>
+        {(guide?.subjects ?? []).map((subject) => (
+          <Tag color="blue" key={subject.type ?? subject.label}>
+            {subject.label ?? subject.type}
+          </Tag>
+        ))}
+      </Space>
+      <Space size={[8, 8]} wrap>
+        <Tag color="geekblue">{guide?.url_key?.title ?? 'URL Key 获取方式'}</Tag>
+        <Tag>query: {guide?.url_key?.query_key ?? 'key'}</Tag>
+        {guide?.credential_reuse?.supports_vault_ref ? <Tag color="green">复用 Vault 引用</Tag> : null}
+        {(guide?.credential_reuse?.example_refs ?? []).map((ref) => (
+          <Tag key={ref}>{ref}</Tag>
+        ))}
+      </Space>
+
+      <Typography.Text strong>动态能力发现</Typography.Text>
+      <Space size={[8, 8]} wrap>
+        <Tag color="purple">{discovery?.jsonrpc_method ?? 'tools/list'}</Tag>
+        {(discovery?.known_tools ?? []).map((tool) => (
+          <Tag key={tool}>{tool}</Tag>
+        ))}
+        {Object.values(driftPolicy).map((policy) => (
+          <Tag color="orange" key={policy}>{labelFromMap(policy, dingTalkDriftPolicyLabels)}</Tag>
+        ))}
+      </Space>
+
+      <Typography.Text strong>高风险动作治理</Typography.Text>
+      <Space size={[8, 8]} wrap>
+        {(governance?.high_risk_controls ?? []).map((control) => (
+          <Tag color="red" key={control}>{labelFromMap(control, dingTalkControlLabels)}</Tag>
+        ))}
+        {(governance?.allowed_roles ?? []).map((role) => (
+          <Tag key={role}>{role}</Tag>
+        ))}
+        {governance?.product_scope_required ? <Tag color="blue">按产品范围控制</Tag> : null}
+      </Space>
+
+      <Typography.Text strong>{observabilityTemplate?.health_dashboard?.title ?? '插件健康看板'}</Typography.Text>
+      <Space size={[8, 8]} wrap>
+        <Tag color="green">连接成功率 {percentageText(successRate)}</Tag>
+        <Tag color="blue">P95 延迟 {typeof p95Latency === 'number' ? `${p95Latency}ms` : '-'}</Tag>
+        {(observabilityTemplate?.metrics ?? []).map((metric) => (
+          <Tag key={metric}>{labelFromMap(metric, dingTalkMetricLabels)}</Tag>
+        ))}
+      </Space>
+
+      <Typography.Text strong>业务场景模板</Typography.Text>
+      <Space size={[8, 8]} wrap>
+        {scenarioTemplates.map((scenario) => (
+          <Tag color="cyan" key={scenario.code ?? scenario.name}>{scenario.name ?? scenario.code}</Tag>
+        ))}
+      </Space>
+    </Space>
+  );
+}
+
+function discoveryTagList(items?: string[], color?: string) {
+  if (!items?.length) {
+    return <Typography.Text type="secondary">无</Typography.Text>;
+  }
+  return (
+    <Space size={[8, 8]} wrap>
+      {items.map((item) => <Tag color={color} key={item}>{item}</Tag>)}
+    </Space>
+  );
+}
+
+function requestSummaryQuery(value?: Record<string, unknown>) {
+  const query = isPlainRecord(value?.query) ? value.query : {};
+  return Object.entries(query);
+}
+
+export function PluginConnectionToolDiscoveryContent({
+  result,
+}: {
+  result: PluginConnectionToolDiscoveryResult;
+}) {
+  const suggestions = result.suggestions ?? [];
+  return (
+    <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+      <Space size={[8, 8]} wrap>
+        <Tag color={result.status === 'succeeded' ? 'green' : 'orange'}>{result.status}</Tag>
+        <Tag>工具数 {result.tool_count ?? result.discovered_tools?.length ?? 0}</Tag>
+        {typeof result.latency_ms === 'number' ? <Tag>{result.latency_ms}ms</Tag> : null}
+      </Space>
+      <Typography.Text strong>新增能力</Typography.Text>
+      {discoveryTagList(result.new_tools, 'green')}
+      <Typography.Text strong>下线能力</Typography.Text>
+      {discoveryTagList(result.missing_tools, 'red')}
+      <Typography.Text strong>Schema 变化</Typography.Text>
+      {discoveryTagList(result.schema_changed_tools, 'orange')}
+      <Typography.Text strong>处理建议</Typography.Text>
+      <Space size={[8, 8]} wrap>
+        {suggestions.length ? suggestions.map((suggestion, index) => (
+          <Tag color="blue" key={`${suggestion.type ?? 'suggestion'}-${index}`}>
+            {labelFromMap(String(suggestion.type ?? ''), dingTalkDriftPolicyLabels)}
+          </Tag>
+        )) : <Typography.Text type="secondary">无</Typography.Text>}
+      </Space>
+      <Typography.Text strong>脱敏请求 Query</Typography.Text>
+      <Space size={[8, 8]} wrap>
+        {requestSummaryQuery(result.request_summary).map(([key, value]) => (
+          <Tag key={key}>
+            <Typography.Text>{key}</Typography.Text>
+            <Typography.Text type="secondary"> {String(value)}</Typography.Text>
+          </Tag>
+        ))}
+      </Space>
+      <JsonDiagnosticsBlock title="发现详情 JSON" value={result.discovered_tools} />
+    </Space>
   );
 }
 

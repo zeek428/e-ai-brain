@@ -8,6 +8,7 @@ import type {
   PluginConnectionListQuery,
   PluginConnectionRecord,
   PluginMarketplaceItem,
+  PluginObservabilityResult,
   PluginRecord,
 } from '../../../services/aiBrain';
 import { PluginActionTable } from './PluginActionTable';
@@ -30,6 +31,7 @@ type PluginManagementTabsProps = {
     total: number;
   };
   connections: PluginConnectionRecord[];
+  dingtalkObservability?: PluginObservabilityResult;
   formatWriteTarget: (writeTarget?: string | null) => string;
   loading: boolean;
   marketplaceItems: PluginMarketplaceItem[];
@@ -52,6 +54,7 @@ type PluginManagementTabsProps = {
   onEditConnection: (connection: PluginConnectionRecord) => void;
   onEditPlugin: (plugin: PluginRecord) => void;
   onEditRunner: (runner: AiExecutorRunnerRecord) => void;
+  onDiscoverConnectionTools: (connection: PluginConnectionRecord) => void;
   onOpenRunnerLogs: (runner: AiExecutorRunnerRecord) => void;
   onOpenRunnerApprovalRequests: () => void;
   onReload: () => void;
@@ -74,6 +77,7 @@ type PluginManagementTabsProps = {
   runners: AiExecutorRunnerRecord[];
   onRunnerListChange: (query: AiExecutorRunnerListQuery) => void;
   runnerTimeoutScanLoading?: boolean;
+  discoveringConnectionId?: string;
   testingConnectionId?: string;
   testingRunnerId?: string;
 };
@@ -84,6 +88,8 @@ export function PluginManagementTabs({
   connectionById,
   connectionListMeta,
   connections,
+  dingtalkObservability,
+  discoveringConnectionId,
   formatWriteTarget,
   loading,
   marketplaceItems,
@@ -106,6 +112,7 @@ export function PluginManagementTabs({
   onEditConnection,
   onEditPlugin,
   onEditRunner,
+  onDiscoverConnectionTools,
   onOpenRunnerLogs,
   onOpenRunnerApprovalRequests,
   onReload,
@@ -133,6 +140,7 @@ export function PluginManagementTabs({
           label: '插件市场',
           children: (
             <PluginMarketplaceTable
+              dingtalkObservability={dingtalkObservability}
               items={marketplaceItems}
               loading={loading}
               onCreateAction={onCreateActionForMarketplacePlugin}
@@ -165,10 +173,12 @@ export function PluginManagementTabs({
               loading={loading}
               pluginById={pluginById}
               remote={connectionListMeta}
+              discoveringConnectionId={discoveringConnectionId}
               testingConnectionId={testingConnectionId}
               onCreateConnection={onCreateConnection}
               onDeleteConnection={onDeleteConnection}
               onEditConnection={onEditConnection}
+              onDiscoverTools={onDiscoverConnectionTools}
               onRemoteChange={onConnectionListChange}
               onReload={onReload}
               onTestConnection={onTestConnection}

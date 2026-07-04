@@ -8,8 +8,9 @@ from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
-import app.services.plugins as plugin_services
+import app.services.plugin_dingtalk_operations as plugin_dingtalk_operations
 import app.services.plugin_invocation_runtime as plugin_invocation_runtime
+import app.services.plugins as plugin_services
 import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
 from app.main import app
 from app.services.ai_executor_runners import (
@@ -333,6 +334,299 @@ def test_dingtalk_p0_action_templates_include_risk_tiers_and_tool_metadata():
         assert template["request_config"]["tool_name"] == tool_name
         assert template["request_config"]["mcp"]["provider"] == "dingtalk"
         assert template["result_mapping"]["write_target"] == "scheduled_job_result"
+
+
+def test_dingtalk_marketplace_exposes_auth_guide_discovery_governance_and_scenarios():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    payload = client.get("/api/system/plugin-marketplace", headers=headers).json()["data"]
+    by_code = {item["code"]: item for item in payload["items"]}
+    item = by_code["dingtalk_doc"]
+
+    authorization_guide = item["authorization_guide"]
+    assert [subject["type"] for subject in authorization_guide["subjects"]] == [
+        "user",
+        "system",
+        "app",
+    ]
+    assert authorization_guide["url_key"]["query_key"] == "key"
+    assert "URL Key 获取方式" in authorization_guide["url_key"]["title"]
+    assert authorization_guide["credential_reuse"]["supports_vault_ref"] is True
+    assert authorization_guide["credential_reuse"]["example_refs"] == [
+        "vault/dingtalk/shared/url_key",
+        "env:DINGTALK_MCP_KEY",
+    ]
+
+    capability_discovery = item["capability_discovery"]
+    assert capability_discovery["mode"] == "tools_list"
+    assert capability_discovery["jsonrpc_method"] == "tools/list"
+    assert capability_discovery["drift_policy"]["new_tool"] == "suggest_action_template"
+    assert "doc.get_document_content" in capability_discovery["known_tools"]
+
+    governance_policy = item["governance_policy"]
+    assert governance_policy["product_scope_required"] is True
+    assert {"admin", "rd_owner", "product_owner"}.issubset(
+        set(governance_policy["allowed_roles"]),
+    )
+    assert "sensitive_read_audit" in governance_policy["high_risk_controls"]
+    assert "write_before_execute_review" in governance_policy["high_risk_controls"]
+    assert "notify_anti_mis_send" in governance_policy["high_risk_controls"]
+
+    observability = item["observability"]
+    assert observability["health_dashboard"]["enabled"] is True
+    assert {
+        "success_rate",
+        "latency_p95_ms",
+        "failure_reason_distribution",
+        "key_expiry_alerts",
+        "action_trend",
+        "redacted_replay",
+    }.issubset(set(observability["metrics"]))
+
+    scenario_codes = {scenario["code"] for scenario in item["business_scenario_templates"]}
+    assert {
+        "dingtalk_knowledge_import",
+        "dingtalk_inspection_bot_notice",
+        "dingtalk_solution_doc_generation",
+    }.issubset(scenario_codes)
+
+
+def test_dingtalk_action_templates_apply_high_risk_governance():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    payload = client.get("/api/system/plugin-action-templates", headers=headers).json()["data"]
+    by_code = {item["code"]: item for item in payload["items"]}
+
+    sensitive_read = by_code["dingtalk_doc_get_content"]
+    assert sensitive_read["requires_human_review"] is True
+    assert sensitive_read["governance"]["product_scope_required"] is True
+    assert "dingtalk.sensitive_read" in sensitive_read["governance"]["audit_events"]
+    assert "sensitive_read_audit" in sensitive_read["governance"]["controls"]
+
+    document_write = by_code["dingtalk_doc_create_document"]
+    assert document_write["requires_human_review"] is True
+    assert "write_before_execute_review" in document_write["governance"]["controls"]
+    assert "dingtalk.write" in document_write["governance"]["audit_events"]
+
+    notification = by_code["dingtalk_bot_send_message"]
+    assert notification["requires_human_review"] is True
+    assert "notify_anti_mis_send" in notification["governance"]["controls"]
+    assert notification["governance"]["anti_mis_send"]["enabled"] is True
+    assert notification["governance"]["anti_mis_send"]["recipient_allowlist_required"] is True
+    assert {"admin", "rd_owner", "product_owner"}.issubset(
+        set(notification["governance"]["allowed_roles"]),
+    )
+
+
+def test_dingtalk_connection_tool_discovery_detects_tool_drift_and_redacts_url_key(
+    monkeypatch,
+):
+    app.state.store.reset()
+    headers = auth_headers()
+    captured_requests: list[dict[str, object]] = []
+
+    marketplace = client.get("/api/system/plugin-marketplace", headers=headers).json()["data"]
+    dingtalk_doc = {item["code"]: item for item in marketplace["items"]}["dingtalk_doc"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            **dingtalk_doc["connection_defaults"],
+            "auth_config": {
+                "query_key": "key",
+                "secret_ref": "dingtalk-url-key-secret",
+            },
+            "name": "钉钉文档个人授权",
+            "plugin_id": dingtalk_doc["plugin_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, *_args):
+            return json.dumps(
+                {
+                    "id": "discovery",
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "tools": [
+                            {
+                                "description": "搜索文档",
+                                "inputSchema": {
+                                    "properties": {
+                                        "keyword": {"type": "string"},
+                                        "max_rows": {"type": "integer"},
+                                    },
+                                    "type": "object",
+                                },
+                                "name": "doc.search_documents",
+                            },
+                            {
+                                "description": "创建文档",
+                                "inputSchema": {
+                                    "properties": {
+                                        "content": {"type": "string"},
+                                        "space_id": {"type": "string"},
+                                        "title": {"type": "string"},
+                                    },
+                                    "type": "object",
+                                },
+                                "name": "doc.create_document",
+                            },
+                            {
+                                "description": "导出文档",
+                                "inputSchema": {
+                                    "properties": {"document_id": {"type": "string"}},
+                                    "type": "object",
+                                },
+                                "name": "doc.export_document",
+                            },
+                        ],
+                    },
+                },
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured_requests.append(
+            {
+                "body": json.loads(request.data.decode("utf-8")),
+                "timeout": timeout,
+                "url": request.full_url,
+            },
+        )
+        return FakeResponse()
+
+    monkeypatch.setattr(plugin_dingtalk_operations, "urlopen", fake_urlopen)
+
+    response = client.post(
+        f"/api/system/plugin-connections/{connection['id']}/discover-tools",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert captured_requests[0]["body"]["method"] == "tools/list"
+    parsed_url = urlparse(str(captured_requests[0]["url"]))
+    assert parse_qs(parsed_url.query)["key"] == ["dingtalk-url-key-secret"]
+    assert data["request_summary"]["query"]["key"] == "***"
+    assert data["status"] == "drift_detected"
+    assert data["tool_count"] == 3
+    assert data["new_tools"] == ["doc.export_document"]
+    assert data["missing_tools"] == ["doc.get_document_content"]
+    assert data["schema_changed_tools"] == ["doc.create_document"]
+    assert data["suggestions"][0]["type"] == "suggest_action_template"
+    assert "dingtalk-url-key-secret" not in str(data)
+
+
+def test_dingtalk_plugin_observability_summarizes_health_and_redacted_replay():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    marketplace = client.get("/api/system/plugin-marketplace", headers=headers).json()["data"]
+    dingtalk_doc = {item["code"]: item for item in marketplace["items"]}["dingtalk_doc"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            **dingtalk_doc["connection_defaults"],
+            "auth_config": {
+                "key_expires_at": "2026-07-12T00:00:00+00:00",
+                "query_key": "key",
+                "secret_ref": "dingtalk-url-key-secret",
+            },
+            "name": "钉钉文档个人授权",
+            "plugin_id": dingtalk_doc["plugin_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "read_dingtalk_doc",
+            "connection_id": connection["id"],
+            "name": "读取钉钉文档",
+            "plugin_id": dingtalk_doc["plugin_id"],
+            "request_config": {"tool_name": "doc.get_document_content"},
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=headers,
+    ).json()["data"]
+    now = datetime.now(UTC).isoformat()
+    for log in [
+        {
+            "action_id": action["id"],
+            "connection_id": connection["id"],
+            "created_at": now,
+            "created_by": "user_admin",
+            "error_code": None,
+            "error_message": None,
+            "id": "plugin_invocation_dingtalk_success",
+            "latency_ms": 120,
+            "plugin_id": dingtalk_doc["plugin_id"],
+            "request_summary": {
+                "request_preview": {
+                    "query": {"key": "***", "provider": "dingtalk"},
+                    "tool_name": "doc.get_document_content",
+                },
+            },
+            "response_summary": {"json": {"ok": True}},
+            "scheduled_job_id": None,
+            "scheduled_job_run_id": None,
+            "status": "succeeded",
+            "trace_id": "trace-success",
+            "trigger_type": "manual",
+            "updated_at": now,
+        },
+        {
+            "action_id": action["id"],
+            "connection_id": connection["id"],
+            "created_at": now,
+            "created_by": "user_admin",
+            "error_code": "HTTPError",
+            "error_message": "403 Forbidden",
+            "id": "plugin_invocation_dingtalk_failed",
+            "latency_ms": 360,
+            "plugin_id": dingtalk_doc["plugin_id"],
+            "request_summary": {
+                "request_preview": {
+                    "query": {"key": "***", "provider": "dingtalk"},
+                    "tool_name": "doc.get_document_content",
+                },
+            },
+            "response_summary": {"status_code": 403},
+            "scheduled_job_id": None,
+            "scheduled_job_run_id": None,
+            "status": "failed",
+            "trace_id": "trace-failed",
+            "trigger_type": "manual",
+            "updated_at": now,
+        },
+    ]:
+        app.state.store.plugin_invocation_logs[log["id"]] = log
+
+    response = client.get("/api/system/plugin-observability?provider=dingtalk", headers=headers)
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["provider"] == "dingtalk"
+    assert data["summary"]["total_invocations"] == 2
+    assert data["summary"]["success_rate"] == 0.5
+    assert data["summary"]["latency_p95_ms"] >= 120
+    assert data["failure_reason_distribution"] == [{"reason": "HTTPError", "count": 1}]
+    assert data["action_trend"][0]["action_code"] == "read_dingtalk_doc"
+    assert data["key_expiry_alerts"][0]["connection_id"] == connection["id"]
+    assert data["redacted_recent_replays"][0]["request_preview"]["query"]["key"] == "***"
+    assert "dingtalk-url-key-secret" not in str(data)
 
 
 def test_mcp_streamable_http_url_key_invocation_uses_query_key_and_redacts_log(
