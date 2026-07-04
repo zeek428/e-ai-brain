@@ -47,6 +47,20 @@ type PasswordFormValues = {
   confirm_password: string;
 };
 
+const DINGTALK_BIND_ERROR_MESSAGES: Record<string, string> = {
+  DINGTALK_ACCOUNT_INACTIVE: '当前 AI Brain 账号不可用，请联系管理员确认账号状态。',
+  DINGTALK_AUTH_DENIED: '你取消了钉钉授权。如需绑定，请重新点击“绑定钉钉”。',
+  DINGTALK_BIND_FAILED: '钉钉授权信息获取失败，请稍后重试或联系管理员检查钉钉应用配置。',
+  DINGTALK_CODE_MISSING: '钉钉没有返回授权码，请重新发起绑定。',
+  DINGTALK_STATE_INVALID: '绑定会话已过期，请从个人中心重新点击“绑定钉钉”。',
+  EXTERNAL_IDENTITY_CONFLICT:
+    '这个钉钉账号已经绑定到其他 AI Brain 用户。请先登录原账号解绑，或联系管理员处理。',
+};
+
+function dingtalkBindErrorMessage(code: string) {
+  return DINGTALK_BIND_ERROR_MESSAGES[code] ?? `绑定失败，请联系管理员处理。错误码：${code}`;
+}
+
 function bindMessageFromQuery() {
   const params = new URLSearchParams(window.location.search);
   const bound = params.get('dingtalk_bound');
@@ -55,7 +69,7 @@ function bindMessageFromQuery() {
     return { type: 'success' as const, text: '钉钉账号已绑定' };
   }
   if (error) {
-    return { type: 'error' as const, text: `钉钉绑定失败：${error}` };
+    return { type: 'error' as const, text: `钉钉绑定失败：${dingtalkBindErrorMessage(error)}` };
   }
   return undefined;
 }

@@ -17,6 +17,7 @@
 - 钉钉官方 MCP 插件增强授权配置向导、`tools/list` 动态能力发现、高风险动作治理、插件健康看板和 AI Brain 业务场景模板，并新增动态发现与钉钉观测 API。
 
 ### Fixed
+- 钉钉账号自助绑定失败时，前端会将 `EXTERNAL_IDENTITY_CONFLICT` 等 OAuth 绑定错误码翻译为可理解的中文提示，明确是否为账号已绑定、会话过期或用户取消授权等场景。
 - 钉钉未绑定身份自动开户不再直接签发登录态；首次登录只创建待审批 viewer 用户并返回 `DINGTALK_ACCOUNT_PENDING_APPROVAL`，管理员激活后才允许登录。
 - 产品配置 Git 资源编辑时，手工修改 Project Path 现在会持久化并回显；只修改 Remote URL 且未手工覆盖 Project Path 时，后端会重新推导仓库路径。
 - 定时作业手动触发返回 `queued/running` 运行记录后，前端会立即切到“运行记录”并置顶展示新 run，不再等待全量列表刷新完成。

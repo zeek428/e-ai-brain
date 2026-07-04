@@ -158,4 +158,59 @@ describe('AccountProfilePage', () => {
       ),
     );
   });
+
+  it('shows a readable DingTalk binding conflict message', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/account/profile?dingtalk_bind_error=EXTERNAL_IDENTITY_CONFLICT',
+    );
+    window.localStorage.setItem('ai_brain_access_token', 'token-viewer');
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const path = String(input);
+      if (path === '/api/auth/profile') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              display_name: 'Viewer',
+              dingtalk_binding: { bound: false },
+              email: 'viewer@example.com',
+              id: 'user_viewer',
+              mobile: '',
+              roles: ['viewer'],
+              username: 'viewer@example.com',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      if (path === '/api/auth/providers') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              dingtalk: { enabled: true },
+              local: { enabled: true },
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AccountProfilePage />);
+
+    expect(
+      await screen.findByText(/这个钉钉账号已经绑定到其他 AI Brain 用户/),
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/account/profile');
+    expect(window.location.search).toBe('');
+  });
 });
