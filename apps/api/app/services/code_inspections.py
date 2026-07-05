@@ -44,6 +44,7 @@ from app.services.code_inspection_read_models import (
 )
 from app.services.plugin_result_mapping import json_path_value
 from app.services.product_scope import user_can_read_product
+from app.services.system_settings import send_system_email
 
 
 def now_iso() -> str:
@@ -785,10 +786,31 @@ def create_code_inspection_notifications(
     recipients = action.get("recipients") if isinstance(action.get("recipients"), list) else []
     for channel in action.get("channels") or []:
         notification_id = current_store.new_id("code_inspection_notification")
+        response_summary: dict[str, Any] = {"status": "recorded"}
+        if channel == "email":
+            response_summary = send_system_email(
+                current_store,
+                body=(
+                    f"代码巡检报告 {report['id']} 已完成。\n"
+                    f"风险等级: {report['risk_level']}\n"
+                    f"问题数: {report['finding_count']}\n"
+                    f"严重问题数: {report['severe_finding_count']}"
+                ),
+                recipients=[str(recipient) for recipient in recipients],
+                subject=(
+                    f"[AI Brain] 代码巡检问题通知 "
+                    f"{report['id']} · {report['risk_level']}"
+                ),
+            )
         target = (
             str(action.get("webhook_url"))
             if channel == "dingtalk" and action.get("webhook_url")
             else ",".join(str(recipient) for recipient in recipients)
+        )
+        status = str(
+            response_summary.get("delivery_status")
+            or response_summary.get("status")
+            or "recorded",
         )
         notification = {
             "channel": str(channel),
@@ -804,8 +826,8 @@ def create_code_inspection_notifications(
                 "recipients": recipients,
                 "webhook_url": action.get("webhook_url"),
             },
-            "response_summary": {"status": "recorded"},
-            "status": "recorded",
+            "response_summary": response_summary,
+            "status": status,
             "target": target,
             "updated_at": now,
         }

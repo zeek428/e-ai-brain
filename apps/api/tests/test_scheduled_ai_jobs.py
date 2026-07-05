@@ -4539,6 +4539,49 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
         "urlopen",
         online_log_model_response,
     )
+    sent_messages: list[dict[str, object]] = []
+
+    class FakeSMTP:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            sent_messages.append({"host": host, "port": port, "timeout": timeout})
+
+        def __enter__(self) -> "FakeSMTP":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def login(self, username: str, password: str) -> None:
+            sent_messages.append({"password": password, "username": username})
+
+        def send_message(self, message: object) -> dict:
+            sent_messages.append(
+                {
+                    "from": message["From"],
+                    "subject": message["Subject"],
+                    "to": message["To"],
+                },
+            )
+            return {}
+
+    monkeypatch.setattr("app.services.system_settings.smtplib.SMTP_SSL", FakeSMTP)
+    email_settings_response = client.patch(
+        "/api/system/settings",
+        json={
+            "email_delivery": {
+                "default_from": "noreply@example.com",
+                "enabled": True,
+                "sender_email": "noreply@example.com",
+                "smtp_host": "smtp.example.com",
+                "smtp_password": "super-secret-password",
+                "smtp_port": 465,
+                "smtp_tls": "ssl",
+                "smtp_username": "noreply@example.com",
+            },
+        },
+        headers=admin_headers,
+    )
+    assert email_settings_response.status_code == 200
 
     plugin = client.post(
         "/api/system/plugins",
@@ -4649,8 +4692,13 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
     assert execution_nodes["skill_processing"]["output"]["anomaly_count"] == 1
     assert model_gateway_call_count == 1
     assert execution_nodes["result_action"]["write_target"] == "email_notifications"
-    assert execution_nodes["result_action"]["feedback"]["delivery_status"] == "recorded"
+    assert execution_nodes["result_action"]["feedback"]["delivery_status"] == "sent"
+    assert execution_nodes["result_action"]["feedback"]["message_id"].endswith("@example.com>")
     assert execution_nodes["result_action"]["feedback"]["recipients"] == ["ops@example.com"]
+    assert {"password": "super-secret-password", "username": "noreply@example.com"} in sent_messages
+    sent_call = next(item for item in sent_messages if item.get("to") == "ops@example.com")
+    assert sent_call["from"] == "noreply@example.com"
+    assert sent_call["subject"] == "发现 1 条高风险线上日志异常。"
     assert execution_nodes["result_actions"][0]["type"] == "send_notification"
     assert result_summary["result_action_policy"] == {
         "failure_policy": "continue_on_error",
@@ -4785,7 +4833,7 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
     ]
     assert result_action_preview["safe_next_action"] == "confirm_single_node_rerun"
     assert result_action_preview["snapshot_preview"]["output"]["value"]["delivery_status"] == (
-        "recorded"
+        "sent"
     )
 
     result_action_rerun_response = client.post(
@@ -4831,7 +4879,7 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
         result_action_rerun_summary["execution_nodes"]["result_action"]["feedback"][
             "delivery_status"
         ]
-        == "recorded"
+        == "sent"
     )
     result_action_records_response = client.get(
         f"/api/system/result-write-records?scheduled_job_run_id={result_action_rerun['id']}",
@@ -4841,7 +4889,7 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
     result_action_records = result_action_records_response.json()["data"]
     assert result_action_records["total"] == 1
     assert result_action_records["items"][0]["write_target"] == "email_notifications"
-    assert result_action_records["items"][0]["summary_fields"]["delivery_status"] == "recorded"
+    assert result_action_records["items"][0]["summary_fields"]["delivery_status"] == "sent"
 
     skill_node_preview_response = client.get(
         f"/api/system/scheduled-job-runs/{run['id']}/trace-nodes/skill_processing/rerun-preview",
@@ -4941,7 +4989,7 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
     result_record = result_records["items"][0]
     assert result_record["write_target"] == "email_notifications"
     assert result_record["write_target_label"] == "邮件通知记录"
-    assert result_record["summary_fields"]["delivery_status"] == "recorded"
+    assert result_record["summary_fields"]["delivery_status"] == "sent"
     assert result_record["summary_fields"]["subject"] == "发现 1 条高风险线上日志异常。"
     assert result_record["summary_fields"]["sample_records"] == ["ops@example.com"]
 

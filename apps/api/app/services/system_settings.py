@@ -14,6 +14,7 @@ from app.api.deps import api_error
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SMTP_TLS_OPTIONS = {"none", "ssl", "starttls"}
 SMTP_TEST_TIMEOUT_SECONDS = 15
+SMTP_SEND_TIMEOUT_SECONDS = 15
 
 
 def _now_iso() -> str:
@@ -186,6 +187,118 @@ def _email_delivery_configured(settings: dict[str, Any]) -> bool:
         and delivery.get("smtp_username")
         and (delivery.get("smtp_password") or delivery.get("smtp_secret_ref"))
     )
+
+
+def _settings_for_email_delivery(current_store: Any) -> dict[str, Any]:
+    repository = _settings_repository(current_store)
+    return (
+        repository.get_system_settings()
+        if repository is not None
+        else dict(_memory_settings(current_store))
+    )
+
+
+def _configured_email_delivery(current_store: Any) -> dict[str, Any]:
+    settings = _settings_for_email_delivery(current_store)
+    delivery = settings.get("email_delivery")
+    if not isinstance(delivery, dict) or not _email_delivery_configured(settings):
+        raise api_error(400, "VALIDATION_ERROR", "Email delivery is not fully configured")
+    return delivery
+
+
+def _send_email_message(
+    delivery: dict[str, Any],
+    message: EmailMessage,
+    *,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    host = str(delivery["smtp_host"])
+    port = int(delivery["smtp_port"])
+    password = _smtp_password_from_delivery(delivery)
+    smtp_tls = str(delivery.get("smtp_tls") or "starttls")
+    username = str(delivery["smtp_username"])
+    refused_recipients: dict[str, tuple[int, bytes]] = {}
+    try:
+        if smtp_tls == "ssl":
+            with smtplib.SMTP_SSL(host, port, timeout=timeout_seconds) as smtp:
+                smtp.login(username, password)
+                refused_recipients = smtp.send_message(message)
+        else:
+            with smtplib.SMTP(host, port, timeout=timeout_seconds) as smtp:
+                if smtp_tls == "starttls":
+                    smtp.starttls()
+                smtp.login(username, password)
+                refused_recipients = smtp.send_message(message)
+    except (OSError, TimeoutError, smtplib.SMTPException) as exc:
+        raise api_error(
+            502,
+            "EMAIL_DELIVERY_FAILED",
+            "Email delivery failed",
+            details={"error_type": exc.__class__.__name__},
+        ) from exc
+    if refused_recipients:
+        raise api_error(
+            502,
+            "EMAIL_DELIVERY_FAILED",
+            "Email delivery failed",
+            details={
+                "error": "SMTP refused one or more recipients",
+                "error_type": "SMTPRecipientsRefused",
+                "refused_recipients": sorted(refused_recipients),
+            },
+        )
+    return {
+        "smtp_host": host,
+        "smtp_port": port,
+        "smtp_tls": smtp_tls,
+    }
+
+
+def send_system_email(
+    current_store: Any,
+    *,
+    body: str,
+    recipients: list[str],
+    subject: str,
+) -> dict[str, Any]:
+    delivery = _configured_email_delivery(current_store)
+    normalized_recipients = [
+        recipient
+        for recipient in (
+            _normalize_optional_email(item, "recipient_email")
+            for item in recipients
+        )
+        if recipient
+    ]
+    if not normalized_recipients:
+        raise api_error(400, "VALIDATION_ERROR", "recipient_email is required")
+
+    sent_at = datetime.now(UTC)
+    sender_email = str(delivery["sender_email"])
+    message = EmailMessage()
+    message["From"] = str(delivery["default_from"])
+    message["To"] = ", ".join(normalized_recipients)
+    message["Date"] = format_datetime(sent_at)
+    message["Message-ID"] = make_msgid(domain=sender_email.split("@")[-1])
+    if delivery.get("reply_to"):
+        message["Reply-To"] = str(delivery["reply_to"])
+    message["Subject"] = str(subject or "AI Brain 定时作业结果")
+    message.set_content(body)
+
+    smtp_summary = _send_email_message(
+        delivery,
+        message,
+        timeout_seconds=SMTP_SEND_TIMEOUT_SECONDS,
+    )
+    return {
+        "delivery_status": "sent",
+        "message_id": message["Message-ID"],
+        "recipients": normalized_recipients,
+        "sent_at": sent_at.isoformat(),
+        "sender_email": sender_email,
+        "subject": message["Subject"],
+        **smtp_summary,
+    }
 
 
 def _public_settings(settings: dict[str, Any]) -> dict[str, Any]:

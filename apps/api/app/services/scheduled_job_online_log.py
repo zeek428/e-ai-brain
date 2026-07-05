@@ -99,6 +99,7 @@ def run_online_log_ai_analysis_job(
     if not isinstance(anomalies, list):
         raise api_error(400, "PLUGIN_RESULT_INVALID", "Mapped anomalies result must be a list")
     result_actions, action_records_imported = execute_generic_result_actions(
+        current_store=current_store,
         job=job,
         output_json=processed_json,
         output_mapping=output_mapping,

@@ -1219,6 +1219,7 @@ def _rerun_generic_result_action_trace_node(
     records_imported = 0
     try:
         result_actions, records_imported = execute_generic_result_actions(
+            current_store=current_store,
             job=job,
             output_json=source_output_json,
             output_mapping=output_mapping,

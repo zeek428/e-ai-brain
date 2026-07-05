@@ -124,6 +124,34 @@ type ConnectionSchemaFieldsProps = {
   systemVariableOptions: SystemVariableOption[];
 };
 
+const schemaSectionGridStyle = {
+  alignItems: 'start',
+  display: 'grid',
+  gap: '12px 16px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+  width: '100%',
+} as const;
+
+const schemaFieldShellStyle = {
+  alignItems: 'flex-start',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 8,
+  minWidth: 0,
+  width: '100%',
+} as const;
+
+const schemaFieldItemStyle = {
+  flex: '1 1 220px',
+  marginBottom: 8,
+  minWidth: 0,
+} as const;
+
+const schemaControlStyle = {
+  maxWidth: '100%',
+  width: '100%',
+} as const;
+
 export function ConnectionSchemaFields({
   pluginCode,
   schema,
@@ -174,7 +202,7 @@ export function ConnectionSchemaFields({
         return (
           <Space key={section.key} orientation="vertical" size={8} style={{ width: '100%' }}>
             <div style={{ color: '#53627a', fontWeight: 600 }}>{section.title}</div>
-            <Space wrap align="start">
+            <div data-testid={`connection-schema-section-${section.key}`} style={schemaSectionGridStyle}>
               {visibleFields.map((field) => {
                 const rules = [
                   ...(field.required ? [{ required: true, message: `请输入${field.label}` }] : []),
@@ -208,37 +236,33 @@ export function ConnectionSchemaFields({
                     mode="multiple"
                     options={schemaOptions}
                     placeholder={field.placeholder || field.label}
-                    style={{ minWidth: 320 }}
+                    style={schemaControlStyle}
                   />
                 ) : field.type === 'select' && schemaOptions.length > 0 ? (
                   <Select
                     allowClear={!field.required}
                     options={schemaOptions}
                     placeholder={field.placeholder || field.label}
-                    style={{ width: 240 }}
+                    style={schemaControlStyle}
                   />
                 ) : field.type === 'number' ? (
-                  <InputNumber placeholder={field.placeholder || field.label} style={{ width: 240 }} />
+                  <InputNumber placeholder={field.placeholder || field.label} style={schemaControlStyle} />
                 ) : field.type === 'boolean' ? (
                   <Switch />
                 ) : (
                   <Input
                     placeholder={field.placeholder || field.label}
-                    style={{
-                      width: ['github_repository_url', 'gitlab_project_url'].includes(field.type ?? '')
-                        ? 420
-                        : 240,
-                    }}
+                    style={schemaControlStyle}
                   />
                 );
                 return (
-                  <Space key={field.key} align="baseline" size={6}>
+                  <div key={field.key} style={schemaFieldShellStyle}>
                     <Form.Item
                       extra={field.description}
                       label={field.label}
                       name={fieldName}
                       rules={rules.length ? rules : undefined}
-                      style={{ marginBottom: 8 }}
+                      style={schemaFieldItemStyle}
                       valuePropName={field.type === 'boolean' ? 'checked' : 'value'}
                     >
                       {control}
@@ -248,7 +272,7 @@ export function ConnectionSchemaFields({
                         allowClear
                         options={systemVariableOptions}
                         placeholder="系统变量"
-                        style={{ width: 190, marginTop: 30 }}
+                        style={{ flex: '0 1 180px', marginTop: 30, minWidth: 150 }}
                         onChange={(value) => {
                           if (value) {
                             form.setFieldValue(fieldName, value);
@@ -256,10 +280,10 @@ export function ConnectionSchemaFields({
                         }}
                       />
                     ) : null}
-                  </Space>
+                  </div>
                 );
               })}
-            </Space>
+            </div>
           </Space>
         );
       })}

@@ -90,6 +90,7 @@ def run_plugin_action_ai_processing_job(
     )
     processed_json = ai_processing["output_json"]
     result_actions, action_records_imported = execute_generic_result_actions(
+        current_store=current_store,
         job=job,
         output_json=processed_json,
         output_mapping=output_mapping,

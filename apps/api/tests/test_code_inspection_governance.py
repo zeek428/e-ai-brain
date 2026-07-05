@@ -679,9 +679,52 @@ def create_scoped_user(
     return auth_headers(username, "password123")
 
 
-def test_scheduled_repository_inspection_runs_multiple_result_actions():
+def test_scheduled_repository_inspection_runs_multiple_result_actions(monkeypatch):
     app.state.store.reset()
     headers = auth_headers()
+    sent_messages: list[dict[str, object]] = []
+
+    class FakeSMTP:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            sent_messages.append({"host": host, "port": port, "timeout": timeout})
+
+        def __enter__(self) -> "FakeSMTP":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def login(self, username: str, password: str) -> None:
+            sent_messages.append({"password": password, "username": username})
+
+        def send_message(self, message: object) -> dict:
+            sent_messages.append(
+                {
+                    "from": message["From"],
+                    "subject": message["Subject"],
+                    "to": message["To"],
+                },
+            )
+            return {}
+
+    monkeypatch.setattr("app.services.system_settings.smtplib.SMTP_SSL", FakeSMTP)
+    email_settings_response = client.patch(
+        "/api/system/settings",
+        json={
+            "email_delivery": {
+                "default_from": "noreply@example.com",
+                "enabled": True,
+                "sender_email": "noreply@example.com",
+                "smtp_host": "smtp.example.com",
+                "smtp_password": "super-secret-password",
+                "smtp_port": 465,
+                "smtp_tls": "ssl",
+                "smtp_username": "noreply@example.com",
+            },
+        },
+        headers=headers,
+    )
+    assert email_settings_response.status_code == 200
     product = create_product(headers)
     repository = create_repository(headers, product["id"])
     _, connection, action = create_scanner_plugin(headers, repository["id"])
@@ -795,6 +838,16 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
     assert detail_payload["findings"][0]["committer_email"] == "alice@example.com"
     assert detail_payload["findings"][0]["created_task_id"].startswith("task_")
     assert detail_payload["notifications"][0]["channel"] in {"email", "dingtalk"}
+    email_notification = next(
+        item for item in detail_payload["notifications"] if item["channel"] == "email"
+    )
+    assert email_notification["status"] == "sent"
+    assert email_notification["response_summary"]["delivery_status"] == "sent"
+    assert email_notification["response_summary"]["message_id"].endswith("@example.com>")
+    assert {"password": "super-secret-password", "username": "noreply@example.com"} in sent_messages
+    sent_call = next(item for item in sent_messages if item.get("to") == "quality@example.com")
+    assert sent_call["from"] == "noreply@example.com"
+    assert str(sent_call["subject"]).startswith("[AI Brain] 代码巡检问题通知")
 
     bugs = client.get(
         f"/api/bugs?product_id={product['id']}&source=code_inspection",

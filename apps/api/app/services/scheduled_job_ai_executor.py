@@ -457,6 +457,7 @@ def _generic_ai_executor_result_summary(
     source_row_count: int,
 ) -> tuple[dict[str, Any], int]:
     result_actions, action_records_imported = execute_generic_result_actions(
+        current_store=current_store,
         job=job,
         output_json=output_json,
         output_mapping=output_mapping,

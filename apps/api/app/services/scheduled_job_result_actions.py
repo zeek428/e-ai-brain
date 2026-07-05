@@ -13,6 +13,7 @@ from app.services.result_write_targets import result_write_target_label
 from app.services.scheduled_job_common import ensure_enum
 from app.services.scheduled_job_config import scheduled_job_result_action_policy
 from app.services.scheduled_job_runtime import exception_error_code_and_message
+from app.services.system_settings import send_system_email
 
 GENERIC_RESULT_ACTION_TYPES = {"save_scheduled_job_result", "send_notification"}
 GENERIC_NOTIFICATION_CHANNELS = {"dingtalk", "email"}
@@ -47,6 +48,7 @@ def default_generic_result_actions(actions: list[dict[str, Any]]) -> list[dict[s
 
 def execute_generic_result_actions(
     *,
+    current_store: Any,
     job: dict[str, Any],
     output_json: dict[str, Any],
     output_mapping: dict[str, Any],
@@ -61,6 +63,7 @@ def execute_generic_result_actions(
             result = _generic_result_action_node(
                 action=action,
                 action_type=action_type,
+                current_store=current_store,
                 output_json=output_json,
                 output_mapping=output_mapping,
             )
@@ -166,6 +169,7 @@ def _generic_result_action_node(
     *,
     action: dict[str, Any],
     action_type: str,
+    current_store: Any,
     output_json: dict[str, Any],
     output_mapping: dict[str, Any],
 ) -> dict[str, Any]:
@@ -183,11 +187,24 @@ def _generic_result_action_node(
     }
     if action_type == "send_notification":
         subject = action.get("subject") or output_json.get("summary") or "AI Brain 定时作业结果"
+        recipients = action.get("recipients") or []
+        channels = action.get("channels") or []
+        email_delivery: dict[str, Any] | None = None
+        if "email" in channels:
+            email_delivery = send_system_email(
+                current_store,
+                body=_notification_body(output_json),
+                recipients=recipients,
+                subject=str(subject),
+            )
         feedback.update(
             {
-                "channels": action.get("channels") or [],
-                "delivery_status": "recorded",
-                "recipients": action.get("recipients") or [],
+                "channels": channels,
+                "delivery_status": (
+                    email_delivery["delivery_status"] if email_delivery else "recorded"
+                ),
+                "message_id": email_delivery.get("message_id") if email_delivery else None,
+                "recipients": email_delivery.get("recipients") if email_delivery else recipients,
                 "sample_records": [compact_preview_value(output_json)],
                 "subject": subject,
                 "webhook_configured": bool(action.get("webhook_url")),
@@ -199,7 +216,8 @@ def _generic_result_action_node(
         feedback["write_preview"] = {
             **write_preview,
             "candidate_count": records_imported,
-            "delivery_status": "recorded",
+            "delivery_id": email_delivery.get("message_id") if email_delivery else None,
+            "delivery_status": feedback["delivery_status"],
             "records_imported": records_imported,
             "sample_records": feedback["sample_records"],
             "subject": subject,
@@ -224,3 +242,10 @@ def _write_target_for_action(action_type: str) -> str:
     if action_type == "send_notification":
         return "email_notifications"
     return "scheduled_job_result"
+
+
+def _notification_body(output_json: dict[str, Any]) -> str:
+    summary = output_json.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return summary.strip()
+    return str(compact_preview_value(output_json))
