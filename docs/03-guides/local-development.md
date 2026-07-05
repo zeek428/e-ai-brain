@@ -96,7 +96,7 @@ curl http://localhost:8000/api/auth/providers
 
 真实 `.env` 不提交到仓库。
 
-内置种子账号默认仅供自动化测试使用。本地开发如需临时使用种子账号，必须在受信任的本机环境显式设置 `ALLOW_SEEDED_USERS=true` 并重启 API；通过 ngrok、花生壳、frp 或局域网 IP 暴露服务时不要启用。非本地/非测试环境会拒绝占位 `APP_SECRET_KEY`、过短密钥和 `ALLOW_SEEDED_USERS=true`。前端不会自动使用种子账号登录，若要在本地直接调用管理列表 API，可通过登录接口获取 token 后写入浏览器 `localStorage.ai_brain_access_token`。
+内置种子账号默认仅供自动化测试使用。本地开发如需临时使用默认种子密码，必须在受信任的本机环境显式设置 `ALLOW_SEEDED_USERS=true` 并重启 API；通过 ngrok、花生壳、frp 或局域网 IP 暴露服务时不要启用。非本地/非测试环境会拒绝占位 `APP_SECRET_KEY`、过短密钥和 `ALLOW_SEEDED_USERS=true`。通过公网域名访问时，应使用真实用户密码或钉钉登录；历史种子用户名如果已经改成真实非默认密码，可按普通数据库用户登录。前端不会自动使用种子账号登录，若要在本地直接调用管理列表 API，可通过登录接口获取 token 后写入浏览器 `localStorage.ai_brain_access_token`。
 
 ### 网络受限环境
 

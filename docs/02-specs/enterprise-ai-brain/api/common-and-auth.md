@@ -322,7 +322,7 @@ GET /api/long-memory/status
 POST /api/auth/login
 ```
 
-当前 MVP 内置种子账号默认仅用于自动化测试；本地开发如需临时启用，必须显式设置 `ALLOW_SEEDED_USERS=true`。非本地/非测试环境默认拒绝种子账号登录，并在启动时拒绝 `ALLOW_SEEDED_USERS=true`、占位 `APP_SECRET_KEY` 或过短密钥。
+当前 MVP 内置种子账号默认仅用于自动化测试；本地开发如需临时启用默认种子密码，必须显式设置 `ALLOW_SEEDED_USERS=true`。非本地/非测试环境默认拒绝默认种子密码登录，并在启动时拒绝 `ALLOW_SEEDED_USERS=true`、占位 `APP_SECRET_KEY` 或过短密钥。若 `admin@example.com` 等历史种子用户名已在用户管理中改成真实非默认密码，应按普通数据库用户登录，不应被默认种子密码门禁拦截。
 
 请求体：
 

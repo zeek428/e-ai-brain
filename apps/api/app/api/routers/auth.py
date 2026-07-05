@@ -173,6 +173,13 @@ def _seeded_users_enabled() -> bool:
     return settings.is_test_env or settings.allow_seeded_users
 
 
+def _is_disabled_seeded_default_login(username: str, password: str) -> bool:
+    seeded_user = SEEDED_USERS.get(username)
+    if seeded_user is None or _seeded_users_enabled():
+        return False
+    return verify_password(password, seeded_user["password_hash"])
+
+
 def _issue_access_token(user: dict[str, Any]) -> str:
     return create_access_token(
         {"sub": user["id"], "username": user["username"], "roles": user["roles"]},
@@ -562,12 +569,6 @@ def _callback_error_redirect(
 
 @router.post("/login")
 def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
-    if payload.username in SEEDED_USERS and not _seeded_users_enabled():
-        raise api_error(
-            403,
-            "DEFAULT_CREDENTIALS_DISABLED",
-            "Seeded local users are disabled outside local environments",
-        )
     user = request.app.state.user_repository.get_by_username(payload.username)
     if user is None:
         raise api_error(401, "INVALID_CREDENTIALS", "Invalid username or password")
@@ -575,6 +576,12 @@ def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
         raise api_error(403, "PASSWORD_LOGIN_DISABLED", "Password login is not configured")
     if not verify_password(payload.password, user["password_hash"]):
         raise api_error(401, "INVALID_CREDENTIALS", "Invalid username or password")
+    if _is_disabled_seeded_default_login(payload.username, payload.password):
+        raise api_error(
+            403,
+            "DEFAULT_CREDENTIALS_DISABLED",
+            "Seeded default credentials are disabled unless explicitly enabled for local testing",
+        )
 
     return _issue_login_response(request, user)
 

@@ -127,7 +127,10 @@ export type SystemEmailDeliveryTestPayload = {
 
 export type SystemEmailDeliveryTestResult = {
   delivery_status: string;
+  message_id?: string;
+  message_subject?: string;
   recipient_email: string;
+  sent_at?: string;
   smtp_host: string;
   smtp_port: number;
   smtp_tls: string;

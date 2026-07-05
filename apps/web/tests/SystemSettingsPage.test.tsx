@@ -80,7 +80,7 @@ describe('SystemSettingsPage', () => {
     expect(screen.getByText('2026-07-03 11:00')).toBeInTheDocument();
   });
 
-  it('edits and tests email delivery settings without echoing the password', async () => {
+  it('saves current email delivery settings before sending a test email', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
         headers: { 'Content-Type': 'application/json' },
@@ -106,6 +106,8 @@ describe('SystemSettingsPage', () => {
               smtp_username: 'noreply@example.com',
             },
             email_delivery_configured: true,
+            test_recipient_email: null,
+            test_recipient_email_configured: false,
             updated_at: '2026-07-03T02:30:00+00:00',
             updated_by: 'user_admin',
           },
@@ -114,6 +116,7 @@ describe('SystemSettingsPage', () => {
       if (String(input) === '/api/system/settings' && init?.method === 'PATCH') {
         const body = JSON.parse(String(init.body));
         expect(body.test_recipient_email).toBe('qa@example.com');
+        expect(body.email_delivery).not.toHaveProperty('smtp_secret_ref');
         expect(body.email_delivery).toMatchObject({
           default_from: 'alerts@example.com',
           enabled: true,
@@ -134,6 +137,8 @@ describe('SystemSettingsPage', () => {
               smtp_password_configured: true,
             },
             email_delivery_configured: true,
+            test_recipient_email: body.test_recipient_email,
+            test_recipient_email_configured: true,
             updated_at: '2026-07-03T03:00:00+00:00',
             updated_by: 'user_admin',
           },
@@ -147,7 +152,9 @@ describe('SystemSettingsPage', () => {
         return jsonResponse({
           data: {
             delivery_status: 'sent',
+            message_subject: '[AI Brain] 邮件发送配置测试 test1234',
             recipient_email: 'qa@example.com',
+            sent_at: '2026-07-03T03:00:01+00:00',
             smtp_host: 'smtp.example.com',
             smtp_port: 587,
             smtp_tls: 'starttls',
@@ -168,6 +175,7 @@ describe('SystemSettingsPage', () => {
       'placeholder',
       '已配置，留空则继续沿用',
     );
+    expect(screen.queryByLabelText('SMTP 密钥引用')).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('发件邮箱'), {
       target: { value: 'alerts@example.com' },
@@ -189,16 +197,6 @@ describe('SystemSettingsPage', () => {
     fireEvent.change(screen.getByLabelText('测试收件人'), {
       target: { value: 'qa@example.com' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
-        '/api/system/settings',
-        'PATCH',
-      ]),
-    );
-    expect(screen.getByLabelText('测试收件人')).toHaveValue('qa@example.com');
-    expect(screen.getByLabelText('测试收件人')).not.toHaveValue('alerts@example.com');
     fireEvent.click(screen.getByRole('button', { name: /发送测试邮件/ }));
 
     await waitFor(() =>
@@ -207,6 +205,14 @@ describe('SystemSettingsPage', () => {
         'POST',
       ]),
     );
+    const methods = fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET']);
+    expect(methods).toEqual([
+      ['/api/system/settings', 'GET'],
+      ['/api/system/settings', 'PATCH'],
+      ['/api/system/settings/email/test', 'POST'],
+    ]);
+    expect(screen.getByLabelText('测试收件人')).toHaveValue('qa@example.com');
+    expect(screen.getByLabelText('测试收件人')).not.toHaveValue('alerts@example.com');
   });
 
   it('does not default the test recipient to the sender email', async () => {
@@ -257,6 +263,27 @@ describe('SystemSettingsPage', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       if (String(input) === '/api/system/settings' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse({
+          data: {
+            admin_email: 'ops@example.com',
+            admin_email_configured: true,
+            email_delivery: {
+              default_from: 'noreply@example.com',
+              enabled: true,
+              sender_email: 'noreply@example.com',
+              smtp_host: 'smtp.example.com',
+              smtp_password_configured: true,
+              smtp_port: 465,
+              smtp_tls: 'ssl',
+              smtp_username: 'noreply@example.com',
+            },
+            email_delivery_configured: true,
+            test_recipient_email: 'qa@example.com',
+            test_recipient_email_configured: true,
+          },
+        });
+      }
+      if (String(input) === '/api/system/settings' && init?.method === 'PATCH') {
         return jsonResponse({
           data: {
             admin_email: 'ops@example.com',

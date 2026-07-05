@@ -173,6 +173,8 @@ def test_email_delivery_test_uses_smtp_configuration_without_echoing_secret(monk
             calls.append(
                 {
                     "from": message["From"],
+                    "message_id": message["Message-ID"],
+                    "subject": message["Subject"],
                     "reply_to": message["Reply-To"],
                     "to": message["To"],
                 }
@@ -188,20 +190,21 @@ def test_email_delivery_test_uses_smtp_configuration_without_echoing_secret(monk
 
     assert response.status_code == 200
     payload = response.json()["data"]
-    assert payload == {
-        "delivery_status": "sent",
-        "recipient_email": "qa@example.com",
-        "smtp_host": "smtp.example.com",
-        "smtp_port": 465,
-        "smtp_tls": "ssl",
-    }
+    assert payload["delivery_status"] == "sent"
+    assert payload["recipient_email"] == "qa@example.com"
+    assert payload["smtp_host"] == "smtp.example.com"
+    assert payload["smtp_port"] == 465
+    assert payload["smtp_tls"] == "ssl"
+    assert payload["message_id"].endswith("@example.com>")
+    assert payload["message_subject"].startswith("[AI Brain] 邮件发送配置测试 ")
+    assert payload["sent_at"]
     assert {"host": "smtp.example.com", "port": 465, "timeout": 15} in calls
     assert {"password": "super-secret-password", "username": "noreply@example.com"} in calls
-    assert {
-        "from": "noreply@example.com",
-        "reply_to": "support@example.com",
-        "to": "qa@example.com",
-    } in calls
+    sent_call = next(call for call in calls if call.get("to") == "qa@example.com")
+    assert sent_call["from"] == "noreply@example.com"
+    assert sent_call["reply_to"] == "support@example.com"
+    assert str(sent_call["subject"]).startswith("[AI Brain] 邮件发送配置测试 ")
+    assert str(sent_call["message_id"]).endswith("@example.com>")
     assert "super-secret-password" not in json.dumps(payload, ensure_ascii=False)
 
 
@@ -297,6 +300,57 @@ def test_email_delivery_test_returns_stable_error_for_network_failures(monkeypat
     assert detail["code"] == "EMAIL_DELIVERY_TEST_FAILED"
     assert detail["error_type"] == "ConnectionResetError"
     assert "super-secret-password" not in json.dumps(detail, ensure_ascii=False)
+
+
+def test_email_delivery_test_fails_when_smtp_refuses_recipient(monkeypatch):
+    headers = auth_headers()
+    client.patch(
+        "/api/system/settings",
+        headers=headers,
+        json={
+            "admin_email": "ops@example.com",
+            "email_delivery": {
+                "default_from": "noreply@example.com",
+                "enabled": True,
+                "sender_email": "noreply@example.com",
+                "smtp_host": "smtp.example.com",
+                "smtp_password": "super-secret-password",
+                "smtp_port": 465,
+                "smtp_tls": "ssl",
+                "smtp_username": "noreply@example.com",
+            },
+        },
+    )
+
+    class RefusingSMTP:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            pass
+
+        def __enter__(self) -> RefusingSMTP:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def login(self, username: str, password: str) -> None:
+            return None
+
+        def send_message(self, message: object) -> dict[str, tuple[int, bytes]]:
+            return {"qa@example.com": (550, b"recipient rejected")}
+
+    monkeypatch.setattr("app.services.system_settings.smtplib.SMTP_SSL", RefusingSMTP)
+
+    response = client.post(
+        "/api/system/settings/email/test",
+        headers=headers,
+        json={"recipient_email": "qa@example.com"},
+    )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail["code"] == "EMAIL_DELIVERY_TEST_FAILED"
+    assert detail["error_type"] == "SMTPRecipientsRefused"
+    assert detail["refused_recipients"] == ["qa@example.com"]
 
 
 def test_admin_email_must_be_valid_when_present():

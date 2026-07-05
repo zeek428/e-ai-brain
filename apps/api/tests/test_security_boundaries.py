@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 from gitlab_fakes import install_real_gitlab_api_stub
 
+from app.core.security import hash_password
+from app.core.users import MemoryUserRepository
 from app.main import app, settings
 
 client = TestClient(app)
@@ -2054,6 +2056,44 @@ def test_seeded_default_users_require_explicit_opt_in_outside_tests():
     assert disabled.status_code == 403
     assert disabled.json()["detail"]["code"] == "DEFAULT_CREDENTIALS_DISABLED"
     assert enabled.status_code == 200
+
+
+def test_seeded_username_can_login_with_real_non_default_password():
+    original_env = settings.app_env
+    original_allow_seeded_users = settings.allow_seeded_users
+    original_users = app.state.user_repository
+    settings.app_env = "local"
+    settings.allow_seeded_users = False
+    app.state.user_repository = MemoryUserRepository(
+        {
+            "admin@example.com": {
+                "display_name": "Real Admin",
+                "id": "user_admin",
+                "password_hash": hash_password("real-admin-secret", salt="real-admin-salt"),
+                "password_login_enabled": True,
+                "roles": ["admin"],
+                "status": "active",
+                "username": "admin@example.com",
+            }
+        }
+    )
+    try:
+        default_password = client.post(
+            "/api/auth/login",
+            json={"username": "admin@example.com", "password": "admin123"},
+        )
+        real_password = client.post(
+            "/api/auth/login",
+            json={"username": "admin@example.com", "password": "real-admin-secret"},
+        )
+    finally:
+        settings.app_env = original_env
+        settings.allow_seeded_users = original_allow_seeded_users
+        app.state.user_repository = original_users
+
+    assert default_password.status_code == 401
+    assert default_password.json()["detail"]["code"] == "INVALID_CREDENTIALS"
+    assert real_password.status_code == 200
 
 
 def test_reviewer_cannot_start_or_read_product_design_tasks_and_reviews():

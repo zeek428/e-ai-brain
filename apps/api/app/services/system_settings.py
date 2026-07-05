@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import smtplib
 from datetime import UTC, datetime
 from email.message import EmailMessage
+from email.utils import format_datetime, make_msgid
 from typing import Any
 
 from app.api.deps import api_error
@@ -346,14 +348,30 @@ def test_email_delivery_response(
     if not recipient:
         raise api_error(400, "VALIDATION_ERROR", "recipient_email is required")
 
+    sent_at = datetime.now(UTC)
+    test_id = secrets.token_hex(4)
+    message_subject = f"[AI Brain] 邮件发送配置测试 {test_id}"
+    sender_email = str(delivery["sender_email"])
+
     message = EmailMessage()
     message["From"] = str(delivery["default_from"])
     message["To"] = recipient
+    message["Date"] = format_datetime(sent_at)
+    message["Message-ID"] = make_msgid(domain=sender_email.split("@")[-1])
     if delivery.get("reply_to"):
         message["Reply-To"] = str(delivery["reply_to"])
-    message["Subject"] = "[AI Brain] 邮件发送配置测试"
+    message["Subject"] = message_subject
     message.set_content(
-        "这是一封 AI Brain 系统设置测试邮件，用于验证 SMTP 发信配置。",
+        "\n".join(
+            [
+                "这是一封 AI Brain 系统设置测试邮件，用于验证 SMTP 发信配置。",
+                "",
+                f"测试编号: {test_id}",
+                f"发送时间(UTC): {sent_at.isoformat()}",
+                f"收件人: {recipient}",
+                f"SMTP 端点: {delivery['smtp_host']}:{delivery['smtp_port']}",
+            ]
+        ),
     )
 
     host = str(delivery["smtp_host"])
@@ -361,17 +379,18 @@ def test_email_delivery_response(
     password = _smtp_password_from_delivery(delivery)
     smtp_tls = str(delivery.get("smtp_tls") or "starttls")
     username = str(delivery["smtp_username"])
+    refused_recipients: dict[str, tuple[int, bytes]] = {}
     try:
         if smtp_tls == "ssl":
             with smtplib.SMTP_SSL(host, port, timeout=SMTP_TEST_TIMEOUT_SECONDS) as smtp:
                 smtp.login(username, password)
-                smtp.send_message(message)
+                refused_recipients = smtp.send_message(message)
         else:
             with smtplib.SMTP(host, port, timeout=SMTP_TEST_TIMEOUT_SECONDS) as smtp:
                 if smtp_tls == "starttls":
                     smtp.starttls()
                 smtp.login(username, password)
-                smtp.send_message(message)
+                refused_recipients = smtp.send_message(message)
     except (OSError, TimeoutError, smtplib.SMTPException) as exc:
         raise api_error(
             502,
@@ -379,10 +398,24 @@ def test_email_delivery_response(
             "Email delivery test failed",
             {"error": str(exc), "error_type": exc.__class__.__name__},
         ) from exc
+    if refused_recipients:
+        raise api_error(
+            502,
+            "EMAIL_DELIVERY_TEST_FAILED",
+            "Email delivery test failed",
+            {
+                "error": "SMTP refused one or more recipients",
+                "error_type": "SMTPRecipientsRefused",
+                "refused_recipients": sorted(refused_recipients),
+            },
+        )
 
     return {
         "delivery_status": "sent",
+        "message_id": str(message["Message-ID"]),
+        "message_subject": message_subject,
         "recipient_email": recipient,
+        "sent_at": sent_at.isoformat(),
         "smtp_host": host,
         "smtp_port": port,
         "smtp_tls": smtp_tls,

@@ -66,7 +66,6 @@ const buildEmailDeliveryPayload = (
     smtp_host: values?.smtp_host?.trim() || null,
     ...(smtpPassword ? { smtp_password: smtpPassword } : {}),
     smtp_port: Number.isFinite(smtpPort) ? smtpPort : null,
-    smtp_secret_ref: values?.smtp_secret_ref?.trim() || null,
     smtp_tls: values?.smtp_tls || 'starttls',
     smtp_username: values?.smtp_username?.trim() || null,
   };
@@ -124,24 +123,29 @@ export default function SystemSettingsPage() {
     return () => window.clearTimeout(timer);
   }, [loadSettings]);
 
-  const saveSettings = async () => {
+  const persistSettingsFromForm = async () => {
     const values = await form.validateFields();
     const nextAdminEmail = values.admin_email?.trim() || null;
     const nextTestRecipientEmail = values.test_recipient_email?.trim() || null;
+    const updated = await updateSystemSettings({
+      admin_email: nextAdminEmail,
+      email_delivery: buildEmailDeliveryPayload(values.email_delivery),
+      test_recipient_email: nextTestRecipientEmail,
+    });
+    setSettings(updated);
+    form.setFieldsValue({
+      admin_email: updated.admin_email ?? '',
+      email_delivery: normalizeEmailDeliveryFormValues(updated.email_delivery),
+      test_recipient_email: updated.test_recipient_email ?? nextTestRecipientEmail ?? '',
+    });
+    return updated;
+  };
+
+  const saveSettings = async () => {
     setSaving(true);
     setError(undefined);
     try {
-      const updated = await updateSystemSettings({
-        admin_email: nextAdminEmail,
-        email_delivery: buildEmailDeliveryPayload(values.email_delivery),
-        test_recipient_email: nextTestRecipientEmail,
-      });
-      setSettings(updated);
-      form.setFieldsValue({
-        admin_email: updated.admin_email ?? '',
-        email_delivery: normalizeEmailDeliveryFormValues(updated.email_delivery),
-        test_recipient_email: updated.test_recipient_email ?? nextTestRecipientEmail ?? '',
-      });
+      await persistSettingsFromForm();
       message.success('系统设置已保存');
     } catch (saveError) {
       const normalized = normalizeRemoteRowsError(saveError);
@@ -153,21 +157,24 @@ export default function SystemSettingsPage() {
   };
 
   const sendTestEmail = async () => {
-    const values = await form.validateFields(['test_recipient_email']);
-    const recipientEmail = values.test_recipient_email?.trim();
     setTestingEmail(true);
+    setSaving(true);
     setError(undefined);
     try {
+      const updated = await persistSettingsFromForm();
+      const recipientEmail = updated.test_recipient_email?.trim();
       const result = await testSystemEmailDelivery({
         recipient_email: recipientEmail || null,
       });
-      message.success(`测试邮件已发送至 ${result.recipient_email}`);
+      const subjectSuffix = result.message_subject ? `，主题：${result.message_subject}` : '';
+      message.success(`测试邮件已发送至 ${result.recipient_email}${subjectSuffix}`);
     } catch (testError) {
       const normalized = normalizeRemoteRowsError(testError);
       const diagnosticMessage = formatEmailDeliveryTestError(normalized);
       setError({ ...normalized, message: diagnosticMessage });
       message.error(diagnosticMessage);
     } finally {
+      setSaving(false);
       setTestingEmail(false);
     }
   };
@@ -333,19 +340,12 @@ export default function SystemSettingsPage() {
                       }
                     />
                   </Form.Item>
-                  <Form.Item label="SMTP 密钥引用" name={['email_delivery', 'smtp_secret_ref']}>
-                    <Input
-                      allowClear
-                      disabled={!emailDeliveryEnabled}
-                      placeholder="env:SMTP_PASSWORD 或 vault/mail/password"
-                    />
-                  </Form.Item>
                 </div>
                 <Divider plain titlePlacement="left">
                   测试发送
                 </Divider>
                 <Form.Item
-                  extra="保存后作为默认测试收件人；留空时使用系统管理员邮箱。"
+                  extra="点击发送测试邮件会先保存当前页面配置；留空时使用系统管理员邮箱。"
                   label="测试收件人"
                   name="test_recipient_email"
                   rules={[
