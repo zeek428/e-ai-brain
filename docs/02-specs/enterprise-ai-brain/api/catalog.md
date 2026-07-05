@@ -87,6 +87,7 @@
 | System | DELETE | `/api/system/model-gateway-configs/{config_id}` | 删除模型网关配置；要求 `system.model_gateway.manage`。 |
 | System | GET | `/api/model-gateway/logs` | 查询模型调用元数据日志；要求 `system.model_gateway.manage`，带 `page/page_size` 时支持 `ai_task_id`、`purpose`、`status` 筛选、`created_at/id/purpose/status/provider/model/latency_ms/ai_task_id` 白名单排序和 `query/performance` 观测；不返回完整 prompt 或输出。 |
 | Assistant | GET | `/api/assistant/conversations` | 查询当前登录用户的 AI 助手会话列表。 |
+| Assistant | DELETE | `/api/assistant/conversations/{conversation_id}` | 删除当前登录用户的 AI 助手会话；请求体可携带 `conversation_ids` 删除折叠重复组。 |
 | Assistant | GET | `/api/assistant/conversations/{conversation_id}/messages` | 查询当前登录用户某个 AI 助手会话的消息记录。 |
 | Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题；确定性意图返回 `message.intent={intent_code,confidence,summary,required_refs}`，工具结果顶层可带 `intent_code/intent_confidence/required_refs`，`summary` 保持业务摘要；请求中的结构化 `references[]` 优先进入上下文，文本 `@...执行一次` 仅在没有结构化作业引用时兜底解析，官方周反馈洞察消歧不得覆盖用户已选择的结构化引用。 |
 | Assistant | GET | `/api/assistant/runtime-status` | 查询当前助手运行环境自检状态；响应返回 `ready`、`mode`、模型/Embedding/Redis/GBrain 状态和 `checks[]`，每个检查项包含 `key/status/label/detail/remediation/action_label/action_url/required/severity`。前端默认仅在必需依赖异常时展示轻量提醒和修复入口，增强能力未配置不在对话页展开诊断。 |

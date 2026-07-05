@@ -11,6 +11,7 @@ import {
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   assistantScopedStorageKey,
   chatWithAssistant,
+  deleteAssistantConversation,
   fetchAssistantConversationPage,
   fetchAssistantConversationMessages,
   fetchAssistantConversations,
@@ -7603,6 +7604,45 @@ describe('AssistantPage', () => {
         toolResults: [],
       },
     ]);
+  });
+
+  it('deletes assistant conversations with collapsed ids', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      expect(input).toBe('/api/assistant/conversations/conversation_latest');
+      expect(init?.method).toBe('DELETE');
+      expect(JSON.parse(String(init?.body))).toEqual({
+        conversation_ids: ['conversation_latest', 'conversation_old'],
+      });
+      return new Response(
+        JSON.stringify({
+          data: {
+            action_run_count: 1,
+            chat_run_count: 2,
+            conversation_ids: ['conversation_latest', 'conversation_old'],
+            deleted: true,
+            deleted_conversation_count: 2,
+            draft_count: 1,
+            message_count: 4,
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' }, status: 200 },
+      );
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(deleteAssistantConversation('conversation_latest', {
+      conversationIds: ['conversation_latest', 'conversation_old'],
+    })).resolves.toEqual({
+      actionRunCount: 1,
+      chatRunCount: 2,
+      conversationIds: ['conversation_latest', 'conversation_old'],
+      deleted: true,
+      deletedConversationCount: 2,
+      draftCount: 1,
+      messageCount: 4,
+    });
   });
 
   it('fetches paginated assistant conversation summaries with cursor metadata', async () => {

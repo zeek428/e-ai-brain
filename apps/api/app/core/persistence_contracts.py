@@ -919,6 +919,14 @@ class AssistantChatRepository(Protocol):
         user_id: str,
     ) -> list[dict[str, Any]] | None: ...
 
+    def delete_assistant_conversations(
+        self,
+        *,
+        audit_event: dict[str, Any] | None = None,
+        conversation_ids: list[str],
+        user_id: str,
+    ) -> dict[str, Any]: ...
+
     def list_assistant_action_drafts(self, *, user_id: str) -> list[dict[str, Any]]: ...
 
     def list_assistant_action_draft_workbench_page(

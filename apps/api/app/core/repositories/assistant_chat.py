@@ -257,6 +257,95 @@ class AssistantChatReadRepository:
                     messages.append(self._assistant_message_from_row(row))
                 return messages
 
+    def delete_assistant_conversations(
+        self,
+        *,
+        audit_event: dict[str, Any] | None = None,
+        conversation_ids: list[str],
+        user_id: str,
+    ) -> dict[str, Any]:
+        normalized_ids = [str(item).strip() for item in conversation_ids if str(item).strip()]
+        if not normalized_ids:
+            return {"deleted": False, "missing_conversation_ids": []}
+        placeholders = ", ".join(["%s"] * len(normalized_ids))
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id
+                    FROM assistant_conversations
+                    WHERE user_id = %s AND id IN ({placeholders})
+                    """,
+                    (user_id, *normalized_ids),
+                )
+                matched_ids = [row[0] for row in cursor.fetchall()]
+                missing_ids = [item_id for item_id in normalized_ids if item_id not in matched_ids]
+                if missing_ids:
+                    return {
+                        "deleted": False,
+                        "missing_conversation_ids": missing_ids,
+                    }
+
+                cursor.execute(
+                    f"""
+                    SELECT id
+                    FROM assistant_messages
+                    WHERE user_id = %s AND conversation_id IN ({placeholders})
+                    """,
+                    (user_id, *normalized_ids),
+                )
+                message_ids = [row[0] for row in cursor.fetchall()]
+                draft_ids = self._assistant_action_draft_ids_for_messages(
+                    cursor,
+                    message_ids=message_ids,
+                    user_id=user_id,
+                )
+                chat_run_ids = self._assistant_chat_run_ids_for_conversation_delete(
+                    cursor,
+                    conversation_ids=normalized_ids,
+                    message_ids=message_ids,
+                    user_id=user_id,
+                )
+                action_run_count = self._delete_assistant_action_runs_for_drafts(
+                    cursor,
+                    draft_ids=draft_ids,
+                )
+                draft_count = self._delete_rows_by_ids(
+                    cursor,
+                    "assistant_action_drafts",
+                    draft_ids,
+                )
+                chat_run_count = self._delete_rows_by_ids(
+                    cursor,
+                    "assistant_chat_runs",
+                    chat_run_ids,
+                )
+                cursor.execute(
+                    f"""
+                    DELETE FROM assistant_conversations
+                    WHERE user_id = %s AND id IN ({placeholders})
+                    """,
+                    (user_id, *normalized_ids),
+                )
+                result = {
+                    "action_run_count": action_run_count,
+                    "chat_run_count": chat_run_count,
+                    "conversation_ids": normalized_ids,
+                    "deleted": True,
+                    "deleted_conversation_count": cursor.rowcount,
+                    "draft_count": draft_count,
+                    "message_count": len(message_ids),
+                }
+                if audit_event is not None:
+                    audit_event["payload"] = {
+                        **dict(audit_event.get("payload") or {}),
+                        **result,
+                    }
+                    if self._upsert_audit_events is None:
+                        raise RuntimeError("Audit upsert callback is not configured")
+                    self._upsert_audit_events(cursor, [audit_event])
+                return result
+
     def list_assistant_action_drafts(self, *, user_id: str) -> list[dict[str, Any]]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -1051,6 +1140,84 @@ class AssistantChatReadRepository:
         self._delete_missing(cursor, "assistant_chat_runs", chat_runs)
         self._delete_missing(cursor, "assistant_action_runs", action_runs)
         self._delete_missing(cursor, "assistant_action_drafts", action_drafts)
+
+    def _assistant_action_draft_ids_for_messages(
+        self,
+        cursor,
+        *,
+        message_ids: list[str],
+        user_id: str,
+    ) -> list[str]:
+        if not message_ids:
+            return []
+        placeholders = ", ".join(["%s"] * len(message_ids))
+        cursor.execute(
+            f"""
+            SELECT id
+            FROM assistant_action_drafts
+            WHERE user_id = %s AND source_message_id IN ({placeholders})
+            """,
+            (user_id, *message_ids),
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+    def _assistant_chat_run_ids_for_conversation_delete(
+        self,
+        cursor,
+        *,
+        conversation_ids: list[str],
+        message_ids: list[str],
+        user_id: str,
+    ) -> list[str]:
+        conversation_placeholders = ", ".join(["%s"] * len(conversation_ids))
+        predicates = [f"conversation_id IN ({conversation_placeholders})"]
+        params: list[Any] = [user_id, *conversation_ids]
+        if message_ids:
+            message_placeholders = ", ".join(["%s"] * len(message_ids))
+            predicates.append(f"user_message_id IN ({message_placeholders})")
+            params.extend(message_ids)
+            predicates.append(f"assistant_message_id IN ({message_placeholders})")
+            params.extend(message_ids)
+        cursor.execute(
+            f"""
+            SELECT id
+            FROM assistant_chat_runs
+            WHERE user_id = %s AND ({" OR ".join(predicates)})
+            """,
+            tuple(params),
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+    def _delete_assistant_action_runs_for_drafts(
+        self,
+        cursor,
+        *,
+        draft_ids: list[str],
+    ) -> int:
+        if not draft_ids:
+            return 0
+        placeholders = ", ".join(["%s"] * len(draft_ids))
+        cursor.execute(
+            f"""
+            DELETE FROM assistant_action_runs
+            WHERE draft_id IN ({placeholders})
+            """,
+            tuple(draft_ids),
+        )
+        return int(cursor.rowcount or 0)
+
+    def _delete_rows_by_ids(self, cursor, table_name: str, row_ids: list[str]) -> int:
+        if not row_ids:
+            return 0
+        placeholders = ", ".join(["%s"] * len(row_ids))
+        cursor.execute(
+            f"""
+            DELETE FROM {table_name}
+            WHERE id IN ({placeholders})
+            """,
+            tuple(row_ids),
+        )
+        return int(cursor.rowcount or 0)
 
     def upsert_assistant_conversations(
         self,

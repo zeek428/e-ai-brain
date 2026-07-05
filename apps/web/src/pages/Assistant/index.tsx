@@ -7,6 +7,7 @@ import {
   fetchAssistantRoleQuickTasks,
   fetchResultWriteTargets,
   getStoredCurrentUser,
+  type AssistantConversationSummary,
   type AssistantDraftTemplate,
   type AssistantRoleQuickTaskGroup,
   type AssistantToolResultItem,
@@ -58,6 +59,8 @@ export default function AssistantPage() {
   const {
     conversationId,
     conversations,
+    deleteConversations,
+    deletingConversationIds,
     hasMoreConversations,
     isLoadingConversations,
     isLoadingMoreConversations,
@@ -360,6 +363,13 @@ export default function AssistantPage() {
     });
   };
 
+  const deleteConversation = (conversation: AssistantConversationSummary) => {
+    const conversationIds = conversation.collapsedConversationIds?.length
+      ? conversation.collapsedConversationIds
+      : [conversation.id];
+    void deleteConversations(conversationIds);
+  };
+
   const useScheduledJobRunFollowupPrompt = (
     item: AssistantToolResultItem,
     prompt: string,
@@ -396,6 +406,7 @@ export default function AssistantPage() {
         <AssistantSidebar
           conversationId={conversationId}
           conversations={conversations}
+          deletingConversationIds={deletingConversationIds}
           hasMoreConversations={hasMoreConversations}
           isLoadingConversations={isLoadingConversations}
           isLoadingMoreConversations={isLoadingMoreConversations}
@@ -405,6 +416,7 @@ export default function AssistantPage() {
           roleQuickTaskCount={roleQuickTaskCount}
           roleQuickTaskGroups={roleQuickTaskGroups}
           roleQuickTasksExpanded={roleQuickTasksExpanded}
+          onDeleteConversation={deleteConversation}
           onToggleDuplicateConversations={toggleDuplicateConversations}
           onLoadMoreConversations={loadMoreConversations}
           onOpenConversation={openConversation}

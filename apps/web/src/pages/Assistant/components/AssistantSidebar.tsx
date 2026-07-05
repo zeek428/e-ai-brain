@@ -1,13 +1,14 @@
 import {
   AppstoreOutlined,
   BarChartOutlined,
+  DeleteOutlined,
   DownOutlined,
   MessageOutlined,
   PlusOutlined,
   UpOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import { Button, Spin, Typography } from 'antd';
+import { Button, Popconfirm, Spin, Typography } from 'antd';
 import { useMemo } from 'react';
 
 import {
@@ -20,11 +21,13 @@ const { Text, Title } = Typography;
 export function AssistantSidebar({
   conversationId,
   conversations,
+  deletingConversationIds,
   isLoadingConversations,
   isLoadingMoreConversations,
   isLoadingMetrics,
   isRefreshingRuntimeStatus,
   onToggleDuplicateConversations,
+  onDeleteConversation,
   onOpenConversation,
   onOpenDraftTemplateMarket,
   onOpenMetricsPanel,
@@ -41,12 +44,14 @@ export function AssistantSidebar({
 }: {
   conversationId?: string;
   conversations: AssistantConversationSummary[];
+  deletingConversationIds: string[];
   hasMoreConversations: boolean;
   isLoadingConversations: boolean;
   isLoadingMoreConversations: boolean;
   isLoadingMetrics: boolean;
   isRefreshingRuntimeStatus?: boolean;
   onToggleDuplicateConversations: () => void;
+  onDeleteConversation: (conversation: AssistantConversationSummary) => void;
   onOpenConversation: (conversationId: string) => void;
   onOpenDraftTemplateMarket: () => void;
   onOpenMetricsPanel: () => void;
@@ -93,23 +98,59 @@ export function AssistantSidebar({
         <div className="assistant-history-list">
           {conversations.length ? (
             <>
-              {conversations.map((item) => (
-                <Button
-                  block
-                  className={item.id === conversationId ? 'assistant-history-active' : undefined}
-                  icon={<MessageOutlined />}
-                  key={item.id}
-                  onClick={() => onOpenConversation(item.id)}
-                >
-                  <span className="assistant-history-button-text">
-                    <span>{item.title}</span>
-                    <span>
-                      {item.collapsedMessageCount ?? item.messageCount} 条
-                      {Number(item.duplicateCount ?? 1) > 1 ? ` · 合并 ${item.duplicateCount} 个重复` : ''}
-                    </span>
-                  </span>
-                </Button>
-              ))}
+              {conversations.map((item) => {
+                const deleteIds = item.collapsedConversationIds?.length
+                  ? item.collapsedConversationIds
+                  : [item.id];
+                const deleteCount = deleteIds.length;
+                const isDeleting = deleteIds.some((deleteId) => (
+                  deletingConversationIds.includes(deleteId)
+                ));
+                return (
+                  <div
+                    className={item.id === conversationId
+                      ? 'assistant-history-row assistant-history-active'
+                      : 'assistant-history-row'}
+                    key={item.id}
+                  >
+                    <Button
+                      block
+                      className="assistant-history-open-button"
+                      icon={<MessageOutlined />}
+                      onClick={() => onOpenConversation(item.id)}
+                    >
+                      <span className="assistant-history-button-text">
+                        <span>{item.title}</span>
+                        <span>
+                          {item.collapsedMessageCount ?? item.messageCount} 条
+                          {Number(item.duplicateCount ?? 1) > 1
+                            ? ` · 合并 ${item.duplicateCount} 个重复`
+                            : ''}
+                        </span>
+                      </span>
+                    </Button>
+                    <Popconfirm
+                      cancelText="取消"
+                      okButtonProps={{ danger: true, loading: isDeleting }}
+                      okText="删除"
+                      title={deleteCount > 1
+                        ? `删除这组 ${deleteCount} 条对话记录？`
+                        : `删除对话「${item.title}」？`}
+                      onConfirm={() => onDeleteConversation(item)}
+                    >
+                      <Button
+                        aria-label={`删除对话 ${item.title}`}
+                        className="assistant-history-delete-button"
+                        danger
+                        disabled={isDeleting}
+                        icon={<DeleteOutlined />}
+                        loading={isDeleting}
+                        type="text"
+                      />
+                    </Popconfirm>
+                  </div>
+                );
+              })}
               {hasMoreConversations ? (
                 <Button
                   block

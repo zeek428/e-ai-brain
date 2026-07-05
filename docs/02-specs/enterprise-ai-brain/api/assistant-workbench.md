@@ -671,7 +671,20 @@ GET /api/assistant/conversations?collapse=true&limit=50&cursor=2026-06-20T03%3A0
 }
 ```
 
-会话列表用于左侧最近对话展示。`collapse` 默认为 `true`，`limit` 范围 1-100，`cursor` 使用上一页 `next_cursor` 原样传回；服务端按 `last_message_at/updated_at desc, id asc` 排序分页。存在下一页时返回 `next_cursor`，不存在时返回 `null` 或省略；`total` 表示本页返回条数，不代表全量历史总数。服务端保存命令式输入时可在内部记录 `source_message_hash`，但公开响应只返回可用于分组解释的 `command_signature` 与 `context_scope`；前端应按返回列表展示，提供“加载更多”，不自行删除历史。对于 `@...执行一次`、`@新建需求 ...` 等重复命令，会话折叠优先使用 `command_signature + context_scope`，避免只按标题合并导致不同产品、不同上下文的同名命令被误折叠；折叠后的分页游标仍必须来自原始排序窗口，避免翻页重复或漏会话。
+会话列表用于左侧最近对话展示。`collapse` 默认为 `true`，`limit` 范围 1-100，`cursor` 使用上一页 `next_cursor` 原样传回；服务端按 `last_message_at/updated_at desc, id asc` 排序分页。存在下一页时返回 `next_cursor`，不存在时返回 `null` 或省略；`total` 表示本页返回条数，不代表全量历史总数。服务端保存命令式输入时可在内部记录 `source_message_hash`，但公开响应只返回可用于分组解释的 `command_signature` 与 `context_scope`；前端应按返回列表展示并提供“加载更多”。对于 `@...执行一次`、`@新建需求 ...` 等重复命令，会话折叠优先使用 `command_signature + context_scope`，避免只按标题合并导致不同产品、不同上下文的同名命令被误折叠；折叠后的分页游标仍必须来自原始排序窗口，避免翻页重复或漏会话。
+
+删除当前用户会话：
+
+```http
+DELETE /api/assistant/conversations/{conversation_id}
+Content-Type: application/json
+
+{
+  "conversation_ids": ["conversation_001", "conversation_002"]
+}
+```
+
+`conversation_ids` 可用于删除左侧折叠重复组；服务端会合并路径参数和请求体中的 ID，校验所有会话均属于当前用户，任一会话不存在或不属于当前用户时返回 404。删除会清理 `assistant_messages`、对应 `assistant_chat_runs`、由被删消息生成的 `assistant_action_drafts` 和 `assistant_action_runs`，但不删除已由草案确认创建的真实业务资源。成功响应返回删除的会话、消息、运行、草案和草案运行数量，并写入 `assistant_conversation.deleted` 审计事件。
 
 当前用户会话消息：
 

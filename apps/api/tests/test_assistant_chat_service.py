@@ -14,6 +14,7 @@ from app.services.assistant_chat import (
     assistant_chat_response,
     assistant_conversation_messages_response,
     assistant_conversations_response,
+    delete_assistant_conversations_response,
 )
 from app.services.assistant_history import ensure_assistant_conversation
 
@@ -227,6 +228,130 @@ def test_assistant_history_service_is_user_scoped():
         )
     assert not_found.value.status_code == 404
     assert not_found.value.code == "NOT_FOUND"
+
+
+def test_assistant_history_service_deletes_user_conversation_records():
+    store = MemoryStore()
+    store.assistant_conversations = {
+        "conversation_admin": {
+            "created_at": "2026-06-05T08:00:00+00:00",
+            "id": "conversation_admin",
+            "last_message_at": "2026-06-05T08:02:00+00:00",
+            "message_count": 2,
+            "title": "管理员会话",
+            "updated_at": "2026-06-05T08:02:00+00:00",
+            "user_id": "user_admin",
+        },
+        "conversation_other": {
+            "created_at": "2026-06-05T07:00:00+00:00",
+            "id": "conversation_other",
+            "last_message_at": "2026-06-05T07:01:00+00:00",
+            "message_count": 1,
+            "title": "其它会话",
+            "updated_at": "2026-06-05T07:01:00+00:00",
+            "user_id": "user_admin",
+        },
+    }
+    store.assistant_messages = {
+        "assistant_message_admin_user": {
+            "content": "查询进度",
+            "conversation_id": "conversation_admin",
+            "created_at": "2026-06-05T08:00:00+00:00",
+            "id": "assistant_message_admin_user",
+            "role": "user",
+            "suggestions": [],
+            "user_id": "user_admin",
+        },
+        "assistant_message_admin_answer": {
+            "content": "当前需求已进入测试。",
+            "conversation_id": "conversation_admin",
+            "created_at": "2026-06-05T08:02:00+00:00",
+            "id": "assistant_message_admin_answer",
+            "role": "assistant",
+            "suggestions": [],
+            "user_id": "user_admin",
+        },
+        "assistant_message_other": {
+            "content": "保留",
+            "conversation_id": "conversation_other",
+            "created_at": "2026-06-05T07:00:00+00:00",
+            "id": "assistant_message_other",
+            "role": "user",
+            "suggestions": [],
+            "user_id": "user_admin",
+        },
+    }
+    store.assistant_chat_runs = {
+        "assistant_chat_run_admin": {
+            "assistant_message_id": "assistant_message_admin_answer",
+            "conversation_id": "conversation_admin",
+            "id": "assistant_chat_run_admin",
+            "status": "succeeded",
+            "user_id": "user_admin",
+            "user_message_id": "assistant_message_admin_user",
+        }
+    }
+    store.assistant_action_drafts = {
+        "assistant_action_draft_admin": {
+            "action": "create_analysis_draft",
+            "created_by": "user_admin",
+            "id": "assistant_action_draft_admin",
+            "source_message_id": "assistant_message_admin_answer",
+            "status": "pending",
+            "title": "分析草案",
+        }
+    }
+    store.assistant_action_runs = {
+        "assistant_action_run_admin": {
+            "draft_id": "assistant_action_draft_admin",
+            "id": "assistant_action_run_admin",
+        }
+    }
+
+    result = delete_assistant_conversations_response(
+        store,
+        conversation_ids=["conversation_admin"],
+        user={"id": "user_admin"},
+    )
+
+    assert result == {
+        "action_run_count": 1,
+        "chat_run_count": 1,
+        "conversation_ids": ["conversation_admin"],
+        "deleted": True,
+        "deleted_conversation_count": 1,
+        "draft_count": 1,
+        "message_count": 2,
+    }
+    assert list(store.assistant_conversations) == ["conversation_other"]
+    assert list(store.assistant_messages) == ["assistant_message_other"]
+    assert store.assistant_chat_runs == {}
+    assert store.assistant_action_drafts == {}
+    assert store.assistant_action_runs == {}
+    assert store.audit_events[-1]["event_type"] == "assistant_conversation.deleted"
+    assert store.audit_events[-1]["payload"]["message_count"] == 2
+
+
+def test_assistant_history_service_delete_is_user_scoped():
+    store = MemoryStore()
+    store.assistant_conversations = {
+        "conversation_admin": {
+            "id": "conversation_admin",
+            "title": "管理员会话",
+            "user_id": "user_admin",
+        }
+    }
+
+    with pytest.raises(AssistantServiceError) as not_found:
+        delete_assistant_conversations_response(
+            store,
+            conversation_ids=["conversation_admin"],
+            user={"id": "user_reviewer"},
+        )
+
+    assert not_found.value.status_code == 404
+    assert list(store.assistant_conversations) == ["conversation_admin"]
+    assert store.audit_events == []
 
 
 def test_assistant_history_service_collapses_duplicate_command_conversations():

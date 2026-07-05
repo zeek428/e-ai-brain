@@ -72,6 +72,7 @@ from app.services.assistant_history import (
     append_assistant_message,
     assistant_conversation_messages_response,
     assistant_conversations_response,
+    delete_assistant_conversations_response,
     ensure_assistant_conversation,
 )
 from app.services.assistant_references import (
@@ -117,6 +118,7 @@ __all__ = [
     "assistant_conversation_messages_response",
     "assistant_conversations_response",
     "assistant_request_store",
+    "delete_assistant_conversations_response",
 ]
 
 

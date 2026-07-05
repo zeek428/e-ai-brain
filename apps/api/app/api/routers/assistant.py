@@ -31,6 +31,7 @@ from app.services.assistant_chat import (
     assistant_conversations_response,
     assistant_request_store,
     cancel_assistant_chat_run_response,
+    delete_assistant_conversations_response,
 )
 from app.services.assistant_draft_templates import list_assistant_draft_templates_response
 from app.services.assistant_metrics import (
@@ -110,6 +111,10 @@ class AssistantActionDraftPatchRequest(BaseModel):
 
 class AssistantActionDraftViewRequest(BaseModel):
     surface: str | None = None
+
+
+class AssistantConversationDeleteRequest(BaseModel):
+    conversation_ids: list[str] = Field(default_factory=list)
 
 
 class AssistantRoleQuickTaskConfigRequest(BaseModel):
@@ -1166,6 +1171,26 @@ def list_assistant_conversation_messages(
     except AssistantServiceError as exc:
         raise api_error(exc.status_code, exc.code, exc.message) from exc
     return envelope(payload, get_trace_id(request))
+
+
+@router.delete("/conversations/{conversation_id}")
+def delete_assistant_conversation(
+    conversation_id: str,
+    request: Request,
+    payload: AssistantConversationDeleteRequest | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    requested_ids = [conversation_id, *((payload.conversation_ids if payload else []) or [])]
+    try:
+        result = delete_assistant_conversations_response(
+            store(request),
+            conversation_ids=requested_ids,
+            user=user,
+        )
+    except AssistantServiceError as exc:
+        raise api_error(exc.status_code, exc.code, exc.message) from exc
+    return envelope(result, get_trace_id(request))
 
 
 @router.post("/chat")

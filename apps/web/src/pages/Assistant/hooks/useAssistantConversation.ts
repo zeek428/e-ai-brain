@@ -2,6 +2,7 @@ import { message as toast } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
+  deleteAssistantConversation,
   fetchAssistantConversationMessages,
   fetchAssistantConversationPage,
   type AssistantChatResponse,
@@ -86,6 +87,7 @@ export function useAssistantConversation() {
   const loadConversationAbortRef = useRef<AbortController | null>(null);
   const loadConversationRequestSeqRef = useRef(0);
   const [conversationId, setConversationId] = useState<string>();
+  const [deletingConversationIds, setDeletingConversationIds] = useState<string[]>([]);
   const [conversationNextCursor, setConversationNextCursor] = useState<string>();
   const [conversations, setConversations] = useState<AssistantConversationSummary[]>([]);
   const [showDuplicateConversations, setShowDuplicateConversations] = useState(false);
@@ -142,6 +144,39 @@ export function useAssistantConversation() {
     isLoadingMoreConversations,
     showDuplicateConversations,
   ]);
+
+  const deleteConversations = useCallback(async (targetConversationIds: string[]) => {
+    const normalizedIds = Array.from(
+      new Set(targetConversationIds.map((item) => item.trim()).filter(Boolean)),
+    );
+    if (!normalizedIds.length) {
+      return;
+    }
+    setDeletingConversationIds((currentIds) => Array.from(new Set([...currentIds, ...normalizedIds])));
+    try {
+      const result = await deleteAssistantConversation(normalizedIds[0], {
+        conversationIds: normalizedIds,
+      });
+      if (conversationId && normalizedIds.includes(conversationId)) {
+        loadConversationAbortRef.current?.abort();
+        setConversationId(undefined);
+        setMessages(welcomeMessages);
+        setLastResponse(undefined);
+      }
+      await loadConversations();
+      toast.success(
+        result.deletedConversationCount > 1
+          ? `已删除 ${result.deletedConversationCount} 条对话记录`
+          : '对话记录已删除',
+      );
+    } catch (error) {
+      toast.error(formatMutationError(error));
+    } finally {
+      setDeletingConversationIds((currentIds) => (
+        currentIds.filter((item) => !normalizedIds.includes(item))
+      ));
+    }
+  }, [conversationId, loadConversations]);
 
   const toggleDuplicateConversations = useCallback(() => {
     const nextShowDuplicates = !showDuplicateConversations;
@@ -222,6 +257,8 @@ export function useAssistantConversation() {
   return {
     conversationId,
     conversations,
+    deleteConversations,
+    deletingConversationIds,
     hasMoreConversations: Boolean(conversationNextCursor),
     isLoadingConversations,
     isLoadingMoreConversations,

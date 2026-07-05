@@ -8200,6 +8200,114 @@ def test_ai_assistant_chat_generates_feedback_draft_when_run_once_job_missing(
     assert history_draft_item["wizard_steps"][0]["title"] == "数据来源"
 
 
+def test_ai_assistant_deletes_conversation_history():
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.assistant_conversations = {
+        "conversation_delete": {
+            "created_at": "2026-06-20T08:00:00+00:00",
+            "id": "conversation_delete",
+            "last_message_at": "2026-06-20T08:01:00+00:00",
+            "message_count": 2,
+            "product_id": None,
+            "title": "待删除会话",
+            "updated_at": "2026-06-20T08:01:00+00:00",
+            "user_id": "user_admin",
+        },
+        "conversation_keep": {
+            "created_at": "2026-06-20T07:00:00+00:00",
+            "id": "conversation_keep",
+            "last_message_at": "2026-06-20T07:01:00+00:00",
+            "message_count": 1,
+            "product_id": None,
+            "title": "保留会话",
+            "updated_at": "2026-06-20T07:01:00+00:00",
+            "user_id": "user_admin",
+        },
+        "conversation_delete_duplicate": {
+            "created_at": "2026-06-20T08:02:00+00:00",
+            "id": "conversation_delete_duplicate",
+            "last_message_at": "2026-06-20T08:03:00+00:00",
+            "message_count": 1,
+            "product_id": None,
+            "title": "待删除会话",
+            "updated_at": "2026-06-20T08:03:00+00:00",
+            "user_id": "user_admin",
+        },
+    }
+    app.state.store.assistant_messages = {
+        "assistant_message_delete_user": {
+            "content": "删除前问题",
+            "conversation_id": "conversation_delete",
+            "created_at": "2026-06-20T08:00:00+00:00",
+            "id": "assistant_message_delete_user",
+            "role": "user",
+            "suggestions": [],
+            "user_id": "user_admin",
+        },
+        "assistant_message_delete_answer": {
+            "content": "删除前回答",
+            "conversation_id": "conversation_delete",
+            "created_at": "2026-06-20T08:01:00+00:00",
+            "id": "assistant_message_delete_answer",
+            "role": "assistant",
+            "suggestions": [],
+            "user_id": "user_admin",
+        },
+        "assistant_message_delete_duplicate": {
+            "content": "重复会话回答",
+            "conversation_id": "conversation_delete_duplicate",
+            "created_at": "2026-06-20T08:03:00+00:00",
+            "id": "assistant_message_delete_duplicate",
+            "role": "assistant",
+            "suggestions": [],
+            "user_id": "user_admin",
+        },
+        "assistant_message_keep": {
+            "content": "保留",
+            "conversation_id": "conversation_keep",
+            "created_at": "2026-06-20T07:01:00+00:00",
+            "id": "assistant_message_keep",
+            "role": "assistant",
+            "suggestions": [],
+            "user_id": "user_admin",
+        },
+    }
+
+    response = client.request(
+        "DELETE",
+        "/api/assistant/conversations/conversation_delete",
+        headers=headers,
+        json={"conversation_ids": ["conversation_delete_duplicate"]},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["deleted"] is True
+    assert payload["deleted_conversation_count"] == 2
+    assert payload["message_count"] == 3
+    assert payload["conversation_ids"] == [
+        "conversation_delete",
+        "conversation_delete_duplicate",
+    ]
+    conversations = client.get("/api/assistant/conversations", headers=headers).json()[
+        "data"
+    ]["items"]
+    assert [item["id"] for item in conversations] == ["conversation_keep"]
+    deleted_history = client.get(
+        "/api/assistant/conversations/conversation_delete/messages",
+        headers=headers,
+    )
+    assert deleted_history.status_code == 404
+    duplicate_history = client.get(
+        "/api/assistant/conversations/conversation_delete_duplicate/messages",
+        headers=headers,
+    )
+    assert duplicate_history.status_code == 404
+    assert "assistant_message_delete_user" not in app.state.store.assistant_messages
+    assert app.state.store.audit_events[-1]["event_type"] == "assistant_conversation.deleted"
+
+
 def test_ai_assistant_history_redacts_sensitive_action_draft_payload_fields():
     headers = auth_headers()
     app.state.store.reset()

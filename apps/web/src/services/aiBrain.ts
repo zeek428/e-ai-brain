@@ -615,6 +615,16 @@ export type AssistantConversationPage = {
   total: number;
 };
 
+export type AssistantConversationDeleteResult = {
+  actionRunCount: number;
+  chatRunCount: number;
+  conversationIds: string[];
+  deleted: boolean;
+  deletedConversationCount: number;
+  draftCount: number;
+  messageCount: number;
+};
+
 export type AssistantConversationMessage = {
   cancelledAt?: string;
   clientRequestId?: string;
@@ -1336,6 +1346,40 @@ export async function fetchAssistantConversationMessages(
     suggestions: item.suggestions ?? [],
     toolResults: item.tool_results ?? [],
   }));
+}
+
+type AssistantConversationDeleteApiResponse = {
+  action_run_count?: number;
+  chat_run_count?: number;
+  conversation_ids?: string[];
+  deleted?: boolean;
+  deleted_conversation_count?: number;
+  draft_count?: number;
+  message_count?: number;
+};
+
+export async function deleteAssistantConversation(
+  conversationId: string,
+  options: { conversationIds?: string[] } = {},
+): Promise<AssistantConversationDeleteResult> {
+  const token = requireAccessToken();
+  const response = await apiRequest<AssistantConversationDeleteApiResponse>(
+    `/api/assistant/conversations/${encodeURIComponent(conversationId)}`,
+    {
+      body: { conversation_ids: options.conversationIds ?? [conversationId] },
+      method: 'DELETE',
+      token,
+    },
+  );
+  return {
+    actionRunCount: Number(response.action_run_count ?? 0),
+    chatRunCount: Number(response.chat_run_count ?? 0),
+    conversationIds: response.conversation_ids ?? [conversationId],
+    deleted: response.deleted === true,
+    deletedConversationCount: Number(response.deleted_conversation_count ?? 0),
+    draftCount: Number(response.draft_count ?? 0),
+    messageCount: Number(response.message_count ?? 0),
+  };
 }
 
 function formatListDate(value?: string) {

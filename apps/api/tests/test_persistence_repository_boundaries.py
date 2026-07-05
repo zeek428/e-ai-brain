@@ -2989,6 +2989,12 @@ def test_postgres_assistant_chat_writes_delegate_to_domain_repository(monkeypatc
     )
     monkeypatch.setattr(
         AssistantChatReadRepository,
+        "delete_assistant_conversations",
+        record_save("delete_assistant_conversations"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        AssistantChatReadRepository,
         "upsert_assistant_conversations",
         record_conversation_upsert,
     )
@@ -3030,6 +3036,11 @@ def test_postgres_assistant_chat_writes_delegate_to_domain_repository(monkeypatc
         run=run,
         audit_events=audit_events,
     )
+    repository.delete_assistant_conversations(
+        audit_event=audit_events[0],
+        conversation_ids=["conversation_001"],
+        user_id="user_admin",
+    )
     repository._upsert_assistant_conversations(cursor, payload["assistant_conversations"])
     repository._upsert_assistant_messages(cursor, payload["assistant_messages"])
     repository._upsert_assistant_chat_runs(cursor, payload["assistant_chat_runs"])
@@ -3049,6 +3060,14 @@ def test_postgres_assistant_chat_writes_delegate_to_domain_repository(monkeypatc
         (
             "save_assistant_action_records",
             {"draft": draft, "run": run, "audit_events": audit_events},
+        ),
+        (
+            "delete_assistant_conversations",
+            {
+                "audit_event": audit_events[0],
+                "conversation_ids": ["conversation_001"],
+                "user_id": "user_admin",
+            },
         ),
         (
             "upsert_assistant_conversations",

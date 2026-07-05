@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
 
@@ -26,6 +27,14 @@ def assistant_query_repository(current_store: Any) -> Any | None:
     return None
 
 
+def assistant_conversation_delete_repository(current_store: Any) -> Any | None:
+    repository = getattr(current_store, "repository", None)
+    if repository is None:
+        return None
+    delete_conversations = getattr(repository, "delete_assistant_conversations", None)
+    return repository if callable(delete_conversations) else None
+
+
 def assistant_uses_repository_context(current_store: Any) -> bool:
     return getattr(current_store, "repository", None) is not None
 
@@ -34,6 +43,14 @@ def _memory_collection(current_store: Any, collection_name: str) -> dict[str, di
     collection = getattr(current_store, collection_name, None)
     if not isinstance(collection, dict):
         collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
         setattr(current_store, collection_name, collection)
     return collection
 
@@ -324,6 +341,167 @@ def assistant_conversation_messages_response(
         for message in messages
     ]
     return {"items": items, "total": len(items)}
+
+
+def delete_assistant_conversations_response(
+    current_store: MemoryStore,
+    *,
+    conversation_ids: list[str],
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    normalized_ids = _normalize_conversation_ids(conversation_ids)
+    if not normalized_ids:
+        raise AssistantServiceError(400, "VALIDATION_ERROR", "Conversation id is required")
+    audit_event = _assistant_conversation_delete_audit_event(
+        current_store,
+        conversation_ids=normalized_ids,
+        user_id=user["id"],
+    )
+    repository = assistant_conversation_delete_repository(current_store)
+    if repository is not None:
+        result = repository.delete_assistant_conversations(
+            audit_event=audit_event,
+            conversation_ids=normalized_ids,
+            user_id=user["id"],
+        )
+        if not result.get("deleted"):
+            raise AssistantServiceError(404, "NOT_FOUND", "Assistant conversation not found")
+        return result
+    result = _delete_memory_assistant_conversations(
+        current_store,
+        audit_event=audit_event,
+        conversation_ids=normalized_ids,
+        user_id=user["id"],
+    )
+    return result
+
+
+def _normalize_conversation_ids(conversation_ids: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for conversation_id in conversation_ids:
+        value = str(conversation_id or "").strip()
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized
+
+
+def _delete_memory_assistant_conversations(
+    current_store: MemoryStore,
+    *,
+    audit_event: dict[str, Any],
+    conversation_ids: list[str],
+    user_id: str,
+) -> dict[str, Any]:
+    conversations = _memory_collection(current_store, "assistant_conversations")
+    missing_ids = [
+        conversation_id
+        for conversation_id in conversation_ids
+        if conversations.get(conversation_id, {}).get("user_id") != user_id
+    ]
+    if missing_ids:
+        raise AssistantServiceError(404, "NOT_FOUND", "Assistant conversation not found")
+
+    conversation_id_set = set(conversation_ids)
+    messages = _memory_collection(current_store, "assistant_messages")
+    message_ids = [
+        message_id
+        for message_id, message in messages.items()
+        if message.get("conversation_id") in conversation_id_set
+        and message.get("user_id") == user_id
+    ]
+    message_id_set = set(message_ids)
+    chat_runs = _memory_collection(current_store, "assistant_chat_runs")
+    chat_run_ids = [
+        run_id
+        for run_id, run in chat_runs.items()
+        if run.get("user_id") == user_id
+        and (
+            run.get("conversation_id") in conversation_id_set
+            or run.get("user_message_id") in message_id_set
+            or run.get("assistant_message_id") in message_id_set
+        )
+    ]
+    drafts = _memory_collection(current_store, "assistant_action_drafts")
+    draft_ids = [
+        draft_id
+        for draft_id, draft in drafts.items()
+        if (draft.get("created_by") or draft.get("user_id")) == user_id
+        and draft.get("source_message_id") in message_id_set
+    ]
+    draft_id_set = set(draft_ids)
+    action_runs = _memory_collection(current_store, "assistant_action_runs")
+    action_run_ids = [
+        run_id
+        for run_id, run in action_runs.items()
+        if run.get("draft_id") in draft_id_set
+    ]
+
+    for collection, item_ids in (
+        (action_runs, action_run_ids),
+        (drafts, draft_ids),
+        (chat_runs, chat_run_ids),
+        (messages, message_ids),
+        (conversations, conversation_ids),
+    ):
+        for item_id in item_ids:
+            collection.pop(item_id, None)
+
+    result = _assistant_conversation_delete_result(
+        action_run_count=len(action_run_ids),
+        chat_run_count=len(chat_run_ids),
+        conversation_ids=conversation_ids,
+        draft_count=len(draft_ids),
+        message_count=len(message_ids),
+    )
+    audit_event["payload"] = {
+        **dict(audit_event.get("payload") or {}),
+        **result,
+    }
+    _memory_list(current_store, "audit_events").append(audit_event)
+    return result
+
+
+def _assistant_conversation_delete_result(
+    *,
+    action_run_count: int,
+    chat_run_count: int,
+    conversation_ids: list[str],
+    draft_count: int,
+    message_count: int,
+) -> dict[str, Any]:
+    return {
+        "action_run_count": action_run_count,
+        "chat_run_count": chat_run_count,
+        "conversation_ids": conversation_ids,
+        "deleted": True,
+        "deleted_conversation_count": len(conversation_ids),
+        "draft_count": draft_count,
+        "message_count": message_count,
+    }
+
+
+def _assistant_conversation_delete_audit_event(
+    current_store: MemoryStore,
+    *,
+    conversation_ids: list[str],
+    user_id: str,
+) -> dict[str, Any]:
+    audit_events = getattr(current_store, "audit_events", None)
+    sequence = len(audit_events) + 1 if isinstance(audit_events, list) else 1
+    return {
+        "actor_id": user_id,
+        "ai_task_id": None,
+        "created_at": datetime.now(UTC).isoformat(),
+        "event_type": "assistant_conversation.deleted",
+        "id": current_store.new_id("audit"),
+        "payload": {"conversation_ids": conversation_ids},
+        "sequence": sequence,
+        "subject_id": conversation_ids[0],
+        "subject_type": "assistant_conversation",
+    }
 
 
 def assistant_conversation_for_user(

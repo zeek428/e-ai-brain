@@ -321,12 +321,33 @@
   padding-right: 4px;
 }
 
-.assistant-history-list .ant-btn {
+.assistant-history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: stretch;
+  gap: 6px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.assistant-history-list .assistant-history-open-button {
   justify-content: flex-start;
+  border: 0;
+  border-radius: 7px 0 0 7px;
   height: auto;
   min-height: 44px;
   padding: 7px 10px;
   text-align: left;
+  box-shadow: none;
+}
+
+.assistant-history-delete-button {
+  align-self: center;
+  width: 28px;
+  min-width: 28px;
+  height: 32px;
+  padding: 0;
 }
 
 .assistant-history-list .assistant-history-load-more {
@@ -338,6 +359,10 @@
 .assistant-history-active {
   border-color: #2f6fed;
   background: #eef4ff;
+}
+
+.assistant-history-active .assistant-history-open-button {
+  background: transparent;
 }
 
 .assistant-history-button-text {
