@@ -8,6 +8,8 @@ dependencies = [
   "langgraph>=1.2.2",
   "minio>=7.2.15",
   "psycopg[binary]>=3.2.0",
+  "pypdf>=5.0.0",
+  "python-multipart>=0.0.20",
   "uvicorn[standard]>=0.32.0",
 ]
 

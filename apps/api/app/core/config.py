@@ -23,7 +23,22 @@ def _env_key_value_map(name: str) -> dict[str, str]:
     return mapping
 
 
+def _env_csv_set(name: str, default: str) -> set[str]:
+    return {
+        item.strip()
+        for item in os.getenv(name, default).split(",")
+        if item.strip()
+    }
+
+
 DEFAULT_APP_SECRET_KEY = "change-me-in-local-env"
+DEFAULT_KNOWLEDGE_UPLOAD_ALLOWED_EXTENSIONS = (
+    ".csv,.json,.md,.markdown,.pdf,.txt"
+)
+DEFAULT_KNOWLEDGE_UPLOAD_ALLOWED_MIME_TYPES = (
+    "application/json,application/octet-stream,application/pdf,"
+    "text/csv,text/markdown,text/plain,text/x-markdown"
+)
 LOCAL_APP_ENVIRONMENTS = {"dev", "development", "local"}
 TEST_APP_ENVIRONMENTS = {"pytest", "test", "testing"}
 LOCAL_NETWORK_CORS_ENVIRONMENTS = LOCAL_APP_ENVIRONMENTS | TEST_APP_ENVIRONMENTS
@@ -64,6 +79,23 @@ class Settings:
         self.object_storage_access_key = os.getenv("OBJECT_STORAGE_ACCESS_KEY", "")
         self.object_storage_secret_key = os.getenv("OBJECT_STORAGE_SECRET_KEY", "")
         self.object_storage_secure = _env_bool("OBJECT_STORAGE_SECURE")
+        self.knowledge_upload_max_bytes = int(
+            os.getenv("KNOWLEDGE_UPLOAD_MAX_BYTES", str(50 * 1024 * 1024)),
+        )
+        self.knowledge_upload_presign_expires_seconds = int(
+            os.getenv("KNOWLEDGE_UPLOAD_PRESIGN_EXPIRES_SECONDS", "900"),
+        )
+        self.knowledge_upload_allowed_extensions = _env_csv_set(
+            "KNOWLEDGE_UPLOAD_ALLOWED_EXTENSIONS",
+            DEFAULT_KNOWLEDGE_UPLOAD_ALLOWED_EXTENSIONS,
+        )
+        self.knowledge_upload_allowed_mime_types = _env_csv_set(
+            "KNOWLEDGE_UPLOAD_ALLOWED_MIME_TYPES",
+            DEFAULT_KNOWLEDGE_UPLOAD_ALLOWED_MIME_TYPES,
+        )
+        self.knowledge_preview_max_chars = int(
+            os.getenv("KNOWLEDGE_PREVIEW_MAX_CHARS", "4000"),
+        )
         default_import_worker_enabled = (
             "false" if self.app_env.lower() in {"test", "testing", "pytest"} else "true"
         )

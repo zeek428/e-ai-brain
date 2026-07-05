@@ -633,8 +633,7 @@ def create_knowledge_document_result(
                 "updated_at": datetime.now(UTC).isoformat(),
             },
         )
-    if not uses_repository_context(current_store):
-        apply_knowledge_document_to_memory(current_store, document, chunks)
+    apply_knowledge_document_to_memory(current_store, document, chunks)
     audit_event = record_audit_event(
         current_store,
         event_type="knowledge_document.created",

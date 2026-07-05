@@ -268,6 +268,7 @@ export type {
 export {
   activateKnowledgeChunkSet,
   approveKnowledgeDeposit,
+  askKnowledgeRag,
   batchMoveKnowledgeDocuments,
   cancelKnowledgeImportJob,
   createKnowledgeFolder,
@@ -294,6 +295,7 @@ export {
   updateKnowledgeFolder,
   updateManagementKnowledgeDocument,
   uploadKnowledgeDocument,
+  uploadKnowledgeDocumentFile,
 } from './knowledgeClient';
 export type {
   KnowledgeAssetRecord,
@@ -303,6 +305,7 @@ export type {
   KnowledgeDepositListItem,
   KnowledgeDepositRecord,
   KnowledgeDocumentListItem,
+  KnowledgeDocumentFileUploadPayload,
   KnowledgeDocumentMutationPayload,
   KnowledgeDocumentUploadPayload,
   KnowledgeFolderRecord,
@@ -311,6 +314,8 @@ export type {
   KnowledgeIndexHealthIssueRecord,
   KnowledgeIndexHealthRecord,
   KnowledgeListQuery,
+  KnowledgeRagAnswerRecord,
+  KnowledgeRagCitationRecord,
   KnowledgeSearchResultRecord,
   KnowledgeSpaceRecord,
 } from './knowledgeClient';

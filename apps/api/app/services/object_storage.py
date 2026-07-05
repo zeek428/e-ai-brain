@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -29,6 +30,24 @@ class ObjectStorage:
 
     def get_bytes(self, *, bucket: str, object_key: str) -> bytes:
         raise NotImplementedError
+
+    def presigned_get_url(
+        self,
+        *,
+        bucket: str,
+        expires_seconds: int,
+        object_key: str,
+    ) -> str | None:
+        return None
+
+    def presigned_put_url(
+        self,
+        *,
+        bucket: str,
+        expires_seconds: int,
+        object_key: str,
+    ) -> str | None:
+        return None
 
 
 class LocalObjectStorage(ObjectStorage):
@@ -112,6 +131,34 @@ class MinioObjectStorage(ObjectStorage):
         finally:
             response.close()
             response.release_conn()
+
+    def presigned_get_url(
+        self,
+        *,
+        bucket: str,
+        expires_seconds: int,
+        object_key: str,
+    ) -> str | None:
+        self._ensure_bucket(bucket)
+        return self.client.presigned_get_object(
+            bucket,
+            object_key,
+            expires=timedelta(seconds=expires_seconds),
+        )
+
+    def presigned_put_url(
+        self,
+        *,
+        bucket: str,
+        expires_seconds: int,
+        object_key: str,
+    ) -> str | None:
+        self._ensure_bucket(bucket)
+        return self.client.presigned_put_object(
+            bucket,
+            object_key,
+            expires=timedelta(seconds=expires_seconds),
+        )
 
 
 def object_storage() -> ObjectStorage:

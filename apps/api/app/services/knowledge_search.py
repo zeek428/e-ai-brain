@@ -134,7 +134,37 @@ def knowledge_search_response(
             item["chunk_index"],
         )
     )
-    return envelope({"items": items[:top_k], "total": len(items)}, trace_id)
+    returned_items = items[: max(1, min(top_k, 50))]
+    return envelope(
+        {
+            "items": returned_items,
+            "metrics": knowledge_search_metrics(
+                items=returned_items,
+                total_candidates=len(items),
+            ),
+            "total": len(items),
+        },
+        trace_id,
+    )
+
+
+def knowledge_search_metrics(
+    *,
+    items: list[dict[str, Any]],
+    total_candidates: int,
+) -> dict[str, Any]:
+    retrieval_modes: dict[str, int] = {}
+    for item in items:
+        mode = item.get("retrieval_mode") or "unknown"
+        retrieval_modes[mode] = retrieval_modes.get(mode, 0) + 1
+    return {
+        "hit_count": len(items),
+        "no_result": len(items) == 0,
+        "no_result_rate": 1.0 if len(items) == 0 else 0.0,
+        "recall_proxy": len(items) / total_candidates if total_candidates else 0.0,
+        "retrieval_modes": retrieval_modes,
+        "total_candidates": total_candidates,
+    }
 
 
 def knowledge_search_candidates(
@@ -147,6 +177,7 @@ def knowledge_search_candidates(
     repository = knowledge_query_repository(current_store)
     has_vector_chunks = getattr(repository, "has_readable_vector_chunks", None)
     search_chunks = getattr(repository, "search_knowledge_chunks", None)
+    search_hybrid_chunks = getattr(repository, "search_knowledge_chunks_hybrid", None)
     if callable(has_vector_chunks) and callable(search_chunks):
         access_args = knowledge_repository_access_args(user)
         try:
@@ -159,6 +190,20 @@ def knowledge_search_candidates(
         query_embedding_result = (
             knowledge_query_embedding(current_store, query) if has_vectors else None
         )
+        if query_embedding_result is not None and callable(search_hybrid_chunks):
+            try:
+                return (
+                    search_hybrid_chunks(
+                        **access_args,
+                        candidate_limit=50,
+                        knowledge_space_id=knowledge_space_id,
+                        query=query,
+                        query_embedding=query_embedding_result[0],
+                    ),
+                    query_embedding_result,
+                )
+            except TypeError:
+                pass
         try:
             candidates = search_chunks(
                 **access_args,
@@ -237,7 +282,13 @@ def knowledge_search_items(
         haystack = f"{document['title']} {chunk['content']}".lower()
         embedding = chunk.get("embedding")
         score = None
-        if (
+        retrieval_modes = set(chunk.get("retrieval_modes") or [])
+        precomputed_score = chunk.get("hybrid_score")
+        if precomputed_score is not None:
+            score = float(precomputed_score)
+            if not retrieval_modes:
+                retrieval_modes.add("hybrid")
+        elif (
             query_embedding is not None
             and query_embedding_context is not None
             and isinstance(embedding, list)
@@ -251,7 +302,11 @@ def knowledge_search_items(
                 continue
         elif query not in haystack:
             continue
-        retrieval_mode = "vector" if score is not None else "keyword"
+        retrieval_mode = (
+            "hybrid"
+            if {"keyword", "vector"}.issubset(retrieval_modes)
+            else ("vector" if "vector" in retrieval_modes or score is not None else "keyword")
+        )
         parent_chunk_id = chunk.get("parent_chunk_id")
         parent_content = None
         if parent_chunk_id:
@@ -281,6 +336,11 @@ def knowledge_search_items(
                     or chunk.get("metadata", {}).get("knowledge_space_id"),
                     "parent_chunk_id": parent_chunk_id,
                     "parent_content": parent_content,
+                    "retrieval_modes": sorted(retrieval_modes),
+                    "hybrid_score": chunk.get("hybrid_score"),
+                    "keyword_rank": chunk.get("keyword_rank"),
+                    "vector_rank": chunk.get("vector_rank"),
+                    "vector_score": chunk.get("vector_score"),
                     "title": document["title"],
                 },
             }

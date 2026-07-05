@@ -3,7 +3,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
+from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 from app.api.deps import api_error
@@ -28,6 +31,7 @@ IMPORT_JOB_RUNNABLE_STATUSES = {"queued", "uploaded", "failed"}
 IMPORT_JOB_RETRYABLE_STATUSES = {"failed", "cancelled"}
 SUPPORTED_PARSER_ENGINES = {"plain_text", "markdown", "pdf_text", "ocr_json", "table_json"}
 SUPPORTED_CHUNK_STRATEGIES = {"simple_text", "parent_child", "regex_section"}
+SAFE_FILENAME_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def now_iso() -> str:
@@ -611,6 +615,43 @@ def decode_upload_content(content_base64: str) -> bytes:
         raise api_error(400, "VALIDATION_ERROR", "content_base64 is invalid") from exc
 
 
+def normalize_upload_filename(filename: str) -> str:
+    original_name = Path(non_blank(filename, "filename")).name.strip()
+    if original_name in {"", ".", ".."}:
+        raise api_error(400, "VALIDATION_ERROR", "filename is invalid")
+    normalized = SAFE_FILENAME_PATTERN.sub("_", original_name)
+    return normalized[:180] or "upload.bin"
+
+
+def _upload_extension(filename: str) -> str:
+    return Path(filename).suffix.lower()
+
+
+def validate_upload_content(
+    *,
+    content: bytes,
+    filename: str,
+    mime_type: str,
+) -> None:
+    settings = get_settings()
+    if not content:
+        raise api_error(400, "VALIDATION_ERROR", "uploaded content is empty")
+    if len(content) > settings.knowledge_upload_max_bytes:
+        raise api_error(
+            413,
+            "KNOWLEDGE_UPLOAD_TOO_LARGE",
+            "uploaded file exceeds configured size limit",
+        )
+    extension = _upload_extension(filename)
+    if extension not in settings.knowledge_upload_allowed_extensions:
+        raise api_error(400, "KNOWLEDGE_UPLOAD_TYPE_UNSUPPORTED", "file extension is not allowed")
+    normalized_mime_type = (mime_type or "application/octet-stream").lower()
+    if normalized_mime_type not in settings.knowledge_upload_allowed_mime_types:
+        raise api_error(400, "KNOWLEDGE_UPLOAD_TYPE_UNSUPPORTED", "file mime type is not allowed")
+    if extension == ".pdf" and not content.startswith(b"%PDF"):
+        raise api_error(400, "KNOWLEDGE_PDF_INVALID", "PDF signature is invalid")
+
+
 def create_asset_record(
     *,
     asset_type: str = "original",
@@ -932,6 +973,24 @@ def _parse_table_json_payload(payload: Any, *, filename: str, parser_engine: str
     }
 
 
+def _extract_pdf_pages(content: bytes) -> list[str]:
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:  # pragma: no cover - dependency is part of runtime install
+        raise ValueError("PDF_PARSER_UNAVAILABLE") from exc
+    try:
+        reader = PdfReader(BytesIO(content))
+        pages = []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            normalized = "\n".join(line.strip() for line in text.splitlines() if line.strip())
+            if normalized:
+                pages.append(normalized)
+        return pages
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("PDF_PARSE_FAILED") from exc
+
+
 def parse_asset_content(
     *,
     content: bytes,
@@ -939,8 +998,8 @@ def parse_asset_content(
     mime_type: str,
     parser_engine: str,
 ) -> dict[str, Any]:
-    text = content.decode("utf-8", errors="replace").strip()
     if parser_engine == "plain_text":
+        text = content.decode("utf-8", errors="replace").strip()
         if not text:
             raise ValueError("NO_INDEXABLE_CONTENT")
         return {
@@ -951,6 +1010,7 @@ def parse_asset_content(
             "metadata": {"parser_engine": parser_engine},
         }
     if parser_engine == "markdown":
+        text = content.decode("utf-8", errors="replace").strip()
         if not text:
             raise ValueError("NO_INDEXABLE_CONTENT")
         return {
@@ -961,12 +1021,7 @@ def parse_asset_content(
             "metadata": {"parser_engine": parser_engine, "structure": "markdown"},
         }
     if parser_engine == "pdf_text":
-        printable = "".join(char if char.isprintable() or char.isspace() else " " for char in text)
-        page_texts = [
-            "\n".join(line.strip() for line in page.splitlines() if line.strip())
-            for page in printable.split("\f")
-        ]
-        page_texts = [page for page in page_texts if page]
+        page_texts = _extract_pdf_pages(content)
         normalized = "\n\n".join(
             f"## Page {index}\n\n{page}" if len(page_texts) > 1 else page
             for index, page in enumerate(page_texts, start=1)
@@ -992,12 +1047,14 @@ def parse_asset_content(
             ],
         }
     if parser_engine == "ocr_json":
+        text = content.decode("utf-8", errors="replace").strip()
         return _parse_ocr_json_payload(
             json.loads(text),
             filename=filename,
             parser_engine=parser_engine,
         )
     if parser_engine == "table_json":
+        text = content.decode("utf-8", errors="replace").strip()
         return _parse_table_json_payload(
             json.loads(text),
             filename=filename,
@@ -1021,6 +1078,38 @@ def upload_knowledge_document_result(
     title: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    content = decode_upload_content(content_base64)
+    return upload_knowledge_document_bytes_result(
+        content=content,
+        current_store=current_store,
+        doc_type=doc_type,
+        filename=filename,
+        folder_id=folder_id,
+        knowledge_space_id=knowledge_space_id,
+        mime_type=mime_type,
+        parser_engine=parser_engine,
+        chunk_strategy=chunk_strategy,
+        tags=tags,
+        title=title,
+        user=user,
+    )
+
+
+def upload_knowledge_document_bytes_result(
+    *,
+    content: bytes,
+    current_store: Any,
+    doc_type: str,
+    filename: str,
+    folder_id: str | None,
+    knowledge_space_id: str,
+    mime_type: str,
+    parser_engine: str | None = None,
+    chunk_strategy: str | None = None,
+    tags: list[str],
+    title: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
     ensure_space_access(current_store, user, space_id=knowledge_space_id, required="write")
     if folder_id is not None:
         folder = _read_memory_record(current_store, "knowledge_folders", folder_id)
@@ -1030,12 +1119,21 @@ def upload_knowledge_document_result(
             or not folder_is_effectively_active(current_store, folder_id)
         ):
             raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
-    content = decode_upload_content(content_base64)
-    if not content:
-        raise api_error(400, "VALIDATION_ERROR", "uploaded content is empty")
-    normalized_parser = normalize_parser_engine(parser_engine, mime_type)
+    normalized_filename = normalize_upload_filename(filename)
+    normalized_mime_type = (mime_type or "application/octet-stream").lower()
+    validate_upload_content(
+        content=content,
+        filename=normalized_filename,
+        mime_type=normalized_mime_type,
+    )
+    normalized_parser = normalize_parser_engine(parser_engine, normalized_mime_type)
     normalized_chunk_strategy = normalize_chunk_strategy(chunk_strategy)
-    preview_content = content.decode("utf-8", errors="replace").strip()
+    settings = get_settings()
+    if normalized_parser == "pdf_text":
+        preview_content = f"{normalized_filename} 已上传，等待 PDF 文本解析。"
+    else:
+        preview_content = content.decode("utf-8", errors="replace").strip()
+    preview_content = preview_content[: settings.knowledge_preview_max_chars]
 
     timestamp = now_iso()
     document_id = current_store.new_id("knowledge")
@@ -1066,8 +1164,8 @@ def upload_knowledge_document_result(
         content=content,
         current_store=current_store,
         document_id=document_id,
-        filename=non_blank(filename, "filename"),
-        mime_type=mime_type or "application/octet-stream",
+        filename=normalized_filename,
+        mime_type=normalized_mime_type,
         space_id=knowledge_space_id,
         user=user,
     )
@@ -1108,6 +1206,54 @@ def upload_knowledge_document_result(
         "asset": dict(asset),
         "document": knowledge_document_response(current_store, document, []),
         "import_job": dict(import_job),
+    }
+
+
+def create_knowledge_upload_presign_result(
+    *,
+    content_length: int | None,
+    current_store: Any,
+    filename: str,
+    knowledge_space_id: str,
+    mime_type: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    ensure_space_access(current_store, user, space_id=knowledge_space_id, required="write")
+    normalized_filename = normalize_upload_filename(filename)
+    normalized_mime_type = (mime_type or "application/octet-stream").lower()
+    settings = get_settings()
+    extension = _upload_extension(normalized_filename)
+    if extension not in settings.knowledge_upload_allowed_extensions:
+        raise api_error(400, "KNOWLEDGE_UPLOAD_TYPE_UNSUPPORTED", "file extension is not allowed")
+    if normalized_mime_type not in settings.knowledge_upload_allowed_mime_types:
+        raise api_error(400, "KNOWLEDGE_UPLOAD_TYPE_UNSUPPORTED", "file mime type is not allowed")
+    if content_length is not None and content_length > settings.knowledge_upload_max_bytes:
+        raise api_error(
+            413,
+            "KNOWLEDGE_UPLOAD_TOO_LARGE",
+            "uploaded file exceeds configured size limit",
+        )
+    upload_session_id = current_store.new_id("knowledge_upload")
+    object_key = f"knowledge/{knowledge_space_id}/pending/{upload_session_id}/{normalized_filename}"
+    storage = object_storage()
+    upload_url = storage.presigned_put_url(
+        bucket=settings.object_storage_bucket,
+        expires_seconds=settings.knowledge_upload_presign_expires_seconds,
+        object_key=object_key,
+    )
+    return {
+        "allowed_extensions": sorted(settings.knowledge_upload_allowed_extensions),
+        "allowed_mime_types": sorted(settings.knowledge_upload_allowed_mime_types),
+        "bucket": settings.object_storage_bucket,
+        "expires_seconds": settings.knowledge_upload_presign_expires_seconds,
+        "filename": normalized_filename,
+        "max_bytes": settings.knowledge_upload_max_bytes,
+        "mime_type": normalized_mime_type,
+        "object_key": object_key,
+        "provider": storage.provider,
+        "supports_presigned": bool(upload_url),
+        "upload_session_id": upload_session_id,
+        "upload_url": upload_url,
     }
 
 

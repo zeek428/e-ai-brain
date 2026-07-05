@@ -125,6 +125,17 @@ def test_knowledge_space_folder_asset_upload_and_search_are_permission_filtered(
     assert viewer_results[0]["source"]["folder_id"] == folder["id"]
     assert viewer_results[0]["source"]["asset_id"] == document["source_asset_id"]
 
+    rag_answer = client.post(
+        "/api/knowledge/rag",
+        headers=viewer_headers,
+        json={"query": "space-secret-token", "knowledge_space_id": space["id"], "top_k": 3},
+    )
+    assert rag_answer.status_code == 200
+    rag_data = rag_answer.json()["data"]
+    assert rag_data["citations"][0]["document_id"] == document["id"]
+    assert rag_data["metrics"]["citation_count"] == 1
+    assert rag_data["metrics"]["no_result"] is False
+
     reviewer_results = client.post(
         "/api/knowledge/search",
         headers=reviewer_headers,
@@ -145,6 +156,52 @@ def test_knowledge_space_folder_asset_upload_and_search_are_permission_filtered(
     )
     assert forbidden_preview.status_code == 403
     assert forbidden_preview.json()["detail"]["code"] == "FORBIDDEN"
+
+
+def test_knowledge_document_multipart_upload_validates_files():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    space = client.post(
+        "/api/knowledge/spaces",
+        headers=admin_headers,
+        json={"code": "secure-upload", "name": "安全上传"},
+    ).json()["data"]
+
+    upload_response = client.post(
+        "/api/knowledge/documents/upload-file",
+        headers=admin_headers,
+        data={
+            "knowledge_space_id": space["id"],
+            "title": "安全上传手册",
+            "doc_type": "manual",
+            "parser_engine": "markdown",
+            "tags": "secure,upload",
+        },
+        files={
+            "file": (
+                "secure-upload.md",
+                b"# Secure Upload\n\nmultipart token",
+                "text/markdown",
+            )
+        },
+    )
+    assert upload_response.status_code == 200
+    uploaded = upload_response.json()["data"]
+    assert uploaded["document"]["knowledge_space_id"] == space["id"]
+    assert uploaded["asset"]["filename"] == "secure-upload.md"
+
+    invalid_pdf_response = client.post(
+        "/api/knowledge/documents/upload-file",
+        headers=admin_headers,
+        data={
+            "knowledge_space_id": space["id"],
+            "title": "伪 PDF",
+            "doc_type": "manual",
+        },
+        files={"file": ("fake.pdf", b"not a real pdf", "application/pdf")},
+    )
+    assert invalid_pdf_response.status_code == 400
+    assert invalid_pdf_response.json()["detail"]["code"] == "KNOWLEDGE_PDF_INVALID"
 
 
 def test_knowledge_document_assets_and_import_jobs_are_listed_with_space_permissions():

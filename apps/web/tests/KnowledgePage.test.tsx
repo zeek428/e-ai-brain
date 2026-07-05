@@ -229,6 +229,17 @@ describe('KnowledgePage', () => {
         });
       }
       if (input === '/api/knowledge/spaces') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'deposit', id: 'knowledge_space_deposit', name: '沉淀知识空间' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/auth/roles') {
+        return jsonResponse(roleCatalogEnvelope);
+      }
+      if (input === '/api/knowledge/spaces/knowledge_space_deposit/folders') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/knowledge/deposits?status=pending') {
@@ -251,6 +262,8 @@ describe('KnowledgePage', () => {
       if (input === '/api/knowledge/deposits/deposit_api/approve') {
         expect(init?.method).toBe('POST');
         expect(JSON.parse(String(init?.body))).toEqual({
+          folder_id: null,
+          knowledge_space_id: 'knowledge_space_deposit',
           permission_roles: ['admin'],
           title: '技术方案知识沉淀',
         });
@@ -259,6 +272,7 @@ describe('KnowledgePage', () => {
             ai_task_id: 'task_solution_done',
             id: 'deposit_api',
             knowledge_document_id: 'knowledge_deposit_api',
+            knowledge_space_id: 'knowledge_space_deposit',
             status: 'approved',
             title: '技术方案知识沉淀',
           },
@@ -348,6 +362,28 @@ describe('KnowledgePage', () => {
           },
         });
       }
+      if (input === '/api/knowledge/rag') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          query: '需求评估',
+          top_k: 5,
+        });
+        return jsonResponse({
+          data: {
+            answer: '围绕“需求评估”，可参考以下知识依据。',
+            answer_mode: 'extractive_rag',
+            citations: [
+              {
+                content: '需求评估规则内容',
+                document_id: 'knowledge_api',
+                source: { doc_type: 'manual', title: '需求评估规则' },
+                title: '需求评估规则',
+              },
+            ],
+            metrics: { citation_count: 1, latency_ms: 12, no_result: false },
+          },
+        });
+      }
       if (String(input).startsWith('/api/knowledge/index-health')) {
         return jsonResponse(knowledgeHealthEnvelope());
       }
@@ -364,6 +400,7 @@ describe('KnowledgePage', () => {
     fireEvent.click(screen.getByRole('button', { name: '检索' }));
 
     expect(await screen.findByText('需求评估规则内容')).toBeInTheDocument();
+    expect((await screen.findAllByText(/可参考以下知识依据/)).length).toBeGreaterThan(0);
     expect(screen.getByText('manual · 需求评估规则')).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path, init]) => [String(path).split('?')[0], init?.method ?? 'GET'])).toEqual([
       ['/api/auth/roles', 'GET'],
@@ -371,6 +408,7 @@ describe('KnowledgePage', () => {
       ['/api/knowledge/documents', 'GET'],
       ['/api/knowledge/index-health', 'GET'],
       ['/api/knowledge/search', 'POST'],
+      ['/api/knowledge/rag', 'POST'],
     ]);
   });
 
@@ -532,20 +570,17 @@ describe('KnowledgePage', () => {
           },
         });
       }
-      if (input === '/api/knowledge/documents/upload') {
+      if (input === '/api/knowledge/documents/upload-file') {
         expect(init?.method).toBe('POST');
-        const body = JSON.parse(String(init?.body));
-        expect(body).toMatchObject({
-          chunk_strategy: 'regex_section',
-          doc_type: 'manual',
-          filename: 'payment-runbook.md',
-          folder_id: 'knowledge_folder_runbook',
-          knowledge_space_id: 'knowledge_space_payment',
-          mime_type: 'text/markdown',
-          tags: [],
-          title: 'payment-runbook',
-        });
-        expect(body.content_base64).toEqual(expect.any(String));
+        expect(init?.body).toBeInstanceOf(FormData);
+        const body = init?.body as FormData;
+        const uploadedFile = body.get('file') as File;
+        expect(uploadedFile.name).toBe('payment-runbook.md');
+        expect(body.get('chunk_strategy')).toBe('regex_section');
+        expect(body.get('doc_type')).toBe('manual');
+        expect(body.get('folder_id')).toBe('knowledge_folder_runbook');
+        expect(body.get('knowledge_space_id')).toBe('knowledge_space_payment');
+        expect(body.get('title')).toBe('payment-runbook');
         return jsonResponse({
           data: {
             asset: {
@@ -590,14 +625,14 @@ describe('KnowledgePage', () => {
     fireEvent.change(folderNameInput, { target: { value: '排障手册' } });
     fireEvent.click(within(folderModal).getByRole('button', { name: /OK|确 定/ }));
 
-    expect(await screen.findByText('排障手册')).toBeInTheDocument();
+    expect((await screen.findAllByText('排障手册')).length).toBeGreaterThan(0);
     const file = new File(['支付失败排查步骤'], 'payment-runbook.md', {
       type: 'text/markdown',
     });
     fireEvent.change(within(documentModal).getByLabelText('选择知识文件'), {
       target: { files: [file] },
     });
-    expect(await screen.findByText('payment-runbook.md')).toBeInTheDocument();
+    expect(await screen.findByText(/payment-runbook.md/)).toBeInTheDocument();
     fireEvent.mouseDown(within(documentModal).getByLabelText('分块策略'));
     fireEvent.click(await screen.findByText('正则分块'));
 
@@ -605,7 +640,7 @@ describe('KnowledgePage', () => {
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
-        '/api/knowledge/documents/upload',
+        '/api/knowledge/documents/upload-file',
         'POST',
       ]),
     );

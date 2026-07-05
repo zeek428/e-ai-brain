@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from app.api.deps import (
@@ -38,6 +38,7 @@ from app.services.knowledge_management import (
     cancel_knowledge_import_job_result,
     create_knowledge_folder_result,
     create_knowledge_space_result,
+    create_knowledge_upload_presign_result,
     list_knowledge_chunk_sets_result,
     list_knowledge_chunks_result,
     list_knowledge_document_assets_result,
@@ -49,8 +50,10 @@ from app.services.knowledge_management import (
     retry_knowledge_import_job_result,
     run_knowledge_import_job_result,
     update_knowledge_space_members_result,
+    upload_knowledge_document_bytes_result,
     upload_knowledge_document_result,
 )
+from app.services.knowledge_rag import knowledge_rag_response
 from app.services.knowledge_search import knowledge_search_response
 
 router = APIRouter(tags=["knowledge"])
@@ -69,6 +72,12 @@ def _require_knowledge_manage(user: dict[str, Any]) -> None:
 
 def _request_started_at(request: Request) -> float | None:
     return getattr(request.state, "started_at", None)
+
+
+def _parse_form_tags(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [tag.strip() for tag in value.split(",") if tag.strip()]
 
 
 class KnowledgeDocumentRequest(BaseModel):
@@ -98,6 +107,12 @@ class KnowledgeDocumentPatchRequest(BaseModel):
 class KnowledgeSearchRequest(BaseModel):
     query: str
     top_k: int = 8
+    knowledge_space_id: str | None = None
+
+
+class KnowledgeRagRequest(BaseModel):
+    query: str
+    top_k: int = 6
     knowledge_space_id: str | None = None
 
 
@@ -141,6 +156,13 @@ class KnowledgeDocumentUploadRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class KnowledgeUploadPresignRequest(BaseModel):
+    content_length: int | None = Field(default=None, ge=1)
+    filename: str
+    knowledge_space_id: str
+    mime_type: str = "application/octet-stream"
+
+
 class KnowledgeDocumentReparseRequest(BaseModel):
     parser_engine: str | None = None
     chunk_strategy: str | None = None
@@ -152,6 +174,8 @@ class KnowledgeDocumentsBatchMoveRequest(BaseModel):
 
 
 class KnowledgeDepositApproveRequest(BaseModel):
+    folder_id: str | None = None
+    knowledge_space_id: str
     title: str | None = None
     permission_roles: list[str] = Field(default_factory=lambda: ["admin"])
 
@@ -340,6 +364,60 @@ def upload_knowledge_document(
     enqueue_knowledge_import_job(
         request.app,
         job_id=result["import_job"]["id"],
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/knowledge/documents/upload-file")
+async def upload_knowledge_document_file(
+    request: Request,
+    file: Annotated[UploadFile, File()],
+    knowledge_space_id: Annotated[str, Form()],
+    title: Annotated[str, Form()],
+    folder_id: Annotated[str | None, Form()] = None,
+    doc_type: Annotated[str, Form()] = "manual",
+    parser_engine: Annotated[str | None, Form()] = None,
+    chunk_strategy: Annotated[str | None, Form()] = None,
+    tags: Annotated[str | None, Form()] = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    max_bytes = get_settings().knowledge_upload_max_bytes
+    content = await file.read(max_bytes + 1)
+    result = upload_knowledge_document_bytes_result(
+        content=content,
+        current_store=knowledge_write_store(store(request)),
+        doc_type=doc_type,
+        filename=file.filename or title,
+        folder_id=folder_id,
+        knowledge_space_id=knowledge_space_id,
+        mime_type=file.content_type or "application/octet-stream",
+        parser_engine=parser_engine,
+        chunk_strategy=chunk_strategy,
+        tags=_parse_form_tags(tags),
+        title=title,
+        user=user,
+    )
+    enqueue_knowledge_import_job(
+        request.app,
+        job_id=result["import_job"]["id"],
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/knowledge/uploads/presign")
+def create_knowledge_upload_presign(
+    request: Request,
+    payload: KnowledgeUploadPresignRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = create_knowledge_upload_presign_result(
+        content_length=payload.content_length,
+        current_store=knowledge_write_store(store(request)),
+        filename=payload.filename,
+        knowledge_space_id=payload.knowledge_space_id,
+        mime_type=payload.mime_type,
         user=user,
     )
     return envelope(result, get_trace_id(request))
@@ -627,6 +705,22 @@ def search_knowledge(
     )
 
 
+@router.post("/api/knowledge/rag")
+def ask_knowledge_rag(
+    request: Request,
+    payload: KnowledgeRagRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return knowledge_rag_response(
+        current_store=store(request),
+        knowledge_space_id=payload.knowledge_space_id,
+        query_value=payload.query,
+        top_k=payload.top_k,
+        trace_id=get_trace_id(request),
+        user=user,
+    )
+
+
 @router.get("/api/knowledge/deposits")
 def list_knowledge_deposits(
     request: Request,
@@ -661,6 +755,8 @@ def approve_knowledge_deposit(
     deposit = approve_knowledge_deposit_result(
         current_store=knowledge_write_store(store(request)),
         deposit_id=deposit_id,
+        folder_id=payload.folder_id,
+        knowledge_space_id=payload.knowledge_space_id,
         permission_roles=payload.permission_roles,
         title=payload.title,
         user=user,

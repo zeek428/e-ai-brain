@@ -825,6 +825,12 @@ class FakeSnapshotRepository:
             for chunk_id, chunk in payload.setdefault("knowledge_chunks", {}).items()
             if chunk.get("document_id") != document_id
         }
+        for deposit_id, deposit in list(payload.setdefault("knowledge_deposits", {}).items()):
+            if deposit.get("knowledge_document_id") == document_id:
+                payload["knowledge_deposits"][deposit_id] = {
+                    **deposit,
+                    "knowledge_document_id": None,
+                }
         for deposit in deposits:
             payload.setdefault("knowledge_deposits", {})[deposit["id"]] = dict(deposit)
         self.knowledge_payload = payload

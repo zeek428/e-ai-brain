@@ -149,6 +149,11 @@ def test_knowledge_search_filters_permissions_and_deposits_are_reviewable():
     assert admin_doc["id"] not in [item["document_id"] for item in results]
 
     task_id = create_completed_design_task(admin_headers)
+    space = client.post(
+        "/api/knowledge/spaces",
+        json={"code": "governance", "name": "治理知识空间"},
+        headers=admin_headers,
+    ).json()["data"]
     deposits = client.get("/api/knowledge/deposits?status=pending", headers=admin_headers).json()[
         "data"
     ]["items"]
@@ -167,7 +172,7 @@ def test_knowledge_search_filters_permissions_and_deposits_are_reviewable():
 
     approved = client.post(
         f"/api/knowledge/deposits/{deposits[0]['id']}/approve",
-        json={"title": "知识治理闭环沉淀"},
+        json={"knowledge_space_id": space["id"], "title": "知识治理闭环沉淀"},
         headers=admin_headers,
     ).json()["data"]
     assert approved["status"] == "approved"

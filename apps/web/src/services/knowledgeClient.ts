@@ -1,6 +1,7 @@
 import type { KnowledgeRecord } from '../data/management';
 import { formatDisplayDateTime } from '../utils/dateTime';
 import {
+  apiFormRequest,
   apiRequest,
   appendQueryParam,
   appendRemoteListParams,
@@ -46,6 +47,8 @@ export type KnowledgeDepositRecord = {
 };
 
 export type KnowledgeDepositApprovePayload = {
+  folderId?: string | null;
+  knowledgeSpaceId: string;
   permissionRoles?: string[];
   title?: string;
 };
@@ -58,9 +61,26 @@ export type KnowledgeSearchResultRecord = {
   id: string;
   parentChunkId?: string;
   parentContent?: string;
-  retrievalMode?: 'keyword' | 'vector';
+  retrievalMode?: 'hybrid' | 'keyword' | 'vector';
+  score?: number | null;
   sourceLabel: string;
   title: string;
+};
+
+export type KnowledgeRagCitationRecord = KnowledgeSearchResultRecord;
+
+export type KnowledgeRagAnswerRecord = {
+  answer: string;
+  answerMode: string;
+  citations: KnowledgeRagCitationRecord[];
+  metrics?: {
+    citationCount?: number;
+    hitCount?: number;
+    latencyMs?: number;
+    noResult?: boolean;
+    noResultRate?: number;
+    ragCitationAccuracyProxy?: number;
+  };
 };
 
 export type KnowledgeSpaceRecord = {
@@ -209,6 +229,17 @@ export type KnowledgeDocumentUploadPayload = {
   title: string;
 };
 
+export type KnowledgeDocumentFileUploadPayload = {
+  chunkStrategy?: string;
+  docType?: string;
+  file: File;
+  folderId?: string | null;
+  knowledgeSpaceId: string;
+  parserEngine?: string;
+  tags?: string[];
+  title: string;
+};
+
 export type KnowledgeDocumentMutationPayload = {
   content?: string;
   doc_type?: string;
@@ -338,6 +369,7 @@ type KnowledgeSearchResultItem = {
   content?: string;
   document_id: string;
   retrieval_mode?: string;
+  score?: number | null;
   source?: {
     asset_id?: string;
     chunk_id?: string;
@@ -350,6 +382,20 @@ type KnowledgeSearchResultItem = {
     title?: string;
   };
   title?: string;
+};
+
+type KnowledgeRagAnswerItem = {
+  answer?: string;
+  answer_mode?: string;
+  citations?: KnowledgeSearchResultItem[];
+  metrics?: {
+    citation_count?: number;
+    hit_count?: number;
+    latency_ms?: number;
+    no_result?: boolean;
+    no_result_rate?: number;
+    rag_citation_accuracy_proxy?: number;
+  };
 };
 
 type KnowledgeIndexHealthIssueItem = {
@@ -573,9 +619,31 @@ function mapKnowledgeSearchResult(
     id: item.chunk_id ?? `${item.document_id}:${index}`,
     parentChunkId: item.source?.parent_chunk_id,
     parentContent: item.source?.parent_content,
-    retrievalMode: item.retrieval_mode === 'vector' ? 'vector' : 'keyword',
+    retrievalMode:
+      item.retrieval_mode === 'hybrid'
+        ? 'hybrid'
+        : item.retrieval_mode === 'vector'
+          ? 'vector'
+          : 'keyword',
+    score: item.score,
     sourceLabel: sourceParts.length ? sourceParts.join(' · ') : '-',
     title: item.title ?? item.document_id,
+  };
+}
+
+function mapKnowledgeRagAnswer(item: KnowledgeRagAnswerItem): KnowledgeRagAnswerRecord {
+  return {
+    answer: item.answer ?? '',
+    answerMode: item.answer_mode ?? 'extractive_rag',
+    citations: (item.citations ?? []).map(mapKnowledgeSearchResult),
+    metrics: {
+      citationCount: item.metrics?.citation_count,
+      hitCount: item.metrics?.hit_count,
+      latencyMs: item.metrics?.latency_ms,
+      noResult: item.metrics?.no_result,
+      noResultRate: item.metrics?.no_result_rate,
+      ragCitationAccuracyProxy: item.metrics?.rag_citation_accuracy_proxy,
+    },
   };
 }
 
@@ -909,6 +977,35 @@ export async function uploadKnowledgeDocument(payload: KnowledgeDocumentUploadPa
   });
 }
 
+export async function uploadKnowledgeDocumentFile(payload: KnowledgeDocumentFileUploadPayload) {
+  const token = requireAccessToken();
+  const formData = new FormData();
+  formData.set('file', payload.file);
+  formData.set('knowledge_space_id', payload.knowledgeSpaceId);
+  formData.set('title', payload.title);
+  formData.set('doc_type', payload.docType ?? 'manual');
+  if (payload.folderId) {
+    formData.set('folder_id', payload.folderId);
+  }
+  if (payload.parserEngine) {
+    formData.set('parser_engine', payload.parserEngine);
+  }
+  if (payload.chunkStrategy) {
+    formData.set('chunk_strategy', payload.chunkStrategy);
+  }
+  if (payload.tags?.length) {
+    formData.set('tags', payload.tags.join(','));
+  }
+  return apiFormRequest<{ document: KnowledgeDocumentListItem }>(
+    '/api/knowledge/documents/upload-file',
+    {
+      body: formData,
+      method: 'POST',
+      token,
+    },
+  );
+}
+
 export async function createManagementKnowledgeDocument(payload: KnowledgeDocumentMutationPayload) {
   const token = requireAccessToken();
   return apiRequest<{ id: string }>('/api/knowledge/documents', {
@@ -982,15 +1079,35 @@ export async function fetchKnowledgeSearchResults(
   return results.items.map(mapKnowledgeSearchResult);
 }
 
+export async function askKnowledgeRag(
+  query: string,
+  topK = 6,
+  knowledgeSpaceId?: string,
+): Promise<KnowledgeRagAnswerRecord> {
+  const token = requireAccessToken();
+  const answer = await apiRequest<KnowledgeRagAnswerItem>('/api/knowledge/rag', {
+    body: {
+      knowledge_space_id: knowledgeSpaceId,
+      query,
+      top_k: topK,
+    },
+    method: 'POST',
+    token,
+  });
+  return mapKnowledgeRagAnswer(answer);
+}
+
 export async function approveKnowledgeDeposit(
   depositId: string,
-  payload: KnowledgeDepositApprovePayload = {},
+  payload: KnowledgeDepositApprovePayload,
 ): Promise<KnowledgeDepositRecord> {
   const token = requireAccessToken();
   const deposit = await apiRequest<KnowledgeDepositListItem>(
     `/api/knowledge/deposits/${depositId}/approve`,
     {
       body: {
+        folder_id: payload.folderId ?? null,
+        knowledge_space_id: payload.knowledgeSpaceId,
         permission_roles: payload.permissionRoles ?? ['admin'],
         title: payload.title,
       },

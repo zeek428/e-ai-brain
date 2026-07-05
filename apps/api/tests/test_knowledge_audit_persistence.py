@@ -292,6 +292,11 @@ def test_knowledge_routes_write_repository_without_request_persist():
 
     try:
         headers = auth_headers()
+        space = client.post(
+            "/api/knowledge/spaces",
+            json={"code": "db-first", "name": "DB-first 知识空间"},
+            headers=headers,
+        ).json()["data"]
         created = client.post(
             "/api/knowledge/documents",
             json={
@@ -372,6 +377,7 @@ def test_knowledge_routes_write_repository_without_request_persist():
         approved_deposit = client.post(
             "/api/knowledge/deposits/deposit_dbfirst_approve/approve",
             json={
+                "knowledge_space_id": space["id"],
                 "permission_roles": ["admin", "knowledge_owner"],
                 "title": "采纳后的知识文档",
             },

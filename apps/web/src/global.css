@@ -258,10 +258,111 @@ body {
   line-height: 1.2;
 }
 
+.knowledge-page-stack {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 16px;
+  min-width: 0;
+}
+
+.knowledge-workbench {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  min-width: 0;
+}
+
+.knowledge-workbench-nav,
+.knowledge-workbench-rag {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e7edf6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.knowledge-workbench-nav {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.knowledge-workbench-section-title,
+.knowledge-rag-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.knowledge-rag-header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.knowledge-space-list,
+.knowledge-folder-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.knowledge-space-list .ant-btn,
+.knowledge-folder-list .ant-btn {
+  justify-content: flex-start;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.knowledge-space-list .ant-btn.is-active {
+  border-color: #2f6fed;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.knowledge-workbench-rag {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.knowledge-rag-form {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 96px auto;
+  gap: 10px;
+  min-width: 0;
+}
+
+.knowledge-rag-form .ant-form-item {
+  margin: 0;
+}
+
+.knowledge-rag-answer,
+.knowledge-rag-empty {
+  display: grid;
+  gap: 8px;
+  min-height: 96px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  background: #fafcff;
+}
+
+.knowledge-rag-answer > div {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .knowledge-health-panel {
   display: grid;
   gap: 14px;
-  margin-bottom: 16px;
   padding: 16px;
   border: 1px solid #edf1f7;
   border-radius: 8px;
@@ -397,6 +498,32 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.knowledge-detail-drawer {
+  display: grid;
+  gap: 14px;
+}
+
+.knowledge-detail-meta {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px 12px;
+}
+
+.knowledge-detail-meta .ant-typography {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 960px) {
+  .knowledge-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .knowledge-rag-form {
+    grid-template-columns: 1fr;
+  }
 }
 
 .requirement-full-chain-modal {

@@ -63,6 +63,13 @@ def _parse_vector_text(value: Any) -> list[float] | None:
         return None
 
 
+def _vector_sql_literal(value: Any) -> str | None:
+    vector = _parse_vector_text(value)
+    if vector is None:
+        return None
+    return "[" + ",".join(f"{item:.12g}" for item in vector) + "]"
+
+
 def _iso(value: Any) -> str | None:
     return value.isoformat() if value else None
 
@@ -927,8 +934,210 @@ class KnowledgeReadRepository:
                                 "title": row[1],
                             },
                         }
-                    )
+                )
                 return candidates
+
+    def search_knowledge_chunks_hybrid(
+        self,
+        *,
+        user_roles: list[str],
+        query: str,
+        query_embedding: list[float],
+        candidate_limit: int = 50,
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_id: str | None = None,
+        knowledge_space_scope_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        vector_literal = _vector_sql_literal(query_embedding)
+        if vector_literal is None:
+            return self.search_knowledge_chunks(
+                user_roles=user_roles,
+                user_id=user_id,
+                global_knowledge_access=global_knowledge_access,
+                knowledge_space_id=knowledge_space_id,
+                knowledge_space_scope_ids=knowledge_space_scope_ids,
+                query=query,
+            )
+        where_clauses = [
+            "d.index_status IN ('indexed', 'text_indexed', 'vector_indexed')",
+            "(d.active_chunk_set_id IS NULL OR c.chunk_set_id = d.active_chunk_set_id)",
+            """
+            (
+              %s IS TRUE
+              OR (
+                d.knowledge_space_id IS NULL
+                AND EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements_text(d.permission_roles) AS role(value)
+                  WHERE role.value = ANY(%s::text[])
+                )
+                AND (
+                  jsonb_array_length(COALESCE(c.permission_scope->'roles', '[]'::jsonb)) = 0
+                  OR EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements_text(
+                      COALESCE(c.permission_scope->'roles', '[]'::jsonb)
+                    ) AS role(value)
+                    WHERE role.value = ANY(%s::text[])
+                  )
+                )
+              )
+              OR (
+                d.knowledge_space_id IS NOT NULL
+                AND (
+                  d.knowledge_space_id = ANY(%s::text[])
+                  OR EXISTS (
+                    SELECT 1
+                    FROM knowledge_spaces ks
+                    WHERE ks.id = d.knowledge_space_id
+                      AND ks.status = 'active'
+                      AND ks.owner_user_id = %s
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM knowledge_space_members ksm
+                    WHERE ksm.knowledge_space_id = d.knowledge_space_id
+                      AND ksm.user_id = %s
+                      AND ksm.status = 'active'
+                      AND ksm.space_role = ANY(%s::text[])
+                  )
+                )
+              )
+            )
+            """,
+        ]
+        params: list[Any] = [
+            global_knowledge_access,
+            user_roles,
+            user_roles,
+            knowledge_space_scope_ids or [],
+            user_id,
+            user_id,
+            READ_SPACE_ROLES,
+        ]
+        if knowledge_space_id is not None:
+            where_clauses.append("d.knowledge_space_id = %s")
+            params.append(knowledge_space_id)
+        select_sql = """
+            SELECT d.id, d.title, d.doc_type, d.permission_roles, d.index_status,
+                   c.id, c.chunk_index, c.content, c.embedding::text, c.metadata,
+                   c.permission_scope, d.knowledge_space_id, d.folder_id,
+                   d.source_asset_id, d.active_chunk_set_id, c.chunk_set_id,
+                   c.parent_chunk_id, c.content_hash,
+                   {score_sql} AS vector_distance
+            FROM knowledge_chunks c
+            JOIN knowledge_documents d ON d.id = c.document_id
+            WHERE {where_sql}
+            {order_sql}
+            LIMIT %s
+        """
+        vector_where = [*where_clauses, "c.embedding IS NOT NULL"]
+        keyword_where = [
+            *where_clauses,
+            "lower(COALESCE(d.title, '') || ' ' || COALESCE(c.content, '')) LIKE %s",
+        ]
+        candidate_limit = max(1, min(candidate_limit, 100))
+        fused: dict[str, dict[str, Any]] = {}
+
+        def add_candidate(row: tuple[Any, ...], *, mode: str, rank: int) -> None:
+            candidate = self._knowledge_chunk_candidate_from_search_row(row)
+            chunk = candidate["chunk"]
+            chunk_id = chunk["id"]
+            if chunk_id not in fused:
+                fused[chunk_id] = {**candidate, "_rrf_score": 0.0}
+            entry = fused[chunk_id]
+            entry["_rrf_score"] += 1 / (60 + rank)
+            modes = set(entry["chunk"].get("retrieval_modes") or [])
+            modes.add(mode)
+            entry["chunk"]["retrieval_modes"] = sorted(modes)
+            entry["chunk"][f"{mode}_rank"] = rank
+            if mode == "vector" and row[18] is not None:
+                distance = float(row[18])
+                entry["chunk"]["vector_distance"] = round(distance, 6)
+                entry["chunk"]["vector_score"] = round(max(0.0, 1.0 - distance), 6)
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    select_sql.format(
+                        order_sql="ORDER BY c.embedding <=> %s::vector, d.id, c.chunk_index",
+                        score_sql="c.embedding <=> %s::vector",
+                        where_sql=" AND ".join(vector_where),
+                    ),
+                    tuple([vector_literal, *params, vector_literal, candidate_limit]),
+                )
+                for rank, row in enumerate(cursor.fetchall(), start=1):
+                    add_candidate(row, mode="vector", rank=rank)
+                keyword = query.lower()
+                cursor.execute(
+                    select_sql.format(
+                        order_sql=(
+                            "ORDER BY CASE WHEN lower(COALESCE(d.title, '')) LIKE %s "
+                            "THEN 0 ELSE 1 END, "
+                            "POSITION(%s IN lower(COALESCE(d.title, '') || ' ' || "
+                            "COALESCE(c.content, ''))), d.id, c.chunk_index"
+                        ),
+                        score_sql="NULL::double precision",
+                        where_sql=" AND ".join(keyword_where),
+                    ),
+                    tuple([*params, f"%{keyword}%", f"%{keyword}%", keyword, candidate_limit]),
+                )
+                for rank, row in enumerate(cursor.fetchall(), start=1):
+                    add_candidate(row, mode="keyword", rank=rank)
+
+        candidates = list(fused.values())
+        for candidate in candidates:
+            candidate["chunk"]["hybrid_score"] = round(float(candidate.pop("_rrf_score")), 6)
+        candidates.sort(
+            key=lambda candidate: (
+                -float(candidate["chunk"].get("hybrid_score") or 0.0),
+                candidate["document"]["id"],
+                candidate["chunk"]["chunk_index"],
+            )
+        )
+        return candidates[:candidate_limit]
+
+    @staticmethod
+    def _knowledge_chunk_candidate_from_search_row(row: tuple[Any, ...]) -> dict[str, Any]:
+        permission_scope = dict(row[10] or {})
+        chunk = {
+            "chunk_index": row[6],
+            "content": row[7],
+            "document_id": row[0],
+            "embedding": _parse_vector_text(row[8]),
+            "id": row[5],
+            "metadata": dict(row[9] or {}),
+            "permission_roles": list(permission_scope.get("roles") or []),
+            "permission_scope": permission_scope,
+        }
+        for optional_key, value in (
+            ("chunk_set_id", row[15]),
+            ("parent_chunk_id", row[16]),
+            ("content_hash", row[17]),
+        ):
+            if value is not None:
+                chunk[optional_key] = value
+        if chunk["embedding"] is None:
+            chunk.pop("embedding")
+        if not chunk["permission_roles"]:
+            chunk.pop("permission_roles")
+        if not chunk["permission_scope"]:
+            chunk.pop("permission_scope")
+        return {
+            "chunk": chunk,
+            "document": {
+                "doc_type": row[2],
+                "id": row[0],
+                "index_status": row[4],
+                "permission_roles": list(row[3] or []),
+                "knowledge_space_id": row[11],
+                "folder_id": row[12],
+                "source_asset_id": row[13],
+                "active_chunk_set_id": row[14],
+                "title": row[1],
+            },
+        }
 
     @staticmethod
     def knowledge_deposit_from_row(row: tuple[Any, ...]) -> dict[str, Any]:

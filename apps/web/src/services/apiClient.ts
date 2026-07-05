@@ -185,6 +185,54 @@ export async function apiRequest<T>(
   return payload.data;
 }
 
+export async function apiFormRequest<T>(
+  path: string,
+  options: {
+    method?: string;
+    token?: string;
+    body: FormData;
+    signal?: AbortSignal;
+  },
+): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    body: options.body,
+    headers: {
+      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+    },
+    method: options.method ?? 'POST',
+    signal: options.signal,
+  });
+  if (!response.ok) {
+    let payload: ApiErrorPayload | undefined;
+    try {
+      payload = (await response.json()) as ApiErrorPayload;
+    } catch {
+      payload = undefined;
+    }
+    const requestError = new ApiRequestError({
+      code: payload?.detail?.code,
+      detail: payload?.detail,
+      message: payload?.detail?.message ?? `API request failed: ${response.status}`,
+      status: response.status,
+      traceId: payload?.detail?.trace_id,
+    });
+    if (response.status === 401 && shouldHandleUnauthorizedResponse(path)) {
+      unauthorizedApiResponseHandler?.();
+    }
+    if (
+      response.status === 403 &&
+      requestError.code === 'FORBIDDEN' &&
+      shouldHandleForbiddenResponse(path)
+    ) {
+      requestError.authorizationRefreshHandled =
+        forbiddenApiResponseHandler?.(requestError, path) === true;
+    }
+    throw requestError;
+  }
+  const payload = (await response.json()) as ApiEnvelope<T>;
+  return payload.data;
+}
+
 function shouldHandleUnauthorizedResponse(path: string) {
   return !(
     path.startsWith('/api/auth/login') ||

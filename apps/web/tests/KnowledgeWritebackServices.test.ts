@@ -133,6 +133,7 @@ describe('knowledge writeback service API mappings', () => {
       },
     ]);
     await approveKnowledgeDeposit('deposit_api', {
+      knowledgeSpaceId: 'knowledge_space_api',
       permissionRoles: ['admin', 'rd_owner'],
       title: '批准标题',
     });
@@ -146,7 +147,12 @@ describe('knowledge writeback service API mappings', () => {
       [
         '/api/knowledge/deposits/deposit_api/approve',
         'POST',
-        JSON.stringify({ permission_roles: ['admin', 'rd_owner'], title: '批准标题' }),
+        JSON.stringify({
+          folder_id: null,
+          knowledge_space_id: 'knowledge_space_api',
+          permission_roles: ['admin', 'rd_owner'],
+          title: '批准标题',
+        }),
       ],
       [
         '/api/knowledge/deposits/deposit_api/reject',
