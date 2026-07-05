@@ -1177,6 +1177,7 @@ Git Review API 入口已收口到独立 `app.api.routers.git_review`：GitLab MR
 - 看板指标来自需求、AI 任务、Bug、GitLab、Jenkins、线上日志、用户使用、用户反馈、迭代规划建议、知识沉淀、审计事件和 lifecycle_context 风险信号。
 - `/api/dashboard/it-team` 由独立 `app.api.routers.dashboard` 提供，router 只负责权限、request store、缓存和响应封装入口；当前实现会在 PostgreSQL 运行时直接读取 repository source rows，指标计算由 `app.services.dashboard_metrics` 按产品、权限和时间窗口组装，并通过单条 repository 写入把产品与时间窗口聚合结果同步到 `dashboard_metric_snapshots`，用于后续首页读取、运营复核和趋势分析。
 - 看板可以使用短 TTL 只读缓存降低重复查询压力，默认 TTL 由 `DASHBOARD_CACHE_TTL_SECONDS` 控制；`refresh=true` 必须清除当前查询维度缓存并重新读取 source rows。响应 `metadata.dashboard_cache` 回显缓存启用、命中、生成时间、年龄、剩余 TTL、耗时和慢查询阈值；超过 `DASHBOARD_SLOW_THRESHOLD_MS` 时记录 `slow_dashboard_query`。
+- 首页展示应优先面向管理决策：首屏必须给出健康结论、治理优先队列和交付负载、风险压力、工程活跃、用户声音四类业务域指标，并用状态分布图展示需求、AI 任务、Bug、发布、反馈和迭代建议分布，避免以无分组数字墙替代管理判断。
 - 首页只展示聚合和风险摘要，明细下钻到对应主体页面。
 
 ### 模块 C: model_gateway

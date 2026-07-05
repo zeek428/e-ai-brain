@@ -18,6 +18,7 @@
 - 钉钉官方 MCP 插件增强授权配置向导、`tools/list` 动态能力发现、高风险动作治理、插件健康看板和 AI Brain 业务场景模板，并新增动态发现与钉钉观测 API。
 
 ### Changed
+- 首页 IT 团队看板优化为管理视图：收敛 13 个平铺指标为交付负载、风险压力、工程活跃和用户声音四个业务域，新增健康结论、治理优先队列和需求/任务/Bug/发布/反馈状态分布图，保留下钻链接和产品/时间筛选。
 - DB-first MemoryStore 巡检增强：`audit_memory_store_usage.py` 现在会识别 `setattr(current_store, ...)` 动态写入，并只允许显式白名单中的 PostgreSQL 可重建派生缓存作为 P2。
 - 定时作业结果动作 `send_notification` 选择邮件渠道时，正式运行会使用系统设置中的邮件发送配置通过 SMTP 投递到动作收件人，并在运行结果写入记录中展示 `sent` 状态和 Message-ID；代码巡检“发送问题消息通知”同步使用系统发件箱发送邮件。
 - 全链路回归脚本在执行前校验真实登录凭据，缺少 `FULL_CHAIN_USERNAME/FULL_CHAIN_PASSWORD` 或 `READINESS_USERNAME/READINESS_PASSWORD` 时会给出清晰失败原因并继续写出 JSON 失败报告。

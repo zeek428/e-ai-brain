@@ -586,38 +586,141 @@ body {
   min-width: 180px;
 }
 
-.dashboard-stat-grid {
+.dashboard-overview-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 16px;
   margin-bottom: 16px;
 }
 
-.dashboard-stat-card {
+.dashboard-insight-card {
   display: grid;
-  gap: 10px;
+  align-content: start;
+  gap: 12px;
   min-width: 0;
-  min-height: 112px;
-  padding: 16px;
+  min-height: 168px;
+  padding: 18px;
   border: 1px solid #edf1f7;
   border-radius: 8px;
   background: #ffffff;
 }
 
-.dashboard-stat-card-title {
+.dashboard-health-card {
+  align-content: center;
+  border-left: 4px solid #52c41a;
+}
+
+.dashboard-health-card[data-level='risk'] {
+  border-color: #ffccc7;
+  border-left-color: #cf1322;
+  background: #fff7f6;
+}
+
+.dashboard-health-card[data-level='watch'] {
+  border-color: #ffe7ba;
+  border-left-color: #d48806;
+  background: #fffaf0;
+}
+
+.dashboard-health-card h3,
+.dashboard-insight-card h4 {
+  margin: 0;
+}
+
+.dashboard-insight-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dashboard-action-list {
+  display: grid;
+  gap: 10px;
+}
+
+.dashboard-action-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  color: inherit;
+  background: #fbfcff;
+}
+
+.dashboard-action-item:hover {
+  border-color: #91caff;
+  color: inherit;
+  background: #f7fbff;
+}
+
+.dashboard-action-item > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.dashboard-action-item > span:first-child .ant-typography {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-action-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.dashboard-focus-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.dashboard-focus-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  min-height: 156px;
+  padding: 16px;
+  border: 1px solid #edf1f7;
+  border-left: 4px solid #1677ff;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.dashboard-focus-card[data-tone='risk'] {
+  border-left-color: #cf1322;
+}
+
+.dashboard-focus-card[data-tone='watch'] {
+  border-left-color: #d48806;
+}
+
+.dashboard-focus-card[data-tone='healthy'] {
+  border-left-color: #389e0d;
+}
+
+.dashboard-focus-card-header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 8px;
   align-items: center;
 }
 
-.dashboard-stat-card-title .ant-typography {
+.dashboard-focus-card-header .ant-typography {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dashboard-stat-card-icon {
+.dashboard-focus-card-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -626,10 +729,22 @@ body {
   line-height: 1;
 }
 
-.dashboard-stat-card-value {
+.dashboard-focus-card-value {
   color: #1f1f1f;
   font-size: 28px;
   line-height: 1.15;
+}
+
+.dashboard-focus-metrics {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboard-focus-metric {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .dashboard-grid {
@@ -648,6 +763,10 @@ body {
 
 .dashboard-panel h4 {
   margin-bottom: 12px;
+}
+
+.dashboard-panel h5 {
+  margin: 14px 0 10px;
 }
 
 .dashboard-panel-wide {
@@ -1335,6 +1454,47 @@ body {
   padding: 2px 0;
 }
 
+.dashboard-chart-list {
+  display: grid;
+  gap: 12px;
+}
+
+.dashboard-chart-row {
+  display: grid;
+  gap: 6px;
+}
+
+.dashboard-chart-meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.dashboard-chart-meta .ant-typography:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-chart-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dashboard-chart-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f0f3f8;
+}
+
+.dashboard-chart-bar {
+  height: 100%;
+  border-radius: inherit;
+}
+
 .dashboard-list-item {
   display: grid;
   gap: 6px;
@@ -1379,6 +1539,11 @@ body {
   .dashboard-product-select {
     flex: 1;
     min-width: 0;
+  }
+
+  .dashboard-overview-grid,
+  .dashboard-focus-grid {
+    grid-template-columns: 1fr;
   }
 
   .dashboard-grid {

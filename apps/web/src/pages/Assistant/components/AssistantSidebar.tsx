@@ -139,7 +139,7 @@ export function AssistantSidebar({
                       onConfirm={() => onDeleteConversation(item)}
                     >
                       <Button
-                        aria-label={`删除对话 ${item.title}`}
+                        aria-label="删除对话"
                         className="assistant-history-delete-button"
                         danger
                         disabled={isDeleting}
