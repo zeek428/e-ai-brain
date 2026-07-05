@@ -41,6 +41,7 @@ ALLOWED_MEMORY_FALLBACK_SETATTR_FUNCTIONS = {
     ("apps/api/app/services/assistant_chat.py", "_memory_collection"),
     ("apps/api/app/services/assistant_chat.py", "_memory_list"),
     ("apps/api/app/services/assistant_history.py", "_memory_collection"),
+    ("apps/api/app/services/assistant_history.py", "_memory_list"),
     ("apps/api/app/services/assistant_references.py", "_memory_collection"),
     ("apps/api/app/services/assistant_references.py", "_memory_list"),
     ("apps/api/app/services/assistant_request_context.py", "_memory_collection"),

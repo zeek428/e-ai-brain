@@ -72,6 +72,41 @@ describe('dashboard service API mappings', () => {
           },
           task_status_counts: [],
           time_range: '7d',
+          trend: {
+            grain: 'day',
+            points: [
+              {
+                ai_tasks_created: 1,
+                completed_tasks: 0,
+                gitlab_commits: 3,
+                period: '2026-06-03',
+                requirements_created: 2,
+              },
+            ],
+            series: [
+              {
+                category: 'delivery',
+                key: 'requirements_created',
+                label: '新增需求',
+                unit: 'count',
+              },
+              {
+                category: 'delivery',
+                key: 'ai_tasks_created',
+                label: '新增 AI 任务',
+                unit: 'count',
+              },
+              {
+                category: 'engineering',
+                key: 'gitlab_commits',
+                label: 'GitLab 提交',
+                unit: 'count',
+              },
+            ],
+            time_range: '7d',
+            window_end: '2026-06-03',
+            window_start: '2026-06-03',
+          },
           usage_metric_summary: {
             active_users: 4,
             conversion_count: 2,
@@ -94,6 +129,20 @@ describe('dashboard service API mappings', () => {
       requirementStatusCounts: [{ count: 2, status: 'approved' }],
       summary: expect.objectContaining({ activeProducts: 1, openBugs: 1, requirements: 2 }),
       timeRange: '7d',
+      trend: expect.objectContaining({
+        grain: 'day',
+        points: [
+          expect.objectContaining({
+            gitlab_commits: 3,
+            period: '2026-06-03',
+            requirements_created: 2,
+          }),
+        ],
+        series: expect.arrayContaining([
+          expect.objectContaining({ key: 'requirements_created', label: '新增需求' }),
+        ]),
+        windowStart: '2026-06-03',
+      }),
     });
   });
 

@@ -103,6 +103,61 @@ describe('Dashboard page', () => {
             },
             task_status_counts: [{ count: 1, status: 'waiting_review' }],
             time_range: '7d',
+            trend: {
+              grain: 'day',
+              points: [
+                {
+                  active_users: 20,
+                  ai_tasks_created: 1,
+                  bugs_created: 1,
+                  completed_tasks: 0,
+                  gitlab_commits: 4,
+                  high_severity_bugs: 1,
+                  iteration_suggestions: 0,
+                  jenkins_releases: 0,
+                  merge_requests: 1,
+                  online_errors: 1,
+                  period: '2026-06-08',
+                  requirements_created: 2,
+                  usage_events: 40,
+                  user_feedback: 1,
+                },
+                {
+                  active_users: 22,
+                  ai_tasks_created: 2,
+                  bugs_created: 1,
+                  completed_tasks: 1,
+                  gitlab_commits: 5,
+                  high_severity_bugs: 0,
+                  iteration_suggestions: 1,
+                  jenkins_releases: 1,
+                  merge_requests: 1,
+                  online_errors: 3,
+                  period: '2026-06-09',
+                  requirements_created: 3,
+                  usage_events: 80,
+                  user_feedback: 2,
+                },
+              ],
+              series: [
+                { category: 'delivery', key: 'requirements_created', label: '新增需求', unit: 'count' },
+                { category: 'delivery', key: 'ai_tasks_created', label: '新增 AI 任务', unit: 'count' },
+                { category: 'delivery', key: 'completed_tasks', label: '完成任务', unit: 'count' },
+                { category: 'risk', key: 'bugs_created', label: '新增 Bug', unit: 'count' },
+                { category: 'risk', key: 'high_severity_bugs', label: '严重 Bug', unit: 'count' },
+                { category: 'risk', key: 'online_errors', label: '线上错误', unit: 'count' },
+                { category: 'engineering', key: 'gitlab_commits', label: 'GitLab 提交', unit: 'count' },
+                { category: 'engineering', key: 'merge_requests', label: 'Merge Request', unit: 'count' },
+                { category: 'engineering', key: 'jenkins_releases', label: '发布记录', unit: 'count' },
+                { category: 'user', key: 'usage_events', label: '使用事件', unit: 'count' },
+                { category: 'user', key: 'active_users', label: '活跃用户', unit: 'count' },
+                { category: 'user', key: 'user_feedback', label: '用户反馈', unit: 'count' },
+                { category: 'user', key: 'iteration_suggestions', label: '迭代建议', unit: 'count' },
+              ],
+              time_range: '7d',
+              window_end: '2026-06-09',
+              window_start: '2026-06-08',
+            },
             usage_metric_summary: {
               active_users: 42,
               conversion_count: 15,
@@ -180,6 +235,12 @@ describe('Dashboard page', () => {
     expect(screen.getAllByText('5').length).toBeGreaterThan(0);
     expect(screen.getByText('需求状态分布')).toBeInTheDocument();
     expect(screen.getByText('AI 任务状态分布')).toBeInTheDocument();
+    expect(screen.getByText('真实趋势')).toBeInTheDocument();
+    expect(screen.getByText('交付趋势')).toBeInTheDocument();
+    expect(screen.getByText('风险趋势')).toBeInTheDocument();
+    expect(screen.getByText('工程趋势')).toBeInTheDocument();
+    expect(screen.getByText('用户趋势')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-08 至 2026-06-09')).toBeInTheDocument();
     expect(screen.getByRole('list', { name: '需求状态分布图' })).toBeInTheDocument();
     expect(screen.getByRole('list', { name: 'Bug 状态分布图' })).toBeInTheDocument();
     expect(screen.getByText('首页看板任务')).toBeInTheDocument();

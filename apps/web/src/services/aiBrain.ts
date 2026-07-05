@@ -375,6 +375,9 @@ export type {
   DashboardStatusCount,
   DashboardSummary,
   DashboardTaskSummary,
+  DashboardTrend,
+  DashboardTrendPoint,
+  DashboardTrendSeries,
   DashboardUsageMetricSummary,
   ItTeamDashboard,
 } from './dashboardClient';

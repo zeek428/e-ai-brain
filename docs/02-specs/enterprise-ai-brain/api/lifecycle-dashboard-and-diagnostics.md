@@ -98,6 +98,8 @@ GET /api/dashboard/it-team?product_id=product_001&time_range=7d
 
 PostgreSQL 运行时默认启用短 TTL 看板缓存，TTL 由 `DASHBOARD_CACHE_TTL_SECONDS` 控制，默认 30 秒；`DASHBOARD_CACHE_TTL_SECONDS<=0` 时禁用缓存。`GET /api/dashboard/it-team?...&refresh=true` 会清除当前用户角色、产品和时间窗口对应的缓存并重新读取 source rows、重建 snapshot。响应 `data.metadata.dashboard_cache` 必须返回缓存是否启用、是否命中、生成时间、缓存年龄、剩余 TTL、本次接口耗时、慢查询阈值和慢查询标记；接口耗时超过 `DASHBOARD_SLOW_THRESHOLD_MS` 时记录 `slow_dashboard_query` 日志。无数据时返回真实 0 和空数组，不生成占位统计：
 
+响应同步返回 `trend`，按日输出交付、风险、工程和用户四类趋势。趋势数据使用看板同一批已完成产品范围和任务读权限过滤的 source rows，并在趋势入桶时按时间窗口截取：需求、AI 任务、Bug、用户反馈和迭代建议按创建时间入桶，已完成任务按完成时间或更新时间入桶，GitLab、Jenkins、线上日志和用户使用按指标日期、发布时间或窗口开始时间入桶；前端使用专业图表库 Ant Design Charts 展示折线趋势，无可绘制环境时降级为文本摘要。`time_range=7d/30d` 时按自然日返回窗口内所有日期，`time_range=all` 仍限制为最近 30 个自然日，避免首页一次性绘制过长历史序列。
+
 ```json
 {
   "data": {
@@ -166,6 +168,34 @@ PostgreSQL 运行时默认启用短 TTL 看板缓存，TTL 由 `DASHBOARD_CACHE_
     "pending_reviews": [],
     "recent_knowledge_documents": [],
     "recent_audit_events": [],
+    "trend": {
+      "grain": "day",
+      "time_range": "7d",
+      "window_start": "2026-06-01",
+      "window_end": "2026-06-08",
+      "series": [
+        {"category": "delivery", "key": "requirements_created", "label": "新增需求", "unit": "count"},
+        {"category": "engineering", "key": "gitlab_commits", "label": "代码提交", "unit": "count"}
+      ],
+      "points": [
+        {
+          "period": "2026-06-01",
+          "requirements_created": 1,
+          "ai_tasks_created": 0,
+          "completed_tasks": 0,
+          "bugs_created": 0,
+          "high_severity_bugs": 0,
+          "online_errors": 0,
+          "gitlab_commits": 7,
+          "merge_requests": 2,
+          "jenkins_releases": 0,
+          "usage_events": 0,
+          "active_users": 0,
+          "user_feedback": 0,
+          "iteration_suggestions": 0
+        }
+      ]
+    },
     "metadata": {
       "dashboard_cache": {
         "age_ms": 0,

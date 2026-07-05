@@ -84,12 +84,14 @@ def test_dashboard_metrics_filter_product_time_range_and_task_permissions():
         ],
         "requirements": [
             {
+                "created_at": "2026-06-02T10:00:00+00:00",
                 "id": "requirement_001",
                 "product_id": "product_001",
                 "status": "approved",
                 "title": "A",
             },
             {
+                "created_at": "2026-06-03T10:00:00+00:00",
                 "id": "requirement_002",
                 "product_id": "product_002",
                 "status": "approved",
@@ -97,8 +99,26 @@ def test_dashboard_metrics_filter_product_time_range_and_task_permissions():
             },
         ],
         "tasks": [
-            {"id": "task_001", "product_id": "product_001", "status": "running"},
-            {"id": "task_hidden", "product_id": "product_001", "status": "running", "hidden": True},
+            {
+                "created_at": "2026-06-02T11:00:00+00:00",
+                "id": "task_001",
+                "product_id": "product_001",
+                "status": "running",
+            },
+            {
+                "created_at": "2026-06-03T11:00:00+00:00",
+                "id": "task_done",
+                "product_id": "product_001",
+                "status": "completed",
+                "updated_at": "2026-06-03T12:00:00+00:00",
+            },
+            {
+                "created_at": "2026-06-03T11:00:00+00:00",
+                "hidden": True,
+                "id": "task_hidden",
+                "product_id": "product_001",
+                "status": "running",
+            },
         ],
         "user_feedback": [
             {
@@ -130,7 +150,7 @@ def test_dashboard_metrics_filter_product_time_range_and_task_permissions():
 
     assert metrics["summary"]["active_products"] == 1
     assert metrics["summary"]["requirements"] == 1
-    assert metrics["summary"]["ai_tasks"] == 1
+    assert metrics["summary"]["ai_tasks"] == 2
     assert metrics["summary"]["pending_reviews"] == 1
     assert metrics["summary"]["bugs"] == 1
     assert metrics["summary"]["high_severity_bugs"] == 1
@@ -140,6 +160,20 @@ def test_dashboard_metrics_filter_product_time_range_and_task_permissions():
         "audit_002",
         "audit_001",
     ]
+    trend = {point["period"]: point for point in metrics["trend"]["points"]}
+    assert metrics["trend"]["grain"] == "day"
+    assert metrics["trend"]["window_start"] == "2026-06-01"
+    assert metrics["trend"]["window_end"] == "2026-06-08"
+    assert trend["2026-06-02"]["requirements_created"] == 1
+    assert trend["2026-06-02"]["ai_tasks_created"] == 1
+    assert trend["2026-06-03"]["ai_tasks_created"] == 1
+    assert trend["2026-06-03"]["completed_tasks"] == 1
+    assert trend["2026-06-03"]["gitlab_commits"] == 3
+    assert trend["2026-06-03"]["online_errors"] == 1
+    assert trend["2026-06-03"]["usage_events"] == 12
+    assert trend["2026-06-03"]["user_feedback"] == 1
+    assert trend["2026-06-03"]["iteration_suggestions"] == 1
+    assert trend["2026-06-08"]["requirements_created"] == 0
 
 
 def test_dashboard_source_rows_from_store_filters_knowledge_documents_by_roles():

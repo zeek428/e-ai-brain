@@ -89,6 +89,26 @@ export type DashboardCacheMetadata = {
   ttlSeconds: number;
 };
 
+export type DashboardTrendSeries = {
+  category: string;
+  key: string;
+  label: string;
+  unit: string;
+};
+
+export type DashboardTrendPoint = {
+  period: string;
+} & Record<string, number | string>;
+
+export type DashboardTrend = {
+  grain: string;
+  points: DashboardTrendPoint[];
+  series: DashboardTrendSeries[];
+  timeRange: string;
+  windowEnd: string;
+  windowStart: string;
+};
+
 export type ItTeamDashboard = {
   bugStatusCounts: DashboardStatusCount[];
   cacheMetadata: DashboardCacheMetadata;
@@ -105,6 +125,7 @@ export type ItTeamDashboard = {
   summary: DashboardSummary;
   taskStatusCounts: DashboardStatusCount[];
   timeRange: string;
+  trend: DashboardTrend;
   usageMetricSummary: DashboardUsageMetricSummary;
   userFeedbackStatusCounts: DashboardStatusCount[];
 };
@@ -172,6 +193,14 @@ type DashboardResponse = {
   }>;
   task_status_counts?: Array<{ count?: number; status?: string }>;
   time_range?: string;
+  trend?: Partial<{
+    grain: string;
+    points: Array<Record<string, unknown> & { period?: string }>;
+    series: Array<Partial<DashboardTrendSeries>>;
+    time_range: string;
+    window_end: string;
+    window_start: string;
+  }>;
   usage_metric_summary?: Partial<{
     active_users: number;
     conversion_count: number;
@@ -216,6 +245,33 @@ function mapDashboardStatusCounts(
     count: normalizeDashboardCount(item.count),
     status: formatUnknownValue(item.status),
   }));
+}
+
+function mapDashboardTrend(trend?: DashboardResponse['trend']): DashboardTrend {
+  const series = (trend?.series ?? [])
+    .map((item) => ({
+      category: formatUnknownValue(item.category),
+      key: formatUnknownValue(item.key),
+      label: formatUnknownValue(item.label),
+      unit: formatUnknownValue(item.unit),
+    }))
+    .filter((item) => item.key !== '-');
+  return {
+    grain: formatUnknownValue(trend?.grain),
+    points: (trend?.points ?? []).map((point) => {
+      const mappedPoint: DashboardTrendPoint = {
+        period: formatUnknownValue(point.period),
+      };
+      for (const item of series) {
+        mappedPoint[item.key] = normalizeDashboardCount(point[item.key]);
+      }
+      return mappedPoint;
+    }),
+    series,
+    timeRange: formatUnknownValue(trend?.time_range),
+    windowEnd: formatUnknownValue(trend?.window_end),
+    windowStart: formatUnknownValue(trend?.window_start),
+  };
 }
 
 export async function fetchItTeamDashboard(
@@ -318,6 +374,7 @@ export async function fetchItTeamDashboard(
     },
     taskStatusCounts: mapDashboardStatusCounts(dashboard.task_status_counts),
     timeRange: formatUnknownValue(dashboard.time_range),
+    trend: mapDashboardTrend(dashboard.trend),
     usageMetricSummary: {
       activeUsers: normalizeDashboardCount(usageMetricSummary.active_users),
       conversionCount: normalizeDashboardCount(usageMetricSummary.conversion_count),

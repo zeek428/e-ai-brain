@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 
@@ -350,6 +350,19 @@ def build_dashboard_metrics_data(
         "recent_audit_events": json.loads(json.dumps(recent_audit_events, ensure_ascii=False)),
         "requirement_titles": [requirement["title"] for requirement in requirements[:10]],
         "time_range": time_range or "all",
+        "trend": _dashboard_trend(
+            requirements=requirements,
+            tasks=tasks,
+            bugs=bugs,
+            gitlab_metrics=gitlab_metrics,
+            jenkins_releases=jenkins_releases,
+            online_log_metrics=online_log_metrics,
+            usage_metrics=usage_metrics,
+            feedback_items=feedback_items,
+            iteration_suggestions=iteration_suggestions,
+            cutoff=cutoff,
+            time_range=time_range,
+        ),
     }
 
 
@@ -529,3 +542,263 @@ def _dashboard_max_number(items: list[dict[str, Any]], field: str) -> float | No
 def _dashboard_average_number(items: list[dict[str, Any]], field: str) -> float | None:
     values = [float(item[field]) for item in items if isinstance(item.get(field), int | float)]
     return round(sum(values) / len(values), 2) if values else None
+
+
+def _dashboard_trend(
+    *,
+    bugs: list[dict[str, Any]],
+    cutoff: datetime | None,
+    feedback_items: list[dict[str, Any]],
+    gitlab_metrics: list[dict[str, Any]],
+    iteration_suggestions: list[dict[str, Any]],
+    jenkins_releases: list[dict[str, Any]],
+    online_log_metrics: list[dict[str, Any]],
+    requirements: list[dict[str, Any]],
+    tasks: list[dict[str, Any]],
+    time_range: str | None,
+    usage_metrics: list[dict[str, Any]],
+) -> dict[str, Any]:
+    series = [
+        {
+            "category": "delivery",
+            "key": "requirements_created",
+            "label": "新增需求",
+            "unit": "count",
+        },
+        {
+            "category": "delivery",
+            "key": "ai_tasks_created",
+            "label": "新增 AI 任务",
+            "unit": "count",
+        },
+        {
+            "category": "delivery",
+            "key": "completed_tasks",
+            "label": "完成任务",
+            "unit": "count",
+        },
+        {"category": "risk", "key": "bugs_created", "label": "新增 Bug", "unit": "count"},
+        {"category": "risk", "key": "high_severity_bugs", "label": "严重 Bug", "unit": "count"},
+        {"category": "risk", "key": "online_errors", "label": "线上错误", "unit": "count"},
+        {
+            "category": "engineering",
+            "key": "gitlab_commits",
+            "label": "GitLab 提交",
+            "unit": "count",
+        },
+        {
+            "category": "engineering",
+            "key": "merge_requests",
+            "label": "Merge Request",
+            "unit": "count",
+        },
+        {
+            "category": "engineering",
+            "key": "jenkins_releases",
+            "label": "发布记录",
+            "unit": "count",
+        },
+        {"category": "user", "key": "usage_events", "label": "使用事件", "unit": "count"},
+        {"category": "user", "key": "active_users", "label": "活跃用户", "unit": "count"},
+        {"category": "user", "key": "user_feedback", "label": "用户反馈", "unit": "count"},
+        {"category": "user", "key": "iteration_suggestions", "label": "迭代建议", "unit": "count"},
+    ]
+    trend_start, trend_end = _dashboard_trend_window(
+        [
+            *_dashboard_datetimes(requirements, ("created_at", "updated_at")),
+            *_dashboard_datetimes(tasks, ("created_at", "updated_at")),
+            *_dashboard_datetimes(bugs, ("created_at", "updated_at")),
+            *_dashboard_datetimes(gitlab_metrics, ("metric_date", "updated_at", "created_at")),
+            *_dashboard_datetimes(
+                jenkins_releases,
+                ("deployed_at", "started_at", "updated_at", "created_at"),
+            ),
+            *_dashboard_datetimes(
+                online_log_metrics,
+                ("window_end", "window_start", "updated_at", "created_at"),
+            ),
+            *_dashboard_datetimes(
+                usage_metrics,
+                ("window_end", "window_start", "updated_at", "created_at"),
+            ),
+            *_dashboard_datetimes(feedback_items, ("created_at", "updated_at")),
+            *_dashboard_datetimes(iteration_suggestions, ("created_at", "updated_at")),
+        ],
+        cutoff=cutoff,
+        time_range=time_range,
+    )
+    series_keys = [item["key"] for item in series]
+    points = [
+        {"period": period.isoformat(), **{key: 0 for key in series_keys}}
+        for period in _dashboard_date_range(trend_start, trend_end)
+    ]
+    points_by_period = {point["period"]: point for point in points}
+
+    _add_count_trend(
+        points_by_period,
+        requirements,
+        fields=("created_at", "updated_at"),
+        key="requirements_created",
+    )
+    _add_count_trend(
+        points_by_period,
+        tasks,
+        fields=("created_at", "updated_at"),
+        key="ai_tasks_created",
+    )
+    _add_count_trend(
+        points_by_period,
+        [task for task in tasks if task.get("status") == "completed"],
+        fields=("completed_at", "updated_at", "created_at"),
+        key="completed_tasks",
+    )
+    _add_count_trend(
+        points_by_period,
+        bugs,
+        fields=("created_at", "updated_at"),
+        key="bugs_created",
+    )
+    _add_count_trend(
+        points_by_period,
+        [bug for bug in bugs if bug.get("severity") in {"blocker", "critical", "major"}],
+        fields=("created_at", "updated_at"),
+        key="high_severity_bugs",
+    )
+    _add_numeric_trend(
+        points_by_period,
+        gitlab_metrics,
+        date_fields=("metric_date", "updated_at", "created_at"),
+        field="commit_count",
+        key="gitlab_commits",
+    )
+    _add_numeric_trend(
+        points_by_period,
+        gitlab_metrics,
+        date_fields=("metric_date", "updated_at", "created_at"),
+        field="merge_request_count",
+        key="merge_requests",
+    )
+    _add_count_trend(
+        points_by_period,
+        jenkins_releases,
+        fields=("deployed_at", "started_at", "updated_at", "created_at"),
+        key="jenkins_releases",
+    )
+    _add_numeric_trend(
+        points_by_period,
+        online_log_metrics,
+        date_fields=("window_end", "window_start", "updated_at", "created_at"),
+        field="error_count",
+        key="online_errors",
+    )
+    _add_numeric_trend(
+        points_by_period,
+        usage_metrics,
+        date_fields=("window_end", "window_start", "updated_at", "created_at"),
+        field="event_count",
+        key="usage_events",
+    )
+    _add_numeric_trend(
+        points_by_period,
+        usage_metrics,
+        date_fields=("window_end", "window_start", "updated_at", "created_at"),
+        field="active_users",
+        key="active_users",
+    )
+    _add_count_trend(
+        points_by_period,
+        feedback_items,
+        fields=("created_at", "updated_at"),
+        key="user_feedback",
+    )
+    _add_count_trend(
+        points_by_period,
+        iteration_suggestions,
+        fields=("created_at", "updated_at"),
+        key="iteration_suggestions",
+    )
+    return {
+        "grain": "day",
+        "points": points,
+        "series": series,
+        "time_range": time_range or "all",
+        "window_end": trend_end.isoformat(),
+        "window_start": trend_start.isoformat(),
+    }
+
+
+def _dashboard_datetimes(
+    items: list[dict[str, Any]],
+    fields: tuple[str, ...],
+) -> list[datetime]:
+    return [
+        item_time
+        for item in items
+        if (item_time := _dashboard_item_datetime(item, fields)) is not None
+    ]
+
+
+def _dashboard_trend_window(
+    item_times: list[datetime],
+    *,
+    cutoff: datetime | None,
+    time_range: str | None,
+) -> tuple[date, date]:
+    normalized = (time_range or "all").strip().lower()
+    window_days = _dashboard_trend_days(normalized)
+    if cutoff is not None:
+        start_date = cutoff.date()
+        fallback_end_date = start_date + timedelta(days=window_days)
+        latest_date = max([fallback_end_date, *[item_time.date() for item_time in item_times]])
+    else:
+        latest_date = max(item_times).date() if item_times else datetime.now(UTC).date()
+        start_date = latest_date - timedelta(days=max(window_days - 1, 0))
+    if start_date > latest_date:
+        latest_date = start_date
+    return start_date, latest_date
+
+
+def _dashboard_trend_days(normalized_time_range: str) -> int:
+    if normalized_time_range.endswith("d") and normalized_time_range[:-1].isdigit():
+        return max(int(normalized_time_range[:-1]), 1)
+    return 30
+
+
+def _dashboard_date_range(start_date: date, end_date: date) -> list[date]:
+    days = max((end_date - start_date).days, 0)
+    return [start_date + timedelta(days=offset) for offset in range(days + 1)]
+
+
+def _add_count_trend(
+    points_by_period: dict[str, dict[str, Any]],
+    items: list[dict[str, Any]],
+    *,
+    fields: tuple[str, ...],
+    key: str,
+) -> None:
+    for item in items:
+        period = _dashboard_trend_period(item, fields)
+        if period in points_by_period:
+            points_by_period[period][key] += 1
+
+
+def _add_numeric_trend(
+    points_by_period: dict[str, dict[str, Any]],
+    items: list[dict[str, Any]],
+    *,
+    date_fields: tuple[str, ...],
+    field: str,
+    key: str,
+) -> None:
+    for item in items:
+        value = item.get(field)
+        if not isinstance(value, int | float):
+            continue
+        period = _dashboard_trend_period(item, date_fields)
+        if period in points_by_period:
+            points_by_period[period][key] += value
+
+
+def _dashboard_trend_period(item: dict[str, Any], fields: tuple[str, ...]) -> str | None:
+    item_time = _dashboard_item_datetime(item, fields)
+    return item_time.date().isoformat() if item_time else None

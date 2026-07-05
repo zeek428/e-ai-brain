@@ -24,6 +24,7 @@ import {
   type ItTeamDashboard,
   type ProductFilterOption,
 } from '../../services/aiBrain';
+import { DashboardTrendSection } from './DashboardTrendSection';
 
 const { Text, Title } = Typography;
 const allProductsValue = '__all_products__';
@@ -712,6 +713,7 @@ export default function DashboardPage() {
           />
         ))}
       </div>
+      {dashboard?.trend ? <DashboardTrendSection trend={dashboard.trend} /> : null}
       <div className="dashboard-grid">
         <section className="dashboard-panel">
           <Title level={4}>需求状态分布</Title>
