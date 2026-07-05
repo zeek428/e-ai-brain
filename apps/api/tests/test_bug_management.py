@@ -397,6 +397,20 @@ def test_viewer_can_read_bugs_but_cannot_mutate_bug_management():
         },
         headers=headers,
     ).json()["data"]
+    scope_response = client.put(
+        f"/api/users/{viewer_user['id']}/scopes",
+        json={
+            "scopes": [
+                {
+                    "access_level": "read",
+                    "scope_id": context["product_id"],
+                    "scope_type": "product",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert scope_response.status_code == 200
     viewer_headers = auth_headers(viewer_username, viewer_password)
     try:
         readable = client.get(

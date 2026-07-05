@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.services.operational_records import (
     JENKINS_RELEASE_STATUSES,
     ensure_enum,
@@ -103,7 +103,7 @@ def create_jenkins_release_response(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(user, {"devops.read"}, {"product_owner", "rd_owner"})
     write_store = operational_write_store(current_store)
     validate_jenkins_release_context(
         write_store,

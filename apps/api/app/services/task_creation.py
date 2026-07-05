@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.task_contexts import (
     ensure_confirmed_release_readiness_task,
@@ -67,7 +67,7 @@ def create_ai_task_response(
 
     input_json = write_store.snapshot(input_payload)
     if task_type == "technical_solution":
-        require_roles(user, {"product_owner", "rd_owner"})
+        require_any_permission_or_roles(user, {"task.create"}, {"product_owner", "rd_owner"})
         design_task_id = input_payload.get("product_detail_design_task_id")
         design_task = write_store.ai_tasks.get(str(design_task_id))
         if (
@@ -86,7 +86,7 @@ def create_ai_task_response(
             source_label="Product detail design",
         )
     elif task_type in TECHNICAL_SOLUTION_FOLLOWUP_TASK_TYPES:
-        require_roles(user, {"product_owner", "rd_owner"})
+        require_any_permission_or_roles(user, {"task.create"}, {"product_owner", "rd_owner"})
         technical_solution = ensure_confirmed_technical_solution_task(
             write_store,
             requirement=requirement,
@@ -101,7 +101,7 @@ def create_ai_task_response(
                 )
             )
     elif task_type in RELEASE_READINESS_FOLLOWUP_TASK_TYPES:
-        require_roles(user, {"product_owner", "rd_owner"})
+        require_any_permission_or_roles(user, {"task.create"}, {"product_owner", "rd_owner"})
         release_readiness = ensure_confirmed_release_readiness_task(
             write_store,
             requirement=requirement,
@@ -115,7 +115,11 @@ def create_ai_task_response(
             )
         )
     elif task_type == "code_review":
-        require_roles(user, {"reviewer", "rd_owner"})
+        require_any_permission_or_roles(
+            user,
+            {"gitlab.review", "task.create"},
+            {"reviewer", "rd_owner"},
+        )
         snapshot_id = input_payload.get("gitlab_mr_snapshot_id")
         snapshot = write_store.gitlab_mr_snapshots.get(str(snapshot_id))
         if snapshot is None:

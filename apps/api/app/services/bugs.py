@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.api.deps import api_error, require_permissions, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles, require_permissions
 from app.core.config import get_settings
 from app.services.bug_lifecycle import (
     ensure_bug_status_transition,
@@ -70,7 +70,7 @@ def payload_updates(payload: Any) -> dict[str, Any]:
 
 
 def require_bug_write_role(user: dict[str, Any]) -> None:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(user, {"bug.manage"}, {"product_owner", "rd_owner"})
 
 
 def bug_write_store(current_store: Any) -> Any:

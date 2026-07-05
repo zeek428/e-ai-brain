@@ -5,7 +5,10 @@ from pathlib import Path
 
 from app.core.authorization import AuthorizationSnapshot, build_menu_tree, has_permission
 from app.core.repositories import authorization as authorization_repository
-from app.core.repositories.authorization_defaults import COMPATIBILITY_ROLE_MENU_GRANTS
+from app.core.repositories.authorization_defaults import (
+    COMPATIBILITY_MENU_RESOURCES,
+    COMPATIBILITY_ROLE_MENU_GRANTS,
+)
 from app.core.roles import ROLE_DEFINITIONS
 
 MIGRATION = Path("app/db/migrations/031_rbac_foundation.sql")
@@ -16,6 +19,7 @@ VIEWER_ASSISTANT_BOUNDARY_MIGRATION = Path(
     "app/db/migrations/084_viewer_assistant_menu_boundary.sql"
 )
 VIEWER_PRODUCT_READ_MENU_MIGRATION = Path("app/db/migrations/085_viewer_product_read_menu.sql")
+ROLE_BOUNDARY_CLEANUP_MIGRATION = Path("app/db/migrations/090_role_boundary_cleanup.sql")
 
 
 def _role_permissions(role_code: str) -> set[str]:
@@ -291,6 +295,30 @@ def test_role_definitions_keep_new_roles_within_reviewed_defaults():
         assert _role_permissions(role_code).isdisjoint(permissions)
 
 
+def test_default_role_menu_grants_include_required_permissions():
+    repository = authorization_repository.CompatibilityAuthorizationRepository()
+    resources = {
+        resource["code"]: resource
+        for resource in COMPATIBILITY_MENU_RESOURCES
+    }
+
+    for role_code, menu_codes in COMPATIBILITY_ROLE_MENU_GRANTS.items():
+        if role_code == "admin":
+            role_permissions = set(
+                repository.snapshot_for_user(
+                    {"id": "user_admin", "roles": ["admin"]}
+                ).permissions
+            )
+        else:
+            role_permissions = _role_permissions(role_code)
+        for menu_code in menu_codes:
+            required_permissions = set(resources[menu_code].get("required_permissions") or [])
+            assert required_permissions <= role_permissions, (
+                f"{role_code} menu {menu_code} misses "
+                f"{sorted(required_permissions - role_permissions)}"
+            )
+
+
 def test_rbac_migration_does_not_seed_non_admin_product_wildcard_scopes():
     sql = MIGRATION.read_text(encoding="utf-8")
     role_scope_seed = re.search(
@@ -479,6 +507,29 @@ def test_viewer_product_read_menu_migration_adds_product_management_read_access(
     assert "product.read" in _role_permissions("viewer")
     assert "product.manage" not in _role_permissions("viewer")
     assert "product.products" in COMPATIBILITY_ROLE_MENU_GRANTS["viewer"]
+
+
+def test_viewer_governance_boundary_migration_removes_devops_and_insight_access():
+    sql = ROLE_BOUNDARY_CLEANUP_MIGRATION.read_text(encoding="utf-8")
+
+    assert "DELETE FROM role_permissions" in sql
+    assert "code = 'viewer'" in sql
+    assert "permission_code IN ('devops.read', 'insight.read')" in sql
+    assert "menu_code IN ('devops.metrics', 'insight.center')" in sql
+    assert "devops.read" not in _role_permissions("viewer")
+    assert "insight.read" not in _role_permissions("viewer")
+    assert "devops.metrics" not in COMPATIBILITY_ROLE_MENU_GRANTS["viewer"]
+    assert "insight.center" not in COMPATIBILITY_ROLE_MENU_GRANTS["viewer"]
+
+
+def test_reviewer_audit_boundary_migration_removes_global_audit_access():
+    sql = ROLE_BOUNDARY_CLEANUP_MIGRATION.read_text(encoding="utf-8")
+
+    assert "code = 'reviewer'" in sql
+    assert "permission_code = 'audit.read'" in sql
+    assert "menu_code IN ('governance', 'audit.events')" in sql
+    assert "audit.read" not in _role_permissions("reviewer")
+    assert "audit.events" not in COMPATIBILITY_ROLE_MENU_GRANTS["reviewer"]
 
 
 def test_postgres_authorization_queries_filter_user_role_effective_window():

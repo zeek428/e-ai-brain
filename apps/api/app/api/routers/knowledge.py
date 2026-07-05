@@ -5,7 +5,12 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import CurrentUser, require_permissions, require_roles, store
+from app.api.deps import (
+    CurrentUser,
+    require_any_permission_or_roles,
+    require_permissions,
+    store,
+)
 from app.core.config import get_settings
 from app.core.trace import envelope, get_trace_id
 from app.services.knowledge_deposit_decisions import (
@@ -51,6 +56,15 @@ from app.services.knowledge_search import knowledge_search_response
 router = APIRouter(tags=["knowledge"])
 settings = get_settings()
 KNOWLEDGE_DEPOSIT_DECIDE_PERMISSION = "knowledge.deposit.decide"
+KNOWLEDGE_MANAGE_PERMISSION = "knowledge.manage"
+
+
+def _require_knowledge_manage(user: dict[str, Any]) -> None:
+    require_any_permission_or_roles(
+        user,
+        {KNOWLEDGE_MANAGE_PERMISSION},
+        {"knowledge_owner", "rd_owner"},
+    )
 
 
 def _request_started_at(request: Request) -> float | None:
@@ -382,7 +396,7 @@ def get_knowledge_import_worker_status(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"knowledge_owner"})
+    _require_knowledge_manage(user)
     return envelope(
         knowledge_import_worker_status(request.app, settings),
         get_trace_id(request),
@@ -525,7 +539,7 @@ def create_knowledge_document(
     payload: KnowledgeDocumentRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"knowledge_owner", "rd_owner"})
+    _require_knowledge_manage(user)
     document = create_knowledge_document_result(
         content=payload.content,
         current_store=knowledge_write_store(store(request)),
@@ -551,7 +565,7 @@ def patch_knowledge_document(
     payload: KnowledgeDocumentPatchRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"knowledge_owner", "rd_owner"})
+    _require_knowledge_manage(user)
     document = patch_knowledge_document_result(
         current_store=knowledge_write_store(store(request)),
         document_id=document_id,
@@ -570,7 +584,7 @@ def retry_knowledge_document_index(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"knowledge_owner", "rd_owner"})
+    _require_knowledge_manage(user)
     document = retry_knowledge_document_index_result(
         current_store=knowledge_write_store(store(request)),
         document_id=document_id,
@@ -588,7 +602,7 @@ def delete_knowledge_document(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"knowledge_owner", "rd_owner"})
+    _require_knowledge_manage(user)
     result = delete_knowledge_document_result(
         current_store=knowledge_write_store(store(request)),
         document_id=document_id,

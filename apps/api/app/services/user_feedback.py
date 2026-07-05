@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.core.listing import add_list_observability, paginated_list_payload
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.product_config_context import product_config_source_store
@@ -135,7 +135,7 @@ def normalized_tags(tags: list[str]) -> list[str]:
 
 
 def require_user_feedback_triage_role(user: dict[str, Any]) -> None:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(user, {"insight.read"}, {"product_owner", "rd_owner"})
 
 
 def list_user_feedback_response(

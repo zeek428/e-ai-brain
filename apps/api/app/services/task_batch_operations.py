@@ -5,8 +5,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.api.deps import require_roles
-from app.services.task_access import task_allowed_roles
+from app.services.task_access import require_task_permission_or_roles
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_persistence_helpers import (
     record_audit_event,
@@ -65,7 +64,7 @@ def batch_cancel_ai_tasks_response(
             )
             continue
 
-        require_roles(user, task_allowed_roles(task))
+        require_task_permission_or_roles(user, task, {"task.cancel"})
         audit_start_index = len(write_store.audit_events)
         now = datetime.now(UTC).isoformat()
         task["status"] = "cancelled"

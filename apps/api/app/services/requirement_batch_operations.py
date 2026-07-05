@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.services.requirements import (
     REQUIREMENT_BATCH_SCHEDULABLE_STATUSES,
     ensure_non_blank,
@@ -33,7 +33,11 @@ def batch_generate_requirement_tasks_result(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(
+        user,
+        {"requirement.task_generate", "task.create"},
+        {"product_owner", "rd_owner"},
+    )
     product = _read_memory_dict(current_store, "products").get(payload.product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
@@ -136,7 +140,11 @@ def batch_assign_requirement_owner_result(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(
+        user,
+        {"requirement.create"},
+        {"product_owner", "rd_owner"},
+    )
     assignee = ensure_non_blank(payload.assignee, "assignee")
     batch_id = current_store.new_id("requirement_owner_batch")
     now = datetime.now(UTC).isoformat()
@@ -238,7 +246,11 @@ def batch_schedule_requirements_result(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(
+        user,
+        {"requirement.create"},
+        {"product_owner", "rd_owner"},
+    )
     product = _read_memory_dict(current_store, "products").get(payload.product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
@@ -365,7 +377,11 @@ def batch_advance_requirement_status_result(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(
+        user,
+        {"requirement.create"},
+        {"product_owner", "rd_owner"},
+    )
     target_status = canonical_requirement_status(payload.target_status)
     validate_requirement_batch_advance_target(target_status)
     batch_id = current_store.new_id("requirement_status_batch")

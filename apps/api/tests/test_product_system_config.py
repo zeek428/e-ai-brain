@@ -34,6 +34,20 @@ def test_viewer_can_read_product_management_without_write_permission():
         },
         headers=headers,
     ).json()["data"]
+    scope_response = client.put(
+        f"/api/users/{viewer_user['id']}/scopes",
+        json={
+            "scopes": [
+                {
+                    "access_level": "read",
+                    "scope_id": product["id"],
+                    "scope_type": "product",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert scope_response.status_code == 200
     viewer_headers = auth_headers(viewer_username, viewer_password)
     try:
         me = client.get("/api/auth/me", headers=viewer_headers).json()["data"]

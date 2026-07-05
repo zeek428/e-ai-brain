@@ -7,7 +7,14 @@ from urllib.request import urlopen
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import CurrentUser, api_error, require_permissions, require_roles, store
+from app.api.deps import (
+    CurrentUser,
+    api_error,
+    require_any_permission_or_roles,
+    require_permissions,
+    require_roles,
+    store,
+)
 from app.core.config import get_settings
 from app.core.trace import envelope, get_trace_id
 from app.services.assistant_action_drafts import (
@@ -64,6 +71,10 @@ from app.services.platform_status import health_payload
 settings = get_settings()
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 ASSISTANT_ACTION_REFERENCES_MANAGE_PERMISSION = "assistant.action_references.manage"
+
+
+def _require_assistant_access(user: dict[str, Any]) -> None:
+    require_any_permission_or_roles(user, {"assistant.chat"}, ASSISTANT_ACCESS_ROLES)
 
 
 class AssistantReferenceItem(BaseModel):
@@ -224,7 +235,7 @@ def assistant_runtime_status(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     trace_id = get_trace_id(request)
     current_store = store(request)
     health = health_payload(
@@ -597,7 +608,7 @@ def list_assistant_conversations(
     limit: int = Query(default=50, ge=1, le=100),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     payload = assistant_conversations_response(
         store(request),
         collapse_duplicates=collapse,
@@ -614,7 +625,7 @@ def create_assistant_action_draft(
     payload: AssistantActionDraftRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     result = create_assistant_action_draft_response(
         current_store=store(request),
         payload=payload,
@@ -638,7 +649,7 @@ def list_assistant_action_drafts(
     validation_status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     return list_assistant_action_drafts_response(
         action=action,
         created_from=created_from,
@@ -663,7 +674,7 @@ def get_assistant_action_draft(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     result = get_assistant_action_draft_response(
         current_store=store(request),
         draft_id=draft_id,
@@ -678,7 +689,7 @@ def confirm_assistant_action_draft(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     result = confirm_assistant_action_draft_response(
         current_store=store(request),
         draft_id=draft_id,
@@ -694,7 +705,7 @@ def cancel_assistant_action_draft(
     payload: AssistantActionDraftCancelRequest | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     result = cancel_assistant_action_draft_response(
         current_store=store(request),
         draft_id=draft_id,
@@ -711,7 +722,7 @@ def retry_assistant_action_draft(
     payload: AssistantActionDraftRetryRequest | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     result = retry_assistant_action_draft_response(
         current_store=store(request),
         draft_id=draft_id,
@@ -728,7 +739,7 @@ def mark_assistant_action_draft_modified(
     payload: AssistantActionDraftModificationRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     result = mark_assistant_action_draft_modified_response(
         current_store=store(request),
         draft_id=draft_id,
@@ -746,7 +757,7 @@ def patch_assistant_action_draft(
     payload: AssistantActionDraftPatchRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     result = patch_assistant_action_draft_response(
         current_store=store(request),
         draft_id=draft_id,
@@ -765,7 +776,7 @@ def mark_assistant_action_draft_viewed(
     payload: AssistantActionDraftViewRequest | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     result = mark_assistant_action_draft_viewed_response(
         current_store=store(request),
         draft_id=draft_id,
@@ -786,7 +797,7 @@ def assistant_metrics(
     window_days: int | None = Query(default=None, ge=1, le=365),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     payload = assistant_metrics_response(
         assistant_request_store(store(request), user_id=user["id"]),
         action=action,
@@ -813,7 +824,7 @@ def assistant_metric_details(
     window_days: int | None = Query(default=None, ge=1, le=365),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     payload = assistant_metric_details_response(
         assistant_request_store(store(request), user_id=user["id"]),
         action=action,
@@ -841,7 +852,7 @@ def assistant_metrics_export(
     window_days: int | None = Query(default=None, ge=1, le=365),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     payload = assistant_metrics_export_response(
         assistant_request_store(store(request), user_id=user["id"]),
         action=action,
@@ -861,7 +872,7 @@ def list_assistant_draft_templates(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     payload = list_assistant_draft_templates_response(user=user)
     return envelope(payload, get_trace_id(request))
 
@@ -871,7 +882,7 @@ def list_assistant_role_quick_tasks(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     payload = list_assistant_role_quick_tasks_response(
         current_store=store(request),
         user=user,
@@ -1125,7 +1136,7 @@ def list_assistant_reference_candidates(
     limit: int = Query(default=8, ge=1, le=20),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     payload = assistant_reference_candidates_response(
         assistant_request_store(store(request), user_id=user["id"]),
         limit=limit,
@@ -1143,7 +1154,7 @@ def resolve_assistant_reference_items(
     payload: AssistantReferenceResolveRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     try:
         result = resolve_assistant_references(
             assistant_request_store(store(request), user_id=user["id"]),
@@ -1161,7 +1172,7 @@ def list_assistant_conversation_messages(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     try:
         payload = assistant_conversation_messages_response(
             store(request),
@@ -1180,7 +1191,7 @@ def delete_assistant_conversation(
     payload: AssistantConversationDeleteRequest | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     requested_ids = [conversation_id, *((payload.conversation_ids if payload else []) or [])]
     try:
         result = delete_assistant_conversations_response(
@@ -1199,7 +1210,7 @@ def chat_with_assistant(
     payload: AssistantChatRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     current_store = assistant_request_store(store(request), user_id=user["id"])
     try:
         response_payload = assistant_chat_response(
@@ -1224,7 +1235,7 @@ def list_assistant_chat_runs(
     limit: int = Query(default=20, ge=1, le=50),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     current_store = assistant_request_store(store(request), user_id=user["id"])
     try:
         result = assistant_chat_runs_response(
@@ -1245,7 +1256,7 @@ def cancel_assistant_chat_run(
     payload: AssistantChatRunCancelRequest | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    _require_assistant_access(user)
     current_store = assistant_request_store(store(request), user_id=user["id"])
     try:
         result = cancel_assistant_chat_run_response(

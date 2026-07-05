@@ -5,7 +5,7 @@ import re
 from typing import Any
 from urllib.request import urlopen
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.services import git_review_github, git_review_gitlab
 from app.services.git_review_snapshots import (
     create_code_review_source_snapshot,
@@ -253,7 +253,7 @@ def preview_gitlab_mr_response(
     repository_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"reviewer", "rd_owner"})
+    require_any_permission_or_roles(user, {"gitlab.review"}, {"reviewer", "rd_owner"})
     current_store = product_config_write_store(current_store)
     repository = _read_memory_record(current_store, "product_git_repositories", repository_id)
     if repository is None:
@@ -281,7 +281,7 @@ def snapshot_gitlab_mr_response(
     repository_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"reviewer", "rd_owner"})
+    require_any_permission_or_roles(user, {"gitlab.review"}, {"reviewer", "rd_owner"})
     current_store = task_workflow_write_store(current_store)
     repository = _read_memory_record(current_store, "product_git_repositories", repository_id)
     if repository is None:
@@ -330,7 +330,7 @@ def list_github_pull_requests_response(
     state: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"reviewer", "rd_owner"})
+    require_any_permission_or_roles(user, {"gitlab.review"}, {"reviewer", "rd_owner"})
     ensure_enum(state, {"open", "closed", "all"}, "GitHub pull request state")
     current_store = product_config_write_store(current_store)
     repository = _read_memory_record(current_store, "product_git_repositories", repository_id)
@@ -358,7 +358,7 @@ def preview_github_pr_response(
     repository_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"reviewer", "rd_owner"})
+    require_any_permission_or_roles(user, {"gitlab.review"}, {"reviewer", "rd_owner"})
     current_store = product_config_write_store(current_store)
     repository = _read_memory_record(current_store, "product_git_repositories", repository_id)
     if repository is None:
@@ -386,7 +386,7 @@ def snapshot_github_pr_response(
     repository_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"reviewer", "rd_owner"})
+    require_any_permission_or_roles(user, {"gitlab.review"}, {"reviewer", "rd_owner"})
     current_store = task_workflow_write_store(current_store)
     repository = _read_memory_record(current_store, "product_git_repositories", repository_id)
     if repository is None:

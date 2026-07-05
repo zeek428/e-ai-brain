@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.services.product_config_context import product_config_source_store
 
 COLLECTOR_TYPES = {
@@ -178,7 +178,7 @@ def parse_optional_time(value: str | None, field_name: str) -> str | None:
 
 
 def require_collector_run_write_role(user: dict[str, Any]) -> None:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(user, {"devops.read"}, {"product_owner", "rd_owner"})
 
 
 def validate_collector_product_context(current_store: Any, *, product_id: str | None) -> None:

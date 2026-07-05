@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.services.requirements import (
     REQUIREMENT_CLOSABLE_STATUSES,
     record_audit_event,
@@ -24,7 +24,7 @@ def approve_requirement_result(
     requirement_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(user, {"requirement.approve"}, {"product_owner", "rd_owner"})
     requirements = _read_memory_dict(current_store, "requirements")
     requirement = requirements.get(requirement_id)
     if requirement is None:
@@ -56,7 +56,7 @@ def reject_requirement_result(
     requirement_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner"})
+    require_any_permission_or_roles(user, {"requirement.approve"}, {"product_owner"})
     requirements = _read_memory_dict(current_store, "requirements")
     requirement = requirements.get(requirement_id)
     if requirement is None:
@@ -90,7 +90,11 @@ def close_requirement_result(
     requirement_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(
+        user,
+        {"requirement.approve", "requirement.create"},
+        {"product_owner", "rd_owner"},
+    )
     requirements = _read_memory_dict(current_store, "requirements")
     ai_tasks = _read_memory_dict(current_store, "ai_tasks")
     requirement = requirements.get(requirement_id)

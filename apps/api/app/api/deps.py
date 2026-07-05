@@ -89,3 +89,37 @@ def require_any_permission(user: dict[str, Any], required_permissions: set[str])
     ):
         return
     raise api_error(403, "FORBIDDEN", "Permission denied")
+
+
+def require_permissions_or_roles(
+    user: dict[str, Any],
+    required_permissions: set[str],
+    allowed_roles: set[str],
+) -> None:
+    user_permissions = set(user.get("permissions") or [])
+    legacy_roles = set(user.get("roles") or [])
+    if (
+        "admin" in legacy_roles
+        or "system.admin" in user_permissions
+        or required_permissions.issubset(user_permissions)
+        or legacy_roles.intersection(allowed_roles)
+    ):
+        return
+    raise api_error(403, "FORBIDDEN", "Permission denied")
+
+
+def require_any_permission_or_roles(
+    user: dict[str, Any],
+    required_permissions: set[str],
+    allowed_roles: set[str],
+) -> None:
+    user_permissions = set(user.get("permissions") or [])
+    legacy_roles = set(user.get("roles") or [])
+    if (
+        "admin" in legacy_roles
+        or "system.admin" in user_permissions
+        or user_permissions.intersection(required_permissions)
+        or legacy_roles.intersection(allowed_roles)
+    ):
+        return
+    raise api_error(403, "FORBIDDEN", "Permission denied")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.services.user_insights import (
     ensure_non_blank,
     record_audit_event,
@@ -146,7 +146,7 @@ def create_usage_metric_response(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(user, {"insight.read"}, {"product_owner", "rd_owner"})
     current_store = user_insight_write_store(current_store)
     validate_usage_metric_context(
         current_store,

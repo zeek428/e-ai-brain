@@ -306,6 +306,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "089_user_password_login_state.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "090_role_boundary_cleanup.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

@@ -907,3 +907,74 @@ def test_user_role_scope_update_and_user_permissions_endpoint():
             "access_level": "write",
         }
     ]
+
+
+def test_user_management_role_edits_sync_to_effective_rbac_permissions():
+    headers = auth_headers()
+    role = client.post(
+        "/api/system/roles",
+        headers=headers,
+        json={"code": "assistant_operator", "name": "Assistant Operator"},
+    ).json()["data"]
+    permissions = client.put(
+        f"/api/system/roles/{role['id']}/permissions",
+        headers=headers,
+        json={"permission_codes": ["assistant.chat"]},
+    )
+    assert permissions.status_code == 200
+
+    created_user = client.post(
+        "/api/users",
+        headers=headers,
+        json={
+            "username": "assistant-operator@example.com",
+            "display_name": "Assistant Operator",
+            "password": "assistant123",
+            "roles": ["assistant_operator"],
+            "status": "active",
+        },
+    ).json()["data"]
+
+    effective = client.get(
+        f"/api/users/{created_user['id']}/permissions",
+        headers=headers,
+    )
+    assert effective.status_code == 200
+    assert effective.json()["data"]["role_codes"] == ["assistant_operator"]
+    assert effective.json()["data"]["permission_codes"] == ["assistant.chat"]
+
+    assistant_headers = auth_headers("assistant-operator@example.com", "assistant123")
+    runtime_status = client.get("/api/assistant/runtime-status", headers=assistant_headers)
+    assert runtime_status.status_code == 200
+
+    patched = client.patch(
+        f"/api/users/{created_user['id']}",
+        headers=headers,
+        json={"roles": ["viewer"]},
+    )
+    assert patched.status_code == 200
+
+    effective_after_patch = client.get(
+        f"/api/users/{created_user['id']}/permissions",
+        headers=headers,
+    )
+    assert effective_after_patch.status_code == 200
+    assert effective_after_patch.json()["data"]["role_codes"] == ["viewer"]
+    assert "assistant.chat" not in effective_after_patch.json()["data"]["permission_codes"]
+
+    runtime_status_after_patch = client.get(
+        "/api/assistant/runtime-status",
+        headers=assistant_headers,
+    )
+    assert runtime_status_after_patch.status_code == 403
+
+
+def test_last_admin_user_cannot_be_demoted_through_user_management():
+    response = client.patch(
+        "/api/users/user_admin",
+        headers=auth_headers(),
+        json={"roles": ["viewer"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "LAST_ADMIN_PROTECTED"

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.requirement_listing import (
     list_requirements_response,
@@ -274,7 +274,7 @@ def create_requirement_result(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(user, {"requirement.create"}, {"product_owner", "rd_owner"})
     title = ensure_non_blank(payload.title, "title")
     content = ensure_non_blank(payload.content, "content")
     product = _read_memory_record(current_store, "products", payload.product_id)
@@ -330,7 +330,7 @@ def patch_requirement_result(
     requirement_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(user, {"requirement.create"}, {"product_owner", "rd_owner"})
     requirement = _read_memory_record(current_store, "requirements", requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
@@ -387,7 +387,7 @@ def delete_requirement_result(
     requirement_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(user, {"requirement.create"}, {"product_owner", "rd_owner"})
     requirement = _read_memory_record(current_store, "requirements", requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
@@ -487,7 +487,11 @@ def generate_requirement_task_result(
     requirement_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(
+        user,
+        {"requirement.task_generate", "task.create"},
+        {"product_owner", "rd_owner"},
+    )
     requirement = _read_memory_record(current_store, "requirements", requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")

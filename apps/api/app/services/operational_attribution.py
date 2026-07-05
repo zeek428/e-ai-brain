@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.services.operational_records import (
     PENDING_ATTRIBUTION_RESOLUTION_ACTIONS,
     PENDING_ATTRIBUTION_SOURCE_TYPES,
@@ -19,7 +19,7 @@ from app.services.operational_records import (
 
 
 def require_pending_attribution_write_role(user: dict[str, Any]) -> None:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(user, {"devops.read"}, {"product_owner", "rd_owner"})
 
 
 def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:

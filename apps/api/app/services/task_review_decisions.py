@@ -3,8 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import require_roles
-from app.services.task_access import task_allowed_roles
+from app.services.task_access import require_task_permission_or_roles
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_persistence_helpers import save_review_decision_records
 from app.services.task_review_artifacts import (
@@ -28,7 +27,7 @@ def approve_review_response(
 ) -> dict[str, Any]:
     write_store = task_workflow_write_store(current_store)
     review, task = ensure_review_decidable(write_store, review_id=review_id, version=version)
-    require_roles(user, task_allowed_roles(task))
+    require_task_permission_or_roles(user, task, {"review.decide"})
     audit_start_index = len(write_store.audit_events)
     now = datetime.now(UTC).isoformat()
     review["status"] = "approved"
@@ -91,7 +90,7 @@ def edit_approve_review_response(
 ) -> dict[str, Any]:
     write_store = task_workflow_write_store(current_store)
     review, task = ensure_review_decidable(write_store, review_id=review_id, version=version)
-    require_roles(user, task_allowed_roles(task))
+    require_task_permission_or_roles(user, task, {"review.decide"})
     audit_start_index = len(write_store.audit_events)
     result = complete_review_with_edited_approval(
         write_store,

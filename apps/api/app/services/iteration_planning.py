@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.services.user_insights import (
     ensure_enum,
     ensure_non_blank,
@@ -23,7 +23,11 @@ ITERATION_DECISIONS = {"accepted", "edited_accepted", "rejected"}
 
 
 def require_iteration_planning_role(user: dict[str, Any]) -> None:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(
+        user,
+        {"planning.decide"},
+        {"product_owner", "rd_owner"},
+    )
 
 
 def validate_iteration_enums(

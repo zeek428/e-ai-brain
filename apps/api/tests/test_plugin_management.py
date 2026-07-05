@@ -1611,6 +1611,13 @@ def test_internal_data_source_supports_source_filters_and_field_permissions():
             "id": "internal_data_source_detail_reader",
             "permissions": ["requirement.read", "system.internal_data_source.detail"],
             "roles": [],
+            "scope_summary": [
+                {
+                    "access_level": "read",
+                    "scope_id": "product_sql",
+                    "scope_type": "product",
+                }
+            ],
         },
     )
     assert "description" in detail_permission_result["schemas"]["requirements"]["fields"]

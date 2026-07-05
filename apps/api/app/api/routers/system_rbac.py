@@ -21,6 +21,7 @@ from app.services.rbac_matrix import (
     build_role_access_preview,
     build_user_permission_diagnostic,
 )
+from app.services.rbac_safety import ensure_authorization_managers_remain
 
 router = APIRouter(tags=["system-rbac"])
 ROLE_CATEGORIES = {
@@ -771,8 +772,17 @@ def _set_role_status(
     status: str,
 ) -> dict[str, Any]:
     require_permissions(user, {"system.roles.manage"})
+    repository = _authorization_repository(request)
+    current_role = repository.get_role(role_id)
+    if current_role is None:
+        raise api_error(404, "NOT_FOUND", "Role not found")
+    if not (status == "inactive" and current_role.get("is_system")):
+        ensure_authorization_managers_remain(
+            request,
+            role_status_overrides={str(current_role["code"]): status},
+        )
     try:
-        role = _authorization_repository(request).set_role_status(
+        role = repository.set_role_status(
             role_id,
             status,
             actor_id=str(user["id"]),
@@ -793,10 +803,20 @@ def update_role_permissions(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_permissions(user, {"system.roles.manage"})
+    permission_codes = _unique_codes(payload.permission_codes, "permission_codes")
+    repository = _authorization_repository(request)
+    current_role = repository.get_role(role_id)
+    if current_role is None:
+        raise api_error(404, "NOT_FOUND", "Role not found")
+    if current_role.get("code") != "admin":
+        ensure_authorization_managers_remain(
+            request,
+            role_permission_overrides={str(current_role["code"]): set(permission_codes)},
+        )
     try:
-        role = _authorization_repository(request).set_role_permissions(
+        role = repository.set_role_permissions(
             role_id,
-            _unique_codes(payload.permission_codes, "permission_codes"),
+            permission_codes,
             actor_id=str(user["id"]),
             trace_id=get_trace_id(request),
         )
@@ -877,15 +897,24 @@ def update_user_roles(
     require_permissions(user, {"system.users.manage"})
     if _find_user(request, user_id) is None:
         raise api_error(404, "NOT_FOUND", "User not found")
+    role_codes = _unique_codes(payload.role_codes, "role_codes")
+    ensure_authorization_managers_remain(
+        request,
+        user_role_overrides={user_id: role_codes},
+    )
     try:
         result = _authorization_repository(request).set_user_roles(
             user_id,
-            _unique_codes(payload.role_codes, "role_codes"),
+            role_codes,
             actor_id=str(user["id"]),
             trace_id=get_trace_id(request),
         )
     except ValueError as exc:
         _map_repository_error(exc)
+    request.app.state.user_repository.update_user(
+        user_id,
+        {"roles": list(result.get("role_codes") or role_codes)},
+    )
     return envelope(result, get_trace_id(request))
 
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import api_error, require_roles
-from app.services.task_access import task_allowed_roles
+from app.api.deps import api_error
+from app.services.task_access import require_task_permission_or_roles
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_persistence_helpers import (
     save_review_decision_records,
@@ -24,7 +24,7 @@ def reject_review_response(
 ) -> dict[str, Any]:
     write_store = task_workflow_write_store(current_store)
     review, task = ensure_review_decidable(write_store, review_id=review_id, version=version)
-    require_roles(user, task_allowed_roles(task))
+    require_task_permission_or_roles(user, task, {"review.decide"})
     audit_start_index = len(write_store.audit_events)
     now = datetime.now(UTC).isoformat()
     review["status"] = "rejected"
@@ -75,7 +75,7 @@ def request_more_info_review_response(
 ) -> dict[str, Any]:
     write_store = task_workflow_write_store(current_store)
     review, task = ensure_review_decidable(write_store, review_id=review_id, version=version)
-    require_roles(user, task_allowed_roles(task))
+    require_task_permission_or_roles(user, task, {"review.decide"})
     audit_start_index = len(write_store.audit_events)
     now = datetime.now(UTC).isoformat()
     review["status"] = "requested_more_info"
@@ -128,7 +128,7 @@ def cancel_ai_task_response(
         raise api_error(404, "NOT_FOUND", "AI task not found")
     if task["status"] in {"completed", "failed", "cancelled"}:
         raise api_error(409, "TASK_STATE_INVALID", "Task cannot be cancelled from current status")
-    require_roles(user, task_allowed_roles(task))
+    require_task_permission_or_roles(user, task, {"task.cancel"})
     audit_start_index = len(write_store.audit_events)
     now = datetime.now(UTC).isoformat()
     task["status"] = "cancelled"
@@ -182,7 +182,7 @@ def submit_more_info_response(
         raise api_error(404, "NOT_FOUND", "AI task not found")
     if task["status"] != "waiting_more_info":
         raise api_error(409, "TASK_STATE_INVALID", "Task is not waiting for more info")
-    require_roles(user, task_allowed_roles(task))
+    require_task_permission_or_roles(user, task, {"task.execute"})
     audit_start_index = len(write_store.audit_events)
     now = datetime.now(UTC).isoformat()
     task.setdefault("input_json", {}).setdefault("more_info_answers", []).extend(answers)

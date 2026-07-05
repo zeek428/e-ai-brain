@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_any_permission_or_roles
 from app.services.operational_records import (
     ensure_enum,
     ensure_non_blank,
@@ -129,7 +129,7 @@ def create_online_log_metric_response(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_roles(user, {"product_owner", "rd_owner"})
+    require_any_permission_or_roles(user, {"devops.read"}, {"product_owner", "rd_owner"})
     write_store = operational_write_store(current_store)
     validate_online_log_metric_context(
         write_store,

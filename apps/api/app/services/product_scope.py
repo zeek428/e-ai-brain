@@ -10,7 +10,7 @@ def user_product_access(user: dict[str, Any]) -> tuple[bool, set[str]]:
         return True, set()
     scope_summary = user.get("scope_summary") or []
     if not scope_summary:
-        return True, set()
+        return False, set()
 
     product_ids: set[str] = set()
     has_product_scope = False
@@ -27,7 +27,7 @@ def user_product_access(user: dict[str, Any]) -> tuple[bool, set[str]]:
             has_product_scope = True
             product_ids.add(str(scope_id))
     if not has_product_scope:
-        return True, set()
+        return False, set()
     return False, product_ids
 
 

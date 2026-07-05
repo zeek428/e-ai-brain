@@ -14,7 +14,7 @@ from app.services.rd_task_executor_policies import (
     queue_rd_task_executor_task,
     resolve_rd_task_executor_policy,
 )
-from app.services.task_access import task_allowed_roles
+from app.services.task_access import require_task_permission_or_roles
 from app.services.task_code_review_execution import (
     call_configured_code_review_executor,
     create_code_review_report,
@@ -79,10 +79,14 @@ def start_ai_task_response(
     task = write_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
-    require_roles(user, task_allowed_roles(task))
     is_retry_start = (
         task["status"] == "failed"
         and task.get("current_step") in RETRYABLE_TASK_FAILURE_STEPS
+    )
+    require_task_permission_or_roles(
+        user,
+        task,
+        {"task.retry"} if is_retry_start else {"task.execute"},
     )
     if task["status"] != "draft" and not is_retry_start:
         raise api_error(409, "TASK_STATE_INVALID", "Task cannot be started from current status")

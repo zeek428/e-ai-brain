@@ -17,6 +17,10 @@ from app.core.listing import (
 )
 from app.core.roles import ASSIGNABLE_ROLE_CODES
 from app.core.trace import envelope, get_trace_id
+from app.services.rbac_safety import (
+    authorization_repository_from_request,
+    ensure_authorization_managers_remain,
+)
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 USER_MANAGE_PERMISSION = "system.users.manage"
@@ -67,14 +71,58 @@ def _ensure_enum(value: str | None, allowed_values: set[str], field: str) -> Non
         raise api_error(400, "VALIDATION_ERROR", f"Unsupported {field}")
 
 
-def _ensure_roles(roles: list[str]) -> None:
+def _assignable_role_codes(request: Request) -> set[str]:
+    authorization_repository = authorization_repository_from_request(request)
+    if authorization_repository is None:
+        return set(ASSIGNABLE_ROLE_CODES)
+    return {
+        str(role.get("code"))
+        for role in authorization_repository.list_roles()
+        if role.get("code")
+        and role.get("is_assignable", True) is True
+        and role.get("status", "active") == "active"
+    }
+
+
+def _ensure_roles(request: Request, roles: list[str]) -> None:
     if not roles:
         raise api_error(400, "VALIDATION_ERROR", "roles is required")
     if len(set(roles)) != len(roles):
         raise api_error(400, "VALIDATION_ERROR", "roles must be unique")
-    invalid_roles = sorted(set(roles) - ASSIGNABLE_ROLE_CODES)
+    invalid_roles = sorted(set(roles) - _assignable_role_codes(request))
     if invalid_roles:
         raise api_error(400, "VALIDATION_ERROR", f"Unsupported roles: {', '.join(invalid_roles)}")
+
+
+def _find_user_summary(request: Request, user_id: str) -> dict[str, Any] | None:
+    return next(
+        (item for item in request.app.state.user_repository.list_users() if item["id"] == user_id),
+        None,
+    )
+
+
+def _sync_authorization_roles(
+    request: Request,
+    *,
+    actor_id: str,
+    role_codes: list[str],
+    user_id: str,
+) -> list[str]:
+    authorization_repository = authorization_repository_from_request(request)
+    if authorization_repository is None:
+        return list(dict.fromkeys(role_codes))
+    try:
+        result = authorization_repository.set_user_roles(
+            user_id,
+            role_codes,
+            actor_id=actor_id,
+            trace_id=get_trace_id(request),
+        )
+    except ValueError as exc:
+        if str(exc) == "UNSUPPORTED_ROLE":
+            raise api_error(400, "VALIDATION_ERROR", "Unsupported role code") from exc
+        raise
+    return list(result.get("role_codes") or role_codes)
 
 
 def _dingtalk_binding_for_user(request: Request, user_id: str) -> dict[str, Any]:
@@ -220,7 +268,7 @@ def create_user(
     display_name = _ensure_non_blank(payload.display_name, "display_name")
     password = _ensure_non_blank(payload.password, "password")
     _ensure_enum(payload.status, USER_STATUSES, "user status")
-    _ensure_roles(payload.roles)
+    _ensure_roles(request, payload.roles)
     mobile = _normalize_mobile(payload.mobile)
     try:
         created = request.app.state.user_repository.create_user(
@@ -235,6 +283,13 @@ def create_user(
                 created["id"],
                 {"mobile": mobile},
             ) or created
+        synced_roles = _sync_authorization_roles(
+            request,
+            actor_id=str(user["id"]),
+            role_codes=payload.roles,
+            user_id=str(created["id"]),
+        )
+        created = {**created, "roles": synced_roles}
     except ValueError as exc:
         if str(exc) == "user_exists":
             raise api_error(409, "USER_EXISTS", "User already exists") from exc
@@ -260,12 +315,30 @@ def patch_user(
     if "username" in updates:
         updates["username"] = _ensure_non_blank(updates["username"], "username")
     if "roles" in updates:
-        _ensure_roles(updates["roles"])
+        _ensure_roles(request, updates["roles"])
     if "status" in updates:
         _ensure_enum(updates["status"], USER_STATUSES, "user status")
+    existing = _find_user_summary(request, user_id)
+    if existing is None:
+        raise api_error(404, "NOT_FOUND", "User not found")
+    if "roles" in updates or "status" in updates:
+        user_role_overrides = {user_id: updates["roles"]} if "roles" in updates else None
+        ensure_authorization_managers_remain(
+            request,
+            user_role_overrides=user_role_overrides,
+            user_status_overrides={user_id: str(updates.get("status") or existing["status"])},
+        )
     updated = request.app.state.user_repository.update_user(user_id, updates)
     if updated is None:
         raise api_error(404, "NOT_FOUND", "User not found")
+    if "roles" in updates:
+        synced_roles = _sync_authorization_roles(
+            request,
+            actor_id=str(user["id"]),
+            role_codes=updates["roles"],
+            user_id=user_id,
+        )
+        updated = {**updated, "roles": synced_roles}
     return envelope(_enrich_user_auth_summary(request, updated), get_trace_id(request))
 
 
@@ -278,6 +351,9 @@ def delete_user(
     require_permissions(user, {USER_MANAGE_PERMISSION})
     if user_id == user["id"]:
         raise api_error(409, "RESOURCE_IN_USE", "Current user cannot be deleted")
+    if _find_user_summary(request, user_id) is None:
+        raise api_error(404, "NOT_FOUND", "User not found")
+    ensure_authorization_managers_remain(request, deleted_user_id=user_id)
     deleted = request.app.state.user_repository.delete_user(user_id)
     if not deleted:
         raise api_error(404, "NOT_FOUND", "User not found")

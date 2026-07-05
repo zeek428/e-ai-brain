@@ -28,7 +28,7 @@ def user_product_access(user: dict[str, Any]) -> tuple[bool, set[str]]:
         return True, set()
     scope_summary = user.get("scope_summary") or []
     if not scope_summary:
-        return True, set()
+        return False, set()
     product_ids: set[str] = set()
     has_product_scope = False
     for scope in scope_summary:
@@ -44,11 +44,13 @@ def user_product_access(user: dict[str, Any]) -> tuple[bool, set[str]]:
             has_product_scope = True
             product_ids.add(str(scope_id))
     if not has_product_scope:
-        return True, set()
+        return False, set()
     return False, product_ids
 
 
 def user_can_access_scheduled_job_product(user: dict[str, Any], product_id: Any) -> bool:
+    if product_id is None:
+        return True
     global_access, product_ids = user_product_access(user)
     if global_access:
         return True

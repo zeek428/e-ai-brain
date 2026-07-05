@@ -436,7 +436,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
         "devops.metrics",
         "code_inspection.reports",
     },
-    "reviewer": {"task", "task.center", "governance", "audit.events"},
+    "reviewer": {"task", "task.center"},
     "knowledge_owner": {
         "workspace.dashboard",
         "assistant.chat",
