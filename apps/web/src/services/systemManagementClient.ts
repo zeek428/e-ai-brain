@@ -94,6 +94,8 @@ export type SystemSettingsRecord = {
   admin_email_configured?: boolean;
   email_delivery?: SystemEmailDeliverySettings | null;
   email_delivery_configured?: boolean;
+  test_recipient_email?: string | null;
+  test_recipient_email_configured?: boolean;
   updated_at?: string | null;
   updated_by?: string | null;
 };
@@ -116,6 +118,7 @@ export type SystemEmailDeliverySettings = {
 export type SystemSettingsMutationPayload = {
   admin_email?: string | null;
   email_delivery?: SystemEmailDeliverySettings | null;
+  test_recipient_email?: string | null;
 };
 
 export type SystemEmailDeliveryTestPayload = {

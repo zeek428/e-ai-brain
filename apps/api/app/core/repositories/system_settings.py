@@ -37,6 +37,7 @@ class SystemSettingsRepository:
         return {
             "admin_email": admin_email,
             "email_delivery": value.get("email_delivery"),
+            "test_recipient_email": value.get("test_recipient_email"),
             "updated_at": row[2].isoformat() if row[2] else None,
             "updated_by": row[1],
         }
@@ -53,6 +54,7 @@ class SystemSettingsRepository:
             "admin_email": admin_email,
             "email": admin_email,
             "email_delivery": settings.get("email_delivery"),
+            "test_recipient_email": settings.get("test_recipient_email"),
         }
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -89,6 +91,7 @@ class SystemSettingsRepository:
         return {
             "admin_email": admin_email,
             "email_delivery": value.get("email_delivery"),
+            "test_recipient_email": value.get("test_recipient_email"),
             "updated_at": row[2].isoformat() if row and row[2] else None,
             "updated_by": row[1] if row else actor_id,
         }

@@ -41,11 +41,14 @@ describe('SystemSettingsPage', () => {
             enabled: false,
             smtp_tls: 'starttls',
           },
+          test_recipient_email: null,
         });
         return jsonResponse({
           data: {
             admin_email: 'admin@example.com',
             admin_email_configured: true,
+            test_recipient_email: null,
+            test_recipient_email_configured: false,
             updated_at: '2026-07-03T03:00:00+00:00',
             updated_by: 'user_admin',
           },
@@ -60,6 +63,7 @@ describe('SystemSettingsPage', () => {
 
     const emailInput = await screen.findByLabelText('系统管理员邮箱');
     expect(emailInput).toHaveValue('ops@example.com');
+    expect(screen.getByLabelText('测试收件人')).toHaveValue('');
     expect(screen.getByText('管理员邮箱已配置')).toBeInTheDocument();
     expect(screen.getByText('2026-07-03 10:30')).toBeInTheDocument();
 
@@ -72,7 +76,7 @@ describe('SystemSettingsPage', () => {
         'PATCH',
       ]),
     );
-    expect(await screen.findByDisplayValue('admin@example.com')).toBeInTheDocument();
+    expect(await screen.findByLabelText('系统管理员邮箱')).toHaveValue('admin@example.com');
     expect(screen.getByText('2026-07-03 11:00')).toBeInTheDocument();
   });
 
@@ -109,6 +113,7 @@ describe('SystemSettingsPage', () => {
       }
       if (String(input) === '/api/system/settings' && init?.method === 'PATCH') {
         const body = JSON.parse(String(init.body));
+        expect(body.test_recipient_email).toBe('qa@example.com');
         expect(body.email_delivery).toMatchObject({
           default_from: 'alerts@example.com',
           enabled: true,
@@ -122,7 +127,7 @@ describe('SystemSettingsPage', () => {
         });
         return jsonResponse({
           data: {
-            ...body,
+            admin_email: body.admin_email,
             email_delivery: {
               ...body.email_delivery,
               smtp_password: undefined,
@@ -157,6 +162,7 @@ describe('SystemSettingsPage', () => {
     render(<SystemSettingsPage />);
 
     expect(await screen.findByLabelText('SMTP Host')).toHaveValue('smtp.example.com');
+    expect(screen.getByLabelText('测试收件人')).toHaveValue('');
     expect(screen.getByLabelText('SMTP 端口')).toHaveValue('465');
     expect(screen.getByLabelText('SMTP 密码/授权码')).toHaveAttribute(
       'placeholder',
@@ -180,6 +186,9 @@ describe('SystemSettingsPage', () => {
     fireEvent.change(screen.getByLabelText('SMTP 密码/授权码'), {
       target: { value: 'new-secret-password' },
     });
+    fireEvent.change(screen.getByLabelText('测试收件人'), {
+      target: { value: 'qa@example.com' },
+    });
     fireEvent.click(screen.getByRole('button', { name: /保存/ }));
 
     await waitFor(() =>
@@ -188,10 +197,8 @@ describe('SystemSettingsPage', () => {
         'PATCH',
       ]),
     );
-
-    fireEvent.change(screen.getByLabelText('测试收件人'), {
-      target: { value: 'qa@example.com' },
-    });
+    expect(screen.getByLabelText('测试收件人')).toHaveValue('qa@example.com');
+    expect(screen.getByLabelText('测试收件人')).not.toHaveValue('alerts@example.com');
     fireEvent.click(screen.getByRole('button', { name: /发送测试邮件/ }));
 
     await waitFor(() =>
@@ -200,5 +207,103 @@ describe('SystemSettingsPage', () => {
         'POST',
       ]),
     );
+  });
+
+  it('does not default the test recipient to the sender email', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (String(input) === '/api/system/settings' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse({
+          data: {
+            admin_email: null,
+            admin_email_configured: false,
+            email_delivery: {
+              default_from: 'noreply@example.com',
+              enabled: true,
+              sender_email: 'noreply@example.com',
+              smtp_host: 'smtp.example.com',
+              smtp_password_configured: true,
+              smtp_port: 465,
+              smtp_tls: 'ssl',
+              smtp_username: 'noreply@example.com',
+            },
+            email_delivery_configured: true,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<SystemSettingsPage />);
+
+    expect(await screen.findByLabelText('发件邮箱')).toHaveValue('noreply@example.com');
+    expect(screen.getByLabelText('测试收件人')).toHaveValue('');
+    expect(screen.getByLabelText('测试收件人')).not.toHaveValue('noreply@example.com');
+  });
+
+  it('shows an actionable SMTP authentication diagnostic when test delivery fails', async () => {
+    const jsonResponse = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (String(input) === '/api/system/settings' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse({
+          data: {
+            admin_email: 'ops@example.com',
+            admin_email_configured: true,
+            email_delivery: {
+              default_from: 'noreply@example.com',
+              enabled: true,
+              sender_email: 'noreply@example.com',
+              smtp_host: 'smtp.example.com',
+              smtp_password_configured: true,
+              smtp_port: 465,
+              smtp_tls: 'ssl',
+              smtp_username: 'noreply@example.com',
+            },
+            email_delivery_configured: true,
+            test_recipient_email: 'qa@example.com',
+            test_recipient_email_configured: true,
+          },
+        });
+      }
+      if (
+        String(input) === '/api/system/settings/email/test'
+        && init?.method === 'POST'
+      ) {
+        return jsonResponse(
+          {
+            detail: {
+              code: 'EMAIL_DELIVERY_TEST_FAILED',
+              error_type: 'SMTPAuthenticationError',
+              message: 'Email delivery test failed',
+              trace_id: 'trace_auth_failed',
+            },
+          },
+          502,
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<SystemSettingsPage />);
+
+    expect(await screen.findByLabelText('测试收件人')).toHaveValue('qa@example.com');
+    fireEvent.click(screen.getByRole('button', { name: /发送测试邮件/ }));
+
+    expect(await screen.findByText(/SMTP 认证失败/)).toBeInTheDocument();
+    expect(screen.getAllByText(/客户端授权码/).length).toBeGreaterThan(0);
   });
 });

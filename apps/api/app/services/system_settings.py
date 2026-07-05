@@ -188,11 +188,14 @@ def _email_delivery_configured(settings: dict[str, Any]) -> bool:
 
 def _public_settings(settings: dict[str, Any]) -> dict[str, Any]:
     admin_email = settings.get("admin_email")
+    test_recipient_email = settings.get("test_recipient_email")
     return {
         "admin_email": admin_email,
         "admin_email_configured": bool(admin_email),
         "email_delivery": _public_email_delivery(settings),
         "email_delivery_configured": _email_delivery_configured(settings),
+        "test_recipient_email": test_recipient_email,
+        "test_recipient_email_configured": bool(test_recipient_email),
         "updated_at": settings.get("updated_at"),
         "updated_by": settings.get("updated_by"),
     }
@@ -213,6 +216,8 @@ def update_system_settings_response(
     admin_email_provided: bool = True,
     email_delivery: dict[str, Any] | None = None,
     email_delivery_provided: bool = False,
+    test_recipient_email: str | None = None,
+    test_recipient_email_provided: bool = False,
     trace_id: str,
 ) -> dict[str, Any]:
     repository = _settings_repository(current_store)
@@ -234,19 +239,29 @@ def update_system_settings_response(
         if email_delivery_provided
         else existing_settings.get("email_delivery")
     )
+    normalized_test_recipient_email = (
+        _normalize_optional_email(test_recipient_email, "test_recipient_email")
+        if test_recipient_email_provided
+        else existing_settings.get("test_recipient_email")
+    )
     next_settings = {
         "admin_email": normalized_email,
         "email_delivery": normalized_delivery,
+        "test_recipient_email": normalized_test_recipient_email,
     }
     changed_fields = []
     if admin_email_provided:
         changed_fields.append("admin_email")
     if email_delivery_provided:
         changed_fields.append("email_delivery")
+    if test_recipient_email_provided:
+        changed_fields.append("test_recipient_email")
     audit_payload = {
         "admin_email_configured": bool(normalized_email),
         "changed_fields": changed_fields,
     }
+    if test_recipient_email_provided:
+        audit_payload["test_recipient_email_configured"] = bool(normalized_test_recipient_email)
     if email_delivery_provided:
         audit_payload.update(
             {
@@ -283,6 +298,7 @@ def update_system_settings_response(
         {
             "admin_email": normalized_email,
             "email_delivery": normalized_delivery,
+            "test_recipient_email": normalized_test_recipient_email,
             "updated_at": now,
             "updated_by": actor_id,
         }
@@ -324,7 +340,7 @@ def test_email_delivery_response(
     if not isinstance(delivery, dict) or not _email_delivery_configured(settings):
         raise api_error(400, "VALIDATION_ERROR", "Email delivery is not fully configured")
     recipient = _normalize_optional_email(
-        recipient_email or settings.get("admin_email"),
+        recipient_email or settings.get("test_recipient_email") or settings.get("admin_email"),
         "recipient_email",
     )
     if not recipient:
@@ -356,12 +372,12 @@ def test_email_delivery_response(
                     smtp.starttls()
                 smtp.login(username, password)
                 smtp.send_message(message)
-    except smtplib.SMTPException as exc:
+    except (OSError, TimeoutError, smtplib.SMTPException) as exc:
         raise api_error(
             502,
             "EMAIL_DELIVERY_TEST_FAILED",
             "Email delivery test failed",
-            {"error": str(exc)},
+            {"error": str(exc), "error_type": exc.__class__.__name__},
         ) from exc
 
     return {

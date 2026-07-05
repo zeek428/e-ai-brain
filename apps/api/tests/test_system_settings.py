@@ -205,6 +205,100 @@ def test_email_delivery_test_uses_smtp_configuration_without_echoing_secret(monk
     assert "super-secret-password" not in json.dumps(payload, ensure_ascii=False)
 
 
+def test_email_delivery_test_uses_saved_test_recipient_by_default(monkeypatch):
+    headers = auth_headers()
+    updated = client.patch(
+        "/api/system/settings",
+        headers=headers,
+        json={
+            "admin_email": "ops@example.com",
+            "test_recipient_email": "qa-default@example.com",
+            "email_delivery": {
+                "default_from": "noreply@example.com",
+                "enabled": True,
+                "sender_email": "noreply@example.com",
+                "smtp_host": "smtp.example.com",
+                "smtp_password": "super-secret-password",
+                "smtp_port": 465,
+                "smtp_tls": "ssl",
+                "smtp_username": "noreply@example.com",
+            },
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["data"]["test_recipient_email"] == "qa-default@example.com"
+    assert updated.json()["data"]["test_recipient_email_configured"] is True
+
+    calls: list[dict[str, object]] = []
+
+    class FakeSMTP:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            calls.append({"host": host, "port": port, "timeout": timeout})
+
+        def __enter__(self) -> FakeSMTP:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def login(self, username: str, password: str) -> None:
+            calls.append({"password": password, "username": username})
+
+        def send_message(self, message: object) -> None:
+            calls.append({"to": message["To"]})
+
+    monkeypatch.setattr("app.services.system_settings.smtplib.SMTP_SSL", FakeSMTP)
+
+    response = client.post(
+        "/api/system/settings/email/test",
+        headers=headers,
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["recipient_email"] == "qa-default@example.com"
+    assert {"to": "qa-default@example.com"} in calls
+
+
+def test_email_delivery_test_returns_stable_error_for_network_failures(monkeypatch):
+    headers = auth_headers()
+    client.patch(
+        "/api/system/settings",
+        headers=headers,
+        json={
+            "admin_email": "ops@example.com",
+            "email_delivery": {
+                "default_from": "noreply@example.com",
+                "enabled": True,
+                "sender_email": "noreply@example.com",
+                "smtp_host": "smtp.example.com",
+                "smtp_password": "super-secret-password",
+                "smtp_port": 465,
+                "smtp_tls": "ssl",
+                "smtp_username": "noreply@example.com",
+            },
+        },
+    )
+
+    class BrokenSMTP:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            raise ConnectionResetError("connection reset by peer")
+
+    monkeypatch.setattr("app.services.system_settings.smtplib.SMTP_SSL", BrokenSMTP)
+
+    response = client.post(
+        "/api/system/settings/email/test",
+        headers=headers,
+        json={"recipient_email": "qa@example.com"},
+    )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail["code"] == "EMAIL_DELIVERY_TEST_FAILED"
+    assert detail["error_type"] == "ConnectionResetError"
+    assert "super-secret-password" not in json.dumps(detail, ensure_ascii=False)
+
+
 def test_admin_email_must_be_valid_when_present():
     response = client.patch(
         "/api/system/settings",

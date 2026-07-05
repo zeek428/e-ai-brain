@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 export type RemoteRowsError = {
   authorizationRefreshHandled?: boolean;
   code?: string;
+  detail?: Record<string, unknown>;
   message: string;
   traceId?: string;
 };
@@ -22,11 +23,13 @@ export function normalizeRemoteRowsError(error: unknown): RemoteRowsError {
     const errorWithDetails = error as Error & {
       authorizationRefreshHandled?: boolean;
       code?: string;
+      detail?: Record<string, unknown>;
       traceId?: string;
     };
     return {
       authorizationRefreshHandled: errorWithDetails.authorizationRefreshHandled,
       code: errorWithDetails.code,
+      detail: errorWithDetails.detail,
       message: error.message,
       traceId: errorWithDetails.traceId,
     };

@@ -72,6 +72,23 @@ const buildEmailDeliveryPayload = (
   };
 };
 
+const formatEmailDeliveryTestError = (error: RemoteRowsError) => {
+  if (error.code !== 'EMAIL_DELIVERY_TEST_FAILED') {
+    return error.message;
+  }
+  const errorType = String(error.detail?.error_type ?? '');
+  if (errorType === 'SMTPAuthenticationError') {
+    return '邮件发送测试失败：SMTP 认证失败，请检查 SMTP 用户名、密码/授权码，阿里企业邮箱可能需要客户端授权码。';
+  }
+  if (errorType === 'ConnectionResetError') {
+    return '邮件发送测试失败：SMTP 连接被重置，请检查 Host、端口、TLS/SSL 和网络访问。';
+  }
+  if (errorType === 'TimeoutError') {
+    return '邮件发送测试失败：SMTP 连接超时，请检查服务器地址、端口和网络。';
+  }
+  return '邮件发送测试失败，请检查 SMTP 配置和邮箱服务状态。';
+};
+
 export default function SystemSettingsPage() {
   const [form] = Form.useForm<SystemSettingsFormValues>();
   const [settings, setSettings] = useState<SystemSettingsRecord>({});
@@ -91,7 +108,7 @@ export default function SystemSettingsPage() {
       form.setFieldsValue({
         admin_email: loaded.admin_email ?? '',
         email_delivery: normalizeEmailDeliveryFormValues(loaded.email_delivery),
-        test_recipient_email: loaded.admin_email ?? '',
+        test_recipient_email: loaded.test_recipient_email ?? '',
       });
     } catch (loadError) {
       setError(normalizeRemoteRowsError(loadError));
@@ -109,18 +126,21 @@ export default function SystemSettingsPage() {
 
   const saveSettings = async () => {
     const values = await form.validateFields();
+    const nextAdminEmail = values.admin_email?.trim() || null;
+    const nextTestRecipientEmail = values.test_recipient_email?.trim() || null;
     setSaving(true);
     setError(undefined);
     try {
       const updated = await updateSystemSettings({
-        admin_email: values.admin_email?.trim() || null,
+        admin_email: nextAdminEmail,
         email_delivery: buildEmailDeliveryPayload(values.email_delivery),
+        test_recipient_email: nextTestRecipientEmail,
       });
       setSettings(updated);
       form.setFieldsValue({
         admin_email: updated.admin_email ?? '',
         email_delivery: normalizeEmailDeliveryFormValues(updated.email_delivery),
-        test_recipient_email: values.test_recipient_email || updated.admin_email || '',
+        test_recipient_email: updated.test_recipient_email ?? nextTestRecipientEmail ?? '',
       });
       message.success('系统设置已保存');
     } catch (saveError) {
@@ -134,17 +154,19 @@ export default function SystemSettingsPage() {
 
   const sendTestEmail = async () => {
     const values = await form.validateFields(['test_recipient_email']);
+    const recipientEmail = values.test_recipient_email?.trim();
     setTestingEmail(true);
     setError(undefined);
     try {
       const result = await testSystemEmailDelivery({
-        recipient_email: values.test_recipient_email?.trim() || null,
+        recipient_email: recipientEmail || null,
       });
       message.success(`测试邮件已发送至 ${result.recipient_email}`);
     } catch (testError) {
       const normalized = normalizeRemoteRowsError(testError);
-      setError(normalized);
-      message.error(normalized.message);
+      const diagnosticMessage = formatEmailDeliveryTestError(normalized);
+      setError({ ...normalized, message: diagnosticMessage });
+      message.error(diagnosticMessage);
     } finally {
       setTestingEmail(false);
     }
@@ -323,6 +345,7 @@ export default function SystemSettingsPage() {
                   测试发送
                 </Divider>
                 <Form.Item
+                  extra="保存后作为默认测试收件人；留空时使用系统管理员邮箱。"
                   label="测试收件人"
                   name="test_recipient_email"
                   rules={[
@@ -332,7 +355,11 @@ export default function SystemSettingsPage() {
                     },
                   ]}
                 >
-                  <Input allowClear autoComplete="email" placeholder="qa@example.com" />
+                  <Input
+                    allowClear
+                    autoComplete="email"
+                    placeholder="默认使用系统管理员邮箱"
+                  />
                 </Form.Item>
                 <Form.Item label="更新时间">
                   <Typography.Text>{formatDisplayDateTime(settings.updated_at)}</Typography.Text>

@@ -47,6 +47,8 @@
 - 修复 viewer 角色误显示 AI 助手草案入口：历史 RBAC 迁移会移除 viewer 的 `assistant.chat` 与 `assistant.chat`/`assistant.drafts` 菜单授权，避免点击草案任务台后返回角色拒绝。
 - viewer 角色新增产品管理只读入口：默认授予 `product.read` 与 `product.products` 菜单，仅展示产品、版本、模块、Git 资源和相关系统列表，前端隐藏新增、编辑和删除操作。
 - 修复 viewer 在 Bug 管理页面仍显示写操作：viewer 只展示 Bug 列表与全链路入口，隐藏登记、编辑、删除、批量处理和行选择，后端补充 viewer 写接口拒绝测试。
+- 修复系统设置测试收件人不生效：`test_recipient_email` 现在作为系统设置字段持久化保存，页面不再把系统管理员邮箱自动写入测试收件人，测试发送未显式指定收件人时优先使用已保存测试收件人，再回退系统管理员邮箱，且不再从发件邮箱推导。
+- 修复系统设置测试邮件失败排障不稳定：SMTP 网络、SSL 握手、连接重置或超时错误统一返回 `EMAIL_DELIVERY_TEST_FAILED`，避免页面表现为后端 500 或连接异常。
 
 ## 历史归档
 

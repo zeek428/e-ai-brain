@@ -33,6 +33,7 @@ class EmailDeliveryPatchRequest(BaseModel):
 class SystemSettingsPatchRequest(BaseModel):
     admin_email: str | None = None
     email_delivery: EmailDeliveryPatchRequest | None = None
+    test_recipient_email: str | None = None
 
 
 class SystemEmailTestRequest(BaseModel):
@@ -72,6 +73,8 @@ def update_system_settings(
                 else None
             ),
             email_delivery_provided="email_delivery" in payload.model_fields_set,
+            test_recipient_email=payload.test_recipient_email,
+            test_recipient_email_provided="test_recipient_email" in payload.model_fields_set,
             trace_id=trace_id,
         ),
         trace_id,
