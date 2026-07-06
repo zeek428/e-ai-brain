@@ -1,4 +1,4 @@
-import { CheckSquareOutlined, DeleteOutlined, EditOutlined, EyeOutlined, UploadOutlined } from '@ant-design/icons';
+import { CheckSquareOutlined, DeleteOutlined, EditOutlined, EyeOutlined, PlayCircleOutlined, UploadOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Tag, message } from 'antd';
 import {
@@ -30,6 +30,7 @@ import {
   fetchManagementBugs,
   fetchManagementBugList,
   getStoredCurrentUser,
+  promoteBugToAiTask,
   type BugImageEvidenceItem,
   type BugImageUploadSource,
   type CurrentUserResponse,
@@ -71,6 +72,7 @@ export default function BugsPage() {
   const [isBatchSaving, setIsBatchSaving] = useState(false);
   const [imagePreview, setImagePreview] = useState<{ title: string; url: string }>();
   const [previewingImageKey, setPreviewingImageKey] = useState<string>();
+  const [promotingBugId, setPromotingBugId] = useState<string>();
   const [isImageUploading, setIsImageUploading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -449,6 +451,24 @@ export default function BugsPage() {
     }
   }, [ensureCanManageBugs, reload, reloadDuplicateBugs]);
 
+  const handlePromoteAiTask = useCallback(async (row: BugRecord) => {
+    if (!ensureCanManageBugs('推进 Bug AI 任务')) {
+      return;
+    }
+    try {
+      setPromotingBugId(row.id);
+      const result = await promoteBugToAiTask(row.id);
+      const status = result.start?.status ?? result.task.status;
+      message.success(`已推进 AI Task ${result.task.id}（${status}）`);
+      await reloadDuplicateBugs();
+      await reload();
+    } catch (promoteError) {
+      message.error(formatMutationError(promoteError));
+    } finally {
+      setPromotingBugId(undefined);
+    }
+  }, [ensureCanManageBugs, reload, reloadDuplicateBugs]);
+
   const openBatchModal = useCallback(() => {
     if (!ensureCanManageBugs('批量处理 Bug')) {
       return;
@@ -589,6 +609,21 @@ export default function BugsPage() {
                 <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
                   编辑
                 </Button>
+                <Popconfirm
+                  disabled={row.status === 'closed'}
+                  okText="推进"
+                  onConfirm={() => handlePromoteAiTask(row)}
+                  title={`将 Bug ${row.id} 推进为 AI Task 并自动执行？`}
+                >
+                  <Button
+                    disabled={row.status === 'closed'}
+                    icon={<PlayCircleOutlined />}
+                    loading={promotingBugId === row.id}
+                    type="link"
+                  >
+                    AI处理
+                  </Button>
+                </Popconfirm>
                 <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除 Bug ${row.id}？`}>
                   <Button danger icon={<DeleteOutlined />} type="link">
                     删除
@@ -600,7 +635,7 @@ export default function BugsPage() {
         ),
       },
     ],
-    [canManageBugs, handleDelete, openEditModal],
+    [canManageBugs, handleDelete, handlePromoteAiTask, openEditModal, promotingBugId],
   );
 
   return (

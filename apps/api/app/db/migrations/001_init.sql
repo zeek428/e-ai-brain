@@ -213,7 +213,7 @@ VALUES (
   '研发大脑',
   '把研发需求转成可确认、可回写、可沉淀的任务方案。',
   'active',
-  '{"default_task_types":["product_detail_design","technical_solution","development_planning","automated_testing","release_readiness","post_release_analysis","code_review"]}'::jsonb
+  '{"default_task_types":["product_detail_design","technical_solution","development_planning","automated_testing","release_readiness","post_release_analysis","code_review","bug_fix"]}'::jsonb
 )
 ON CONFLICT (id) DO UPDATE SET
   code = EXCLUDED.code,

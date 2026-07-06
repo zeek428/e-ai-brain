@@ -210,6 +210,7 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "088_dingtalk_corp_name.sql" in applied_migrations
     assert "089_user_password_login_state.sql" in applied_migrations
     assert "090_role_boundary_cleanup.sql" in applied_migrations
+    assert "093_bug_fix_task_type.sql" in applied_migrations
 
 
 def test_assistant_action_draft_constraint_migrations_cover_supported_actions():

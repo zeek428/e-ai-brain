@@ -77,6 +77,19 @@ def save_requirement_and_ai_task_records(
         save_records(requirement=requirement, task=task, audit_event=audit_event)
 
 
+def save_bug_and_ai_task_records(
+    current_store: Any,
+    *,
+    bug: dict[str, Any],
+    task: dict[str, Any],
+    audit_events: list[dict[str, Any]],
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_records = getattr(repository, "save_bug_and_ai_task_records", None)
+    if callable(save_records):
+        save_records(bug=bug, task=task, audit_events=audit_events)
+
+
 def save_review_decision_records(
     current_store: Any,
     *,

@@ -272,6 +272,7 @@ def test_bug_management_endpoints_are_owned_by_bugs_router():
     assert _route_for("/api/bugs", "GET").endpoint.__module__ == expected_module
     assert _route_for("/api/bugs", "POST").endpoint.__module__ == expected_module
     assert _route_for("/api/bugs/batch-update", "POST").endpoint.__module__ == expected_module
+    assert _route_for("/api/bugs/{bug_id}/promote-ai-task", "POST").endpoint.__module__ == expected_module
     assert _route_for("/api/bugs/{bug_id}", "PATCH").endpoint.__module__ == expected_module
     assert _route_for("/api/bugs/{bug_id}", "DELETE").endpoint.__module__ == expected_module
 

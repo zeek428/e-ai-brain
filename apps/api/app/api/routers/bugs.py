@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from time import perf_counter
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -16,6 +16,7 @@ from app.services.bugs import (
     delete_bug_result,
     patch_bug_result,
     preview_bug_image_result,
+    promote_bug_to_ai_task_result,
     upload_bug_image_result,
 )
 
@@ -62,6 +63,13 @@ class BugBatchUpdateRequest(BaseModel):
     severity: str | None = None
     assignee: str | None = None
     reason: str | None = None
+
+
+class BugPromoteAiTaskRequest(BaseModel):
+    auto_start: bool = True
+    execution_mode: Literal["model_gateway", "deterministic"] | None = None
+    reason: str | None = None
+    title: str | None = None
 
 
 @router.get("/api/bugs")
@@ -126,6 +134,23 @@ def batch_update_bugs(
         current_store=bug_write_store(store(request)),
         payload=payload,
         user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/bugs/{bug_id}/promote-ai-task")
+def promote_bug_to_ai_task(
+    bug_id: str,
+    request: Request,
+    payload: BugPromoteAiTaskRequest | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = promote_bug_to_ai_task_result(
+        code_review_executor=getattr(request.app.state, "code_review_executor", None),
+        current_store=store(request),
+        payload=payload or BugPromoteAiTaskRequest(),
+        user=user,
+        bug_id=bug_id,
     )
     return envelope(result, get_trace_id(request))
 

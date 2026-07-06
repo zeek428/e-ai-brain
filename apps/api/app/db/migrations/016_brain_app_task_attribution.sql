@@ -31,6 +31,6 @@ CREATE INDEX IF NOT EXISTS idx_ai_tasks_brain_app
   ON ai_tasks (brain_app_id);
 
 UPDATE brain_apps
-SET config = '{"default_task_types":["product_detail_design","technical_solution","development_planning","automated_testing","release_readiness","post_release_analysis","code_review"]}'::jsonb,
+SET config = '{"default_task_types":["product_detail_design","technical_solution","development_planning","automated_testing","release_readiness","post_release_analysis","code_review","bug_fix"]}'::jsonb,
     updated_at = now()
 WHERE id = 'rd_brain';

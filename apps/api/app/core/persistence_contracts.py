@@ -254,6 +254,14 @@ class AiTaskRepository(Protocol):
         audit_event: dict[str, Any] | None = None,
     ) -> None: ...
 
+    def save_bug_and_ai_task_records(
+        self,
+        *,
+        bug: dict[str, Any],
+        task: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+    ) -> None: ...
+
     def save_task_start_records(
         self,
         *,

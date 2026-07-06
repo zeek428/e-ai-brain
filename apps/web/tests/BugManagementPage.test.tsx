@@ -1,11 +1,43 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { message, Modal, notification } from 'antd';
+import type { ReactElement, ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import './proComponentsMock';
 
 import BugsPage from '../src/pages/Bugs';
 import { saveCurrentUser } from '../src/services/aiBrain';
+
+vi.mock('antd', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('antd')>();
+  const React = await import('react');
+
+  return {
+    ...actual,
+    Popconfirm: ({
+      children,
+      disabled,
+      onConfirm,
+    }: {
+      children?: ReactNode;
+      disabled?: boolean;
+      onConfirm?: (event?: unknown) => void;
+    }) => {
+      if (!React.isValidElement(children)) {
+        return children;
+      }
+      const child = children as ReactElement<{ onClick?: (event: unknown) => void }>;
+      return React.cloneElement(child, {
+        onClick: (event: unknown) => {
+          child.props.onClick?.(event);
+          if (!disabled) {
+            onConfirm?.(event);
+          }
+        },
+      });
+    },
+  };
+});
 
 const originalCreateObjectURL = URL.createObjectURL;
 const originalRevokeObjectURL = URL.revokeObjectURL;
@@ -336,6 +368,85 @@ describe('bug management page', () => {
     ).toBeInTheDocument();
   });
 
+  it('promotes a bug to an auto-started AI task from the row actions', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      if (path.startsWith('/api/products?') && path.includes('active_only=true')) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/product-versions' || path.startsWith('/api/product-versions?')) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if ((path === '/api/bugs' || path.startsWith('/api/bugs?')) && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                assignee: 'rd@example.com',
+                created_at: '2026-06-04T09:00:00+00:00',
+                description: '需要 AI 自动修复',
+                id: 'bug_promote',
+                module_code: 'delivery',
+                product_id: 'product_api',
+                reproduce_steps: ['进入页面', '点击保存'],
+                severity: 'major',
+                source: 'manual_test',
+                status: 'open',
+                title: '推进 AI 任务 Bug',
+                version_id: 'version_api',
+                version_name: 'v1 MVP',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/bugs/bug_promote/promote-ai-task' && method === 'POST') {
+        return jsonResponse({
+          data: {
+            start: {
+              current_step: 'waiting_ai_executor',
+              executor_task_id: 'ai_executor_task_001',
+              runner_id: 'runner_codex',
+              status: 'running',
+            },
+            task: {
+              current_step: 'waiting_ai_executor',
+              id: 'task_bug_fix',
+              status: 'running',
+              task_type: 'bug_fix',
+            },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path} ${method}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<BugsPage />);
+
+    const bugRow = (await screen.findByText('推进 AI 任务 Bug')).closest('tr');
+    expect(bugRow).not.toBeNull();
+    fireEvent.click(within(bugRow as HTMLElement).getByRole('button', { name: /AI处理/ }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET', init?.body])).toContainEqual([
+        '/api/bugs/bug_promote/promote-ai-task',
+        'POST',
+        JSON.stringify({ auto_start: true }),
+      ]),
+    );
+  });
+
   it('renders bug management as read-only for viewer users', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
@@ -426,6 +537,7 @@ describe('bug management page', () => {
     const bugRow = screen.getByText('只读 Bug').closest('tr');
     expect(bugRow).not.toBeNull();
     expect(within(bugRow as HTMLElement).getByRole('link', { name: '全链路' })).toBeInTheDocument();
+    expect(within(bugRow as HTMLElement).queryByRole('button', { name: /AI处理/ })).not.toBeInTheDocument();
     expect(within(bugRow as HTMLElement).queryByRole('button', { name: /编辑/ })).not.toBeInTheDocument();
     expect(within(bugRow as HTMLElement).queryByRole('button', { name: /删除/ })).not.toBeInTheDocument();
   });

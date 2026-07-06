@@ -171,6 +171,7 @@ export {
   fetchManagementBugImagePreview,
   fetchManagementBugList,
   fetchManagementBugs,
+  promoteBugToAiTask,
   uploadManagementBugImage,
   updateManagementBug,
 } from './bugClient';
@@ -182,6 +183,7 @@ export type {
   BugImageUploadSource,
   BugListQuery,
   BugMutationPayload,
+  BugPromoteAiTaskResult,
 } from './bugClient';
 export {
   approveManagementRequirement,

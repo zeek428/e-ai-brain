@@ -25,6 +25,7 @@ def default_brain_apps() -> dict[str, dict[str, Any]]:
                     "release_readiness",
                     "post_release_analysis",
                     "code_review",
+                    "bug_fix",
                 ],
             },
         }

@@ -53,6 +53,22 @@ export type BugBatchUpdateResult = {
   updatedCount: number;
 };
 
+export type BugPromoteAiTaskResult = {
+  start?: {
+    current_step?: string;
+    executor_task_id?: string;
+    runner_id?: string;
+    status?: string;
+  } | null;
+  task: {
+    current_step?: string;
+    id: string;
+    status: string;
+    task_type: string;
+    title?: string;
+  };
+};
+
 export type BugImageUploadSource = 'clipboard' | 'file_picker';
 
 export type BugImageEvidenceItem = {
@@ -335,6 +351,15 @@ export async function batchUpdateManagementBugs(
     updated: (result.updated ?? []).map(mapBugRecord),
     updatedCount: normalizeDashboardCount(result.updated_count),
   };
+}
+
+export async function promoteBugToAiTask(bugId: string): Promise<BugPromoteAiTaskResult> {
+  const token = requireAccessToken();
+  return apiRequest<BugPromoteAiTaskResult>(`/api/bugs/${bugId}/promote-ai-task`, {
+    body: { auto_start: true },
+    method: 'POST',
+    token,
+  });
 }
 
 export async function deleteManagementBug(bugId: string) {

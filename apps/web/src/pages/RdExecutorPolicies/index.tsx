@@ -45,6 +45,7 @@ const TASK_TYPE_OPTIONS = [
   { label: '代码评审', value: 'code_review' },
   { label: '自动化测试', value: 'automated_testing' },
   { label: '代码整改', value: 'code_inspection_remediation' },
+  { label: 'Bug 修复', value: 'bug_fix' },
   { label: '发布上线评估', value: 'release_readiness' },
   { label: '上线后分析', value: 'post_release_analysis' },
 ];

@@ -213,6 +213,7 @@ POST /api/bugs
 POST /api/bugs/images/upload
 GET /api/bugs/images/preview?bucket=ai-brain-knowledge&object_key=bugs%2Fevidence%2Fuser_admin%2F2026-07-03%2Fd7b7aa...%2Ffailure.png&mime_type=image%2Fpng
 POST /api/bugs/batch-update
+POST /api/bugs/{bug_id}/promote-ai-task
 PATCH /api/bugs/{bug_id}
 ```
 
@@ -241,6 +242,17 @@ PATCH /api/bugs/{bug_id}
 ```
 
 `status`、`severity`、`assignee` 至少提供一个；`status` 仍逐条校验 Bug 状态机，非法状态流转、重复 ID 或不存在的 Bug 不阻塞其他合法记录，而是进入 `skipped` 明细。成功更新的 Bug 写入逐条 `bug.updated` 审计，批次写入 `bug.batch_updated` 审计，响应返回 `batch_id`、`updated_count`、`skipped_count`、`updated` 和 `skipped`。
+
+推进 AI 任务请求体：
+
+```json
+{
+  "auto_start": true,
+  "title": "Bug 修复：知识检索权限过滤异常"
+}
+```
+
+`POST /api/bugs/{bug_id}/promote-ai-task` 要求 Bug 写权限。接口会基于 Bug 的产品、版本、模块、复现步骤、证据和可选需求上下文创建 `task_type=bug_fix` 的 AI Task，并把 Bug 快照写入 `input_json.bug`；同时在 Bug 的 `evidence.ai_task_automation` 中记录 `latest_task_id` 和历史 `task_ids`。`auto_start=true` 时，创建后立即复用 `POST /api/ai-tasks/{task_id}/start` 的现有执行链路；若存在 active 的 `bug_fix` 研发执行器策略，则任务进入 `running/current_step=waiting_ai_executor` 并创建 `ai_executor_task` 交由 Runner 认领。重复 Bug、已关闭 Bug 或已有未结束自动化任务的 Bug 返回 `409 BUG_STATE_INVALID` 或 `409 BUG_AI_TASK_IN_PROGRESS`。接口写入 `ai_task.created` 与 `bug.ai_task_promoted` 审计事件。
 
 登记请求体：
 
@@ -293,10 +305,10 @@ PATCH /api/bugs/{bug_id}
 
 状态和枚举：
 
-- 来源：`ai_auto_test | ai_post_release | manual_test`。
+- 来源：`ai_auto_test | ai_post_release | code_inspection | manual_test`。
 - 状态：`open | triaged | needs_info | assigned | fixed | verified | closed | reopened`。
 - 严重程度：`blocker | critical | major | minor`。
 - AI 自动测试来源缺少 `reproduce_steps` 时初始状态为 `needs_info`；人工登记或带复现步骤的 Bug 初始状态为 `open`。
 - 提交 `duplicate_of_bug_id` 时重复 Bug 初始状态为 `closed`，并保留主 Bug 关联，避免重复进入修复队列。
 - 状态更新必须符合状态机约束，非法跨越返回 `BUG_STATE_INVALID`；创建和更新均写入 `bug.created` 或 `bug.updated` 审计事件。
-- Bug 管理工作台必须从真实 `/api/bugs` 响应映射 `version_code`、`version_name`、`reproduce_steps`、`evidence`、`duplicate_of_bug_id`、`requirement_id` 和 `related_task_id`；列表展示迭代版本并支持按版本名、编码或未关联状态过滤；登记弹窗允许录入复现步骤、对象型证据 JSON、关联需求和关联任务，目标版本选项读取同产品未归档迭代版本，支持 `planning`、`active`、`testing` 和 `released`，过滤 `archived`；登记和编辑弹窗支持本地多选图片与剪贴板粘贴图片，保存前先调用 `/api/bugs/images/upload` 获得 MinIO 对象引用并写入 `evidence.images[]`，已上传图片点击后调用 `/api/bugs/images/preview` 预览；编辑弹窗允许维护复现步骤、证据 JSON、状态、处理人和重复归并，重复归并候选仅展示同产品 Bug，来源只读展示，不允许把 AI 自动测试或上线后分析来源在前端改写为人工来源；列表勾选多条 Bug 后可打开“批量处理”，调用 `/api/bugs/batch-update` 更新状态、严重级别或处理人，并展示批量结果。
+- Bug 管理工作台必须从真实 `/api/bugs` 响应映射 `version_code`、`version_name`、`reproduce_steps`、`evidence`、`duplicate_of_bug_id`、`requirement_id` 和 `related_task_id`；列表展示迭代版本并支持按版本名、编码或未关联状态过滤；登记弹窗允许录入复现步骤、对象型证据 JSON、关联需求和关联任务，目标版本选项读取同产品未归档迭代版本，支持 `planning`、`active`、`testing` 和 `released`，过滤 `archived`；登记和编辑弹窗支持本地多选图片与剪贴板粘贴图片，保存前先调用 `/api/bugs/images/upload` 获得 MinIO 对象引用并写入 `evidence.images[]`，已上传图片点击后调用 `/api/bugs/images/preview` 预览；编辑弹窗允许维护复现步骤、证据 JSON、状态、处理人和重复归并，重复归并候选仅展示同产品 Bug，来源只读展示，不允许把 AI 自动测试或上线后分析来源在前端改写为人工来源；列表勾选多条 Bug 后可打开“批量处理”，调用 `/api/bugs/batch-update` 更新状态、严重级别或处理人，并展示批量结果；具备 Bug 管理权限的用户可在行操作中将未关闭 Bug 推进为 `bug_fix` AI Task 并自动启动，viewer 只读用户不得展示该操作。

@@ -298,6 +298,7 @@ POST /api/requirements/batch-generate-tasks
 | `automated_testing` | 自动化测试。 |
 | `release_readiness` | 发布上线评估。 |
 | `post_release_analysis` | 上线后分析。 |
+| `bug_fix` | Bug 修复自动化任务，由 Bug 管理 `promote-ai-task` 接口创建并可直接进入研发执行器策略。 |
 
 创建任务：
 

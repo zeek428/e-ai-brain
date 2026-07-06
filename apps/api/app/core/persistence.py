@@ -318,6 +318,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "092_auth_login_challenges.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "093_bug_fix_task_type.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -2420,6 +2424,19 @@ class PostgresSnapshotRepository:
             knowledge_deposits=knowledge_deposits,
             bugs=bugs,
             code_review_report=code_review_report,
+        )
+
+    def save_bug_and_ai_task_records(
+        self,
+        *,
+        bug: dict[str, Any],
+        task: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+    ) -> None:
+        self._task_read_repository.save_bug_and_ai_task_records(
+            bug=bug,
+            task=task,
+            audit_events=audit_events,
         )
 
     def save_task_state_records(

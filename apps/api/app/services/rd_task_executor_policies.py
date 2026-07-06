@@ -607,6 +607,8 @@ def _template_context(task: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     product_context = (
         task.get("product_context") if isinstance(task.get("product_context"), dict) else {}
     )
+    input_json = task.get("input_json") if isinstance(task.get("input_json"), dict) else {}
+    bug = input_json.get("bug") if isinstance(input_json.get("bug"), dict) else {}
     product = (
         product_context.get("product")
         if isinstance(product_context.get("product"), dict)
@@ -619,6 +621,9 @@ def _template_context(task: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     )
     return {
         "branch": str(policy.get("branch") or ""),
+        "bug_id": str(bug.get("id") or ""),
+        "bug_severity": str(bug.get("severity") or ""),
+        "bug_title": str(bug.get("title") or ""),
         "module_code": str(task.get("module_code") or ""),
         "product_id": str(task.get("product_id") or ""),
         "product_name": str(product.get("name") or task.get("product_id") or ""),
@@ -659,6 +664,7 @@ def queue_rd_task_executor_task(
     )
     input_payload = {
         "branch": policy.get("branch"),
+        "bug": (task.get("input_json") or {}).get("bug") or {},
         "output_contract": policy.get("output_contract") or {},
         "product_context": task.get("product_context") or {},
         "repository_id": policy.get("repository_id"),

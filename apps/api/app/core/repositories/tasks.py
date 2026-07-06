@@ -381,6 +381,22 @@ class TaskReadRepository:
                     self._require_callback(self._upsert_audit_events, "audit upsert")
                     self._upsert_audit_events(cursor, [audit_event])
 
+    def save_bug_and_ai_task_records(
+        self,
+        *,
+        bug: dict[str, Any],
+        task: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+    ) -> None:
+        self._require_callback(self._upsert_bugs, "bug upsert")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self.upsert_ai_tasks(cursor, {task["id"]: task})
+                self._upsert_bugs(cursor, {bug["id"]: bug})
+                if audit_events:
+                    self._require_callback(self._upsert_audit_events, "audit upsert")
+                    self._upsert_audit_events(cursor, audit_events)
+
     def save_task_start_records(
         self,
         *,

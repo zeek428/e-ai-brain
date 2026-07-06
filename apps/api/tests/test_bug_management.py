@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app, settings
 from app.services.object_storage import object_storage
+from tests.test_rd_task_executor_policies import create_codex_runner
 
 client = TestClient(app)
 
@@ -329,6 +330,83 @@ def test_bug_batch_update_rejects_null_only_update_fields():
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
+def test_bug_can_promote_to_ai_task_and_queue_rd_executor():
+    headers = auth_headers()
+    context = create_product_context(headers)
+    runner = create_codex_runner(headers)
+    policy_response = client.post(
+        "/api/delivery/rd-task-executor-policies",
+        json={
+            "executor_type": "codex",
+            "instruction_template": (
+                "修复 Bug {{bug_id}} / {{bug_title}}，任务 {{task_id}}，产品 {{product_id}}。"
+            ),
+            "name": "Bug 修复走 Codex",
+            "output_contract": {"summary": "string"},
+            "priority": 10,
+            "product_id": context["product_id"],
+            "runner_id": runner["id"],
+            "status": "active",
+            "task_type": "bug_fix",
+            "timeout_seconds": 600,
+            "workspace_root": "/Users/zeek/source/e-ai-brain",
+        },
+        headers=headers,
+    )
+    assert policy_response.status_code == 200
+    bug = create_bug(
+        headers,
+        context,
+        assignee="rd_owner@example.com",
+        reproduce_steps=["进入知识检索", "使用 viewer 查询受限内容"],
+        source="manual_test",
+        title="权限过滤 Bug 需要自动修复",
+    )
+
+    promoted = client.post(
+        f"/api/bugs/{bug['id']}/promote-ai-task",
+        json={"auto_start": True},
+        headers=headers,
+    )
+
+    assert promoted.status_code == 200
+    data = promoted.json()["data"]
+    assert data["task"]["task_type"] == "bug_fix"
+    assert data["task"]["status"] == "running"
+    assert data["task"]["current_step"] == "waiting_ai_executor"
+    assert data["task"]["input_json"]["bug"]["id"] == bug["id"]
+    assert data["task"]["input_json"]["bug"]["reproduce_steps"] == [
+        "进入知识检索",
+        "使用 viewer 查询受限内容",
+    ]
+    assert data["start"]["executor_task_id"].startswith("ai_executor_task_")
+    assert data["start"]["runner_id"] == runner["id"]
+
+    detail = client.get(f"/api/ai-tasks/{data['task']['id']}", headers=headers).json()["data"]
+    assert detail["task_type"] == "bug_fix"
+    assert detail["status"] == "running"
+    assert detail["input"]["bug"]["id"] == bug["id"]
+
+    updated_bug = client.get(
+        f"/api/bugs?product_id={context['product_id']}&title=权限过滤",
+        headers=headers,
+    ).json()["data"]["items"][0]
+    assert updated_bug["evidence"]["ai_task_automation"]["latest_task_id"] == data["task"]["id"]
+    assert updated_bug["evidence"]["ai_task_automation"]["latest_task_status"] == "running"
+    assert updated_bug["evidence"]["ai_task_automation"]["task_ids"] == [data["task"]["id"]]
+
+    claimed = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "codex", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert claimed.status_code == 200
+    claimed_task = claimed.json()["data"]["task"]
+    assert claimed_task["ai_task_id"] == data["task"]["id"]
+    assert claimed_task["input_payload"]["bug"]["id"] == bug["id"]
+    assert "修复 Bug" in claimed_task["instruction"]
 
 
 def test_bug_management_rejects_invalid_context_state_and_roles():
