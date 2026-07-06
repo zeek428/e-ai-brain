@@ -1,6 +1,9 @@
+import re
+
 from fastapi.testclient import TestClient
 from gitlab_fakes import install_real_gitlab_api_stub
 
+from app.core.login_challenges import MemoryLoginChallengeRepository
 from app.core.security import hash_password
 from app.core.users import MemoryUserRepository
 from app.main import app, settings
@@ -12,6 +15,11 @@ def auth_headers(username: str = "admin@example.com", password: str = "admin123"
     response = client.post("/api/auth/login", json={"username": username, "password": password})
     token = response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def _challenge_answer(question: str) -> str:
+    left, right = [int(item) for item in re.findall(r"\d+", question)[:2]]
+    return str(left + right)
 
 
 def create_draft_product_detail_design_task(headers: dict[str, str]) -> str:
@@ -2056,6 +2064,65 @@ def test_seeded_default_users_require_explicit_opt_in_outside_tests():
     assert disabled.status_code == 403
     assert disabled.json()["detail"]["code"] == "DEFAULT_CREDENTIALS_DISABLED"
     assert enabled.status_code == 200
+
+
+def test_password_login_requires_one_time_numeric_challenge_when_enabled():
+    original_enabled = settings.login_challenge_enabled
+    original_repository = app.state.login_challenge_repository
+    settings.login_challenge_enabled = True
+    app.state.login_challenge_repository = MemoryLoginChallengeRepository(
+        secret_key=settings.app_secret_key,
+    )
+    try:
+        missing_challenge = client.post(
+            "/api/auth/login",
+            json={"username": "admin@example.com", "password": "admin123"},
+        )
+        challenge_response = client.post("/api/auth/login-challenge", json={})
+        challenge = challenge_response.json()["data"]
+        wrong_answer = client.post(
+            "/api/auth/login",
+            json={
+                "challenge_answer": "999",
+                "challenge_id": challenge["challenge_id"],
+                "password": "admin123",
+                "username": "admin@example.com",
+            },
+        )
+        reused_challenge = client.post(
+            "/api/auth/login",
+            json={
+                "challenge_answer": _challenge_answer(challenge["question"]),
+                "challenge_id": challenge["challenge_id"],
+                "password": "admin123",
+                "username": "admin@example.com",
+            },
+        )
+        next_challenge = client.post("/api/auth/login-challenge", json={}).json()["data"]
+        successful_login = client.post(
+            "/api/auth/login",
+            json={
+                "challenge_answer": _challenge_answer(next_challenge["question"]),
+                "challenge_id": next_challenge["challenge_id"],
+                "password": "admin123",
+                "username": "admin@example.com",
+            },
+        )
+    finally:
+        settings.login_challenge_enabled = original_enabled
+        app.state.login_challenge_repository = original_repository
+
+    assert missing_challenge.status_code == 400
+    assert missing_challenge.json()["detail"]["code"] == "LOGIN_CHALLENGE_REQUIRED"
+    assert challenge_response.status_code == 200
+    assert challenge["challenge_id"]
+    assert challenge["question"].startswith("请计算：")
+    assert wrong_answer.status_code == 401
+    assert wrong_answer.json()["detail"]["code"] == "LOGIN_CHALLENGE_INVALID"
+    assert reused_challenge.status_code == 401
+    assert reused_challenge.json()["detail"]["code"] == "LOGIN_CHALLENGE_INVALID"
+    assert successful_login.status_code == 200
+    assert successful_login.json()["data"]["access_token"]
 
 
 def test_seeded_username_can_login_with_real_non_default_password():

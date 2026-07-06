@@ -56,6 +56,8 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 接口/动作 | HTTP 状态 | 错误码 | 可重试 | 审计要求 | 前端处理建议 |
 |-----------|-----------|--------|--------|----------|--------------|
+| POST `/api/auth/login` | 400/401 | LOGIN_CHALLENGE_REQUIRED / LOGIN_CHALLENGE_INVALID | 是 | 不记录用户填写答案；可记录失败摘要和 trace_id。 | 自动刷新数字校验题，提示用户重新填写后再登录。 |
+| POST `/api/auth/login-challenge` | 200/503 | LOGIN_CHALLENGE_UNAVAILABLE | 是 | 不记录答案明文或 hash。 | 展示安全校验生成失败，允许刷新重试。 |
 | GET `/api/auth/dingtalk/start` | 503 | DINGTALK_LOGIN_NOT_CONFIGURED | 否 | 记录可选，不记录 redirect 明文以外的敏感字段。 | 隐藏或禁用钉钉登录入口，提示管理员配置认证提供方。 |
 | GET `/api/auth/dingtalk/callback` | 302 回前端错误页 | DINGTALK_STATE_INVALID / DINGTALK_AUTH_DENIED / DINGTALK_CODE_MISSING / DINGTALK_UPSTREAM_ERROR / DINGTALK_PROFILE_INCOMPLETE | 视错误而定 | 成功记录 `dingtalk_login.succeeded`；失败可按安全策略记录摘要，不保存 auth code、access token 或 refresh token。 | 回到登录页或回调页展示错误，允许重新发起钉钉登录。 |
 | GET `/api/auth/dingtalk/callback` | 302 回前端错误页 | DINGTALK_CORP_NOT_ALLOWED / DINGTALK_ACCOUNT_NOT_BOUND / DINGTALK_ACCOUNT_PENDING_APPROVAL / DINGTALK_ACCOUNT_INACTIVE / EXTERNAL_IDENTITY_CONFLICT | 否 | 自动开户成功记录 `dingtalk_account.provisioned`；拒绝只保存 corp_id 等非敏感摘要。 | 展示企业不允许、未绑定、待审批、账号停用或绑定冲突的明确提示。 |

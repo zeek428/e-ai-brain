@@ -48,6 +48,8 @@ ROLE_STATUSES = {"active", "inactive"}
 
 
 class LoginRequest(BaseModel):
+    challenge_answer: str | None = None
+    challenge_id: str | None = None
     username: str
     password: str
 
@@ -178,6 +180,26 @@ def _is_disabled_seeded_default_login(username: str, password: str) -> bool:
     if seeded_user is None or _seeded_users_enabled():
         return False
     return verify_password(password, seeded_user["password_hash"])
+
+
+def _login_challenge_repository(request: Request) -> Any:
+    repository = getattr(request.app.state, "login_challenge_repository", None)
+    if repository is None:
+        raise api_error(503, "LOGIN_CHALLENGE_UNAVAILABLE", "Login challenge is unavailable")
+    return repository
+
+
+def _require_login_challenge(request: Request, payload: LoginRequest) -> None:
+    if not settings.login_challenge_enabled:
+        return
+    if not payload.challenge_id or not payload.challenge_answer:
+        raise api_error(400, "LOGIN_CHALLENGE_REQUIRED", "Login challenge answer is required")
+    verified = _login_challenge_repository(request).consume_challenge(
+        answer=payload.challenge_answer,
+        challenge_id=payload.challenge_id,
+    )
+    if not verified:
+        raise api_error(401, "LOGIN_CHALLENGE_INVALID", "Login challenge is invalid or expired")
 
 
 def _issue_access_token(user: dict[str, Any]) -> str:
@@ -569,6 +591,7 @@ def _callback_error_redirect(
 
 @router.post("/login")
 def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
+    _require_login_challenge(request, payload)
     user = request.app.state.user_repository.get_by_username(payload.username)
     if user is None:
         raise api_error(401, "INVALID_CREDENTIALS", "Invalid username or password")
@@ -586,6 +609,14 @@ def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
     return _issue_login_response(request, user)
 
 
+@router.post("/login-challenge")
+def login_challenge(request: Request) -> dict[str, Any]:
+    challenge = _login_challenge_repository(request).create_challenge(
+        expires_in_seconds=settings.login_challenge_ttl_seconds,
+    )
+    return envelope(challenge, get_trace_id(request))
+
+
 @router.get("/providers")
 def providers(request: Request) -> dict[str, Any]:
     dingtalk_configured = _dingtalk_configured()
@@ -601,6 +632,8 @@ def providers(request: Request) -> dict[str, Any]:
                 "start_url": "/api/auth/dingtalk/start" if dingtalk_configured else None,
             },
             "local": {
+                "challenge_required": settings.login_challenge_enabled,
+                "challenge_url": "/api/auth/login-challenge",
                 "display_name": "账号密码登录",
                 "enabled": True,
                 "start_url": "/api/auth/login",

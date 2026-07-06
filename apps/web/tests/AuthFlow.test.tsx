@@ -112,9 +112,27 @@ describe('AI Brain auth flow and routes', () => {
                 enabled: false,
               },
               local: {
+                challenge_required: true,
+                challenge_url: '/api/auth/login-challenge',
                 display_name: '账号密码登录',
                 enabled: true,
               },
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      if (input === '/api/auth/login-challenge') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              challenge_id: 'challenge-001',
+              expires_in: 300,
+              question: '请计算：3 + 4 = ?',
             },
           }),
           {
@@ -144,6 +162,8 @@ describe('AI Brain auth flow and routes', () => {
       expect(input).toBe('/api/auth/login');
       expect(init?.method).toBe('POST');
       expect(JSON.parse(String(init?.body))).toEqual({
+        challenge_answer: '7',
+        challenge_id: 'challenge-001',
         password: 'admin123',
         username: 'admin@example.com',
       });
@@ -168,9 +188,13 @@ describe('AI Brain auth flow and routes', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<LoginPage />);
+    expect(await screen.findByDisplayValue('请计算：3 + 4 = ?')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('请输入计算结果'), {
+      target: { value: '7' },
+    });
     fireEvent.click(screen.getByRole('button', { name: /登\s*录/ }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(window.localStorage.getItem('ai_brain_access_token')).toBe('token-admin');
     expect(window.localStorage.getItem('ai_brain_current_user')).toContain('menu_tree');
     expect(window.location.pathname).toBe('/delivery/bugs');

@@ -324,10 +324,33 @@ POST /api/auth/login
 
 当前 MVP 内置种子账号默认仅用于自动化测试；本地开发如需临时启用默认种子密码，必须显式设置 `ALLOW_SEEDED_USERS=true`。非本地/非测试环境默认拒绝默认种子密码登录，并在启动时拒绝 `ALLOW_SEEDED_USERS=true`、占位 `APP_SECRET_KEY` 或过短密钥。若 `admin@example.com` 等历史种子用户名已在用户管理中改成真实非默认密码，应按普通数据库用户登录，不应被默认种子密码门禁拦截。
 
+账号密码登录默认启用轻量数字安全校验，钉钉 OAuth 登录不需要该校验。前端应先调用 `POST /api/auth/login-challenge` 获取一次性题目，再把 `challenge_id` 和用户填写的 `challenge_answer` 随登录请求提交。挑战默认 5 分钟有效，一次性消费；答错、过期或重复使用都会返回 `LOGIN_CHALLENGE_INVALID`，需要重新获取题目。自动化测试环境默认不强制挑战，可通过 `LOGIN_CHALLENGE_ENABLED` 和 `LOGIN_CHALLENGE_TTL_SECONDS` 调整。
+
+获取登录挑战：
+
+```http
+POST /api/auth/login-challenge
+```
+
+响应：
+
+```json
+{
+  "data": {
+    "challenge_id": "challenge_token",
+    "question": "请计算：3 + 4 = ?",
+    "expires_in": 300
+  },
+  "trace_id": "trace_000"
+}
+```
+
 请求体：
 
 ```json
 {
+  "challenge_answer": "7",
+  "challenge_id": "challenge_token",
   "username": "admin@example.com",
   "password": "<redacted>"
 }
@@ -367,6 +390,8 @@ GET /api/auth/providers
   "data": {
     "local": {
       "enabled": true,
+      "challenge_required": true,
+      "challenge_url": "/api/auth/login-challenge",
       "display_name": "账号密码登录",
       "start_url": "/api/auth/login"
     },

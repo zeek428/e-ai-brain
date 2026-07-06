@@ -60,6 +60,17 @@ export type LoginResponse = {
   user: CurrentUserResponse;
 };
 
+export type LoginChallengeResponse = {
+  challenge_id: string;
+  expires_in: number;
+  question: string;
+};
+
+export type LoginChallengeAnswer = {
+  challengeAnswer: string;
+  challengeId: string;
+};
+
 export type AuthProfileUpdatePayload = {
   current_password?: string;
   display_name?: string;
@@ -82,6 +93,8 @@ export type DingTalkBindStartResponse = {
 
 export type AuthProviderConfig = {
   bind_start_url?: string | null;
+  challenge_required?: boolean;
+  challenge_url?: string | null;
   configured?: boolean;
   display_name: string;
   enabled: boolean;
@@ -242,9 +255,24 @@ export function handleForbiddenApiResponse(error: ApiRequestError) {
 setUnauthorizedApiResponseHandler(handleUnauthorizedApiResponse);
 setForbiddenApiResponseHandler(handleForbiddenApiResponse);
 
-export async function login(username: string, password: string): Promise<LoginResponse> {
+export async function fetchLoginChallenge(): Promise<LoginChallengeResponse> {
+  return apiRequest<LoginChallengeResponse>('/api/auth/login-challenge', {
+    method: 'POST',
+  });
+}
+
+export async function login(
+  username: string,
+  password: string,
+  challenge?: LoginChallengeAnswer,
+): Promise<LoginResponse> {
   const loginResponse = await apiRequest<LoginResponse>('/api/auth/login', {
-    body: { username, password },
+    body: {
+      challenge_answer: challenge?.challengeAnswer,
+      challenge_id: challenge?.challengeId,
+      password,
+      username,
+    },
     method: 'POST',
   });
   return persistLoginResponse(loginResponse);

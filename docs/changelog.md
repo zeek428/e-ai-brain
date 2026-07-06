@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### Added
+- 账号密码登录新增轻量数字安全校验：前端登录页先获取一次性计算题并随用户名密码提交，后端以 PostgreSQL/测试内存仓储保存 TTL 挑战并原子消费；钉钉 OAuth 登录不受影响。
 - 知识中心升级为工作台：新增空间/目录导航、RAG 问答入口、引用展示、检索命中详情抽屉和 multipart 文件上传，上传时必须选择知识空间，沉淀采纳也必须显式进入空间。
 - 知识检索新增 PostgreSQL 内 Hybrid Search：同一权限过滤下执行 pgvector TopN 与关键词 TopN，并通过 RRF 融合；新增 `POST /api/knowledge/rag` 返回带引用答案和检索/RAG 质量指标。
 - 知识上传链路新增安全校验和真实 PDF 解析：支持文件大小、扩展名、MIME、PDF 签名校验，新增 MinIO/S3 预签名上传信息接口和 `pypdf` 文本抽取。

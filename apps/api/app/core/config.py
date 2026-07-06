@@ -60,6 +60,18 @@ class Settings:
         self.allow_seeded_users = _env_bool("ALLOW_SEEDED_USERS", "")
         self.app_secret_key = os.getenv("APP_SECRET_KEY", DEFAULT_APP_SECRET_KEY)
         self.access_token_expire_seconds = int(os.getenv("ACCESS_TOKEN_EXPIRE_SECONDS", "28800"))
+        default_login_challenge_enabled = (
+            "false"
+            if self.app_env.lower() in TEST_APP_ENVIRONMENTS
+            else "true"
+        )
+        self.login_challenge_enabled = _env_bool(
+            "LOGIN_CHALLENGE_ENABLED",
+            default_login_challenge_enabled,
+        )
+        self.login_challenge_ttl_seconds = int(
+            os.getenv("LOGIN_CHALLENGE_TTL_SECONDS", "300"),
+        )
         self.database_url = os.getenv(
             "DATABASE_URL",
             "postgresql://ai_brain:password@localhost:5432/ai_brain",

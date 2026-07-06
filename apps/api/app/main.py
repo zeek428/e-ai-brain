@@ -54,6 +54,10 @@ from app.core.external_identities import (
     MemoryExternalIdentityRepository,
     PostgresExternalIdentityRepository,
 )
+from app.core.login_challenges import (
+    MemoryLoginChallengeRepository,
+    PostgresLoginChallengeRepository,
+)
 from app.core.persistence import PostgresSnapshotRepository
 from app.core.persistence_runtime import PostgresRuntimeStore
 from app.core.repositories.authorization import (
@@ -139,6 +143,21 @@ def build_dingtalk_oauth_state_repository() -> (
     return MemoryDingTalkOAuthStateRepository()
 
 
+def build_login_challenge_repository() -> (
+    MemoryLoginChallengeRepository | PostgresLoginChallengeRepository
+):
+    if settings.persistence_mode == "postgres":
+        return PostgresLoginChallengeRepository(
+            settings.database_url,
+            pool_max_size=settings.database_pool_max_size,
+            secret_key=settings.app_secret_key,
+        )
+    _ensure_memory_mode_allowed()
+    if settings.persistence_mode != "memory":
+        raise RuntimeError(f"Unsupported PERSISTENCE_MODE={settings.persistence_mode}")
+    return MemoryLoginChallengeRepository(secret_key=settings.app_secret_key)
+
+
 def build_authorization_repository() -> (
     CompatibilityAuthorizationRepository | PostgresAuthorizationRepository
 ):
@@ -169,6 +188,7 @@ app.state.store = build_store()
 app.state.user_repository = build_user_repository()
 app.state.external_identity_repository = build_external_identity_repository()
 app.state.dingtalk_oauth_state_repository = build_dingtalk_oauth_state_repository()
+app.state.login_challenge_repository = build_login_challenge_repository()
 app.state.authorization_repository = build_authorization_repository()
 app.state.code_review_executor = None
 app.state.dashboard_cache = {}

@@ -310,6 +310,14 @@ class PostgresSnapshotRepository:
                     cursor,
                     "090_role_boundary_cleanup.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "091_knowledge_hybrid_search_indexes.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "092_auth_login_challenges.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
