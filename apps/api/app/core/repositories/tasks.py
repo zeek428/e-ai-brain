@@ -81,8 +81,8 @@ class TaskReadRepository:
                     f"""
                     SELECT id, name, brain_app_id, product_id, task_type, executor_type,
                            runner_id, repository_id, workspace_root, branch,
-                           instruction_template, output_contract, timeout_seconds,
-                           priority, status, created_by, created_at, updated_at
+                           code_change_review_mode, instruction_template, output_contract,
+                           timeout_seconds, priority, status, created_by, created_at, updated_at
                     FROM rd_task_executor_policies
                     {where}
                     ORDER BY priority ASC, task_type ASC, product_id NULLS FIRST, id ASC
@@ -156,6 +156,7 @@ class TaskReadRepository:
                     SELECT policy.id, policy.name, policy.brain_app_id, policy.product_id,
                            policy.task_type, policy.executor_type, policy.runner_id,
                            policy.repository_id, policy.workspace_root, policy.branch,
+                           policy.code_change_review_mode,
                            policy.instruction_template, policy.output_contract,
                            policy.timeout_seconds, policy.priority, policy.status,
                            policy.created_by, policy.created_at, policy.updated_at,
@@ -216,6 +217,7 @@ class TaskReadRepository:
     ) -> str:
         sort_columns = {
             "executor_type": "policy.executor_type",
+            "code_change_review_mode": "policy.code_change_review_mode",
             "name": "LOWER(policy.name)",
             "priority": "policy.priority",
             "product_name": "LOWER(COALESCE(product.name, ''))",
@@ -271,13 +273,13 @@ class TaskReadRepository:
                 INSERT INTO rd_task_executor_policies (
                   id, name, brain_app_id, product_id, task_type, executor_type,
                   runner_id, repository_id, workspace_root, branch, instruction_template,
-                  output_contract, timeout_seconds, priority, status, created_by,
-                  created_at, updated_at
+                  output_contract, timeout_seconds, priority, status,
+                  code_change_review_mode, created_by, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s, %s,
-                  %s::jsonb, %s, %s, %s, %s,
+                  %s::jsonb, %s, %s, %s, %s, %s,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -295,6 +297,7 @@ class TaskReadRepository:
                   timeout_seconds = EXCLUDED.timeout_seconds,
                   priority = EXCLUDED.priority,
                   status = EXCLUDED.status,
+                  code_change_review_mode = EXCLUDED.code_change_review_mode,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -313,6 +316,7 @@ class TaskReadRepository:
                     int(policy.get("timeout_seconds") or 1800),
                     int(policy.get("priority") or 100),
                     policy.get("status") or "active",
+                    policy.get("code_change_review_mode") or "manual_review",
                     policy.get("created_by"),
                     policy.get("created_at"),
                     policy.get("updated_at"),
@@ -327,28 +331,29 @@ class TaskReadRepository:
         policy = {
             "brain_app_id": row[2] or DEFAULT_BRAIN_APP_ID,
             "branch": row[9],
-            "created_at": row[16].isoformat() if row[16] else None,
-            "created_by": row[15],
+            "code_change_review_mode": row[10] or "manual_review",
+            "created_at": row[17].isoformat() if row[17] else None,
+            "created_by": row[16],
             "executor_type": row[5],
             "id": row[0],
-            "instruction_template": row[10],
+            "instruction_template": row[11],
             "name": row[1],
-            "output_contract": dict(row[11] or {}),
-            "priority": row[13],
+            "output_contract": dict(row[12] or {}),
+            "priority": row[14],
             "product_id": row[3],
             "repository_id": row[7],
             "runner_id": row[6],
-            "status": row[14],
+            "status": row[15],
             "task_type": row[4],
-            "timeout_seconds": row[12],
-            "updated_at": row[17].isoformat() if row[17] else None,
+            "timeout_seconds": row[13],
+            "updated_at": row[18].isoformat() if row[18] else None,
             "workspace_root": row[8] or "",
         }
-        if len(row) > 18:
-            policy["product_name"] = row[18]
-            policy["repository_name"] = row[19]
-            policy["repository_default_branch"] = row[20]
-            policy["runner_name"] = row[21]
+        if len(row) > 19:
+            policy["product_name"] = row[19]
+            policy["repository_name"] = row[20]
+            policy["repository_default_branch"] = row[21]
+            policy["runner_name"] = row[22]
         return policy
 
     def load_workflow_runtime(self) -> dict[str, Any]:

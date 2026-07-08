@@ -900,6 +900,7 @@ export type AiExecutorApprovalRequestApprovalResponse = {
 
 export type RdTaskExecutorPolicyRecord = {
   branch?: string | null;
+  code_change_review_mode?: string;
   created_at?: string | null;
   created_by?: string | null;
   executor_type: string;
@@ -924,6 +925,7 @@ export type RdTaskExecutorPolicyRecord = {
 
 export type RdTaskExecutorPolicyPayload = {
   branch?: string | null;
+  code_change_review_mode?: string;
   executor_type?: string;
   instruction_template?: string;
   name?: string;

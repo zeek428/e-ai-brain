@@ -74,7 +74,20 @@ from app.services.ai_executor_task_reliability import (
 )
 from app.services.operational_records import record_audit_event, save_single_repository_record
 from app.services.product_scope import product_scope_filter
+from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_output_summary import readable_task_output_summary
+from app.services.task_persistence_helpers import (
+    record_audit_event as record_task_audit_event,
+)
+from app.services.task_persistence_helpers import save_review_decision_records
+from app.services.task_review_artifacts import (
+    advance_requirement_after_task_completed,
+    confirm_code_review_report,
+    create_automated_testing_bugs,
+    create_knowledge_deposit,
+    create_post_release_bugs,
+)
+from app.services.task_workflow_context import task_workflow_write_store
 
 
 def _ensure_admin(user: dict[str, Any]) -> None:
@@ -388,6 +401,179 @@ def _existing_pending_review(
     return None
 
 
+def _executor_policy_id_from_task(ai_task: dict[str, Any]) -> str | None:
+    input_json = ai_task.get("input_json") if isinstance(ai_task.get("input_json"), dict) else {}
+    executor = input_json.get("executor") if isinstance(input_json.get("executor"), dict) else {}
+    policy_id = str(executor.get("executor_policy_id") or "").strip()
+    return policy_id or None
+
+
+def _load_executor_policy_for_ai_task(
+    current_store: Any,
+    ai_task: dict[str, Any],
+) -> dict[str, Any] | None:
+    policy_id = _executor_policy_id_from_task(ai_task)
+    if not policy_id:
+        return None
+    policy = _read_record(current_store, "rd_task_executor_policies", policy_id)
+    if policy is not None:
+        return policy
+    repository = getattr(current_store, "repository", None)
+    list_policies = getattr(repository, "list_rd_task_executor_policies", None)
+    if not callable(list_policies):
+        return None
+    for candidate in list_policies(
+        product_id=None,
+        status=None,
+        task_type=str(ai_task.get("task_type") or ""),
+    ):
+        if candidate.get("id") == policy_id:
+            return dict(candidate)
+    return None
+
+
+def _code_change_review_mode(policy: dict[str, Any] | None) -> str:
+    mode = str((policy or {}).get("code_change_review_mode") or "manual_review").strip()
+    return "auto_commit" if mode == "auto_commit" else "manual_review"
+
+
+def _complete_ai_task_with_auto_commit_if_configured(
+    current_store: Any,
+    *,
+    ai_task: dict[str, Any],
+    executor_snapshot: dict[str, Any],
+    output_json: dict[str, Any],
+    runner_id: str,
+) -> bool:
+    policy = _load_executor_policy_for_ai_task(current_store, ai_task)
+    if _code_change_review_mode(policy) != "auto_commit":
+        return False
+
+    write_store = task_workflow_write_store(current_store)
+    task = write_store.ai_tasks.get(ai_task["id"], dict(ai_task))
+    now = datetime.now(UTC).isoformat()
+    review_id = current_store.new_id("review")
+    review = {
+        "ai_task_id": task["id"],
+        "content": output_json,
+        "created_at": now,
+        "decided_at": now,
+        "decided_by": "system",
+        "decision_reason": "auto_commit_by_executor_policy",
+        "id": review_id,
+        "questions": [],
+        "stage": task.get("task_type") or "executor_result",
+        "status": "approved",
+        "updated_at": now,
+        "version": 1,
+    }
+    if getattr(write_store, "repository", None) is None:
+        _memory_collection(write_store, "human_reviews")[review_id] = review
+    review_ids = list(task.get("review_ids") or [])
+    if review_id not in review_ids:
+        review_ids.append(review_id)
+    task.update(
+        {
+            "current_step": "executor_completed",
+            "output_json": output_json,
+            "review_ids": review_ids,
+            "status": "completed",
+            "updated_at": now,
+        }
+    )
+
+    audit_start_index = len(write_store.audit_events)
+    record_task_audit_event(
+        write_store,
+        event_type="ai_task.executor_completed",
+        actor_id=runner_id,
+        ai_task_id=task["id"],
+        subject_type="ai_task",
+        subject_id=task["id"],
+        payload={
+            "ai_task_id": task["id"],
+            **executor_snapshot,
+            "code_change_review_mode": "auto_commit",
+            "executor_policy_id": (policy or {}).get("id"),
+        },
+    )
+    from app.services.ai_executor_workspace_isolation import (
+        mark_ai_executor_workspace_isolation_decision,
+    )
+
+    mark_ai_executor_workspace_isolation_decision(
+        current_store,
+        action="merge",
+        decided_by="system",
+        reason="auto_commit_by_executor_policy",
+        task=task,
+    )
+    confirm_code_review_report(write_store, task)
+    created_bug_ids = [
+        *create_automated_testing_bugs(write_store, actor_id="system", task=task),
+        *create_post_release_bugs(write_store, actor_id="system", task=task),
+    ]
+    advance_requirement_after_task_completed(write_store, task)
+    knowledge_deposit = create_knowledge_deposit(write_store, task)
+    checkpoint = transition_latest_graph_run(
+        write_store,
+        task=task,
+        status="completed",
+        current_step="complete_archive",
+        state_snapshot={
+            "code_change_review_mode": "auto_commit",
+            "review_id": review_id,
+            "task_status": task["status"],
+        },
+    )
+    record_task_audit_event(
+        write_store,
+        event_type="review.submitted",
+        actor_id="system",
+        ai_task_id=task["id"],
+        subject_type="human_review",
+        subject_id=review_id,
+        payload={
+            "code_change_review_mode": "auto_commit",
+            "decision": "approved",
+            "executor_policy_id": (policy or {}).get("id"),
+        },
+    )
+    record_task_audit_event(
+        write_store,
+        event_type="ai_task.executor_auto_committed",
+        actor_id="system",
+        ai_task_id=task["id"],
+        subject_type="ai_task",
+        subject_id=task["id"],
+        payload={
+            "executor_policy_id": (policy or {}).get("id"),
+            "runner_id": runner_id,
+            "runner_task_id": executor_snapshot.get("runner_task_id"),
+        },
+    )
+    graph_run = latest_graph_run(write_store, task)
+    requirement = write_store.requirements.get(task.get("requirement_id"))
+    code_review_report = (
+        write_store.code_review_reports.get(task.get("code_review_report_id"))
+        if task.get("code_review_report_id")
+        else None
+    )
+    save_review_decision_records(
+        write_store,
+        task=task,
+        review=review,
+        graph_run=graph_run,
+        checkpoint=checkpoint,
+        requirement=requirement,
+        knowledge_deposits=[knowledge_deposit],
+        bugs=[write_store.bugs[bug_id] for bug_id in created_bug_ids],
+        code_review_report=code_review_report,
+        audit_events=write_store.audit_events[audit_start_index:],
+    )
+    return True
+
+
 def _sync_runner_completion_to_ai_task(
     current_store: Any,
     *,
@@ -399,6 +585,13 @@ def _sync_runner_completion_to_ai_task(
         return
     runner_status = str(task.get("status") or "running")
     now = datetime.now(UTC).isoformat()
+    input_json = ai_task.get("input_json") if isinstance(ai_task.get("input_json"), dict) else {}
+    existing_executor = (
+        input_json.get("executor") if isinstance(input_json.get("executor"), dict) else {}
+    )
+    request_config = (
+        task.get("request_config") if isinstance(task.get("request_config"), dict) else {}
+    )
     executor_snapshot = {
         "executor_type": task.get("executor_type"),
         "runner_id": task.get("runner_id"),
@@ -406,12 +599,17 @@ def _sync_runner_completion_to_ai_task(
         "status": runner_status,
         "workspace_root": task.get("workspace_root"),
     }
+    executor_policy_id = existing_executor.get("executor_policy_id") or request_config.get(
+        "executor_policy_id"
+    )
+    if executor_policy_id:
+        executor_snapshot["executor_policy_id"] = executor_policy_id
     if runner_status in {"queued", "claimed", "running"}:
         updated_task = {
             **ai_task,
             "current_step": "waiting_ai_executor",
             "input_json": {
-                **dict(ai_task.get("input_json") or {}),
+                **input_json,
                 "executor": executor_snapshot,
             },
             "status": "running",
@@ -444,6 +642,14 @@ def _sync_runner_completion_to_ai_task(
         output_summary = readable_task_output_summary(output_json)
         if output_summary:
             output_json["summary"] = output_summary
+        if _complete_ai_task_with_auto_commit_if_configured(
+            current_store,
+            ai_task=ai_task,
+            executor_snapshot=executor_snapshot,
+            output_json=output_json,
+            runner_id=runner_id,
+        ):
+            return
         updated_task = {
             **ai_task,
             "current_step": "executor_completed",

@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### Added
+- 新增 `docs/08-help/` 帮助中心维护入口，定义用户操作手册、截图目录、截图脱敏规范和开发完成后的帮助文档同步检查清单。
 - 账号密码登录新增轻量数字安全校验：前端登录页先获取一次性计算题并随用户名密码提交，后端以 PostgreSQL/测试内存仓储保存 TTL 挑战并原子消费；钉钉 OAuth 登录不受影响。
 - 知识中心升级为工作台：新增空间/目录导航、RAG 问答入口、引用展示、检索命中详情抽屉和 multipart 文件上传，上传时必须选择知识空间，沉淀采纳也必须显式进入空间。
 - 知识检索新增 PostgreSQL 内 Hybrid Search：同一权限过滤下执行 pgvector TopN 与关键词 TopN，并通过 RRF 融合；新增 `POST /api/knowledge/rag` 返回带引用答案和检索/RAG 质量指标。
@@ -24,6 +25,7 @@
 - Bug 管理新增“推进 AI 任务”能力：`POST /api/bugs/{bug_id}/promote-ai-task` 会创建 `bug_fix` AI Task，写入 Bug 自动化任务引用并默认复用研发执行器策略自动启动，前端行操作新增“AI处理”入口。
 
 ### Changed
+- 研发执行器策略新增“代码提交方式”配置：默认保持 AI Task 完成后人工确认，策略设为自动提交时会在 Runner 成功后自动通过 Review 并请求合入隔离 worktree。
 - 研发执行器策略新增/编辑入口不再提供“代码巡检整改”任务类型；代码巡检 finding 先进入 Bug，Bug 确认后统一通过“Bug 修复”策略推进 AI Task，历史 `code_inspection_remediation` 仅保留老任务和老策略展示兼容。
 - 研发任务命中研发执行器策略下发 Runner 时，会按任务产品/版本注入当前用户可读且已索引的知识中心项目文档片段；Runner `input_payload.knowledge_references` 保留结构化引用，实际执行指令同步追加“产品知识中心上下文”，避免 AI 编码只拿到任务标题而缺少产品文档约束。
 - AI 执行器 Runner 包默认启用 Git worktree 隔离：Codex/Claude/Hermes/OpenClaw 在隔离工作区执行，研发任务确认通过后 Runner 才把补丁合入主工作区，拒绝或取消时丢弃隔离结果；确认弹窗同步展示“确认通过/拒绝并丢弃”的操作语义。

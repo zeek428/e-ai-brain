@@ -14,13 +14,17 @@ CREATE TABLE IF NOT EXISTS rd_task_executor_policies (
   timeout_seconds integer NOT NULL DEFAULT 1800,
   priority integer NOT NULL DEFAULT 100,
   status text NOT NULL DEFAULT 'active',
+  code_change_review_mode text NOT NULL DEFAULT 'manual_review',
   created_by text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT ck_rd_task_executor_policies_executor_type CHECK (
     executor_type IN ('codex', 'claude', 'openclaw')
   ),
-  CONSTRAINT ck_rd_task_executor_policies_status CHECK (status IN ('active', 'disabled'))
+  CONSTRAINT ck_rd_task_executor_policies_status CHECK (status IN ('active', 'disabled')),
+  CONSTRAINT ck_rd_task_executor_policies_code_change_review_mode CHECK (
+    code_change_review_mode IN ('manual_review', 'auto_commit')
+  )
 );
 
 CREATE INDEX IF NOT EXISTS idx_rd_task_executor_policies_match

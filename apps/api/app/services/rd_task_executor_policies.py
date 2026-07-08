@@ -28,9 +28,11 @@ from app.services.operational_records import record_audit_event
 RD_TASK_EXECUTOR_POLICY_MANAGE_PERMISSION = "delivery.rd_executor_policies.manage"
 RD_TASK_EXECUTOR_TYPES = {"claude", "codex", "openclaw"}
 RD_TASK_EXECUTOR_POLICY_STATUSES = {"active", "disabled"}
+RD_TASK_CODE_CHANGE_REVIEW_MODES = {"auto_commit", "manual_review"}
 RD_TASK_KNOWLEDGE_REFERENCE_LIMIT = 6
 RD_TASK_KNOWLEDGE_REFERENCE_MAX_CHARS = 1200
 RD_TASK_EXECUTOR_POLICY_SORT_FIELDS = {
+    "code_change_review_mode",
     "executor_type",
     "name",
     "priority",
@@ -99,6 +101,17 @@ def _ensure_status(value: Any) -> str:
     if status not in RD_TASK_EXECUTOR_POLICY_STATUSES:
         raise api_error(400, "VALIDATION_ERROR", "status must be active or disabled")
     return status
+
+
+def _ensure_code_change_review_mode(value: Any) -> str:
+    mode = str(value or "manual_review").strip().lower()
+    if mode not in RD_TASK_CODE_CHANGE_REVIEW_MODES:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "code_change_review_mode must be manual_review or auto_commit",
+        )
+    return mode
 
 
 def _repository(current_store: Any) -> Any | None:
@@ -217,6 +230,9 @@ def sync_rd_task_executor_policy_store(
 def _policy_public(current_store: Any, policy: dict[str, Any]) -> dict[str, Any]:
     sync_policy_resource_store(current_store, policy)
     public = dict(policy)
+    public["code_change_review_mode"] = _ensure_code_change_review_mode(
+        public.get("code_change_review_mode")
+    )
     runner = _read_memory_dict(current_store, "ai_executor_runners").get(
         policy.get("runner_id")
     )
@@ -465,6 +481,9 @@ def _policy_from_payload(
     policy = {
         **base,
         "branch": _optional_text(value("branch", base.get("branch"))),
+        "code_change_review_mode": _ensure_code_change_review_mode(
+            value("code_change_review_mode", base.get("code_change_review_mode"))
+        ),
         "executor_type": _ensure_executor_type(value("executor_type", base.get("executor_type"))),
         "instruction_template": _ensure_non_blank(
             value("instruction_template", base.get("instruction_template")),
@@ -512,6 +531,7 @@ def create_rd_task_executor_policy_response(
         subject_type="rd_task_executor_policy",
         subject_id=policy["id"],
         payload={
+            "code_change_review_mode": policy["code_change_review_mode"],
             "executor_type": policy["executor_type"],
             "runner_id": policy.get("runner_id"),
             "task_type": policy["task_type"],
@@ -550,6 +570,7 @@ def patch_rd_task_executor_policy_response(
         subject_type="rd_task_executor_policy",
         subject_id=policy_id,
         payload={
+            "code_change_review_mode": policy["code_change_review_mode"],
             "executor_type": policy["executor_type"],
             "runner_id": policy.get("runner_id"),
             "status": policy["status"],
@@ -951,6 +972,7 @@ def queue_rd_task_executor_task(
     input_payload = {
         "branch": branch,
         "bug": (task.get("input_json") or {}).get("bug") or {},
+        "code_change_review_mode": policy.get("code_change_review_mode") or "manual_review",
         "code_inspection": _code_inspection_payload(task, policy),
         "knowledge_references": knowledge_references,
         "output_contract": policy.get("output_contract") or {},
@@ -965,6 +987,7 @@ def queue_rd_task_executor_task(
     }
     request_config = {
         "branch": branch,
+        "code_change_review_mode": policy.get("code_change_review_mode") or "manual_review",
         "executor_policy_id": policy["id"],
         "output_contract": policy.get("output_contract") or {},
         "repository_id": repository_id,

@@ -275,6 +275,7 @@ def test_executor_review_decision_exposes_workspace_isolation_action_to_runner()
         headers=headers,
     ).json()["data"]
     started = client.post(f"/api/ai-tasks/{created['id']}/start", headers=headers).json()["data"]
+    assert started["executor_policy_id"] == policy_response.json()["data"]["id"]
     runner_task_id = started["executor_task_id"]
     client.post(
         "/api/system/ai-executor-tasks/claim",
@@ -409,6 +410,93 @@ def test_executor_review_decision_exposes_workspace_isolation_action_to_runner()
         discard_completed.json()["data"]["workspace_isolation"]["decision"]["status"]
         == "completed"
     )
+
+
+def test_executor_policy_auto_commit_requests_workspace_merge_without_pending_review():
+    headers = auth_headers()
+    requirement, technical_solution_task_id = create_confirmed_technical_solution_task(headers)
+    runner = create_codex_runner(headers)
+
+    policy_response = client.post(
+        "/api/delivery/rd-task-executor-policies",
+        json={
+            "code_change_review_mode": "auto_commit",
+            "executor_type": "codex",
+            "instruction_template": "处理任务 {{task_id}}。",
+            "name": "Codex 自动提交隔离工作区",
+            "output_contract": {"summary": "string"},
+            "priority": 10,
+            "product_id": requirement["product_id"],
+            "runner_id": runner["id"],
+            "status": "active",
+            "task_type": "development_planning",
+            "timeout_seconds": 600,
+            "workspace_root": "/Users/zeek/source/e-ai-brain",
+        },
+        headers=headers,
+    )
+    assert policy_response.status_code == 200
+    assert policy_response.json()["data"]["code_change_review_mode"] == "auto_commit"
+
+    created = client.post(
+        "/api/ai-tasks",
+        json={
+            "input": {"technical_solution_task_id": technical_solution_task_id},
+            "requirement_id": requirement["id"],
+            "task_type": "development_planning",
+            "title": "开发计划：自动提交隔离工作区",
+        },
+        headers=headers,
+    ).json()["data"]
+    started = client.post(f"/api/ai-tasks/{created['id']}/start", headers=headers).json()["data"]
+    assert started["executor_policy_id"] == policy_response.json()["data"]["id"]
+    runner_task_id = started["executor_task_id"]
+    client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "codex", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    completed = client.post(
+        f"/api/system/ai-executor-tasks/{runner_task_id}/complete",
+        json={
+            "result_json": {
+                "summary": "开发计划已生成并通过自动提交策略",
+                "workspace_isolation": {
+                    "base_workspace_root": "/Users/zeek/source/e-ai-brain",
+                    "branch_name": "ai-brain/ai_executor_task_auto_commit",
+                    "mode": "git_worktree",
+                    "status": "pending_review",
+                    "worktree_path": (
+                        "/Users/zeek/source/e-ai-brain/.ai-brain-worktrees/"
+                        "ai_executor_task_auto_commit"
+                    ),
+                },
+            },
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert completed.status_code == 200
+
+    detail = client.get(f"/api/ai-tasks/{created['id']}", headers=headers).json()["data"]
+    assert detail["input"]["executor"]["executor_policy_id"] == policy_response.json()["data"]["id"]
+    assert detail["status"] == "completed"
+    assert detail["current_step"] == "complete_archive"
+    assert detail["pending_review"] is None
+    assert detail["reviews"]["items"][0]["status"] == "approved"
+    assert detail["reviews"]["items"][0]["decision_reason"] == "auto_commit_by_executor_policy"
+    assert detail["knowledge_deposits"]["items"][0]["content"] == (
+        "开发计划已生成并通过自动提交策略"
+    )
+
+    runner_status = client.get(
+        f"/api/system/ai-executor-tasks/{runner_task_id}/runner-status?runner_id={runner['id']}",
+        headers={"X-Runner-Token": "runner-secret"},
+    ).json()["data"]["task"]
+    assert runner_status["workspace_isolation"]["decision"]["action"] == "merge"
+    assert runner_status["workspace_isolation"]["decision"]["decided_by"] == "system"
+    assert runner_status["workspace_isolation"]["decision"]["status"] == "requested"
 
 
 def test_task_detail_extracts_readable_executor_output_summary():

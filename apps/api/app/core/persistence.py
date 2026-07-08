@@ -322,6 +322,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "093_bug_fix_task_type.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "094_rd_task_executor_policy_code_change_review_mode.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

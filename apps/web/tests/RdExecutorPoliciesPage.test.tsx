@@ -27,6 +27,7 @@ function installFetchMock() {
         data: {
           items: [
             {
+              code_change_review_mode: 'manual_review',
               executor_type: 'codex',
               id: 'rd_executor_policy_001',
               instruction_template: '处理 {{task_id}}',
@@ -105,6 +106,7 @@ function installFetchMock() {
       createBodies.push(JSON.parse(String(init?.body)));
       return jsonResponse({
         data: {
+          code_change_review_mode: 'auto_commit',
           executor_type: 'codex',
           id: 'rd_executor_policy_002',
           name: '新增策略',
@@ -141,6 +143,7 @@ describe('RdExecutorPoliciesPage', () => {
 
     expect(await screen.findByText('开发计划走 Codex')).toBeInTheDocument();
     expect(screen.getByText('本地 Codex Runner')).toBeInTheDocument();
+    expect(screen.getByText('人工确认')).toBeInTheDocument();
     expect(screen.getByText('/Users/zeek/source/e-ai-brain')).toBeInTheDocument();
     expect(screen.getAllByText('策略名称').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole('button', { name: '保存视图' })).toBeInTheDocument();
@@ -150,6 +153,7 @@ describe('RdExecutorPoliciesPage', () => {
     expect(within(dialog).getByText('新增研发执行器策略')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('执行器')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Runner')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('代码提交方式')).toBeInTheDocument();
     expect(within(dialog).queryByText('AI角色')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('Skill')).not.toBeInTheDocument();
 
@@ -169,6 +173,8 @@ describe('RdExecutorPoliciesPage', () => {
     fireEvent.change(within(dialog).getByLabelText('工作区'), {
       target: { value: '/Users/zeek/source/e-ai-brain' },
     });
+    fireEvent.mouseDown(within(dialog).getByLabelText('代码提交方式'));
+    fireEvent.click(await screen.findByText('自动提交代码修改'));
     fireEvent.mouseDown(within(dialog).getByLabelText('Runner'));
     fireEvent.click(await screen.findByText('本地 Codex Runner (Codex)'));
 
@@ -178,6 +184,7 @@ describe('RdExecutorPoliciesPage', () => {
       expect(createBodies).toHaveLength(1);
     });
     expect(createBodies[0]).toMatchObject({
+      code_change_review_mode: 'auto_commit',
       executor_type: 'codex',
       name: '新增策略',
       runner_id: 'runner_codex',

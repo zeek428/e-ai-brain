@@ -52,6 +52,7 @@ class RdTaskExecutorPolicyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     branch: str | None = None
+    code_change_review_mode: str = "manual_review"
     executor_type: str
     instruction_template: str
     name: str
@@ -70,6 +71,7 @@ class RdTaskExecutorPolicyPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     branch: str | None = None
+    code_change_review_mode: str | None = None
     executor_type: str | None = None
     instruction_template: str | None = None
     name: str | None = None

@@ -1047,9 +1047,10 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 - 页面任务类型下拉必须覆盖研发流程常用阶段：PRD / 原型 / 产品详细设计（`product_detail_design`）、技术方案设计（`technical_solution`）、代码实现 / 开发计划（`development_planning`）、代码评审（`code_review`）、自动化测试（`automated_testing`）、代码整改（`code_inspection_remediation`）、发布上线评估（`release_readiness`）和上线后分析（`post_release_analysis`）。其中 PRD 与原型当前随产品详细设计任务产出，代码实现当前沿用开发计划任务的执行策略匹配值。
 - 策略匹配优先级为：同任务类型下产品专属策略优先于全局策略，随后按 `priority` 升序匹配；未命中策略的研发任务继续沿用现有模型网关 / code_review executor 路径。
 - 策略可选绑定 `product_id`、`repository_id`、`branch`，必须配置 `workspace_root`、`instruction_template`、`output_contract`、`timeout_seconds` 和 `status`。`workspace_root` 必须落在 Runner 的 `workspace_roots` 白名单内；白名单目录允许子工作区路径，派发和认领阶段都必须校验，认领时发现越界任务需失败并回写日志，避免 Runner 配置变更后误执行旧任务。
+- 策略新增 `code_change_review_mode` 控制 AI Task 代码修改完成后的处理方式，默认 `manual_review`：Runner 成功后进入待确认，人工点击“确认通过/修改后通过”才向 Runner 下发 `merge` 决策；配置为 `auto_commit` 时，Runner 成功后系统自动创建已通过 Review、记录 `review.submitted/ai_task.executor_auto_committed` 审计，并向 Runner 下发 `merge` 决策提交隔离 worktree。失败、取消、超时或拒绝仍走 `discard`，不自动合入代码。
 - 策略管理列表必须优先使用 PostgreSQL read model 完成分页、筛选、排序和查询性能观测；`GET /api/delivery/rd-task-executor-policies` 传入 `page/page_size` 时支持 `name/product_name/executor_type/task_type/status` 筛选和 `priority/name/product_name/repository_name/runner_name/executor_type/task_type/status/updated_at/workspace_root` 白名单排序，并返回 `query/performance`。未传分页参数的兼容读取只用于老调用方和测试 fallback，不作为管理页面主路径。
 - 研发任务启动时先解析 active 策略；命中后创建 `ai_executor_tasks(ai_task_id=当前任务)`，任务状态进入 `running`，`current_step=waiting_ai_executor`，并在 `input_json.executor` 冻结策略 ID、执行器类型、Runner、Runner 任务 ID 和工作区。
-- Runner 认领、追加日志、租约重派、完成、取消、超时或死信回写时，服务端同步 `ai_tasks`：运行中和重派保持 `running/waiting_ai_executor`；成功时写入 `output_json.executor/result`、生成 `human_reviews(pending)` 并进入 `waiting_review`；失败、取消、超时或死信写入错误码和错误信息，任务进入 `failed/cancelled`。
+- Runner 认领、追加日志、租约重派、完成、取消、超时或死信回写时，服务端同步 `ai_tasks`：运行中和重派保持 `running/waiting_ai_executor`；成功时写入 `output_json.executor/result`，默认生成 `human_reviews(pending)` 并进入 `waiting_review`，若策略为 `auto_commit` 则直接完成任务和确认副作用；失败、取消、超时或死信写入错误码和错误信息，任务进入 `failed/cancelled`。
 - 执行器输入只包含研发任务摘要、需求快照、产品上下文、仓库/分支和输出契约，不下发产品 Git 凭据、插件连接密钥、模型网关密钥或 Agent/Skill 配置。Runner 可在受控工作区中使用本机 Codex/Claude Code/OpenClaw 完成工程分析或生成补丁草案，但业务终态仍必须经过 AI Brain 人工确认。
 - 页面入口位于需求交付 / 研发执行器策略；插件管理 / AI 执行器继续维护 Runner 本体、Token、心跳、安装包、日志和健康检测。
 

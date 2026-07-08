@@ -22,6 +22,7 @@ import { formatMutationError } from '../../utils/managementCrud';
 
 type PolicyFormValues = {
   branch?: string;
+  code_change_review_mode: string;
   executor_type: string;
   instruction_template: string;
   name: string;
@@ -67,6 +68,11 @@ const STATUS_OPTIONS = [
   { label: '停用', value: 'disabled' },
 ];
 
+const CODE_CHANGE_REVIEW_MODE_OPTIONS = [
+  { label: '人工确认', value: 'manual_review' },
+  { label: '自动提交代码修改', value: 'auto_commit' },
+];
+
 const STATUS_COLORS: Record<string, string> = {
   active: 'green',
   disabled: 'default',
@@ -78,6 +84,10 @@ function taskTypeLabel(value: string) {
 
 function executorLabel(value: string) {
   return EXECUTOR_OPTIONS.find((item) => item.value === value)?.label ?? value;
+}
+
+function codeChangeReviewModeLabel(value: string | undefined) {
+  return CODE_CHANGE_REVIEW_MODE_OPTIONS.find((item) => item.value === value)?.label ?? '人工确认';
 }
 
 function mutationError(error: unknown, fallback: string) {
@@ -275,6 +285,7 @@ export default function RdExecutorPoliciesPage() {
     setRepositories([]);
     form.resetFields();
     form.setFieldsValue({
+      code_change_review_mode: 'manual_review',
       executor_type: 'codex',
       instruction_template: '请基于研发任务 {{task_id}} / {{task_title}} 在当前仓库完成分析，并输出结构化结果。',
       output_contract_json: stableJson({ summary: 'string', details: 'object' }),
@@ -293,6 +304,7 @@ export default function RdExecutorPoliciesPage() {
     form.resetFields();
     form.setFieldsValue({
       branch: policy.branch ?? undefined,
+      code_change_review_mode: policy.code_change_review_mode ?? 'manual_review',
       executor_type: policy.executor_type,
       instruction_template: policy.instruction_template,
       name: policy.name,
@@ -315,6 +327,7 @@ export default function RdExecutorPoliciesPage() {
       const outputContract = parseJsonObject(values.output_contract_json, '输出契约');
       const payload = {
         branch: values.branch || null,
+        code_change_review_mode: values.code_change_review_mode,
         executor_type: values.executor_type,
         instruction_template: values.instruction_template,
         name: values.name,
@@ -369,6 +382,16 @@ export default function RdExecutorPoliciesPage() {
       render: (_, row) => <Tag color="blue">{executorLabel(row.executor_type)}</Tag>,
       title: '执行器',
       width: 130,
+    },
+    {
+      dataIndex: 'code_change_review_mode',
+      render: (_, row) => (
+        <Tag color={row.code_change_review_mode === 'auto_commit' ? 'green' : 'gold'}>
+          {codeChangeReviewModeLabel(row.code_change_review_mode)}
+        </Tag>
+      ),
+      title: '代码提交方式',
+      width: 160,
     },
     {
       dataIndex: 'runner_name',
@@ -461,7 +484,7 @@ export default function RdExecutorPoliciesPage() {
         }}
         rowKey="id"
         tableLayout="fixed"
-        tableScroll={{ x: 1810 }}
+        tableScroll={{ x: 2030 }}
         tableTitle="研发执行器策略"
         title="研发执行器策略"
       />
@@ -509,6 +532,13 @@ export default function RdExecutorPoliciesPage() {
           </Form.Item>
           <Form.Item label="工作区" name="workspace_root" rules={[{ required: true, message: '请输入工作区路径' }]}>
             <Input />
+          </Form.Item>
+          <Form.Item
+            label="代码提交方式"
+            name="code_change_review_mode"
+            rules={[{ required: true, message: '请选择代码提交方式' }]}
+          >
+            <Select options={CODE_CHANGE_REVIEW_MODE_OPTIONS} />
           </Form.Item>
           <Form.Item label="超时秒数" name="timeout_seconds" rules={[{ required: true, message: '请输入超时秒数' }]}>
             <InputNumber max={86400} min={60} style={{ width: '100%' }} />
