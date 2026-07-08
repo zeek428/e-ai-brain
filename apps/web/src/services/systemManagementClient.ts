@@ -157,9 +157,95 @@ export type SystemHealthRecommendationRecord = {
   title: string;
 };
 
+export type SystemHealthAlertRecord = {
+  action_href?: string | null;
+  component?: string | null;
+  id: string;
+  message?: string | null;
+  owner?: string | null;
+  severity: string;
+  source?: string;
+  status: string;
+  title: string;
+};
+
+export type SystemHealthOperations = {
+  ai_executor_ops?: {
+    controls?: Array<{ description: string; label: string; target: string }>;
+    latest_failures?: Array<{
+      error_code?: string | null;
+      error_message?: string | null;
+      id?: string;
+      status?: string;
+      updated_at?: string | null;
+    }>;
+    runner_health?: Record<string, unknown>;
+    summary?: Record<string, unknown>;
+    task_status_counts?: Record<string, number>;
+  };
+  alert_center?: {
+    alerts: SystemHealthAlertRecord[];
+    summary: {
+      high_count: number;
+      low_count: number;
+      medium_count: number;
+      open_count: number;
+    };
+  };
+  dingtalk_lifecycle?: {
+    login?: Record<string, unknown>;
+    mcp?: {
+      connection_count?: number;
+      failed_connection_count?: number;
+      key_expiry_alerts?: Array<Record<string, unknown>>;
+      soon_expiring_count?: number;
+    };
+    user_bindings?: Record<string, unknown>;
+  };
+  help_and_retention?: {
+    retention_policies?: Array<{
+      configured: boolean;
+      days: number;
+      env: string;
+      key: string;
+      note: string;
+      title: string;
+    }>;
+    screenshots?: {
+      coverage?: Record<string, number>;
+      screenshots?: Array<Record<string, unknown>>;
+    };
+  };
+  knowledge_quality_loop?: {
+    feedback_loop?: Record<string, unknown>;
+    quality_gates?: Array<Record<string, unknown>>;
+    summary?: Record<string, unknown>;
+  };
+  permission_diagnostics?: {
+    diagnostics?: Array<Record<string, unknown>>;
+    summary?: Record<string, unknown>;
+  };
+  product_onboarding_scores?: {
+    products?: Array<{
+      git_repository_count?: number;
+      knowledge_document_count?: number;
+      missing_items?: string[];
+      module_count?: number;
+      name: string;
+      product_id: string;
+      related_system_count?: number;
+      score: number;
+      status: string;
+      version_count?: number;
+    }>;
+    summary?: Record<string, unknown>;
+  };
+};
+
 export type SystemHealthReport = {
   checked_at: string;
   checks: SystemHealthCheckRecord[];
+  operations?: SystemHealthOperations;
   overall_status: string;
   platform?: Record<string, string>;
   recommendations: SystemHealthRecommendationRecord[];

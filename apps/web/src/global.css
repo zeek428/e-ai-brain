@@ -1649,6 +1649,151 @@ body {
   gap: 12px;
 }
 
+.system-health-operations {
+  gap: 18px;
+}
+
+.system-health-ops-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.system-health-ops-card {
+  display: grid;
+  align-content: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.system-health-ops-card-wide {
+  grid-column: span 2;
+}
+
+.system-health-ops-card-heading {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.system-health-ops-card-heading strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.system-health-ops-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.system-health-ops-metric {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.system-health-ops-metric strong {
+  color: #1f2937;
+  font-size: 20px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.system-health-ops-metric[data-tone='success'] strong {
+  color: #389e0d;
+}
+
+.system-health-ops-metric[data-tone='warning'] strong {
+  color: #d48806;
+}
+
+.system-health-ops-metric[data-tone='danger'] strong {
+  color: #cf1322;
+}
+
+.system-health-ops-list,
+.system-health-product-score-list,
+.system-health-retention-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.system-health-alert-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.system-health-alert-row:hover {
+  border-color: #91caff;
+}
+
+.system-health-alert-row > span:first-child {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.system-health-alert-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.system-health-product-score,
+.system-health-retention-list > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.system-health-product-score > div,
+.system-health-retention-list > div {
+  min-width: 0;
+}
+
+.system-health-product-score .ant-typography,
+.system-health-retention-list .ant-typography {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.system-health-quality-gates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.system-health-ops-inline-alert {
+  padding: 8px 10px;
+}
+
 .system-health-recommendations {
   display: grid;
   gap: 10px;
@@ -1745,10 +1890,21 @@ body {
     align-items: flex-start;
     flex-direction: column;
   }
+
+  .system-health-ops-grid,
+  .system-health-ops-card-wide,
+  .system-health-ops-metric-grid {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (min-width: 761px) and (max-width: 1180px) {
   .system-health-shortcuts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .system-health-ops-metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

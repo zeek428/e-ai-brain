@@ -211,10 +211,53 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     }
     app.state.store.plugin_connections["connection_dingtalk_health_center"] = {
         "id": "connection_dingtalk_health_center",
+        "auth_config": {"key_expires_at": "2030-01-01T00:00:00+00:00", "url_key": "secret-url-key"},
         "plugin_code": "dingtalk-doc",
         "plugin_name": "钉钉知识库",
         "status": "error",
         "error_message": "request failed for https://mcp.example.test/wiki?key=secret-url-key&token=secret-token",
+    }
+    app.state.store.products["product_health_center"] = {
+        "id": "product_health_center",
+        "code": "health-center",
+        "name": "健康中心产品",
+        "status": "active",
+    }
+    app.state.store.product_versions["product_version_health_center"] = {
+        "id": "product_version_health_center",
+        "product_id": "product_health_center",
+        "name": "v1",
+        "status": "active",
+    }
+    app.state.store.product_modules["product_module_health_center"] = {
+        "id": "product_module_health_center",
+        "product_id": "product_health_center",
+        "name": "运维模块",
+        "status": "active",
+    }
+    app.state.store.product_git_repositories["product_git_health_center"] = {
+        "id": "product_git_health_center",
+        "product_id": "product_health_center",
+        "name": "健康中心代码库",
+        "status": "active",
+    }
+    app.state.store.knowledge_documents["knowledge_document_health_center"] = {
+        "id": "knowledge_document_health_center",
+        "product_id": "product_health_center",
+        "title": "健康中心说明",
+        "index_status": "indexed",
+        "permission_roles": ["admin"],
+    }
+    app.state.store.ai_executor_runners["runner_health_center"] = {
+        "id": "runner_health_center",
+        "name": "本地 Runner",
+        "max_concurrent_tasks": 2,
+        "status": "active",
+    }
+    app.state.store.ai_executor_tasks["ai_executor_task_health_center"] = {
+        "id": "ai_executor_task_health_center",
+        "runner_id": "runner_health_center",
+        "status": "queued",
     }
 
     response = client.get("/api/system/health", headers=auth_headers())
@@ -235,6 +278,14 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     assert checks["dingtalk_mcp"]["last_error"] == (
         "request failed for https://mcp.example.test/wiki?key=***&token=***"
     )
+    operations = data["operations"]
+    assert operations["alert_center"]["summary"]["open_count"] >= 1
+    assert operations["ai_executor_ops"]["summary"]["queued_count"] == 1
+    assert operations["dingtalk_lifecycle"]["mcp"]["connection_count"] == 1
+    assert operations["knowledge_quality_loop"]["summary"]["total_documents"] >= 1
+    assert operations["permission_diagnostics"]["summary"]["active_role_count"] >= 1
+    product_scores = operations["product_onboarding_scores"]["products"]
+    assert any(item["product_id"] == "product_health_center" for item in product_scores)
     assert "secret-url-key" not in response.text
     assert "secret-token" not in response.text
     assert data["trace_id"].startswith("trace_")

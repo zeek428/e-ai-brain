@@ -16,6 +16,7 @@ import {
   Button,
   Descriptions,
   Empty,
+  Progress,
   Skeleton,
   Space,
   Statistic,
@@ -29,6 +30,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchSystemHealth,
   type SystemHealthCheckRecord,
+  type SystemHealthOperations,
   type SystemHealthReport,
 } from '../../services/aiBrain';
 import { formatDisplayDateTime } from '../../utils/dateTime';
@@ -195,6 +197,300 @@ function SystemHealthShortcut({
   );
 }
 
+function numericMetric(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  return fallback;
+}
+
+function percentMetric(value: unknown): number {
+  const ratio = numericMetric(value, 0);
+  if (ratio <= 1) {
+    return Math.round(ratio * 100);
+  }
+  return Math.round(ratio);
+}
+
+function OperationMetric({
+  tone,
+  title,
+  value,
+}: {
+  tone?: 'danger' | 'success' | 'warning';
+  title: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="system-health-ops-metric" data-tone={tone ?? 'default'}>
+      <Text type="secondary">{title}</Text>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function alertSeverityTag(severity: string) {
+  const labelMap: Record<string, string> = {
+    high: '高',
+    info: '提示',
+    low: '低',
+    medium: '中',
+  };
+  const colorMap: Record<string, string> = {
+    high: 'red',
+    info: 'blue',
+    low: 'default',
+    medium: 'orange',
+  };
+  return <Tag color={colorMap[severity] ?? 'default'}>{labelMap[severity] ?? severity}</Tag>;
+}
+
+function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthOperations }) {
+  const alertCenter = operations.alert_center;
+  const aiExecutor = operations.ai_executor_ops;
+  const knowledge = operations.knowledge_quality_loop;
+  const productScores = operations.product_onboarding_scores;
+  const permission = operations.permission_diagnostics;
+  const dingtalk = operations.dingtalk_lifecycle;
+  const helpAndRetention = operations.help_and_retention;
+  const products = productScores?.products ?? [];
+  const alerts = alertCenter?.alerts ?? [];
+  const retentionPolicies = helpAndRetention?.retention_policies ?? [];
+  const screenshots = helpAndRetention?.screenshots?.screenshots ?? [];
+  const qualityGates = knowledge?.quality_gates ?? [];
+  const permissionDiagnostics = permission?.diagnostics ?? [];
+  const keyExpiryAlerts = dingtalk?.mcp?.key_expiry_alerts ?? [];
+
+  return (
+    <section className="system-health-panel system-health-operations">
+      <div className="system-health-section-heading">
+        <div>
+          <Title level={4}>平台治理运维台</Title>
+          <Text type="secondary">从告警、执行、知识、产品、权限、钉钉授权和归档策略看闭环质量</Text>
+        </div>
+      </div>
+
+      <div className="system-health-ops-grid">
+        <article className="system-health-ops-card system-health-ops-card-wide">
+          <div className="system-health-ops-card-heading">
+            <strong>系统健康告警中心</strong>
+            <Tag color={alertCenter?.summary?.open_count ? 'orange' : 'green'}>
+              {alertCenter?.summary?.open_count ?? 0} 个打开
+            </Tag>
+          </div>
+          <div className="system-health-ops-metric-grid">
+            <OperationMetric
+              title="高优先级"
+              tone={alertCenter?.summary?.high_count ? 'danger' : 'success'}
+              value={alertCenter?.summary?.high_count ?? 0}
+            />
+            <OperationMetric title="中优先级" value={alertCenter?.summary?.medium_count ?? 0} />
+            <OperationMetric title="低优先级" value={alertCenter?.summary?.low_count ?? 0} />
+          </div>
+          <div className="system-health-ops-list">
+            {alerts.slice(0, 5).map((alert) => (
+              <button
+                className="system-health-alert-row"
+                key={alert.id}
+                onClick={() => alert.action_href && navigateTo(alert.action_href)}
+                type="button"
+              >
+                <span>
+                  {alertSeverityTag(alert.severity)}
+                  <strong>{alert.title}</strong>
+                </span>
+                <Text type="secondary">{alert.owner || '平台管理员'}</Text>
+              </button>
+            ))}
+            {!alerts.length ? <Empty description="暂无打开告警" image={Empty.PRESENTED_IMAGE_SIMPLE} /> : null}
+          </div>
+        </article>
+
+        <article className="system-health-ops-card">
+          <div className="system-health-ops-card-heading">
+            <strong>AI 任务执行运维台</strong>
+            <Button size="small" type="link" onClick={() => navigateTo('/tasks/plugins')}>
+              运维
+            </Button>
+          </div>
+          <div className="system-health-ops-metric-grid">
+            <OperationMetric title="排队" value={formatMetricValue(aiExecutor?.summary?.queued_count)} />
+            <OperationMetric title="运行中" value={formatMetricValue(aiExecutor?.summary?.running_count)} />
+            <OperationMetric
+              title="失败/死信"
+              tone={numericMetric(aiExecutor?.summary?.failed_total) ? 'danger' : 'success'}
+              value={formatMetricValue(aiExecutor?.summary?.failed_total)}
+            />
+            <OperationMetric title="待审批" value={formatMetricValue(aiExecutor?.summary?.pending_approval_count)} />
+          </div>
+          <Text type="secondary">
+            队列压力 {formatMetricValue(percentMetric(aiExecutor?.summary?.queue_pressure))}%；
+            Runner {formatMetricValue(aiExecutor?.runner_health?.active_runner_count)} 个可用。
+          </Text>
+        </article>
+
+        <article className="system-health-ops-card">
+          <div className="system-health-ops-card-heading">
+            <strong>知识中心质量闭环</strong>
+            <Button size="small" type="link" onClick={() => navigateTo('/assets/knowledge')}>
+              治理
+            </Button>
+          </div>
+          <div className="system-health-ops-metric-grid">
+            <OperationMetric title="文档" value={formatMetricValue(knowledge?.summary?.total_documents)} />
+            <OperationMetric
+              title="可检索率"
+              tone={percentMetric(knowledge?.summary?.searchable_ratio) >= 80 ? 'success' : 'warning'}
+              value={`${percentMetric(knowledge?.summary?.searchable_ratio)}%`}
+            />
+            <OperationMetric
+              title="索引失败"
+              tone={numericMetric(knowledge?.summary?.index_failed_documents) ? 'danger' : 'success'}
+              value={formatMetricValue(knowledge?.summary?.index_failed_documents)}
+            />
+            <OperationMetric title="待审核沉淀" value={formatMetricValue(knowledge?.summary?.pending_deposit_count)} />
+          </div>
+          <div className="system-health-quality-gates">
+            {qualityGates.slice(0, 3).map((gate) => (
+              <Tag color={gate.passed ? 'green' : 'orange'} key={String(gate.metric)}>
+                {String(gate.metric)}：{gate.passed ? '达标' : '需关注'}
+              </Tag>
+            ))}
+          </div>
+        </article>
+
+        <article className="system-health-ops-card system-health-ops-card-wide">
+          <div className="system-health-ops-card-heading">
+            <strong>产品接入完整度评分</strong>
+            <Button size="small" type="link" onClick={() => navigateTo('/assets/products')}>
+              接入向导
+            </Button>
+          </div>
+          <div className="system-health-ops-metric-grid">
+            <OperationMetric title="平均分" value={formatMetricValue(productScores?.summary?.average_score)} />
+            <OperationMetric title="已就绪" tone="success" value={formatMetricValue(productScores?.summary?.ready_count)} />
+            <OperationMetric title="部分接入" value={formatMetricValue(productScores?.summary?.partial_count)} />
+            <OperationMetric
+              title="高风险"
+              tone={numericMetric(productScores?.summary?.at_risk_count) ? 'danger' : 'success'}
+              value={formatMetricValue(productScores?.summary?.at_risk_count)}
+            />
+          </div>
+          <div className="system-health-product-score-list">
+            {products.slice(0, 6).map((product) => (
+              <div className="system-health-product-score" key={product.product_id}>
+                <div>
+                  <strong>{product.name}</strong>
+                  <Text type="secondary">
+                    {product.missing_items?.length ? product.missing_items.join('、') : '接入信息完整'}
+                  </Text>
+                </div>
+                <Progress percent={product.score} size="small" status={product.score >= 80 ? 'success' : 'normal'} />
+              </div>
+            ))}
+            {!products.length ? <Empty description="暂无活跃产品" image={Empty.PRESENTED_IMAGE_SIMPLE} /> : null}
+          </div>
+        </article>
+
+        <article className="system-health-ops-card">
+          <div className="system-health-ops-card-heading">
+            <strong>权限诊断增强</strong>
+            <Button size="small" type="link" onClick={() => navigateTo('/system/roles')}>
+              权限矩阵
+            </Button>
+          </div>
+          <div className="system-health-ops-metric-grid">
+            <OperationMetric title="启用角色" value={formatMetricValue(permission?.summary?.active_role_count)} />
+            <OperationMetric
+              title="菜单缺口"
+              tone={numericMetric(permission?.summary?.roles_with_menu_permission_gaps) ? 'warning' : 'success'}
+              value={formatMetricValue(permission?.summary?.roles_with_menu_permission_gaps)}
+            />
+            <OperationMetric
+              title="高风险角色"
+              tone={numericMetric(permission?.summary?.roles_with_high_risk_permissions) ? 'danger' : 'success'}
+              value={formatMetricValue(permission?.summary?.roles_with_high_risk_permissions)}
+            />
+          </div>
+          {permissionDiagnostics.slice(0, 2).map((item) => (
+            <Alert
+              className="system-health-ops-inline-alert"
+              key={String(item.message)}
+              showIcon
+              title={String(item.message)}
+              type={item.level === 'risk' ? 'warning' : 'info'}
+            />
+          ))}
+        </article>
+
+        <article className="system-health-ops-card">
+          <div className="system-health-ops-card-heading">
+            <strong>钉钉授权生命周期</strong>
+            <Button size="small" type="link" onClick={() => navigateTo('/tasks/plugins')}>
+              连接管理
+            </Button>
+          </div>
+          <div className="system-health-ops-metric-grid">
+            <OperationMetric title="绑定用户" value={formatMetricValue(dingtalk?.user_bindings?.active_identity_count)} />
+            <OperationMetric title="MCP 连接" value={formatMetricValue(dingtalk?.mcp?.connection_count)} />
+            <OperationMetric
+              title="测试失败"
+              tone={numericMetric(dingtalk?.mcp?.failed_connection_count) ? 'danger' : 'success'}
+              value={formatMetricValue(dingtalk?.mcp?.failed_connection_count)}
+            />
+            <OperationMetric title="即将到期" value={formatMetricValue(dingtalk?.mcp?.soon_expiring_count)} />
+          </div>
+          <div className="system-health-quality-gates">
+            {keyExpiryAlerts.slice(0, 3).map((item) => (
+              <Tag color={item.severity === 'expired' ? 'red' : 'gold'} key={String(item.connection_id)}>
+                {String(item.connection_name || '钉钉连接')}：{formatMetricValue(item.days_left)} 天
+              </Tag>
+            ))}
+          </div>
+        </article>
+
+        <article className="system-health-ops-card system-health-ops-card-wide">
+          <div className="system-health-ops-card-heading">
+            <strong>帮助截图自动化与数据归档策略</strong>
+            <Button size="small" type="link" onClick={() => navigateTo('/help?article=system-admin')}>
+              帮助文档
+            </Button>
+          </div>
+          <div className="system-health-ops-metric-grid">
+            <OperationMetric
+              title="截图覆盖"
+              value={`${formatMetricValue(helpAndRetention?.screenshots?.coverage?.ready_count)} / ${formatMetricValue(helpAndRetention?.screenshots?.coverage?.expected_count)}`}
+            />
+            <OperationMetric
+              title="已配置策略"
+              value={retentionPolicies.filter((item) => item.configured).length}
+            />
+          </div>
+          <div className="system-health-retention-list">
+            {retentionPolicies.slice(0, 6).map((item) => (
+              <div key={item.key}>
+                <strong>{item.title}</strong>
+                <Text type="secondary">{item.days} 天 · {item.configured ? item.env : `${item.env} 默认值`}</Text>
+              </div>
+            ))}
+          </div>
+          <div className="system-health-quality-gates">
+            {screenshots.map((item) => (
+              <Tag color={item.exists ? 'green' : 'orange'} key={String(item.route)}>
+                {String(item.article)}截图
+              </Tag>
+            ))}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
 export default function SystemHealthPage() {
   const [report, setReport] = useState<SystemHealthReport>();
   const [error, setError] = useState<RemoteRowsError>();
@@ -323,6 +619,8 @@ export default function SystemHealthPage() {
                 to="/tasks/plugins"
               />
             </section>
+
+            {report.operations ? <SystemHealthOperationsPanel operations={report.operations} /> : null}
 
             <section className="system-health-panel">
               <div className="system-health-section-heading">
