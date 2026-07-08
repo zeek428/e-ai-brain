@@ -38,17 +38,23 @@ type PolicyFormValues = {
 
 type RdTaskExecutorPolicyRow = RdTaskExecutorPolicyRecord & Record<string, unknown>;
 
-const TASK_TYPE_OPTIONS = [
+const LEGACY_CODE_INSPECTION_REMEDIATION_TYPE = 'code_inspection_remediation';
+
+const TASK_TYPE_LABEL_OPTIONS = [
   { label: 'PRD / 原型 / 产品详细设计', value: 'product_detail_design' },
   { label: '技术方案设计', value: 'technical_solution' },
   { label: '代码实现 / 开发计划', value: 'development_planning' },
   { label: '代码评审', value: 'code_review' },
   { label: '自动化测试', value: 'automated_testing' },
-  { label: '代码整改', value: 'code_inspection_remediation' },
+  { label: '代码巡检整改', value: LEGACY_CODE_INSPECTION_REMEDIATION_TYPE },
   { label: 'Bug 修复', value: 'bug_fix' },
   { label: '发布上线评估', value: 'release_readiness' },
   { label: '上线后分析', value: 'post_release_analysis' },
 ];
+
+const TASK_TYPE_OPTIONS = TASK_TYPE_LABEL_OPTIONS.filter(
+  (item) => item.value !== LEGACY_CODE_INSPECTION_REMEDIATION_TYPE,
+);
 
 const EXECUTOR_OPTIONS = [
   { label: 'Codex', value: 'codex' },
@@ -67,7 +73,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 function taskTypeLabel(value: string) {
-  return TASK_TYPE_OPTIONS.find((item) => item.value === value)?.label ?? value;
+  return TASK_TYPE_LABEL_OPTIONS.find((item) => item.value === value)?.label ?? value;
 }
 
 function executorLabel(value: string) {
@@ -237,6 +243,19 @@ export default function RdExecutorPoliciesPage() {
         value: runner.id,
       }));
   }, [runners, selectedExecutorType]);
+  const taskTypeOptions = useMemo(() => {
+    if (editingPolicy?.task_type !== LEGACY_CODE_INSPECTION_REMEDIATION_TYPE) {
+      return TASK_TYPE_OPTIONS;
+    }
+    return [
+      {
+        disabled: true,
+        label: '代码巡检整改（历史兼容，建议改用 Bug 修复）',
+        value: LEGACY_CODE_INSPECTION_REMEDIATION_TYPE,
+      },
+      ...TASK_TYPE_OPTIONS,
+    ];
+  }, [editingPolicy?.task_type]);
 
   const loadRepositories = useCallback(async (productId?: string | null) => {
     if (!productId) {
@@ -424,7 +443,7 @@ export default function RdExecutorPoliciesPage() {
         viewStorageKey="delivery.rd_executor_policies"
         filters={[
           { label: '策略名称', name: 'name', type: 'text' },
-          { label: '任务类型', name: 'task_type', options: TASK_TYPE_OPTIONS, type: 'select' },
+          { label: '任务类型', name: 'task_type', options: taskTypeOptions, type: 'select' },
           { label: '执行器', name: 'executor_type', options: EXECUTOR_OPTIONS, type: 'select' },
           { label: '产品', name: 'product_name', type: 'text' },
           { label: '状态', name: 'status', options: STATUS_OPTIONS, type: 'select' },
@@ -460,7 +479,7 @@ export default function RdExecutorPoliciesPage() {
             <Input />
           </Form.Item>
           <Form.Item label="任务类型" name="task_type" rules={[{ required: true, message: '请选择任务类型' }]}>
-            <Select optionFilterProp="label" options={TASK_TYPE_OPTIONS} showSearch />
+            <Select optionFilterProp="label" options={taskTypeOptions} showSearch />
           </Form.Item>
           <Form.Item label="执行器" name="executor_type" rules={[{ required: true, message: '请选择执行器' }]}>
             <Select

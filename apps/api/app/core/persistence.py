@@ -934,7 +934,9 @@ class PostgresSnapshotRepository:
         global_knowledge_access: bool = False,
         knowledge_space_id: str | None = None,
         knowledge_space_scope_ids: list[str] | None = None,
+        product_id: str | None = None,
         query: str | None = None,
+        version_id: str | None = None,
     ) -> list[dict[str, Any]]:
         return self._knowledge_read_repository.search_knowledge_chunks(
             user_roles=user_roles,
@@ -942,7 +944,9 @@ class PostgresSnapshotRepository:
             global_knowledge_access=global_knowledge_access,
             knowledge_space_id=knowledge_space_id,
             knowledge_space_scope_ids=knowledge_space_scope_ids,
+            product_id=product_id,
             query=query,
+            version_id=version_id,
         )
 
     def load_audit_events(self) -> dict[str, Any]:

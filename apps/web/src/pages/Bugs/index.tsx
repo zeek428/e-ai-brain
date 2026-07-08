@@ -61,6 +61,8 @@ import {
   type BugFormValues,
 } from './bugPageHelpers';
 
+const BUG_ACTION_COLUMN_WIDTH = 380;
+
 export default function BugsPage() {
   const [form] = Form.useForm<BugFormValues>();
   const [batchForm] = Form.useForm<BugBatchFormValues>();
@@ -599,8 +601,9 @@ export default function BugsPage() {
         key: 'actions',
         title: '操作',
         valueType: 'option',
+        width: BUG_ACTION_COLUMN_WIDTH,
         render: (_, row) => (
-          <Space size={4}>
+          <Space size={4} wrap={false}>
             <Button href={fullChainSubjectHref('bug', row.id)} type="link">
               全链路
             </Button>

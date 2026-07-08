@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from io import BytesIO
 from types import SimpleNamespace
 from zipfile import ZipFile
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 
 import app.services.scheduled_job_ai_capabilities as scheduled_job_ai_capabilities_service
 import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_service
+import app.services.scheduled_job_config as scheduled_job_config
 import app.services.scheduled_job_data_connections as scheduled_job_data_connections_service
 import app.services.scheduled_job_result_actions as scheduled_job_result_actions_service
 import app.services.scheduled_jobs as scheduled_jobs_service
@@ -1162,6 +1164,62 @@ def test_scheduled_job_list_uses_repository_pagination_when_requested():
         "sort_by": "created_at",
         "sort_order": "asc",
     }
+
+
+def test_cron_scheduled_job_next_run_uses_future_occurrence_in_timezone():
+    next_run = scheduled_job_config.next_run_at(
+        SimpleNamespace(
+            cron_expression="0 9 * * MON",
+            interval_seconds=None,
+            schedule_type="cron",
+            timezone="Asia/Shanghai",
+        ),
+        now=datetime(2026, 7, 7, 2, 0, tzinfo=UTC),
+    )
+
+    assert next_run == "2026-07-13T01:00:00+00:00"
+
+
+def test_scheduled_job_list_advances_stale_next_run_to_future():
+    current_store = SimpleNamespace(
+        scheduled_jobs={
+            "scheduled_job_stale": {
+                "config_json": {},
+                "created_at": "2026-06-24T00:00:00+00:00",
+                "cron_expression": "0 9 * * MON",
+                "enabled": True,
+                "execution_mode": "deterministic",
+                "id": "scheduled_job_stale",
+                "job_type": "code_repository_inspection",
+                "name": "过期的代码巡检",
+                "next_run_at": "2026-06-24T00:00:00+00:00",
+                "product_id": "product_ai_brain",
+                "schedule_type": "cron",
+                "source_system": "ai-brain",
+                "status": "active",
+                "timezone": "Asia/Shanghai",
+                "updated_at": "2026-06-24T00:00:00+00:00",
+            },
+        },
+    )
+
+    before_list = datetime.now(UTC)
+    payload = scheduled_jobs_service.list_scheduled_jobs_response(
+        current_store=current_store,
+        enabled=True,
+        job_type=None,
+        page=1,
+        page_size=10,
+        started_at=None,
+        user=ADMIN_SERVICE_USER,
+    )
+
+    refreshed_next_run = datetime.fromisoformat(payload["items"][0]["next_run_at"])
+    assert refreshed_next_run > before_list
+    assert (
+        current_store.scheduled_jobs["scheduled_job_stale"]["next_run_at"]
+        == payload["items"][0]["next_run_at"]
+    )
 
 
 def test_scheduled_job_runner_execution_node_keeps_system_executor_model_metadata():

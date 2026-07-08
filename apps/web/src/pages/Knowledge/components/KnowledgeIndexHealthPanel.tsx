@@ -355,38 +355,39 @@ export function KnowledgeIndexHealthPanel({
         : { color: 'green', label: '正常' };
 
   const renderAction = (issue: KnowledgeHealthIssue) => {
+    const actionText = issueActionText(issue);
     if (issue.action === 'retry_index') {
       return (
         <Button
-          aria-label={`处理索引健康问题 ${issue.document.title}`}
+          aria-label={`${actionText} ${issue.document.title}`}
           onClick={() => void onRetryIndex(issue.document)}
           size="small"
           type="link"
         >
-          {issueActionText(issue)}
+          {actionText}
         </Button>
       );
     }
     if (issue.action === 'open_chunks') {
       return (
         <Button
-          aria-label={`查看分块健康问题 ${issue.document.title}`}
+          aria-label={`${actionText} ${issue.document.title}`}
           onClick={() => onOpenChunks(issue.document)}
           size="small"
           type="link"
         >
-          {issueActionText(issue)}
+          {actionText}
         </Button>
       );
     }
     return (
       <Button
-        aria-label={`查看导入任务 ${issue.document.title}`}
+        aria-label={`${actionText} ${issue.document.title}`}
         onClick={onOpenImportJobs}
         size="small"
         type="link"
       >
-        {issueActionText(issue)}
+        {actionText}
       </Button>
     );
   };

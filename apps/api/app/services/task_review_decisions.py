@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from app.services.ai_executor_workspace_isolation import (
+    mark_ai_executor_workspace_isolation_decision,
+)
 from app.services.task_access import require_task_permission_or_roles
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_persistence_helpers import save_review_decision_records
@@ -36,6 +39,12 @@ def approve_review_response(
     review["updated_at"] = now
     task["status"] = "completed"
     task["updated_at"] = now
+    mark_ai_executor_workspace_isolation_decision(
+        write_store,
+        action="merge",
+        decided_by=user["id"],
+        task=task,
+    )
     confirm_code_review_report(write_store, task)
     created_bug_ids = [
         *create_automated_testing_bugs(write_store, actor_id=user["id"], task=task),
@@ -98,6 +107,12 @@ def edit_approve_review_response(
         edited_content=edited_content or {},
         review=review,
         review_id=review_id,
+        task=task,
+    )
+    mark_ai_executor_workspace_isolation_decision(
+        write_store,
+        action="merge",
+        decided_by=user["id"],
         task=task,
     )
     graph_run = latest_graph_run(write_store, task)

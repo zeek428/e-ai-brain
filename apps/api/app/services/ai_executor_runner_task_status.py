@@ -32,6 +32,8 @@ def runner_ai_executor_task_status_response(
     task = _read_record(current_store, "ai_executor_tasks", task_id)
     if task is None or task.get("runner_id") != normalized_runner_id:
         raise api_error(404, "NOT_FOUND", "AI executor task not found")
+    result_json = task.get("result_json") if isinstance(task.get("result_json"), dict) else {}
+    workspace_isolation = result_json.get("workspace_isolation")
     return {
         "task": {
             "error_code": task.get("error_code"),
@@ -43,5 +45,8 @@ def runner_ai_executor_task_status_response(
             "status": task.get("status"),
             "timeout_seconds": task.get("timeout_seconds"),
             "updated_at": task.get("updated_at"),
+            "workspace_isolation": (
+                workspace_isolation if isinstance(workspace_isolation, dict) else None
+            ),
         }
     }

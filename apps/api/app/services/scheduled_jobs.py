@@ -124,6 +124,16 @@ persist_record = job_store.persist_record
 resolve_plugin_input_mapping = job_runtime.resolve_plugin_input_mapping
 
 
+def _next_run_after(job: dict[str, Any], timestamp: str | None) -> str | None:
+    if not timestamp:
+        return job.get("next_run_at")
+    try:
+        reference_time = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        return next_run_at(job, now=reference_time)
+    except Exception:
+        return job.get("next_run_at")
+
+
 def create_scheduled_job_response(
     *,
     current_store: Any,
@@ -1136,6 +1146,7 @@ def execute_queued_scheduled_job_run_response(
         "last_failure_at": finished_at if status == "failed" else job.get("last_failure_at"),
         "last_run_at": finished_at,
         "last_success_at": finished_at if status == "succeeded" else job.get("last_success_at"),
+        "next_run_at": _next_run_after(job, finished_at),
         "updated_at": updated_at,
     }
     job_store.put_memory_record(current_store, "scheduled_jobs", job_update)
@@ -1798,6 +1809,11 @@ def run_scheduled_job_response(
         "last_failure_at": finished_at if status == "failed" else job.get("last_failure_at"),
         "last_run_at": finished_at or updated_at,
         "last_success_at": finished_at if status == "succeeded" else job.get("last_success_at"),
+        "next_run_at": (
+            _next_run_after(job, finished_at)
+            if status in SCHEDULED_JOB_RUN_TERMINAL_STATUSES
+            else job.get("next_run_at")
+        ),
         "updated_at": updated_at,
     }
     job_store.put_memory_record(current_store, "scheduled_jobs", job_update)

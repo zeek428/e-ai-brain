@@ -105,6 +105,7 @@ def execute_native_multi_code_inspection_summary(
     deduplicated_bug_ids: list[str] = []
     notification_ids: list[str] = []
     task_ids: list[str] = []
+    task_promotion_deferred = False
     severe_finding_count = 0
     model_gateway_called = False
     native_scan_items: list[dict[str, Any]] = []
@@ -184,6 +185,10 @@ def execute_native_multi_code_inspection_summary(
         bug_ids.extend(inspection_result["bug_ids"])
         deduplicated_bug_ids.extend(inspection_result["deduplicated_bug_ids"])
         notification_ids.extend(inspection_result["notification_ids"])
+        task_promotion_deferred = (
+            task_promotion_deferred
+            or bool(inspection_result.get("task_promotion_deferred"))
+        )
         task_ids.extend(inspection_result.get("task_ids") or [])
         native_scan = (plugin_summary.get("response_summary") or {}).get("native_scan")
         native_scan_node: dict[str, Any] = {}
@@ -278,9 +283,13 @@ def execute_native_multi_code_inspection_summary(
                 },
                 "task_creation": {
                     "created_task_ids": task_ids,
-                    "label": "严重问题自动创建整改任务",
+                    "label": "Bug 确认后推进研发任务",
                     "records_imported": len(task_ids),
-                    "status": "succeeded",
+                    "status": (
+                        "deferred_to_bug_confirmation"
+                        if task_promotion_deferred
+                        else "not_configured"
+                    ),
                 },
             },
             "finding_count": total_findings,
@@ -331,9 +340,13 @@ def code_inspection_single_result_summary(
         },
         "task_creation": {
             "created_task_ids": inspection_result.get("task_ids") or [],
-            "label": "严重问题自动创建整改任务",
+            "label": "Bug 确认后推进研发任务",
             "records_imported": len(inspection_result.get("task_ids") or []),
-            "status": "succeeded",
+            "status": (
+                "deferred_to_bug_confirmation"
+                if inspection_result.get("task_promotion_deferred")
+                else "not_configured"
+            ),
         },
         "code_inspection_report": {
             "finding_count": report["finding_count"],

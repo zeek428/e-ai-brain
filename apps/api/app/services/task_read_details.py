@@ -9,6 +9,7 @@ from app.services.mock_writeback import writeback_idempotency_key
 from app.services.task_access import can_read_task, task_read_scope
 from app.services.task_contexts import public_product_context
 from app.services.task_graph_runtime import graph_runs_for_task
+from app.services.task_output_summary import readable_task_output_summary
 from app.services.task_workflow_context import task_workflow_read_store
 
 PENDING_REVIEW_SORT_FIELDS = {
@@ -58,7 +59,9 @@ def task_detail_projection(current_store: Any, task: dict[str, Any]) -> dict[str
         "product_context": public_product_context(task.get("product_context")),
         **task.get("input_json", {}),
     }
-    detail["output"] = task.get("output_json")
+    output_json = task.get("output_json")
+    detail["output"] = output_json
+    detail["output_summary"] = readable_task_output_summary(output_json)
     detail["current_step"] = task.get("current_step")
     detail["pending_review"] = current_store.snapshot(pending_review) if pending_review else None
     detail["reviews"] = current_store.snapshot({"items": reviews, "total": len(reviews)})

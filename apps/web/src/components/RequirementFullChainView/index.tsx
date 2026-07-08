@@ -127,10 +127,11 @@ function renderTimelineStatusTag(type: string, status?: string) {
 
 function buildFullChainStageItems(fullChain: RequirementFullChainRecord) {
   const summary = fullChain.summary;
+  const requirement = fullChain.requirement;
   const stages = [
     {
-      count: 1,
-      detail: `${formatRequirementStatus(fullChain.requirement.status)} · 1 项`,
+      count: requirement ? 1 : 0,
+      detail: requirement ? `${formatRequirementStatus(requirement.status)} · 1 项` : '当前版本暂无需求',
       title: '需求',
     },
     {
@@ -248,9 +249,10 @@ function markdownList<T>(items: T[], renderItem: (item: T) => string) {
 }
 
 function buildFullChainMarkdownReport(fullChain: RequirementFullChainRecord) {
-  const requirementStatus = formatRequirementStatus(fullChain.requirement.status);
+  const requirement = fullChain.requirement;
+  const requirementStatus = requirement ? formatRequirementStatus(requirement.status) : '暂无需求';
   const iterationVersion = fullChain.iterationVersion;
-  const productName = `${fullChain.product?.code ?? fullChain.requirement.product}${
+  const productName = `${fullChain.product?.code ?? requirement?.product ?? '-'}${
     fullChain.product?.name ? ` · ${fullChain.product.name}` : ''
   }`;
   const versionName = iterationVersion
@@ -258,15 +260,21 @@ function buildFullChainMarkdownReport(fullChain: RequirementFullChainRecord) {
         iterationVersion.status,
       )}`
     : '未排期';
+  const subjectTitle =
+    requirement?.title ??
+    iterationVersion?.name ??
+    iterationVersion?.code ??
+    fullChain.anchor?.subjectId ??
+    '空链路';
 
   return [
-    `# 需求全链路报告：${fullChain.requirement.title}`,
+    `# 需求全链路报告：${subjectTitle}`,
     '',
     `生成时间：${new Date().toISOString()}`,
     '',
     '## 链路摘要',
     '',
-    `- 需求：${fullChain.requirement.title} (${fullChain.requirement.id})`,
+    `- 需求：${requirement ? `${requirement.title} (${requirement.id})` : '暂无需求'}`,
     `- 状态：${requirementStatus}`,
     `- 产品：${productName}`,
     `- 迭代版本：${versionName}`,
@@ -379,8 +387,9 @@ function downloadFullChainMarkdownReport(fullChain: RequirementFullChainRecord) 
   const blob = new Blob([report], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
+  const fileSubject = fullChain.requirement?.id ?? fullChain.iterationVersion?.id ?? fullChain.anchor?.subjectId ?? 'empty';
   link.href = url;
-  link.download = `requirement-full-chain-${fullChain.requirement.id}.md`;
+  link.download = `requirement-full-chain-${fileSubject}.md`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -440,12 +449,14 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
   const iterationVersion = fullChain.iterationVersion;
   const items = [
     {
-      children: renderEntityDetail({
-        href: withQuery('/delivery/requirements', 'requirement_id', requirement.id),
-        linkLabel: `查看需求 ${requirement.id}`,
-        meta: `${formatRequirementStatus(requirement.status)} · ${requirement.createdAt}`,
-        title: requirement.title,
-      }),
+      children: requirement
+        ? renderEntityDetail({
+            href: withQuery('/delivery/requirements', 'requirement_id', requirement.id),
+            linkLabel: `查看需求 ${requirement.id}`,
+            meta: `${formatRequirementStatus(requirement.status)} · ${requirement.createdAt}`,
+            title: requirement.title,
+          })
+        : <Text type="secondary">当前版本暂无需求</Text>,
       key: 'requirement',
       label: '需求',
     },
@@ -667,7 +678,8 @@ export function RequirementFullChainView({
   const [timelineTypeFilters, setTimelineTypeFilters] = useState<string[]>([]);
   const stageItems = buildFullChainStageItems(fullChain);
   const firstPendingIndex = stageItems.findIndex((item) => item.status === 'wait');
-  const requirementStatus = requirementStatusLabels[fullChain.requirement.status];
+  const requirement = fullChain.requirement;
+  const requirementStatus = requirement ? requirementStatusLabels[requirement.status] : undefined;
   const versionRequirementStats = useMemo(
     () => buildVersionRequirementStats(versionRequirements),
     [versionRequirements],
@@ -689,7 +701,7 @@ export function RequirementFullChainView({
   const showAnchor =
     anchorSubjectId &&
     anchorSubjectType &&
-    (anchorSubjectType !== 'requirement' || anchorSubjectId !== fullChain.requirement.id);
+    (anchorSubjectType !== 'requirement' || !requirement || anchorSubjectId !== requirement.id);
 
   return (
     <Space className="requirement-full-chain-view" orientation="vertical" size={16} style={{ width: '100%' }}>
@@ -706,12 +718,14 @@ export function RequirementFullChainView({
         <div className="requirement-full-chain-summary-value requirement-full-chain-summary-wide">
           <Space align="center" size={8} wrap>
             <Space size={8} wrap>
-              <Text strong>{fullChain.requirement.title}</Text>
-              <Tag>{fullChain.requirement.id}</Tag>
-              <StatusTag
-                color={requirementStatus?.color ?? 'default'}
-                label={requirementStatus?.label ?? fullChain.requirement.status}
-              />
+              <Text strong>{requirement?.title ?? '当前版本暂无需求'}</Text>
+              {requirement ? <Tag>{requirement.id}</Tag> : <Tag>空链路</Tag>}
+              {requirement ? (
+                <StatusTag
+                  color={requirementStatus?.color ?? 'default'}
+                  label={requirementStatus?.label ?? requirement.status}
+                />
+              ) : null}
             </Space>
             <Button onClick={() => downloadFullChainMarkdownReport(fullChain)} size="small">
               导出链路报告
@@ -720,7 +734,7 @@ export function RequirementFullChainView({
         </div>
         <div className="requirement-full-chain-summary-label">产品</div>
         <div className="requirement-full-chain-summary-value">
-          {fullChain.product?.code ?? fullChain.requirement.product}
+          {fullChain.product?.code ?? requirement?.product ?? '-'}
           {fullChain.product?.name ? ` · ${fullChain.product.name}` : ''}
         </div>
         <div className="requirement-full-chain-summary-label">迭代版本</div>
@@ -839,7 +853,8 @@ export function RequirementFullChainView({
             <Space align="center" size={8} wrap>
               <Text strong>版本内需求对比</Text>
               <Text type="secondary">
-                当前版本共 {versionRequirements.length} 条需求，当前需求 {fullChain.requirement.id}
+                当前版本共 {versionRequirements.length} 条需求
+                {requirement ? `，当前需求 ${requirement.id}` : ''}
               </Text>
             </Space>
             <Space size={[4, 4]} wrap>
@@ -860,10 +875,16 @@ export function RequirementFullChainView({
                 return (
                   <Descriptions.Item
                     key={requirement.id}
-                    label={requirement.id === fullChain.requirement.id ? '当前需求' : requirement.id}
+                    label={
+                      fullChain.requirement && requirement.id === fullChain.requirement.id
+                        ? '当前需求'
+                        : requirement.id
+                    }
                   >
                     <Space size={8} wrap>
-                      <Text strong={requirement.id === fullChain.requirement.id}>{requirement.title}</Text>
+                      <Text strong={Boolean(fullChain.requirement && requirement.id === fullChain.requirement.id)}>
+                        {requirement.title}
+                      </Text>
                       <StatusTag
                         color={statusLabel?.color ?? 'default'}
                         label={statusLabel?.label ?? requirement.status}

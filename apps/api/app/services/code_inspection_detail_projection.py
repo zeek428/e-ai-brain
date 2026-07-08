@@ -219,9 +219,9 @@ def code_inspection_governance_summary(
     if uncovered_task_findings:
         action_items.append(
             {
-                "code": "create_task_for_uncovered_severe_findings",
+                "code": "promote_bug_or_requirement_after_confirmation",
                 "count": len(uncovered_task_findings),
-                "label": "为未派生任务的严重问题创建整改任务",
+                "label": "Bug 或需求确认后推进研发任务",
             }
         )
     if pending_suppression_findings:
@@ -241,7 +241,7 @@ def code_inspection_governance_summary(
             }
         )
     status = "healthy"
-    if uncovered_bug_findings or uncovered_task_findings or expired_accepted_risk_findings:
+    if uncovered_bug_findings or expired_accepted_risk_findings:
         status = "action_required"
     elif pending_suppression_findings:
         status = "pending_review"

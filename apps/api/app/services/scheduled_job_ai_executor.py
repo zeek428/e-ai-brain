@@ -21,6 +21,7 @@ from app.services.scheduled_job_ai_processing import (
     validate_skill_output_json_contract,
     validate_skill_output_mapping_contract,
 )
+from app.services.scheduled_job_config import next_run_at
 from app.services.scheduled_job_execution_engine import (
     ScheduledJobExecutionEngine as JobExecutionEngine,
 )
@@ -41,6 +42,16 @@ DEFAULT_AI_EXECUTOR_CONFIG = {
 }
 RUNNER_ACTIVE_STATUSES = {"claimed", "queued", "running"}
 RUNNER_FAILED_STATUSES = {"cancelled", "dead_letter", "failed", "timed_out"}
+
+
+def _next_run_after(job: dict[str, Any], timestamp: str | None) -> str | None:
+    if not timestamp:
+        return job.get("next_run_at")
+    try:
+        reference_time = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        return next_run_at(job, now=reference_time)
+    except Exception:
+        return job.get("next_run_at")
 
 
 def _payload_config_json(payload_or_job: Any) -> dict[str, Any]:
@@ -593,9 +604,13 @@ def _code_inspection_ai_executor_result_summary(
         },
         "task_creation": {
             "created_task_ids": inspection_result.get("task_ids") or [],
-            "label": "严重问题自动创建整改任务",
+            "label": "Bug 确认后推进研发任务",
             "records_imported": len(inspection_result.get("task_ids") or []),
-            "status": "succeeded",
+            "status": (
+                "deferred_to_bug_confirmation"
+                if inspection_result.get("task_promotion_deferred")
+                else "not_configured"
+            ),
         },
         "code_inspection_report": {
             "finding_count": report["finding_count"],
@@ -895,6 +910,7 @@ def sync_ai_executor_completion_to_scheduled_run(
             "last_success_at": (
                 finished_at if run_status == "succeeded" else job.get("last_success_at")
             ),
+            "next_run_at": _next_run_after(job, finished_at or now),
             "updated_at": now,
         }
         put_memory_record(current_store, "scheduled_jobs", job_update)

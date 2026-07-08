@@ -788,7 +788,8 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions(monkeypatc
         "code_inspection_report_",
     )
     assert execution_nodes["bug_creation"]["created_bug_ids"][0].startswith("bug_")
-    assert execution_nodes["task_creation"]["created_task_ids"][0].startswith("task_")
+    assert execution_nodes["task_creation"]["created_task_ids"] == []
+    assert execution_nodes["task_creation"]["status"] == "deferred_to_bug_confirmation"
     assert execution_nodes["notifications"]["created_notification_ids"]
 
     report_id = execution_nodes["code_inspection_report"]["report_id"]
@@ -824,19 +825,19 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions(monkeypatc
     assert detail_payload["report"]["plugin_invocation_log_id"].startswith(
         "plugin_invocation_log_",
     )
-    assert detail_payload["report"]["created_task_ids"][0].startswith("task_")
+    assert detail_payload["report"]["created_task_ids"] == []
     assert detail_payload["report"]["committer_summary"][0]["email"] == "alice@example.com"
     assert detail_payload["governance_summary"]["status"] == "healthy"
     assert detail_payload["governance_summary"]["active_severe_finding_count"] == 1
     assert detail_payload["governance_summary"]["covered_by_bug_count"] == 1
-    assert detail_payload["governance_summary"]["covered_by_task_count"] == 1
+    assert detail_payload["governance_summary"]["covered_by_task_count"] == 0
     assert detail_payload["governance_summary"]["bug_coverage_rate"] == 1
-    assert detail_payload["governance_summary"]["task_coverage_rate"] == 1
+    assert detail_payload["governance_summary"]["task_coverage_rate"] == 0
     assert detail_payload["governance_summary"]["uncovered_bug_finding_count"] == 0
-    assert detail_payload["governance_summary"]["uncovered_task_finding_count"] == 0
+    assert detail_payload["governance_summary"]["uncovered_task_finding_count"] == 1
     assert detail_payload["findings"][0]["severity"] == "critical"
     assert detail_payload["findings"][0]["committer_email"] == "alice@example.com"
-    assert detail_payload["findings"][0]["created_task_id"].startswith("task_")
+    assert detail_payload["findings"][0]["created_task_id"] is None
     assert detail_payload["notifications"][0]["channel"] in {"email", "dingtalk"}
     email_notification = next(
         item for item in detail_payload["notifications"] if item["channel"] == "email"
@@ -861,17 +862,81 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions(monkeypatc
     assert bug_items[0]["evidence"]["code_inspection_report_id"] == report_id
     assert bug_items[0]["evidence"]["committer_email"] == "alice@example.com"
 
+    remediation_tasks = client.get(
+        f"/api/ai-tasks?product_id={product['id']}&task_type=code_inspection_remediation",
+        headers=headers,
+    )
+    assert remediation_tasks.status_code == 200
+    assert remediation_tasks.json()["data"]["items"] == []
+
+    promoted = client.post(
+        f"/api/bugs/{bug_items[0]['id']}/promote-ai-task",
+        json={"auto_start": False},
+        headers=headers,
+    )
+    assert promoted.status_code == 200
+    promoted_task = promoted.json()["data"]["task"]
+    assert promoted_task["task_type"] == "bug_fix"
+    assert promoted_task["status"] == "draft"
+    task_detail = client.get(f"/api/ai-tasks/{promoted_task['id']}", headers=headers)
+    assert task_detail.status_code == 200
+    assert task_detail.json()["data"]["input"]["bug"]["evidence"][
+        "code_inspection_report_id"
+    ] == report_id
+
+
+def test_code_inspection_task_list_projects_historical_finding_location():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(
+        headers,
+        code="repo-historical-task-title-product",
+        name="Repository Historical Task Title Product",
+    )
+    app.state.store.ai_tasks["task_historical_code_inspection"] = {
+        "brain_app_id": "rd_brain",
+        "created_at": "2026-07-07T02:46:15+00:00",
+        "created_by": "user_admin",
+        "current_step": None,
+        "graph_run_ids": [],
+        "id": "task_historical_code_inspection",
+        "input_json": {
+            "code_inspection_finding_id": "code_inspection_finding_legacy",
+            "code_inspection_report_id": "code_inspection_report_legacy",
+            "description": "Hardcoded credential is committed in source.",
+            "file_path": "apps/api/app/auth.py",
+            "line_number": 80,
+            "recommendation": "Move the credential to secret storage.",
+            "rule_id": "secrets.hardcoded_credential",
+            "severity": "critical",
+            "title": "硬编码敏感凭据",
+        },
+        "module_code": None,
+        "output_json": None,
+        "product_context": {"product": {"id": product["id"], "name": product["name"]}},
+        "product_id": product["id"],
+        "requirement_id": None,
+        "requirement_snapshot": None,
+        "review_ids": [],
+        "status": "draft",
+        "task_type": "code_inspection_remediation",
+        "title": "[Code Inspection Remediation] 硬编码敏感凭据",
+        "updated_at": "2026-07-07T02:46:15+00:00",
+        "version_id": None,
+    }
+
     tasks = client.get(
         f"/api/ai-tasks?product_id={product['id']}&task_type=code_inspection_remediation",
         headers=headers,
     )
+
     assert tasks.status_code == 200
-    task_items = tasks.json()["data"]["items"]
-    assert len(task_items) == 1
-    assert task_items[0]["title"].startswith("[Code Inspection Remediation]")
-    task_detail = client.get(f"/api/ai-tasks/{task_items[0]['id']}", headers=headers)
-    assert task_detail.status_code == 200
-    assert task_detail.json()["data"]["input"]["code_inspection_report_id"] == report_id
+    item = tasks.json()["data"]["items"][0]
+    assert item["title"] == (
+        "[Code Inspection Remediation] "
+        "apps/api/app/auth.py:80 · 硬编码敏感凭据"
+    )
+    assert "input_json" not in item
 
 
 def test_code_inspection_finding_suppression_approval_updates_report_governance():
@@ -2494,10 +2559,10 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["summary"]["bug_created_count"] == 1
     assert payload["sla"]["status"] == "healthy"
     assert payload["sla"]["bug_coverage_rate"] == 1
-    assert payload["sla"]["task_coverage_rate"] == 1
-    assert payload["sla"]["covered_by_task_count"] == 1
-    assert payload["sla"]["uncovered_task_finding_count"] == 0
-    assert payload["sla"]["oldest_without_task_at"] is None
+    assert payload["sla"]["task_coverage_rate"] == 0
+    assert payload["sla"]["covered_by_task_count"] == 0
+    assert payload["sla"]["uncovered_task_finding_count"] == 1
+    assert payload["sla"]["oldest_without_task_at"] is not None
     assert payload["governance_pressure"] == {
         "accepted_risk_count": 0,
         "action_required_branch_count": 1,
@@ -2512,7 +2577,7 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
         "quality_gate_violation_count": 1,
         "status": "action_required",
         "uncovered_bug_finding_count": 0,
-        "uncovered_task_finding_count": 0,
+        "uncovered_task_finding_count": 1,
     }
     assert payload["rule_distribution"][0]["rule_id"] == "SEC001"
     assert payload["rule_distribution"][0]["severe_finding_count"] == 1
@@ -2524,7 +2589,7 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["branch_governance"][0]["status"] == "action_required"
     assert payload["branch_governance"][0]["active_severe_finding_count"] == 1
     assert payload["branch_governance"][0]["covered_by_bug_count"] == 1
-    assert payload["branch_governance"][0]["covered_by_task_count"] == 1
+    assert payload["branch_governance"][0]["covered_by_task_count"] == 0
     assert payload["branch_governance"][0]["quality_gate_failed_report_count"] == 1
     assert payload["branch_governance"][0]["quality_gate_violation_count"] == 1
     assert payload["committer_ranking"][0]["email"] == "alice@example.com"
@@ -2533,9 +2598,9 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["committer_governance"][0]["status"] == "healthy"
     assert payload["committer_governance"][0]["active_severe_finding_count"] == 1
     assert payload["committer_governance"][0]["covered_by_bug_count"] == 1
-    assert payload["committer_governance"][0]["covered_by_task_count"] == 1
+    assert payload["committer_governance"][0]["covered_by_task_count"] == 0
     assert payload["committer_governance"][0]["uncovered_bug_finding_count"] == 0
-    assert payload["committer_governance"][0]["uncovered_task_finding_count"] == 0
+    assert payload["committer_governance"][0]["uncovered_task_finding_count"] == 1
     assert payload["trend"][0]["report_count"] == 1
     assert payload["trend"][0]["quality_gate_passed_count"] == 0
     assert payload["trend"][0]["quality_gate_failed_count"] == 1

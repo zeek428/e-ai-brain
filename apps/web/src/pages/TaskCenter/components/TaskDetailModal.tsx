@@ -5,6 +5,7 @@ import type {
   TaskCenterTaskDetailRecord,
   TaskCenterTaskRecord,
 } from '../../../services/aiBrain';
+import { TaskOutputSummary } from './TaskOutputSummary';
 
 const { Text } = Typography;
 
@@ -36,6 +37,37 @@ function formatJsonPreview(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function displayValue(value: unknown) {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  return String(value);
+}
+
+function codeInspectionLocation(input: Record<string, unknown>) {
+  const filePath = displayValue(input.file_path);
+  const lineNumber = displayValue(input.line_number);
+  if (filePath === '-') {
+    return '-';
+  }
+  return lineNumber === '-' ? filePath : `${filePath}:${lineNumber}`;
+}
+
+function hasCodeInspectionContext(input: Record<string, unknown>) {
+  return Boolean(
+    input.code_inspection_finding_id ||
+      input.code_inspection_report_id ||
+      input.file_path ||
+      input.rule_id,
+  );
+}
+
 export function TaskDetailModal({
   dialog,
   onClose,
@@ -43,6 +75,8 @@ export function TaskDetailModal({
   taskTypeLabels,
 }: TaskDetailModalProps) {
   const detail = dialog?.detail;
+  const inputContext = objectRecord(detail?.inputJson);
+  const showCodeInspectionContext = hasCodeInspectionContext(inputContext);
   return (
     <Modal
       footer={null}
@@ -77,9 +111,46 @@ export function TaskDetailModal({
               {detail.graphRunIds.join(', ') || '-'}
             </Descriptions.Item>
           </Descriptions>
-          <Descriptions column={1} size="small">
-            <Descriptions.Item label="输出摘要">{detail.outputSummary}</Descriptions.Item>
-          </Descriptions>
+          {showCodeInspectionContext ? (
+            <section className="task-detail-output-section" data-testid="task-code-inspection-context">
+              <div className="task-detail-output-header">
+                <Text strong>代码巡检定位</Text>
+                <Text type="secondary">用于确认 AI 需要处理的具体 finding</Text>
+              </div>
+              <Descriptions column={1} size="small">
+                <Descriptions.Item label="目标位置">
+                  {codeInspectionLocation(inputContext)}
+                </Descriptions.Item>
+                <Descriptions.Item label="规则 ID">{displayValue(inputContext.rule_id)}</Descriptions.Item>
+                <Descriptions.Item label="严重级别">
+                  {displayValue(inputContext.severity)}
+                </Descriptions.Item>
+                <Descriptions.Item label="Finding">
+                  {displayValue(inputContext.code_inspection_finding_id)}
+                </Descriptions.Item>
+                <Descriptions.Item label="报告">
+                  {displayValue(inputContext.code_inspection_report_id)}
+                </Descriptions.Item>
+                <Descriptions.Item label="问题描述">
+                  {displayValue(inputContext.description)}
+                </Descriptions.Item>
+                <Descriptions.Item label="修复建议">
+                  {displayValue(inputContext.recommendation)}
+                </Descriptions.Item>
+              </Descriptions>
+            </section>
+          ) : null}
+          <section className="task-detail-output-section">
+            <div className="task-detail-output-header">
+              <Text strong>AI 输出摘要</Text>
+              <Text type="secondary">用于确认结果，原始执行数据保留在下方</Text>
+            </div>
+            <TaskOutputSummary summary={detail.outputSummary} />
+          </section>
+          <div className="task-detail-output-header">
+            <Text strong>原始执行结果</Text>
+            <Text type="secondary">用于排障和审计</Text>
+          </div>
           <Input.TextArea readOnly rows={8} value={formatJsonPreview(detail.outputJson)} />
         </Space>
       ) : null}

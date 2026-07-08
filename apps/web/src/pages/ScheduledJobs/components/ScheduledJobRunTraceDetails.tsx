@@ -313,7 +313,7 @@ export function RunExecutionChain({ run }: { run: ScheduledJobRunRecord }) {
     { key: 'skill_processing', title: 'AI执行处理内容' },
     { key: 'result_action', title: '动作反馈内容' },
     ...(getRunExecutionNode(run, 'task_creation')
-      ? [{ key: 'task_creation', title: '整改任务创建反馈' }]
+      ? [{ key: 'task_creation', title: 'Bug 确认后推进研发任务' }]
       : []),
   ];
   return (

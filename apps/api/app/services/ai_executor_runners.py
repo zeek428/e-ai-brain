@@ -74,6 +74,7 @@ from app.services.ai_executor_task_reliability import (
 )
 from app.services.operational_records import record_audit_event, save_single_repository_record
 from app.services.product_scope import product_scope_filter
+from app.services.task_output_summary import readable_task_output_summary
 
 
 def _ensure_admin(user: dict[str, Any]) -> None:
@@ -440,6 +441,9 @@ def _sync_runner_completion_to_ai_task(
             },
             "result": task.get("result_json") or {},
         }
+        output_summary = readable_task_output_summary(output_json)
+        if output_summary:
+            output_json["summary"] = output_summary
         updated_task = {
             **ai_task,
             "current_step": "executor_completed",

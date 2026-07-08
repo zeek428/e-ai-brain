@@ -282,7 +282,7 @@ function codeInspectionGovernanceItems(detail: CodeInspectionDetailRecord) {
     },
     {
       key: 'task_coverage',
-      label: '整改任务覆盖',
+      label: '任务推进',
       children: `${governance?.covered_by_task_count ?? detail.report.created_task_ids?.length ?? 0} 个 · ${percentageText(
         governance?.task_coverage_rate,
       )}`,
@@ -294,7 +294,7 @@ function codeInspectionGovernanceItems(detail: CodeInspectionDetailRecord) {
     },
     {
       key: 'uncovered_task',
-      label: '未派生任务',
+      label: '待推进任务',
       children: `${governance?.uncovered_task_finding_count ?? 0} 个`,
     },
     {
@@ -367,7 +367,7 @@ export function CodeInspectionDetailModal({
               { key: 'finding_count', label: '问题数', children: detail.report.finding_count },
               { key: 'severe_count', label: '严重问题', children: detail.report.severe_finding_count },
               { key: 'bugs', label: '创建 Bug', children: detail.report.created_bug_ids?.join('、') || '-' },
-              { key: 'tasks', label: '整改任务', children: detail.report.created_task_ids?.join('、') || '-' },
+              { key: 'tasks', label: '已推进任务', children: detail.report.created_task_ids?.join('、') || '-' },
               { key: 'summary', label: '摘要', children: detail.report.summary || '-' },
             ]}
           />
@@ -470,7 +470,7 @@ export function CodeInspectionDetailModal({
               { dataIndex: 'created_bug_id', title: 'Bug', width: 140, render: (value) => bugLink(String(value ?? '')) },
               {
                 dataIndex: 'created_task_id',
-                title: '整改任务',
+                title: 'AI Task',
                 width: 150,
                 render: (value) => taskLink(String(value ?? '')),
               },

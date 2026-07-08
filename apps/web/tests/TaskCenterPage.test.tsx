@@ -29,6 +29,75 @@ afterEach(() => {
 });
 
 describe('TaskCenterPage', () => {
+  it('cancels a cancellable task from the row operation dialog', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path.startsWith('/api/reviews/pending')) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (
+        path === '/api/products?active_only=true' ||
+        path === '/api/products?active_only=true&page_size=100'
+      ) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions?active_only=true&page_size=100'
+      ) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/ai-tasks/task_cancel/cancel' && init?.method === 'POST') {
+        expect(init.body).toBeUndefined();
+        return jsonResponse({ data: { id: 'task_cancel', status: 'cancelled' } });
+      }
+      if (path.startsWith('/api/ai-tasks')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_by: 'user_admin',
+                id: 'task_cancel',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'waiting_review',
+                task_type: 'technical_solution',
+                title: '可取消任务',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    const taskRow = (await screen.findByText('可取消任务')).closest('tr');
+    expect(taskRow).not.toBeNull();
+    fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
+    const operationDialog = await screen.findByTestId('task-operation-dialog');
+    fireEvent.click(within(operationDialog).getByRole('button', { name: '取消任务' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/ai-tasks/task_cancel/cancel',
+        'POST',
+      ]),
+    );
+  });
+
   it('hides task mutation actions for viewer users', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
@@ -392,6 +461,24 @@ describe('TaskCenterPage', () => {
                 task_type: 'code_review',
                 title: 'Code Review：接口任务',
               },
+              {
+                created_by: 'user_admin',
+                id: 'task_code_inspection',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'waiting_review',
+                task_type: 'code_inspection_remediation',
+                title: '代码巡检整改：硬编码敏感凭据',
+              },
+              {
+                created_by: 'user_admin',
+                id: 'task_bug_fix',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'draft',
+                task_type: 'bug_fix',
+                title: 'Bug 修复：登录失败',
+              },
             ],
             total: 1,
           },
@@ -420,6 +507,10 @@ describe('TaskCenterPage', () => {
     expect(await screen.findByText('接口任务')).toBeInTheDocument();
     expect(screen.getByText('模型网关失败任务')).toBeInTheDocument();
     expect(screen.getAllByText('产品详细设计')).not.toHaveLength(0);
+    expect(screen.getAllByText('代码巡检整改').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Bug 修复').length).toBeGreaterThan(0);
+    expect(screen.queryByText('code_inspection_remediation')).not.toBeInTheDocument();
+    expect(screen.queryByText('bug_fix')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '批量取消' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '批量重试' })).toBeDisabled();
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 task_api' }));
@@ -467,7 +558,7 @@ describe('TaskCenterPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '批量重试结果' })).not.toBeInTheDocument());
 
     expect(screen.getByRole('button', { name: '待确认' })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: '操作' })).toHaveLength(5);
+    expect(screen.getAllByRole('button', { name: '操作' })).toHaveLength(7);
     expect(screen.queryByRole('button', { name: '确认输出' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '生成技术方案' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '导出 Markdown' })).not.toBeInTheDocument();
@@ -497,18 +588,20 @@ describe('TaskCenterPage', () => {
     expect(screen.getByRole('button', { name: '创建 Code Review' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '待确认' }));
     expect(await screen.findByText('接口任务输出摘要')).toBeInTheDocument();
+    expect(screen.getByText('确认通过后由 Runner 合入主工作区，拒绝后由 Runner 丢弃隔离结果。')).toBeInTheDocument();
     const pendingReviewTable = screen
       .getAllByRole('table')
-      .find((table) => table.getAttribute('data-table-scroll-x') === '1040');
+      .find((table) => table.getAttribute('data-table-scroll-x') === '1160');
     expect(pendingReviewTable).toBeDefined();
     expect(pendingReviewTable).toHaveAttribute('data-table-layout', 'fixed');
-    expect(pendingReviewTable).toHaveAttribute('data-table-scroll-x', '1040');
+    expect(pendingReviewTable).toHaveAttribute('data-table-scroll-x', '1160');
     expect(screen.getAllByText('确认编号')).not.toHaveLength(0);
     expect(within(pendingReviewTable as HTMLElement).getByRole('columnheader', { name: '操作' })).toHaveAttribute(
       'data-fixed',
       'right',
     );
     expect(screen.getByRole('button', { name: '确认通过' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '拒绝并丢弃' })).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
       expect.stringMatching(/^\/api\/reviews\/pending\?.*page=1.*page_size=20/),
       'GET',
@@ -531,7 +624,13 @@ describe('TaskCenterPage', () => {
                 items: [
                   {
                     ai_task_id: 'task_scoped',
-                    content: { summary: '任务级输出摘要' },
+                    content: {
+                      result: {
+                        output_preview:
+                          '@@ -1,3 +1,3 @@\n- raw diff\n+ fixed diff\n\n' +
+                          'tokens used\n1,024\n**整改状态：已修复** - 任务级输出摘要 - `npm test`：通过',
+                      },
+                    },
                     id: 'review_scoped',
                     stage: 'technical_solution',
                     status: 'pending',
@@ -597,7 +696,11 @@ describe('TaskCenterPage', () => {
     fireEvent.click(within(operationDialog).getByRole('button', { name: '确认输出' }));
 
     expect(await screen.findByText('确认输出：任务级确认任务')).toBeInTheDocument();
-    expect(await screen.findByText('任务级输出摘要')).toBeInTheDocument();
+    const reviewSummary = await screen.findByTestId('task-output-summary-preview');
+    expect(within(reviewSummary).getByText('整改状态')).toBeInTheDocument();
+    expect(within(reviewSummary).getByText('已修复')).toBeInTheDocument();
+    expect(within(reviewSummary).getByText('任务级输出摘要')).toBeInTheDocument();
+    expect(within(reviewSummary).getByText('npm test')).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
       expect.stringMatching(/^\/api\/reviews\/pending\?.*ai_task_id=task_scoped/),
       'GET',
@@ -766,8 +869,8 @@ describe('TaskCenterPage', () => {
                 product_id: 'product_api',
                 requirement_id: 'requirement_api',
                 status: 'completed',
-                task_type: 'technical_solution',
-                title: '技术方案：详情入口',
+                task_type: 'code_inspection_remediation',
+                title: '代码巡检整改：详情入口',
               },
             ],
             total: 1,
@@ -781,25 +884,45 @@ describe('TaskCenterPage', () => {
             graph_runs: [{ id: 'graph_run_api', status: 'completed' }],
             id: 'task_detail_api',
             input: {
+              code_inspection_finding_id: 'code_inspection_finding_api',
+              code_inspection_report_id: 'code_inspection_report_api',
+              description: 'Access key is committed in source code.',
+              file_path: 'src/config.py',
+              line_number: 12,
               product_context: {
                 module: { code: 'core', name: '工作台模块' },
                 product: { id: 'product_api', name: 'AI Brain 产品' },
                 version: { id: 'version_api', name: 'v1 MVP' },
               },
+              recommendation: 'Move the key to a secret manager.',
+              rule_id: 'SEC001',
+              severity: 'critical',
               requirement_snapshot: {
                 id: 'requirement_api',
                 title: '真实需求快照',
               },
             },
             output: {
-              summary: '任务详情输出摘要',
+              result: {
+                output_preview:
+                  "@@ -150,7 +202,7 @@\n- username: 'admin@example.com'\n+ username: TEST_LOGIN_USERNAME",
+              },
             },
+            output_summary:
+              '**整改状态：已修复**\n' +
+              '- 已删除登录页硬编码凭据\n' +
+              '**验证方式**\n' +
+              '- `npm test`：通过\n' +
+              '**结构化结论**\n' +
+              '```json\n' +
+              '{"verdict":"fixed"}\n' +
+              '```',
             pending_review: null,
             product_id: 'product_api',
             requirement_id: 'requirement_api',
             status: 'completed',
-            task_type: 'technical_solution',
-            title: '技术方案：详情入口',
+            task_type: 'code_inspection_remediation',
+            title: '代码巡检整改：详情入口',
           },
         });
       }
@@ -810,21 +933,37 @@ describe('TaskCenterPage', () => {
 
     render(<TaskCenterPage />);
 
-    expect(await screen.findByText('技术方案：详情入口')).toBeInTheDocument();
-    const taskRow = screen.getByText('技术方案：详情入口').closest('tr');
+    expect(await screen.findByText('代码巡检整改：详情入口')).toBeInTheDocument();
+    const taskRow = screen.getByText('代码巡检整改：详情入口').closest('tr');
     expect(taskRow).not.toBeNull();
     fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
 
     expect(await screen.findByText('任务操作')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
 
-    expect(await screen.findByText(/任务详情：技术方案：详情入口/)).toBeInTheDocument();
+    expect(await screen.findByText(/任务详情：代码巡检整改：详情入口/)).toBeInTheDocument();
+    expect(screen.getAllByText('代码巡检整改').length).toBeGreaterThan(0);
+    expect(screen.queryByText('code_inspection_remediation')).not.toBeInTheDocument();
     expect(screen.getByText('AI Brain 产品')).toBeInTheDocument();
     expect(screen.getByText('v1 MVP')).toBeInTheDocument();
     expect(screen.getByText('工作台模块')).toBeInTheDocument();
     expect(screen.getByText('真实需求快照')).toBeInTheDocument();
     expect(screen.getByText('graph_run_api')).toBeInTheDocument();
-    expect(screen.getByDisplayValue(/任务详情输出摘要/)).toBeInTheDocument();
+    expect(screen.getByText('代码巡检定位')).toBeInTheDocument();
+    expect(screen.getByText('src/config.py:12')).toBeInTheDocument();
+    expect(screen.getByText('SEC001')).toBeInTheDocument();
+    expect(screen.getByText('critical')).toBeInTheDocument();
+    expect(screen.getByText('code_inspection_finding_api')).toBeInTheDocument();
+    expect(screen.getByText('Access key is committed in source code.')).toBeInTheDocument();
+    expect(screen.getByText('Move the key to a secret manager.')).toBeInTheDocument();
+    const outputSummaryReport = screen.getByTestId('task-output-summary-report');
+    expect(within(outputSummaryReport).getByText('整改状态')).toBeInTheDocument();
+    expect(within(outputSummaryReport).getByText('已修复')).toBeInTheDocument();
+    expect(within(outputSummaryReport).getByText('已删除登录页硬编码凭据')).toBeInTheDocument();
+    expect(within(outputSummaryReport).getByText('验证方式')).toBeInTheDocument();
+    expect(within(outputSummaryReport).getByText('npm test')).toBeInTheDocument();
+    expect(within(outputSummaryReport).getByText('{"verdict":"fixed"}')).toBeInTheDocument();
+    expect(screen.getByDisplayValue(/output_preview/)).toBeInTheDocument();
     await waitFor(() => {
       const relevantCalls = fetchMock.mock.calls
         .map(([path, init]) => [
@@ -986,13 +1125,14 @@ describe('TaskCenterPage', () => {
     expect(await screen.findByText('技术方案确认任务')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '待确认' }));
     expect(await screen.findByText('AI 原始技术方案摘要')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '拒绝' }));
+    fireEvent.click(screen.getByRole('button', { name: '拒绝并丢弃' }));
     const rejectModalTitle = await screen.findByText('拒绝确认：review_api');
     const rejectModal = rejectModalTitle.closest('.ant-modal') as HTMLElement;
+    expect(rejectModal).toHaveTextContent('拒绝后 Runner 会丢弃隔离工作区的代码修改；历史未隔离任务不会自动回滚主工作区。');
     fireEvent.change(screen.getByRole('textbox', { name: '拒绝原因' }), {
       target: { value: '风险过高，需要重新生成' },
     });
-    fireEvent.click(within(rejectModal).getByRole('button', { name: /拒\s*绝/ }));
+    fireEvent.click(within(rejectModal).getByRole('button', { name: '拒绝并丢弃' }));
     await waitFor(() =>
       expect(fetchMock.mock.calls.some(([path]) => path === '/api/reviews/review_api/reject')).toBe(true),
     );

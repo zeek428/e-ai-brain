@@ -1,27 +1,23 @@
 import {
-  DatabaseOutlined,
   DeleteOutlined,
   EditOutlined,
   FileSearchOutlined,
-  FolderAddOutlined,
   FolderOpenOutlined,
+  MoreOutlined,
   NodeIndexOutlined,
   PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
-  SearchOutlined,
   StopOutlined,
-  UploadOutlined,
 } from '@ant-design/icons';
-import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Typography, message } from 'antd';
+import { Button, Dropdown, Modal, Space, message } from 'antd';
 import type { FormInstance } from 'antd';
 import { type ChangeEvent, type Key, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { ManagementListQuery } from '../../components/ManagementListPage';
-import type { KnowledgeRecord } from '../../data/management';
+import type { KnowledgeRecord, RequirementRecord } from '../../data/management';
 import { type UserRoleDefinition, toUserRoleOptions } from '../../data/roles';
 import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
@@ -44,9 +40,10 @@ import {
   fetchKnowledgeImportWorkerStatus,
   fetchKnowledgeSearchResults,
   fetchKnowledgeSpaces,
+  fetchLifecycleFullChain,
   fetchManagementKnowledgeList,
+  fetchManagementRequirementList,
   fetchRoleDefinitions,
-  fullChainSubjectHref,
   rejectKnowledgeDeposit,
   reparseKnowledgeDocument,
   retryKnowledgeImportJob,
@@ -67,14 +64,26 @@ import {
   type KnowledgeSearchResultRecord,
   type KnowledgeSpaceRecord,
   type RemoteListPerformance,
+  type RequirementFullChainRecord,
 } from '../../services/aiBrain';
 import { formatMutationError, joinTextList, splitCommaText } from '../../utils/managementCrud';
 import {
   KnowledgeIndexHealthPanel,
   type KnowledgeIndexHealthState,
 } from './components/KnowledgeIndexHealthPanel';
-
-const { Text } = Typography;
+import { KnowledgePageDialogs } from './components/KnowledgePageDialogs';
+import { KnowledgeWorkbenchPanels } from './components/KnowledgeWorkbenchPanels';
+import type {
+  KnowledgeAdvancedFilterValues,
+  KnowledgeBatchMoveFormValues,
+  KnowledgeFolderEditFormValues,
+  KnowledgeFolderFormValues,
+  KnowledgeFormValues,
+  KnowledgeSearchFormValues,
+  KnowledgeSpaceFormValues,
+  KnowledgeWorkbenchTab,
+  RejectDepositFormValues,
+} from './types';
 
 const statusLabels: Record<KnowledgeRecord['status'], { color: string; label: string }> = {
   archived: { color: 'default', label: '已归档' },
@@ -108,9 +117,8 @@ const assetTypeLabels: Record<string, string> = {
   table_json: '表格数据',
 };
 
-const KNOWLEDGE_TABLE_SCROLL_X = 2000;
-const KNOWLEDGE_ACTION_COLUMN_WIDTH = 420;
-const KNOWLEDGE_DEPOSIT_TABLE_SCROLL_X = 1120;
+const KNOWLEDGE_TABLE_SCROLL_X = 1520;
+const KNOWLEDGE_ACTION_COLUMN_WIDTH = 220;
 
 function formatAssetSize(sizeBytes: number) {
   if (sizeBytes < 1024) {
@@ -121,56 +129,6 @@ function formatAssetSize(sizeBytes: number) {
   }
   return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
 }
-
-type KnowledgeFormValues = {
-  chunk_strategy?: string;
-  content?: string;
-  doc_type: string;
-  folder_id?: string;
-  index_status?: KnowledgeRecord['status'];
-  knowledge_space_id?: string;
-  permission_roles?: string[];
-  parser_engine?: string;
-  tags?: string;
-  title: string;
-};
-
-type KnowledgeSpaceFormValues = {
-  code: string;
-  description?: string;
-  name: string;
-};
-
-type KnowledgeFolderFormValues = {
-  name: string;
-};
-
-type KnowledgeFolderEditFormValues = {
-  folder_id: string;
-  name?: string;
-  parent_folder_id?: string;
-  sort_order?: number;
-  status?: string;
-};
-
-type KnowledgeBatchMoveFormValues = {
-  folder_id?: string;
-};
-
-type RejectDepositFormValues = {
-  reason: string;
-};
-
-type KnowledgeSearchFormValues = {
-  knowledge_space_id?: string;
-  query: string;
-  top_k?: number;
-};
-
-type KnowledgeQuickSearchFormValues = {
-  quick_query: string;
-  top_k?: number;
-};
 
 const knowledgeSortFieldMap: Record<string, string> = {
   documentType: 'doc_type',
@@ -183,6 +141,41 @@ const knowledgeSortFieldMap: Record<string, string> = {
 
 function normalizeFilterText(value: unknown) {
   return String(value ?? '').trim() || undefined;
+}
+
+function hasFilterValues(filters: Record<string, unknown>) {
+  return Object.values(filters).some((value) => normalizeFilterText(value));
+}
+
+function normalizeAdvancedFilters(values: KnowledgeAdvancedFilterValues) {
+  return {
+    documentType: normalizeFilterText(values.documentType),
+    folderId: normalizeFilterText(values.folderId),
+    ownerRole: normalizeFilterText(values.ownerRole),
+  };
+}
+
+function removeAdvancedFilters(filters: ManagementListQuery['filters']) {
+  const restFilters = { ...filters };
+  delete restFilters.documentType;
+  delete restFilters.folderId;
+  delete restFilters.ownerRole;
+  return restFilters;
+}
+
+function isNoisyKnowledgeSpace(space: KnowledgeSpaceRecord) {
+  const normalized = `${space.code} ${space.name} ${space.description ?? ''}`.toLowerCase();
+  return [
+    'full-chain',
+    'smoke',
+    'test',
+    'tmp',
+    'temp',
+    'worker',
+    'parser',
+    '验证',
+    '测试',
+  ].some((keyword) => normalized.includes(keyword));
 }
 
 function buildKnowledgeListQuery(query: ManagementListQuery): KnowledgeListQuery {
@@ -201,6 +194,7 @@ function buildKnowledgeListQuery(query: ManagementListQuery): KnowledgeListQuery
 }
 
 export default function KnowledgePage() {
+  const advancedFilterSubmitRef = useRef<HTMLButtonElement>(null);
   const documentFormRef = useRef<FormInstance<KnowledgeFormValues>>(null);
   const documentSubmitRef = useRef<HTMLButtonElement>(null);
   const batchMoveSubmitRef = useRef<HTMLButtonElement>(null);
@@ -224,14 +218,19 @@ export default function KnowledgePage() {
   const [isAssetsModalOpen, setIsAssetsModalOpen] = useState(false);
   const [isBatchMoveModalOpen, setIsBatchMoveModalOpen] = useState(false);
   const [isChunksModalOpen, setIsChunksModalOpen] = useState(false);
-  const [isDepositsModalOpen, setIsDepositsModalOpen] = useState(false);
   const [isFolderEditModalOpen, setIsFolderEditModalOpen] = useState(false);
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
-  const [isImportJobsModalOpen, setIsImportJobsModalOpen] = useState(false);
-  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [isSpaceModalOpen, setIsSpaceModalOpen] = useState(false);
+  const [activeWorkbenchTab, setActiveWorkbenchTab] = useState<KnowledgeWorkbenchTab>('documents');
+  const [advancedFilterValues, setAdvancedFilterValues] = useState<KnowledgeAdvancedFilterValues>({});
   const [editingDocument, setEditingDocument] = useState<KnowledgeRecord | null>(null);
+  const [isAdvancedFilterOpen, setIsAdvancedFilterOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [fullChainDeposit, setFullChainDeposit] = useState<KnowledgeDepositRecord | null>(null);
+  const [fullChain, setFullChain] = useState<RequirementFullChainRecord | null>(null);
+  const [fullChainError, setFullChainError] = useState<RemoteRowsError>();
+  const [fullChainVersionRequirements, setFullChainVersionRequirements] = useState<RequirementRecord[]>([]);
+  const [isFullChainLoading, setIsFullChainLoading] = useState(false);
   const [rejectingDeposit, setRejectingDeposit] = useState<KnowledgeDepositRecord | null>(null);
   const [detailDocument, setDetailDocument] = useState<KnowledgeRecord | null>(null);
   const [searchRows, setSearchRows] = useState<KnowledgeSearchResultRecord[]>([]);
@@ -240,7 +239,6 @@ export default function KnowledgePage() {
   const [ragAnswer, setRagAnswer] = useState<KnowledgeRagAnswerRecord | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [documentInitialValues, setDocumentInitialValues] = useState<Partial<KnowledgeFormValues>>({});
-  const [searchInitialValues, setSearchInitialValues] = useState<Partial<KnowledgeSearchFormValues>>({ top_k: 5 });
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | undefined>();
   const [selectedUploadFile, setSelectedUploadFile] = useState<{
     file: File;
@@ -249,6 +247,8 @@ export default function KnowledgePage() {
     sizeBytes: number;
   } | null>(null);
   const [folders, setFolders] = useState<KnowledgeFolderRecord[]>([]);
+  const [showNoisySpaces, setShowNoisySpaces] = useState(false);
+  const [spaceSearchText, setSpaceSearchText] = useState('');
   const [spaces, setSpaces] = useState<KnowledgeSpaceRecord[]>([]);
   const [roleCatalogError, setRoleCatalogError] = useState<string | undefined>();
   const [roleDefinitions, setRoleDefinitions] = useState<UserRoleDefinition[]>([]);
@@ -295,6 +295,26 @@ export default function KnowledgePage() {
   );
   const selectedSpace = useMemo(
     () => spaces.find((space) => space.id === selectedSpaceId),
+    [selectedSpaceId, spaces],
+  );
+  const selectedFolderId = normalizeFilterText(listQuery.filters.folderId);
+  const visibleSpaces = useMemo(() => {
+    const searchText = spaceSearchText.trim().toLowerCase();
+    return spaces.filter((space) => {
+      const matchesSearch = searchText
+        ? `${space.name} ${space.code}`.toLowerCase().includes(searchText)
+        : true;
+      if (!matchesSearch) {
+        return false;
+      }
+      if (showNoisySpaces || space.id === selectedSpaceId) {
+        return true;
+      }
+      return !isNoisyKnowledgeSpace(space);
+    });
+  }, [selectedSpaceId, showNoisySpaces, spaceSearchText, spaces]);
+  const hiddenNoisySpaceCount = useMemo(
+    () => spaces.filter((space) => isNoisyKnowledgeSpace(space) && space.id !== selectedSpaceId).length,
     [selectedSpaceId, spaces],
   );
   const reloadSpaces = useCallback(async () => {
@@ -448,10 +468,44 @@ export default function KnowledgePage() {
     }
   }, []);
 
-  const openDepositsModal = useCallback(() => {
-    setIsDepositsModalOpen(true);
-    void reloadDeposits();
-  }, [reloadDeposits]);
+  const closeFullChainModal = useCallback(() => {
+    setFullChainDeposit(null);
+    setFullChain(null);
+    setFullChainError(undefined);
+    setFullChainVersionRequirements([]);
+    setIsFullChainLoading(false);
+  }, []);
+
+  const openFullChainModal = useCallback(async (row: KnowledgeDepositRecord) => {
+    setFullChainDeposit(row);
+    setFullChain(null);
+    setFullChainError(undefined);
+    setFullChainVersionRequirements([]);
+    setIsFullChainLoading(true);
+    try {
+      const loadedChain = await fetchLifecycleFullChain('knowledge_deposit', row.id);
+      setFullChain(loadedChain);
+      if (loadedChain.iterationVersion?.id) {
+        try {
+          const versionRequirements = await fetchManagementRequirementList({
+            page: 1,
+            pageSize: 100,
+            sortField: 'created_at',
+            sortOrder: 'descend',
+            versionId: loadedChain.iterationVersion.id,
+          });
+          setFullChainVersionRequirements(versionRequirements.rows);
+        } catch {
+          setFullChainVersionRequirements([]);
+        }
+      }
+    } catch (loadError: unknown) {
+      setFullChainError(normalizeRemoteRowsError(loadError));
+      setFullChainVersionRequirements([]);
+    } finally {
+      setIsFullChainLoading(false);
+    }
+  }, []);
 
   const reloadImportJobs = useCallback(async (spaceId?: string) => {
     setImportJobsLoading(true);
@@ -481,18 +535,30 @@ export default function KnowledgePage() {
 
   const openImportJobsModal = useCallback(() => {
     const spaceId = selectedSpaceId ?? spaces[0]?.id;
-    setIsImportJobsModalOpen(true);
+    setActiveWorkbenchTab('imports');
     void reloadImportJobs(spaceId);
     void reloadImportWorkerStatus();
   }, [reloadImportJobs, reloadImportWorkerStatus, selectedSpaceId, spaces]);
 
   const openSearchModal = useCallback(() => {
-    setSearchInitialValues({ knowledge_space_id: selectedSpaceId, top_k: 5 });
     setSearchRows([]);
     setHasSearched(false);
     setRagAnswer(null);
-    setIsSearchModalOpen(true);
-  }, [selectedSpaceId]);
+    setActiveWorkbenchTab('search');
+  }, []);
+
+  const handleWorkbenchTabChange = useCallback((tabKey: string) => {
+    const nextTab = tabKey as KnowledgeWorkbenchTab;
+    setActiveWorkbenchTab(nextTab);
+    if (nextTab === 'imports') {
+      const spaceId = selectedSpaceId ?? spaces[0]?.id;
+      void reloadImportJobs(spaceId);
+      void reloadImportWorkerStatus();
+    }
+    if (nextTab === 'deposits') {
+      void reloadDeposits();
+    }
+  }, [reloadDeposits, reloadImportJobs, reloadImportWorkerStatus, selectedSpaceId, spaces]);
 
   const selectWorkbenchSpace = useCallback((spaceId: string) => {
     setSelectedSpaceId(spaceId);
@@ -745,6 +811,16 @@ export default function KnowledgePage() {
     }
   }, [reload]);
 
+  const confirmDeleteDocument = useCallback((row: KnowledgeRecord) => {
+    Modal.confirm({
+      content: '删除后该文档不会再出现在知识检索和问答结果中。',
+      okButtonProps: { danger: true },
+      okText: '删除',
+      onOk: () => handleDelete(row),
+      title: `删除知识 ${row.id}？`,
+    });
+  }, [handleDelete]);
+
   const handleRetryIndex = useCallback(async (row: KnowledgeRecord) => {
     try {
       await retryKnowledgeDocumentIndex(row.id);
@@ -754,6 +830,53 @@ export default function KnowledgePage() {
       message.error(formatMutationError(retryError));
     }
   }, [reload]);
+
+  const handleAdvancedFilterSubmit = useCallback((values: KnowledgeAdvancedFilterValues) => {
+    const normalizedValues = normalizeAdvancedFilters(values);
+    setAdvancedFilterValues(normalizedValues);
+    setIsAdvancedFilterOpen(false);
+    setListQuery((current) => ({
+      ...current,
+      filters: {
+        ...removeAdvancedFilters(current.filters),
+        ...normalizedValues,
+      },
+      page: 1,
+    }));
+  }, []);
+
+  const clearAdvancedFilters = useCallback(() => {
+    setAdvancedFilterValues({});
+    setListQuery((current) => ({
+      ...current,
+      filters: removeAdvancedFilters(current.filters),
+      page: 1,
+    }));
+  }, []);
+
+  const handleListQueryChange = useCallback((query: ManagementListQuery) => {
+    const isFullReset =
+      !hasFilterValues(query.filters) &&
+      query.page === 1 &&
+      !query.sortField &&
+      !query.sortOrder;
+    const nextAdvancedValues = isFullReset ? {} : advancedFilterValues;
+    if (isFullReset && hasFilterValues(advancedFilterValues)) {
+      setAdvancedFilterValues({});
+    }
+    const nextFilters: ManagementListQuery['filters'] = {
+      ...query.filters,
+      ...nextAdvancedValues,
+    };
+    const nextSpaceId = normalizeFilterText(nextFilters.knowledgeSpaceId);
+    if (nextSpaceId) {
+      setSelectedSpaceId(nextSpaceId);
+    }
+    setListQuery({
+      ...query,
+      filters: nextFilters,
+    });
+  }, [advancedFilterValues]);
 
   const handleApproveDeposit = useCallback(async (row: KnowledgeDepositRecord) => {
     if (!selectedSpaceId) {
@@ -1162,28 +1285,48 @@ export default function KnowledgePage() {
             <Button aria-label="分块" icon={<NodeIndexOutlined />} onClick={() => void openChunksModal(row)} type="link">
               分块
             </Button>
-            <Button icon={<ReloadOutlined />} onClick={() => void handleReparseDocument(row)} type="link">
-              重解析
-            </Button>
-            <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
+            <Button aria-label="编辑" icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
-            {row.status === 'index_failed' || row.status === 'text_indexed' ? (
-              <Button icon={<ReloadOutlined />} onClick={() => handleRetryIndex(row)} type="link">
-                {row.status === 'text_indexed' ? '补向量索引' : '重试索引'}
+            <Button aria-label="删除" danger icon={<DeleteOutlined />} onClick={() => confirmDeleteDocument(row)} type="link">
+              删除
+            </Button>
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    icon: <ReloadOutlined />,
+                    key: 'reparse',
+                    label: '重解析',
+                  },
+                  row.status === 'index_failed' || row.status === 'text_indexed'
+                    ? {
+                        icon: <ReloadOutlined />,
+                        key: 'retry-index',
+                        label: row.status === 'text_indexed' ? '补向量索引' : '重试索引',
+                      }
+                    : null,
+                ].filter(Boolean),
+                onClick: ({ key }) => {
+                  if (key === 'reparse') {
+                    void handleReparseDocument(row);
+                  }
+                  if (key === 'retry-index') {
+                    void handleRetryIndex(row);
+                  }
+                },
+              }}
+            >
+              <Button aria-label={`更多操作 ${row.id}`} icon={<MoreOutlined />} type="link">
+                更多
               </Button>
-            ) : null}
-            <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除知识 ${row.id}？`}>
-              <Button danger icon={<DeleteOutlined />} type="link">
-                删除
-              </Button>
-            </Popconfirm>
+            </Dropdown>
           </Space>
         ),
       },
     ],
     [
-      handleDelete,
+      confirmDeleteDocument,
       handleReparseDocument,
       handleRetryIndex,
       openDocumentDetail,
@@ -1237,7 +1380,7 @@ export default function KnowledgePage() {
         width: 190,
         render: (_, row) => (
           <Space size={4} wrap={false}>
-            <Button href={fullChainSubjectHref('knowledge_deposit', row.id)} type="link">
+            <Button onClick={() => void openFullChainModal(row)} type="link">
               全链路
             </Button>
             {row.status === 'pending' ? (
@@ -1254,7 +1397,7 @@ export default function KnowledgePage() {
         ),
       },
     ],
-    [handleApproveDeposit, openRejectDepositModal],
+    [handleApproveDeposit, openFullChainModal, openRejectDepositModal],
   );
 
   const searchColumns = useMemo<ProColumns<KnowledgeSearchResultRecord>[]>(
@@ -1303,110 +1446,50 @@ export default function KnowledgePage() {
     />
   );
 
-  const knowledgeWorkbenchPanel = (
-    <div className="knowledge-workbench">
-      <section aria-label="知识空间目录" className="knowledge-workbench-nav">
-        <div className="knowledge-workbench-section-title">
-          <Text strong>知识空间</Text>
-          <Text type="secondary">{spaces.length} 个</Text>
-        </div>
-        <div className="knowledge-space-list">
-          {spaces.map((space) => (
-            <Button
-              block
-              className={space.id === selectedSpaceId ? 'is-active' : undefined}
-              key={space.id}
-              onClick={() => selectWorkbenchSpace(space.id)}
-            >
-              {space.name}
-            </Button>
-          ))}
-          {spaces.length === 0 ? <Text type="secondary">暂无可访问空间</Text> : null}
-        </div>
-        <div className="knowledge-workbench-section-title">
-          <Text strong>目录</Text>
-          <Button disabled={!selectedSpaceId} onClick={() => setIsFolderModalOpen(true)} size="small">
-            新建
-          </Button>
-        </div>
-        <div className="knowledge-folder-list">
-          <Button block onClick={() => selectWorkbenchFolder(undefined)}>
-            空间根目录
-          </Button>
-          {folders.map((folder) => (
-            <Button
-              block
-              key={folder.id}
-              onClick={() => selectWorkbenchFolder(folder.id)}
-            >
-              {folder.path}
-            </Button>
-          ))}
-        </div>
-      </section>
-      <section aria-label="知识检索问答" className="knowledge-workbench-rag">
-        <div className="knowledge-rag-header">
-          <div>
-            <Text strong>Hybrid Search + RAG</Text>
-            <Text type="secondary">
-              {selectedSpace ? `当前空间：${selectedSpace.name}` : '全部可访问空间'}
-            </Text>
-          </div>
-          <Button icon={<SearchOutlined />} onClick={openSearchModal}>
-            高级检索
-          </Button>
-        </div>
-        <Form<KnowledgeQuickSearchFormValues>
-          className="knowledge-rag-form"
-          initialValues={{ top_k: 6 }}
-          key={selectedSpaceId || 'all'}
-          layout="inline"
-          onFinish={(values) =>
-            void handleSearch({
-              knowledge_space_id: selectedSpaceId,
-              query: values.quick_query,
-              top_k: values.top_k,
-            })
-          }
-        >
-          <Form.Item
-            name="quick_query"
-            rules={[{ required: true, message: '请输入问题或关键词' }]}
-          >
-            <Input placeholder="搜索制度、方案、需求背景或直接提问" />
-          </Form.Item>
-          <Form.Item name="top_k">
-            <InputNumber min={1} max={12} precision={0} />
-          </Form.Item>
-          <Form.Item>
-            <Button htmlType="submit" loading={searchLoading} type="primary">
-              问答
-            </Button>
-          </Form.Item>
-        </Form>
-        {ragAnswer ? (
-          <div className="knowledge-rag-answer">
-            <Text strong>回答</Text>
-            <div>{ragAnswer.answer}</div>
-            <Text type="secondary">
-              引用 {ragAnswer.metrics?.citationCount ?? ragAnswer.citations.length} 条 ·
-              延迟 {ragAnswer.metrics?.latencyMs ?? '-'} ms
-            </Text>
-          </div>
-        ) : (
-          <div className="knowledge-rag-empty">
-            <Text type="secondary">输入问题后展示带引用的答案和召回证据。</Text>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-
   const knowledgeBeforeTable = (
-    <div className="knowledge-page-stack">
-      {knowledgeWorkbenchPanel}
-      {knowledgeHealthPanel}
-    </div>
+    <KnowledgeWorkbenchPanels
+      activeWorkbenchTab={activeWorkbenchTab}
+      depositColumns={depositColumns}
+      depositRows={depositRows}
+      depositsLoading={depositsLoading}
+      folders={folders}
+      hasSearched={hasSearched}
+      hiddenNoisySpaceCount={hiddenNoisySpaceCount}
+      importJobColumns={importJobColumns}
+      importJobRows={importJobRows}
+      importJobsLoading={importJobsLoading}
+      importWorkerStatus={importWorkerStatus}
+      importWorkerStatusLoading={importWorkerStatusLoading}
+      knowledgeHealthPanel={knowledgeHealthPanel}
+      knowledgeHealthState={knowledgeHealthState}
+      listRows={listState.rows}
+      listTotal={listState.total}
+      onCreateFolder={() => setIsFolderModalOpen(true)}
+      onOpenSearch={openSearchModal}
+      onReloadDeposits={() => void reloadDeposits()}
+      onReloadImportJobs={(spaceId) => void reloadImportJobs(spaceId)}
+      onReloadImportWorkerStatus={() => void reloadImportWorkerStatus()}
+      onSearch={handleSearch}
+      onSelectFolder={selectWorkbenchFolder}
+      onSelectSpace={selectWorkbenchSpace}
+      onSetActiveWorkbenchTab={setActiveWorkbenchTab}
+      onSetSelectedSpaceId={setSelectedSpaceId}
+      onToggleNoisySpaces={() => setShowNoisySpaces((current) => !current)}
+      onUpdateSpaceSearchText={setSpaceSearchText}
+      onWorkbenchTabChange={handleWorkbenchTabChange}
+      ragAnswer={ragAnswer}
+      searchColumns={searchColumns}
+      searchLoading={searchLoading}
+      searchRows={searchRows}
+      selectedFolderId={selectedFolderId}
+      selectedSpace={selectedSpace}
+      selectedSpaceId={selectedSpaceId}
+      showNoisySpaces={showNoisySpaces}
+      spaceOptions={spaceOptions}
+      spaceSearchText={spaceSearchText}
+      spaces={spaces}
+      visibleSpaces={visibleSpaces}
+    />
   );
 
   return (
@@ -1425,24 +1508,6 @@ export default function KnowledgePage() {
             options: spaceOptions,
             type: 'select',
           },
-          {
-            label: '目录',
-            name: 'folderId',
-            options: folderOptions,
-            type: 'select',
-          },
-          {
-            label: '类型',
-            name: 'documentType',
-            options: [
-              { label: 'PRD', value: 'PRD' },
-              { label: 'Spec', value: 'Spec' },
-              { label: 'Deposit', value: 'Deposit' },
-              { label: 'Manual', value: 'manual' },
-            ],
-            type: 'select',
-          },
-          { label: '权限角色', name: 'ownerRole', type: 'text' },
           {
             label: '状态',
             name: 'status',
@@ -1464,13 +1529,7 @@ export default function KnowledgePage() {
         onReload={() => void reload()}
         primaryAction="导入文档"
         remote={{
-          onChange: (query) => {
-            const nextSpaceId = normalizeFilterText(query.filters.knowledgeSpaceId);
-            if (nextSpaceId) {
-              setSelectedSpaceId(nextSpaceId);
-            }
-            setListQuery(query);
-          },
+          onChange: handleListQueryChange,
           page: listState.page,
           pageSize: listState.pageSize,
           performance: listState.performance,
@@ -1489,8 +1548,8 @@ export default function KnowledgePage() {
           <Button icon={<PlusOutlined />} key="create-space" onClick={() => setIsSpaceModalOpen(true)}>
             新建空间
           </Button>,
-          <Button aria-label="导入任务" icon={<DatabaseOutlined />} key="import-jobs" onClick={openImportJobsModal}>
-            导入任务
+          <Button key="advanced-filter" onClick={() => setIsAdvancedFilterOpen(true)}>
+            高级筛选
           </Button>,
           <Button icon={<FolderOpenOutlined />} key="folder-edit" onClick={() => setIsFolderEditModalOpen(true)}>
             目录整理
@@ -1503,501 +1562,82 @@ export default function KnowledgePage() {
           >
             批量移动
           </Button>,
-          <Button aria-label="知识检索" icon={<SearchOutlined />} key="knowledge-search" onClick={openSearchModal}>
-            知识检索
-          </Button>,
-          <Button key="deposit-review" onClick={openDepositsModal}>
-            沉淀审核
-          </Button>,
         ]}
       />
-      <Modal
-        footer={null}
-        onCancel={() => setIsImportJobsModalOpen(false)}
-        open={isImportJobsModalOpen}
-        title="导入任务"
-        width={980}
-      >
-        <Space
-          style={{ justifyContent: 'space-between', marginBottom: 12, width: '100%' }}
-          wrap
-        >
-          <Space wrap>
-            <Text strong>导入 worker</Text>
-            <StatusTag
-              color={importWorkerStatus?.enabled ? 'blue' : 'default'}
-              label={importWorkerStatus?.enabled ? '已启用' : '未启用'}
-            />
-            <StatusTag
-              color={importWorkerStatus?.running ? 'green' : 'default'}
-              label={importWorkerStatus?.running ? '运行中' : '已停止'}
-            />
-            <Text type="secondary">待处理 {importWorkerStatus?.pendingCount ?? 0}</Text>
-            <Text type="secondary">处理中 {importWorkerStatus?.activeJobId ?? '-'}</Text>
-            <Text type="secondary">已处理 {importWorkerStatus?.processedCount ?? 0}</Text>
-            <Text type={importWorkerStatus?.failedCount ? 'danger' : 'secondary'}>
-              失败 {importWorkerStatus?.failedCount ?? 0}
-            </Text>
-          </Space>
-          <Button
-            icon={<ReloadOutlined />}
-            loading={importWorkerStatusLoading}
-            onClick={() => void reloadImportWorkerStatus()}
-          >
-            刷新状态
-          </Button>
-        </Space>
-        <ProTable<KnowledgeImportJobRecord>
-          columns={importJobColumns}
-          dataSource={importJobRows}
-          loading={importJobsLoading}
-          options={false}
-          pagination={false}
-          rowKey="id"
-          search={false}
-        />
-        {importJobRows.length === 0 && !importJobsLoading ? (
-          <Text type="secondary">当前没有导入任务。</Text>
-        ) : null}
-      </Modal>
-      <Modal
-        footer={null}
-        onCancel={() => setIsAssetsModalOpen(false)}
-        open={isAssetsModalOpen}
-        title={assetsDocument ? `文档资产：${assetsDocument.title}` : '文档资产'}
-        width={860}
-      >
-        <ProTable<KnowledgeAssetRecord>
-          columns={assetColumns}
-          dataSource={assetRows}
-          loading={assetsLoading}
-          options={false}
-          pagination={false}
-          rowKey="id"
-          search={false}
-        />
-        {assetRows.length === 0 && !assetsLoading ? (
-          <Text type="secondary">当前文档没有可查看资产。</Text>
-        ) : null}
-      </Modal>
-      <Modal
-        footer={null}
-        onCancel={() => setIsChunksModalOpen(false)}
-        open={isChunksModalOpen}
-        title={chunksDocument ? `分块版本：${chunksDocument.title}` : '分块版本'}
-        width={1100}
-      >
-        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-          <ProTable<KnowledgeChunkSetRecord>
-            columns={chunkSetColumns}
-            dataSource={chunkSetRows}
-            loading={chunkSetsLoading}
-            options={false}
-            pagination={false}
-            rowKey="id"
-            search={false}
-          />
-          <ProTable<KnowledgeChunkRecord>
-            columns={chunkColumns}
-            dataSource={chunkRows}
-            loading={chunksLoading}
-            options={false}
-            pagination={false}
-            rowKey="id"
-            search={false}
-          />
-          {chunkRows.length === 0 && !chunksLoading ? (
-            <Text type="secondary">当前分块版本没有可预览 chunk。</Text>
-          ) : null}
-        </Space>
-      </Modal>
-      <Modal
-        destroyOnHidden
-        footer={null}
-        onCancel={() => setIsSearchModalOpen(false)}
-        open={isSearchModalOpen}
-        title="知识检索与问答"
-        width={860}
-      >
-        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-          <Form<KnowledgeSearchFormValues>
-            initialValues={searchInitialValues}
-            layout="inline"
-            onFinish={(values) => void handleSearch(values)}
-            preserve={false}
-          >
-            <Form.Item label="知识空间" name="knowledge_space_id">
-              <Select
-                allowClear
-                onChange={(value) => setSelectedSpaceId(value)}
-                options={spaceOptions}
-                placeholder="全部可访问空间"
-                style={{ minWidth: 220 }}
-              />
-            </Form.Item>
-            <Form.Item
-              label="检索关键词"
-              name="query"
-              rules={[{ required: true, message: '请输入检索关键词' }]}
-            >
-              <Input aria-label="检索关键词" placeholder="输入需求、技术方案或规则关键词" />
-            </Form.Item>
-            <Form.Item label="返回条数" name="top_k">
-              <InputNumber min={1} max={20} precision={0} />
-            </Form.Item>
-            <Form.Item>
-              <Button
-                aria-label="检索"
-                htmlType="submit"
-                loading={searchLoading}
-                type="primary"
-              >
-                检索问答
-              </Button>
-            </Form.Item>
-          </Form>
-          {ragAnswer ? (
-            <div className="knowledge-rag-answer">
-              <Text strong>RAG 回答</Text>
-              <div>{ragAnswer.answer}</div>
-              <Text type="secondary">
-                引用 {ragAnswer.metrics?.citationCount ?? ragAnswer.citations.length} 条 ·
-                延迟 {ragAnswer.metrics?.latencyMs ?? '-'} ms
-              </Text>
-            </div>
-          ) : null}
-          <ProTable<KnowledgeSearchResultRecord>
-            columns={searchColumns}
-            dataSource={searchRows}
-            loading={searchLoading}
-            options={false}
-            pagination={false}
-            rowKey="id"
-            search={false}
-          />
-          {hasSearched && searchRows.length === 0 && !searchLoading ? (
-            <Text type="secondary">没有检索到可访问的知识结果。</Text>
-          ) : null}
-        </Space>
-      </Modal>
-      <Drawer
-        onClose={() => setDetailDocument(null)}
-        open={Boolean(detailDocument)}
-        size="large"
-        title={detailDocument?.title ?? '知识详情'}
-      >
-        {detailDocument ? (
-          <div className="knowledge-detail-drawer">
-            <div className="knowledge-detail-meta">
-              <Text type="secondary">知识编号</Text>
-              <Text>{detailDocument.id}</Text>
-              <Text type="secondary">知识空间</Text>
-              <Text>
-                {detailDocument.knowledgeSpaceId
-                  ? spaceNameById.get(detailDocument.knowledgeSpaceId) ?? detailDocument.knowledgeSpaceId
-                  : '-'}
-              </Text>
-              <Text type="secondary">目录</Text>
-              <Text>{detailDocument.folderPath ?? '-'}</Text>
-              <Text type="secondary">类型</Text>
-              <Text>{detailDocument.documentType}</Text>
-              <Text type="secondary">权限角色</Text>
-              <Text>{detailDocument.ownerRole}</Text>
-              <Text type="secondary">状态</Text>
-              <StatusTag
-                color={statusLabels[detailDocument.status].color}
-                label={statusLabels[detailDocument.status].label}
-              />
-              <Text type="secondary">更新时间</Text>
-              <Text>{detailDocument.updatedAt ?? '-'}</Text>
-              <Text type="secondary">标签</Text>
-              <Text>{joinTextList(detailDocument.tags) || '-'}</Text>
-              <Text type="secondary">索引错误</Text>
-              <Text>{detailDocument.indexError || detailDocument.vectorIndexError || '-'}</Text>
-            </div>
-            <Space wrap>
-              <Button icon={<FileSearchOutlined />} onClick={() => void openAssetsModal(detailDocument)}>
-                资产
-              </Button>
-              <Button icon={<NodeIndexOutlined />} onClick={() => void openChunksModal(detailDocument)}>
-                分块
-              </Button>
-              <Button icon={<EditOutlined />} onClick={() => openEditModal(detailDocument)}>
-                编辑
-              </Button>
-              <Button icon={<ReloadOutlined />} onClick={() => void handleReparseDocument(detailDocument)}>
-                重解析
-              </Button>
-            </Space>
-          </div>
-        ) : null}
-      </Drawer>
-      <Modal
-        footer={null}
-        onCancel={() => setIsDepositsModalOpen(false)}
-        open={isDepositsModalOpen}
-        title="沉淀审核"
-        width={920}
-      >
-        <ProTable<KnowledgeDepositRecord>
-          columns={depositColumns}
-          dataSource={depositRows}
-          loading={depositsLoading}
-          options={false}
-          pagination={false}
-          rowKey="id"
-          search={false}
-          scroll={{ x: KNOWLEDGE_DEPOSIT_TABLE_SCROLL_X }}
-          tableLayout="fixed"
-        />
-        {depositRows.length === 0 && !depositsLoading ? (
-          <Text type="secondary">当前没有待审核知识沉淀。</Text>
-        ) : null}
-      </Modal>
-      <Modal
-        confirmLoading={isSaving}
-        destroyOnHidden
-        onCancel={() => setIsModalOpen(false)}
-        onOk={() => documentSubmitRef.current?.click()}
-        open={isModalOpen}
-        title={editingDocument ? '编辑知识文档' : '导入知识文档'}
-      >
-        <Form<KnowledgeFormValues>
-          initialValues={documentInitialValues}
-          layout="vertical"
-          onFinish={(values) => void handleSave(values)}
-          preserve={false}
-          ref={documentFormRef}
-        >
-          <Form.Item
-            label="知识空间"
-            name="knowledge_space_id"
-            rules={[{ required: true, message: '请选择知识空间' }]}
-          >
-            <Select
-              onChange={(value) => {
-                setSelectedSpaceId(value);
-                documentFormRef.current?.setFieldValue('folder_id', undefined);
-              }}
-              options={spaceOptions}
-              placeholder="选择知识空间"
-            />
-          </Form.Item>
-          <Form.Item label="目录" name="folder_id">
-            <Space.Compact style={{ width: '100%' }}>
-              <Select
-                allowClear
-                disabled={!selectedSpaceId}
-                options={folderOptions}
-                placeholder="选择目录"
-              />
-              <Button htmlType="button" icon={<FolderAddOutlined />} onClick={() => setIsFolderModalOpen(true)}>
-                新建
-              </Button>
-            </Space.Compact>
-          </Form.Item>
-          <Form.Item label="知识标题" name="title" rules={[{ required: true, message: '请输入知识标题' }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="类型" name="doc_type" rules={[{ required: true, message: '请输入知识类型' }]}>
-            <Input placeholder="manual / PRD / Spec / Deposit" />
-          </Form.Item>
-          {!editingDocument ? (
-            <>
-              <Form.Item label="解析器" name="parser_engine">
-                <Select
-                  options={[
-                    { label: '纯文本', value: 'plain_text' },
-                    { label: 'Markdown', value: 'markdown' },
-                    { label: 'PDF 文本', value: 'pdf_text' },
-                    { label: 'OCR JSON', value: 'ocr_json' },
-                    { label: '表格 JSON', value: 'table_json' },
-                  ]}
-                  placeholder="按文件类型自动选择"
-                />
-              </Form.Item>
-              <Form.Item label="分块策略" name="chunk_strategy">
-                <Select
-                  options={[
-                    { label: '简单文本', value: 'simple_text' },
-                    { label: '父子分块', value: 'parent_child' },
-                    { label: '正则分块', value: 'regex_section' },
-                  ]}
-                  placeholder="简单文本"
-                />
-              </Form.Item>
-            </>
-          ) : null}
-          <Form.Item label="权限角色" name="permission_roles" rules={[{ required: true, message: '请选择权限角色' }]}>
-            <Select
-              disabled={roleOptions.length === 0}
-              mode="multiple"
-              optionFilterProp="label"
-              options={roleOptions}
-              placeholder="请选择权限角色"
-            />
-          </Form.Item>
-          <Form.Item label="标签" name="tags">
-            <Input />
-          </Form.Item>
-          {!editingDocument ? (
-            <Form.Item label="上传文件">
-              <Space orientation="vertical" style={{ width: '100%' }}>
-                <Button icon={<UploadOutlined />}>
-                  <label style={{ cursor: 'pointer' }}>
-                    选择文件
-                    <input
-                      aria-label="选择知识文件"
-                      onChange={(event) => void handleFileInputChange(event)}
-                      style={{ display: 'none' }}
-                      type="file"
-                    />
-                  </label>
-                </Button>
-                {selectedUploadFile ? (
-                  <Text type="secondary">
-                    {selectedUploadFile.filename} · {Math.ceil(selectedUploadFile.sizeBytes / 1024)} KB ·
-                    {selectedUploadFile.mimeType}
-                  </Text>
-                ) : null}
-              </Space>
-            </Form.Item>
-          ) : null}
-          {editingDocument ? (
-            <Form.Item label="索引状态" name="index_status">
-              <Select
-                options={[
-                  { label: '已索引', value: 'indexed' },
-                  { label: '文本索引', value: 'text_indexed' },
-                  { label: '向量索引', value: 'vector_indexed' },
-                  { label: '待索引', value: 'pending_index' },
-                  { label: '索引中', value: 'importing' },
-                  { label: '索引失败', value: 'index_failed' },
-                  { label: '已归档', value: 'archived' },
-                ]}
-              />
-            </Form.Item>
-          ) : null}
-          <Form.Item label="内容" name="content">
-            <Input.TextArea rows={5} />
-          </Form.Item>
-          <button ref={documentSubmitRef} style={{ display: 'none' }} type="submit" />
-        </Form>
-      </Modal>
-      <Modal
-        destroyOnHidden
-        onCancel={() => setIsSpaceModalOpen(false)}
-        onOk={() => spaceSubmitRef.current?.click()}
-        open={isSpaceModalOpen}
-        title="新建知识空间"
-      >
-        <Form<KnowledgeSpaceFormValues>
-          layout="vertical"
-          onFinish={(values) => void handleCreateSpace(values)}
-          preserve={false}
-        >
-          <Form.Item label="空间编码" name="code" rules={[{ required: true, message: '请输入空间编码' }]}>
-            <Input placeholder="payments" />
-          </Form.Item>
-          <Form.Item label="空间名称" name="name" rules={[{ required: true, message: '请输入空间名称' }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="说明" name="description">
-            <Input.TextArea rows={3} />
-          </Form.Item>
-          <button ref={spaceSubmitRef} style={{ display: 'none' }} type="submit" />
-        </Form>
-      </Modal>
-      <Modal
-        destroyOnHidden
-        onCancel={() => setIsFolderModalOpen(false)}
-        onOk={() => folderSubmitRef.current?.click()}
-        open={isFolderModalOpen}
-        title="新建知识目录"
-      >
-        <Form<KnowledgeFolderFormValues>
-          layout="vertical"
-          onFinish={(values) => void handleCreateFolder(values)}
-          preserve={false}
-        >
-          <Form.Item label="目录名称" name="name" rules={[{ required: true, message: '请输入目录名称' }]}>
-            <Input />
-          </Form.Item>
-          <button ref={folderSubmitRef} style={{ display: 'none' }} type="submit" />
-        </Form>
-      </Modal>
-      <Modal
-        destroyOnHidden
-        onCancel={() => setIsFolderEditModalOpen(false)}
-        onOk={() => folderEditSubmitRef.current?.click()}
-        open={isFolderEditModalOpen}
-        title="目录整理"
-      >
-        <Form<KnowledgeFolderEditFormValues>
-          layout="vertical"
-          onFinish={(values) => void handleEditFolder(values)}
-          preserve={false}
-        >
-          <Form.Item label="目录" name="folder_id" rules={[{ required: true, message: '请选择目录' }]}>
-            <Select options={folderOptions} />
-          </Form.Item>
-          <Form.Item label="目录名称" name="name">
-            <Input />
-          </Form.Item>
-          <Form.Item label="父目录" name="parent_folder_id">
-            <Select allowClear options={folderOptions} />
-          </Form.Item>
-          <Form.Item label="排序" name="sort_order">
-            <InputNumber min={0} precision={0} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item label="状态" name="status">
-            <Select
-              options={[
-                { label: '启用', value: 'active' },
-                { label: '归档', value: 'archived' },
-              ]}
-            />
-          </Form.Item>
-          <button ref={folderEditSubmitRef} style={{ display: 'none' }} type="submit" />
-        </Form>
-      </Modal>
-      <Modal
-        destroyOnHidden
-        onCancel={() => setIsBatchMoveModalOpen(false)}
-        onOk={() => batchMoveSubmitRef.current?.click()}
-        open={isBatchMoveModalOpen}
-        title="批量移动知识"
-      >
-        <Form<KnowledgeBatchMoveFormValues>
-          layout="vertical"
-          onFinish={(values) => void handleBatchMove(values)}
-          preserve={false}
-        >
-          <Form.Item label="目标目录" name="folder_id">
-            <Select allowClear options={folderOptions} placeholder="移动到空间根目录" />
-          </Form.Item>
-          <Text type="secondary">已选择 {selectedRowKeys.length} 条知识文档。</Text>
-          <button ref={batchMoveSubmitRef} style={{ display: 'none' }} type="submit" />
-        </Form>
-      </Modal>
-      <Modal
-        destroyOnHidden
-        onCancel={() => setRejectingDeposit(null)}
-        onOk={() => rejectDepositSubmitRef.current?.click()}
-        open={Boolean(rejectingDeposit)}
-        title={rejectingDeposit ? `拒绝沉淀：${rejectingDeposit.title}` : '拒绝沉淀'}
-      >
-        <Form<RejectDepositFormValues>
-          layout="vertical"
-          onFinish={(values) => void handleRejectDeposit(values)}
-          preserve={false}
-        >
-          <Form.Item label="拒绝原因" name="reason" rules={[{ required: true, message: '请输入拒绝原因' }]}>
-            <Input.TextArea rows={3} />
-          </Form.Item>
-          <button ref={rejectDepositSubmitRef} style={{ display: 'none' }} type="submit" />
-        </Form>
-      </Modal>
+      <KnowledgePageDialogs
+        advancedFilterSubmitRef={advancedFilterSubmitRef}
+        advancedFilterValues={advancedFilterValues}
+        assetColumns={assetColumns}
+        assetRows={assetRows}
+        assetsDocument={assetsDocument}
+        assetsLoading={assetsLoading}
+        batchMoveSubmitRef={batchMoveSubmitRef}
+        chunkColumns={chunkColumns}
+        chunkRows={chunkRows}
+        chunkSetColumns={chunkSetColumns}
+        chunkSetRows={chunkSetRows}
+        chunkSetsLoading={chunkSetsLoading}
+        chunksDocument={chunksDocument}
+        chunksLoading={chunksLoading}
+        clearAdvancedFilters={clearAdvancedFilters}
+        closeFullChainModal={closeFullChainModal}
+        detailDocument={detailDocument}
+        documentFormRef={documentFormRef}
+        documentInitialValues={documentInitialValues}
+        documentSubmitRef={documentSubmitRef}
+        editingDocument={editingDocument}
+        folderEditSubmitRef={folderEditSubmitRef}
+        folderOptions={folderOptions}
+        folderSubmitRef={folderSubmitRef}
+        fullChain={fullChain}
+        fullChainDeposit={fullChainDeposit}
+        fullChainError={fullChainError}
+        fullChainVersionRequirements={fullChainVersionRequirements}
+        handleAdvancedFilterSubmit={handleAdvancedFilterSubmit}
+        handleBatchMove={handleBatchMove}
+        handleCreateFolder={handleCreateFolder}
+        handleCreateSpace={handleCreateSpace}
+        handleEditFolder={handleEditFolder}
+        handleFileInputChange={handleFileInputChange}
+        handleRejectDeposit={handleRejectDeposit}
+        handleReparseDocument={handleReparseDocument}
+        handleSave={handleSave}
+        isAdvancedFilterOpen={isAdvancedFilterOpen}
+        isAssetsModalOpen={isAssetsModalOpen}
+        isBatchMoveModalOpen={isBatchMoveModalOpen}
+        isChunksModalOpen={isChunksModalOpen}
+        isFolderEditModalOpen={isFolderEditModalOpen}
+        isFolderModalOpen={isFolderModalOpen}
+        isFullChainLoading={isFullChainLoading}
+        isModalOpen={isModalOpen}
+        isSaving={isSaving}
+        isSpaceModalOpen={isSpaceModalOpen}
+        onCloseAssetsModal={() => setIsAssetsModalOpen(false)}
+        onCloseBatchMoveModal={() => setIsBatchMoveModalOpen(false)}
+        onCloseChunksModal={() => setIsChunksModalOpen(false)}
+        onCloseDetailDrawer={() => setDetailDocument(null)}
+        onCloseDocumentModal={() => setIsModalOpen(false)}
+        onCloseFolderEditModal={() => setIsFolderEditModalOpen(false)}
+        onCloseFolderModal={() => setIsFolderModalOpen(false)}
+        onCloseSpaceModal={() => setIsSpaceModalOpen(false)}
+        onEditDocument={openEditModal}
+        onOpenAssetsModal={openAssetsModal}
+        onOpenChunksModal={openChunksModal}
+        rejectDepositSubmitRef={rejectDepositSubmitRef}
+        rejectingDeposit={rejectingDeposit}
+        roleOptions={roleOptions}
+        selectedRowKeys={selectedRowKeys}
+        selectedSpaceId={selectedSpaceId}
+        selectedUploadFile={selectedUploadFile}
+        setIsAdvancedFilterOpen={setIsAdvancedFilterOpen}
+        setIsFolderModalOpen={setIsFolderModalOpen}
+        setRejectingDeposit={setRejectingDeposit}
+        setSelectedSpaceId={setSelectedSpaceId}
+        spaceNameById={spaceNameById}
+        spaceOptions={spaceOptions}
+        spaceSubmitRef={spaceSubmitRef}
+        statusLabels={statusLabels}
+      />
     </>
   );
 }

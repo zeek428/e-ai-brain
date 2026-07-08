@@ -21,6 +21,8 @@ from app.services.bug_listing import bug_summary_projection
 from app.services.object_storage import object_storage
 from app.services.task_persistence_helpers import (
     record_audit_event as record_task_audit_event,
+)
+from app.services.task_persistence_helpers import (
     save_bug_and_ai_task_records,
 )
 from app.services.task_start_execution import start_ai_task_response

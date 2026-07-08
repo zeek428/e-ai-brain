@@ -35,9 +35,26 @@ function getRedirectPath() {
   return '/welcome';
 }
 
+function formatLoginError(error: ApiRequestError) {
+  if (error.code === 'LOGIN_CHALLENGE_REQUIRED') {
+    return '请输入安全校验答案后再登录。';
+  }
+  if (error.code === 'LOGIN_CHALLENGE_INVALID') {
+    return '安全校验答案错误或已过期，请重新填写。';
+  }
+  if (error.code === 'LOGIN_CHALLENGE_UNAVAILABLE') {
+    return '安全校验暂时不可用，请稍后重试或联系管理员。';
+  }
+  if (error.code === 'INVALID_CREDENTIALS') {
+    return '账号或密码错误，请重新输入。';
+  }
+  return `${error.code ?? error.status} · ${error.message}`;
+}
+
 export default function LoginPage() {
   const [dingtalkLoginEnabled, setDingtalkLoginEnabled] = useState(false);
   const [error, setError] = useState<string>();
+  const [form] = Form.useForm<LoginFormValues>();
   const [loginChallenge, setLoginChallenge] = useState<LoginChallengeResponse | null>(null);
   const [loginChallengeLoading, setLoginChallengeLoading] = useState(false);
   const [loginChallengeRequired, setLoginChallengeRequired] = useState(false);
@@ -49,6 +66,7 @@ export default function LoginPage() {
     try {
       const challenge = await fetchLoginChallenge();
       setLoginChallenge(challenge);
+      form.setFieldsValue({ challenge_answer: undefined });
       return challenge;
     } catch {
       setLoginChallenge(null);
@@ -57,7 +75,7 @@ export default function LoginPage() {
     } finally {
       setLoginChallengeLoading(false);
     }
-  }, []);
+  }, [form]);
 
   useEffect(() => {
     if (!getAccessToken()) {
@@ -120,11 +138,12 @@ export default function LoginPage() {
       navigateTo(getRedirectPath());
     } catch (requestError) {
       if (requestError instanceof ApiRequestError) {
-        setError(`${requestError.code ?? requestError.status} · ${requestError.message}`);
+        setError(formatLoginError(requestError));
       } else {
         setError('登录失败，请检查后端服务状态。');
       }
       if (loginChallengeRequired) {
+        form.setFieldsValue({ challenge_answer: undefined });
         void refreshLoginChallenge();
       }
     } finally {
@@ -137,11 +156,10 @@ export default function LoginPage() {
       <Card className="login-card">
         <div className="login-heading">
           <Typography.Title level={1}>Enterprise AI Brain</Typography.Title>
-          <Typography.Text>开发环境登录</Typography.Text>
         </div>
         {error ? <Alert showIcon title={error} type="error" /> : null}
         <Form<LoginFormValues>
-          initialValues={{ password: 'admin123', username: 'admin@example.com' }}
+          form={form}
           layout="vertical"
           onFinish={handleFinish}
           requiredMark={false}

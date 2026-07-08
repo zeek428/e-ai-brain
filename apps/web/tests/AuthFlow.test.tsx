@@ -21,6 +21,26 @@ import {
 } from '../src/services/aiBrain';
 import { formatMutationError } from '../src/utils/managementCrud';
 
+const TEST_LOGIN_USERNAME = 'fake-login-user@example.test';
+const TEST_LOGIN_PASSWORD = 'fake-password-for-test-only';
+
+function getLoginInput(container: HTMLElement, autocomplete: string) {
+  const input = container.querySelector<HTMLInputElement>(`input[autocomplete="${autocomplete}"]`);
+  if (!input) {
+    throw new Error(`Missing login input with autocomplete=${autocomplete}`);
+  }
+  return input;
+}
+
+function fillLocalLoginCredentials(container: HTMLElement) {
+  fireEvent.change(getLoginInput(container, 'username'), {
+    target: { value: TEST_LOGIN_USERNAME },
+  });
+  fireEvent.change(getLoginInput(container, 'current-password'), {
+    target: { value: TEST_LOGIN_PASSWORD },
+  });
+}
+
 describe('AI Brain auth flow and routes', () => {
   afterEach(() => {
     Modal.destroyAll();
@@ -100,7 +120,39 @@ describe('AI Brain auth flow and routes', () => {
     expect(routes).toContain("component: './TaskCenter'");
   });
 
-  it('logs in with the development account and redirects to the requested page', async () => {
+  it('does not prefill local login credentials in the browser', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      expect(input).toBe('/api/auth/providers');
+      return new Response(
+        JSON.stringify({
+          data: {
+            dingtalk: {
+              display_name: '钉钉登录',
+              enabled: false,
+            },
+            local: {
+              challenge_required: false,
+              display_name: '账号密码登录',
+              enabled: true,
+            },
+          },
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<LoginPage />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(getLoginInput(container, 'username')).toHaveValue('');
+    expect(getLoginInput(container, 'current-password')).toHaveValue('');
+  });
+
+  it('logs in with typed local credentials and redirects to the requested page', async () => {
     window.history.pushState({}, '', '/login?redirect=%2Fdelivery%2Fbugs');
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       if (input === '/api/auth/providers') {
@@ -150,7 +202,7 @@ describe('AI Brain auth flow and routes', () => {
               id: 'user_admin',
               menu_tree: [{ code: 'workspace.dashboard', name: '团队看板', path: '/welcome' }],
               roles: ['admin'],
-              username: 'admin@example.com',
+              username: TEST_LOGIN_USERNAME,
             },
           }),
           {
@@ -164,8 +216,8 @@ describe('AI Brain auth flow and routes', () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         challenge_answer: '7',
         challenge_id: 'challenge-001',
-        password: 'admin123',
-        username: 'admin@example.com',
+        password: TEST_LOGIN_PASSWORD,
+        username: TEST_LOGIN_USERNAME,
       });
       return new Response(
         JSON.stringify({
@@ -175,7 +227,7 @@ describe('AI Brain auth flow and routes', () => {
               display_name: 'AI Brain Admin',
               id: 'user_admin',
               roles: ['admin'],
-              username: 'admin@example.com',
+              username: TEST_LOGIN_USERNAME,
             },
           },
         }),
@@ -187,7 +239,8 @@ describe('AI Brain auth flow and routes', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<LoginPage />);
+    const { container } = render(<LoginPage />);
+    fillLocalLoginCredentials(container);
     expect(await screen.findByDisplayValue('请计算：3 + 4 = ?')).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText('请输入计算结果'), {
       target: { value: '7' },
@@ -198,6 +251,87 @@ describe('AI Brain auth flow and routes', () => {
     expect(window.localStorage.getItem('ai_brain_access_token')).toBe('token-admin');
     expect(window.localStorage.getItem('ai_brain_current_user')).toContain('menu_tree');
     expect(window.location.pathname).toBe('/delivery/bugs');
+  });
+
+  it('shows a friendly numeric challenge error and refreshes the question after a wrong answer', async () => {
+    window.history.pushState({}, '', '/login?redirect=%2Fdelivery%2Fbugs');
+    let challengeRequestCount = 0;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/auth/providers') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              dingtalk: {
+                display_name: '钉钉登录',
+                enabled: false,
+              },
+              local: {
+                challenge_required: true,
+                challenge_url: '/api/auth/login-challenge',
+                display_name: '账号密码登录',
+                enabled: true,
+              },
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      if (input === '/api/auth/login-challenge') {
+        expect(init?.method).toBe('POST');
+        challengeRequestCount += 1;
+        return new Response(
+          JSON.stringify({
+            data: {
+              challenge_id: `challenge-00${challengeRequestCount}`,
+              expires_in: 300,
+              question:
+                challengeRequestCount === 1 ? '请计算：3 + 4 = ?' : '请计算：8 + 1 = ?',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      expect(input).toBe('/api/auth/login');
+      expect(init?.method).toBe('POST');
+      expect(JSON.parse(String(init?.body))).toEqual({
+        challenge_answer: '999',
+        challenge_id: 'challenge-001',
+        password: TEST_LOGIN_PASSWORD,
+        username: TEST_LOGIN_USERNAME,
+      });
+      return new Response(
+        JSON.stringify({
+          detail: {
+            code: 'LOGIN_CHALLENGE_INVALID',
+            message: 'Login challenge is invalid or expired',
+            trace_id: 'trace_login_challenge_invalid',
+          },
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          status: 401,
+        },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<LoginPage />);
+    fillLocalLoginCredentials(container);
+    expect(await screen.findByDisplayValue('请计算：3 + 4 = ?')).toBeInTheDocument();
+    const answerInput = screen.getByPlaceholderText('请输入计算结果') as HTMLInputElement;
+    fireEvent.change(answerInput, { target: { value: '999' } });
+    fireEvent.click(screen.getByRole('button', { name: /登\s*录/ }));
+
+    expect(await screen.findByText('安全校验答案错误或已过期，请重新填写。')).toBeInTheDocument();
+    await waitFor(() => expect(challengeRequestCount).toBe(2));
+    expect(await screen.findByDisplayValue('请计算：8 + 1 = ?')).toBeInTheDocument();
+    expect(answerInput.value).toBe('');
   });
 
   it('shows the DingTalk login option when the backend enables the provider', async () => {

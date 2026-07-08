@@ -154,7 +154,7 @@ export type RequirementFullChainRecord = {
     id: string;
     name?: string;
   };
-  requirement: RequirementRecord;
+  requirement: RequirementRecord | null;
   reviews: Array<{
     aiTaskId?: string;
     createdAt: string;
@@ -306,7 +306,7 @@ type RequirementFullChainResponse = {
   jenkins_releases?: FlexibleListItem[];
   knowledge_deposits?: KnowledgeDepositListItem[];
   product?: ProductResponse | null;
-  requirement: RequirementListItem;
+  requirement?: RequirementListItem | null;
   reviews?: PendingReviewListItem[];
   status?: string;
   summary?: Partial<{
@@ -495,7 +495,7 @@ function mapRequirementFullChain(
           name: chain.product.name,
         }
       : undefined,
-    requirement: mapRequirementRecord(chain.requirement),
+    requirement: chain.requirement ? mapRequirementRecord(chain.requirement) : null,
     reviews: (chain.reviews ?? []).map((review) => ({
       aiTaskId: review.ai_task_id,
       createdAt: formatListDate(formatUnknownValue(review.created_at)),

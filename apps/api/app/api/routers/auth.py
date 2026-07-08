@@ -185,7 +185,7 @@ def _is_disabled_seeded_default_login(username: str, password: str) -> bool:
 def _login_challenge_repository(request: Request) -> Any:
     repository = getattr(request.app.state, "login_challenge_repository", None)
     if repository is None:
-        raise api_error(503, "LOGIN_CHALLENGE_UNAVAILABLE", "Login challenge is unavailable")
+        raise api_error(503, "LOGIN_CHALLENGE_UNAVAILABLE", "安全校验暂时不可用")
     return repository
 
 
@@ -193,13 +193,13 @@ def _require_login_challenge(request: Request, payload: LoginRequest) -> None:
     if not settings.login_challenge_enabled:
         return
     if not payload.challenge_id or not payload.challenge_answer:
-        raise api_error(400, "LOGIN_CHALLENGE_REQUIRED", "Login challenge answer is required")
+        raise api_error(400, "LOGIN_CHALLENGE_REQUIRED", "请输入安全校验答案")
     verified = _login_challenge_repository(request).consume_challenge(
         answer=payload.challenge_answer,
         challenge_id=payload.challenge_id,
     )
     if not verified:
-        raise api_error(401, "LOGIN_CHALLENGE_INVALID", "Login challenge is invalid or expired")
+        raise api_error(401, "LOGIN_CHALLENGE_INVALID", "安全校验答案错误或已过期")
 
 
 def _issue_access_token(user: dict[str, Any]) -> str:

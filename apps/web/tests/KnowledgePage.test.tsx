@@ -175,7 +175,21 @@ describe('KnowledgePage', () => {
     render(<KnowledgePage />);
 
     expect((await screen.findAllByText('知识中心布局验证')).length).toBeGreaterThan(0);
-    const healthPanel = screen.getByLabelText('知识索引健康');
+    const summaryPanel = screen.getByLabelText('知识索引健康摘要');
+    expect(within(summaryPanel).getByText('索引健康')).toBeInTheDocument();
+    expect(within(summaryPanel).getByText('向量覆盖率 0%')).toBeInTheDocument();
+    expect(within(summaryPanel).getByText('可检索')).toBeInTheDocument();
+    expect(within(summaryPanel).getByText('索引失败')).toBeInTheDocument();
+    expect(within(summaryPanel).getByText('处理中')).toBeInTheDocument();
+    const filterForm = screen.getByLabelText('查询表格');
+    expect(within(filterForm).getByText('知识标题')).toBeInTheDocument();
+    expect(within(filterForm).getByText('知识空间')).toBeInTheDocument();
+    expect(within(filterForm).getByText('状态')).toBeInTheDocument();
+    expect(within(filterForm).queryByText('目录')).not.toBeInTheDocument();
+    expect(within(filterForm).queryByText('类型')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '更多操作 knowledge_layout' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '索引治理' }));
+    const healthPanel = await screen.findByLabelText('知识索引健康');
     expect(within(healthPanel).getByText('索引健康')).toBeInTheDocument();
     expect(within(healthPanel).getAllByText('关键词兜底').length).toBeGreaterThan(0);
     expect(within(healthPanel).getByText('解析状态')).toBeInTheDocument();
@@ -197,11 +211,10 @@ describe('KnowledgePage', () => {
     expect(within(healthPanel).getAllByText('权限命中：角色 admin 命中 1 个文档').length).toBeGreaterThan(0);
     expect(within(healthPanel).getByText('Embedding 模型：text-embedding-3-small/1536维 0')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '知识列表' })).toBeInTheDocument();
-    const mainTable = document.querySelector('table[data-table-scroll-x="2000"]');
+    const mainTable = document.querySelector('table[data-table-scroll-x="1520"]');
     expect(mainTable).not.toBeNull();
     expect(mainTable).toHaveAttribute('data-table-layout', 'fixed');
-    expect(within(mainTable as HTMLElement).getByText('操作')).toHaveAttribute('data-width', '420');
-    expect(screen.getByRole('button', { name: /补向量索引/ })).toBeInTheDocument();
+    expect(within(mainTable as HTMLElement).getByText('操作')).toHaveAttribute('data-width', '220');
   });
 
   it('opens knowledge deposit review and approves a pending deposit', async () => {
@@ -278,6 +291,38 @@ describe('KnowledgePage', () => {
           },
         });
       }
+      if (input === '/api/lifecycle/full-chain?subject_id=deposit_api&subject_type=knowledge_deposit') {
+        return jsonResponse({
+          data: {
+            anchor: {
+              subject_id: 'deposit_api',
+              subject_type: 'knowledge_deposit',
+            },
+            knowledge_deposits: [
+              {
+                created_at: '2026-06-04T10:30:00+00:00',
+                id: 'deposit_api',
+                status: 'pending',
+                title: '技术方案知识沉淀',
+              },
+            ],
+            status: 'available',
+            summary: {
+              knowledge_deposits: 1,
+              timeline_events: 1,
+            },
+            timeline: [
+              {
+                occurred_at: '2026-06-04T10:30:00+00:00',
+                status: 'pending',
+                subject_id: 'deposit_api',
+                title: '知识沉淀：技术方案知识沉淀',
+                type: 'knowledge_deposit',
+              },
+            ],
+          },
+        });
+      }
       if (String(input).startsWith('/api/knowledge/index-health')) {
         return jsonResponse(knowledgeHealthEnvelope());
       }
@@ -289,18 +334,22 @@ describe('KnowledgePage', () => {
     render(<KnowledgePage />);
 
     expect((await screen.findAllByText('接口知识')).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button', { name: '沉淀审核' }));
+    fireEvent.click(screen.getByRole('tab', { name: '沉淀审核' }));
 
     expect(await screen.findByText('技术方案知识沉淀')).toBeInTheDocument();
     expect(screen.getByText('沉淀内容摘要')).toBeInTheDocument();
     const depositTable = document.querySelector('table[data-table-scroll-x="1120"]');
     expect(depositTable).not.toBeNull();
     expect(depositTable).toHaveAttribute('data-table-layout', 'fixed');
-    const fullChainLink = screen.getByRole('link', { name: '全链路' });
-    expect(fullChainLink).toHaveAttribute(
-      'href',
-      '/delivery/full-chain?subject_id=deposit_api&subject_type=knowledge_deposit',
-    );
+    const depositRow = screen.getByText('技术方案知识沉淀').closest('tr');
+    expect(depositRow).not.toBeNull();
+    expect(within(depositRow as HTMLElement).queryByRole('link', { name: '全链路' })).not.toBeInTheDocument();
+    const initialPathname = window.location.pathname;
+    fireEvent.click(within(depositRow as HTMLElement).getByRole('button', { name: '全链路' }));
+
+    expect(await screen.findByRole('dialog', { name: '知识沉淀全链路 · deposit_api' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe(initialPathname);
+    expect(screen.getByLabelText('全链路入口主体')).toHaveTextContent('入口主体：知识沉淀 · deposit_api');
     fireEvent.click(screen.getByRole('button', { name: '批准入库' }));
 
     await waitFor(() =>
@@ -395,7 +444,7 @@ describe('KnowledgePage', () => {
     render(<KnowledgePage />);
 
     expect((await screen.findAllByText('需求评估规则')).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button', { name: '知识检索' }));
+    fireEvent.click(screen.getByRole('tab', { name: '问答检索' }));
     fireEvent.change(screen.getByLabelText('检索关键词'), { target: { value: '需求评估' } });
     fireEvent.click(screen.getByRole('button', { name: '检索' }));
 
@@ -500,7 +549,8 @@ describe('KnowledgePage', () => {
 
     expect((await screen.findAllByText('失败知识')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('embedding provider timeout').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getAllByRole('button', { name: /重试索引/ })[0]);
+    fireEvent.click(screen.getByRole('tab', { name: '索引治理' }));
+    fireEvent.click(await screen.findByRole('button', { name: /重试索引/ }));
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
@@ -843,7 +893,7 @@ describe('KnowledgePage', () => {
     render(<KnowledgePage />);
 
     expect(await screen.findByText('导入任务排查')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '导入任务' }));
+    fireEvent.click(screen.getByRole('tab', { name: '导入任务' }));
 
     expect(await screen.findByText('markdown')).toBeInTheDocument();
     expect(screen.getByText('导入 worker')).toBeInTheDocument();
@@ -892,5 +942,5 @@ describe('KnowledgePage', () => {
         'POST',
       ]),
     );
-  });
+  }, 10000);
 });

@@ -35,10 +35,12 @@ export const taskBatchRetryableFailureSteps = new Set([
   'model_gateway_failed',
 ]);
 
-export const PENDING_REVIEW_TABLE_SCROLL = { x: 1040 } satisfies TableProps<TaskCenterReviewRecord>['scroll'];
+export const PENDING_REVIEW_TABLE_SCROLL = { x: 1160 } satisfies TableProps<TaskCenterReviewRecord>['scroll'];
 
 export const taskTypeLabels: Record<string, string> = {
   automated_testing: '自动化测试',
+  bug_fix: 'Bug 修复',
+  code_inspection_remediation: '代码巡检整改',
   code_review: 'Code Review',
   development_planning: '开发计划',
   post_release_analysis: '上线后分析',
@@ -64,6 +66,7 @@ export function hasTaskOperationRole(user: CurrentUserResponse | undefined) {
 }
 
 export type TaskActionItem = {
+  danger?: boolean;
   key: string;
   label: string;
   onClick: () => void;

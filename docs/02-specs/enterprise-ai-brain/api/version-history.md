@@ -6,6 +6,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.549 | 2026-07-08 | 研发执行器策略新增入口移除历史 `code_inspection_remediation` 选项，代码巡检 finding 经 Bug 确认后统一按 `bug_fix` 推进 AI Task | Codex |
+| v1.1.548 | 2026-07-08 | 研发任务命中研发执行器策略下发 Runner 时新增 `input_payload.knowledge_references[]`，并把同产品/同版本可读知识中心片段追加到执行器 instruction | Codex |
 | v1.1.547 | 2026-07-05 | 定时作业 `send_notification` 邮件渠道正式运行接入系统邮件发送配置，使用系统发件箱向动作收件人投递并在邮件通知记录中返回投递状态和 Message-ID | Codex |
 | v1.1.546 | 2026-07-04 | 插件管理 API 新增钉钉授权向导/治理/观测/业务模板市场字段、`discover-tools` 动态能力发现接口和 `plugin-observability` 健康看板接口 | Codex |
 | v1.1.545 | 2026-07-04 | 插件管理 API 新增钉钉官方 MCP P0 标准插件，支持 `mcp_streamable_http`、`url_key` 鉴权、P0 动作模板风险分层和 URL Key 脱敏 | Codex |

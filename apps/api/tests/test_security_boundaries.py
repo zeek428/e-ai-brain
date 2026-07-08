@@ -2114,11 +2114,13 @@ def test_password_login_requires_one_time_numeric_challenge_when_enabled():
 
     assert missing_challenge.status_code == 400
     assert missing_challenge.json()["detail"]["code"] == "LOGIN_CHALLENGE_REQUIRED"
+    assert missing_challenge.json()["detail"]["message"] == "请输入安全校验答案"
     assert challenge_response.status_code == 200
     assert challenge["challenge_id"]
     assert challenge["question"].startswith("请计算：")
     assert wrong_answer.status_code == 401
     assert wrong_answer.json()["detail"]["code"] == "LOGIN_CHALLENGE_INVALID"
+    assert wrong_answer.json()["detail"]["message"] == "安全校验答案错误或已过期"
     assert reused_challenge.status_code == 401
     assert reused_challenge.json()["detail"]["code"] == "LOGIN_CHALLENGE_INVALID"
     assert successful_login.status_code == 200

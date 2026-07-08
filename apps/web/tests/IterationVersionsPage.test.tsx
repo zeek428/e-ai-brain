@@ -1530,7 +1530,7 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('Dashboard Repo').length).toBeGreaterThan(0);
     expect(screen.getByText('分支质量治理')).toBeInTheDocument();
     expect(screen.getAllByText('待治理').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('缺整改任务').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('待推进任务').length).toBeGreaterThan(0);
     expect(screen.getAllByText('活跃严重').length).toBeGreaterThan(0);
     expect(screen.getAllByText('误报忽略').length).toBeGreaterThan(0);
     expect(screen.getAllByText('接受风险').length).toBeGreaterThan(0);

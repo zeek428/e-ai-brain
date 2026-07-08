@@ -6,6 +6,7 @@ from typing import Any
 from app.api.deps import api_error
 from app.core.listing import add_list_observability, ensure_list_enum, sort_list_items
 from app.core.store import DEFAULT_BRAIN_APP_ID
+from app.core.task_titles import code_inspection_remediation_title
 from app.services.task_access import can_read_task, task_read_scope
 
 AI_TASK_SORT_FIELDS = {
@@ -58,6 +59,8 @@ def _memory_records(current_store: Any, collection_name: str) -> list[dict[str, 
 
 
 def task_product_name(current_store: Any, task: dict[str, Any]) -> str | None:
+    if task.get("product_name"):
+        return task.get("product_name")
     product_id = task.get("product_id")
     product = _memory_dict(current_store, "products").get(str(product_id)) if product_id else None
     if product:
@@ -68,6 +71,17 @@ def task_product_name(current_store: Any, task: dict[str, Any]) -> str | None:
         if isinstance(product_snapshot, dict):
             return product_snapshot.get("name")
     return None
+
+
+def task_display_title(task: dict[str, Any]) -> str:
+    title = str(task.get("title") or "")
+    if task.get("task_type") != "code_inspection_remediation":
+        return title
+    input_json = task.get("input_json")
+    context = input_json if isinstance(input_json, dict) else {}
+    if not context:
+        return title
+    return code_inspection_remediation_title(context, fallback_title=title)
 
 
 def task_summary_projection(task: dict[str, Any], current_store: Any) -> dict[str, Any]:
@@ -83,7 +97,7 @@ def task_summary_projection(task: dict[str, Any], current_store: Any) -> dict[st
         "requirement_id": task["requirement_id"],
         "status": task["status"],
         "task_type": task["task_type"],
-        "title": task["title"],
+        "title": task_display_title(task),
         "updated_at": task.get("updated_at"),
         "version_id": task["version_id"],
     }
@@ -148,6 +162,7 @@ def list_ai_tasks_response(
             sort_by=resolved_sort_by,
             sort_order=sort_order,
         )
+        items = [task_summary_projection(item, current_store) for item in items]
         return add_list_observability(
             {
                 "items": items,

@@ -604,7 +604,7 @@ export function VersionDashboardQualityDeliveryTables({
           { dataIndex: 'severeFindingCount', title: '严重问题', width: 110 },
           { dataIndex: 'activeSevereFindingCount', title: '活跃严重', width: 110 },
           { dataIndex: 'uncoveredSevereBugCount', title: '缺 Bug', width: 100 },
-          { dataIndex: 'uncoveredSevereTaskCount', title: '缺整改任务', width: 120 },
+          { dataIndex: 'uncoveredSevereTaskCount', title: '待推进任务', width: 120 },
           { dataIndex: 'falsePositiveCount', title: '误报忽略', width: 110 },
           { dataIndex: 'acceptedRiskCount', title: '接受风险', width: 110 },
           { dataIndex: 'expiredAcceptedRiskCount', title: '过期风险', width: 110 },

@@ -32,6 +32,7 @@ import {
   approveTaskCenterReview,
   batchCancelTaskCenterTasks,
   batchRetryTaskCenterTasks,
+  cancelTaskCenterTask,
   createAutomatedTestingTask,
   createCodeReviewTask,
   createDevelopmentPlanningTask,
@@ -71,6 +72,7 @@ import {
   TaskDetailModal,
   type TaskDetailDialogState,
 } from './components/TaskDetailModal';
+import { TaskOutputSummary } from './components/TaskOutputSummary';
 import {
   PENDING_REVIEW_TABLE_SCROLL,
   buildTaskCenterQuery,
@@ -404,6 +406,16 @@ export default function TaskCenterPage() {
     }
   }, [reloadTaskCenter, selectedBatchCancellableTasks, showTaskBatchResult]);
 
+  const handleCancelTask = useCallback(async (task: TaskCenterTaskRecord) => {
+    try {
+      await cancelTaskCenterTask(task.id);
+      message.success('任务已取消');
+      await reloadTaskCenter();
+    } catch (taskError) {
+      message.error(formatMutationError(taskError));
+    }
+  }, [reloadTaskCenter]);
+
   const handleBatchRetryTasks = useCallback(async () => {
     if (!selectedBatchRetryableTasks.length) {
       message.warning('请选择可重试的失败任务');
@@ -507,7 +519,7 @@ export default function TaskCenterPage() {
         rejectReviewDialog.review.version,
         values.reason.trim(),
       );
-      message.success('已拒绝该确认项，任务已标记失败');
+      message.success('已拒绝该确认项，Runner 将丢弃隔离结果，任务已标记失败');
       setRejectReviewDialog(undefined);
       setReviewDialog(undefined);
       await reloadTaskCenter();
@@ -864,6 +876,15 @@ export default function TaskCenterPage() {
       });
     }
 
+    if (taskBatchCancellableStatuses.has(selectedActionTask.status)) {
+      actions.push({
+        danger: true,
+        key: 'cancel',
+        label: '取消任务',
+        onClick: closeAndRun(() => handleCancelTask(selectedActionTask)),
+      });
+    }
+
     if (
       selectedActionTask.type === 'product_detail_design' &&
       selectedActionTask.status === 'completed'
@@ -946,6 +967,7 @@ export default function TaskCenterPage() {
     handleCreateReleaseReadiness,
     handleCreateTechnicalSolution,
     handleExportMarkdown,
+    handleCancelTask,
     handleOpenCodeReview,
     handleOpenCodeReviewReport,
     handleOpenTaskDetail,
@@ -1024,25 +1046,25 @@ export default function TaskCenterPage() {
         dataIndex: 'id',
         ellipsis: true,
         title: '确认编号',
-        width: 180,
+        width: 140,
       },
       {
         dataIndex: 'stage',
         ellipsis: true,
         title: '确认阶段',
-        width: 160,
+        width: 140,
       },
       {
         dataIndex: 'contentSummary',
-        ellipsis: true,
+        render: (_, row) => <TaskOutputSummary compact summary={row.contentSummary} />,
         title: 'AI 输出摘要',
-        width: 300,
+        width: 480,
       },
       {
         dataIndex: 'status',
         title: '状态',
         render: (_, row) => <Tag color="gold">{row.status}</Tag>,
-        width: 120,
+        width: 100,
       },
       {
         fixed: 'right',
@@ -1051,7 +1073,7 @@ export default function TaskCenterPage() {
         valueType: 'option',
         render: (_, row) =>
           canOperateTasks ? (
-            <Space size={4}>
+            <Space className="task-review-actions" size={4} wrap={false}>
               <Button onClick={() => handleApproveReview(row)} type="link">
                 确认通过
               </Button>
@@ -1059,14 +1081,14 @@ export default function TaskCenterPage() {
                 修改后通过
               </Button>
               <Button danger onClick={() => openRejectReviewDialog(row)} type="link">
-                拒绝
+                拒绝并丢弃
               </Button>
               <Button onClick={() => openRequestMoreInfoDialog(row)} type="link">
                 要求补充
               </Button>
             </Space>
           ) : null,
-        width: 280,
+        width: 300,
       },
     ],
     [
@@ -1104,6 +1126,8 @@ export default function TaskCenterPage() {
               { label: '发布评估', value: 'release_readiness' },
               { label: '上线后分析', value: 'post_release_analysis' },
               { label: 'Code Review', value: 'code_review' },
+              { label: '代码巡检整改', value: 'code_inspection_remediation' },
+              { label: 'Bug 修复', value: 'bug_fix' },
             ],
             type: 'select',
           },
@@ -1196,11 +1220,12 @@ export default function TaskCenterPage() {
       />
 
       <Modal
+        className="task-review-output-modal"
         footer={null}
         onCancel={() => setReviewDialog(undefined)}
         open={Boolean(reviewDialog)}
         title={reviewDialog?.task ? `确认输出：${reviewDialog.task.label}` : '待确认'}
-        width={860}
+        width={1160}
       >
         {effectiveReviewsError ? (
           <Alert
@@ -1210,6 +1235,12 @@ export default function TaskCenterPage() {
             type="error"
           />
         ) : null}
+        <Alert
+          className="management-list-alert"
+          showIcon
+          title="确认通过后由 Runner 合入主工作区，拒绝后由 Runner 丢弃隔离结果。"
+          type="info"
+        />
         <ProTable<TaskCenterReviewRecord>
           columns={reviewColumns}
           dataSource={visibleReviewRows}
@@ -1252,7 +1283,7 @@ export default function TaskCenterPage() {
 
       <Modal
         confirmLoading={rejectReviewDialog?.submitting}
-        okText="拒绝"
+        okText="拒绝并丢弃"
         okButtonProps={{ danger: true }}
         onCancel={() => setRejectReviewDialog(undefined)}
         onOk={() => void handleRejectReview()}
@@ -1264,6 +1295,12 @@ export default function TaskCenterPage() {
         }
         width={640}
       >
+        <Alert
+          className="management-list-alert"
+          showIcon
+          title="拒绝后 Runner 会丢弃隔离工作区的代码修改；历史未隔离任务不会自动回滚主工作区。"
+          type="warning"
+        />
         <Form<RejectReviewFormValues> form={rejectReviewForm} layout="vertical">
           <Form.Item
             label="拒绝原因"
@@ -1329,7 +1366,7 @@ export default function TaskCenterPage() {
             >
               {taskActionItems.length ? (
                 taskActionItems.map((item) => (
-                  <Button block key={item.key} onClick={item.onClick} type={item.type}>
+                  <Button block danger={item.danger} key={item.key} onClick={item.onClick} type={item.type}>
                     {item.label}
                   </Button>
                 ))

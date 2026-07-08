@@ -8,6 +8,7 @@ from typing import Any
 
 from app.api.deps import api_error, require_permissions
 from app.core.store import DEFAULT_BRAIN_APP_ID
+from app.core.task_titles import code_inspection_remediation_title
 from app.services.bugs import create_bug_result
 from app.services.code_inspection_common import (
     CODE_INSPECTION_SUPPRESSION_REASONS,
@@ -108,6 +109,16 @@ def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any
         collection = []
         setattr(current_store, collection_name, collection)
     return collection
+
+
+def _merged_unique_ids(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    for group in groups:
+        for item in group:
+            item_id = str(item)
+            if item_id and item_id not in merged:
+                merged.append(item_id)
+    return merged
 
 
 def require_code_inspection_read(user: dict[str, Any]) -> None:
@@ -650,11 +661,11 @@ def create_bugs_for_findings(
         )
         created_ids.append(created["id"])
         finding["created_bug_id"] = created["id"]
-    report["created_bug_ids"] = [
-        *report.get("created_bug_ids", []),
-        *created_ids,
-        *deduplicated_ids,
-    ]
+    report["created_bug_ids"] = _merged_unique_ids(
+        [str(item) for item in report.get("created_bug_ids", [])],
+        created_ids,
+        deduplicated_ids,
+    )
     report["committer_count"] = committer_count(findings)
     report["committer_summary"] = committer_summary(findings)
     report["updated_at"] = datetime.now(UTC).isoformat()
@@ -704,6 +715,10 @@ def finding_task_input(finding: dict[str, Any], report: dict[str, Any]) -> dict[
     }
 
 
+def finding_task_title(finding: dict[str, Any]) -> str:
+    return code_inspection_remediation_title(finding)
+
+
 def create_tasks_for_findings(
     current_store: Any,
     *,
@@ -743,7 +758,7 @@ def create_tasks_for_findings(
             "review_ids": [],
             "status": "draft",
             "task_type": "code_inspection_remediation",
-            "title": f"[Code Inspection Remediation] {finding['title']}",
+            "title": finding_task_title(finding),
             "updated_at": now,
             "version_id": None,
         }
@@ -861,6 +876,7 @@ def execute_code_inspection_result_actions(
     deduplicated_bug_ids: list[str] = []
     notification_ids: list[str] = []
     task_ids: list[str] = []
+    task_promotion_deferred = False
     action_results: list[dict[str, Any]] = []
     report_written = False
     for action in actions:
@@ -942,20 +958,26 @@ def execute_code_inspection_result_actions(
                         "status": "succeeded",
                     }
                 )
-            created_task_ids = create_tasks_for_findings(
+            bug_result = create_bugs_for_findings(
                 current_store,
                 findings=findings,
                 report=report,
                 severity_threshold=action.get("severity_threshold") or "high",
                 user=user,
             )
-            task_ids.extend(created_task_ids)
+            bug_ids.extend(bug_result["created_ids"])
+            deduplicated_bug_ids.extend(bug_result["deduplicated_ids"])
+            task_promotion_deferred = True
             action_results.append(
                 {
                     "action_type": action_type,
-                    "created_task_ids": created_task_ids,
+                    "created_bug_ids": bug_result["created_ids"],
+                    "created_task_ids": [],
+                    "deduplicated_bug_ids": bug_result["deduplicated_ids"],
+                    "deferred_to": "bug_confirmation",
+                    "message": "代码扫描不直接创建研发任务；请在 Bug 确认后推进 AI Task。",
                     "severity_threshold": action.get("severity_threshold") or "high",
-                    "status": "succeeded",
+                    "status": "deferred_to_bug_confirmation",
                 }
             )
         elif action_type == "send_notification":
@@ -1022,6 +1044,7 @@ def execute_code_inspection_result_actions(
         "report": report,
         "report_written": report_written,
         "result_actions": actions,
+        "task_promotion_deferred": task_promotion_deferred,
         "task_ids": task_ids,
     }
 

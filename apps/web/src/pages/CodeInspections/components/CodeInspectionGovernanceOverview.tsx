@@ -49,7 +49,7 @@ function issueGapTags(row: Record<string, unknown>) {
   return (
     <Space className="code-inspection-table-tags" size={[4, 4]} wrap>
       {countTag('缺 Bug', row.uncovered_bug_finding_count, 'red')}
-      {countTag('缺任务', row.uncovered_task_finding_count, 'orange')}
+      {countTag('待推进任务', row.uncovered_task_finding_count, 'orange')}
     </Space>
   );
 }
@@ -218,7 +218,6 @@ function buildCodeInspectionGovernanceConclusion(
     actionRequiredBranchCount > 0 ? `待闭环分支 ${actionRequiredBranchCount}` : undefined,
     actionRequiredCommitterCount > 0 ? `待闭环提交人 ${actionRequiredCommitterCount}` : undefined,
     uncoveredBugCount > 0 ? `缺 Bug ${uncoveredBugCount}` : undefined,
-    uncoveredTaskCount > 0 ? `缺整改任务 ${uncoveredTaskCount}` : undefined,
     pendingSuppressionCount + pendingReviewCount > 0
       ? `待审批忽略 ${pendingSuppressionCount + pendingReviewCount}`
       : undefined,
@@ -227,10 +226,10 @@ function buildCodeInspectionGovernanceConclusion(
 
   if (!risks.length) {
     risks.push(`Bug 覆盖率 ${percentText(sla?.bug_coverage_rate)}`);
-    risks.push(`整改覆盖率 ${percentText(sla?.task_coverage_rate)}`);
+    risks.push(`任务推进率 ${percentText(sla?.task_coverage_rate)}`);
   }
 
-  const detail = `当前范围有 ${reportCount} 份巡检报告、${severeFindingCount} 个严重问题，门禁失败报告 ${failedReportCount} 份、失败项 ${qualityGateViolationCount} 个，缺 Bug ${uncoveredBugCount} 个、缺整改任务 ${uncoveredTaskCount} 个。`;
+  const detail = `当前范围有 ${reportCount} 份巡检报告、${severeFindingCount} 个严重问题，门禁失败报告 ${failedReportCount} 份、失败项 ${qualityGateViolationCount} 个，缺 Bug ${uncoveredBugCount} 个、待推进任务 ${uncoveredTaskCount} 个。`;
 
   if (failedReportCount > 0 || qualityGateViolationCount > 0) {
     return {
@@ -245,7 +244,7 @@ function buildCodeInspectionGovernanceConclusion(
     return {
       detail,
       level: 'warning',
-      nextAction: '先处理“分支治理待办”中的待闭环分支，确认 Bug、整改任务和风险接受是否完整。',
+      nextAction: '先处理“分支治理待办”中的待闭环分支，确认 Bug、风险接受，并按需从 Bug 或需求推进任务。',
       risks,
       value: '优先处理分支治理待办',
     };
@@ -254,18 +253,18 @@ function buildCodeInspectionGovernanceConclusion(
     return {
       detail,
       level: 'warning',
-      nextAction: '先处理“提交人治理待办”中的责任人闭环，补齐缺失 Bug、整改任务或忽略审批。',
+      nextAction: '先处理“提交人治理待办”中的责任人闭环，补齐缺失 Bug 或忽略审批，再按需推进任务。',
       risks,
       value: '优先处理提交人治理待办',
     };
   }
-  if (uncoveredBugCount > 0 || uncoveredTaskCount > 0) {
+  if (uncoveredBugCount > 0) {
     return {
       detail,
       level: 'warning',
-      nextAction: '先为严重问题补齐 Bug 或整改任务，确保扫描结果进入交付闭环。',
+      nextAction: '先为严重问题补齐 Bug，确认后再从 Bug 或需求推进研发任务。',
       risks,
-      value: '优先补齐 Bug 和整改任务',
+      value: '优先补齐 Bug',
     };
   }
   if (pendingSuppressionCount + pendingReviewCount > 0) {
@@ -393,7 +392,7 @@ export function CodeInspectionGovernanceOverview({
               title="Bug 覆盖率"
               value={percentText(sla?.bug_coverage_rate)}
             />
-            <Text type="secondary">{`整改 ${percentText(sla?.task_coverage_rate)}`}</Text>
+            <Text type="secondary">{`任务推进 ${percentText(sla?.task_coverage_rate)}`}</Text>
           </Card>
         </Col>
         <Col lg={6} md={12} xs={12}>
@@ -424,7 +423,7 @@ export function CodeInspectionGovernanceOverview({
                     {pressureMetric('待审批分支', governancePressure?.pending_review_branch_count, 'gold')}
                     {pressureMetric('待审批忽略', governancePressure?.pending_suppression_count, 'gold')}
                     {pressureMetric('缺 Bug', governancePressure?.uncovered_bug_finding_count, 'red')}
-                    {pressureMetric('缺整改任务', governancePressure?.uncovered_task_finding_count)}
+                    {pressureMetric('待推进任务', governancePressure?.uncovered_task_finding_count)}
                     {pressureMetric('门禁失败报告', governancePressure?.quality_gate_failed_report_count, 'red')}
                     {pressureMetric('门禁失败项', governancePressure?.quality_gate_violation_count, 'red')}
                     {pressureMetric('到期接受风险', governancePressure?.expired_accepted_risk_count)}
@@ -533,9 +532,9 @@ export function CodeInspectionGovernanceOverview({
                       { key: 'covered', label: '已关联 Bug', children: sla?.covered_by_bug_count ?? 0 },
                       { key: 'uncovered', label: '未覆盖严重问题', children: sla?.uncovered_severe_finding_count ?? 0 },
                       { key: 'oldest', label: '最早未覆盖', children: sla?.oldest_uncovered_at ?? '-' },
-                      { key: 'task_covered', label: '已生成整改任务', children: sla?.covered_by_task_count ?? 0 },
-                      { key: 'task_uncovered', label: '未派生整改任务', children: sla?.uncovered_task_finding_count ?? 0 },
-                      { key: 'task_oldest', label: '最早未派生任务', children: sla?.oldest_without_task_at ?? '-' },
+                      { key: 'task_covered', label: '已推进任务', children: sla?.covered_by_task_count ?? 0 },
+                      { key: 'task_uncovered', label: '待推进任务', children: sla?.uncovered_task_finding_count ?? 0 },
+                      { key: 'task_oldest', label: '最早待推进任务', children: sla?.oldest_without_task_at ?? '-' },
                     ]}
                     size="small"
                   />

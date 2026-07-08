@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -253,6 +254,34 @@ def ensure_review_decidable(
     return review, task
 
 
+def _first_non_blank_string(*values: Any) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _task_output_knowledge_content(task: dict[str, Any]) -> str:
+    output = task.get("output_json")
+    if not isinstance(output, dict):
+        return str(output).strip() if output is not None else task["title"]
+
+    result = output.get("result")
+    if not isinstance(result, dict):
+        result = {}
+    content = _first_non_blank_string(
+        output.get("summary"),
+        result.get("summary"),
+        output.get("output_preview"),
+        result.get("output_preview"),
+    )
+    if content is not None:
+        return content
+    if output:
+        return json.dumps(output, ensure_ascii=False, sort_keys=True)
+    return task["title"]
+
+
 def create_knowledge_deposit(current_store: Any, task: dict[str, Any]) -> dict[str, Any]:
     deposit_id = current_store.new_id("deposit")
     now = datetime.now(UTC).isoformat()
@@ -260,7 +289,7 @@ def create_knowledge_deposit(current_store: Any, task: dict[str, Any]) -> dict[s
         "id": deposit_id,
         "ai_task_id": task["id"],
         "title": f"{task['title']} 知识沉淀",
-        "content": task["output_json"]["summary"],
+        "content": _task_output_knowledge_content(task),
         "status": "pending",
         "knowledge_document_id": None,
         "created_at": now,

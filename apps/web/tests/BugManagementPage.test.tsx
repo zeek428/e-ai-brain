@@ -436,6 +436,10 @@ describe('bug management page', () => {
 
     const bugRow = (await screen.findByText('推进 AI 任务 Bug')).closest('tr');
     expect(bugRow).not.toBeNull();
+    expect(screen.getByRole('columnheader', { name: '操作' })).toHaveAttribute('data-width', '380');
+    expect(Number(screen.getByRole('table').getAttribute('data-table-scroll-x'))).toBeGreaterThanOrEqual(1820);
+    expect(within(bugRow as HTMLElement).getByRole('button', { name: /AI处理/ })).toHaveTextContent('AI处理');
+    expect(within(bugRow as HTMLElement).getByRole('button', { name: /删除/ })).toBeInTheDocument();
     fireEvent.click(within(bugRow as HTMLElement).getByRole('button', { name: /AI处理/ }));
 
     await waitFor(() =>

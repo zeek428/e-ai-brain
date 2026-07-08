@@ -97,10 +97,6 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
                     "severity_threshold": "critical",
                     "type": "create_bug_for_severe_findings",
                 },
-                {
-                    "severity_threshold": "high",
-                    "type": "create_task_for_severe_findings",
-                },
                 {"channels": ["email"], "recipients": [], "type": "send_notification"},
             ],
             "schedule_type": "cron",
@@ -223,7 +219,6 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
             "result_actions": [
                 {"type": "write_code_inspection_report"},
                 {"severity_threshold": "critical", "type": "create_bug_for_severe_findings"},
-                {"severity_threshold": "high", "type": "create_task_for_severe_findings"},
             ],
             "schedule_type": "cron",
             "skill_ids": [],

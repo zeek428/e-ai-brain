@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import zipfile
 from datetime import UTC, datetime
 from io import BytesIO
@@ -24,6 +26,23 @@ def _runner_endpoint(runner: dict[str, Any]) -> str:
 def _runner_metadata(runner: dict[str, Any]) -> dict[str, Any]:
     metadata = runner.get("metadata")
     return metadata if isinstance(metadata, dict) else {}
+
+
+def _normalize_runner_executor_command(executor_type: str, command: str) -> str:
+    text = str(command or "").strip()
+    if executor_type != "codex" or not text:
+        return text
+    try:
+        command_args = shlex.split(text)
+    except ValueError:
+        return text
+    if len(command_args) == 1 and os.path.basename(command_args[0]).lower() in {
+        "codex",
+        "codex.exe",
+    }:
+        command_args.append("exec")
+        return shlex.join(command_args)
+    return text
 
 
 def _normalized_package_option(value: str | None) -> str | None:
@@ -89,7 +108,7 @@ def runner_executor_commands(runner: dict[str, Any]) -> dict[str, str]:
     raw_commands = metadata.get("executor_commands")
     if isinstance(raw_commands, dict):
         commands = {
-            str(key): str(value).strip()
+            str(key): _normalize_runner_executor_command(str(key), str(value))
             for key, value in raw_commands.items()
             if str(key).strip() and str(value).strip()
         }
@@ -97,7 +116,7 @@ def runner_executor_commands(runner: dict[str, Any]) -> dict[str, str]:
         commands = {}
     defaults = {
         "claude": "claude",
-        "codex": "codex",
+        "codex": "codex exec",
         "hermes": "hermes",
         "openclaw": "openclaw",
     }
@@ -130,6 +149,7 @@ def _runner_env_text(runner: dict[str, Any], package_options: dict[str, str]) ->
             f"AI_BRAIN_MAX_CONCURRENT_TASKS={max_concurrent_tasks}",
             "AI_BRAIN_POLL_INTERVAL_SECONDS=5",
             "AI_BRAIN_RUNNER_CONFIG=./runner_config.json",
+            "AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS=false",
             "AI_BRAIN_BYPASS_PROXY=auto",
             "NO_PROXY=127.0.0.1,localhost,::1",
             "no_proxy=127.0.0.1,localhost,::1",
@@ -161,16 +181,29 @@ def _runner_config_json(runner: dict[str, Any], package_options: dict[str, str])
             "cancel_process_tree_on_server_cancel": True,
             "command_allowlist_enforced": True,
             "command_shell_disabled": True,
+            "extra_path_entries": [
+                "$HOME/.local/bin",
+                "$HOME/.npm-global/bin",
+                "$HOME/.bun/bin",
+                "$HOME/.cargo/bin",
+                "/Applications/Codex.app/Contents/Resources",
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+            ],
             "instruction_passed_via_stdin": True,
+            "local_console_logs": False,
             "log_flush_interval_seconds": 2,
             "log_flush_line_count": 5,
             "max_output_preview_chars": 4000,
+            "print_background_logs": False,
             "process_group_isolation": True,
             "reject_unconfigured_executor": True,
             "require_human_review_for_git_push": True,
             "server_high_risk_approval_required": True,
             "stream_logs": True,
             "terminate_process_tree_on_timeout": True,
+            "workspace_worktree_isolation_enabled": True,
+            "workspace_worktree_parent_dir_name": ".ai-brain-worktrees",
             "workspace_roots_enforced": True,
         },
     }
@@ -194,6 +227,7 @@ import queue
 import re
 import signal
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -205,6 +239,13 @@ import urllib.request
 
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw_value = _env(name)
+    if not raw_value:
+        return bool(default)
+    return raw_value.lower() in {"1", "true", "yes", "on"}
 
 
 RUNNER_ID = _env("AI_BRAIN_RUNNER_ID")
@@ -223,6 +264,10 @@ def _load_config() -> dict:
 CONFIG = _load_config()
 EXECUTOR_COMMANDS = dict(CONFIG.get("executor_commands") or {})
 SAFETY = CONFIG.get("safety") if isinstance(CONFIG.get("safety"), dict) else {}
+PRINT_BACKGROUND_LOGS = bool(
+    SAFETY.get("print_background_logs", SAFETY.get("local_console_logs", False))
+)
+LOCAL_CONSOLE_LOGS = _env_bool("AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS", PRINT_BACKGROUND_LOGS)
 MAX_OUTPUT_PREVIEW_CHARS = int(SAFETY.get("max_output_preview_chars") or 4000)
 LOG_FLUSH_INTERVAL_SECONDS = float(SAFETY.get("log_flush_interval_seconds") or 2)
 LOG_FLUSH_LINE_COUNT = int(SAFETY.get("log_flush_line_count") or 5)
@@ -234,6 +279,14 @@ WORKSPACE_ROOTS = [
 ]
 _STREAM_END = object()
 SERVER_TERMINAL_STATUSES = {"cancelled", "dead_letter", "failed", "succeeded", "timed_out"}
+WORKTREE_ISOLATION_ENABLED = bool(SAFETY.get("workspace_worktree_isolation_enabled", True))
+WORKTREE_PARENT_DIR_NAME = str(
+    SAFETY.get("workspace_worktree_parent_dir_name") or ".ai-brain-worktrees"
+)
+WORKSPACE_ISOLATIONS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(CONFIG_PATH)),
+    "workspace_isolations.json",
+)
 EXECUTOR_TYPES = [
     str(item).strip()
     for item in (CONFIG.get("runner") or {}).get("executor_types", [])
@@ -249,6 +302,72 @@ HIGH_RISK_PATTERNS = (
         r"terraform\s+(apply|destroy)|docker\s+push|npm\s+publish|pnpm\s+publish)\b",
     ),
 )
+
+
+def _string_list(value) -> list[str]:
+    if isinstance(value, str):
+        values = value.split(os.pathsep)
+    elif isinstance(value, list):
+        values = value
+    else:
+        values = []
+    return [str(item).strip() for item in values if str(item).strip()]
+
+
+def _default_executor_path_entries() -> list[str]:
+    home = os.path.expanduser("~")
+    entries: list[str] = []
+    if home and home != "~":
+        entries.extend(
+            [
+                os.path.join(home, ".local", "bin"),
+                os.path.join(home, ".npm-global", "bin"),
+                os.path.join(home, ".bun", "bin"),
+                os.path.join(home, ".cargo", "bin"),
+            ]
+        )
+    entries.extend(
+        [
+            "/Applications/Codex.app/Contents/Resources",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+    )
+    return entries
+
+
+def _configured_extra_path_entries() -> list[str]:
+    entries = _string_list(SAFETY.get("extra_path_entries"))
+    return [os.path.expandvars(os.path.expanduser(item)) for item in entries]
+
+
+def _runner_search_path() -> str:
+    existing_path = os.environ.get("PATH") or ""
+    entries = [
+        *_configured_extra_path_entries(),
+        *_default_executor_path_entries(),
+        *existing_path.split(os.pathsep),
+    ]
+    unique_entries: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        normalized = str(entry or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_entries.append(normalized)
+    return os.pathsep.join(unique_entries)
+
+
+def _augment_process_path() -> None:
+    os.environ["PATH"] = _runner_search_path()
+
+
+_augment_process_path()
 
 
 def _api_root() -> str:
@@ -328,9 +447,33 @@ def _workspace_allowed(workspace_root: str) -> bool:
     return False
 
 
-def _append_logs(task_id: str, logs: list[dict], status: str = "running") -> None:
+def _print_local_log(task_id: str, log: dict) -> None:
+    if not LOCAL_CONSOLE_LOGS:
+        return
+    level = str(log.get("level") or "info").upper()
+    timestamp = str(log.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    message = str(log.get("message") or "")
+    stream = sys.stderr if level in {"ERROR", "WARNING"} else sys.stdout
+    print(f"[{timestamp}] [{task_id}] [{level}] {message}", file=stream, flush=True)
+
+
+def _print_local_logs(task_id: str, logs: list[dict]) -> None:
+    for log in logs:
+        if isinstance(log, dict):
+            _print_local_log(task_id, log)
+
+
+def _append_logs(
+    task_id: str,
+    logs: list[dict],
+    status: str = "running",
+    *,
+    local_echo: bool = True,
+) -> None:
     if not logs:
         return
+    if local_echo:
+        _print_local_logs(task_id, logs)
     _request_json(
         "POST",
         f"{API_ROOT}/ai-executor-tasks/{task_id}/logs",
@@ -338,13 +481,19 @@ def _append_logs(task_id: str, logs: list[dict], status: str = "running") -> Non
     )
 
 
-def _flush_log_batch(task_id: str, logs: list[dict], status: str = "running") -> None:
+def _flush_log_batch(
+    task_id: str,
+    logs: list[dict],
+    status: str = "running",
+    *,
+    local_echo: bool = True,
+) -> None:
     if not logs:
         return
     batch = list(logs)
     logs.clear()
     try:
-        _append_logs(task_id, batch, status=status)
+        _append_logs(task_id, batch, status=status, local_echo=local_echo)
     except Exception as exc:  # noqa: BLE001 - logging should not kill local execution.
         print(f"Failed to append runner logs: {exc}", file=sys.stderr)
 
@@ -358,6 +507,8 @@ def _complete_task(
     error_code: str | None = None,
     error_message: str | None = None,
 ) -> None:
+    if logs:
+        _print_local_logs(task_id, logs)
     _request_json(
         "POST",
         f"{API_ROOT}/ai-executor-tasks/{task_id}/complete",
@@ -380,6 +531,244 @@ def _task_status(task_id: str) -> dict | None:
     )
     task = (response.get("data") or {}).get("task")
     return task if isinstance(task, dict) else None
+
+
+def _complete_workspace_decision(
+    task_id: str,
+    *,
+    action: str,
+    message: str,
+    status: str,
+) -> None:
+    _request_json(
+        "POST",
+        f"{API_ROOT}/ai-executor-tasks/{task_id}/workspace-decision",
+        {
+            "action": action,
+            "message": message,
+            "runner_id": RUNNER_ID,
+            "status": status,
+        },
+    )
+
+
+def _load_pending_workspace_isolations() -> dict:
+    try:
+        with open(WORKSPACE_ISOLATIONS_PATH, "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001 - local state should not stop task execution.
+        print(f"Failed to load workspace isolation state: {exc}", file=sys.stderr)
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _save_pending_workspace_isolations(value: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(WORKSPACE_ISOLATIONS_PATH), exist_ok=True)
+        with open(WORKSPACE_ISOLATIONS_PATH, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True)
+    except Exception as exc:  # noqa: BLE001 - local state should not stop task execution.
+        print(f"Failed to save workspace isolation state: {exc}", file=sys.stderr)
+
+
+def _remember_pending_workspace(task_id: str, isolation: dict | None) -> None:
+    if not isolation or isolation.get("mode") != "git_worktree":
+        return
+    pending = _load_pending_workspace_isolations()
+    pending[task_id] = isolation
+    _save_pending_workspace_isolations(pending)
+
+
+def _forget_pending_workspace(task_id: str) -> None:
+    pending = _load_pending_workspace_isolations()
+    if task_id in pending:
+        pending.pop(task_id, None)
+        _save_pending_workspace_isolations(pending)
+
+
+def _command_output(
+    command_args: list[str],
+    *,
+    cwd: str,
+    timeout_seconds: int = 60,
+) -> tuple[int, str]:
+    process = subprocess.Popen(
+        command_args,
+        cwd=cwd,
+        env={**os.environ, "PATH": _runner_search_path()},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        **_process_group_popen_kwargs(),
+    )
+    try:
+        output, _ = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        _terminate_process_tree(process)
+        output, _ = process.communicate(timeout=2)
+        return -9, output or ""
+    return int(process.returncode or 0), output or ""
+
+
+def _git(cwd: str, *args: str, timeout_seconds: int = 60) -> tuple[int, str]:
+    return _command_output(["git", *args], cwd=cwd, timeout_seconds=timeout_seconds)
+
+
+def _safe_path_part(value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip()).strip(".-")
+    return sanitized or "task"
+
+
+def _prepare_isolated_workspace(task: dict, workspace_root: str) -> tuple[str, dict | None]:
+    if not WORKTREE_ISOLATION_ENABLED:
+        return workspace_root, None
+    task_id = str(task.get("id") or "task")
+    code, git_root = _git(workspace_root, "rev-parse", "--show-toplevel")
+    if code != 0 or not git_root.strip():
+        return workspace_root, {
+            "base_workspace_root": workspace_root,
+            "mode": "none",
+            "reason": "not_git_repository",
+            "status": "not_isolated",
+            "worktree_path": workspace_root,
+        }
+    base_root = os.path.abspath(git_root.strip())
+    repo_name = _safe_path_part(os.path.basename(base_root))
+    worktree_path = os.path.join(
+        os.path.dirname(base_root),
+        WORKTREE_PARENT_DIR_NAME,
+        repo_name,
+        _safe_path_part(task_id),
+    )
+    branch_name = f"ai-brain/{_safe_path_part(task_id)}"
+    if os.path.exists(worktree_path):
+        _discard_isolated_workspace(
+            {
+                "base_workspace_root": base_root,
+                "branch_name": branch_name,
+                "worktree_path": worktree_path,
+            }
+        )
+    os.makedirs(os.path.dirname(worktree_path), exist_ok=True)
+    # git worktree add keeps AI changes outside the primary workspace until review approval.
+    code, output = _git(base_root, "worktree", "add", "-b", branch_name, worktree_path, "HEAD")
+    if code != 0:
+        raise RuntimeError(f"git worktree add failed: {output}")
+    return worktree_path, {
+        "base_workspace_root": base_root,
+        "branch_name": branch_name,
+        "mode": "git_worktree",
+        "patch_path": None,
+        "status": "active",
+        "worktree_path": worktree_path,
+    }
+
+
+def _capture_workspace_patch(isolation: dict | None) -> dict | None:
+    if not isolation or isolation.get("mode") != "git_worktree":
+        return isolation
+    worktree_path = str(isolation.get("worktree_path") or "")
+    if not worktree_path or not os.path.isdir(worktree_path):
+        return {**isolation, "status": "missing_worktree"}
+    _git(worktree_path, "add", "-N", ".")
+    code, patch = _git(worktree_path, "diff", "--binary", "HEAD", timeout_seconds=120)
+    patch_path = os.path.join(worktree_path, ".ai-brain-task.patch")
+    with open(patch_path, "w", encoding="utf-8") as handle:
+        handle.write(patch if code == 0 else "")
+    return {
+        **isolation,
+        "changed": bool(patch.strip()) if code == 0 else False,
+        "patch_path": patch_path,
+        "status": "pending_review",
+    }
+
+
+def _base_workspace_has_local_changes(base_workspace_root: str) -> bool:
+    code, output = _git(base_workspace_root, "status", "--porcelain", timeout_seconds=30)
+    return code != 0 or bool(output.strip())
+
+
+def _merge_isolated_workspace(isolation: dict) -> str:
+    base_workspace_root = str(isolation.get("base_workspace_root") or "")
+    patch_path = str(isolation.get("patch_path") or "")
+    if not base_workspace_root or not os.path.isdir(base_workspace_root):
+        raise RuntimeError("Base workspace is missing")
+    if _base_workspace_has_local_changes(base_workspace_root):
+        raise RuntimeError("Base workspace has local changes; refusing to apply isolated patch")
+    if patch_path and os.path.exists(patch_path):
+        code, output = _git(
+            base_workspace_root,
+            "apply",
+            "--whitespace=nowarn",
+            patch_path,
+            timeout_seconds=120,
+        )
+        if code != 0:
+            raise RuntimeError(f"git apply failed: {output}")
+    _discard_isolated_workspace(isolation)
+    return "merged isolated patch into base workspace"
+
+
+def _discard_isolated_workspace(isolation: dict) -> str:
+    base_workspace_root = str(isolation.get("base_workspace_root") or "")
+    worktree_path = str(isolation.get("worktree_path") or "")
+    branch_name = str(isolation.get("branch_name") or "")
+    if base_workspace_root and os.path.isdir(base_workspace_root) and worktree_path:
+        _git(
+            base_workspace_root,
+            "worktree",
+            "remove",
+            "--force",
+            worktree_path,
+            timeout_seconds=120,
+        )
+    if worktree_path and os.path.exists(worktree_path):
+        shutil.rmtree(worktree_path, ignore_errors=True)
+    if base_workspace_root and os.path.isdir(base_workspace_root) and branch_name:
+        _git(base_workspace_root, "branch", "-D", branch_name, timeout_seconds=60)
+    return "discarded isolated worktree"
+
+
+def _finalize_workspace_decisions() -> None:
+    pending = _load_pending_workspace_isolations()
+    if not pending:
+        return
+    for task_id, pending_isolation in list(pending.items()):
+        try:
+            task_status = _task_status(task_id) or {}
+            isolation = task_status.get("workspace_isolation")
+            if not isinstance(isolation, dict):
+                isolation = pending_isolation if isinstance(pending_isolation, dict) else {}
+            decision = isolation.get("decision") if isinstance(isolation, dict) else {}
+            if not isinstance(decision, dict) or decision.get("status") != "requested":
+                continue
+            action = str(decision.get("action") or "")
+            if action == "merge":
+                message = _merge_isolated_workspace(isolation)
+            elif action == "discard":
+                message = _discard_isolated_workspace(isolation)
+            else:
+                continue
+            _complete_workspace_decision(
+                task_id,
+                action=action,
+                message=message,
+                status="completed",
+            )
+            _forget_pending_workspace(task_id)
+        except Exception as exc:  # noqa: BLE001 - keep the runner alive and report the failure.
+            action = str(((isolation or {}).get("decision") or {}).get("action") or "unknown")
+            try:
+                _complete_workspace_decision(
+                    task_id,
+                    action=action,
+                    message=str(exc),
+                    status="failed",
+                )
+            except Exception as report_exc:  # noqa: BLE001
+                print(f"Failed to report workspace decision failure: {report_exc}", file=sys.stderr)
 
 
 def _heartbeat() -> None:
@@ -483,9 +872,11 @@ def _parsed_json_output(output_preview: str):
 def _executor_result_json(
     *,
     duration_ms: int,
+    execution_workspace_root: str | None = None,
     executor_type: str,
     exit_code: int,
     output_preview: str,
+    workspace_isolation: dict | None = None,
     workspace_root: str,
 ) -> dict:
     result_json = {
@@ -496,6 +887,10 @@ def _executor_result_json(
         "output_preview": output_preview,
         "workspace_root": workspace_root,
     }
+    if execution_workspace_root:
+        result_json["execution_workspace_root"] = execution_workspace_root
+    if workspace_isolation:
+        result_json["workspace_isolation"] = workspace_isolation
     parsed_output = _parsed_json_output(output_preview)
     if parsed_output is not None:
         result_json["parsed_output"] = parsed_output
@@ -562,6 +957,7 @@ def _stream_process_output(
     process = subprocess.Popen(
         command_args,
         cwd=workspace_root,
+        env={**os.environ, "PATH": _runner_search_path()},
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -601,7 +997,9 @@ def _stream_process_output(
             output_preview = (output_preview + item)[-MAX_OUTPUT_PREVIEW_CHARS:]
             message = item.rstrip()
             if message:
-                pending_logs.append({"level": "info", "message": message})
+                log = {"level": "info", "message": message}
+                _print_local_log(task_id, log)
+                pending_logs.append(log)
 
         now = time.monotonic()
         if (
@@ -619,21 +1017,23 @@ def _stream_process_output(
             if status in SERVER_TERMINAL_STATUSES:
                 server_terminal_status = status
                 termination_status = _terminate_process_tree(process)
+                log = {
+                    "level": "warning",
+                    "message": (
+                        f"Task reached server terminal status {status}; "
+                        f"process tree {termination_status}"
+                    ),
+                }
+                _print_local_log(task_id, log)
                 pending_logs.append(
-                    {
-                        "level": "warning",
-                        "message": (
-                            f"Task reached server terminal status {status}; "
-                            f"process tree {termination_status}"
-                        ),
-                    }
+                    log
                 )
                 break
         if pending_logs and (
             len(pending_logs) >= LOG_FLUSH_LINE_COUNT
             or now - last_flush_at >= LOG_FLUSH_INTERVAL_SECONDS
         ):
-            _flush_log_batch(task_id, pending_logs, status="running")
+            _flush_log_batch(task_id, pending_logs, status="running", local_echo=False)
             last_flush_at = now
 
         if process.poll() is not None and reader_done:
@@ -641,15 +1041,15 @@ def _stream_process_output(
         if now >= deadline and process.poll() is None:
             timed_out = True
             termination_status = _terminate_process_tree(process)
-            pending_logs.append(
-                {
-                    "level": "error",
-                    "message": (
-                        f"Executor timed out after {timeout_seconds}s; "
-                        f"process tree {termination_status}"
-                    ),
-                }
-            )
+            log = {
+                "level": "error",
+                "message": (
+                    f"Executor timed out after {timeout_seconds}s; "
+                    f"process tree {termination_status}"
+                ),
+            }
+            _print_local_log(task_id, log)
+            pending_logs.append(log)
             break
 
     drained_done, output_preview = _drain_output_queue(
@@ -659,7 +1059,12 @@ def _stream_process_output(
     )
     reader_done = reader_done or drained_done
     if not server_terminal_status:
-        _flush_log_batch(task_id, pending_logs, status="timed_out" if timed_out else "running")
+        _flush_log_batch(
+            task_id,
+            pending_logs,
+            status="timed_out" if timed_out else "running",
+            local_echo=False,
+        )
     else:
         pending_logs.clear()
     reader.join(timeout=1)
@@ -675,6 +1080,22 @@ def _command_allowlist_enforced() -> bool:
     return bool(SAFETY.get("command_allowlist_enforced", True))
 
 
+def _command_basename(command_path: str) -> str:
+    normalized = str(command_path or "").replace("\\", "/").rstrip("/")
+    return normalized.rsplit("/", 1)[-1].lower()
+
+
+def _ensure_noninteractive_codex_command(
+    executor_type: str,
+    command_args: list[str],
+) -> list[str]:
+    if executor_type != "codex" or len(command_args) != 1:
+        return command_args
+    if _command_basename(command_args[0]) not in {"codex", "codex.exe"}:
+        return command_args
+    return [command_args[0], "exec"]
+
+
 def _resolve_executor_command(executor_type: str) -> tuple[str | None, list[str], str | None]:
     configured = str(EXECUTOR_COMMANDS.get(executor_type) or "").strip()
     if _command_allowlist_enforced() and not configured:
@@ -686,6 +1107,20 @@ def _resolve_executor_command(executor_type: str) -> tuple[str | None, list[str]
         return command, [], f"Invalid command configured for executor {executor_type}: {exc}"
     if not command_args:
         return command, [], f"No command configured for executor {executor_type}"
+    executable = command_args[0]
+    if not os.path.dirname(executable):
+        resolved = shutil.which(executable, path=_runner_search_path())
+        if not resolved:
+            return (
+                command,
+                command_args,
+                (
+                    f"Executable {executable!r} was not found. "
+                    f"Search PATH: {_runner_search_path()}"
+                ),
+            )
+        command_args[0] = resolved
+    command_args = _ensure_noninteractive_codex_command(executor_type, command_args)
     return command, command_args, None
 
 
@@ -748,24 +1183,38 @@ def _run_task(task: dict) -> None:
             ),
             error_message=command_error,
             result_json={
+                "command": command,
+                "command_args": command_args,
                 "command_allowlist_enforced": _command_allowlist_enforced(),
                 "executor_type": executor_type,
+                "search_path": _runner_search_path(),
             },
         )
         return
     started_at = time.time()
-    _append_logs(
-        task_id,
-        [{"level": "info", "message": f"Starting {executor_type} in {workspace_root}"}],
-        status="running",
-    )
+    execution_workspace_root = workspace_root
+    workspace_isolation: dict | None = None
     try:
+        execution_workspace_root, workspace_isolation = _prepare_isolated_workspace(
+            task,
+            workspace_root,
+        )
+        _append_logs(
+            task_id,
+            [
+                {
+                    "level": "info",
+                    "message": f"Starting {executor_type} in {execution_workspace_root}",
+                }
+            ],
+            status="running",
+        )
         exit_code, preview, timed_out, server_terminal_status = _stream_process_output(
             command_args=command_args,
             instruction=instruction,
             task_id=task_id,
             timeout_seconds=timeout_seconds,
-            workspace_root=workspace_root,
+            workspace_root=execution_workspace_root,
         )
         duration_ms = int((time.time() - started_at) * 1000)
         if server_terminal_status:
@@ -774,8 +1223,17 @@ def _run_task(task: dict) -> None:
                 f"{server_terminal_status}; local completion skipped.",
                 file=sys.stderr,
             )
+            if workspace_isolation and workspace_isolation.get("mode") == "git_worktree":
+                _discard_isolated_workspace(workspace_isolation)
             return
+        workspace_isolation = _capture_workspace_patch(workspace_isolation)
         if timed_out:
+            if workspace_isolation and workspace_isolation.get("mode") == "git_worktree":
+                _discard_isolated_workspace(workspace_isolation)
+                workspace_isolation = {
+                    **workspace_isolation,
+                    "status": "discarded_after_timeout",
+                }
             _complete_task(
                 task_id,
                 status="timed_out",
@@ -789,14 +1247,24 @@ def _run_task(task: dict) -> None:
                 ],
                 result_json=_executor_result_json(
                     duration_ms=duration_ms,
+                    execution_workspace_root=execution_workspace_root,
                     executor_type=executor_type,
                     exit_code=exit_code,
                     output_preview=preview,
+                    workspace_isolation=workspace_isolation,
                     workspace_root=workspace_root,
                 ),
             )
             return
         status = "succeeded" if exit_code == 0 else "failed"
+        if status == "succeeded":
+            _remember_pending_workspace(task_id, workspace_isolation)
+        elif workspace_isolation and workspace_isolation.get("mode") == "git_worktree":
+            _discard_isolated_workspace(workspace_isolation)
+            workspace_isolation = {
+                **workspace_isolation,
+                "status": "discarded_after_failure",
+            }
         logs = [
             {
                 "level": "info" if exit_code == 0 else "error",
@@ -811,19 +1279,35 @@ def _run_task(task: dict) -> None:
             logs=logs,
             result_json=_executor_result_json(
                 duration_ms=duration_ms,
+                execution_workspace_root=execution_workspace_root,
                 executor_type=executor_type,
                 exit_code=exit_code,
                 output_preview=preview,
+                workspace_isolation=workspace_isolation,
                 workspace_root=workspace_root,
             ),
         )
     except Exception as exc:  # noqa: BLE001 - runner must report failures to AI Brain.
+        if workspace_isolation and workspace_isolation.get("mode") == "git_worktree":
+            try:
+                _discard_isolated_workspace(workspace_isolation)
+                workspace_isolation = {
+                    **workspace_isolation,
+                    "status": "discarded_after_exception",
+                }
+            except Exception as cleanup_exc:  # noqa: BLE001
+                print(f"Failed to discard isolated workspace: {cleanup_exc}", file=sys.stderr)
         _complete_task(
             task_id,
             status="failed",
             error_code=exc.__class__.__name__,
             error_message=str(exc),
-            result_json={"executor_type": executor_type, "workspace_root": workspace_root},
+            result_json={
+                "execution_workspace_root": execution_workspace_root,
+                "executor_type": executor_type,
+                "workspace_isolation": workspace_isolation,
+                "workspace_root": workspace_root,
+            },
         )
 
 
@@ -838,6 +1322,7 @@ def main() -> int:
     while True:
         try:
             _heartbeat()
+            _finalize_workspace_decisions()
             task = _claim_task()
             if task:
                 _run_task(task)
@@ -1344,6 +1829,9 @@ def _runner_readme(runner: dict[str, Any], package_options: dict[str, str]) -> s
 当 Endpoint 指向 `127.0.0.1`、`localhost` 或 `::1` 时，Runner 默认绕过系统
 HTTP/HTTPS 代理，避免本机代理把心跳请求转发后重置连接；如需强制使用代理，
 可在 `ai-brain-runner.env` 中设置 `AI_BRAIN_BYPASS_PROXY=false`。
+Runner 默认仍会把任务日志同步到 AI Brain，但不在本机后台控制台打印执行日志；
+如需排查本地执行过程，可在 `ai-brain-runner.env` 中设置
+`AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS=true` 后重启 Runner。
 
 ## 启停说明
 

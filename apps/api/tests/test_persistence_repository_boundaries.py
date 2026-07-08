@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.persistence import PersistentMemoryStore, PostgresSnapshotRepository
@@ -26,6 +27,38 @@ from app.core.repositories.user_insights import UserInsightReadRepository
 from app.core.repositories.user_insights_writes import UserInsightWriteRepository
 from app.services.assistant_action_drafts import ASSISTANT_DRAFT_ACTIONS
 from tests.test_database_persistence import FakeSnapshotRepository
+
+
+class _StaticCursor:
+    def __init__(self, rows: list[tuple]) -> None:
+        self.rows = rows
+        self.queries: list[str] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, query: str, params: tuple | None = None) -> None:
+        self.queries.append(query)
+
+    def fetchall(self) -> list[tuple]:
+        return self.rows
+
+
+class _StaticConnection:
+    def __init__(self, cursor: _StaticCursor) -> None:
+        self._cursor = cursor
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def cursor(self) -> _StaticCursor:
+        return self._cursor
 
 
 def test_postgres_system_state_delegates_to_domain_repository(monkeypatch):
@@ -1322,6 +1355,46 @@ def test_postgres_task_read_models_delegate_to_domain_repository(monkeypatch):
     assert calls[4][1]["read_scope"] == "code_review"
 
 
+def test_ai_task_summary_repository_projects_code_inspection_location_title():
+    now = datetime(2026, 7, 7, 2, 46, 15, tzinfo=UTC)
+    cursor = _StaticCursor(
+        [
+            (
+                "task_legacy",
+                "rd_brain",
+                None,
+                "code_inspection_remediation",
+                "[Code Inspection Remediation] 硬编码敏感凭据",
+                "draft",
+                "product_119",
+                None,
+                None,
+                None,
+                "user_admin",
+                now,
+                now,
+                "AI Brain",
+                {
+                    "file_path": "apps/api/app/auth.py",
+                    "line_number": 80,
+                    "rule_id": "secrets.hardcoded_credential",
+                    "title": "硬编码敏感凭据",
+                },
+            )
+        ]
+    )
+    repository = TaskReadRepository(lambda: _StaticConnection(cursor))
+
+    items = repository.list_ai_task_summaries(task_type="code_inspection_remediation")
+
+    assert "t.input_json" in cursor.queries[0]
+    assert items[0]["title"] == (
+        "[Code Inspection Remediation] "
+        "apps/api/app/auth.py:80 · 硬编码敏感凭据"
+    )
+    assert "input_json" not in items[0]
+
+
 def test_postgres_task_writes_delegate_to_domain_repository(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
     calls: list[tuple[str, dict]] = []
@@ -2377,8 +2450,10 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
     }
     assert repository.has_readable_vector_chunks(user_roles=["admin"]) is True
     assert repository.search_knowledge_chunks(
+        product_id="product_001",
         user_roles=["product_owner"],
         query="AI Brain",
+        version_id="version_001",
     )[0]["source"] == "search_knowledge_chunks"
     assert repository.claim_knowledge_import_job(
         job_id="knowledge_import_job_001",
@@ -2431,9 +2506,11 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
                 "global_knowledge_access": False,
                 "knowledge_space_id": None,
                 "knowledge_space_scope_ids": None,
+                "product_id": "product_001",
                 "query": "AI Brain",
                 "user_id": None,
                 "user_roles": ["product_owner"],
+                "version_id": "version_001",
             },
         ),
         (

@@ -197,6 +197,7 @@ type TaskDetailItem = TaskListItem & {
   module_code?: string;
   output?: unknown;
   output_json?: unknown;
+  output_summary?: unknown;
   pending_review?: unknown;
   product_context?: unknown;
   requirement_snapshot?: unknown;
@@ -254,6 +255,117 @@ function formatUnknownValue(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+const TASK_OUTPUT_SUMMARY_MARKERS = [
+  '**整改状态',
+  '整改状态：',
+  '整改状态:',
+  '## 整改',
+  '**整改结果',
+  '整改结果：',
+  '整改结果:',
+  '**执行结果',
+  '执行结果：',
+  '执行结果:',
+  '**修复结果',
+  '修复结果：',
+  '修复结果:',
+  '**处理结果',
+  '处理结果：',
+  '处理结果:',
+  '**验证方式',
+  '验证方式：',
+  '验证方式:',
+];
+
+const ANSI_ESCAPE_CHARACTER = String.fromCharCode(27);
+const ANSI_ESCAPE_PATTERN = new RegExp(`${ANSI_ESCAPE_CHARACTER}\\[[0-?]*[ -/]*[@-~]`, 'g');
+
+function truncateReadableSummary(text: string) {
+  const maxSummaryLength = 6000;
+  if (text.length <= maxSummaryLength) {
+    return text;
+  }
+  return `${text.slice(0, maxSummaryLength).trimEnd()}\n\n...（摘要已截断）`;
+}
+
+function stringAtPath(value: unknown, path: string[]) {
+  let current = value;
+  for (const key of path) {
+    const record = normalizeObjectRecord(current);
+    if (!record) {
+      return undefined;
+    }
+    current = record[key];
+  }
+  return typeof current === 'string' && current.trim() ? current.trim() : undefined;
+}
+
+function stripCodexTokenHeader(text: string) {
+  const tokenPattern = /^tokens used\s*\n\s*[\d,]+\s*$/gim;
+  let tokenEndIndex = -1;
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(text)) !== null) {
+    tokenEndIndex = match.index + match[0].length;
+  }
+  return tokenEndIndex >= 0 ? text.slice(tokenEndIndex).trim() : text;
+}
+
+function outputPreviewSummary(outputPreview: unknown) {
+  if (typeof outputPreview !== 'string' || !outputPreview.trim()) {
+    return undefined;
+  }
+  let text = outputPreview
+    .replace(/\r\n/g, '\n')
+    .replace(ANSI_ESCAPE_PATTERN, '')
+    .trim();
+  let markerIndex = -1;
+  TASK_OUTPUT_SUMMARY_MARKERS.forEach((marker) => {
+    const index = text.indexOf(marker);
+    if (index >= 0 && (markerIndex < 0 || index < markerIndex)) {
+      markerIndex = index;
+    }
+  });
+  text = markerIndex >= 0 ? text.slice(markerIndex).trim() : stripCodexTokenHeader(text);
+  text = text.replace(/^tokens used\s*\n\s*[\d,]+\s*/i, '').trim();
+  if (!text || ((text.startsWith('{') || text.startsWith('[')) && text.includes('output_preview'))) {
+    return undefined;
+  }
+  return truncateReadableSummary(text);
+}
+
+function readableTaskOutputSummary(output: unknown) {
+  const summaryPaths = [
+    ['summary'],
+    ['output_summary'],
+    ['result', 'summary'],
+    ['result', 'output_summary'],
+    ['result', 'result', 'summary'],
+    ['result', 'result', 'output_summary'],
+    ['result', 'parsed_output', 'summary'],
+    ['result', 'parsed_output', 'output_summary'],
+    ['result', 'parsed_output', 'result', 'summary'],
+  ];
+  for (const path of summaryPaths) {
+    const summary = stringAtPath(output, path);
+    if (summary) {
+      return truncateReadableSummary(summary);
+    }
+  }
+
+  const previewPaths = [
+    ['output_preview'],
+    ['result', 'output_preview'],
+    ['result', 'result', 'output_preview'],
+  ];
+  for (const path of previewPaths) {
+    const summary = outputPreviewSummary(stringAtPath(output, path));
+    if (summary) {
+      return summary;
+    }
+  }
+  return undefined;
 }
 
 export function mapTaskRecord(task: TaskListItem): TaskCenterTaskRecord {
@@ -337,7 +449,9 @@ export async function fetchTaskCenterTaskDetail(
     label: detail.title ?? detail.task_type ?? detail.id,
     moduleName: formatUnknownValue(module.name ?? module.code ?? detail.module_code),
     outputJson: output ?? {},
-    outputSummary: formatUnknownValue(outputRecord?.summary ?? output),
+    outputSummary: formatUnknownValue(
+      detail.output_summary ?? readableTaskOutputSummary(output) ?? outputRecord?.summary ?? output,
+    ),
     owner: detail.created_by ?? '-',
     pendingReviewId:
       typeof pendingReview?.id === 'string' && pendingReview.id ? pendingReview.id : undefined,
@@ -357,6 +471,14 @@ export async function fetchTaskCenterTaskDetail(
 export async function startTaskCenterTask(taskId: string) {
   const token = requireAccessToken();
   return apiRequest<{ review_id: string; status: string }>(`/api/ai-tasks/${taskId}/start`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export async function cancelTaskCenterTask(taskId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ id: string; status: string }>(`/api/ai-tasks/${taskId}/cancel`, {
     method: 'POST',
     token,
   });
@@ -405,7 +527,7 @@ export async function batchRetryTaskCenterTasks(
 function mapPendingReviewRecord(review: PendingReviewListItem): TaskCenterReviewRecord {
   return {
     aiTaskId: review.ai_task_id,
-    contentSummary: formatUnknownValue(review.content?.summary),
+    contentSummary: formatUnknownValue(readableTaskOutputSummary(review.content) ?? review.content?.summary),
     createdAt: review.created_at ? formatListDate(review.created_at) : undefined,
     id: review.id,
     stage: review.stage ?? '-',

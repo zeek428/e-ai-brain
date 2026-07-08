@@ -7,6 +7,7 @@ from typing import Any
 
 from app.core.repositories.task_writes import TaskWriteRepository
 from app.core.store import DEFAULT_BRAIN_APP_ID
+from app.core.task_titles import code_inspection_remediation_title
 
 
 class TaskReadRepository:
@@ -679,7 +680,8 @@ class TaskReadRepository:
                     SELECT t.id, t.brain_app_id, t.requirement_id, t.task_type, t.title,
                            t.status, t.product_id, t.version_id, t.module_code,
                            t.current_step, t.created_by, t.created_at, t.updated_at,
-                           COALESCE(p.name, t.product_context->'product'->>'name')
+                           COALESCE(p.name, t.product_context->'product'->>'name'),
+                           t.input_json
                     FROM ai_tasks t
                     LEFT JOIN products p ON p.id = t.product_id
                     {where_clause}
@@ -701,7 +703,14 @@ class TaskReadRepository:
                         "requirement_id": row[2],
                         "status": row[5],
                         "task_type": row[3],
-                        "title": row[4],
+                        "title": (
+                            code_inspection_remediation_title(
+                                row[14] if isinstance(row[14], dict) else {},
+                                fallback_title=row[4],
+                            )
+                            if row[3] == "code_inspection_remediation"
+                            else row[4]
+                        ),
                         "updated_at": row[12].isoformat() if row[12] else None,
                         "version_id": row[7],
                     }

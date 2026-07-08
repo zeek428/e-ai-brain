@@ -2716,6 +2716,7 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
 
     assert "START_STOP.md" in readme_text
     assert "runner_agent.py" in readme_text
+    assert "AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS=true" in readme_text
     compile(runner_agent_text, "runner_agent.py", "exec")
     assert 'f"{API_ROOT}/ai-executor-tasks/claim"' in runner_agent_text
     assert 'f"{API_ROOT}/ai-executor-tasks/{task_id}/runner-status' in runner_agent_text
@@ -2726,8 +2727,19 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     assert "CANCEL_CHECK_INTERVAL_SECONDS" in runner_agent_text
     assert "SERVER_TERMINAL_STATUSES" in runner_agent_text
     assert "_flush_log_batch" in runner_agent_text
+    assert "AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS" in runner_agent_text
+    assert "_print_local_log" in runner_agent_text
+    assert "LOCAL_CONSOLE_LOGS" in runner_agent_text
+    assert "flush=True" in runner_agent_text
+    assert "local_echo=False" in runner_agent_text
     assert "_process_group_popen_kwargs" in runner_agent_text
     assert "_terminate_process_tree" in runner_agent_text
+    assert "_prepare_isolated_workspace" in runner_agent_text
+    assert "_finalize_workspace_decisions" in runner_agent_text
+    assert "_merge_isolated_workspace" in runner_agent_text
+    assert "_discard_isolated_workspace" in runner_agent_text
+    assert "git worktree add" in runner_agent_text
+    assert "workspace_isolation" in runner_agent_text
     assert "start_new_session" in runner_agent_text
     assert "CREATE_NEW_PROCESS_GROUP" in runner_agent_text
     assert "os.killpg" in runner_agent_text
@@ -2758,11 +2770,12 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     assert "AI_BRAIN_RUNNER_TOKEN=<runner_token>" in env_text
     assert "AI_BRAIN_RUNNER_PACKAGE_VERSION=v1" in env_text
     assert "AI_BRAIN_POLL_INTERVAL_SECONDS=5" in env_text
+    assert "AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS=false" in env_text
     assert "AI_BRAIN_BYPASS_PROXY=auto" in env_text
     assert "NO_PROXY=127.0.0.1,localhost,::1" in env_text
     assert "AI_BRAIN_EXECUTORS=codex,claude,hermes,openclaw" in env_text
     assert "AI_BRAIN_WORKSPACE_ROOTS=/data/repos/e-ai-brain,/data/repos/service-a" in env_text
-    assert config["executor_commands"]["codex"] == "codex"
+    assert config["executor_commands"]["codex"] == "codex exec"
     assert config["package"] == {
         "arch": "amd64",
         "install_mode": "systemd",
@@ -2775,7 +2788,10 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     assert config["safety"]["command_shell_disabled"] is True
     assert config["safety"]["cancel_check_interval_seconds"] == 2
     assert config["safety"]["cancel_process_tree_on_server_cancel"] is True
+    assert "/Applications/Codex.app/Contents/Resources" in config["safety"]["extra_path_entries"]
     assert config["safety"]["instruction_passed_via_stdin"] is True
+    assert config["safety"]["local_console_logs"] is False
+    assert config["safety"]["print_background_logs"] is False
     assert config["safety"]["max_output_preview_chars"] == 4000
     assert config["safety"]["process_group_isolation"] is True
     assert config["safety"]["reject_unconfigured_executor"] is True
@@ -2897,7 +2913,11 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     assert invalid_response.json()["detail"]["code"] == "VALIDATION_ERROR"
 
 
-def test_ai_executor_runner_agent_executes_configured_command_with_stdin(tmp_path, monkeypatch):
+def test_ai_executor_runner_agent_executes_configured_command_with_stdin(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
     app.state.store.reset()
     admin_headers = auth_headers()
 
@@ -2956,6 +2976,12 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(tmp_pat
 
     namespace: dict[str, object] = {"__name__": "ai_brain_runner_probe"}
     exec(compile(runner_agent_text, "runner_agent.py", "exec"), namespace)
+    assert namespace["LOCAL_CONSOLE_LOGS"] is False
+    monkeypatch.setenv("AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS", "true")
+    verbose_namespace: dict[str, object] = {"__name__": "ai_brain_runner_probe_verbose"}
+    exec(compile(runner_agent_text, "runner_agent.py", "exec"), verbose_namespace)
+    assert verbose_namespace["LOCAL_CONSOLE_LOGS"] is True
+    monkeypatch.setenv("AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS", "false")
     assert namespace["_parsed_json_output"]('```json\n{"summary": "ok"}\n```') == {
         "summary": "ok",
     }
@@ -2993,6 +3019,9 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(tmp_pat
         },
     )
 
+    captured = capsys.readouterr()
+    assert "runner_task_probe" not in captured.out
+    assert "runner_task_probe" not in captured.err
     assert stdin_capture.read_text(encoding="utf-8") == instruction
     log_requests = [item for item in requests if str(item["url"]).endswith("/logs")]
     assert log_requests[0]["payload"]["logs"][0]["message"].startswith("Starting openclaw")
@@ -3013,6 +3042,26 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(tmp_pat
     assert complete_payload["result_json"]["exit_code"] == 0
     assert "runner-probe-started" in complete_payload["result_json"]["output_preview"]
     assert complete_payload["result_json"]["workspace_root"] == str(tmp_path)
+    namespace["LOCAL_CONSOLE_LOGS"] = True
+    namespace["_print_local_log"]("runner_task_probe", {"level": "info", "message": "visible"})
+    captured = capsys.readouterr()
+    assert "visible" in captured.out
+
+    fake_home = tmp_path / "runner_home"
+    fake_codex_bin = fake_home / ".local" / "bin"
+    fake_codex_bin.mkdir(parents=True)
+    fake_codex = fake_codex_bin / "codex"
+    fake_codex.write_text("#!/usr/bin/env sh\necho codex-from-user-bin\n", encoding="utf-8")
+    fake_codex.chmod(0o755)
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("PATH", "")
+    namespace["EXECUTOR_COMMANDS"] = {"codex": "codex", "openclaw": command}
+
+    _command, command_args, command_error = namespace["_resolve_executor_command"]("codex")
+
+    assert command_error is None
+    assert command_args[0] == str(fake_codex)
+    assert command_args[1] == "exec"
 
     stdin_capture.write_text("previous instruction", encoding="utf-8")
     requests.clear()

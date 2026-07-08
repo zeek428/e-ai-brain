@@ -4,6 +4,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.api.deps import api_error
+from app.services.ai_executor_workspace_isolation import (
+    mark_ai_executor_workspace_isolation_decision,
+)
 from app.services.task_access import require_task_permission_or_roles
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_persistence_helpers import (
@@ -34,6 +37,13 @@ def reject_review_response(
     review["updated_at"] = now
     task["status"] = "failed"
     task["updated_at"] = now
+    mark_ai_executor_workspace_isolation_decision(
+        write_store,
+        action="discard",
+        decided_by=user["id"],
+        reason=decision_reason,
+        task=task,
+    )
     checkpoint = transition_latest_graph_run(
         write_store,
         task=task,
@@ -133,6 +143,13 @@ def cancel_ai_task_response(
     now = datetime.now(UTC).isoformat()
     task["status"] = "cancelled"
     task["updated_at"] = now
+    mark_ai_executor_workspace_isolation_decision(
+        write_store,
+        action="discard",
+        decided_by=user["id"],
+        reason="task_cancelled",
+        task=task,
+    )
     cancelled_reviews = []
     for review_id in task.get("review_ids", []):
         review = write_store.human_reviews.get(review_id)

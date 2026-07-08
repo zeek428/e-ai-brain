@@ -219,6 +219,7 @@ export {
   approveTaskCenterReview,
   batchCancelTaskCenterTasks,
   batchRetryTaskCenterTasks,
+  cancelTaskCenterTask,
   createAutomatedTestingTask,
   createDevelopmentPlanningTask,
   createPostReleaseAnalysisTask,

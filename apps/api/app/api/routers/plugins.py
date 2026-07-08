@@ -33,6 +33,9 @@ from app.services.ai_executor_runners import (
     runner_heartbeat_response,
     test_ai_executor_runner_response,
 )
+from app.services.ai_executor_workspace_isolation import (
+    complete_ai_executor_workspace_isolation_decision,
+)
 from app.services.plugin_action_trials import trial_plugin_action_response
 from app.services.plugin_dingtalk_operations import (
     discover_plugin_connection_tools_response,
@@ -234,6 +237,13 @@ class AiExecutorTaskCompleteRequest(BaseModel):
     error_message: str | None = None
     logs: list[dict[str, Any]] = Field(default_factory=list)
     result_json: dict[str, Any] = Field(default_factory=dict)
+    runner_id: str
+    status: str
+
+
+class AiExecutorTaskWorkspaceDecisionRequest(BaseModel):
+    action: str
+    message: str | None = None
     runner_id: str
     status: str
 
@@ -558,6 +568,26 @@ def complete_ai_executor_task(
             current_store=store(request),
             payload=payload,
             request=request,
+            task_id=task_id,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-tasks/{task_id}/workspace-decision")
+def complete_ai_executor_task_workspace_decision(
+    payload: AiExecutorTaskWorkspaceDecisionRequest,
+    request: Request,
+    task_id: str,
+) -> dict[str, Any]:
+    return envelope(
+        complete_ai_executor_workspace_isolation_decision(
+            action=payload.action,
+            current_store=store(request),
+            message=payload.message,
+            request=request,
+            runner_id=payload.runner_id,
+            status=payload.status,
             task_id=task_id,
         ),
         get_trace_id(request),

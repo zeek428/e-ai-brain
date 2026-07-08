@@ -231,7 +231,6 @@ CODE_INSPECTION_IGNORE_RULE_DEFINITIONS = [
 CODE_INSPECTION_RESULT_ACTION_DEFINITIONS = [
     {"label": "写入代码巡检报告", "value": "write_code_inspection_report"},
     {"label": "严重问题自动创建 Bug", "value": "create_bug_for_severe_findings"},
-    {"label": "严重问题自动创建整改任务", "value": "create_task_for_severe_findings"},
     {"label": "发送问题消息通知", "value": "send_notification"},
 ]
 GENERIC_RESULT_ACTION_DEFINITIONS = [
@@ -246,7 +245,6 @@ CODE_INSPECTION_SEVERITY_THRESHOLD_DEFINITIONS = [
 DEFAULT_CODE_INSPECTION_RESULT_ACTIONS = [
     {"type": "write_code_inspection_report"},
     {"severity_threshold": "critical", "type": "create_bug_for_severe_findings"},
-    {"severity_threshold": "high", "type": "create_task_for_severe_findings"},
     {"channels": ["email"], "recipients": [], "type": "send_notification"},
 ]
 

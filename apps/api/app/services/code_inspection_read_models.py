@@ -661,7 +661,6 @@ def code_inspection_dashboard_response(
     for entry in committer_governance_stats.values():
         if (
             entry["uncovered_bug_finding_count"]
-            or entry["uncovered_task_finding_count"]
             or entry["expired_accepted_risk_count"]
         ):
             entry["status"] = "action_required"
@@ -670,7 +669,6 @@ def code_inspection_dashboard_response(
     for entry in branch_governance_stats.values():
         if (
             entry["uncovered_bug_finding_count"]
-            or entry["uncovered_task_finding_count"]
             or entry["expired_accepted_risk_count"]
             or entry["quality_gate_failed_report_count"]
         ):
@@ -782,7 +780,6 @@ def code_inspection_dashboard_response(
         governance_pressure["failed_report_count"]
         or governance_pressure["quality_gate_failed_report_count"]
         or governance_pressure["uncovered_bug_finding_count"]
-        or governance_pressure["uncovered_task_finding_count"]
         or governance_pressure["expired_accepted_risk_count"]
     ):
         governance_pressure["status"] = "action_required"
@@ -839,9 +836,7 @@ def code_inspection_dashboard_response(
         if severe_finding_count
         else 1
     )
-    sla_status = (
-        "healthy" if bug_coverage_rate >= 0.8 and task_coverage_rate >= 0.8 else "at_risk"
-    )
+    sla_status = "healthy" if bug_coverage_rate >= 0.8 else "at_risk"
     return {
         "branch_governance": branch_governance,
         "branch_ranking": branch_ranking,

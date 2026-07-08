@@ -3,8 +3,12 @@ CREATE TABLE IF NOT EXISTS auth_login_challenges (
   question text NOT NULL,
   answer_hash text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
   expires_at timestamptz NOT NULL
 );
+
+ALTER TABLE IF EXISTS auth_login_challenges
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 
 CREATE INDEX IF NOT EXISTS idx_auth_login_challenges_expires_at
   ON auth_login_challenges (expires_at);

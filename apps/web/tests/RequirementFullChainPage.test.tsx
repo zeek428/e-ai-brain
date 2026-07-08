@@ -425,4 +425,141 @@ describe('RequirementFullChainPage', () => {
       '/api/lifecycle/full-chain?subject_id=bug_history&subject_type=bug',
     );
   });
+
+  it('shows an empty full-chain state for an iteration version without requirements', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (
+        path ===
+        '/api/lifecycle/full-chain?subject_id=version_empty&subject_type=product_version'
+      ) {
+        return jsonResponse({
+          data: {
+            ai_tasks: [],
+            anchor: {
+              subject_id: 'version_empty',
+              subject_type: 'product_version',
+            },
+            audit_events: [],
+            branch_configs: [
+              {
+                base_branch: 'main',
+                branch_status: 'active',
+                creation_source: 'manual',
+                id: 'branch_empty',
+                product_id: 'product_ai_brain',
+                repository_id: 'repo_ai_brain_web',
+                repository_name: 'AI Brain Web',
+                repository_path: 'zeek428/e-ai-brain',
+                repository_provider: 'github',
+                version_id: 'version_empty',
+                working_branch: 'feature/empty',
+              },
+            ],
+            bugs: [],
+            code_inspection_reports: [
+              {
+                branch: 'feature/empty',
+                created_at: '2026-06-04T10:10:00+00:00',
+                finding_count: 0,
+                id: 'inspection_empty',
+                risk_level: 'low',
+                severe_finding_count: 0,
+                status: 'completed',
+                summary: '空版本分支巡检通过。',
+              },
+            ],
+            code_review_reports: [],
+            execution_traces: [],
+            git_snapshots: [],
+            iteration_version: {
+              code: '2026-07-empty',
+              id: 'version_empty',
+              name: '2026-07 空迭代',
+              status: 'planning',
+            },
+            jenkins_releases: [],
+            knowledge_deposits: [],
+            product: { code: 'AI-BRAIN', id: 'product_ai_brain', name: 'AI Brain' },
+            requirement: null,
+            reviews: [],
+            status: 'empty',
+            summary: {
+              ai_tasks: 0,
+              audit_events: 0,
+              branch_configs: 1,
+              bugs: 0,
+              code_inspection_reports: 1,
+              code_review_reports: 0,
+              execution_traces: 0,
+              git_snapshots: 0,
+              jenkins_releases: 0,
+              knowledge_deposits: 0,
+              reviews: 0,
+              timeline_events: 3,
+            },
+            timeline: [
+              {
+                occurred_at: '2026-06-04T09:00:00+00:00',
+                status: 'planning',
+                subject_id: 'version_empty',
+                title: '迭代版本：2026-07 空迭代',
+                type: 'iteration_version',
+              },
+              {
+                occurred_at: '2026-06-04T09:10:00+00:00',
+                status: 'active',
+                subject_id: 'branch_empty',
+                title: '代码分支：feature/empty',
+                type: 'branch_config',
+              },
+              {
+                occurred_at: '2026-06-04T10:10:00+00:00',
+                status: 'completed',
+                subject_id: 'inspection_empty',
+                title: '代码巡检：空版本分支巡检通过。',
+                type: 'code_inspection_report',
+              },
+            ],
+          },
+        });
+      }
+      if (path.includes('version_id=version_empty') || path.includes('page_size=100')) {
+        return jsonResponse({
+          data: {
+            items: [],
+            total: 0,
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.history.pushState(
+      {},
+      '',
+      '/delivery/full-chain?subject_type=product_version&subject_id=version_empty',
+    );
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<RequirementFullChainPage />);
+
+    expect(await screen.findByRole('heading', { name: '需求全链路详情' })).toBeInTheDocument();
+    expect(await screen.findByText('入口主体：迭代版本 · version_empty')).toBeInTheDocument();
+    expect(screen.getAllByText('当前版本暂无需求').length).toBeGreaterThan(0);
+    expect(screen.getByText('空链路')).toBeInTheDocument();
+    expect(screen.getByText('2026-07-empty · 2026-07 空迭代')).toBeInTheDocument();
+    expect(screen.getByText('代码分支：feature/empty')).toBeInTheDocument();
+    expect(screen.getByText('代码巡检：空版本分支巡检通过。')).toBeInTheDocument();
+    expect(screen.queryByText(/NO_REQUIREMENT_CONTEXT/)).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
+      '/api/lifecycle/full-chain?subject_id=version_empty&subject_type=product_version',
+    );
+  });
 });

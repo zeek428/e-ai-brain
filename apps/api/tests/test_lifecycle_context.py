@@ -977,6 +977,82 @@ def test_lifecycle_full_chain_subject_anchor_enforces_product_scope():
     assert allowed_executor_task["requirement"]["id"] == "requirement_alpha"
 
 
+def test_lifecycle_full_chain_returns_empty_version_payload_without_requirements():
+    store = build_minimal_full_chain_store()
+    store.requirements.clear()
+    store.ai_tasks.clear()
+    store.code_inspection_reports["inspection_alpha"] = {
+        "branch": "feature/alpha",
+        "created_at": "2026-06-27T02:00:00+00:00",
+        "created_bug_ids": [],
+        "created_task_ids": [],
+        "finding_count": 1,
+        "id": "inspection_alpha",
+        "product_id": "product_alpha",
+        "repository_id": "repo_alpha",
+        "risk_level": "medium",
+        "scan_finished_at": "2026-06-27T02:05:00+00:00",
+        "severe_finding_count": 0,
+        "status": "completed",
+        "summary": "空版本分支巡检",
+    }
+    store.jenkins_release_records["release_alpha"] = {
+        "build_id": "42",
+        "created_at": "2026-06-27T03:00:00+00:00",
+        "id": "release_alpha",
+        "job_name": "alpha-release",
+        "product_id": "product_alpha",
+        "status": "succeeded",
+        "version_id": "version_alpha",
+    }
+
+    payload = get_requirement_full_chain_by_subject_response(
+        current_store=store,
+        subject_id="version_alpha",
+        subject_type="product_version",
+        user=scoped_reader("product_alpha"),
+    )
+
+    assert payload["status"] == "empty"
+    assert payload["empty_reason"] == "iteration_version_has_no_requirements"
+    assert payload["requirement"] is None
+    assert payload["product"]["id"] == "product_alpha"
+    assert payload["iteration_version"]["id"] == "version_alpha"
+    assert payload["anchor"] == {
+        "subject_id": "version_alpha",
+        "subject_type": "product_version",
+    }
+    assert {branch["id"] for branch in payload["branch_configs"]} == {"branch_config_alpha"}
+    assert {report["id"] for report in payload["code_inspection_reports"]} == {
+        "inspection_alpha"
+    }
+    assert {release["id"] for release in payload["jenkins_releases"]} == {"release_alpha"}
+    assert payload["summary"]["branch_configs"] == 1
+    assert payload["summary"]["code_inspection_reports"] == 1
+    assert payload["summary"]["jenkins_releases"] == 1
+    assert payload["summary"]["timeline_events"] == len(payload["timeline"])
+    assert {item["type"] for item in payload["timeline"]} >= {
+        "branch_config",
+        "code_inspection_report",
+        "iteration_version",
+        "jenkins_release",
+    }
+
+    branch_payload = get_requirement_full_chain_by_subject_response(
+        current_store=store,
+        subject_id="branch_config_alpha",
+        subject_type="product_version_branch_config",
+        user=scoped_reader("product_alpha"),
+    )
+
+    assert branch_payload["status"] == "empty"
+    assert branch_payload["anchor"] == {
+        "subject_id": "branch_config_alpha",
+        "subject_type": "product_version_branch_config",
+    }
+    assert branch_payload["requirement"] is None
+
+
 def test_lifecycle_context_requires_query_anchor():
     headers = auth_headers()
 

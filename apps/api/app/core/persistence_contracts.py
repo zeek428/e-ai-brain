@@ -423,7 +423,13 @@ class KnowledgeRepository(Protocol):
         self,
         *,
         user_roles: list[str],
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_id: str | None = None,
+        knowledge_space_scope_ids: list[str] | None = None,
+        product_id: str | None = None,
         query: str | None = None,
+        version_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     def save_knowledge(self, payload: dict[str, Any]) -> None: ...

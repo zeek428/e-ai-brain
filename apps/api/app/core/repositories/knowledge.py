@@ -812,7 +812,9 @@ class KnowledgeReadRepository:
         global_knowledge_access: bool = False,
         knowledge_space_id: str | None = None,
         knowledge_space_scope_ids: list[str] | None = None,
+        product_id: str | None = None,
         query: str | None = None,
+        version_id: str | None = None,
     ) -> list[dict[str, Any]]:
         where_clauses = [
             "d.index_status IN ('indexed', 'text_indexed', 'vector_indexed')",
@@ -877,6 +879,12 @@ class KnowledgeReadRepository:
         if knowledge_space_id is not None:
             where_clauses.append("d.knowledge_space_id = %s")
             params.append(knowledge_space_id)
+        if product_id is not None:
+            where_clauses.append("d.product_id = %s")
+            params.append(product_id)
+        if version_id is not None:
+            where_clauses.append("(d.version_id IS NULL OR d.version_id = %s)")
+            params.append(version_id)
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -885,7 +893,7 @@ class KnowledgeReadRepository:
                            c.id, c.chunk_index, c.content, c.embedding::text, c.metadata,
                            c.permission_scope, d.knowledge_space_id, d.folder_id,
                            d.source_asset_id, d.active_chunk_set_id, c.chunk_set_id,
-                           c.parent_chunk_id, c.content_hash
+                           c.parent_chunk_id, c.content_hash, d.product_id, d.version_id
                     FROM knowledge_chunks c
                     JOIN knowledge_documents d ON d.id = c.document_id
                     WHERE {' AND '.join(where_clauses)}
@@ -931,7 +939,9 @@ class KnowledgeReadRepository:
                                 "folder_id": row[12],
                                 "source_asset_id": row[13],
                                 "active_chunk_set_id": row[14],
+                                "product_id": row[18],
                                 "title": row[1],
+                                "version_id": row[19],
                             },
                         }
                 )

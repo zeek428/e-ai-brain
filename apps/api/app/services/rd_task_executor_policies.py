@@ -18,11 +18,18 @@ from app.services.ai_executor_runners import (
     find_available_runner,
     sync_ai_executor_runner_store,
 )
+from app.services.knowledge_documents import (
+    knowledge_query_repository,
+    knowledge_repository_access_args,
+)
+from app.services.knowledge_search import memory_knowledge_search_candidates
 from app.services.operational_records import record_audit_event
 
 RD_TASK_EXECUTOR_POLICY_MANAGE_PERMISSION = "delivery.rd_executor_policies.manage"
 RD_TASK_EXECUTOR_TYPES = {"claude", "codex", "openclaw"}
 RD_TASK_EXECUTOR_POLICY_STATUSES = {"active", "disabled"}
+RD_TASK_KNOWLEDGE_REFERENCE_LIMIT = 6
+RD_TASK_KNOWLEDGE_REFERENCE_MAX_CHARS = 1200
 RD_TASK_EXECUTOR_POLICY_SORT_FIELDS = {
     "executor_type",
     "name",
@@ -36,6 +43,21 @@ RD_TASK_EXECUTOR_POLICY_SORT_FIELDS = {
     "workspace_root",
 }
 TOKEN_PATTERN = re.compile(r"\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}")
+CODE_INSPECTION_CONTEXT_FIELDS = (
+    "branch",
+    "code_inspection_finding_id",
+    "code_inspection_report_id",
+    "commit_sha",
+    "description",
+    "file_path",
+    "line_number",
+    "recommendation",
+    "repository_id",
+    "risk_level",
+    "rule_id",
+    "severity",
+    "title",
+)
 
 
 def _can_manage_policy(user: dict[str, Any]) -> bool:
@@ -603,11 +625,242 @@ def resolve_rd_task_executor_policy(
     return policies[0] if policies else None
 
 
-def _template_context(task: dict[str, Any], policy: dict[str, Any]) -> dict[str, str]:
+def _task_input(task: dict[str, Any]) -> dict[str, Any]:
+    return task.get("input_json") if isinstance(task.get("input_json"), dict) else {}
+
+
+def _task_product_context(task: dict[str, Any]) -> dict[str, Any]:
     product_context = (
         task.get("product_context") if isinstance(task.get("product_context"), dict) else {}
     )
-    input_json = task.get("input_json") if isinstance(task.get("input_json"), dict) else {}
+    return product_context
+
+
+def _task_repository(task: dict[str, Any]) -> dict[str, Any]:
+    input_json = _task_input(task)
+    product_context = _task_product_context(task)
+    input_repository = input_json.get("repository")
+    if isinstance(input_repository, dict):
+        return input_repository
+    context_repository = product_context.get("repository")
+    return context_repository if isinstance(context_repository, dict) else {}
+
+
+def _executor_branch(policy: dict[str, Any], task: dict[str, Any]) -> str:
+    input_json = _task_input(task)
+    repository = _task_repository(task)
+    return str(
+        policy.get("branch")
+        or input_json.get("branch")
+        or repository.get("default_branch")
+        or "",
+    )
+
+
+def _executor_repository_id(policy: dict[str, Any], task: dict[str, Any]) -> str:
+    input_json = _task_input(task)
+    repository = _task_repository(task)
+    return str(
+        policy.get("repository_id")
+        or input_json.get("repository_id")
+        or repository.get("id")
+        or "",
+    )
+
+
+def _code_inspection_context(task: dict[str, Any], policy: dict[str, Any]) -> dict[str, str]:
+    input_json = _task_input(task)
+    repository = _task_repository(task)
+    context = {
+        field: str(input_json.get(field) or "")
+        for field in CODE_INSPECTION_CONTEXT_FIELDS
+    }
+    context["branch"] = _executor_branch(policy, task)
+    context["repository_id"] = _executor_repository_id(policy, task)
+    context["repository_default_branch"] = str(repository.get("default_branch") or "")
+    context["repository_project_path"] = str(repository.get("project_path") or "")
+    context["repository_remote_url"] = str(repository.get("remote_url") or "")
+    return context
+
+
+def _code_inspection_payload(task: dict[str, Any], policy: dict[str, Any]) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in _code_inspection_context(task, policy).items()
+        if value
+    }
+
+
+def _code_inspection_instruction_block(task: dict[str, Any], policy: dict[str, Any]) -> str:
+    if task.get("task_type") != "code_inspection_remediation":
+        return ""
+    context = _code_inspection_context(task, policy)
+    if not any(context.get(key) for key in ("file_path", "rule_id", "recommendation")):
+        return ""
+    return "\n".join(
+        [
+            "代码巡检整改上下文：",
+            f"- 目标文件: {context.get('file_path') or '未提供'}",
+            f"- 目标行号: {context.get('line_number') or '未提供'}",
+            f"- 规则 ID: {context.get('rule_id') or '未提供'}",
+            f"- 严重级别: {context.get('severity') or context.get('risk_level') or '未提供'}",
+            f"- 分支: {context.get('branch') or '未提供'}",
+            "- 仓库: "
+            f"{context.get('repository_project_path') or context.get('repository_id') or '未提供'}",
+            f"- 报告 ID: {context.get('code_inspection_report_id') or '未提供'}",
+            f"- Finding ID: {context.get('code_inspection_finding_id') or '未提供'}",
+            f"- 问题描述: {context.get('description') or '未提供'}",
+            f"- 修复建议: {context.get('recommendation') or '未提供'}",
+            "",
+            "执行要求：",
+            "1. 优先只处理本条 finding 指向的代码位置及必要的近邻测试调整。",
+            "2. 不要进行仓库级安全扫描；需要验证时只做与本条 finding 直接相关的最小检查。",
+            "3. 不要输出、复制或保留真实密钥；测试数据应替换为明显的假值或运行时配置。",
+            "4. 输出结构化结果，说明修改点、验证方式和剩余风险。",
+        ],
+    )
+
+
+def _task_version_id(task: dict[str, Any]) -> str | None:
+    product_context = _task_product_context(task)
+    version = product_context.get("version")
+    version_id = task.get("version_id")
+    if not version_id and isinstance(version, dict):
+        version_id = version.get("id")
+    text = str(version_id or "").strip()
+    return text or None
+
+
+def _knowledge_candidate_matches_task(
+    candidate: dict[str, Any],
+    *,
+    product_id: str,
+    version_id: str | None,
+) -> bool:
+    document = candidate.get("document") if isinstance(candidate.get("document"), dict) else {}
+    if str(document.get("product_id") or "").strip() != product_id:
+        return False
+    document_version_id = str(document.get("version_id") or "").strip()
+    if version_id and document_version_id and document_version_id != version_id:
+        return False
+    return True
+
+
+def _truncate_knowledge_content(content: Any) -> str:
+    text = str(content or "").strip()
+    if len(text) <= RD_TASK_KNOWLEDGE_REFERENCE_MAX_CHARS:
+        return text
+    return f"{text[:RD_TASK_KNOWLEDGE_REFERENCE_MAX_CHARS].rstrip()}..."
+
+
+def _knowledge_reference_from_candidate(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    document = candidate.get("document") if isinstance(candidate.get("document"), dict) else {}
+    chunk = candidate.get("chunk") if isinstance(candidate.get("chunk"), dict) else {}
+    chunk_id = str(chunk.get("id") or "").strip()
+    document_id = str(document.get("id") or chunk.get("document_id") or "").strip()
+    content = _truncate_knowledge_content(chunk.get("content"))
+    if not chunk_id or not document_id or not content:
+        return None
+    return {
+        "chunk_id": chunk_id,
+        "chunk_index": int(chunk.get("chunk_index") or 0),
+        "content": content,
+        "document_id": document_id,
+        "doc_type": document.get("doc_type"),
+        "folder_id": document.get("folder_id"),
+        "knowledge_space_id": document.get("knowledge_space_id"),
+        "title": document.get("title") or document_id,
+    }
+
+
+def _task_knowledge_reference_candidates(
+    *,
+    current_store: Any,
+    product_id: str,
+    user: dict[str, Any],
+    version_id: str | None,
+) -> list[dict[str, Any]]:
+    repository = knowledge_query_repository(current_store)
+    search_chunks = getattr(repository, "search_knowledge_chunks", None)
+    if callable(search_chunks):
+        access_args = knowledge_repository_access_args(user)
+        search_args = {
+            **access_args,
+            "product_id": product_id,
+            "query": None,
+            "version_id": version_id,
+        }
+        try:
+            return list(search_chunks(**search_args))
+        except TypeError:
+            return list(search_chunks(**access_args, query=None))
+    return memory_knowledge_search_candidates(
+        current_store=current_store,
+        knowledge_space_id=None,
+        user=user,
+    )
+
+
+def _task_knowledge_references(
+    *,
+    current_store: Any,
+    task: dict[str, Any],
+    user: dict[str, Any],
+) -> list[dict[str, Any]]:
+    product_id = str(task.get("product_id") or "").strip()
+    if not product_id:
+        return []
+    version_id = _task_version_id(task)
+    references: list[dict[str, Any]] = []
+    seen_chunk_ids: set[str] = set()
+    for candidate in _task_knowledge_reference_candidates(
+        current_store=current_store,
+        product_id=product_id,
+        user=user,
+        version_id=version_id,
+    ):
+        if not _knowledge_candidate_matches_task(
+            candidate,
+            product_id=product_id,
+            version_id=version_id,
+        ):
+            continue
+        reference = _knowledge_reference_from_candidate(candidate)
+        if reference is None or reference["chunk_id"] in seen_chunk_ids:
+            continue
+        seen_chunk_ids.add(reference["chunk_id"])
+        references.append(reference)
+        if len(references) >= RD_TASK_KNOWLEDGE_REFERENCE_LIMIT:
+            break
+    return references
+
+
+def _knowledge_references_instruction_block(references: list[dict[str, Any]]) -> str:
+    if not references:
+        return ""
+    lines = ["产品知识中心上下文："]
+    for index, reference in enumerate(references, start=1):
+        title = reference.get("title") or reference.get("document_id") or "未命名文档"
+        doc_type = reference.get("doc_type") or "文档"
+        chunk_index = reference.get("chunk_index")
+        chunk_label = f"片段 {chunk_index}" if chunk_index is not None else "片段"
+        lines.append(
+            f"{index}. {title}（{doc_type} / {chunk_label}）：{reference.get('content') or ''}"
+        )
+    lines.extend(
+        [
+            "",
+            "执行要求：",
+            "1. 优先遵循以上产品知识中心内容；如与任务要求冲突，请在输出摘要中说明。",
+            "2. 不要把其他产品、无权限或未索引文档作为实现依据。",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _template_context(task: dict[str, Any], policy: dict[str, Any]) -> dict[str, str]:
+    product_context = _task_product_context(task)
+    input_json = _task_input(task)
     bug = input_json.get("bug") if isinstance(input_json.get("bug"), dict) else {}
     product = (
         product_context.get("product")
@@ -619,15 +872,25 @@ def _template_context(task: dict[str, Any], policy: dict[str, Any]) -> dict[str,
         if isinstance(task.get("requirement_snapshot"), dict)
         else {}
     )
+    code_inspection = _code_inspection_context(task, policy)
     return {
-        "branch": str(policy.get("branch") or ""),
+        "branch": _executor_branch(policy, task),
         "bug_id": str(bug.get("id") or ""),
         "bug_severity": str(bug.get("severity") or ""),
         "bug_title": str(bug.get("title") or ""),
+        "code_inspection_finding_id": code_inspection.get("code_inspection_finding_id", ""),
+        "code_inspection_report_id": code_inspection.get("code_inspection_report_id", ""),
+        "commit_sha": code_inspection.get("commit_sha", ""),
+        "file_path": code_inspection.get("file_path", ""),
+        "line_number": code_inspection.get("line_number", ""),
         "module_code": str(task.get("module_code") or ""),
         "product_id": str(task.get("product_id") or ""),
         "product_name": str(product.get("name") or task.get("product_id") or ""),
-        "repository_id": str(policy.get("repository_id") or ""),
+        "recommendation": code_inspection.get("recommendation", ""),
+        "repository_id": _executor_repository_id(policy, task),
+        "risk_level": code_inspection.get("risk_level", ""),
+        "rule_id": code_inspection.get("rule_id", ""),
+        "severity": code_inspection.get("severity", ""),
         "requirement_id": str(task.get("requirement_id") or ""),
         "requirement_title": str(requirement.get("title") or ""),
         "task_id": str(task.get("id") or ""),
@@ -636,13 +899,25 @@ def _template_context(task: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     }
 
 
-def render_executor_instruction(task: dict[str, Any], policy: dict[str, Any]) -> str:
+def render_executor_instruction(
+    task: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    knowledge_references: list[dict[str, Any]] | None = None,
+) -> str:
     context = _template_context(task, policy)
 
     def replace(match: re.Match[str]) -> str:
         return context.get(match.group(1), match.group(0))
 
-    return TOKEN_PATTERN.sub(replace, str(policy.get("instruction_template") or "")).strip()
+    instruction = TOKEN_PATTERN.sub(replace, str(policy.get("instruction_template") or "")).strip()
+    code_inspection_block = _code_inspection_instruction_block(task, policy)
+    if code_inspection_block:
+        instruction = f"{instruction}\n\n{code_inspection_block}".strip()
+    knowledge_block = _knowledge_references_instruction_block(knowledge_references or [])
+    if knowledge_block:
+        instruction = f"{instruction}\n\n{knowledge_block}".strip()
+    return instruction
 
 
 def queue_rd_task_executor_task(
@@ -653,7 +928,16 @@ def queue_rd_task_executor_task(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     workspace_root = _ensure_non_blank(policy.get("workspace_root"), "workspace_root")
-    instruction = render_executor_instruction(task, policy)
+    knowledge_references = _task_knowledge_references(
+        current_store=current_store,
+        task=task,
+        user=user,
+    )
+    instruction = render_executor_instruction(
+        task,
+        policy,
+        knowledge_references=knowledge_references,
+    )
     if not instruction:
         raise api_error(400, "RD_EXECUTOR_INSTRUCTION_REQUIRED", "instruction_template is empty")
     runner = find_available_runner(
@@ -662,12 +946,16 @@ def queue_rd_task_executor_task(
         runner_id=policy.get("runner_id"),
         workspace_root=workspace_root,
     )
+    branch = _executor_branch(policy, task) or None
+    repository_id = _executor_repository_id(policy, task) or None
     input_payload = {
-        "branch": policy.get("branch"),
+        "branch": branch,
         "bug": (task.get("input_json") or {}).get("bug") or {},
+        "code_inspection": _code_inspection_payload(task, policy),
+        "knowledge_references": knowledge_references,
         "output_contract": policy.get("output_contract") or {},
         "product_context": task.get("product_context") or {},
-        "repository_id": policy.get("repository_id"),
+        "repository_id": repository_id,
         "requirement_snapshot": task.get("requirement_snapshot") or {},
         "task": {
             "id": task["id"],
@@ -676,10 +964,10 @@ def queue_rd_task_executor_task(
         },
     }
     request_config = {
-        "branch": policy.get("branch"),
+        "branch": branch,
         "executor_policy_id": policy["id"],
         "output_contract": policy.get("output_contract") or {},
-        "repository_id": policy.get("repository_id"),
+        "repository_id": repository_id,
         "source": "rd_task_executor_policy",
     }
     return create_ai_executor_task(

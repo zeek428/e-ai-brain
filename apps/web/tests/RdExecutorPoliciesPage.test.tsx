@@ -158,6 +158,9 @@ describe('RdExecutorPoliciesPage', () => {
     expect(screen.getAllByText('技术方案设计').length).toBeGreaterThan(0);
     const codeImplementationOptions = screen.getAllByText('代码实现 / 开发计划');
     expect(codeImplementationOptions.length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Bug 修复').length).toBeGreaterThan(0);
+    expect(screen.queryByText('代码巡检整改')).not.toBeInTheDocument();
+    expect(screen.queryByText('代码整改')).not.toBeInTheDocument();
     expect(screen.getAllByText('发布上线评估').length).toBeGreaterThan(0);
     expect(screen.getAllByText('上线后分析').length).toBeGreaterThan(0);
     fireEvent.click(codeImplementationOptions[codeImplementationOptions.length - 1]);

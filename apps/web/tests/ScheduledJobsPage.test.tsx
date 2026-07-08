@@ -169,7 +169,6 @@ function installScheduledJobsFetchMock(
             default_result_actions: [
               { type: 'write_code_inspection_report' },
               { severity_threshold: 'critical', type: 'create_bug_for_severe_findings' },
-              { severity_threshold: 'high', type: 'create_task_for_severe_findings' },
               { channels: ['email'], recipients: [], type: 'send_notification' },
             ],
             default_scan_mode: 'sync_existing_alerts',
@@ -181,7 +180,6 @@ function installScheduledJobsFetchMock(
             result_actions: [
               { label: '写入代码巡检报告', value: 'write_code_inspection_report' },
               { label: '严重问题自动创建 Bug', value: 'create_bug_for_severe_findings' },
-              { label: '严重问题自动创建整改任务', value: 'create_task_for_severe_findings' },
               { label: '发送问题消息通知', value: 'send_notification' },
             ],
             scan_modes: [
@@ -351,7 +349,6 @@ function installScheduledJobsFetchMock(
                 result_actions: [
                   { type: 'write_code_inspection_report' },
                   { severity_threshold: 'critical', type: 'create_bug_for_severe_findings' },
-                  { severity_threshold: 'high', type: 'create_task_for_severe_findings' },
                   { channels: ['email'], recipients: [], type: 'send_notification' },
                 ],
                 schedule_type: 'cron',
@@ -417,7 +414,6 @@ function installScheduledJobsFetchMock(
                 name: 'GitLab MR AI 审查',
                 result_actions: [
                   { type: 'write_code_inspection_report' },
-                  { severity_threshold: 'high', type: 'create_task_for_severe_findings' },
                 ],
                 schedule_type: 'manual',
                 source_system: 'gitlab',
@@ -1977,7 +1973,6 @@ describe('ScheduledJobsPage', () => {
         result_actions: [
           { type: 'write_code_inspection_report' },
           { severity_threshold: 'critical', type: 'create_bug_for_severe_findings' },
-          { severity_threshold: 'high', type: 'create_task_for_severe_findings' },
           { channels: ['email'], recipients: [], type: 'send_notification' },
         ],
         schedule_type: 'cron',
@@ -3862,18 +3857,19 @@ describe('ScheduledJobsPage', () => {
                 status: 'succeeded',
               },
               task_creation: {
-                created_task_ids: ['task_code_fix_001'],
+                created_task_ids: [],
                 feedback: {
-                  task_ids: ['task_code_fix_001'],
+                  task_ids: [],
                 },
-                records_imported: 1,
-                status: 'succeeded',
+                label: 'Bug 确认后推进研发任务',
+                records_imported: 0,
+                status: 'deferred_to_bug_confirmation',
               },
             },
             finding_count: 1,
             report_id: 'code_inspection_report_ai',
             risk_level: 'critical',
-            task_ids: ['task_code_fix_001'],
+            task_ids: [],
             write_target: 'code_inspection_reports',
           },
           scheduled_job_id: 'scheduled_job_code_inspection_ai',
@@ -3900,8 +3896,8 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('流程节点 动作反馈内容')).toHaveTextContent('code_inspection_reports');
     expect(dialog).toHaveTextContent('代码仓库巡检');
     expect(dialog).toHaveTextContent('代码巡检报告写入结果');
-    expect(dialog).toHaveTextContent('严重问题自动创建整改任务');
-    expect(dialog).toHaveTextContent('task_code_fix_001');
+    expect(dialog).toHaveTextContent('Bug 确认后推进研发任务');
+    expect(dialog).toHaveTextContent('deferred_to_bug_confirmation');
     expect(dialog).toHaveTextContent('code_inspection_report_ai');
     expect(dialog).toHaveTextContent('model_log_code_inspection');
     expect(dialog).toHaveTextContent('write_code_inspection_report');

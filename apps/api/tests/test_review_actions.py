@@ -62,6 +62,64 @@ def test_edit_approve_updates_output_and_completes_task():
     assert detail["output_json"]["summary"] == "人工修改后的详细设计"
 
 
+def test_approve_executor_review_uses_nested_summary_for_knowledge_deposit():
+    headers = auth_headers()
+    app.state.store.reset()
+    task_id = "task_executor_review"
+    review_id = "review_executor_review"
+    now = "2026-07-03T21:15:00+00:00"
+    app.state.store.ai_tasks[task_id] = {
+        "id": task_id,
+        "task_type": "code_inspection_remediation",
+        "title": "[Code Inspection Remediation] 硬编码敏感凭据",
+        "status": "waiting_review",
+        "current_step": "executor_completed",
+        "product_id": "product_119",
+        "version_id": None,
+        "module_id": None,
+        "requirement_id": None,
+        "created_by": "user_admin",
+        "created_at": now,
+        "updated_at": now,
+        "input_json": {},
+        "output_json": {
+            "executor": {"status": "succeeded", "executor_type": "codex"},
+            "result": {
+                "exit_code": 0,
+                "summary": "已完成硬编码敏感凭据整改。",
+                "output_preview": "Codex executor completed successfully.",
+            },
+        },
+        "graph_run_ids": [],
+    }
+    app.state.store.human_reviews[review_id] = {
+        "id": review_id,
+        "ai_task_id": task_id,
+        "stage": "code_inspection_remediation",
+        "status": "pending",
+        "version": 1,
+        "content": app.state.store.snapshot(app.state.store.ai_tasks[task_id]["output_json"]),
+        "edited_content": None,
+        "created_by": "user_admin",
+        "decided_by": None,
+        "decided_at": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    response = client.post(
+        f"/api/reviews/{review_id}/approve",
+        json={"version": 1},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == {"review_status": "approved", "task_status": "completed"}
+    deposits = list(app.state.store.knowledge_deposits.values())
+    assert len(deposits) == 1
+    assert deposits[0]["content"] == "已完成硬编码敏感凭据整改。"
+
+
 def test_reject_and_request_more_info_move_task_to_documented_states():
     headers = auth_headers()
     _task_id, review_id = create_waiting_review_task(headers)
