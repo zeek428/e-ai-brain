@@ -15,39 +15,66 @@ function jsonResponse(body: unknown) {
 
 function installFetchMock() {
   const createBodies: unknown[] = [];
+  const policyItems = [
+    {
+      code_change_review_mode: 'manual_review',
+      executor_type: 'codex',
+      id: 'rd_executor_policy_001',
+      instruction_template: '处理 {{task_id}}',
+      name: '开发计划走 Codex',
+      output_contract: { summary: 'string' },
+      priority: 10,
+      product_id: 'product_001',
+      product_name: '研发大脑平台',
+      repository_id: 'repo_001',
+      repository_name: 'e-ai-brain',
+      runner_id: 'runner_codex',
+      runner_name: '本地 Codex Runner',
+      status: 'active',
+      task_type: 'development_planning',
+      timeout_seconds: 600,
+      updated_at: '2026-06-20T02:00:00Z',
+      workspace_root: '/Users/zeek/source/e-ai-brain',
+    },
+    {
+      code_change_review_mode: 'manual_review',
+      executor_type: 'codex',
+      id: 'rd_executor_policy_002',
+      instruction_template: '通用处理 {{task_id}}',
+      name: '开发计划通用 Codex',
+      output_contract: { summary: 'string' },
+      priority: 20,
+      product_id: null,
+      product_name: null,
+      runner_id: 'runner_codex',
+      runner_name: '本地 Codex Runner',
+      status: 'active',
+      task_type: 'development_planning',
+      timeout_seconds: 600,
+      updated_at: '2026-06-20T03:00:00Z',
+      workspace_root: '/Users/zeek/source/e-ai-brain',
+    },
+  ];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input), 'http://localhost');
     const method = init?.method ?? 'GET';
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
     if (url.pathname === '/api/delivery/rd-task-executor-policies' && method === 'GET') {
+      if (!url.searchParams.has('page')) {
+        return jsonResponse({
+          data: {
+            items: policyItems,
+            total: policyItems.length,
+          },
+        });
+      }
       expect(url.searchParams.get('page')).toBe('1');
       expect(url.searchParams.get('page_size')).toBe('10');
       expect(url.searchParams.get('sort_by')).toBe('priority');
       return jsonResponse({
         data: {
-          items: [
-            {
-              code_change_review_mode: 'manual_review',
-              executor_type: 'codex',
-              id: 'rd_executor_policy_001',
-              instruction_template: '处理 {{task_id}}',
-              name: '开发计划走 Codex',
-              output_contract: { summary: 'string' },
-              priority: 10,
-              product_id: 'product_001',
-              product_name: '研发大脑平台',
-              repository_id: 'repo_001',
-              repository_name: 'e-ai-brain',
-              runner_id: 'runner_codex',
-              runner_name: '本地 Codex Runner',
-              status: 'active',
-              task_type: 'development_planning',
-              timeout_seconds: 600,
-              updated_at: '2026-06-20T02:00:00Z',
-              workspace_root: '/Users/zeek/source/e-ai-brain',
-            },
-          ],
-          total: 1,
+          items: policyItems,
+          total: policyItems.length,
         },
       });
     }
@@ -142,9 +169,13 @@ describe('RdExecutorPoliciesPage', () => {
     render(<RdExecutorPoliciesPage />);
 
     expect(await screen.findByText('开发计划走 Codex')).toBeInTheDocument();
-    expect(screen.getByText('本地 Codex Runner')).toBeInTheDocument();
-    expect(screen.getByText('人工确认')).toBeInTheDocument();
-    expect(screen.getByText('/Users/zeek/source/e-ai-brain')).toBeInTheDocument();
+    expect(screen.getByText('开发计划通用 Codex')).toBeInTheDocument();
+    expect(screen.getAllByText('本地 Codex Runner').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('人工确认').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('/Users/zeek/source/e-ai-brain').length).toBeGreaterThan(0);
+    expect(screen.getByText('命中提示')).toBeInTheDocument();
+    expect(screen.getByText('通用兜底')).toBeInTheDocument();
+    expect(screen.getByText('同任务类型已有产品专用策略，产品任务会优先命中产品专用策略')).toBeInTheDocument();
     expect(screen.getAllByText('策略名称').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole('button', { name: '保存视图' })).toBeInTheDocument();
 
@@ -154,6 +185,8 @@ describe('RdExecutorPoliciesPage', () => {
     expect(within(dialog).getByLabelText('执行器')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Runner')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('代码提交方式')).toBeInTheDocument();
+    expect(within(dialog).getByText('命中预览')).toBeInTheDocument();
+    expect(within(dialog).getByText('当前表单策略将作为通用兜底策略')).toBeInTheDocument();
     expect(within(dialog).queryByText('AI角色')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('Skill')).not.toBeInTheDocument();
 

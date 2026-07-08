@@ -6,6 +6,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.551 | 2026-07-08 | 研发执行器策略页面新增命中提示和新增/编辑命中预览，按产品专属优先、priority 升序和策略 ID 兜底展示冲突风险 | Codex |
 | v1.1.550 | 2026-07-08 | 研发执行器策略新增 `code_change_review_mode`：默认人工确认，配置 `auto_commit` 时 Runner 成功后自动通过 Review 并请求 merge 隔离 worktree | Codex |
 | v1.1.549 | 2026-07-08 | 研发执行器策略新增入口移除历史 `code_inspection_remediation` 选项，代码巡检 finding 经 Bug 确认后统一按 `bug_fix` 推进 AI Task | Codex |
 | v1.1.548 | 2026-07-08 | 研发任务命中研发执行器策略下发 Runner 时新增 `input_payload.knowledge_references[]`，并把同产品/同版本可读知识中心片段追加到执行器 instruction | Codex |

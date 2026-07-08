@@ -19,6 +19,22 @@ body {
   line-height: 1;
 }
 
+.layout-help-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.layout-help-link:hover,
+.layout-help-link:focus-visible {
+  color: #2f6fed;
+  outline: none;
+}
+
 .avatar-menu-trigger {
   display: inline-flex;
   align-items: center;

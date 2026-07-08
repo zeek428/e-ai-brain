@@ -14,6 +14,7 @@ AI Brain 是企业 AI 大脑平台项目。v1 以“研发大脑”为样板，M
 | [02-specs/enterprise-ai-brain/spec.md](02-specs/enterprise-ai-brain/spec.md) | 项目级技术规格入口，保留跨域架构、数据、状态、风险和测试策略，业务域细节见 `domains/`。 |
 | [02-specs/enterprise-ai-brain/api.md](02-specs/enterprise-ai-brain/api.md) | 项目级 API 文档入口，接口细节按业务域拆入 `api/` 分册。 |
 | [02-specs/enterprise-ai-brain/test-case.md](02-specs/enterprise-ai-brain/test-case.md) | 项目级测试用例入口，详细用例按业务域拆入 `test-cases/`。 |
+| [08-help/README.md](08-help/README.md) | 面向最终用户的帮助中心和业务模块操作手册维护入口，包含截图规范和迭代同步检查清单。 |
 
 ## 推荐阅读顺序
 
@@ -85,7 +86,11 @@ docs/
 ├── 04-decisions/
 ├── 05-runbooks/
 ├── 06-standards/
-└── 07-deprecated/
+├── 07-deprecated/
+└── 08-help/
+    ├── README.md
+    └── assets/
+        └── screenshots/
 ```
 
 ## 文档维护规则
@@ -93,6 +98,7 @@ docs/
 - 项目级入口文档仍是维护源：PRD 保持单文件，spec/API/test-case 通过入口文件索引到业务域分册和历史归档。
 - 每个 PRD 验收标准必须映射到至少一个测试用例。
 - 每个新增模块必须同步补充对应业务域规格、API 分册、数据模型、权限、审计说明和测试用例。
+- 每个影响用户操作的页面或流程变更必须检查 `08-help/`，同步更新操作手册、截图或 FAQ；确认无需更新时，在交付说明中写明原因。
 - 所有高影响 AI 动作必须保留明确人工确认点。
 - 当实现与文档不一致时，先更新项目级入口和对应分册，再更新代码；完成后同步 changelog。
 - 部署、监控和故障响应 runbook 同时记录 local、staging 和 production-readiness 门禁；当前实现状态必须以代码、`scripts/production_readiness_check.py` 和目标环境验证结果为准。

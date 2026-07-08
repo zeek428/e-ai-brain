@@ -1,4 +1,10 @@
-import { ClusterOutlined, LogoutOutlined, ProfileOutlined, UserOutlined } from '@ant-design/icons';
+import {
+  ClusterOutlined,
+  LogoutOutlined,
+  ProfileOutlined,
+  QuestionCircleOutlined,
+  UserOutlined,
+} from '@ant-design/icons';
 import { ConfigProvider, Dropdown, theme } from 'antd';
 import type { ReactNode } from 'react';
 
@@ -163,13 +169,29 @@ export async function getInitialState(): Promise<InitialState> {
 }
 
 export const layout = ({ initialState }: { initialState?: InitialState }) => ({
-  actionsRender: () => [<span className="layout-action" key="phase">IT研发大脑</span>],
+  actionsRender: () => [
+    <button
+      className="layout-action layout-help-link"
+      key="help"
+      onClick={() => navigateTo('/help')}
+      type="button"
+    >
+      <QuestionCircleOutlined aria-hidden="true" />
+      帮助中心
+    </button>,
+    <span className="layout-action" key="phase">IT研发大脑</span>,
+  ],
   avatarProps: {
     icon: <UserOutlined />,
     render: (_props: unknown, dom: ReactNode) => (
       <Dropdown
         menu={{
           items: [
+            {
+              icon: <QuestionCircleOutlined aria-hidden="true" />,
+              key: 'help',
+              label: '帮助中心',
+            },
             {
               icon: <ProfileOutlined />,
               key: 'profile',
@@ -182,6 +204,9 @@ export const layout = ({ initialState }: { initialState?: InitialState }) => ({
             },
           ],
           onClick: ({ key }) => {
+            if (key === 'help') {
+              navigateTo('/help');
+            }
             if (key === 'profile') {
               navigateTo('/account/profile');
             }

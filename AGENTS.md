@@ -15,6 +15,7 @@ Use the project-level documents as the active source of truth:
 3. [docs/02-specs/enterprise-ai-brain/api.md](docs/02-specs/enterprise-ai-brain/api.md) — API contracts and error semantics.
 4. [docs/02-specs/enterprise-ai-brain/test-case.md](docs/02-specs/enterprise-ai-brain/test-case.md) — acceptance-test mapping and P0/P1 test cases.
 5. [docs/02-specs/architecture/system-overview.md](docs/02-specs/architecture/system-overview.md) and [docs/02-specs/architecture/tech-stack.md](docs/02-specs/architecture/tech-stack.md) — concise architecture and technology summaries.
+6. [docs/08-help/README.md](docs/08-help/README.md) — user-facing help center and business module operation manuals. Keep it aligned with visible page behavior, screenshots, permissions, and common user-facing errors.
 
 The [docs/07-deprecated/](docs/07-deprecated/) directory is a historical archive only. Do not use it as the implementation authority for new work; migrate any still-valid historical details into the project-level PRD/spec/API/test documents instead.
 
@@ -58,6 +59,8 @@ If package scripts or app directories are added later, prefer the checked-in scr
 ## Testing and Commit Gate
 
 For any change that affects frontend routes, menus, visible copy, page components, frontend service mappings, or backend API behavior that changes a rendered page, run actual web UI validation before committing. Start or restart the real web service, use the PostgreSQL-backed API runtime, open the target page in a browser, log in with the relevant role, and verify the URL/title, non-blank render, expected menu/text/table/modal/interaction, absence of stale UI, and no relevant console/runtime errors. If Umi/MFSU cache, old ports, or stale bundles prevent the page from reflecting the change, fix the running environment and repeat the browser check. Do not commit until both automated tests and the real webpage validation pass, and include the URL, role, checked page/flow, commands, and result in the final summary.
+
+For any change that affects user-facing menus, page layout, visible copy, form fields, buttons, operation flows, permissions, error messages, or screenshots, check [docs/08-help](docs/08-help) before committing. Update the relevant help manual and screenshot under `docs/08-help/assets/screenshots/`, or explicitly state in the final summary why no help update is needed. Screenshots must be taken from the real local UI when feasible and must mask secrets, tokens, passwords, private domains, phone numbers, and personal contact details.
 
 ## Intended Architecture
 
@@ -143,3 +146,5 @@ High-impact AI steps must stop at explicit human confirmation points before cont
 ## Documentation Maintenance
 
 When implementation and docs diverge, update the project-level docs first, then code, then [docs/changelog.md](docs/changelog.md). New modules must update the API, data model, permission, and audit documentation. PRD acceptance criteria must remain mapped to test cases.
+
+User help documentation is maintained separately from engineering specs. When a feature changes how a user performs work, update [docs/08-help](docs/08-help) in the same change set: revise the operation steps, adjust screenshots, refresh FAQ/error explanations, and record the help-doc change in [docs/changelog.md](docs/changelog.md).

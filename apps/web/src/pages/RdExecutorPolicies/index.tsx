@@ -1,5 +1,5 @@
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Tag, message } from 'antd';
+import { Alert, Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Tag, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
@@ -11,6 +11,7 @@ import {
   fetchAiExecutorRunners,
   fetchManagementProducts,
   fetchProductGitRepositoryRecords,
+  fetchRdTaskExecutorPolicies,
   fetchRdTaskExecutorPolicyList,
   updateRdTaskExecutorPolicy,
   type AiExecutorRunnerRecord,
@@ -38,6 +39,19 @@ type PolicyFormValues = {
 };
 
 type RdTaskExecutorPolicyRow = RdTaskExecutorPolicyRecord & Record<string, unknown>;
+
+type PolicyHitHint = {
+  color: string;
+  description: string;
+  label: string;
+};
+
+type ModalPolicyPreview = {
+  detail?: string;
+  message: string;
+  type: 'info' | 'success' | 'warning';
+  warning?: string;
+};
 
 const LEGACY_CODE_INSPECTION_REMEDIATION_TYPE = 'code_inspection_remediation';
 
@@ -88,6 +102,157 @@ function executorLabel(value: string) {
 
 function codeChangeReviewModeLabel(value: string | undefined) {
   return CODE_CHANGE_REVIEW_MODE_OPTIONS.find((item) => item.value === value)?.label ?? '人工确认';
+}
+
+function normalizeProductId(value: string | null | undefined) {
+  return String(value ?? '').trim();
+}
+
+function productNameLabel(products: ProductRecord[], productId: string | null | undefined) {
+  const normalizedProductId = normalizeProductId(productId);
+  if (!normalizedProductId) {
+    return '未指定产品';
+  }
+  return products.find((product) => product.id === normalizedProductId)?.name ?? normalizedProductId;
+}
+
+function isActivePolicy(policy: Pick<RdTaskExecutorPolicyRecord, 'status'>) {
+  return policy.status === 'active';
+}
+
+function policyMatchesTask(
+  policy: Pick<RdTaskExecutorPolicyRecord, 'product_id' | 'status' | 'task_type'>,
+  taskType: string | undefined,
+  productId: string | null | undefined,
+) {
+  if (!taskType || !isActivePolicy(policy) || policy.task_type !== taskType) {
+    return false;
+  }
+  const policyProductId = normalizeProductId(policy.product_id);
+  const targetProductId = normalizeProductId(productId);
+  return !policyProductId || policyProductId === targetProductId;
+}
+
+function sortPoliciesForTask(
+  policies: RdTaskExecutorPolicyRecord[],
+  taskType: string | undefined,
+  productId: string | null | undefined,
+) {
+  const targetProductId = normalizeProductId(productId);
+  return policies
+    .filter((policy) => policyMatchesTask(policy, taskType, targetProductId))
+    .sort((left, right) => {
+      const leftProductId = normalizeProductId(left.product_id);
+      const rightProductId = normalizeProductId(right.product_id);
+      const leftScopeRank = leftProductId === targetProductId ? 0 : 1;
+      const rightScopeRank = rightProductId === targetProductId ? 0 : 1;
+      if (leftScopeRank !== rightScopeRank) {
+        return leftScopeRank - rightScopeRank;
+      }
+      if (left.priority !== right.priority) {
+        return left.priority - right.priority;
+      }
+      return left.id.localeCompare(right.id);
+    });
+}
+
+function samePolicyScope(left: RdTaskExecutorPolicyRecord, right: RdTaskExecutorPolicyRecord) {
+  return left.task_type === right.task_type && normalizeProductId(left.product_id) === normalizeProductId(right.product_id);
+}
+
+function buildPolicyHitHint(policy: RdTaskExecutorPolicyRecord, policies: RdTaskExecutorPolicyRecord[]): PolicyHitHint {
+  if (!isActivePolicy(policy)) {
+    return {
+      color: 'default',
+      description: '停用策略不会参与任务命中',
+      label: '不参与',
+    };
+  }
+  const productId = normalizeProductId(policy.product_id);
+  const candidates = sortPoliciesForTask(policies, policy.task_type, productId);
+  const winner = candidates[0];
+  if (winner && winner.id !== policy.id) {
+    return {
+      color: 'red',
+      description: `当前会命中「${winner.name}」`,
+      label: '被覆盖',
+    };
+  }
+  const productSpecificCount = policies.filter(
+    (candidate) =>
+      isActivePolicy(candidate) &&
+      candidate.task_type === policy.task_type &&
+      normalizeProductId(candidate.product_id),
+  ).length;
+  if (!productId && productSpecificCount > 0) {
+    return {
+      color: 'gold',
+      description: '同任务类型已有产品专用策略，产品任务会优先命中产品专用策略',
+      label: '通用兜底',
+    };
+  }
+  const sameScopeCandidates = candidates.filter((candidate) => samePolicyScope(candidate, policy));
+  if (sameScopeCandidates.length > 1) {
+    return {
+      color: 'blue',
+      description: `同范围还有 ${sameScopeCandidates.length - 1} 条候选，按优先级和策略 ID 排序`,
+      label: '当前命中',
+    };
+  }
+  return {
+    color: 'green',
+    description: productId ? '当前产品任务会优先命中该策略' : '未指定产品的任务会命中该通用策略',
+    label: '当前命中',
+  };
+}
+
+function buildModalPolicyPreview({
+  currentPolicy,
+  policies,
+  products,
+}: {
+  currentPolicy: RdTaskExecutorPolicyRecord;
+  policies: RdTaskExecutorPolicyRecord[];
+  products: ProductRecord[];
+}): ModalPolicyPreview {
+  if (!currentPolicy.task_type) {
+    return { message: '请选择任务类型后查看命中预览', type: 'info' };
+  }
+  if (!isActivePolicy(currentPolicy)) {
+    return {
+      message: '当前表单策略停用，不参与任务命中',
+      type: 'warning',
+    };
+  }
+  const productId = normalizeProductId(currentPolicy.product_id);
+  const candidates = sortPoliciesForTask(policies, currentPolicy.task_type, productId);
+  const winner = candidates[0];
+  const samePriorityCandidates = candidates.filter(
+    (candidate) =>
+      samePolicyScope(candidate, currentPolicy) && candidate.priority === currentPolicy.priority,
+  );
+  const warning =
+    samePriorityCandidates.length > 1
+      ? '存在同级策略，priority 相同，保存后会继续按策略 ID 兜底排序，建议调整优先级'
+      : undefined;
+  if (winner?.id === currentPolicy.id) {
+    return {
+      detail: productId
+        ? `当前配置会优先命中 ${productNameLabel(products, productId)} 的 ${taskTypeLabel(currentPolicy.task_type)} 任务`
+        : '当前表单策略将作为通用兜底策略',
+      message: '命中预览',
+      type: warning ? 'warning' : 'success',
+      warning,
+    };
+  }
+  return {
+    detail: winner
+      ? `当前配置会命中「${winner.name}」，当前表单策略不会被优先命中`
+      : '当前没有可命中的启用策略',
+    message: '命中预览',
+    type: 'warning',
+    warning,
+  };
 }
 
 function mutationError(error: unknown, fallback: string) {
@@ -162,7 +327,14 @@ export default function RdExecutorPoliciesPage() {
     status: 'loading',
     total: 0,
   });
+  const [policyCandidates, setPolicyCandidates] = useState<RdTaskExecutorPolicyRecord[]>([]);
   const selectedExecutorType = Form.useWatch('executor_type', form);
+  const watchedCodeChangeReviewMode = Form.useWatch('code_change_review_mode', form);
+  const watchedName = Form.useWatch('name', form);
+  const watchedPriority = Form.useWatch('priority', form);
+  const watchedProductId = Form.useWatch('product_id', form);
+  const watchedStatus = Form.useWatch('status', form);
+  const watchedTaskType = Form.useWatch('task_type', form);
 
   const loadReferences = useCallback(async () => {
     setReferenceLoading(true);
@@ -198,9 +370,17 @@ export default function RdExecutorPoliciesPage() {
     }
   }, []);
 
+  const loadPolicyCandidates = useCallback(async () => {
+    try {
+      setPolicyCandidates(await fetchRdTaskExecutorPolicies());
+    } catch (error) {
+      message.error(mutationError(error, '加载研发执行器策略命中预览失败'));
+    }
+  }, []);
+
   const reload = useCallback(async () => {
-    await Promise.all([loadPolicies(listQuery), loadReferences()]);
-  }, [listQuery, loadPolicies, loadReferences]);
+    await Promise.all([loadPolicies(listQuery), loadPolicyCandidates(), loadReferences()]);
+  }, [listQuery, loadPolicies, loadPolicyCandidates, loadReferences]);
 
   useEffect(() => {
     let cancelled = false;
@@ -225,6 +405,18 @@ export default function RdExecutorPoliciesPage() {
       cancelled = true;
     };
   }, [listQuery, loadPolicies]);
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        void loadPolicyCandidates();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadPolicyCandidates]);
 
   const productOptions = useMemo(
     () => [
@@ -253,6 +445,42 @@ export default function RdExecutorPoliciesPage() {
         value: runner.id,
       }));
   }, [runners, selectedExecutorType]);
+  const conflictPolicies = policyCandidates.length ? policyCandidates : listState.rows;
+  const modalPreview = useMemo(() => {
+    const currentPolicy: RdTaskExecutorPolicyRecord = {
+      code_change_review_mode: watchedCodeChangeReviewMode ?? 'manual_review',
+      executor_type: selectedExecutorType ?? 'codex',
+      id: editingPolicy?.id ?? '__current_form_policy__',
+      instruction_template: '',
+      name: String(watchedName || '').trim() || '当前表单策略',
+      priority: Number(watchedPriority || 100),
+      product_id: watchedProductId || null,
+      status: watchedStatus || 'active',
+      task_type: watchedTaskType || '',
+      timeout_seconds: 1800,
+      workspace_root: '',
+    };
+    const nextPolicies = [
+      ...conflictPolicies.filter((policy) => policy.id !== editingPolicy?.id),
+      currentPolicy,
+    ];
+    return buildModalPolicyPreview({
+      currentPolicy,
+      policies: nextPolicies,
+      products,
+    });
+  }, [
+    conflictPolicies,
+    editingPolicy?.id,
+    products,
+    selectedExecutorType,
+    watchedCodeChangeReviewMode,
+    watchedName,
+    watchedPriority,
+    watchedProductId,
+    watchedStatus,
+    watchedTaskType,
+  ]);
   const taskTypeOptions = useMemo(() => {
     if (editingPolicy?.task_type !== LEGACY_CODE_INSPECTION_REMEDIATION_TYPE) {
       return TASK_TYPE_OPTIONS;
@@ -349,7 +577,7 @@ export default function RdExecutorPoliciesPage() {
         message.success('研发执行器策略已创建');
       }
       setModalOpen(false);
-      await loadPolicies(listQuery);
+      await Promise.all([loadPolicies(listQuery), loadPolicyCandidates()]);
     } catch (error) {
       message.error(mutationError(error, '保存研发执行器策略失败'));
     }
@@ -359,7 +587,7 @@ export default function RdExecutorPoliciesPage() {
     try {
       await deleteRdTaskExecutorPolicy(policy.id);
       message.success('研发执行器策略已删除');
-      await loadPolicies(listQuery);
+      await Promise.all([loadPolicies(listQuery), loadPolicyCandidates()]);
     } catch (error) {
       message.error(mutationError(error, '删除研发执行器策略失败'));
     }
@@ -424,6 +652,20 @@ export default function RdExecutorPoliciesPage() {
       width: 100,
     },
     {
+      dataIndex: 'policy_hit_hint',
+      render: (_, row) => {
+        const hint = buildPolicyHitHint(row, conflictPolicies);
+        return (
+          <Space orientation="vertical" size={2}>
+            <Tag color={hint.color}>{hint.label}</Tag>
+            <span style={{ color: 'rgba(0, 0, 0, 0.45)', fontSize: 12 }}>{hint.description}</span>
+          </Space>
+        );
+      },
+      title: '命中提示',
+      width: 260,
+    },
+    {
       dataIndex: 'status',
       render: (_, row) => (
         <StatusTag color={STATUS_COLORS[row.status] ?? 'default'} label={row.status === 'active' ? '启用' : '停用'} />
@@ -484,7 +726,7 @@ export default function RdExecutorPoliciesPage() {
         }}
         rowKey="id"
         tableLayout="fixed"
-        tableScroll={{ x: 2030 }}
+        tableScroll={{ x: 2290 }}
         tableTitle="研发执行器策略"
         title="研发执行器策略"
       />
@@ -548,6 +790,19 @@ export default function RdExecutorPoliciesPage() {
           </Form.Item>
           <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
             <Select options={STATUS_OPTIONS} />
+          </Form.Item>
+          <Form.Item label="策略预览">
+            <Alert
+              description={
+                <Space orientation="vertical" size={4}>
+                  {modalPreview.detail ? <span>{modalPreview.detail}</span> : null}
+                  {modalPreview.warning ? <span>{modalPreview.warning}</span> : null}
+                </Space>
+              }
+              showIcon
+              title={modalPreview.message}
+              type={modalPreview.type}
+            />
           </Form.Item>
           <Form.Item label="指令模板" name="instruction_template" rules={[{ required: true, message: '请输入指令模板' }]}>
             <Input.TextArea rows={5} />

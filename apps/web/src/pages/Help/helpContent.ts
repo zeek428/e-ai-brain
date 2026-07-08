@@ -1,0 +1,601 @@
+export type HelpSection = {
+  body: string[];
+  heading: string;
+};
+
+export type HelpArticle = {
+  key: string;
+  keywords: string[];
+  related?: string[];
+  role: string;
+  route?: string;
+  sections: HelpSection[];
+  summary: string;
+  title: string;
+};
+
+export type HelpGroup = {
+  articles: HelpArticle[];
+  key: string;
+  title: string;
+};
+
+export const helpGroups: HelpGroup[] = [
+  {
+    key: 'start',
+    title: '快速开始',
+    articles: [
+      {
+        key: 'getting-started',
+        keywords: ['登录', '钉钉', '个人中心', '权限', '菜单'],
+        related: ['account-profile', 'system-roles'],
+        role: '所有已登录用户',
+        route: '/welcome',
+        summary: '了解 AI Brain 的登录方式、菜单结构、角色权限和常用操作入口。',
+        title: '快速开始',
+        sections: [
+          {
+            heading: '首次进入',
+            body: [
+              '账号密码登录需要完成数字安全校验；钉钉登录不需要回答数字题。',
+              '登录后会按当前角色展示可访问菜单。如果看不到某个菜单，通常是角色未授权，而不是页面丢失。',
+              '顶部“帮助中心”和头像菜单中的“个人中心”适合处理日常自助问题。',
+            ],
+          },
+          {
+            heading: '推荐使用顺序',
+            body: [
+              '先在团队看板查看产品范围、交付负载和风险压力。',
+              '再进入需求交付或产品资产处理具体需求、任务、Bug、知识和产品配置。',
+              '出现接口异常、权限拒绝或执行失败时，优先查看审计与运行、执行诊断和帮助中心 FAQ。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'account-profile',
+        keywords: ['个人中心', '密码', '邮箱', '手机号', '钉钉绑定', '解绑'],
+        role: '所有已登录用户',
+        route: '/account/profile',
+        summary: '维护个人资料、本地密码和钉钉账号绑定关系。',
+        title: '个人中心',
+        sections: [
+          {
+            heading: '可以维护的信息',
+            body: [
+              '可修改显示名称、邮箱、手机号和登录密码；登录名用于识别账号，默认只读展示。',
+              '钉钉账号卡片会展示绑定状态、企业名称和外部身份摘要，便于确认当前账号是否绑定正确。',
+              'SSO-only 账号需要先设置本地密码，才能解除唯一的钉钉登录方式。',
+            ],
+          },
+          {
+            heading: '绑定钉钉',
+            body: [
+              '已有 AI Brain 账号应先用账号密码登录，再到个人中心发起钉钉绑定。',
+              '如果提示账号冲突，说明该钉钉身份已经绑定到其他 AI Brain 用户，需要管理员在用户管理中确认或解绑。',
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'workspace',
+    title: '业务工作台',
+    articles: [
+      {
+        key: 'dashboard',
+        keywords: ['团队看板', '趋势', '风险', '产品范围', '治理优先级'],
+        role: '具备团队看板读取权限的用户',
+        route: '/welcome',
+        summary: '从管理视角查看交付、风险、工程活跃和用户声音。',
+        title: '团队看板',
+        sections: [
+          {
+            heading: '页面重点',
+            body: [
+              '顶部筛选用于切换产品范围和时间范围，所有指标和趋势会联动刷新。',
+              '四个业务域分别覆盖交付负载、风险压力、工程活跃和用户声音。',
+              '治理优先队列用于快速定位最需要处理的需求、任务、Bug、发布或反馈。',
+            ],
+          },
+          {
+            heading: '如何使用',
+            body: [
+              '管理者先看健康结论，再看趋势是否持续恶化，最后下钻到对应列表处理。',
+              '如果趋势为空，通常表示当前产品或时间范围下缺少足够历史数据。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'assistant',
+        keywords: ['AI 助手', '对话', '草案', '知识引用', '上下文'],
+        role: '具备 AI 助手使用权限的用户',
+        route: '/assistant',
+        summary: '通过对话方式检索上下文、生成草案和辅助分析。',
+        title: 'AI 助手',
+        sections: [
+          {
+            heading: '适合的场景',
+            body: [
+              '询问系统操作、需求背景、知识中心文档、研发任务和治理数据。',
+              '让 AI 生成需求草案、任务拆解、测试建议或问题分析时，应尽量提供产品、版本和上下文。',
+            ],
+          },
+          {
+            heading: '注意事项',
+            body: [
+              'AI 输出需要人工确认后再进入正式业务流程。',
+              '涉及数据变更、审批、写回或外部动作时，以页面按钮和审计记录为准。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'assistant-drafts',
+        keywords: ['草案任务台', '草案', '转换', 'AI 助手'],
+        role: '具备草案任务台权限的用户',
+        route: '/assistant/drafts',
+        summary: '集中处理 AI 助手生成的需求、任务或知识沉淀草案。',
+        title: '草案任务台',
+        sections: [
+          {
+            heading: '核心流程',
+            body: [
+              '从草案列表查看来源、类型、状态和生成时间。',
+              '人工校对内容后，再决定转换为需求、任务、知识沉淀或关闭草案。',
+              '无法编辑的用户通常只有只读权限，需要联系管理员调整角色。',
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'tasks',
+    title: '任务中心',
+    articles: [
+      {
+        key: 'scheduled-jobs',
+        keywords: ['定时作业', '运行记录', '手动触发', '邮件通知'],
+        role: '任务中心运维或管理员',
+        route: '/tasks/scheduled-jobs',
+        summary: '管理定时作业、手动触发任务并查看运行记录。',
+        title: '定时作业',
+        sections: [
+          {
+            heading: '常用操作',
+            body: [
+              '在作业列表查看启停状态、下次运行时间、最近运行结果和产品归属。',
+              '手动触发后页面会切到运行记录，并置顶展示新运行记录。',
+              '邮件通知类动作依赖系统设置中的邮件发送配置。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'ai-capabilities',
+        keywords: ['AI 能力配置', '能力', '模型', '动作'],
+        role: '系统管理员或 AI 能力管理员',
+        route: '/tasks/ai-capabilities',
+        summary: '维护可被任务、插件和助手调用的 AI 能力定义。',
+        title: 'AI 能力配置',
+        sections: [
+          {
+            heading: '配置重点',
+            body: [
+              '能力名称、用途、输入输出和风险等级应保持清晰，方便角色授权和审计。',
+              '高风险能力建议只开放给管理员或明确业务负责人。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'plugins',
+        keywords: ['插件', 'MCP', '钉钉', '诊断', '授权'],
+        role: '系统管理员或插件管理员',
+        route: '/tasks/plugins',
+        summary: '管理标准插件、授权配置、健康诊断和动作模板。',
+        title: '插件管理',
+        sections: [
+          {
+            heading: '使用建议',
+            body: [
+              '新增插件后先完成授权配置，再执行工具发现和健康诊断。',
+              '高风险动作需要明确业务场景、输入字段和审计摘要，避免把密钥或完整请求写入日志。',
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'delivery',
+    title: '需求交付',
+    articles: [
+      {
+        key: 'requirements',
+        keywords: ['需求管理', '审批', '生成任务', '全链路'],
+        role: '产品、研发负责人、评审者；viewer 只读',
+        route: '/delivery/requirements',
+        summary: '登记、审批、关闭需求，并从需求生成 AI 研发任务。',
+        title: '需求管理',
+        sections: [
+          {
+            heading: '核心流程',
+            body: [
+              '新需求先进入草稿或待审批状态，补齐产品、版本、优先级和描述后提交评审。',
+              '审批通过后可生成 AI 任务，任务会继承产品、版本和需求上下文。',
+              '全链路用于查看需求、任务、评审、Bug、知识和审计之间的关联。',
+            ],
+          },
+          {
+            heading: '权限边界',
+            body: [
+              'viewer 可查看授权产品范围内的数据，但不能创建、审批、关闭或生成任务。',
+              '如果按钮不可见或接口返回 FORBIDDEN，请检查角色权限和产品范围。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'rd-tasks',
+        keywords: ['研发任务', 'AI Task', '确认', 'Runner', '执行器'],
+        role: '研发、评审者、管理员',
+        route: '/delivery/rd-tasks',
+        summary: '跟踪 AI 研发任务状态、执行结果、人工确认和写回。',
+        title: '研发任务',
+        sections: [
+          {
+            heading: '状态理解',
+            body: [
+              'running 表示 AI 正在执行，waiting_review 表示等待人工确认，completed 表示流程完成。',
+              '任务详情中应优先查看输出摘要、人工确认点、执行诊断和关联知识引用。',
+              '确认通过后才会进入后续写回或合入动作，拒绝会保留审计记录。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'rd-executor-policies',
+        keywords: ['研发执行器策略', 'Codex', 'Claude', '自动提交', '人工确认'],
+        role: '管理员或研发治理负责人',
+        route: '/delivery/rd-executor-policies',
+        summary: '配置不同任务类型如何选择 AI 执行器、知识上下文和代码提交方式。',
+        title: '研发执行器策略',
+        sections: [
+          {
+            heading: '配置重点',
+            body: [
+              '策略通常按任务类型、产品和优先级匹配，决定使用哪个 Runner 和是否自动启动。',
+              '代码提交方式建议默认人工确认；自动提交只适合边界清晰、测试充分的任务。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'versions',
+        keywords: ['迭代版本', '版本', '分支', '发布'],
+        role: '产品、研发和发布负责人',
+        route: '/delivery/versions',
+        summary: '维护产品迭代版本、研发分支和交付状态。',
+        title: '迭代版本',
+        sections: [
+          {
+            heading: '使用方式',
+            body: [
+              '把需求、研发任务、Bug 和发布记录归属到同一版本，便于查看交付范围和风险。',
+              '暂无需求的版本进入全链路时会展示版本级空状态，而不是报错。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'bugs',
+        keywords: ['Bug 管理', 'AI处理', '只读', '全链路'],
+        role: '测试、研发、产品；viewer 只读',
+        route: '/delivery/bugs',
+        summary: '登记、分诊、推进和追踪 Bug 生命周期。',
+        title: 'Bug 管理',
+        sections: [
+          {
+            heading: '常用操作',
+            body: [
+              '可按产品、版本、状态、严重级别和来源筛选 Bug。',
+              '具备写权限的用户可以登记、编辑、批量处理或推进 AI 任务。',
+              'viewer 只能查看列表和全链路，页面不会展示写操作。',
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'assets',
+    title: '产品资产',
+    articles: [
+      {
+        key: 'products',
+        keywords: ['产品管理', '版本', '模块', 'Git 仓库', '相关系统'],
+        role: '产品管理员；viewer 只读',
+        route: '/assets/products',
+        summary: '维护产品、版本、模块、Git 资源和相关系统，是数据归属的基础。',
+        title: '产品管理',
+        sections: [
+          {
+            heading: '为什么重要',
+            body: [
+              '需求、任务、Bug、知识、代码巡检和看板指标都会依赖产品归属。',
+              '产品范围也是角色数据权限的核心边界，建议保持产品编码和名称稳定。',
+              'viewer 可以查看产品资产，但不能新增、编辑或删除。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'knowledge',
+        keywords: ['知识中心', '空间', '目录', '上传', 'Hybrid Search', 'RAG'],
+        role: '知识管理员、研发、产品；viewer 按授权只读',
+        route: '/assets/knowledge',
+        summary: '上传和治理产品知识，支持检索、RAG 问答、引用和知识沉淀。',
+        title: '知识中心',
+        sections: [
+          {
+            heading: '工作台结构',
+            body: [
+              '空间和目录用于组织知识归属，新文档和沉淀入库都必须选择知识空间。',
+              '文档库用于上传、筛选、查看索引状态和打开详情。',
+              '知识问答会基于 Hybrid Search 召回内容，并展示引用片段。',
+            ],
+          },
+          {
+            heading: '上传注意事项',
+            body: [
+              'PDF、文本和常见文档需要通过文件校验后才会进入索引流程。',
+              '上传失败时先查看文件大小、类型、空间归属和导入任务状态。',
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'governance',
+    title: '运营治理',
+    articles: [
+      {
+        key: 'devops',
+        keywords: ['日志监控', 'Jenkins', 'GitLab', '发布', '在线日志'],
+        role: '研发治理、运维或管理员',
+        route: '/governance/devops',
+        summary: '查看工程指标、发布记录和在线日志风险。',
+        title: '日志监控',
+        sections: [
+          {
+            heading: '管理重点',
+            body: [
+              '按产品查看代码提交、构建、发布和在线日志趋势。',
+              '异常波动应下钻到版本、任务或代码巡检记录确认根因。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'insights',
+        keywords: ['用户洞察', '反馈', '迭代建议', '用户声音'],
+        role: '产品、运营、管理员',
+        route: '/governance/insights',
+        summary: '沉淀用户反馈、行为指标和迭代建议。',
+        title: '用户洞察',
+        sections: [
+          {
+            heading: '使用方式',
+            body: [
+              '负向反馈会进入治理视图，并可关联到迭代建议、需求或 Bug。',
+              '建议定期按产品查看高频问题，避免反馈只停留在单条记录。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'audit-traces',
+        keywords: ['审计', '执行诊断', 'trace_id', '全链路', '接口异常'],
+        role: '管理员、审计员、研发治理人员',
+        route: '/governance/audit',
+        summary: '排查关键操作、接口异常、AI 执行和全链路上下文。',
+        title: '审计与执行诊断',
+        sections: [
+          {
+            heading: '排障顺序',
+            body: [
+              '用户反馈错误码或 trace_id 时，先在审计与运行中按时间、主体或事件类型查找。',
+              'AI 执行失败、任务卡住或写回异常时，再进入执行诊断查看运行链路。',
+              '全链路只对有关联上下文的主体展示；没有需求上下文时页面会展示空状态或禁用入口。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'code-inspections',
+        keywords: ['代码巡检', '质量安全', '产品维度', '全链路', '报告'],
+        role: '研发治理、代码质量负责人、管理员',
+        route: '/governance/code-inspections',
+        summary: '按产品查看代码质量安全巡检报告、风险分布和治理待办。',
+        title: '代码巡检',
+        sections: [
+          {
+            heading: '页面重点',
+            body: [
+              '顶部产品范围会联动报告列表、风险分布和治理概览。',
+              '未关联需求上下文的独立巡检报告不会直接打开需求全链路。',
+              '严重发现建议先进入 Bug 或需求确认，再推进 AI 研发任务。',
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'system',
+    title: '系统管理',
+    articles: [
+      {
+        key: 'system-users',
+        keywords: ['用户管理', '登录方式', '钉钉', '外部身份', '停用'],
+        role: '系统管理员',
+        route: '/system/users',
+        summary: '维护用户资料、角色、启停状态和外部身份绑定。',
+        title: '用户管理',
+        sections: [
+          {
+            heading: '管理重点',
+            body: [
+              '用户列表会展示登录方式、钉钉绑定企业和本地密码状态。',
+              '停用、删除或降权管理员时，系统会保护最后一个 active admin。',
+              '钉钉绑定冲突可通过外部身份管理能力排查，但操作会写入审计。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'system-roles',
+        keywords: ['角色管理', '菜单管理', '权限点', 'viewer', '只读'],
+        role: '系统管理员',
+        route: '/system/roles',
+        summary: '维护角色、权限点、菜单入口和数据范围。',
+        title: '角色与菜单',
+        sections: [
+          {
+            heading: '配置原则',
+            body: [
+              '菜单可见不等于接口可写，后端权限点才是最终边界。',
+              'viewer 默认只读，不能通过隐藏按钮以外的方式执行写操作。',
+              '新增菜单后应同步角色授权、帮助文档和真实页面验证。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'system-settings',
+        keywords: ['系统设置', '邮件', 'SMTP', '测试收件人', '管理员邮箱'],
+        role: '系统管理员',
+        route: '/system/settings',
+        summary: '维护系统基础配置和邮件发送能力。',
+        title: '系统设置',
+        sections: [
+          {
+            heading: '邮件配置',
+            body: [
+              '发件邮箱、SMTP Host、端口、加密方式、用户名和 SMTP 密码/授权码必须匹配邮箱服务商要求。',
+              'SMTP 密钥引用只用于引用外部密钥，例如 env:SMTP_PASSWORD；如果直接填写密码/授权码，可以留空。',
+              '测试收件人会独立保存，不会自动覆盖为发件人邮箱。',
+            ],
+          },
+          {
+            heading: '安全要求',
+            body: [
+              '密码和授权码不会明文回显，审计只记录是否配置和变更字段。',
+              '点击发送测试邮件前，页面会先保存当前配置，再调用测试发送接口。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'model-gateway',
+        keywords: ['模型网关', '模型', '供应商', 'Token', '延迟'],
+        role: '系统管理员或 AI 平台管理员',
+        route: '/system/model-gateway',
+        summary: '维护模型供应商、模型配置和调用元数据。',
+        title: '模型网关',
+        sections: [
+          {
+            heading: '配置原则',
+            body: [
+              '业务模块应通过模型网关调用模型，不直接依赖供应商 SDK。',
+              '日志记录供应商、模型、用途、Token、延迟和状态，不默认保存完整提示词或输出。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'assistant-admin',
+        keywords: ['AI助手快捷任务', '@ 能力', '动作引用', '角色配置'],
+        role: '系统管理员或 AI 助手管理员',
+        route: '/system/assistant-role-quick-tasks',
+        summary: '配置不同角色可见的助手快捷任务和 @ 能力引用。',
+        title: 'AI 助手管理配置',
+        sections: [
+          {
+            heading: '配置建议',
+            body: [
+              '快捷任务应按角色职责配置，避免把管理员动作暴露给只读用户。',
+              '@ 能力引用应写清输入要求、风险等级和结果去向。',
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'faq',
+    title: '常见问题',
+    articles: [
+      {
+        key: 'faq',
+        keywords: ['FORBIDDEN', 'Permission denied', 'DEFAULT_CREDENTIALS_DISABLED', 'SMTP', '登录失败'],
+        role: '所有用户',
+        summary: '汇总登录、权限、邮件、全链路和页面异常的常见处理方式。',
+        title: '常见问题与错误码',
+        sections: [
+          {
+            heading: '权限或菜单问题',
+            body: [
+              'FORBIDDEN 或 Permission denied 表示后端权限点拒绝。请确认当前角色是否具备对应菜单和接口权限。',
+              '菜单看得到但接口拒绝，通常是菜单授权和权限点不一致，需要管理员在角色管理中修正。',
+            ],
+          },
+          {
+            heading: '登录问题',
+            body: [
+              'DEFAULT_CREDENTIALS_DISABLED 表示当前环境禁用了种子账号，请使用真实账号或让管理员启用本地测试开关。',
+              '数字校验答错后页面会刷新题目，请重新输入新的答案后再登录。',
+            ],
+          },
+          {
+            heading: '邮件问题',
+            body: [
+              '测试邮件失败时先确认 SMTP Host、端口、SSL/TLS、用户名和授权码是否匹配邮箱服务商要求。',
+              '阿里企业邮箱 SSL 发信通常使用 smtp.qiye.aliyun.com 和 465 端口，密码应填写安全密码或客户端专用密码。',
+            ],
+          },
+        ],
+      },
+    ],
+  },
+];
+
+export const helpArticles = helpGroups.flatMap((group) => group.articles);
+
+export const helpArticleByKey = new Map(helpArticles.map((article) => [article.key, article]));
+
+export function findHelpArticle(key: string | null | undefined) {
+  if (!key) {
+    return undefined;
+  }
+  return helpArticleByKey.get(key);
+}
+
+export function getArticleSearchText(article: HelpArticle) {
+  return [
+    article.title,
+    article.summary,
+    article.role,
+    article.route,
+    ...article.keywords,
+    ...article.sections.flatMap((section) => [section.heading, ...section.body]),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}

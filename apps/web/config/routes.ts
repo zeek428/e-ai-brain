@@ -17,6 +17,13 @@ const routes = [
     hideInMenu: true,
   },
   {
+    path: '/help',
+    name: '帮助中心',
+    icon: 'QuestionCircleOutlined',
+    component: './Help',
+    hideInMenu: true,
+  },
+  {
     path: '/',
     redirect: '/login',
   },

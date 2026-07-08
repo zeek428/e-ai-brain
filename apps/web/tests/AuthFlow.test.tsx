@@ -62,6 +62,9 @@ describe('AI Brain auth flow and routes', () => {
     expect(routes).toContain("component: './Login'");
     expect(routes).toContain("path: '/account/profile'");
     expect(routes).toContain("component: './AccountProfile'");
+    expect(routes).toContain("path: '/help'");
+    expect(routes).toContain("name: '帮助中心'");
+    expect(routes).toContain("component: './Help'");
     expect(routes).toContain('layout: false');
     expect(routes).toContain("path: '/welcome'");
     expect(routes).toContain("name: '团队看板'");
