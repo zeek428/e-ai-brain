@@ -1,6 +1,6 @@
 import { PlayCircleOutlined } from '@ant-design/icons';
 import type { FormInstance } from 'antd';
-import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Tag, Typography } from 'antd';
+import { Alert, Button, Col, Form, Input, InputNumber, Modal, Row, Select, Space, Tag, Typography } from 'antd';
 
 import type {
   PluginConnectionSchemaRecord,
@@ -259,27 +259,31 @@ export function PluginConnectionModal({
                 type="info"
               />
             ) : null}
-            <Space wrap>
-              <Form.Item label="查询参数名" name="query_key">
-                <Input placeholder="key" />
-              </Form.Item>
-              <Form.Item
-                extra={
-                  isDingTalkConnection
-                    ? '填写钉钉 MCP 网关授权 URL 中的 key 值；不同授权主体可使用个人、系统或应用独立 key。'
-                    : '填写 URL 查询参数形式的密钥，保存后调用时会自动追加到请求 URL。'
-                }
-                label="URL Key / 密钥引用"
-                name="secret_ref"
-                rules={
-                  isDingTalkConnection
-                    ? [{ required: true, message: '请填写钉钉 MCP URL Key 或密钥引用' }]
-                    : undefined
-                }
-              >
-                <Input placeholder="dingtalk key / vault/dingtalk/doc/key / env:DINGTALK_MCP_KEY" />
-              </Form.Item>
-            </Space>
+            <Row className="plugin-connection-url-key-grid" gutter={[16, 0]}>
+              <Col className="plugin-connection-url-key-query" xs={24}>
+                <Form.Item label="查询参数名" name="query_key">
+                  <Input placeholder="key" />
+                </Form.Item>
+              </Col>
+              <Col className="plugin-connection-url-key-secret" xs={24}>
+                <Form.Item
+                  extra={
+                    isDingTalkConnection
+                      ? '填写钉钉 MCP 网关授权 URL 中的 key 值；不同授权主体可使用个人、系统或应用独立 key。'
+                      : '填写 URL 查询参数形式的密钥，保存后调用时会自动追加到请求 URL。'
+                  }
+                  label="URL Key / 密钥引用"
+                  name="secret_ref"
+                  rules={
+                    isDingTalkConnection
+                      ? [{ required: true, message: '请填写钉钉 MCP URL Key 或密钥引用' }]
+                      : undefined
+                  }
+                >
+                  <Input placeholder="dingtalk key / vault/dingtalk/doc/key / env:DINGTALK_MCP_KEY" />
+                </Form.Item>
+              </Col>
+            </Row>
           </>
         ) : null}
         {!isInternalDataSourceConnection ? (

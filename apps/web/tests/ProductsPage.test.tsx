@@ -50,6 +50,18 @@ describe('ProductsPage', () => {
     expect(screen.getByText('产品列表')).toBeInTheDocument();
     expect(screen.getAllByText('产品编码')).not.toHaveLength(0);
     expect(screen.queryByText('AI-BRAIN')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '产品接入向导' }));
+
+    const onboardingDialog = await screen.findByRole('dialog', { name: '产品接入向导' });
+    expect(within(onboardingDialog).getByText('已有产品 0')).toBeInTheDocument();
+    expect(within(onboardingDialog).getByText('1. 建立产品主数据')).toBeInTheDocument();
+    expect(within(onboardingDialog).getByText('2. 补齐交付结构和代码资源')).toBeInTheDocument();
+    expect(within(onboardingDialog).getByText('3. 绑定知识空间')).toBeInTheDocument();
+    expect(within(onboardingDialog).getByText('4. 配置插件连接')).toBeInTheDocument();
+    expect(within(onboardingDialog).getByText('5. 校验角色与产品范围')).toBeInTheDocument();
+    expect(within(onboardingDialog).getByText('6. 复检平台运行状态')).toBeInTheDocument();
+    expect(within(onboardingDialog).getByRole('button', { name: '复检系统健康' })).toBeInTheDocument();
   });
 
   it('filters product table rows from query conditions', async () => {
@@ -202,6 +214,14 @@ describe('ProductsPage', () => {
 
     expect(await screen.findByText('查看者可读产品')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '新增产品' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '产品接入向导' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '产品接入向导' }));
+    const onboardingDialog = await screen.findByRole('dialog', { name: '产品接入向导' });
+    expect(within(onboardingDialog).getByText('已有产品 1')).toBeInTheDocument();
+    expect(within(onboardingDialog).queryByRole('button', { name: '新增产品' })).not.toBeInTheDocument();
+    fireEvent.click(within(onboardingDialog).getByRole('button', { name: 'Close' }));
+
     const productRow = screen.getByText('查看者可读产品').closest('tr');
     expect(productRow).not.toBeNull();
     expect(within(productRow as HTMLElement).getByRole('button', { name: '配置' })).toBeInTheDocument();

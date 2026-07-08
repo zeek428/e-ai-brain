@@ -217,6 +217,12 @@ const routes = [
         component: './Menus',
       },
       {
+        path: '/system/health',
+        name: '系统健康',
+        icon: 'DashboardOutlined',
+        component: './SystemHealth',
+      },
+      {
         path: '/system/settings',
         name: '系统设置',
         icon: 'SettingOutlined',

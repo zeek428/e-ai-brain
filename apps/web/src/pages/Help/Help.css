@@ -188,6 +188,52 @@
   line-height: 1.8;
 }
 
+.help-screenshot-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px 0;
+  border-top: 1px solid #f0f3f8;
+}
+
+.help-screenshot-section h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.help-screenshot-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.help-screenshot-card {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid #e4ebf5;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.help-screenshot-card img {
+  display: block;
+  width: 100%;
+  max-height: 560px;
+  border: 1px solid #dbe4f0;
+  border-radius: 6px;
+  object-fit: contain;
+  object-position: top left;
+  background: #ffffff;
+}
+
+.help-screenshot-card figcaption {
+  color: rgba(15, 23, 42, 0.64);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .help-related {
   display: flex;
   flex-wrap: wrap;

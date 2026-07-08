@@ -3,6 +3,12 @@ export type HelpSection = {
   heading: string;
 };
 
+export type HelpScreenshot = {
+  alt: string;
+  caption?: string;
+  src: string;
+};
+
 export type HelpArticle = {
   key: string;
   keywords: string[];
@@ -10,6 +16,7 @@ export type HelpArticle = {
   role: string;
   route?: string;
   sections: HelpSection[];
+  screenshots?: HelpScreenshot[];
   summary: string;
   title: string;
 };
@@ -317,9 +324,16 @@ export const helpGroups: HelpGroup[] = [
     articles: [
       {
         key: 'products',
-        keywords: ['产品管理', '版本', '模块', 'Git 仓库', '相关系统'],
+        keywords: ['产品管理', '版本', '模块', 'Git 仓库', '相关系统', '产品接入向导'],
         role: '产品管理员；viewer 只读',
         route: '/assets/products',
+        screenshots: [
+          {
+            alt: '产品接入向导页面截图',
+            caption: '产品接入向导会把主数据、交付结构、知识空间、插件连接、权限范围和健康复检串联在一个弹窗内。',
+            src: '/help/screenshots/assets-products-onboarding.png',
+          },
+        ],
         summary: '维护产品、版本、模块、Git 资源和相关系统，是数据归属的基础。',
         title: '产品管理',
         sections: [
@@ -329,6 +343,14 @@ export const helpGroups: HelpGroup[] = [
               '需求、任务、Bug、知识、代码巡检和看板指标都会依赖产品归属。',
               '产品范围也是角色数据权限的核心边界，建议保持产品编码和名称稳定。',
               'viewer 可以查看产品资产，但不能新增、编辑或删除。',
+            ],
+          },
+          {
+            heading: '接入新产品',
+            body: [
+              '点击“产品接入向导”可以按步骤检查产品主数据、版本模块、Git 资源、知识空间、插件连接、角色范围和系统健康。',
+              '具备产品管理权限的用户可以从向导直接新增产品或配置当前页第一个产品；只读用户只能查看接入步骤和已有配置状态。',
+              '接入完成后建议进入系统健康页复检产品初始化、知识质量、插件连接和权限诊断。',
             ],
           },
         ],
@@ -460,7 +482,7 @@ export const helpGroups: HelpGroup[] = [
       },
       {
         key: 'system-roles',
-        keywords: ['角色管理', '菜单管理', '权限点', 'viewer', '只读'],
+        keywords: ['角色管理', '菜单管理', '权限点', '权限诊断', 'viewer', '只读'],
         role: '系统管理员',
         route: '/system/roles',
         summary: '维护角色、权限点、菜单入口和数据范围。',
@@ -472,6 +494,39 @@ export const helpGroups: HelpGroup[] = [
               '菜单可见不等于接口可写，后端权限点才是最终边界。',
               'viewer 默认只读，不能通过隐藏按钮以外的方式执行写操作。',
               '新增菜单后应同步角色授权、帮助文档和真实页面验证。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'system-health',
+        keywords: ['系统健康', '配置体检', '依赖检查', 'SMTP', '钉钉', 'MinIO', 'pgvector', 'Redis', '模型网关'],
+        related: ['system-settings', 'system-roles', 'model-gateway'],
+        role: '系统管理员',
+        route: '/system/health',
+        screenshots: [
+          {
+            alt: '系统健康页面总览截图',
+            caption: '系统健康页会把依赖状态、优先处理项、分类检查和修复入口统一到一个页面。',
+            src: '/help/screenshots/system-health-overview.png',
+          },
+        ],
+        summary: '统一查看平台依赖、核心配置、运行失败摘要和修复建议。',
+        title: '系统健康',
+        sections: [
+          {
+            heading: '页面重点',
+            body: [
+              '顶部展示整体状态、检查项总数、正常项、需关注项和阻断异常。',
+              '优先处理区域会聚合最需要修复的依赖、配置或运行失败，支持直接跳转到对应配置页面。',
+              '分类检查覆盖 PostgreSQL、Redis、pgvector、对象存储、SMTP、钉钉登录、钉钉 MCP、模型网关、知识质量、AI 执行器、作业运行、观测告警和产品初始化。',
+            ],
+          },
+          {
+            heading: '排查建议',
+            body: [
+              '先处理红色异常，再处理橙色或黄色待完善项。',
+              '出现登录、插件、邮件或 AI 任务失败时，优先查看该页的最近错误和修复建议，再下钻到执行诊断、插件管理、系统设置或模型网关。',
             ],
           },
         ],

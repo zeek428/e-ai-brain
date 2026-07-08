@@ -2459,6 +2459,10 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByText('钉钉文档 (mcp_streamable_http)')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('URL Key / 密钥引用')).toHaveValue('');
     expect(within(dialog).getByLabelText('查询参数名')).toHaveValue('key');
+    const urlKeyGrid = dialog.querySelector('.plugin-connection-url-key-grid');
+    expect(urlKeyGrid).toBeTruthy();
+    expect(urlKeyGrid).toContainElement(within(dialog).getByLabelText('查询参数名'));
+    expect(urlKeyGrid).toContainElement(within(dialog).getByLabelText('URL Key / 密钥引用'));
     expect(within(dialog).getByLabelText('授权主体')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('provider')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('dingtalk')).toBeInTheDocument();

@@ -1516,9 +1516,240 @@ body {
   min-width: 0;
 }
 
+.system-health-page {
+  display: grid;
+  gap: 16px;
+}
+
+.system-health-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
+  gap: 18px;
+  align-items: center;
+  padding: 24px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.system-health-hero[data-status='error'] {
+  border-color: #ffd6d6;
+  background: #fffafa;
+}
+
+.system-health-hero[data-status='degraded'],
+.system-health-hero[data-status='warning'] {
+  border-color: #ffe7ba;
+  background: #fffdf7;
+}
+
+.system-health-hero-copy {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.system-health-hero-copy .ant-typography {
+  margin: 0;
+}
+
+.system-health-overall-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  color: #1677ff;
+  background: #e6f4ff;
+  font-size: 22px;
+}
+
+.system-health-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.system-health-summary-grid .ant-statistic {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.system-health-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.system-health-shortcut {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.system-health-shortcut:hover {
+  border-color: #91caff;
+  box-shadow: 0 8px 20px rgba(22, 119, 255, 0.08);
+}
+
+.system-health-shortcut > span:last-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.system-health-shortcut-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: #1677ff;
+  background: #e6f4ff;
+}
+
+.system-health-panel {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.system-health-section-heading {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.system-health-section-heading .ant-typography {
+  margin: 0;
+}
+
+.system-health-check-list {
+  display: grid;
+  gap: 12px;
+}
+
+.system-health-recommendations {
+  display: grid;
+  gap: 10px;
+}
+
+.system-health-recommendation {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid #fff1b8;
+  border-radius: 8px;
+  background: #fffdf4;
+}
+
+.system-health-recommendation > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.system-health-recommendation .ant-typography {
+  margin-bottom: 0;
+}
+
+.system-health-check {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.system-health-check-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.system-health-check-title {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.system-health-description {
+  margin-bottom: 0 !important;
+}
+
+.system-health-check-alert {
+  max-width: 100%;
+}
+
+.system-health-metrics .ant-descriptions-item-content {
+  overflow-wrap: anywhere;
+}
+
+.product-onboarding-guide {
+  width: 100%;
+}
+
+.product-onboarding-guide .ant-typography {
+  margin-bottom: 0;
+}
+
+.product-onboarding-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
 @media (max-width: 760px) {
   .system-settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .system-health-hero,
+  .system-health-shortcuts {
+    grid-template-columns: 1fr;
+  }
+
+  .system-health-section-heading,
+  .system-health-check-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (min-width: 761px) and (max-width: 1180px) {
+  .system-health-shortcuts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

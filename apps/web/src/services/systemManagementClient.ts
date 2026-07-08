@@ -136,6 +136,44 @@ export type SystemEmailDeliveryTestResult = {
   smtp_tls: string;
 };
 
+export type SystemHealthCheckRecord = {
+  action_href?: string | null;
+  category: string;
+  component: string;
+  description: string;
+  fix_suggestion: string;
+  key: string;
+  last_error?: string | null;
+  metrics?: Record<string, unknown>;
+  status: string;
+  title: string;
+};
+
+export type SystemHealthRecommendationRecord = {
+  action_href?: string | null;
+  component: string;
+  message: string;
+  severity: string;
+  title: string;
+};
+
+export type SystemHealthReport = {
+  checked_at: string;
+  checks: SystemHealthCheckRecord[];
+  overall_status: string;
+  platform?: Record<string, string>;
+  recommendations: SystemHealthRecommendationRecord[];
+  summary: {
+    category_counts: Record<string, Record<string, number>>;
+    critical_count: number;
+    needs_attention_count: number;
+    ok_count: number;
+    status_counts: Record<string, number>;
+    total: number;
+  };
+  trace_id: string;
+};
+
 export type RoleAccessPreview = {
   diagnostics: Array<{
     code: string;
@@ -422,6 +460,11 @@ export async function testSystemEmailDelivery(
     method: 'POST',
     token,
   });
+}
+
+export async function fetchSystemHealth(): Promise<SystemHealthReport> {
+  const token = requireAccessToken();
+  return apiRequest<SystemHealthReport>('/api/system/health', { token });
 }
 
 export async function fetchSystemMenuList(

@@ -183,6 +183,63 @@ def test_health_uses_persisted_default_model_gateway_config(monkeypatch):
     assert response.json()["model_gateway"] == "configured"
 
 
+def test_system_health_center_aggregates_dependency_and_configuration_checks(monkeypatch):
+    app.state.store.reset()
+    monkeypatch.setattr(main.settings, "object_storage_provider", "local")
+    monkeypatch.setattr(main.settings, "dingtalk_login_enabled", True)
+    monkeypatch.setattr(main.settings, "dingtalk_client_id", "ding-client")
+    monkeypatch.setattr(main.settings, "dingtalk_client_secret", "ding-secret")
+    monkeypatch.setattr(main.settings, "dingtalk_redirect_uri", "https://example.com/api/auth/dingtalk/callback")
+    app.state.store.model_gateway_configs["model_gateway_config_health_center"] = {
+        "id": "model_gateway_config_health_center",
+        "name": "健康中心模型网关",
+        "provider": "openai_compatible",
+        "base_url": "http://model-gateway.test/v1",
+        "api_key": "sk-health-center",
+        "default_chat_model": "chat",
+        "default_embedding_model": "embedding",
+        "timeout_seconds": 60,
+        "max_retries": 0,
+        "status": "active",
+        "is_default": True,
+    }
+    app.state.store.integration_plugins["plugin_dingtalk_health_center"] = {
+        "id": "plugin_dingtalk_health_center",
+        "code": "dingtalk-doc",
+        "name": "钉钉知识库",
+        "status": "active",
+    }
+    app.state.store.plugin_connections["connection_dingtalk_health_center"] = {
+        "id": "connection_dingtalk_health_center",
+        "plugin_code": "dingtalk-doc",
+        "plugin_name": "钉钉知识库",
+        "status": "error",
+        "error_message": "request failed for https://mcp.example.test/wiki?key=secret-url-key&token=secret-token",
+    }
+
+    response = client.get("/api/system/health", headers=auth_headers())
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["overall_status"] in {"ok", "warning", "degraded", "error"}
+    assert data["summary"]["total"] >= 10
+    checks = {item["key"]: item for item in data["checks"]}
+    assert {"postgres", "redis", "pgvector", "smtp", "dingtalk_login", "model_gateway"} <= set(checks)
+    assert checks["dingtalk_login"]["status"] == "configured"
+    assert checks["model_gateway"]["metrics"]["embedding_gateway"] in {
+        "configured",
+        "disabled",
+        "failed",
+        "not_configured",
+    }
+    assert checks["dingtalk_mcp"]["last_error"] == (
+        "request failed for https://mcp.example.test/wiki?key=***&token=***"
+    )
+    assert "secret-url-key" not in response.text
+    assert "secret-token" not in response.text
+    assert data["trace_id"].startswith("trace_")
+
+
 def test_health_dependency_endpoint_parsing_supports_docker_service_names():
     assert tcp_endpoint_from_url(
         "postgresql://ai_brain:password@postgres:5432/ai_brain",

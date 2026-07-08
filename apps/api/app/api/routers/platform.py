@@ -4,10 +4,11 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
-from app.api.deps import CurrentUser, store
+from app.api.deps import CurrentUser, require_any_permission, store
 from app.core.config import get_settings
 from app.core.trace import envelope, get_trace_id
 from app.services.platform_status import health_payload, long_memory_status_payload
+from app.services.system_health import system_health_report
 
 settings = get_settings()
 router = APIRouter(tags=["platform"])
@@ -28,3 +29,25 @@ def get_long_memory_status(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     return envelope(long_memory_status_payload(settings), get_trace_id(request))
+
+
+@router.get("/api/system/health")
+def get_system_health(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_any_permission(
+        user,
+        {"system.health.read", "system.settings.manage", "system.roles.read"},
+    )
+    trace_id = get_trace_id(request)
+    return envelope(
+        system_health_report(
+            current_store=store(request),
+            request=request,
+            settings=settings,
+            trace_id=trace_id,
+            user=user,
+        ),
+        trace_id,
+    )

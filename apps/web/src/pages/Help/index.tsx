@@ -180,6 +180,20 @@ export default function HelpPage() {
               </section>
             ))}
 
+            {selectedArticle.screenshots?.length ? (
+              <section className="help-screenshot-section" aria-label="页面截图">
+                <h3>页面截图</h3>
+                <div className="help-screenshot-grid">
+                  {selectedArticle.screenshots.map((screenshot) => (
+                    <figure className="help-screenshot-card" key={screenshot.src}>
+                      <img alt={screenshot.alt} src={screenshot.src} />
+                      {screenshot.caption ? <figcaption>{screenshot.caption}</figcaption> : null}
+                    </figure>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
             {relatedArticles.length > 0 ? (
               <div className="help-related" aria-label="相关帮助文档">
                 <Space wrap>

@@ -1,7 +1,13 @@
-import { DeleteOutlined, EditOutlined, PlusOutlined, SettingOutlined } from '@ant-design/icons';
+import {
+  DeleteOutlined,
+  EditOutlined,
+  PlusOutlined,
+  RocketOutlined,
+  SettingOutlined,
+} from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
+import { Button, Form, Input, Modal, Popconfirm, Select, Space, Steps, Tag, Typography, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DateStringPicker } from '../../components/DateStringPicker';
@@ -59,6 +65,9 @@ import {
   type ProductResourceFormValues,
   type ResourceKind,
 } from './productPageHelpers';
+import { navigateTo } from '../../utils/navigation';
+
+const { Paragraph, Text } = Typography;
 
 export default function ProductsPage() {
   const [form] = Form.useForm<ProductFormValues>();
@@ -67,6 +76,7 @@ export default function ProductsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [configProduct, setConfigProduct] = useState<ProductRecord | null>(null);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
   const [versionRows, setVersionRows] = useState<ProductVersionRecord[]>([]);
   const [moduleRows, setModuleRows] = useState<ProductModuleRecord[]>([]);
@@ -211,6 +221,25 @@ export default function ProductsPage() {
       status: 'active',
     });
     setIsModalOpen(true);
+  };
+
+  const openProductOnboarding = () => {
+    setIsOnboardingOpen(true);
+  };
+
+  const openFirstProductConfig = () => {
+    const product = listState.rows[0];
+    if (!product) {
+      message.info('请先新增一个产品，再继续配置版本、模块和 Git 资源');
+      return;
+    }
+    setIsOnboardingOpen(false);
+    openConfigModal(product);
+  };
+
+  const openCreateProductFromOnboarding = () => {
+    setIsOnboardingOpen(false);
+    openCreateModal();
   };
 
   const openEditModal = useCallback((row: ProductRecord) => {
@@ -810,7 +839,130 @@ export default function ProductsPage() {
         rowKey="id"
         tableTitle="产品列表"
         title="产品管理"
+        toolbarActions={[
+          <Button
+            aria-label="产品接入向导"
+            icon={<RocketOutlined />}
+            key="product-onboarding"
+            onClick={openProductOnboarding}
+          >
+            产品接入向导
+          </Button>,
+        ]}
       />
+      <Modal
+        destroyOnHidden
+        footer={[
+          <Button key="health" onClick={() => navigateTo('/system/health')}>
+            复检系统健康
+          </Button>,
+          canManageProducts ? (
+            <Button key="create" onClick={openCreateProductFromOnboarding} type="primary">
+              新增产品
+            </Button>
+          ) : null,
+        ]}
+        onCancel={() => setIsOnboardingOpen(false)}
+        open={isOnboardingOpen}
+        title="产品接入向导"
+        width={920}
+      >
+        <Space className="product-onboarding-guide" orientation="vertical" size={18}>
+          <Paragraph>
+            按产品维度完成主数据、交付结构、代码资源、知识空间、插件连接和权限范围配置后，
+            后续需求、Bug、代码巡检、知识检索和作业运行才能稳定归属到同一个产品上下文。
+          </Paragraph>
+          <div className="product-onboarding-status">
+            <Tag color={listState.total > 0 ? 'green' : 'gold'}>
+              已有产品 {listState.total}
+            </Tag>
+            <Tag color={listState.rows.some((product) => product.moduleCount > 0) ? 'green' : 'default'}>
+              当前页已有模块的产品 {listState.rows.filter((product) => product.moduleCount > 0).length}
+            </Tag>
+            <Tag color={listState.rows.some((product) => product.version && product.version !== '-') ? 'green' : 'default'}>
+              当前页已有版本的产品 {listState.rows.filter((product) => product.version && product.version !== '-').length}
+            </Tag>
+          </div>
+          <Steps
+            orientation="vertical"
+            items={[
+              {
+                content: (
+                  <Space orientation="vertical" size={6}>
+                    <Text>创建产品编码、产品名称、负责团队和默认版本。</Text>
+                    <Space wrap>
+                      {canManageProducts ? (
+                        <Button onClick={openCreateProductFromOnboarding} size="small" type="primary">
+                          新增产品
+                        </Button>
+                      ) : null}
+                      <Button onClick={() => setIsOnboardingOpen(false)} size="small">
+                        查看产品列表
+                      </Button>
+                    </Space>
+                  </Space>
+                ),
+                title: '1. 建立产品主数据',
+              },
+              {
+                content: (
+                  <Space orientation="vertical" size={6}>
+                    <Text>为产品维护迭代版本、业务模块、Git 资源和相关系统。</Text>
+                    <Button disabled={!listState.rows.length} onClick={openFirstProductConfig} size="small">
+                      配置当前页第一个产品
+                    </Button>
+                  </Space>
+                ),
+                title: '2. 补齐交付结构和代码资源',
+              },
+              {
+                content: (
+                  <Space orientation="vertical" size={6}>
+                    <Text>创建知识空间和目录，上传产品文档，确保 RAG 检索有产品归属。</Text>
+                    <Button onClick={() => navigateTo('/assets/knowledge')} size="small">
+                      进入知识中心
+                    </Button>
+                  </Space>
+                ),
+                title: '3. 绑定知识空间',
+              },
+              {
+                content: (
+                  <Space orientation="vertical" size={6}>
+                    <Text>安装并配置钉钉 MCP、代码仓库、内部数据源等插件连接。</Text>
+                    <Button onClick={() => navigateTo('/tasks/plugins')} size="small">
+                      进入插件管理
+                    </Button>
+                  </Space>
+                ),
+                title: '4. 配置插件连接',
+              },
+              {
+                content: (
+                  <Space orientation="vertical" size={6}>
+                    <Text>在角色管理中按产品授予 read/write/admin scope，避免菜单可见但接口被拒绝。</Text>
+                    <Button onClick={() => navigateTo('/system/roles')} size="small">
+                      进入权限诊断
+                    </Button>
+                  </Space>
+                ),
+                title: '5. 校验角色与产品范围',
+              },
+              {
+                content: (
+                  <Space orientation="vertical" size={6}>
+                    <Text>完成配置后到系统健康复检 SMTP、钉钉、MinIO、模型网关、知识质量和执行队列。</Text>
+                    <Button onClick={() => navigateTo('/system/health')} size="small">
+                      打开系统健康
+                    </Button>
+                  </Space>
+                ),
+                title: '6. 复检平台运行状态',
+              },
+            ]}
+          />
+        </Space>
+      </Modal>
       <Modal
         confirmLoading={isSaving}
         destroyOnHidden
