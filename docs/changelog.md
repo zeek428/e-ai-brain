@@ -8,6 +8,7 @@
 
 ### Added
 - 系统健康告警中心补齐事件闭环：新增 `system_alert_incidents`、`system_alert_subscriptions`、`knowledge_quality_events` 结构表，`PATCH /api/system/alerts/{alert_id}` 支持认领、处理中、关闭、忽略并记录负责人、关闭原因和复盘，`POST /api/system/alerts/subscriptions` 支持创建告警订阅；系统健康页同步展示告警状态、趋势和订阅摘要。
+- 系统告警补齐规则和周报闭环：新增 `system_alert_rules` 表与 `GET/POST/PATCH /api/system/alerts/rules`，告警物化时记录命中规则；新增 `GET /api/system/admin-weekly-report` 生成管理员周报 Markdown，系统健康页可直接查看。
 - 知识中心质量闭环新增持久化观测：`POST /api/knowledge/search` 与 `/api/knowledge/rag` 自动记录检索/RAG 质量事件，新增 `/api/knowledge/quality/metrics`、`/api/knowledge/quality/feedback`、`/api/knowledge/quality/citation-click` 支持无结果率、引用点击率、有用/无用反馈和 RAG 引用准确率 proxy 汇总。
 - 新增帮助中心维护脚本：`scripts/check_help_center_assets.mjs` 校验帮助文档路由、截图文件和截图过期状态，`scripts/capture_help_screenshots.mjs` 使用 Playwright 按路由刷新帮助截图。
 - 审计事件新增 CSV 导出接口 `GET /api/audit/events/export`，复用审计事件筛选条件导出最近 1000 条摘要记录。

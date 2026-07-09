@@ -174,6 +174,28 @@ export type SystemHealthAlertRecord = {
   title: string;
 };
 
+export type SystemAlertRuleRecord = {
+  component?: string | null;
+  condition_json?: Record<string, unknown>;
+  created_at?: string | null;
+  enabled?: boolean;
+  id: string;
+  name: string;
+  notification_scope?: string | null;
+  owner?: string | null;
+  severity_min: string;
+  source: string;
+  updated_at?: string | null;
+};
+
+export type SystemAdminWeeklyReport = {
+  generated_at: string;
+  markdown: string;
+  sections?: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  trace_id?: string;
+};
+
 export type SystemHealthOperations = {
   ai_executor_ops?: {
     controls?: Array<{ description: string; label: string; target: string }>;
@@ -192,12 +214,15 @@ export type SystemHealthOperations = {
   };
   alert_center?: {
     alerts: SystemHealthAlertRecord[];
+    rules?: SystemAlertRuleRecord[];
     summary: {
+      enabled_rule_count?: number;
       high_count: number;
       low_count: number;
       medium_count: number;
       open_count: number;
       resolving_count?: number;
+      rule_count?: number;
     };
     subscriptions?: Array<Record<string, unknown>>;
     trend?: Array<Record<string, unknown>>;
@@ -582,6 +607,15 @@ export async function testSystemEmailDelivery(
 export async function fetchSystemHealth(): Promise<SystemHealthReport> {
   const token = requireAccessToken();
   return apiRequest<SystemHealthReport>('/api/system/health', { token });
+}
+
+export async function fetchSystemAdminWeeklyReport(
+  days = 7,
+): Promise<SystemAdminWeeklyReport> {
+  const token = requireAccessToken();
+  return apiRequest<SystemAdminWeeklyReport>(`/api/system/admin-weekly-report?days=${days}`, {
+    token,
+  });
 }
 
 export async function fetchSystemMenuList(

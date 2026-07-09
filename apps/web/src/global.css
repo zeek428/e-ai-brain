@@ -1794,6 +1794,14 @@ body {
   padding: 8px 10px;
 }
 
+.system-health-weekly-report-preview {
+  max-height: 520px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .system-health-recommendations {
   display: grid;
   gap: 10px;

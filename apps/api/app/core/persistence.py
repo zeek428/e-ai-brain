@@ -334,6 +334,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "096_platform_operations_quality_loop.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "097_system_alert_rules_and_admin_report.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -402,6 +406,12 @@ class PostgresSnapshotRepository:
 
     def save_system_alert_subscription(self, subscription: dict[str, Any]) -> dict[str, Any]:
         return self._platform_operations_repository.save_system_alert_subscription(subscription)
+
+    def list_system_alert_rules(self) -> list[dict[str, Any]]:
+        return self._platform_operations_repository.list_system_alert_rules()
+
+    def save_system_alert_rule(self, rule: dict[str, Any]) -> dict[str, Any]:
+        return self._platform_operations_repository.save_system_alert_rule(rule)
 
     def insert_knowledge_quality_event(self, event: dict[str, Any]) -> dict[str, Any]:
         return self._platform_operations_repository.insert_knowledge_quality_event(event)

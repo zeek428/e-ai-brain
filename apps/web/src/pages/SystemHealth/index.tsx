@@ -16,6 +16,7 @@ import {
   Button,
   Descriptions,
   Empty,
+  Modal,
   Progress,
   Skeleton,
   Space,
@@ -28,6 +29,7 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
+  fetchSystemAdminWeeklyReport,
   fetchSystemHealth,
   type SystemHealthCheckRecord,
   type SystemHealthOperations,
@@ -268,6 +270,7 @@ function alertStatusTag(status: string) {
 }
 
 function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthOperations }) {
+  const [weeklyReportLoading, setWeeklyReportLoading] = useState(false);
   const alertCenter = operations.alert_center;
   const aiExecutor = operations.ai_executor_ops;
   const knowledge = operations.knowledge_quality_loop;
@@ -278,6 +281,7 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
   const securityAudit = operations.security_audit_governance;
   const products = productScores?.products ?? [];
   const alerts = alertCenter?.alerts ?? [];
+  const alertRules = alertCenter?.rules ?? [];
   const alertTrend = alertCenter?.trend ?? [];
   const retentionPolicies = helpAndRetention?.retention_policies ?? [];
   const screenshots = helpAndRetention?.screenshots?.screenshots ?? [];
@@ -290,6 +294,22 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
   const permissionDiagnostics = permission?.diagnostics ?? [];
   const keyExpiryAlerts = dingtalk?.mcp?.key_expiry_alerts ?? [];
   const secretRefIssues = securityAudit?.secret_ref_validation?.issues ?? [];
+
+  const showAdminWeeklyReport = async () => {
+    setWeeklyReportLoading(true);
+    try {
+      const report = await fetchSystemAdminWeeklyReport(7);
+      Modal.info({
+        content: <pre className="system-health-weekly-report-preview">{report.markdown}</pre>,
+        title: '管理员周报',
+        width: 760,
+      });
+    } catch (reportError) {
+      message.error(formatRemoteRowsError(normalizeRemoteRowsError(reportError)));
+    } finally {
+      setWeeklyReportLoading(false);
+    }
+  };
 
   return (
     <section className="system-health-panel system-health-operations">
@@ -317,6 +337,10 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
             <OperationMetric title="中优先级" value={alertCenter?.summary?.medium_count ?? 0} />
             <OperationMetric title="低优先级" value={alertCenter?.summary?.low_count ?? 0} />
             <OperationMetric title="处理中" value={alertCenter?.summary?.resolving_count ?? 0} />
+            <OperationMetric
+              title="启用规则"
+              value={`${formatMetricValue(alertCenter?.summary?.enabled_rule_count)} / ${formatMetricValue(alertCenter?.summary?.rule_count)}`}
+            />
           </div>
           <div className="system-health-ops-list">
             {alerts.slice(0, 5).map((alert) => (
@@ -339,6 +363,15 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
             ))}
             {!alerts.length ? <Empty description="暂无打开告警" image={Empty.PRESENTED_IMAGE_SIMPLE} /> : null}
           </div>
+          {alertRules.length ? (
+            <div className="system-health-quality-gates" aria-label="告警规则">
+              {alertRules.slice(0, 4).map((rule) => (
+                <Tag color={rule.enabled ? 'blue' : 'default'} key={rule.id}>
+                  {rule.name} · {rule.severity_min}
+                </Tag>
+              ))}
+            </div>
+          ) : null}
           {alertTrend.length ? (
             <div className="system-health-quality-gates" aria-label="告警历史趋势">
               {alertTrend.slice(-4).map((item) => (
@@ -539,9 +572,19 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
         <article className="system-health-ops-card">
           <div className="system-health-ops-card-heading">
             <strong>安全审计治理</strong>
-            <Button size="small" type="link" onClick={() => navigateTo('/governance/audit')}>
-              审计
-            </Button>
+            <Space size={4}>
+              <Button
+                loading={weeklyReportLoading}
+                size="small"
+                type="link"
+                onClick={() => void showAdminWeeklyReport()}
+              >
+                周报
+              </Button>
+              <Button size="small" type="link" onClick={() => navigateTo('/governance/audit')}>
+                审计
+              </Button>
+            </Space>
           </div>
           <div className="system-health-ops-metric-grid">
             <OperationMetric

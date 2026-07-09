@@ -37,6 +37,7 @@ HEALTH_STATUS_RANK = {
     "error": 3,
     "failed": 3,
 }
+ALERT_SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3}
 
 SENSITIVE_ERROR_PATTERNS = (
     re.compile(r"(?i)(key=)[^&\s]+"),
@@ -1608,6 +1609,41 @@ def _alert_severity_for_check(check: dict[str, Any]) -> str:
     return "low"
 
 
+def _alert_rule_matches(rule: dict[str, Any], alert: dict[str, Any]) -> bool:
+    if not bool(rule.get("enabled", True)):
+        return False
+    rule_source = str(rule.get("source") or "").strip()
+    if rule_source and rule_source != str(alert.get("source") or ""):
+        return False
+    rule_component = str(rule.get("component") or "").strip()
+    if rule_component and rule_component != str(alert.get("component") or ""):
+        return False
+    severity_min = str(rule.get("severity_min") or "medium")
+    alert_severity = str(alert.get("severity") or "low")
+    return ALERT_SEVERITY_RANK.get(alert_severity, 0) >= ALERT_SEVERITY_RANK.get(severity_min, 2)
+
+
+def _apply_alert_rules(alerts: list[dict[str, Any]], rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rules:
+        return alerts
+    for alert in alerts:
+        matched_rules = [
+            rule
+            for rule in rules
+            if _alert_rule_matches(rule, alert)
+        ]
+        if not matched_rules:
+            continue
+        metadata = alert.get("metadata") if isinstance(alert.get("metadata"), dict) else {}
+        alert["metadata"] = {
+            **metadata,
+            "matched_rule_ids": [rule.get("id") for rule in matched_rules if rule.get("id")],
+        }
+        if not alert.get("owner"):
+            alert["owner"] = matched_rules[0].get("owner")
+    return alerts
+
+
 def _alert_incidents_from_memory(current_store: Any) -> dict[str, dict[str, Any]]:
     incidents = getattr(current_store, "system_alert_incidents", None)
     if not isinstance(incidents, dict):
@@ -1624,7 +1660,18 @@ def _persist_alert_incidents(
     list_incidents = getattr(repository, "list_system_alert_incidents", None)
     if callable(upsert) and callable(list_incidents):
         try:
-            return upsert([{**alert, "metadata": {"origin": "system_health"}} for alert in alerts])
+            return upsert(
+                [
+                    {
+                        **alert,
+                        "metadata": {
+                            **(alert.get("metadata") if isinstance(alert.get("metadata"), dict) else {}),
+                            "origin": "system_health",
+                        },
+                    }
+                    for alert in alerts
+                ]
+            )
         except Exception:  # pragma: no cover - defensive around partially migrated runtimes
             return alerts
     incidents = _alert_incidents_from_memory(current_store)
@@ -1674,6 +1721,7 @@ def _alert_center(
     operations: dict[str, Any],
 ) -> dict[str, Any]:
     alerts: list[dict[str, Any]] = []
+    rules = _list_alert_rules(current_store)
     owner_by_category = {
         "AI 执行运维": "平台运维",
         "产品接入": "产品负责人",
@@ -1739,7 +1787,7 @@ def _alert_center(
                 "title": f"{alert.get('connection_name') or '钉钉连接'} 授权即将到期",
             },
         )
-    alerts = _persist_alert_incidents(current_store, alerts)
+    alerts = _persist_alert_incidents(current_store, _apply_alert_rules(alerts, rules))
     severity_order = {"high": 0, "medium": 1, "low": 2, "info": 3}
     status_order = {"open": 0, "acknowledged": 1, "resolving": 2, "ignored": 3, "closed": 4}
     alerts.sort(
@@ -1752,6 +1800,7 @@ def _alert_center(
     open_alerts = [item for item in alerts if item.get("status") not in {"closed", "ignored"}]
     return {
         "alerts": alerts[:12],
+        "rules": rules,
         "subscriptions": _list_alert_subscriptions(current_store),
         "summary": {
             "acknowledged_count": sum(1 for item in alerts if item.get("status") == "acknowledged"),
@@ -1761,6 +1810,8 @@ def _alert_center(
             "medium_count": sum(1 for item in open_alerts if item.get("severity") == "medium"),
             "open_count": len(open_alerts),
             "resolving_count": sum(1 for item in alerts if item.get("status") == "resolving"),
+            "rule_count": len(rules),
+            "enabled_rule_count": sum(1 for item in rules if item.get("enabled")),
         },
         "trend": _alert_history_trend(alerts),
     }
@@ -1777,6 +1828,20 @@ def _list_alert_subscriptions(current_store: Any) -> list[dict[str, Any]]:
     subscriptions = getattr(current_store, "system_alert_subscriptions", {})
     if isinstance(subscriptions, dict):
         return [dict(item) for item in subscriptions.values()]
+    return []
+
+
+def _list_alert_rules(current_store: Any) -> list[dict[str, Any]]:
+    repository = _runtime_repository(current_store)
+    list_rules = getattr(repository, "list_system_alert_rules", None)
+    if callable(list_rules):
+        try:
+            return list_rules()
+        except Exception:  # pragma: no cover - defensive around partially migrated runtimes
+            return []
+    rules = getattr(current_store, "system_alert_rules", {})
+    if isinstance(rules, dict):
+        return [dict(item) for item in rules.values()]
     return []
 
 
@@ -1927,6 +1992,308 @@ def save_system_alert_subscription_response(
         saved = {**subscription, "created_at": _now_iso(), "updated_at": _now_iso()}
         subscriptions[subscription_id] = saved
     return envelope(saved, trace_id)
+
+
+def _normalize_alert_rule(
+    *,
+    actor_id: str,
+    current_store: Any,
+    existing: dict[str, Any] | None,
+    payload: dict[str, Any],
+    rule_id: str | None = None,
+) -> dict[str, Any]:
+    normalized_name = str(payload.get("name", existing.get("name") if existing else "") or "").strip()
+    if not normalized_name:
+        raise api_error(400, "VALIDATION_ERROR", "name is required")
+    normalized_source = str(
+        payload.get("source", existing.get("source") if existing else "system_check") or "system_check"
+    ).strip()
+    normalized_severity = str(
+        payload.get("severity_min", existing.get("severity_min") if existing else "medium") or "medium"
+    ).strip()
+    if normalized_severity not in ALERT_SEVERITY_RANK:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported alert severity")
+    condition_json = payload.get(
+        "condition_json",
+        existing.get("condition_json") if existing else {},
+    )
+    if condition_json is None:
+        condition_json = {}
+    if not isinstance(condition_json, dict):
+        raise api_error(400, "VALIDATION_ERROR", "condition_json must be an object")
+    repository = _runtime_repository(current_store)
+    new_id = getattr(repository, "next_id", None)
+    allocated_id = (
+        rule_id
+        or (new_id("system_alert_rule") if callable(new_id) else current_store.new_id("system_alert_rule"))
+    )
+    return {
+        "component": _normalize_optional_rule_text(
+            payload.get("component", existing.get("component") if existing else None),
+        ),
+        "condition_json": condition_json,
+        "created_by": existing.get("created_by") if existing else actor_id,
+        "enabled": bool(payload.get("enabled", existing.get("enabled") if existing else True)),
+        "id": allocated_id,
+        "name": normalized_name,
+        "notification_scope": _normalize_optional_rule_text(
+            payload.get(
+                "notification_scope",
+                existing.get("notification_scope") if existing else "global",
+            ),
+        )
+        or "global",
+        "owner": _normalize_optional_rule_text(
+            payload.get("owner", existing.get("owner") if existing else None),
+        ),
+        "severity_min": normalized_severity,
+        "source": normalized_source,
+        "updated_by": actor_id,
+    }
+
+
+def _normalize_optional_rule_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _save_alert_rule(current_store: Any, rule: dict[str, Any]) -> dict[str, Any]:
+    repository = _runtime_repository(current_store)
+    save_rule = getattr(repository, "save_system_alert_rule", None)
+    if callable(save_rule):
+        return save_rule(rule)
+    rules = getattr(current_store, "system_alert_rules", None)
+    if not isinstance(rules, dict):
+        rules = {}
+        vars(current_store)["system_alert_rules"] = rules
+    now = _now_iso()
+    existing = rules.get(str(rule["id"])) or {}
+    saved = {
+        **existing,
+        **rule,
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+    }
+    rules[str(rule["id"])] = saved
+    return dict(saved)
+
+
+def save_system_alert_rule_response(
+    *,
+    condition_json: dict[str, Any] | None,
+    component: str | None,
+    current_store: Any,
+    enabled: bool,
+    name: str | None,
+    notification_scope: str | None,
+    owner: str | None,
+    severity_min: str,
+    source: str | None,
+    trace_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    from app.core.trace import envelope
+
+    actor_id = str(user.get("id") or user.get("username") or "")
+    rule = _normalize_alert_rule(
+        actor_id=actor_id,
+        current_store=current_store,
+        existing=None,
+        payload={
+            "component": component,
+            "condition_json": condition_json or {},
+            "enabled": enabled,
+            "name": name,
+            "notification_scope": notification_scope,
+            "owner": owner,
+            "severity_min": severity_min,
+            "source": source,
+        },
+    )
+    return envelope(_save_alert_rule(current_store, rule), trace_id)
+
+
+def list_system_alert_rules_response(
+    *,
+    current_store: Any,
+    trace_id: str,
+) -> dict[str, Any]:
+    from app.core.trace import envelope
+
+    rules = _list_alert_rules(current_store)
+    return envelope(
+        {
+            "items": rules,
+            "summary": {
+                "enabled_count": sum(1 for rule in rules if rule.get("enabled")),
+                "total": len(rules),
+            },
+        },
+        trace_id,
+    )
+
+
+def update_system_alert_rule_response(
+    *,
+    condition_json: dict[str, Any] | None,
+    component: str | None,
+    current_store: Any,
+    enabled: bool | None,
+    name: str | None,
+    notification_scope: str | None,
+    owner: str | None,
+    rule_id: str,
+    severity_min: str | None,
+    source: str | None,
+    trace_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    from app.core.trace import envelope
+
+    existing = next((rule for rule in _list_alert_rules(current_store) if rule.get("id") == rule_id), None)
+    if existing is None:
+        raise api_error(404, "ALERT_RULE_NOT_FOUND", "System alert rule not found")
+    actor_id = str(user.get("id") or user.get("username") or "")
+    payload = {
+        key: value
+        for key, value in {
+            "component": component,
+            "condition_json": condition_json,
+            "enabled": enabled,
+            "name": name,
+            "notification_scope": notification_scope,
+            "owner": owner,
+            "severity_min": severity_min,
+            "source": source,
+        }.items()
+        if value is not None
+    }
+    rule = _normalize_alert_rule(
+        actor_id=actor_id,
+        current_store=current_store,
+        existing=existing,
+        payload=payload,
+        rule_id=rule_id,
+    )
+    return envelope(_save_alert_rule(current_store, rule), trace_id)
+
+
+def admin_weekly_report_response(
+    *,
+    current_store: Any,
+    days: int,
+    request: Request,
+    settings: Settings,
+    trace_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    from app.core.trace import envelope
+
+    window_days = max(1, min(int(days or 7), 31))
+    health = system_health_report(
+        current_store=current_store,
+        request=request,
+        settings=settings,
+        trace_id=trace_id,
+        user=user,
+    )
+    operations = health.get("operations") or {}
+    alerts = (operations.get("alert_center") or {}).get("alerts") or []
+    audit_events = _items_from_store(current_store, "list_audit_events", "audit_events")
+    now = datetime.now(UTC)
+    recent_audit_events = [
+        event
+        for event in audit_events
+        if (
+            created_at := _parse_datetime(event.get("created_at"))
+        ) is not None
+        and (now - created_at).days <= window_days
+    ]
+    sensitive_keywords = {"auth", "config", "gateway", "permission", "role", "secret", "settings", "user"}
+    sensitive_events = [
+        event
+        for event in recent_audit_events
+        if any(keyword in str(event.get("event_type") or "").lower() for keyword in sensitive_keywords)
+    ]
+    high_risk_events = [
+        event
+        for event in recent_audit_events
+        if str(event.get("result") or "").lower() in {"blocked", "failed"}
+        or "delete" in str(event.get("event_type") or "").lower()
+        or "admin" in str(event.get("event_type") or "").lower()
+    ]
+    knowledge_summary = (operations.get("knowledge_quality_loop") or {}).get("summary") or {}
+    ai_summary = (operations.get("ai_executor_ops") or {}).get("summary") or {}
+    alert_summary = (operations.get("alert_center") or {}).get("summary") or {}
+    report_summary = {
+        "alert_open_count": alert_summary.get("open_count", 0),
+        "alert_closed_count": alert_summary.get("closed_count", 0),
+        "audit_event_count": len(recent_audit_events),
+        "high_risk_operation_count": len(high_risk_events),
+        "knowledge_no_result_rate": knowledge_summary.get("no_result_rate"),
+        "runner_failed_total": ai_summary.get("failed_total", 0),
+        "sensitive_change_count": len(sensitive_events),
+        "window_days": window_days,
+    }
+    markdown_lines = [
+        f"# AI Brain 管理员周报（近 {window_days} 天）",
+        "",
+        f"- 打开告警：{report_summary['alert_open_count']}，已关闭：{report_summary['alert_closed_count']}",
+        f"- 审计事件：{report_summary['audit_event_count']}，敏感配置/权限相关变更：{report_summary['sensitive_change_count']}",
+        f"- 高风险或失败操作：{report_summary['high_risk_operation_count']}",
+        f"- AI 执行失败/死信/超时：{report_summary['runner_failed_total']}",
+        f"- 知识检索无结果率：{report_summary['knowledge_no_result_rate'] if report_summary['knowledge_no_result_rate'] is not None else '-'}",
+        "",
+        "## 待处理告警",
+    ]
+    for alert in alerts[:5]:
+        markdown_lines.append(
+            f"- [{alert.get('severity')}] {alert.get('title')}，负责人：{alert.get('owner') or '未分配'}，状态：{alert.get('status')}"
+        )
+    if not alerts:
+        markdown_lines.append("- 暂无告警。")
+    markdown_lines.extend(
+        [
+            "",
+            "## 建议动作",
+            "- 优先关闭 high/medium 告警，并补齐关闭原因和复盘记录。",
+            "- 对敏感配置、权限和密钥引用变更进行抽查。",
+            "- 关注知识无结果查询和 AI 执行失败原因分布。",
+        ]
+    )
+    return envelope(
+        {
+            "generated_at": _now_iso(),
+            "markdown": "\n".join(markdown_lines),
+            "sections": {
+                "alerts": alerts[:10],
+                "high_risk_events": [
+                    {
+                        "created_at": event.get("created_at"),
+                        "event_type": event.get("event_type"),
+                        "id": event.get("id"),
+                        "result": event.get("result"),
+                        "subject_id": event.get("subject_id"),
+                        "subject_type": event.get("subject_type"),
+                    }
+                    for event in high_risk_events[:10]
+                ],
+                "sensitive_events": [
+                    {
+                        "created_at": event.get("created_at"),
+                        "event_type": event.get("event_type"),
+                        "id": event.get("id"),
+                        "subject_id": event.get("subject_id"),
+                        "subject_type": event.get("subject_type"),
+                    }
+                    for event in sensitive_events[:10]
+                ],
+            },
+            "summary": report_summary,
+            "trace_id": trace_id,
+        },
+        trace_id,
+    )
 
 
 def system_health_report(

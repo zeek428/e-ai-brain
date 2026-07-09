@@ -42,8 +42,10 @@
 | System Settings | PATCH | `/api/system/settings` | 更新全局系统设置，支持维护系统管理员邮箱和 SMTP 发信配置。 |
 | System Settings | POST | `/api/system/settings/email/test` | 使用已保存的 SMTP 发信配置发送测试邮件。 |
 | System Health | GET | `/api/system/health` | 查询系统健康、告警中心、AI 执行器、知识质量、产品接入、权限诊断、钉钉生命周期和归档策略。 |
+| System Health | GET/POST/PATCH | `/api/system/alerts/rules` | 查看、创建和更新系统告警规则。 |
 | System Health | PATCH | `/api/system/alerts/{alert_id}` | 认领、处理中、关闭或忽略系统告警；关闭/忽略必须填写原因。 |
 | System Health | POST | `/api/system/alerts/subscriptions` | 创建系统告警订阅。 |
+| System Health | GET | `/api/system/admin-weekly-report` | 生成管理员周报摘要和 Markdown 正文。 |
 | System RBAC | GET | `/api/system/roles` | 查询系统角色列表。 |
 | System RBAC | POST | `/api/system/roles` | 创建非系统角色。 |
 | System RBAC | POST | `/api/system/roles/{role_id}/copy` | 从现有角色复制角色、权限、菜单和范围。 |

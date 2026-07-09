@@ -228,6 +228,62 @@ class PlatformOperationsRepository:
             "updated_at": _iso(row[8]),
         }
 
+    def list_system_alert_rules(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, name, source, component, severity_min, owner,
+                           notification_scope, condition_json, enabled,
+                           created_by, updated_by, created_at, updated_at
+                    FROM system_alert_rules
+                    ORDER BY enabled DESC, source ASC, severity_min DESC, id ASC
+                    """
+                )
+                return [self._system_alert_rule_from_row(row) for row in cursor.fetchall()]
+
+    def save_system_alert_rule(self, rule: dict[str, Any]) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO system_alert_rules (
+                      id, name, source, component, severity_min, owner,
+                      notification_scope, condition_json, enabled, created_by, updated_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                      name = EXCLUDED.name,
+                      source = EXCLUDED.source,
+                      component = EXCLUDED.component,
+                      severity_min = EXCLUDED.severity_min,
+                      owner = EXCLUDED.owner,
+                      notification_scope = EXCLUDED.notification_scope,
+                      condition_json = EXCLUDED.condition_json,
+                      enabled = EXCLUDED.enabled,
+                      updated_by = EXCLUDED.updated_by,
+                      updated_at = now()
+                    RETURNING id, name, source, component, severity_min, owner,
+                              notification_scope, condition_json, enabled,
+                              created_by, updated_by, created_at, updated_at
+                    """,
+                    (
+                        rule["id"],
+                        rule["name"],
+                        rule.get("source") or "system_check",
+                        rule.get("component"),
+                        rule.get("severity_min") or "medium",
+                        rule.get("owner"),
+                        rule.get("notification_scope") or "global",
+                        _json(rule.get("condition_json"), {}),
+                        bool(rule.get("enabled", True)),
+                        rule.get("created_by"),
+                        rule.get("updated_by") or rule.get("created_by"),
+                    ),
+                )
+                row = cursor.fetchone()
+        return self._system_alert_rule_from_row(row)
+
     def insert_knowledge_quality_event(self, event: dict[str, Any]) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -375,6 +431,23 @@ class PlatformOperationsRepository:
             "metadata": row[17] if isinstance(row[17], dict) else {},
             "created_at": _iso(row[18]),
             "updated_at": _iso(row[19]),
+        }
+
+    def _system_alert_rule_from_row(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row[0],
+            "name": row[1],
+            "source": row[2],
+            "component": row[3],
+            "severity_min": row[4],
+            "owner": row[5],
+            "notification_scope": row[6],
+            "condition_json": row[7] if isinstance(row[7], dict) else {},
+            "enabled": bool(row[8]),
+            "created_by": row[9],
+            "updated_by": row[10],
+            "created_at": _iso(row[11]),
+            "updated_at": _iso(row[12]),
         }
 
     def _knowledge_quality_event_from_row(self, row: Any) -> dict[str, Any]:

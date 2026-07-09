@@ -10,9 +10,13 @@ from app.core.config import get_settings
 from app.core.trace import envelope, get_trace_id
 from app.services.platform_status import health_payload, long_memory_status_payload
 from app.services.system_health import (
+    admin_weekly_report_response,
+    list_system_alert_rules_response,
+    save_system_alert_rule_response,
     save_system_alert_subscription_response,
     system_health_report,
     update_system_alert_incident_response,
+    update_system_alert_rule_response,
 )
 
 settings = get_settings()
@@ -32,6 +36,28 @@ class SystemAlertSubscriptionRequest(BaseModel):
     severity_min: str = "medium"
     scope: str | None = "global"
     enabled: bool = True
+
+
+class SystemAlertRuleRequest(BaseModel):
+    name: str | None = None
+    source: str | None = "system_check"
+    component: str | None = None
+    severity_min: str = "medium"
+    owner: str | None = None
+    notification_scope: str | None = "global"
+    condition_json: dict[str, Any] | None = None
+    enabled: bool = True
+
+
+class SystemAlertRulePatchRequest(BaseModel):
+    name: str | None = None
+    source: str | None = None
+    component: str | None = None
+    severity_min: str | None = None
+    owner: str | None = None
+    notification_scope: str | None = None
+    condition_json: dict[str, Any] | None = None
+    enabled: bool | None = None
 
 
 @router.get("/health")
@@ -73,6 +99,64 @@ def get_system_health(
     )
 
 
+@router.get("/api/system/alerts/rules")
+def list_system_alert_rules(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.alerts.manage"})
+    return list_system_alert_rules_response(
+        current_store=store(request),
+        trace_id=get_trace_id(request),
+    )
+
+
+@router.post("/api/system/alerts/rules")
+def create_system_alert_rule(
+    request: Request,
+    payload: SystemAlertRuleRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.alerts.manage"})
+    return save_system_alert_rule_response(
+        condition_json=payload.condition_json,
+        component=payload.component,
+        current_store=store(request),
+        enabled=payload.enabled,
+        name=payload.name,
+        notification_scope=payload.notification_scope,
+        owner=payload.owner,
+        severity_min=payload.severity_min,
+        source=payload.source,
+        trace_id=get_trace_id(request),
+        user=user,
+    )
+
+
+@router.patch("/api/system/alerts/rules/{rule_id}")
+def patch_system_alert_rule(
+    rule_id: str,
+    request: Request,
+    payload: SystemAlertRulePatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.alerts.manage"})
+    return update_system_alert_rule_response(
+        condition_json=payload.condition_json,
+        component=payload.component,
+        current_store=store(request),
+        enabled=payload.enabled,
+        name=payload.name,
+        notification_scope=payload.notification_scope,
+        owner=payload.owner,
+        rule_id=rule_id,
+        severity_min=payload.severity_min,
+        source=payload.source,
+        trace_id=get_trace_id(request),
+        user=user,
+    )
+
+
 @router.patch("/api/system/alerts/{alert_id}")
 def patch_system_alert_incident(
     alert_id: str,
@@ -108,5 +192,23 @@ def create_system_alert_subscription(
         severity_min=payload.severity_min,
         target=payload.target,
         trace_id=get_trace_id(request),
+        user=user,
+    )
+
+
+@router.get("/api/system/admin-weekly-report")
+def get_admin_weekly_report(
+    request: Request,
+    days: int = 7,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_any_permission(user, {"system.alerts.manage", "audit.read", "system.settings.manage"})
+    trace_id = get_trace_id(request)
+    return admin_weekly_report_response(
+        current_store=store(request),
+        days=days,
+        request=request,
+        settings=settings,
+        trace_id=trace_id,
         user=user,
     )
