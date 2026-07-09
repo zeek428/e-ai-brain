@@ -114,6 +114,8 @@ delivery-requirements-approve.png
 - 截图中的邮箱、手机号、真实姓名、token、密码、密钥、内外网域名、Cookie、连接串等必须脱敏。
 - 截图只标注用户需要关注的按钮、字段、状态和结果，不标注内部实现细节。
 - 页面改版后，必须检查旧截图是否仍然准确。
+- 维护检查运行 `node scripts/check_help_center_assets.mjs`，会同时校验前端帮助中心截图、Markdown 手册截图、注册路由、截图过期时间、public/docs 双份截图是否一致，以及未被引用的截图资产。
+- 刷新截图前可运行 `node scripts/capture_help_screenshots.mjs --list-targets` 查看从前端帮助内容自动派生出的截图目标；实际截图可使用 `READINESS_BEARER_TOKEN` 或 `--bearer-token` 注入本地登录态后运行 `node scripts/capture_help_screenshots.mjs`。
 
 ## 开发完成检查清单
 
