@@ -1790,6 +1790,36 @@ body {
   min-width: 0;
 }
 
+.system-health-executor-tasks {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.system-health-executor-task-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.system-health-executor-task-main {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.system-health-executor-task-main .ant-typography {
+  min-width: 0;
+  max-width: 180px;
+}
+
 .system-health-ops-inline-alert {
   padding: 8px 10px;
 }
@@ -1904,6 +1934,18 @@ body {
   .system-health-ops-metric-grid {
     grid-column: auto;
     grid-template-columns: 1fr;
+  }
+
+  .system-health-executor-task-row {
+    grid-template-columns: 1fr;
+  }
+
+  .system-health-executor-task-main {
+    flex-wrap: wrap;
+  }
+
+  .system-health-executor-task-main .ant-typography {
+    max-width: 100%;
   }
 }
 

@@ -951,6 +951,18 @@ def _ai_executor_ops(current_store: Any) -> dict[str, Any]:
         and (lease_expires_at := _parse_datetime(task.get("lease_expires_at"))) is not None
         and lease_expires_at <= now
     ]
+    latest_active_tasks = sorted(
+        [
+            task
+            for task in tasks
+            if str(task.get("status") or "").lower() in {"queued", "claimed", "running"}
+        ],
+        key=lambda task: (
+            task.get("updated_at") or task.get("claimed_at") or task.get("created_at") or "",
+            task.get("id") or "",
+        ),
+        reverse=True,
+    )[:5]
     latest_failures = sorted(
         [
             task
@@ -988,6 +1000,26 @@ def _ai_executor_ops(current_store: Any) -> dict[str, Any]:
     pending_approvals = [
         item for item in approvals if str(item.get("status") or "").lower() == "pending"
     ]
+
+    def task_brief(task: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ai_task_id": task.get("ai_task_id"),
+            "created_at": task.get("created_at"),
+            "error_code": task.get("error_code"),
+            "error_message": _redact_error_summary(str(task.get("error_message") or ""))
+            if task.get("error_message")
+            else None,
+            "executor_type": task.get("executor_type"),
+            "id": task.get("id"),
+            "runner_id": task.get("runner_id"),
+            "scheduled_job_run_id": task.get("scheduled_job_run_id"),
+            "status": task.get("status"),
+            "updated_at": task.get("updated_at")
+            or task.get("finished_at")
+            or task.get("claimed_at")
+            or task.get("created_at"),
+        }
+
     return {
         "controls": [
             {
@@ -1006,18 +1038,13 @@ def _ai_executor_ops(current_store: Any) -> dict[str, Any]:
                 "target": "/tasks/plugins",
             },
         ],
-        "latest_failures": [
-            {
-                "error_code": failure.get("error_code"),
-                "error_message": _redact_error_summary(str(failure.get("error_message") or ""))
-                if failure.get("error_message")
-                else None,
-                "id": failure.get("id"),
-                "status": failure.get("status"),
-                "updated_at": failure.get("updated_at") or failure.get("finished_at"),
-            }
-            for failure in latest_failures
-        ],
+        "latest_active_tasks": [task_brief(task) for task in latest_active_tasks],
+        "latest_failures": [task_brief(failure) for failure in latest_failures],
+        "operation_targets": {
+            "cancellable_count": queued_count + running_total,
+            "retryable_count": failed_total + status_counts.get("cancelled", 0),
+            "timeout_scan_count": len(lease_expired_tasks),
+        },
         "runner_health": {
             "active_runner_count": runner_status_counts.get("active", 0),
             "offline_runner_count": runner_status_counts.get("offline", 0)

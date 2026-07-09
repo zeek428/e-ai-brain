@@ -51,9 +51,29 @@ describe('SystemHealthPage', () => {
             ],
             operations: {
               ai_executor_ops: {
+                failure_reason_distribution: [{ count: 1, reason: 'AI_EXECUTOR_TASK_FAILED' }],
+                latest_active_tasks: [
+                  {
+                    id: 'runner_task_queued',
+                    runner_id: 'runner_1',
+                    status: 'queued',
+                  },
+                ],
+                latest_failures: [
+                  {
+                    error_code: 'AI_EXECUTOR_TASK_FAILED',
+                    id: 'runner_task_failed',
+                    status: 'failed',
+                  },
+                ],
+                operation_targets: {
+                  cancellable_count: 1,
+                  retryable_count: 1,
+                  timeout_scan_count: 0,
+                },
                 runner_health: { active_runner_count: 1 },
                 summary: {
-                  failed_total: 0,
+                  failed_total: 1,
                   pending_approval_count: 1,
                   queue_pressure: 0.5,
                   queued_count: 2,
@@ -189,6 +209,11 @@ describe('SystemHealthPage', () => {
     expect(screen.getByText('平台治理运维台')).toBeInTheDocument();
     expect(screen.getByText('系统健康告警中心')).toBeInTheDocument();
     expect(screen.getByText('AI 任务执行运维台')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '扫超时' })).toBeInTheDocument();
+    expect(screen.getByText('runner_task_queued')).toBeInTheDocument();
+    expect(screen.getByText('runner_task_failed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /取\s*消/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /重\s*试/ })).toBeInTheDocument();
     expect(screen.getByText('知识中心质量闭环')).toBeInTheDocument();
     expect(screen.getByText('产品接入完整度评分')).toBeInTheDocument();
     expect(screen.getByText('钉钉授权生命周期')).toBeInTheDocument();

@@ -200,13 +200,35 @@ export type SystemHealthOperations = {
   ai_executor_ops?: {
     controls?: Array<{ description: string; label: string; target: string }>;
     failure_reason_distribution?: Array<{ count?: number; reason?: string }>;
-    latest_failures?: Array<{
+    latest_active_tasks?: Array<{
+      ai_task_id?: string | null;
+      created_at?: string | null;
       error_code?: string | null;
       error_message?: string | null;
+      executor_type?: string | null;
       id?: string;
+      runner_id?: string | null;
+      scheduled_job_run_id?: string | null;
       status?: string;
       updated_at?: string | null;
     }>;
+    latest_failures?: Array<{
+      ai_task_id?: string | null;
+      created_at?: string | null;
+      error_code?: string | null;
+      error_message?: string | null;
+      executor_type?: string | null;
+      id?: string;
+      runner_id?: string | null;
+      scheduled_job_run_id?: string | null;
+      status?: string;
+      updated_at?: string | null;
+    }>;
+    operation_targets?: {
+      cancellable_count?: number;
+      retryable_count?: number;
+      timeout_scan_count?: number;
+    };
     runner_health?: Record<string, unknown>;
     policies?: Record<string, unknown>;
     summary?: Record<string, unknown>;

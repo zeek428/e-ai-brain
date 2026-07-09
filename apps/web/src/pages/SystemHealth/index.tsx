@@ -29,8 +29,11 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
+  cancelAiExecutorTask,
   fetchSystemAdminWeeklyReport,
   fetchSystemHealth,
+  retryAiExecutorTask,
+  timeoutAiExecutorTasks,
   type SystemHealthCheckRecord,
   type SystemHealthOperations,
   type SystemHealthReport,
@@ -58,6 +61,12 @@ const STATUS_LABELS: Record<string, string> = {
   not_configured: '未配置',
   ok: '正常',
   attention: '需关注',
+  cancelled: '已取消',
+  claimed: '已领取',
+  dead_letter: '死信',
+  queued: '排队',
+  running: '运行中',
+  timed_out: '超时',
   warning: '待完善',
 };
 
@@ -75,6 +84,12 @@ const STATUS_COLORS: Record<string, string> = {
   not_configured: 'default',
   ok: 'green',
   warning: 'gold',
+  cancelled: 'default',
+  claimed: 'blue',
+  dead_letter: 'red',
+  queued: 'gold',
+  running: 'blue',
+  timed_out: 'orange',
 };
 
 const OVERALL_COPY: Record<string, { color: string; icon: ReactNode; title: string }> = {
@@ -273,7 +288,14 @@ function alertStatusTag(status: string) {
   return <Tag color={colorMap[status] ?? 'default'}>{labelMap[status] ?? status}</Tag>;
 }
 
-function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthOperations }) {
+function SystemHealthOperationsPanel({
+  onRefresh,
+  operations,
+}: {
+  onRefresh?: () => Promise<void> | void;
+  operations: SystemHealthOperations;
+}) {
+  const [executorActionLoading, setExecutorActionLoading] = useState<string>();
   const [weeklyReportLoading, setWeeklyReportLoading] = useState(false);
   const alertCenter = operations.alert_center;
   const aiExecutor = operations.ai_executor_ops;
@@ -290,6 +312,8 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
   const retentionPolicies = helpAndRetention?.retention_policies ?? [];
   const screenshots = helpAndRetention?.screenshots?.screenshots ?? [];
   const feedbackLoop = knowledge?.feedback_loop ?? {};
+  const activeExecutorTasks = aiExecutor?.latest_active_tasks ?? [];
+  const failedExecutorTasks = aiExecutor?.latest_failures ?? [];
   const failureReasons = aiExecutor?.failure_reason_distribution ?? [];
   const scopeComparison = permission?.scope_comparison ?? {};
   const permissionSuggestions = permission?.auto_fix_suggestions ?? [];
@@ -313,6 +337,54 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
     } finally {
       setWeeklyReportLoading(false);
     }
+  };
+
+  const reloadAfterExecutorAction = async () => {
+    await Promise.resolve(onRefresh?.());
+  };
+
+  const runExecutorAction = async (
+    action: 'cancel' | 'retry' | 'timeout-scan',
+    taskId?: string,
+  ) => {
+    const loadingKey = taskId ? `${action}:${taskId}` : action;
+    setExecutorActionLoading(loadingKey);
+    try {
+      if (action === 'cancel' && taskId) {
+        await cancelAiExecutorTask(taskId, '管理员从系统健康运维台取消任务');
+        message.success('AI 执行任务已取消');
+      } else if (action === 'retry' && taskId) {
+        await retryAiExecutorTask(taskId, '管理员从系统健康运维台重试任务');
+        message.success('AI 执行任务已重新入队');
+      } else {
+        const result = await timeoutAiExecutorTasks();
+        message.success(result.summary?.message || '超时扫描已完成');
+      }
+      await reloadAfterExecutorAction();
+    } catch (actionError) {
+      message.error(formatRemoteRowsError(normalizeRemoteRowsError(actionError)));
+    } finally {
+      setExecutorActionLoading(undefined);
+    }
+  };
+
+  const confirmCancelExecutorTask = (taskId: string) => {
+    Modal.confirm({
+      content: '取消后会保留审计记录，适用于长期排队、卡住或已经不需要执行的任务。',
+      okButtonProps: { danger: true },
+      okText: '确认取消',
+      onOk: () => runExecutorAction('cancel', taskId),
+      title: '取消 AI 执行任务',
+    });
+  };
+
+  const confirmRetryExecutorTask = (taskId: string) => {
+    Modal.confirm({
+      content: '任务会重新放回队列，建议确认 Runner、插件配置或外部依赖已经恢复。',
+      okText: '确认重试',
+      onOk: () => runExecutorAction('retry', taskId),
+      title: '重试 AI 执行任务',
+    });
   };
 
   return (
@@ -390,9 +462,19 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
         <article className="system-health-ops-card">
           <div className="system-health-ops-card-heading">
             <strong>AI 任务执行运维台</strong>
-            <Button size="small" type="link" onClick={() => navigateTo('/tasks/plugins')}>
-              运维
-            </Button>
+            <Space size={4}>
+              <Button
+                loading={executorActionLoading === 'timeout-scan'}
+                size="small"
+                type="link"
+                onClick={() => void runExecutorAction('timeout-scan')}
+              >
+                扫超时
+              </Button>
+              <Button size="small" type="link" onClick={() => navigateTo('/tasks/plugins')}>
+                运维
+              </Button>
+            </Space>
           </div>
           <div className="system-health-ops-metric-grid">
             <OperationMetric title="排队" value={formatMetricValue(aiExecutor?.summary?.queued_count)} />
@@ -407,6 +489,9 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
           <Text type="secondary">
             队列压力 {formatMetricValue(percentMetric(aiExecutor?.summary?.queue_pressure))}%；
             Runner {formatMetricValue(aiExecutor?.runner_health?.active_runner_count)} 个可用。
+            可取消 {formatMetricValue(aiExecutor?.operation_targets?.cancellable_count)} 个；
+            可重试 {formatMetricValue(aiExecutor?.operation_targets?.retryable_count)} 个；
+            待扫超时 {formatMetricValue(aiExecutor?.operation_targets?.timeout_scan_count)} 个。
           </Text>
           {failureReasons.length ? (
             <div className="system-health-quality-gates">
@@ -417,6 +502,45 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
               ))}
             </div>
           ) : null}
+          <div className="system-health-executor-tasks">
+            {activeExecutorTasks.slice(0, 3).map((task) => (
+              <div className="system-health-executor-task-row" key={`active:${task.id}`}>
+                <span className="system-health-executor-task-main">
+                  {statusTag(task.status || 'queued')}
+                  <Text ellipsis={{ tooltip: task.id }}>{task.id || '-'}</Text>
+                  <Text type="secondary">{task.runner_id || task.executor_type || '未分配 Runner'}</Text>
+                </span>
+                <Button
+                  disabled={!task.id}
+                  loading={task.id ? executorActionLoading === `cancel:${task.id}` : false}
+                  size="small"
+                  onClick={() => task.id && confirmCancelExecutorTask(task.id)}
+                >
+                  取消
+                </Button>
+              </div>
+            ))}
+            {failedExecutorTasks.slice(0, 3).map((task) => (
+              <div className="system-health-executor-task-row" key={`failed:${task.id}`}>
+                <span className="system-health-executor-task-main">
+                  {statusTag(task.status || 'failed')}
+                  <Text ellipsis={{ tooltip: task.id }}>{task.id || '-'}</Text>
+                  <Text type="secondary">{task.error_code || task.error_message || '失败原因待补充'}</Text>
+                </span>
+                <Button
+                  disabled={!task.id}
+                  loading={task.id ? executorActionLoading === `retry:${task.id}` : false}
+                  size="small"
+                  onClick={() => task.id && confirmRetryExecutorTask(task.id)}
+                >
+                  重试
+                </Button>
+              </div>
+            ))}
+            {!activeExecutorTasks.length && !failedExecutorTasks.length ? (
+              <Empty description="暂无需要处理的执行任务" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            ) : null}
+          </div>
         </article>
 
         <article className="system-health-ops-card">
@@ -809,7 +933,9 @@ export default function SystemHealthPage() {
               />
             </section>
 
-            {report.operations ? <SystemHealthOperationsPanel operations={report.operations} /> : null}
+            {report.operations ? (
+              <SystemHealthOperationsPanel onRefresh={loadHealth} operations={report.operations} />
+            ) : null}
 
             <section className="system-health-panel">
               <div className="system-health-section-heading">

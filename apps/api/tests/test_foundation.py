@@ -256,8 +256,17 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     }
     app.state.store.ai_executor_tasks["ai_executor_task_health_center"] = {
         "id": "ai_executor_task_health_center",
+        "executor_type": "openclaw",
         "runner_id": "runner_health_center",
         "status": "queued",
+    }
+    app.state.store.ai_executor_tasks["ai_executor_task_health_failed"] = {
+        "id": "ai_executor_task_health_failed",
+        "error_code": "AI_EXECUTOR_TASK_FAILED",
+        "error_message": "runner command exited with code 1",
+        "executor_type": "openclaw",
+        "runner_id": "runner_health_center",
+        "status": "failed",
     }
 
     response = client.get("/api/system/health", headers=auth_headers())
@@ -281,6 +290,21 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     operations = data["operations"]
     assert operations["alert_center"]["summary"]["open_count"] >= 1
     assert operations["ai_executor_ops"]["summary"]["queued_count"] == 1
+    assert operations["ai_executor_ops"]["operation_targets"] == {
+        "cancellable_count": 1,
+        "retryable_count": 1,
+        "timeout_scan_count": 0,
+    }
+    assert operations["ai_executor_ops"]["latest_active_tasks"][0]["id"] == (
+        "ai_executor_task_health_center"
+    )
+    assert operations["ai_executor_ops"]["latest_failures"][0]["id"] == (
+        "ai_executor_task_health_failed"
+    )
+    assert operations["ai_executor_ops"]["failure_reason_distribution"][0] == {
+        "count": 1,
+        "reason": "AI_EXECUTOR_TASK_FAILED",
+    }
     assert operations["dingtalk_lifecycle"]["mcp"]["connection_count"] == 1
     assert operations["knowledge_quality_loop"]["summary"]["total_documents"] >= 1
     assert operations["permission_diagnostics"]["summary"]["active_role_count"] >= 1
