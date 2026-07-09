@@ -2,6 +2,7 @@ import { MailOutlined, ReloadOutlined, SaveOutlined, SendOutlined } from '@ant-d
 import { PageContainer } from '@ant-design/pro-components';
 import {
   Alert,
+  App as AntdApp,
   Button,
   Divider,
   Form,
@@ -13,8 +14,8 @@ import {
   Switch,
   Tag,
   Typography,
-  message,
 } from 'antd';
+import type { ModalFuncProps } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 
 import {
@@ -22,6 +23,7 @@ import {
   testSystemEmailDelivery,
   updateSystemSettings,
   type SystemEmailDeliverySettings,
+  type SystemSettingsMutationPayload,
   type SystemSettingsRecord,
 } from '../../services/aiBrain';
 import { formatDisplayDateTime } from '../../utils/dateTime';
@@ -37,9 +39,41 @@ type SystemSettingsFormValues = {
   test_recipient_email?: string;
 };
 
+type ModalApi = {
+  confirm: (config: ModalFuncProps) => void;
+};
+
 const DEFAULT_EMAIL_DELIVERY: SystemEmailDeliverySettings = {
   enabled: false,
   smtp_tls: 'starttls',
+};
+
+const EMAIL_DELIVERY_CONFIRMATION_FIELDS = [
+  'enabled',
+  'sender_email',
+  'default_from',
+  'reply_to',
+  'smtp_host',
+  'smtp_port',
+  'smtp_tls',
+  'smtp_username',
+  'smtp_password',
+  'smtp_secret_ref',
+] as const;
+
+type EmailDeliveryConfirmationField = (typeof EMAIL_DELIVERY_CONFIRMATION_FIELDS)[number];
+
+const EMAIL_DELIVERY_FIELD_LABELS: Record<EmailDeliveryConfirmationField, string> = {
+  default_from: '默认发件人',
+  enabled: '启用发信',
+  reply_to: 'Reply-To',
+  sender_email: '发件邮箱',
+  smtp_host: 'SMTP Host',
+  smtp_password: 'SMTP 密码/授权码',
+  smtp_port: 'SMTP 端口',
+  smtp_secret_ref: 'SMTP 密钥引用',
+  smtp_tls: '加密方式',
+  smtp_username: 'SMTP 用户名',
 };
 
 const normalizeEmailDeliveryFormValues = (
@@ -71,6 +105,94 @@ const buildEmailDeliveryPayload = (
   };
 };
 
+const normalizeEmailDeliveryCompareValue = (
+  field: EmailDeliveryConfirmationField,
+  value: unknown,
+) => {
+  if (field === 'enabled') {
+    return Boolean(value);
+  }
+  if (field === 'smtp_port') {
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return null;
+    }
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? numericValue : null;
+  }
+  if (field === 'smtp_tls') {
+    return String(value || 'starttls').trim();
+  }
+  if (typeof value === 'string') {
+    return value.trim() || null;
+  }
+  return value ?? null;
+};
+
+const isEmailDeliveryEffectivelyEmpty = (delivery?: SystemEmailDeliverySettings | null) => {
+  if (!delivery) {
+    return true;
+  }
+  if (delivery.enabled) {
+    return false;
+  }
+  return ![
+    delivery.sender_email,
+    delivery.default_from,
+    delivery.reply_to,
+    delivery.smtp_host,
+    delivery.smtp_username,
+    delivery.smtp_password,
+    delivery.smtp_secret_ref,
+    delivery.smtp_port,
+  ].some((value) => String(value ?? '').trim());
+};
+
+const collectSensitiveEmailDeliveryChanges = (
+  nextDelivery?: SystemEmailDeliverySettings | null,
+  currentDelivery?: SystemEmailDeliverySettings | null,
+) => {
+  if (
+    isEmailDeliveryEffectivelyEmpty(nextDelivery) &&
+    isEmailDeliveryEffectivelyEmpty(currentDelivery)
+  ) {
+    return [];
+  }
+  return EMAIL_DELIVERY_CONFIRMATION_FIELDS.filter((field) => {
+    if (field === 'smtp_password') {
+      return Boolean(nextDelivery?.smtp_password?.trim());
+    }
+    const nextValue = Object.prototype.hasOwnProperty.call(nextDelivery ?? {}, field)
+      ? nextDelivery?.[field]
+      : currentDelivery?.[field];
+    return normalizeEmailDeliveryCompareValue(field, nextValue) !==
+      normalizeEmailDeliveryCompareValue(field, currentDelivery?.[field]);
+  });
+};
+
+const confirmSensitiveEmailDeliveryChange = (
+  modal: ModalApi,
+  changedFields: EmailDeliveryConfirmationField[],
+) => new Promise<boolean>((resolve) => {
+  const labels = changedFields.map((field) => EMAIL_DELIVERY_FIELD_LABELS[field]).join('、');
+  modal.confirm({
+    cancelText: '取消',
+    content: (
+      <div className="system-settings-confirmation-copy">
+        <Typography.Paragraph>
+          本次将变更邮件发送敏感配置：{labels}。保存后会影响系统通知和测试邮件发送能力。
+        </Typography.Paragraph>
+        <Typography.Text type="secondary">
+          系统只记录变更字段和已确认状态，不会记录 SMTP 密码、授权码或密钥值。
+        </Typography.Text>
+      </div>
+    ),
+    okText: '确认保存',
+    onCancel: () => resolve(false),
+    onOk: () => resolve(true),
+    title: '确认敏感配置变更',
+  });
+});
+
 const formatEmailDeliveryTestError = (error: RemoteRowsError) => {
   if (error.code !== 'EMAIL_DELIVERY_TEST_FAILED') {
     return error.message;
@@ -88,7 +210,8 @@ const formatEmailDeliveryTestError = (error: RemoteRowsError) => {
   return '邮件发送测试失败，请检查 SMTP 配置和邮箱服务状态。';
 };
 
-export default function SystemSettingsPage() {
+function SystemSettingsContent() {
+  const { message, modal } = AntdApp.useApp();
   const [form] = Form.useForm<SystemSettingsFormValues>();
   const [settings, setSettings] = useState<SystemSettingsRecord>({});
   const [error, setError] = useState<RemoteRowsError>();
@@ -127,11 +250,28 @@ export default function SystemSettingsPage() {
     const values = await form.validateFields();
     const nextAdminEmail = values.admin_email?.trim() || null;
     const nextTestRecipientEmail = values.test_recipient_email?.trim() || null;
-    const updated = await updateSystemSettings({
+    const emailDeliveryPayload = buildEmailDeliveryPayload(values.email_delivery);
+    const payload: SystemSettingsMutationPayload = {
       admin_email: nextAdminEmail,
-      email_delivery: buildEmailDeliveryPayload(values.email_delivery),
+      email_delivery: emailDeliveryPayload,
       test_recipient_email: nextTestRecipientEmail,
-    });
+    };
+    const sensitiveFields = collectSensitiveEmailDeliveryChanges(
+      emailDeliveryPayload,
+      settings.email_delivery,
+    );
+    if (sensitiveFields.length > 0) {
+      const confirmed = await confirmSensitiveEmailDeliveryChange(modal, sensitiveFields);
+      if (!confirmed) {
+        message.info('已取消敏感配置保存');
+        return undefined;
+      }
+      payload.high_risk_confirmation = {
+        confirmed: true,
+        reason: `系统设置页面确认变更邮件发送配置：${sensitiveFields.join(',')}`,
+      };
+    }
+    const updated = await updateSystemSettings(payload);
     setSettings(updated);
     form.setFieldsValue({
       admin_email: updated.admin_email ?? '',
@@ -145,8 +285,10 @@ export default function SystemSettingsPage() {
     setSaving(true);
     setError(undefined);
     try {
-      await persistSettingsFromForm();
-      message.success('系统设置已保存');
+      const updated = await persistSettingsFromForm();
+      if (updated) {
+        message.success('系统设置已保存');
+      }
     } catch (saveError) {
       const normalized = normalizeRemoteRowsError(saveError);
       setError(normalized);
@@ -162,6 +304,9 @@ export default function SystemSettingsPage() {
     setError(undefined);
     try {
       const updated = await persistSettingsFromForm();
+      if (!updated) {
+        return;
+      }
       const recipientEmail = updated.test_recipient_email?.trim();
       const result = await testSystemEmailDelivery({
         recipient_email: recipientEmail || null,
@@ -402,5 +547,13 @@ export default function SystemSettingsPage() {
         </section>
       </div>
     </PageContainer>
+  );
+}
+
+export default function SystemSettingsPage() {
+  return (
+    <AntdApp>
+      <SystemSettingsContent />
+    </AntdApp>
   );
 }

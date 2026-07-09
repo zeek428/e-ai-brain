@@ -15,6 +15,18 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SMTP_TLS_OPTIONS = {"none", "ssl", "starttls"}
 SMTP_TEST_TIMEOUT_SECONDS = 15
 SMTP_SEND_TIMEOUT_SECONDS = 15
+EMAIL_DELIVERY_SENSITIVE_FIELDS = (
+    "enabled",
+    "sender_email",
+    "default_from",
+    "reply_to",
+    "smtp_host",
+    "smtp_port",
+    "smtp_tls",
+    "smtp_username",
+    "smtp_password",
+    "smtp_secret_ref",
+)
 
 
 def _now_iso() -> str:
@@ -189,6 +201,87 @@ def _email_delivery_configured(settings: dict[str, Any]) -> bool:
     )
 
 
+def _email_delivery_effectively_empty(delivery: dict[str, Any] | None) -> bool:
+    if not isinstance(delivery, dict):
+        return True
+    if bool(delivery.get("enabled")):
+        return False
+    return not any(
+        _normalize_optional_text(delivery.get(field_name))
+        for field_name in (
+            "sender_email",
+            "default_from",
+            "reply_to",
+            "smtp_host",
+            "smtp_username",
+            "smtp_password",
+            "smtp_secret_ref",
+        )
+    ) and delivery.get("smtp_port") in (None, "")
+
+
+def _email_delivery_sensitive_changed_fields(
+    previous_delivery: dict[str, Any] | None,
+    next_delivery: dict[str, Any] | None,
+) -> list[str]:
+    if _email_delivery_effectively_empty(previous_delivery) and _email_delivery_effectively_empty(
+        next_delivery,
+    ):
+        return []
+    previous = previous_delivery if isinstance(previous_delivery, dict) else {}
+    current = next_delivery if isinstance(next_delivery, dict) else {}
+    changed_fields: list[str] = []
+    for field_name in EMAIL_DELIVERY_SENSITIVE_FIELDS:
+        previous_value = previous.get(field_name)
+        current_value = current.get(field_name)
+        if field_name == "smtp_tls":
+            previous_value = previous_value or "starttls"
+            current_value = current_value or "starttls"
+        if previous_value != current_value:
+            changed_fields.append(field_name)
+    return changed_fields
+
+
+def _validated_high_risk_confirmation(
+    confirmation: dict[str, Any] | None,
+    *,
+    changed_fields: list[str],
+) -> dict[str, Any] | None:
+    if not changed_fields:
+        return None
+    if not isinstance(confirmation, dict) or confirmation.get("confirmed") is not True:
+        raise api_error(
+            409,
+            "SENSITIVE_CONFIG_CONFIRMATION_REQUIRED",
+            "Sensitive system setting changes require explicit confirmation",
+            {
+                "changed_sensitive_fields": changed_fields,
+                "confirmation": {
+                    "confirmed": True,
+                    "reason": "required for audit context",
+                },
+            },
+    )
+    reason = _normalize_optional_text(confirmation.get("reason"))
+    if not reason:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "high_risk_confirmation.reason is required",
+        )
+    if reason and len(reason) > 240:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "high_risk_confirmation.reason must be 240 characters or fewer",
+        )
+    return {
+        "changed_sensitive_fields": changed_fields,
+        "confirmed": True,
+        "reason_configured": bool(reason),
+    }
+
+
 def _settings_for_email_delivery(current_store: Any) -> dict[str, Any]:
     repository = _settings_repository(current_store)
     return (
@@ -331,6 +424,7 @@ def update_system_settings_response(
     admin_email_provided: bool = True,
     email_delivery: dict[str, Any] | None = None,
     email_delivery_provided: bool = False,
+    high_risk_confirmation: dict[str, Any] | None = None,
     test_recipient_email: str | None = None,
     test_recipient_email_provided: bool = False,
     trace_id: str,
@@ -358,6 +452,18 @@ def update_system_settings_response(
         _normalize_optional_email(test_recipient_email, "test_recipient_email")
         if test_recipient_email_provided
         else existing_settings.get("test_recipient_email")
+    )
+    sensitive_changed_fields = (
+        _email_delivery_sensitive_changed_fields(
+            existing_settings.get("email_delivery"),
+            normalized_delivery,
+        )
+        if email_delivery_provided
+        else []
+    )
+    confirmation_summary = _validated_high_risk_confirmation(
+        high_risk_confirmation,
+        changed_fields=sensitive_changed_fields,
     )
     next_settings = {
         "admin_email": normalized_email,
@@ -387,6 +493,8 @@ def update_system_settings_response(
                 ),
             }
         )
+    if confirmation_summary is not None:
+        audit_payload["sensitive_config_confirmation"] = confirmation_summary
     audit_event = {
         "id": current_store.new_id("audit"),
         "event_type": "system.settings.updated",

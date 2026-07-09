@@ -1516,6 +1516,10 @@ body {
   min-width: 0;
 }
 
+.system-settings-confirmation-copy .ant-typography {
+  margin-bottom: 8px;
+}
+
 .system-health-page {
   display: grid;
   gap: 16px;

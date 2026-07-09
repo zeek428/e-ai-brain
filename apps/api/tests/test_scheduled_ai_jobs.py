@@ -4626,6 +4626,10 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
     email_settings_response = client.patch(
         "/api/system/settings",
         json={
+            "high_risk_confirmation": {
+                "confirmed": True,
+                "reason": "测试确认变更邮件发送配置",
+            },
             "email_delivery": {
                 "default_from": "noreply@example.com",
                 "enabled": True,

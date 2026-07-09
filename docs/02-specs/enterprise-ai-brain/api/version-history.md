@@ -6,6 +6,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.557 | 2026-07-09 | `PATCH /api/system/settings` 对邮件发送敏感配置变更要求 `high_risk_confirmation`，缺少确认返回 `SENSITIVE_CONFIG_CONFIRMATION_REQUIRED` | Codex |
 | v1.1.556 | 2026-07-09 | 系统健康 `ai_executor_ops` 返回最近活跃任务、操作目标计数和失败任务摘要，支撑健康页直接超时扫描、取消和重试 Runner 任务 | Codex |
 | v1.1.555 | 2026-07-09 | 权限诊断新增用户菜单视角预览 `GET /api/system/permissions/menu-preview`，角色保存前风险预检新增 `POST /api/system/roles/{role_id}/risk-precheck` 并阻断菜单权限缺口 | Codex |
 | v1.1.554 | 2026-07-09 | 产品接入完整度评分纳入真实健康信号，返回插件失败数、权限范围状态、可检索文档数和 recent_health_check 摘要 | Codex |

@@ -711,6 +711,10 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions(monkeypatc
     email_settings_response = client.patch(
         "/api/system/settings",
         json={
+            "high_risk_confirmation": {
+                "confirmed": True,
+                "reason": "测试确认变更邮件发送配置",
+            },
             "email_delivery": {
                 "default_from": "noreply@example.com",
                 "enabled": True,

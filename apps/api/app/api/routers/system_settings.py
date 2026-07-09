@@ -30,9 +30,15 @@ class EmailDeliveryPatchRequest(BaseModel):
     smtp_username: str | None = None
 
 
+class HighRiskConfirmationRequest(BaseModel):
+    confirmed: bool | None = None
+    reason: str | None = None
+
+
 class SystemSettingsPatchRequest(BaseModel):
     admin_email: str | None = None
     email_delivery: EmailDeliveryPatchRequest | None = None
+    high_risk_confirmation: HighRiskConfirmationRequest | None = None
     test_recipient_email: str | None = None
 
 
@@ -73,6 +79,11 @@ def update_system_settings(
                 else None
             ),
             email_delivery_provided="email_delivery" in payload.model_fields_set,
+            high_risk_confirmation=(
+                payload.high_risk_confirmation.model_dump(exclude_unset=True)
+                if payload.high_risk_confirmation is not None
+                else None
+            ),
             test_recipient_email=payload.test_recipient_email,
             test_recipient_email_provided="test_recipient_email" in payload.model_fields_set,
             trace_id=trace_id,

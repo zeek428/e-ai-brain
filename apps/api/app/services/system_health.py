@@ -1702,7 +1702,8 @@ def _security_audit_governance(current_store: Any) -> dict[str, Any]:
             "controls": [
                 "AI Runner 高风险指令要求平台审批",
                 "系统告警关闭必须填写关闭原因",
-                "敏感配置变更只记录字段和配置状态，不记录密钥值",
+                "系统邮件发送等敏感配置变更要求后端二次确认",
+                "敏感配置审计只记录字段和配置状态，不记录密钥值",
             ],
             "status": "configured",
         },
@@ -1715,9 +1716,9 @@ def _security_audit_governance(current_store: Any) -> dict[str, Any]:
             "supported_formats": ["env:NAME", "vault/path"],
         },
         "sensitive_config_approval": {
-            "policy": "敏感配置变更需要系统管理员权限；正式接入审批流前，系统健康页持续暴露变更数量和高风险确认状态。",
+            "policy": "敏感配置变更需要系统管理员权限；系统邮件发送配置写入必须携带二次确认和确认原因，审计仅记录字段、配置状态和确认状态。",
             "required": True,
-            "status": "monitored",
+            "status": "configured",
             "tracked_event_count_7d": len(sensitive_config_events),
         },
     }

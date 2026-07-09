@@ -118,6 +118,10 @@ export type SystemEmailDeliverySettings = {
 export type SystemSettingsMutationPayload = {
   admin_email?: string | null;
   email_delivery?: SystemEmailDeliverySettings | null;
+  high_risk_confirmation?: {
+    confirmed?: boolean;
+    reason?: string | null;
+  } | null;
   test_recipient_email?: string | null;
 };
 

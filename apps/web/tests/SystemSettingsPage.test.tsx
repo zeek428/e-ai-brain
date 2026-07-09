@@ -116,6 +116,10 @@ describe('SystemSettingsPage', () => {
       if (String(input) === '/api/system/settings' && init?.method === 'PATCH') {
         const body = JSON.parse(String(init.body));
         expect(body.test_recipient_email).toBe('qa@example.com');
+        expect(body.high_risk_confirmation).toMatchObject({
+          confirmed: true,
+          reason: expect.stringContaining('smtp_password'),
+        });
         expect(body.email_delivery).not.toHaveProperty('smtp_secret_ref');
         expect(body.email_delivery).toMatchObject({
           default_from: 'alerts@example.com',
@@ -198,6 +202,9 @@ describe('SystemSettingsPage', () => {
       target: { value: 'qa@example.com' },
     });
     fireEvent.click(screen.getByRole('button', { name: /发送测试邮件/ }));
+    expect((await screen.findAllByText('确认敏感配置变更')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/SMTP 密码\/授权码/).length).toBeGreaterThan(1);
+    fireEvent.click(screen.getByRole('button', { name: '确认保存' }));
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([

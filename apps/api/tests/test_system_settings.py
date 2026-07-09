@@ -35,6 +35,10 @@ def auth_headers(username: str = "admin@example.com", password: str = "admin123"
     return {"Authorization": f"Bearer {token}"}
 
 
+def sensitive_config_confirmation() -> dict[str, object]:
+    return {"confirmed": True, "reason": "测试确认变更邮件发送配置"}
+
+
 def test_admin_can_update_system_admin_email_and_audit_event_is_recorded():
     headers = auth_headers()
 
@@ -72,6 +76,7 @@ def test_admin_can_configure_email_delivery_without_returning_secret():
         headers=headers,
         json={
             "admin_email": "ops@example.com",
+            "high_risk_confirmation": sensitive_config_confirmation(),
             "email_delivery": {
                 "default_from": "noreply@example.com",
                 "enabled": True,
@@ -103,6 +108,7 @@ def test_admin_can_configure_email_delivery_without_returning_secret():
         headers=headers,
         json={
             "admin_email": "ops@example.com",
+            "high_risk_confirmation": sensitive_config_confirmation(),
             "email_delivery": {
                 "default_from": "noreply@example.com",
                 "enabled": True,
@@ -124,6 +130,11 @@ def test_admin_can_configure_email_delivery_without_returning_secret():
         "admin_email_configured": True,
         "changed_fields": ["admin_email", "email_delivery"],
         "email_delivery_configured": True,
+        "sensitive_config_confirmation": {
+            "changed_sensitive_fields": ["smtp_port", "smtp_tls"],
+            "confirmed": True,
+            "reason_configured": True,
+        },
         "smtp_password_configured": True,
         "smtp_secret_ref_configured": False,
     }
@@ -133,6 +144,39 @@ def test_admin_can_configure_email_delivery_without_returning_secret():
     )
 
 
+def test_email_delivery_sensitive_changes_require_confirmation_without_secret_echo():
+    headers = auth_headers()
+    audit_event_count = len(app.state.store.audit_events)
+
+    response = client.patch(
+        "/api/system/settings",
+        headers=headers,
+        json={
+            "admin_email": "ops@example.com",
+            "email_delivery": {
+                "default_from": "noreply@example.com",
+                "enabled": True,
+                "sender_email": "noreply@example.com",
+                "smtp_host": "smtp.example.com",
+                "smtp_password": "super-secret-password",
+                "smtp_port": 465,
+                "smtp_tls": "ssl",
+                "smtp_username": "noreply@example.com",
+            },
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "SENSITIVE_CONFIG_CONFIRMATION_REQUIRED"
+    assert "smtp_password" in detail["changed_sensitive_fields"]
+    assert "super-secret-password" not in json.dumps(detail, ensure_ascii=False)
+    assert len(app.state.store.audit_events) == audit_event_count
+    assert client.get("/api/system/settings", headers=headers).json()["data"][
+        "email_delivery_configured"
+    ] is False
+
+
 def test_email_delivery_test_uses_smtp_configuration_without_echoing_secret(monkeypatch):
     headers = auth_headers()
     client.patch(
@@ -140,6 +184,7 @@ def test_email_delivery_test_uses_smtp_configuration_without_echoing_secret(monk
         headers=headers,
         json={
             "admin_email": "ops@example.com",
+            "high_risk_confirmation": sensitive_config_confirmation(),
             "email_delivery": {
                 "default_from": "noreply@example.com",
                 "enabled": True,
@@ -216,6 +261,7 @@ def test_email_delivery_test_uses_saved_test_recipient_by_default(monkeypatch):
         json={
             "admin_email": "ops@example.com",
             "test_recipient_email": "qa-default@example.com",
+            "high_risk_confirmation": sensitive_config_confirmation(),
             "email_delivery": {
                 "default_from": "noreply@example.com",
                 "enabled": True,
@@ -270,6 +316,7 @@ def test_email_delivery_test_returns_stable_error_for_network_failures(monkeypat
         headers=headers,
         json={
             "admin_email": "ops@example.com",
+            "high_risk_confirmation": sensitive_config_confirmation(),
             "email_delivery": {
                 "default_from": "noreply@example.com",
                 "enabled": True,
@@ -309,6 +356,7 @@ def test_email_delivery_test_fails_when_smtp_refuses_recipient(monkeypatch):
         headers=headers,
         json={
             "admin_email": "ops@example.com",
+            "high_risk_confirmation": sensitive_config_confirmation(),
             "email_delivery": {
                 "default_from": "noreply@example.com",
                 "enabled": True,

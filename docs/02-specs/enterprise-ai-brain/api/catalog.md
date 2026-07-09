@@ -40,7 +40,7 @@
 | System RBAC | POST | `/api/system/menus/{menu_code}/disable` | 停用菜单资源。 |
 | System RBAC | POST | `/api/system/menus/{menu_code}/enable` | 启用菜单资源。 |
 | System Settings | GET | `/api/system/settings` | 查询全局系统设置，返回系统管理员邮箱和脱敏后的系统级邮件发送配置。 |
-| System Settings | PATCH | `/api/system/settings` | 更新全局系统设置，支持维护系统管理员邮箱和 SMTP 发信配置。 |
+| System Settings | PATCH | `/api/system/settings` | 更新全局系统设置，支持维护系统管理员邮箱和 SMTP 发信配置；变更邮件发送敏感字段时必须携带高风险确认。 |
 | System Settings | POST | `/api/system/settings/email/test` | 使用已保存的 SMTP 发信配置发送测试邮件。 |
 | System Health | GET | `/api/system/health` | 查询系统健康、告警中心、AI 执行器、知识质量、产品接入、权限诊断、钉钉生命周期和归档策略。 |
 | System Health | GET/POST/PATCH | `/api/system/alerts/rules` | 查看、创建和更新系统告警规则。 |
