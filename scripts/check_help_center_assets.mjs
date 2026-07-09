@@ -216,9 +216,6 @@ function main() {
         `截图可能过期：${path.basename(src)} 已 ${ageDays} 天未刷新，阈值 ${options.maxAgeDays} 天`,
       );
     }
-    if (!markdownScreenshotFilenames.has(path.basename(src))) {
-      warnings.push(`前端截图未被 Markdown 手册引用：${path.basename(src)}`);
-    }
   }
 
   for (const ref of markdownScreenshotRefs) {

@@ -38,6 +38,13 @@ export const helpGroups: HelpGroup[] = [
         related: ['account-profile', 'system-roles'],
         role: '所有已登录用户',
         route: '/welcome',
+        screenshots: [
+          {
+            alt: '快速开始首页截图',
+            caption: '首次进入后可从团队看板、顶部帮助入口和头像菜单开始熟悉系统。',
+            src: '/help/screenshots/help-getting-started.png',
+          },
+        ],
         summary: '了解 AI Brain 的登录方式、菜单结构、角色权限和常用操作入口。',
         title: '快速开始',
         sections: [
@@ -64,6 +71,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['个人中心', '密码', '邮箱', '手机号', '钉钉绑定', '解绑'],
         role: '所有已登录用户',
         route: '/account/profile',
+        screenshots: [
+          {
+            alt: '个人中心页面截图',
+            caption: '个人中心用于维护资料、本地密码和钉钉账号绑定状态。',
+            src: '/help/screenshots/help-account-profile.png',
+          },
+        ],
         summary: '维护个人资料、本地密码和钉钉账号绑定关系。',
         title: '个人中心',
         sections: [
@@ -95,6 +109,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['团队看板', '趋势', '风险', '产品范围', '治理优先级'],
         role: '具备团队看板读取权限的用户',
         route: '/welcome',
+        screenshots: [
+          {
+            alt: '团队看板页面截图',
+            caption: '团队看板汇总产品范围内的交付、风险、工程活跃和用户声音趋势。',
+            src: '/help/screenshots/help-dashboard.png',
+          },
+        ],
         summary: '从管理视角查看交付、风险、工程活跃和用户声音。',
         title: '团队看板',
         sections: [
@@ -120,6 +141,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['AI 助手', '对话', '草案', '知识引用', '上下文'],
         role: '具备 AI 助手使用权限的用户',
         route: '/assistant',
+        screenshots: [
+          {
+            alt: 'AI 助手页面截图',
+            caption: 'AI 助手支持对话检索、上下文分析和草案生成。',
+            src: '/help/screenshots/help-assistant.png',
+          },
+        ],
         summary: '通过对话方式检索上下文、生成草案和辅助分析。',
         title: 'AI 助手',
         sections: [
@@ -144,6 +172,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['草案任务台', '草案', '转换', 'AI 助手'],
         role: '具备草案任务台权限的用户',
         route: '/assistant/drafts',
+        screenshots: [
+          {
+            alt: '草案任务台页面截图',
+            caption: '草案任务台集中展示 AI 助手生成的待处理草案和治理状态。',
+            src: '/help/screenshots/help-assistant-drafts.png',
+          },
+        ],
         summary: '集中处理 AI 助手生成的需求、任务或知识沉淀草案。',
         title: '草案任务台',
         sections: [
@@ -168,6 +203,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['定时作业', '运行记录', '手动触发', '邮件通知'],
         role: '任务中心运维或管理员',
         route: '/tasks/scheduled-jobs',
+        screenshots: [
+          {
+            alt: '定时作业页面截图',
+            caption: '定时作业页用于维护作业配置、手动触发和查看运行记录。',
+            src: '/help/screenshots/help-scheduled-jobs.png',
+          },
+        ],
         summary: '管理定时作业、手动触发任务并查看运行记录。',
         title: '定时作业',
         sections: [
@@ -186,6 +228,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['AI 能力配置', '能力', '模型', '动作'],
         role: '系统管理员或 AI 能力管理员',
         route: '/tasks/ai-capabilities',
+        screenshots: [
+          {
+            alt: 'AI 能力配置页面截图',
+            caption: 'AI 能力配置页用于维护可被任务、插件和助手调用的能力定义。',
+            src: '/help/screenshots/help-ai-capabilities.png',
+          },
+        ],
         summary: '维护可被任务、插件和助手调用的 AI 能力定义。',
         title: 'AI 能力配置',
         sections: [
@@ -203,6 +252,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['插件', 'MCP', '钉钉', '诊断', '授权'],
         role: '系统管理员或插件管理员',
         route: '/tasks/plugins',
+        screenshots: [
+          {
+            alt: '插件管理页面截图',
+            caption: '插件管理页集中维护标准插件、连接、动作和执行器。',
+            src: '/help/screenshots/help-plugins.png',
+          },
+        ],
         summary: '管理标准插件、授权配置、健康诊断和动作模板。',
         title: '插件管理',
         sections: [
@@ -226,6 +282,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['需求管理', '审批', '生成任务', '全链路'],
         role: '产品、研发负责人、评审者；viewer 只读',
         route: '/delivery/requirements',
+        screenshots: [
+          {
+            alt: '需求管理页面截图',
+            caption: '需求管理页用于登记、审批和追踪需求全链路上下文。',
+            src: '/help/screenshots/help-requirements.png',
+          },
+        ],
         summary: '登记、审批、关闭需求，并从需求生成 AI 研发任务。',
         title: '需求管理',
         sections: [
@@ -251,6 +314,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['研发任务', 'AI Task', '确认', 'Runner', '执行器'],
         role: '研发、评审者、管理员',
         route: '/delivery/rd-tasks',
+        screenshots: [
+          {
+            alt: '研发任务页面截图',
+            caption: '研发任务页展示 AI Task 状态、人工确认点和执行结果。',
+            src: '/help/screenshots/help-rd-tasks.png',
+          },
+        ],
         summary: '跟踪 AI 研发任务状态、执行结果、人工确认和写回。',
         title: '研发任务',
         sections: [
@@ -269,6 +339,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['研发执行器策略', 'Codex', 'Claude', '自动提交', '人工确认'],
         role: '管理员或研发治理负责人',
         route: '/delivery/rd-executor-policies',
+        screenshots: [
+          {
+            alt: '研发执行器策略页面截图',
+            caption: '研发执行器策略页用于配置任务如何选择 Runner、知识上下文和提交方式。',
+            src: '/help/screenshots/help-rd-executor-policies.png',
+          },
+        ],
         summary: '配置不同任务类型如何选择 AI 执行器、知识上下文和代码提交方式。',
         title: '研发执行器策略',
         sections: [
@@ -286,6 +363,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['迭代版本', '版本', '分支', '发布'],
         role: '产品、研发和发布负责人',
         route: '/delivery/versions',
+        screenshots: [
+          {
+            alt: '迭代版本页面截图',
+            caption: '迭代版本页用于维护产品版本、交付范围和分支风险。',
+            src: '/help/screenshots/help-versions.png',
+          },
+        ],
         summary: '维护产品迭代版本、研发分支和交付状态。',
         title: '迭代版本',
         sections: [
@@ -303,6 +387,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['Bug 管理', 'AI处理', '只读', '全链路'],
         role: '测试、研发、产品；viewer 只读',
         route: '/delivery/bugs',
+        screenshots: [
+          {
+            alt: 'Bug 管理页面截图',
+            caption: 'Bug 管理页用于筛选、分诊和追踪缺陷生命周期。',
+            src: '/help/screenshots/help-bugs.png',
+          },
+        ],
         summary: '登记、分诊、推进和追踪 Bug 生命周期。',
         title: 'Bug 管理',
         sections: [
@@ -360,6 +451,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['知识中心', '空间', '目录', '上传', 'Hybrid Search', 'RAG'],
         role: '知识管理员、研发、产品；viewer 按授权只读',
         route: '/assets/knowledge',
+        screenshots: [
+          {
+            alt: '知识中心页面截图',
+            caption: '知识中心工作台覆盖空间目录、文档库、检索和 RAG 问答。',
+            src: '/help/screenshots/help-knowledge.png',
+          },
+        ],
         summary: '上传和治理产品知识，支持检索、RAG 问答、引用和知识沉淀。',
         title: '知识中心',
         sections: [
@@ -391,6 +489,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['日志监控', 'Jenkins', 'GitLab', '发布', '在线日志'],
         role: '研发治理、运维或管理员',
         route: '/governance/devops',
+        screenshots: [
+          {
+            alt: '日志监控页面截图',
+            caption: '日志监控页用于查看工程指标、发布记录和在线日志风险。',
+            src: '/help/screenshots/help-devops.png',
+          },
+        ],
         summary: '查看工程指标、发布记录和在线日志风险。',
         title: '日志监控',
         sections: [
@@ -408,6 +513,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['用户洞察', '反馈', '迭代建议', '用户声音'],
         role: '产品、运营、管理员',
         route: '/governance/insights',
+        screenshots: [
+          {
+            alt: '用户洞察页面截图',
+            caption: '用户洞察页用于沉淀反馈、行为指标和迭代建议。',
+            src: '/help/screenshots/help-insights.png',
+          },
+        ],
         summary: '沉淀用户反馈、行为指标和迭代建议。',
         title: '用户洞察',
         sections: [
@@ -425,6 +537,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['审计', '执行诊断', 'trace_id', '全链路', '接口异常'],
         role: '管理员、审计员、研发治理人员',
         route: '/governance/audit',
+        screenshots: [
+          {
+            alt: '审计与执行诊断页面截图',
+            caption: '审计与执行诊断页用于按 trace、主体和事件排查关键操作。',
+            src: '/help/screenshots/help-audit-traces.png',
+          },
+        ],
         summary: '排查关键操作、接口异常、AI 执行和全链路上下文。',
         title: '审计与执行诊断',
         sections: [
@@ -443,6 +562,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['代码巡检', '质量安全', '产品维度', '全链路', '报告'],
         role: '研发治理、代码质量负责人、管理员',
         route: '/governance/code-inspections',
+        screenshots: [
+          {
+            alt: '代码巡检页面截图',
+            caption: '代码巡检页按产品展示质量安全报告、风险分布和治理待办。',
+            src: '/help/screenshots/help-code-inspections.png',
+          },
+        ],
         summary: '按产品查看代码质量安全巡检报告、风险分布和治理待办。',
         title: '代码巡检',
         sections: [
@@ -467,6 +593,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['用户管理', '登录方式', '钉钉', '外部身份', '停用'],
         role: '系统管理员',
         route: '/system/users',
+        screenshots: [
+          {
+            alt: '用户管理页面截图',
+            caption: '用户管理页用于维护账号资料、角色、状态和外部身份绑定。',
+            src: '/help/screenshots/help-system-users.png',
+          },
+        ],
         summary: '维护用户资料、角色、启停状态和外部身份绑定。',
         title: '用户管理',
         sections: [
@@ -485,6 +618,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['角色管理', '菜单管理', '权限点', '权限诊断', 'viewer', '只读'],
         role: '系统管理员',
         route: '/system/roles',
+        screenshots: [
+          {
+            alt: '角色与菜单页面截图',
+            caption: '角色管理页用于维护角色、权限点、菜单入口和数据范围。',
+            src: '/help/screenshots/help-system-roles.png',
+          },
+        ],
         summary: '维护角色、权限点、菜单入口和数据范围。',
         title: '角色与菜单',
         sections: [
@@ -536,6 +676,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['系统设置', '邮件', 'SMTP', '测试收件人', '管理员邮箱'],
         role: '系统管理员',
         route: '/system/settings',
+        screenshots: [
+          {
+            alt: '系统设置页面截图',
+            caption: '系统设置页用于维护基础配置、邮件发送能力和安全确认。',
+            src: '/help/screenshots/help-system-settings.png',
+          },
+        ],
         summary: '维护系统基础配置和邮件发送能力。',
         title: '系统设置',
         sections: [
@@ -562,6 +709,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['模型网关', '模型', '供应商', 'Token', '延迟'],
         role: '系统管理员或 AI 平台管理员',
         route: '/system/model-gateway',
+        screenshots: [
+          {
+            alt: '模型网关页面截图',
+            caption: '模型网关页用于维护模型供应商、模型配置和调用元数据。',
+            src: '/help/screenshots/help-model-gateway.png',
+          },
+        ],
         summary: '维护模型供应商、模型配置和调用元数据。',
         title: '模型网关',
         sections: [
@@ -579,6 +733,13 @@ export const helpGroups: HelpGroup[] = [
         keywords: ['AI助手快捷任务', '@ 能力', '动作引用', '角色配置'],
         role: '系统管理员或 AI 助手管理员',
         route: '/system/assistant-role-quick-tasks',
+        screenshots: [
+          {
+            alt: 'AI 助手管理配置页面截图',
+            caption: 'AI 助手管理配置页用于维护角色快捷任务和 @ 能力引用。',
+            src: '/help/screenshots/help-assistant-admin.png',
+          },
+        ],
         summary: '配置不同角色可见的助手快捷任务和 @ 能力引用。',
         title: 'AI 助手管理配置',
         sections: [

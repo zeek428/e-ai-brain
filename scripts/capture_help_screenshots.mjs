@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const helpContentPath = path.join(repoRoot, 'apps/web/src/pages/Help/helpContent.ts');
+const webRequire = createRequire(path.join(repoRoot, 'apps/web/package.json'));
 
 const FALLBACK_TARGETS = [
   {
@@ -55,6 +57,7 @@ function parseArgs(argv) {
   const options = {
     apiBaseUrl: process.env.READINESS_API_BASE_URL || 'http://localhost:8000',
     bearerToken: process.env.READINESS_BEARER_TOKEN || '',
+    chromePath: process.env.HELP_SCREENSHOT_CHROME_PATH || process.env.READINESS_CHROME_PATH || '',
     listTargets: false,
     password: process.env.READINESS_PASSWORD || '',
     targets: [],
@@ -74,6 +77,8 @@ function parseArgs(argv) {
       options.apiBaseUrl = next();
     } else if (arg === '--bearer-token') {
       options.bearerToken = next();
+    } else if (arg === '--chrome-path') {
+      options.chromePath = next();
     } else if (arg === '--list-targets') {
       options.listTargets = true;
     } else if (arg === '--password') {
@@ -112,6 +117,7 @@ Usage:
 Options:
   --route /path=name       Capture an extra route to name.png. Can be repeated.
   --bearer-token TOKEN     Seed localStorage with an existing API token. Defaults to READINESS_BEARER_TOKEN.
+  --chrome-path PATH       Chrome/Chromium executable path. Defaults to HELP_SCREENSHOT_CHROME_PATH or READINESS_CHROME_PATH.
   --list-targets           Print derived screenshot targets without launching Playwright.
   --username USER          Login username. Defaults to READINESS_USERNAME.
   --password PASSWORD      Login password. Defaults to READINESS_PASSWORD.
@@ -122,10 +128,32 @@ async function loadPlaywright() {
   try {
     return await import('playwright');
   } catch (error) {
-    throw new Error(
-      'Playwright is required for screenshot capture. Install it in the web workspace before running this script.',
-    );
+    try {
+      return webRequire('playwright');
+    } catch {
+      throw new Error(
+        'Playwright is required for screenshot capture. Install it in apps/web before running this script.',
+      );
+    }
   }
+}
+
+function detectChromePath(explicitPath) {
+  if (explicitPath) {
+    if (existsSync(explicitPath)) {
+      return explicitPath;
+    }
+    throw new Error(`Chrome executable not found: ${explicitPath}`);
+  }
+  const candidates = [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) || '';
 }
 
 async function loginIfNeeded(page, options) {
@@ -167,6 +195,40 @@ async function seedBearerToken(page, token) {
   }, token);
 }
 
+async function redactPageForScreenshot(page) {
+  await page.evaluate(() => {
+    const maskText = (value) => String(value || '')
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, 'user@example.com')
+      .replace(/ding[a-z0-9]{12,}/gi, 'ding********')
+      .replace(/\b[0-9a-f]{24,}\b/gi, '********')
+      .replace(/\b(?:sk|pk|api|token|secret|key)_[A-Za-z0-9_-]{12,}\b/g, '********');
+
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walker.nextNode()) {
+      textNodes.push(walker.currentNode);
+    }
+    for (const node of textNodes) {
+      const masked = maskText(node.nodeValue);
+      if (masked !== node.nodeValue) {
+        node.nodeValue = masked;
+      }
+    }
+
+    for (const element of document.querySelectorAll('input, textarea')) {
+      if ('value' in element) {
+        element.value = maskText(element.value);
+      }
+      if (element.getAttribute('placeholder')) {
+        element.setAttribute('placeholder', maskText(element.getAttribute('placeholder')));
+      }
+      if (element.getAttribute('title')) {
+        element.setAttribute('title', maskText(element.getAttribute('title')));
+      }
+    }
+  });
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
@@ -180,7 +242,11 @@ async function main() {
     return;
   }
   const { chromium } = await loadPlaywright();
-  const browser = await chromium.launch({ headless: true });
+  const chromePath = detectChromePath(options.chromePath);
+  const browser = await chromium.launch({
+    headless: true,
+    ...(chromePath ? { executablePath: chromePath } : {}),
+  });
   const page = await browser.newPage({ viewport: { height: 1000, width: 1440 } });
   await seedBearerToken(page, options.bearerToken);
   await loginIfNeeded(page, options);
@@ -198,6 +264,7 @@ async function main() {
         `Route ${target.route} redirected to login. Provide --bearer-token or READINESS_BEARER_TOKEN.`,
       );
     }
+    await redactPageForScreenshot(page);
     await page.screenshot({ fullPage: true, path: publicPath });
     copyFileSync(publicPath, docsPath);
     console.log(`Captured ${target.route} -> ${path.relative(repoRoot, publicPath)}`);

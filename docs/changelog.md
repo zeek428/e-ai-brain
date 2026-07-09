@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### Added
+- 帮助中心截图自动化补齐全路由覆盖：前端帮助内容为 24 个业务路由配置 25 张页面截图目标，截图脚本从 `apps/web` 加载 Playwright 并使用本机 Chrome，截图前自动脱敏邮箱、钉钉企业 ID 和 token-like 字符串，`help:check:strict` 可校验截图覆盖、双份一致性和过期状态。
 - 系统健康告警订阅新增通知 outbox：新增 `system_alert_notifications` 表，系统健康物化告警时按启用订阅、严重级别和 scope 生成幂等待投递记录，前端展示待通知数量和最近通知目标，便于后续 SMTP/钉钉/webhook 投递器追踪处理状态。
 - 系统健康告警处理补齐状态流转时间线：`PATCH /api/system/alerts/{alert_id}` 会向 `metadata.status_history` 追加处理记录，系统健康页处理弹窗展示最近处理时间、状态变化、负责人、关闭原因和复盘状态。
 - 系统健康告警订阅补齐管理闭环：新增 `PATCH /api/system/alerts/subscriptions/{subscription_id}`，系统健康页展示已有订阅的渠道、目标、级别和范围，并支持直接启用或停用订阅。
