@@ -114,6 +114,40 @@ describe('SystemHealthPage', () => {
             trend: [{ closed: 0, date: '2026-07-08', opened: 1 }],
           },
           dingtalk_lifecycle: {
+            authorization_boundaries: [
+              {
+                description: '个人授权代表具体用户，授权失效或人员离职会影响连接。',
+                subject_type: 'user',
+                title: '个人授权',
+              },
+              {
+                description: '系统授权代表企业统一连接，适合知识库等共享能力。',
+                subject_type: 'system',
+                title: '系统授权',
+              },
+              {
+                description: '应用授权代表钉钉应用身份，适合稳定的企业级自动化。',
+                subject_type: 'app',
+                title: '应用授权',
+              },
+            ],
+            authorization_subject_summary: { app: 0, system: 1, unknown: 0, user: 0 },
+            authorization_subjects: [
+              {
+                boundary: '系统授权适合企业统一连接，由管理员集中维护和轮换。',
+                connection_id: 'connection_dingtalk_health_center',
+                connection_name: '钉钉知识库',
+                corp_id: 'dingcorp_health',
+                corp_name: '青锋科技',
+                days_left: 12,
+                expires_at: '2026-07-20T00:00:00+00:00',
+                expiry_status: 'warning',
+                last_test_status: 'failed',
+                subject_label: '钉钉知识库 · 系统授权',
+                subject_type: 'system',
+                subject_type_label: '系统授权',
+              },
+            ],
             login: { configured: true, enabled: true },
             mcp: {
               connection_count: 1,
@@ -281,6 +315,12 @@ describe('SystemHealthPage', () => {
     expect(screen.getByText('知识中心质量闭环')).toBeInTheDocument();
     expect(screen.getByText('产品接入完整度评分')).toBeInTheDocument();
     expect(screen.getByText('钉钉授权生命周期')).toBeInTheDocument();
+    expect(screen.getByLabelText('钉钉授权主体统计')).toHaveTextContent('系统 1');
+    expect(screen.getByLabelText('钉钉授权边界说明')).toHaveTextContent('个人授权代表具体用户');
+    expect(screen.getByLabelText('钉钉授权边界说明')).toHaveTextContent('系统授权代表企业统一连接');
+    expect(screen.getByLabelText('钉钉授权主体清单')).toHaveTextContent('钉钉知识库 · 系统授权');
+    expect(screen.getByLabelText('钉钉授权主体清单')).toHaveTextContent('企业 青锋科技');
+    expect(screen.getByLabelText('钉钉授权主体清单')).toHaveTextContent('剩余 12 天');
     expect(screen.getByText('帮助截图自动化与数据归档策略')).toBeInTheDocument();
     expect(screen.getByText('AI Brain')).toBeInTheDocument();
     expect(screen.getByText('SMTP 邮件发送')).toBeInTheDocument();

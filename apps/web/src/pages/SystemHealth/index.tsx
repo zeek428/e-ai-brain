@@ -374,6 +374,8 @@ function SystemHealthOperationsPanel({
   const failureReasons = aiExecutor?.failure_reason_distribution ?? [];
   const scopeComparison = permission?.scope_comparison ?? {};
   const permissionSuggestions = permission?.auto_fix_suggestions ?? [];
+  const dingtalkBoundaries = dingtalk?.authorization_boundaries ?? [];
+  const dingtalkSubjectSummary = dingtalk?.authorization_subject_summary ?? {};
   const dingtalkSubjects = dingtalk?.authorization_subjects ?? [];
   const qualityGates = knowledge?.quality_gates ?? [];
   const permissionDiagnostics = permission?.diagnostics ?? [];
@@ -903,6 +905,48 @@ function SystemHealthOperationsPanel({
               value={formatMetricValue(dingtalk?.mcp?.failed_connection_count)}
             />
             <OperationMetric title="即将到期" value={formatMetricValue(dingtalk?.mcp?.soon_expiring_count)} />
+          </div>
+          <div className="system-health-dingtalk-subject-summary" aria-label="钉钉授权主体统计">
+            <Tag color="blue">个人 {formatMetricValue(dingtalkSubjectSummary.user)}</Tag>
+            <Tag color="purple">系统 {formatMetricValue(dingtalkSubjectSummary.system)}</Tag>
+            <Tag color="cyan">应用 {formatMetricValue(dingtalkSubjectSummary.app)}</Tag>
+            {numericMetric(dingtalkSubjectSummary.unknown) ? (
+              <Tag color="gold">未声明 {formatMetricValue(dingtalkSubjectSummary.unknown)}</Tag>
+            ) : null}
+          </div>
+          {dingtalkBoundaries.length ? (
+            <div className="system-health-dingtalk-boundaries" aria-label="钉钉授权边界说明">
+              {dingtalkBoundaries.slice(0, 3).map((item) => (
+                <div key={String(item.subject_type || item.title)}>
+                  <Text strong>{String(item.title || item.subject_type || '授权边界')}</Text>
+                  <Text type="secondary">{String(item.description || '-')}</Text>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <div className="system-health-dingtalk-subjects" aria-label="钉钉授权主体清单">
+            {dingtalkSubjects.slice(0, 4).map((item) => (
+              <div key={String(item.connection_id)}>
+                <div className="system-health-dingtalk-subject-title">
+                  <Text strong>{String(item.subject_label || item.connection_name || item.connection_id || '钉钉连接')}</Text>
+                  {statusTag(String(item.expiry_status || item.status || 'unknown'))}
+                </div>
+                <Text type="secondary">
+                  企业 {String(item.corp_name || item.corp_id || '未声明')}
+                  {' · '}
+                  到期 {item.expires_at ? formatDisplayDateTime(String(item.expires_at)) : '未配置'}
+                  {item.days_left !== undefined && item.days_left !== null
+                    ? ` · 剩余 ${formatMetricValue(item.days_left)} 天`
+                    : ''}
+                  {' · '}
+                  测试 {String(item.last_test_status || item.status || '未知')}
+                </Text>
+                <Text type="secondary">{String(item.boundary || '未声明授权主体，建议补齐个人/系统/应用边界。')}</Text>
+              </div>
+            ))}
+            {!dingtalkSubjects.length ? (
+              <Text type="secondary">暂无钉钉 MCP 授权主体，新增连接时应声明个人、系统或应用授权。</Text>
+            ) : null}
           </div>
           <div className="system-health-quality-gates">
             {keyExpiryAlerts.slice(0, 3).map((item) => (

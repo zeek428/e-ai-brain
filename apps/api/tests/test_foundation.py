@@ -190,6 +190,7 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     monkeypatch.setattr(main.settings, "dingtalk_client_id", "ding-client")
     monkeypatch.setattr(main.settings, "dingtalk_client_secret", "ding-secret")
     monkeypatch.setattr(main.settings, "dingtalk_redirect_uri", "https://example.com/api/auth/dingtalk/callback")
+    monkeypatch.setattr(main.settings, "dingtalk_corp_name_map", {"dingcorp_health": "青锋科技"})
     app.state.store.model_gateway_configs["model_gateway_config_health_center"] = {
         "id": "model_gateway_config_health_center",
         "name": "健康中心模型网关",
@@ -211,7 +212,13 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     }
     app.state.store.plugin_connections["connection_dingtalk_health_center"] = {
         "id": "connection_dingtalk_health_center",
-        "auth_config": {"key_expires_at": "2030-01-01T00:00:00+00:00", "url_key": "secret-url-key"},
+        "auth_config": {
+            "auth_subject_type": "system",
+            "corp_id": "dingcorp_health",
+            "key_expires_at": "2030-01-01T00:00:00+00:00",
+            "secret_ref": "vault/dingtalk/shared/url_key",
+            "url_key": "secret-url-key",
+        },
         "plugin_code": "dingtalk-doc",
         "plugin_name": "钉钉知识库",
         "status": "error",
@@ -306,6 +313,12 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
         "reason": "AI_EXECUTOR_TASK_FAILED",
     }
     assert operations["dingtalk_lifecycle"]["mcp"]["connection_count"] == 1
+    assert operations["dingtalk_lifecycle"]["authorization_subject_summary"]["system"] == 1
+    dingtalk_subject = operations["dingtalk_lifecycle"]["authorization_subjects"][0]
+    assert dingtalk_subject["subject_type_label"] == "系统授权"
+    assert dingtalk_subject["corp_name"] == "青锋科技"
+    assert dingtalk_subject["secret_ref_configured"] is True
+    assert dingtalk_subject["expires_at"] == "2030-01-01T00:00:00+00:00"
     assert operations["knowledge_quality_loop"]["summary"]["total_documents"] >= 1
     assert operations["permission_diagnostics"]["summary"]["active_role_count"] >= 1
     product_scores = operations["product_onboarding_scores"]["products"]

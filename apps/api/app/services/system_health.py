@@ -1375,6 +1375,7 @@ def _dingtalk_lifecycle(
     request: Request,
     settings: Settings,
 ) -> dict[str, Any]:
+    now = datetime.now(UTC)
     connections = _dingtalk_connections(current_store)
     failed_connections = [
         connection
@@ -1400,6 +1401,7 @@ def _dingtalk_lifecycle(
         }
     )
     authorization_subjects: list[dict[str, Any]] = []
+    subject_type_counts: dict[str, int] = {}
     for connection in connections:
         auth_config = connection.get("auth_config") if isinstance(connection.get("auth_config"), dict) else {}
         request_config = (
@@ -1412,7 +1414,33 @@ def _dingtalk_lifecycle(
             or auth_config.get("subject_type")
             or "unknown"
         )
+        normalized_subject_type = str(subject_type or "unknown")
+        subject_type_counts[normalized_subject_type] = (
+            subject_type_counts.get(normalized_subject_type, 0) + 1
+        )
         corp_id = query.get("corp_id") or auth_config.get("corp_id")
+        expires_at = _parse_datetime(auth_config.get("key_expires_at"))
+        days_left = (expires_at - now).days if expires_at else None
+        expiry_status = (
+            "expired"
+            if days_left is not None and days_left < 0
+            else "warning"
+            if days_left is not None and days_left <= 14
+            else "healthy"
+            if days_left is not None
+            else "unknown"
+        )
+        last_test_summary = (
+            connection.get("last_test_summary")
+            if isinstance(connection.get("last_test_summary"), dict)
+            else {}
+        )
+        subject_type_label = {
+            "app": "应用授权",
+            "system": "系统授权",
+            "user": "个人授权",
+            "unknown": "未声明",
+        }.get(normalized_subject_type, normalized_subject_type)
         authorization_subjects.append(
             {
                 "boundary": {
@@ -1420,12 +1448,21 @@ def _dingtalk_lifecycle(
                     "system": "系统授权适合企业统一连接，由管理员集中维护和轮换。",
                     "user": "个人授权仅代表当前授权用户，适合个人空间或临时连接。",
                     "unknown": "未声明授权主体，建议补齐个人/系统/应用边界。",
-                }.get(str(subject_type), "未声明授权主体，建议补齐个人/系统/应用边界。"),
+                }.get(normalized_subject_type, "未声明授权主体，建议补齐个人/系统/应用边界。"),
                 "connection_id": connection.get("id"),
                 "connection_name": connection.get("name"),
                 "corp_id": corp_id,
                 "corp_name": settings.dingtalk_corp_name_map.get(str(corp_id or "")),
-                "subject_type": subject_type,
+                "days_left": days_left,
+                "expires_at": expires_at.isoformat() if expires_at else None,
+                "expiry_status": expiry_status,
+                "last_test_status": last_test_summary.get("status"),
+                "plugin_code": connection.get("plugin_code") or connection.get("plugin_id"),
+                "secret_ref_configured": bool(auth_config.get("secret_ref")),
+                "status": connection.get("status"),
+                "subject_label": f"{connection.get('name') or connection.get('id') or '钉钉连接'} · {subject_type_label}",
+                "subject_type": normalized_subject_type,
+                "subject_type_label": subject_type_label,
             },
         )
     return {
@@ -1446,6 +1483,12 @@ def _dingtalk_lifecycle(
                 "title": "应用授权",
             },
         ],
+        "authorization_subject_summary": {
+            "app": subject_type_counts.get("app", 0),
+            "system": subject_type_counts.get("system", 0),
+            "unknown": subject_type_counts.get("unknown", 0),
+            "user": subject_type_counts.get("user", 0),
+        },
         "authorization_subjects": authorization_subjects,
         "login": {
             "allowed_corp_count": len(settings.dingtalk_allowed_corp_id_set),

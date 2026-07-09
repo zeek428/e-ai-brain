@@ -288,6 +288,7 @@ export type SystemHealthOperations = {
   };
   dingtalk_lifecycle?: {
     authorization_boundaries?: Array<Record<string, unknown>>;
+    authorization_subject_summary?: Record<string, number>;
     authorization_subjects?: Array<Record<string, unknown>>;
     login?: Record<string, unknown>;
     mcp?: {
