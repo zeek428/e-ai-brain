@@ -267,6 +267,45 @@ class PlatformOperationsRepository:
                     )
         return self.list_system_alert_notifications(limit=100)
 
+    def update_system_alert_notification_status(
+        self,
+        notification_id: str,
+        *,
+        delivery_result: dict[str, Any] | None = None,
+        last_error: str | None = None,
+        status: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE system_alert_notifications
+                    SET
+                      status = %s,
+                      attempts = attempts + 1,
+                      last_error = %s,
+                      payload_json = payload_json || %s::jsonb,
+                      sent_at = CASE
+                        WHEN %s = 'sent' THEN COALESCE(sent_at, now())
+                        ELSE sent_at
+                      END,
+                      updated_at = now()
+                    WHERE id = %s
+                    RETURNING id, alert_id, subscription_id, channel, target, severity,
+                              status, attempts, last_error, payload_json, created_at,
+                              updated_at, sent_at
+                    """,
+                    (
+                        status,
+                        last_error,
+                        _json({"delivery_result": delivery_result or {}}, {}),
+                        status,
+                        notification_id,
+                    ),
+                )
+                row = cursor.fetchone()
+        return self._system_alert_notification_from_row(row) if row else None
+
     def save_system_alert_subscription(self, subscription: dict[str, Any]) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:

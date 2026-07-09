@@ -11,6 +11,7 @@ from app.core.trace import envelope, get_trace_id
 from app.services.platform_status import health_payload, long_memory_status_payload
 from app.services.system_health import (
     admin_weekly_report_response,
+    dispatch_system_alert_notifications_response,
     list_system_alert_rules_response,
     object_storage_cleanup_response,
     save_system_alert_rule_response,
@@ -68,6 +69,11 @@ class SystemAlertRulePatchRequest(BaseModel):
     notification_scope: str | None = None
     condition_json: dict[str, Any] | None = None
     enabled: bool | None = None
+
+
+class SystemAlertNotificationDispatchRequest(BaseModel):
+    include_failed: bool = False
+    limit: int = 50
 
 
 class SystemObjectStorageCleanupRequest(BaseModel):
@@ -227,6 +233,22 @@ def patch_system_alert_subscription(
         severity_min=payload.severity_min,
         subscription_id=subscription_id,
         target=payload.target,
+        trace_id=get_trace_id(request),
+        user=user,
+    )
+
+
+@router.post("/api/system/alerts/notifications/dispatch")
+def dispatch_system_alert_notifications(
+    request: Request,
+    payload: SystemAlertNotificationDispatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.alerts.manage"})
+    return dispatch_system_alert_notifications_response(
+        current_store=store(request),
+        include_failed=payload.include_failed,
+        limit=payload.limit,
         trace_id=get_trace_id(request),
         user=user,
     )

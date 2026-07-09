@@ -248,6 +248,19 @@ export type SystemAlertNotificationRecord = {
   updated_at?: string | null;
 };
 
+export type SystemAlertNotificationDispatchResult = {
+  notifications: SystemAlertNotificationRecord[];
+  remaining_pending_count: number;
+  summary: {
+    channel_counts?: Record<string, number>;
+    failed_count?: number;
+    include_failed?: boolean;
+    processed_count?: number;
+    sent_count?: number;
+    skipped_count?: number;
+  };
+};
+
 export type SystemAlertRuleMutationPayload = {
   component?: string | null;
   condition_json?: Record<string, unknown>;
@@ -359,6 +372,7 @@ export type SystemHealthOperations = {
       resolving_count?: number;
       rule_count?: number;
       sent_notification_count?: number;
+      skipped_notification_count?: number;
       total_notification_count?: number;
     };
     subscriptions?: SystemAlertSubscriptionRecord[];
@@ -894,6 +908,21 @@ export async function updateSystemAlertSubscription(
     {
       body: payload,
       method: 'PATCH',
+      token,
+    },
+  );
+}
+
+export async function dispatchSystemAlertNotifications(payload: {
+  include_failed?: boolean;
+  limit?: number;
+} = {}): Promise<SystemAlertNotificationDispatchResult> {
+  const token = requireAccessToken();
+  return apiRequest<SystemAlertNotificationDispatchResult>(
+    '/api/system/alerts/notifications/dispatch',
+    {
+      body: payload,
+      method: 'POST',
       token,
     },
   );

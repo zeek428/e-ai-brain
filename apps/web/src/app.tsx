@@ -104,7 +104,7 @@ function filterMenuDataByAuthorization(
   const orderByPath = collectMenuPathOrder(menuTree);
   const filterRoute = (route: MenuRoute): MenuRoute | undefined => {
     if (route.hideInMenu) {
-      return route;
+      return undefined;
     }
     const sourceChildren = route.routes ?? route.children;
     const children = sourceChildren?.map(filterRoute).filter(Boolean) as MenuRoute[] | undefined;

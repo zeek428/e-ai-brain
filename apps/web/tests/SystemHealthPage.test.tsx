@@ -135,6 +135,31 @@ describe('SystemHealthPage', () => {
                 source: 'system_check',
               },
             ],
+            notifications: [
+              {
+                alert_id: 'check:dingtalk_mcp',
+                attempts: 0,
+                channel: 'in_app',
+                created_at: '2026-07-08T08:00:00+00:00',
+                id: 'alert_notification_pending',
+                severity: 'low',
+                status: 'pending',
+                subscription_id: 'alert_subscription_existing',
+                target: 'ops-duty',
+              },
+              {
+                alert_id: 'check:dingtalk_mcp',
+                attempts: 1,
+                channel: 'dingtalk',
+                created_at: '2026-07-08T08:05:00+00:00',
+                id: 'alert_notification_failed',
+                last_error: 'DINGTALK_TARGET_URL_REQUIRED',
+                severity: 'low',
+                status: 'failed',
+                subscription_id: 'alert_subscription_existing',
+                target: 'ding-key',
+              },
+            ],
             subscriptions: [
               {
                 channel: 'email',
@@ -147,12 +172,15 @@ describe('SystemHealthPage', () => {
             ],
             summary: {
               enabled_rule_count: 1,
+              failed_notification_count: 1,
               high_count: 0,
               low_count: 1,
               medium_count: 0,
               open_count: 1,
+              pending_notification_count: 1,
               resolving_count: 0,
               rule_count: 1,
+              sent_notification_count: 0,
             },
             trend: [{ closed: 0, date: '2026-07-08', opened: 1 }],
           },
@@ -439,6 +467,32 @@ describe('SystemHealthPage', () => {
           },
         });
       }
+      if (path === '/api/system/alerts/notifications/dispatch' && method === 'POST') {
+        return jsonResponse({
+          data: {
+            notifications: [
+              {
+                alert_id: 'check:dingtalk_mcp',
+                attempts: 1,
+                channel: 'in_app',
+                id: 'alert_notification_pending',
+                sent_at: '2026-07-08T08:10:00+00:00',
+                severity: 'low',
+                status: 'sent',
+                subscription_id: 'alert_subscription_existing',
+                target: 'ops-duty',
+              },
+            ],
+            remaining_pending_count: 0,
+            summary: {
+              failed_count: 0,
+              processed_count: 1,
+              sent_count: 1,
+              skipped_count: 0,
+            },
+          },
+        });
+      }
       throw new Error(`Unexpected fetch call: ${method} ${path}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -452,12 +506,17 @@ describe('SystemHealthPage', () => {
     expect(screen.getByText('模型网关')).toBeInTheDocument();
     expect(screen.getByText('平台治理运维台')).toBeInTheDocument();
     expect(screen.getByText('系统健康告警中心')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '投递通知' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '重试失败' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '新增订阅' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '新增规则' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /停用规则 钉钉 MCP 失败规则/ })).toBeInTheDocument();
     expect(screen.getByLabelText('告警订阅')).toHaveTextContent('ops@example.com');
     expect(screen.getByLabelText('告警订阅')).toHaveTextContent('global · high+');
     expect(screen.getByRole('button', { name: '停用订阅' })).toBeInTheDocument();
+    expect(screen.getByLabelText('告警通知记录')).toHaveTextContent('ops-duty');
+    expect(screen.getByLabelText('告警通知记录')).toHaveTextContent('尝试 0');
+    expect(screen.getByLabelText('告警通知记录')).toHaveTextContent('DINGTALK_TARGET_URL_REQUIRED');
     expect(screen.getByText('AI 任务执行运维台')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '扫超时' })).toBeInTheDocument();
     expect(screen.getByLabelText('AI执行策略配置')).toHaveTextContent('策略配置 已配置');
@@ -466,7 +525,7 @@ describe('SystemHealthPage', () => {
     expect(screen.getByText('runner_task_queued')).toBeInTheDocument();
     expect(screen.getByText('runner_task_failed')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /取\s*消/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /重\s*试/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^重\s*试$/ })).toBeInTheDocument();
     expect(screen.getByText('知识中心质量闭环')).toBeInTheDocument();
     expect(screen.getByLabelText('知识治理待办')).toHaveTextContent('治理待办 2');
     expect(screen.getByLabelText('知识治理待办')).toHaveTextContent('研发规范索引失败');
@@ -532,6 +591,17 @@ describe('SystemHealthPage', () => {
       ),
     );
 
+    fireEvent.click(screen.getByRole('button', { name: '投递通知' }));
+    await waitFor(() =>
+      expect(calls).toContainEqual(
+        expect.objectContaining({
+          body: { include_failed: false, limit: 100 },
+          method: 'POST',
+          path: '/api/system/alerts/notifications/dispatch',
+        }),
+      ),
+    );
+
     fireEvent.click(screen.getByRole('button', { name: '新增订阅' }));
     expect(await screen.findByText('新增告警订阅')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('通知目标'), { target: { value: 'ops@example.com' } });
@@ -583,6 +653,6 @@ describe('SystemHealthPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /刷新/ }));
 
-    await waitFor(() => expect(calls.filter((call) => call.path === '/api/system/health')).toHaveLength(7));
+    await waitFor(() => expect(calls.filter((call) => call.path === '/api/system/health')).toHaveLength(8));
   });
 });

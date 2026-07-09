@@ -424,6 +424,21 @@ class PostgresSnapshotRepository:
     ) -> list[dict[str, Any]]:
         return self._platform_operations_repository.upsert_system_alert_notifications(notifications)
 
+    def update_system_alert_notification_status(
+        self,
+        notification_id: str,
+        *,
+        delivery_result: dict[str, Any] | None = None,
+        last_error: str | None = None,
+        status: str,
+    ) -> dict[str, Any] | None:
+        return self._platform_operations_repository.update_system_alert_notification_status(
+            notification_id,
+            delivery_result=delivery_result,
+            last_error=last_error,
+            status=status,
+        )
+
     def list_system_alert_subscriptions(self) -> list[dict[str, Any]]:
         return self._platform_operations_repository.list_system_alert_subscriptions()
 

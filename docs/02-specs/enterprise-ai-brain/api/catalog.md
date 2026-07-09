@@ -47,6 +47,7 @@
 | System Health | PATCH | `/api/system/alerts/{alert_id}` | 认领、处理中、关闭或忽略系统告警；关闭/忽略必须填写原因。 |
 | System Health | POST | `/api/system/alerts/subscriptions` | 创建系统告警订阅。 |
 | System Health | PATCH | `/api/system/alerts/subscriptions/{subscription_id}` | 更新或启停系统告警订阅。 |
+| System Health | POST | `/api/system/alerts/notifications/dispatch` | 投递 pending 告警通知，可选择重试 failed 通知，并回写 sent/failed/skipped、attempts、last_error 和脱敏投递摘要。 |
 | System Health | GET | `/api/system/admin-weekly-report` | 生成管理员周报摘要和 Markdown 正文。 |
 | System RBAC | GET | `/api/system/roles` | 查询系统角色列表。 |
 | System RBAC | POST | `/api/system/roles` | 创建非系统角色。 |

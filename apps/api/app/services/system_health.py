@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request as UrlRequest, urlopen
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from app.api.deps import api_error
 from app.core.config import Settings
@@ -33,7 +36,7 @@ from app.services.product_config_context import (
     list_related_system_records,
 )
 from app.services.rbac_matrix import build_rbac_policy_matrix
-from app.services.system_settings import system_settings_response
+from app.services.system_settings import send_system_email, system_settings_response
 
 
 HEALTH_STATUS_RANK = {
@@ -2727,6 +2730,304 @@ def _list_alert_notifications(
         )
     )
     return items[:limit]
+
+
+def _alert_notification_recipients(target: str) -> list[str]:
+    return [
+        item.strip()
+        for item in re.split(r"[;,]", target)
+        if item.strip()
+    ]
+
+
+def _alert_notification_message(notification: dict[str, Any]) -> tuple[str, str]:
+    payload = notification.get("payload_json") if isinstance(notification.get("payload_json"), dict) else {}
+    title = str(payload.get("title") or notification.get("alert_id") or "系统健康告警")
+    severity = str(notification.get("severity") or "low")
+    component = str(payload.get("component") or "-")
+    owner = str(payload.get("owner") or "平台管理员")
+    source = str(payload.get("source") or "system_check")
+    action_href = str(payload.get("action_href") or "")
+    message = str(payload.get("message") or "请登录 AI Brain 系统健康页查看详情。")
+    subject = f"[AI Brain][{severity}] {title}"
+    body_lines = [
+        "AI Brain 系统健康告警通知",
+        "",
+        f"告警标题: {title}",
+        f"严重级别: {severity}",
+        f"来源: {source}",
+        f"组件: {component}",
+        f"负责人: {owner}",
+        f"通知 ID: {notification.get('id')}",
+        "",
+        f"处理建议: {message}",
+    ]
+    if action_href:
+        body_lines.extend(["", f"处理入口: {action_href}"])
+    return subject, "\n".join(body_lines)
+
+
+def _post_alert_webhook_notification(
+    *,
+    channel: str,
+    notification: dict[str, Any],
+    target: str,
+) -> dict[str, Any]:
+    if not target.startswith(("http://", "https://")):
+        raise ValueError(f"{channel.upper()}_TARGET_URL_REQUIRED")
+    subject, body = _alert_notification_message(notification)
+    payload = {
+        "alert_id": notification.get("alert_id"),
+        "channel": channel,
+        "message": body,
+        "notification_id": notification.get("id"),
+        "payload": notification.get("payload_json") if isinstance(notification.get("payload_json"), dict) else {},
+        "severity": notification.get("severity"),
+        "subject": subject,
+    }
+    request = UrlRequest(
+        target,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=10) as response:
+        status_code = int(response.getcode() or 0)
+        if status_code >= 400:
+            raise RuntimeError(f"WEBHOOK_HTTP_{status_code}")
+        return {
+            "delivery_status": "sent",
+            "http_status": status_code,
+            "provider": channel,
+        }
+
+
+def _dispatch_alert_notification(
+    current_store: Any,
+    notification: dict[str, Any],
+) -> tuple[str, dict[str, Any], str | None]:
+    channel = str(notification.get("channel") or "").strip()
+    target = str(notification.get("target") or "").strip()
+    notification_id = str(notification.get("id") or "")
+    if not target:
+        return "failed", {"notification_id": notification_id}, "DELIVERY_TARGET_REQUIRED"
+    try:
+        if channel == "in_app":
+            return (
+                "sent",
+                {
+                    "delivery_status": "sent",
+                    "notification_id": notification_id,
+                    "provider": "in_app",
+                    "target_configured": True,
+                },
+                None,
+            )
+        if channel == "email":
+            subject, body = _alert_notification_message(notification)
+            delivery_result = send_system_email(
+                current_store,
+                body=body,
+                recipients=_alert_notification_recipients(target),
+                subject=subject,
+            )
+            return (
+                "sent",
+                {
+                    "delivery_status": delivery_result.get("delivery_status"),
+                    "message_id": delivery_result.get("message_id"),
+                    "provider": "email",
+                    "recipient_count": len(delivery_result.get("recipients") or []),
+                    "sent_at": delivery_result.get("sent_at"),
+                    "smtp_host": delivery_result.get("smtp_host"),
+                },
+                None,
+            )
+        if channel in {"dingtalk", "webhook"}:
+            return (
+                "sent",
+                _post_alert_webhook_notification(
+                    channel=channel,
+                    notification=notification,
+                    target=target,
+                ),
+                None,
+            )
+        return "skipped", {"provider": channel or "unknown"}, "UNSUPPORTED_DELIVERY_CHANNEL"
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        code = str(detail.get("code") or exc.__class__.__name__)
+        return (
+            "failed",
+            {"error_code": code, "provider": channel},
+            _redact_error_summary(code),
+        )
+    except (HTTPError, URLError, TimeoutError, OSError, RuntimeError, ValueError) as exc:
+        return (
+            "failed",
+            {"error_type": exc.__class__.__name__, "provider": channel},
+            _redact_error_summary(str(exc) or exc.__class__.__name__),
+        )
+
+
+def _update_alert_notification_status(
+    current_store: Any,
+    notification: dict[str, Any],
+    *,
+    delivery_result: dict[str, Any],
+    last_error: str | None,
+    status: str,
+) -> dict[str, Any]:
+    notification_id = str(notification.get("id") or "")
+    repository = _runtime_repository(current_store)
+    update_status = getattr(repository, "update_system_alert_notification_status", None)
+    if callable(update_status):
+        updated = update_status(
+            notification_id,
+            delivery_result=delivery_result,
+            last_error=last_error,
+            status=status,
+        )
+        if updated:
+            return updated
+    stored = getattr(current_store, "system_alert_notifications", None)
+    if not isinstance(stored, dict):
+        stored = {}
+        vars(current_store)["system_alert_notifications"] = stored
+    now = _now_iso()
+    existing = dict(stored.get(notification_id) or notification)
+    payload_json = existing.get("payload_json") if isinstance(existing.get("payload_json"), dict) else {}
+    updated = {
+        **existing,
+        "attempts": int(existing.get("attempts") or 0) + 1,
+        "last_error": last_error,
+        "payload_json": {
+            **payload_json,
+            "delivery_result": delivery_result,
+        },
+        "sent_at": existing.get("sent_at") or (now if status == "sent" else None),
+        "status": status,
+        "updated_at": now,
+    }
+    stored[notification_id] = updated
+    return updated
+
+
+def _append_alert_dispatch_audit_event(
+    current_store: Any,
+    *,
+    actor_id: str,
+    summary: dict[str, Any],
+) -> None:
+    event = {
+        "actor_id": actor_id,
+        "ai_task_id": None,
+        "created_at": _now_iso(),
+        "event_type": "system_alert_notifications.dispatched",
+        "id": current_store.new_id("audit"),
+        "payload": {
+            "channel_counts": summary.get("channel_counts") or {},
+            "failed_count": summary.get("failed_count") or 0,
+            "include_failed": bool(summary.get("include_failed")),
+            "processed_count": summary.get("processed_count") or 0,
+            "sent_count": summary.get("sent_count") or 0,
+            "skipped_count": summary.get("skipped_count") or 0,
+        },
+        "sequence": len(getattr(current_store, "audit_events", []) or []) + 1,
+        "subject_id": "system_alert_notifications",
+        "subject_type": "system_alert_notifications",
+    }
+    repository = _runtime_repository(current_store)
+    append_audit_event = getattr(repository, "append_audit_event", None)
+    if callable(append_audit_event):
+        append_audit_event(event)
+        return
+    audit = getattr(current_store, "audit", None)
+    if callable(audit):
+        audit(
+            actor_id=actor_id,
+            event_type=event["event_type"],
+            payload=event["payload"],
+            subject_id=event["subject_id"],
+            subject_type=event["subject_type"],
+        )
+
+
+def dispatch_system_alert_notifications_response(
+    *,
+    current_store: Any,
+    include_failed: bool,
+    limit: int,
+    trace_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    from app.core.trace import envelope
+
+    normalized_limit = max(1, min(int(limit or 50), 200))
+    if include_failed:
+        candidates = _list_alert_notifications(
+            current_store,
+            limit=normalized_limit,
+            status="failed",
+        )
+        if len(candidates) < normalized_limit:
+            pending_candidates = _list_alert_notifications(
+                current_store,
+                limit=normalized_limit - len(candidates),
+                status="pending",
+            )
+            existing_ids = {str(item.get("id") or "") for item in candidates}
+            candidates.extend(
+                item
+                for item in pending_candidates
+                if str(item.get("id") or "") not in existing_ids
+            )
+    else:
+        candidates = _list_alert_notifications(
+            current_store,
+            limit=normalized_limit,
+            status="pending",
+        )
+    processed: list[dict[str, Any]] = []
+    for notification in candidates[:normalized_limit]:
+        status, delivery_result, last_error = _dispatch_alert_notification(
+            current_store,
+            notification,
+        )
+        processed.append(
+            _update_alert_notification_status(
+                current_store,
+                notification,
+                delivery_result=delivery_result,
+                last_error=last_error,
+                status=status,
+            )
+        )
+    channel_counts = _count_by_status(processed, field="channel")
+    status_counts = _count_by_status(processed)
+    summary = {
+        "channel_counts": channel_counts,
+        "failed_count": status_counts.get("failed", 0),
+        "include_failed": include_failed,
+        "processed_count": len(processed),
+        "sent_count": status_counts.get("sent", 0),
+        "skipped_count": status_counts.get("skipped", 0),
+    }
+    _append_alert_dispatch_audit_event(
+        current_store,
+        actor_id=str(user.get("id") or user.get("username") or ""),
+        summary=summary,
+    )
+    return envelope(
+        {
+            "notifications": processed,
+            "remaining_pending_count": len(
+                _list_alert_notifications(current_store, limit=200, status="pending")
+            ),
+            "summary": summary,
+        },
+        trace_id,
+    )
 
 
 def _alert_notification_summary(notifications: list[dict[str, Any]]) -> dict[str, Any]:

@@ -179,6 +179,89 @@ def test_system_alert_subscriptions_create_deduplicated_notification_outbox():
     assert len(app.state.store.system_alert_notifications) == first_notification_count
 
 
+def test_system_alert_notification_dispatch_marks_in_app_sent():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    subscription = client.post(
+        "/api/system/alerts/subscriptions",
+        headers=headers,
+        json={
+            "channel": "in_app",
+            "scope": "source:system_check",
+            "severity_min": "low",
+            "target": "ops-duty",
+        },
+    )
+    assert subscription.status_code == 200
+
+    health = client.get("/api/system/health", headers=headers)
+    assert health.status_code == 200
+    assert health.json()["data"]["operations"]["alert_center"]["summary"]["pending_notification_count"] >= 1
+
+    dispatched = client.post(
+        "/api/system/alerts/notifications/dispatch",
+        headers=headers,
+        json={"limit": 200},
+    )
+    assert dispatched.status_code == 200
+    payload = dispatched.json()["data"]
+    assert payload["summary"]["processed_count"] >= 1
+    assert payload["summary"]["sent_count"] >= 1
+    assert payload["remaining_pending_count"] == 0
+    assert all(item["status"] == "sent" for item in payload["notifications"])
+    assert all(item["attempts"] == 1 for item in payload["notifications"])
+    assert all(item["sent_at"] for item in payload["notifications"])
+    assert all(
+        item["payload_json"]["delivery_result"]["provider"] == "in_app"
+        for item in payload["notifications"]
+    )
+    assert app.state.store.audit_events[-1]["event_type"] == "system_alert_notifications.dispatched"
+
+
+def test_system_alert_notification_dispatch_can_retry_failed_webhook_targets():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    subscription = client.post(
+        "/api/system/alerts/subscriptions",
+        headers=headers,
+        json={
+            "channel": "dingtalk",
+            "scope": "source:system_check",
+            "severity_min": "low",
+            "target": "ding-not-a-webhook-url",
+        },
+    )
+    assert subscription.status_code == 200
+
+    health = client.get("/api/system/health", headers=headers)
+    assert health.status_code == 200
+
+    dispatched = client.post(
+        "/api/system/alerts/notifications/dispatch",
+        headers=headers,
+        json={"limit": 1},
+    )
+    assert dispatched.status_code == 200
+    failed_notification = dispatched.json()["data"]["notifications"][0]
+    assert failed_notification["status"] == "failed"
+    assert failed_notification["attempts"] == 1
+    assert failed_notification["last_error"] == "DINGTALK_TARGET_URL_REQUIRED"
+
+    retried = client.post(
+        "/api/system/alerts/notifications/dispatch",
+        headers=headers,
+        json={"include_failed": True, "limit": 1},
+    )
+    assert retried.status_code == 200
+    retried_notification = retried.json()["data"]["notifications"][0]
+    assert retried_notification["id"] == failed_notification["id"]
+    assert retried_notification["status"] == "failed"
+    assert retried_notification["attempts"] == 2
+    assert retried_notification["last_error"] == "DINGTALK_TARGET_URL_REQUIRED"
+
+
 def test_product_onboarding_score_uses_real_health_signals():
     app.state.store.reset()
     headers = auth_headers()

@@ -37,6 +37,7 @@ import {
   cleanupSystemObjectStorage,
   createSystemAlertRule,
   createSystemAlertSubscription,
+  dispatchSystemAlertNotifications,
   fetchSystemAdminWeeklyReport,
   fetchSystemHealth,
   retryAiExecutorTask,
@@ -408,6 +409,8 @@ function SystemHealthOperationsPanel({
   const alertNotifications = alertCenter?.notifications ?? [];
   const alertSubscriptions = alertCenter?.subscriptions ?? [];
   const alertTrend = alertCenter?.trend ?? [];
+  const pendingNotificationCount = numericMetric(alertCenter?.summary?.pending_notification_count);
+  const failedNotificationCount = numericMetric(alertCenter?.summary?.failed_notification_count);
   const executorStrategy = aiExecutor?.strategy_config ?? {};
   const executorStrategyMatrix = executorStrategy.strategy_matrix ?? [];
   const executorStrategyIssues = executorStrategy.configuration_issues ?? [];
@@ -592,6 +595,32 @@ function SystemHealthOperationsPanel({
     }
   };
 
+  const runAlertNotificationDispatch = async (includeFailed = false) => {
+    setAlertActionLoading(includeFailed ? 'notifications:retry' : 'notifications:dispatch');
+    try {
+      const result = await dispatchSystemAlertNotifications({
+        include_failed: includeFailed,
+        limit: 100,
+      });
+      const processedCount = Number(result.summary?.processed_count ?? 0);
+      const sentCount = Number(result.summary?.sent_count ?? 0);
+      const failedCount = Number(result.summary?.failed_count ?? 0);
+      const skippedCount = Number(result.summary?.skipped_count ?? 0);
+      if (!processedCount) {
+        message.info(includeFailed ? '暂无失败通知需要重试' : '暂无待投递通知');
+      } else if (failedCount) {
+        message.warning(`已处理 ${processedCount} 条通知，成功 ${sentCount} 条，失败 ${failedCount} 条`);
+      } else {
+        message.success(`已投递 ${sentCount} 条通知${skippedCount ? `，跳过 ${skippedCount} 条` : ''}`);
+      }
+      await reloadAfterAlertAction();
+    } catch (dispatchError) {
+      message.error(formatRemoteRowsError(normalizeRemoteRowsError(dispatchError)));
+    } finally {
+      setAlertActionLoading(undefined);
+    }
+  };
+
   const runExecutorAction = async (
     action: 'cancel' | 'retry' | 'timeout-scan',
     taskId?: string,
@@ -705,6 +734,25 @@ function SystemHealthOperationsPanel({
               <Tag color={alertCenter?.summary?.open_count ? 'orange' : 'green'}>
                 {alertCenter?.summary?.open_count ?? 0} 个打开
               </Tag>
+              <Button
+                disabled={!pendingNotificationCount}
+                loading={alertActionLoading === 'notifications:dispatch'}
+                size="small"
+                type="link"
+                onClick={() => void runAlertNotificationDispatch(false)}
+              >
+                投递通知
+              </Button>
+              {failedNotificationCount ? (
+                <Button
+                  loading={alertActionLoading === 'notifications:retry'}
+                  size="small"
+                  type="link"
+                  onClick={() => void runAlertNotificationDispatch(true)}
+                >
+                  重试失败
+                </Button>
+              ) : null}
               <Button size="small" type="link" onClick={openSubscriptionModal}>
                 新增订阅
               </Button>
@@ -819,7 +867,16 @@ function SystemHealthOperationsPanel({
                     <Text ellipsis={{ tooltip: notification.target }}>{notification.target}</Text>
                   </span>
                   <Text type="secondary">
-                    {notification.severity} · {notification.created_at ? formatDisplayDateTime(notification.created_at) : '-'}
+                    {notification.severity}
+                    {' · '}
+                    尝试 {formatMetricValue(notification.attempts)}
+                    {notification.last_error ? ` · ${notification.last_error}` : ''}
+                    {' · '}
+                    {notification.sent_at
+                      ? `送达 ${formatDisplayDateTime(notification.sent_at)}`
+                      : notification.created_at
+                        ? formatDisplayDateTime(notification.created_at)
+                        : '-'}
                   </Text>
                 </div>
               ))}
@@ -1362,7 +1419,10 @@ function SystemHealthOperationsPanel({
           </div>
           <div className="system-health-quality-gates">
             {screenshots.map((item) => (
-              <Tag color={item.exists ? 'green' : 'orange'} key={String(item.route)}>
+              <Tag
+                color={item.exists ? 'green' : 'orange'}
+                key={`${String(item.route)}:${String(item.article)}:${String(item.src || '')}`}
+              >
                 {String(item.article)}截图
               </Tag>
             ))}
