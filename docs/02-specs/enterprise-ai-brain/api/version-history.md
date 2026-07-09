@@ -6,6 +6,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.552 | 2026-07-09 | 系统健康新增告警 incident/订阅处理接口、安全审计治理快照，知识中心新增质量事件、反馈和引用点击接口，审计事件新增 CSV 导出 | Codex |
 | v1.1.551 | 2026-07-08 | 研发执行器策略页面新增命中提示和新增/编辑命中预览，按产品专属优先、priority 升序和策略 ID 兜底展示冲突风险 | Codex |
 | v1.1.550 | 2026-07-08 | 研发执行器策略新增 `code_change_review_mode`：默认人工确认，配置 `auto_commit` 时 Runner 成功后自动通过 Review 并请求 merge 隔离 worktree | Codex |
 | v1.1.549 | 2026-07-08 | 研发执行器策略新增入口移除历史 `code_inspection_remediation` 选项，代码巡检 finding 经 Bug 确认后统一按 `bug_fix` 推进 AI Task | Codex |

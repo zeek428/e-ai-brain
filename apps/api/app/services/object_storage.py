@@ -31,6 +31,9 @@ class ObjectStorage:
     def get_bytes(self, *, bucket: str, object_key: str) -> bytes:
         raise NotImplementedError
 
+    def delete_object(self, *, bucket: str, object_key: str) -> None:
+        raise NotImplementedError
+
     def presigned_get_url(
         self,
         *,
@@ -75,6 +78,9 @@ class LocalObjectStorage(ObjectStorage):
 
     def get_bytes(self, *, bucket: str, object_key: str) -> bytes:
         return self._path_for(bucket, object_key).read_bytes()
+
+    def delete_object(self, *, bucket: str, object_key: str) -> None:
+        self._path_for(bucket, object_key).unlink(missing_ok=True)
 
 
 class MinioObjectStorage(ObjectStorage):
@@ -131,6 +137,9 @@ class MinioObjectStorage(ObjectStorage):
         finally:
             response.close()
             response.release_conn()
+
+    def delete_object(self, *, bucket: str, object_key: str) -> None:
+        self.client.remove_object(bucket, object_key)
 
     def presigned_get_url(
         self,

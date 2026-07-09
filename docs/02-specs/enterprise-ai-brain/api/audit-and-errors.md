@@ -9,6 +9,7 @@ GET /api/audit/events?ai_task_id=task_001
 GET /api/audit/events?subject_type=requirement&subject_id=requirement_001
 GET /api/audit/events?event_type=review.submitted
 GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&created_to=2026-05-31T23:59:59Z
+GET /api/audit/events/export?subject_type=knowledge_document&created_from=2026-05-01T00:00:00Z
 ```
 
 权限：要求 `audit.read`；管理员、`system.admin` 或通过角色授予 `audit.read` 的用户可访问，未授权用户返回 `403 FORBIDDEN`。
@@ -23,6 +24,8 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | event_type | string | 按事件类型过滤。 |
 | actor_id | string | 按操作者 ID 过滤。 |
 | created_from / created_to | ISO datetime | 按创建时间范围过滤，未带时区时按 UTC 处理。 |
+
+`GET /api/audit/events/export` 复用同一组筛选参数，返回 `text/csv` 附件，最多导出最近 1000 条摘要字段：`id`、`sequence`、`created_at`、`actor_id`、`event_type`、`subject_type`、`subject_id`、`ai_task_id`、`result`、`trace_id`。导出接口只输出审计摘要，不导出密钥、邮件正文、Prompt 或外部调用完整响应。
 
 响应：
 

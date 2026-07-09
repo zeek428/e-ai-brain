@@ -41,6 +41,9 @@
 | System Settings | GET | `/api/system/settings` | 查询全局系统设置，返回系统管理员邮箱和脱敏后的系统级邮件发送配置。 |
 | System Settings | PATCH | `/api/system/settings` | 更新全局系统设置，支持维护系统管理员邮箱和 SMTP 发信配置。 |
 | System Settings | POST | `/api/system/settings/email/test` | 使用已保存的 SMTP 发信配置发送测试邮件。 |
+| System Health | GET | `/api/system/health` | 查询系统健康、告警中心、AI 执行器、知识质量、产品接入、权限诊断、钉钉生命周期和归档策略。 |
+| System Health | PATCH | `/api/system/alerts/{alert_id}` | 认领、处理中、关闭或忽略系统告警；关闭/忽略必须填写原因。 |
+| System Health | POST | `/api/system/alerts/subscriptions` | 创建系统告警订阅。 |
 | System RBAC | GET | `/api/system/roles` | 查询系统角色列表。 |
 | System RBAC | POST | `/api/system/roles` | 创建非系统角色。 |
 | System RBAC | POST | `/api/system/roles/{role_id}/copy` | 从现有角色复制角色、权限、菜单和范围。 |
@@ -175,6 +178,10 @@
 | Knowledge | POST | `/api/knowledge/documents/{document_id}/reparse` | 基于原始资产创建新的 queued 重解析任务。 |
 | Knowledge | POST | `/api/knowledge/documents/batch-move` | 批量移动知识文档目录，返回 updated/skipped 明细。 |
 | Knowledge | POST | `/api/knowledge/search` | 知识检索。 |
+| Knowledge | POST | `/api/knowledge/rag` | 基于 Hybrid Search 生成带引用答案，并返回 RAG 质量指标。 |
+| Knowledge | GET | `/api/knowledge/quality/metrics` | 查看知识检索/RAG 质量事件、无结果率、引用点击率和反馈汇总。 |
+| Knowledge | POST | `/api/knowledge/quality/feedback` | 提交 RAG/检索结果有用、无用、部分有用或引用不准确反馈。 |
+| Knowledge | POST | `/api/knowledge/quality/citation-click` | 记录用户点击 RAG 引用。 |
 | Knowledge | GET | `/api/knowledge/deposits?status=&page=&page_size=&sort_by=&sort_order=` | 知识沉淀候选列表；校验 `knowledge.deposit.decide`。传入 `page/page_size` 时优先走 PostgreSQL read model 的 count/page 查询，支持按 `status` 过滤，支持 `sort_by=id/ai_task_id/deposit_type/title/status/created_at/updated_at` 与 `sort_order=asc/desc`，响应补充 `page/page_size/query/performance`；未带分页时保留旧全量返回兼容旧审核弹窗和测试 helper。 |
 | Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/approve` | 采纳知识沉淀；校验 `knowledge.deposit.decide`。 |
 | Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/reject` | 驳回知识沉淀；校验 `knowledge.deposit.decide`。 |
@@ -182,6 +189,7 @@
 | Output | POST | `/api/writeback/results/{task_id}` | 显式生成或复用模拟回写结果，使用幂等键避免重复 Issue。 |
 | Output | GET | `/api/export/tasks/{task_id}/markdown` | 导出 Markdown 方案。 |
 | Audit | GET | `/api/audit/events` | 查询审计事件；要求 `audit.read`，支持主体、操作者、事件类型和时间范围过滤。 |
+| Audit | GET | `/api/audit/events/export` | 按审计筛选条件导出 CSV 摘要。 |
 | DevOps | GET | `/api/devops/gitlab/daily-code-metrics` | 查询真实 GitLab 每日提交和代码质量审核结果。 |
 | DevOps | POST | `/api/devops/gitlab/daily-code-metrics` | 登记真实 GitLab 每日提交和代码质量审核结果。 |
 | DevOps | GET | `/api/devops/operational-metrics` | 查询研发运营统一聚合列表，支持服务端分页、排序和筛选。 |

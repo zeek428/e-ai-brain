@@ -132,6 +132,7 @@ class KnowledgeWriteRepository:
                         cursor,
                         {deposit["id"]: deposit for deposit in deposits},
                     )
+                cursor.execute("DELETE FROM knowledge_assets WHERE document_id = %s", (document_id,))
                 cursor.execute("DELETE FROM knowledge_documents WHERE id = %s", (document_id,))
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])

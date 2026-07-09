@@ -4,6 +4,7 @@ from time import perf_counter
 from typing import Any
 
 from app.core.trace import envelope
+from app.services.knowledge_quality import record_knowledge_quality_event_best_effort
 from app.services.knowledge_search import knowledge_search_response
 
 
@@ -65,20 +66,39 @@ def knowledge_rag_response(
     ]
     latency_ms = round((perf_counter() - started_at) * 1000, 2)
     has_citations = bool(citations)
+    search_metrics = search_data.get("metrics") or {}
+    rag_metrics = {
+        "citation_count": len(citations),
+        "hit_count": len(items),
+        "latency_ms": latency_ms,
+        "no_result": not has_citations,
+        "no_result_rate": 0.0 if has_citations else 1.0,
+        "rag_citation_accuracy_proxy": 1.0 if has_citations else 0.0,
+        "retrieval": search_metrics,
+    }
+    quality_event = record_knowledge_quality_event_best_effort(
+        current_store,
+        citation_count=len(citations),
+        event_type="rag",
+        hit_count=len(items),
+        knowledge_space_id=knowledge_space_id,
+        latency_ms=latency_ms,
+        metadata={"answer_mode": "extractive_rag", "top_k": top_k},
+        no_result=not has_citations,
+        query=query_value,
+        related_event_id=search_metrics.get("quality_event_id"),
+        retrieval_modes=search_metrics.get("retrieval_modes") or {},
+        trace_id=trace_id,
+        user=user,
+    )
+    if quality_event:
+        rag_metrics["quality_event_id"] = quality_event.get("id")
     return envelope(
         {
             "answer": _answer_from_citations(query_value.strip(), citations),
             "answer_mode": "extractive_rag",
             "citations": citations,
-            "metrics": {
-                "citation_count": len(citations),
-                "hit_count": len(items),
-                "latency_ms": latency_ms,
-                "no_result": not has_citations,
-                "no_result_rate": 0.0 if has_citations else 1.0,
-                "rag_citation_accuracy_proxy": 1.0 if has_citations else 0.0,
-                "retrieval": search_data.get("metrics") or {},
-            },
+            "metrics": rag_metrics,
         },
         trace_id,
     )

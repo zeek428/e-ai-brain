@@ -17,6 +17,7 @@ from app.services.knowledge_indexing import (
     replace_knowledge_chunks_result,
     split_knowledge_content,
 )
+from app.services.object_storage import object_storage
 
 USER_ROLES = ASSIGNABLE_ROLE_CODES
 KNOWLEDGE_INDEX_STATUSES = {
@@ -517,9 +518,54 @@ def remove_knowledge_document_from_memory(
 ) -> None:
     _memory_collection(current_store, "knowledge_documents").pop(document_id, None)
     clear_knowledge_chunks(current_store, document_id)
+    for asset_id in [
+        asset_id
+        for asset_id, asset in _memory_collection(current_store, "knowledge_assets").items()
+        if asset.get("document_id") == document_id
+    ]:
+        _memory_collection(current_store, "knowledge_assets").pop(asset_id, None)
     deposits = _memory_collection(current_store, "knowledge_deposits")
     for deposit in affected_deposits:
         deposits[str(deposit["id"])] = deposit
+
+
+def cleanup_knowledge_document_objects(
+    current_store: Any,
+    *,
+    document_id: str,
+) -> dict[str, Any]:
+    assets = [
+        dict(asset)
+        for asset in _read_memory_dict(current_store, "knowledge_assets").values()
+        if asset.get("document_id") == document_id
+    ]
+    if not assets:
+        return {"deleted_count": 0, "errors": []}
+    storage = object_storage()
+    deleted_count = 0
+    errors: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for asset in assets:
+        bucket = str(asset.get("bucket") or "")
+        object_key = str(asset.get("object_key") or "")
+        if not bucket or not object_key:
+            continue
+        key = (bucket, object_key)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        try:
+            storage.delete_object(bucket=bucket, object_key=object_key)
+            deleted_count += 1
+        except Exception as exc:  # pragma: no cover - depends on external object storage
+            errors.append(
+                {
+                    "asset_id": asset.get("id"),
+                    "error": exc.__class__.__name__,
+                    "object_key": object_key,
+                },
+            )
+    return {"deleted_count": deleted_count, "errors": errors}
 
 
 def ensure_non_blank(value: str | None, field: str) -> str:
@@ -862,6 +908,10 @@ def delete_knowledge_document_result(
 ) -> dict[str, Any]:
     if get_knowledge_document(current_store, document_id) is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    object_cleanup = cleanup_knowledge_document_objects(
+        current_store,
+        document_id=document_id,
+    )
     affected_deposits = []
     now = datetime.now(UTC).isoformat()
     for deposit in _read_memory_dict(current_store, "knowledge_deposits").values():
@@ -891,4 +941,4 @@ def delete_knowledge_document_result(
         deposits=affected_deposits,
         audit_event=audit_event,
     )
-    return {"deleted": True, "id": document_id}
+    return {"deleted": True, "id": document_id, "object_cleanup": object_cleanup}

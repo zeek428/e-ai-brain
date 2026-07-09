@@ -390,7 +390,18 @@ POST /api/knowledge/search
 }
 ```
 
-前端知识中心提供“知识检索”弹窗，提交真实 `/api/knowledge/search` 请求并展示可访问结果的标题、来源、召回模式和内容摘要；后端返回 chunk 级命中结果，权限过滤必须在返回 chunk 前完成。存在可读向量 chunk 且 Embedding 网关可用时查询文本会生成 embedding，并只和 `embedding_config_id`、`embedding_model`、`embedding_dimension` 兼容的 chunk 计算 cosine 相似度，返回 `score` 与 `retrieval_mode=vector`；不兼容、缺失或仅文本索引可用时按关键词检索返回 `retrieval_mode=keyword` 且 `score=null`。启用 `parent_child` 时父块不作为直接命中结果返回，子块命中会在 `source.parent_chunk_id` 和 `source.parent_content` 中补充父块上下文；OCR/Table 导入的命中 chunk metadata 可包含页码、图片数量、图片引用、表格数量、表格序号、列名和结构化解析资产引用。无结果时展示真实空状态，不回退到示例数据。
+前端知识中心提供“知识检索”弹窗，提交真实 `/api/knowledge/search` 请求并展示可访问结果的标题、来源、召回模式和内容摘要；后端返回 chunk 级命中结果，权限过滤必须在返回 chunk 前完成。存在可读向量 chunk 且 Embedding 网关可用时查询文本会生成 embedding，并只和 `embedding_config_id`、`embedding_model`、`embedding_dimension` 兼容的 chunk 计算 cosine 相似度，返回 `score` 与 `retrieval_mode=vector`；不兼容、缺失或仅文本索引可用时按关键词检索返回 `retrieval_mode=keyword` 且 `score=null`。启用 `parent_child` 时父块不作为直接命中结果返回，子块命中会在 `source.parent_chunk_id` 和 `source.parent_content` 中补充父块上下文；OCR/Table 导入的命中 chunk metadata 可包含页码、图片数量、图片引用、表格数量、表格序号、列名和结构化解析资产引用。无结果时展示真实空状态，不回退到示例数据。每次搜索会写入 `knowledge_quality_events`，响应 `metrics.quality_event_id` 可用于后续反馈关联。
+
+RAG 问答和质量反馈：
+
+```http
+POST /api/knowledge/rag
+GET /api/knowledge/quality/metrics
+POST /api/knowledge/quality/feedback
+POST /api/knowledge/quality/citation-click
+```
+
+`POST /api/knowledge/rag` 复用 Hybrid Search 返回 `answer`、`citations[]` 和 `metrics`，其中 `metrics` 包含 `citation_count`、`hit_count`、`latency_ms`、`no_result`、`no_result_rate`、`rag_citation_accuracy_proxy`、`retrieval` 和 `quality_event_id`。`GET /api/knowledge/quality/metrics` 要求 `knowledge.quality.read` 或知识管理权限，支持 `event_type`、`limit` 和 `since_days`，返回最近事件和汇总指标：检索/RAG 查询数、无结果率、引用数、引用点击率、反馈数、有用/无用反馈数和 RAG 引用准确率 proxy。`POST /api/knowledge/quality/feedback` 接收 `related_event_id`、`feedback_value=useful|not_useful|partial|incorrect`、可选 `feedback_comment`、`citation_chunk_id`、`citation_document_id`；`POST /api/knowledge/quality/citation-click` 接收 `related_event_id` 和可选引用 chunk/document ID，用于统计引用点击。质量事件不得保存完整 Prompt、模型输出或密钥。
 
 知识沉淀：
 

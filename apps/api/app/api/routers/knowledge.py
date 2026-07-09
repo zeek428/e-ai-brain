@@ -53,6 +53,10 @@ from app.services.knowledge_management import (
     upload_knowledge_document_bytes_result,
     upload_knowledge_document_result,
 )
+from app.services.knowledge_quality import (
+    knowledge_quality_metrics_response,
+    record_knowledge_quality_event,
+)
 from app.services.knowledge_rag import knowledge_rag_response
 from app.services.knowledge_search import knowledge_search_response
 
@@ -114,6 +118,20 @@ class KnowledgeRagRequest(BaseModel):
     query: str
     top_k: int = 6
     knowledge_space_id: str | None = None
+
+
+class KnowledgeQualityFeedbackRequest(BaseModel):
+    related_event_id: str
+    feedback_value: str
+    feedback_comment: str | None = None
+    citation_chunk_id: str | None = None
+    citation_document_id: str | None = None
+
+
+class KnowledgeCitationClickRequest(BaseModel):
+    related_event_id: str
+    citation_chunk_id: str | None = None
+    citation_document_id: str | None = None
 
 
 class KnowledgeSpaceRequest(BaseModel):
@@ -719,6 +737,67 @@ def ask_knowledge_rag(
         trace_id=get_trace_id(request),
         user=user,
     )
+
+
+@router.get("/api/knowledge/quality/metrics")
+def get_knowledge_quality_metrics(
+    request: Request,
+    event_type: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    since_days: int = Query(default=30, ge=1, le=365),
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_any_permission_or_roles(
+        user,
+        {"knowledge.quality.read", KNOWLEDGE_MANAGE_PERMISSION},
+        {"knowledge_owner", "rd_owner"},
+    )
+    return knowledge_quality_metrics_response(
+        store(request),
+        event_type=event_type,
+        limit=limit,
+        since_days=since_days,
+        trace_id=get_trace_id(request),
+    )
+
+
+@router.post("/api/knowledge/quality/feedback")
+def create_knowledge_quality_feedback(
+    request: Request,
+    payload: KnowledgeQualityFeedbackRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    event = record_knowledge_quality_event(
+        store(request),
+        citation_chunk_id=payload.citation_chunk_id,
+        citation_document_id=payload.citation_document_id,
+        event_type="feedback",
+        feedback_comment=payload.feedback_comment,
+        feedback_value=payload.feedback_value,
+        related_event_id=payload.related_event_id,
+        trace_id=get_trace_id(request),
+        user=user,
+    )
+    return envelope(event, get_trace_id(request))
+
+
+@router.post("/api/knowledge/quality/citation-click")
+def create_knowledge_citation_click(
+    request: Request,
+    payload: KnowledgeCitationClickRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    event = record_knowledge_quality_event(
+        store(request),
+        citation_chunk_id=payload.citation_chunk_id,
+        citation_count=1,
+        citation_document_id=payload.citation_document_id,
+        event_type="citation_click",
+        related_event_id=payload.related_event_id,
+        trace_id=get_trace_id(request),
+        user=user,
+    )
+    return envelope(event, get_trace_id(request))
 
 
 @router.get("/api/knowledge/deposits")

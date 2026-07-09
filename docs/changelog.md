@@ -7,6 +7,10 @@
 ## [Unreleased]
 
 ### Added
+- 系统健康告警中心补齐事件闭环：新增 `system_alert_incidents`、`system_alert_subscriptions`、`knowledge_quality_events` 结构表，`PATCH /api/system/alerts/{alert_id}` 支持认领、处理中、关闭、忽略并记录负责人、关闭原因和复盘，`POST /api/system/alerts/subscriptions` 支持创建告警订阅；系统健康页同步展示告警状态、趋势和订阅摘要。
+- 知识中心质量闭环新增持久化观测：`POST /api/knowledge/search` 与 `/api/knowledge/rag` 自动记录检索/RAG 质量事件，新增 `/api/knowledge/quality/metrics`、`/api/knowledge/quality/feedback`、`/api/knowledge/quality/citation-click` 支持无结果率、引用点击率、有用/无用反馈和 RAG 引用准确率 proxy 汇总。
+- 新增帮助中心维护脚本：`scripts/check_help_center_assets.mjs` 校验帮助文档路由、截图文件和截图过期状态，`scripts/capture_help_screenshots.mjs` 使用 Playwright 按路由刷新帮助截图。
+- 审计事件新增 CSV 导出接口 `GET /api/audit/events/export`，复用审计事件筛选条件导出最近 1000 条摘要记录。
 - 系统管理“系统健康”升级为平台治理运维台：`GET /api/system/health` 新增 `operations` 聚合，覆盖系统健康告警中心、AI 任务执行运维台、知识中心质量闭环、产品接入完整度评分、权限诊断增强、钉钉授权生命周期管理、帮助截图覆盖和数据归档策略；前端同步展示七块治理视图、评分条、告警列表和运维跳转入口。
 - 新增系统管理“系统健康”配置体检中心：后端 `GET /api/system/health` 聚合 PostgreSQL、Redis、pgvector、MinIO/S3、SMTP、钉钉登录、钉钉 MCP、模型网关、知识质量、AI 执行器、定时作业、观测告警和产品初始化状态；前端新增 `/system/health` 页面展示整体状态、优先处理项、分类检查、最近错误和修复建议，并提供执行诊断、权限诊断、模型网关和插件运维快捷入口。
 - 产品管理新增“产品接入向导”：按产品主数据、版本模块、Git 资源、知识空间、插件连接、角色范围和系统健康复检串联新产品接入路径；viewer 仅可查看向导，不展示新增入口。
@@ -29,6 +33,9 @@
 - Bug 管理新增“推进 AI 任务”能力：`POST /api/bugs/{bug_id}/promote-ai-task` 会创建 `bug_fix` AI Task，写入 Bug 自动化任务引用并默认复用研发执行器策略自动启动，前端行操作新增“AI处理”入口。
 
 ### Changed
+- 产品接入完整度评分进一步纳入插件连接、产品权限范围和最近健康状态；权限诊断返回保存角色前风险预检、菜单权限缺口自动修复建议、用户视角菜单预览说明和 viewer/read/write/admin scope 对比；钉钉生命周期返回个人/系统/应用授权边界说明和连接授权主体摘要。
+- 系统健康页新增安全审计治理卡片，展示敏感配置审批策略、高风险二次确认、密钥引用校验、直接密钥配置数量、审计导出入口和近 7 天管理员周报摘要，全程不回显密钥值。
+- AI 任务执行运维台新增失败原因分类分布，并明确重试、取消、超时扫描和 dead-letter 策略摘要，便于从系统健康页定位队列稳定性问题。
 - 研发执行器策略列表新增“命中提示”，新增/编辑弹窗新增“命中预览”，可提前看到通用策略、产品专用策略、优先级和同级冲突对最终命中的影响。
 - 研发执行器策略新增“代码提交方式”配置：默认保持 AI Task 完成后人工确认，策略设为自动提交时会在 Runner 成功后自动通过 Review 并请求合入隔离 worktree。
 - 研发执行器策略新增/编辑入口不再提供“代码巡检整改”任务类型；代码巡检 finding 先进入 Bug，Bug 确认后统一通过“Bug 修复”策略推进 AI Task，历史 `code_inspection_remediation` 仅保留老任务和老策略展示兼容。
@@ -47,6 +54,7 @@
 - 拆分 Bug、产品、需求和任务中心页面的纯 helper 逻辑，页面容器重新回到架构行数预算内。
 
 ### Fixed
+- 删除知识文档时同步清理关联 `knowledge_assets` 记录，并通过对象存储适配器尽力删除 MinIO/S3 或本地对象文件；接口返回 `object_cleanup` 说明删除数量和外部对象清理错误。
 - 修复钉钉官方 MCP 新增连接弹窗中 URL Key 认证字段排版拥挤的问题，“查询参数名”和“URL Key / 密钥引用”改为响应式网格展示，避免 label、必填标记和说明错位。
 - 修复知识中心沉淀审核“全链路”会跳转离开当前工作台的问题，改为页内弹窗展示并保留当前操作上下文。
 - 修复定时作业错过执行时间后“下次运行”仍停留在过去时间的问题：Cron/Interval 作业会在列表读取和运行完成后推进到下一次未来时间。

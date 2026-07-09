@@ -326,6 +326,14 @@ class PostgresSnapshotRepository:
                     cursor,
                     "094_rd_task_executor_policy_code_change_review_mode.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "095_system_health_center.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "096_platform_operations_quality_loop.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -359,6 +367,59 @@ class PostgresSnapshotRepository:
             settings,
             actor_id=actor_id,
             audit_event=audit_event,
+        )
+
+    def list_system_alert_incidents(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        return self._platform_operations_repository.list_system_alert_incidents(limit=limit)
+
+    def upsert_system_alert_incidents(
+        self,
+        alerts: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return self._platform_operations_repository.upsert_system_alert_incidents(alerts)
+
+    def update_system_alert_incident(
+        self,
+        alert_id: str,
+        *,
+        close_reason: str | None = None,
+        owner: str | None = None,
+        postmortem: str | None = None,
+        status: str | None = None,
+        actor_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        return self._platform_operations_repository.update_system_alert_incident(
+            alert_id,
+            close_reason=close_reason,
+            owner=owner,
+            postmortem=postmortem,
+            status=status,
+            actor_id=actor_id,
+        )
+
+    def list_system_alert_subscriptions(self) -> list[dict[str, Any]]:
+        return self._platform_operations_repository.list_system_alert_subscriptions()
+
+    def save_system_alert_subscription(self, subscription: dict[str, Any]) -> dict[str, Any]:
+        return self._platform_operations_repository.save_system_alert_subscription(subscription)
+
+    def insert_knowledge_quality_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        return self._platform_operations_repository.insert_knowledge_quality_event(event)
+
+    def list_knowledge_quality_events(
+        self,
+        *,
+        event_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return self._platform_operations_repository.list_knowledge_quality_events(
+            event_type=event_type,
+            limit=limit,
+        )
+
+    def knowledge_quality_summary(self, *, since_days: int = 30) -> dict[str, Any]:
+        return self._platform_operations_repository.knowledge_quality_summary(
+            since_days=since_days,
         )
 
     def load_product_config(self) -> dict[str, Any]:

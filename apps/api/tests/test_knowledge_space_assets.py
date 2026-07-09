@@ -115,15 +115,21 @@ def test_knowledge_space_folder_asset_upload_and_search_are_permission_filtered(
     assert reviewer_documents.status_code == 403
     assert reviewer_documents.json()["detail"]["code"] == "FORBIDDEN"
 
-    viewer_results = client.post(
+    viewer_search = client.post(
         "/api/knowledge/search",
         headers=viewer_headers,
         json={"query": "space-secret-token", "knowledge_space_id": space["id"], "top_k": 5},
-    ).json()["data"]["items"]
+    )
+    assert viewer_search.status_code == 200
+    viewer_search_data = viewer_search.json()["data"]
+    viewer_results = viewer_search_data["items"]
     assert [item["document_id"] for item in viewer_results] == [document["id"]]
     assert viewer_results[0]["source"]["knowledge_space_id"] == space["id"]
     assert viewer_results[0]["source"]["folder_id"] == folder["id"]
     assert viewer_results[0]["source"]["asset_id"] == document["source_asset_id"]
+    assert viewer_search_data["metrics"]["quality_event_id"].startswith(
+        "knowledge_quality_event_",
+    )
 
     rag_answer = client.post(
         "/api/knowledge/rag",
@@ -135,6 +141,40 @@ def test_knowledge_space_folder_asset_upload_and_search_are_permission_filtered(
     assert rag_data["citations"][0]["document_id"] == document["id"]
     assert rag_data["metrics"]["citation_count"] == 1
     assert rag_data["metrics"]["no_result"] is False
+    assert rag_data["metrics"]["quality_event_id"].startswith("knowledge_quality_event_")
+
+    feedback_response = client.post(
+        "/api/knowledge/quality/feedback",
+        headers=viewer_headers,
+        json={
+            "related_event_id": rag_data["metrics"]["quality_event_id"],
+            "feedback_value": "useful",
+            "citation_document_id": document["id"],
+        },
+    )
+    assert feedback_response.status_code == 200
+    assert feedback_response.json()["data"]["feedback_value"] == "useful"
+
+    citation_click_response = client.post(
+        "/api/knowledge/quality/citation-click",
+        headers=viewer_headers,
+        json={
+            "related_event_id": rag_data["metrics"]["quality_event_id"],
+            "citation_document_id": document["id"],
+        },
+    )
+    assert citation_click_response.status_code == 200
+    assert citation_click_response.json()["data"]["event_type"] == "citation_click"
+
+    quality_metrics = client.get(
+        "/api/knowledge/quality/metrics",
+        headers=admin_headers,
+    )
+    assert quality_metrics.status_code == 200
+    quality_summary = quality_metrics.json()["data"]["summary"]
+    assert quality_summary["query_count"] >= 2
+    assert quality_summary["feedback_count"] == 1
+    assert quality_summary["citation_click_count"] == 1
 
     reviewer_results = client.post(
         "/api/knowledge/search",

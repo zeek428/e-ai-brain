@@ -159,10 +159,15 @@ export type SystemHealthRecommendationRecord = {
 
 export type SystemHealthAlertRecord = {
   action_href?: string | null;
+  acknowledged_at?: string | null;
+  close_reason?: string | null;
   component?: string | null;
+  first_seen_at?: string | null;
   id: string;
+  last_seen_at?: string | null;
   message?: string | null;
   owner?: string | null;
+  postmortem?: string | null;
   severity: string;
   source?: string;
   status: string;
@@ -172,6 +177,7 @@ export type SystemHealthAlertRecord = {
 export type SystemHealthOperations = {
   ai_executor_ops?: {
     controls?: Array<{ description: string; label: string; target: string }>;
+    failure_reason_distribution?: Array<{ count?: number; reason?: string }>;
     latest_failures?: Array<{
       error_code?: string | null;
       error_message?: string | null;
@@ -180,6 +186,7 @@ export type SystemHealthOperations = {
       updated_at?: string | null;
     }>;
     runner_health?: Record<string, unknown>;
+    policies?: Record<string, unknown>;
     summary?: Record<string, unknown>;
     task_status_counts?: Record<string, number>;
   };
@@ -190,9 +197,14 @@ export type SystemHealthOperations = {
       low_count: number;
       medium_count: number;
       open_count: number;
+      resolving_count?: number;
     };
+    subscriptions?: Array<Record<string, unknown>>;
+    trend?: Array<Record<string, unknown>>;
   };
   dingtalk_lifecycle?: {
+    authorization_boundaries?: Array<Record<string, unknown>>;
+    authorization_subjects?: Array<Record<string, unknown>>;
     login?: Record<string, unknown>;
     mcp?: {
       connection_count?: number;
@@ -222,7 +234,9 @@ export type SystemHealthOperations = {
     summary?: Record<string, unknown>;
   };
   permission_diagnostics?: {
+    auto_fix_suggestions?: Array<Record<string, unknown>>;
     diagnostics?: Array<Record<string, unknown>>;
+    scope_comparison?: Record<string, Record<string, number>>;
     summary?: Record<string, unknown>;
   };
   product_onboarding_scores?: {
@@ -232,13 +246,30 @@ export type SystemHealthOperations = {
       missing_items?: string[];
       module_count?: number;
       name: string;
+      permission_scope_count?: number;
+      plugin_connection_count?: number;
       product_id: string;
+      recent_health_status?: string;
       related_system_count?: number;
       score: number;
       status: string;
       version_count?: number;
     }>;
     summary?: Record<string, unknown>;
+  };
+  security_audit_governance?: {
+    admin_weekly_report?: Record<string, unknown>;
+    audit_export?: Record<string, unknown>;
+    high_risk_confirmation?: Record<string, unknown>;
+    secret_ref_validation?: {
+      direct_secret_count?: number;
+      invalid_ref_count?: number;
+      issues?: Array<Record<string, unknown>>;
+      ref_count?: number;
+      status?: string;
+      supported_formats?: string[];
+    };
+    sensitive_config_approval?: Record<string, unknown>;
   };
 };
 

@@ -8,8 +8,10 @@ from typing import Any
 
 from fastapi import Request
 
+from app.api.deps import api_error
 from app.core.config import Settings
 from app.services.knowledge_index_health import knowledge_index_health_response
+from app.services.knowledge_quality import knowledge_quality_summary
 from app.services.platform_status import health_payload
 from app.services.product_config_context import (
     list_product_git_repository_records,
@@ -614,10 +616,83 @@ def _knowledge_spaces_for_health(current_store: Any) -> list[dict[str, Any]]:
     return [dict(space) for space in iterable if isinstance(space, dict)]
 
 
-def _product_onboarding_scores(current_store: Any) -> dict[str, Any]:
+def _connection_product_ids(connection: dict[str, Any]) -> set[str]:
+    request_config = connection.get("request_config")
+    if not isinstance(request_config, dict):
+        return set()
+    candidates: list[Any] = [
+        request_config.get("product_id"),
+        (request_config.get("query") or {}).get("product_id")
+        if isinstance(request_config.get("query"), dict)
+        else None,
+    ]
+    source_filters = request_config.get("source_filters")
+    if isinstance(source_filters, dict):
+        for value in source_filters.values():
+            if isinstance(value, dict):
+                candidates.append(value.get("product_id"))
+    product_ids: set[str] = set()
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            product_ids.add(candidate.strip())
+        elif isinstance(candidate, list):
+            product_ids.update(str(item).strip() for item in candidate if str(item).strip())
+    return product_ids
+
+
+def _product_plugin_counts(current_store: Any) -> dict[str, int]:
+    connections = _items_from_store(current_store, "list_plugin_connections", "plugin_connections")
+    counts: dict[str, int] = {}
+    for connection in connections:
+        if str(connection.get("status") or "").lower() not in {"active", "enabled"}:
+            continue
+        for product_id in _connection_product_ids(connection):
+            counts[product_id] = counts.get(product_id, 0) + 1
+    return counts
+
+
+def _product_permission_scope_counts(
+    *,
+    current_store: Any,
+    request: Request | None,
+) -> dict[str, int]:
+    repository = None
+    if request is not None:
+        repository = getattr(request.app.state, "authorization_repository", None)
+    repository = repository or _runtime_repository(current_store)
+    if repository is None:
+        return {}
+    try:
+        matrix = build_rbac_policy_matrix(repository)
+    except Exception:  # pragma: no cover - defensive around partial repositories
+        return {}
+    counts: dict[str, int] = {}
+    for row in matrix.get("rows") or []:
+        for scope in row.get("scopes") or []:
+            if not isinstance(scope, dict):
+                continue
+            if str(scope.get("scope_type") or "") not in {"product", "global"}:
+                continue
+            scope_id = str(scope.get("scope_id") or "")
+            if not scope_id:
+                continue
+            counts[scope_id] = counts.get(scope_id, 0) + 1
+    return counts
+
+
+def _product_onboarding_scores(
+    current_store: Any,
+    *,
+    request: Request | None = None,
+) -> dict[str, Any]:
     products = list_product_records(current_store, active_only=False)
     active_products = [product for product in products if product.get("status") != "archived"]
     documents = _knowledge_documents_for_health(current_store)
+    plugin_counts = _product_plugin_counts(current_store)
+    permission_scope_counts = _product_permission_scope_counts(
+        current_store=current_store,
+        request=request,
+    )
     products_payload: list[dict[str, Any]] = []
     for product in active_products:
         product_id = str(product.get("id") or "")
@@ -647,23 +722,27 @@ def _product_onboarding_scores(current_store: Any) -> dict[str, Any]:
             if str(document.get("product_id") or "") == product_id
             and document.get("index_status") != "archived"
         ]
+        plugin_connection_count = plugin_counts.get(product_id, 0)
+        permission_scope_count = (
+            permission_scope_counts.get(product_id, 0) + permission_scope_counts.get("*", 0)
+        )
 
         score = 0
         missing_items: list[str] = []
         if product.get("name") and product.get("status") == "active":
-            score += 20
+            score += 15
         else:
             missing_items.append("产品主数据未启用或缺名称")
         if active_versions:
-            score += 20
+            score += 15
         else:
             missing_items.append("未维护可用迭代版本")
         if active_modules:
-            score += 15
+            score += 10
         else:
             missing_items.append("未维护产品模块")
         if active_git_repositories:
-            score += 20
+            score += 15
         else:
             missing_items.append("未绑定代码仓库")
         if product_documents:
@@ -674,6 +753,14 @@ def _product_onboarding_scores(current_store: Any) -> dict[str, Any]:
             score += 10
         else:
             missing_items.append("未维护关联系统")
+        if plugin_connection_count:
+            score += 10
+        else:
+            missing_items.append("未绑定可用插件连接")
+        if permission_scope_count:
+            score += 10
+        else:
+            missing_items.append("未配置产品权限范围")
 
         if score >= 80:
             status = "ready"
@@ -688,9 +775,14 @@ def _product_onboarding_scores(current_store: Any) -> dict[str, Any]:
                 "missing_items": missing_items,
                 "module_count": len(active_modules),
                 "name": product.get("name") or product_id,
+                "permission_scope_count": permission_scope_count,
+                "plugin_connection_count": plugin_connection_count,
                 "product_id": product_id,
                 "related_system_count": len(active_related_systems),
                 "score": score,
+                "recent_health_status": "healthy"
+                if score >= 80
+                else ("attention" if score >= 50 else "at_risk"),
                 "status": status,
                 "version_count": len(active_versions),
             },
@@ -772,6 +864,19 @@ def _ai_executor_ops(current_store: Any) -> dict[str, Any]:
         ),
         reverse=True,
     )[:5]
+    failure_reason_counts: dict[str, int] = {}
+    for task in tasks:
+        if str(task.get("status") or "").lower() not in {"cancelled", "dead_letter", "failed", "timed_out"}:
+            continue
+        reason = (
+            task.get("failure_reason")
+            or task.get("error_code")
+            or task.get("dead_letter_reason")
+            or task.get("status")
+            or "unknown"
+        )
+        normalized_reason = _redact_error_summary(str(reason)) or "unknown"
+        failure_reason_counts[normalized_reason] = failure_reason_counts.get(normalized_reason, 0) + 1
     total_capacity = sum(max(0, int(runner.get("max_concurrent_tasks") or 0)) for runner in runners)
     running_total = status_counts.get("claimed", 0) + status_counts.get("running", 0)
     queued_count = status_counts.get("queued", 0)
@@ -820,6 +925,19 @@ def _ai_executor_ops(current_store: Any) -> dict[str, Any]:
             "runner_status_counts": runner_status_counts,
             "total_runner_count": len(runners),
         },
+        "failure_reason_distribution": [
+            {"count": count, "reason": reason}
+            for reason, count in sorted(
+                failure_reason_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:8]
+        ],
+        "policies": {
+            "cancel_strategy": "支持取消 queued/claimed/running 等任务并保留审计事件。",
+            "dead_letter_strategy": "租约多次失效或超过重试上限后进入 dead_letter，需人工确认。",
+            "retry_strategy": "failed、timed_out、dead_letter、cancelled 可重新入队。",
+            "timeout_strategy": "超时扫描会释放过期租约，并按可靠性策略重排或转死信。",
+        },
         "summary": {
             "dead_letter_count": status_counts.get("dead_letter", 0),
             "failed_total": failed_total,
@@ -862,12 +980,56 @@ def _knowledge_quality_loop(
     pending_deposits = [
         item for item in deposits if str(item.get("status") or "").lower() == "pending"
     ]
+    quality_metrics = knowledge_quality_summary(current_store, since_days=30)
+    stale_days = int(os.getenv("KNOWLEDGE_DOC_STALE_DAYS", "180") or "180")
+    now = datetime.now(UTC)
+    stale_documents = [
+        document
+        for document in documents
+        if (
+            (
+                _updated_at := _parse_datetime(
+                    document.get("updated_at") or document.get("created_at"),
+                )
+            )
+            is not None
+        )
+        and (now - _updated_at).days >= stale_days
+        and str(document.get("index_status") or "").lower() not in {"archived", "deleted"}
+    ]
+    low_quality_documents = [
+        document
+        for document in documents
+        if str(document.get("index_status") or "").lower()
+        in {"index_failed", "pending_index", "importing"}
+        or (
+            str(document.get("index_status") or "").lower()
+            in {"indexed", "text_indexed", "vector_indexed"}
+            and int(document.get("chunk_count") or 0) == 0
+        )
+    ]
+    no_result_rate = quality_metrics.get("no_result_rate")
+    citation_click_rate = quality_metrics.get("citation_click_rate")
+    citation_accuracy = quality_metrics.get("rag_citation_accuracy_proxy")
+    query_count = int(quality_metrics.get("query_count") or 0)
     return {
         "feedback_loop": {
-            "citation_accuracy_status": "instrumentation_pending",
-            "no_result_rate_status": "instrumentation_pending",
-            "rag_feedback_status": "instrumentation_pending",
-            "recommendation": "建议补充检索日志、RAG 引用反馈和无结果率指标，形成召回质量闭环。",
+            "citation_accuracy_status": "observed" if citation_accuracy is not None else "waiting_feedback",
+            "citation_click_rate": citation_click_rate,
+            "citation_click_status": "observed" if citation_click_rate is not None else "waiting_clicks",
+            "metrics_window_days": quality_metrics.get("since_days"),
+            "no_result_rate": no_result_rate,
+            "no_result_rate_status": "observed" if query_count else "waiting_queries",
+            "rag_citation_accuracy_proxy": citation_accuracy,
+            "rag_feedback_status": "observed"
+            if int(quality_metrics.get("feedback_count") or 0)
+            else "waiting_feedback",
+            "recommendation": (
+                "继续引导用户点击引用和提交有用/无用反馈，优先治理无结果查询和过期文档。"
+                if query_count
+                else "检索日志已接入，等待真实搜索和 RAG 问答产生质量样本。"
+            ),
+            "summary": quality_metrics,
         },
         "quality_gates": [
             {
@@ -888,18 +1050,46 @@ def _knowledge_quality_loop(
                 "target": "沉淀候选及时审核",
                 "value": len(pending_deposits),
             },
+            {
+                "metric": "no_result_rate",
+                "passed": no_result_rate is None or no_result_rate <= 0.3,
+                "target": "近 30 天检索/RAG 无结果率不超过 30%",
+                "value": no_result_rate,
+            },
+            {
+                "metric": "outdated_documents",
+                "passed": len(stale_documents) == 0,
+                "target": f"{stale_days} 天未更新文档需要复核",
+                "value": len(stale_documents),
+            },
         ],
         "summary": {
             "active_space_count": sum(1 for item in spaces if item.get("status") == "active"),
+            "citation_click_rate": citation_click_rate,
             "failed_import_job_count": len(failed_import_jobs),
             "index_failed_documents": failed_documents,
+            "low_quality_document_count": len(low_quality_documents),
+            "no_result_rate": no_result_rate,
+            "outdated_document_count": len(stale_documents),
             "pending_deposit_count": len(pending_deposits),
+            "quality_event_count": query_count,
+            "rag_citation_accuracy_proxy": citation_accuracy,
             "searchable_documents": searchable_documents,
             "searchable_ratio": _ratio(searchable_documents, total_documents),
             "status_counts": status_counts,
             "total_documents": total_documents,
             "total_space_count": len(spaces),
         },
+        "watch_documents": [
+            {
+                "document_id": document.get("id"),
+                "index_status": document.get("index_status"),
+                "reason": "过期" if document in stale_documents else "低质量",
+                "title": document.get("title"),
+                "updated_at": document.get("updated_at"),
+            }
+            for document in [*low_quality_documents[:3], *stale_documents[:3]]
+        ][:5],
     }
 
 
@@ -944,6 +1134,17 @@ def _permission_diagnostics(*, current_store: Any, request: Request) -> dict[str
     rows_without_scope = [row for row in active_rows if not row.get("scope_count")]
     high_risk_rows = [row for row in rows if int(row.get("high_risk_permission_count") or 0) > 0]
     menu_gap_rows = [row for row in rows if row.get("missing_menu_permission_codes")]
+    scope_comparison: dict[str, dict[str, int]] = {}
+    for row in active_rows:
+        role_code = str(row.get("role_code") or "")
+        access_levels = {"admin": 0, "read": 0, "viewer": 0, "write": 0}
+        for scope in row.get("scopes") or []:
+            if not isinstance(scope, dict):
+                continue
+            access_level = str(scope.get("access_level") or "read")
+            if access_level in access_levels:
+                access_levels[access_level] += 1
+        scope_comparison[role_code] = access_levels
     diagnostics: list[dict[str, Any]] = []
     if menu_gap_rows:
         diagnostics.append(
@@ -969,8 +1170,25 @@ def _permission_diagnostics(*, current_store: Any, request: Request) -> dict[str
                 "role_codes": [row.get("role_code") for row in rows_without_scope[:6]],
             },
         )
+    auto_fix_suggestions = [
+        {
+            "action": "sync_menu_required_permissions",
+            "description": "保存角色前自动补齐菜单必需权限，避免菜单可见但接口 Forbidden。",
+            "role_codes": [row.get("role_code") for row in menu_gap_rows[:6]],
+        }
+    ] if menu_gap_rows else []
+    risk_precheck = {
+        "blocking_issue_count": len(menu_gap_rows) + len(rows_without_scope),
+        "high_risk_permission_role_count": len(high_risk_rows),
+        "status": "attention"
+        if menu_gap_rows or rows_without_scope or high_risk_rows
+        else "pass",
+    }
     return {
+        "auto_fix_suggestions": auto_fix_suggestions,
         "diagnostics": diagnostics,
+        "risk_precheck": risk_precheck,
+        "scope_comparison": scope_comparison,
         "summary": {
             "active_role_count": len(active_rows),
             "permission_count": (matrix.get("summary") or {}).get("permission_count", 0),
@@ -978,6 +1196,11 @@ def _permission_diagnostics(*, current_store: Any, request: Request) -> dict[str
             "roles_with_menu_permission_gaps": len(menu_gap_rows),
             "roles_without_scope": len(rows_without_scope),
             "scope_grant_count": (matrix.get("summary") or {}).get("scope_grant_count", 0),
+        },
+        "user_menu_preview": {
+            "available": True,
+            "description": "可基于用户有效角色和菜单授权预览该用户实际可见菜单，排查菜单和接口权限不一致。",
+            "target": "/system/roles",
         },
     }
 
@@ -1049,7 +1272,54 @@ def _dingtalk_lifecycle(
             if identity.get("corp_name") or settings.dingtalk_corp_name_map.get(str(identity.get("corp_id") or ""))
         }
     )
+    authorization_subjects: list[dict[str, Any]] = []
+    for connection in connections:
+        auth_config = connection.get("auth_config") if isinstance(connection.get("auth_config"), dict) else {}
+        request_config = (
+            connection.get("request_config") if isinstance(connection.get("request_config"), dict) else {}
+        )
+        query = request_config.get("query") if isinstance(request_config.get("query"), dict) else {}
+        subject_type = (
+            query.get("auth_subject_type")
+            or auth_config.get("auth_subject_type")
+            or auth_config.get("subject_type")
+            or "unknown"
+        )
+        corp_id = query.get("corp_id") or auth_config.get("corp_id")
+        authorization_subjects.append(
+            {
+                "boundary": {
+                    "app": "应用授权适合统一应用身份访问企业级资源。",
+                    "system": "系统授权适合企业统一连接，由管理员集中维护和轮换。",
+                    "user": "个人授权仅代表当前授权用户，适合个人空间或临时连接。",
+                    "unknown": "未声明授权主体，建议补齐个人/系统/应用边界。",
+                }.get(str(subject_type), "未声明授权主体，建议补齐个人/系统/应用边界。"),
+                "connection_id": connection.get("id"),
+                "connection_name": connection.get("name"),
+                "corp_id": corp_id,
+                "corp_name": settings.dingtalk_corp_name_map.get(str(corp_id or "")),
+                "subject_type": subject_type,
+            },
+        )
     return {
+        "authorization_boundaries": [
+            {
+                "description": "个人授权代表具体用户，授权失效或人员离职会影响连接。",
+                "subject_type": "user",
+                "title": "个人授权",
+            },
+            {
+                "description": "系统授权代表企业统一连接，适合知识库等共享能力。",
+                "subject_type": "system",
+                "title": "系统授权",
+            },
+            {
+                "description": "应用授权代表钉钉应用身份，适合稳定的企业级自动化。",
+                "subject_type": "app",
+                "title": "应用授权",
+            },
+        ],
+        "authorization_subjects": authorization_subjects,
         "login": {
             "allowed_corp_count": len(settings.dingtalk_allowed_corp_id_set),
             "auto_provision": settings.dingtalk_auto_provision,
@@ -1148,6 +1418,184 @@ def _help_screenshot_status() -> dict[str, Any]:
     }
 
 
+def _secret_ref_validity(secret_ref: str) -> tuple[str, str | None]:
+    if secret_ref.startswith("env:"):
+        env_name = secret_ref.removeprefix("env:").strip()
+        if not env_name:
+            return "invalid", "env 引用缺少变量名"
+        if os.getenv(env_name):
+            return "valid", None
+        return "unresolved", "当前运行时未解析到对应环境变量"
+    if secret_ref.startswith("vault/"):
+        return "valid", None
+    return "warning", "建议统一使用 env:NAME 或 vault/path 形式"
+
+
+def _collect_secret_refs(
+    value: Any,
+    *,
+    prefix: str,
+    refs: list[dict[str, Any]],
+    direct_secret_paths: list[str],
+) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            normalized_key = str(key).lower()
+            if normalized_key in {"secret_ref", "token_ref", "api_key_ref"} or normalized_key.endswith("_secret_ref"):
+                if isinstance(child, str) and child.strip():
+                    status, issue = _secret_ref_validity(child.strip())
+                    refs.append(
+                        {
+                            "issue": issue,
+                            "path": path,
+                            "status": status,
+                            "type": child.split(":", 1)[0] if ":" in child else child.split("/", 1)[0],
+                        }
+                    )
+                else:
+                    refs.append(
+                        {
+                            "issue": "密钥引用为空",
+                            "path": path,
+                            "status": "missing",
+                            "type": "unknown",
+                        }
+                    )
+                continue
+            if normalized_key in {"api_key", "client_secret", "password", "secret", "smtp_password", "token"}:
+                if child:
+                    direct_secret_paths.append(path)
+                continue
+            _collect_secret_refs(
+                child,
+                prefix=path,
+                refs=refs,
+                direct_secret_paths=direct_secret_paths,
+            )
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _collect_secret_refs(
+                child,
+                prefix=f"{prefix}[{index}]",
+                refs=refs,
+                direct_secret_paths=direct_secret_paths,
+            )
+
+
+def _security_audit_governance(current_store: Any) -> dict[str, Any]:
+    settings_payload = system_settings_response(current_store)
+    plugin_connections = _items_from_store(
+        current_store,
+        "list_plugin_connections",
+        "plugin_connections",
+    )
+    model_gateway_configs = _items_from_store(
+        current_store,
+        "list_model_gateway_configs",
+        "model_gateway_configs",
+    )
+    audit_events = _items_from_store(current_store, "list_audit_events", "audit_events")
+    secret_refs: list[dict[str, Any]] = []
+    direct_secret_paths: list[str] = []
+    _collect_secret_refs(
+        settings_payload.get("email_delivery") or {},
+        prefix="system_settings.email_delivery",
+        refs=secret_refs,
+        direct_secret_paths=direct_secret_paths,
+    )
+    for connection in plugin_connections:
+        connection_id = connection.get("id") or connection.get("code") or "unknown"
+        _collect_secret_refs(
+            connection.get("auth_config") or {},
+            prefix=f"plugin_connection.{connection_id}.auth_config",
+            refs=secret_refs,
+            direct_secret_paths=direct_secret_paths,
+        )
+    for config in model_gateway_configs:
+        config_id = config.get("id") or config.get("name") or "unknown"
+        _collect_secret_refs(
+            config,
+            prefix=f"model_gateway_config.{config_id}",
+            refs=secret_refs,
+            direct_secret_paths=direct_secret_paths,
+        )
+
+    now = datetime.now(UTC)
+    recent_audit_events = [
+        event
+        for event in audit_events
+        if (
+            event_at := _parse_datetime(event.get("created_at"))
+        ) is not None
+        and (now - event_at).days <= 7
+    ]
+    sensitive_event_keywords = (
+        "auth",
+        "config",
+        "gateway",
+        "permission",
+        "role",
+        "secret",
+        "settings",
+        "user",
+    )
+    sensitive_config_events = [
+        event
+        for event in recent_audit_events
+        if any(keyword in str(event.get("event_type") or "").lower() for keyword in sensitive_event_keywords)
+    ]
+    high_risk_operation_events = [
+        event
+        for event in recent_audit_events
+        if str(event.get("result") or "").lower() in {"blocked", "failed"}
+        or "delete" in str(event.get("event_type") or "").lower()
+        or "admin" in str(event.get("event_type") or "").lower()
+    ]
+    invalid_refs = [
+        ref
+        for ref in secret_refs
+        if ref.get("status") in {"invalid", "missing", "unresolved", "warning"}
+    ]
+    return {
+        "admin_weekly_report": {
+            "available": True,
+            "high_risk_operation_count": len(high_risk_operation_events),
+            "recommendation": "每周汇总审计、告警、权限和敏感配置变更，发送给管理员复盘。",
+            "sensitive_config_change_count": len(sensitive_config_events),
+            "total_audit_events": len(recent_audit_events),
+            "window_days": 7,
+        },
+        "audit_export": {
+            "endpoint": "/api/audit/events/export",
+            "supported": True,
+        },
+        "high_risk_confirmation": {
+            "required": True,
+            "controls": [
+                "AI Runner 高风险指令要求平台审批",
+                "系统告警关闭必须填写关闭原因",
+                "敏感配置变更只记录字段和配置状态，不记录密钥值",
+            ],
+            "status": "configured",
+        },
+        "secret_ref_validation": {
+            "direct_secret_count": len(direct_secret_paths),
+            "invalid_ref_count": len(invalid_refs),
+            "issues": invalid_refs[:6],
+            "ref_count": len(secret_refs),
+            "status": "attention" if invalid_refs else "pass",
+            "supported_formats": ["env:NAME", "vault/path"],
+        },
+        "sensitive_config_approval": {
+            "policy": "敏感配置变更需要系统管理员权限；正式接入审批流前，系统健康页持续暴露变更数量和高风险确认状态。",
+            "required": True,
+            "status": "monitored",
+            "tracked_event_count_7d": len(sensitive_config_events),
+        },
+    }
+
+
 def _alert_severity_for_check(check: dict[str, Any]) -> str:
     status = str(check.get("status") or "")
     rank = _status_rank(status)
@@ -1160,7 +1608,71 @@ def _alert_severity_for_check(check: dict[str, Any]) -> str:
     return "low"
 
 
-def _alert_center(checks: list[dict[str, Any]], operations: dict[str, Any]) -> dict[str, Any]:
+def _alert_incidents_from_memory(current_store: Any) -> dict[str, dict[str, Any]]:
+    incidents = getattr(current_store, "system_alert_incidents", None)
+    if not isinstance(incidents, dict):
+        return {}
+    return incidents
+
+
+def _persist_alert_incidents(
+    current_store: Any,
+    alerts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    repository = _runtime_repository(current_store)
+    upsert = getattr(repository, "upsert_system_alert_incidents", None)
+    list_incidents = getattr(repository, "list_system_alert_incidents", None)
+    if callable(upsert) and callable(list_incidents):
+        try:
+            return upsert([{**alert, "metadata": {"origin": "system_health"}} for alert in alerts])
+        except Exception:  # pragma: no cover - defensive around partially migrated runtimes
+            return alerts
+    incidents = _alert_incidents_from_memory(current_store)
+    now = _now_iso()
+    for alert in alerts:
+        existing = incidents.get(str(alert["id"])) or {}
+        incidents[str(alert["id"])] = {
+            **alert,
+            "created_at": existing.get("created_at") or now,
+            "first_seen_at": existing.get("first_seen_at") or now,
+            "last_seen_at": now,
+            "owner": existing.get("owner") or alert.get("owner"),
+            "status": existing.get("status") or "open",
+            "updated_at": now,
+        }
+    return sorted(
+        [dict(item) for item in incidents.values()],
+        key=lambda item: (str(item.get("status") or ""), str(item.get("last_seen_at") or "")),
+        reverse=True,
+    )
+
+
+def _alert_history_trend(alerts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    trend: dict[str, dict[str, Any]] = {}
+    for alert in alerts:
+        seen_at = _parse_datetime(alert.get("last_seen_at") or alert.get("created_at"))
+        if seen_at is None:
+            continue
+        day = seen_at.date().isoformat()
+        entry = trend.setdefault(
+            day,
+            {"closed": 0, "date": day, "high": 0, "opened": 0, "total": 0},
+        )
+        entry["total"] += 1
+        if alert.get("severity") == "high":
+            entry["high"] += 1
+        if alert.get("status") in {"closed", "ignored"}:
+            entry["closed"] += 1
+        else:
+            entry["opened"] += 1
+    return [trend[day] for day in sorted(trend.keys())[-14:]]
+
+
+def _alert_center(
+    current_store: Any,
+    checks: list[dict[str, Any]],
+    operations: dict[str, Any],
+) -> dict[str, Any]:
     alerts: list[dict[str, Any]] = []
     owner_by_category = {
         "AI 执行运维": "平台运维",
@@ -1227,17 +1739,45 @@ def _alert_center(checks: list[dict[str, Any]], operations: dict[str, Any]) -> d
                 "title": f"{alert.get('connection_name') or '钉钉连接'} 授权即将到期",
             },
         )
+    alerts = _persist_alert_incidents(current_store, alerts)
     severity_order = {"high": 0, "medium": 1, "low": 2, "info": 3}
-    alerts.sort(key=lambda item: (severity_order.get(str(item.get("severity")), 9), str(item.get("title"))))
+    status_order = {"open": 0, "acknowledged": 1, "resolving": 2, "ignored": 3, "closed": 4}
+    alerts.sort(
+        key=lambda item: (
+            status_order.get(str(item.get("status")), 9),
+            severity_order.get(str(item.get("severity")), 9),
+            str(item.get("title")),
+        )
+    )
+    open_alerts = [item for item in alerts if item.get("status") not in {"closed", "ignored"}]
     return {
         "alerts": alerts[:12],
+        "subscriptions": _list_alert_subscriptions(current_store),
         "summary": {
-            "high_count": sum(1 for item in alerts if item.get("severity") == "high"),
-            "low_count": sum(1 for item in alerts if item.get("severity") == "low"),
-            "medium_count": sum(1 for item in alerts if item.get("severity") == "medium"),
-            "open_count": len(alerts),
+            "acknowledged_count": sum(1 for item in alerts if item.get("status") == "acknowledged"),
+            "closed_count": sum(1 for item in alerts if item.get("status") == "closed"),
+            "high_count": sum(1 for item in open_alerts if item.get("severity") == "high"),
+            "low_count": sum(1 for item in open_alerts if item.get("severity") == "low"),
+            "medium_count": sum(1 for item in open_alerts if item.get("severity") == "medium"),
+            "open_count": len(open_alerts),
+            "resolving_count": sum(1 for item in alerts if item.get("status") == "resolving"),
         },
+        "trend": _alert_history_trend(alerts),
     }
+
+
+def _list_alert_subscriptions(current_store: Any) -> list[dict[str, Any]]:
+    repository = _runtime_repository(current_store)
+    list_subscriptions = getattr(repository, "list_system_alert_subscriptions", None)
+    if callable(list_subscriptions):
+        try:
+            return list_subscriptions()
+        except Exception:  # pragma: no cover - defensive around partially migrated runtimes
+            return []
+    subscriptions = getattr(current_store, "system_alert_subscriptions", {})
+    if isinstance(subscriptions, dict):
+        return [dict(item) for item in subscriptions.values()]
+    return []
 
 
 def _operations_snapshot(
@@ -1267,10 +1807,126 @@ def _operations_snapshot(
             current_store=current_store,
             request=request,
         ),
-        "product_onboarding_scores": _product_onboarding_scores(current_store),
+        "product_onboarding_scores": _product_onboarding_scores(
+            current_store,
+            request=request,
+        ),
+        "security_audit_governance": _security_audit_governance(current_store),
     }
-    operations["alert_center"] = _alert_center(checks, operations)
+    operations["alert_center"] = _alert_center(current_store, checks, operations)
     return operations
+
+
+def update_system_alert_incident_response(
+    *,
+    alert_id: str,
+    close_reason: str | None,
+    current_store: Any,
+    owner: str | None,
+    postmortem: str | None,
+    status: str | None,
+    trace_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    from app.core.trace import envelope
+
+    normalized_status = status.strip() if isinstance(status, str) and status.strip() else None
+    if normalized_status is not None and normalized_status not in {
+        "acknowledged",
+        "closed",
+        "ignored",
+        "open",
+        "resolving",
+    }:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported alert status")
+    normalized_close_reason = close_reason.strip() if close_reason else None
+    if normalized_status in {"closed", "ignored"} and not normalized_close_reason:
+        raise api_error(400, "VALIDATION_ERROR", "close_reason is required when closing alert")
+
+    repository = _runtime_repository(current_store)
+    update_incident = getattr(repository, "update_system_alert_incident", None)
+    actor_id = str(user.get("id") or user.get("username") or "")
+    if callable(update_incident):
+        incident = update_incident(
+            alert_id,
+            close_reason=normalized_close_reason,
+            owner=owner.strip() if owner else None,
+            postmortem=postmortem.strip() if postmortem else None,
+            status=normalized_status,
+            actor_id=actor_id or None,
+        )
+    else:
+        incidents = _alert_incidents_from_memory(current_store)
+        incident = incidents.get(alert_id)
+        if incident is not None:
+            if normalized_status:
+                incident["status"] = normalized_status
+            if owner:
+                incident["owner"] = owner.strip()
+            if normalized_close_reason:
+                incident["close_reason"] = normalized_close_reason
+            if postmortem:
+                incident["postmortem"] = postmortem.strip()
+            if normalized_status in {"acknowledged", "resolving"}:
+                incident.setdefault("acknowledged_at", _now_iso())
+                incident.setdefault("acknowledged_by", actor_id)
+            if normalized_status in {"closed", "ignored"}:
+                incident["resolved_at"] = _now_iso()
+                incident["resolved_by"] = actor_id
+            incident["updated_at"] = _now_iso()
+    if incident is None:
+        raise api_error(404, "ALERT_NOT_FOUND", "System alert incident not found")
+    return envelope(incident, trace_id)
+
+
+def save_system_alert_subscription_response(
+    *,
+    channel: str,
+    current_store: Any,
+    enabled: bool,
+    scope: str | None,
+    severity_min: str,
+    target: str,
+    trace_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    from app.core.trace import envelope
+
+    normalized_channel = channel.strip()
+    if normalized_channel not in {"dingtalk", "email", "in_app", "webhook"}:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported alert subscription channel")
+    normalized_severity = severity_min.strip() if severity_min else "medium"
+    if normalized_severity not in {"high", "info", "low", "medium"}:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported alert severity")
+    normalized_target = target.strip()
+    if not normalized_target:
+        raise api_error(400, "VALIDATION_ERROR", "target is required")
+    repository = _runtime_repository(current_store)
+    save_subscription = getattr(repository, "save_system_alert_subscription", None)
+    new_id = getattr(repository, "next_id", None)
+    subscription_id = (
+        new_id("system_alert_subscription")
+        if callable(new_id)
+        else current_store.new_id("system_alert_subscription")
+    )
+    subscription = {
+        "channel": normalized_channel,
+        "created_by": user.get("id"),
+        "enabled": enabled,
+        "id": subscription_id,
+        "scope": scope.strip() if scope else "global",
+        "severity_min": normalized_severity,
+        "target": normalized_target,
+    }
+    if callable(save_subscription):
+        saved = save_subscription(subscription)
+    else:
+        subscriptions = getattr(current_store, "system_alert_subscriptions", None)
+        if not isinstance(subscriptions, dict):
+            subscriptions = {}
+        saved = {**subscription, "created_at": _now_iso(), "updated_at": _now_iso()}
+        subscriptions[subscription_id] = saved
+    return envelope(saved, trace_id)
 
 
 def system_health_report(

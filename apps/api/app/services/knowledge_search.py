@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 from app.api.deps import api_error
@@ -16,6 +17,7 @@ from app.services.model_gateway import (
     ModelGatewayConfigError,
     call_model_gateway_embeddings_with_context,
 )
+from app.services.knowledge_quality import record_knowledge_quality_event_best_effort
 
 KNOWLEDGE_SEARCHABLE_STATUSES = {"indexed", "text_indexed", "vector_indexed"}
 
@@ -112,6 +114,7 @@ def knowledge_search_response(
     trace_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    started_at = perf_counter()
     query = ensure_non_blank(query_value, "query").lower()
     candidates, query_embedding_result = knowledge_search_candidates(
         current_store=current_store,
@@ -135,13 +138,29 @@ def knowledge_search_response(
         )
     )
     returned_items = items[: max(1, min(top_k, 50))]
+    metrics = knowledge_search_metrics(
+        items=returned_items,
+        total_candidates=len(items),
+    )
+    quality_event = record_knowledge_quality_event_best_effort(
+        current_store,
+        event_type="search",
+        hit_count=len(returned_items),
+        knowledge_space_id=knowledge_space_id,
+        latency_ms=round((perf_counter() - started_at) * 1000, 2),
+        metadata={"top_k": top_k, "total_candidates": len(items)},
+        no_result=len(returned_items) == 0,
+        query=query_value,
+        retrieval_modes=metrics.get("retrieval_modes") or {},
+        trace_id=trace_id,
+        user=user,
+    )
+    if quality_event:
+        metrics["quality_event_id"] = quality_event.get("id")
     return envelope(
         {
             "items": returned_items,
-            "metrics": knowledge_search_metrics(
-                items=returned_items,
-                total_candidates=len(items),
-            ),
+            "metrics": metrics,
             "total": len(items),
         },
         trace_id,

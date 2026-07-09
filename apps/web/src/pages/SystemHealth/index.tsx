@@ -249,6 +249,24 @@ function alertSeverityTag(severity: string) {
   return <Tag color={colorMap[severity] ?? 'default'}>{labelMap[severity] ?? severity}</Tag>;
 }
 
+function alertStatusTag(status: string) {
+  const labelMap: Record<string, string> = {
+    acknowledged: '已认领',
+    closed: '已关闭',
+    ignored: '已忽略',
+    open: '打开',
+    resolving: '处理中',
+  };
+  const colorMap: Record<string, string> = {
+    acknowledged: 'blue',
+    closed: 'green',
+    ignored: 'default',
+    open: 'orange',
+    resolving: 'purple',
+  };
+  return <Tag color={colorMap[status] ?? 'default'}>{labelMap[status] ?? status}</Tag>;
+}
+
 function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthOperations }) {
   const alertCenter = operations.alert_center;
   const aiExecutor = operations.ai_executor_ops;
@@ -257,13 +275,21 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
   const permission = operations.permission_diagnostics;
   const dingtalk = operations.dingtalk_lifecycle;
   const helpAndRetention = operations.help_and_retention;
+  const securityAudit = operations.security_audit_governance;
   const products = productScores?.products ?? [];
   const alerts = alertCenter?.alerts ?? [];
+  const alertTrend = alertCenter?.trend ?? [];
   const retentionPolicies = helpAndRetention?.retention_policies ?? [];
   const screenshots = helpAndRetention?.screenshots?.screenshots ?? [];
+  const feedbackLoop = knowledge?.feedback_loop ?? {};
+  const failureReasons = aiExecutor?.failure_reason_distribution ?? [];
+  const scopeComparison = permission?.scope_comparison ?? {};
+  const permissionSuggestions = permission?.auto_fix_suggestions ?? [];
+  const dingtalkSubjects = dingtalk?.authorization_subjects ?? [];
   const qualityGates = knowledge?.quality_gates ?? [];
   const permissionDiagnostics = permission?.diagnostics ?? [];
   const keyExpiryAlerts = dingtalk?.mcp?.key_expiry_alerts ?? [];
+  const secretRefIssues = securityAudit?.secret_ref_validation?.issues ?? [];
 
   return (
     <section className="system-health-panel system-health-operations">
@@ -290,6 +316,7 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
             />
             <OperationMetric title="中优先级" value={alertCenter?.summary?.medium_count ?? 0} />
             <OperationMetric title="低优先级" value={alertCenter?.summary?.low_count ?? 0} />
+            <OperationMetric title="处理中" value={alertCenter?.summary?.resolving_count ?? 0} />
           </div>
           <div className="system-health-ops-list">
             {alerts.slice(0, 5).map((alert) => (
@@ -301,13 +328,26 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
               >
                 <span>
                   {alertSeverityTag(alert.severity)}
+                  {alertStatusTag(alert.status)}
                   <strong>{alert.title}</strong>
                 </span>
-                <Text type="secondary">{alert.owner || '平台管理员'}</Text>
+                <Text type="secondary">
+                  {alert.owner || '平台管理员'}
+                  {alert.last_seen_at ? ` · ${formatDisplayDateTime(alert.last_seen_at)}` : ''}
+                </Text>
               </button>
             ))}
             {!alerts.length ? <Empty description="暂无打开告警" image={Empty.PRESENTED_IMAGE_SIMPLE} /> : null}
           </div>
+          {alertTrend.length ? (
+            <div className="system-health-quality-gates" aria-label="告警历史趋势">
+              {alertTrend.slice(-4).map((item) => (
+                <Tag key={String(item.date)}>
+                  {String(item.date)}：打开 {formatMetricValue(item.opened)} / 关闭 {formatMetricValue(item.closed)}
+                </Tag>
+              ))}
+            </div>
+          ) : null}
         </article>
 
         <article className="system-health-ops-card">
@@ -331,6 +371,15 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
             队列压力 {formatMetricValue(percentMetric(aiExecutor?.summary?.queue_pressure))}%；
             Runner {formatMetricValue(aiExecutor?.runner_health?.active_runner_count)} 个可用。
           </Text>
+          {failureReasons.length ? (
+            <div className="system-health-quality-gates">
+              {failureReasons.slice(0, 4).map((item) => (
+                <Tag color="red" key={String(item.reason)}>
+                  {String(item.reason)}：{formatMetricValue(item.count)}
+                </Tag>
+              ))}
+            </div>
+          ) : null}
         </article>
 
         <article className="system-health-ops-card">
@@ -353,6 +402,15 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
               value={formatMetricValue(knowledge?.summary?.index_failed_documents)}
             />
             <OperationMetric title="待审核沉淀" value={formatMetricValue(knowledge?.summary?.pending_deposit_count)} />
+            <OperationMetric
+              title="无结果率"
+              tone={numericMetric(feedbackLoop.no_result_rate) > 0.3 ? 'warning' : 'success'}
+              value={
+                feedbackLoop.no_result_rate === null || feedbackLoop.no_result_rate === undefined
+                  ? '-'
+                  : `${percentMetric(feedbackLoop.no_result_rate)}%`
+              }
+            />
           </div>
           <div className="system-health-quality-gates">
             {qualityGates.slice(0, 3).map((gate) => (
@@ -361,6 +419,10 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
               </Tag>
             ))}
           </div>
+          <Text type="secondary">
+            引用点击率 {feedbackLoop.citation_click_rate === null || feedbackLoop.citation_click_rate === undefined ? '-' : `${percentMetric(feedbackLoop.citation_click_rate)}%`}
+            ，反馈准确率 {feedbackLoop.rag_citation_accuracy_proxy === null || feedbackLoop.rag_citation_accuracy_proxy === undefined ? '-' : `${percentMetric(feedbackLoop.rag_citation_accuracy_proxy)}%`}
+          </Text>
         </article>
 
         <article className="system-health-ops-card system-health-ops-card-wide">
@@ -385,12 +447,16 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
               <div className="system-health-product-score" key={product.product_id}>
                 <div>
                   <strong>{product.name}</strong>
-                  <Text type="secondary">
-                    {product.missing_items?.length ? product.missing_items.join('、') : '接入信息完整'}
-                  </Text>
-                </div>
-                <Progress percent={product.score} size="small" status={product.score >= 80 ? 'success' : 'normal'} />
+                <Text type="secondary">
+                  {product.missing_items?.length ? product.missing_items.join('、') : '接入信息完整'}
+                </Text>
+                <Text type="secondary">
+                  插件 {formatMetricValue(product.plugin_connection_count)} · 权限范围 {formatMetricValue(product.permission_scope_count)} ·
+                  健康 {formatMetricValue(product.recent_health_status)}
+                </Text>
               </div>
+              <Progress percent={product.score} size="small" status={product.score >= 80 ? 'success' : 'normal'} />
+            </div>
             ))}
             {!products.length ? <Empty description="暂无活跃产品" image={Empty.PRESENTED_IMAGE_SIMPLE} /> : null}
           </div>
@@ -425,6 +491,18 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
               type={item.level === 'risk' ? 'warning' : 'info'}
             />
           ))}
+          <div className="system-health-quality-gates">
+            {Object.entries(scopeComparison).slice(0, 4).map(([roleCode, counts]) => (
+              <Tag key={roleCode}>
+                {roleCode}：读 {formatMetricValue((counts as Record<string, unknown>).read)} / 写 {formatMetricValue((counts as Record<string, unknown>).write)}
+              </Tag>
+            ))}
+            {permissionSuggestions.slice(0, 1).map((item) => (
+              <Tag color="gold" key={String(item.action)}>
+                {String(item.action)}
+              </Tag>
+            ))}
+          </div>
         </article>
 
         <article className="system-health-ops-card">
@@ -450,7 +528,61 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
                 {String(item.connection_name || '钉钉连接')}：{formatMetricValue(item.days_left)} 天
               </Tag>
             ))}
+            {dingtalkSubjects.slice(0, 3).map((item) => (
+              <Tag color="blue" key={String(item.connection_id)}>
+                {String(item.connection_name || item.connection_id)}：{String(item.subject_type || 'unknown')}
+              </Tag>
+            ))}
           </div>
+        </article>
+
+        <article className="system-health-ops-card">
+          <div className="system-health-ops-card-heading">
+            <strong>安全审计治理</strong>
+            <Button size="small" type="link" onClick={() => navigateTo('/governance/audit')}>
+              审计
+            </Button>
+          </div>
+          <div className="system-health-ops-metric-grid">
+            <OperationMetric
+              title="审计周报"
+              tone={securityAudit?.admin_weekly_report?.available ? 'success' : 'warning'}
+              value={securityAudit?.admin_weekly_report?.available ? '可生成' : '待接入'}
+            />
+            <OperationMetric
+              title="敏感变更"
+              value={formatMetricValue(securityAudit?.admin_weekly_report?.sensitive_config_change_count)}
+            />
+            <OperationMetric
+              title="密钥引用"
+              tone={numericMetric(securityAudit?.secret_ref_validation?.invalid_ref_count) ? 'warning' : 'success'}
+              value={`${formatMetricValue(securityAudit?.secret_ref_validation?.ref_count)} / 异常 ${formatMetricValue(securityAudit?.secret_ref_validation?.invalid_ref_count)}`}
+            />
+            <OperationMetric
+              title="直接密钥"
+              value={formatMetricValue(securityAudit?.secret_ref_validation?.direct_secret_count)}
+            />
+          </div>
+          <div className="system-health-quality-gates">
+            <Tag color={securityAudit?.sensitive_config_approval?.required ? 'gold' : 'default'}>
+              敏感配置审批
+            </Tag>
+            <Tag color={securityAudit?.high_risk_confirmation?.required ? 'gold' : 'default'}>
+              高危二次确认
+            </Tag>
+            <Tag color={securityAudit?.audit_export?.supported ? 'green' : 'orange'}>
+              审计导出
+            </Tag>
+            {secretRefIssues.slice(0, 2).map((item) => (
+              <Tag color="orange" key={String(item.path)}>
+                {String(item.path || '密钥引用')}：{String(item.status || '异常')}
+              </Tag>
+            ))}
+          </div>
+          <Text type="secondary">
+            近 7 天审计 {formatMetricValue(securityAudit?.admin_weekly_report?.total_audit_events)}
+            条，高风险操作 {formatMetricValue(securityAudit?.admin_weekly_report?.high_risk_operation_count)} 条。
+          </Text>
         </article>
 
         <article className="system-health-ops-card system-health-ops-card-wide">

@@ -15,6 +15,7 @@ from app.core.repositories.lifecycle_dashboard import LifecycleDashboardReadRepo
 from app.core.repositories.mock_writeback import MockWritebackReadRepository
 from app.core.repositories.model_gateway import ModelGatewayReadRepository
 from app.core.repositories.operational_collection import OperationalCollectionReadRepository
+from app.core.repositories.platform_operations import PlatformOperationsRepository
 from app.core.repositories.plugins import PluginReadRepository
 from app.core.repositories.product_config import ProductConfigReadRepository
 from app.core.repositories.requirements import RequirementReadRepository
@@ -36,6 +37,7 @@ def install_snapshot_repositories(repository: Any) -> None:
             audit_events,
         ),
     )
+    repository._platform_operations_repository = PlatformOperationsRepository(repository._connect)
     repository._table_maintenance_repository = TableMaintenanceRepository()
     repository._repository_callbacks = RepositoryCallbackHub(
         repository._table_maintenance_repository,
