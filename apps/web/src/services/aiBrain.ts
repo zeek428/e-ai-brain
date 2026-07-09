@@ -409,6 +409,7 @@ export { fetchProductVersionDashboard } from './productVersionDashboardClient';
 export type { ProductVersionDashboard } from './productVersionDashboardClient';
 export {
   copySystemRole,
+  cleanupSystemObjectStorage,
   createSystemAlertRule,
   createSystemAlertSubscription,
   createManagementUser,

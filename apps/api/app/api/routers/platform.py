@@ -12,6 +12,7 @@ from app.services.platform_status import health_payload, long_memory_status_payl
 from app.services.system_health import (
     admin_weekly_report_response,
     list_system_alert_rules_response,
+    object_storage_cleanup_response,
     save_system_alert_rule_response,
     save_system_alert_subscription_response,
     system_health_report,
@@ -58,6 +59,11 @@ class SystemAlertRulePatchRequest(BaseModel):
     notification_scope: str | None = None
     condition_json: dict[str, Any] | None = None
     enabled: bool | None = None
+
+
+class SystemObjectStorageCleanupRequest(BaseModel):
+    confirmed: bool = False
+    reason: str | None = None
 
 
 @router.get("/health")
@@ -209,6 +215,23 @@ def get_admin_weekly_report(
         days=days,
         request=request,
         settings=settings,
+        trace_id=trace_id,
+        user=user,
+    )
+
+
+@router.post("/api/system/object-storage/cleanup")
+def cleanup_system_object_storage(
+    request: Request,
+    payload: SystemObjectStorageCleanupRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.settings.manage"})
+    trace_id = get_trace_id(request)
+    return object_storage_cleanup_response(
+        confirmed=payload.confirmed,
+        current_store=store(request),
+        reason=payload.reason,
         trace_id=trace_id,
         user=user,
     )

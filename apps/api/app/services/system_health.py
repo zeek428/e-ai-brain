@@ -1911,6 +1911,41 @@ def _retention_cleanup_status(
 
 
 def _object_storage_cleanup_status(current_store: Any) -> dict[str, Any]:
+    candidates = _object_storage_cleanup_candidates(current_store)
+    orphan_assets = candidates["orphan_assets"]
+    incomplete_assets = candidates["incomplete_assets"]
+    cleanup_failed_assets = candidates["cleanup_failed_assets"]
+    cleanup_ready_assets = candidates["cleanup_ready_assets"]
+    metadata_only_assets = candidates["metadata_only_assets"]
+    blocked_assets = candidates["blocked_assets"]
+    status = "attention" if orphan_assets or incomplete_assets or cleanup_failed_assets else "pass"
+    return {
+        "blocked_asset_count": len(blocked_assets),
+        "cleanup_failed_count": len(cleanup_failed_assets),
+        "cleanup_ready_count": len(cleanup_ready_assets),
+        "incomplete_asset_count": len(incomplete_assets),
+        "metadata_only_cleanup_count": len(metadata_only_assets),
+        "orphan_asset_count": len(orphan_assets),
+        "recommendation": (
+            "发现文档已删除但对象引用仍存在或对象信息不完整，建议复核知识文档删除结果并补偿清理对象存储。"
+            if status == "attention"
+            else "知识文档删除会同步尝试清理对象存储，当前未发现孤儿对象引用。"
+        ),
+        "sample_assets": [
+            {
+                "asset_id": asset.get("id"),
+                "bucket": asset.get("bucket"),
+                "document_id": asset.get("document_id"),
+                "object_key": asset.get("object_key"),
+            }
+            for asset in [*orphan_assets[:3], *incomplete_assets[:3], *cleanup_failed_assets[:3]]
+        ][:6],
+        "status": status,
+        "tracked_asset_count": len(candidates["assets"]),
+    }
+
+
+def _object_storage_cleanup_candidates(current_store: Any) -> dict[str, list[dict[str, Any]]]:
     assets = _items_from_repository_payload(
         current_store,
         memory_attr="knowledge_assets",
@@ -1935,28 +1970,161 @@ def _object_storage_cleanup_status(current_store: Any) -> dict[str, Any]:
         if (asset.get("metadata") or {}).get("object_cleanup_error")
         or asset.get("object_cleanup_error")
     ]
-    status = "attention" if orphan_assets or incomplete_assets or cleanup_failed_assets else "pass"
+    cleanup_ready_assets = [
+        asset for asset in orphan_assets if asset.get("bucket") and asset.get("object_key")
+    ]
+    metadata_only_assets = [
+        asset for asset in orphan_assets if not asset.get("bucket") or not asset.get("object_key")
+    ]
+    blocked_assets = [
+        asset for asset in [*incomplete_assets, *cleanup_failed_assets] if asset not in orphan_assets
+    ]
     return {
-        "cleanup_failed_count": len(cleanup_failed_assets),
-        "incomplete_asset_count": len(incomplete_assets),
-        "orphan_asset_count": len(orphan_assets),
-        "recommendation": (
-            "发现文档已删除但对象引用仍存在或对象信息不完整，建议复核知识文档删除结果并补偿清理对象存储。"
-            if status == "attention"
-            else "知识文档删除会同步尝试清理对象存储，当前未发现孤儿对象引用。"
-        ),
-        "sample_assets": [
-            {
-                "asset_id": asset.get("id"),
-                "bucket": asset.get("bucket"),
-                "document_id": asset.get("document_id"),
-                "object_key": asset.get("object_key"),
-            }
-            for asset in [*orphan_assets[:3], *incomplete_assets[:3], *cleanup_failed_assets[:3]]
-        ][:6],
-        "status": status,
-        "tracked_asset_count": len(assets),
+        "assets": assets,
+        "blocked_assets": blocked_assets,
+        "cleanup_failed_assets": cleanup_failed_assets,
+        "cleanup_ready_assets": cleanup_ready_assets,
+        "incomplete_assets": incomplete_assets,
+        "metadata_only_assets": metadata_only_assets,
+        "orphan_assets": orphan_assets,
     }
+
+
+def _persist_object_storage_asset_cleanup(
+    current_store: Any,
+    *,
+    audit_event: dict[str, Any],
+    cleaned_asset_ids: set[str],
+) -> None:
+    repository = _runtime_repository(current_store)
+    load_knowledge = getattr(repository, "load_knowledge", None)
+    save_knowledge = getattr(repository, "save_knowledge", None)
+    if callable(load_knowledge) and callable(save_knowledge):
+        payload = load_knowledge()
+        if not isinstance(payload, dict):
+            payload = {}
+        assets = payload.get("knowledge_assets", {})
+        if isinstance(assets, dict):
+            payload["knowledge_assets"] = {
+                asset_id: asset
+                for asset_id, asset in assets.items()
+                if str(asset_id) not in cleaned_asset_ids
+                and str((asset or {}).get("id") or "") not in cleaned_asset_ids
+            }
+        payload["audit_events"] = [audit_event]
+        save_knowledge(payload)
+        return
+    memory_assets = getattr(current_store, "knowledge_assets", None)
+    if isinstance(memory_assets, dict):
+        for asset_id in cleaned_asset_ids:
+            memory_assets.pop(asset_id, None)
+
+
+def object_storage_cleanup_response(
+    *,
+    confirmed: bool,
+    current_store: Any,
+    reason: str | None,
+    trace_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    from app.core.trace import envelope
+    from app.services.knowledge_deposits import record_audit_event
+    from app.services.object_storage import object_storage
+
+    candidates = _object_storage_cleanup_candidates(current_store)
+    cleanup_ready_assets = candidates["cleanup_ready_assets"]
+    metadata_only_assets = candidates["metadata_only_assets"]
+    blocked_assets = candidates["blocked_assets"]
+    cleaned_asset_ids: set[str] = set()
+    deleted_objects: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    storage = object_storage()
+    if confirmed:
+        for asset in cleanup_ready_assets:
+            asset_id = str(asset.get("id") or "")
+            bucket = str(asset.get("bucket") or "")
+            object_key = str(asset.get("object_key") or "")
+            try:
+                storage.delete_object(bucket=bucket, object_key=object_key)
+            except Exception as exc:  # pragma: no cover - depends on external object storage
+                errors.append(
+                    {
+                        "asset_id": asset_id,
+                        "error": exc.__class__.__name__,
+                        "object_key": object_key,
+                    }
+                )
+                continue
+            if asset_id:
+                cleaned_asset_ids.add(asset_id)
+            deleted_objects.append(
+                {
+                    "asset_id": asset_id,
+                    "bucket": bucket,
+                    "object_key": object_key,
+                }
+            )
+        for asset in metadata_only_assets:
+            asset_id = str(asset.get("id") or "")
+            if asset_id:
+                cleaned_asset_ids.add(asset_id)
+        if cleaned_asset_ids:
+            audit_event = record_audit_event(
+                current_store,
+                event_type="system.object_storage.cleanup",
+                actor_id=user["id"],
+                subject_type="system_object_storage",
+                subject_id="knowledge_assets",
+            )
+            audit_event["payload"] = {
+                "blocked_asset_count": len(blocked_assets),
+                "cleaned_asset_count": len(cleaned_asset_ids),
+                "deleted_object_count": len(deleted_objects),
+                "dry_run": False,
+                "error_count": len(errors),
+                "reason_configured": bool(reason and reason.strip()),
+            }
+            _persist_object_storage_asset_cleanup(
+                current_store,
+                audit_event=audit_event,
+                cleaned_asset_ids=cleaned_asset_ids,
+            )
+    status = "dry_run"
+    if confirmed:
+        if errors and cleaned_asset_ids:
+            status = "partial"
+        elif errors:
+            status = "failed"
+        else:
+            status = "completed"
+    return envelope(
+        {
+            "blocked_asset_count": len(blocked_assets),
+            "cleaned_asset_ids": sorted(cleaned_asset_ids),
+            "confirmed": confirmed,
+            "deleted_objects": deleted_objects,
+            "dry_run": not confirmed,
+            "errors": errors,
+            "metadata_only_cleanup_count": len(metadata_only_assets),
+            "object_delete_count": len(deleted_objects),
+            "planned_asset_cleanup_count": len(cleanup_ready_assets) + len(metadata_only_assets),
+            "planned_object_delete_count": len(cleanup_ready_assets),
+            "reason_configured": bool(reason and reason.strip()),
+            "sample_blocked_assets": [
+                {
+                    "asset_id": asset.get("id"),
+                    "bucket": asset.get("bucket"),
+                    "document_id": asset.get("document_id"),
+                    "object_key": asset.get("object_key"),
+                }
+                for asset in blocked_assets[:6]
+            ],
+            "status": status,
+            "trace_id": trace_id,
+        },
+        trace_id,
+    )
 
 
 def _fallback_help_screenshot_targets() -> list[dict[str, Any]]:

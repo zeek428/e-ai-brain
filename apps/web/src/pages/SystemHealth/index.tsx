@@ -34,6 +34,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   cancelAiExecutorTask,
+  cleanupSystemObjectStorage,
   createSystemAlertRule,
   createSystemAlertSubscription,
   fetchSystemAdminWeeklyReport,
@@ -347,6 +348,7 @@ function SystemHealthOperationsPanel({
 }) {
   const [executorActionLoading, setExecutorActionLoading] = useState<string>();
   const [alertActionLoading, setAlertActionLoading] = useState<string>();
+  const [objectCleanupLoading, setObjectCleanupLoading] = useState(false);
   const [weeklyReportLoading, setWeeklyReportLoading] = useState(false);
   const [selectedAlert, setSelectedAlert] = useState<SystemHealthAlertRecord>();
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false);
@@ -579,6 +581,58 @@ function SystemHealthOperationsPanel({
       onOk: () => runExecutorAction('retry', taskId),
       title: '重试 AI 执行任务',
     });
+  };
+
+  const runObjectStorageCleanup = async () => {
+    setObjectCleanupLoading(true);
+    try {
+      const plan = await cleanupSystemObjectStorage({ confirmed: false });
+      if (!plan.planned_asset_cleanup_count) {
+        message.info('当前没有可同步清理的孤儿知识资产');
+        return;
+      }
+      Modal.confirm({
+        content: (
+          <div className="system-health-cleanup-confirm">
+            <Paragraph>
+              将删除 {plan.planned_object_delete_count} 个孤儿对象，并清理 {plan.planned_asset_cleanup_count}
+              条知识资产引用。对象删除失败时会保留资产记录并返回错误。
+            </Paragraph>
+            {plan.blocked_asset_count ? (
+              <Text type="secondary">
+                另有 {plan.blocked_asset_count} 条资产因信息不完整或仍有关联文档，仅纳入人工复核。
+              </Text>
+            ) : null}
+          </div>
+        ),
+        okButtonProps: { danger: true },
+        okText: '确认同步清理',
+        onOk: async () => {
+          setObjectCleanupLoading(true);
+          try {
+            const result = await cleanupSystemObjectStorage({
+              confirmed: true,
+              reason: '管理员从系统健康页同步清理孤儿知识资产',
+            });
+            if (result.errors.length) {
+              message.warning(`已清理 ${result.cleaned_asset_ids.length} 条资产，${result.errors.length} 个对象删除失败`);
+            } else {
+              message.success(`已同步清理 ${result.cleaned_asset_ids.length} 条资产引用`);
+            }
+            await Promise.resolve(onRefresh?.());
+          } catch (cleanupError) {
+            message.error(formatRemoteRowsError(normalizeRemoteRowsError(cleanupError)));
+          } finally {
+            setObjectCleanupLoading(false);
+          }
+        },
+        title: '确认对象存储同步清理',
+      });
+    } catch (cleanupError) {
+      message.error(formatRemoteRowsError(normalizeRemoteRowsError(cleanupError)));
+    } finally {
+      setObjectCleanupLoading(false);
+    }
   };
 
   return (
@@ -1178,13 +1232,30 @@ function SystemHealthOperationsPanel({
               </div>
             ) : null}
             <div>
-              <strong>对象存储同步清理</strong>
+              <Space size={8}>
+                <strong>对象存储同步清理</strong>
+                <Button
+                  disabled={!numericMetric(objectStorageCleanup.orphan_asset_count)}
+                  loading={objectCleanupLoading}
+                  size="small"
+                  onClick={() => void runObjectStorageCleanup()}
+                >
+                  预检并清理
+                </Button>
+              </Space>
               <Text type="secondary">
                 跟踪对象 {formatMetricValue(objectStorageCleanup.tracked_asset_count)}
                 {' · '}
                 孤儿引用 {formatMetricValue(objectStorageCleanup.orphan_asset_count)}
                 {' · '}
                 信息不完整 {formatMetricValue(objectStorageCleanup.incomplete_asset_count)}
+              </Text>
+              <Text type="secondary">
+                可删除对象 {formatMetricValue(objectStorageCleanup.cleanup_ready_count)}
+                {' · '}
+                仅清理引用 {formatMetricValue(objectStorageCleanup.metadata_only_cleanup_count)}
+                {' · '}
+                阻断复核 {formatMetricValue(objectStorageCleanup.blocked_asset_count)}
               </Text>
             </div>
           </div>

@@ -4,7 +4,8 @@ from urllib.parse import quote
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import app, settings
+from app.services.object_storage import object_storage
 
 client = TestClient(app)
 
@@ -184,3 +185,82 @@ def test_product_onboarding_score_uses_real_health_signals():
     assert product["recent_health_check"]["failed_plugin_connection_count"] == 1
     assert "插件连接健康检查失败" in product["recent_health_check"]["summary"]
     assert "未配置产品权限范围" not in product["missing_items"]
+
+
+def test_object_storage_cleanup_dry_run_and_confirm(monkeypatch, tmp_path):
+    app.state.store.reset()
+    monkeypatch.setattr(settings, "object_storage_provider", "local")
+    monkeypatch.setattr(settings, "object_storage_local_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "object_storage_bucket", "ai-brain-knowledge")
+    headers = auth_headers()
+    store = app.state.store
+    storage = object_storage()
+    storage.put_bytes(
+        bucket=settings.object_storage_bucket,
+        content=b"orphan pdf",
+        mime_type="application/pdf",
+        object_key="knowledge/deleted.pdf",
+    )
+    store.knowledge_documents["knowledge_document_active"] = {
+        "id": "knowledge_document_active",
+        "index_status": "vector_indexed",
+        "title": "保留文档",
+    }
+    store.knowledge_assets["knowledge_asset_orphan"] = {
+        "bucket": settings.object_storage_bucket,
+        "document_id": "knowledge_document_deleted",
+        "filename": "deleted.pdf",
+        "id": "knowledge_asset_orphan",
+        "object_key": "knowledge/deleted.pdf",
+    }
+    store.knowledge_assets["knowledge_asset_incomplete"] = {
+        "bucket": settings.object_storage_bucket,
+        "document_id": "knowledge_document_active",
+        "filename": "broken.pdf",
+        "id": "knowledge_asset_incomplete",
+        "object_key": "",
+    }
+
+    dry_run = client.post(
+        "/api/system/object-storage/cleanup",
+        headers=headers,
+        json={"confirmed": False},
+    )
+    assert dry_run.status_code == 200
+    plan = dry_run.json()["data"]
+    assert plan["dry_run"] is True
+    assert plan["planned_asset_cleanup_count"] == 1
+    assert plan["planned_object_delete_count"] == 1
+    assert plan["blocked_asset_count"] == 1
+    assert "knowledge_asset_orphan" in store.knowledge_assets
+    assert storage.get_bytes(
+        bucket=settings.object_storage_bucket,
+        object_key="knowledge/deleted.pdf",
+    ) == b"orphan pdf"
+
+    confirmed = client.post(
+        "/api/system/object-storage/cleanup",
+        headers=headers,
+        json={"confirmed": True, "reason": "测试同步清理"},
+    )
+    assert confirmed.status_code == 200
+    result = confirmed.json()["data"]
+    assert result["dry_run"] is False
+    assert result["cleaned_asset_ids"] == ["knowledge_asset_orphan"]
+    assert result["object_delete_count"] == 1
+    assert "knowledge_asset_orphan" not in store.knowledge_assets
+    assert "knowledge_asset_incomplete" in store.knowledge_assets
+    try:
+        storage.get_bytes(
+            bucket=settings.object_storage_bucket,
+            object_key="knowledge/deleted.pdf",
+        )
+    except FileNotFoundError:
+        pass
+    else:  # pragma: no cover - defensive assertion clarity
+        raise AssertionError("orphan object was not deleted")
+    assert any(
+        event["event_type"] == "system.object_storage.cleanup"
+        and event["payload"]["cleaned_asset_count"] == 1
+        for event in store.audit_events
+    )

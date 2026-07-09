@@ -204,8 +204,11 @@ describe('SystemHealthPage', () => {
               total_expired_count: 3,
             },
             object_storage_cleanup: {
+              blocked_asset_count: 1,
               cleanup_failed_count: 0,
+              cleanup_ready_count: 1,
               incomplete_asset_count: 1,
+              metadata_only_cleanup_count: 0,
               orphan_asset_count: 1,
               recommendation: '发现文档已删除但对象引用仍存在或对象信息不完整，建议复核知识文档删除结果并补偿清理对象存储。',
               status: 'attention',
@@ -446,6 +449,9 @@ describe('SystemHealthPage', () => {
     expect(screen.getByText('retention-check')).toBeInTheDocument();
     expect(screen.getByText('对象存储同步清理')).toBeInTheDocument();
     expect(screen.getByText(/孤儿引用 1/)).toBeInTheDocument();
+    expect(screen.getByText(/可删除对象 1/)).toBeInTheDocument();
+    expect(screen.getByText(/阻断复核 1/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '预检并清理' })).toBeEnabled();
     expect(screen.getByLabelText('安全审计治理动作')).toHaveTextContent('迁移直接密钥配置');
     expect(screen.getByLabelText('安全审计治理动作')).toHaveTextContent('导出审计证据');
     expect(screen.getByLabelText('安全审计治理动作')).toHaveTextContent('生成管理员周报');

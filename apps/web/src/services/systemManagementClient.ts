@@ -225,6 +225,22 @@ export type SystemAlertRuleMutationPayload = {
   source?: string | null;
 };
 
+export type SystemObjectStorageCleanupResult = {
+  blocked_asset_count: number;
+  cleaned_asset_ids: string[];
+  confirmed: boolean;
+  deleted_objects: Array<Record<string, unknown>>;
+  dry_run: boolean;
+  errors: Array<Record<string, unknown>>;
+  metadata_only_cleanup_count: number;
+  object_delete_count: number;
+  planned_asset_cleanup_count: number;
+  planned_object_delete_count: number;
+  reason_configured: boolean;
+  sample_blocked_assets: Array<Record<string, unknown>>;
+  status: string;
+};
+
 export type SystemAdminWeeklyReport = {
   generated_at: string;
   markdown: string;
@@ -331,8 +347,11 @@ export type SystemHealthOperations = {
       total_expired_count?: number;
     };
     object_storage_cleanup?: {
+      blocked_asset_count?: number;
       cleanup_failed_count?: number;
+      cleanup_ready_count?: number;
       incomplete_asset_count?: number;
+      metadata_only_cleanup_count?: number;
       orphan_asset_count?: number;
       recommendation?: string;
       sample_assets?: Array<Record<string, unknown>>;
@@ -849,6 +868,18 @@ export async function updateSystemAlertRule(
       token,
     },
   );
+}
+
+export async function cleanupSystemObjectStorage(payload: {
+  confirmed?: boolean;
+  reason?: string | null;
+}): Promise<SystemObjectStorageCleanupResult> {
+  const token = requireAccessToken();
+  return apiRequest<SystemObjectStorageCleanupResult>('/api/system/object-storage/cleanup', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
 }
 
 export async function fetchSystemMenuList(
