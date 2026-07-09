@@ -402,6 +402,12 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     assert dingtalk_subject["expires_at"] == "2030-01-01T00:00:00+00:00"
     assert operations["knowledge_quality_loop"]["summary"]["total_documents"] >= 1
     retention = operations["help_and_retention"]
+    help_screenshots = retention["screenshots"]
+    screenshot_routes = {item["route"] for item in help_screenshots["screenshots"]}
+    assert help_screenshots["coverage"]["expected_count"] >= 2
+    assert help_screenshots["coverage"]["ready_count"] >= 2
+    assert {"/assets/products", "/system/health"} <= screenshot_routes
+    assert any(item["source"] == "help_content" for item in help_screenshots["screenshots"])
     assert retention["cleanup_status"]["total_expired_count"] >= 3
     assert any(
         item["policy_key"] == "model_gateway_logs"

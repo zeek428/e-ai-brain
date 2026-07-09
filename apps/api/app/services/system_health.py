@@ -1959,22 +1959,79 @@ def _object_storage_cleanup_status(current_store: Any) -> dict[str, Any]:
     }
 
 
-def _help_screenshot_status() -> dict[str, Any]:
-    root = Path(__file__).resolve().parents[4]
-    expected = [
+def _fallback_help_screenshot_targets() -> list[dict[str, Any]]:
+    return [
         {
             "article": "系统健康",
             "doc_path": "docs/08-help/assets/screenshots/system-health-overview.png",
             "public_path": "apps/web/public/help/screenshots/system-health-overview.png",
             "route": "/system/health",
+            "source": "fallback",
         },
         {
             "article": "产品接入向导",
             "doc_path": "docs/08-help/assets/screenshots/assets-products-onboarding.png",
             "public_path": "apps/web/public/help/screenshots/assets-products-onboarding.png",
             "route": "/assets/products",
+            "source": "fallback",
         },
     ]
+
+
+def _help_screenshot_article_label(alt: str, route: str, filename: str) -> str:
+    label = alt.strip()
+    for suffix in ("页面总览截图", "页面截图", "总览截图", "截图"):
+        if label.endswith(suffix):
+            label = label[: -len(suffix)].strip()
+            break
+    return label or route or filename.removesuffix(".png")
+
+
+def _help_screenshot_targets_from_content(root: Path) -> list[dict[str, Any]]:
+    help_content_path = root / "apps/web/src/pages/Help/helpContent.ts"
+    if not help_content_path.exists():
+        return []
+    try:
+        help_content = help_content_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+
+    current_route = ""
+    current_alt = ""
+    targets: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for line in help_content.splitlines():
+        route_match = re.search(r"route:\s*'([^']+)'", line)
+        if route_match:
+            current_route = route_match.group(1)
+        alt_match = re.search(r"alt:\s*'([^']+)'", line)
+        if alt_match:
+            current_alt = alt_match.group(1)
+        src_match = re.search(r"src:\s*'/help/screenshots/([^']+\.png)'", line)
+        if not src_match:
+            continue
+
+        filename = src_match.group(1)
+        key = (current_route, filename)
+        if key in seen:
+            continue
+        seen.add(key)
+        targets.append(
+            {
+                "article": _help_screenshot_article_label(current_alt, current_route, filename),
+                "doc_path": f"docs/08-help/assets/screenshots/{filename}",
+                "public_path": f"apps/web/public/help/screenshots/{filename}",
+                "route": current_route,
+                "source": "help_content",
+            }
+        )
+        current_alt = ""
+    return targets
+
+
+def _help_screenshot_status() -> dict[str, Any]:
+    root = Path(__file__).resolve().parents[4]
+    expected = _help_screenshot_targets_from_content(root) or _fallback_help_screenshot_targets()
     screenshots: list[dict[str, Any]] = []
     for item in expected:
         doc_file = root / item["doc_path"]

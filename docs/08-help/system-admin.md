@@ -49,7 +49,7 @@
 - 优先处理区聚合当前最需要修复的依赖、配置或运行失败，并支持跳转到对应配置页面。
 - 分类检查覆盖 PostgreSQL、Redis、pgvector、MinIO/S3 对象存储、SMTP、钉钉登录、钉钉 MCP、模型网关、知识质量、AI 执行器、定时作业、观测告警和产品初始化。
 - 快捷入口支持下钻到执行诊断、权限诊断、模型网关和插件运维。
-- 帮助中心维护可运行 `node scripts/check_help_center_assets.mjs` 检查帮助路由、前端/Markdown 截图文件、截图过期状态和双份截图一致性；需要刷新截图时可先运行 `node scripts/capture_help_screenshots.mjs --list-targets` 查看自动派生目标，再使用 `READINESS_BEARER_TOKEN` 或 `--bearer-token` 运行 `node scripts/capture_help_screenshots.mjs`。
+- 帮助中心维护可运行 `node scripts/check_help_center_assets.mjs` 检查帮助路由、前端/Markdown 截图文件、截图过期状态和双份截图一致性；需要刷新截图时可先运行 `node scripts/capture_help_screenshots.mjs --list-targets` 查看自动派生目标，再使用 `READINESS_BEARER_TOKEN` 或 `--bearer-token` 运行 `node scripts/capture_help_screenshots.mjs`。系统健康页会从帮助中心内容自动派生截图覆盖清单，新增截图后应同时提交 public 和 docs 两份图片。
 
 排查建议：
 

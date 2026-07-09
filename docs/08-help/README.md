@@ -116,6 +116,7 @@ delivery-requirements-approve.png
 - 页面改版后，必须检查旧截图是否仍然准确。
 - 维护检查运行 `node scripts/check_help_center_assets.mjs`，会同时校验前端帮助中心截图、Markdown 手册截图、注册路由、截图过期时间、public/docs 双份截图是否一致，以及未被引用的截图资产。
 - 刷新截图前可运行 `node scripts/capture_help_screenshots.mjs --list-targets` 查看从前端帮助内容自动派生出的截图目标；实际截图可使用 `READINESS_BEARER_TOKEN` 或 `--bearer-token` 注入本地登录态后运行 `node scripts/capture_help_screenshots.mjs`。
+- 系统健康页的“帮助截图覆盖”也从前端帮助内容自动派生截图目标；新增帮助截图时不需要再手工维护后端固定列表，但仍需要运行检查脚本确认 public/docs 两份截图一致。
 
 ## 开发完成检查清单
 
