@@ -315,6 +315,23 @@ export type SystemHealthOperations = {
     user_bindings?: Record<string, unknown>;
   };
   help_and_retention?: {
+    cleanup_status?: {
+      cleanup_mode?: string;
+      expired_records?: Array<Record<string, unknown>>;
+      policies?: Array<Record<string, unknown>>;
+      recommendation?: string;
+      status?: string;
+      total_expired_count?: number;
+    };
+    object_storage_cleanup?: {
+      cleanup_failed_count?: number;
+      incomplete_asset_count?: number;
+      orphan_asset_count?: number;
+      recommendation?: string;
+      sample_assets?: Array<Record<string, unknown>>;
+      status?: string;
+      tracked_asset_count?: number;
+    };
     retention_policies?: Array<{
       configured: boolean;
       days: number;

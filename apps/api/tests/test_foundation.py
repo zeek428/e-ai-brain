@@ -284,6 +284,38 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
         "product_id": "product_health_center",
         "status": "active",
     }
+    app.state.store.knowledge_assets["knowledge_asset_orphan"] = {
+        "id": "knowledge_asset_orphan",
+        "bucket": "ai-brain",
+        "document_id": "knowledge_document_deleted",
+        "object_key": "knowledge/deleted.pdf",
+    }
+    app.state.store.knowledge_import_jobs["knowledge_import_job_old"] = {
+        "id": "knowledge_import_job_old",
+        "created_at": "2024-01-01T00:00:00+00:00",
+        "status": "completed",
+    }
+    app.state.store.model_gateway_logs.append(
+        {
+            "id": "model_log_old",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "purpose": "retention-check",
+            "status": "success",
+        }
+    )
+    app.state.store.audit_events.append(
+        {
+            "id": "audit_event_old",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "event_type": "system.settings.updated",
+            "result": "success",
+        }
+    )
+    app.state.store.scheduled_job_runs["scheduled_job_run_old"] = {
+        "id": "scheduled_job_run_old",
+        "created_at": "2024-01-01T00:00:00+00:00",
+        "status": "success",
+    }
     app.state.store.ai_executor_runners["runner_health_center"] = {
         "id": "runner_health_center",
         "name": "本地 Runner",
@@ -349,6 +381,15 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     assert dingtalk_subject["secret_ref_configured"] is True
     assert dingtalk_subject["expires_at"] == "2030-01-01T00:00:00+00:00"
     assert operations["knowledge_quality_loop"]["summary"]["total_documents"] >= 1
+    retention = operations["help_and_retention"]
+    assert retention["cleanup_status"]["total_expired_count"] >= 3
+    assert any(
+        item["policy_key"] == "model_gateway_logs"
+        and item["title"] == "retention-check"
+        for item in retention["cleanup_status"]["expired_records"]
+    )
+    assert retention["object_storage_cleanup"]["orphan_asset_count"] == 1
+    assert retention["object_storage_cleanup"]["sample_assets"][0]["asset_id"] == "knowledge_asset_orphan"
     knowledge_governance = operations["knowledge_quality_loop"]["governance_summary"]
     assert knowledge_governance["governance_candidate_count"] >= 2
     assert knowledge_governance["index_failed_document_count"] >= 1

@@ -165,6 +165,29 @@ describe('SystemHealthPage', () => {
             user_bindings: { active_identity_count: 3 },
           },
           help_and_retention: {
+            cleanup_status: {
+              cleanup_mode: 'manual_review',
+              expired_records: [
+                {
+                  age_days: 420,
+                  id: 'model_log_old',
+                  policy_key: 'model_gateway_logs',
+                  status: 'success',
+                  title: 'retention-check',
+                },
+              ],
+              recommendation: '存在超过保留期的数据，建议先导出审计证据，再由管理员按策略归档或清理。',
+              status: 'attention',
+              total_expired_count: 3,
+            },
+            object_storage_cleanup: {
+              cleanup_failed_count: 0,
+              incomplete_asset_count: 1,
+              orphan_asset_count: 1,
+              recommendation: '发现文档已删除但对象引用仍存在或对象信息不完整，建议复核知识文档删除结果并补偿清理对象存储。',
+              status: 'attention',
+              tracked_asset_count: 5,
+            },
             retention_policies: [
               {
                 configured: false,
@@ -354,6 +377,9 @@ describe('SystemHealthPage', () => {
     expect(screen.getByLabelText('钉钉授权主体清单')).toHaveTextContent('企业 青锋科技');
     expect(screen.getByLabelText('钉钉授权主体清单')).toHaveTextContent('剩余 12 天');
     expect(screen.getByText('帮助截图自动化与数据归档策略')).toBeInTheDocument();
+    expect(screen.getByText('retention-check')).toBeInTheDocument();
+    expect(screen.getByText('对象存储同步清理')).toBeInTheDocument();
+    expect(screen.getByText(/孤儿引用 1/)).toBeInTheDocument();
     expect(screen.getByText('AI Brain')).toBeInTheDocument();
     expect(screen.getByText('SMTP 邮件发送')).toBeInTheDocument();
     expect(screen.getAllByText('钉钉 MCP 连接').length).toBeGreaterThan(0);

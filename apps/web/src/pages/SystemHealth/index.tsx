@@ -367,6 +367,9 @@ function SystemHealthOperationsPanel({
   const alertRules = alertCenter?.rules ?? [];
   const alertTrend = alertCenter?.trend ?? [];
   const retentionPolicies = helpAndRetention?.retention_policies ?? [];
+  const retentionCleanup = helpAndRetention?.cleanup_status ?? {};
+  const retentionExpiredRecords = retentionCleanup.expired_records ?? [];
+  const objectStorageCleanup = helpAndRetention?.object_storage_cleanup ?? {};
   const screenshots = helpAndRetention?.screenshots?.screenshots ?? [];
   const feedbackLoop = knowledge?.feedback_loop ?? {};
   const activeExecutorTasks = aiExecutor?.latest_active_tasks ?? [];
@@ -1081,6 +1084,22 @@ function SystemHealthOperationsPanel({
               title="已配置策略"
               value={retentionPolicies.filter((item) => item.configured).length}
             />
+            <OperationMetric
+              title="过期候选"
+              tone={numericMetric(retentionCleanup.total_expired_count) ? 'warning' : 'success'}
+              value={formatMetricValue(retentionCleanup.total_expired_count)}
+            />
+            <OperationMetric
+              title="对象清理风险"
+              tone={
+                numericMetric(objectStorageCleanup.orphan_asset_count)
+                || numericMetric(objectStorageCleanup.incomplete_asset_count)
+                || numericMetric(objectStorageCleanup.cleanup_failed_count)
+                  ? 'warning'
+                  : 'success'
+              }
+              value={`${formatMetricValue(objectStorageCleanup.orphan_asset_count)} / 异常 ${formatMetricValue(objectStorageCleanup.cleanup_failed_count)}`}
+            />
           </div>
           <div className="system-health-retention-list">
             {retentionPolicies.slice(0, 6).map((item) => (
@@ -1089,6 +1108,33 @@ function SystemHealthOperationsPanel({
                 <Text type="secondary">{item.days} 天 · {item.configured ? item.env : `${item.env} 默认值`}</Text>
               </div>
             ))}
+          </div>
+          <div className="system-health-retention-list" aria-label="数据归档清理体检">
+            {retentionExpiredRecords.slice(0, 4).map((item) => (
+              <div key={`${String(item.policy_key)}:${String(item.id)}`}>
+                <strong>{String(item.title || item.id || '过期数据')}</strong>
+                <Text type="secondary">
+                  {String(item.policy_key || 'retention')} · 超期 {formatMetricValue(item.age_days)} 天
+                  {item.status ? ` · ${String(item.status)}` : ''}
+                </Text>
+              </div>
+            ))}
+            {!retentionExpiredRecords.length ? (
+              <div>
+                <strong>暂无过期归档候选</strong>
+                <Text type="secondary">{String(retentionCleanup.recommendation || '继续按当前策略观察。')}</Text>
+              </div>
+            ) : null}
+            <div>
+              <strong>对象存储同步清理</strong>
+              <Text type="secondary">
+                跟踪对象 {formatMetricValue(objectStorageCleanup.tracked_asset_count)}
+                {' · '}
+                孤儿引用 {formatMetricValue(objectStorageCleanup.orphan_asset_count)}
+                {' · '}
+                信息不完整 {formatMetricValue(objectStorageCleanup.incomplete_asset_count)}
+              </Text>
+            </div>
           </div>
           <div className="system-health-quality-gates">
             {screenshots.map((item) => (

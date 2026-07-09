@@ -1638,6 +1638,153 @@ def _retention_policies() -> list[dict[str, Any]]:
     return policies
 
 
+def _record_timestamp(item: dict[str, Any]) -> datetime | None:
+    for field in (
+        "created_at",
+        "updated_at",
+        "finished_at",
+        "completed_at",
+        "ended_at",
+        "started_at",
+        "last_seen_at",
+    ):
+        parsed = _parse_datetime(item.get(field))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _retention_items_for_policy(current_store: Any, policy_key: str) -> list[dict[str, Any]]:
+    if policy_key == "audit_events":
+        return _items_from_store(current_store, "list_audit_events", "audit_events")
+    if policy_key == "execution_traces":
+        return _items_from_store(current_store, "list_execution_traces", "execution_traces")
+    if policy_key == "model_gateway_logs":
+        return _items_from_store(current_store, "list_model_gateway_logs", "model_gateway_logs")
+    if policy_key == "scheduled_job_runs":
+        return _items_from_store(current_store, "list_scheduled_job_runs", "scheduled_job_runs")
+    if policy_key == "knowledge_import_jobs":
+        return _items_from_repository_payload(
+            current_store,
+            memory_attr="knowledge_import_jobs",
+            payload_key="knowledge_import_jobs",
+            repository_method="load_knowledge",
+        )
+    return []
+
+
+def _retention_cleanup_status(
+    current_store: Any,
+    policies: list[dict[str, Any]],
+) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    policy_statuses: list[dict[str, Any]] = []
+    expired_records: list[dict[str, Any]] = []
+    for policy in policies:
+        policy_key = str(policy.get("key") or "")
+        if policy_key == "help_screenshots":
+            continue
+        items = _retention_items_for_policy(current_store, policy_key)
+        days = int(policy.get("days") or 0)
+        expired_items: list[tuple[dict[str, Any], int]] = []
+        for item in items:
+            timestamp = _record_timestamp(item)
+            if timestamp is None:
+                continue
+            age_days = (now - timestamp).days
+            if age_days >= days:
+                expired_items.append((item, age_days))
+        expired_items.sort(key=lambda pair: pair[1], reverse=True)
+        policy_statuses.append(
+            {
+                "expired_count": len(expired_items),
+                "key": policy_key,
+                "retention_days": days,
+                "status": "attention" if expired_items else "pass",
+                "title": policy.get("title"),
+                "total_count": len(items),
+            }
+        )
+        for item, age_days in expired_items[:3]:
+            expired_records.append(
+                {
+                    "age_days": age_days,
+                    "id": item.get("id") or item.get("trace_id") or item.get("event_type"),
+                    "policy_key": policy_key,
+                    "status": item.get("status") or item.get("result"),
+                    "title": item.get("title")
+                    or item.get("name")
+                    or item.get("event_type")
+                    or item.get("purpose")
+                    or item.get("job_id")
+                    or item.get("id"),
+                }
+            )
+    expired_records.sort(key=lambda item: int(item.get("age_days") or 0), reverse=True)
+    total_expired = sum(int(item.get("expired_count") or 0) for item in policy_statuses)
+    return {
+        "cleanup_mode": "manual_review",
+        "expired_records": expired_records[:8],
+        "policies": policy_statuses,
+        "recommendation": (
+            "存在超过保留期的数据，建议先导出审计证据，再由管理员按策略归档或清理。"
+            if total_expired
+            else "暂无超过保留期的数据，继续按当前策略观察。"
+        ),
+        "status": "attention" if total_expired else "pass",
+        "total_expired_count": total_expired,
+    }
+
+
+def _object_storage_cleanup_status(current_store: Any) -> dict[str, Any]:
+    assets = _items_from_repository_payload(
+        current_store,
+        memory_attr="knowledge_assets",
+        payload_key="knowledge_assets",
+        repository_method="load_knowledge",
+    )
+    documents = _knowledge_documents_for_health(current_store)
+    document_ids = {str(document.get("id")) for document in documents if document.get("id")}
+    orphan_assets = [
+        asset
+        for asset in assets
+        if asset.get("document_id") and str(asset.get("document_id")) not in document_ids
+    ]
+    incomplete_assets = [
+        asset
+        for asset in assets
+        if not asset.get("bucket") or not asset.get("object_key")
+    ]
+    cleanup_failed_assets = [
+        asset
+        for asset in assets
+        if (asset.get("metadata") or {}).get("object_cleanup_error")
+        or asset.get("object_cleanup_error")
+    ]
+    status = "attention" if orphan_assets or incomplete_assets or cleanup_failed_assets else "pass"
+    return {
+        "cleanup_failed_count": len(cleanup_failed_assets),
+        "incomplete_asset_count": len(incomplete_assets),
+        "orphan_asset_count": len(orphan_assets),
+        "recommendation": (
+            "发现文档已删除但对象引用仍存在或对象信息不完整，建议复核知识文档删除结果并补偿清理对象存储。"
+            if status == "attention"
+            else "知识文档删除会同步尝试清理对象存储，当前未发现孤儿对象引用。"
+        ),
+        "sample_assets": [
+            {
+                "asset_id": asset.get("id"),
+                "bucket": asset.get("bucket"),
+                "document_id": asset.get("document_id"),
+                "object_key": asset.get("object_key"),
+            }
+            for asset in [*orphan_assets[:3], *incomplete_assets[:3], *cleanup_failed_assets[:3]]
+        ][:6],
+        "status": status,
+        "tracked_asset_count": len(assets),
+    }
+
+
 def _help_screenshot_status() -> dict[str, Any]:
     root = Path(__file__).resolve().parents[4]
     expected = [
@@ -2115,6 +2262,7 @@ def _operations_snapshot(
     settings: Settings,
 ) -> dict[str, Any]:
     checks_by_key = {str(check.get("key") or ""): check for check in checks}
+    retention_policies = _retention_policies()
     operations = {
         "ai_executor_ops": _ai_executor_ops(current_store),
         "dingtalk_lifecycle": _dingtalk_lifecycle(
@@ -2123,7 +2271,9 @@ def _operations_snapshot(
             settings=settings,
         ),
         "help_and_retention": {
-            "retention_policies": _retention_policies(),
+            "cleanup_status": _retention_cleanup_status(current_store, retention_policies),
+            "object_storage_cleanup": _object_storage_cleanup_status(current_store),
+            "retention_policies": retention_policies,
             "screenshots": _help_screenshot_status(),
         },
         "knowledge_quality_loop": _knowledge_quality_loop(
