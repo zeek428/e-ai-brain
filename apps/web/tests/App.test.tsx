@@ -175,6 +175,15 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (input === '/api/audit/events/export?sort_by=created_at&sort_order=desc') {
+        return new Response('id,event_type\n"audit_api","requirement.approved"\n', {
+          headers: {
+            'Content-Disposition': 'attachment; filename="audit-filtered.csv"',
+            'Content-Type': 'text/csv',
+          },
+          status: 200,
+        });
+      }
       if (input === '/api/lifecycle/context?subject_type=requirement&subject_id=requirement_api') {
         return jsonResponse({
           data: {
@@ -245,6 +254,36 @@ describe('AI Brain Ant Design Pro workbench', () => {
     render(<AuditPage />);
 
     expect(await screen.findByText('requirement.approved')).toBeInTheDocument();
+    const createObjectURL = vi.fn(() => 'blob:audit-csv');
+    const revokeObjectURL = vi.fn();
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '导出 CSV' }));
+      await waitFor(() =>
+        expect(fetchMock.mock.calls.map(([path]) => String(path))).toContain(
+          '/api/audit/events/export?sort_by=created_at&sort_order=desc',
+        ),
+      );
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(anchorClick).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:audit-csv');
+    } finally {
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreateObjectURL });
+      } else {
+        Reflect.deleteProperty(URL, 'createObjectURL');
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevokeObjectURL });
+      } else {
+        Reflect.deleteProperty(URL, 'revokeObjectURL');
+      }
+      anchorClick.mockRestore();
+    }
     const auditRow = screen.getByText('requirement.approved').closest('tr');
     expect(auditRow).not.toBeNull();
     expect(within(auditRow as HTMLElement).getByRole('link', { name: '执行诊断' })).toHaveAttribute(

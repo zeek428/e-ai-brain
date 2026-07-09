@@ -1,9 +1,12 @@
 import type { AuditRecord } from '../data/management';
 import { formatDisplayDateTime } from '../utils/dateTime';
 import {
+  API_BASE_URL,
+  ApiRequestError,
   apiRequest,
   appendQueryParam,
   appendRemoteListParams,
+  type ApiErrorPayload,
   type ListResponse,
   type RemoteListPerformance,
 } from './apiClient';
@@ -31,6 +34,11 @@ export type AuditListQuery = RemoteListQuery & {
   eventType?: string;
   result?: string;
   subject?: string;
+};
+
+export type AuditExportFile = {
+  blob: Blob;
+  filename: string;
 };
 
 export type ExecutionTraceListQuery = RemoteListQuery & {
@@ -177,6 +185,54 @@ function normalizeDashboardCount(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+function appendAuditQueryParams(
+  params: URLSearchParams,
+  query: AuditListQuery,
+  options: { includePagination: boolean },
+) {
+  appendQueryParam(params, 'actor', query.actor);
+  appendQueryParam(params, 'event_type', query.eventType);
+  appendQueryParam(params, 'result', query.result);
+  appendQueryParam(params, 'subject', query.subject);
+  if (options.includePagination) {
+    appendRemoteListParams(params, query);
+    return;
+  }
+  appendQueryParam(params, 'sort_by', query.sortField);
+  appendQueryParam(
+    params,
+    'sort_order',
+    query.sortOrder === 'ascend' ? 'asc' : query.sortOrder === 'descend' ? 'desc' : undefined,
+  );
+}
+
+function auditEventsPath(basePath: string, query: AuditListQuery, options: { includePagination: boolean }) {
+  const params = new URLSearchParams();
+  appendAuditQueryParams(params, query, options);
+  const queryString = params.toString();
+  return queryString ? `${basePath}?${queryString}` : basePath;
+}
+
+function filenameFromContentDisposition(value: string | null, fallback: string): string {
+  if (!value) {
+    return fallback;
+  }
+  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+  const quotedMatch = value.match(/filename="([^"]+)"/i);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1];
+  }
+  const plainMatch = value.match(/filename=([^;]+)/i);
+  return plainMatch?.[1]?.trim() || fallback;
+}
+
 function mapAuditRecord(event: AuditEventListItem): AuditRecord {
   return {
     actor: event.actor_id ?? '-',
@@ -213,15 +269,8 @@ export async function fetchManagementAuditList(
   query: AuditListQuery = {},
 ): Promise<RemoteListResult<AuditRecord>> {
   const token = requireAccessToken();
-  const params = new URLSearchParams();
-  appendQueryParam(params, 'actor', query.actor);
-  appendQueryParam(params, 'event_type', query.eventType);
-  appendQueryParam(params, 'result', query.result);
-  appendQueryParam(params, 'subject', query.subject);
-  appendRemoteListParams(params, query);
-  const queryString = params.toString();
   const events = await apiRequest<ListResponse<AuditEventListItem>>(
-    queryString ? `/api/audit/events?${queryString}` : '/api/audit/events',
+    auditEventsPath('/api/audit/events', query, { includePagination: true }),
     { token },
   );
 
@@ -231,6 +280,39 @@ export async function fetchManagementAuditList(
     performance: events.performance,
     rows: events.items.map(mapAuditRecord),
     total: events.total,
+  };
+}
+
+export async function downloadManagementAuditCsv(
+  query: AuditListQuery = {},
+): Promise<AuditExportFile> {
+  const token = requireAccessToken();
+  const path = auditEventsPath('/api/audit/events/export', query, { includePagination: false });
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    method: 'GET',
+  });
+  if (!response.ok) {
+    let payload: ApiErrorPayload | undefined;
+    try {
+      payload = (await response.json()) as ApiErrorPayload;
+    } catch {
+      payload = undefined;
+    }
+    throw new ApiRequestError({
+      code: payload?.detail?.code,
+      detail: payload?.detail,
+      message: payload?.detail?.message ?? `API request failed: ${response.status}`,
+      status: response.status,
+      traceId: payload?.detail?.trace_id,
+    });
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromContentDisposition(
+      response.headers.get('Content-Disposition'),
+      'ai-brain-audit-events.csv',
+    ),
   };
 }
 

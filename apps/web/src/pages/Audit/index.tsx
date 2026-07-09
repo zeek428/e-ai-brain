@@ -1,5 +1,6 @@
+import { DownloadOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Descriptions, Modal, Space, Tag, Typography, message } from 'antd';
+import { App as AntdApp, Button, Descriptions, Modal, Space, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ExecutionTraceLink } from '../../components/ExecutionTraceLink';
@@ -7,6 +8,7 @@ import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../c
 import type { AuditRecord } from '../../data/management';
 import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
+  downloadManagementAuditCsv,
   fetchLifecycleContext,
   fetchManagementAuditList,
   type AuditListQuery,
@@ -93,13 +95,27 @@ function buildAuditListQuery(query: ManagementListQuery): AuditListQuery {
   };
 }
 
-export default function AuditPage() {
+function downloadBlobFile(blob: Blob, filename: string) {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+function AuditContent() {
+  const { message } = AntdApp.useApp();
   const [selectedAudit, setSelectedAudit] = useState<AuditRecord>();
   const [traceDialog, setTraceDialog] = useState<{
     context?: LifecycleContextRecord;
     loading: boolean;
     row: AuditRecord;
   }>();
+  const [exporting, setExporting] = useState(false);
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
     filters: {},
     page: 1,
@@ -175,21 +191,37 @@ export default function AuditPage() {
     };
   }, [listQuery]);
 
-  const openTraceDialog = useCallback(async (row: AuditRecord) => {
-    const params = resolveTraceParams(row);
-    if (!params) {
-      message.warning('当前审计事件没有可追踪的需求、任务或产品主体。');
-      return;
-    }
-    setTraceDialog({ loading: true, row });
+  const openTraceDialog = useCallback(
+    async (row: AuditRecord) => {
+      const params = resolveTraceParams(row);
+      if (!params) {
+        message.warning('当前审计事件没有可追踪的需求、任务或产品主体。');
+        return;
+      }
+      setTraceDialog({ loading: true, row });
+      try {
+        const context = await fetchLifecycleContext(params);
+        setTraceDialog({ context, loading: false, row });
+      } catch (traceError) {
+        setTraceDialog(undefined);
+        message.error(formatMutationError(traceError));
+      }
+    },
+    [message],
+  );
+
+  const handleExportCsv = useCallback(async () => {
+    setExporting(true);
     try {
-      const context = await fetchLifecycleContext(params);
-      setTraceDialog({ context, loading: false, row });
-    } catch (traceError) {
-      setTraceDialog(undefined);
-      message.error(formatMutationError(traceError));
+      const file = await downloadManagementAuditCsv(buildAuditListQuery(listQuery));
+      downloadBlobFile(file.blob, file.filename);
+      message.success('审计 CSV 已导出');
+    } catch (exportError) {
+      message.error(formatMutationError(exportError));
+    } finally {
+      setExporting(false);
     }
-  }, []);
+  }, [listQuery, message]);
 
   const columns = useMemo<ProColumns<AuditRecord>[]>(
     () => [
@@ -285,6 +317,16 @@ export default function AuditPage() {
         rowKey="id"
         tableTitle="审计列表"
         title="审计与运行"
+        toolbarActions={[
+          <Button
+            icon={<DownloadOutlined aria-hidden="true" />}
+            key="export-csv"
+            loading={exporting}
+            onClick={() => void handleExportCsv()}
+          >
+            导出 CSV
+          </Button>,
+        ]}
       />
       <Modal
         footer={null}
@@ -372,5 +414,13 @@ export default function AuditPage() {
         ) : null}
       </Modal>
     </>
+  );
+}
+
+export default function AuditPage() {
+  return (
+    <AntdApp>
+      <AuditContent />
+    </AntdApp>
   );
 }

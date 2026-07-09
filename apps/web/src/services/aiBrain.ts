@@ -337,6 +337,7 @@ export type {
   RequirementFullChainTimelineItem,
 } from './lifecycleClient';
 export {
+  downloadManagementAuditCsv,
   fetchExecutionTraceDetail,
   fetchExecutionTraces,
   fetchLifecycleContext,
@@ -344,6 +345,7 @@ export {
   fetchManagementAuditList,
 } from './diagnosticsClient';
 export type {
+  AuditExportFile,
   AuditListQuery,
   ExecutionTraceDetailRecord,
   ExecutionTraceEdgeRecord,
