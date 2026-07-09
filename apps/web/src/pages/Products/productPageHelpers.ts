@@ -43,6 +43,11 @@ export type ProductResourceFormValues = {
   status?: string;
 };
 
+export type ProductMemberFormValues = {
+  member_role: string;
+  user_id: string;
+};
+
 export type ProductResourceEditor =
   | { kind: 'module'; record?: ProductModuleRecord; submitting: boolean }
   | { kind: 'relatedSystem'; record?: ProductRelatedSystemRecord; submitting: boolean }
@@ -120,6 +125,35 @@ export function canManageProductResources(user: CurrentUserResponse | undefined)
     roles.has('product_owner') ||
     permissions.has('system.admin') ||
     permissions.has('product.manage')
+  );
+}
+
+export function canReadProductMembers(user: CurrentUserResponse | undefined) {
+  if (!user) {
+    return true;
+  }
+  const roles = new Set(user.roles ?? []);
+  const permissions = new Set(user.permissions ?? []);
+  return (
+    roles.has('admin') ||
+    roles.has('product_owner') ||
+    permissions.has('system.admin') ||
+    permissions.has('product.member.read') ||
+    permissions.has('product.member.manage')
+  );
+}
+
+export function canManageProductMembers(user: CurrentUserResponse | undefined) {
+  if (!user) {
+    return true;
+  }
+  const roles = new Set(user.roles ?? []);
+  const permissions = new Set(user.permissions ?? []);
+  return (
+    roles.has('admin') ||
+    roles.has('product_owner') ||
+    permissions.has('system.admin') ||
+    permissions.has('product.member.manage')
   );
 }
 

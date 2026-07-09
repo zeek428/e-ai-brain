@@ -83,6 +83,160 @@ def test_viewer_can_read_product_management_without_write_permission():
         client.delete(f"/api/users/{viewer_user['id']}", headers=headers)
 
 
+def test_product_members_grant_product_scoped_permissions_and_can_be_revoked():
+    app.state.store.reset()
+    headers = auth_headers()
+    unique = uuid4().hex[:8]
+    product = client.post(
+        "/api/products",
+        json={"code": f"member-scope-{unique}", "name": "成员范围产品"},
+        headers=headers,
+    ).json()["data"]
+    other_product = client.post(
+        "/api/products",
+        json={"code": f"member-other-{unique}", "name": "其他产品"},
+        headers=headers,
+    ).json()["data"]
+    member_username = f"product-member-{unique}@example.com"
+    member_password = "member123"
+    member_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Product Member",
+            "password": member_password,
+            "roles": ["viewer"],
+            "username": member_username,
+        },
+        headers=headers,
+    ).json()["data"]
+
+    try:
+        updated = client.put(
+            f"/api/products/{product['id']}/members",
+            json={
+                "members": [
+                    {"member_role": "developer", "user_id": member_user["id"]},
+                ]
+            },
+            headers=headers,
+        )
+        assert updated.status_code == 200
+        member_rows = updated.json()["data"]["items"]
+        assert member_rows[0]["display_name"] == "Product Member"
+        assert member_rows[0]["member_role_label"] == "开发工程师"
+
+        member_headers = auth_headers(member_username, member_password)
+        me = client.get("/api/auth/me", headers=member_headers).json()["data"]
+        assert "product.read" in me["permissions"]
+        assert "task.execute" in me["permissions"]
+        assert {
+            "access_level": "write",
+            "scope_id": product["id"],
+            "scope_type": "product",
+        } in me["scope_summary"]
+        menu_codes = {
+            child["code"]
+            for item in me["menu_tree"]
+            for child in item.get("children", [])
+        }
+        assert "product.products" in menu_codes
+        assert "task.center" in menu_codes
+
+        visible_products = client.get("/api/products", headers=member_headers).json()["data"]
+        assert [item["id"] for item in visible_products["items"]] == [product["id"]]
+        assert other_product["id"] not in [item["id"] for item in visible_products["items"]]
+
+        revoked = client.put(
+            f"/api/products/{product['id']}/members",
+            json={"members": []},
+            headers=headers,
+        )
+        assert revoked.status_code == 200
+        assert revoked.json()["data"]["items"] == []
+        refreshed_me = client.get("/api/auth/me", headers=member_headers).json()["data"]
+        assert {
+            "access_level": "write",
+            "scope_id": product["id"],
+            "scope_type": "product",
+        } not in refreshed_me["scope_summary"]
+        empty_products = client.get("/api/products", headers=member_headers).json()["data"]
+        assert empty_products["items"] == []
+    finally:
+        client.delete(f"/api/users/{member_user['id']}", headers=headers)
+
+
+def test_product_owner_member_can_manage_members_inside_assigned_product():
+    app.state.store.reset()
+    headers = auth_headers()
+    unique = uuid4().hex[:8]
+    product = client.post(
+        "/api/products",
+        json={"code": f"member-owner-{unique}", "name": "成员经理产品"},
+        headers=headers,
+    ).json()["data"]
+    owner_username = f"product-owner-member-{unique}@example.com"
+    developer_username = f"developer-member-{unique}@example.com"
+    owner_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Scoped Product Owner",
+            "password": "owner123",
+            "roles": ["viewer"],
+            "username": owner_username,
+        },
+        headers=headers,
+    ).json()["data"]
+    developer_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Scoped Developer",
+            "password": "developer123",
+            "roles": ["viewer"],
+            "username": developer_username,
+        },
+        headers=headers,
+    ).json()["data"]
+
+    try:
+        client.put(
+            f"/api/products/{product['id']}/members",
+            json={
+                "members": [
+                    {"member_role": "product_owner", "user_id": owner_user["id"]},
+                ]
+            },
+            headers=headers,
+        )
+        owner_headers = auth_headers(owner_username, "owner123")
+        candidates = client.get(
+            f"/api/products/{product['id']}/member-candidates",
+            headers=owner_headers,
+        )
+        assert candidates.status_code == 200
+        assert developer_user["id"] in [
+            item["id"] for item in candidates.json()["data"]["items"]
+        ]
+
+        managed = client.put(
+            f"/api/products/{product['id']}/members",
+            json={
+                "members": [
+                    {"member_role": "product_owner", "user_id": owner_user["id"]},
+                    {"member_role": "developer", "user_id": developer_user["id"]},
+                ]
+            },
+            headers=owner_headers,
+        )
+        assert managed.status_code == 200
+        assert {item["member_role"] for item in managed.json()["data"]["items"]} == {
+            "developer",
+            "product_owner",
+        }
+    finally:
+        client.delete(f"/api/users/{developer_user['id']}", headers=headers)
+        client.delete(f"/api/users/{owner_user['id']}", headers=headers)
+
+
 def test_product_config_supports_list_patch_and_active_filters():
     app.state.store.reset()
     headers = auth_headers()

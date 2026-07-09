@@ -80,6 +80,33 @@ export type ProductRelatedSystemRecord = {
   status: 'active' | 'inactive';
 };
 
+export type ProductMemberCandidateRecord = {
+  displayName: string;
+  id: string;
+  roles: string[];
+  status: 'active' | 'inactive';
+  username: string;
+};
+
+export type ProductMemberRecord = {
+  displayName: string;
+  id: string;
+  memberRole: string;
+  memberRoleLabel: string;
+  productId: string;
+  scopeId: string;
+  scopeLabel: string;
+  scopeType: string;
+  status: 'active' | 'inactive';
+  userId: string;
+  username: string;
+};
+
+export type ProductMemberRoleOption = {
+  label: string;
+  value: string;
+};
+
 export type ProductContextOption = {
   code: string;
   id: string;

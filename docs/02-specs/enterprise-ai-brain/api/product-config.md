@@ -8,6 +8,8 @@
 
 ```http
 GET /api/products?active_only=true
+GET /api/products/{product_id}/members
+GET /api/products/{product_id}/member-candidates
 GET /api/products/{product_id}/versions?active_only=true
 GET /api/products/{product_id}/modules?active_only=true
 GET /api/products/{product_id}/git-repositories?active_only=true
@@ -21,6 +23,7 @@ GET /api/products/{product_id}/git-repositories?active_only=true
 ```http
 POST /api/products
 PATCH /api/products/{product_id}
+PUT /api/products/{product_id}/members
 POST /api/products/{product_id}/versions
 PATCH /api/product-versions/{version_id}
 POST /api/product-versions/{version_id}/advance-status
@@ -37,6 +40,39 @@ POST /api/products/{product_id}/git-repositories
 PATCH /api/product-git-repositories/{repo_id}
 DELETE /api/product-git-repositories/{repo_id}
 ```
+
+产品成员维护接口：
+
+```http
+GET /api/products/{product_id}/members
+GET /api/products/{product_id}/member-candidates
+PUT /api/products/{product_id}/members
+```
+
+`GET /api/products/{product_id}/members` 要求 `product.member.read`，并按当前用户产品 scope 校验产品可见性；`GET /api/products/{product_id}/member-candidates` 和 `PUT /api/products/{product_id}/members` 要求 `product.member.manage`，仅允许具备当前产品管理范围的用户维护。产品成员保存采用整体替换语义，后端会把成员职责派生为产品 scope 和对应权限，并记录 `product.members.updated` 审计事件。
+
+产品成员保存请求：
+
+```json
+{
+  "members": [
+    {
+      "user_id": "user_001",
+      "member_role": "product_owner",
+      "scope_type": "product",
+      "scope_id": "*"
+    },
+    {
+      "user_id": "user_002",
+      "member_role": "developer",
+      "scope_type": "product",
+      "scope_id": "*"
+    }
+  ]
+}
+```
+
+成员职责由服务端返回中文展示名，当前支持产品经理、研发负责人、开发工程师、测试负责人、测试人员、运维/发布负责人和观察者；前端不得直接向业务用户展示 `member_role` 编码。
 
 产品请求体：
 

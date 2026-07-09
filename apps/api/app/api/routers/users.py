@@ -125,6 +125,17 @@ def _sync_authorization_roles(
     return list(result.get("role_codes") or role_codes)
 
 
+def _delete_authorization_grants(request: Request, *, actor_id: str, user_id: str) -> None:
+    authorization_repository = authorization_repository_from_request(request)
+    delete_grants = getattr(authorization_repository, "delete_user_grants", None)
+    if callable(delete_grants):
+        delete_grants(
+            user_id,
+            actor_id=actor_id,
+            trace_id=get_trace_id(request),
+        )
+
+
 def _dingtalk_binding_for_user(request: Request, user_id: str) -> dict[str, Any]:
     identity_repository = getattr(request.app.state, "external_identity_repository", None)
     find_active_by_user = getattr(identity_repository, "find_active_by_user", None)
@@ -357,4 +368,5 @@ def delete_user(
     deleted = request.app.state.user_repository.delete_user(user_id)
     if not deleted:
         raise api_error(404, "NOT_FOUND", "User not found")
+    _delete_authorization_grants(request, actor_id=str(user["id"]), user_id=user_id)
     return envelope({"deleted": True, "id": user_id}, get_trace_id(request))

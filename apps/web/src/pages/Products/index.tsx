@@ -14,6 +14,9 @@ import { DateStringPicker } from '../../components/DateStringPicker';
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type {
   ProductGitRepositoryRecord,
+  ProductMemberCandidateRecord,
+  ProductMemberRecord,
+  ProductMemberRoleOption,
   ProductModuleRecord,
   ProductRecord,
   ProductRelatedSystemRecord,
@@ -34,12 +37,16 @@ import {
   deleteProductVersion,
   fetchManagementProduct,
   fetchManagementProductList,
+  fetchProductMemberCandidates,
+  fetchProductMembers,
   fetchProductGitRepositoryRecords,
   fetchProductModules,
   fetchProductRelatedSystems,
   fetchProductVersions,
   getStoredCurrentUser,
+  replaceProductMembers,
   type CurrentUserResponse,
+  type ProductMemberMutationPayload,
   updateManagementProduct,
   updateProductGitRepository,
   updateProductModule,
@@ -55,12 +62,15 @@ import { formatMutationError, trimText } from '../../utils/managementCrud';
 import {
   activeStatusLabels,
   buildProductListQuery,
+  canManageProductMembers,
   canManageProductResources,
+  canReadProductMembers,
   formatProductDeleteError,
   resourceEditorTitle,
   versionCreateStatusOptions,
   versionStatusLabels,
   type ProductFormValues,
+  type ProductMemberFormValues,
   type ProductResourceEditor,
   type ProductResourceFormValues,
   type ResourceKind,
@@ -72,16 +82,23 @@ const { Paragraph, Text } = Typography;
 export default function ProductsPage() {
   const [form] = Form.useForm<ProductFormValues>();
   const [resourceForm] = Form.useForm<ProductResourceFormValues>();
+  const [memberForm] = Form.useForm<ProductMemberFormValues>();
   const [editingProduct, setEditingProduct] = useState<ProductRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [configProduct, setConfigProduct] = useState<ProductRecord | null>(null);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
+  const [memberCandidatesLoading, setMemberCandidatesLoading] = useState(false);
+  const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
+  const [isSavingMembers, setIsSavingMembers] = useState(false);
   const [versionRows, setVersionRows] = useState<ProductVersionRecord[]>([]);
   const [moduleRows, setModuleRows] = useState<ProductModuleRecord[]>([]);
   const [relatedSystemRows, setRelatedSystemRows] = useState<ProductRelatedSystemRecord[]>([]);
   const [repositoryRows, setRepositoryRows] = useState<ProductGitRepositoryRecord[]>([]);
+  const [memberRows, setMemberRows] = useState<ProductMemberRecord[]>([]);
+  const [memberCandidates, setMemberCandidates] = useState<ProductMemberCandidateRecord[]>([]);
+  const [memberRoleOptions, setMemberRoleOptions] = useState<ProductMemberRoleOption[]>([]);
   const [resourceEditor, setResourceEditor] = useState<ProductResourceEditor>();
   const [handledProductConfigDeepLink, setHandledProductConfigDeepLink] = useState<string>();
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | undefined>(() => getStoredCurrentUser());
@@ -89,6 +106,8 @@ export default function ProductsPage() {
     () => canManageProductResources(currentUser),
     [currentUser],
   );
+  const canReadMembers = useMemo(() => canReadProductMembers(currentUser), [currentUser]);
+  const canManageMembers = useMemo(() => canManageProductMembers(currentUser), [currentUser]);
   const productConfigDeepLink = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const productId = params.get('product_id')?.trim();
@@ -191,22 +210,27 @@ export default function ProductsPage() {
   const loadProductResources = useCallback(async (productId: string) => {
     setConfigLoading(true);
     try {
-      const [versions, modules, relatedSystems, repositories] = await Promise.all([
+      const [versions, modules, relatedSystems, repositories, members] = await Promise.all([
         fetchProductVersions(productId),
         fetchProductModules(productId),
         fetchProductRelatedSystems(productId),
         fetchProductGitRepositoryRecords(productId),
+        canReadMembers
+          ? fetchProductMembers(productId)
+          : Promise.resolve({ items: [], roleOptions: [] }),
       ]);
       setVersionRows(versions);
       setModuleRows(modules);
       setRelatedSystemRows(relatedSystems);
       setRepositoryRows(repositories);
+      setMemberRows(members.items);
+      setMemberRoleOptions(members.roleOptions);
     } catch (loadError) {
       message.error(formatMutationError(loadError));
     } finally {
       setConfigLoading(false);
     }
-  }, []);
+  }, [canReadMembers]);
 
   const openCreateModal = () => {
     if (!canManageProducts) {
@@ -268,6 +292,9 @@ export default function ProductsPage() {
     setModuleRows([]);
     setRelatedSystemRows([]);
     setRepositoryRows([]);
+    setMemberRows([]);
+    setMemberCandidates([]);
+    setIsMemberModalOpen(false);
   }, []);
 
   const handleSave = async () => {
@@ -559,6 +586,108 @@ export default function ProductsPage() {
     }
   }, [canManageProducts, reloadConfigAfterMutation]);
 
+  const memberRowsToPayload = useCallback(
+    (rows: ProductMemberRecord[]): ProductMemberMutationPayload[] =>
+      rows.map((row) => ({
+        member_role: row.memberRole,
+        scope_id: row.scopeId,
+        scope_type: row.scopeType,
+        user_id: row.userId,
+      })),
+    [],
+  );
+
+  const loadMemberCandidates = useCallback(async () => {
+    if (!configProduct || !canManageMembers) {
+      return;
+    }
+    setMemberCandidatesLoading(true);
+    try {
+      const result = await fetchProductMemberCandidates(configProduct.id);
+      setMemberCandidates(result.items);
+      if (result.roleOptions.length) {
+        setMemberRoleOptions(result.roleOptions);
+      }
+    } catch (loadError) {
+      message.error(formatMutationError(loadError));
+    } finally {
+      setMemberCandidatesLoading(false);
+    }
+  }, [canManageMembers, configProduct]);
+
+  const openMemberModal = useCallback(() => {
+    if (!canManageMembers) {
+      message.warning('当前账号没有产品成员维护权限');
+      return;
+    }
+    memberForm.resetFields();
+    setIsMemberModalOpen(true);
+    void loadMemberCandidates();
+  }, [canManageMembers, loadMemberCandidates, memberForm]);
+
+  const handleSaveMember = async () => {
+    if (!configProduct || !canManageMembers) {
+      message.warning('当前账号没有产品成员维护权限');
+      return;
+    }
+    const values = await memberForm.validateFields();
+    const nextMember: ProductMemberMutationPayload = {
+      member_role: values.member_role,
+      scope_id: '*',
+      scope_type: 'product',
+      user_id: values.user_id,
+    };
+    if (
+      memberRows.some(
+        (member) =>
+          member.userId === nextMember.user_id && member.memberRole === nextMember.member_role,
+      )
+    ) {
+      message.warning('该成员已拥有相同产品职责');
+      return;
+    }
+    setIsSavingMembers(true);
+    try {
+      const result = await replaceProductMembers(configProduct.id, [
+        ...memberRowsToPayload(memberRows),
+        nextMember,
+      ]);
+      setMemberRows(result.items);
+      if (result.roleOptions.length) {
+        setMemberRoleOptions(result.roleOptions);
+      }
+      setIsMemberModalOpen(false);
+      message.success('产品成员已保存');
+    } catch (saveError) {
+      message.error(formatMutationError(saveError));
+    } finally {
+      setIsSavingMembers(false);
+    }
+  };
+
+  const handleRemoveMember = useCallback(async (row: ProductMemberRecord) => {
+    if (!configProduct || !canManageMembers) {
+      message.warning('当前账号没有产品成员维护权限');
+      return;
+    }
+    setIsSavingMembers(true);
+    try {
+      const result = await replaceProductMembers(
+        configProduct.id,
+        memberRowsToPayload(memberRows.filter((member) => member.id !== row.id)),
+      );
+      setMemberRows(result.items);
+      if (result.roleOptions.length) {
+        setMemberRoleOptions(result.roleOptions);
+      }
+      message.success('产品成员已移除');
+    } catch (removeError) {
+      message.error(formatMutationError(removeError));
+    } finally {
+      setIsSavingMembers(false);
+    }
+  }, [canManageMembers, configProduct, memberRows, memberRowsToPayload]);
+
   const versionColumns = useMemo<ProColumns<ProductVersionRecord>[]>(
     () => [
       { dataIndex: 'code', search: false, title: '版本编码' },
@@ -726,6 +855,46 @@ export default function ProductsPage() {
         : []),
     ],
     [canManageProducts, handleDeleteResource, openResourceEditor],
+  );
+
+  const memberColumns = useMemo<ProColumns<ProductMemberRecord>[]>(
+    () => [
+      { dataIndex: 'displayName', search: false, title: '成员' },
+      { dataIndex: 'username', search: false, title: '账号' },
+      { dataIndex: 'memberRoleLabel', search: false, title: '产品职责' },
+      { dataIndex: 'scopeLabel', search: false, title: '数据范围' },
+      {
+        dataIndex: 'status',
+        search: false,
+        title: '状态',
+        render: (_, row) => {
+          const statusLabel = activeStatusLabels[row.status];
+          return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
+        },
+      },
+      ...(canManageMembers
+        ? [
+            {
+              key: 'actions',
+              search: false,
+              title: '操作',
+              valueType: 'option' as const,
+              render: (_: unknown, row: ProductMemberRecord) => (
+                <Popconfirm
+                  okText="移除"
+                  onConfirm={() => handleRemoveMember(row)}
+                  title={`移除成员 ${row.displayName} 的 ${row.memberRoleLabel} 职责？`}
+                >
+                  <Button danger icon={<DeleteOutlined />} loading={isSavingMembers} type="link">
+                    移除
+                  </Button>
+                </Popconfirm>
+              ),
+            },
+          ]
+        : []),
+    ],
+    [canManageMembers, handleRemoveMember, isSavingMembers],
   );
 
   const columns = useMemo<ProColumns<ProductRecord>[]>(
@@ -1109,6 +1278,32 @@ export default function ProductsPage() {
                 : []
             }
           />
+          {canReadMembers ? (
+            <ProTable<ProductMemberRecord>
+              columns={memberColumns}
+              dataSource={memberRows}
+              headerTitle="成员权限"
+              loading={configLoading}
+              options={false}
+              pagination={false}
+              rowKey="id"
+              search={false}
+              toolBarRender={() =>
+                canManageMembers
+                  ? [
+                      <Button
+                        aria-label="新增成员"
+                        icon={<PlusOutlined />}
+                        key="add-product-member"
+                        onClick={openMemberModal}
+                      >
+                        新增成员
+                      </Button>,
+                    ]
+                  : []
+              }
+            />
+          ) : null}
         </Space>
       </Modal>
       <Modal
@@ -1240,6 +1435,45 @@ export default function ProductsPage() {
               </Form.Item>
             </>
           ) : null}
+        </Form>
+      </Modal>
+      <Modal
+        cancelText="取消"
+        confirmLoading={isSavingMembers}
+        destroyOnHidden
+        okButtonProps={{ 'aria-label': '保存成员' }}
+        okText="保存"
+        onCancel={() => setIsMemberModalOpen(false)}
+        onOk={() => void handleSaveMember()}
+        open={isMemberModalOpen}
+        title="新增产品成员"
+      >
+        <Form<ProductMemberFormValues> form={memberForm} layout="vertical">
+          <Form.Item label="成员" name="user_id" rules={[{ required: true, message: '请选择成员' }]}>
+            <Select
+              loading={memberCandidatesLoading}
+              optionFilterProp="label"
+              options={memberCandidates.map((candidate) => ({
+                label: `${candidate.displayName}（${candidate.username}）`,
+                value: candidate.id,
+              }))}
+              placeholder="请选择系统用户"
+              showSearch
+            />
+          </Form.Item>
+          <Form.Item
+            label="产品职责"
+            name="member_role"
+            rules={[{ required: true, message: '请选择产品职责' }]}
+          >
+            <Select
+              options={memberRoleOptions.map((option) => ({
+                label: option.label,
+                value: option.value,
+              }))}
+              placeholder="请选择产品内职责"
+            />
+          </Form.Item>
         </Form>
       </Modal>
     </>

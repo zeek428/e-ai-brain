@@ -67,6 +67,9 @@
 | Product | POST | `/api/products` | 创建产品；要求 `product.manage` 且当前用户具备全局产品范围，受限产品 scope 用户返回 403。 |
 | Product | PATCH | `/api/products/{product_id}` | 更新产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404。 |
 | Product | DELETE | `/api/products/{product_id}` | 删除未被需求、AI 任务或 Bug 占用的产品；要求 `product.manage`，按当前用户产品 scope 校验，scope 外返回 404；无业务依赖时级联清理该产品的版本、模块和 Git 资源配置；存在业务依赖时返回 `409 RESOURCE_IN_USE`，并在错误详情中返回 `related_counts.requirements/ai_tasks/bugs` 与 `related_total`，前端据此提示先迁移/删除关联记录或将产品停用。 |
+| Product Member | GET | `/api/products/{product_id}/members` | 查询产品成员、产品职责和产品范围；要求 `product.member.read`，并按当前用户产品 scope 校验。 |
+| Product Member | GET | `/api/products/{product_id}/member-candidates` | 查询可添加的产品成员候选人和职责选项；要求 `product.member.manage`，并按当前用户产品 scope 校验。 |
+| Product Member | PUT | `/api/products/{product_id}/members` | 整体保存产品成员配置；要求 `product.member.manage`，保存后派生产品 scope 和职责权限，并写入 `product.members.updated` 审计。 |
 | Product Version | GET | `/api/product-versions`, `/api/products/{product_id}/versions` | 产品迭代版本列表，前端主入口位于需求交付/迭代版本；要求 `product.read`，批量列表按当前用户产品 scope 过滤，指定 scope 外产品返回 404。 |
 | Product Version | GET | `/api/product-versions/{version_id}/dashboard` | 查询迭代版本驾驶舱，聚合版本需求、AI 任务、版本代码分支、Bug、代码巡检、代码评审、知识沉淀、发布记录、状态推进影响和阻塞项；PostgreSQL 运行时使用版本范围专用 read model，响应字段不变，不先加载全量 task workflow source rows；要求 `product.read` 并按版本归属产品校验 scope，Bug 明细需 `bug.read`，代码巡检明细需 `code_inspection.read`，知识沉淀明细需 `knowledge.read`，缺少子权限时返回 `access_issues` 并隐藏对应明细；知识沉淀行返回关联知识文档索引状态、chunk 数、embedding chunk 数和关键词/混合/不可用检索模式；`delivery_stage_overview` 返回后端统一生成的交付阶段总览；`evidence_coverage` 返回版本证据覆盖评分、九类证据域状态、阻断数和缺口数。 |
 | Product Version | POST | `/api/products/{product_id}/versions` | 创建产品迭代版本；要求 `product.manage`，并按当前用户产品 scope 校验产品可见性。 |

@@ -474,6 +474,18 @@ describe('ProductsPage', () => {
           },
         });
       }
+      if (path === '/api/products/product_api/members' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [],
+            role_options: [
+              { label: '产品经理', value: 'product_owner' },
+              { label: '开发工程师', value: 'developer' },
+            ],
+            total: 0,
+          },
+        });
+      }
       if (path === '/api/system/related-systems?product_id=product_api' && method === 'GET') {
         return jsonResponse({
           data: {
@@ -614,6 +626,192 @@ describe('ProductsPage', () => {
     );
   }, 10_000);
 
+  it('manages product members from the product configuration dialog', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    let savedMembersBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if ((path === '/api/products' || path.startsWith('/api/products?')) && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'AI-BRAIN',
+                id: 'product_api',
+                module_count: 1,
+                name: 'AI Brain',
+                owner_team: 'AI Platform',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/versions' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/product-versions' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/products/product_api/modules' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/system/related-systems?product_id=product_api' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/products/product_api/git-repositories' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/products/product_api/members' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                display_name: '产品经理',
+                id: 'product_api:user_owner:product_owner:product:*',
+                member_role: 'product_owner',
+                member_role_label: '产品经理',
+                product_id: 'product_api',
+                scope_id: '*',
+                scope_label: '整个产品',
+                scope_type: 'product',
+                status: 'active',
+                user_id: 'user_owner',
+                username: 'owner@example.com',
+              },
+            ],
+            role_options: [
+              { label: '产品经理', value: 'product_owner' },
+              { label: '开发工程师', value: 'developer' },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/member-candidates' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                display_name: '产品经理',
+                id: 'user_owner',
+                roles: ['viewer'],
+                status: 'active',
+                username: 'owner@example.com',
+              },
+              {
+                display_name: '开发同学',
+                id: 'user_developer',
+                roles: ['viewer'],
+                status: 'active',
+                username: 'dev@example.com',
+              },
+            ],
+            role_options: [
+              { label: '产品经理', value: 'product_owner' },
+              { label: '开发工程师', value: 'developer' },
+            ],
+            total: 2,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/members' && method === 'PUT') {
+        savedMembersBody = JSON.parse(String(init?.body));
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                display_name: '产品经理',
+                id: 'product_api:user_owner:product_owner:product:*',
+                member_role: 'product_owner',
+                member_role_label: '产品经理',
+                product_id: 'product_api',
+                scope_id: '*',
+                scope_label: '整个产品',
+                scope_type: 'product',
+                status: 'active',
+                user_id: 'user_owner',
+                username: 'owner@example.com',
+              },
+              {
+                display_name: '开发同学',
+                id: 'product_api:user_developer:developer:product:*',
+                member_role: 'developer',
+                member_role_label: '开发工程师',
+                product_id: 'product_api',
+                scope_id: '*',
+                scope_label: '整个产品',
+                scope_type: 'product',
+                status: 'active',
+                user_id: 'user_developer',
+                username: 'dev@example.com',
+              },
+            ],
+            role_options: [
+              { label: '产品经理', value: 'product_owner' },
+              { label: '开发工程师', value: 'developer' },
+            ],
+            total: 2,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path} ${method}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ProductsPage />);
+
+    expect(await screen.findByText('AI Brain')).toBeInTheDocument();
+    const productRow = screen.getByText('AI Brain').closest('tr');
+    expect(productRow).not.toBeNull();
+    fireEvent.click(within(productRow as HTMLElement).getByRole('button', { name: '配置' }));
+
+    expect(await screen.findByText('成员权限')).toBeInTheDocument();
+    expect(screen.getByText('owner@example.com')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '新增成员' }));
+
+    const memberDialogTitle = await screen.findByText('新增产品成员');
+    const memberDialog = memberDialogTitle.closest('.ant-modal') as HTMLElement;
+    expect(memberDialog).not.toBeNull();
+    fireEvent.mouseDown(within(memberDialog).getByLabelText('成员'));
+    fireEvent.click(await screen.findByText('开发同学（dev@example.com）'));
+    fireEvent.mouseDown(within(memberDialog).getByLabelText('产品职责'));
+    fireEvent.click(await screen.findByText('开发工程师'));
+    fireEvent.click(within(memberDialog).getByRole('button', { name: '保存成员' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/products/product_api/members',
+        'PUT',
+      ]),
+    );
+    expect(savedMembersBody).toEqual({
+      members: [
+        {
+          member_role: 'product_owner',
+          scope_id: '*',
+          scope_type: 'product',
+          user_id: 'user_owner',
+        },
+        {
+          member_role: 'developer',
+          scope_id: '*',
+          scope_type: 'product',
+          user_id: 'user_developer',
+        },
+      ],
+    });
+    expect(await screen.findByText('dev@example.com')).toBeInTheDocument();
+  }, 10_000);
+
   it('saves Project Path when editing product Git resources', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
@@ -673,6 +871,9 @@ describe('ProductsPage', () => {
             total: 1,
           },
         });
+      }
+      if (path === '/api/products/product_api/members' && method === 'GET') {
+        return jsonResponse({ data: { items: [], role_options: [], total: 0 } });
       }
       if (path === '/api/product-git-repositories/repo_api' && method === 'PATCH') {
         patchBody = JSON.parse(String(init?.body));
@@ -780,6 +981,9 @@ describe('ProductsPage', () => {
             total: 1,
           },
         });
+      }
+      if (path === '/api/products/product_api/members' && method === 'GET') {
+        return jsonResponse({ data: { items: [], role_options: [], total: 0 } });
       }
       if (path === '/api/product-git-repositories/repo_api' && method === 'PATCH') {
         const body = JSON.parse(String(init?.body));

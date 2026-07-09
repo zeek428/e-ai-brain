@@ -71,6 +71,79 @@ describe('product service API mappings', () => {
           },
         });
       }
+      if (path === '/api/products/product_api/members' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                display_name: '开发同学',
+                id: 'product_api:user_developer:developer:product:*',
+                member_role: 'developer',
+                member_role_label: '开发工程师',
+                product_id: 'product_api',
+                scope_id: '*',
+                scope_label: '整个产品',
+                scope_type: 'product',
+                status: 'active',
+                user_id: 'user_developer',
+                username: 'dev@example.com',
+              },
+            ],
+            role_options: [{ label: '开发工程师', value: 'developer' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/member-candidates' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                display_name: '开发同学',
+                id: 'user_developer',
+                roles: ['viewer'],
+                status: 'active',
+                username: 'dev@example.com',
+              },
+            ],
+            role_options: [{ label: '开发工程师', value: 'developer' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/members' && method === 'PUT') {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          members: [
+            {
+              member_role: 'developer',
+              scope_id: '*',
+              scope_type: 'product',
+              user_id: 'user_developer',
+            },
+          ],
+        });
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                display_name: '开发同学',
+                id: 'product_api:user_developer:developer:product:*',
+                member_role: 'developer',
+                member_role_label: '开发工程师',
+                product_id: 'product_api',
+                scope_id: '*',
+                scope_label: '整个产品',
+                scope_type: 'product',
+                status: 'active',
+                user_id: 'user_developer',
+                username: 'dev@example.com',
+              },
+            ],
+            role_options: [{ label: '开发工程师', value: 'developer' }],
+            total: 1,
+          },
+        });
+      }
       if (path === '/api/system/related-systems?product_id=product_api' && method === 'GET') {
         return jsonResponse({
           data: {
@@ -126,6 +199,16 @@ describe('product service API mappings', () => {
     });
     await callService('updateProductVersionBranchConfig', 'version_branch_api', { branch_status: 'testing' });
     await callService('deleteProductVersionBranchConfig', 'version_branch_api');
+    const members = await callService('fetchProductMembers', 'product_api');
+    const candidates = await callService('fetchProductMemberCandidates', 'product_api');
+    await callService('replaceProductMembers', 'product_api', [
+      {
+        member_role: 'developer',
+        scope_id: '*',
+        scope_type: 'product',
+        user_id: 'user_developer',
+      },
+    ]);
     const relatedSystems = await callService('fetchProductRelatedSystems', 'product_api');
     await callService('createProductRelatedSystem', 'product_api', {
       code: 'crm',
@@ -153,6 +236,27 @@ describe('product service API mappings', () => {
         workingBranch: 'release/v1',
       }),
     ]);
+    expect(members).toEqual({
+      items: [
+        expect.objectContaining({
+          displayName: '开发同学',
+          memberRole: 'developer',
+          memberRoleLabel: '开发工程师',
+          username: 'dev@example.com',
+        }),
+      ],
+      roleOptions: [{ label: '开发工程师', value: 'developer' }],
+    });
+    expect(candidates).toEqual({
+      items: [
+        expect.objectContaining({
+          displayName: '开发同学',
+          id: 'user_developer',
+          username: 'dev@example.com',
+        }),
+      ],
+      roleOptions: [{ label: '开发工程师', value: 'developer' }],
+    });
     expect(relatedSystems).toEqual([
       expect.objectContaining({
         code: 'billing',
@@ -178,6 +282,9 @@ describe('product service API mappings', () => {
       ['/api/product-versions/version_api/branch-configs', 'POST'],
       ['/api/product-version-branch-configs/version_branch_api', 'PATCH'],
       ['/api/product-version-branch-configs/version_branch_api', 'DELETE'],
+      ['/api/products/product_api/members', 'GET'],
+      ['/api/products/product_api/member-candidates', 'GET'],
+      ['/api/products/product_api/members', 'PUT'],
       ['/api/system/related-systems?product_id=product_api', 'GET'],
       ['/api/system/related-systems', 'POST'],
       ['/api/system/related-systems/related_system_api', 'PATCH'],

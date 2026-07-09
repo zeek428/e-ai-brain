@@ -1,5 +1,8 @@
 import type {
   ProductGitRepositoryRecord,
+  ProductMemberCandidateRecord,
+  ProductMemberRecord,
+  ProductMemberRoleOption,
   ProductModuleRecord,
   ProductRecord,
   ProductRelatedSystemRecord,
@@ -964,6 +967,40 @@ type ProductRelatedSystemListItem = {
   status?: string;
 };
 
+type ProductMemberListItem = {
+  display_name?: string | null;
+  id?: string;
+  member_role: string;
+  member_role_label?: string;
+  product_id: string;
+  scope_id?: string;
+  scope_label?: string;
+  scope_type?: string;
+  status?: string;
+  user_id: string;
+  username?: string | null;
+};
+
+type ProductMemberCandidateListItem = {
+  display_name?: string | null;
+  id: string;
+  roles?: string[];
+  status?: string;
+  username?: string | null;
+};
+
+type ProductMemberListResponse = {
+  items: ProductMemberListItem[];
+  role_options?: ProductMemberRoleOption[];
+  total?: number;
+};
+
+type ProductMemberCandidateResponse = {
+  items: ProductMemberCandidateListItem[];
+  role_options?: ProductMemberRoleOption[];
+  total?: number;
+};
+
 export type ProductMutationPayload = {
   code?: string;
   description?: string;
@@ -1059,6 +1096,13 @@ export type ProductRelatedSystemMutationPayload = {
   owner_team?: string;
   product_id?: string;
   status?: string;
+};
+
+export type ProductMemberMutationPayload = {
+  member_role: string;
+  scope_id?: string;
+  scope_type?: string;
+  user_id: string;
 };
 
 type ProductGitRepositoryListItem = {
@@ -1659,6 +1703,58 @@ export async function deleteManagementProduct(productId: string) {
   });
 }
 
+export async function fetchProductMembers(productId: string): Promise<{
+  items: ProductMemberRecord[];
+  roleOptions: ProductMemberRoleOption[];
+}> {
+  const token = requireAccessToken();
+  const members = await apiRequest<ProductMemberListResponse>(
+    `/api/products/${productId}/members`,
+    { token },
+  );
+  return {
+    items: members.items.map(mapProductMemberRecord),
+    roleOptions: members.role_options ?? [],
+  };
+}
+
+export async function fetchProductMemberCandidates(productId: string): Promise<{
+  items: ProductMemberCandidateRecord[];
+  roleOptions: ProductMemberRoleOption[];
+}> {
+  const token = requireAccessToken();
+  const candidates = await apiRequest<ProductMemberCandidateResponse>(
+    `/api/products/${productId}/member-candidates`,
+    { token },
+  );
+  return {
+    items: candidates.items.map(mapProductMemberCandidateRecord),
+    roleOptions: candidates.role_options ?? [],
+  };
+}
+
+export async function replaceProductMembers(
+  productId: string,
+  members: ProductMemberMutationPayload[],
+): Promise<{
+  items: ProductMemberRecord[];
+  roleOptions: ProductMemberRoleOption[];
+}> {
+  const token = requireAccessToken();
+  const result = await apiRequest<ProductMemberListResponse>(
+    `/api/products/${productId}/members`,
+    {
+      body: { members },
+      method: 'PUT',
+      token,
+    },
+  );
+  return {
+    items: result.items.map(mapProductMemberRecord),
+    roleOptions: result.role_options ?? [],
+  };
+}
+
 function mapProductVersionRecord(version: ProductVersionListItem): ProductVersionRecord {
   return {
     code: version.code ?? version.id,
@@ -1697,6 +1793,43 @@ function mapProductRelatedSystemRecord(
     ownerTeam: relatedSystem.owner_team ?? '-',
     productId: relatedSystem.product_id,
     status: normalizeActiveInactiveStatus(relatedSystem.status),
+  };
+}
+
+function mapProductMemberRecord(member: ProductMemberListItem): ProductMemberRecord {
+  return {
+    displayName: member.display_name ?? member.username ?? member.user_id,
+    id:
+      member.id ??
+      [
+        member.product_id,
+        member.user_id,
+        member.member_role,
+        member.scope_type ?? 'product',
+        member.scope_id ?? '*',
+      ].join(':'),
+    memberRole: member.member_role,
+    memberRoleLabel: member.member_role_label ?? member.member_role,
+    productId: member.product_id,
+    scopeId: member.scope_id ?? '*',
+    scopeLabel:
+      member.scope_label ?? (member.scope_id === '*' ? '整个产品' : member.scope_id ?? '整个产品'),
+    scopeType: member.scope_type ?? 'product',
+    status: normalizeActiveInactiveStatus(member.status),
+    userId: member.user_id,
+    username: member.username ?? member.user_id,
+  };
+}
+
+function mapProductMemberCandidateRecord(
+  candidate: ProductMemberCandidateListItem,
+): ProductMemberCandidateRecord {
+  return {
+    displayName: candidate.display_name ?? candidate.username ?? candidate.id,
+    id: candidate.id,
+    roles: candidate.roles ?? [],
+    status: normalizeActiveInactiveStatus(candidate.status),
+    username: candidate.username ?? candidate.id,
   };
 }
 

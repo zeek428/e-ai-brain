@@ -134,11 +134,19 @@ def _repository_menu_resources(repository: Any) -> list[dict[str, Any]]:
 def _repository_granted_menu_codes(
     repository: Any,
     snapshot: AuthorizationSnapshot,
+    resources: list[dict[str, Any]],
 ) -> set[str]:
+    granted_codes: set[str]
     method = getattr(repository, "granted_menu_codes_for_roles", None)
     if method is not None:
-        return set(method(snapshot.roles))
-    return {menu["code"] for menu in snapshot.menus if menu.get("code")}
+        granted_codes = set(method(snapshot.roles))
+    else:
+        granted_codes = {menu["code"] for menu in snapshot.menus if menu.get("code")}
+    for resource in resources:
+        required_permissions = set(resource.get("required_permissions") or [])
+        if required_permissions and required_permissions.issubset(snapshot.permissions):
+            granted_codes.add(str(resource["code"]))
+    return granted_codes
 
 
 def _route_permissions(resources: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -161,7 +169,7 @@ def _authorized_user(request: Request, user: dict[str, Any]) -> dict[str, Any]:
             "permissions": sorted(snapshot.permissions),
             "scope_summary": snapshot.scopes,
             "menu_tree": build_menu_tree(
-                granted_codes=_repository_granted_menu_codes(repository, snapshot),
+                granted_codes=_repository_granted_menu_codes(repository, snapshot, resources),
                 resources=resources,
                 permissions=snapshot.permissions,
             ),

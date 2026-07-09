@@ -23,6 +23,40 @@ from app.core.repositories.authorization_defaults import (
 )
 from app.core.roles import ROLE_DEFINITIONS
 
+ROLE_PERMISSION_TEMPLATE_BY_CODE: dict[str, set[str]] = {
+    str(role["code"]): {str(permission) for permission in role.get("permissions") or []}
+    for role in ROLE_DEFINITIONS
+}
+
+PRODUCT_MEMBER_ROLE_LABELS: dict[str, str] = {
+    "product_owner": "产品经理",
+    "rd_owner": "研发负责人",
+    "developer": "开发工程师",
+    "test_owner": "测试负责人",
+    "tester": "测试人员",
+    "release_owner": "运维/发布负责人",
+    "viewer": "观察者",
+}
+
+PRODUCT_MEMBER_ROLE_PERMISSIONS: dict[str, set[str]] = {
+    "product_owner": ROLE_PERMISSION_TEMPLATE_BY_CODE.get("product_owner", set())
+    | {"product.read", "product.manage", "product.member.read", "product.member.manage"},
+    "rd_owner": ROLE_PERMISSION_TEMPLATE_BY_CODE.get("rd_owner", set()) | {"product.read"},
+    "developer": ROLE_PERMISSION_TEMPLATE_BY_CODE.get("developer", set())
+    | {"product.read", "requirement.read", "bug.manage"},
+    "test_owner": ROLE_PERMISSION_TEMPLATE_BY_CODE.get("test_owner", set())
+    | {"product.read", "bug.manage", "test.read"},
+    "tester": ROLE_PERMISSION_TEMPLATE_BY_CODE.get("tester", set())
+    | {"product.read", "bug.read", "test.read"},
+    "release_owner": ROLE_PERMISSION_TEMPLATE_BY_CODE.get("release_owner", set())
+    | {"product.read", "release.read", "bug.read"},
+    "viewer": ROLE_PERMISSION_TEMPLATE_BY_CODE.get("viewer", set()) | {"product.read"},
+}
+
+PRODUCT_MEMBER_ROLES = set(PRODUCT_MEMBER_ROLE_LABELS)
+PRODUCT_MEMBER_SCOPE_TYPES = {"product"}
+PRODUCT_MEMBER_STATUSES = {"active", "inactive"}
+
 
 class CompatibilityAuthorizationRepository:
     def __init__(self) -> None:
@@ -35,6 +69,7 @@ class CompatibilityAuthorizationRepository:
             for role_code, menu_codes in COMPATIBILITY_ROLE_MENU_GRANTS.items()
         }
         self._role_scope_grants = deepcopy(COMPATIBILITY_ROLE_SCOPES)
+        self._product_members: dict[str, list[dict[str, Any]]] = {}
         self._user_role_grants: dict[str, list[str]] = {}
         self._user_scope_grants: dict[str, list[dict[str, Any]]] = {}
         self._menu_resources = [
@@ -93,6 +128,11 @@ class CompatibilityAuthorizationRepository:
                 granted_codes.update(self._role_menu_grants.get(role_code, set()))
             scopes.extend(deepcopy(self._role_scope_grants.get(role_code, [])))
         scopes.extend(deepcopy(self._user_scope_grants.get(str(user["id"]), [])))
+        member_permissions, member_scopes = self._product_member_authorization_for_user(
+            str(user["id"])
+        )
+        permissions.update(member_permissions)
+        scopes.extend(member_scopes)
 
         return AuthorizationSnapshot(
             user_id=str(user["id"]),
@@ -634,6 +674,32 @@ class CompatibilityAuthorizationRepository:
         self._user_scope_grants[user_id] = normalized_scopes
         return {"user_id": user_id, "scopes": deepcopy(normalized_scopes), "trace_id": trace_id}
 
+    def delete_user_grants(
+        self,
+        user_id: str,
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        del actor_id
+        removed_roles = len(self._user_role_grants.pop(user_id, []))
+        removed_scopes = len(self._user_scope_grants.pop(user_id, []))
+        removed_product_members = 0
+        for product_id, members in list(self._product_members.items()):
+            retained_members = [member for member in members if member.get("user_id") != user_id]
+            removed_product_members += len(members) - len(retained_members)
+            if retained_members:
+                self._product_members[product_id] = retained_members
+            else:
+                self._product_members.pop(product_id, None)
+        return {
+            "removed_product_members": removed_product_members,
+            "removed_roles": removed_roles,
+            "removed_scopes": removed_scopes,
+            "trace_id": trace_id,
+            "user_id": user_id,
+        }
+
     def effective_permissions_for_user(
         self,
         user: dict[str, Any],
@@ -646,6 +712,128 @@ class CompatibilityAuthorizationRepository:
             "scopes": snapshot.scopes,
             "menu_codes": sorted(menu["code"] for menu in snapshot.menus),
         }
+
+    def list_product_members(
+        self,
+        product_id: str,
+        *,
+        active_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        members = self._product_members.get(product_id, [])
+        return deepcopy(
+            [
+                member
+                for member in sorted(
+                    members,
+                    key=lambda item: (
+                        item.get("member_role", ""),
+                        item.get("user_id", ""),
+                        item.get("scope_type", ""),
+                        item.get("scope_id", ""),
+                    ),
+                )
+                if not active_only or member.get("status") == "active"
+            ]
+        )
+
+    def set_product_members(
+        self,
+        product_id: str,
+        members: list[dict[str, Any]],
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        before = self.list_product_members(product_id, active_only=False)
+        normalized_members = self._normalize_product_members(product_id, members)
+        self._product_members[product_id] = normalized_members
+        after = self.list_product_members(product_id, active_only=False)
+        self._record_product_members_mutation(
+            product_id=product_id,
+            before_payload={"items": before},
+            after_payload={"items": after},
+            actor_id=actor_id,
+            trace_id=trace_id,
+        )
+        return {
+            "items": self.list_product_members(product_id, active_only=True),
+            "product_id": product_id,
+            "trace_id": trace_id,
+        }
+
+    def _normalize_product_members(
+        self,
+        product_id: str,
+        members: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        now = datetime.now(UTC).isoformat()
+        for member in members:
+            user_id = str(member.get("user_id") or "").strip()
+            member_role = str(member.get("member_role") or "").strip()
+            scope_type = str(member.get("scope_type") or "product").strip()
+            scope_id = str(member.get("scope_id") or "*").strip()
+            status = str(member.get("status") or "active").strip()
+            if not user_id:
+                raise ValueError("PRODUCT_MEMBER_USER_REQUIRED")
+            if member_role not in PRODUCT_MEMBER_ROLES:
+                raise ValueError("UNSUPPORTED_PRODUCT_MEMBER_ROLE")
+            if scope_type not in PRODUCT_MEMBER_SCOPE_TYPES:
+                raise ValueError("UNSUPPORTED_PRODUCT_MEMBER_SCOPE")
+            if scope_type == "product" and scope_id not in {"*", product_id}:
+                raise ValueError("UNSUPPORTED_PRODUCT_MEMBER_SCOPE")
+            if status not in PRODUCT_MEMBER_STATUSES:
+                raise ValueError("UNSUPPORTED_PRODUCT_MEMBER_STATUS")
+            key = (user_id, member_role, scope_type, scope_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(
+                {
+                    "created_at": now,
+                    "member_role": member_role,
+                    "product_id": product_id,
+                    "scope_id": scope_id,
+                    "scope_type": scope_type,
+                    "status": status,
+                    "updated_at": now,
+                    "user_id": user_id,
+                }
+            )
+        return normalized
+
+    def _product_member_authorization_for_user(
+        self,
+        user_id: str,
+    ) -> tuple[set[str], list[dict[str, Any]]]:
+        permissions: set[str] = set()
+        scopes: list[dict[str, Any]] = []
+        seen_scopes: set[tuple[str, str, str]] = set()
+        for product_id, members in self._product_members.items():
+            for member in members:
+                if member.get("status") != "active" or member.get("user_id") != user_id:
+                    continue
+                member_role = str(member.get("member_role") or "")
+                permissions.update(PRODUCT_MEMBER_ROLE_PERMISSIONS.get(member_role, set()))
+                if member.get("scope_type") != "product":
+                    continue
+                scope_id = str(member.get("scope_id") or "*")
+                if scope_id not in {"*", product_id}:
+                    continue
+                access_level = "read" if member_role == "viewer" else "write"
+                scope_key = ("product", product_id, access_level)
+                if scope_key in seen_scopes:
+                    continue
+                seen_scopes.add(scope_key)
+                scopes.append(
+                    {
+                        "access_level": access_level,
+                        "scope_id": product_id,
+                        "scope_type": "product",
+                    }
+                )
+        return permissions, scopes
 
     def _find_role(self, role_id_or_code: str) -> dict[str, Any] | None:
         return next(
@@ -872,6 +1060,35 @@ class CompatibilityAuthorizationRepository:
             }
         )
 
+    def _record_product_members_mutation(
+        self,
+        *,
+        product_id: str,
+        before_payload: dict[str, Any],
+        after_payload: dict[str, Any],
+        actor_id: str,
+        trace_id: str,
+    ) -> None:
+        del trace_id
+        now = datetime.now(UTC).isoformat()
+        self.audit_events.append(
+            {
+                "id": f"audit_event_{uuid4().hex}",
+                "event_type": "product.members.updated",
+                "actor_id": actor_id,
+                "ai_task_id": None,
+                "subject_type": "product",
+                "subject_id": product_id,
+                "payload": {
+                    "after": deepcopy(after_payload),
+                    "before": deepcopy(before_payload),
+                },
+                "sequence": len(self.audit_events) + 1,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+
 
 class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
     def __init__(self, database_url: str, *, pool_max_size: int = 5) -> None:
@@ -901,6 +1118,11 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
         roles = self._role_codes_for_user(user)
         permissions = self._permissions_for_roles(roles)
         scopes = self._scopes_for_roles(roles)
+        member_permissions, member_scopes = self._product_member_authorization_for_user(
+            str(user["id"])
+        )
+        permissions.update(member_permissions)
+        scopes.extend(member_scopes)
         granted_codes = self.granted_menu_codes_for_roles(roles)
         resources = self.menu_resources()
         return AuthorizationSnapshot(
@@ -2025,6 +2247,43 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
                     )
         return {"user_id": user_id, "scopes": normalized_scopes}
 
+    def delete_user_grants(
+        self,
+        user_id: str,
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        del actor_id, trace_id
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM user_roles WHERE user_id = %s", (user_id,))
+                removed_roles = cursor.rowcount
+                cursor.execute(
+                    """
+                    UPDATE user_scope_grants
+                    SET status = 'revoked', updated_at = now()
+                    WHERE user_id = %s AND status = 'active'
+                    """,
+                    (user_id,),
+                )
+                removed_scopes = cursor.rowcount
+                cursor.execute(
+                    """
+                    UPDATE product_members
+                    SET status = 'inactive', updated_at = now()
+                    WHERE user_id = %s AND status = 'active'
+                    """,
+                    (user_id,),
+                )
+                removed_product_members = cursor.rowcount
+        return {
+            "removed_product_members": removed_product_members,
+            "removed_roles": removed_roles,
+            "removed_scopes": removed_scopes,
+            "user_id": user_id,
+        }
+
     def effective_permissions_for_user(self, user: dict[str, Any]) -> dict[str, Any]:
         snapshot = self.snapshot_for_user(user)
         return {
@@ -2033,6 +2292,170 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
             "permission_codes": sorted(snapshot.permissions),
             "scopes": snapshot.scopes,
             "menu_codes": sorted(menu["code"] for menu in snapshot.menus),
+        }
+
+    def list_product_members(
+        self,
+        product_id: str,
+        *,
+        active_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                return self._postgres_list_product_members(
+                    cursor,
+                    product_id=product_id,
+                    active_only=active_only,
+                )
+
+    def set_product_members(
+        self,
+        product_id: str,
+        members: list[dict[str, Any]],
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        normalized_members = self._normalize_product_members(product_id, members)
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                before = self._postgres_list_product_members(
+                    cursor,
+                    product_id=product_id,
+                    active_only=False,
+                )
+                cursor.execute(
+                    """
+                    UPDATE product_members
+                    SET status = 'inactive', updated_at = now()
+                    WHERE product_id = %s AND status = 'active'
+                    """,
+                    (product_id,),
+                )
+                for member in normalized_members:
+                    cursor.execute(
+                        """
+                        INSERT INTO product_members (
+                          product_id, user_id, member_role, scope_type, scope_id,
+                          status, granted_by
+                        )
+                        VALUES (%s, %s, %s, %s, %s, 'active', %s)
+                        ON CONFLICT (product_id, user_id, member_role, scope_type, scope_id)
+                        DO UPDATE SET
+                          status = 'active',
+                          granted_by = EXCLUDED.granted_by,
+                          updated_at = now()
+                        """,
+                        (
+                            member["product_id"],
+                            member["user_id"],
+                            member["member_role"],
+                            member["scope_type"],
+                            member["scope_id"],
+                            actor_id,
+                        ),
+                    )
+                after = self._postgres_list_product_members(
+                    cursor,
+                    product_id=product_id,
+                    active_only=False,
+                )
+                self._insert_product_members_audit(
+                    cursor,
+                    product_id=product_id,
+                    before_payload={"items": before},
+                    after_payload={"items": after},
+                    actor_id=actor_id,
+                    trace_id=trace_id,
+                )
+        return {
+            "items": self.list_product_members(product_id, active_only=True),
+            "product_id": product_id,
+        }
+
+    def _postgres_list_product_members(
+        self,
+        cursor,
+        *,
+        product_id: str,
+        active_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        where_sql = "product_id = %s"
+        params: list[Any] = [product_id]
+        if active_only:
+            where_sql += " AND status = 'active'"
+        cursor.execute(
+            f"""
+            SELECT product_id, user_id, member_role, scope_type, scope_id,
+                   status, granted_by, created_at, updated_at
+            FROM product_members
+            WHERE {where_sql}
+            ORDER BY member_role, user_id, scope_type, scope_id
+            """,
+            tuple(params),
+        )
+        return [self._postgres_product_member_from_row(row) for row in cursor.fetchall()]
+
+    def _product_member_authorization_for_user(
+        self,
+        user_id: str,
+    ) -> tuple[set[str], list[dict[str, Any]]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT product_id, member_role, scope_type, scope_id
+                    FROM product_members
+                    WHERE user_id = %s AND status = 'active'
+                    ORDER BY product_id, member_role, scope_type, scope_id
+                    """,
+                    (user_id,),
+                )
+                rows = cursor.fetchall()
+        permissions: set[str] = set()
+        scopes: list[dict[str, Any]] = []
+        seen_scopes: set[tuple[str, str, str]] = set()
+        for product_id, member_role, scope_type, scope_id in rows:
+            member_role = str(member_role)
+            permissions.update(PRODUCT_MEMBER_ROLE_PERMISSIONS.get(member_role, set()))
+            if scope_type != "product" or str(scope_id) not in {"*", str(product_id)}:
+                continue
+            access_level = "read" if member_role == "viewer" else "write"
+            scope_key = ("product", str(product_id), access_level)
+            if scope_key in seen_scopes:
+                continue
+            seen_scopes.add(scope_key)
+            scopes.append(
+                {
+                    "access_level": access_level,
+                    "scope_id": str(product_id),
+                    "scope_type": "product",
+                }
+            )
+        return permissions, scopes
+
+    def _postgres_product_member_from_row(self, row: tuple[Any, ...]) -> dict[str, Any]:
+        (
+            product_id,
+            user_id,
+            member_role,
+            scope_type,
+            scope_id,
+            status,
+            granted_by,
+            created_at,
+            updated_at,
+        ) = row
+        return {
+            "created_at": created_at.isoformat() if created_at else None,
+            "granted_by": granted_by,
+            "member_role": member_role,
+            "product_id": product_id,
+            "scope_id": scope_id,
+            "scope_type": scope_type,
+            "status": status,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+            "user_id": user_id,
         }
 
     def _postgres_role_row(self, cursor, role_id_or_code: str):
@@ -2335,6 +2758,35 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
                 menu_code,
                 json.dumps(
                     {"before": before_payload, "after": after_payload},
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+
+    def _insert_product_members_audit(
+        self,
+        cursor,
+        *,
+        product_id: str,
+        before_payload: dict[str, Any],
+        after_payload: dict[str, Any],
+        actor_id: str,
+        trace_id: str,
+    ) -> None:
+        del trace_id
+        cursor.execute(
+            """
+            INSERT INTO audit_events (
+              id, event_type, actor_id, ai_task_id, subject_type, subject_id, payload, sequence
+            )
+            VALUES (%s, 'product.members.updated', %s, NULL, 'product', %s, %s::jsonb, 0)
+            """,
+            (
+                f"audit_event_{uuid4().hex}",
+                actor_id,
+                product_id,
+                json.dumps(
+                    {"after": after_payload, "before": before_payload},
                     ensure_ascii=False,
                 ),
             ),
