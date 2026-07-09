@@ -991,12 +991,14 @@ type ProductMemberCandidateListItem = {
 
 type ProductMemberListResponse = {
   items: ProductMemberListItem[];
+  revision?: string;
   role_options?: ProductMemberRoleOption[];
   total?: number;
 };
 
 type ProductMemberCandidateResponse = {
   items: ProductMemberCandidateListItem[];
+  minimum_keyword_length?: number;
   role_options?: ProductMemberRoleOption[];
   total?: number;
 };
@@ -1705,6 +1707,7 @@ export async function deleteManagementProduct(productId: string) {
 
 export async function fetchProductMembers(productId: string): Promise<{
   items: ProductMemberRecord[];
+  revision: string;
   roleOptions: ProductMemberRoleOption[];
 }> {
   const token = requireAccessToken();
@@ -1714,21 +1717,30 @@ export async function fetchProductMembers(productId: string): Promise<{
   );
   return {
     items: members.items.map(mapProductMemberRecord),
+    revision: members.revision ?? '',
     roleOptions: members.role_options ?? [],
   };
 }
 
-export async function fetchProductMemberCandidates(productId: string): Promise<{
+export async function fetchProductMemberCandidates(productId: string, keyword?: string): Promise<{
   items: ProductMemberCandidateRecord[];
+  minimumKeywordLength: number;
   roleOptions: ProductMemberRoleOption[];
 }> {
   const token = requireAccessToken();
+  const query = new URLSearchParams();
+  const normalizedKeyword = keyword?.trim();
+  if (normalizedKeyword) {
+    query.set('keyword', normalizedKeyword);
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : '';
   const candidates = await apiRequest<ProductMemberCandidateResponse>(
-    `/api/products/${productId}/member-candidates`,
+    `/api/products/${productId}/member-candidates${suffix}`,
     { token },
   );
   return {
     items: candidates.items.map(mapProductMemberCandidateRecord),
+    minimumKeywordLength: candidates.minimum_keyword_length ?? 0,
     roleOptions: candidates.role_options ?? [],
   };
 }
@@ -1736,21 +1748,24 @@ export async function fetchProductMemberCandidates(productId: string): Promise<{
 export async function replaceProductMembers(
   productId: string,
   members: ProductMemberMutationPayload[],
+  expectedRevision?: string,
 ): Promise<{
   items: ProductMemberRecord[];
+  revision: string;
   roleOptions: ProductMemberRoleOption[];
 }> {
   const token = requireAccessToken();
   const result = await apiRequest<ProductMemberListResponse>(
     `/api/products/${productId}/members`,
     {
-      body: { members },
+      body: { expected_revision: expectedRevision, members },
       method: 'PUT',
       token,
     },
   );
   return {
     items: result.items.map(mapProductMemberRecord),
+    revision: result.revision ?? '',
     roleOptions: result.role_options ?? [],
   };
 }

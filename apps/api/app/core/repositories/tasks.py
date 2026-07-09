@@ -555,6 +555,7 @@ class TaskReadRepository:
         status: str | None = None,
         task_type: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         requirement_id: str | None = None,
         created_from: Any | None = None,
         created_to: Any | None = None,
@@ -580,6 +581,12 @@ class TaskReadRepository:
         if product_id is not None:
             where_clauses.append("t.product_id = %s")
             params.append(product_id)
+        if product_scope_ids is not None:
+            if product_scope_ids:
+                where_clauses.append("t.product_id = ANY(%s)")
+                params.append(product_scope_ids)
+            else:
+                where_clauses.append("1 = 0")
         if requirement_id is not None:
             where_clauses.append("t.requirement_id = %s")
             params.append(requirement_id)
@@ -599,6 +606,7 @@ class TaskReadRepository:
         status: str | None = None,
         task_type: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         requirement_id: str | None = None,
         created_from: Any | None = None,
         created_to: Any | None = None,
@@ -610,6 +618,7 @@ class TaskReadRepository:
             status=status,
             task_type=task_type,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             requirement_id=requirement_id,
             created_from=created_from,
             created_to=created_to,
@@ -636,6 +645,7 @@ class TaskReadRepository:
         status: str | None = None,
         task_type: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         requirement_id: str | None = None,
         created_from: Any | None = None,
         created_to: Any | None = None,
@@ -651,6 +661,7 @@ class TaskReadRepository:
             status=status,
             task_type=task_type,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             requirement_id=requirement_id,
             created_from=created_from,
             created_to=created_to,
@@ -855,6 +866,7 @@ class TaskReadRepository:
         self,
         *,
         ai_task_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         read_scope: str | None = None,
     ) -> tuple[str, list[Any]]:
         where_clauses = ["r.status = 'pending'"]
@@ -862,6 +874,12 @@ class TaskReadRepository:
         if ai_task_id is not None:
             where_clauses.append("r.ai_task_id = %s")
             params.append(ai_task_id)
+        if product_scope_ids is not None:
+            if product_scope_ids:
+                where_clauses.append("t.product_id = ANY(%s)")
+                params.append(product_scope_ids)
+            else:
+                where_clauses.append("1 = 0")
         self._append_ai_task_read_scope(where_clauses, read_scope=read_scope, table_alias="t")
         where_clause = f"WHERE {' AND '.join(where_clauses)}"
         return where_clause, params
@@ -870,10 +888,12 @@ class TaskReadRepository:
         self,
         *,
         ai_task_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         read_scope: str | None = None,
     ) -> int:
         where_clause, params = self._pending_review_summary_where(
             ai_task_id=ai_task_id,
+            product_scope_ids=product_scope_ids,
             read_scope=read_scope,
         )
         with self._connect() as connection:
@@ -896,12 +916,14 @@ class TaskReadRepository:
         ai_task_id: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        product_scope_ids: list[str] | None = None,
         read_scope: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> list[dict[str, Any]]:
         where_clause, params = self._pending_review_summary_where(
             ai_task_id=ai_task_id,
+            product_scope_ids=product_scope_ids,
             read_scope=read_scope,
         )
         sort_columns = {

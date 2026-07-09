@@ -6,6 +6,7 @@ from app.api.deps import api_error
 from app.core.listing import add_list_observability, ensure_list_enum, sort_list_items
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.mock_writeback import writeback_idempotency_key
+from app.services.product_scope import product_scope_filter
 from app.services.task_access import can_read_task, task_read_scope
 from app.services.task_contexts import public_product_context
 from app.services.task_graph_runtime import graph_runs_for_task
@@ -145,13 +146,19 @@ def pending_reviews_response(
     repository = pending_review_query_repository(current_store)
     if repository is not None:
         read_scope = task_read_scope(user)
+        product_scope_ids = product_scope_filter(user)
         count_pending_reviews = getattr(repository, "count_pending_review_summaries", None)
         if callable(count_pending_reviews):
-            total = count_pending_reviews(ai_task_id=ai_task_id, read_scope=read_scope)
+            total = count_pending_reviews(
+                ai_task_id=ai_task_id,
+                product_scope_ids=product_scope_ids,
+                read_scope=read_scope,
+            )
             items = repository.list_pending_review_summaries(
                 ai_task_id=ai_task_id,
                 limit=resolved_page_size,
                 offset=(resolved_page - 1) * resolved_page_size,
+                product_scope_ids=product_scope_ids,
                 read_scope=read_scope,
                 sort_by=resolved_sort_by,
                 sort_order=sort_order,
@@ -171,7 +178,10 @@ def pending_reviews_response(
                 sort_order=sort_order,
                 started_at=started_at,
             )
-        items = repository.list_pending_review_summaries(read_scope=read_scope)
+        items = repository.list_pending_review_summaries(
+            product_scope_ids=product_scope_ids,
+            read_scope=read_scope,
+        )
         if ai_task_id:
             items = [item for item in items if item.get("ai_task_id") == ai_task_id]
         items = sort_list_items(

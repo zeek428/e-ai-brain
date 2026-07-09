@@ -5,6 +5,7 @@ from typing import Any
 
 from app.api.deps import api_error, require_any_permission_or_roles
 from app.core.store import DEFAULT_BRAIN_APP_ID
+from app.services.product_scope import require_product_scope
 from app.services.requirement_listing import (
     list_requirements_response,
     requirement_summary_projection,
@@ -216,6 +217,10 @@ def set_requirement_status(requirement: dict[str, Any], status: str) -> None:
     requirement["updated_at"] = datetime.now(UTC).isoformat()
 
 
+def ensure_requirement_product_scope(user: dict[str, Any], product_id: Any) -> None:
+    require_product_scope(user, product_id)
+
+
 def public_git_repository(repository: dict[str, Any]) -> dict[str, Any]:
     public_repository = {
         key: value
@@ -280,6 +285,7 @@ def create_requirement_result(
     product = _read_memory_record(current_store, "products", payload.product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
+    ensure_requirement_product_scope(user, payload.product_id)
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
     validate_requirement_version(
@@ -334,6 +340,7 @@ def patch_requirement_result(
     requirement = _read_memory_record(current_store, "requirements", requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
+    ensure_requirement_product_scope(user, requirement.get("product_id"))
     current_status = canonical_requirement_status(requirement.get("status"))
     if current_status not in {"approved", "planned", "rejected", "submitted"}:
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement cannot be edited")
@@ -351,6 +358,7 @@ def patch_requirement_result(
     product = _read_memory_record(current_store, "products", next_product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
+    ensure_requirement_product_scope(user, next_product_id)
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
     validate_requirement_version(
@@ -391,6 +399,7 @@ def delete_requirement_result(
     requirement = _read_memory_record(current_store, "requirements", requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
+    ensure_requirement_product_scope(user, requirement.get("product_id"))
     task_ids = requirement.get("task_ids")
     task_count = len(task_ids) if isinstance(task_ids, list) else 1 if task_ids else 0
     if task_count:
@@ -495,6 +504,7 @@ def generate_requirement_task_result(
     requirement = _read_memory_record(current_store, "requirements", requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
+    ensure_requirement_product_scope(user, requirement.get("product_id"))
     if canonical_requirement_status(requirement.get("status")) != "planned":
         raise api_error(
             409,

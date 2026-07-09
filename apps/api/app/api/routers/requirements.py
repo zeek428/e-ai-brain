@@ -202,6 +202,7 @@ def get_requirement(
     requirement = get_requirement_response(
         current_store=store(request),
         requirement_id=requirement_id,
+        user=user,
     )
     return envelope(requirement, get_trace_id(request))
 

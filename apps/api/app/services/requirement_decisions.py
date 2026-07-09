@@ -6,6 +6,7 @@ from typing import Any
 from app.api.deps import api_error, require_any_permission_or_roles
 from app.services.requirements import (
     REQUIREMENT_CLOSABLE_STATUSES,
+    ensure_requirement_product_scope,
     record_audit_event,
     save_requirement_record,
 )
@@ -29,6 +30,7 @@ def approve_requirement_result(
     requirement = requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
+    ensure_requirement_product_scope(user, requirement.get("product_id"))
     if canonical_requirement_status(requirement.get("status")) != "submitted":
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement is not pending approval")
 
@@ -61,6 +63,7 @@ def reject_requirement_result(
     requirement = requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
+    ensure_requirement_product_scope(user, requirement.get("product_id"))
     if canonical_requirement_status(requirement.get("status")) != "submitted":
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement is not pending approval")
 
@@ -100,6 +103,7 @@ def close_requirement_result(
     requirement = requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
+    ensure_requirement_product_scope(user, requirement.get("product_id"))
     if canonical_requirement_status(requirement.get("status")) not in REQUIREMENT_CLOSABLE_STATUSES:
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement cannot be closed")
 

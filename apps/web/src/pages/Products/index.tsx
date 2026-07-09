@@ -98,6 +98,8 @@ export default function ProductsPage() {
   const [repositoryRows, setRepositoryRows] = useState<ProductGitRepositoryRecord[]>([]);
   const [memberRows, setMemberRows] = useState<ProductMemberRecord[]>([]);
   const [memberCandidates, setMemberCandidates] = useState<ProductMemberCandidateRecord[]>([]);
+  const [memberCandidateMinimumKeywordLength, setMemberCandidateMinimumKeywordLength] = useState(0);
+  const [memberRevision, setMemberRevision] = useState('');
   const [memberRoleOptions, setMemberRoleOptions] = useState<ProductMemberRoleOption[]>([]);
   const [resourceEditor, setResourceEditor] = useState<ProductResourceEditor>();
   const [handledProductConfigDeepLink, setHandledProductConfigDeepLink] = useState<string>();
@@ -217,13 +219,14 @@ export default function ProductsPage() {
         fetchProductGitRepositoryRecords(productId),
         canReadMembers
           ? fetchProductMembers(productId)
-          : Promise.resolve({ items: [], roleOptions: [] }),
+          : Promise.resolve({ items: [], revision: '', roleOptions: [] }),
       ]);
       setVersionRows(versions);
       setModuleRows(modules);
       setRelatedSystemRows(relatedSystems);
       setRepositoryRows(repositories);
       setMemberRows(members.items);
+      setMemberRevision(members.revision);
       setMemberRoleOptions(members.roleOptions);
     } catch (loadError) {
       message.error(formatMutationError(loadError));
@@ -597,14 +600,15 @@ export default function ProductsPage() {
     [],
   );
 
-  const loadMemberCandidates = useCallback(async () => {
+  const loadMemberCandidates = useCallback(async (keyword?: string) => {
     if (!configProduct || !canManageMembers) {
       return;
     }
     setMemberCandidatesLoading(true);
     try {
-      const result = await fetchProductMemberCandidates(configProduct.id);
+      const result = await fetchProductMemberCandidates(configProduct.id, keyword);
       setMemberCandidates(result.items);
+      setMemberCandidateMinimumKeywordLength(result.minimumKeywordLength);
       if (result.roleOptions.length) {
         setMemberRoleOptions(result.roleOptions);
       }
@@ -621,6 +625,7 @@ export default function ProductsPage() {
       return;
     }
     memberForm.resetFields();
+    setMemberCandidates([]);
     setIsMemberModalOpen(true);
     void loadMemberCandidates();
   }, [canManageMembers, loadMemberCandidates, memberForm]);
@@ -648,11 +653,16 @@ export default function ProductsPage() {
     }
     setIsSavingMembers(true);
     try {
-      const result = await replaceProductMembers(configProduct.id, [
-        ...memberRowsToPayload(memberRows),
-        nextMember,
-      ]);
+      const result = await replaceProductMembers(
+        configProduct.id,
+        [
+          ...memberRowsToPayload(memberRows),
+          nextMember,
+        ],
+        memberRevision || undefined,
+      );
       setMemberRows(result.items);
+      setMemberRevision(result.revision);
       if (result.roleOptions.length) {
         setMemberRoleOptions(result.roleOptions);
       }
@@ -675,8 +685,10 @@ export default function ProductsPage() {
       const result = await replaceProductMembers(
         configProduct.id,
         memberRowsToPayload(memberRows.filter((member) => member.id !== row.id)),
+        memberRevision || undefined,
       );
       setMemberRows(result.items);
+      setMemberRevision(result.revision);
       if (result.roleOptions.length) {
         setMemberRoleOptions(result.roleOptions);
       }
@@ -686,7 +698,7 @@ export default function ProductsPage() {
     } finally {
       setIsSavingMembers(false);
     }
-  }, [canManageMembers, configProduct, memberRows, memberRowsToPayload]);
+  }, [canManageMembers, configProduct, memberRevision, memberRows, memberRowsToPayload]);
 
   const versionColumns = useMemo<ProColumns<ProductVersionRecord>[]>(
     () => [
@@ -1451,7 +1463,16 @@ export default function ProductsPage() {
         <Form<ProductMemberFormValues> form={memberForm} layout="vertical">
           <Form.Item label="成员" name="user_id" rules={[{ required: true, message: '请选择成员' }]}>
             <Select
+              filterOption={false}
               loading={memberCandidatesLoading}
+              notFoundContent={
+                memberCandidatesLoading
+                  ? '加载中'
+                  : memberCandidateMinimumKeywordLength > 0
+                    ? `请输入至少 ${memberCandidateMinimumKeywordLength} 个字符搜索成员`
+                    : '暂无可选成员'
+              }
+              onSearch={(value) => void loadMemberCandidates(value)}
               optionFilterProp="label"
               options={memberCandidates.map((candidate) => ({
                 label: `${candidate.displayName}（${candidate.username}）`,

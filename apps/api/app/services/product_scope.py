@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.api.deps import api_error
+
 
 def user_product_access(user: dict[str, Any]) -> tuple[bool, set[str]]:
     roles = set(user.get("roles") or [])
@@ -41,3 +43,16 @@ def user_can_read_product(user: dict[str, Any], product_id: Any) -> bool:
     if global_access:
         return True
     return product_id is not None and str(product_id) in product_ids
+
+
+def require_product_scope(
+    user: dict[str, Any],
+    product_id: Any,
+    *,
+    code: str = "NOT_FOUND",
+    message: str = "Product not found",
+    status_code: int = 404,
+) -> None:
+    if user_can_read_product(user, product_id):
+        return
+    raise api_error(status_code, code, message)

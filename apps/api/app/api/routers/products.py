@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
@@ -62,6 +64,7 @@ class ProductMemberRequest(BaseModel):
 
 
 class ProductMembersReplaceRequest(BaseModel):
+    expected_revision: str | None = None
     members: list[ProductMemberRequest] = Field(default_factory=list)
 
 
@@ -93,10 +96,55 @@ def _users_by_id(request: Request) -> dict[str, dict[str, Any]]:
     }
 
 
-def _active_member_candidates(request: Request) -> list[dict[str, Any]]:
+def _product_members_revision(members: list[dict[str, Any]]) -> str:
+    revision_payload = [
+        {
+            "member_role": str(member.get("member_role") or ""),
+            "scope_id": str(member.get("scope_id") or "*"),
+            "scope_type": str(member.get("scope_type") or "product"),
+            "status": str(member.get("status") or "active"),
+            "user_id": str(member.get("user_id") or ""),
+        }
+        for member in members
+    ]
+    revision_payload.sort(
+        key=lambda item: (
+            item["user_id"],
+            item["member_role"],
+            item["scope_type"],
+            item["scope_id"],
+            item["status"],
+        )
+    )
+    raw = json.dumps(revision_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _candidate_matches_keyword(user: dict[str, Any], keyword: str) -> bool:
+    normalized_keyword = keyword.strip().lower()
+    if not normalized_keyword:
+        return True
+    haystack = " ".join(
+        str(user.get(field) or "")
+        for field in ("id", "username", "display_name")
+    ).lower()
+    return normalized_keyword in haystack
+
+
+def _active_member_candidates(
+    request: Request,
+    *,
+    allow_full_directory: bool,
+    keyword: str | None,
+) -> list[dict[str, Any]]:
+    normalized_keyword = (keyword or "").strip()
+    if not allow_full_directory and len(normalized_keyword) < 2:
+        return []
     candidates: list[dict[str, Any]] = []
     for user in _users_by_id(request).values():
         if user.get("status", "active") != "active":
+            continue
+        if not _candidate_matches_keyword(user, normalized_keyword):
             continue
         candidates.append(
             {
@@ -302,6 +350,7 @@ def list_product_members(
     return envelope(
         {
             "items": enriched,
+            "revision": _product_members_revision(members),
             "role_options": _product_member_role_options(),
             "total": len(enriched),
         },
@@ -320,6 +369,15 @@ def replace_product_members(
     _ensure_product_scope(user, product_id)
     if get_product_record(store(request), product_id) is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
+    current_members = _authorization_repository(request).list_product_members(product_id)
+    current_revision = _product_members_revision(current_members)
+    if payload.expected_revision is not None and payload.expected_revision != current_revision:
+        raise api_error(
+            409,
+            "PRODUCT_MEMBERS_CONFLICT",
+            "Product members were changed by another request",
+            extra={"current_revision": current_revision},
+        )
     members = _normalize_member_payloads(
         payload=payload,
         product_id=product_id,
@@ -335,9 +393,11 @@ def replace_product_members(
         members=list(result.get("items") or []),
         request=request,
     )
+    next_members = list(result.get("items") or [])
     return envelope(
         {
             "items": enriched,
+            "revision": _product_members_revision(next_members),
             "role_options": _product_member_role_options(),
             "total": len(enriched),
         },
@@ -349,16 +409,22 @@ def replace_product_members(
 def list_product_member_candidates(
     product_id: str,
     request: Request,
+    keyword: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_permissions(user, {PRODUCT_MEMBER_MANAGE_PERMISSION})
     _ensure_product_scope(user, product_id)
     if get_product_record(store(request), product_id) is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
-    candidates = _active_member_candidates(request)
+    candidates = _active_member_candidates(
+        request,
+        allow_full_directory=product_scope_filter(user) is None,
+        keyword=keyword,
+    )
     return envelope(
         {
             "items": candidates,
+            "minimum_keyword_length": 0 if product_scope_filter(user) is None else 2,
             "role_options": _product_member_role_options(),
             "total": len(candidates),
         },

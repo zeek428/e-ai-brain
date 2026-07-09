@@ -121,7 +121,9 @@ def test_product_members_grant_product_scoped_permissions_and_can_be_revoked():
             headers=headers,
         )
         assert updated.status_code == 200
-        member_rows = updated.json()["data"]["items"]
+        updated_payload = updated.json()["data"]
+        assert updated_payload["revision"]
+        member_rows = updated_payload["items"]
         assert member_rows[0]["display_name"] == "Product Member"
         assert member_rows[0]["member_role_label"] == "开发工程师"
 
@@ -208,8 +210,15 @@ def test_product_owner_member_can_manage_members_inside_assigned_product():
             headers=headers,
         )
         owner_headers = auth_headers(owner_username, "owner123")
-        candidates = client.get(
+        empty_candidates = client.get(
             f"/api/products/{product['id']}/member-candidates",
+            headers=owner_headers,
+        )
+        assert empty_candidates.status_code == 200
+        assert empty_candidates.json()["data"]["items"] == []
+
+        candidates = client.get(
+            f"/api/products/{product['id']}/member-candidates?keyword=developer",
             headers=owner_headers,
         )
         assert candidates.status_code == 200
@@ -217,9 +226,14 @@ def test_product_owner_member_can_manage_members_inside_assigned_product():
             item["id"] for item in candidates.json()["data"]["items"]
         ]
 
+        before_members = client.get(
+            f"/api/products/{product['id']}/members",
+            headers=owner_headers,
+        ).json()["data"]
         managed = client.put(
             f"/api/products/{product['id']}/members",
             json={
+                "expected_revision": before_members["revision"],
                 "members": [
                     {"member_role": "product_owner", "user_id": owner_user["id"]},
                     {"member_role": "developer", "user_id": developer_user["id"]},
@@ -232,6 +246,198 @@ def test_product_owner_member_can_manage_members_inside_assigned_product():
             "developer",
             "product_owner",
         }
+        stale = client.put(
+            f"/api/products/{product['id']}/members",
+            json={
+                "expected_revision": before_members["revision"],
+                "members": [
+                    {"member_role": "product_owner", "user_id": owner_user["id"]},
+                ],
+            },
+            headers=owner_headers,
+        )
+        assert stale.status_code == 409
+        assert stale.json()["detail"]["code"] == "PRODUCT_MEMBERS_CONFLICT"
+    finally:
+        client.delete(f"/api/users/{developer_user['id']}", headers=headers)
+        client.delete(f"/api/users/{owner_user['id']}", headers=headers)
+
+
+def _create_requirement_and_task(
+    headers: dict[str, str],
+    *,
+    product: dict[str, str],
+    suffix: str,
+) -> tuple[dict[str, str], dict[str, str]]:
+    version = client.post(
+        f"/api/products/{product['id']}/versions",
+        json={"code": f"v-{suffix}", "name": f"版本 {suffix}"},
+        headers=headers,
+    ).json()["data"]
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "content": f"产品范围权限验证 {suffix}",
+            "product_id": product["id"],
+            "title": f"产品范围需求 {suffix}",
+            "version_id": version["id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
+    task = client.post(
+        f"/api/requirements/{requirement['id']}/generate-task",
+        headers=headers,
+    ).json()["data"]
+    return requirement, task
+
+
+def test_product_member_permissions_are_limited_to_assigned_product_business_data():
+    app.state.store.reset()
+    headers = auth_headers()
+    unique = uuid4().hex[:8]
+    product = client.post(
+        "/api/products",
+        json={"code": f"scope-a-{unique}", "name": "授权产品"},
+        headers=headers,
+    ).json()["data"]
+    other_product = client.post(
+        "/api/products",
+        json={"code": f"scope-b-{unique}", "name": "未授权产品"},
+        headers=headers,
+    ).json()["data"]
+    requirement, task = _create_requirement_and_task(
+        headers,
+        product=product,
+        suffix=f"a-{unique}",
+    )
+    other_requirement, other_task = _create_requirement_and_task(
+        headers,
+        product=other_product,
+        suffix=f"b-{unique}",
+    )
+    bug = client.post(
+        "/api/bugs",
+        json={
+            "description": "授权产品 Bug",
+            "product_id": product["id"],
+            "severity": "major",
+            "source": "manual_test",
+            "title": "授权产品 Bug",
+        },
+        headers=headers,
+    ).json()["data"]
+    other_bug = client.post(
+        "/api/bugs",
+        json={
+            "description": "未授权产品 Bug",
+            "product_id": other_product["id"],
+            "severity": "major",
+            "source": "manual_test",
+            "title": "未授权产品 Bug",
+        },
+        headers=headers,
+    ).json()["data"]
+    owner_username = f"scoped-owner-{unique}@example.com"
+    developer_username = f"scoped-developer-{unique}@example.com"
+    owner_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Scoped Owner",
+            "password": "owner123",
+            "roles": ["viewer"],
+            "username": owner_username,
+        },
+        headers=headers,
+    ).json()["data"]
+    developer_user = client.post(
+        "/api/users",
+        json={
+            "display_name": "Scoped Developer",
+            "password": "developer123",
+            "roles": ["viewer"],
+            "username": developer_username,
+        },
+        headers=headers,
+    ).json()["data"]
+
+    try:
+        client.put(
+            f"/api/products/{product['id']}/members",
+            json={
+                "members": [
+                    {"member_role": "product_owner", "user_id": owner_user["id"]},
+                    {"member_role": "developer", "user_id": developer_user["id"]},
+                ]
+            },
+            headers=headers,
+        )
+        owner_headers = auth_headers(owner_username, "owner123")
+        developer_headers = auth_headers(developer_username, "developer123")
+
+        allowed_requirement = client.get(
+            f"/api/requirements/{requirement['id']}",
+            headers=owner_headers,
+        )
+        assert allowed_requirement.status_code == 200
+        denied_requirement = client.get(
+            f"/api/requirements/{other_requirement['id']}",
+            headers=owner_headers,
+        )
+        assert denied_requirement.status_code == 404
+
+        denied_create_requirement = client.post(
+            "/api/requirements",
+            json={
+                "content": "不应能跨产品创建需求。",
+                "product_id": other_product["id"],
+                "title": "跨产品创建需求",
+            },
+            headers=owner_headers,
+        )
+        assert denied_create_requirement.status_code == 404
+        denied_approve_requirement = client.post(
+            f"/api/requirements/{other_requirement['id']}/approve",
+            json={},
+            headers=owner_headers,
+        )
+        assert denied_approve_requirement.status_code == 404
+
+        visible_tasks = client.get("/api/ai-tasks", headers=developer_headers).json()["data"]
+        assert task["task_id"] in [item["id"] for item in visible_tasks["items"]]
+        assert other_task["task_id"] not in [item["id"] for item in visible_tasks["items"]]
+        denied_task_detail = client.get(
+            f"/api/ai-tasks/{other_task['task_id']}",
+            headers=developer_headers,
+        )
+        assert denied_task_detail.status_code == 403
+        denied_task_start = client.post(
+            f"/api/ai-tasks/{other_task['task_id']}/start",
+            headers=developer_headers,
+        )
+        assert denied_task_start.status_code == 403
+
+        visible_bugs = client.get("/api/bugs", headers=developer_headers).json()["data"]
+        assert bug["id"] in [item["id"] for item in visible_bugs["items"]]
+        assert other_bug["id"] not in [item["id"] for item in visible_bugs["items"]]
+        denied_create_bug = client.post(
+            "/api/bugs",
+            json={
+                "description": "不应能跨产品登记 Bug。",
+                "product_id": other_product["id"],
+                "severity": "major",
+                "source": "manual_test",
+                "title": "跨产品 Bug",
+            },
+            headers=developer_headers,
+        )
+        assert denied_create_bug.status_code == 404
+        denied_patch_bug = client.patch(
+            f"/api/bugs/{other_bug['id']}",
+            json={"title": "不应能跨产品编辑 Bug"},
+            headers=developer_headers,
+        )
+        assert denied_patch_bug.status_code == 404
     finally:
         client.delete(f"/api/users/{developer_user['id']}", headers=headers)
         client.delete(f"/api/users/{owner_user['id']}", headers=headers)

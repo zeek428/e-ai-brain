@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.api.deps import api_error, require_any_permission_or_roles
 from app.services.requirements import (
     REQUIREMENT_BATCH_SCHEDULABLE_STATUSES,
     ensure_non_blank,
+    ensure_requirement_product_scope,
     generate_product_detail_design_task,
     record_audit_event,
     requirement_summary_projection,
@@ -41,6 +44,7 @@ def batch_generate_requirement_tasks_result(
     product = _read_memory_dict(current_store, "products").get(payload.product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
+    ensure_requirement_product_scope(user, payload.product_id)
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
 
@@ -64,6 +68,17 @@ def batch_generate_requirement_tasks_result(
 
         requirement = _read_memory_dict(current_store, "requirements").get(requirement_id)
         if requirement is None:
+            skipped.append(
+                {
+                    "code": "NOT_FOUND",
+                    "id": requirement_id,
+                    "message": "Requirement not found",
+                }
+            )
+            continue
+        try:
+            ensure_requirement_product_scope(user, requirement.get("product_id"))
+        except HTTPException:
             skipped.append(
                 {
                     "code": "NOT_FOUND",
@@ -174,6 +189,17 @@ def batch_assign_requirement_owner_result(
                 }
             )
             continue
+        try:
+            ensure_requirement_product_scope(user, requirement.get("product_id"))
+        except HTTPException:
+            skipped.append(
+                {
+                    "code": "NOT_FOUND",
+                    "id": requirement_id,
+                    "message": "Requirement not found",
+                }
+            )
+            continue
         current_status = canonical_requirement_status(requirement.get("status"))
         if current_status in {"cancelled", "closed"}:
             skipped.append(
@@ -254,6 +280,7 @@ def batch_schedule_requirements_result(
     product = _read_memory_dict(current_store, "products").get(payload.product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
+    ensure_requirement_product_scope(user, payload.product_id)
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
     validate_requirement_version(
@@ -282,6 +309,17 @@ def batch_schedule_requirements_result(
 
         requirement = _read_memory_dict(current_store, "requirements").get(requirement_id)
         if requirement is None:
+            skipped.append(
+                {
+                    "code": "NOT_FOUND",
+                    "id": requirement_id,
+                    "message": "Requirement not found",
+                }
+            )
+            continue
+        try:
+            ensure_requirement_product_scope(user, requirement.get("product_id"))
+        except HTTPException:
             skipped.append(
                 {
                     "code": "NOT_FOUND",
@@ -404,6 +442,17 @@ def batch_advance_requirement_status_result(
 
         requirement = _read_memory_dict(current_store, "requirements").get(requirement_id)
         if requirement is None:
+            skipped.append(
+                {
+                    "code": "NOT_FOUND",
+                    "id": requirement_id,
+                    "message": "Requirement not found",
+                }
+            )
+            continue
+        try:
+            ensure_requirement_product_scope(user, requirement.get("product_id"))
+        except HTTPException:
             skipped.append(
                 {
                     "code": "NOT_FOUND",

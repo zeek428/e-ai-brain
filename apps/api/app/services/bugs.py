@@ -19,6 +19,7 @@ from app.services.bug_lifecycle import (
 )
 from app.services.bug_listing import bug_summary_projection
 from app.services.object_storage import object_storage
+from app.services.product_scope import require_product_scope
 from app.services.task_persistence_helpers import (
     record_audit_event as record_task_audit_event,
 )
@@ -80,6 +81,10 @@ def payload_updates(payload: Any) -> dict[str, Any]:
 
 def require_bug_write_role(user: dict[str, Any]) -> None:
     require_any_permission_or_roles(user, {"bug.manage"}, {"product_owner", "rd_owner"})
+
+
+def ensure_bug_product_scope(user: dict[str, Any], product_id: Any) -> None:
+    require_product_scope(user, product_id)
 
 
 def bug_write_store(current_store: Any) -> Any:
@@ -332,6 +337,7 @@ def promote_bug_to_ai_task_result(
     bug = _read_memory_record(write_store, "bugs", bug_id)
     if bug is None:
         raise api_error(404, "NOT_FOUND", "Bug not found")
+    ensure_bug_product_scope(user, bug.get("product_id"))
     if bug.get("duplicate_of_bug_id"):
         raise api_error(409, "BUG_STATE_INVALID", "Duplicate Bug cannot be promoted")
     if bug.get("status") == "closed":
@@ -504,6 +510,7 @@ def create_bug_result(
         related_task_id=payload.related_task_id,
         duplicate_of_bug_id=payload.duplicate_of_bug_id,
     )
+    ensure_bug_product_scope(user, payload.product_id)
     bug_id = current_store.new_id("bug")
     now = datetime.now(UTC).isoformat()
     bug = {
@@ -580,6 +587,17 @@ def batch_update_bugs_result(
 
         bug = _read_memory_record(current_store, "bugs", bug_id)
         if bug is None:
+            skipped.append(
+                {
+                    "code": "NOT_FOUND",
+                    "id": bug_id,
+                    "message": "Bug not found",
+                }
+            )
+            continue
+        try:
+            ensure_bug_product_scope(user, bug.get("product_id"))
+        except HTTPException:
             skipped.append(
                 {
                     "code": "NOT_FOUND",
@@ -668,6 +686,7 @@ def patch_bug_result(
     bug = _read_memory_record(current_store, "bugs", bug_id)
     if bug is None:
         raise api_error(404, "NOT_FOUND", "Bug not found")
+    ensure_bug_product_scope(user, bug.get("product_id"))
     updates = payload_updates(payload)
     validate_bug_enums(severity=updates.get("severity"), status=updates.get("status"))
     if "title" in updates:
@@ -710,8 +729,10 @@ def delete_bug_result(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_bug_write_role(user)
-    if _read_memory_record(current_store, "bugs", bug_id) is None:
+    bug = _read_memory_record(current_store, "bugs", bug_id)
+    if bug is None:
         raise api_error(404, "NOT_FOUND", "Bug not found")
+    ensure_bug_product_scope(user, bug.get("product_id"))
     audit_event = record_audit_event(
         current_store,
         event_type="bug.deleted",

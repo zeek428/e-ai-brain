@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.api.deps import require_any_permission_or_roles
+from app.api.deps import api_error, require_any_permission_or_roles
+from app.services.product_scope import user_can_read_product
 
 
 def task_allowed_roles(task: dict[str, Any]) -> set[str]:
@@ -17,6 +18,18 @@ def require_task_permission_or_roles(
     permissions: set[str],
 ) -> None:
     require_any_permission_or_roles(user, permissions, task_allowed_roles(task))
+    if not can_access_task_product(user, task):
+        raise api_error(403, "FORBIDDEN", "Insufficient product scope for this AI task")
+
+
+def can_access_task_product(user: dict[str, Any], task: dict[str, Any]) -> bool:
+    user_roles = set(user["roles"])
+    user_permissions = set(user.get("permissions") or [])
+    if "admin" in user_roles or "system.admin" in user_permissions:
+        return True
+    if "reviewer" in user_roles and task.get("task_type") == "code_review":
+        return True
+    return user_can_read_product(user, task.get("product_id"))
 
 
 def can_read_task(user: dict[str, Any], task: dict[str, Any]) -> bool:
@@ -24,6 +37,8 @@ def can_read_task(user: dict[str, Any], task: dict[str, Any]) -> bool:
     user_permissions = set(user.get("permissions") or [])
     if "admin" in user_roles or "system.admin" in user_permissions:
         return True
+    if not can_access_task_product(user, task):
+        return False
     if bool(user_roles.intersection(task_allowed_roles(task))):
         return True
     if "task.read" not in user_permissions:

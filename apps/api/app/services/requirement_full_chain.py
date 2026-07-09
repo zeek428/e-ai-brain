@@ -4,12 +4,12 @@ from typing import Any
 
 from app.api.deps import api_error, require_any_permission
 from app.services.bugs import bug_summary_projection
-from app.services.code_inspections import user_can_read_product
 from app.services.full_chain_subject_resolution import (
     latest_requirement_id_for_version,
     resolve_requirement_id_from_full_chain_subject,
 )
 from app.services.lifecycle_subjects import subject_product_id
+from app.services.product_scope import user_can_read_product
 from app.services.requirements import requirement_summary_projection
 from app.services.task_access import can_read_task
 from app.services.task_listing import task_summary_projection
@@ -201,11 +201,17 @@ def full_chain_execution_traces(
     return sort_by_lifecycle_time(traces, "started_at", "updated_at")
 
 
-def get_requirement_response(*, current_store: Any, requirement_id: str) -> dict[str, Any]:
+def get_requirement_response(
+    *,
+    current_store: Any,
+    requirement_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
     read_store = requirement_read_store(current_store)
     requirement = read_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
+    _ensure_requirement_full_chain_access(requirement, user=user)
     return requirement
 
 

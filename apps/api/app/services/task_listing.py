@@ -7,6 +7,7 @@ from app.api.deps import api_error
 from app.core.listing import add_list_observability, ensure_list_enum, sort_list_items
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.core.task_titles import code_inspection_remediation_title
+from app.services.product_scope import product_scope_filter
 from app.services.task_access import can_read_task, task_read_scope
 
 AI_TASK_SORT_FIELDS = {
@@ -143,12 +144,14 @@ def list_ai_tasks_response(
     repository = ai_task_list_query_repository(current_store)
     if repository is not None:
         read_scope = task_read_scope(user)
+        product_scope_ids = product_scope_filter(user)
         query_filters = {
             "created_by": created_by,
             "created_from": from_at,
             "created_to": to_at,
             "keyword": keyword,
             "product_id": product_id,
+            "product_scope_ids": product_scope_ids,
             "read_scope": read_scope,
             "requirement_id": requirement_id,
             "status": status,

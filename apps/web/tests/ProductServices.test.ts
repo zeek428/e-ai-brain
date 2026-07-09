@@ -245,6 +245,7 @@ describe('product service API mappings', () => {
           username: 'dev@example.com',
         }),
       ],
+      revision: '',
       roleOptions: [{ label: '开发工程师', value: 'developer' }],
     });
     expect(candidates).toEqual({
@@ -255,6 +256,7 @@ describe('product service API mappings', () => {
           username: 'dev@example.com',
         }),
       ],
+      minimumKeywordLength: 0,
       roleOptions: [{ label: '开发工程师', value: 'developer' }],
     });
     expect(relatedSystems).toEqual([

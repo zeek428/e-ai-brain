@@ -49,12 +49,13 @@ GET /api/products/{product_id}/member-candidates
 PUT /api/products/{product_id}/members
 ```
 
-`GET /api/products/{product_id}/members` 要求 `product.member.read`，并按当前用户产品 scope 校验产品可见性；`GET /api/products/{product_id}/member-candidates` 和 `PUT /api/products/{product_id}/members` 要求 `product.member.manage`，仅允许具备当前产品管理范围的用户维护。产品成员保存采用整体替换语义，后端会把成员职责派生为产品 scope 和对应权限，并记录 `product.members.updated` 审计事件。
+`GET /api/products/{product_id}/members` 要求 `product.member.read`，并按当前用户产品 scope 校验产品可见性，响应返回 `revision` 用于后续并发保存校验；`GET /api/products/{product_id}/member-candidates` 和 `PUT /api/products/{product_id}/members` 要求 `product.member.manage`，仅允许具备当前产品管理范围的用户维护。全局产品管理员可以直接查看成员候选列表，产品范围内的成员管理员必须通过 `keyword` 搜索候选人且关键字至少 2 个字符，避免无条件暴露全量用户目录。产品成员保存采用整体替换语义，后端会把成员职责派生为产品 scope 和对应权限，并记录 `product.members.updated` 审计事件；当请求携带 `expected_revision` 且与当前成员列表不一致时返回 `409 PRODUCT_MEMBERS_CONFLICT`。
 
 产品成员保存请求：
 
 ```json
 {
+  "expected_revision": "6f6f6b7c...",
   "members": [
     {
       "user_id": "user_001",

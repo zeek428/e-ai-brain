@@ -738,6 +738,7 @@ class PostgresSnapshotRepository:
         status: str | None = None,
         task_type: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         requirement_id: str | None = None,
         created_from: Any | None = None,
         created_to: Any | None = None,
@@ -749,6 +750,7 @@ class PostgresSnapshotRepository:
             status=status,
             task_type=task_type,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             requirement_id=requirement_id,
             created_from=created_from,
             created_to=created_to,
@@ -763,6 +765,7 @@ class PostgresSnapshotRepository:
         status: str | None = None,
         task_type: str | None = None,
         product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
         requirement_id: str | None = None,
         created_from: Any | None = None,
         created_to: Any | None = None,
@@ -778,6 +781,7 @@ class PostgresSnapshotRepository:
             status=status,
             task_type=task_type,
             product_id=product_id,
+            product_scope_ids=product_scope_ids,
             requirement_id=requirement_id,
             created_from=created_from,
             created_to=created_to,
@@ -793,9 +797,13 @@ class PostgresSnapshotRepository:
     def list_pending_review_summaries(
         self,
         *,
+        product_scope_ids: list[str] | None = None,
         read_scope: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._task_read_repository.list_pending_review_summaries(read_scope=read_scope)
+        return self._task_read_repository.list_pending_review_summaries(
+            product_scope_ids=product_scope_ids,
+            read_scope=read_scope,
+        )
 
     def load_ai_tasks(self) -> dict[str, Any]:
         return self._task_read_repository.load_ai_tasks()

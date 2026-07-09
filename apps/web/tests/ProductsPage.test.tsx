@@ -691,6 +691,7 @@ describe('ProductsPage', () => {
               { label: '产品经理', value: 'product_owner' },
               { label: '开发工程师', value: 'developer' },
             ],
+            revision: 'member-revision-1',
             total: 1,
           },
         });
@@ -718,6 +719,7 @@ describe('ProductsPage', () => {
               { label: '产品经理', value: 'product_owner' },
               { label: '开发工程师', value: 'developer' },
             ],
+            revision: 'member-revision-2',
             total: 2,
           },
         });
@@ -794,6 +796,7 @@ describe('ProductsPage', () => {
       ]),
     );
     expect(savedMembersBody).toEqual({
+      expected_revision: 'member-revision-1',
       members: [
         {
           member_role: 'product_owner',
