@@ -1745,7 +1745,6 @@ body {
   border-radius: 8px;
   background: #ffffff;
   color: inherit;
-  cursor: pointer;
   text-align: left;
 }
 
@@ -1763,6 +1762,10 @@ body {
 .system-health-alert-row strong {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.system-health-alert-row .ant-space {
+  flex-shrink: 0;
 }
 
 .system-health-product-score,

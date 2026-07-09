@@ -192,6 +192,39 @@ export type SystemAlertRuleRecord = {
   updated_at?: string | null;
 };
 
+export type SystemAlertIncidentUpdatePayload = {
+  close_reason?: string | null;
+  owner?: string | null;
+  postmortem?: string | null;
+  status?: string | null;
+};
+
+export type SystemAlertSubscriptionPayload = {
+  channel: string;
+  enabled?: boolean;
+  scope?: string | null;
+  severity_min?: string;
+  target: string;
+};
+
+export type SystemAlertSubscriptionRecord = SystemAlertSubscriptionPayload & {
+  created_at?: string | null;
+  created_by?: string | null;
+  id: string;
+  updated_at?: string | null;
+};
+
+export type SystemAlertRuleMutationPayload = {
+  component?: string | null;
+  condition_json?: Record<string, unknown>;
+  enabled?: boolean;
+  name?: string | null;
+  notification_scope?: string | null;
+  owner?: string | null;
+  severity_min?: string;
+  source?: string | null;
+};
+
 export type SystemAdminWeeklyReport = {
   generated_at: string;
   markdown: string;
@@ -720,6 +753,58 @@ export async function fetchSystemAdminWeeklyReport(
   return apiRequest<SystemAdminWeeklyReport>(`/api/system/admin-weekly-report?days=${days}`, {
     token,
   });
+}
+
+export async function updateSystemAlertIncident(
+  alertId: string,
+  payload: SystemAlertIncidentUpdatePayload,
+): Promise<SystemHealthAlertRecord> {
+  const token = requireAccessToken();
+  return apiRequest<SystemHealthAlertRecord>(
+    `/api/system/alerts/${encodeURIComponent(alertId)}`,
+    {
+      body: payload,
+      method: 'PATCH',
+      token,
+    },
+  );
+}
+
+export async function createSystemAlertSubscription(
+  payload: SystemAlertSubscriptionPayload,
+): Promise<SystemAlertSubscriptionRecord> {
+  const token = requireAccessToken();
+  return apiRequest<SystemAlertSubscriptionRecord>('/api/system/alerts/subscriptions', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function createSystemAlertRule(
+  payload: SystemAlertRuleMutationPayload,
+): Promise<SystemAlertRuleRecord> {
+  const token = requireAccessToken();
+  return apiRequest<SystemAlertRuleRecord>('/api/system/alerts/rules', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updateSystemAlertRule(
+  ruleId: string,
+  payload: SystemAlertRuleMutationPayload,
+): Promise<SystemAlertRuleRecord> {
+  const token = requireAccessToken();
+  return apiRequest<SystemAlertRuleRecord>(
+    `/api/system/alerts/rules/${encodeURIComponent(ruleId)}`,
+    {
+      body: payload,
+      method: 'PATCH',
+      token,
+    },
+  );
 }
 
 export async function fetchSystemMenuList(

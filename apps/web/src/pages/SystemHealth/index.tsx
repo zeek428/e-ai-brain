@@ -16,11 +16,15 @@ import {
   Button,
   Descriptions,
   Empty,
+  Form,
+  Input,
   Modal,
   Progress,
+  Radio,
   Skeleton,
   Space,
   Statistic,
+  Switch,
   Tag,
   Typography,
   message,
@@ -30,10 +34,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   cancelAiExecutorTask,
+  createSystemAlertRule,
+  createSystemAlertSubscription,
   fetchSystemAdminWeeklyReport,
   fetchSystemHealth,
   retryAiExecutorTask,
   timeoutAiExecutorTasks,
+  updateSystemAlertIncident,
+  updateSystemAlertRule,
+  type SystemAlertIncidentUpdatePayload,
+  type SystemAlertRuleMutationPayload,
+  type SystemHealthAlertRecord,
   type SystemHealthCheckRecord,
   type SystemHealthOperations,
   type SystemHealthReport,
@@ -47,6 +58,7 @@ import {
 } from '../../hooks/useRemoteRows';
 
 const { Paragraph, Text, Title } = Typography;
+const { TextArea } = Input;
 
 const STATUS_LABELS: Record<string, string> = {
   configured: '已配置',
@@ -288,6 +300,44 @@ function alertStatusTag(status: string) {
   return <Tag color={colorMap[status] ?? 'default'}>{labelMap[status] ?? status}</Tag>;
 }
 
+type AlertIncidentFormValues = {
+  close_reason?: string;
+  owner?: string;
+  postmortem?: string;
+  status?: string;
+};
+
+type AlertSubscriptionFormValues = {
+  channel?: string;
+  enabled?: boolean;
+  scope?: string;
+  severity_min?: string;
+  target?: string;
+};
+
+type AlertRuleFormValues = {
+  component?: string;
+  condition_json?: string;
+  enabled?: boolean;
+  name?: string;
+  notification_scope?: string;
+  owner?: string;
+  severity_min?: string;
+  source?: string;
+};
+
+function parseJsonObjectInput(value?: string): Record<string, unknown> {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) {
+    return {};
+  }
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('CONDITION_JSON_NOT_OBJECT');
+  }
+  return parsed as Record<string, unknown>;
+}
+
 function SystemHealthOperationsPanel({
   onRefresh,
   operations,
@@ -296,7 +346,14 @@ function SystemHealthOperationsPanel({
   operations: SystemHealthOperations;
 }) {
   const [executorActionLoading, setExecutorActionLoading] = useState<string>();
+  const [alertActionLoading, setAlertActionLoading] = useState<string>();
   const [weeklyReportLoading, setWeeklyReportLoading] = useState(false);
+  const [selectedAlert, setSelectedAlert] = useState<SystemHealthAlertRecord>();
+  const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false);
+  const [ruleModalOpen, setRuleModalOpen] = useState(false);
+  const [alertForm] = Form.useForm<AlertIncidentFormValues>();
+  const [subscriptionForm] = Form.useForm<AlertSubscriptionFormValues>();
+  const [ruleForm] = Form.useForm<AlertRuleFormValues>();
   const alertCenter = operations.alert_center;
   const aiExecutor = operations.ai_executor_ops;
   const knowledge = operations.knowledge_quality_loop;
@@ -341,6 +398,132 @@ function SystemHealthOperationsPanel({
 
   const reloadAfterExecutorAction = async () => {
     await Promise.resolve(onRefresh?.());
+  };
+
+  const reloadAfterAlertAction = async () => {
+    await Promise.resolve(onRefresh?.());
+  };
+
+  const openAlertIncidentModal = (alert: SystemHealthAlertRecord) => {
+    setSelectedAlert(alert);
+    alertForm.setFieldsValue({
+      close_reason: alert.close_reason ?? '',
+      owner: alert.owner ?? '',
+      postmortem: alert.postmortem ?? '',
+      status: alert.status || 'open',
+    });
+  };
+
+  const submitAlertIncident = async (values: AlertIncidentFormValues) => {
+    if (!selectedAlert) {
+      return;
+    }
+    const payload: SystemAlertIncidentUpdatePayload = {
+      close_reason: values.close_reason?.trim() || null,
+      owner: values.owner?.trim() || null,
+      postmortem: values.postmortem?.trim() || null,
+      status: values.status || selectedAlert.status,
+    };
+    setAlertActionLoading(`alert:${selectedAlert.id}`);
+    try {
+      await updateSystemAlertIncident(selectedAlert.id, payload);
+      message.success('告警处理状态已更新');
+      setSelectedAlert(undefined);
+      await reloadAfterAlertAction();
+    } catch (alertError) {
+      message.error(formatRemoteRowsError(normalizeRemoteRowsError(alertError)));
+    } finally {
+      setAlertActionLoading(undefined);
+    }
+  };
+
+  const openSubscriptionModal = () => {
+    subscriptionForm.setFieldsValue({
+      channel: 'email',
+      enabled: true,
+      scope: 'global',
+      severity_min: 'medium',
+      target: '',
+    });
+    setSubscriptionModalOpen(true);
+  };
+
+  const submitSubscription = async (values: AlertSubscriptionFormValues) => {
+    setAlertActionLoading('subscription:create');
+    try {
+      await createSystemAlertSubscription({
+        channel: values.channel || 'email',
+        enabled: values.enabled ?? true,
+        scope: values.scope?.trim() || 'global',
+        severity_min: values.severity_min || 'medium',
+        target: values.target?.trim() || '',
+      });
+      message.success('告警订阅已保存');
+      setSubscriptionModalOpen(false);
+      await reloadAfterAlertAction();
+    } catch (subscriptionError) {
+      message.error(formatRemoteRowsError(normalizeRemoteRowsError(subscriptionError)));
+    } finally {
+      setAlertActionLoading(undefined);
+    }
+  };
+
+  const openRuleModal = () => {
+    ruleForm.setFieldsValue({
+      component: '',
+      condition_json: '{}',
+      enabled: true,
+      name: '',
+      notification_scope: 'global',
+      owner: '',
+      severity_min: 'medium',
+      source: 'system_check',
+    });
+    setRuleModalOpen(true);
+  };
+
+  const submitRule = async (values: AlertRuleFormValues) => {
+    let conditionJson: Record<string, unknown>;
+    try {
+      conditionJson = parseJsonObjectInput(values.condition_json);
+    } catch {
+      message.error('规则条件必须是 JSON 对象，例如 {"status":"warning"}');
+      return;
+    }
+    const payload: SystemAlertRuleMutationPayload = {
+      component: values.component?.trim() || null,
+      condition_json: conditionJson,
+      enabled: values.enabled ?? true,
+      name: values.name?.trim() || null,
+      notification_scope: values.notification_scope?.trim() || 'global',
+      owner: values.owner?.trim() || null,
+      severity_min: values.severity_min || 'medium',
+      source: values.source?.trim() || 'system_check',
+    };
+    setAlertActionLoading('rule:create');
+    try {
+      await createSystemAlertRule(payload);
+      message.success('告警规则已保存');
+      setRuleModalOpen(false);
+      await reloadAfterAlertAction();
+    } catch (ruleError) {
+      message.error(formatRemoteRowsError(normalizeRemoteRowsError(ruleError)));
+    } finally {
+      setAlertActionLoading(undefined);
+    }
+  };
+
+  const toggleAlertRule = async (ruleId: string, enabled: boolean) => {
+    setAlertActionLoading(`rule:${ruleId}`);
+    try {
+      await updateSystemAlertRule(ruleId, { enabled });
+      message.success(enabled ? '告警规则已启用' : '告警规则已停用');
+      await reloadAfterAlertAction();
+    } catch (ruleError) {
+      message.error(formatRemoteRowsError(normalizeRemoteRowsError(ruleError)));
+    } finally {
+      setAlertActionLoading(undefined);
+    }
   };
 
   const runExecutorAction = async (
@@ -400,9 +583,17 @@ function SystemHealthOperationsPanel({
         <article className="system-health-ops-card system-health-ops-card-wide">
           <div className="system-health-ops-card-heading">
             <strong>系统健康告警中心</strong>
-            <Tag color={alertCenter?.summary?.open_count ? 'orange' : 'green'}>
-              {alertCenter?.summary?.open_count ?? 0} 个打开
-            </Tag>
+            <Space size={4}>
+              <Tag color={alertCenter?.summary?.open_count ? 'orange' : 'green'}>
+                {alertCenter?.summary?.open_count ?? 0} 个打开
+              </Tag>
+              <Button size="small" type="link" onClick={openSubscriptionModal}>
+                新增订阅
+              </Button>
+              <Button size="small" type="link" onClick={openRuleModal}>
+                新增规则
+              </Button>
+            </Space>
           </div>
           <div className="system-health-ops-metric-grid">
             <OperationMetric
@@ -420,11 +611,9 @@ function SystemHealthOperationsPanel({
           </div>
           <div className="system-health-ops-list">
             {alerts.slice(0, 5).map((alert) => (
-              <button
+              <div
                 className="system-health-alert-row"
                 key={alert.id}
-                onClick={() => alert.action_href && navigateTo(alert.action_href)}
-                type="button"
               >
                 <span>
                   {alertSeverityTag(alert.severity)}
@@ -435,16 +624,38 @@ function SystemHealthOperationsPanel({
                   {alert.owner || '平台管理员'}
                   {alert.last_seen_at ? ` · ${formatDisplayDateTime(alert.last_seen_at)}` : ''}
                 </Text>
-              </button>
+                <Space size={4}>
+                  {alert.action_href ? (
+                    <Button size="small" type="link" onClick={() => navigateTo(alert.action_href as string)}>
+                      查看
+                    </Button>
+                  ) : null}
+                  <Button
+                    aria-label={`处理告警 ${alert.title}`}
+                    loading={alertActionLoading === `alert:${alert.id}`}
+                    size="small"
+                    type="link"
+                    onClick={() => openAlertIncidentModal(alert)}
+                  >
+                    处理
+                  </Button>
+                </Space>
+              </div>
             ))}
             {!alerts.length ? <Empty description="暂无打开告警" image={Empty.PRESENTED_IMAGE_SIMPLE} /> : null}
           </div>
           {alertRules.length ? (
             <div className="system-health-quality-gates" aria-label="告警规则">
               {alertRules.slice(0, 4).map((rule) => (
-                <Tag color={rule.enabled ? 'blue' : 'default'} key={rule.id}>
-                  {rule.name} · {rule.severity_min}
-                </Tag>
+                <Button
+                  key={rule.id}
+                  loading={alertActionLoading === `rule:${rule.id}`}
+                  onClick={() => void toggleAlertRule(rule.id, !rule.enabled)}
+                  size="small"
+                  type={rule.enabled ? 'link' : 'text'}
+                >
+                  {rule.enabled ? `停用规则 ${rule.name}` : `启用规则 ${rule.name}`} · {rule.severity_min}
+                </Button>
               ))}
             </div>
           ) : null}
@@ -800,6 +1011,126 @@ function SystemHealthOperationsPanel({
           </div>
         </article>
       </div>
+      <Modal
+        confirmLoading={Boolean(selectedAlert && alertActionLoading === `alert:${selectedAlert.id}`)}
+        destroyOnHidden
+        okText="保存处理"
+        onCancel={() => setSelectedAlert(undefined)}
+        onOk={() => alertForm.submit()}
+        open={Boolean(selectedAlert)}
+        title="处理告警"
+        width={680}
+      >
+        <Form form={alertForm} layout="vertical" onFinish={(values) => void submitAlertIncident(values)}>
+          <Descriptions column={1} size="small">
+            <Descriptions.Item label="告警">{selectedAlert?.title ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label="说明">{selectedAlert?.message ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label="首次出现">
+              {selectedAlert?.first_seen_at ? formatDisplayDateTime(selectedAlert.first_seen_at) : '-'}
+            </Descriptions.Item>
+          </Descriptions>
+          <Form.Item label="处理状态" name="status">
+            <Radio.Group>
+              <Radio.Button value="open">打开</Radio.Button>
+              <Radio.Button value="acknowledged">已认领</Radio.Button>
+              <Radio.Button value="resolving">处理中</Radio.Button>
+              <Radio.Button value="closed">关闭</Radio.Button>
+              <Radio.Button value="ignored">忽略</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item label="负责人" name="owner">
+            <Input placeholder="例如：平台运维 / lzk" />
+          </Form.Item>
+          <Form.Item label="关闭原因" name="close_reason">
+            <TextArea placeholder="关闭或忽略时填写原因，便于后续审计和复盘" rows={3} />
+          </Form.Item>
+          <Form.Item label="复盘记录" name="postmortem">
+            <TextArea placeholder="记录根因、影响范围、处理动作和预防措施" rows={4} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        confirmLoading={alertActionLoading === 'subscription:create'}
+        destroyOnHidden
+        okText="保存订阅"
+        onCancel={() => setSubscriptionModalOpen(false)}
+        onOk={() => subscriptionForm.submit()}
+        open={subscriptionModalOpen}
+        title="新增告警订阅"
+        width={640}
+      >
+        <Form form={subscriptionForm} layout="vertical" onFinish={(values) => void submitSubscription(values)}>
+          <Form.Item label="通知渠道" name="channel">
+            <Radio.Group>
+              <Radio.Button value="email">邮件</Radio.Button>
+              <Radio.Button value="dingtalk">钉钉</Radio.Button>
+              <Radio.Button value="webhook">Webhook</Radio.Button>
+              <Radio.Button value="in_app">站内</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item
+            label="通知目标"
+            name="target"
+            rules={[{ message: '请填写通知目标', required: true }]}
+          >
+            <Input placeholder="邮箱、钉钉机器人地址、Webhook URL 或用户组" />
+          </Form.Item>
+          <Form.Item label="最低级别" name="severity_min">
+            <Radio.Group>
+              <Radio.Button value="low">低</Radio.Button>
+              <Radio.Button value="medium">中</Radio.Button>
+              <Radio.Button value="high">高</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item label="订阅范围" name="scope">
+            <Input placeholder="global / system_check / dingtalk_mcp" />
+          </Form.Item>
+          <Form.Item label="启用订阅" name="enabled" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        confirmLoading={alertActionLoading === 'rule:create'}
+        destroyOnHidden
+        okText="保存规则"
+        onCancel={() => setRuleModalOpen(false)}
+        onOk={() => ruleForm.submit()}
+        open={ruleModalOpen}
+        title="新增告警规则"
+        width={700}
+      >
+        <Form form={ruleForm} layout="vertical" onFinish={(values) => void submitRule(values)}>
+          <Form.Item label="规则名称" name="name" rules={[{ message: '请填写规则名称', required: true }]}>
+            <Input placeholder="例如：钉钉授权即将过期" />
+          </Form.Item>
+          <Form.Item label="来源" name="source">
+            <Input placeholder="system_check / dingtalk_lifecycle / product_onboarding" />
+          </Form.Item>
+          <Form.Item label="组件" name="component">
+            <Input placeholder="例如：dingtalk_mcp / smtp / product_score" />
+          </Form.Item>
+          <Form.Item label="最低级别" name="severity_min">
+            <Radio.Group>
+              <Radio.Button value="low">低</Radio.Button>
+              <Radio.Button value="medium">中</Radio.Button>
+              <Radio.Button value="high">高</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item label="负责人" name="owner">
+            <Input placeholder="规则默认负责人" />
+          </Form.Item>
+          <Form.Item label="通知范围" name="notification_scope">
+            <Input placeholder="global / system / product" />
+          </Form.Item>
+          <Form.Item label="条件 JSON" name="condition_json">
+            <TextArea placeholder='例如 {"status":"warning"}' rows={4} />
+          </Form.Item>
+          <Form.Item label="启用规则" name="enabled" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
     </section>
   );
 }
