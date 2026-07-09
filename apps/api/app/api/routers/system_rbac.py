@@ -19,6 +19,8 @@ from app.services.product_config_context import list_product_records, runtime_re
 from app.services.rbac_matrix import (
     build_rbac_policy_matrix,
     build_role_access_preview,
+    build_role_risk_precheck,
+    build_user_menu_preview,
     build_user_permission_diagnostic,
 )
 from app.services.rbac_safety import ensure_authorization_managers_remain
@@ -124,6 +126,13 @@ class ScopeGrantRequest(BaseModel):
 
 class UserRoleGrantRequest(BaseModel):
     role_codes: list[str] = Field(default_factory=list)
+
+
+class RoleRiskPrecheckRequest(BaseModel):
+    menu_codes: list[str] | None = None
+    permission_codes: list[str] | None = None
+    scopes: list[ScopeGrant] | None = None
+    status: str | None = None
 
 
 def _authorization_repository(request: Request) -> Any:
@@ -240,6 +249,20 @@ def _map_repository_error(exc: ValueError) -> None:
     raise api_error(status_code, code, messages.get(code, code))
 
 
+def _ensure_known_permission_codes(repository: Any, permission_codes: list[str]) -> None:
+    known_codes = {str(permission.get("code") or "") for permission in repository.list_permissions()}
+    unsupported = sorted(set(permission_codes) - known_codes)
+    if unsupported:
+        raise api_error(400, "UNSUPPORTED_PERMISSION", f"Unsupported permission code: {unsupported[0]}")
+
+
+def _ensure_known_menu_codes(repository: Any, menu_codes: list[str]) -> None:
+    known_codes = {str(menu.get("code") or "") for menu in repository.menu_resources()}
+    unsupported = sorted(set(menu_codes) - known_codes)
+    if unsupported:
+        raise api_error(400, "UNSUPPORTED_MENU", f"Unsupported menu code: {unsupported[0]}")
+
+
 @router.get("/api/system/permissions")
 def list_permissions(
     request: Request,
@@ -292,6 +315,29 @@ def get_permission_diagnostics(
             permission_code=permission_code,
             scope_type=scope_type,
             scope_id=scope_id,
+            scope_resource_names=_scope_resource_names(request),
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/permissions/menu-preview")
+def get_user_menu_preview(
+    request: Request,
+    user_id: str,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_any_permission(
+        user,
+        {"system.roles.read", "system.roles.manage", "system.users.manage"},
+    )
+    target_user = _find_user(request, user_id)
+    if target_user is None:
+        raise api_error(404, "NOT_FOUND", "User not found")
+    return envelope(
+        build_user_menu_preview(
+            _authorization_repository(request),
+            target_user,
             scope_resource_names=_scope_resource_names(request),
         ),
         get_trace_id(request),
@@ -718,6 +764,52 @@ def get_role(
                 scope_resource_names=_scope_resource_names(request),
             ),
         },
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/roles/{role_id}/risk-precheck")
+def precheck_role_risk(
+    role_id: str,
+    request: Request,
+    payload: RoleRiskPrecheckRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.roles.manage"})
+    repository = _authorization_repository(request)
+    role = repository.get_role(role_id)
+    if role is None:
+        raise api_error(404, "NOT_FOUND", "Role not found")
+    menu_codes = (
+        _unique_codes(payload.menu_codes, "menu_codes")
+        if payload.menu_codes is not None
+        else None
+    )
+    permission_codes = (
+        _unique_codes(payload.permission_codes, "permission_codes")
+        if payload.permission_codes is not None
+        else None
+    )
+    if menu_codes is not None:
+        _ensure_known_menu_codes(repository, menu_codes)
+    if permission_codes is not None:
+        _ensure_known_permission_codes(repository, permission_codes)
+    if payload.status is not None:
+        ensure_list_enum(payload.status, ROLE_STATUSES, "role status")
+    return envelope(
+        build_role_risk_precheck(
+            repository,
+            role,
+            menu_codes=menu_codes,
+            permission_codes=permission_codes,
+            scope_resource_names=_scope_resource_names(request),
+            scopes=(
+                [scope.model_dump() for scope in payload.scopes]
+                if payload.scopes is not None
+                else None
+            ),
+            status=payload.status,
+        ),
         get_trace_id(request),
     )
 

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.authorization import build_menu_tree
+
 HIGH_RISK_LEVELS = {"critical", "danger", "high"}
+RISK_SEVERITY_ORDER = {"info": 0, "warning": 1, "risk": 2, "blocked": 3}
 SCOPE_TYPE_LABELS = {
     "department": "部门",
     "global": "全局",
@@ -115,6 +118,30 @@ def _scope_groups(scopes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _flatten_menu_tree(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    flattened: list[dict[str, Any]] = []
+    for node in nodes:
+        flattened.append(
+            {
+                "code": node.get("code"),
+                "name": node.get("name"),
+                "path": node.get("path"),
+            }
+        )
+        flattened.extend(_flatten_menu_tree(node.get("children") or []))
+    return flattened
+
+
+def _scope_access_counts(scopes: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {}
+    for scope in scopes:
+        scope_type = str(scope.get("scope_type") or "unknown")
+        access_level = str(scope.get("access_level") or "read")
+        by_level = counts.setdefault(scope_type, {"admin": 0, "read": 0, "write": 0})
+        by_level[access_level] = by_level.get(access_level, 0) + 1
+    return counts
+
+
 def _role_grant_reasons(
     roles: list[dict[str, Any]],
     role_codes: list[str],
@@ -147,6 +174,102 @@ def _role_grant_reasons(
                 }
             )
     return reasons
+
+
+def build_user_menu_preview(
+    repository: Any,
+    target_user: dict[str, Any],
+    *,
+    scope_resource_names: ScopeResourceNames | None = None,
+) -> dict[str, Any]:
+    """Render the exact menu tree a target user can see, plus blocked menu evidence."""
+
+    effective = repository.effective_permissions_for_user(target_user)
+    menus = list(repository.menu_resources())
+    menu_by_code = {str(menu.get("code") or ""): menu for menu in menus}
+    permission_codes = set(_string_list(effective.get("permission_codes") or []))
+    granted_menu_codes = set(_string_list(effective.get("menu_codes") or []))
+    menu_tree = build_menu_tree(
+        granted_codes=granted_menu_codes,
+        permissions=permission_codes,
+        resources=menus,
+    )
+    visible_menus = _flatten_menu_tree(menu_tree)
+    visible_menu_codes = {
+        str(menu.get("code") or "")
+        for menu in visible_menus
+        if str(menu.get("code") or "").strip()
+    }
+    blocked_menus: list[dict[str, Any]] = []
+    for menu_code in sorted(granted_menu_codes - visible_menu_codes):
+        menu = menu_by_code.get(menu_code)
+        if menu is None:
+            blocked_menus.append(
+                {
+                    "code": menu_code,
+                    "message": "菜单授权存在，但菜单资源不存在",
+                    "reason": "menu_missing",
+                }
+            )
+            continue
+        required_permissions = _string_list(menu.get("required_permissions") or [])
+        missing_permissions = sorted(set(required_permissions) - permission_codes)
+        if str(menu.get("status") or "active") != "active":
+            reason = "menu_inactive"
+            message = "菜单已授权，但当前菜单状态不是启用"
+        elif missing_permissions:
+            reason = "permission_missing"
+            message = "菜单已授权，但缺少菜单所需权限点"
+        elif str(menu.get("menu_type") or "") == "hidden_page":
+            reason = "hidden_page"
+            message = "隐藏页面不在导航树中展示"
+        else:
+            reason = "parent_hidden"
+            message = "菜单父级不可见或无可展示子节点"
+        blocked_menus.append(
+            {
+                "code": menu_code,
+                "message": message,
+                "missing_permission_codes": missing_permissions,
+                "name": menu.get("name"),
+                "path": menu.get("path"),
+                "reason": reason,
+                "required_permission_codes": required_permissions,
+            }
+        )
+    scopes = _enrich_scopes(
+        [
+            dict(scope)
+            for scope in effective.get("scopes", [])
+            if isinstance(scope, dict)
+        ],
+        scope_resource_names=scope_resource_names,
+    )
+    return {
+        "blocked_menus": blocked_menus,
+        "effective": {
+            "menu_codes": sorted(granted_menu_codes),
+            "permission_codes": sorted(permission_codes),
+            "role_codes": _string_list(effective.get("role_codes") or []),
+            "scopes": scopes,
+        },
+        "menu_tree": menu_tree,
+        "scope_summary": _scope_summary(scopes),
+        "summary": {
+            "blocked_menu_count": len(blocked_menus),
+            "granted_menu_count": len(granted_menu_codes),
+            "visible_menu_count": len(visible_menu_codes),
+        },
+        "user": {
+            "display_name": target_user.get("display_name"),
+            "id": str(target_user.get("id") or ""),
+            "roles": _string_list(effective.get("role_codes") or []),
+            "status": str(target_user.get("status") or "active"),
+            "username": target_user.get("username"),
+        },
+        "visible_menu_codes": sorted(visible_menu_codes),
+        "visible_menus": visible_menus,
+    }
 
 
 def build_role_access_preview(
@@ -272,6 +395,123 @@ def build_role_access_preview(
         "scope_summary": _scope_summary(scopes),
         "scopes": scopes,
         "visible_menus": visible_menus,
+    }
+
+
+def build_role_risk_precheck(
+    repository: Any,
+    role: dict[str, Any],
+    *,
+    menu_codes: list[str] | None = None,
+    permission_codes: list[str] | None = None,
+    scope_resource_names: ScopeResourceNames | None = None,
+    scopes: list[dict[str, Any]] | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    """Preview role risks before persisting menu, permission, or scope changes."""
+
+    current_preview = build_role_access_preview(
+        repository,
+        role,
+        scope_resource_names=scope_resource_names,
+    )
+    candidate_role = {
+        **role,
+        "menu_codes": _string_list(
+            menu_codes if menu_codes is not None else role.get("menu_codes") or role.get("menu_scope") or []
+        ),
+        "permission_codes": _string_list(
+            permission_codes
+            if permission_codes is not None
+            else role.get("permission_codes") or role.get("permissions") or []
+        ),
+        "permissions": _string_list(
+            permission_codes
+            if permission_codes is not None
+            else role.get("permission_codes") or role.get("permissions") or []
+        ),
+        "scopes": [
+            dict(scope)
+            for scope in (
+                scopes if scopes is not None else role.get("scopes", [])
+            )
+            if isinstance(scope, dict)
+        ],
+        "status": status or str(role.get("status") or "active"),
+    }
+    candidate_preview = build_role_access_preview(
+        repository,
+        candidate_role,
+        scope_resource_names=scope_resource_names,
+    )
+
+    risks: list[dict[str, Any]] = []
+    auto_fix_suggestions: list[dict[str, Any]] = []
+    for diagnostic in candidate_preview.get("diagnostics") or []:
+        code = str(diagnostic.get("code") or "")
+        level = str(diagnostic.get("level") or "warning")
+        severity = "blocked" if code == "menu_permission_gap" else level
+        risk = {
+            **diagnostic,
+            "severity": severity,
+        }
+        risks.append(risk)
+        if code == "menu_permission_gap":
+            missing_permissions = _string_list(diagnostic.get("permission_codes") or [])
+            auto_fix_suggestions.append(
+                {
+                    "action": "add_permissions",
+                    "description": "补齐菜单所需权限点，避免菜单可见但接口 Forbidden。",
+                    "permission_codes": missing_permissions,
+                }
+            )
+        elif code == "scope_not_configured":
+            auto_fix_suggestions.append(
+                {
+                    "action": "configure_scope",
+                    "description": "为角色配置产品、知识空间或全局 scope，避免只能看到入口但查不到数据。",
+                    "scope_examples": [
+                        {"access_level": "read", "scope_id": "<product_id>", "scope_type": "product"},
+                        {"access_level": "read", "scope_id": "*", "scope_type": "global"},
+                    ],
+                }
+            )
+        elif code == "high_risk_permission":
+            auto_fix_suggestions.append(
+                {
+                    "action": "review_high_risk_permissions",
+                    "description": "保存前复核高风险权限是否确实需要，必要时拆分为更小角色。",
+                    "permission_codes": _string_list(diagnostic.get("permission_codes") or []),
+                }
+            )
+    if candidate_role["status"] != "active":
+        risks.append(
+            {
+                "code": "role_inactive",
+                "level": "warning",
+                "message": "角色保存为停用状态，用户不会获得该角色权限。",
+                "severity": "warning",
+            }
+        )
+    highest = max(
+        (RISK_SEVERITY_ORDER.get(str(risk.get("severity") or "warning"), 1) for risk in risks),
+        default=0,
+    )
+    decision_status = "blocked" if highest >= 3 else ("warning" if highest else "pass")
+    return {
+        "auto_fix_suggestions": auto_fix_suggestions,
+        "candidate": candidate_preview,
+        "current": current_preview,
+        "decision": {
+            "can_save": decision_status != "blocked",
+            "risk_count": len(risks),
+            "status": decision_status,
+        },
+        "risks": risks,
+        "scope_comparison": {
+            "current": _scope_access_counts(current_preview.get("scopes") or []),
+            "candidate": _scope_access_counts(candidate_preview.get("scopes") or []),
+        },
     }
 
 

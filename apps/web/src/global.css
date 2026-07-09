@@ -2116,6 +2116,40 @@ body {
   gap: 12px;
 }
 
+.role-user-menu-preview,
+.role-risk-precheck-panel,
+.role-risk-precheck-result {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.role-user-menu-preview,
+.role-risk-precheck-panel {
+  padding: 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #fbfcff;
+}
+
+.role-risk-precheck-panel {
+  margin-bottom: 16px;
+}
+
+.role-risk-precheck-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.role-user-menu-preview .ant-tag,
+.role-risk-precheck-result .ant-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 
 .dashboard-list {
   display: grid;
@@ -2358,6 +2392,11 @@ body {
 
   .role-detail-access-grid {
     grid-template-columns: 1fr;
+  }
+
+  .role-risk-precheck-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .capability-row {

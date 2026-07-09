@@ -460,6 +460,72 @@ export type UserPermissionDiagnostic = {
   };
 };
 
+export type UserMenuPreview = {
+  blocked_menus: Array<{
+    code: string;
+    message: string;
+    missing_permission_codes?: string[];
+    name?: string;
+    path?: string | null;
+    reason: string;
+    required_permission_codes?: string[];
+  }>;
+  effective: {
+    menu_codes: string[];
+    permission_codes: string[];
+    role_codes: string[];
+    scopes: ScopeGrant[];
+  };
+  menu_tree: Array<{
+    children?: UserMenuPreview['menu_tree'];
+    code: string;
+    name: string;
+    path?: string | null;
+  }>;
+  scope_summary?: string;
+  summary: {
+    blocked_menu_count: number;
+    granted_menu_count: number;
+    visible_menu_count: number;
+  };
+  user: {
+    display_name?: string;
+    id: string;
+    roles: string[];
+    status: string;
+    username?: string;
+  };
+  visible_menu_codes: string[];
+  visible_menus: Array<{ code: string; name?: string; path?: string | null }>;
+};
+
+export type RoleRiskPrecheck = {
+  auto_fix_suggestions: Array<{
+    action: string;
+    description: string;
+    permission_codes?: string[];
+    scope_examples?: ScopeGrant[];
+  }>;
+  candidate: RoleAccessPreview;
+  current: RoleAccessPreview;
+  decision: {
+    can_save: boolean;
+    risk_count: number;
+    status: 'pass' | 'warning' | 'blocked' | string;
+  };
+  risks: Array<{
+    code: string;
+    level?: string;
+    message: string;
+    permission_codes?: string[];
+    severity: string;
+  }>;
+  scope_comparison: {
+    candidate: Record<string, Record<string, number>>;
+    current: Record<string, Record<string, number>>;
+  };
+};
+
 export type UserMutationPayload = {
   display_name?: string;
   mobile?: string;
@@ -680,6 +746,32 @@ export async function fetchSystemPermissionDiagnostics(query: {
   appendQueryParam(params, 'scope_type', query.scopeType);
   appendQueryParam(params, 'scope_id', query.scopeId);
   return apiRequest<UserPermissionDiagnostic>(`/api/system/permissions/diagnostics?${params.toString()}`, {
+    token,
+  });
+}
+
+export async function fetchSystemUserMenuPreview(userId: string): Promise<UserMenuPreview> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'user_id', userId);
+  return apiRequest<UserMenuPreview>(`/api/system/permissions/menu-preview?${params.toString()}`, {
+    token,
+  });
+}
+
+export async function fetchSystemRoleRiskPrecheck(
+  roleId: string,
+  payload: {
+    menu_codes?: string[];
+    permission_codes?: string[];
+    scopes?: ScopeGrant[];
+    status?: string;
+  },
+): Promise<RoleRiskPrecheck> {
+  const token = requireAccessToken();
+  return apiRequest<RoleRiskPrecheck>(`/api/system/roles/${roleId}/risk-precheck`, {
+    body: payload,
+    method: 'POST',
     token,
   });
 }

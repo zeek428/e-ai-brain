@@ -691,6 +691,128 @@ def test_permission_diagnostics_explains_user_menu_permission_and_scope_blocks()
     assert checks["scope"]["status"] == "blocked"
 
 
+def test_user_menu_preview_explains_visible_and_blocked_menus():
+    headers = auth_headers()
+    role = client.post(
+        "/api/system/roles",
+        headers=headers,
+        json={"code": "menu_preview_operator", "name": "Menu Preview Operator"},
+    ).json()["data"]
+    client.put(
+        f"/api/system/roles/{role['id']}/menus",
+        headers=headers,
+        json={"menu_codes": ["workspace.dashboard"]},
+    )
+    created_user = client.post(
+        "/api/users",
+        headers=headers,
+        json={
+            "username": "menu-preview-user@example.com",
+            "display_name": "Menu Preview User",
+            "password": "menuPreview123",
+            "roles": ["viewer"],
+            "status": "active",
+        },
+    ).json()["data"]
+    role_response = client.put(
+        f"/api/users/{created_user['id']}/roles",
+        headers=headers,
+        json={"role_codes": ["menu_preview_operator"]},
+    )
+    assert role_response.status_code == 200
+
+    response = client.get(
+        "/api/system/permissions/menu-preview",
+        headers=headers,
+        params={"user_id": created_user["id"]},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["user"]["id"] == created_user["id"]
+    assert data["summary"] == {
+        "blocked_menu_count": 1,
+        "granted_menu_count": 1,
+        "visible_menu_count": 0,
+    }
+    assert data["visible_menus"] == []
+    assert data["blocked_menus"] == [
+        {
+            "code": "workspace.dashboard",
+            "message": "菜单已授权，但缺少菜单所需权限点",
+            "missing_permission_codes": ["workspace.read"],
+            "name": "团队看板",
+            "path": "/welcome",
+            "reason": "permission_missing",
+            "required_permission_codes": ["workspace.read"],
+        }
+    ]
+
+
+def test_role_risk_precheck_blocks_menu_permission_gap_and_suggests_fix():
+    headers = auth_headers()
+    role = client.post(
+        "/api/system/roles",
+        headers=headers,
+        json={"code": "risk_precheck_operator", "name": "Risk Precheck Operator"},
+    ).json()["data"]
+
+    blocked = client.post(
+        f"/api/system/roles/{role['id']}/risk-precheck",
+        headers=headers,
+        json={
+            "menu_codes": ["workspace.dashboard"],
+            "permission_codes": [],
+        },
+    )
+
+    assert blocked.status_code == 200
+    blocked_data = blocked.json()["data"]
+    assert blocked_data["decision"] == {
+        "can_save": False,
+        "risk_count": 2,
+        "status": "blocked",
+    }
+    assert [risk["code"] for risk in blocked_data["risks"]] == [
+        "menu_permission_gap",
+        "scope_not_configured",
+    ]
+    assert blocked_data["risks"][0]["severity"] == "blocked"
+    assert blocked_data["auto_fix_suggestions"][0] == {
+        "action": "add_permissions",
+        "description": "补齐菜单所需权限点，避免菜单可见但接口 Forbidden。",
+        "permission_codes": ["workspace.read"],
+    }
+    assert blocked_data["scope_comparison"]["candidate"] == {}
+
+    warning = client.post(
+        f"/api/system/roles/{role['id']}/risk-precheck",
+        headers=headers,
+        json={
+            "menu_codes": ["workspace.dashboard"],
+            "permission_codes": ["workspace.read"],
+            "scopes": [
+                {
+                    "access_level": "read",
+                    "scope_id": "*",
+                    "scope_type": "global",
+                }
+            ],
+        },
+    )
+
+    assert warning.status_code == 200
+    warning_data = warning.json()["data"]
+    assert warning_data["decision"] == {
+        "can_save": True,
+        "risk_count": 0,
+        "status": "pass",
+    }
+    assert warning_data["scope_comparison"]["candidate"] == {
+        "global": {"admin": 0, "read": 1, "write": 0}
+    }
+
+
 def test_task_center_contains_ai_jobs_and_plugin_menus():
     response = client.get("/api/system/menus", headers=auth_headers())
 

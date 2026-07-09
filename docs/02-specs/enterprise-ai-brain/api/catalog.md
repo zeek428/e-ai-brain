@@ -29,6 +29,7 @@
 | System RBAC | GET | `/api/system/permissions` | 查询权限点目录。 |
 | System RBAC | GET | `/api/system/permissions/matrix` | 查询 RBAC 策略矩阵，按角色聚合权限点、菜单入口、数据范围和授权缺口。 |
 | System RBAC | GET | `/api/system/permissions/diagnostics` | 查询用户权限诊断，按 `user_id` 以及可选 `path`、`permission_code`、`scope_type`、`scope_id` 返回检查项、阻断原因和授权来源。 |
+| System RBAC | GET | `/api/system/permissions/menu-preview` | 以指定用户视角预览实际菜单树、可见菜单和被阻断菜单原因。 |
 | System External Identity | GET | `/api/system/external-identities` | 管理员查询外部身份绑定记录，返回脱敏身份 hint 和绑定摘要。 |
 | System External Identity | DELETE | `/api/system/external-identities/{identity_id}` | 管理员解除外部身份绑定；默认阻止 SSO-only 用户被解绑到无登录方式，`force=true` 用于救援解绑。 |
 | System RBAC | GET | `/api/system/menus` | 查询菜单资源目录。 |
@@ -50,6 +51,7 @@
 | System RBAC | POST | `/api/system/roles` | 创建非系统角色。 |
 | System RBAC | POST | `/api/system/roles/{role_id}/copy` | 从现有角色复制角色、权限、菜单和范围。 |
 | System RBAC | GET | `/api/system/roles/{role_id}` | 查询角色详情。 |
+| System RBAC | POST | `/api/system/roles/{role_id}/risk-precheck` | 保存角色菜单、权限或 scope 前预检风险，返回阻断项和自动修复建议。 |
 | System RBAC | PATCH | `/api/system/roles/{role_id}` | 更新角色基础信息。 |
 | System RBAC | POST | `/api/system/roles/{role_id}/disable` | 停用非系统角色；系统角色返回 `SYSTEM_ROLE_PROTECTED`。 |
 | System RBAC | POST | `/api/system/roles/{role_id}/enable` | 启用角色。 |

@@ -1,5 +1,6 @@
 import type { ProColumns } from '@ant-design/pro-components';
 import {
+  Alert,
   Button,
   Checkbox,
   Descriptions,
@@ -30,7 +31,9 @@ import {
   createSystemRole,
   fetchSystemPermissionMatrix,
   fetchSystemPermissionDiagnostics,
+  fetchSystemRoleRiskPrecheck,
   fetchSystemRoleList,
+  fetchSystemUserMenuPreview,
   setSystemRoleStatus,
   type RemoteListPerformance,
   updateSystemRole,
@@ -41,9 +44,11 @@ import {
   type PermissionRecord,
   type RbacPolicyMatrix,
   type RbacPolicyMatrixRow,
+  type RoleRiskPrecheck,
   type RoleListQuery,
   type ScopeGrant,
   type SystemRoleRecord,
+  type UserMenuPreview,
   type UserPermissionDiagnostic,
   type UserPermissionDiagnosticCheck,
 } from '../../services/aiBrain';
@@ -477,6 +482,221 @@ function diagnosticCheckColumns(): ColumnsType<UserPermissionDiagnosticCheck> {
   ];
 }
 
+function roleRiskStatusLabel(status: string) {
+  if (status === 'pass') {
+    return '可保存';
+  }
+  if (status === 'blocked') {
+    return '阻断保存';
+  }
+  return '需关注';
+}
+
+function roleRiskStatusColor(status: string) {
+  if (status === 'pass') {
+    return 'success';
+  }
+  if (status === 'blocked') {
+    return 'error';
+  }
+  return 'warning';
+}
+
+function roleRiskTagColor(status: string) {
+  if (status === 'pass') {
+    return 'green';
+  }
+  if (status === 'blocked') {
+    return 'red';
+  }
+  return 'gold';
+}
+
+function renderScopeAccessCounts(counts: Record<string, Record<string, number>>) {
+  const entries = Object.entries(counts);
+  if (!entries.length) {
+    return <Text type="secondary">未配置 scope</Text>;
+  }
+  return (
+    <Space size={[4, 4]} wrap>
+      {entries.map(([scopeType, accessCounts]) => (
+        <Tag color={SCOPE_TYPE_COLORS[scopeType] ?? 'default'} key={scopeType}>
+          {SCOPE_TYPE_LABELS[scopeType] ?? scopeType} · 读 {accessCounts.read ?? 0} / 写{' '}
+          {accessCounts.write ?? 0} / 管 {accessCounts.admin ?? 0}
+        </Tag>
+      ))}
+    </Space>
+  );
+}
+
+function renderUserMenuPreview(preview: UserMenuPreview | undefined) {
+  if (!preview) {
+    return null;
+  }
+  const blockedMenuColumns: ColumnsType<UserMenuPreview['blocked_menus'][number]> = [
+    {
+      dataIndex: 'name',
+      render: (_, row) => (
+        <Space orientation="vertical" size={2}>
+          <Text strong>{row.name || row.code}</Text>
+          <Text type="secondary">{row.path || row.code}</Text>
+        </Space>
+      ),
+      title: '阻断入口',
+      width: 220,
+    },
+    {
+      dataIndex: 'message',
+      render: (_, row) => (
+        <Space orientation="vertical" size={4}>
+          <Text>{row.message}</Text>
+          {row.missing_permission_codes?.length ? (
+            <Text type="secondary">缺少权限点：{row.missing_permission_codes.join('、')}</Text>
+          ) : null}
+        </Space>
+      ),
+      title: '原因',
+    },
+  ];
+  return (
+    <div className="role-user-menu-preview">
+      <Space size={[8, 8]} wrap>
+        <Tag color="cyan">可见菜单 {preview.summary.visible_menu_count}</Tag>
+        <Tag color="blue">授权菜单 {preview.summary.granted_menu_count}</Tag>
+        <Tag color={preview.summary.blocked_menu_count ? 'red' : 'green'}>
+          阻断菜单 {preview.summary.blocked_menu_count}
+        </Tag>
+        <Tag>{preview.scope_summary || '未配置数据范围'}</Tag>
+      </Space>
+      <Descriptions bordered column={2} size="small">
+        <Descriptions.Item label="用户" span={2}>
+          {preview.user.display_name || preview.user.username || preview.user.id}
+        </Descriptions.Item>
+        <Descriptions.Item label="角色" span={2}>
+          {renderDiagnosticReasons(preview.effective.role_codes)}
+        </Descriptions.Item>
+        <Descriptions.Item label="可见入口" span={2}>
+          {preview.visible_menus.length ? (
+            <Space size={[4, 4]} wrap>
+              {preview.visible_menus.slice(0, 12).map((menu) => (
+                <Tag color="cyan" key={menu.code}>
+                  {menu.name || menu.code}
+                </Tag>
+              ))}
+              {preview.visible_menus.length > 12 ? <Tag>+{preview.visible_menus.length - 12}</Tag> : null}
+            </Space>
+          ) : (
+            <Text type="secondary">暂无可见入口</Text>
+          )}
+        </Descriptions.Item>
+      </Descriptions>
+      {preview.blocked_menus.length ? (
+        <Table<UserMenuPreview['blocked_menus'][number]>
+          columns={blockedMenuColumns}
+          dataSource={preview.blocked_menus}
+          pagination={false}
+          rowKey="code"
+          scroll={{ x: 720 }}
+          size="small"
+          tableLayout="fixed"
+        />
+      ) : (
+        <StatusTag color="green" label="菜单视角无阻断" />
+      )}
+    </div>
+  );
+}
+
+function renderRoleRiskPrecheck(result: RoleRiskPrecheck | undefined) {
+  if (!result) {
+    return (
+      <Alert
+        message="保存前可先运行风险预检"
+        description="预检会检查菜单权限缺口、数据范围覆盖和高风险权限，避免菜单能点但接口 Forbidden。"
+        showIcon
+        type="info"
+      />
+    );
+  }
+  const riskColumns: ColumnsType<RoleRiskPrecheck['risks'][number]> = [
+    {
+      dataIndex: 'code',
+      render: (_, row) => (
+        <Space orientation="vertical" size={2}>
+          <Tag color={row.severity === 'blocked' ? 'red' : row.severity === 'risk' ? 'red' : 'gold'}>
+            {row.severity}
+          </Tag>
+          <Text type="secondary">{row.code}</Text>
+        </Space>
+      ),
+      title: '风险',
+      width: 150,
+    },
+    {
+      dataIndex: 'message',
+      render: (_, row) => (
+        <Space orientation="vertical" size={4}>
+          <Text>{row.message}</Text>
+          {row.permission_codes?.length ? (
+            <Text type="secondary">涉及权限：{row.permission_codes.join('、')}</Text>
+          ) : null}
+        </Space>
+      ),
+      title: '说明',
+    },
+  ];
+  return (
+    <div className="role-risk-precheck-result">
+      <Alert
+        message={`风险预检：${roleRiskStatusLabel(result.decision.status)}`}
+        description={`候选配置包含 ${result.decision.risk_count} 个风险项；${
+          result.decision.can_save ? '允许保存，但建议确认提示项。' : '存在阻断项，请按修复建议处理后再保存。'
+        }`}
+        showIcon
+        type={roleRiskStatusColor(result.decision.status)}
+      />
+      <Space size={[8, 8]} wrap>
+        <Tag color={roleRiskTagColor(result.decision.status)}>{roleRiskStatusLabel(result.decision.status)}</Tag>
+        <Tag color="cyan">候选菜单 {result.candidate.menu_count}</Tag>
+        <Tag color="blue">候选权限 {result.candidate.permission_count}</Tag>
+        <Tag color={result.candidate.scope_count ? 'purple' : 'gold'}>候选范围 {result.candidate.scope_count}</Tag>
+        {result.candidate.high_risk_permission_count ? (
+          <Tag color="red">高风险权限 {result.candidate.high_risk_permission_count}</Tag>
+        ) : null}
+      </Space>
+      <Descriptions bordered column={1} size="small">
+        <Descriptions.Item label="当前 scope">{renderScopeAccessCounts(result.scope_comparison.current)}</Descriptions.Item>
+        <Descriptions.Item label="候选 scope">{renderScopeAccessCounts(result.scope_comparison.candidate)}</Descriptions.Item>
+        <Descriptions.Item label="自动修复建议">
+          {result.auto_fix_suggestions.length ? (
+            <Space orientation="vertical" size={4}>
+              {result.auto_fix_suggestions.map((suggestion) => (
+                <Text key={`${suggestion.action}:${suggestion.description}`}>
+                  {suggestion.description}
+                  {suggestion.permission_codes?.length ? `（${suggestion.permission_codes.join('、')}）` : ''}
+                </Text>
+              ))}
+            </Space>
+          ) : (
+            <Text type="secondary">暂无修复建议</Text>
+          )}
+        </Descriptions.Item>
+      </Descriptions>
+      {result.risks.length ? (
+        <Table<RoleRiskPrecheck['risks'][number]>
+          columns={riskColumns}
+          dataSource={result.risks}
+          pagination={false}
+          rowKey={(row) => `${row.code}:${row.message}`}
+          scroll={{ x: 640 }}
+          size="small"
+          tableLayout="fixed"
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function buildColumns({
   configureGrant,
   copyRole,
@@ -662,6 +882,9 @@ export default function RolesPage() {
   const [permissionDiagnosticResult, setPermissionDiagnosticResult] = useState<UserPermissionDiagnostic>();
   const [permissionDiagnosticError, setPermissionDiagnosticError] = useState<RemoteRowsError>();
   const [permissionDiagnosticLoading, setPermissionDiagnosticLoading] = useState(false);
+  const [userMenuPreview, setUserMenuPreview] = useState<UserMenuPreview>();
+  const [roleRiskPrecheckResult, setRoleRiskPrecheckResult] = useState<RoleRiskPrecheck>();
+  const [roleRiskPrecheckLoading, setRoleRiskPrecheckLoading] = useState(false);
   const [roleForm] = Form.useForm<RoleFormValues>();
   const [permissionDiagnosticForm] = Form.useForm<PermissionDiagnosticFormValues>();
   const [grantForm] = Form.useForm<{
@@ -772,19 +995,25 @@ export default function RolesPage() {
 
   const runPermissionDiagnostic = useCallback(async () => {
     const values = await permissionDiagnosticForm.validateFields();
+    const userId = normalizeFilterText(values.userId) ?? '';
     setPermissionDiagnosticLoading(true);
     try {
-      const result = await fetchSystemPermissionDiagnostics({
-        path: normalizeFilterText(values.path),
-        permissionCode: normalizeFilterText(values.permissionCode),
-        scopeId: normalizeFilterText(values.scopeId),
-        scopeType: normalizeFilterText(values.scopeType),
-        userId: normalizeFilterText(values.userId) ?? '',
-      });
+      const [result, menuPreview] = await Promise.all([
+        fetchSystemPermissionDiagnostics({
+          path: normalizeFilterText(values.path),
+          permissionCode: normalizeFilterText(values.permissionCode),
+          scopeId: normalizeFilterText(values.scopeId),
+          scopeType: normalizeFilterText(values.scopeType),
+          userId,
+        }),
+        fetchSystemUserMenuPreview(userId),
+      ]);
       setPermissionDiagnosticResult(result);
+      setUserMenuPreview(menuPreview);
       setPermissionDiagnosticError(undefined);
     } catch (loadError: unknown) {
       setPermissionDiagnosticResult(undefined);
+      setUserMenuPreview(undefined);
       setPermissionDiagnosticError(normalizeRemoteRowsError(loadError));
     } finally {
       setPermissionDiagnosticLoading(false);
@@ -811,6 +1040,7 @@ export default function RolesPage() {
   }, [roleForm]);
   const openGrantModal = useCallback((row: RoleManagementRow, type: 'grants' | 'scopes') => {
     setGrantModal({ role: row, type });
+    setRoleRiskPrecheckResult(undefined);
     grantForm.setFieldsValue({
       menuCodes: row.menu_codes,
       permissionCodes: row.permission_codes,
@@ -819,6 +1049,41 @@ export default function RolesPage() {
         : [{ access_level: 'read', scope_id: '', scope_type: 'product' }],
     });
   }, [grantForm]);
+  const buildRoleRiskPrecheckPayload = useCallback(
+    (values: { menuCodes?: string[]; permissionCodes?: string[]; scopes?: ScopeGrant[] }) => {
+      if (grantModal?.type === 'grants') {
+        return {
+          menu_codes: values.menuCodes ?? [],
+          permission_codes: values.permissionCodes ?? [],
+        };
+      }
+      return {
+        scopes: (values.scopes ?? []).filter((scope) => scope.scope_type && scope.scope_id),
+      };
+    },
+    [grantModal?.type],
+  );
+  const runRoleRiskPrecheck = useCallback(async () => {
+    if (!grantModal) {
+      return undefined;
+    }
+    const values = await grantForm.validateFields();
+    setRoleRiskPrecheckLoading(true);
+    try {
+      const result = await fetchSystemRoleRiskPrecheck(
+        grantModal.role.id,
+        buildRoleRiskPrecheckPayload(values),
+      );
+      setRoleRiskPrecheckResult(result);
+      return result;
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '风险预检失败');
+      setRoleRiskPrecheckResult(undefined);
+      return undefined;
+    } finally {
+      setRoleRiskPrecheckLoading(false);
+    }
+  }, [buildRoleRiskPrecheckPayload, grantForm, grantModal]);
   const submitRoleForm = async () => {
     const values = await roleForm.validateFields();
     setSubmitting(true);
@@ -847,6 +1112,18 @@ export default function RolesPage() {
     const values = await grantForm.validateFields();
     setSubmitting(true);
     try {
+      const precheck = await fetchSystemRoleRiskPrecheck(
+        grantModal.role.id,
+        buildRoleRiskPrecheckPayload(values),
+      );
+      setRoleRiskPrecheckResult(precheck);
+      if (!precheck.decision.can_save) {
+        message.error('风险预检未通过，请先处理菜单权限缺口后再保存');
+        return;
+      }
+      if (precheck.decision.status === 'warning') {
+        message.warning('已保存，但当前配置仍有需要关注的权限范围提示');
+      }
       if (grantModal.type === 'grants') {
         await updateSystemRoleMenus(grantModal.role.id, values.menuCodes ?? []);
         await updateSystemRolePermissions(grantModal.role.id, values.permissionCodes ?? []);
@@ -1131,6 +1408,7 @@ export default function RolesPage() {
                   permissionDiagnosticForm.resetFields();
                   setPermissionDiagnosticError(undefined);
                   setPermissionDiagnosticResult(undefined);
+                  setUserMenuPreview(undefined);
                 }}
               >
                 清空
@@ -1173,6 +1451,7 @@ export default function RolesPage() {
               size="small"
               tableLayout="fixed"
             />
+            {renderUserMenuPreview(userMenuPreview)}
           </div>
         ) : null}
       </section>
@@ -1185,6 +1464,7 @@ export default function RolesPage() {
       permissionDiagnosticResult,
       permissions,
       runPermissionDiagnostic,
+      userMenuPreview,
     ],
   );
   const updateGrantMenuSelection = useCallback(
@@ -1310,7 +1590,10 @@ export default function RolesPage() {
       <Modal
         confirmLoading={submitting}
         destroyOnHidden
-        onCancel={() => setGrantModal(undefined)}
+        onCancel={() => {
+          setGrantModal(undefined);
+          setRoleRiskPrecheckResult(undefined);
+        }}
         onOk={() => void submitGrantForm()}
         open={Boolean(grantModal)}
         title={
@@ -1320,6 +1603,22 @@ export default function RolesPage() {
         }
         width={880}
       >
+        {grantModal ? (
+          <div className="role-risk-precheck-panel">
+            <div className="role-risk-precheck-header">
+              <Space orientation="vertical" size={4}>
+                <Text strong>保存前风险预检</Text>
+                <Text type="secondary">
+                  按当前候选菜单、权限点和 scope 预览保存风险，阻断菜单权限缺口。
+                </Text>
+              </Space>
+              <Button loading={roleRiskPrecheckLoading} onClick={() => void runRoleRiskPrecheck()}>
+                运行预检
+              </Button>
+            </div>
+            {renderRoleRiskPrecheck(roleRiskPrecheckResult)}
+          </div>
+        ) : null}
         <Form form={grantForm} layout="vertical" preserve={false}>
           {grantModal?.type === 'grants' ? (
             <>
