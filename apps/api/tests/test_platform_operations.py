@@ -113,3 +113,74 @@ def test_system_alert_rules_and_admin_weekly_report_are_operable():
     assert payload["summary"]["window_days"] == 7
     assert "AI Brain 管理员周报" in payload["markdown"]
     assert "sections" in payload
+
+
+def test_product_onboarding_score_uses_real_health_signals():
+    app.state.store.reset()
+    headers = auth_headers()
+    store = app.state.store
+    product_id = "product_health_001"
+    store.products[product_id] = {
+        "code": "health-product",
+        "id": product_id,
+        "name": "健康评分产品",
+        "status": "active",
+    }
+    store.product_versions["version_health_001"] = {
+        "code": "v1",
+        "id": "version_health_001",
+        "name": "v1",
+        "product_id": product_id,
+        "status": "active",
+    }
+    store.product_modules["module_health_001"] = {
+        "code": "core",
+        "id": "module_health_001",
+        "name": "核心模块",
+        "product_id": product_id,
+        "status": "active",
+    }
+    store.product_git_repositories["git_health_001"] = {
+        "id": "git_health_001",
+        "name": "主仓库",
+        "product_id": product_id,
+        "remote_url": "https://example.com/health/product.git",
+        "status": "active",
+    }
+    store.related_systems["related_health_001"] = {
+        "id": "related_health_001",
+        "name": "关联系统",
+        "product_id": product_id,
+        "status": "active",
+    }
+    store.knowledge_documents["knowledge_health_001"] = {
+        "id": "knowledge_health_001",
+        "index_status": "vector_indexed",
+        "name": "产品知识",
+        "product_id": product_id,
+    }
+    store.plugin_connections["plugin_connection_health_001"] = {
+        "id": "plugin_connection_health_001",
+        "last_test_summary": {
+            "checked_at": "2026-07-09T10:00:00+00:00",
+            "status": "failed",
+        },
+        "name": "失败插件连接",
+        "plugin_code": "dingtalk",
+        "request_config": {"product_id": product_id},
+        "status": "active",
+    }
+
+    response = client.get("/api/system/health", headers=headers)
+    assert response.status_code == 200
+    products = response.json()["data"]["operations"]["product_onboarding_scores"]["products"]
+    product = next(item for item in products if item["product_id"] == product_id)
+    assert product["plugin_connection_count"] == 1
+    assert product["plugin_failed_connection_count"] == 1
+    assert product["permission_scope_count"] >= 1
+    assert product["permission_scope_status"] == "configured"
+    assert product["recent_health_status"] == "degraded"
+    assert product["recent_health_check"]["checked_at"] == "2026-07-09T10:00:00+00:00"
+    assert product["recent_health_check"]["failed_plugin_connection_count"] == 1
+    assert "插件连接健康检查失败" in product["recent_health_check"]["summary"]
+    assert "未配置产品权限范围" not in product["missing_items"]

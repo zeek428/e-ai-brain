@@ -52,20 +52,24 @@ const STATUS_LABELS: Record<string, string> = {
   enabled: '已启用',
   error: '异常',
   failed: '失败',
+  healthy: '健康',
   info: '提示',
   managed: '托管',
   not_configured: '未配置',
   ok: '正常',
+  attention: '需关注',
   warning: '待完善',
 };
 
 const STATUS_COLORS: Record<string, string> = {
+  attention: 'gold',
   configured: 'green',
   degraded: 'orange',
   disabled: 'default',
   enabled: 'green',
   error: 'red',
   failed: 'red',
+  healthy: 'green',
   info: 'blue',
   managed: 'green',
   not_configured: 'default',
@@ -484,9 +488,19 @@ function SystemHealthOperationsPanel({ operations }: { operations: SystemHealthO
                   {product.missing_items?.length ? product.missing_items.join('、') : '接入信息完整'}
                 </Text>
                 <Text type="secondary">
-                  插件 {formatMetricValue(product.plugin_connection_count)} · 权限范围 {formatMetricValue(product.permission_scope_count)} ·
-                  健康 {formatMetricValue(product.recent_health_status)}
+                  插件 {formatMetricValue(product.plugin_connection_count)}
+                  {numericMetric(product.plugin_failed_connection_count) ? ` / 失败 ${formatMetricValue(product.plugin_failed_connection_count)}` : ''}
+                  {' · '}
+                  权限范围 {formatMetricValue(product.permission_scope_count)}
+                  {' · '}
+                  可检索文档 {formatMetricValue(product.searchable_knowledge_document_count)}
                 </Text>
+                <Space size={4} wrap>
+                  {statusTag(product.recent_health_status ?? 'attention')}
+                  <Text type="secondary">
+                    {product.recent_health_check?.summary ?? '健康检查待生成'}
+                  </Text>
+                </Space>
               </div>
               <Progress percent={product.score} size="small" status={product.score >= 80 ? 'success' : 'normal'} />
             </div>

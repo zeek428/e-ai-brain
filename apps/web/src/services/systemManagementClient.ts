@@ -272,11 +272,23 @@ export type SystemHealthOperations = {
       module_count?: number;
       name: string;
       permission_scope_count?: number;
+      permission_scope_status?: string;
       plugin_connection_count?: number;
+      plugin_failed_connection_count?: number;
+      plugin_total_connection_count?: number;
       product_id: string;
+      recent_health_check?: {
+        checked_at?: string | null;
+        failed_knowledge_document_count?: number;
+        failed_plugin_connection_count?: number;
+        issues?: string[];
+        status?: string;
+        summary?: string;
+      };
       recent_health_status?: string;
       related_system_count?: number;
       score: number;
+      searchable_knowledge_document_count?: number;
       status: string;
       version_count?: number;
     }>;

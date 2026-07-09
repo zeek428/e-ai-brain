@@ -641,15 +641,58 @@ def _connection_product_ids(connection: dict[str, Any]) -> set[str]:
     return product_ids
 
 
-def _product_plugin_counts(current_store: Any) -> dict[str, int]:
+def _plugin_connection_test_status(connection: dict[str, Any]) -> str:
+    last_test = connection.get("last_test_summary")
+    if not isinstance(last_test, dict):
+        return "unknown"
+    status = str(last_test.get("status") or "").strip().lower()
+    if status in {"ok", "pass", "passed", "success", "succeeded", "healthy"}:
+        return "passed"
+    if status in {"blocked", "error", "failed", "fail", "timeout", "timed_out"}:
+        return "failed"
+    return status or "unknown"
+
+
+def _plugin_connection_checked_at(connection: dict[str, Any]) -> str | None:
+    last_test = connection.get("last_test_summary")
+    if not isinstance(last_test, dict):
+        return None
+    for field in ("checked_at", "tested_at", "finished_at", "updated_at", "created_at"):
+        value = last_test.get(field)
+        if value:
+            return str(value)
+    return None
+
+
+def _product_plugin_health(current_store: Any) -> dict[str, dict[str, Any]]:
     connections = _items_from_store(current_store, "list_plugin_connections", "plugin_connections")
-    counts: dict[str, int] = {}
+    health_by_product: dict[str, dict[str, Any]] = {}
     for connection in connections:
-        if str(connection.get("status") or "").lower() not in {"active", "enabled"}:
-            continue
+        connection_status = str(connection.get("status") or "").strip().lower()
+        enabled = connection_status in {"active", "enabled"}
+        test_status = _plugin_connection_test_status(connection)
+        checked_at = _plugin_connection_checked_at(connection)
         for product_id in _connection_product_ids(connection):
-            counts[product_id] = counts.get(product_id, 0) + 1
-    return counts
+            entry = health_by_product.setdefault(
+                product_id,
+                {
+                    "active_count": 0,
+                    "checked_count": 0,
+                    "failed_count": 0,
+                    "latest_checked_at": None,
+                    "total_count": 0,
+                },
+            )
+            entry["total_count"] += 1
+            if enabled:
+                entry["active_count"] += 1
+            if test_status != "unknown":
+                entry["checked_count"] += 1
+            if not enabled or test_status == "failed":
+                entry["failed_count"] += 1
+            if checked_at and (entry["latest_checked_at"] is None or checked_at > entry["latest_checked_at"]):
+                entry["latest_checked_at"] = checked_at
+    return health_by_product
 
 
 def _product_permission_scope_counts(
@@ -689,7 +732,7 @@ def _product_onboarding_scores(
     products = list_product_records(current_store, active_only=False)
     active_products = [product for product in products if product.get("status") != "archived"]
     documents = _knowledge_documents_for_health(current_store)
-    plugin_counts = _product_plugin_counts(current_store)
+    plugin_health_by_product = _product_plugin_health(current_store)
     permission_scope_counts = _product_permission_scope_counts(
         current_store=current_store,
         request=request,
@@ -723,19 +766,55 @@ def _product_onboarding_scores(
             if str(document.get("product_id") or "") == product_id
             and document.get("index_status") != "archived"
         ]
-        plugin_connection_count = plugin_counts.get(product_id, 0)
+        searchable_product_documents = [
+            document
+            for document in product_documents
+            if str(document.get("index_status") or "") in {"indexed", "text_indexed", "vector_indexed"}
+        ]
+        failed_product_documents = [
+            document
+            for document in product_documents
+            if str(document.get("index_status") or "") == "index_failed"
+        ]
+        plugin_health = plugin_health_by_product.get(
+            product_id,
+            {
+                "active_count": 0,
+                "checked_count": 0,
+                "failed_count": 0,
+                "latest_checked_at": None,
+                "total_count": 0,
+            },
+        )
+        plugin_connection_count = int(plugin_health.get("active_count") or 0)
+        failed_plugin_connection_count = int(plugin_health.get("failed_count") or 0)
         permission_scope_count = (
             permission_scope_counts.get(product_id, 0) + permission_scope_counts.get("*", 0)
         )
+        health_issues: list[str] = []
+        if not active_git_repositories:
+            health_issues.append("缺少可用代码仓库")
+        if not plugin_connection_count:
+            health_issues.append("缺少可用插件连接")
+        if failed_plugin_connection_count:
+            health_issues.append("插件连接健康检查失败")
+        if not permission_scope_count:
+            health_issues.append("缺少产品权限范围")
+        if failed_product_documents:
+            health_issues.append("存在知识索引失败文档")
+        if health_issues:
+            recent_health_status = "degraded" if failed_plugin_connection_count or failed_product_documents else "attention"
+        else:
+            recent_health_status = "healthy"
 
         score = 0
         missing_items: list[str] = []
         if product.get("name") and product.get("status") == "active":
-            score += 15
+            score += 10
         else:
             missing_items.append("产品主数据未启用或缺名称")
         if active_versions:
-            score += 15
+            score += 10
         else:
             missing_items.append("未维护可用迭代版本")
         if active_modules:
@@ -746,22 +825,32 @@ def _product_onboarding_scores(
             score += 15
         else:
             missing_items.append("未绑定代码仓库")
-        if product_documents:
+        if searchable_product_documents:
             score += 15
         else:
-            missing_items.append("知识空间缺少产品文档")
+            missing_items.append("知识空间缺少可检索产品文档")
+        if failed_product_documents:
+            missing_items.append("存在知识索引失败文档")
         if active_related_systems:
             score += 10
         else:
             missing_items.append("未维护关联系统")
-        if plugin_connection_count:
+        if plugin_connection_count and not failed_plugin_connection_count:
             score += 10
+        elif plugin_connection_count:
+            score += 5
+            missing_items.append("插件连接健康检查失败")
         else:
             missing_items.append("未绑定可用插件连接")
         if permission_scope_count:
             score += 10
         else:
             missing_items.append("未配置产品权限范围")
+        if recent_health_status == "healthy":
+            score += 10
+        elif recent_health_status == "attention":
+            score += 5
+        score = min(score, 100)
 
         if score >= 80:
             status = "ready"
@@ -777,13 +866,23 @@ def _product_onboarding_scores(
                 "module_count": len(active_modules),
                 "name": product.get("name") or product_id,
                 "permission_scope_count": permission_scope_count,
+                "permission_scope_status": "configured" if permission_scope_count else "missing",
                 "plugin_connection_count": plugin_connection_count,
+                "plugin_failed_connection_count": failed_plugin_connection_count,
+                "plugin_total_connection_count": int(plugin_health.get("total_count") or 0),
                 "product_id": product_id,
+                "recent_health_check": {
+                    "checked_at": plugin_health.get("latest_checked_at") or _now_iso(),
+                    "failed_knowledge_document_count": len(failed_product_documents),
+                    "failed_plugin_connection_count": failed_plugin_connection_count,
+                    "issues": health_issues,
+                    "status": recent_health_status,
+                    "summary": "健康检查正常" if not health_issues else "；".join(health_issues[:4]),
+                },
                 "related_system_count": len(active_related_systems),
                 "score": score,
-                "recent_health_status": "healthy"
-                if score >= 80
-                else ("attention" if score >= 50 else "at_risk"),
+                "recent_health_status": recent_health_status,
+                "searchable_knowledge_document_count": len(searchable_product_documents),
                 "status": status,
                 "version_count": len(active_versions),
             },
