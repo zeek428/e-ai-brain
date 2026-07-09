@@ -423,13 +423,51 @@ describe('KnowledgePage', () => {
             answer_mode: 'extractive_rag',
             citations: [
               {
+                chunk_id: 'chunk_requirement_rule',
                 content: '需求评估规则内容',
                 document_id: 'knowledge_api',
                 source: { doc_type: 'manual', title: '需求评估规则' },
                 title: '需求评估规则',
               },
             ],
-            metrics: { citation_count: 1, latency_ms: 12, no_result: false },
+            metrics: {
+              citation_count: 1,
+              latency_ms: 12,
+              no_result: false,
+              quality_event_id: 'knowledge_quality_event_rag_1',
+            },
+          },
+        });
+      }
+      if (input === '/api/knowledge/quality/citation-click') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          citation_chunk_id: 'chunk_requirement_rule',
+          citation_document_id: 'knowledge_api',
+          related_event_id: 'knowledge_quality_event_rag_1',
+        });
+        return jsonResponse({
+          data: {
+            citation_chunk_id: 'chunk_requirement_rule',
+            citation_document_id: 'knowledge_api',
+            event_type: 'citation_click',
+            id: 'knowledge_quality_event_click_1',
+            related_event_id: 'knowledge_quality_event_rag_1',
+          },
+        });
+      }
+      if (input === '/api/knowledge/quality/feedback') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          feedback_value: 'useful',
+          related_event_id: 'knowledge_quality_event_rag_1',
+        });
+        return jsonResponse({
+          data: {
+            event_type: 'feedback',
+            feedback_value: 'useful',
+            id: 'knowledge_quality_event_feedback_1',
+            related_event_id: 'knowledge_quality_event_rag_1',
           },
         });
       }
@@ -451,6 +489,20 @@ describe('KnowledgePage', () => {
     expect(await screen.findByText('需求评估规则内容')).toBeInTheDocument();
     expect((await screen.findAllByText(/可参考以下知识依据/)).length).toBeGreaterThan(0);
     expect(screen.getByText('manual · 需求评估规则')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '#1 需求评估规则' }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/knowledge/quality/citation-click',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /有用/ }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/knowledge/quality/feedback',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    );
     expect(fetchMock.mock.calls.map(([path, init]) => [String(path).split('?')[0], init?.method ?? 'GET'])).toEqual([
       ['/api/auth/roles', 'GET'],
       ['/api/knowledge/spaces', 'GET'],
@@ -458,6 +510,8 @@ describe('KnowledgePage', () => {
       ['/api/knowledge/index-health', 'GET'],
       ['/api/knowledge/search', 'POST'],
       ['/api/knowledge/rag', 'POST'],
+      ['/api/knowledge/quality/citation-click', 'POST'],
+      ['/api/knowledge/quality/feedback', 'POST'],
     ]);
   });
 

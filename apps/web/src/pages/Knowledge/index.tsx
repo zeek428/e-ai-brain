@@ -45,6 +45,8 @@ import {
   fetchManagementRequirementList,
   fetchRoleDefinitions,
   rejectKnowledgeDeposit,
+  recordKnowledgeCitationClick,
+  recordKnowledgeQualityFeedback,
   reparseKnowledgeDocument,
   retryKnowledgeImportJob,
   retryKnowledgeDocumentIndex,
@@ -59,8 +61,10 @@ import {
   type KnowledgeImportJobRecord,
   type KnowledgeImportWorkerStatusRecord,
   type KnowledgeListQuery,
+  type KnowledgeQualityFeedbackValue,
   type KnowledgeDepositRecord,
   type KnowledgeRagAnswerRecord,
+  type KnowledgeRagCitationRecord,
   type KnowledgeSearchResultRecord,
   type KnowledgeSpaceRecord,
   type RemoteListPerformance,
@@ -237,6 +241,9 @@ export default function KnowledgePage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [ragAnswer, setRagAnswer] = useState<KnowledgeRagAnswerRecord | null>(null);
+  const [ragFeedbackSubmittingValue, setRagFeedbackSubmittingValue] =
+    useState<KnowledgeQualityFeedbackValue>();
+  const [ragFeedbackValue, setRagFeedbackValue] = useState<KnowledgeQualityFeedbackValue>();
   const [isSaving, setIsSaving] = useState(false);
   const [documentInitialValues, setDocumentInitialValues] = useState<Partial<KnowledgeFormValues>>({});
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | undefined>();
@@ -918,6 +925,8 @@ export default function KnowledgePage() {
   const handleSearch = async (values: KnowledgeSearchFormValues) => {
     setSearchLoading(true);
     setRagAnswer(null);
+    setRagFeedbackSubmittingValue(undefined);
+    setRagFeedbackValue(undefined);
     try {
       const searchSpaceId = values.knowledge_space_id || selectedSpaceId;
       const [results, answer] = await Promise.all([
@@ -941,6 +950,51 @@ export default function KnowledgePage() {
       setSearchLoading(false);
     }
   };
+
+  const handleRagFeedback = useCallback(
+    async (feedbackValue: KnowledgeQualityFeedbackValue) => {
+      const relatedEventId = ragAnswer?.metrics?.qualityEventId;
+      if (!relatedEventId) {
+        message.warning('本次问答缺少质量事件，暂不能记录反馈');
+        return;
+      }
+      setRagFeedbackSubmittingValue(feedbackValue);
+      try {
+        await recordKnowledgeQualityFeedback({
+          feedbackValue,
+          relatedEventId,
+        });
+        setRagFeedbackValue(feedbackValue);
+        message.success(feedbackValue === 'useful' ? '已记录有用反馈' : '已记录无用反馈');
+      } catch (feedbackError) {
+        message.error(formatMutationError(feedbackError));
+      } finally {
+        setRagFeedbackSubmittingValue(undefined);
+      }
+    },
+    [ragAnswer?.metrics?.qualityEventId],
+  );
+
+  const handleRecordCitationClick = useCallback(
+    async (citation: KnowledgeRagCitationRecord) => {
+      const relatedEventId = ragAnswer?.metrics?.qualityEventId;
+      if (!relatedEventId) {
+        message.warning('本次问答缺少质量事件，暂不能记录引用点击');
+        return;
+      }
+      try {
+        await recordKnowledgeCitationClick({
+          citationChunkId: citation.chunkId,
+          citationDocumentId: citation.documentId,
+          relatedEventId,
+        });
+        message.success('已记录引用点击');
+      } catch (citationError) {
+        message.error(formatMutationError(citationError));
+      }
+    },
+    [ragAnswer?.metrics?.qualityEventId],
+  );
 
   const handleCreateSpace = async (values: KnowledgeSpaceFormValues) => {
     try {
@@ -1469,15 +1523,19 @@ export default function KnowledgePage() {
       onReloadDeposits={() => void reloadDeposits()}
       onReloadImportJobs={(spaceId) => void reloadImportJobs(spaceId)}
       onReloadImportWorkerStatus={() => void reloadImportWorkerStatus()}
+      onRecordCitationClick={handleRecordCitationClick}
       onSearch={handleSearch}
       onSelectFolder={selectWorkbenchFolder}
       onSelectSpace={selectWorkbenchSpace}
       onSetActiveWorkbenchTab={setActiveWorkbenchTab}
       onSetSelectedSpaceId={setSelectedSpaceId}
+      onSubmitRagFeedback={handleRagFeedback}
       onToggleNoisySpaces={() => setShowNoisySpaces((current) => !current)}
       onUpdateSpaceSearchText={setSpaceSearchText}
       onWorkbenchTabChange={handleWorkbenchTabChange}
       ragAnswer={ragAnswer}
+      ragFeedbackSubmittingValue={ragFeedbackSubmittingValue}
+      ragFeedbackValue={ragFeedbackValue}
       searchColumns={searchColumns}
       searchLoading={searchLoading}
       searchRows={searchRows}

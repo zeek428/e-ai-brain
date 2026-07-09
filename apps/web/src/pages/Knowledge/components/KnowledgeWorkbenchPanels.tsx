@@ -1,4 +1,4 @@
-import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { CheckOutlined, CloseOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, InputNumber, Select, Space, Tabs, Typography } from 'antd';
@@ -11,7 +11,9 @@ import type {
   KnowledgeFolderRecord,
   KnowledgeImportJobRecord,
   KnowledgeImportWorkerStatusRecord,
+  KnowledgeQualityFeedbackValue,
   KnowledgeRagAnswerRecord,
+  KnowledgeRagCitationRecord,
   KnowledgeSearchResultRecord,
   KnowledgeSpaceRecord,
 } from '../../../services/aiBrain';
@@ -46,15 +48,19 @@ type KnowledgeWorkbenchPanelsProps = {
   onReloadDeposits: () => void;
   onReloadImportJobs: (spaceId?: string) => void;
   onReloadImportWorkerStatus: () => void;
+  onRecordCitationClick: (citation: KnowledgeRagCitationRecord) => void | Promise<void>;
   onSearch: (values: KnowledgeSearchFormValues) => void | Promise<void>;
   onSelectFolder: (folderId?: string) => void;
   onSelectSpace: (spaceId: string) => void;
   onSetActiveWorkbenchTab: (tab: KnowledgeWorkbenchTab) => void;
   onSetSelectedSpaceId: (spaceId?: string) => void;
+  onSubmitRagFeedback: (feedbackValue: KnowledgeQualityFeedbackValue) => void | Promise<void>;
   onToggleNoisySpaces: () => void;
   onUpdateSpaceSearchText: (value: string) => void;
   onWorkbenchTabChange: (tabKey: string) => void;
   ragAnswer: KnowledgeRagAnswerRecord | null;
+  ragFeedbackSubmittingValue?: KnowledgeQualityFeedbackValue;
+  ragFeedbackValue?: KnowledgeQualityFeedbackValue;
   searchColumns: ProColumns<KnowledgeSearchResultRecord>[];
   searchLoading: boolean;
   searchRows: KnowledgeSearchResultRecord[];
@@ -92,15 +98,19 @@ export function KnowledgeWorkbenchPanels({
   onReloadDeposits,
   onReloadImportJobs,
   onReloadImportWorkerStatus,
+  onRecordCitationClick,
   onSearch,
   onSelectFolder,
   onSelectSpace,
   onSetActiveWorkbenchTab,
   onSetSelectedSpaceId,
+  onSubmitRagFeedback,
   onToggleNoisySpaces,
   onUpdateSpaceSearchText,
   onWorkbenchTabChange,
   ragAnswer,
+  ragFeedbackSubmittingValue,
+  ragFeedbackValue,
   searchColumns,
   searchLoading,
   searchRows,
@@ -130,6 +140,74 @@ export function KnowledgeWorkbenchPanels({
     listRows.filter((row) => row.status === 'indexed' || row.status === 'vector_indexed').length;
   const healthCoverage = healthTotal > 0 ? Math.round((healthVectorReady / healthTotal) * 100) : 0;
   const currentImportSpaceId = selectedSpaceId ?? spaces[0]?.id;
+  const ragQualityEventId = ragAnswer?.metrics?.qualityEventId;
+
+  const renderRagAnswer = (emptyText: string) => {
+    if (!ragAnswer) {
+      return (
+        <div className="knowledge-rag-empty">
+          <Text type="secondary">{emptyText}</Text>
+        </div>
+      );
+    }
+    const feedbackDisabled = !ragQualityEventId || Boolean(ragFeedbackSubmittingValue);
+    return (
+      <div className="knowledge-rag-answer">
+        <Text strong>引用式回答</Text>
+        <div className="knowledge-rag-answer-body">{ragAnswer.answer}</div>
+        {ragAnswer.citations.length > 0 ? (
+          <div className="knowledge-rag-citations">
+            <Text type="secondary">引用来源</Text>
+            <Space wrap>
+              {ragAnswer.citations.map((citation, index) => (
+                <Button
+                  disabled={!ragQualityEventId}
+                  key={`${citation.id}-${index}`}
+                  onClick={() => void onRecordCitationClick(citation)}
+                  size="small"
+                  title={ragQualityEventId ? '记录一次引用点击' : '本次问答缺少质量事件，暂不能记录点击'}
+                  type="link"
+                >
+                  #{index + 1} {citation.title}
+                </Button>
+              ))}
+            </Space>
+          </div>
+        ) : null}
+        <div className="knowledge-rag-answer-footer">
+          <Text type="secondary">
+            引用 {ragAnswer.metrics?.citationCount ?? ragAnswer.citations.length} 条 ·
+            延迟 {ragAnswer.metrics?.latencyMs ?? '-'} ms
+          </Text>
+          <Space wrap>
+            <Button
+              disabled={feedbackDisabled}
+              icon={<CheckOutlined />}
+              loading={ragFeedbackSubmittingValue === 'useful'}
+              onClick={() => void onSubmitRagFeedback('useful')}
+              size="small"
+              title={ragQualityEventId ? '标记本次回答有用' : '本次问答缺少质量事件，暂不能反馈'}
+              type={ragFeedbackValue === 'useful' ? 'primary' : 'default'}
+            >
+              有用
+            </Button>
+            <Button
+              danger={ragFeedbackValue === 'not_useful'}
+              disabled={feedbackDisabled}
+              icon={<CloseOutlined />}
+              loading={ragFeedbackSubmittingValue === 'not_useful'}
+              onClick={() => void onSubmitRagFeedback('not_useful')}
+              size="small"
+              title={ragQualityEventId ? '标记本次回答无用' : '本次问答缺少质量事件，暂不能反馈'}
+              type={ragFeedbackValue === 'not_useful' ? 'primary' : 'default'}
+            >
+              无用
+            </Button>
+          </Space>
+        </div>
+      </div>
+    );
+  };
 
   const knowledgeHealthSummaryPanel = (
     <section aria-label="知识索引健康摘要" className="knowledge-health-summary">
@@ -206,20 +284,7 @@ export function KnowledgeWorkbenchPanels({
           </Button>
         </Form.Item>
       </Form>
-      {ragAnswer ? (
-        <div className="knowledge-rag-answer">
-          <Text strong>引用式回答</Text>
-          <div>{ragAnswer.answer}</div>
-          <Text type="secondary">
-            引用 {ragAnswer.metrics?.citationCount ?? ragAnswer.citations.length} 条 ·
-            延迟 {ragAnswer.metrics?.latencyMs ?? '-'} ms
-          </Text>
-        </div>
-      ) : (
-        <div className="knowledge-rag-empty">
-          <Text type="secondary">输入问题后展示答案、召回证据和可访问来源。</Text>
-        </div>
-      )}
+      {renderRagAnswer('输入问题后展示答案、召回证据和可访问来源。')}
       <ProTable<KnowledgeSearchResultRecord>
         columns={searchColumns}
         dataSource={searchRows}
@@ -412,20 +477,7 @@ export function KnowledgeWorkbenchPanels({
             </Button>
           </Form.Item>
         </Form>
-        {ragAnswer ? (
-          <div className="knowledge-rag-answer">
-            <Text strong>引用式回答</Text>
-            <div>{ragAnswer.answer}</div>
-            <Text type="secondary">
-              引用 {ragAnswer.metrics?.citationCount ?? ragAnswer.citations.length} 条 ·
-              延迟 {ragAnswer.metrics?.latencyMs ?? '-'} ms
-            </Text>
-          </div>
-        ) : (
-          <div className="knowledge-rag-empty">
-            <Text type="secondary">输入问题后展示引用式答案和召回证据。</Text>
-          </div>
-        )}
+        {renderRagAnswer('输入问题后展示引用式答案和召回证据。')}
       </section>
     </div>
   );

@@ -79,8 +79,20 @@ export type KnowledgeRagAnswerRecord = {
     latencyMs?: number;
     noResult?: boolean;
     noResultRate?: number;
+    qualityEventId?: string;
     ragCitationAccuracyProxy?: number;
   };
+};
+
+export type KnowledgeQualityFeedbackValue = 'incorrect' | 'not_useful' | 'partial' | 'useful';
+
+export type KnowledgeQualityEventRecord = {
+  citationChunkId?: string | null;
+  citationDocumentId?: string | null;
+  eventType: string;
+  feedbackValue?: string | null;
+  id: string;
+  relatedEventId?: string | null;
 };
 
 export type KnowledgeSpaceRecord = {
@@ -394,8 +406,18 @@ type KnowledgeRagAnswerItem = {
     latency_ms?: number;
     no_result?: boolean;
     no_result_rate?: number;
+    quality_event_id?: string;
     rag_citation_accuracy_proxy?: number;
   };
+};
+
+type KnowledgeQualityEventItem = {
+  citation_chunk_id?: string | null;
+  citation_document_id?: string | null;
+  event_type?: string;
+  feedback_value?: string | null;
+  id: string;
+  related_event_id?: string | null;
 };
 
 type KnowledgeIndexHealthIssueItem = {
@@ -642,8 +664,20 @@ function mapKnowledgeRagAnswer(item: KnowledgeRagAnswerItem): KnowledgeRagAnswer
       latencyMs: item.metrics?.latency_ms,
       noResult: item.metrics?.no_result,
       noResultRate: item.metrics?.no_result_rate,
+      qualityEventId: item.metrics?.quality_event_id,
       ragCitationAccuracyProxy: item.metrics?.rag_citation_accuracy_proxy,
     },
+  };
+}
+
+function mapKnowledgeQualityEvent(item: KnowledgeQualityEventItem): KnowledgeQualityEventRecord {
+  return {
+    citationChunkId: item.citation_chunk_id,
+    citationDocumentId: item.citation_document_id,
+    eventType: item.event_type ?? '-',
+    feedbackValue: item.feedback_value,
+    id: item.id,
+    relatedEventId: item.related_event_id,
   };
 }
 
@@ -1095,6 +1129,49 @@ export async function askKnowledgeRag(
     token,
   });
   return mapKnowledgeRagAnswer(answer);
+}
+
+export async function recordKnowledgeQualityFeedback(payload: {
+  citationChunkId?: string;
+  citationDocumentId?: string;
+  feedbackComment?: string;
+  feedbackValue: KnowledgeQualityFeedbackValue;
+  relatedEventId: string;
+}): Promise<KnowledgeQualityEventRecord> {
+  const token = requireAccessToken();
+  const event = await apiRequest<KnowledgeQualityEventItem>('/api/knowledge/quality/feedback', {
+    body: {
+      citation_chunk_id: payload.citationChunkId,
+      citation_document_id: payload.citationDocumentId,
+      feedback_comment: payload.feedbackComment,
+      feedback_value: payload.feedbackValue,
+      related_event_id: payload.relatedEventId,
+    },
+    method: 'POST',
+    token,
+  });
+  return mapKnowledgeQualityEvent(event);
+}
+
+export async function recordKnowledgeCitationClick(payload: {
+  citationChunkId?: string;
+  citationDocumentId?: string;
+  relatedEventId: string;
+}): Promise<KnowledgeQualityEventRecord> {
+  const token = requireAccessToken();
+  const event = await apiRequest<KnowledgeQualityEventItem>(
+    '/api/knowledge/quality/citation-click',
+    {
+      body: {
+        citation_chunk_id: payload.citationChunkId,
+        citation_document_id: payload.citationDocumentId,
+        related_event_id: payload.relatedEventId,
+      },
+      method: 'POST',
+      token,
+    },
+  );
+  return mapKnowledgeQualityEvent(event);
 }
 
 export async function approveKnowledgeDeposit(

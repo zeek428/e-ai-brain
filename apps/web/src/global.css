@@ -396,9 +396,30 @@ body {
   background: #fafcff;
 }
 
-.knowledge-rag-answer > div {
+.knowledge-rag-answer-body {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.knowledge-rag-citations {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.knowledge-rag-citations .ant-space {
+  row-gap: 4px;
+}
+
+.knowledge-rag-answer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 4px;
+  border-top: 1px solid #eef2f7;
 }
 
 .knowledge-health-summary {
@@ -619,9 +640,15 @@ body {
   }
 
   .knowledge-rag-form,
+  .knowledge-rag-answer-footer,
   .knowledge-health-summary,
   .knowledge-health-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .knowledge-rag-answer-footer {
+    display: grid;
+    justify-items: start;
   }
 }
 
