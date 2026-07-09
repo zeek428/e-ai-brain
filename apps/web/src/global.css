@@ -1921,6 +1921,27 @@ body {
   min-width: 0;
 }
 
+.system-health-executor-strategy-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.system-health-executor-strategy-list > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.system-health-executor-strategy-list .ant-typography {
+  overflow-wrap: anywhere;
+}
+
 .system-health-executor-task-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2057,7 +2078,8 @@ body {
   .system-health-ops-grid,
   .system-health-ops-card-wide,
   .system-health-ops-metric-grid,
-  .system-health-dingtalk-boundaries {
+  .system-health-dingtalk-boundaries,
+  .system-health-executor-strategy-list {
     grid-column: auto;
     grid-template-columns: 1fr;
   }

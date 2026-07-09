@@ -366,6 +366,9 @@ function SystemHealthOperationsPanel({
   const alerts = alertCenter?.alerts ?? [];
   const alertRules = alertCenter?.rules ?? [];
   const alertTrend = alertCenter?.trend ?? [];
+  const executorStrategy = aiExecutor?.strategy_config ?? {};
+  const executorStrategyMatrix = executorStrategy.strategy_matrix ?? [];
+  const executorStrategyIssues = executorStrategy.configuration_issues ?? [];
   const retentionPolicies = helpAndRetention?.retention_policies ?? [];
   const retentionCleanup = helpAndRetention?.cleanup_status ?? {};
   const retentionExpiredRecords = retentionCleanup.expired_records ?? [];
@@ -711,6 +714,41 @@ function SystemHealthOperationsPanel({
             可重试 {formatMetricValue(aiExecutor?.operation_targets?.retryable_count)} 个；
             待扫超时 {formatMetricValue(aiExecutor?.operation_targets?.timeout_scan_count)} 个。
           </Text>
+          <div className="system-health-quality-gates" aria-label="AI执行策略配置">
+            <Tag color={executorStrategy.status === 'attention' ? 'orange' : 'green'}>
+              策略配置 {executorStrategy.status === 'attention' ? '需关注' : '已配置'}
+            </Tag>
+            {executorStrategyMatrix.slice(0, 4).map((item) => {
+              const threshold = item.threshold as Record<string, unknown> | undefined;
+              const thresholdText = threshold
+                ? `${formatMetricValue(threshold.min)}-${formatMetricValue(threshold.max)}${item.unit === 'seconds' ? 's' : ''}`
+                : formatMetricValue(item.source);
+              return (
+                <Tag color={item.status === 'attention' ? 'orange' : 'blue'} key={String(item.key)}>
+                  {String(item.label || item.key)}：{thresholdText}
+                </Tag>
+              );
+            })}
+          </div>
+          {executorStrategyMatrix.length ? (
+            <div className="system-health-executor-strategy-list" aria-label="AI执行策略矩阵">
+              {executorStrategyMatrix.slice(0, 3).map((item) => (
+                <div key={String(item.key)}>
+                  <strong>{String(item.label || item.key)}</strong>
+                  <Text type="secondary">{String(item.action || item.source || '-')}</Text>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {executorStrategyIssues.length ? (
+            <div className="system-health-quality-gates" aria-label="AI执行策略风险">
+              {executorStrategyIssues.slice(0, 3).map((item) => (
+                <Tag color={item.level === 'warning' ? 'orange' : 'blue'} key={String(item.target)}>
+                  {String(item.message || item.target)}
+                </Tag>
+              ))}
+            </div>
+          ) : null}
           {failureReasons.length ? (
             <div className="system-health-quality-gates">
               {failureReasons.slice(0, 4).map((item) => (

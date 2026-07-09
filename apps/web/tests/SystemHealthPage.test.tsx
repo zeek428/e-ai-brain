@@ -69,6 +69,29 @@ describe('SystemHealthPage', () => {
               timeout_scan_count: 0,
             },
             runner_health: { active_runner_count: 1 },
+            strategy_config: {
+              recommendation: '重试、取消、超时和死信策略已具备可操作闭环。',
+              status: 'configured',
+              strategy_matrix: [
+                {
+                  action: '运行中的任务超过任务 timeout_seconds 后标记 timed_out，可从运维台重试。',
+                  key: 'timeout',
+                  label: '超时策略',
+                  source: 'ai_executor_tasks.timeout_seconds',
+                  status: 'configured',
+                  threshold: { avg: 2400, max: 2400, min: 2400 },
+                  unit: 'seconds',
+                },
+                {
+                  action: 'failed/timed_out/dead_letter/cancelled 可一键重新入队，保留 retry_history。',
+                  key: 'manual_retry',
+                  label: '重试策略',
+                  retryable_statuses: ['cancelled', 'dead_letter', 'failed', 'timed_out'],
+                  source: 'AI_EXECUTOR_TASK_RETRYABLE_STATUSES',
+                  status: 'configured',
+                },
+              ],
+            },
             summary: {
               failed_total: 1,
               pending_approval_count: 1,
@@ -359,6 +382,9 @@ describe('SystemHealthPage', () => {
     expect(screen.getByRole('button', { name: /停用规则 钉钉 MCP 失败规则/ })).toBeInTheDocument();
     expect(screen.getByText('AI 任务执行运维台')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '扫超时' })).toBeInTheDocument();
+    expect(screen.getByLabelText('AI执行策略配置')).toHaveTextContent('策略配置 已配置');
+    expect(screen.getByLabelText('AI执行策略配置')).toHaveTextContent('超时策略：2400-2400s');
+    expect(screen.getByLabelText('AI执行策略矩阵')).toHaveTextContent('重试策略');
     expect(screen.getByText('runner_task_queued')).toBeInTheDocument();
     expect(screen.getByText('runner_task_failed')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /取\s*消/ })).toBeInTheDocument();

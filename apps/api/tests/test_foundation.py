@@ -317,6 +317,7 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
         "status": "success",
     }
     app.state.store.ai_executor_runners["runner_health_center"] = {
+        "heartbeat_timeout_seconds": 90,
         "id": "runner_health_center",
         "name": "本地 Runner",
         "max_concurrent_tasks": 2,
@@ -325,8 +326,15 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     app.state.store.ai_executor_tasks["ai_executor_task_health_center"] = {
         "id": "ai_executor_task_health_center",
         "executor_type": "openclaw",
+        "request_config": {
+            "reliability": {
+                "lease_timeout_seconds": 600,
+                "max_reclaim_count": 2,
+            },
+        },
         "runner_id": "runner_health_center",
         "status": "queued",
+        "timeout_seconds": 2400,
     }
     app.state.store.ai_executor_tasks["ai_executor_task_health_failed"] = {
         "id": "ai_executor_task_health_failed",
@@ -373,6 +381,18 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
         "count": 1,
         "reason": "AI_EXECUTOR_TASK_FAILED",
     }
+    executor_strategy = operations["ai_executor_ops"]["strategy_config"]
+    assert executor_strategy["status"] == "configured"
+    assert executor_strategy["task_timeout_seconds"] == {"avg": 2400, "max": 2400, "min": 2400}
+    assert executor_strategy["runner_heartbeat_timeout_seconds"] == {
+        "avg": 90,
+        "max": 90,
+        "min": 90,
+    }
+    assert "failed" in executor_strategy["retryable_statuses"]
+    assert "running" in executor_strategy["cancellable_statuses"]
+    assert executor_strategy["configured_task_count"]["lease_timeout_seconds"] == 1
+    assert any(item["key"] == "dead_letter" for item in executor_strategy["strategy_matrix"])
     assert operations["dingtalk_lifecycle"]["mcp"]["connection_count"] == 1
     assert operations["dingtalk_lifecycle"]["authorization_subject_summary"]["system"] == 1
     dingtalk_subject = operations["dingtalk_lifecycle"]["authorization_subjects"][0]

@@ -10,6 +10,18 @@ from fastapi import Request
 
 from app.api.deps import api_error
 from app.core.config import Settings
+from app.services.ai_executor_runner_constants import (
+    AI_EXECUTOR_TASK_RETRYABLE_STATUSES,
+    AI_EXECUTOR_TASK_STATUSES,
+    AI_EXECUTOR_TASK_TERMINAL_STATUSES,
+)
+from app.services.ai_executor_task_reliability import (
+    DEFAULT_LEASE_TIMEOUT_SECONDS,
+    DEFAULT_MAX_RECLAIM_COUNT,
+    LEASE_ACTIVE_STATUSES,
+    lease_timeout_seconds,
+    max_reclaim_count,
+)
 from app.services.knowledge_index_health import knowledge_index_health_response
 from app.services.knowledge_quality import knowledge_quality_summary
 from app.services.platform_status import health_payload
@@ -933,6 +945,162 @@ def _observability_check(current_store: Any) -> dict[str, Any]:
     )
 
 
+def _int_range(values: list[int], *, default: int | None = None) -> dict[str, Any]:
+    if not values:
+        return {
+            "avg": default,
+            "max": default,
+            "min": default,
+        }
+    return {
+        "avg": round(sum(values) / len(values)),
+        "max": max(values),
+        "min": min(values),
+    }
+
+
+def _task_configured_count(tasks: list[dict[str, Any]], config_key: str) -> int:
+    count = 0
+    for task in tasks:
+        request_config = task.get("request_config") if isinstance(task.get("request_config"), dict) else {}
+        reliability = request_config.get("reliability") if isinstance(request_config.get("reliability"), dict) else {}
+        query = request_config.get("query") if isinstance(request_config.get("query"), dict) else {}
+        if config_key in reliability or config_key in request_config or config_key in query:
+            count += 1
+    return count
+
+
+def _ai_executor_strategy_config(
+    *,
+    lease_expired_tasks: list[dict[str, Any]],
+    runners: list[dict[str, Any]],
+    tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    task_timeout_values = [
+        int(task.get("timeout_seconds") or 1800)
+        for task in tasks
+        if str(task.get("status") or "").lower() not in AI_EXECUTOR_TASK_TERMINAL_STATUSES
+    ]
+    lease_timeout_values = [lease_timeout_seconds(task) for task in tasks]
+    reclaim_values = [max_reclaim_count(task) for task in tasks]
+    heartbeat_values = [
+        int(runner.get("heartbeat_timeout_seconds") or 120)
+        for runner in runners
+        if str(runner.get("status") or "").lower() == "active"
+    ]
+    cancellable_statuses = sorted(AI_EXECUTOR_TASK_STATUSES - AI_EXECUTOR_TASK_TERMINAL_STATUSES)
+    retryable_statuses = sorted(AI_EXECUTOR_TASK_RETRYABLE_STATUSES)
+    configuration_issues: list[dict[str, Any]] = []
+    if not tasks:
+        configuration_issues.append(
+            {
+                "level": "info",
+                "message": "暂无执行任务样本，策略配置仅展示默认值。",
+                "target": "ai_executor_tasks",
+            }
+        )
+    if lease_expired_tasks:
+        configuration_issues.append(
+            {
+                "level": "warning",
+                "message": "存在租约已过期任务，应执行超时扫描释放 Runner 槽位。",
+                "target": "lease_timeout",
+            }
+        )
+    if task_timeout_values and max(task_timeout_values) > 24 * 60 * 60:
+        configuration_issues.append(
+            {
+                "level": "warning",
+                "message": "存在超过 24 小时的任务执行超时配置，建议复核是否会掩盖卡死任务。",
+                "target": "task_timeout",
+            }
+        )
+    if runners and not heartbeat_values:
+        configuration_issues.append(
+            {
+                "level": "warning",
+                "message": "没有 active Runner 心跳阈值样本，队列容量和超时判断可能不稳定。",
+                "target": "runner_heartbeat",
+            }
+        )
+    strategy_matrix = [
+        {
+            "action": "运行中的任务超过任务 timeout_seconds 后标记 timed_out，可从运维台重试。",
+            "key": "timeout",
+            "label": "超时策略",
+            "source": "ai_executor_tasks.timeout_seconds",
+            "status": "attention" if lease_expired_tasks else "configured",
+            "threshold": _int_range(task_timeout_values, default=1800),
+            "unit": "seconds",
+        },
+        {
+            "action": "claimed/running 任务租约过期后先重排，超过回收次数进入 dead_letter。",
+            "key": "lease_reclaim",
+            "label": "租约回收",
+            "source": "request_config.reliability.lease_timeout_seconds",
+            "status": "attention" if lease_expired_tasks else "configured",
+            "threshold": _int_range(lease_timeout_values, default=DEFAULT_LEASE_TIMEOUT_SECONDS),
+            "unit": "seconds",
+        },
+        {
+            "action": "租约回收次数达到阈值后转入 dead_letter，由管理员复核后重跑。",
+            "key": "dead_letter",
+            "label": "死信阈值",
+            "source": "request_config.reliability.max_reclaim_count",
+            "status": "configured",
+            "threshold": _int_range(reclaim_values, default=DEFAULT_MAX_RECLAIM_COUNT),
+            "unit": "times",
+        },
+        {
+            "action": "failed/timed_out/dead_letter/cancelled 可一键重新入队，保留 retry_history。",
+            "key": "manual_retry",
+            "label": "重试策略",
+            "retryable_statuses": retryable_statuses,
+            "source": "AI_EXECUTOR_TASK_RETRYABLE_STATUSES",
+            "status": "configured",
+        },
+        {
+            "action": "queued/claimed/running 等非终态任务可取消并记录审计。",
+            "cancellable_statuses": cancellable_statuses,
+            "key": "manual_cancel",
+            "label": "取消策略",
+            "source": "AI_EXECUTOR_TASK_TERMINAL_STATUSES",
+            "status": "configured",
+        },
+        {
+            "action": "active Runner 超过心跳阈值未上报时会在健康诊断中视为离线。",
+            "key": "runner_heartbeat",
+            "label": "Runner 心跳",
+            "source": "ai_executor_runners.heartbeat_timeout_seconds",
+            "status": "configured" if heartbeat_values else "attention",
+            "threshold": _int_range(heartbeat_values, default=120),
+            "unit": "seconds",
+        },
+    ]
+    return {
+        "active_lease_statuses": sorted(LEASE_ACTIVE_STATUSES),
+        "cancellable_statuses": cancellable_statuses,
+        "configuration_issues": configuration_issues,
+        "configured_task_count": {
+            "lease_timeout_seconds": _task_configured_count(tasks, "lease_timeout_seconds"),
+            "max_reclaim_count": _task_configured_count(tasks, "max_reclaim_count"),
+            "timeout_seconds": sum(1 for task in tasks if task.get("timeout_seconds")),
+        },
+        "dead_letter_after_reclaim_count": _int_range(reclaim_values, default=DEFAULT_MAX_RECLAIM_COUNT),
+        "lease_timeout_seconds": _int_range(lease_timeout_values, default=DEFAULT_LEASE_TIMEOUT_SECONDS),
+        "recommendation": (
+            "存在租约过期或策略异常，建议先执行超时扫描，再复核任务 timeout、租约和 Runner 心跳阈值。"
+            if configuration_issues
+            else "重试、取消、超时和死信策略已具备可操作闭环，建议按失败分布定期复盘阈值。"
+        ),
+        "retryable_statuses": retryable_statuses,
+        "runner_heartbeat_timeout_seconds": _int_range(heartbeat_values, default=120),
+        "status": "attention" if configuration_issues else "configured",
+        "strategy_matrix": strategy_matrix,
+        "task_timeout_seconds": _int_range(task_timeout_values, default=1800),
+    }
+
+
 def _ai_executor_ops(current_store: Any) -> dict[str, Any]:
     runners = _items_from_store(current_store, "list_ai_executor_runners", "ai_executor_runners")
     tasks = _items_from_store(current_store, "list_ai_executor_tasks", "ai_executor_tasks")
@@ -1000,6 +1168,11 @@ def _ai_executor_ops(current_store: Any) -> dict[str, Any]:
     pending_approvals = [
         item for item in approvals if str(item.get("status") or "").lower() == "pending"
     ]
+    strategy_config = _ai_executor_strategy_config(
+        lease_expired_tasks=lease_expired_tasks,
+        runners=runners,
+        tasks=tasks,
+    )
 
     def task_brief(task: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -1065,6 +1238,7 @@ def _ai_executor_ops(current_store: Any) -> dict[str, Any]:
             "retry_strategy": "failed、timed_out、dead_letter、cancelled 可重新入队。",
             "timeout_strategy": "超时扫描会释放过期租约，并按可靠性策略重排或转死信。",
         },
+        "strategy_config": strategy_config,
         "summary": {
             "dead_letter_count": status_counts.get("dead_letter", 0),
             "failed_total": failed_total,

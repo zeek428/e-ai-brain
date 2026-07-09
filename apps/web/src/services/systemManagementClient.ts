@@ -283,6 +283,13 @@ export type SystemHealthOperations = {
     };
     runner_health?: Record<string, unknown>;
     policies?: Record<string, unknown>;
+    strategy_config?: {
+      configuration_issues?: Array<Record<string, unknown>>;
+      recommendation?: string;
+      status?: string;
+      strategy_matrix?: Array<Record<string, unknown>>;
+      task_timeout_seconds?: Record<string, unknown>;
+    };
     summary?: Record<string, unknown>;
     task_status_counts?: Record<string, number>;
   };
