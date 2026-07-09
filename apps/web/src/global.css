@@ -1754,6 +1754,7 @@ body {
 }
 
 .system-health-ops-list,
+.system-health-alert-subscriptions,
 .system-health-product-score-list,
 .system-health-retention-list {
   display: grid;
@@ -1793,6 +1794,29 @@ body {
 
 .system-health-alert-row .ant-space {
   flex-shrink: 0;
+}
+
+.system-health-alert-subscription-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(120px, 0.8fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.system-health-alert-subscription-row > span:first-child {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.system-health-alert-subscription-row .ant-typography {
+  min-width: 0;
 }
 
 .system-health-product-score,

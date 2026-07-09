@@ -66,6 +66,23 @@ def test_system_alert_incident_can_be_acknowledged_closed_and_subscribed():
     assert subscription.json()["data"]["channel"] == "email"
     assert subscription.json()["data"]["severity_min"] == "high"
 
+    patched_subscription = client.patch(
+        f"/api/system/alerts/subscriptions/{subscription.json()['data']['id']}",
+        headers=headers,
+        json={"enabled": False},
+    )
+    assert patched_subscription.status_code == 200
+    patched_data = patched_subscription.json()["data"]
+    assert patched_data["enabled"] is False
+    assert patched_data["channel"] == "email"
+    assert patched_data["severity_min"] == "high"
+    assert patched_data["target"] == "ops@example.com"
+
+    health_after_subscription_update = client.get("/api/system/health", headers=headers)
+    assert health_after_subscription_update.status_code == 200
+    subscriptions = health_after_subscription_update.json()["data"]["operations"]["alert_center"]["subscriptions"]
+    assert subscriptions[0]["enabled"] is False
+
 
 def test_system_alert_rules_and_admin_weekly_report_are_operable():
     app.state.store.reset()

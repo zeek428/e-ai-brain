@@ -43,6 +43,7 @@ import {
   timeoutAiExecutorTasks,
   updateSystemAlertIncident,
   updateSystemAlertRule,
+  updateSystemAlertSubscription,
   type SystemAlertIncidentUpdatePayload,
   type SystemAlertRuleMutationPayload,
   type SystemHealthAlertRecord,
@@ -301,6 +302,16 @@ function alertStatusTag(status: string) {
   return <Tag color={colorMap[status] ?? 'default'}>{labelMap[status] ?? status}</Tag>;
 }
 
+function alertSubscriptionChannelLabel(channel: string) {
+  const labels: Record<string, string> = {
+    dingtalk: '钉钉',
+    email: '邮件',
+    in_app: '站内',
+    webhook: 'Webhook',
+  };
+  return labels[channel] ?? channel;
+}
+
 type AlertIncidentFormValues = {
   close_reason?: string;
   owner?: string;
@@ -367,6 +378,7 @@ function SystemHealthOperationsPanel({
   const products = productScores?.products ?? [];
   const alerts = alertCenter?.alerts ?? [];
   const alertRules = alertCenter?.rules ?? [];
+  const alertSubscriptions = alertCenter?.subscriptions ?? [];
   const alertTrend = alertCenter?.trend ?? [];
   const executorStrategy = aiExecutor?.strategy_config ?? {};
   const executorStrategyMatrix = executorStrategy.strategy_matrix ?? [];
@@ -534,6 +546,19 @@ function SystemHealthOperationsPanel({
       await reloadAfterAlertAction();
     } catch (ruleError) {
       message.error(formatRemoteRowsError(normalizeRemoteRowsError(ruleError)));
+    } finally {
+      setAlertActionLoading(undefined);
+    }
+  };
+
+  const toggleAlertSubscription = async (subscriptionId: string, enabled: boolean) => {
+    setAlertActionLoading(`subscription:${subscriptionId}`);
+    try {
+      await updateSystemAlertSubscription(subscriptionId, { enabled });
+      message.success(enabled ? '告警订阅已启用' : '告警订阅已停用');
+      await reloadAfterAlertAction();
+    } catch (subscriptionError) {
+      message.error(formatRemoteRowsError(normalizeRemoteRowsError(subscriptionError)));
     } finally {
       setAlertActionLoading(undefined);
     }
@@ -724,6 +749,33 @@ function SystemHealthOperationsPanel({
               ))}
             </div>
           ) : null}
+          <div className="system-health-alert-subscriptions" aria-label="告警订阅">
+            {alertSubscriptions.slice(0, 4).map((subscription) => (
+              <div className="system-health-alert-subscription-row" key={subscription.id}>
+                <span>
+                  <Tag color={subscription.enabled ? 'green' : 'default'}>
+                    {subscription.enabled ? '启用' : '停用'}
+                  </Tag>
+                  <Tag>{alertSubscriptionChannelLabel(subscription.channel)}</Tag>
+                  <Text ellipsis={{ tooltip: subscription.target }}>{subscription.target}</Text>
+                </span>
+                <Text type="secondary">
+                  {subscription.scope || 'global'} · {subscription.severity_min || 'medium'}+
+                </Text>
+                <Button
+                  loading={alertActionLoading === `subscription:${subscription.id}`}
+                  size="small"
+                  type="link"
+                  onClick={() => void toggleAlertSubscription(subscription.id, !subscription.enabled)}
+                >
+                  {subscription.enabled ? '停用订阅' : '启用订阅'}
+                </Button>
+              </div>
+            ))}
+            {!alertSubscriptions.length ? (
+              <Text type="secondary">暂无告警订阅，建议至少配置一个高优先级通知目标。</Text>
+            ) : null}
+          </div>
           {alertTrend.length ? (
             <div className="system-health-quality-gates" aria-label="告警历史趋势">
               {alertTrend.slice(-4).map((item) => (

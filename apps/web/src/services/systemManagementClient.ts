@@ -207,6 +207,14 @@ export type SystemAlertSubscriptionPayload = {
   target: string;
 };
 
+export type SystemAlertSubscriptionMutationPayload = {
+  channel?: string | null;
+  enabled?: boolean | null;
+  scope?: string | null;
+  severity_min?: string | null;
+  target?: string | null;
+};
+
 export type SystemAlertSubscriptionRecord = SystemAlertSubscriptionPayload & {
   created_at?: string | null;
   created_by?: string | null;
@@ -321,7 +329,7 @@ export type SystemHealthOperations = {
       resolving_count?: number;
       rule_count?: number;
     };
-    subscriptions?: Array<Record<string, unknown>>;
+    subscriptions?: SystemAlertSubscriptionRecord[];
     trend?: Array<Record<string, unknown>>;
   };
   dingtalk_lifecycle?: {
@@ -842,6 +850,21 @@ export async function createSystemAlertSubscription(
     method: 'POST',
     token,
   });
+}
+
+export async function updateSystemAlertSubscription(
+  subscriptionId: string,
+  payload: SystemAlertSubscriptionMutationPayload,
+): Promise<SystemAlertSubscriptionRecord> {
+  const token = requireAccessToken();
+  return apiRequest<SystemAlertSubscriptionRecord>(
+    `/api/system/alerts/subscriptions/${encodeURIComponent(subscriptionId)}`,
+    {
+      body: payload,
+      method: 'PATCH',
+      token,
+    },
+  );
 }
 
 export async function createSystemAlertRule(

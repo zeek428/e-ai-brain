@@ -18,6 +18,7 @@ from app.services.system_health import (
     system_health_report,
     update_system_alert_incident_response,
     update_system_alert_rule_response,
+    update_system_alert_subscription_response,
 )
 
 settings = get_settings()
@@ -37,6 +38,14 @@ class SystemAlertSubscriptionRequest(BaseModel):
     severity_min: str = "medium"
     scope: str | None = "global"
     enabled: bool = True
+
+
+class SystemAlertSubscriptionPatchRequest(BaseModel):
+    channel: str | None = None
+    target: str | None = None
+    severity_min: str | None = None
+    scope: str | None = None
+    enabled: bool | None = None
 
 
 class SystemAlertRuleRequest(BaseModel):
@@ -196,6 +205,27 @@ def create_system_alert_subscription(
         enabled=payload.enabled,
         scope=payload.scope,
         severity_min=payload.severity_min,
+        target=payload.target,
+        trace_id=get_trace_id(request),
+        user=user,
+    )
+
+
+@router.patch("/api/system/alerts/subscriptions/{subscription_id}")
+def patch_system_alert_subscription(
+    subscription_id: str,
+    request: Request,
+    payload: SystemAlertSubscriptionPatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.alerts.manage"})
+    return update_system_alert_subscription_response(
+        channel=payload.channel,
+        current_store=store(request),
+        enabled=payload.enabled,
+        scope=payload.scope,
+        severity_min=payload.severity_min,
+        subscription_id=subscription_id,
         target=payload.target,
         trace_id=get_trace_id(request),
         user=user,

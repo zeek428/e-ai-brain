@@ -125,6 +125,16 @@ describe('SystemHealthPage', () => {
                 source: 'system_check',
               },
             ],
+            subscriptions: [
+              {
+                channel: 'email',
+                enabled: true,
+                id: 'alert_subscription_existing',
+                scope: 'global',
+                severity_min: 'high',
+                target: 'ops@example.com',
+              },
+            ],
             summary: {
               enabled_rule_count: 1,
               high_count: 0,
@@ -385,6 +395,18 @@ describe('SystemHealthPage', () => {
           },
         });
       }
+      if (path === '/api/system/alerts/subscriptions/alert_subscription_existing' && method === 'PATCH') {
+        return jsonResponse({
+          data: {
+            channel: 'email',
+            enabled: false,
+            id: 'alert_subscription_existing',
+            scope: 'global',
+            severity_min: 'high',
+            target: 'ops@example.com',
+          },
+        });
+      }
       if (path === '/api/system/alerts/rules' && method === 'POST') {
         return jsonResponse({
           data: {
@@ -423,6 +445,9 @@ describe('SystemHealthPage', () => {
     expect(screen.getByRole('button', { name: '新增订阅' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '新增规则' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /停用规则 钉钉 MCP 失败规则/ })).toBeInTheDocument();
+    expect(screen.getByLabelText('告警订阅')).toHaveTextContent('ops@example.com');
+    expect(screen.getByLabelText('告警订阅')).toHaveTextContent('global · high+');
+    expect(screen.getByRole('button', { name: '停用订阅' })).toBeInTheDocument();
     expect(screen.getByText('AI 任务执行运维台')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '扫超时' })).toBeInTheDocument();
     expect(screen.getByLabelText('AI执行策略配置')).toHaveTextContent('策略配置 已配置');
@@ -483,6 +508,17 @@ describe('SystemHealthPage', () => {
       ),
     );
 
+    fireEvent.click(screen.getByRole('button', { name: '停用订阅' }));
+    await waitFor(() =>
+      expect(calls).toContainEqual(
+        expect.objectContaining({
+          body: { enabled: false },
+          method: 'PATCH',
+          path: '/api/system/alerts/subscriptions/alert_subscription_existing',
+        }),
+      ),
+    );
+
     fireEvent.click(screen.getByRole('button', { name: '新增订阅' }));
     expect(await screen.findByText('新增告警订阅')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('通知目标'), { target: { value: 'ops@example.com' } });
@@ -534,6 +570,6 @@ describe('SystemHealthPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /刷新/ }));
 
-    await waitFor(() => expect(calls.filter((call) => call.path === '/api/system/health')).toHaveLength(6));
+    await waitFor(() => expect(calls.filter((call) => call.path === '/api/system/health')).toHaveLength(7));
   });
 });

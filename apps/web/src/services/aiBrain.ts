@@ -439,6 +439,7 @@ export {
   unbindSystemExternalIdentity,
   updateSystemAlertIncident,
   updateSystemAlertRule,
+  updateSystemAlertSubscription,
   updateManagementUser,
   updateSystemMenu,
   updateSystemRole,

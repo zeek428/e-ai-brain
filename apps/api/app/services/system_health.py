@@ -2834,41 +2834,126 @@ def save_system_alert_subscription_response(
 ) -> dict[str, Any]:
     from app.core.trace import envelope
 
-    normalized_channel = channel.strip()
-    if normalized_channel not in {"dingtalk", "email", "in_app", "webhook"}:
-        raise api_error(400, "VALIDATION_ERROR", "Unsupported alert subscription channel")
-    normalized_severity = severity_min.strip() if severity_min else "medium"
-    if normalized_severity not in {"high", "info", "low", "medium"}:
-        raise api_error(400, "VALIDATION_ERROR", "Unsupported alert severity")
-    normalized_target = target.strip()
-    if not normalized_target:
-        raise api_error(400, "VALIDATION_ERROR", "target is required")
     repository = _runtime_repository(current_store)
-    save_subscription = getattr(repository, "save_system_alert_subscription", None)
     new_id = getattr(repository, "next_id", None)
     subscription_id = (
         new_id("system_alert_subscription")
         if callable(new_id)
         else current_store.new_id("system_alert_subscription")
     )
-    subscription = {
+    subscription = _normalize_alert_subscription(
+        channel=channel,
+        created_by=str(user.get("id") or ""),
+        enabled=enabled,
+        existing=None,
+        scope=scope,
+        severity_min=severity_min,
+        subscription_id=subscription_id,
+        target=target,
+    )
+    return envelope(_save_alert_subscription(current_store, subscription), trace_id)
+
+
+def _normalize_alert_subscription(
+    *,
+    channel: str | None,
+    created_by: str | None,
+    enabled: bool | None,
+    existing: dict[str, Any] | None,
+    scope: str | None,
+    severity_min: str | None,
+    subscription_id: str,
+    target: str | None,
+) -> dict[str, Any]:
+    normalized_channel = str(
+        channel if channel is not None else (existing or {}).get("channel") or "",
+    ).strip()
+    if normalized_channel not in {"dingtalk", "email", "in_app", "webhook"}:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported alert subscription channel")
+    normalized_severity = str(
+        severity_min if severity_min is not None else (existing or {}).get("severity_min") or "medium",
+    ).strip()
+    if normalized_severity not in {"high", "info", "low", "medium"}:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported alert severity")
+    normalized_target = str(
+        target if target is not None else (existing or {}).get("target") or "",
+    ).strip()
+    if not normalized_target:
+        raise api_error(400, "VALIDATION_ERROR", "target is required")
+    normalized_scope = str(
+        scope if scope is not None else (existing or {}).get("scope") or "global",
+    ).strip() or "global"
+    return {
         "channel": normalized_channel,
-        "created_by": user.get("id"),
-        "enabled": enabled,
+        "created_by": (existing or {}).get("created_by") or created_by,
+        "enabled": bool(enabled if enabled is not None else (existing or {}).get("enabled", True)),
         "id": subscription_id,
-        "scope": scope.strip() if scope else "global",
+        "scope": normalized_scope,
         "severity_min": normalized_severity,
         "target": normalized_target,
     }
+
+
+def _save_alert_subscription(current_store: Any, subscription: dict[str, Any]) -> dict[str, Any]:
+    repository = _runtime_repository(current_store)
+    save_subscription = getattr(repository, "save_system_alert_subscription", None)
     if callable(save_subscription):
-        saved = save_subscription(subscription)
-    else:
-        subscriptions = getattr(current_store, "system_alert_subscriptions", None)
-        if not isinstance(subscriptions, dict):
-            subscriptions = {}
-        saved = {**subscription, "created_at": _now_iso(), "updated_at": _now_iso()}
-        subscriptions[subscription_id] = saved
-    return envelope(saved, trace_id)
+        return save_subscription(subscription)
+    subscriptions = getattr(current_store, "system_alert_subscriptions", None)
+    if not isinstance(subscriptions, dict):
+        subscriptions = {}
+        vars(current_store)["system_alert_subscriptions"] = subscriptions
+    now = _now_iso()
+    existing = subscriptions.get(str(subscription["id"])) or {}
+    saved = {
+        **existing,
+        **subscription,
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+    }
+    subscriptions[str(subscription["id"])] = saved
+    return dict(saved)
+
+
+def update_system_alert_subscription_response(
+    *,
+    channel: str | None,
+    current_store: Any,
+    enabled: bool | None,
+    scope: str | None,
+    severity_min: str | None,
+    subscription_id: str,
+    target: str | None,
+    trace_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    from app.core.trace import envelope
+
+    existing = next(
+        (
+            subscription
+            for subscription in _list_alert_subscriptions(current_store)
+            if subscription.get("id") == subscription_id
+        ),
+        None,
+    )
+    if existing is None:
+        raise api_error(
+            404,
+            "ALERT_SUBSCRIPTION_NOT_FOUND",
+            "System alert subscription not found",
+        )
+    subscription = _normalize_alert_subscription(
+        channel=channel,
+        created_by=str(user.get("id") or ""),
+        enabled=enabled,
+        existing=existing,
+        scope=scope,
+        severity_min=severity_min,
+        subscription_id=subscription_id,
+        target=target,
+    )
+    return envelope(_save_alert_subscription(current_store, subscription), trace_id)
 
 
 def _normalize_alert_rule(
