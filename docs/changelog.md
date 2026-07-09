@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### Added
+- 系统健康告警处理补齐状态流转时间线：`PATCH /api/system/alerts/{alert_id}` 会向 `metadata.status_history` 追加处理记录，系统健康页处理弹窗展示最近处理时间、状态变化、负责人、关闭原因和复盘状态。
 - 系统健康告警订阅补齐管理闭环：新增 `PATCH /api/system/alerts/subscriptions/{subscription_id}`，系统健康页展示已有订阅的渠道、目标、级别和范围，并支持直接启用或停用订阅。
 - 系统健康“对象存储同步清理”补齐补偿操作闭环：新增 `POST /api/system/object-storage/cleanup` dry-run/confirmed 接口，系统健康页支持预检并二次确认清理孤儿知识资产对象，删除失败会保留资产记录并返回错误，成功清理写入脱敏审计。
 - 帮助中心截图自动化新增覆盖报告和严格门禁：`check_help_center_assets.mjs` 支持 `--json`、`--strict-screenshots` 和截图覆盖率统计，`apps/web` 新增 `help:check`、`help:check:strict`、`help:screenshots:list` 脚本，便于在本地或 CI 中发现缺截图路由。

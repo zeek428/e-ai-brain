@@ -75,10 +75,15 @@ const STATUS_LABELS: Record<string, string> = {
   not_configured: '未配置',
   ok: '正常',
   attention: '需关注',
+  acknowledged: '已认领',
   cancelled: '已取消',
   claimed: '已领取',
+  closed: '已关闭',
   dead_letter: '死信',
+  ignored: '已忽略',
+  open: '打开',
   queued: '排队',
+  resolving: '处理中',
   running: '运行中',
   timed_out: '超时',
   warning: '待完善',
@@ -86,17 +91,22 @@ const STATUS_LABELS: Record<string, string> = {
 
 const STATUS_COLORS: Record<string, string> = {
   attention: 'gold',
+  acknowledged: 'blue',
   configured: 'green',
+  closed: 'green',
   degraded: 'orange',
   disabled: 'default',
   enabled: 'green',
   error: 'red',
   failed: 'red',
   healthy: 'green',
+  ignored: 'default',
   info: 'blue',
   managed: 'green',
   not_configured: 'default',
   ok: 'green',
+  open: 'orange',
+  resolving: 'purple',
   warning: 'gold',
   cancelled: 'default',
   claimed: 'blue',
@@ -310,6 +320,17 @@ function alertSubscriptionChannelLabel(channel: string) {
     webhook: 'Webhook',
   };
   return labels[channel] ?? channel;
+}
+
+function alertHistoryFieldLabel(field: string) {
+  const labels: Record<string, string> = {
+    close_reason: '关闭原因',
+    owner: '负责人',
+    postmortem: '复盘记录',
+    status: '处理状态',
+    touched: '处理记录',
+  };
+  return labels[field] ?? field;
 }
 
 type AlertIncidentFormValues = {
@@ -1338,6 +1359,30 @@ function SystemHealthOperationsPanel({
               {selectedAlert?.first_seen_at ? formatDisplayDateTime(selectedAlert.first_seen_at) : '-'}
             </Descriptions.Item>
           </Descriptions>
+          {selectedAlert?.status_history?.length ? (
+            <div className="system-health-alert-history" aria-label="告警处理历史">
+              <Text strong>最近处理记录</Text>
+              {selectedAlert.status_history.slice(-4).reverse().map((item, index) => (
+                <div key={`${item.at ?? 'unknown'}:${index}`}>
+                  <span>
+                    {formatDisplayDateTime(item.at || '')}
+                    {' · '}
+                    {STATUS_LABELS[item.from_status || ''] ?? item.from_status ?? '-'}
+                    {' -> '}
+                    {STATUS_LABELS[item.to_status || ''] ?? item.to_status ?? '-'}
+                  </span>
+                  <Text type="secondary">
+                    {item.owner ? `负责人 ${item.owner}` : '未指定负责人'}
+                    {item.changed_fields?.length
+                      ? ` · ${item.changed_fields.map(alertHistoryFieldLabel).join('、')}`
+                      : ''}
+                    {item.close_reason ? ` · ${item.close_reason}` : ''}
+                    {item.postmortem_configured ? ' · 已记录复盘' : ''}
+                  </Text>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <Form.Item label="处理状态" name="status">
             <Radio.Group>
               <Radio.Button value="open">打开</Radio.Button>

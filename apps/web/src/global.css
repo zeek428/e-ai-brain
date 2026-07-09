@@ -1819,6 +1819,26 @@ body {
   min-width: 0;
 }
 
+.system-health-alert-history {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.system-health-alert-history > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.system-health-alert-history > div > span {
+  font-weight: 600;
+}
+
 .system-health-product-score,
 .system-health-retention-list > div {
   display: grid;

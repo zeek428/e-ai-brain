@@ -103,11 +103,13 @@ class PlatformOperationsRepository:
         alert_id: str,
         *,
         close_reason: str | None = None,
+        history_event: dict[str, Any] | None = None,
         owner: str | None = None,
         postmortem: str | None = None,
         status: str | None = None,
         actor_id: str | None = None,
     ) -> dict[str, Any] | None:
+        history_json = json.dumps([history_event], ensure_ascii=False) if history_event else None
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -136,6 +138,15 @@ class PlatformOperationsRepository:
                         WHEN %s IN ('closed', 'ignored') THEN %s
                         ELSE resolved_by
                       END,
+                      metadata = CASE
+                        WHEN %s::jsonb IS NULL THEN metadata
+                        ELSE jsonb_set(
+                          metadata,
+                          '{status_history}',
+                          COALESCE(metadata -> 'status_history', '[]'::jsonb) || %s::jsonb,
+                          true
+                        )
+                      END,
                       updated_at = now()
                     WHERE id = %s
                     RETURNING id, source, component, title, severity, status, owner,
@@ -154,6 +165,8 @@ class PlatformOperationsRepository:
                         status,
                         status,
                         actor_id,
+                        history_json,
+                        history_json,
                         alert_id,
                     ),
                 )
@@ -410,6 +423,7 @@ class PlatformOperationsRepository:
         }
 
     def _system_alert_incident_from_row(self, row: Any) -> dict[str, Any]:
+        metadata = row[17] if isinstance(row[17], dict) else {}
         return {
             "id": row[0],
             "source": row[1],
@@ -428,7 +442,10 @@ class PlatformOperationsRepository:
             "resolved_by": row[14],
             "close_reason": row[15],
             "postmortem": row[16],
-            "metadata": row[17] if isinstance(row[17], dict) else {},
+            "metadata": metadata,
+            "status_history": metadata.get("status_history", [])
+            if isinstance(metadata.get("status_history"), list)
+            else [],
             "created_at": _iso(row[18]),
             "updated_at": _iso(row[19]),
         }

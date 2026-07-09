@@ -113,6 +113,16 @@ describe('SystemHealthPage', () => {
                 severity: 'low',
                 source: 'system_check',
                 status: 'open',
+                status_history: [
+                  {
+                    actor_id: 'admin',
+                    at: '2026-07-08T08:00:00+00:00',
+                    changed_fields: ['status', 'owner'],
+                    from_status: 'open',
+                    owner: '平台运维',
+                    to_status: 'acknowledged',
+                  },
+                ],
                 title: '钉钉 MCP 连接',
               },
             ],
@@ -488,6 +498,9 @@ describe('SystemHealthPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '处理告警 钉钉 MCP 连接' }));
     expect(await screen.findByText('处理告警')).toBeInTheDocument();
+    expect(screen.getByLabelText('告警处理历史')).toHaveTextContent('最近处理记录');
+    expect(screen.getByLabelText('告警处理历史')).toHaveTextContent('打开 -> 已认领');
+    expect(screen.getByLabelText('告警处理历史')).toHaveTextContent('负责人 平台运维');
     fireEvent.click(screen.getByLabelText('关闭'));
     fireEvent.change(screen.getByLabelText('负责人'), { target: { value: 'lzk' } });
     fireEvent.change(screen.getByLabelText('关闭原因'), { target: { value: '授权已更新' } });

@@ -175,6 +175,16 @@ export type SystemHealthAlertRecord = {
   severity: string;
   source?: string;
   status: string;
+  status_history?: Array<{
+    actor_id?: string | null;
+    at?: string | null;
+    changed_fields?: string[];
+    close_reason?: string | null;
+    from_status?: string | null;
+    owner?: string | null;
+    postmortem_configured?: boolean;
+    to_status?: string | null;
+  }>;
   title: string;
 };
 

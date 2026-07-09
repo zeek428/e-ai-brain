@@ -2557,8 +2557,10 @@ def _persist_alert_incidents(
             "created_at": existing.get("created_at") or now,
             "first_seen_at": existing.get("first_seen_at") or now,
             "last_seen_at": now,
+            "metadata": existing.get("metadata") or alert.get("metadata") or {},
             "owner": existing.get("owner") or alert.get("owner"),
             "status": existing.get("status") or "open",
+            "status_history": existing.get("status_history") or [],
             "updated_at": now,
         }
     return sorted(
@@ -2705,6 +2707,72 @@ def _list_alert_subscriptions(current_store: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _find_alert_incident(current_store: Any, alert_id: str) -> dict[str, Any] | None:
+    repository = _runtime_repository(current_store)
+    list_incidents = getattr(repository, "list_system_alert_incidents", None)
+    if callable(list_incidents):
+        try:
+            return next(
+                (
+                    dict(incident)
+                    for incident in list_incidents()
+                    if incident.get("id") == alert_id
+                ),
+                None,
+            )
+        except Exception:  # pragma: no cover - defensive around partially migrated runtimes
+            return None
+    incident = _alert_incidents_from_memory(current_store).get(alert_id)
+    return dict(incident) if isinstance(incident, dict) else None
+
+
+def _alert_incident_status_history(incident: dict[str, Any]) -> list[dict[str, Any]]:
+    history = incident.get("status_history")
+    if isinstance(history, list):
+        return [dict(item) for item in history if isinstance(item, dict)]
+    metadata = incident.get("metadata")
+    if isinstance(metadata, dict) and isinstance(metadata.get("status_history"), list):
+        return [dict(item) for item in metadata["status_history"] if isinstance(item, dict)]
+    return []
+
+
+def _alert_history_event(
+    *,
+    actor_id: str,
+    close_reason: str | None,
+    existing: dict[str, Any] | None,
+    owner: str | None,
+    postmortem: str | None,
+    status: str | None,
+) -> dict[str, Any]:
+    existing = existing or {}
+    from_status = str(existing.get("status") or "open")
+    to_status = status or from_status
+    changed_fields: list[str] = []
+    if status is not None and status != existing.get("status"):
+        changed_fields.append("status")
+    if owner is not None and owner != existing.get("owner"):
+        changed_fields.append("owner")
+    if close_reason is not None and close_reason != existing.get("close_reason"):
+        changed_fields.append("close_reason")
+    if postmortem is not None and postmortem != existing.get("postmortem"):
+        changed_fields.append("postmortem")
+    return {
+        "actor_id": actor_id,
+        "at": _now_iso(),
+        "changed_fields": changed_fields or ["touched"],
+        "close_reason": close_reason
+        if close_reason is not None
+        else existing.get("close_reason"),
+        "from_status": from_status,
+        "owner": owner if owner is not None else existing.get("owner"),
+        "postmortem_configured": bool(
+            postmortem if postmortem is not None else existing.get("postmortem")
+        ),
+        "to_status": to_status,
+    }
+
+
 def _list_alert_rules(current_store: Any) -> list[dict[str, Any]]:
     repository = _runtime_repository(current_store)
     list_rules = getattr(repository, "list_system_alert_rules", None)
@@ -2784,16 +2852,28 @@ def update_system_alert_incident_response(
     normalized_close_reason = close_reason.strip() if close_reason else None
     if normalized_status in {"closed", "ignored"} and not normalized_close_reason:
         raise api_error(400, "VALIDATION_ERROR", "close_reason is required when closing alert")
+    normalized_owner = owner.strip() if owner else None
+    normalized_postmortem = postmortem.strip() if postmortem else None
 
     repository = _runtime_repository(current_store)
     update_incident = getattr(repository, "update_system_alert_incident", None)
     actor_id = str(user.get("id") or user.get("username") or "")
+    existing_incident = _find_alert_incident(current_store, alert_id)
+    history_event = _alert_history_event(
+        actor_id=actor_id,
+        close_reason=normalized_close_reason,
+        existing=existing_incident,
+        owner=normalized_owner,
+        postmortem=normalized_postmortem,
+        status=normalized_status,
+    )
     if callable(update_incident):
         incident = update_incident(
             alert_id,
             close_reason=normalized_close_reason,
-            owner=owner.strip() if owner else None,
-            postmortem=postmortem.strip() if postmortem else None,
+            history_event=history_event,
+            owner=normalized_owner,
+            postmortem=normalized_postmortem,
             status=normalized_status,
             actor_id=actor_id or None,
         )
@@ -2803,21 +2883,33 @@ def update_system_alert_incident_response(
         if incident is not None:
             if normalized_status:
                 incident["status"] = normalized_status
-            if owner:
-                incident["owner"] = owner.strip()
+            if normalized_owner:
+                incident["owner"] = normalized_owner
             if normalized_close_reason:
                 incident["close_reason"] = normalized_close_reason
-            if postmortem:
-                incident["postmortem"] = postmortem.strip()
+            if normalized_postmortem:
+                incident["postmortem"] = normalized_postmortem
             if normalized_status in {"acknowledged", "resolving"}:
                 incident.setdefault("acknowledged_at", _now_iso())
                 incident.setdefault("acknowledged_by", actor_id)
             if normalized_status in {"closed", "ignored"}:
                 incident["resolved_at"] = _now_iso()
                 incident["resolved_by"] = actor_id
+            history = _alert_incident_status_history(incident)
+            history.append(history_event)
+            metadata = incident.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata["status_history"] = history
+            incident["metadata"] = metadata
+            incident["status_history"] = history
             incident["updated_at"] = _now_iso()
     if incident is None:
         raise api_error(404, "ALERT_NOT_FOUND", "System alert incident not found")
+    incident = {
+        **incident,
+        "status_history": _alert_incident_status_history(incident),
+    }
     return envelope(incident, trace_id)
 
 

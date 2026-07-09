@@ -30,11 +30,16 @@ def test_system_alert_incident_can_be_acknowledged_closed_and_subscribed():
     acknowledged = client.patch(
         f"/api/system/alerts/{quote(alert_id, safe='')}",
         headers=headers,
-        json={"owner": "平台运维", "status": "acknowledged"},
+        json={"owner": "值班负责人", "status": "acknowledged"},
     )
     assert acknowledged.status_code == 200
     assert acknowledged.json()["data"]["status"] == "acknowledged"
-    assert acknowledged.json()["data"]["owner"] == "平台运维"
+    assert acknowledged.json()["data"]["owner"] == "值班负责人"
+    acknowledged_history = acknowledged.json()["data"]["status_history"]
+    assert acknowledged_history[-1]["from_status"] == "open"
+    assert acknowledged_history[-1]["to_status"] == "acknowledged"
+    assert "status" in acknowledged_history[-1]["changed_fields"]
+    assert "owner" in acknowledged_history[-1]["changed_fields"]
 
     missing_reason = client.patch(
         f"/api/system/alerts/{quote(alert_id, safe='')}",
@@ -52,6 +57,11 @@ def test_system_alert_incident_can_be_acknowledged_closed_and_subscribed():
     assert closed.status_code == 200
     assert closed.json()["data"]["close_reason"] == "测试环境确认可忽略"
     assert closed.json()["data"]["status"] == "closed"
+    closed_history = closed.json()["data"]["status_history"]
+    assert len(closed_history) == 2
+    assert closed_history[-1]["from_status"] == "acknowledged"
+    assert closed_history[-1]["to_status"] == "closed"
+    assert closed_history[-1]["close_reason"] == "测试环境确认可忽略"
 
     subscription = client.post(
         "/api/system/alerts/subscriptions",
