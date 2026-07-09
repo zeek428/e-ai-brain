@@ -40,6 +40,7 @@ import {
   dispatchSystemAlertNotifications,
   fetchSystemAdminWeeklyReport,
   fetchSystemHealth,
+  fetchSystemUserMenuPreview,
   retryAiExecutorTask,
   timeoutAiExecutorTasks,
   updateSystemAlertIncident,
@@ -51,6 +52,7 @@ import {
   type SystemHealthCheckRecord,
   type SystemHealthOperations,
   type SystemHealthReport,
+  type UserMenuPreview,
 } from '../../services/aiBrain';
 import { formatDisplayDateTime } from '../../utils/dateTime';
 import { navigateTo } from '../../utils/navigation';
@@ -368,6 +370,10 @@ type AlertRuleFormValues = {
   source?: string;
 };
 
+type PermissionMenuPreviewFormValues = {
+  user_id?: string;
+};
+
 function parseJsonObjectInput(value?: string): Record<string, unknown> {
   const trimmed = String(value ?? '').trim();
   if (!trimmed) {
@@ -394,9 +400,14 @@ function SystemHealthOperationsPanel({
   const [selectedAlert, setSelectedAlert] = useState<SystemHealthAlertRecord>();
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false);
   const [ruleModalOpen, setRuleModalOpen] = useState(false);
+  const [permissionPreviewModalOpen, setPermissionPreviewModalOpen] = useState(false);
+  const [permissionPreviewLoading, setPermissionPreviewLoading] = useState(false);
+  const [permissionPreviewResult, setPermissionPreviewResult] = useState<UserMenuPreview>();
+  const [permissionPreviewError, setPermissionPreviewError] = useState<RemoteRowsError>();
   const [alertForm] = Form.useForm<AlertIncidentFormValues>();
   const [subscriptionForm] = Form.useForm<AlertSubscriptionFormValues>();
   const [ruleForm] = Form.useForm<AlertRuleFormValues>();
+  const [permissionPreviewForm] = Form.useForm<PermissionMenuPreviewFormValues>();
   const alertCenter = operations.alert_center;
   const aiExecutor = operations.ai_executor_ops;
   const knowledge = operations.knowledge_quality_loop;
@@ -437,6 +448,30 @@ function SystemHealthOperationsPanel({
   const securityGovernanceActions = securityAudit?.governance_actions ?? [];
   const governanceSummary = knowledge?.governance_summary ?? {};
   const governanceCandidates = knowledge?.governance_candidates ?? knowledge?.watch_documents ?? [];
+
+  const openPermissionMenuPreview = () => {
+    setPermissionPreviewError(undefined);
+    setPermissionPreviewResult(undefined);
+    setPermissionPreviewModalOpen(true);
+  };
+
+  const submitPermissionMenuPreview = async (values: PermissionMenuPreviewFormValues) => {
+    const userId = String(values.user_id ?? '').trim();
+    if (!userId) {
+      return;
+    }
+    setPermissionPreviewLoading(true);
+    setPermissionPreviewError(undefined);
+    try {
+      const preview = await fetchSystemUserMenuPreview(userId);
+      setPermissionPreviewResult(preview);
+    } catch (previewError) {
+      setPermissionPreviewResult(undefined);
+      setPermissionPreviewError(normalizeRemoteRowsError(previewError));
+    } finally {
+      setPermissionPreviewLoading(false);
+    }
+  };
 
   const showAdminWeeklyReport = async () => {
     setWeeklyReportLoading(true);
@@ -1160,9 +1195,14 @@ function SystemHealthOperationsPanel({
         <article className="system-health-ops-card">
           <div className="system-health-ops-card-heading">
             <strong>权限诊断增强</strong>
-            <Button size="small" type="link" onClick={() => navigateTo('/system/roles')}>
-              权限矩阵
-            </Button>
+            <Space size={4}>
+              <Button size="small" type="link" onClick={openPermissionMenuPreview}>
+                用户视角预览
+              </Button>
+              <Button size="small" type="link" onClick={() => navigateTo('/system/roles')}>
+                权限矩阵
+              </Button>
+            </Space>
           </div>
           <div className="system-health-ops-metric-grid">
             <OperationMetric title="启用角色" value={formatMetricValue(permission?.summary?.active_role_count)} />
@@ -1442,6 +1482,108 @@ function SystemHealthOperationsPanel({
           </div>
         </article>
       </div>
+      <Modal
+        destroyOnHidden
+        footer={null}
+        onCancel={() => setPermissionPreviewModalOpen(false)}
+        open={permissionPreviewModalOpen}
+        title="以用户视角预览菜单"
+        width={760}
+      >
+        <Form
+          form={permissionPreviewForm}
+          layout="vertical"
+          onFinish={(values) => void submitPermissionMenuPreview(values)}
+        >
+          <Form.Item
+            extra="填写系统用户 ID，例如 user_admin；系统会按该用户的角色、菜单、权限点和 scope 生成真实导航视角。"
+            label="用户 ID"
+            name="user_id"
+            rules={[{ message: '请填写用户 ID', required: true }]}
+          >
+            <Input placeholder="user_admin / user_xxx" />
+          </Form.Item>
+          <Space>
+            <Button htmlType="submit" loading={permissionPreviewLoading} type="primary">
+              生成预览
+            </Button>
+            <Button
+              onClick={() => {
+                permissionPreviewForm.resetFields();
+                setPermissionPreviewError(undefined);
+                setPermissionPreviewResult(undefined);
+              }}
+            >
+              清空
+            </Button>
+          </Space>
+        </Form>
+        {permissionPreviewError ? (
+          <Alert
+            className="system-health-ops-inline-alert"
+            message={formatRemoteRowsError(permissionPreviewError)}
+            showIcon
+            type="error"
+          />
+        ) : null}
+        {permissionPreviewResult ? (
+          <div className="system-health-permission-preview" aria-label="用户视角菜单预览结果">
+            <Space size={[8, 8]} wrap>
+              <Tag color="cyan">可见入口 {permissionPreviewResult.summary.visible_menu_count}</Tag>
+              <Tag color="blue">授权菜单 {permissionPreviewResult.summary.granted_menu_count}</Tag>
+              <Tag color={permissionPreviewResult.summary.blocked_menu_count ? 'red' : 'green'}>
+                阻断入口 {permissionPreviewResult.summary.blocked_menu_count}
+              </Tag>
+              <Tag>{permissionPreviewResult.scope_summary || '未配置数据范围'}</Tag>
+            </Space>
+            <Descriptions bordered column={1} size="small">
+              <Descriptions.Item label="用户">
+                {permissionPreviewResult.user.display_name
+                  || permissionPreviewResult.user.username
+                  || permissionPreviewResult.user.id}
+              </Descriptions.Item>
+              <Descriptions.Item label="角色">
+                {permissionPreviewResult.effective.role_codes.length
+                  ? permissionPreviewResult.effective.role_codes.join('、')
+                  : '未分配角色'}
+              </Descriptions.Item>
+              <Descriptions.Item label="可见入口">
+                {permissionPreviewResult.visible_menus.length ? (
+                  <Space size={[4, 4]} wrap>
+                    {permissionPreviewResult.visible_menus.slice(0, 16).map((menu) => (
+                      <Tag color="cyan" key={menu.code}>
+                        {menu.name || menu.code}
+                      </Tag>
+                    ))}
+                    {permissionPreviewResult.visible_menus.length > 16 ? (
+                      <Tag>+{permissionPreviewResult.visible_menus.length - 16}</Tag>
+                    ) : null}
+                  </Space>
+                ) : (
+                  <Text type="secondary">暂无可见入口</Text>
+                )}
+              </Descriptions.Item>
+            </Descriptions>
+            {permissionPreviewResult.blocked_menus.length ? (
+              <div className="system-health-permission-preview-blocks" aria-label="菜单阻断明细">
+                {permissionPreviewResult.blocked_menus.slice(0, 8).map((menu) => (
+                  <div key={menu.code}>
+                    <Text strong>{menu.name || menu.code}</Text>
+                    <Text type="secondary">
+                      {menu.message}
+                      {menu.missing_permission_codes?.length
+                        ? ` · 缺少权限点：${menu.missing_permission_codes.join('、')}`
+                        : ''}
+                    </Text>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Alert message="菜单视角无阻断" showIcon type="success" />
+            )}
+          </div>
+        ) : null}
+      </Modal>
       <Modal
         confirmLoading={Boolean(selectedAlert && alertActionLoading === `alert:${selectedAlert.id}`)}
         destroyOnHidden

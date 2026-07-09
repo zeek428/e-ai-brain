@@ -522,6 +522,45 @@ describe('SystemHealthPage', () => {
           },
         });
       }
+      if (path === '/api/system/permissions/menu-preview?user_id=user_viewer' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            blocked_menus: [
+              {
+                code: 'system.scheduled_jobs',
+                message: '菜单已授权，但缺少菜单所需权限点',
+                missing_permission_codes: ['system.scheduled_jobs.run'],
+                name: '任务中心',
+                path: '/tasks',
+                reason: 'permission_missing',
+                required_permission_codes: ['system.scheduled_jobs.run'],
+              },
+            ],
+            effective: {
+              menu_codes: ['dashboard', 'system.scheduled_jobs'],
+              permission_codes: ['dashboard.read'],
+              role_codes: ['viewer'],
+              scopes: [{ access_level: 'read', scope_id: 'product_ai_brain', scope_type: 'product' }],
+            },
+            menu_tree: [{ code: 'dashboard', name: '团队看板', path: '/welcome' }],
+            scope_summary: '产品范围 1 个',
+            summary: {
+              blocked_menu_count: 1,
+              granted_menu_count: 2,
+              visible_menu_count: 1,
+            },
+            user: {
+              display_name: 'Viewer User',
+              id: 'user_viewer',
+              roles: ['viewer'],
+              status: 'active',
+              username: 'viewer@example.com',
+            },
+            visible_menu_codes: ['dashboard'],
+            visible_menus: [{ code: 'dashboard', name: '团队看板', path: '/welcome' }],
+          },
+        });
+      }
       throw new Error(`Unexpected fetch call: ${method} ${path}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -564,6 +603,7 @@ describe('SystemHealthPage', () => {
     expect(screen.getByLabelText('AI Brain评分分项')).toHaveTextContent('插件连接 10/10');
     expect(screen.getByLabelText('AI Brain评分分项')).toHaveTextContent('权限范围 10/10');
     expect(screen.getByLabelText('AI Brain评分分项')).toHaveTextContent('最近健康 10/10');
+    expect(screen.getByRole('button', { name: '用户视角预览' })).toBeInTheDocument();
     expect(screen.getByText('钉钉授权生命周期')).toBeInTheDocument();
     expect(screen.getByLabelText('钉钉授权主体统计')).toHaveTextContent('系统 1');
     expect(screen.getByLabelText('钉钉授权边界说明')).toHaveTextContent('个人授权代表具体用户');
@@ -633,6 +673,14 @@ describe('SystemHealthPage', () => {
         }),
       ),
     );
+
+    fireEvent.click(screen.getByRole('button', { name: '用户视角预览' }));
+    expect(await screen.findByText('以用户视角预览菜单')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('用户 ID'), { target: { value: 'user_viewer' } });
+    fireEvent.click(screen.getByRole('button', { name: '生成预览' }));
+    expect(await screen.findByLabelText('用户视角菜单预览结果')).toHaveTextContent('可见入口 1');
+    expect(screen.getByLabelText('用户视角菜单预览结果')).toHaveTextContent('阻断入口 1');
+    expect(screen.getByLabelText('菜单阻断明细')).toHaveTextContent('缺少权限点：system.scheduled_jobs.run');
 
     fireEvent.click(screen.getByRole('button', { name: '新增订阅' }));
     expect(await screen.findByText('新增告警订阅')).toBeInTheDocument();

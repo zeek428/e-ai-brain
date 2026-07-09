@@ -1874,6 +1874,27 @@ body {
   overflow-wrap: anywhere;
 }
 
+.system-health-permission-preview {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.system-health-permission-preview-blocks {
+  display: grid;
+  gap: 8px;
+}
+
+.system-health-permission-preview-blocks > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #f0f2f5;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
 .system-health-quality-gates {
   display: flex;
   flex-wrap: wrap;
