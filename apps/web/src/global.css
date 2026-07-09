@@ -1861,6 +1861,19 @@ body {
   overflow-wrap: anywhere;
 }
 
+.system-health-product-score-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.system-health-product-score-breakdown .ant-tag {
+  margin-inline-end: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .system-health-quality-gates {
   display: flex;
   flex-wrap: wrap;

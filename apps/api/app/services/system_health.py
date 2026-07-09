@@ -739,6 +739,27 @@ def _product_permission_scope_counts(
     return counts
 
 
+def _product_score_breakdown_item(
+    *,
+    evidence: str,
+    key: str,
+    label: str,
+    max_score: int,
+    score: int,
+    status: str,
+    suggestion: str,
+) -> dict[str, Any]:
+    return {
+        "evidence": evidence,
+        "key": key,
+        "label": label,
+        "max_score": max_score,
+        "score": max(0, min(score, max_score)),
+        "status": status,
+        "suggestion": suggestion,
+    }
+
+
 def _product_onboarding_scores(
     current_store: Any,
     *,
@@ -822,49 +843,226 @@ def _product_onboarding_scores(
         else:
             recent_health_status = "healthy"
 
-        score = 0
         missing_items: list[str] = []
+        score_breakdown: list[dict[str, Any]] = []
         if product.get("name") and product.get("status") == "active":
-            score += 10
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence="产品名称和启用状态已配置",
+                    key="master_data",
+                    label="主数据",
+                    max_score=10,
+                    score=10,
+                    status="healthy",
+                    suggestion="保持产品名称、编码和状态可用",
+                )
+            )
         else:
             missing_items.append("产品主数据未启用或缺名称")
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence="产品名称缺失或状态不是 active",
+                    key="master_data",
+                    label="主数据",
+                    max_score=10,
+                    score=0,
+                    status="missing",
+                    suggestion="补齐产品名称并启用产品",
+                )
+            )
         if active_versions:
-            score += 10
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence=f"已维护 {len(active_versions)} 个可用版本",
+                    key="version",
+                    label="版本",
+                    max_score=10,
+                    score=10,
+                    status="healthy",
+                    suggestion="持续维护版本状态和分支范围",
+                )
+            )
         else:
             missing_items.append("未维护可用迭代版本")
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence="没有 active 版本",
+                    key="version",
+                    label="版本",
+                    max_score=10,
+                    score=0,
+                    status="missing",
+                    suggestion="至少维护一个可用迭代版本",
+                )
+            )
         if active_modules:
-            score += 10
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence=f"已维护 {len(active_modules)} 个可用模块",
+                    key="module",
+                    label="模块",
+                    max_score=10,
+                    score=10,
+                    status="healthy",
+                    suggestion="保持模块与需求、Bug、研发任务一致",
+                )
+            )
         else:
             missing_items.append("未维护产品模块")
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence="没有 active 模块",
+                    key="module",
+                    label="模块",
+                    max_score=10,
+                    score=0,
+                    status="missing",
+                    suggestion="维护产品模块，便于需求、Bug 和任务归属",
+                )
+            )
         if active_git_repositories:
-            score += 15
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence=f"已绑定 {len(active_git_repositories)} 个可用代码仓库",
+                    key="git_repository",
+                    label="代码仓库",
+                    max_score=15,
+                    score=15,
+                    status="healthy",
+                    suggestion="保持默认分支和凭据配置有效",
+                )
+            )
         else:
             missing_items.append("未绑定代码仓库")
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence="没有 active 代码仓库",
+                    key="git_repository",
+                    label="代码仓库",
+                    max_score=15,
+                    score=0,
+                    status="missing",
+                    suggestion="绑定 GitHub/GitLab 仓库并维护默认分支",
+                )
+            )
         if searchable_product_documents:
-            score += 15
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence=f"可检索文档 {len(searchable_product_documents)} / 总文档 {len(product_documents)}",
+                    key="knowledge",
+                    label="知识空间",
+                    max_score=15,
+                    score=15,
+                    status="healthy",
+                    suggestion="保持产品知识可检索并定期更新",
+                )
+            )
         else:
             missing_items.append("知识空间缺少可检索产品文档")
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence=f"总文档 {len(product_documents)}，可检索文档 0",
+                    key="knowledge",
+                    label="知识空间",
+                    max_score=15,
+                    score=0,
+                    status="missing",
+                    suggestion="绑定知识空间并完成文档解析、分片和索引",
+                )
+            )
         if failed_product_documents:
             missing_items.append("存在知识索引失败文档")
         if active_related_systems:
-            score += 10
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence=f"已维护 {len(active_related_systems)} 个关联系统",
+                    key="related_system",
+                    label="关联系统",
+                    max_score=10,
+                    score=10,
+                    status="healthy",
+                    suggestion="保持上游、下游和通知系统关系准确",
+                )
+            )
         else:
             missing_items.append("未维护关联系统")
+            score_breakdown.append(
+                _product_score_breakdown_item(
+                    evidence="没有 active 关联系统",
+                    key="related_system",
+                    label="关联系统",
+                    max_score=10,
+                    score=0,
+                    status="missing",
+                    suggestion="维护产品依赖的上下游系统",
+                )
+            )
         if plugin_connection_count and not failed_plugin_connection_count:
-            score += 10
+            plugin_score = 10
+            plugin_status = "healthy"
+            plugin_suggestion = "保持插件连接定期测试通过"
         elif plugin_connection_count:
-            score += 5
+            plugin_score = 5
+            plugin_status = "degraded"
+            plugin_suggestion = "修复失败插件连接或停用不可用连接"
             missing_items.append("插件连接健康检查失败")
         else:
+            plugin_score = 0
+            plugin_status = "missing"
+            plugin_suggestion = "为产品绑定至少一个可用插件连接"
             missing_items.append("未绑定可用插件连接")
+        score_breakdown.append(
+            _product_score_breakdown_item(
+                evidence=(
+                    f"active {plugin_connection_count} / total {int(plugin_health.get('total_count') or 0)}"
+                    f" / failed {failed_plugin_connection_count}"
+                ),
+                key="plugin_connection",
+                label="插件连接",
+                max_score=10,
+                score=plugin_score,
+                status=plugin_status,
+                suggestion=plugin_suggestion,
+            )
+        )
         if permission_scope_count:
-            score += 10
+            permission_score = 10
+            permission_status = "healthy"
+            permission_suggestion = "定期复核 viewer/read/write/admin scope 是否匹配产品边界"
         else:
+            permission_score = 0
+            permission_status = "missing"
+            permission_suggestion = "为产品配置至少一个角色或用户权限范围"
             missing_items.append("未配置产品权限范围")
+        score_breakdown.append(
+            _product_score_breakdown_item(
+                evidence=f"命中产品/全局权限范围 {permission_scope_count} 个",
+                key="permission_scope",
+                label="权限范围",
+                max_score=10,
+                score=permission_score,
+                status=permission_status,
+                suggestion=permission_suggestion,
+            )
+        )
         if recent_health_status == "healthy":
-            score += 10
+            health_score = 10
         elif recent_health_status == "attention":
-            score += 5
+            health_score = 5
+        else:
+            health_score = 0
+        score_breakdown.append(
+            _product_score_breakdown_item(
+                evidence="健康检查正常" if not health_issues else "；".join(health_issues[:4]),
+                key="recent_health",
+                label="最近健康",
+                max_score=10,
+                score=health_score,
+                status=recent_health_status,
+                suggestion="优先处理健康检查中的阻断项和降级项",
+            )
+        )
+        score = sum(int(item["score"]) for item in score_breakdown)
         score = min(score, 100)
 
         if score >= 80:
@@ -896,6 +1094,7 @@ def _product_onboarding_scores(
                 },
                 "related_system_count": len(active_related_systems),
                 "score": score,
+                "score_breakdown": score_breakdown,
                 "recent_health_status": recent_health_status,
                 "searchable_knowledge_document_count": len(searchable_product_documents),
                 "status": status,

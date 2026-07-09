@@ -331,6 +331,13 @@ def test_product_onboarding_score_uses_real_health_signals():
     assert product["recent_health_check"]["failed_plugin_connection_count"] == 1
     assert "插件连接健康检查失败" in product["recent_health_check"]["summary"]
     assert "未配置产品权限范围" not in product["missing_items"]
+    score_breakdown = {item["key"]: item for item in product["score_breakdown"]}
+    assert score_breakdown["plugin_connection"]["score"] == 5
+    assert score_breakdown["plugin_connection"]["status"] == "degraded"
+    assert score_breakdown["permission_scope"]["score"] == 10
+    assert score_breakdown["permission_scope"]["status"] == "healthy"
+    assert score_breakdown["recent_health"]["score"] == 0
+    assert score_breakdown["recent_health"]["status"] == "degraded"
 
 
 def test_object_storage_cleanup_dry_run_and_confirm(monkeypatch, tmp_path):

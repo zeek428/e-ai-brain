@@ -463,6 +463,15 @@ export type SystemHealthOperations = {
       recent_health_status?: string;
       related_system_count?: number;
       score: number;
+      score_breakdown?: Array<{
+        evidence?: string;
+        key: string;
+        label: string;
+        max_score: number;
+        score: number;
+        status: string;
+        suggestion?: string;
+      }>;
       searchable_knowledge_document_count?: number;
       status: string;
       version_count?: number;

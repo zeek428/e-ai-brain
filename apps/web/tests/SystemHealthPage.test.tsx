@@ -328,6 +328,35 @@ describe('SystemHealthPage', () => {
                 missing_items: ['未维护关联系统'],
                 name: 'AI Brain',
                 product_id: 'product_ai_brain',
+                score_breakdown: [
+                  {
+                    evidence: '已绑定 1 个可用插件连接',
+                    key: 'plugin_connection',
+                    label: '插件连接',
+                    max_score: 10,
+                    score: 10,
+                    status: 'healthy',
+                    suggestion: '保持插件连接定期测试通过',
+                  },
+                  {
+                    evidence: '命中产品/全局权限范围 1 个',
+                    key: 'permission_scope',
+                    label: '权限范围',
+                    max_score: 10,
+                    score: 10,
+                    status: 'healthy',
+                    suggestion: '定期复核 scope',
+                  },
+                  {
+                    evidence: '健康检查正常',
+                    key: 'recent_health',
+                    label: '最近健康',
+                    max_score: 10,
+                    score: 10,
+                    status: 'healthy',
+                    suggestion: '优先处理健康检查问题',
+                  },
+                ],
                 score: 90,
                 status: 'ready',
               },
@@ -532,6 +561,9 @@ describe('SystemHealthPage', () => {
     expect(screen.getByLabelText('知识治理待办')).toHaveTextContent('长期未更新知识文档');
     expect(screen.getByLabelText('知识治理待办')).toHaveTextContent('补齐 Embedding 配置并重建向量索引');
     expect(screen.getByText('产品接入完整度评分')).toBeInTheDocument();
+    expect(screen.getByLabelText('AI Brain评分分项')).toHaveTextContent('插件连接 10/10');
+    expect(screen.getByLabelText('AI Brain评分分项')).toHaveTextContent('权限范围 10/10');
+    expect(screen.getByLabelText('AI Brain评分分项')).toHaveTextContent('最近健康 10/10');
     expect(screen.getByText('钉钉授权生命周期')).toBeInTheDocument();
     expect(screen.getByLabelText('钉钉授权主体统计')).toHaveTextContent('系统 1');
     expect(screen.getByLabelText('钉钉授权边界说明')).toHaveTextContent('个人授权代表具体用户');

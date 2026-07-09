@@ -73,6 +73,7 @@ const STATUS_LABELS: Record<string, string> = {
   healthy: '健康',
   info: '提示',
   managed: '托管',
+  missing: '缺失',
   not_configured: '未配置',
   ok: '正常',
   attention: '需关注',
@@ -107,6 +108,7 @@ const STATUS_COLORS: Record<string, string> = {
   ignored: 'default',
   info: 'blue',
   managed: 'green',
+  missing: 'red',
   not_configured: 'default',
   ok: 'green',
   open: 'orange',
@@ -1119,26 +1121,37 @@ function SystemHealthOperationsPanel({
               <div className="system-health-product-score" key={product.product_id}>
                 <div>
                   <strong>{product.name}</strong>
-                <Text type="secondary">
-                  {product.missing_items?.length ? product.missing_items.join('、') : '接入信息完整'}
-                </Text>
-                <Text type="secondary">
-                  插件 {formatMetricValue(product.plugin_connection_count)}
-                  {numericMetric(product.plugin_failed_connection_count) ? ` / 失败 ${formatMetricValue(product.plugin_failed_connection_count)}` : ''}
-                  {' · '}
-                  权限范围 {formatMetricValue(product.permission_scope_count)}
-                  {' · '}
-                  可检索文档 {formatMetricValue(product.searchable_knowledge_document_count)}
-                </Text>
-                <Space size={4} wrap>
-                  {statusTag(product.recent_health_status ?? 'attention')}
                   <Text type="secondary">
-                    {product.recent_health_check?.summary ?? '健康检查待生成'}
+                    {product.missing_items?.length ? product.missing_items.join('、') : '接入信息完整'}
                   </Text>
-                </Space>
+                  <div className="system-health-product-score-breakdown" aria-label={`${product.name}评分分项`}>
+                    {(product.score_breakdown ?? []).map((item) => (
+                      <Tag
+                        color={STATUS_COLORS[item.status] ?? 'default'}
+                        key={`${product.product_id}:${item.key}`}
+                        title={`${item.evidence ?? ''}${item.suggestion ? `；建议：${item.suggestion}` : ''}`}
+                      >
+                        {item.label} {formatMetricValue(item.score)}/{formatMetricValue(item.max_score)}
+                      </Tag>
+                    ))}
+                  </div>
+                  <Text type="secondary">
+                    插件 {formatMetricValue(product.plugin_connection_count)}
+                    {numericMetric(product.plugin_failed_connection_count) ? ` / 失败 ${formatMetricValue(product.plugin_failed_connection_count)}` : ''}
+                    {' · '}
+                    权限范围 {formatMetricValue(product.permission_scope_count)}
+                    {' · '}
+                    可检索文档 {formatMetricValue(product.searchable_knowledge_document_count)}
+                  </Text>
+                  <Space size={4} wrap>
+                    {statusTag(product.recent_health_status ?? 'attention')}
+                    <Text type="secondary">
+                      {product.recent_health_check?.summary ?? '健康检查待生成'}
+                    </Text>
+                  </Space>
+                </div>
+                <Progress percent={product.score} size="small" status={product.score >= 80 ? 'success' : 'normal'} />
               </div>
-              <Progress percent={product.score} size="small" status={product.score >= 80 ? 'success' : 'normal'} />
-            </div>
             ))}
             {!products.length ? <Empty description="暂无活跃产品" image={Empty.PRESENTED_IMAGE_SIMPLE} /> : null}
           </div>
