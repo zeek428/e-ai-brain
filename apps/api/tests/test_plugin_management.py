@@ -280,21 +280,19 @@ def test_dingtalk_p0_marketplace_exposes_standard_mcp_capabilities():
         "dingtalk_drive": ("9638", "drive", "钉钉钉盘"),
         "dingtalk_wiki": ("9730", "wiki", "钉钉知识库"),
     }
-    for code, (mcp_id, server_name, name) in expected.items():
+    for code, (mcp_id, _server_name, name) in expected.items():
         item = by_code[code]
         assert item["name"] == name
         assert item["protocol"] == "mcp_streamable_http"
         assert item["publisher"] == "钉钉官方"
         assert item["connection_defaults"]["auth_type"] == "url_key"
-        assert item["connection_defaults"]["endpoint_url"].startswith(
-            "https://mcp-gw.dingtalk.com/mserver/",
-        )
-        query = item["connection_defaults"]["request_config"]["query"]
-        assert query["provider"] == "dingtalk"
-        assert query["mcp_id"] == mcp_id
-        assert query["server_name"] == server_name
-        assert query["auth_subject_type"] in {"user", "system", "app"}
+        assert item["connection_defaults"]["endpoint_url"] == ""
+        assert item["connection_defaults"]["request_config"] == {}
+        assert item["connection_defaults"]["auth_config"]["query_key"] == "key"
+        assert item["connection_defaults"]["auth_config"]["auth_subject_type"] == "user"
         assert item["connection_schema"]["sections"][0]["key"] == "dingtalk_mcp"
+        assert item["capability_discovery"]["known_tools"]
+        assert item["capability_discovery"]["mcp_id"] == mcp_id
 
 
 def test_dingtalk_p0_action_templates_include_risk_tiers_and_tool_metadata():
@@ -351,7 +349,7 @@ def test_dingtalk_marketplace_exposes_auth_guide_discovery_governance_and_scenar
         "app",
     ]
     assert authorization_guide["url_key"]["query_key"] == "key"
-    assert "URL Key 获取方式" in authorization_guide["url_key"]["title"]
+    assert "StreamableHttp URL 获取方式" in authorization_guide["url_key"]["title"]
     assert authorization_guide["credential_reuse"]["supports_vault_ref"] is True
     assert authorization_guide["credential_reuse"]["example_refs"] == [
         "vault/dingtalk/shared/url_key",
@@ -435,13 +433,28 @@ def test_dingtalk_connection_tool_discovery_detects_tool_drift_and_redacts_url_k
             **dingtalk_doc["connection_defaults"],
             "auth_config": {
                 "query_key": "key",
-                "secret_ref": "dingtalk-url-key-secret",
             },
+            "endpoint_url": (
+                "https://mcp-gw.dingtalk.com/server/"
+                "doc-instance-123?key=dingtalk-url-key-secret"
+            ),
             "name": "钉钉文档个人授权",
             "plugin_id": dingtalk_doc["plugin_id"],
+            "request_config": {
+                "query": {
+                    "auth_subject_type": "user",
+                    "mcp_id": "9629",
+                    "provider": "dingtalk",
+                    "server_name": "doc",
+                },
+            },
         },
         headers=headers,
     ).json()["data"]
+    assert connection["endpoint_url"] == "https://mcp-gw.dingtalk.com/server/doc-instance-123"
+    assert connection["auth_config"]["secret_ref"] == "dingtalk-url-key-secret"
+    assert connection["auth_config"]["auth_subject_type"] == "user"
+    assert connection["request_config"] == {}
 
     class FakeResponse:
         status = 200
@@ -516,6 +529,9 @@ def test_dingtalk_connection_tool_discovery_detects_tool_drift_and_redacts_url_k
     data = response.json()["data"]
     assert captured_requests[0]["body"]["method"] == "tools/list"
     parsed_url = urlparse(str(captured_requests[0]["url"]))
+    assert f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}" == (
+        "https://mcp-gw.dingtalk.com/server/doc-instance-123"
+    )
     assert parse_qs(parsed_url.query)["key"] == ["dingtalk-url-key-secret"]
     assert data["request_summary"]["query"]["key"] == "***"
     assert data["status"] == "drift_detected"
@@ -542,6 +558,7 @@ def test_dingtalk_plugin_observability_summarizes_health_and_redacted_replay():
                 "query_key": "key",
                 "secret_ref": "dingtalk-url-key-secret",
             },
+            "endpoint_url": "https://mcp-gw.dingtalk.com/server/doc-instance-123",
             "name": "钉钉文档个人授权",
             "plugin_id": dingtalk_doc["plugin_id"],
         },
@@ -640,7 +657,7 @@ def test_mcp_streamable_http_url_key_invocation_uses_query_key_and_redacts_log(
         "/api/system/plugins",
         json={
             "category": "collaboration",
-            "code": "custom_dingtalk_doc",
+            "code": "dingtalk_custom_doc",
             "description": "测试钉钉文档 Streamable HTTP MCP",
             "name": "测试钉钉文档",
             "protocol": "mcp_streamable_http",
@@ -656,7 +673,7 @@ def test_mcp_streamable_http_url_key_invocation_uses_query_key_and_redacts_log(
         json={
             "auth_config": {"query_key": "key", "secret_ref": "dingtalk-url-key-secret"},
             "auth_type": "url_key",
-            "endpoint_url": "https://mcp-gw.dingtalk.com/mserver/doc",
+            "endpoint_url": "https://mcp-gw.dingtalk.com/server/doc-instance-123",
             "environment": "prod",
             "name": "钉钉文档个人授权",
             "plugin_id": plugin["id"],
@@ -729,15 +746,9 @@ def test_mcp_streamable_http_url_key_invocation_uses_query_key_and_redacts_log(
     assert invoked.status_code == 200, invoked.text
     parsed_url = urlparse(str(captured_requests[0]["url"]))
     assert f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}" == (
-        "https://mcp-gw.dingtalk.com/mserver/doc"
+        "https://mcp-gw.dingtalk.com/server/doc-instance-123"
     )
-    assert parse_qs(parsed_url.query) == {
-        "auth_subject_type": ["user"],
-        "key": ["dingtalk-url-key-secret"],
-        "mcp_id": ["9629"],
-        "provider": ["dingtalk"],
-        "server_name": ["doc"],
-    }
+    assert parse_qs(parsed_url.query) == {"key": ["dingtalk-url-key-secret"]}
     request_body = captured_requests[0]["body"]
     assert request_body["method"] == "tools/call"
     assert request_body["params"] == {

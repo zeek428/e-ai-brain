@@ -345,6 +345,52 @@ describe('system management pages', () => {
           },
         );
       }
+      if (String(input).startsWith('/api/system/permissions/menu-preview?')) {
+        expect(String(input)).toContain('user_id=user_viewer');
+        return new Response(
+          JSON.stringify({
+            data: {
+              blocked_menus: [
+                {
+                  code: 'workspace.dashboard',
+                  message: '缺少权限点：workspace.read',
+                  missing_permission_codes: ['workspace.read'],
+                  name: '团队看板',
+                  path: '/welcome',
+                  reason: 'missing_permissions',
+                  required_permission_codes: ['workspace.read'],
+                },
+              ],
+              effective: {
+                menu_codes: ['workspace.dashboard'],
+                permission_codes: [],
+                role_codes: ['viewer'],
+                scopes: [],
+              },
+              menu_tree: [],
+              scope_summary: '未配置范围',
+              summary: {
+                blocked_menu_count: 1,
+                granted_menu_count: 0,
+                visible_menu_count: 0,
+              },
+              user: {
+                display_name: '查看者',
+                id: 'user_viewer',
+                roles: ['viewer'],
+                status: 'active',
+                username: 'viewer@example.com',
+              },
+              visible_menu_codes: [],
+              visible_menus: [],
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
       if (String(input).startsWith('/api/system/roles?')) {
         const url = new URL(String(input), 'http://localhost');
         expect(url.searchParams.get('page')).toBe('1');
@@ -418,7 +464,7 @@ describe('system management pages', () => {
     fireEvent.click(screen.getByRole('button', { name: '运行诊断' }));
 
     expect(await screen.findByText('存在阻断')).toBeInTheDocument();
-    expect(screen.getByText('缺少权限点：workspace.read')).toBeInTheDocument();
+    expect(screen.getAllByText('缺少权限点：workspace.read').length).toBeGreaterThan(0);
     expect(screen.getByText('角色：viewer')).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole('button', { name: '角色配置' })[0]);

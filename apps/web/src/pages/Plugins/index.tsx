@@ -583,7 +583,7 @@ export default function PluginsPage() {
       ...nextValues,
     };
     if (advancedConnectionJsonOpen) {
-      nextValues.auth_config = stableJson(buildConnectionAuthConfig(mergedValues));
+      nextValues.auth_config = stableJson(buildConnectionAuthConfig(mergedValues, schema));
     }
     if (advancedConnectionRequestJsonOpen) {
       nextValues.request_config = stableJson(buildConnectionRequestConfig(mergedValues, schema));
@@ -597,7 +597,7 @@ export default function PluginsPage() {
       const values = await connectionForm.validateFields();
       const authConfig = advancedConnectionJsonOpen
         ? parseJsonObject(values.auth_config, '认证配置')
-        : buildConnectionAuthConfig(values);
+        : buildConnectionAuthConfig(values, selectedConnectionSchema);
       if (selectedConnectionIsGithub) {
         const tokenRef = typeof authConfig.token_ref === 'string' ? authConfig.token_ref.trim() : '';
         if (values.auth_type !== 'bearer' || !tokenRef) {
@@ -1150,7 +1150,7 @@ export default function PluginsPage() {
       connectionForm.setFieldsValue({
         auth_config: values.auth_config?.trim()
           ? values.auth_config
-          : stableJson(buildConnectionAuthConfig(values)),
+          : stableJson(buildConnectionAuthConfig(values, selectedConnectionSchema)),
       });
     }
     setAdvancedConnectionJsonOpen(nextOpen);
@@ -1334,7 +1334,7 @@ export default function PluginsPage() {
 
   const syncConnectionAuthJsonFromVisual = () => {
     const values = connectionForm.getFieldsValue();
-    connectionForm.setFieldValue('auth_config', stableJson(buildConnectionAuthConfig(values)));
+    connectionForm.setFieldValue('auth_config', stableJson(buildConnectionAuthConfig(values, selectedConnectionSchema)));
   };
 
   const handleConnectionValuesChange = (

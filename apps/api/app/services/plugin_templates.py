@@ -111,14 +111,14 @@ DINGTALK_AUTHORIZATION_GUIDE: dict[str, Any] = {
         },
     ],
     "url_key": {
-        "description": "从钉钉 MCP 授权 URL 中复制 query 参数 key 的值，保存为连接密钥或密钥引用。",
+        "description": "从钉钉 AI Hub MCP 详情复制 StreamableHttp URL；系统会从 URL 中提取 key 并保存为连接密钥。",
         "query_key": "key",
         "steps": [
             "在钉钉 AI Hub 打开对应 MCP 能力详情并完成授权。",
-            "复制授权 URL 中 key 查询参数的值。",
-            "在 AI Brain 连接中填写 URL Key，或填写 Vault / env 密钥引用。",
+            "复制右侧“使用 MCP”区域中的 StreamableHttp URL，或从 JSON Config 中复制 url。",
+            "在 AI Brain 连接的 Endpoint URL 中粘贴完整 URL；如需复用凭据，也可以只填写不带 key 的 URL 并在 URL Key 字段填写 Vault / env 密钥引用。",
         ],
-        "title": "URL Key 获取方式",
+        "title": "StreamableHttp URL 获取方式",
     },
 }
 
@@ -199,6 +199,7 @@ DINGTALK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 
 
 def _dingtalk_capability_discovery(plugin_code: str) -> dict[str, Any]:
+    capability = DINGTALK_MCP_P0_CAPABILITIES.get(plugin_code, {})
     tool_names = [
         template["tool_name"]
         for template in DINGTALK_MCP_P0_ACTION_DEFINITIONS
@@ -212,7 +213,9 @@ def _dingtalk_capability_discovery(plugin_code: str) -> dict[str, Any]:
         },
         "jsonrpc_method": "tools/list",
         "known_tools": sorted(tool_names),
+        "mcp_id": capability.get("mcp_id"),
         "mode": "tools_list",
+        "server_name": capability.get("server_name"),
     }
 
 
@@ -366,23 +369,14 @@ def _dingtalk_marketplace_metadata() -> dict[str, dict[str, Any]]:
 def _dingtalk_connection_defaults() -> dict[str, dict[str, Any]]:
     return {
         code: {
-            "auth_config": {"query_key": "key"},
+            "auth_config": {"auth_subject_type": "user", "query_key": "key"},
             "auth_type": "url_key",
-            "endpoint_url": (
-                f"https://mcp-gw.dingtalk.com/mserver/{capability['server_name']}"
-            ),
+            "endpoint_url": "",
             "environment": "prod",
             "max_retries": 1,
             "name": f"{capability['name']} MCP 连接",
             "protocol": DINGTALK_MCP_PROTOCOL,
-            "request_config": {
-                "query": {
-                    "auth_subject_type": "user",
-                    "mcp_id": capability["mcp_id"],
-                    "provider": "dingtalk",
-                    "server_name": capability["server_name"],
-                },
-            },
+            "request_config": {},
             "status": "active",
             "timeout_seconds": 30,
         }
@@ -410,7 +404,7 @@ def _dingtalk_connection_schemas() -> dict[str, dict[str, Any]]:
                                 {"label": "系统授权", "value": "system"},
                                 {"label": "应用授权", "value": "app"},
                             ],
-                            "path": "request_config.query.auth_subject_type",
+                            "path": "auth_config.auth_subject_type",
                             "required": True,
                             "type": "select",
                         },

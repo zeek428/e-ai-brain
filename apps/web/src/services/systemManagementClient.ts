@@ -232,6 +232,22 @@ export type SystemAlertSubscriptionRecord = SystemAlertSubscriptionPayload & {
   updated_at?: string | null;
 };
 
+export type SystemAlertNotificationRecord = {
+  alert_id: string;
+  attempts?: number;
+  channel: string;
+  created_at?: string | null;
+  id: string;
+  last_error?: string | null;
+  payload_json?: Record<string, unknown>;
+  sent_at?: string | null;
+  severity: string;
+  status: string;
+  subscription_id: string;
+  target: string;
+  updated_at?: string | null;
+};
+
 export type SystemAlertRuleMutationPayload = {
   component?: string | null;
   condition_json?: Record<string, unknown>;
@@ -329,15 +345,21 @@ export type SystemHealthOperations = {
   };
   alert_center?: {
     alerts: SystemHealthAlertRecord[];
+    notifications?: SystemAlertNotificationRecord[];
     rules?: SystemAlertRuleRecord[];
     summary: {
+      enabled_subscription_count?: number;
+      failed_notification_count?: number;
       enabled_rule_count?: number;
       high_count: number;
       low_count: number;
       medium_count: number;
       open_count: number;
+      pending_notification_count?: number;
       resolving_count?: number;
       rule_count?: number;
+      sent_notification_count?: number;
+      total_notification_count?: number;
     };
     subscriptions?: SystemAlertSubscriptionRecord[];
     trend?: Array<Record<string, unknown>>;

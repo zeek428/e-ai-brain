@@ -24,6 +24,7 @@ from app.services.model_gateway import (  # noqa: F401 - re-exported for service
 from app.services.operational_records import record_audit_event, save_single_repository_record
 from app.services.plugin_connection_config import (
     ensure_plugin_connection_auth_requirements,
+    normalize_dingtalk_connection_config,
     normalize_github_connection_request_config,
     normalize_gitlab_connection_config,
 )
@@ -673,11 +674,6 @@ def create_plugin_connection_response(
     ensure_enum(payload.auth_type, PLUGIN_AUTH_TYPES, "auth_type")
     ensure_enum(payload.environment or "default", PLUGIN_CONNECTION_ENVIRONMENTS, "environment")
     ensure_enum(payload.status, PLUGIN_STATUSES, "status")
-    ensure_plugin_connection_auth_requirements(
-        auth_config=payload.auth_config,
-        auth_type=payload.auth_type,
-        plugin=plugin,
-    )
     now = datetime.now(UTC).isoformat()
     connection_id = current_store.new_id("plugin_connection")
     endpoint_url = (
@@ -692,8 +688,19 @@ def create_plugin_connection_response(
         request_config=request_config,
         plugin=plugin,
     )
+    endpoint_url, request_config, auth_config = normalize_dingtalk_connection_config(
+        auth_config=payload.auth_config,
+        endpoint_url=endpoint_url,
+        request_config=request_config,
+        plugin=plugin,
+    )
+    ensure_plugin_connection_auth_requirements(
+        auth_config=auth_config,
+        auth_type=payload.auth_type,
+        plugin=plugin,
+    )
     connection = {
-        "auth_config": payload.auth_config,
+        "auth_config": auth_config,
         "auth_type": payload.auth_type,
         "created_at": now,
         "created_by": user["id"],
@@ -781,6 +788,12 @@ def patch_plugin_connection_response(
         request_config=connection["request_config"],
         plugin=plugin,
     )
+    endpoint_url, request_config, auth_config = normalize_dingtalk_connection_config(
+        auth_config=connection.get("auth_config") or {},
+        endpoint_url=endpoint_url,
+        request_config=request_config,
+        plugin=plugin,
+    )
     connection["endpoint_url"] = (
         "internal://e-ai-brain/business-data"
         if plugin.get("protocol") == INTERNAL_DATA_SOURCE_PROTOCOL
@@ -788,6 +801,7 @@ def patch_plugin_connection_response(
         else ensure_non_blank(endpoint_url, "endpoint_url")
     )
     connection["request_config"] = request_config
+    connection["auth_config"] = auth_config
     ensure_plugin_connection_auth_requirements(
         auth_config=connection.get("auth_config") or {},
         auth_type=str(connection.get("auth_type") or "none"),

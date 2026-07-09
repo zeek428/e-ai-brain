@@ -338,6 +338,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "097_system_alert_rules_and_admin_report.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "098_system_alert_notifications.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -387,6 +391,7 @@ class PostgresSnapshotRepository:
         alert_id: str,
         *,
         close_reason: str | None = None,
+        history_event: dict[str, Any] | None = None,
         owner: str | None = None,
         postmortem: str | None = None,
         status: str | None = None,
@@ -395,11 +400,29 @@ class PostgresSnapshotRepository:
         return self._platform_operations_repository.update_system_alert_incident(
             alert_id,
             close_reason=close_reason,
+            history_event=history_event,
             owner=owner,
             postmortem=postmortem,
             status=status,
             actor_id=actor_id,
         )
+
+    def list_system_alert_notifications(
+        self,
+        *,
+        limit: int = 100,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._platform_operations_repository.list_system_alert_notifications(
+            limit=limit,
+            status=status,
+        )
+
+    def upsert_system_alert_notifications(
+        self,
+        notifications: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return self._platform_operations_repository.upsert_system_alert_notifications(notifications)
 
     def list_system_alert_subscriptions(self) -> list[dict[str, Any]]:
         return self._platform_operations_repository.list_system_alert_subscriptions()

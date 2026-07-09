@@ -143,6 +143,42 @@ def test_system_alert_rules_and_admin_weekly_report_are_operable():
     assert "sections" in payload
 
 
+def test_system_alert_subscriptions_create_deduplicated_notification_outbox():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    subscription = client.post(
+        "/api/system/alerts/subscriptions",
+        headers=headers,
+        json={
+            "channel": "in_app",
+            "scope": "source:system_check",
+            "severity_min": "low",
+            "target": "ops-duty",
+        },
+    )
+    assert subscription.status_code == 200
+    subscription_id = subscription.json()["data"]["id"]
+
+    health = client.get("/api/system/health", headers=headers)
+    assert health.status_code == 200
+    alert_center = health.json()["data"]["operations"]["alert_center"]
+    notifications = alert_center["notifications"]
+    assert notifications
+    notification = notifications[0]
+    assert notification["subscription_id"] == subscription_id
+    assert notification["channel"] == "in_app"
+    assert notification["target"] == "ops-duty"
+    assert notification["status"] == "pending"
+    assert notification["payload_json"]["source"] == "system_check"
+    assert alert_center["summary"]["pending_notification_count"] >= 1
+    first_notification_count = len(app.state.store.system_alert_notifications)
+
+    refreshed = client.get("/api/system/health", headers=headers)
+    assert refreshed.status_code == 200
+    assert len(app.state.store.system_alert_notifications) == first_notification_count
+
+
 def test_product_onboarding_score_uses_real_health_signals():
     app.state.store.reset()
     headers = auth_headers()

@@ -388,6 +388,28 @@ function applySchemaValuesToRequestConfig(
   return isPlainRecord(root.request_config) ? root.request_config : requestConfig;
 }
 
+function applySchemaValuesToAuthConfig(
+  authConfig: Record<string, unknown>,
+  schema: PluginConnectionSchemaRecord | undefined,
+  schemaValues: Record<string, unknown> | undefined,
+) {
+  if (!schemaValues) {
+    return authConfig;
+  }
+  const root: Record<string, unknown> = { auth_config: { ...authConfig } };
+  schemaFields(schema).forEach((field) => {
+    const value = schemaValues[field.key];
+    if (value === undefined || !schemaFieldVisibleForValues(field, schemaValues)) {
+      return;
+    }
+    if (!field.path?.startsWith('auth_config.')) {
+      return;
+    }
+    setValueAtPath(root, field.path, value);
+  });
+  return isPlainRecord(root.auth_config) ? root.auth_config : authConfig;
+}
+
 export function buildVisualRequestConfig(values: Partial<PluginActionFormValues>): Record<string, unknown> {
   const config: Record<string, unknown> = {};
   const method = values.method || 'GET';
@@ -448,29 +470,28 @@ export function buildActionRequestPreview(
 
 export function buildConnectionAuthConfig(
   values: Partial<PluginConnectionFormValues>,
+  schema?: PluginConnectionSchemaRecord,
 ): Record<string, unknown> {
+  let config: Record<string, unknown> = {};
   if (values.auth_type === 'bearer') {
-    return values.token_ref?.trim() ? { token_ref: values.token_ref.trim() } : {};
-  }
-  if (values.auth_type === 'api_key_header') {
-    return {
+    config = values.token_ref?.trim() ? { token_ref: values.token_ref.trim() } : {};
+  } else if (values.auth_type === 'api_key_header') {
+    config = {
       header_name: values.header_name?.trim() || 'X-API-Key',
       ...(values.secret_ref?.trim() ? { secret_ref: values.secret_ref.trim() } : {}),
     };
-  }
-  if (values.auth_type === 'basic') {
-    return {
+  } else if (values.auth_type === 'basic') {
+    config = {
       ...(values.username_ref?.trim() ? { username_ref: values.username_ref.trim() } : {}),
       ...(values.password_ref?.trim() ? { password_ref: values.password_ref.trim() } : {}),
     };
-  }
-  if (values.auth_type === 'url_key') {
-    return {
+  } else if (values.auth_type === 'url_key') {
+    config = {
       query_key: values.query_key?.trim() || 'key',
       ...(values.secret_ref?.trim() ? { secret_ref: values.secret_ref.trim() } : {}),
     };
   }
-  return {};
+  return applySchemaValuesToAuthConfig(config, schema, values.schema_values);
 }
 
 export function buildConnectionRequestConfig(

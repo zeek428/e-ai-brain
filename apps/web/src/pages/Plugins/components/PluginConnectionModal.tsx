@@ -157,8 +157,23 @@ export function PluginConnectionModal({
           <Input />
         </Form.Item>
         {!isInternalDataSourceConnection ? (
-          <Form.Item label="Endpoint URL" name="endpoint_url" rules={[{ required: true }]}>
-            <Input />
+          <Form.Item
+            extra={
+              isDingTalkConnection
+                ? '从钉钉 AI Hub MCP 详情复制 StreamableHttp URL 或 JSON Config 中的 url，支持粘贴包含 key 的完整 URL。'
+                : undefined
+            }
+            label={isDingTalkConnection ? 'StreamableHttp URL' : 'Endpoint URL'}
+            name="endpoint_url"
+            rules={[{ required: true }]}
+          >
+            <Input
+              placeholder={
+                isDingTalkConnection
+                  ? 'https://mcp-gw.dingtalk.com/server/<实例ID>?key=...'
+                  : undefined
+              }
+            />
           </Form.Item>
         ) : (
           <Form.Item hidden name="endpoint_url">
@@ -247,9 +262,9 @@ export function PluginConnectionModal({
                       <Tag color="blue">系统授权</Tag>
                       <Tag color="blue">应用授权</Tag>
                     </Space>
-                    <Typography.Text>URL Key 获取方式</Typography.Text>
+                    <Typography.Text>StreamableHttp URL 获取方式</Typography.Text>
                     <Typography.Text type="secondary">
-                      完成钉钉 MCP 授权后复制授权 URL 中的 key 参数；同一主体可复用 Vault 引用，例如 vault/dingtalk/shared/url_key。
+                      完成钉钉 MCP 授权后优先复制完整 StreamableHttp URL；系统会自动提取 key。也可以填写不带 key 的 URL，并在下方填 Vault 引用，例如 vault/dingtalk/shared/url_key。
                     </Typography.Text>
                   </Space>
                 )}
@@ -269,14 +284,23 @@ export function PluginConnectionModal({
                 <Form.Item
                   extra={
                     isDingTalkConnection
-                      ? '填写钉钉 MCP 网关授权 URL 中的 key 值；不同授权主体可使用个人、系统或应用独立 key。'
+                      ? '如果 StreamableHttp URL 已包含 key，这里可以留空；生产建议改用 vault/dingtalk/doc/key 或 env:DINGTALK_MCP_KEY。'
                       : '填写 URL 查询参数形式的密钥，保存后调用时会自动追加到请求 URL。'
                   }
                   label="URL Key / 密钥引用"
                   name="secret_ref"
                   rules={
                     isDingTalkConnection
-                      ? [{ required: true, message: '请填写钉钉 MCP URL Key 或密钥引用' }]
+                      ? [{
+                        validator: (_: unknown, value: unknown) => {
+                          const endpointUrl = String(form.getFieldValue('endpoint_url') ?? '');
+                          const hasEndpointKey = /[?&]key=/.test(endpointUrl);
+                          if (String(value ?? '').trim() || hasEndpointKey) {
+                            return Promise.resolve();
+                          }
+                          return Promise.reject(new Error('请粘贴包含 key 的 StreamableHttp URL，或填写 URL Key / 密钥引用'));
+                        },
+                      }]
                       : undefined
                   }
                 >

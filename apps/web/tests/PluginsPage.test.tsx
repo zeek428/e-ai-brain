@@ -675,8 +675,11 @@ function installPluginsFetchMock(
                       ],
                       url_key: {
                         query_key: 'key',
-                        steps: ['打开钉钉 MCP 市场能力详情', '复制授权 URL 中的 key 参数'],
-                        title: 'URL Key 获取方式',
+                        steps: [
+                          '打开钉钉 MCP 市场能力详情',
+                          '复制 StreamableHttp URL 或 JSON Config 中的 url',
+                        ],
+                        title: 'StreamableHttp URL 获取方式',
                       },
                     },
                     business_scenario_templates: [
@@ -707,22 +710,16 @@ function installPluginsFetchMock(
                     code: 'dingtalk_doc',
                     connection_defaults: {
                       auth_config: {
+                        auth_subject_type: 'user',
                         query_key: 'key',
                         secret_ref: '',
                       },
                       auth_type: 'url_key',
-                      endpoint_url: 'https://mcp-gw.dingtalk.com/mserver/doc',
+                      endpoint_url: '',
                       environment: 'prod',
                       max_retries: 1,
                       name: '钉钉文档 MCP 连接',
-                      request_config: {
-                        query: {
-                          auth_subject_type: 'user',
-                          mcp_id: '9629',
-                          provider: 'dingtalk',
-                          server_name: 'doc',
-                        },
-                      },
+                      request_config: {},
                       status: 'active',
                       timeout_seconds: 30,
                     },
@@ -740,7 +737,7 @@ function installPluginsFetchMock(
                                 { label: '系统授权', value: 'system' },
                                 { label: '应用授权', value: 'app' },
                               ],
-                              path: 'request_config.query.auth_subject_type',
+                              path: 'auth_config.auth_subject_type',
                               required: true,
                               type: 'select',
                             },
@@ -1508,21 +1505,14 @@ function installPluginsFetchMock(
                       secret_ref: '***',
                     },
                     auth_type: 'url_key',
-                    endpoint_url: 'https://mcp-gw.dingtalk.com/mserver/doc',
+                    endpoint_url: 'https://mcp-gw.dingtalk.com/server/doc-instance-123',
                     environment: 'prod',
                     id: 'connection_dingtalk_doc',
                     name: '钉钉文档个人授权',
                     plugin_code: 'dingtalk_doc',
                     plugin_id: 'plugin_standard_dingtalk_doc',
                     plugin_name: '钉钉文档',
-                    request_config: {
-                      query: {
-                        auth_subject_type: 'user',
-                        mcp_id: '9629',
-                        provider: 'dingtalk',
-                        server_name: 'doc',
-                      },
-                    },
+                    request_config: {},
                     status: 'active',
                   },
                 ]
@@ -2453,9 +2443,7 @@ describe('PluginsPage', () => {
 
     const dialog = await findDialogByTitle('新增连接');
     expect(within(dialog).getByLabelText('名称')).toHaveValue('钉钉文档 MCP 连接');
-    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue(
-      'https://mcp-gw.dingtalk.com/mserver/doc',
-    );
+    expect(within(dialog).getByLabelText('StreamableHttp URL')).toHaveValue('');
     expect(within(dialog).getByText('钉钉文档 (mcp_streamable_http)')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('URL Key / 密钥引用')).toHaveValue('');
     expect(within(dialog).getByLabelText('查询参数名')).toHaveValue('key');
@@ -2464,13 +2452,11 @@ describe('PluginsPage', () => {
     expect(urlKeyGrid).toContainElement(within(dialog).getByLabelText('查询参数名'));
     expect(urlKeyGrid).toContainElement(within(dialog).getByLabelText('URL Key / 密钥引用'));
     expect(within(dialog).getByLabelText('授权主体')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('provider')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('dingtalk')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('mcp_id')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('9629')).toBeInTheDocument();
 
-    fireEvent.change(within(dialog).getByLabelText('URL Key / 密钥引用'), {
-      target: { value: 'dingtalk-url-key-secret' },
+    fireEvent.change(within(dialog).getByLabelText('StreamableHttp URL'), {
+      target: {
+        value: 'https://mcp-gw.dingtalk.com/server/doc-instance-123?key=dingtalk-url-key-secret',
+      },
     });
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 
@@ -2478,20 +2464,13 @@ describe('PluginsPage', () => {
       expect(connectionBodies).toEqual([
         expect.objectContaining({
           auth_config: {
+            auth_subject_type: 'user',
             query_key: 'key',
-            secret_ref: 'dingtalk-url-key-secret',
           },
           auth_type: 'url_key',
-          endpoint_url: 'https://mcp-gw.dingtalk.com/mserver/doc',
+          endpoint_url: 'https://mcp-gw.dingtalk.com/server/doc-instance-123?key=dingtalk-url-key-secret',
           plugin_id: 'plugin_standard_dingtalk_doc',
-          request_config: {
-            query: {
-              auth_subject_type: 'user',
-              mcp_id: '9629',
-              provider: 'dingtalk',
-              server_name: 'doc',
-            },
-          },
+          request_config: {},
         }),
       ]),
     );
@@ -2518,7 +2497,7 @@ describe('PluginsPage', () => {
     expect(screen.getByText('个人授权')).toBeInTheDocument();
     expect(screen.getByText('系统授权')).toBeInTheDocument();
     expect(screen.getByText('应用授权')).toBeInTheDocument();
-    expect(screen.getByText('URL Key 获取方式')).toBeInTheDocument();
+    expect(screen.getByText('StreamableHttp URL 获取方式')).toBeInTheDocument();
     expect(screen.getByText('vault/dingtalk/shared/url_key')).toBeInTheDocument();
     expect(screen.getByText('动态能力发现')).toBeInTheDocument();
     expect(screen.getByText('tools/list')).toBeInTheDocument();
@@ -2537,8 +2516,8 @@ describe('PluginsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '配置市场插件 钉钉文档' }));
     const dialog = await findDialogByTitle('新增连接');
     expect(within(dialog).getByText('授权配置向导')).toBeInTheDocument();
-    expect(within(dialog).getByText('URL Key 获取方式')).toBeInTheDocument();
-    expect(within(dialog).getByText(/复用 Vault 引用/)).toBeInTheDocument();
+    expect(within(dialog).getByText('StreamableHttp URL 获取方式')).toBeInTheDocument();
+    expect(within(dialog).getByText(/改用 vault\/dingtalk\/doc\/key/)).toBeInTheDocument();
   });
 
   it('discovers DingTalk MCP tools from the connection list and shows drift hints', async () => {

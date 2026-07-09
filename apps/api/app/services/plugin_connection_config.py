@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlunparse
 
 from app.api.deps import api_error
+
+DINGTALK_MANAGED_QUERY_KEYS = {
+    "auth_subject_type",
+    "mcp_id",
+    "provider",
+    "server_name",
+}
 
 
 def ensure_plugin_connection_auth_requirements(
@@ -175,3 +182,63 @@ def normalize_gitlab_connection_config(
             },
         },
     )
+
+
+def _endpoint_without_query_key(
+    endpoint_url: str,
+    query_key: str,
+) -> tuple[str, str | None]:
+    parsed_endpoint = urlparse(endpoint_url)
+    if not parsed_endpoint.scheme or not parsed_endpoint.netloc:
+        return endpoint_url, None
+    extracted_key: str | None = None
+    preserved_query: list[tuple[str, str]] = []
+    for key, value in parse_qsl(parsed_endpoint.query, keep_blank_values=True):
+        if key == query_key:
+            if extracted_key is None and value:
+                extracted_key = value
+            continue
+        preserved_query.append((key, value))
+    return (
+        urlunparse(
+            parsed_endpoint._replace(query=urlencode(preserved_query, doseq=True))
+        ),
+        extracted_key,
+    )
+
+
+def normalize_dingtalk_connection_config(
+    *,
+    auth_config: dict[str, Any],
+    endpoint_url: str,
+    request_config: dict[str, Any],
+    plugin: dict[str, Any],
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    if not str(plugin.get("code") or "").startswith("dingtalk_"):
+        return endpoint_url, request_config, auth_config
+    query_key = str(auth_config.get("query_key") or "key").strip() or "key"
+    endpoint_url, endpoint_key = _endpoint_without_query_key(endpoint_url, query_key)
+    next_auth_config = {
+        **auth_config,
+        "query_key": query_key,
+    }
+    if endpoint_key and not str(next_auth_config.get("secret_ref") or "").strip():
+        next_auth_config["secret_ref"] = endpoint_key
+
+    request_query = request_config.get("query")
+    if not isinstance(request_query, dict):
+        return endpoint_url, request_config, next_auth_config
+    auth_subject_type = request_query.get("auth_subject_type")
+    if auth_subject_type and not next_auth_config.get("auth_subject_type"):
+        next_auth_config["auth_subject_type"] = auth_subject_type
+    cleaned_query = {
+        key: value
+        for key, value in request_query.items()
+        if key not in DINGTALK_MANAGED_QUERY_KEYS
+    }
+    next_request_config = {
+        key: value for key, value in request_config.items() if key != "query"
+    }
+    if cleaned_query:
+        next_request_config["query"] = cleaned_query
+    return endpoint_url, next_request_config, next_auth_config

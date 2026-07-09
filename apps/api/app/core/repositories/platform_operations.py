@@ -199,6 +199,74 @@ class PlatformOperationsRepository:
                     for row in cursor.fetchall()
                 ]
 
+    def list_system_alert_notifications(
+        self,
+        *,
+        limit: int = 100,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where = "WHERE status = %s" if status else ""
+        params: tuple[Any, ...] = (status, limit) if status else (limit,)
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, alert_id, subscription_id, channel, target, severity,
+                           status, attempts, last_error, payload_json, created_at,
+                           updated_at, sent_at
+                    FROM system_alert_notifications
+                    {where}
+                    ORDER BY
+                      CASE status
+                        WHEN 'pending' THEN 0
+                        WHEN 'failed' THEN 1
+                        WHEN 'sent' THEN 2
+                        ELSE 3
+                      END,
+                      created_at DESC,
+                      id ASC
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                return [self._system_alert_notification_from_row(row) for row in cursor.fetchall()]
+
+    def upsert_system_alert_notifications(
+        self,
+        notifications: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not notifications:
+            return self.list_system_alert_notifications(limit=100)
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                for notification in notifications:
+                    cursor.execute(
+                        """
+                        INSERT INTO system_alert_notifications (
+                          id, alert_id, subscription_id, channel, target, severity,
+                          status, payload_json
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, 'pending', %s::jsonb)
+                        ON CONFLICT (alert_id, subscription_id) DO UPDATE SET
+                          channel = EXCLUDED.channel,
+                          target = EXCLUDED.target,
+                          severity = EXCLUDED.severity,
+                          payload_json = system_alert_notifications.payload_json || EXCLUDED.payload_json,
+                          updated_at = now()
+                        WHERE system_alert_notifications.status IN ('pending', 'failed')
+                        """,
+                        (
+                            notification["id"],
+                            notification["alert_id"],
+                            notification["subscription_id"],
+                            notification["channel"],
+                            notification["target"],
+                            notification["severity"],
+                            _json(notification.get("payload_json"), {}),
+                        ),
+                    )
+        return self.list_system_alert_notifications(limit=100)
+
     def save_system_alert_subscription(self, subscription: dict[str, Any]) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -465,6 +533,23 @@ class PlatformOperationsRepository:
             "updated_by": row[10],
             "created_at": _iso(row[11]),
             "updated_at": _iso(row[12]),
+        }
+
+    def _system_alert_notification_from_row(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row[0],
+            "alert_id": row[1],
+            "subscription_id": row[2],
+            "channel": row[3],
+            "target": row[4],
+            "severity": row[5],
+            "status": row[6],
+            "attempts": _safe_int(row[7]),
+            "last_error": row[8],
+            "payload_json": row[9] if isinstance(row[9], dict) else {},
+            "created_at": _iso(row[10]),
+            "updated_at": _iso(row[11]),
+            "sent_at": _iso(row[12]),
         }
 
     def _knowledge_quality_event_from_row(self, row: Any) -> dict[str, Any]:

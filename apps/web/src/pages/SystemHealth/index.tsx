@@ -82,9 +82,12 @@ const STATUS_LABELS: Record<string, string> = {
   dead_letter: '死信',
   ignored: '已忽略',
   open: '打开',
+  pending: '待投递',
   queued: '排队',
   resolving: '处理中',
   running: '运行中',
+  sent: '已发送',
+  skipped: '已跳过',
   timed_out: '超时',
   warning: '待完善',
 };
@@ -106,7 +109,10 @@ const STATUS_COLORS: Record<string, string> = {
   not_configured: 'default',
   ok: 'green',
   open: 'orange',
+  pending: 'gold',
   resolving: 'purple',
+  sent: 'green',
+  skipped: 'default',
   warning: 'gold',
   cancelled: 'default',
   claimed: 'blue',
@@ -399,6 +405,7 @@ function SystemHealthOperationsPanel({
   const products = productScores?.products ?? [];
   const alerts = alertCenter?.alerts ?? [];
   const alertRules = alertCenter?.rules ?? [];
+  const alertNotifications = alertCenter?.notifications ?? [];
   const alertSubscriptions = alertCenter?.subscriptions ?? [];
   const alertTrend = alertCenter?.trend ?? [];
   const executorStrategy = aiExecutor?.strategy_config ?? {};
@@ -716,6 +723,11 @@ function SystemHealthOperationsPanel({
             <OperationMetric title="低优先级" value={alertCenter?.summary?.low_count ?? 0} />
             <OperationMetric title="处理中" value={alertCenter?.summary?.resolving_count ?? 0} />
             <OperationMetric
+              title="待通知"
+              tone={numericMetric(alertCenter?.summary?.failed_notification_count) ? 'danger' : 'success'}
+              value={formatMetricValue(alertCenter?.summary?.pending_notification_count)}
+            />
+            <OperationMetric
               title="启用规则"
               value={`${formatMetricValue(alertCenter?.summary?.enabled_rule_count)} / ${formatMetricValue(alertCenter?.summary?.rule_count)}`}
             />
@@ -797,6 +809,22 @@ function SystemHealthOperationsPanel({
               <Text type="secondary">暂无告警订阅，建议至少配置一个高优先级通知目标。</Text>
             ) : null}
           </div>
+          {alertNotifications.length ? (
+            <div className="system-health-alert-subscriptions" aria-label="告警通知记录">
+              {alertNotifications.slice(0, 4).map((notification) => (
+                <div className="system-health-alert-subscription-row" key={notification.id}>
+                  <span>
+                    {statusTag(notification.status)}
+                    <Tag>{alertSubscriptionChannelLabel(notification.channel)}</Tag>
+                    <Text ellipsis={{ tooltip: notification.target }}>{notification.target}</Text>
+                  </span>
+                  <Text type="secondary">
+                    {notification.severity} · {notification.created_at ? formatDisplayDateTime(notification.created_at) : '-'}
+                  </Text>
+                </div>
+              ))}
+            </div>
+          ) : null}
           {alertTrend.length ? (
             <div className="system-health-quality-gates" aria-label="告警历史趋势">
               {alertTrend.slice(-4).map((item) => (

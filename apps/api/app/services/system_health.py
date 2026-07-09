@@ -2570,6 +2570,178 @@ def _persist_alert_incidents(
     )
 
 
+def _alert_subscription_scope_matches(subscription: dict[str, Any], alert: dict[str, Any]) -> bool:
+    scope = str(subscription.get("scope") or "global").strip()
+    if scope in {"*", "all", "global"}:
+        return True
+    if ":" in scope:
+        scope_type, scope_value = scope.split(":", 1)
+        scope_value = scope_value.strip()
+        if scope_type == "source":
+            return scope_value == str(alert.get("source") or "")
+        if scope_type == "component":
+            return scope_value == str(alert.get("component") or "")
+        if scope_type == "owner":
+            return scope_value == str(alert.get("owner") or "")
+        if scope_type == "severity":
+            return scope_value == str(alert.get("severity") or "")
+        return False
+    return scope in {
+        str(alert.get("source") or ""),
+        str(alert.get("component") or ""),
+        str(alert.get("owner") or ""),
+    }
+
+
+def _alert_subscription_matches(subscription: dict[str, Any], alert: dict[str, Any]) -> bool:
+    if not bool(subscription.get("enabled", True)):
+        return False
+    if alert.get("status") in {"closed", "ignored"}:
+        return False
+    severity_min = str(subscription.get("severity_min") or "medium")
+    alert_severity = str(alert.get("severity") or "low")
+    if ALERT_SEVERITY_RANK.get(alert_severity, 0) < ALERT_SEVERITY_RANK.get(severity_min, 2):
+        return False
+    return _alert_subscription_scope_matches(subscription, alert)
+
+
+def _alert_notification_id(alert_id: str, subscription_id: str) -> str:
+    normalized_alert_id = re.sub(r"[^a-zA-Z0-9_.:-]+", "_", alert_id.strip())
+    normalized_subscription_id = re.sub(r"[^a-zA-Z0-9_.:-]+", "_", subscription_id.strip())
+    return f"alert_notification:{normalized_alert_id}:{normalized_subscription_id}"[:220]
+
+
+def _build_alert_notifications(
+    *,
+    alerts: list[dict[str, Any]],
+    subscriptions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    notifications: list[dict[str, Any]] = []
+    for alert in alerts:
+        alert_id = str(alert.get("id") or "").strip()
+        if not alert_id:
+            continue
+        for subscription in subscriptions:
+            subscription_id = str(subscription.get("id") or "").strip()
+            if not subscription_id or not _alert_subscription_matches(subscription, alert):
+                continue
+            notifications.append(
+                {
+                    "alert_id": alert_id,
+                    "channel": subscription.get("channel"),
+                    "id": _alert_notification_id(alert_id, subscription_id),
+                    "payload_json": {
+                        "action_href": alert.get("action_href"),
+                        "alert_status": alert.get("status"),
+                        "component": alert.get("component"),
+                        "last_seen_at": alert.get("last_seen_at"),
+                        "matched_rule_ids": (
+                            alert.get("metadata", {}).get("matched_rule_ids")
+                            if isinstance(alert.get("metadata"), dict)
+                            else []
+                        ),
+                        "message": alert.get("message"),
+                        "owner": alert.get("owner"),
+                        "source": alert.get("source"),
+                        "title": alert.get("title"),
+                    },
+                    "severity": alert.get("severity") or "low",
+                    "subscription_id": subscription_id,
+                    "target": subscription.get("target"),
+                }
+            )
+    return notifications
+
+
+def _persist_alert_notifications(
+    current_store: Any,
+    notifications: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    repository = _runtime_repository(current_store)
+    upsert = getattr(repository, "upsert_system_alert_notifications", None)
+    if callable(upsert):
+        try:
+            return upsert(notifications)
+        except Exception:  # pragma: no cover - defensive around partially migrated runtimes
+            return []
+    stored = getattr(current_store, "system_alert_notifications", None)
+    if not isinstance(stored, dict):
+        stored = {}
+        vars(current_store)["system_alert_notifications"] = stored
+    now = _now_iso()
+    for notification in notifications:
+        notification_id = str(notification["id"])
+        existing = stored.get(notification_id) or {}
+        if existing.get("status") in {"sent", "skipped"}:
+            continue
+        stored[notification_id] = {
+            **existing,
+            **notification,
+            "attempts": int(existing.get("attempts") or 0),
+            "created_at": existing.get("created_at") or now,
+            "payload_json": {
+                **(
+                    existing.get("payload_json")
+                    if isinstance(existing.get("payload_json"), dict)
+                    else {}
+                ),
+                **(
+                    notification.get("payload_json")
+                    if isinstance(notification.get("payload_json"), dict)
+                    else {}
+                ),
+            },
+            "status": existing.get("status") or "pending",
+            "updated_at": now,
+        }
+    return _list_alert_notifications(current_store)
+
+
+def _list_alert_notifications(
+    current_store: Any,
+    *,
+    limit: int = 100,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    repository = _runtime_repository(current_store)
+    list_notifications = getattr(repository, "list_system_alert_notifications", None)
+    if callable(list_notifications):
+        try:
+            return list_notifications(limit=limit, status=status)
+        except Exception:  # pragma: no cover - defensive around partially migrated runtimes
+            return []
+    notifications = getattr(current_store, "system_alert_notifications", {})
+    if not isinstance(notifications, dict):
+        return []
+    items = [
+        dict(item)
+        for item in notifications.values()
+        if status is None or str(item.get("status") or "") == status
+    ]
+    status_order = {"pending": 0, "failed": 1, "sent": 2, "skipped": 3}
+    items.sort(
+        key=lambda item: (
+            status_order.get(str(item.get("status") or ""), 9),
+            -(int(_parse_datetime(item.get("created_at")).timestamp()) if _parse_datetime(item.get("created_at")) else 0),
+            str(item.get("id") or ""),
+        )
+    )
+    return items[:limit]
+
+
+def _alert_notification_summary(notifications: list[dict[str, Any]]) -> dict[str, Any]:
+    status_counts = _count_by_status(notifications)
+    channel_counts = _count_by_status(notifications, field="channel")
+    return {
+        "channel_counts": channel_counts,
+        "failed_notification_count": status_counts.get("failed", 0),
+        "pending_notification_count": status_counts.get("pending", 0),
+        "sent_notification_count": status_counts.get("sent", 0),
+        "skipped_notification_count": status_counts.get("skipped", 0),
+        "total_notification_count": len(notifications),
+    }
+
+
 def _alert_history_trend(alerts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     trend: dict[str, dict[str, Any]] = {}
     for alert in alerts:
@@ -2664,6 +2836,11 @@ def _alert_center(
             },
         )
     alerts = _persist_alert_incidents(current_store, _apply_alert_rules(alerts, rules))
+    subscriptions = _list_alert_subscriptions(current_store)
+    notifications = _persist_alert_notifications(
+        current_store,
+        _build_alert_notifications(alerts=alerts, subscriptions=subscriptions),
+    )
     severity_order = {"high": 0, "medium": 1, "low": 2, "info": 3}
     status_order = {"open": 0, "acknowledged": 1, "resolving": 2, "ignored": 3, "closed": 4}
     alerts.sort(
@@ -2676,14 +2853,17 @@ def _alert_center(
     open_alerts = [item for item in alerts if item.get("status") not in {"closed", "ignored"}]
     return {
         "alerts": alerts[:12],
+        "notifications": notifications[:8],
         "rules": rules,
-        "subscriptions": _list_alert_subscriptions(current_store),
+        "subscriptions": subscriptions,
         "summary": {
             "acknowledged_count": sum(1 for item in alerts if item.get("status") == "acknowledged"),
             "closed_count": sum(1 for item in alerts if item.get("status") == "closed"),
+            "enabled_subscription_count": sum(1 for item in subscriptions if item.get("enabled")),
             "high_count": sum(1 for item in open_alerts if item.get("severity") == "high"),
             "low_count": sum(1 for item in open_alerts if item.get("severity") == "low"),
             "medium_count": sum(1 for item in open_alerts if item.get("severity") == "medium"),
+            **_alert_notification_summary(notifications),
             "open_count": len(open_alerts),
             "resolving_count": sum(1 for item in alerts if item.get("status") == "resolving"),
             "rule_count": len(rules),

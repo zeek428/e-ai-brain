@@ -461,6 +461,7 @@ export type {
   SystemEmailDeliveryTestPayload,
   SystemEmailDeliveryTestResult,
   SystemAlertIncidentUpdatePayload,
+  SystemAlertNotificationRecord,
   SystemAlertRuleMutationPayload,
   SystemHealthAlertRecord,
   SystemAdminWeeklyReport,

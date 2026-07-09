@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### Added
+- 系统健康告警订阅新增通知 outbox：新增 `system_alert_notifications` 表，系统健康物化告警时按启用订阅、严重级别和 scope 生成幂等待投递记录，前端展示待通知数量和最近通知目标，便于后续 SMTP/钉钉/webhook 投递器追踪处理状态。
 - 系统健康告警处理补齐状态流转时间线：`PATCH /api/system/alerts/{alert_id}` 会向 `metadata.status_history` 追加处理记录，系统健康页处理弹窗展示最近处理时间、状态变化、负责人、关闭原因和复盘状态。
 - 系统健康告警订阅补齐管理闭环：新增 `PATCH /api/system/alerts/subscriptions/{subscription_id}`，系统健康页展示已有订阅的渠道、目标、级别和范围，并支持直接启用或停用订阅。
 - 系统健康“对象存储同步清理”补齐补偿操作闭环：新增 `POST /api/system/object-storage/cleanup` dry-run/confirmed 接口，系统健康页支持预检并二次确认清理孤儿知识资产对象，删除失败会保留资产记录并返回错误，成功清理写入脱敏审计。
@@ -72,6 +73,7 @@
 - 拆分 Bug、产品、需求和任务中心页面的纯 helper 逻辑，页面容器重新回到架构行数预算内。
 
 ### Fixed
+- 修复钉钉文档 MCP 连接测试使用旧 `/mserver/doc` 默认 Endpoint 导致 404 的问题；新增/编辑连接改为支持直接粘贴钉钉 AI Hub 复制的实例级 `StreamableHttp URL`，服务端自动提取 `key` 并清理旧 query。
 - 删除知识文档时同步清理关联 `knowledge_assets` 记录，并通过对象存储适配器尽力删除 MinIO/S3 或本地对象文件；接口返回 `object_cleanup` 说明删除数量和外部对象清理错误。
 - 修复钉钉官方 MCP 新增连接弹窗中 URL Key 认证字段排版拥挤的问题，“查询参数名”和“URL Key / 密钥引用”改为响应式网格展示，避免 label、必填标记和说明错位。
 - 修复知识中心沉淀审核“全链路”会跳转离开当前工作台的问题，改为页内弹窗展示并保留当前操作上下文。
