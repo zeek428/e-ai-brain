@@ -50,7 +50,9 @@
 - 插件市场新增钉钉官方 MCP P0 标准插件：文档、知识库、钉盘、AI 表格、机器人消息和通讯录能力按独立标准插件接入，支持 `mcp_streamable_http`、URL Key 鉴权、P0 动作模板和请求摘要脱敏。
 - 钉钉官方 MCP 插件增强授权配置向导、`tools/list` 动态能力发现、高风险动作治理、插件健康看板和 AI Brain 业务场景模板，并新增动态发现与钉钉观测 API。
 - 钉钉官方动作模板补充“钉钉文档 - 更新内容”场景，并统一钉钉动作模板名称为“钉钉能力 - 操作”前缀，便于新增动作配置场景检索。
-- 结果写入目标新增“钉钉文档”：动作表单可视化配置文档链接或 ID、写入内容和追加/覆盖方式，粘贴 `alidocs.dingtalk.com/i/nodes/...` 链接时自动提取 `document_id` 并生成 MCP `arguments`，无需手工编辑高级 JSON。
+- 结果写入目标新增“钉钉文档”：动作表单可视化配置文档链接或 ID、写入内容和追加/覆盖方式，粘贴 `alidocs.dingtalk.com/i/nodes/...` 链接时自动提取文档节点 ID，并生成 MCP `nodeId/markdown/mode` 参数，无需手工编辑高级 JSON。
+- 动作试运行输入改为默认按已保存动作配置执行，并将临时覆盖 JSON 收纳到高级区域；钉钉文档更新动作会直接展示文档 ID、写入方式和写入内容摘要，降低试运行配置门槛。
+- 钉钉文档写入动作兼容历史缺少 `request_config.tool_name` 或使用旧别名的配置：运行和试运行时会按 `result_mapping.write_target=dingtalk_document` 自动补齐真实 MCP 工具 `update_document`、钉钉 MCP 信息，并把文档链接/内容转换为 `nodeId`、`markdown`、`mode` 参数，避免出现 `tool_name is required` 或 “not found the specified tool”。
 - Bug 管理新增“推进 AI 任务”能力：`POST /api/bugs/{bug_id}/promote-ai-task` 会创建 `bug_fix` AI Task，写入 Bug 自动化任务引用并默认复用研发执行器策略自动启动，前端行操作新增“AI处理”入口。
 
 ### Changed

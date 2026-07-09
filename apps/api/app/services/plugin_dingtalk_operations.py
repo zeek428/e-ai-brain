@@ -141,12 +141,13 @@ def discover_plugin_connection_tools_response(
     )
     timeout = min(int(connection.get("timeout_seconds") or 10), 10)
     with urlopen(request, timeout=timeout) as response:
-        body_preview = response.read(8192).decode("utf-8", errors="replace")
+        raw_body = response.read().decode("utf-8", errors="replace")
+        body_preview = raw_body[:8192]
         response_summary: dict[str, Any] = {
             "body_preview": body_preview,
             "status_code": getattr(response, "status", None),
         }
-        parsed_json = ConnectionDiagnosticsService.json_from_body_preview(body_preview)
+        parsed_json = ConnectionDiagnosticsService.json_from_body_preview(raw_body)
         if parsed_json is not None:
             response_summary["json"] = parsed_json
     parsed_response = response_summary.get("json")

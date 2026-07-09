@@ -107,10 +107,11 @@ export function PluginActionTable({
           title: '写入目标',
           ellipsis: true,
           width: 220,
-          render: (value) => {
+          render: (_, row) => {
+            const resultMapping = row.result_mapping;
             const writeTarget =
-              value && typeof value === 'object'
-                ? (value as unknown as Record<string, unknown>).write_target
+              resultMapping && typeof resultMapping === 'object'
+                ? resultMapping.write_target
                 : undefined;
             return typeof writeTarget === 'string'
               ? formatWriteTarget(writeTarget)

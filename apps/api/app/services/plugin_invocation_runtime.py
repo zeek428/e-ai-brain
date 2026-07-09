@@ -35,6 +35,10 @@ from app.services.model_gateway import (
 from app.services.plugin_constants import AI_EXECUTOR_RUNNER_PROTOCOLS, MCP_HTTP_PROTOCOLS
 from app.services.plugin_store_helpers import _set_header, ensure_non_blank
 
+DINGTALK_DOCUMENT_WRITE_TARGET = "dingtalk_document"
+DINGTALK_DOCUMENT_LEGACY_UPDATE_TOOL_NAME = "doc.update_document_content"
+DINGTALK_DOCUMENT_UPDATE_TOOL_NAME = "update_document"
+
 
 def _call_model_gateway_for_task(current_store: Any, *, task: dict[str, Any]) -> tuple[Any, Any]:
     plugin_services = sys.modules.get("app.services.plugins")
@@ -187,6 +191,17 @@ def _mcp_arguments(
     arguments = {**configured_arguments, **input_payload}
     if "document_id" in arguments:
         arguments["document_id"] = dingtalk_document_id_from_url(arguments["document_id"])
+    if "nodeId" in arguments:
+        arguments["nodeId"] = dingtalk_document_id_from_url(arguments["nodeId"])
+    if request_config.get("tool_name") == DINGTALK_DOCUMENT_UPDATE_TOOL_NAME:
+        if "nodeId" not in arguments and arguments.get("document_id"):
+            arguments["nodeId"] = dingtalk_document_id_from_url(arguments["document_id"])
+        if "markdown" not in arguments and arguments.get("content"):
+            arguments["markdown"] = arguments["content"]
+        if arguments.get("markdown") and not arguments.get("format"):
+            arguments["format"] = "markdown"
+        arguments.pop("document_id", None)
+        arguments.pop("content", None)
     return arguments
 
 
@@ -199,6 +214,53 @@ def _scalar_template_parameters(*sources: dict[str, Any] | None) -> dict[str, st
             if isinstance(value, str | int | float | bool):
                 parameters[str(key)] = str(value)
     return parameters
+
+
+def _non_blank_string(value: Any) -> str:
+    return str(value).strip() if isinstance(value, str) else ""
+
+
+def _apply_dingtalk_document_write_defaults(
+    action: dict[str, Any],
+    request_config: dict[str, Any],
+) -> dict[str, Any]:
+    result_mapping = _dict_config_section(action.get("result_mapping"))
+    if result_mapping.get("write_target") != DINGTALK_DOCUMENT_WRITE_TARGET:
+        return request_config
+    if action.get("action_type") != "mcp_tool":
+        return request_config
+
+    normalized = dict(request_config)
+    configured_tool_name = _non_blank_string(normalized.get("tool_name"))
+    if not configured_tool_name or configured_tool_name == DINGTALK_DOCUMENT_LEGACY_UPDATE_TOOL_NAME:
+        normalized["tool_name"] = DINGTALK_DOCUMENT_UPDATE_TOOL_NAME
+
+    mcp = _dict_config_section(normalized.get("mcp"))
+    if not _non_blank_string(mcp.get("provider")):
+        mcp["provider"] = "dingtalk"
+    if not _non_blank_string(mcp.get("server_name")):
+        mcp["server_name"] = "doc"
+    normalized["mcp"] = mcp
+
+    arguments = _dict_config_section(normalized.get("arguments"))
+    if arguments.get("document_id") and not arguments.get("nodeId"):
+        arguments["nodeId"] = arguments.get("document_id")
+    if arguments.get("content") and not arguments.get("markdown"):
+        arguments["markdown"] = arguments.get("content")
+    mapping_argument_defaults = {
+        "format": "markdown",
+        "markdown": result_mapping.get("content_template"),
+        "mode": result_mapping.get("write_mode"),
+        "nodeId": result_mapping.get("document_id"),
+    }
+    for key, value in mapping_argument_defaults.items():
+        if key not in arguments and value not in (None, ""):
+            arguments[key] = value
+    arguments.pop("document_id", None)
+    arguments.pop("content", None)
+    if arguments:
+        normalized["arguments"] = arguments
+    return normalized
 
 
 def resolve_plugin_request_config(
@@ -224,6 +286,7 @@ def resolve_plugin_request_config(
     if connection_headers or action_headers:
         merged["headers"] = {**connection_headers, **action_headers}
 
+    merged = _apply_dingtalk_document_write_defaults(action, merged)
     timezone = plugin_invocation_timezone(input_payload)
     return resolve_dynamic_parameter_value(
         merged,

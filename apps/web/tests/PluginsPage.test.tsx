@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import './proComponentsMock';
 
 import PluginsPage from '../src/pages/Plugins';
+import { buildVisualRequestConfig } from '../src/pages/Plugins/components/pluginFormTransformHelpers';
 import {
   ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
@@ -707,7 +708,7 @@ function installPluginsFetchMock(
                         schema_changed: 'mark_needs_review',
                       },
                       jsonrpc_method: 'tools/list',
-                      known_tools: ['doc.search_documents', 'doc.get_document_content', 'doc.create_document'],
+                      known_tools: ['search_documents', 'get_document_content', 'create_document'],
                       mode: 'tools_list',
                     },
                     category: 'collaboration',
@@ -894,7 +895,7 @@ function installPluginsFetchMock(
                         provider: 'dingtalk',
                         server_name: 'doc',
                       },
-                      tool_name: 'doc.update_document_content',
+                      tool_name: 'update_document',
                     },
                     result_mapping: {
                       content_template: '{{result_summary}}',
@@ -1697,20 +1698,20 @@ function installPluginsFetchMock(
       return jsonResponse({
         data: {
           discovered_tools: [
-            { name: 'doc.search_documents' },
-            { name: 'doc.create_document' },
-            { name: 'doc.export_document' },
+            { name: 'search_documents' },
+            { name: 'create_document' },
+            { name: 'export_document' },
           ],
-          missing_tools: ['doc.get_document_content'],
-          new_tools: ['doc.export_document'],
+          missing_tools: ['get_document_content'],
+          new_tools: ['export_document'],
           request_summary: {
             method: 'POST',
             query: { key: '***', provider: 'dingtalk' },
           },
-          schema_changed_tools: ['doc.create_document'],
+          schema_changed_tools: ['create_document'],
           status: 'drift_detected',
           suggestions: [
-            { detail: '新增工具 doc.export_document 可生成动作模板', type: 'suggest_action_template' },
+            { detail: '新增工具 export_document 可生成动作模板', type: 'suggest_action_template' },
           ],
           tool_count: 3,
         },
@@ -1728,7 +1729,7 @@ function installPluginsFetchMock(
             {
               request_preview: {
                 query: { key: '***', provider: 'dingtalk' },
-                tool_name: 'doc.get_document_content',
+                tool_name: 'get_document_content',
               },
             },
           ],
@@ -1769,6 +1770,38 @@ function installPluginsFetchMock(
             },
           ]
         : [];
+      const dingtalkDocumentActions = options.includeDingTalkPlugins
+        ? [
+            {
+              action_type: 'mcp_tool',
+              code: 'update_dingtalk_document_content',
+              connection_id: 'connection_dingtalk_doc',
+              id: 'action_dingtalk_doc_update',
+              name: '钉钉文档 - 更新内容',
+              plugin_id: 'plugin_standard_dingtalk_doc',
+              request_config: {
+                arguments: {
+                  format: 'markdown',
+                  markdown: '{{result_summary}}',
+                  mode: 'append',
+                  nodeId: 'b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz',
+                },
+                mcp: { provider: 'dingtalk', server_name: 'doc' },
+                tool_name: 'update_document',
+              },
+              requires_human_review: false,
+              result_mapping: {
+                content_template: '{{result_summary}}',
+                document_id: 'b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz',
+                document_id_path: '$.document_id',
+                status_path: '$.status',
+                write_mode: 'append',
+                write_target: 'dingtalk_document',
+              },
+              status: 'active',
+            },
+          ]
+        : [];
       return jsonResponse({
         data: {
           items: [
@@ -1789,9 +1822,10 @@ function installPluginsFetchMock(
               result_mapping: { write_target: 'scheduled_job_result' },
               status: 'active',
             },
+            ...dingtalkDocumentActions,
             ...officialActions,
           ],
-          total: 1 + officialActions.length,
+          total: 1 + dingtalkDocumentActions.length + officialActions.length,
         },
       });
     }
@@ -2630,9 +2664,9 @@ describe('PluginsPage', () => {
     );
     const dialog = await findDialogByTitle('钉钉动态能力发现');
     expect(within(dialog).getByText('drift_detected')).toBeInTheDocument();
-    expect(within(dialog).getByText('doc.export_document')).toBeInTheDocument();
-    expect(within(dialog).getByText('doc.get_document_content')).toBeInTheDocument();
-    expect(within(dialog).getByText('doc.create_document')).toBeInTheDocument();
+    expect(within(dialog).getByText('export_document')).toBeInTheDocument();
+    expect(within(dialog).getByText('get_document_content')).toBeInTheDocument();
+    expect(within(dialog).getByText('create_document')).toBeInTheDocument();
     expect(within(dialog).getByText('新增工具生成动作模板')).toBeInTheDocument();
     expect(within(dialog).getByText('key')).toBeInTheDocument();
     expect(within(dialog).getByText('***')).toBeInTheDocument();
@@ -2651,7 +2685,11 @@ describe('PluginsPage', () => {
 
     const dialog = await findDialogByTitle('新增动作');
     fireEvent.mouseDown(within(dialog).getByLabelText('配置场景'));
-    fireEvent.click(await screen.findByText('钉钉文档 - 更新内容'));
+    const scenarioDropdown = document.querySelector<HTMLElement>(
+      '.ant-select-dropdown:not(.ant-select-dropdown-hidden)',
+    );
+    expect(scenarioDropdown).toBeTruthy();
+    fireEvent.click(within(scenarioDropdown!).getByText('钉钉文档 - 更新内容'));
 
     expect(within(dialog).queryByLabelText('插件')).not.toBeInTheDocument();
     expect(within(dialog).getByText('钉钉文档')).toBeInTheDocument();
@@ -2678,12 +2716,13 @@ describe('PluginsPage', () => {
           plugin_id: 'plugin_standard_dingtalk_doc',
           request_config: expect.objectContaining({
             arguments: {
-              content: '{{result_summary}}',
-              document_id: 'b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz',
+              format: 'markdown',
+              markdown: '{{result_summary}}',
               mode: 'append',
+              nodeId: 'b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz',
             },
             mcp: expect.objectContaining({ provider: 'dingtalk' }),
-            tool_name: 'doc.update_document_content',
+            tool_name: 'update_document',
           }),
           result_mapping: {
             content_template: '{{result_summary}}',
@@ -2696,6 +2735,31 @@ describe('PluginsPage', () => {
         }),
       ]),
     );
+  });
+
+  it('fills the DingTalk document update tool when the write target is selected directly', () => {
+    expect(
+      buildVisualRequestConfig({
+        action_type: 'mcp_tool',
+        content_template: '{{result_summary}}',
+        document_id: 'https://alidocs.dingtalk.com/i/nodes/b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz?doc_type=wiki_doc',
+        request_config: '{}',
+        write_mode: 'append',
+        write_target: 'dingtalk_document',
+      }),
+    ).toEqual({
+      arguments: {
+        format: 'markdown',
+        markdown: '{{result_summary}}',
+        mode: 'append',
+        nodeId: 'b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz',
+      },
+      mcp: {
+        provider: 'dingtalk',
+        server_name: 'doc',
+      },
+      tool_name: 'update_document',
+    });
   });
 
   it('shows template version status and copies an official plugin as custom', async () => {
@@ -3947,6 +4011,9 @@ describe('PluginsPage', () => {
     fireEvent.click(await screen.findByText('试运行'));
 
     const dialog = await findDialogByTitle('动作试运行：调用反馈 API');
+    expect(within(dialog).getByText('试运行输入通常无需填写')).toBeInTheDocument();
+    expect(within(dialog).getByText(/默认使用动作里保存的请求配置试运行/)).toBeInTheDocument();
+    expect(within(dialog).getByText('高级：临时覆盖输入 JSON')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '试运行' }));
 
     await waitFor(() =>
@@ -3995,6 +4062,40 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByText('预计写入：8')).toBeInTheDocument();
     expect(within(dialog).getByText('候选记录：0')).toBeInTheDocument();
     expect(within(dialog).getByText('预览值')).toBeInTheDocument();
+  });
+
+  it('guides DingTalk document action trials without requiring JSON editing', async () => {
+    const { actionTrialBodies } = installPluginsFetchMock({
+      includeDingTalkPlugins: true,
+      includeOfficialPlugins: true,
+    });
+    window.history.pushState({}, '', '/tasks/plugins');
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    const actionCell = await screen.findByText('钉钉文档 - 更新内容');
+    const actionRow = actionCell.closest('tr');
+    expect(actionRow).toBeTruthy();
+    expect(within(actionRow!).getAllByText('钉钉文档')).toHaveLength(2);
+    fireEvent.click(within(actionRow!).getByRole('button', { name: /试运行/ }));
+
+    const dialog = await findDialogByTitle('动作试运行：钉钉文档 - 更新内容');
+    expect(within(dialog).getByText('默认按动作配置试运行')).toBeInTheDocument();
+    expect(within(dialog).getByText(/通常不用填写下面的 JSON/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/文档 ID：b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz/)).toBeInTheDocument();
+    expect(within(dialog).getByText('写入方式：追加内容')).toBeInTheDocument();
+    expect(within(dialog).getByText('写入内容：{{result_summary}}')).toBeInTheDocument();
+    expect(within(dialog).getByText('高级：临时覆盖输入 JSON')).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '试运行' }));
+
+    await waitFor(() =>
+      expect(actionTrialBodies.at(-1)).toEqual({
+        connection_id: 'connection_dingtalk_doc',
+        input_payload: {},
+      }),
+    );
   });
 
   it('shows runner approval request details when an action trial is blocked', async () => {

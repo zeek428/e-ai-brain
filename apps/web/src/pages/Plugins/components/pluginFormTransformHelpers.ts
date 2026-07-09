@@ -34,6 +34,7 @@ export const MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO = 'maxcompute_weekly_feedback';
 export const MAXCOMPUTE_DEFAULT_FIELDS =
   'feedback_id,user_id,product_id,module_code,feedback_type,content,sentiment,created_at';
 export const DEFAULT_RESULT_WRITE_TARGET = 'scheduled_job_result';
+const DINGTALK_DOCUMENT_UPDATE_TOOL_NAME = 'update_document';
 
 export function stableJson(value: Record<string, unknown>): string {
   return JSON.stringify(value, null, 2);
@@ -438,12 +439,24 @@ export function buildVisualRequestConfig(values: Partial<PluginActionFormValues>
     const config = parseOptionalJsonRecord(values.request_config);
     const argumentsConfig = isPlainRecord(config.arguments) ? { ...config.arguments } : {};
     if (values.write_target === 'dingtalk_document') {
+      if (!stringValue(config.tool_name)) {
+        config.tool_name = DINGTALK_DOCUMENT_UPDATE_TOOL_NAME;
+      } else if (config.tool_name === 'doc.update_document_content') {
+        config.tool_name = DINGTALK_DOCUMENT_UPDATE_TOOL_NAME;
+      }
+      const mcpConfig = isPlainRecord(config.mcp) ? { ...config.mcp } : {};
+      config.mcp = {
+        ...mcpConfig,
+        provider: stringValue(mcpConfig.provider).trim() || 'dingtalk',
+        server_name: stringValue(mcpConfig.server_name).trim() || 'doc',
+      };
       const documentId = dingtalkDocumentIdFromLink(values.document_id);
       if (documentId) {
-        argumentsConfig.document_id = documentId;
+        argumentsConfig.nodeId = documentId;
       }
       if (values.content_template?.trim()) {
-        argumentsConfig.content = values.content_template.trim();
+        argumentsConfig.markdown = values.content_template.trim();
+        argumentsConfig.format = 'markdown';
       }
       if (values.write_mode?.trim()) {
         argumentsConfig.mode = values.write_mode.trim();

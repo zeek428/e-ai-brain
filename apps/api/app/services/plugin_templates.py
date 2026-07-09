@@ -184,23 +184,24 @@ DINGTALK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"keyword": {"type": "string"}},
         "type": "object",
     },
-    "doc.create_document": {
-        "properties": {"content": {"type": "string"}, "title": {"type": "string"}},
+    "create_document": {
+        "properties": {"markdown": {"type": "string"}, "name": {"type": "string"}},
         "type": "object",
     },
-    "doc.get_document_content": {
-        "properties": {"document_id": {"type": "string"}},
+    "get_document_content": {
+        "properties": {"format": {"type": "string"}, "nodeId": {"type": "string"}},
         "type": "object",
     },
-    "doc.search_documents": {
-        "properties": {"keyword": {"type": "string"}, "max_rows": {"type": "integer"}},
+    "search_documents": {
+        "properties": {"keyword": {"type": "string"}, "pageSize": {"type": "integer"}},
         "type": "object",
     },
-    "doc.update_document_content": {
+    "update_document": {
         "properties": {
-            "content": {"type": "string"},
-            "document_id": {"type": "string"},
+            "format": {"type": "string"},
+            "markdown": {"type": "string"},
             "mode": {"enum": ["append", "overwrite"], "type": "string"},
+            "nodeId": {"type": "string"},
         },
         "type": "object",
     },
@@ -304,7 +305,7 @@ DINGTALK_MCP_P0_ACTION_DEFINITIONS: list[dict[str, Any]] = [
         "form_defaults": {"content": "{{result_summary}}", "title": "{{job_name}}"},
         "plugin_code": "dingtalk_doc",
         "risk_tier": "write",
-        "tool_name": "doc.create_document",
+        "tool_name": "create_document",
     },
     {
         "code": "dingtalk_doc_get_content",
@@ -314,7 +315,7 @@ DINGTALK_MCP_P0_ACTION_DEFINITIONS: list[dict[str, Any]] = [
         "form_defaults": {"document_id": ""},
         "plugin_code": "dingtalk_doc",
         "risk_tier": "sensitive_read",
-        "tool_name": "doc.get_document_content",
+        "tool_name": "get_document_content",
     },
     {
         "code": "dingtalk_doc_search",
@@ -324,7 +325,7 @@ DINGTALK_MCP_P0_ACTION_DEFINITIONS: list[dict[str, Any]] = [
         "form_defaults": {"keyword": "", "max_rows": 20},
         "plugin_code": "dingtalk_doc",
         "risk_tier": "read",
-        "tool_name": "doc.search_documents",
+        "tool_name": "search_documents",
     },
     {
         "code": "dingtalk_doc_update_content",
@@ -339,7 +340,7 @@ DINGTALK_MCP_P0_ACTION_DEFINITIONS: list[dict[str, Any]] = [
         "plugin_code": "dingtalk_doc",
         "result_mapping": result_write_target_default_mapping("dingtalk_document"),
         "risk_tier": "write",
-        "tool_name": "doc.update_document_content",
+        "tool_name": "update_document",
     },
     {
         "code": "dingtalk_drive_list_files",

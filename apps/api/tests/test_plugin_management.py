@@ -323,25 +323,25 @@ def test_dingtalk_p0_action_templates_include_risk_tiers_and_tool_metadata():
         ),
         "dingtalk_doc_create_document": (
             "dingtalk_doc",
-            "doc.create_document",
+            "create_document",
             "write",
             "钉钉文档 - 创建文档",
         ),
         "dingtalk_doc_get_content": (
             "dingtalk_doc",
-            "doc.get_document_content",
+            "get_document_content",
             "sensitive_read",
             "钉钉文档 - 读取内容",
         ),
         "dingtalk_doc_search": (
             "dingtalk_doc",
-            "doc.search_documents",
+            "search_documents",
             "read",
             "钉钉文档 - 搜索文档",
         ),
         "dingtalk_doc_update_content": (
             "dingtalk_doc",
-            "doc.update_document_content",
+            "update_document",
             "write",
             "钉钉文档 - 更新内容",
         ),
@@ -411,8 +411,8 @@ def test_dingtalk_marketplace_exposes_auth_guide_discovery_governance_and_scenar
     assert capability_discovery["mode"] == "tools_list"
     assert capability_discovery["jsonrpc_method"] == "tools/list"
     assert capability_discovery["drift_policy"]["new_tool"] == "suggest_action_template"
-    assert "doc.get_document_content" in capability_discovery["known_tools"]
-    assert "doc.update_document_content" in capability_discovery["known_tools"]
+    assert "get_document_content" in capability_discovery["known_tools"]
+    assert "update_document" in capability_discovery["known_tools"]
     assert "钉钉文档 - 更新内容" in item["action_templates"]
 
     governance_policy = item["governance_policy"]
@@ -539,27 +539,26 @@ def test_dingtalk_connection_tool_discovery_detects_tool_drift_and_redacts_url_k
                                     },
                                     "type": "object",
                                 },
-                                "name": "doc.search_documents",
+                                "name": "search_documents",
                             },
                             {
                                 "description": "创建文档",
                                 "inputSchema": {
                                     "properties": {
-                                        "content": {"type": "string"},
-                                        "space_id": {"type": "string"},
-                                        "title": {"type": "string"},
+                                        "markdown": {"type": "string"},
+                                        "name": {"type": "string"},
                                     },
                                     "type": "object",
                                 },
-                                "name": "doc.create_document",
+                                "name": "create_document",
                             },
                             {
                                 "description": "导出文档",
                                 "inputSchema": {
-                                    "properties": {"document_id": {"type": "string"}},
+                                    "properties": {"nodeId": {"type": "string"}},
                                     "type": "object",
                                 },
-                                "name": "doc.export_document",
+                                "name": "export_document",
                             },
                         ],
                     },
@@ -594,12 +593,12 @@ def test_dingtalk_connection_tool_discovery_detects_tool_drift_and_redacts_url_k
     assert data["request_summary"]["query"]["key"] == "***"
     assert data["status"] == "drift_detected"
     assert data["tool_count"] == 3
-    assert data["new_tools"] == ["doc.export_document"]
+    assert data["new_tools"] == ["export_document"]
     assert data["missing_tools"] == [
-        "doc.get_document_content",
-        "doc.update_document_content",
+        "get_document_content",
+        "update_document",
     ]
-    assert data["schema_changed_tools"] == ["doc.create_document"]
+    assert data["schema_changed_tools"] == ["search_documents"]
     assert data["suggestions"][0]["type"] == "suggest_action_template"
     assert "dingtalk-url-key-secret" not in str(data)
 
@@ -633,7 +632,7 @@ def test_dingtalk_plugin_observability_summarizes_health_and_redacted_replay():
             "connection_id": connection["id"],
             "name": "读取钉钉文档",
             "plugin_id": dingtalk_doc["plugin_id"],
-            "request_config": {"tool_name": "doc.get_document_content"},
+            "request_config": {"tool_name": "get_document_content"},
             "result_mapping": {"write_target": "scheduled_job_result"},
             "status": "active",
         },
@@ -654,7 +653,7 @@ def test_dingtalk_plugin_observability_summarizes_health_and_redacted_replay():
             "request_summary": {
                 "request_preview": {
                     "query": {"key": "***", "provider": "dingtalk"},
-                    "tool_name": "doc.get_document_content",
+                    "tool_name": "get_document_content",
                 },
             },
             "response_summary": {"json": {"ok": True}},
@@ -678,7 +677,7 @@ def test_dingtalk_plugin_observability_summarizes_health_and_redacted_replay():
             "request_summary": {
                 "request_preview": {
                     "query": {"key": "***", "provider": "dingtalk"},
-                    "tool_name": "doc.get_document_content",
+                    "tool_name": "get_document_content",
                 },
             },
             "response_summary": {"status_code": 403},
@@ -762,13 +761,9 @@ def test_mcp_streamable_http_url_key_invocation_uses_query_key_and_redacts_log(
             "plugin_id": plugin["id"],
             "request_config": {
                 "arguments": {
-                    "document_id": (
-                        "https://alidocs.dingtalk.com/i/nodes/"
-                        "b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz?doc_type=wiki_doc"
-                    ),
                     "max_rows": 20,
                 },
-                "tool_name": "doc.search_documents",
+                "tool_name": "search_documents",
             },
             "result_mapping": {"write_target": "scheduled_job_result"},
             "status": "active",
@@ -823,23 +818,125 @@ def test_mcp_streamable_http_url_key_invocation_uses_query_key_and_redacts_log(
     assert request_body["method"] == "tools/call"
     assert request_body["params"] == {
         "arguments": {
-            "document_id": "b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz",
             "keyword": "AI Brain",
             "max_rows": 20,
         },
-        "name": "doc.search_documents",
+        "name": "search_documents",
     }
     assert captured_requests[0]["headers"]["Accept"] == "application/json, text/event-stream"
     data = invoked.json()["data"]
     request_preview = data["request_summary"]["request_preview"]
     assert request_preview["protocol"] == "mcp_streamable_http"
     assert request_preview["arguments"] == {
-        "document_id": "b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz",
         "keyword": "AI Brain",
         "max_rows": 20,
     }
     assert request_preview["query"]["key"] == "***"
     assert "dingtalk-url-key-secret" not in str(data)
+
+
+def test_dingtalk_document_trial_infers_update_tool_for_legacy_actions(monkeypatch):
+    app.state.store.reset()
+    headers = auth_headers()
+    captured_requests: list[dict[str, object]] = []
+
+    marketplace = client.get("/api/system/plugin-marketplace", headers=headers).json()["data"]
+    dingtalk_doc = {item["code"]: item for item in marketplace["items"]}["dingtalk_doc"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            **dingtalk_doc["connection_defaults"],
+            "auth_config": {"query_key": "key", "secret_ref": "dingtalk-url-key-secret"},
+            "endpoint_url": "https://mcp-gw.dingtalk.com/server/doc-instance-123",
+            "name": "钉钉文档个人授权",
+            "plugin_id": dingtalk_doc["plugin_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "legacy_update_dingtalk_document",
+            "connection_id": connection["id"],
+            "name": "历史钉钉文档更新动作",
+            "plugin_id": dingtalk_doc["plugin_id"],
+            "request_config": {},
+            "result_mapping": {
+                "content_template": "{{result_summary}}",
+                "document_id": (
+                    "https://alidocs.dingtalk.com/i/nodes/"
+                    "b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz?doc_type=wiki_doc"
+                ),
+                "document_id_path": "$.document_id",
+                "status_path": "$.status",
+                "write_mode": "append",
+                "write_target": "dingtalk_document",
+            },
+            "status": "active",
+        },
+        headers=headers,
+    ).json()["data"]
+    assert action["request_config"] == {}
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "id": action["id"],
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "document_id": "b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz",
+                        "status": "updated",
+                    },
+                },
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured_requests.append(
+            {
+                "body": json.loads(request.data.decode("utf-8")),
+                "timeout": timeout,
+                "url": request.full_url,
+            },
+        )
+        return FakeResponse()
+
+    monkeypatch.setattr(plugin_invocation_runtime, "urlopen", fake_urlopen)
+
+    response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/trial",
+        json={"connection_id": connection["id"], "input_payload": {}},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "succeeded"
+    assert data["request_preview"]["tool_name"] == "update_document"
+    assert data["request_preview"]["arguments"] == {
+        "format": "markdown",
+        "markdown": "{{result_summary}}",
+        "mode": "append",
+        "nodeId": "b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz",
+    }
+    assert captured_requests[0]["body"]["params"] == {
+        "arguments": {
+            "format": "markdown",
+            "markdown": "{{result_summary}}",
+            "mode": "append",
+            "nodeId": "b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz",
+        },
+        "name": "update_document",
+    }
 
 
 def create_plugin_bundle(headers: dict[str, str]) -> tuple[dict, dict, dict]:

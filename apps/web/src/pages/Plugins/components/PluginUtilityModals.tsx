@@ -1,7 +1,7 @@
 import { CheckCircleOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { SelectProps } from 'antd';
-import { Alert, Button, Input, Modal, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Collapse, Input, Modal, Select, Space, Table, Tag, Typography } from 'antd';
 
 import { ExecutionTraceLink } from '../../../components/ExecutionTraceLink';
 import type {
@@ -106,6 +106,73 @@ function approvalRequestStatusColor(status?: string) {
 function approvalRequestTitle(record: AiExecutorApprovalRequestRecord) {
   const rawTitle = record.approval_request?.title;
   return typeof rawTitle === 'string' && rawTitle.trim() ? rawTitle : '高风险操作审批';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function stringValue(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function actionRequestArguments(action?: PluginActionRecord) {
+  const requestConfig = isRecord(action?.request_config) ? action.request_config : {};
+  return isRecord(requestConfig.arguments) ? requestConfig.arguments : {};
+}
+
+function writeModeLabel(value?: string) {
+  if (value === 'overwrite') {
+    return '覆盖内容';
+  }
+  if (value === 'append') {
+    return '追加内容';
+  }
+  return value ?? '-';
+}
+
+function trialInputGuide(action?: PluginActionRecord) {
+  const requestConfig = isRecord(action?.request_config) ? action.request_config : {};
+  const resultMapping = isRecord(action?.result_mapping) ? action.result_mapping : {};
+  const argumentsConfig = actionRequestArguments(action);
+  const writeTarget = stringValue(resultMapping.write_target);
+  const toolName = stringValue(requestConfig.tool_name);
+  const isDingTalkDocumentWrite =
+    writeTarget === 'dingtalk_document'
+    || toolName === 'doc.update_document_content'
+    || toolName === 'update_document';
+  if (isDingTalkDocumentWrite) {
+    const hasToolName = toolName === 'update_document';
+    return {
+      description: hasToolName
+        ? '文档、写入内容和追加/覆盖方式已经在动作里配置好。通常不用填写下面的 JSON，直接点击“试运行”即可；只有想临时覆盖参数时再展开高级 JSON。'
+        : '该动作按钉钉文档写入目标运行，系统会自动补齐钉钉文档更新工具。通常不用填写下面的 JSON，直接点击“试运行”即可。',
+      recommendedInputJson: '{}',
+      tags: [
+        { label: '文档 ID', value: stringValue(argumentsConfig.nodeId, argumentsConfig.document_id, resultMapping.document_id) ?? '-' },
+        { label: 'MCP 工具', value: toolName === 'doc.update_document_content' ? 'update_document' : toolName ?? 'update_document' },
+        { label: '写入方式', value: writeModeLabel(stringValue(argumentsConfig.mode, resultMapping.write_mode)) },
+        { label: '写入内容', value: stringValue(argumentsConfig.markdown, argumentsConfig.content, resultMapping.content_template) ?? '-' },
+      ],
+      title: '默认按动作配置试运行',
+      type: 'warning' as const,
+    };
+  }
+  return {
+    description: '默认使用动作里保存的请求配置试运行，通常保持输入为 {} 即可。只有需要临时覆盖请求参数时，才在高级 JSON 中填写键值，例如 {"start_pt":"20260601"}。',
+    recommendedInputJson: '{}',
+    tags: [
+      { label: '动作类型', value: action?.action_type ?? '-' },
+      { label: '写入目标', value: writeTarget ?? '仅保存运行结果' },
+    ],
+    title: '试运行输入通常无需填写',
+    type: 'info' as const,
+  };
 }
 
 export function SystemVariableModal({
@@ -413,6 +480,8 @@ export function PluginActionTrialModal({
 }: PluginActionTrialModalProps) {
   const dryRunSeed = result?.scheduled_job_dry_run_seed;
   const canCreateScheduledJobDraft = trialSeedCanCreateScheduledJobDraft(result);
+  const inputGuide = trialInputGuide(action);
+  const inputJsonLooksDefault = inputJson.trim() === inputGuide.recommendedInputJson;
   return (
     <Modal
       confirmLoading={running}
@@ -434,10 +503,54 @@ export function PluginActionTrialModal({
             onChange={onConnectionChange}
           />
         </Space>
-        <div>
-          <Typography.Text strong>试运行输入 JSON</Typography.Text>
-          <Input.TextArea rows={5} value={inputJson} onChange={(event) => onInputJsonChange(event.target.value)} />
-        </div>
+        <Alert
+          action={(
+            <Button
+              disabled={inputJsonLooksDefault}
+              size="small"
+              onClick={() => onInputJsonChange(inputGuide.recommendedInputJson)}
+            >
+              使用默认输入
+            </Button>
+          )}
+          description={(
+            <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+              <Typography.Text>{inputGuide.description}</Typography.Text>
+              <Space size={[6, 6]} wrap>
+                {inputGuide.tags.map((item) => (
+                  <Tag key={item.label}>
+                    {item.label}：{item.value}
+                  </Tag>
+                ))}
+              </Space>
+            </Space>
+          )}
+          showIcon
+          title={inputGuide.title}
+          type={inputGuide.type}
+        />
+        <Collapse
+          ghost
+          items={[
+            {
+              children: (
+                <Space orientation="vertical" size={6} style={{ width: '100%' }}>
+                  <Typography.Text type="secondary">
+                    这里的 JSON 会作为临时输入传给动作，字段会覆盖动作中同名参数。
+                  </Typography.Text>
+                  <Input.TextArea
+                    rows={5}
+                    value={inputJson}
+                    onChange={(event) => onInputJsonChange(event.target.value)}
+                  />
+                </Space>
+              ),
+              key: 'advanced-json',
+              label: '高级：临时覆盖输入 JSON',
+            },
+          ]}
+          size="small"
+        />
         {sampleResponseSummary ? (
           <Alert
             description="本次试运行将复用连接测试返回的响应样例，只计算映射命中和写入预览，不再次请求第三方接口。"
