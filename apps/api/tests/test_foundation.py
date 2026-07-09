@@ -250,10 +250,39 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     }
     app.state.store.knowledge_documents["knowledge_document_health_center"] = {
         "id": "knowledge_document_health_center",
+        "chunk_count": 4,
+        "knowledge_space_id": "knowledge_space_health_center",
         "product_id": "product_health_center",
         "title": "健康中心说明",
         "index_status": "indexed",
         "permission_roles": ["admin"],
+        "updated_at": "2030-01-01T00:00:00+00:00",
+    }
+    app.state.store.knowledge_documents["knowledge_document_health_failed"] = {
+        "id": "knowledge_document_health_failed",
+        "chunk_count": 0,
+        "knowledge_space_id": "knowledge_space_health_center",
+        "product_id": "product_health_center",
+        "title": "失败索引文档",
+        "index_status": "index_failed",
+        "permission_roles": ["admin"],
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+    app.state.store.knowledge_documents["knowledge_document_health_stale"] = {
+        "id": "knowledge_document_health_stale",
+        "chunk_count": 2,
+        "knowledge_space_id": "knowledge_space_health_center",
+        "product_id": "product_health_center",
+        "title": "长期未更新文档",
+        "index_status": "text_indexed",
+        "permission_roles": ["admin"],
+        "updated_at": "2024-01-01T00:00:00+00:00",
+    }
+    app.state.store.knowledge_spaces["knowledge_space_health_center"] = {
+        "id": "knowledge_space_health_center",
+        "name": "健康中心空间",
+        "product_id": "product_health_center",
+        "status": "active",
     }
     app.state.store.ai_executor_runners["runner_health_center"] = {
         "id": "runner_health_center",
@@ -320,6 +349,19 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     assert dingtalk_subject["secret_ref_configured"] is True
     assert dingtalk_subject["expires_at"] == "2030-01-01T00:00:00+00:00"
     assert operations["knowledge_quality_loop"]["summary"]["total_documents"] >= 1
+    knowledge_governance = operations["knowledge_quality_loop"]["governance_summary"]
+    assert knowledge_governance["governance_candidate_count"] >= 2
+    assert knowledge_governance["index_failed_document_count"] >= 1
+    assert knowledge_governance["keyword_only_document_count"] >= 1
+    assert knowledge_governance["stale_document_count"] >= 1
+    knowledge_candidates = operations["knowledge_quality_loop"]["governance_candidates"]
+    assert any(item["title"] == "失败索引文档" for item in knowledge_candidates)
+    assert any(
+        item["title"] == "长期未更新文档"
+        and item["knowledge_space_name"] == "健康中心空间"
+        and "补齐 Embedding" in item["suggested_action"]
+        for item in knowledge_candidates
+    )
     assert operations["permission_diagnostics"]["summary"]["active_role_count"] >= 1
     product_scores = operations["product_onboarding_scores"]["products"]
     assert any(item["product_id"] == "product_health_center" for item in product_scores)

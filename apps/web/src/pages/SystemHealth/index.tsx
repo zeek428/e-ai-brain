@@ -381,6 +381,8 @@ function SystemHealthOperationsPanel({
   const permissionDiagnostics = permission?.diagnostics ?? [];
   const keyExpiryAlerts = dingtalk?.mcp?.key_expiry_alerts ?? [];
   const secretRefIssues = securityAudit?.secret_ref_validation?.issues ?? [];
+  const governanceSummary = knowledge?.governance_summary ?? {};
+  const governanceCandidates = knowledge?.governance_candidates ?? knowledge?.watch_documents ?? [];
 
   const showAdminWeeklyReport = async () => {
     setWeeklyReportLoading(true);
@@ -792,6 +794,48 @@ function SystemHealthOperationsPanel({
                 {String(gate.metric)}：{gate.passed ? '达标' : '需关注'}
               </Tag>
             ))}
+          </div>
+          <div className="system-health-knowledge-governance" aria-label="知识治理待办">
+            <div className="system-health-knowledge-governance-summary">
+              <Tag color={numericMetric(governanceSummary.governance_candidate_count) ? 'orange' : 'green'}>
+                治理待办 {formatMetricValue(governanceSummary.governance_candidate_count)}
+              </Tag>
+              <Tag color={numericMetric(governanceSummary.stale_document_count) ? 'gold' : 'green'}>
+                过期文档 {formatMetricValue(governanceSummary.stale_document_count)}
+              </Tag>
+              <Tag color={numericMetric(governanceSummary.keyword_only_document_count) ? 'blue' : 'green'}>
+                仅关键词 {formatMetricValue(governanceSummary.keyword_only_document_count)}
+              </Tag>
+              <Tag color={numericMetric(governanceSummary.zero_chunk_document_count) ? 'red' : 'green'}>
+                无分片 {formatMetricValue(governanceSummary.zero_chunk_document_count)}
+              </Tag>
+            </div>
+            {governanceCandidates.length ? (
+              <div className="system-health-knowledge-governance-list">
+                {governanceCandidates.slice(0, 4).map((candidate) => {
+                  const severity = String(candidate.severity ?? 'low');
+                  const severityColor = severity === 'high' ? 'red' : severity === 'medium' ? 'orange' : 'blue';
+                  return (
+                    <div className="system-health-knowledge-governance-item" key={String(candidate.document_id ?? candidate.title)}>
+                      <div className="system-health-knowledge-governance-title">
+                        <Text strong ellipsis={{ tooltip: candidate.title }}>
+                          {formatMetricValue(candidate.title)}
+                        </Text>
+                        <Tag color={severityColor}>{severity === 'high' ? '高' : severity === 'medium' ? '中' : '低'}</Tag>
+                      </div>
+                      <Text type="secondary">
+                        {formatMetricValue(candidate.reason)}
+                        {candidate.knowledge_space_name ? ` · 空间 ${candidate.knowledge_space_name}` : ''}
+                        {candidate.updated_at ? ` · ${formatDisplayDateTime(candidate.updated_at)}` : ''}
+                      </Text>
+                      <Text type="secondary">{formatMetricValue(candidate.suggested_action)}</Text>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <Empty description="暂无知识治理待办" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            )}
           </div>
           <Text type="secondary">
             引用点击率 {feedbackLoop.citation_click_rate === null || feedbackLoop.citation_click_rate === undefined ? '-' : `${percentMetric(feedbackLoop.citation_click_rate)}%`}

@@ -181,6 +181,34 @@ describe('SystemHealthPage', () => {
             },
           },
           knowledge_quality_loop: {
+            governance_candidates: [
+              {
+                document_id: 'knowledge_document_failed',
+                index_status: 'index_failed',
+                knowledge_space_name: '研发知识空间',
+                reason: '索引未完成或失败',
+                severity: 'high',
+                suggested_action: '重新索引并查看导入/解析日志',
+                title: '研发规范索引失败',
+                updated_at: '2026-07-01T00:00:00+08:00',
+              },
+              {
+                document_id: 'knowledge_document_stale',
+                index_status: 'text_indexed',
+                knowledge_space_name: '研发知识空间',
+                reason: '仅关键词索引，缺少向量召回、180 天未更新',
+                severity: 'medium',
+                suggested_action: '补齐 Embedding 配置并重建向量索引；确认内容是否过期，更新文档或归档',
+                title: '长期未更新知识文档',
+                updated_at: '2024-01-01T00:00:00+08:00',
+              },
+            ],
+            governance_summary: {
+              governance_candidate_count: 2,
+              keyword_only_document_count: 1,
+              stale_document_count: 1,
+              zero_chunk_document_count: 0,
+            },
             quality_gates: [{ metric: 'searchable_ratio', passed: true, value: 1 }],
             summary: {
               index_failed_documents: 0,
@@ -313,6 +341,10 @@ describe('SystemHealthPage', () => {
     expect(screen.getByRole('button', { name: /取\s*消/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /重\s*试/ })).toBeInTheDocument();
     expect(screen.getByText('知识中心质量闭环')).toBeInTheDocument();
+    expect(screen.getByLabelText('知识治理待办')).toHaveTextContent('治理待办 2');
+    expect(screen.getByLabelText('知识治理待办')).toHaveTextContent('研发规范索引失败');
+    expect(screen.getByLabelText('知识治理待办')).toHaveTextContent('长期未更新知识文档');
+    expect(screen.getByLabelText('知识治理待办')).toHaveTextContent('补齐 Embedding 配置并重建向量索引');
     expect(screen.getByText('产品接入完整度评分')).toBeInTheDocument();
     expect(screen.getByText('钉钉授权生命周期')).toBeInTheDocument();
     expect(screen.getByLabelText('钉钉授权主体统计')).toHaveTextContent('系统 1');

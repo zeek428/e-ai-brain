@@ -1824,6 +1824,51 @@ body {
   min-width: 0;
 }
 
+.system-health-knowledge-governance {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.system-health-knowledge-governance-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.system-health-knowledge-governance-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.system-health-knowledge-governance-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.system-health-knowledge-governance-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.system-health-knowledge-governance-title .ant-typography {
+  min-width: 0;
+}
+
+.system-health-knowledge-governance-item .ant-typography {
+  overflow-wrap: anywhere;
+}
+
 .system-health-dingtalk-subject-summary {
   display: flex;
   flex-wrap: wrap;

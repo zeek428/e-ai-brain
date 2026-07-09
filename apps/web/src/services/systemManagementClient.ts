@@ -233,6 +233,21 @@ export type SystemAdminWeeklyReport = {
   trace_id?: string;
 };
 
+export type SystemHealthKnowledgeGovernanceCandidate = {
+  age_days?: number | null;
+  document_id?: string | null;
+  index_status?: string | null;
+  knowledge_space_id?: string | null;
+  knowledge_space_name?: string | null;
+  product_id?: string | null;
+  reason?: string | null;
+  reasons?: string[];
+  severity?: string | null;
+  suggested_action?: string | null;
+  title?: string | null;
+  updated_at?: string | null;
+};
+
 export type SystemHealthOperations = {
   ai_executor_ops?: {
     controls?: Array<{ description: string; label: string; target: string }>;
@@ -315,8 +330,11 @@ export type SystemHealthOperations = {
   };
   knowledge_quality_loop?: {
     feedback_loop?: Record<string, unknown>;
+    governance_candidates?: SystemHealthKnowledgeGovernanceCandidate[];
+    governance_summary?: Record<string, unknown>;
     quality_gates?: Array<Record<string, unknown>>;
     summary?: Record<string, unknown>;
+    watch_documents?: SystemHealthKnowledgeGovernanceCandidate[];
   };
   permission_diagnostics?: {
     auto_fix_suggestions?: Array<Record<string, unknown>>;

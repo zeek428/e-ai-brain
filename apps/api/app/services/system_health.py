@@ -1110,6 +1110,8 @@ def _knowledge_quality_loop(
     quality_metrics = knowledge_quality_summary(current_store, since_days=30)
     stale_days = int(os.getenv("KNOWLEDGE_DOC_STALE_DAYS", "180") or "180")
     now = datetime.now(UTC)
+    active_document_statuses = {"archived", "deleted"}
+    spaces_by_id = {str(space.get("id")): space for space in spaces if space.get("id")}
     stale_documents = [
         document
         for document in documents
@@ -1122,19 +1124,97 @@ def _knowledge_quality_loop(
             is not None
         )
         and (now - _updated_at).days >= stale_days
-        and str(document.get("index_status") or "").lower() not in {"archived", "deleted"}
+        and str(document.get("index_status") or "").lower() not in active_document_statuses
+    ]
+    index_failed_documents = [
+        document
+        for document in documents
+        if str(document.get("index_status") or "").lower()
+        in {"failed", "index_failed", "pending_index", "importing"}
+    ]
+    keyword_only_documents = [
+        document
+        for document in documents
+        if str(document.get("index_status") or "").lower() in {"keyword_only", "text_indexed"}
+    ]
+    zero_chunk_documents = [
+        document
+        for document in documents
+        if str(document.get("index_status") or "").lower()
+        in {"indexed", "text_indexed", "vector_indexed"}
+        and int(document.get("chunk_count") or 0) == 0
     ]
     low_quality_documents = [
         document
         for document in documents
-        if str(document.get("index_status") or "").lower()
-        in {"index_failed", "pending_index", "importing"}
-        or (
-            str(document.get("index_status") or "").lower()
-            in {"indexed", "text_indexed", "vector_indexed"}
-            and int(document.get("chunk_count") or 0) == 0
-        )
+        if document in index_failed_documents
+        or document in keyword_only_documents
+        or document in zero_chunk_documents
     ]
+    stale_document_ids = {str(document.get("id")) for document in stale_documents if document.get("id")}
+    low_quality_document_ids = {
+        str(document.get("id")) for document in low_quality_documents if document.get("id")
+    }
+
+    def _governance_candidate(document: dict[str, Any]) -> dict[str, Any]:
+        document_id = str(document.get("id") or "")
+        index_status = str(document.get("index_status") or "unknown").lower()
+        updated_at = _parse_datetime(document.get("updated_at") or document.get("created_at"))
+        age_days = (now - updated_at).days if updated_at else None
+        reasons: list[str] = []
+        suggested_actions: list[str] = []
+        severity = "low"
+        if index_status in {"failed", "index_failed", "pending_index", "importing"}:
+            reasons.append("索引未完成或失败")
+            suggested_actions.append("重新索引并查看导入/解析日志")
+            severity = "high" if index_status in {"failed", "index_failed"} else "medium"
+        if index_status in {"keyword_only", "text_indexed"}:
+            reasons.append("仅关键词索引，缺少向量召回")
+            suggested_actions.append("补齐 Embedding 配置并重建向量索引")
+            severity = "medium" if severity == "low" else severity
+        if document in zero_chunk_documents:
+            reasons.append("没有可检索分片")
+            suggested_actions.append("重新解析文档或检查文件内容")
+            severity = "high"
+        if document_id in stale_document_ids:
+            reasons.append(f"{stale_days} 天未更新")
+            suggested_actions.append("确认内容是否过期，更新文档或归档")
+            severity = "medium" if severity == "low" else severity
+        knowledge_space_id = (
+            document.get("knowledge_space_id")
+            or document.get("space_id")
+            or document.get("target_space_id")
+        )
+        space = spaces_by_id.get(str(knowledge_space_id)) if knowledge_space_id else None
+        return {
+            "age_days": age_days,
+            "document_id": document.get("id"),
+            "index_status": document.get("index_status"),
+            "knowledge_space_id": knowledge_space_id,
+            "knowledge_space_name": (space or {}).get("name") or (space or {}).get("title"),
+            "product_id": document.get("product_id"),
+            "reason": "、".join(reasons) if reasons else "待复核",
+            "reasons": reasons,
+            "severity": severity,
+            "suggested_action": "；".join(dict.fromkeys(suggested_actions)) or "复核文档质量",
+            "title": document.get("title") or document.get("file_name") or document.get("id"),
+            "updated_at": document.get("updated_at") or document.get("created_at"),
+        }
+
+    governance_candidates = [
+        _governance_candidate(document)
+        for document in documents
+        if str(document.get("id") or "") in low_quality_document_ids
+        or str(document.get("id") or "") in stale_document_ids
+    ]
+    severity_rank = {"high": 0, "medium": 1, "low": 2}
+    governance_candidates.sort(
+        key=lambda item: (
+            severity_rank.get(str(item.get("severity") or "low"), 3),
+            -(int(item.get("age_days") or 0)),
+            str(item.get("title") or ""),
+        )
+    )
     no_result_rate = quality_metrics.get("no_result_rate")
     citation_click_rate = quality_metrics.get("citation_click_rate")
     citation_accuracy = quality_metrics.get("rag_citation_accuracy_proxy")
@@ -1190,11 +1270,23 @@ def _knowledge_quality_loop(
                 "value": len(stale_documents),
             },
         ],
+        "governance_candidates": governance_candidates[:8],
+        "governance_summary": {
+            "failed_import_job_count": len(failed_import_jobs),
+            "governance_candidate_count": len(governance_candidates),
+            "index_failed_document_count": len(index_failed_documents),
+            "keyword_only_document_count": len(keyword_only_documents),
+            "low_quality_document_count": len(low_quality_documents),
+            "stale_days": stale_days,
+            "stale_document_count": len(stale_documents),
+            "zero_chunk_document_count": len(zero_chunk_documents),
+        },
         "summary": {
             "active_space_count": sum(1 for item in spaces if item.get("status") == "active"),
             "citation_click_rate": citation_click_rate,
             "failed_import_job_count": len(failed_import_jobs),
             "index_failed_documents": failed_documents,
+            "keyword_only_document_count": len(keyword_only_documents),
             "low_quality_document_count": len(low_quality_documents),
             "no_result_rate": no_result_rate,
             "outdated_document_count": len(stale_documents),
@@ -1211,7 +1303,7 @@ def _knowledge_quality_loop(
             {
                 "document_id": document.get("id"),
                 "index_status": document.get("index_status"),
-                "reason": "过期" if document in stale_documents else "低质量",
+                "reason": "过期" if str(document.get("id") or "") in stale_document_ids else "低质量",
                 "title": document.get("title"),
                 "updated_at": document.get("updated_at"),
             }
