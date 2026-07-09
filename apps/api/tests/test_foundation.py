@@ -432,6 +432,10 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     assert operations["permission_diagnostics"]["summary"]["active_role_count"] >= 1
     product_scores = operations["product_onboarding_scores"]["products"]
     assert any(item["product_id"] == "product_health_center" for item in product_scores)
+    security_actions = operations["security_audit_governance"]["governance_actions"]
+    assert any(item["key"] == "migrate_direct_secrets" for item in security_actions)
+    assert any(item["key"] == "export_audit_evidence" for item in security_actions)
+    assert any(item["key"] == "generate_admin_weekly_report" for item in security_actions)
     assert "secret-url-key" not in response.text
     assert "secret-token" not in response.text
     assert data["trace_id"].startswith("trace_")

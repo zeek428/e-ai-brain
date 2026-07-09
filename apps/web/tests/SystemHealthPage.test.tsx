@@ -288,6 +288,46 @@ describe('SystemHealthPage', () => {
               ready_count: 1,
             },
           },
+          security_audit_governance: {
+            admin_weekly_report: {
+              available: true,
+              high_risk_operation_count: 1,
+              sensitive_config_change_count: 2,
+              total_audit_events: 12,
+            },
+            audit_export: { supported: true },
+            governance_actions: [
+              {
+                detail: '发现 1 个直接密钥配置，建议迁移为 env:NAME 或 vault/path 引用。',
+                key: 'migrate_direct_secrets',
+                severity: 'medium',
+                target: '/system/settings',
+                title: '迁移直接密钥配置',
+              },
+              {
+                detail: '按当前筛选导出最近 1000 条脱敏审计摘要，用于问题复盘和合规留档。',
+                key: 'export_audit_evidence',
+                severity: 'low',
+                target: '/governance/audit',
+                title: '导出审计证据',
+              },
+              {
+                detail: '生成近 7 天管理员周报，覆盖告警、审计、权限、知识质量和 AI 执行失败。',
+                key: 'generate_admin_weekly_report',
+                severity: 'low',
+                target: '/system/health',
+                title: '生成管理员周报',
+              },
+            ],
+            high_risk_confirmation: { required: true },
+            secret_ref_validation: {
+              direct_secret_count: 1,
+              invalid_ref_count: 0,
+              ref_count: 2,
+              status: 'pass',
+            },
+            sensitive_config_approval: { required: true },
+          },
         },
         overall_status: 'warning',
         recommendations: [
@@ -406,6 +446,9 @@ describe('SystemHealthPage', () => {
     expect(screen.getByText('retention-check')).toBeInTheDocument();
     expect(screen.getByText('对象存储同步清理')).toBeInTheDocument();
     expect(screen.getByText(/孤儿引用 1/)).toBeInTheDocument();
+    expect(screen.getByLabelText('安全审计治理动作')).toHaveTextContent('迁移直接密钥配置');
+    expect(screen.getByLabelText('安全审计治理动作')).toHaveTextContent('导出审计证据');
+    expect(screen.getByLabelText('安全审计治理动作')).toHaveTextContent('生成管理员周报');
     expect(screen.getByText('AI Brain')).toBeInTheDocument();
     expect(screen.getByText('SMTP 邮件发送')).toBeInTheDocument();
     expect(screen.getAllByText('钉钉 MCP 连接').length).toBeGreaterThan(0);

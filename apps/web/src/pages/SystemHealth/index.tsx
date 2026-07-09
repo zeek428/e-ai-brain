@@ -387,6 +387,7 @@ function SystemHealthOperationsPanel({
   const permissionDiagnostics = permission?.diagnostics ?? [];
   const keyExpiryAlerts = dingtalk?.mcp?.key_expiry_alerts ?? [];
   const secretRefIssues = securityAudit?.secret_ref_validation?.issues ?? [];
+  const securityGovernanceActions = securityAudit?.governance_actions ?? [];
   const governanceSummary = knowledge?.governance_summary ?? {};
   const governanceCandidates = knowledge?.governance_candidates ?? knowledge?.watch_documents ?? [];
 
@@ -1100,6 +1101,19 @@ function SystemHealthOperationsPanel({
               </Tag>
             ))}
           </div>
+          {securityGovernanceActions.length ? (
+            <div className="system-health-retention-list" aria-label="安全审计治理动作">
+              {securityGovernanceActions.slice(0, 6).map((item) => (
+                <div key={String(item.key || item.title)}>
+                  <strong>
+                    {alertSeverityTag(String(item.severity || 'low'))}
+                    {String(item.title || '治理动作')}
+                  </strong>
+                  <Text type="secondary">{String(item.detail || item.target || '-')}</Text>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <Text type="secondary">
             近 7 天审计 {formatMetricValue(securityAudit?.admin_weekly_report?.total_audit_events)}
             条，高风险操作 {formatMetricValue(securityAudit?.admin_weekly_report?.high_risk_operation_count)} 条。

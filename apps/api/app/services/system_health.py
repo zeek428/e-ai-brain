@@ -2197,6 +2197,71 @@ def _security_audit_governance(current_store: Any) -> dict[str, Any]:
         for ref in secret_refs
         if ref.get("status") in {"invalid", "missing", "unresolved", "warning"}
     ]
+    governance_actions: list[dict[str, Any]] = []
+    if invalid_refs:
+        governance_actions.append(
+            {
+                "detail": f"发现 {len(invalid_refs)} 个异常密钥引用，建议补齐 env/vault 配置后重新体检。",
+                "key": "fix_invalid_secret_refs",
+                "metric": len(invalid_refs),
+                "severity": "high",
+                "target": "/system/settings",
+                "title": "修复异常密钥引用",
+            }
+        )
+    if direct_secret_paths:
+        governance_actions.append(
+            {
+                "detail": f"发现 {len(direct_secret_paths)} 个直接密钥配置，建议迁移为 env:NAME 或 vault/path 引用。",
+                "key": "migrate_direct_secrets",
+                "metric": len(direct_secret_paths),
+                "severity": "medium",
+                "target": "/system/settings",
+                "title": "迁移直接密钥配置",
+            }
+        )
+    if sensitive_config_events:
+        governance_actions.append(
+            {
+                "detail": f"近 7 天有 {len(sensitive_config_events)} 次敏感配置或权限变更，建议复核确认原因和审计摘要。",
+                "key": "review_sensitive_changes",
+                "metric": len(sensitive_config_events),
+                "severity": "medium",
+                "target": "/governance/audit",
+                "title": "复核敏感配置变更",
+            }
+        )
+    if high_risk_operation_events:
+        governance_actions.append(
+            {
+                "detail": f"近 7 天有 {len(high_risk_operation_events)} 次高风险或失败操作，建议进入审计与运行复盘。",
+                "key": "review_high_risk_operations",
+                "metric": len(high_risk_operation_events),
+                "severity": "high",
+                "target": "/governance/audit",
+                "title": "复盘高风险操作",
+            }
+        )
+    governance_actions.extend(
+        [
+            {
+                "detail": "按当前筛选导出最近 1000 条脱敏审计摘要，用于问题复盘和合规留档。",
+                "key": "export_audit_evidence",
+                "metric": len(recent_audit_events),
+                "severity": "low",
+                "target": "/governance/audit",
+                "title": "导出审计证据",
+            },
+            {
+                "detail": "生成近 7 天管理员周报，覆盖告警、审计、权限、知识质量和 AI 执行失败。",
+                "key": "generate_admin_weekly_report",
+                "metric": len(recent_audit_events),
+                "severity": "low",
+                "target": "/system/health",
+                "title": "生成管理员周报",
+            },
+        ]
+    )
     return {
         "admin_weekly_report": {
             "available": True,
@@ -2210,6 +2275,7 @@ def _security_audit_governance(current_store: Any) -> dict[str, Any]:
             "endpoint": "/api/audit/events/export",
             "supported": True,
         },
+        "governance_actions": governance_actions[:8],
         "high_risk_confirmation": {
             "required": True,
             "controls": [

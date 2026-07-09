@@ -399,6 +399,7 @@ export type SystemHealthOperations = {
   security_audit_governance?: {
     admin_weekly_report?: Record<string, unknown>;
     audit_export?: Record<string, unknown>;
+    governance_actions?: Array<Record<string, unknown>>;
     high_risk_confirmation?: Record<string, unknown>;
     secret_ref_validation?: {
       direct_secret_count?: number;
