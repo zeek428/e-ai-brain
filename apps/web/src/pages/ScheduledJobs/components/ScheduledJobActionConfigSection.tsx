@@ -1,11 +1,7 @@
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import { Button, Form, Input, Select, Space, Typography } from 'antd';
-import type { FormItemProps } from 'antd';
+import { Alert, Button, Form, Input, Select, Space, Typography } from 'antd';
 
-import type { PluginActionRecord } from '../../../services/aiBrain';
 import { ScheduledJobFormSection } from './ScheduledJobFormSection';
-
-type FormRule = NonNullable<FormItemProps['rules']>[number];
 
 const notificationChannelOptions = [
   { label: '邮件', value: 'email' },
@@ -17,53 +13,21 @@ export function ScheduledJobActionConfigSection({
   genericResultActionOptions,
   isCodeInspectionJob,
   isGenericResultActionJob,
-  pluginActions,
-  requiredForPluginResource,
   severityThresholdOptions,
-  usesNativeScan,
-  writeStrategyLabelFromAction,
 }: {
   codeInspectionResultActionOptions: Array<{ label: string; value: string }>;
   genericResultActionOptions: Array<{ label: string; value: string }>;
   isCodeInspectionJob: boolean;
   isGenericResultActionJob: boolean;
-  pluginActions: PluginActionRecord[];
-  requiredForPluginResource: (message: string) => FormRule;
   severityThresholdOptions: Array<{ label: string; value: string }>;
-  usesNativeScan: boolean;
-  writeStrategyLabelFromAction: (action: PluginActionRecord) => string;
 }) {
-  const writeStrategyExtra = usesNativeScan
-    ? '本地完整扫描使用下方结果动作写入代码巡检报告'
-    : '选择结果写到哪里或通知到哪里，后台按配置顺序执行对应动作';
-
   const resultActionOptions = isCodeInspectionJob
     ? codeInspectionResultActionOptions
     : genericResultActionOptions;
   const showResultActions = isCodeInspectionJob || isGenericResultActionJob;
 
   return (
-    <ScheduledJobFormSection label="动作配置" marker="输出">
-      <Form.Item
-        label="写入策略"
-        name="plugin_action_ids"
-        rules={[requiredForPluginResource('请选择写入策略')]}
-        extra={writeStrategyExtra}
-      >
-        <Select
-          allowClear
-          disabled={usesNativeScan}
-          mode="multiple"
-          maxTagCount={2}
-          optionFilterProp="label"
-          placeholder="请选择写入策略"
-          showSearch
-          options={pluginActions.map((action) => ({
-            label: writeStrategyLabelFromAction(action),
-            value: action.id,
-          }))}
-        />
-      </Form.Item>
+    <ScheduledJobFormSection label="结果动作" marker="输出">
       {showResultActions ? (
         <Form.List name="result_actions">
           {(fields, { add, remove }) => (
@@ -129,7 +93,13 @@ export function ScheduledJobActionConfigSection({
             </Space>
           )}
         </Form.List>
-      ) : null}
+      ) : (
+        <Alert
+          showIcon
+          type="info"
+          title="当前作业使用数据来源动作的结果映射生成写入反馈"
+        />
+      )}
     </ScheduledJobFormSection>
   );
 }

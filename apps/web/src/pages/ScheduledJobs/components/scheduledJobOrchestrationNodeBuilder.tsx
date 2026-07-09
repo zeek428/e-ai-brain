@@ -135,12 +135,12 @@ export function buildScheduledJobOrchestrationNodes({
           onClick={testSelectedConnection}
           size="small"
         >
-          测试数据连接
+          测试数据来源
         </Button>
       ),
       details: compactDetails([
         ...connectionDetails,
-        selectedConnections.length > 1 ? `共 ${selectedConnections.length} 个数据连接` : undefined,
+        selectedConnections.length > 1 ? `共 ${selectedConnections.length} 个数据来源` : undefined,
         connectionTestResult ? `连接测试 ${connectionTestResult.status}` : undefined,
         connectionTestResult ? `${connectionTestResult.latency_ms}ms` : undefined,
         requestUrl,
@@ -153,7 +153,7 @@ export function buildScheduledJobOrchestrationNodes({
         : connectionRequired
           ? 'orange'
           : 'default',
-      title: '数据连接',
+      title: '数据来源',
     },
     {
       details: compactDetails([

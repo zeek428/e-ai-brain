@@ -283,6 +283,34 @@ def result_write_preview(
             "write_target_label": write_target_label,
         }
 
+    if write_target == "dingtalk_document":
+        document_id = str(mapping.get("document_id") or "").strip() or json_path_value(
+            raw_json,
+            str(mapping.get("document_id_path") or default_mapping.get("document_id_path")),
+        )
+        status = json_path_value(
+            raw_json,
+            str(mapping.get("status_path") or default_mapping.get("status_path")),
+        )
+        content_template = str(
+            mapping.get("content_template")
+            or default_mapping.get("content_template")
+            or "",
+        )
+        write_mode = str(mapping.get("write_mode") or default_mapping.get("write_mode") or "")
+        records_imported = 1 if raw_json is not None else 0
+        candidate_count = 1 if document_id or status or raw_json is not None else 0
+        return {
+            "candidate_count": candidate_count,
+            "document_id": compact_preview_value(document_id),
+            "records_imported": records_imported,
+            "sample_records": [compact_preview_value(content_template)] if content_template else [],
+            "status": compact_preview_value(status),
+            "write_mode": write_mode,
+            "write_target": write_target,
+            "write_target_label": write_target_label,
+        }
+
     preview_value = json_path_value(raw_json, mapping.get("records_imported_path"))
     if preview_value is None:
         for path in (

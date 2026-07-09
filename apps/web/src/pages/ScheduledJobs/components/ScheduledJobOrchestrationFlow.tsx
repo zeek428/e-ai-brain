@@ -17,10 +17,10 @@ type ScheduledJobTemplateWizardStep = NonNullable<ScheduledJobTemplateRecord['wi
 
 const defaultScheduledJobWizardSteps: ScheduledJobTemplateWizardStep[] = [
   {
-    description: '选择插件连接并完成取数测试',
+    description: '选择取数连接，或选择授权连接与读取动作',
     key: 'data_connection',
     required: true,
-    title: '数据连接',
+    title: '数据来源',
   },
   {
     description: '选择模型、AI角色和 Skill',
@@ -106,7 +106,7 @@ export function ScheduledJobOrchestrationFlow({
     >
       <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }} wrap>
         <Typography.Text strong>执行链路</Typography.Text>
-        <Typography.Text type="secondary">执行链路：数据连接 → AI执行 → 动作 → 运行记录</Typography.Text>
+        <Typography.Text type="secondary">执行链路：数据来源 → AI执行 → 动作 → 运行记录</Typography.Text>
       </Space>
       <Steps
         current={wizardStepCurrentIndex(steps, nodes)}

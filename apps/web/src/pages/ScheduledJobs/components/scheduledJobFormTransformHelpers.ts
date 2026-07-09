@@ -11,6 +11,7 @@ export type ScheduledJobFormValues = {
   agent_id?: string;
   config_json?: Record<string, unknown>;
   cron_expression?: string;
+  data_source_mode?: ScheduledJobDataSourceMode;
   enabled: boolean;
   execution_mode: string;
   interval_seconds?: number;
@@ -31,6 +32,8 @@ export type ScheduledJobFormValues = {
   source_system: string;
   template?: string;
 };
+
+export type ScheduledJobDataSourceMode = 'authorized_read_action' | 'direct_connection';
 
 export type DraftBackedScheduledJobFormValues = ScheduledJobFormValues & {
   plugin_input_mapping?: Record<string, unknown>;
@@ -166,6 +169,11 @@ export const scheduleTypeOptions = [
 ];
 
 export const scheduleTypeLabelByValue = new Map(scheduleTypeOptions.map((option) => [option.value, option.label]));
+
+export const dataSourceModeOptions = [
+  { label: '直接取数连接', value: 'direct_connection' },
+  { label: '授权连接 + 读取动作', value: 'authorized_read_action' },
+];
 
 export const productRequiredJobTypes = ['code_repository_inspection', 'user_feedback_insight_extract'];
 export const pluginRequiredJobTypes = [
@@ -370,15 +378,25 @@ export function scheduledJobConfigWithOrchestration(
   configJson: Record<string, unknown>,
   pluginConnectionIds: string[],
   pluginActionIds: string[],
+  extraOrchestration: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
     ...configJson,
     orchestration: {
       ...orchestrationConfigValue(configJson),
+      ...extraOrchestration,
       plugin_action_ids: pluginActionIds,
       plugin_connection_ids: pluginConnectionIds,
     },
   };
+}
+
+export function dataSourceModeFromConfig(configJson: unknown): ScheduledJobDataSourceMode {
+  const orchestration = orchestrationConfigValue(configJson);
+  const mode =
+    recordStringValue(orchestration, 'data_source_mode')
+    ?? recordStringValue(recordValue(configJson), 'data_source_mode');
+  return mode === 'authorized_read_action' ? 'authorized_read_action' : 'direct_connection';
 }
 
 export function hasRequiredFormValue(value: unknown) {
@@ -470,6 +488,7 @@ export function scheduledJobValuesFromAssistantDraft(
     agent_id: resolvedAgentId,
     config_json: recordFromDraftPayload(payload, 'config_json'),
     cron_expression: stringFromDraftPayload(payload, 'cron_expression'),
+    data_source_mode: dataSourceModeFromConfig(recordFromDraftPayload(payload, 'config_json')),
     enabled: booleanFromDraftPayload(payload, 'enabled', true),
     execution_mode:
       stringFromDraftPayload(payload, 'execution_mode')
@@ -597,6 +616,7 @@ export function scheduledJobTemplateValuesFromRecord(
     agent_id: recordStringValue(record, 'agent_id') ?? fallback?.agent_id ?? undefined,
     config_json: recordValue(record.config_json) ?? fallback?.config_json ?? {},
     cron_expression: recordStringValue(record, 'cron_expression') ?? fallback?.cron_expression ?? undefined,
+    data_source_mode: dataSourceModeFromConfig(record.config_json ?? fallback?.config_json),
     enabled: recordBooleanValue(record, 'enabled', fallback?.enabled ?? true),
     execution_mode: recordStringValue(record, 'execution_mode') ?? fallback?.execution_mode ?? 'deterministic',
     interval_seconds: recordNumberValue(record, 'interval_seconds') ?? fallback?.interval_seconds ?? undefined,

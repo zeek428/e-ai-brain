@@ -132,7 +132,7 @@ export function ScheduledJobConfigTable({
         },
         {
           dataIndex: 'plugin_connection_id',
-          title: '数据连接',
+          title: '数据来源',
           width: 260,
           render: (_, row) => {
             const connectionLabels = multiIdsFromScheduledJob(

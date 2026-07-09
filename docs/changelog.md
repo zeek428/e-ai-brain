@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### Added
+- 定时作业新增/编辑表单将首段配置统一为“数据来源”，支持“直接取数连接”和“授权连接 + 读取动作”两种模式；读取动作会按 Schema 展示参数字段，并将来源方式保存到 `config_json.orchestration.data_source_mode`。
 - 系统健康页权限诊断区新增“用户视角预览”入口，可输入用户 ID 查看真实可见入口、阻断入口、缺失权限点和 scope 摘要。
 - 产品接入完整度评分新增分项矩阵：系统健康页按主数据、版本、模块、代码仓库、知识、关联系统、插件连接、权限范围和最近健康展示得分、状态、证据和建议。
 - 系统健康告警通知 outbox 补齐投递闭环：新增 `POST /api/system/alerts/notifications/dispatch`，支持站内通知、系统 SMTP 邮件、Webhook/钉钉 URL 投递和失败重试，回写 `sent/failed/skipped`、`attempts`、`last_error`、`sent_at` 与脱敏投递摘要，系统健康页新增“投递通知”和“重试失败”操作。
@@ -48,6 +49,8 @@
 - 系统管理“系统设置”页面扩展系统级邮件发送配置：支持维护系统管理员邮箱、发件邮箱、默认发件人、Reply-To、SMTP Host/端口/TLS/用户名、密码或密钥引用，并提供 `POST /api/system/settings/email/test` 测试发送；响应和审计仅记录配置状态，不回显 SMTP 密码。
 - 插件市场新增钉钉官方 MCP P0 标准插件：文档、知识库、钉盘、AI 表格、机器人消息和通讯录能力按独立标准插件接入，支持 `mcp_streamable_http`、URL Key 鉴权、P0 动作模板和请求摘要脱敏。
 - 钉钉官方 MCP 插件增强授权配置向导、`tools/list` 动态能力发现、高风险动作治理、插件健康看板和 AI Brain 业务场景模板，并新增动态发现与钉钉观测 API。
+- 钉钉官方动作模板补充“钉钉文档 - 更新内容”场景，并统一钉钉动作模板名称为“钉钉能力 - 操作”前缀，便于新增动作配置场景检索。
+- 结果写入目标新增“钉钉文档”：动作表单可视化配置文档链接或 ID、写入内容和追加/覆盖方式，粘贴 `alidocs.dingtalk.com/i/nodes/...` 链接时自动提取 `document_id` 并生成 MCP `arguments`，无需手工编辑高级 JSON。
 - Bug 管理新增“推进 AI 任务”能力：`POST /api/bugs/{bug_id}/promote-ai-task` 会创建 `bug_fix` AI Task，写入 Bug 自动化任务引用并默认复用研发执行器策略自动启动，前端行操作新增“AI处理”入口。
 
 ### Changed

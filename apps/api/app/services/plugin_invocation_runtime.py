@@ -4,7 +4,7 @@ import json
 import sys
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlencode, urljoin
+from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -157,6 +157,39 @@ def _mcp_headers(
     }
 
 
+def dingtalk_document_id_from_url(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if not stripped:
+        return stripped
+    parsed = urlparse(stripped)
+    if not parsed.scheme or not parsed.netloc:
+        return stripped
+    query = parse_qs(parsed.query)
+    for key in ("document_id", "doc_id", "docKey", "dentryUuid", "node_id"):
+        if query.get(key):
+            return query[key][0]
+    segments = [unquote(segment) for segment in parsed.path.split("/") if segment]
+    for marker in ("nodes", "node"):
+        if marker in segments:
+            index = segments.index(marker)
+            if index + 1 < len(segments):
+                return segments[index + 1]
+    return stripped
+
+
+def _mcp_arguments(
+    request_config: dict[str, Any],
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    configured_arguments = _dict_config_section(request_config.get("arguments"))
+    arguments = {**configured_arguments, **input_payload}
+    if "document_id" in arguments:
+        arguments["document_id"] = dingtalk_document_id_from_url(arguments["document_id"])
+    return arguments
+
+
 def _scalar_template_parameters(*sources: dict[str, Any] | None) -> dict[str, str]:
     parameters: dict[str, str] = {}
     for source in sources:
@@ -305,7 +338,10 @@ def _invoke_mcp_http(
                 "id": action["id"],
                 "jsonrpc": "2.0",
                 "method": "tools/call",
-                "params": {"arguments": input_payload, "name": tool_name},
+                "params": {
+                    "arguments": _mcp_arguments(request_config, input_payload),
+                    "name": tool_name,
+                },
             },
             ensure_ascii=False,
         ).encode("utf-8"),
@@ -589,6 +625,7 @@ def plugin_action_request_preview(
             "workspace_root": _config_value(request_config, "workspace_root"),
         }
     if plugin["protocol"] in MCP_HTTP_PROTOCOLS:
+        arguments = _mcp_arguments(request_config, input_payload)
         query = _query_with_url_key(
             connection,
             _dict_config_section(request_config.get("query")),
@@ -596,7 +633,7 @@ def plugin_action_request_preview(
         )
         endpoint_url = str(connection.get("endpoint_url") or "")
         return {
-            "arguments": input_payload,
+            "arguments": arguments,
             "endpoint_url": endpoint_url,
             "headers": headers,
             "jsonrpc_method": "tools/call",

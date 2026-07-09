@@ -662,7 +662,11 @@ function installPluginsFetchMock(
               ? [
                   {
                     action_count: 0,
-                    action_templates: ['钉钉文档搜索', '钉钉文档创建'],
+                    action_templates: [
+                      '钉钉文档 - 搜索文档',
+                      '钉钉文档 - 创建文档',
+                      '钉钉文档 - 更新内容',
+                    ],
                     authorization_guide: {
                       credential_reuse: {
                         example_refs: ['vault/dingtalk/shared/url_key', 'env:DINGTALK_MCP_KEY'],
@@ -870,8 +874,43 @@ function installPluginsFetchMock(
               result_mapping: { write_target: 'scheduled_job_result' },
               template_version: 'v1',
             },
+            ...(options.includeDingTalkPlugins
+              ? [
+                  {
+                    action_type: 'mcp_tool',
+                    code: 'dingtalk_doc_update_content',
+                    default_code: 'update_dingtalk_document_content',
+                    default_name: '钉钉文档 - 更新内容',
+                    form_defaults: {
+                      content: '{{result_summary}}',
+                      document_id: '',
+                      mode: 'append',
+                    },
+                    name: '钉钉文档 - 更新内容',
+                    plugin_code: 'dingtalk_doc',
+                    request_config: {
+                      mcp: {
+                        mcp_id: '9629',
+                        provider: 'dingtalk',
+                        server_name: 'doc',
+                      },
+                      tool_name: 'doc.update_document_content',
+                    },
+                    result_mapping: {
+                      content_template: '{{result_summary}}',
+                      document_id: '',
+                      document_id_path: '$.document_id',
+                      status_path: '$.status',
+                      write_mode: 'append',
+                      write_target: 'dingtalk_document',
+                    },
+                    risk_tier: 'write',
+                    template_version: 'v1',
+                  },
+                ]
+              : []),
           ],
-          total: options.emptyActionTemplates ? 0 : 4,
+          total: options.emptyActionTemplates ? 0 : options.includeDingTalkPlugins ? 5 : 4,
         },
       });
     }
@@ -977,8 +1016,59 @@ function installPluginsFetchMock(
                 },
               ],
             },
+            {
+              code: 'dingtalk_document',
+              default_result_mapping: {
+                content_template: '{{result_summary}}',
+                document_id: '',
+                document_id_path: '$.document_id',
+                status_path: '$.status',
+                write_mode: 'append',
+                write_target: 'dingtalk_document',
+              },
+              form_label: '钉钉文档',
+              label: '钉钉文档',
+              mapping_fields: [
+                {
+                  key: 'document_id',
+                  label: '钉钉文档链接或 ID',
+                  placeholder: 'https://alidocs.dingtalk.com/i/nodes/...',
+                  required: true,
+                },
+                {
+                  key: 'content_template',
+                  label: '写入内容',
+                  placeholder: '{{result_summary}}',
+                  required: true,
+                  type: 'textarea',
+                },
+                {
+                  key: 'write_mode',
+                  label: '写入方式',
+                  options: [
+                    { label: '追加内容', value: 'append' },
+                    { label: '覆盖内容', value: 'overwrite' },
+                  ],
+                  placeholder: 'append',
+                  required: true,
+                  type: 'select',
+                },
+                {
+                  key: 'document_id_path',
+                  label: '返回文档 ID JSONPath',
+                  placeholder: '$.document_id',
+                  required: false,
+                },
+                {
+                  key: 'status_path',
+                  label: '返回状态 JSONPath',
+                  placeholder: '$.status',
+                  required: false,
+                },
+              ],
+            },
           ],
-          total: 4,
+          total: 5,
         },
       });
     }
@@ -2546,6 +2636,66 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByText('新增工具生成动作模板')).toBeInTheDocument();
     expect(within(dialog).getByText('key')).toBeInTheDocument();
     expect(within(dialog).getByText('***')).toBeInTheDocument();
+  });
+
+  it('configures DingTalk document update actions from scene templates', async () => {
+    const { actionBodies } = installPluginsFetchMock({
+      includeDingTalkPlugins: true,
+      includeOfficialPlugins: true,
+    });
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
+
+    const dialog = await findDialogByTitle('新增动作');
+    fireEvent.mouseDown(within(dialog).getByLabelText('配置场景'));
+    fireEvent.click(await screen.findByText('钉钉文档 - 更新内容'));
+
+    expect(within(dialog).queryByLabelText('插件')).not.toBeInTheDocument();
+    expect(within(dialog).getByText('钉钉文档')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('钉钉文档链接或 ID')).toHaveValue('');
+    expect(within(dialog).getByLabelText('写入内容')).toHaveValue('{{result_summary}}');
+    expect(within(dialog).getByText('追加内容')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('返回文档 ID JSONPath')).toHaveValue('$.document_id');
+    expect(within(dialog).getByLabelText('返回状态 JSONPath')).toHaveValue('$.status');
+
+    fireEvent.change(within(dialog).getByLabelText('钉钉文档链接或 ID'), {
+      target: {
+        value: 'https://alidocs.dingtalk.com/i/nodes/b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz?doc_type=wiki_doc',
+      },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
+
+    await waitFor(() =>
+      expect(actionBodies).toEqual([
+        expect.objectContaining({
+          action_type: 'mcp_tool',
+          code: 'update_dingtalk_document_content',
+          connection_id: 'connection_dingtalk_doc',
+          name: '钉钉文档 - 更新内容',
+          plugin_id: 'plugin_standard_dingtalk_doc',
+          request_config: expect.objectContaining({
+            arguments: {
+              content: '{{result_summary}}',
+              document_id: 'b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz',
+              mode: 'append',
+            },
+            mcp: expect.objectContaining({ provider: 'dingtalk' }),
+            tool_name: 'doc.update_document_content',
+          }),
+          result_mapping: {
+            content_template: '{{result_summary}}',
+            document_id: 'b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz',
+            document_id_path: '$.document_id',
+            status_path: '$.status',
+            write_mode: 'append',
+            write_target: 'dingtalk_document',
+          },
+        }),
+      ]),
+    );
   });
 
   it('shows template version status and copies an official plugin as custom', async () => {

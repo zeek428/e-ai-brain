@@ -173,6 +173,29 @@ function parseParameterValue(row: RequestParameterRow): unknown {
   return value;
 }
 
+export function dingtalkDocumentIdFromLink(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const pathMatch = trimmed.match(/\/(?:i\/)?nodes\/([^/?#]+)/);
+  if (pathMatch?.[1]) {
+    return safeDecodeURIComponent(pathMatch[1]);
+  }
+  try {
+    const parsed = new URL(trimmed);
+    for (const key of ['document_id', 'doc_id', 'docKey', 'dentryUuid', 'node_id']) {
+      const parameterValue = parsed.searchParams.get(key);
+      if (parameterValue) {
+        return parameterValue;
+      }
+    }
+  } catch {
+    // Plain document IDs are accepted as-is.
+  }
+  return trimmed;
+}
+
 function rowsToRecord(rows: RequestParameterRow[] | undefined): Record<string, unknown> {
   return (rows ?? []).reduce<Record<string, unknown>>((result, row) => {
     const name = row.name?.trim();
@@ -411,6 +434,26 @@ function applySchemaValuesToAuthConfig(
 }
 
 export function buildVisualRequestConfig(values: Partial<PluginActionFormValues>): Record<string, unknown> {
+  if (values.action_type === 'mcp_tool') {
+    const config = parseOptionalJsonRecord(values.request_config);
+    const argumentsConfig = isPlainRecord(config.arguments) ? { ...config.arguments } : {};
+    if (values.write_target === 'dingtalk_document') {
+      const documentId = dingtalkDocumentIdFromLink(values.document_id);
+      if (documentId) {
+        argumentsConfig.document_id = documentId;
+      }
+      if (values.content_template?.trim()) {
+        argumentsConfig.content = values.content_template.trim();
+      }
+      if (values.write_mode?.trim()) {
+        argumentsConfig.mode = values.write_mode.trim();
+      }
+    }
+    if (Object.keys(argumentsConfig).length > 0) {
+      config.arguments = argumentsConfig;
+    }
+    return config;
+  }
   const config: Record<string, unknown> = {};
   const method = values.method || 'GET';
   const path = values.path?.trim();
@@ -427,6 +470,18 @@ export function buildVisualRequestConfig(values: Partial<PluginActionFormValues>
     config.headers = headers;
   }
   return config;
+}
+
+function parseOptionalJsonRecord(value: string | undefined): Record<string, unknown> {
+  if (!value?.trim()) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isPlainRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 export function buildActionRequestPreview(
@@ -456,6 +511,7 @@ export function buildActionRequestPreview(
   const baseUrl = connection?.endpoint_url?.replace(/\/$/, '') ?? '';
   const queryString = new URLSearchParams(query as Record<string, string>).toString();
   return {
+    arguments: config.arguments,
     endpoint: connection?.endpoint_url ?? '-',
     headers,
     method,
@@ -649,8 +705,11 @@ export function resultMappingVisualFields(
   const values: Partial<PluginActionFormValues> & Record<string, string | undefined> = {
     branch_path: stringMappingValue(resultMapping, 'branch_path'),
     commit_sha_path: stringMappingValue(resultMapping, 'commit_sha_path'),
+    content_template: stringMappingValue(resultMapping, 'content_template'),
     delivery_id_path: stringMappingValue(resultMapping, 'delivery_id_path'),
     delivery_status_path: stringMappingValue(resultMapping, 'delivery_status_path'),
+    document_id: stringMappingValue(resultMapping, 'document_id'),
+    document_id_path: stringMappingValue(resultMapping, 'document_id_path'),
     findings_path: stringMappingValue(resultMapping, 'findings_path'),
     insights_path: stringMappingValue(resultMapping, 'insights_path'),
     records_imported_path: stringMappingValue(resultMapping, 'records_imported_path'),
@@ -658,8 +717,10 @@ export function resultMappingVisualFields(
     repository_id_path: stringMappingValue(resultMapping, 'repository_id_path'),
     risk_level_path: stringMappingValue(resultMapping, 'risk_level_path'),
     rows_path: stringMappingValue(resultMapping, 'rows_path'),
+    status_path: stringMappingValue(resultMapping, 'status_path'),
     subject_path: stringMappingValue(resultMapping, 'subject_path'),
     summary_path: stringMappingValue(resultMapping, 'summary_path'),
+    write_mode: stringMappingValue(resultMapping, 'write_mode'),
     write_target: writeTargetFromResultMapping(resultMapping),
   };
   const target = resultWriteTargetRecordByCode(writeTargets, values.write_target);
@@ -681,7 +742,10 @@ export function buildVisualResultMapping(
     target.mapping_fields.forEach((field) => {
       const rawValue = rawValues[field.key];
       if (typeof rawValue === 'string' && rawValue.trim()) {
-        nextMapping[field.key] = rawValue.trim();
+        nextMapping[field.key] =
+          writeTarget === 'dingtalk_document' && field.key === 'document_id'
+            ? dingtalkDocumentIdFromLink(rawValue)
+            : rawValue.trim();
       }
     });
     return mergeWriteTarget(nextMapping, writeTarget);

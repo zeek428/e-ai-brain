@@ -38,6 +38,7 @@ import { useScheduledJobWorkspaceData } from './components/useScheduledJobWorksp
 import {
   cloneResultActions,
   codeInspectionUsesNativeScan,
+  dataSourceModeFromConfig,
   initialScheduledJobPageTab,
   isCodeInspectionPluginAction,
   multiIdsFromScheduledJob,
@@ -71,7 +72,6 @@ import {
   findByTemplateSelector,
   scheduledJobDraftHasReusableResponse,
   scheduledJobDraftRequestsAutoDryRun,
-  writeStrategyLabelFromAction,
 } from './scheduledJobPageHelpers';
 
 export default function ScheduledJobsPage() {
@@ -452,10 +452,10 @@ export default function ScheduledJobsPage() {
 
   const testSelectedConnection = useCallback(async () => {
     if (!selectedPrimaryPluginConnectionId) {
-      message.warning('请先选择数据连接');
+      message.warning('请先选择数据来源');
       return;
     }
-    const hide = message.loading('正在测试数据连接，请稍候...', 0);
+    const hide = message.loading('正在测试数据来源，请稍候...', 0);
     setTestingConnectionId(selectedPrimaryPluginConnectionId);
     try {
       const result = await testPluginConnection(selectedPrimaryPluginConnectionId);
@@ -682,6 +682,7 @@ export default function ScheduledJobsPage() {
         agent_id: aiRequired ? agentId : undefined,
         config_json: templateConfigJson,
         cron_expression: templatePayloadString(template, 'cron_expression'),
+        data_source_mode: dataSourceModeFromConfig(templateConfigJson),
         enabled: templatePayloadBoolean(template, 'enabled', true),
         execution_mode: executionMode,
         interval_seconds: templatePayloadNumber(template, 'interval_seconds'),
@@ -784,6 +785,7 @@ export default function ScheduledJobsPage() {
     setPendingAutoDryRun(false);
     form.resetFields();
     form.setFieldsValue({
+      data_source_mode: 'direct_connection',
       enabled: true,
       execution_mode: 'ai_generated',
       job_type: 'user_feedback_insight_extract',
@@ -921,6 +923,7 @@ export default function ScheduledJobsPage() {
       agent_id: job.agent_id ?? undefined,
       config_json: editConfigJson,
       cron_expression: job.cron_expression ?? undefined,
+      data_source_mode: dataSourceModeFromConfig(editConfigJson),
       enabled: job.enabled ?? true,
       execution_mode: job.execution_mode ?? 'deterministic',
       interval_seconds: job.interval_seconds ?? undefined,
@@ -959,7 +962,7 @@ export default function ScheduledJobsPage() {
 
   const buildJobRequestPayload = useCallback(
     (values: ScheduledJobFormValues): Partial<ScheduledJobRecord> => {
-      const { template, ...jobValues } = values;
+      const { data_source_mode: dataSourceMode, template, ...jobValues } = values;
       const selectedTemplate = availableJobTemplates.find((item) => item.code === template);
       const pluginConnectionIds = uniqueStringList(
         Array.isArray(values.plugin_connection_ids)
@@ -1013,18 +1016,22 @@ export default function ScheduledJobsPage() {
           },
           pluginConnectionIds,
           pluginActionIds,
+          {
+            data_source_mode: dataSourceMode ?? 'direct_connection',
+            read_action_id: primaryId(pluginActionIds) ?? null,
+          },
         ),
         plugin_input_mapping:
-          editingJob?.plugin_input_mapping
+          values.plugin_input_mapping
+          ?? editingJob?.plugin_input_mapping
           ?? templateSource?.values.plugin_input_mapping
-          ?? values.plugin_input_mapping
           ?? recordFromDraftPayload(assistantDraftPayload ?? {}, 'plugin_input_mapping')
           ?? templatePayloadRecordValue(selectedTemplate, 'plugin_input_mapping')
           ?? {},
         plugin_output_mapping:
-          editingJob?.plugin_output_mapping
+          values.plugin_output_mapping
+          ?? editingJob?.plugin_output_mapping
           ?? templateSource?.values.plugin_output_mapping
-          ?? values.plugin_output_mapping
           ?? recordFromDraftPayload(assistantDraftPayload ?? {}, 'plugin_output_mapping')
           ?? templatePayloadRecordValue(selectedTemplate, 'plugin_output_mapping')
           ?? {},
@@ -1044,6 +1051,10 @@ export default function ScheduledJobsPage() {
           recordValue(requestPayload.config_json) ?? {},
           requestPayload.plugin_connection_ids ?? [],
           [],
+          {
+            data_source_mode: dataSourceMode ?? 'direct_connection',
+            read_action_id: null,
+          },
         );
       }
       return requestPayload;
@@ -1338,7 +1349,6 @@ export default function ScheduledJobsPage() {
         skills={skills}
         templateSource={templateSource}
         usesNativeScan={selectedCodeInspectionUsesNativeScan}
-        writeStrategyLabelFromAction={writeStrategyLabelFromAction}
         onApplyJobTemplate={applyJobTemplate}
         onClose={closeJobModal}
         onDryRun={dryRunJob}

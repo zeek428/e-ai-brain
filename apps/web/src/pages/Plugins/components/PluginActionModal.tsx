@@ -22,10 +22,13 @@ export type PluginActionFormValues = {
   branch_path?: string;
   code: string;
   commit_sha_path?: string;
+  content_template?: string;
   connection_id?: string;
   delivery_id_path?: string;
   delivery_status_path?: string;
   description?: string;
+  document_id?: string;
+  document_id_path?: string;
   findings_path?: string;
   header_rows?: RequestParameterRow[];
   insights_path?: string;
@@ -46,10 +49,12 @@ export type PluginActionFormValues = {
   returned_fields?: string;
   scenario?: string;
   status: string;
+  status_path?: string;
   subject_path?: string;
   summary_path?: string;
   table_name?: string;
   time_field?: string;
+  write_mode?: string;
   write_target?: string;
 };
 
@@ -104,6 +109,16 @@ function resultWriteTargetRecordByCode(
   return writeTargets.find((target) => target.code === (writeTarget || defaultWriteTarget));
 }
 
+function resultMappingFieldControl(field: ResultWriteTargetRecord['mapping_fields'][number]) {
+  if (field.type === 'select') {
+    return <Select options={field.options ?? []} placeholder={field.placeholder} style={{ width: 220 }} />;
+  }
+  if (field.type === 'textarea') {
+    return <Input.TextArea placeholder={field.placeholder} rows={3} style={{ width: 460 }} />;
+  }
+  return <Input placeholder={field.placeholder} style={{ width: 220 }} />;
+}
+
 function ResultWriteTargetMappingFields({
   defaultWriteTarget,
   writeTarget,
@@ -127,7 +142,7 @@ function ResultWriteTargetMappingFields({
             name={field.key}
             rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : undefined}
           >
-            <Input placeholder={field.placeholder} style={{ width: 220 }} />
+            {resultMappingFieldControl(field)}
           </Form.Item>
         ))}
       </Space>
@@ -289,6 +304,16 @@ export function PluginActionModal({
         <Button onClick={onToggleAdvancedJson} type="link">
           高级 JSON 修改
         </Button>
+        {!advancedJsonOpen ? (
+          <>
+            <Form.Item hidden name="request_config">
+              <Input type="hidden" />
+            </Form.Item>
+            <Form.Item hidden name="result_mapping">
+              <Input type="hidden" />
+            </Form.Item>
+          </>
+        ) : null}
         {advancedJsonOpen ? (
           <>
             <Space style={{ marginBottom: 8 }}>

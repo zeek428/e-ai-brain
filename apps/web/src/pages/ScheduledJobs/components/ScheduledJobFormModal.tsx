@@ -75,7 +75,6 @@ type ScheduledJobFormModalProps = {
   skills: AiSkillRecord[];
   templateSource?: ScheduledJobTemplateSource;
   usesNativeScan: boolean;
-  writeStrategyLabelFromAction: (action: PluginActionRecord) => string;
   onApplyJobTemplate: (templateCode?: string) => void;
   onClose: () => void;
   onDryRun: () => void | Promise<void>;
@@ -263,7 +262,6 @@ export function ScheduledJobFormModal({
   skills,
   templateSource,
   usesNativeScan,
-  writeStrategyLabelFromAction,
   onApplyJobTemplate,
   onClose,
   onDryRun,
@@ -349,6 +347,7 @@ export function ScheduledJobFormModal({
         form={form}
         layout="vertical"
         initialValues={{
+          data_source_mode: 'direct_connection',
           enabled: true,
           execution_mode: 'ai_generated',
           job_type: 'user_feedback_insight_extract',
@@ -383,6 +382,7 @@ export function ScheduledJobFormModal({
         <ScheduledJobDataConnectionSection
           filteredPluginConnections={filteredPluginConnections}
           onPluginConnectionChange={onPluginConnectionChange}
+          pluginActions={pluginActions}
           requiredForPluginResource={requiredForPluginResource}
           usesNativeScan={usesNativeScan}
         />
@@ -416,11 +416,7 @@ export function ScheduledJobFormModal({
           genericResultActionOptions={genericResultActionOptions}
           isCodeInspectionJob={selectedJobType === 'code_repository_inspection'}
           isGenericResultActionJob={selectedJobType === 'online_log_ai_analysis'}
-          pluginActions={pluginActions}
-          requiredForPluginResource={requiredForPluginResource}
           severityThresholdOptions={severityThresholdSelectOptions}
-          usesNativeScan={usesNativeScan}
-          writeStrategyLabelFromAction={writeStrategyLabelFromAction}
         />
         <ScheduledJobScheduleConfigSection scheduleTypeOptions={scheduleTypeSelectOptions} />
         {dryRunResult ? <ScheduledJobDryRunResultPanel result={dryRunResult} /> : null}

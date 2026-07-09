@@ -303,35 +303,86 @@ def test_dingtalk_p0_action_templates_include_risk_tiers_and_tool_metadata():
     by_code = {item["code"]: item for item in payload["items"]}
 
     expected_templates = {
-        "dingtalk_aitable_query_records": ("dingtalk_aitable", "aitable.search_records", "read"),
+        "dingtalk_aitable_query_records": (
+            "dingtalk_aitable",
+            "aitable.search_records",
+            "read",
+            "钉钉 AI 表格 - 查询记录",
+        ),
         "dingtalk_bot_send_message": (
             "dingtalk_bot",
             "bot.batch_send_robot_msg_to_users",
             "notify",
+            "钉钉机器人 - 发送消息",
         ),
         "dingtalk_contact_search_user": (
             "dingtalk_contact",
             "contact.search_user_by_key_word",
             "read",
+            "钉钉通讯录 - 搜索用户",
         ),
-        "dingtalk_doc_create_document": ("dingtalk_doc", "doc.create_document", "write"),
+        "dingtalk_doc_create_document": (
+            "dingtalk_doc",
+            "doc.create_document",
+            "write",
+            "钉钉文档 - 创建文档",
+        ),
         "dingtalk_doc_get_content": (
             "dingtalk_doc",
             "doc.get_document_content",
             "sensitive_read",
+            "钉钉文档 - 读取内容",
         ),
-        "dingtalk_doc_search": ("dingtalk_doc", "doc.search_documents", "read"),
-        "dingtalk_drive_list_files": ("dingtalk_drive", "drive.list_files", "read"),
-        "dingtalk_wiki_search_spaces": ("dingtalk_wiki", "wiki.search_wikiSpaces", "read"),
+        "dingtalk_doc_search": (
+            "dingtalk_doc",
+            "doc.search_documents",
+            "read",
+            "钉钉文档 - 搜索文档",
+        ),
+        "dingtalk_doc_update_content": (
+            "dingtalk_doc",
+            "doc.update_document_content",
+            "write",
+            "钉钉文档 - 更新内容",
+        ),
+        "dingtalk_drive_list_files": (
+            "dingtalk_drive",
+            "drive.list_files",
+            "read",
+            "钉钉钉盘 - 列出文件",
+        ),
+        "dingtalk_wiki_search_spaces": (
+            "dingtalk_wiki",
+            "wiki.search_wikiSpaces",
+            "read",
+            "钉钉知识库 - 搜索空间",
+        ),
     }
-    for code, (plugin_code, tool_name, risk_tier) in expected_templates.items():
+    for code, (plugin_code, tool_name, risk_tier, default_name) in expected_templates.items():
         template = by_code[code]
         assert template["plugin_code"] == plugin_code
         assert template["action_type"] == "mcp_tool"
         assert template["risk_tier"] == risk_tier
+        assert template["name"] == default_name
+        assert template["default_name"] == default_name
         assert template["request_config"]["tool_name"] == tool_name
         assert template["request_config"]["mcp"]["provider"] == "dingtalk"
-        assert template["result_mapping"]["write_target"] == "scheduled_job_result"
+        expected_write_target = (
+            "dingtalk_document"
+            if code == "dingtalk_doc_update_content"
+            else "scheduled_job_result"
+        )
+        assert template["result_mapping"]["write_target"] == expected_write_target
+    update_template = by_code["dingtalk_doc_update_content"]
+    assert update_template["form_defaults"] == {
+        "content": "{{result_summary}}",
+        "document_id": "",
+        "mode": "append",
+    }
+    assert update_template["request_config"]["tool_schema"]["properties"]["mode"]["enum"] == [
+        "append",
+        "overwrite",
+    ]
 
 
 def test_dingtalk_marketplace_exposes_auth_guide_discovery_governance_and_scenarios():
@@ -361,6 +412,8 @@ def test_dingtalk_marketplace_exposes_auth_guide_discovery_governance_and_scenar
     assert capability_discovery["jsonrpc_method"] == "tools/list"
     assert capability_discovery["drift_policy"]["new_tool"] == "suggest_action_template"
     assert "doc.get_document_content" in capability_discovery["known_tools"]
+    assert "doc.update_document_content" in capability_discovery["known_tools"]
+    assert "钉钉文档 - 更新内容" in item["action_templates"]
 
     governance_policy = item["governance_policy"]
     assert governance_policy["product_scope_required"] is True
@@ -407,6 +460,11 @@ def test_dingtalk_action_templates_apply_high_risk_governance():
     assert document_write["requires_human_review"] is True
     assert "write_before_execute_review" in document_write["governance"]["controls"]
     assert "dingtalk.write" in document_write["governance"]["audit_events"]
+
+    document_update = by_code["dingtalk_doc_update_content"]
+    assert document_update["requires_human_review"] is True
+    assert "write_before_execute_review" in document_update["governance"]["controls"]
+    assert "dingtalk.write" in document_update["governance"]["audit_events"]
 
     notification = by_code["dingtalk_bot_send_message"]
     assert notification["requires_human_review"] is True
@@ -537,7 +595,10 @@ def test_dingtalk_connection_tool_discovery_detects_tool_drift_and_redacts_url_k
     assert data["status"] == "drift_detected"
     assert data["tool_count"] == 3
     assert data["new_tools"] == ["doc.export_document"]
-    assert data["missing_tools"] == ["doc.get_document_content"]
+    assert data["missing_tools"] == [
+        "doc.get_document_content",
+        "doc.update_document_content",
+    ]
     assert data["schema_changed_tools"] == ["doc.create_document"]
     assert data["suggestions"][0]["type"] == "suggest_action_template"
     assert "dingtalk-url-key-secret" not in str(data)
@@ -699,7 +760,16 @@ def test_mcp_streamable_http_url_key_invocation_uses_query_key_and_redacts_log(
             "connection_id": connection["id"],
             "name": "搜索钉钉文档",
             "plugin_id": plugin["id"],
-            "request_config": {"tool_name": "doc.search_documents"},
+            "request_config": {
+                "arguments": {
+                    "document_id": (
+                        "https://alidocs.dingtalk.com/i/nodes/"
+                        "b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz?doc_type=wiki_doc"
+                    ),
+                    "max_rows": 20,
+                },
+                "tool_name": "doc.search_documents",
+            },
             "result_mapping": {"write_target": "scheduled_job_result"},
             "status": "active",
         },
@@ -752,13 +822,22 @@ def test_mcp_streamable_http_url_key_invocation_uses_query_key_and_redacts_log(
     request_body = captured_requests[0]["body"]
     assert request_body["method"] == "tools/call"
     assert request_body["params"] == {
-        "arguments": {"keyword": "AI Brain"},
+        "arguments": {
+            "document_id": "b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz",
+            "keyword": "AI Brain",
+            "max_rows": 20,
+        },
         "name": "doc.search_documents",
     }
     assert captured_requests[0]["headers"]["Accept"] == "application/json, text/event-stream"
     data = invoked.json()["data"]
     request_preview = data["request_summary"]["request_preview"]
     assert request_preview["protocol"] == "mcp_streamable_http"
+    assert request_preview["arguments"] == {
+        "document_id": "b9Y4gmKWrekkKx2ET4dzY39d8GXn6lpz",
+        "keyword": "AI Brain",
+        "max_rows": 20,
+    }
     assert request_preview["query"]["key"] == "***"
     assert "dingtalk-url-key-secret" not in str(data)
 
@@ -3640,6 +3719,7 @@ def test_result_write_targets_registry_drives_action_mapping_forms():
     by_code = {item["code"]: item for item in items}
     assert set(by_code) >= {
         "code_inspection_reports",
+        "dingtalk_document",
         "email_notifications",
         "scheduled_job_result",
         "user_feedback_insights",
@@ -3674,6 +3754,26 @@ def test_result_write_targets_registry_drives_action_mapping_forms():
     email = by_code["email_notifications"]
     assert email["default_result_mapping"]["recipients_path"] == "$.recipients"
     assert email["mapping_fields"][0]["required"] is True
+    dingtalk_document = by_code["dingtalk_document"]
+    assert dingtalk_document["label"] == "钉钉文档"
+    assert dingtalk_document["default_result_mapping"] == {
+        "content_template": "{{result_summary}}",
+        "document_id": "",
+        "document_id_path": "$.document_id",
+        "status_path": "$.status",
+        "write_mode": "append",
+        "write_target": "dingtalk_document",
+    }
+    assert dingtalk_document["mapping_fields"][0]["label"] == "钉钉文档链接或 ID"
+    assert dingtalk_document["mapping_fields"][0]["placeholder"] == (
+        "https://alidocs.dingtalk.com/i/nodes/..."
+    )
+    assert dingtalk_document["mapping_fields"][1]["type"] == "textarea"
+    assert dingtalk_document["mapping_fields"][2]["type"] == "select"
+    assert dingtalk_document["mapping_fields"][2]["options"] == [
+        {"label": "追加内容", "value": "append"},
+        {"label": "覆盖内容", "value": "overwrite"},
+    ]
 
 
 def test_plugin_resources_delete_requires_unused_dependencies():
@@ -5010,6 +5110,25 @@ def test_json_path_mapping_supports_brackets_indexes_and_wildcards():
             "value_preview": [{"id": "feedback-1"}],
         }
     ]
+    assert result_write_preview(
+        {"json": {"document_id": "doc-001", "status": "updated"}},
+        {
+            "content_template": "{{result_summary}}",
+            "document_id": "doc-001",
+            "status_path": "$.status",
+            "write_mode": "append",
+            "write_target": "dingtalk_document",
+        },
+    ) == {
+        "candidate_count": 1,
+        "document_id": "doc-001",
+        "records_imported": 1,
+        "sample_records": ["{{result_summary}}"],
+        "status": "updated",
+        "write_mode": "append",
+        "write_target": "dingtalk_document",
+        "write_target_label": "钉钉文档",
+    }
 
 
 def test_plugin_action_trial_returns_request_preview_and_mapping_hits():

@@ -592,8 +592,10 @@ export type ResultWriteTargetFieldRecord = {
   description?: string;
   key: string;
   label: string;
+  options?: Array<{ label: string; value: string }>;
   placeholder?: string;
   required?: boolean;
+  type?: 'input' | 'select' | 'textarea';
 };
 
 export type ResultWriteTargetRecord = {

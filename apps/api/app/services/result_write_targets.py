@@ -145,6 +145,69 @@ RESULT_WRITE_TARGETS = [
             "online_log_ai_analysis",
         ],
     },
+    {
+        "code": "dingtalk_document",
+        "default_result_mapping": {
+            "content_template": "{{result_summary}}",
+            "document_id": "",
+            "document_id_path": "$.document_id",
+            "status_path": "$.status",
+            "write_mode": "append",
+            "write_target": "dingtalk_document",
+        },
+        "description": "把 AI 处理结果追加或覆盖写入指定钉钉文档，并记录文档写入反馈。",
+        "form_label": "钉钉文档",
+        "label": "钉钉文档",
+        "mapping_fields": [
+            {
+                "description": "可粘贴钉钉文档链接，系统会自动提取 /i/nodes/ 后的文档 ID。",
+                "key": "document_id",
+                "label": "钉钉文档链接或 ID",
+                "placeholder": "https://alidocs.dingtalk.com/i/nodes/...",
+                "required": True,
+            },
+            {
+                "description": "写入钉钉文档的内容模板，可引用任务结果摘要。",
+                "key": "content_template",
+                "label": "写入内容",
+                "placeholder": "{{result_summary}}",
+                "required": True,
+                "type": "textarea",
+            },
+            {
+                "description": "追加到文档末尾或覆盖文档内容。",
+                "key": "write_mode",
+                "label": "写入方式",
+                "options": [
+                    {"label": "追加内容", "value": "append"},
+                    {"label": "覆盖内容", "value": "overwrite"},
+                ],
+                "placeholder": "append",
+                "required": True,
+                "type": "select",
+            },
+            {
+                "description": "从钉钉 MCP 返回中读取文档 ID 的路径，用于写入记录。",
+                "key": "document_id_path",
+                "label": "返回文档 ID JSONPath",
+                "placeholder": "$.document_id",
+                "required": False,
+            },
+            {
+                "description": "从钉钉 MCP 返回中读取写入状态的路径。",
+                "key": "status_path",
+                "label": "返回状态 JSONPath",
+                "placeholder": "$.status",
+                "required": False,
+            },
+        ],
+        "supported_job_types": [
+            "plugin_action_invoke",
+            "user_feedback_insight_extract",
+            "code_repository_inspection",
+            "online_log_ai_analysis",
+        ],
+    },
 ]
 
 
