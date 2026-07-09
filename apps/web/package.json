@@ -8,6 +8,9 @@
     "build": "max build",
     "test": "vitest run",
     "test:e2e:assistant": "node scripts/assistant-smoke.mjs",
+    "help:check": "node ../../scripts/check_help_center_assets.mjs",
+    "help:check:strict": "node ../../scripts/check_help_center_assets.mjs --strict-screenshots",
+    "help:screenshots:list": "node ../../scripts/capture_help_screenshots.mjs --list-targets",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
