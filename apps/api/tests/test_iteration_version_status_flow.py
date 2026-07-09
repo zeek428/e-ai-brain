@@ -222,13 +222,23 @@ def test_advancing_testing_version_to_released_blocks_unfinished_requirements():
         headers=headers,
     )
 
+    assert released.status_code == 409
+    assert released.json()["detail"]["code"] == "PRODUCT_VERSION_STATUS_BLOCKED"
+    assert get_requirement(headers, testing_requirement["id"])["status"] == "testing"
+    assert get_requirement(headers, ready_requirement["id"])["status"] == "ready_for_release"
+
+    set_requirement_status(testing_requirement["id"], "released")
+    set_requirement_status(ready_requirement["id"], "released")
+    released = client.post(
+        f"/api/product-versions/{version['id']}/advance-status",
+        json={"reason": "部署完成后发布版本", "target_status": "released"},
+        headers=headers,
+    )
+
     assert released.status_code == 200
     released_data = released.json()["data"]
     assert released_data["version"]["status"] == "released"
-    assert {item["id"]: item["to_status"] for item in released_data["updated_requirements"]} == {
-        testing_requirement["id"]: "released",
-        ready_requirement["id"]: "released",
-    }
+    assert released_data["updated_requirements"] == []
     assert get_requirement(headers, testing_requirement["id"])["status"] == "released"
     assert get_requirement(headers, ready_requirement["id"])["status"] == "released"
     assert get_requirement(headers, unfinished_requirement["id"])["status"] == "deferred"
@@ -470,6 +480,8 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "bugs": 2,
         "code_review_reports": 1,
         "code_inspection_reports": 1,
+        "deployments": 0,
+        "failed_deployments": 0,
         "knowledge_deposits": 1,
         "open_bugs": 2,
         "pending_code_review_reports": 1,
@@ -479,6 +491,7 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "searchable_knowledge_deposits": 1,
         "severe_bugs": 2,
         "severe_code_inspection_reports": 1,
+        "successful_deployments": 0,
         "successful_releases": 0,
         "tasks": 1,
         "vectorized_knowledge_deposits": 0,
@@ -521,6 +534,7 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "code-reviews",
         "bugs",
         "knowledge-deposits",
+        "deployments",
         "releases",
         "status-impact",
     ]
@@ -530,6 +544,17 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     assert readiness_by_key["code-reviews"]["status"] == "blocked"
     assert readiness_by_key["bugs"]["value"] == "严重 Bug 未关闭"
     assert readiness_by_key["knowledge-deposits"]["status"] == "ready"
+    assert readiness_by_key["deployments"] == {
+        "action_label": "查看部署",
+        "action_target_id": version["id"],
+        "action_target_type": "deployments",
+        "detail": "当前阶段暂不强制要求成功部署单。",
+        "key": "deployments",
+        "level": "info",
+        "status": "not_applicable",
+        "title": "运维部署",
+        "value": "部署待执行",
+    }
     assert readiness_by_key["releases"] == {
         "action_label": "排查发布",
         "action_target_id": version["id"],
@@ -549,6 +574,7 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "code-reviews",
         "bugs",
         "knowledge-deposits",
+        "deployments",
         "releases",
         "status-impact",
     ]
@@ -604,6 +630,11 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         delivery_stage_by_key["knowledge-deposits"]["detail"]
         == "1 条知识沉淀 · 可检索 1 条 · 向量就绪 0 条"
     )
+    assert (
+        delivery_stage_by_key["deployments"]["detail"]
+        == "0 个部署单 · 暂无部署阻塞 · 成功 0 个 · 失败 0 个"
+    )
+    assert delivery_stage_by_key["deployments"]["level"] == "warning"
     assert (
         delivery_stage_by_key["releases"]["detail"]
         == "1 条记录 · 发布阻塞 1 个 · 成功 0 条 · 失败 1 条 · "
@@ -692,6 +723,17 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
                 "status": "covered",
                 "title": "知识沉淀",
                 "value": "1/1 可检索",
+            },
+            {
+                "action_label": "查看部署",
+                "action_target_id": version["id"],
+                "action_target_type": "deployments",
+                "detail": "当前阶段暂无运维部署单",
+                "key": "deployments",
+                "level": "info",
+                "status": "not_applicable",
+                "title": "运维部署",
+                "value": "部署待执行",
             },
             {
                 "action_label": "查看发布",
@@ -1073,7 +1115,7 @@ def test_product_version_dashboard_prefers_version_scoped_repository_projection(
     ]
 
 
-def test_product_version_dashboard_blocks_release_without_successful_release_record():
+def test_product_version_dashboard_blocks_release_without_successful_deployment():
     app.state.store.reset()
     headers = auth_headers()
     product = create_product(headers, "version-dashboard-release-evidence")
@@ -1090,49 +1132,41 @@ def test_product_version_dashboard_blocks_release_without_successful_release_rec
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["status_impact"]["target_status"] == "released"
-    assert data["summary"]["blockers"] == 1
+    assert data["summary"]["blockers"] == 2
     assert data["governance_conclusion"]["value"] == "版本暂不建议推进"
-    assert data["governance_conclusion"]["risks"] == ["发布阻塞 1"]
-    assert data["blockers"] == [
-        {
-            "action_label": "排查发布",
-            "action_target_id": version["id"],
-            "action_target_type": "product_version",
-            "id": None,
-            "reason": "缺少成功发布记录，不能确认版本已完成发布。",
-            "resolution_hint": "登记或同步成功发布记录后解除发布阻塞。",
-            "severity": "high",
-            "source_type": "jenkins_release",
-            "title": "缺少成功发布记录",
-        }
-    ]
-    assert data["next_actions"] == [
-        {
-            "action_label": "排查发布",
-            "action_target_id": version["id"],
-            "action_target_type": "product_version",
-            "full_chain_subject_id": version["id"],
-            "full_chain_subject_type": "product_version",
-            "id": None,
-            "priority": 1,
-            "reason": "缺少成功发布记录，不能确认版本已完成发布。",
-            "resolution_hint": "登记或同步成功发布记录后解除发布阻塞。",
-            "severity": "high",
-            "source_label": "发布记录",
-            "source_type": "jenkins_release",
-            "title": "缺少成功发布记录",
-        }
-    ]
+    assert {blocker["source_type"] for blocker in data["blockers"]} == {
+        "deployment_request",
+        "requirement",
+    }
+    deployment_blocker = next(
+        blocker for blocker in data["blockers"] if blocker["source_type"] == "deployment_request"
+    )
+    assert deployment_blocker == {
+        "action_label": "处理部署",
+        "action_target_id": version["id"],
+        "action_target_type": "product_version",
+        "id": None,
+        "reason": "缺少成功运维部署单，不能确认版本已完成发布。",
+        "resolution_hint": "创建部署单并登记成功部署结果后解除发布阻塞。",
+        "severity": "high",
+        "source_type": "deployment_request",
+        "title": "缺少成功部署证据",
+    }
+    assert data["next_actions"][0]["source_type"] == "deployment_request"
+    assert data["next_actions"][0]["source_label"] == "运维部署"
 
-    app.state.store.jenkins_release_records["release_success"] = {
-        "build_id": "99",
+    app.state.store.deployment_requests["deployment_success"] = {
         "created_at": "2026-06-04T10:00:00+00:00",
-        "id": "release_success",
-        "job_name": "deploy-release",
+        "environment": "prod",
+        "id": "deployment_success",
         "product_id": product["id"],
-        "status": "success",
+        "requirement_ids": [requirement["id"]],
+        "status": "succeeded",
+        "title": "生产部署",
+        "updated_at": "2026-06-04T10:00:00+00:00",
         "version_id": version["id"],
     }
+    set_requirement_status(requirement["id"], "released")
 
     response_with_release = client.get(
         f"/api/product-versions/{version['id']}/dashboard",
@@ -1142,17 +1176,16 @@ def test_product_version_dashboard_blocks_release_without_successful_release_rec
     assert response_with_release.status_code == 200
     data_with_release = response_with_release.json()["data"]
     assert data_with_release["summary"]["blockers"] == 0
-    assert data_with_release["summary"]["successful_releases"] == 1
-    assert data_with_release["summary"]["failed_releases"] == 0
-    release_stage = next(
+    assert data_with_release["summary"]["successful_deployments"] == 1
+    assert data_with_release["summary"]["failed_deployments"] == 0
+    deployment_stage = next(
         item
         for item in data_with_release["delivery_stage_overview"]
-        if item["key"] == "releases"
+        if item["key"] == "deployments"
     )
     assert (
-        release_stage["detail"]
-        == "1 条记录 · 暂无发布阻塞 · 成功 1 条 · 失败 0 条 · "
-        "最近 success deploy-release · 2026-06-04 18:00"
+        deployment_stage["detail"]
+        == "1 个部署单 · 暂无部署阻塞 · 成功 1 个 · 失败 0 个 · 最近 succeeded 生产部署 · 2026-06-04 18:00"
     )
     assert data_with_release["governance_conclusion"] == {
         "detail": (

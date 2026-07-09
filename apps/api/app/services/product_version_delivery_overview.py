@@ -74,6 +74,7 @@ def failed_release(release: dict[str, Any]) -> bool:
         "cancelled",
         "failed",
         "failure",
+        "rolled_back",
     }
 
 
@@ -96,9 +97,10 @@ def release_display_time(release: dict[str, Any]) -> str:
 
 def release_label(release: dict[str, Any]) -> str:
     status = str(release.get("status") or "-")
+    title = str(release.get("title") or "").strip()
     job_name = str(release.get("job_name") or "").strip()
     build_id = str(release.get("build_id") or "").strip()
-    subject = job_name or build_id or str(release.get("id") or "").strip()
+    subject = title or job_name or build_id or str(release.get("id") or "").strip()
     return f"{status} {subject}".strip()
 
 
@@ -278,6 +280,7 @@ def version_delivery_stage_overview(
     bugs: list[dict[str, Any]],
     code_inspection_reports: list[dict[str, Any]],
     code_review_reports: list[dict[str, Any]],
+    deployments: list[dict[str, Any]],
     knowledge_deposits: list[dict[str, Any]],
     releases: list[dict[str, Any]],
     status_impact: dict[str, Any] | None,
@@ -304,8 +307,18 @@ def version_delivery_stage_overview(
     release_blocker_count = sum(
         1 for blocker in blockers if blocker.get("source_type") == "jenkins_release"
     )
+    deployment_blocker_count = sum(
+        1 for blocker in blockers if blocker.get("source_type") == "deployment_request"
+    )
     successful_release_count = sum(1 for release in releases if successful_release(release))
     failed_release_count = sum(1 for release in releases if failed_release(release))
+    successful_deployment_count = sum(
+        1 for deployment in deployments if successful_release(deployment)
+    )
+    failed_deployment_count = sum(1 for deployment in deployments if failed_release(deployment))
+    latest_deployment = deployments[0] if deployments else {}
+    latest_deployment_label = release_label(latest_deployment) if latest_deployment else ""
+    latest_deployment_time = release_display_time(latest_deployment) if latest_deployment else ""
     latest_release = releases[0] if releases else {}
     latest_release_label = release_label(latest_release) if latest_release else ""
     latest_release_time = release_display_time(latest_release) if latest_release else ""
@@ -321,6 +334,7 @@ def version_delivery_stage_overview(
     searchable_knowledge_count = summary["searchable_knowledge_deposits"]
     vectorized_knowledge_count = summary["vectorized_knowledge_deposits"]
     release_count = summary["releases"]
+    deployment_count = summary.get("deployments", len(deployments))
     branch_has_pressure = (
         not_created_branch_count
         or action_required_branch_count
@@ -396,6 +410,17 @@ def version_delivery_stage_overview(
             f"最近 {latest_release_label} · {latest_release_time or '-'}"
         )
     release_detail = " · ".join(release_detail_parts)
+    deployment_detail_parts = [
+        f"{deployment_count} 个部署单",
+        f"部署阻塞 {deployment_blocker_count} 个" if deployment_blocker_count else "暂无部署阻塞",
+        f"成功 {successful_deployment_count} 个",
+        f"失败 {failed_deployment_count} 个",
+    ]
+    if latest_deployment:
+        deployment_detail_parts.append(
+            f"最近 {latest_deployment_label} · {latest_deployment_time or '-'}"
+        )
+    deployment_detail = " · ".join(deployment_detail_parts)
 
     return [
         _delivery_stage(
@@ -532,6 +557,34 @@ def version_delivery_stage_overview(
                 f"{searchable_knowledge_count}/{knowledge_deposit_count} 可检索"
                 if knowledge_deposit_count
                 else "沉淀待补齐"
+            ),
+        ),
+        _delivery_stage(
+            action_label="处理部署" if deployment_blocker_count else "查看部署",
+            action_target_id=latest_deployment.get("id") or version_id,
+            action_target_type=(
+                "deployment_request" if latest_deployment.get("id") else "product_version"
+            ),
+            detail=deployment_detail,
+            full_chain_subject_id=latest_deployment.get("id") or version_id,
+            full_chain_subject_type=(
+                "deployment_request" if latest_deployment.get("id") else "product_version"
+            ),
+            key="deployments",
+            level=(
+                "error"
+                if deployment_blocker_count
+                else "success"
+                if successful_deployment_count
+                else "warning"
+            ),
+            title="运维部署",
+            value=(
+                "部署待治理"
+                if deployment_blocker_count
+                else "部署已成功"
+                if successful_deployment_count
+                else "部署待执行"
             ),
         ),
         _delivery_stage(

@@ -11,6 +11,7 @@ from app.core.listing import (
     paginated_list_payload,
     sort_list_items,
 )
+from app.services.product_scope import product_scope_filter
 
 OPERATIONAL_METRIC_SORT_FIELDS = {"category", "id", "name", "status", "updated_at", "value"}
 
@@ -107,14 +108,21 @@ def operational_metric_rows(current_store: Any) -> list[dict[str, Any]]:
     ):
         gitlab_metrics = repository.list_gitlab_daily_code_metrics()
         jenkins_releases = repository.list_jenkins_release_records()
+        deployment_requests = (
+            repository.list_deployment_requests()
+            if callable(getattr(repository, "list_deployment_requests", None))
+            else []
+        )
         online_logs = repository.list_online_log_metrics()
     else:
         gitlab_metrics = _memory_records(current_store, "gitlab_daily_code_metrics")
         jenkins_releases = _memory_records(current_store, "jenkins_release_records")
+        deployment_requests = _memory_records(current_store, "deployment_requests")
         online_logs = _memory_records(current_store, "online_log_metrics")
     return [
         *(operational_metric_projection("GitLab 指标", item) for item in gitlab_metrics),
         *(operational_metric_projection("Jenkins 发布", item) for item in jenkins_releases),
+        *(operational_metric_projection("运维部署", item) for item in deployment_requests),
         *(operational_metric_projection("线上日志", item) for item in online_logs),
     ]
 
@@ -131,12 +139,14 @@ def list_operational_metrics_response(
     started_at: float | None,
     status: str | None,
     trace_id: str,
+    user: dict[str, Any],
 ) -> dict[str, Any]:
     ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
     resolved_sort_by = sort_by or "updated_at"
     if resolved_sort_by not in OPERATIONAL_METRIC_SORT_FIELDS:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
     filters = {"category": category, "name": name, "status": status}
+    scoped_product_ids = product_scope_filter(user)
 
     repository = operational_query_repository(current_store)
     list_items = (
@@ -150,6 +160,7 @@ def list_operational_metrics_response(
                 category=category,
                 name=name,
                 status=status,
+                product_scope_ids=scoped_product_ids,
                 page=page,
                 page_size=page_size,
                 sort_by=resolved_sort_by,
@@ -165,6 +176,13 @@ def list_operational_metrics_response(
         )
 
     items = operational_metric_rows(current_store)
+    if scoped_product_ids is not None:
+        scoped_set = set(scoped_product_ids)
+        items = [
+            item
+            for item in items
+            if item.get("product_id") is not None and str(item.get("product_id")) in scoped_set
+        ]
     if category is not None:
         items = [item for item in items if item.get("category") == category]
     if status is not None:

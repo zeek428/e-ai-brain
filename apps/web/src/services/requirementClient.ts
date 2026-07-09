@@ -219,6 +219,7 @@ function normalizeRequirementStatus(status?: string): RequirementRecord['status'
     status === 'deferred' ||
     status === 'designing' ||
     status === 'developing' ||
+    status === 'deploying' ||
     status === 'draft' ||
     status === 'planned' ||
     status === 'ready_for_dev' ||

@@ -18,6 +18,7 @@ REQUIREMENT_STATUSES = {
     "code_reviewing",
     "deferred",
     "designing",
+    "deploying",
     "developing",
     "draft",
     "planned",
@@ -34,7 +35,7 @@ REQUIREMENT_STATUS_AFTER_TASK_COMPLETED = {
     "development_planning": "developing",
     "post_release_analysis": "accepted",
     "product_detail_design": "ready_for_dev",
-    "release_readiness": "released",
+    "release_readiness": "ready_for_release",
     "technical_solution": "ready_for_dev",
 }
 

@@ -606,13 +606,13 @@ def validate_version_dashboard_quick_regression(
     release_evidence_blockers = [
         blocker
         for blocker in dashboard_blockers
-        if blocker.get("source_type") == "jenkins_release"
+        if blocker.get("source_type") == "deployment_request"
         and blocker.get("action_target_type") == "product_version"
         and str(blocker.get("action_target_id")) == version["id"]
     ]
     _assert(
         release_evidence_blockers,
-        f"Version dashboard quick check missed release evidence blocker: {dashboard_blockers}",
+        f"Version dashboard quick check missed deployment evidence blocker: {dashboard_blockers}",
     )
     branch_blockers = [
         blocker
@@ -1224,17 +1224,17 @@ def run_regression(
     release_evidence_blockers = [
         blocker
         for blocker in dashboard_blockers
-        if blocker.get("source_type") == "jenkins_release"
+        if blocker.get("source_type") == "deployment_request"
         and str(blocker.get("action_target_id")) == version["id"]
         and blocker.get("action_target_type") == "product_version"
     ]
     _assert(
         release_evidence_blockers,
-        f"Version dashboard missed release evidence blocker for product version: {dashboard_blockers}",
+        f"Version dashboard missed deployment evidence blocker for product version: {dashboard_blockers}",
     )
     _assert(
-        any("缺少成功发布记录" in str(blocker.get("reason") or "") for blocker in release_evidence_blockers),
-        f"Version dashboard release blocker did not explain missing successful release: {release_evidence_blockers}",
+        any("缺少成功运维部署" in str(blocker.get("reason") or "") for blocker in release_evidence_blockers),
+        f"Version dashboard deployment blocker did not explain missing successful deployment: {release_evidence_blockers}",
     )
     results.append(
         StepResult(

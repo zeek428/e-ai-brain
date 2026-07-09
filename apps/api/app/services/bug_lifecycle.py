@@ -4,7 +4,13 @@ from typing import Any
 
 from fastapi import HTTPException
 
-BUG_SOURCES = {"ai_auto_test", "ai_post_release", "code_inspection", "manual_test"}
+BUG_SOURCES = {
+    "ai_auto_test",
+    "ai_post_release",
+    "code_inspection",
+    "deployment_failure",
+    "manual_test",
+}
 BUG_SEVERITIES = {"blocker", "critical", "major", "minor"}
 BUG_STATUSES = {
     "assigned",

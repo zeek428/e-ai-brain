@@ -133,6 +133,7 @@ export type RequirementRecord = {
     | 'deferred'
     | 'designing'
     | 'developing'
+    | 'deploying'
     | 'draft'
     | 'planned'
     | 'ready_for_dev'
@@ -160,7 +161,7 @@ export type BugRecord = {
   reproduceSteps?: string[];
   requirementId?: string;
   severity: 'blocker' | 'critical' | 'major' | 'minor';
-  source: 'ai_auto_test' | 'ai_post_release' | 'code_inspection' | 'manual_test';
+  source: 'ai_auto_test' | 'ai_post_release' | 'code_inspection' | 'deployment_failure' | 'manual_test';
   status:
     | 'assigned'
     | 'closed'

@@ -6847,7 +6847,7 @@ def test_ai_assistant_iteration_governance_is_deterministic_and_keeps_history(
     assert version_item["blocker_count"] >= 2
     assert [item["source_type"] for item in version_item["next_actions"][:2]] == [
         "bug",
-        "jenkins_release",
+        "deployment_request",
     ]
     assert version_item["delivery_stage_overview"][0]["key"] == "requirements"
     assert version_item["delivery_stage_overview"][0]["title"] == "需求范围"

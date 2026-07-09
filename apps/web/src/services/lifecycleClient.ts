@@ -113,6 +113,7 @@ export type RequirementFullChainSummary = {
   bugs: number;
   codeInspectionReports: number;
   codeReviewReports: number;
+  deploymentRequests: number;
   executionTraces: number;
   gitSnapshots: number;
   jenkinsReleases: number;
@@ -134,6 +135,13 @@ export type RequirementFullChainRecord = {
   codeInspectionReports: CodeInspectionReportRecord[];
   codeReviewReports: CodeReviewReportRecord[];
   executionTraces: ExecutionTraceListItem[];
+  deploymentRequests: Array<{
+    createdAt: string;
+    environment: string;
+    id: string;
+    status: string;
+    title: string;
+  }>;
   gitSnapshots: GitLabMergeRequestSnapshot[];
   iterationVersion?: {
     code?: string;
@@ -300,6 +308,7 @@ type RequirementFullChainResponse = {
   branch_configs?: ProductVersionBranchConfigListItem[];
   code_inspection_reports?: CodeInspectionReportRecord[];
   code_review_reports?: CodeReviewReportResponse[];
+  deployment_requests?: FlexibleListItem[];
   execution_traces?: ExecutionTraceListItem[];
   git_snapshots?: GitLabMergeRequestSnapshotResponse[];
   iteration_version?: ProductVersionListItem | null;
@@ -316,6 +325,7 @@ type RequirementFullChainResponse = {
     bugs: number;
     code_inspection_reports: number;
     code_review_reports: number;
+    deployment_requests: number;
     execution_traces: number;
     git_snapshots: number;
     jenkins_releases: number;
@@ -457,6 +467,13 @@ function mapRequirementFullChain(
       status: report.status ?? '-',
       summary: report.summary ?? report.id,
     })),
+    deploymentRequests: (chain.deployment_requests ?? []).map((deployment) => ({
+      createdAt: formatListDate(formatUnknownValue(deployment.created_at ?? deployment.updated_at)),
+      environment: formatUnknownValue(deployment.environment),
+      id: formatUnknownValue(deployment.id),
+      status: formatUnknownValue(deployment.status),
+      title: formatUnknownValue(deployment.title ?? deployment.id),
+    })),
     executionTraces: chain.execution_traces ?? [],
     gitSnapshots: (chain.git_snapshots ?? []).map((snapshot) => ({
       changedFilesSummary: snapshot.changed_files_summary ?? [],
@@ -510,6 +527,7 @@ function mapRequirementFullChain(
       bugs: normalizeDashboardCount(summary.bugs),
       codeInspectionReports: normalizeDashboardCount(summary.code_inspection_reports),
       codeReviewReports: normalizeDashboardCount(summary.code_review_reports),
+      deploymentRequests: normalizeDashboardCount(summary.deployment_requests),
       executionTraces: normalizeDashboardCount(summary.execution_traces),
       gitSnapshots: normalizeDashboardCount(summary.git_snapshots),
       jenkinsReleases: normalizeDashboardCount(summary.jenkins_releases),

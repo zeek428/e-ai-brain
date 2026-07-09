@@ -114,6 +114,76 @@ export type JenkinsReleaseCreatePayload = {
   version_id: string;
 };
 
+export type DeploymentRunRecord = {
+  createdAt: string;
+  executorType: string;
+  externalBuildId?: string;
+  externalJobName?: string;
+  failureReason?: string;
+  finishedAt?: string;
+  id: string;
+  logUrl?: string;
+  startedAt?: string;
+  status: string;
+  updatedAt: string;
+};
+
+export type DeploymentRequestRecord = {
+  artifactVersion?: string;
+  commitSha?: string;
+  createdAt: string;
+  environment: string;
+  failureReason?: string;
+  finishedAt?: string;
+  gateSummary: Record<string, unknown>;
+  id: string;
+  productId: string;
+  releaseBranch?: string;
+  requirementIds: string[];
+  riskLevel: string;
+  rollbackPlan?: string;
+  runs: DeploymentRunRecord[];
+  startedAt?: string;
+  status: string;
+  title: string;
+  updatedAt: string;
+  versionId: string;
+};
+
+export type DeploymentRequestCreatePayload = {
+  artifact_version?: string;
+  assigned_ops_user?: string;
+  commit_sha?: string;
+  deploy_window_end?: string;
+  deploy_window_start?: string;
+  environment?: string;
+  release_branch?: string;
+  release_readiness_task_id?: string;
+  requirement_ids: string[];
+  risk_level?: string;
+  rollback_plan?: string;
+  product_id: string;
+  title: string;
+  version_id: string;
+};
+
+export type DeploymentStartPayload = {
+  executor_type?: string;
+  external_build_id?: string;
+  external_job_name?: string;
+  log_url?: string;
+};
+
+export type DeploymentCompletePayload = DeploymentStartPayload & {
+  failure_reason?: string;
+  finished_at?: string;
+  status: 'failed' | 'rolled_back' | 'success';
+};
+
+export type DeploymentCancelPayload = {
+  reason?: string;
+};
+
 export type OnlineLogMetricCreatePayload = {
   anomaly_summary?: string;
   core_event_count?: number;
@@ -236,8 +306,9 @@ function mapOperationalMetrics(
         'title',
         'job_name',
         'build_id',
-        'metric_date',
         'environment',
+        'artifact_version',
+        'metric_date',
         'window_start',
       ]),
     ),
@@ -253,6 +324,9 @@ function mapOperationalMetrics(
         'summary',
         'commit_count',
         'build_id',
+        'environment',
+        'artifact_version',
+        'requirement_ids',
         'duration_seconds',
         'error_rate',
         'request_count',
@@ -275,8 +349,9 @@ function mapOperationalMetricRecord(item: FlexibleListItem, index: number): Oper
         'title',
         'job_name',
         'build_id',
-        'metric_date',
         'environment',
+        'artifact_version',
+        'metric_date',
         'window_start',
       ]),
     ),
@@ -293,6 +368,9 @@ function mapOperationalMetricRecord(item: FlexibleListItem, index: number): Oper
         'commit_count',
         'quality_score',
         'build_id',
+        'environment',
+        'artifact_version',
+        'requirement_ids',
         'duration_seconds',
         'error_rate',
         'request_count',
@@ -304,15 +382,17 @@ function mapOperationalMetricRecord(item: FlexibleListItem, index: number): Oper
 
 export async function fetchDevopsMetrics(): Promise<OperationalMetricRecord[]> {
   const token = requireAccessToken();
-  const [gitlabMetrics, jenkinsReleases, onlineLogs] = await Promise.all([
+  const [gitlabMetrics, jenkinsReleases, deploymentRequests, onlineLogs] = await Promise.all([
     apiRequest<ListResponse<FlexibleListItem>>('/api/devops/gitlab/daily-code-metrics', { token }),
     apiRequest<ListResponse<FlexibleListItem>>('/api/devops/jenkins/releases', { token }),
+    apiRequest<ListResponse<FlexibleListItem>>('/api/devops/deployments', { token }),
     apiRequest<ListResponse<FlexibleListItem>>('/api/ops/online-log-metrics', { token }),
   ]);
 
   return [
     ...mapOperationalMetrics('GitLab 指标', gitlabMetrics.items),
     ...mapOperationalMetrics('Jenkins 发布', jenkinsReleases.items),
+    ...mapOperationalMetrics('运维部署', deploymentRequests.items),
     ...mapOperationalMetrics('线上日志', onlineLogs.items),
   ];
 }
@@ -361,6 +441,86 @@ export async function createJenkinsRelease(
     method: 'POST',
     token,
   });
+}
+
+export async function fetchDeploymentRequests(params: {
+  environment?: string;
+  productId?: string;
+  status?: string;
+  versionId?: string;
+} = {}): Promise<DeploymentRequestRecord[]> {
+  const token = requireAccessToken();
+  const query = new URLSearchParams();
+  appendQueryParam(query, 'environment', params.environment);
+  appendQueryParam(query, 'product_id', params.productId);
+  appendQueryParam(query, 'status', params.status);
+  appendQueryParam(query, 'version_id', params.versionId);
+  const queryString = query.toString();
+  const response = await apiRequest<ListResponse<FlexibleListItem>>(
+    queryString ? `/api/devops/deployments?${queryString}` : '/api/devops/deployments',
+    { token },
+  );
+  return response.items.map(mapDeploymentRequest);
+}
+
+export async function createDeploymentRequest(
+  payload: DeploymentRequestCreatePayload,
+): Promise<DeploymentRequestRecord> {
+  const token = requireAccessToken();
+  const item = await apiRequest<FlexibleListItem>('/api/devops/deployments', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+  return mapDeploymentRequest(item);
+}
+
+export async function startDeploymentRequest(
+  deploymentRequestId: string,
+  payload: DeploymentStartPayload = {},
+): Promise<DeploymentRequestRecord> {
+  const token = requireAccessToken();
+  const item = await apiRequest<FlexibleListItem>(
+    `/api/devops/deployments/${encodeURIComponent(deploymentRequestId)}/start`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+  return mapDeploymentRequest(item);
+}
+
+export async function completeDeploymentRequest(
+  deploymentRequestId: string,
+  payload: DeploymentCompletePayload,
+): Promise<DeploymentRequestRecord> {
+  const token = requireAccessToken();
+  const item = await apiRequest<FlexibleListItem>(
+    `/api/devops/deployments/${encodeURIComponent(deploymentRequestId)}/complete`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+  return mapDeploymentRequest(item);
+}
+
+export async function cancelDeploymentRequest(
+  deploymentRequestId: string,
+  payload: DeploymentCancelPayload = {},
+): Promise<DeploymentRequestRecord> {
+  const token = requireAccessToken();
+  const item = await apiRequest<FlexibleListItem>(
+    `/api/devops/deployments/${encodeURIComponent(deploymentRequestId)}/cancel`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+  return mapDeploymentRequest(item);
 }
 
 export async function createOnlineLogMetric(
@@ -425,6 +585,55 @@ export async function updateCollectorRun(
 
 function emptyToUndefined(value: string) {
   return value === '-' ? undefined : value;
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean);
+}
+
+function mapDeploymentRun(item: FlexibleListItem): DeploymentRunRecord {
+  return {
+    createdAt: formatListDate(formatUnknownValue(item.created_at)),
+    executorType: formatUnknownValue(item.executor_type),
+    externalBuildId: emptyToUndefined(formatUnknownValue(item.external_build_id)),
+    externalJobName: emptyToUndefined(formatUnknownValue(item.external_job_name)),
+    failureReason: emptyToUndefined(formatUnknownValue(item.failure_reason)),
+    finishedAt: emptyToUndefined(formatListDate(formatUnknownValue(item.finished_at))),
+    id: formatUnknownValue(item.id),
+    logUrl: emptyToUndefined(formatUnknownValue(item.log_url)),
+    startedAt: emptyToUndefined(formatListDate(formatUnknownValue(item.started_at))),
+    status: formatUnknownValue(item.status),
+    updatedAt: formatListDate(formatUnknownValue(item.updated_at ?? item.created_at)),
+  };
+}
+
+function mapDeploymentRequest(item: FlexibleListItem): DeploymentRequestRecord {
+  return {
+    artifactVersion: emptyToUndefined(formatUnknownValue(item.artifact_version)),
+    commitSha: emptyToUndefined(formatUnknownValue(item.commit_sha)),
+    createdAt: formatListDate(formatUnknownValue(item.created_at)),
+    environment: formatUnknownValue(item.environment),
+    failureReason: emptyToUndefined(formatUnknownValue(item.failure_reason)),
+    finishedAt: emptyToUndefined(formatListDate(formatUnknownValue(item.finished_at))),
+    gateSummary: normalizeObjectRecord(item.gate_summary) ?? {},
+    id: formatUnknownValue(item.id),
+    productId: formatUnknownValue(item.product_id),
+    releaseBranch: emptyToUndefined(formatUnknownValue(item.release_branch)),
+    requirementIds: normalizeStringArray(item.requirement_ids),
+    riskLevel: formatUnknownValue(item.risk_level),
+    rollbackPlan: emptyToUndefined(formatUnknownValue(item.rollback_plan)),
+    runs: Array.isArray(item.runs) ? item.runs.map((run) => mapDeploymentRun(run as FlexibleListItem)) : [],
+    startedAt: emptyToUndefined(formatListDate(formatUnknownValue(item.started_at))),
+    status: formatUnknownValue(item.status),
+    title: formatUnknownValue(item.title),
+    updatedAt: formatListDate(formatUnknownValue(item.updated_at ?? item.created_at)),
+    versionId: formatUnknownValue(item.version_id),
+  };
 }
 
 function mapPendingAttributionItem(item: FlexibleListItem): PendingAttributionItem {

@@ -132,7 +132,95 @@ Content-Type: application/json
 }
 ```
 
-服务端校验产品处于 active 状态且版本归属该产品，archived 版本不得登记发布记录；`status` 只能为 `success`、`failed`、`running` 或 `canceled`，构建编号和耗时不得为负数，部署时间不得早于开始时间；写入 `jenkins_release_records` 后记录 `jenkins_release.created` 审计事件。
+服务端校验产品处于 active 状态且版本归属该产品，archived 版本不得登记发布记录；`deployment_request_id` 可选，传入时必须属于同一产品和版本；`status` 只能为 `success`、`failed`、`running` 或 `canceled`，构建编号和耗时不得为负数，部署时间不得早于开始时间；写入 `jenkins_release_records` 后记录 `jenkins_release.created` 审计事件。
+
+运维部署单：
+
+```http
+GET /api/devops/deployments?product_id=product_001&version_id=version_001&status=deploying&environment=prod
+```
+
+当前实现支持按产品、版本、状态和环境筛选部署单，并返回关联需求范围和最近执行记录：
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "deployment_request_001",
+        "product_id": "product_001",
+        "version_id": "version_001",
+        "title": "生产部署",
+        "environment": "prod",
+        "status": "pending_ops",
+        "requirement_ids": ["requirement_001"],
+        "risk_level": "medium",
+        "rollback_plan": "回滚到上一稳定版本",
+        "gate_summary": {
+          "blocking_bug_count": 0,
+          "requirement_count": 1,
+          "status": "ready"
+        },
+        "runs": []
+      }
+    ],
+    "total": 1
+  },
+  "trace_id": "trace_012_deploy"
+}
+```
+
+具备 `deployment.create` 的产品负责人、研发负责人或发布负责人可从测试完成或待发布需求发起部署：
+
+```http
+POST /api/devops/deployments
+Content-Type: application/json
+
+{
+  "product_id": "product_001",
+  "version_id": "version_001",
+  "title": "生产部署",
+  "requirement_ids": ["requirement_001"],
+  "environment": "prod",
+  "risk_level": "medium",
+  "release_branch": "release/2026.07",
+  "commit_sha": "8f6b7c1",
+  "artifact_version": "2026.07.09-1",
+  "deploy_window_start": "2026-07-09T13:00:00Z",
+  "deploy_window_end": "2026-07-09T14:00:00Z",
+  "rollback_plan": "回滚到上一稳定版本"
+}
+```
+
+服务端校验产品和版本归属、需求必须处于 `testing` 或 `ready_for_release`、同版本 blocker/critical 未关闭 Bug 不存在；如传入 `release_readiness_task_id`，必须是同产品版本下已完成的 `release_readiness` 任务。创建成功后写入 `deployment_requests` 和 `deployment_request_requirements`，状态为 `pending_ops`，记录 `deployment_request.created` 审计事件。
+
+具备 `deployment.execute` 的发布负责人或运维人员可启动和完成部署：
+
+```http
+POST /api/devops/deployments/deployment_request_001/start
+Content-Type: application/json
+
+{
+  "executor_type": "manual",
+  "external_job_name": "rd-brain-prod-deploy",
+  "external_build_id": "build-20260709-001",
+  "log_url": "https://jenkins.example/job/..."
+}
+```
+
+启动成功后部署单进入 `deploying`，写入一条 `deployment_runs(status=running)`，关联需求进入 `deploying`。
+
+```http
+POST /api/devops/deployments/deployment_request_001/complete
+Content-Type: application/json
+
+{
+  "status": "success",
+  "external_build_id": "build-20260709-001"
+}
+```
+
+`status=success` 时部署单进入 `succeeded`，部署运行进入 `success`，关联需求进入 `released`；`status=failed` 或 `rolled_back` 时部署单进入失败或回滚状态，关联需求回到 `ready_for_release`，并创建来源为 `deployment_failure` 的 Bug。具备 `deployment.cancel` 的用户可调用 `POST /api/devops/deployments/{deployment_request_id}/cancel` 取消未完成部署，运行中的 run 会标记为 `canceled`，部署中的需求回到 `ready_for_release`。
 
 研发运营统一聚合列表：
 
@@ -140,7 +228,7 @@ Content-Type: application/json
 GET /api/devops/operational-metrics?category=Jenkins%20发布&name=deploy&status=success&page=1&page_size=10&sort_by=updated_at&sort_order=desc
 ```
 
-该接口面向研发运营主列表聚合 GitLab 每日代码指标、Jenkins 发布记录和线上运行日志指标，返回统一行字段 `category`、`name`、`value`、`status`、`updated_at` 以及原始上下文字段。支持 `category` 精确筛选，`name` 文本筛选，`status` 精确筛选，`page/page_size` 服务端分页，`sort_by` 支持 `category/id/name/status/updated_at/value`，`sort_order` 支持 `asc/desc`。PostgreSQL 运行时必须通过 repository SQL read model 聚合查询三类来源，并在 SQL 层完成筛选、排序和分页；MemoryStore 仅保留为测试 helper fallback。前端研发运营指标主列表必须调用该接口，不再并发拉取三类原始接口后本地拼装、排序或分页；登记弹窗仍使用各原始 POST 接口写入真实指标。
+该接口面向研发运营主列表聚合 GitLab 每日代码指标、Jenkins 发布记录、运维部署单和线上运行日志指标，返回统一行字段 `category`、`name`、`value`、`status`、`updated_at` 以及原始上下文字段。支持 `category` 精确筛选，`name` 文本筛选，`status` 精确筛选，`page/page_size` 服务端分页，`sort_by` 支持 `category/id/name/status/updated_at/value`，`sort_order` 支持 `asc/desc`。PostgreSQL 运行时必须通过 repository SQL read model 聚合查询四类来源，并在 SQL 层完成筛选、排序和分页；MemoryStore 仅保留为测试 helper fallback。前端研发运营指标主列表必须调用该接口，不再并发拉取四类原始接口后本地拼装、排序或分页；登记弹窗仍使用各原始 POST 接口写入真实指标或部署单。
 
 线上运行日志运营指标：
 

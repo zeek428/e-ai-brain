@@ -156,6 +156,21 @@ type ProductVersionDashboardReleaseItem = {
   status?: unknown;
 };
 
+type ProductVersionDashboardDeploymentItem = {
+  artifact_version?: unknown;
+  created_at?: unknown;
+  environment?: unknown;
+  failure_reason?: unknown;
+  finished_at?: unknown;
+  id?: unknown;
+  release_branch?: unknown;
+  requirement_ids?: unknown;
+  started_at?: unknown;
+  status?: unknown;
+  title?: unknown;
+  updated_at?: unknown;
+};
+
 type ProductVersionDashboardKnowledgeDepositItem = {
   ai_task_id?: string | null;
   id: string;
@@ -281,6 +296,8 @@ type ProductVersionDashboardSummary = {
   bugs: number;
   code_inspection_reports: number;
   code_review_reports: number;
+  deployments: number;
+  failed_deployments: number;
   knowledge_deposits: number;
   open_bugs: number;
   pending_code_review_reports: number;
@@ -291,6 +308,7 @@ type ProductVersionDashboardSummary = {
   severe_bugs: number;
   severe_code_inspection_reports: number;
   successful_releases: number;
+  successful_deployments: number;
   tasks: number;
   vectorized_knowledge_deposits: number;
 };
@@ -325,6 +343,7 @@ type ProductVersionDashboardResponse = {
   bugs?: BugListItem[];
   code_inspection_reports?: ProductVersionDashboardCodeInspectionReport[];
   code_review_reports?: ProductVersionDashboardCodeReviewReport[];
+  deployments?: ProductVersionDashboardDeploymentItem[];
   delivery_stage_overview?: ProductVersionDashboardDeliveryStageItem[];
   evidence_coverage?: ProductVersionDashboardEvidenceCoverage | null;
   governance_conclusion?: ProductVersionDashboardGovernanceConclusion | null;
@@ -502,6 +521,19 @@ export type ProductVersionDashboard = {
     jobName?: string;
     status: string;
   }>;
+  deployments: Array<{
+    artifactVersion?: string;
+    createdAt: string;
+    environment: string;
+    failureReason?: string;
+    finishedAt?: string;
+    id: string;
+    releaseBranch?: string;
+    requirementIds: string[];
+    startedAt?: string;
+    status: string;
+    title: string;
+  }>;
   requirementStatusCounts: ProductVersionDashboardStatusCount[];
   requirements: RequirementRecord[];
   statusImpact?: {
@@ -543,6 +575,10 @@ function formatUnknownValue(value: unknown): string {
     return JSON.stringify(value);
   }
   return String(value);
+}
+
+function emptyToUndefined(value: string) {
+  return value === '-' ? undefined : value;
 }
 
 function normalizeDashboardCount(value: unknown) {
@@ -598,6 +634,7 @@ function normalizeRequirementStatus(status?: string): RequirementRecord['status'
     status === 'deferred' ||
     status === 'designing' ||
     status === 'developing' ||
+    status === 'deploying' ||
     status === 'draft' ||
     status === 'planned' ||
     status === 'ready_for_dev' ||
@@ -636,7 +673,12 @@ function normalizeBugStatus(status?: string): BugRecord['status'] {
 }
 
 function normalizeBugSource(source?: string): BugRecord['source'] {
-  if (source === 'ai_auto_test' || source === 'ai_post_release' || source === 'code_inspection') {
+  if (
+    source === 'ai_auto_test' ||
+    source === 'ai_post_release' ||
+    source === 'code_inspection' ||
+    source === 'deployment_failure'
+  ) {
     return source;
   }
   return 'manual_test';
@@ -942,6 +984,19 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
     releaseReadinessChecklist: mapReleaseReadinessChecklist(
       dashboard.release_readiness_checklist,
     ),
+    deployments: (dashboard.deployments ?? []).map((deployment) => ({
+      artifactVersion: emptyToUndefined(formatUnknownValue(deployment.artifact_version)),
+      createdAt: formatListDate(formatUnknownValue(deployment.created_at ?? deployment.updated_at)),
+      environment: formatUnknownValue(deployment.environment),
+      failureReason: emptyToUndefined(formatUnknownValue(deployment.failure_reason)),
+      finishedAt: emptyToUndefined(formatListDate(formatUnknownValue(deployment.finished_at))),
+      id: formatUnknownValue(deployment.id),
+      releaseBranch: emptyToUndefined(formatUnknownValue(deployment.release_branch)),
+      requirementIds: normalizeStringList(deployment.requirement_ids),
+      startedAt: emptyToUndefined(formatListDate(formatUnknownValue(deployment.started_at))),
+      status: formatUnknownValue(deployment.status),
+      title: formatUnknownValue(deployment.title ?? deployment.id),
+    })),
     releases: (dashboard.releases ?? []).map((release) => ({
       buildId: formatUnknownValue(release.build_id),
       createdAt: formatListDate(formatUnknownValue(release.deployed_at ?? release.started_at ?? release.created_at)),
@@ -965,6 +1020,8 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
       bugs: normalizeDashboardCount(summary.bugs),
       code_inspection_reports: normalizeDashboardCount(summary.code_inspection_reports),
       code_review_reports: normalizeDashboardCount(summary.code_review_reports),
+      deployments: normalizeDashboardCount(summary.deployments),
+      failed_deployments: normalizeDashboardCount(summary.failed_deployments),
       knowledge_deposits: normalizeDashboardCount(summary.knowledge_deposits),
       open_bugs: normalizeDashboardCount(summary.open_bugs),
       pending_code_review_reports: normalizeDashboardCount(summary.pending_code_review_reports),
@@ -975,6 +1032,7 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
       severe_bugs: normalizeDashboardCount(summary.severe_bugs),
       severe_code_inspection_reports: normalizeDashboardCount(summary.severe_code_inspection_reports),
       successful_releases: normalizeDashboardCount(summary.successful_releases),
+      successful_deployments: normalizeDashboardCount(summary.successful_deployments),
       tasks: normalizeDashboardCount(summary.tasks),
       vectorized_knowledge_deposits: normalizeDashboardCount(summary.vectorized_knowledge_deposits),
     },

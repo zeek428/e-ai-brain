@@ -118,6 +118,7 @@ const requirementStatusLabels: Record<
   deferred: { color: 'default', label: '暂缓' },
   designing: { color: 'blue', label: '设计中' },
   developing: { color: 'geekblue', label: '开发中' },
+  deploying: { color: 'orange', label: '部署中' },
   draft: { color: 'default', label: '草稿' },
   planned: { color: 'cyan', label: '已排期' },
   ready_for_dev: { color: 'lime', label: '待开发' },

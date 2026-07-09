@@ -800,6 +800,7 @@ export default function BugsPage() {
                     { label: '人工登记', value: 'manual_test' },
                     { label: 'AI 自动测试', value: 'ai_auto_test' },
                     { label: 'AI 上线后分析', value: 'ai_post_release' },
+                    { label: '部署失败', value: 'deployment_failure' },
                   ]}
                 />
               </Form.Item>

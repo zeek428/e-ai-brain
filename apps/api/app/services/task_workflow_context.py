@@ -14,6 +14,8 @@ TASK_WORKFLOW_COLLECTION_KEYS = {
     "code_review_reports": "code_review_reports",
     "gitlab_daily_code_metrics": "gitlab_daily_code_metrics",
     "gitlab_mr_snapshots": "gitlab_mr_snapshots",
+    "deployment_requests": "deployment_requests",
+    "deployment_runs": "deployment_runs",
     "graph_checkpoints": "graph_checkpoints",
     "graph_runs": "graph_runs",
     "human_reviews": "human_reviews",
@@ -62,6 +64,8 @@ class TaskWorkflowSourceStore:
         self.code_inspection_findings: dict[str, dict[str, Any]] = {}
         self.gitlab_daily_code_metrics: dict[str, dict[str, Any]] = {}
         self.jenkins_release_records: dict[str, dict[str, Any]] = {}
+        self.deployment_requests: dict[str, dict[str, Any]] = {}
+        self.deployment_runs: dict[str, dict[str, Any]] = {}
         self.online_log_metrics: dict[str, dict[str, Any]] = {}
         self.requirements: dict[str, dict[str, Any]] = {}
         self.ai_tasks: dict[str, dict[str, Any]] = {}

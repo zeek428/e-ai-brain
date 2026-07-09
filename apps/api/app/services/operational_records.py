@@ -10,8 +10,9 @@ from app.services.product_config_context import product_config_source_store
 
 COLLECTOR_TYPES = {
     "code_inspection",
-    "dashboard_snapshot_refresh",
-    "gitlab_daily_code_metric",
+        "dashboard_snapshot_refresh",
+        "deployment_request",
+        "gitlab_daily_code_metric",
     "iteration_plan_suggestion",
     "jenkins_release",
     "lifecycle_context_refresh",
@@ -65,6 +66,10 @@ def operational_write_store(current_store: Any) -> Any:
         "online_log_metrics": lambda: repository.list_online_log_metrics(),
         "pending_attribution_items": lambda: repository.list_pending_attribution_items(),
     }
+    if callable(getattr(repository, "list_deployment_requests", None)):
+        collection_loaders["deployment_requests"] = lambda: repository.list_deployment_requests()
+    if callable(getattr(repository, "list_deployment_runs", None)):
+        collection_loaders["deployment_runs"] = lambda: repository.list_deployment_runs()
     for collection_name, loader in collection_loaders.items():
         setattr(
             source_store,

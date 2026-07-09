@@ -79,6 +79,7 @@ def test_operational_metrics_use_repository_read_model_for_sql_pagination():
                 "name": "deploy",
                 "page": 1,
                 "page_size": 1,
+                "product_scope_ids": None,
                 "sort_by": "updated_at",
                 "sort_order": "desc",
                 "status": "success",

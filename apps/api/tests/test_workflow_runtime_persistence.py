@@ -329,11 +329,16 @@ def test_pending_reviews_route_uses_repository_pagination_and_task_filter():
         assert payload["query"]["name"] == "pending_reviews"
         assert payload["query"]["filters"] == {"ai_task_id": "task_perf_001"}
         assert payload["performance"]["total"] == 23
-        assert count_kwargs == {"ai_task_id": "task_perf_001", "read_scope": "all"}
+        assert count_kwargs == {
+            "ai_task_id": "task_perf_001",
+            "product_scope_ids": None,
+            "read_scope": "all",
+        }
         assert list_kwargs == {
             "ai_task_id": "task_perf_001",
             "limit": 5,
             "offset": 5,
+            "product_scope_ids": None,
             "read_scope": "all",
             "sort_by": "updated_at",
             "sort_order": "asc",

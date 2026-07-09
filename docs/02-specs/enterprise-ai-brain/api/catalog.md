@@ -202,6 +202,11 @@
 | DevOps | GET | `/api/devops/gitlab/daily-code-metrics` | 查询真实 GitLab 每日提交和代码质量审核结果。 |
 | DevOps | POST | `/api/devops/gitlab/daily-code-metrics` | 登记真实 GitLab 每日提交和代码质量审核结果。 |
 | DevOps | GET | `/api/devops/operational-metrics` | 查询研发运营统一聚合列表，支持服务端分页、排序和筛选。 |
+| DevOps | GET | `/api/devops/deployments` | 查询运维部署单；要求 `deployment.read` 或 `devops.read`，按产品 scope 过滤。 |
+| DevOps | POST | `/api/devops/deployments` | 从测试完成或待发布需求发起运维部署单；校验产品/版本/需求范围、阻塞 Bug 和发布评估任务。 |
+| DevOps | POST | `/api/devops/deployments/{deployment_request_id}/start` | 启动部署单，记录部署运行并把关联需求推进到 `deploying`。 |
+| DevOps | POST | `/api/devops/deployments/{deployment_request_id}/complete` | 登记部署成功、失败或回滚；成功推进需求到 `released`，失败/回滚生成 `deployment_failure` Bug。 |
+| DevOps | POST | `/api/devops/deployments/{deployment_request_id}/cancel` | 取消未完成部署单，并把部署中的需求退回 `ready_for_release`。 |
 | Collectors | GET | `/api/collectors/runs` | 查询 DevOps/洞察采集运行记录。 |
 | Collectors | POST | `/api/collectors/runs` | 登记一次真实采集或导入运行。 |
 | Collectors | PATCH | `/api/collectors/runs/{run_id}` | 更新采集运行状态、导入数量、错误说明或摘要。 |
@@ -290,7 +295,7 @@
 | GitHub Review | POST | `/api/devops/github/pull-requests/{repository_id}/{pr_number}/snapshot` | 拉取 PR 元信息和 diff 摘要，生成 code_review 输入快照。 |
 | Code Review | GET | `/api/ai-tasks/{task_id}/code-review-report` | 查询 GitLab MR / GitHub PR 代码 Review 报告、执行器信息、确认状态和只读回写模板。 |
 | DevOps | GET | `/api/devops/jenkins/releases` | 查询 Jenkins 发布记录。 |
-| DevOps | POST | `/api/devops/jenkins/releases` | 登记真实 Jenkins 发布记录。 |
+| DevOps | POST | `/api/devops/jenkins/releases` | 登记真实 Jenkins 发布记录，可关联同产品版本的部署单。 |
 | Ops | GET | `/api/ops/online-log-metrics` | 查询线上运行日志运营指标。 |
 | Ops | POST | `/api/ops/online-log-metrics` | 登记真实线上运行日志聚合指标。 |
 | Bug | GET | `/api/bugs` | 查询 Bug 列表；校验 `bug.read`，支持产品、迭代版本、状态、严重程度和来源过滤，并按当前用户产品 scope 过滤。 |

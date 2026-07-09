@@ -342,6 +342,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "098_system_alert_notifications.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "099_deployment_requests.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -814,6 +818,7 @@ class PostgresSnapshotRepository:
     def get_task_workflow_source_rows(self) -> dict[str, Any]:
         audit_payload = self.load_audit_events() or {}
         bugs_payload = self.load_bugs() or {}
+        deployments_payload = self.load_deployment_requests() or {}
         gitlab_metrics_payload = self.load_gitlab_daily_code_metrics() or {}
         jenkins_releases_payload = self.load_jenkins_release_records() or {}
         model_gateway_payload = self.load_model_gateway() or {}
@@ -830,6 +835,10 @@ class PostgresSnapshotRepository:
             "bugs": list((bugs_payload.get("bugs") or {}).values()),
             "code_inspection_reports": self.list_code_inspection_reports(),
             "code_review_reports": list((review_payload.get("code_review_reports") or {}).values()),
+            "deployment_requests": list(
+                (deployments_payload.get("deployment_requests") or {}).values()
+            ),
+            "deployment_runs": list((deployments_payload.get("deployment_runs") or {}).values()),
             "gitlab_daily_code_metrics": list(
                 (gitlab_metrics_payload.get("gitlab_daily_code_metrics") or {}).values()
             ),
@@ -1257,6 +1266,35 @@ class PostgresSnapshotRepository:
     def load_jenkins_release_records(self) -> dict[str, Any]:
         return self._devops_read_repository.load_jenkins_release_records()
 
+    def load_deployment_requests(self) -> dict[str, Any]:
+        return self._devops_read_repository.load_deployment_requests()
+
+    def list_deployment_requests(
+        self,
+        *,
+        environment: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        status: str | None = None,
+        version_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._devops_read_repository.list_deployment_requests(
+            environment=environment,
+            product_id=product_id,
+            product_scope_ids=product_scope_ids,
+            status=status,
+            version_id=version_id,
+        )
+
+    def list_deployment_runs(
+        self,
+        *,
+        deployment_request_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._devops_read_repository.list_deployment_runs(
+            deployment_request_id=deployment_request_id,
+        )
+
     def list_jenkins_release_records(
         self,
         *,
@@ -1297,6 +1335,7 @@ class PostgresSnapshotRepository:
         *,
         category: str | None = None,
         name: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         page: int | None = None,
         page_size: int | None = None,
@@ -1306,6 +1345,7 @@ class PostgresSnapshotRepository:
         return self._devops_read_repository.list_operational_metric_items(
             category=category,
             name=name,
+            product_scope_ids=product_scope_ids,
             status=status,
             page=page,
             page_size=page_size,
@@ -2698,6 +2738,28 @@ class PostgresSnapshotRepository:
         self._devops_read_repository.save_jenkins_release_record(
             record,
             audit_event=audit_event,
+        )
+
+    def save_deployment_request_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._devops_read_repository.save_deployment_request_record(
+            record,
+            audit_events=audit_events,
+        )
+
+    def save_deployment_run_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._devops_read_repository.save_deployment_run_record(
+            record,
+            audit_events=audit_events,
         )
 
     def save_online_log_metrics(self, payload: dict[str, Any]) -> None:

@@ -14,6 +14,7 @@
 
 - `execution_trace_snapshots`
 - `code_inspection_reports`、`code_inspection_findings`、`code_inspection_notifications`
+- `deployment_requests`、`deployment_request_requirements`、`deployment_runs`
 - `bugs`、`user_feedback`、`user_usage_metrics`、`iteration_plan_suggestions`
 - `lifecycle_context_edges`、`lifecycle_risk_signals`、`dashboard_metric_snapshots`
 
@@ -46,6 +47,7 @@
 - 严重代码巡检 finding 可派生 Bug 或整改任务，并通过 fingerprint 去重。
 - Bug 列表属于管理型列表，必须校验 `bug.read` 并按当前用户产品 scope 在服务端过滤；PostgreSQL 运行态需将产品 scope 下推到 Bug read model 后再分页计数，避免前端或内存 fallback 暴露其他产品记录。Bug 创建、批量更新、编辑和删除属于 DB-first 写路径：服务层不得直接调用 `current_store.audit()` 或写 `current_store.bugs`；MemoryStore fallback 由 `save_bug_record` / `delete_bug_record` 承接，PostgreSQL 运行态的 Bug 单记录写入、删除和审计必须在同一数据库事务中提交。
 - 用户洞察列表固定列宽、服务端筛选和详情查看保持稳定，优质反馈可转需求。
+- 运维部署单属于 DB-first 写路径：创建、启动、完成、失败、回滚和取消必须写入 `deployment_requests` / `deployment_runs` 并同步审计；部署成功推进关联需求到 `released`，失败或回滚推进回 `ready_for_release` 并创建 `deployment_failure` 来源 Bug。部署单列表和操作必须按产品 scope 过滤，Jenkins 发布记录可关联部署单但不能替代部署成功门禁。
 - 用户使用指标创建属于 DB-first 写路径：服务层不得直接写 `current_store.user_usage_metrics`；MemoryStore 测试 fallback 由 `save_user_usage_metric_record` 写入指标，PostgreSQL 运行态通过同名 repository 单记录写入指标和审计事件。
 - 用户洞察域通用审计 helper 在轻量上下文 fallback 中必须通过审计事件列表 helper 写入，不得直接 append `current_store.audit_events`；repository 运行态的审计事件由用户反馈、使用指标或迭代规划写入 helper 显式携带提交。
 - 用户反馈创建、更新和转需求必须通过用户洞察写入 helper 承接；反馈单记录由 `save_user_feedback_record` 写入，转需求由 `save_user_feedback_requirement_conversion` 同步提交需求、反馈 linked 状态和审计事件。PostgreSQL 运行态更新/转需求必须按反馈 ID 从 repository 读取源记录，不得依赖运行时 `MemoryStore.user_feedback` 全量集合；MemoryStore 仅作为测试 fallback。

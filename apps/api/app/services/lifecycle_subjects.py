@@ -260,6 +260,8 @@ def subject_product_id(
         return task_product_id(current_store, deposit.get("ai_task_id") if deposit else None)
     product_scoped_collections = {
         "bug": "bugs",
+        "deployment": "deployment_requests",
+        "deployment_request": "deployment_requests",
         "gitlab_daily_code_metric": "gitlab_daily_code_metrics",
         "jenkins_release": "jenkins_release_records",
         "online_log_metric": "online_log_metrics",
@@ -394,6 +396,26 @@ def lifecycle_subject_tasks(
             for task in _tasks(current_store)
             if task.get("product_id") == bug.get("product_id")
         ]
+    if subject_type in {"deployment", "deployment_request"}:
+        deployment = _record(current_store, "deployment_requests", subject_id)
+        if deployment is None:
+            raise api_error(404, "NOT_FOUND", "Deployment request not found")
+        tasks_by_id: dict[str, dict[str, Any]] = {}
+        for requirement_id in deployment.get("requirement_ids", []):
+            for task in lifecycle_require_tasks_by_requirement(current_store, str(requirement_id)):
+                tasks_by_id[str(task["id"])] = task
+        if tasks_by_id:
+            return list(tasks_by_id.values())
+        return [
+            task
+            for task in _tasks(current_store)
+            if task.get("product_id") == deployment.get("product_id")
+            and (
+                not deployment.get("version_id")
+                or not task.get("version_id")
+                or task.get("version_id") == deployment.get("version_id")
+            )
+        ]
     evidence_collections = {
         "gitlab_daily_code_metric": (
             "gitlab_daily_code_metrics",
@@ -493,6 +515,9 @@ def lifecycle_subject(
         elif subject_type == "bug":
             bug = _record(current_store, "bugs", normalized_subject_id)
             resolved_product_id = bug["product_id"] if bug is not None else None
+        elif subject_type in {"deployment", "deployment_request"}:
+            deployment = _record(current_store, "deployment_requests", normalized_subject_id)
+            resolved_product_id = deployment["product_id"] if deployment is not None else None
         elif subject_type in {
             "gitlab_daily_code_metric",
             "jenkins_release",

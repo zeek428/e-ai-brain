@@ -172,6 +172,19 @@ def resolve_requirement_id_from_full_chain_subject(
         requirement_id = resolve_code_inspection_report_requirement_id(current_store, report)
         if requirement_id is not None:
             return requirement_id
+    if normalized_type in {"deployment", "deployment_request"}:
+        deployment = read_memory_dict(current_store, "deployment_requests").get(normalized_id)
+        if deployment is None:
+            raise api_error(404, "NOT_FOUND", "Deployment request not found")
+        requirement_ids = [str(item) for item in deployment.get("requirement_ids", []) if item]
+        if requirement_ids:
+            requirement_id = requirement_ids[0]
+            if read_memory_dict(current_store, "requirements").get(requirement_id) is None:
+                raise api_error(404, "NOT_FOUND", "Requirement not found")
+            return requirement_id
+        requirement_id = latest_requirement_id_for_version(current_store, deployment.get("version_id"))
+        if requirement_id is not None:
+            return requirement_id
     tasks = lifecycle_subject_tasks(
         current_store,
         subject_type=normalized_type,

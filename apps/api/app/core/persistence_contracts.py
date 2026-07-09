@@ -622,6 +622,7 @@ class OperationalMetricReadModelRepository(Protocol):
         *,
         category: str | None = None,
         name: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         page: int | None = None,
         page_size: int | None = None,

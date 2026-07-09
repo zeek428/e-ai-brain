@@ -2221,6 +2221,7 @@ def test_postgres_devops_read_models_delegate_to_domain_repository(monkeypatch):
                 "name": "repo-api",
                 "page": 3,
                 "page_size": 15,
+                "product_scope_ids": None,
                 "sort_by": "updated_at",
                 "sort_order": "desc",
                 "status": "collected",

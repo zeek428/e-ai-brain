@@ -9,6 +9,13 @@ from pydantic import BaseModel, Field
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
 from app.services.devops_metrics import list_operational_metrics_response
+from app.services.operational_deployments import (
+    cancel_deployment_request_response,
+    complete_deployment_request_response,
+    create_deployment_request_response,
+    list_deployment_requests_response,
+    start_deployment_request_response,
+)
 from app.services.operational_gitlab_metrics import (
     create_gitlab_metric_response,
     list_gitlab_metrics_response,
@@ -57,6 +64,45 @@ class JenkinsReleaseRequest(BaseModel):
     deployed_at: str | None = None
     failure_reason: str | None = None
     source_channel: str | None = None
+    deployment_request_id: str | None = None
+
+
+class DeploymentRequestCreate(BaseModel):
+    product_id: str
+    version_id: str
+    title: str
+    requirement_ids: list[str] = Field(default_factory=list)
+    environment: str = "prod"
+    deploy_window_start: str | None = None
+    deploy_window_end: str | None = None
+    release_branch: str | None = None
+    commit_sha: str | None = None
+    artifact_version: str | None = None
+    release_readiness_task_id: str | None = None
+    rollback_plan: str | None = None
+    risk_level: str = "medium"
+    assigned_ops_user: str | None = None
+
+
+class DeploymentStartRequest(BaseModel):
+    executor_type: str | None = "manual"
+    external_job_name: str | None = None
+    external_build_id: str | None = None
+    log_url: str | None = None
+
+
+class DeploymentCompleteRequest(BaseModel):
+    status: str = "success"
+    failure_reason: str | None = None
+    finished_at: str | None = None
+    executor_type: str | None = "manual"
+    external_job_name: str | None = None
+    external_build_id: str | None = None
+    log_url: str | None = None
+
+
+class DeploymentCancelRequest(BaseModel):
+    reason: str | None = None
 
 
 class OnlineLogMetricRequest(BaseModel):
@@ -100,6 +146,7 @@ def operational_metrics(
         started_at=started_at if isinstance(started_at, float) else perf_counter(),
         status=status,
         trace_id=get_trace_id(request),
+        user=user,
     )
     return envelope(payload, get_trace_id(request))
 
@@ -166,6 +213,88 @@ def create_jenkins_release(
         user=user,
     )
     return envelope(release, get_trace_id(request))
+
+
+@router.get("/api/devops/deployments")
+def deployment_requests(
+    request: Request,
+    product_id: str | None = None,
+    version_id: str | None = None,
+    status: str | None = None,
+    environment: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = list_deployment_requests_response(
+        current_store=store(request),
+        environment=environment,
+        product_id=product_id,
+        status=status,
+        user=user,
+        version_id=version_id,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/devops/deployments")
+def create_deployment_request(
+    payload: DeploymentRequestCreate,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    deployment = create_deployment_request_response(
+        current_store=store(request),
+        payload=payload,
+        user=user,
+    )
+    return envelope(deployment, get_trace_id(request))
+
+
+@router.post("/api/devops/deployments/{deployment_request_id}/start")
+def start_deployment_request(
+    deployment_request_id: str,
+    payload: DeploymentStartRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    deployment = start_deployment_request_response(
+        current_store=store(request),
+        deployment_request_id=deployment_request_id,
+        payload=payload,
+        user=user,
+    )
+    return envelope(deployment, get_trace_id(request))
+
+
+@router.post("/api/devops/deployments/{deployment_request_id}/complete")
+def complete_deployment_request(
+    deployment_request_id: str,
+    payload: DeploymentCompleteRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    deployment = complete_deployment_request_response(
+        current_store=store(request),
+        deployment_request_id=deployment_request_id,
+        payload=payload,
+        user=user,
+    )
+    return envelope(deployment, get_trace_id(request))
+
+
+@router.post("/api/devops/deployments/{deployment_request_id}/cancel")
+def cancel_deployment_request(
+    deployment_request_id: str,
+    payload: DeploymentCancelRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    deployment = cancel_deployment_request_response(
+        current_store=store(request),
+        deployment_request_id=deployment_request_id,
+        payload=payload,
+        user=user,
+    )
+    return envelope(deployment, get_trace_id(request))
 
 
 @router.get("/api/ops/online-log-metrics")

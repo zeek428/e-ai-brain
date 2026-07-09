@@ -929,6 +929,7 @@ export default function RequirementsPage() {
                 { label: '代码评审中', value: 'code_reviewing' },
                 { label: '测试中', value: 'testing' },
                 { label: '待发布', value: 'ready_for_release' },
+                { label: '部署中', value: 'deploying' },
                 { label: '已发布', value: 'released' },
                 { label: '已验收', value: 'accepted' },
                 { label: '已拒绝', value: 'rejected' },

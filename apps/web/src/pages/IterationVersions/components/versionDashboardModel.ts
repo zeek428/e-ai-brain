@@ -63,6 +63,7 @@ export const dashboardBlockerSourceLabels: Record<string, string> = {
   bug: 'Bug',
   code_inspection_report: '代码巡检',
   code_review_report: '代码评审',
+  deployment_request: '运维部署',
   jenkins_release: '发布记录',
   product_version_branch_config: '代码分支',
   requirement: '需求',
@@ -95,6 +96,7 @@ export function blockerSubjectType(sourceType: string) {
     sourceType === 'bug' ||
     sourceType === 'code_inspection_report' ||
     sourceType === 'code_review_report' ||
+    sourceType === 'deployment_request' ||
     sourceType === 'jenkins_release' ||
     sourceType === 'product_version' ||
     sourceType === 'product_version_branch_config' ||
@@ -115,11 +117,12 @@ const blockerSeverityPriority: Record<string, number> = {
 
 const blockerSourcePriority: Record<string, number> = {
   bug: 1,
-  jenkins_release: 2,
-  code_inspection_report: 3,
-  code_review_report: 4,
-  requirement: 5,
-  product_version_branch_config: 6,
+  deployment_request: 2,
+  jenkins_release: 3,
+  code_inspection_report: 4,
+  code_review_report: 5,
+  requirement: 6,
+  product_version_branch_config: 7,
 };
 
 export function blockerActionHref(blocker: DashboardActionTarget, versionId: string) {
@@ -153,6 +156,12 @@ export function blockerActionHref(blocker: DashboardActionTarget, versionId: str
   if (targetType === 'jenkins_release') {
     return internalHref('/governance/devops', {
       release_id: targetId,
+      version_id: versionId,
+    });
+  }
+  if (targetType === 'deployment_request' || targetType === 'deployments') {
+    return internalHref('/governance/devops', {
+      deployment_id: targetId,
       version_id: versionId,
     });
   }
@@ -262,6 +271,15 @@ function deliveryStageActionHref(
   if (targetType === 'releases') {
     return internalHref('/governance/devops', { version_id: targetId });
   }
+  if (targetType === 'deployments') {
+    return internalHref('/governance/devops', { version_id: targetId });
+  }
+  if (targetType === 'deployment_request') {
+    return internalHref('/governance/devops', {
+      deployment_id: targetId,
+      version_id: dashboard.version.id,
+    });
+  }
   if (targetType === 'jenkins_release') {
     return internalHref('/governance/devops', {
       release_id: targetId,
@@ -350,6 +368,7 @@ export function buildStatusLabelMap(
     assigned: { color: 'blue', label: '已分派' },
     closed: { color: 'default', label: '已关闭' },
     completed: { color: 'green', label: '已完成' },
+    deploying: { color: 'processing', label: '部署中' },
     failed: { color: 'red', label: '失败' },
     fixed: { color: 'cyan', label: '已修复' },
     high: { color: 'orange', label: '高风险' },
@@ -359,10 +378,12 @@ export function buildStatusLabelMap(
     passed: { color: 'green', label: '通过' },
     pending_scan: { color: 'gold', label: '待巡检' },
     pending_review: { color: 'gold', label: '待确认' },
+    pending_ops: { color: 'gold', label: '待运维执行' },
     healthy: { color: 'green', label: '已闭环' },
     ready_for_release: { color: 'orange', label: '待发布' },
     reopened: { color: 'volcano', label: '重新打开' },
     running: { color: 'blue', label: '运行中' },
+    rolled_back: { color: 'volcano', label: '已回滚' },
     succeeded: { color: 'green', label: '成功' },
     triaged: { color: 'gold', label: '已分诊' },
     verified: { color: 'green', label: '已验证' },
@@ -659,7 +680,22 @@ export function buildDashboardDeliveryStageItems(dashboard?: ProductVersionDashb
     return riskLevel === 'blocker' || riskLevel === 'critical' || riskLevel === 'high';
   }).length;
   const pendingCodeReviewCount = dashboard.summary.pending_code_review_reports;
+  const deploymentBlockerCount = dashboard.blockers.filter(
+    (blocker) => blocker.sourceType === 'deployment_request',
+  ).length;
   const releaseBlockerCount = dashboard.blockers.filter((blocker) => blocker.sourceType === 'jenkins_release').length;
+  const latestDeployment = dashboard.deployments[0];
+  const deploymentDetailParts = [
+    `${dashboard.summary.deployments} 个部署单`,
+    deploymentBlockerCount ? `部署阻塞 ${deploymentBlockerCount} 个` : '暂无部署阻塞',
+    `成功 ${dashboard.summary.successful_deployments} 个`,
+    `失败 ${dashboard.summary.failed_deployments} 个`,
+  ];
+  if (latestDeployment) {
+    deploymentDetailParts.push(
+      `最近 ${latestDeployment.status} ${latestDeployment.environment} · ${latestDeployment.createdAt}`,
+    );
+  }
   const latestRelease = dashboard.releases[0];
   const releaseDetailParts = [
     `${dashboard.summary.releases} 条记录`,
@@ -804,6 +840,30 @@ export function buildDashboardDeliveryStageItems(dashboard?: ProductVersionDashb
       value: dashboard.summary.knowledge_deposits
         ? `${dashboard.summary.searchable_knowledge_deposits}/${dashboard.summary.knowledge_deposits} 可检索`
         : '沉淀待补齐',
+    },
+    {
+      actionHref: latestDeployment
+        ? internalHref('/governance/devops', {
+            deployment_id: latestDeployment.id,
+            version_id: dashboard.version.id,
+          })
+        : internalHref('/governance/devops', { version_id: dashboard.version.id }),
+      actionLabel: deploymentBlockerCount ? '处理部署' : '查看部署',
+      detail: deploymentDetailParts.join(' · '),
+      key: 'deployments',
+      level: deploymentBlockerCount
+        ? 'error'
+        : dashboard.summary.failed_deployments
+          ? 'warning'
+          : dashboard.summary.successful_deployments
+            ? 'success'
+            : 'info',
+      title: '运维部署',
+      value: deploymentBlockerCount
+        ? '部署待治理'
+        : dashboard.summary.successful_deployments
+          ? '部署已完成'
+          : '部署待补证',
     },
     {
       actionHref: internalHref('/governance/devops', { version_id: dashboard.version.id }),

@@ -30,6 +30,7 @@ export const sourceLabels: Record<BugRecord['source'], { color: string; label: s
   ai_auto_test: { color: 'purple', label: 'AI 自动测试' },
   ai_post_release: { color: 'cyan', label: 'AI 上线后分析' },
   code_inspection: { color: 'magenta', label: '代码巡检' },
+  deployment_failure: { color: 'volcano', label: '部署失败' },
   manual_test: { color: 'default', label: '人工登记' },
 };
 

@@ -73,6 +73,7 @@ const statusLabels: Record<string, { color: string; label: string }> = {
   deferred: { color: 'default', label: '已暂缓' },
   designing: { color: 'blue', label: '设计中' },
   developing: { color: 'geekblue', label: '开发中' },
+  deploying: { color: 'orange', label: '部署中' },
   pending_approval: { color: 'gold', label: '待审批' },
   planned: { color: 'cyan', label: '已排期' },
   ready_for_dev: { color: 'lime', label: '待开发' },

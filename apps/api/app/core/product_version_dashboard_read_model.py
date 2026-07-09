@@ -51,6 +51,16 @@ def product_version_dashboard_source_rows(repository: Any, version_id: str) -> d
         for item in knowledge_deposits
         if item.get("knowledge_document_id")
     ]
+    deployment_requests = _list_version_deployment_requests(
+        repository,
+        version_id=version_id,
+    )
+    deployment_runs = [
+        run
+        for deployment_request in deployment_requests
+        for run in deployment_request.get("runs", [])
+        if isinstance(run, dict)
+    ]
     source_rows.update(
         {
             "bugs": _list_version_bugs(
@@ -71,6 +81,8 @@ def product_version_dashboard_source_rows(repository: Any, version_id: str) -> d
             ),
             "code_inspection_reports": code_inspection_reports,
             "code_review_reports": _list_code_review_reports_for_tasks(repository, task_ids),
+            "deployment_requests": deployment_requests,
+            "deployment_runs": deployment_runs,
             "jenkins_release_records": repository.list_jenkins_release_records(
                 version_id=version_id,
             ),
@@ -107,6 +119,8 @@ def _empty_task_workflow_source_rows() -> dict[str, Any]:
         "code_inspection_reports": [],
         "code_inspection_findings": [],
         "code_review_reports": [],
+        "deployment_requests": [],
+        "deployment_runs": [],
         "gitlab_daily_code_metrics": [],
         "gitlab_mr_snapshots": [],
         "graph_checkpoints": [],
@@ -254,6 +268,21 @@ def _list_version_bugs(
                         bug.pop(optional_key)
                 bugs.append(bug)
             return bugs
+
+
+def _list_version_deployment_requests(repository: Any, *, version_id: str) -> list[dict[str, Any]]:
+    deployments = repository.list_deployment_requests(version_id=version_id)
+    deployment_ids = [str(item["id"]) for item in deployments if item.get("id")]
+    if not deployment_ids:
+        return deployments
+    runs_by_request: dict[str, list[dict[str, Any]]] = {deployment_id: [] for deployment_id in deployment_ids}
+    for deployment_id in deployment_ids:
+        runs_by_request[deployment_id] = repository.list_deployment_runs(
+            deployment_request_id=deployment_id,
+        )
+    for deployment in deployments:
+        deployment["runs"] = runs_by_request.get(str(deployment.get("id")), [])
+    return deployments
 
 
 def _list_code_review_reports_for_tasks(

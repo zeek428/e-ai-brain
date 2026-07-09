@@ -12,7 +12,7 @@ GET /api/lifecycle/context?subject_type=requirement&subject_id=requirement_001&d
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| subject_type | string | 起点主体类型。当前支持 `product`、`requirement`、`ai_task`、`human_review`、`code_review_report`、`gitlab_mr_snapshot`、`mock_issue`、`knowledge_deposit`、`audit_event`、`bug`、`gitlab_daily_code_metric`、`jenkins_release`、`online_log_metric`、`user_usage_metric`、`user_feedback`、`iteration_plan_suggestion`；未支持类型必须返回 `VALIDATION_ERROR`。 |
+| subject_type | string | 起点主体类型。当前支持 `product`、`requirement`、`ai_task`、`human_review`、`code_review_report`、`gitlab_mr_snapshot`、`mock_issue`、`knowledge_deposit`、`audit_event`、`bug`、`gitlab_daily_code_metric`、`deployment_request`、`jenkins_release`、`online_log_metric`、`user_usage_metric`、`user_feedback`、`iteration_plan_suggestion`；未支持类型必须返回 `VALIDATION_ERROR`。 |
 | subject_id | string | 起点主体 ID。 |
 | product_id | string | 可选，按产品过滤。 |
 | version_id | string | 可选，按版本过滤。 |

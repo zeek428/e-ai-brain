@@ -481,6 +481,152 @@ describe('operational insights pages', () => {
     );
   });
 
+  it('creates and starts deployment requests from the DevOps page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      if (path.startsWith('/api/devops/operational-metrics')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                category: '运维部署',
+                environment: 'prod',
+                id: 'deployment_request_001',
+                status: 'pending_ops',
+                title: '生产部署',
+                updated_at: '2026-06-01T12:00:00Z',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/devops/deployments' && init?.method === 'POST') {
+        return jsonResponse({
+          data: {
+            environment: 'prod',
+            id: 'deployment_request_created',
+            product_id: 'product_deploy',
+            requirement_ids: ['requirement_deploy'],
+            status: 'pending_ops',
+            title: '生产部署',
+            version_id: 'version_deploy',
+          },
+        });
+      }
+      if (input === '/api/devops/deployments/deployment_request_001/start' && init?.method === 'POST') {
+        return jsonResponse({
+          data: {
+            environment: 'prod',
+            id: 'deployment_request_001',
+            product_id: 'product_deploy',
+            requirement_ids: ['requirement_deploy'],
+            runs: [{ id: 'deployment_run_001', status: 'running' }],
+            status: 'deploying',
+            title: '生产部署',
+            version_id: 'version_deploy',
+          },
+        });
+      }
+      if (path.startsWith('/api/products?active_only=true')) {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'deploy-platform', id: 'product_deploy', name: '部署平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path.startsWith('/api/product-versions?active_only=true')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'v1.0.0',
+                id: 'version_deploy',
+                name: 'v1.0.0',
+                product_id: 'product_deploy',
+                status: 'testing',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path.startsWith('/api/requirements?')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                assignee: 'release-owner',
+                created_at: '2026-06-01T11:00:00Z',
+                id: 'requirement_deploy',
+                priority: 'P1',
+                product_id: 'product_deploy',
+                status: 'ready_for_release',
+                title: '部署需求',
+                updated_at: '2026-06-01T11:30:00Z',
+                version_id: 'version_deploy',
+              },
+            ],
+            page: 1,
+            page_size: 100,
+            total: 1,
+          },
+        });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DevopsPage />);
+
+    expect(await screen.findByText('生产部署')).toBeInTheDocument();
+    expect(screen.getByText('待运维执行')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '发起部署' }));
+    await screen.findByRole('dialog', { name: '发起运维部署' });
+    await waitFor(() => expect(screen.getByLabelText('部署需求')).not.toBeDisabled());
+    fireEvent.change(screen.getByLabelText('部署标题'), { target: { value: '生产部署' } });
+    await waitFor(() => expect(screen.getByText(/requirement_deploy/)).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('回滚方案'), { target: { value: '回滚到上一稳定版本' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建部署单' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/devops/deployments',
+        'POST',
+        JSON.stringify({
+          environment: 'prod',
+          requirement_ids: ['requirement_deploy'],
+          risk_level: 'medium',
+          rollback_plan: '回滚到上一稳定版本',
+          product_id: 'product_deploy',
+          title: '生产部署',
+          version_id: 'version_deploy',
+        }),
+      ]),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '启动' }));
+    await screen.findByRole('dialog', { name: '启动部署' });
+    fireEvent.click(screen.getByRole('button', { name: '确认部署操作' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/devops/deployments/deployment_request_001/start',
+        'POST',
+        JSON.stringify({ executor_type: 'manual' }),
+      ]),
+    );
+  });
+
   it('records real online log metrics from the DevOps page', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

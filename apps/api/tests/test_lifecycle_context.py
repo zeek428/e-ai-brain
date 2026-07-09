@@ -642,6 +642,7 @@ def test_requirement_full_chain_returns_requirement_timeline_and_related_subject
         "code_review_reports": len(full_chain["code_review_reports"]),
         "code_inspection_reports": len(full_chain["code_inspection_reports"]),
         "bugs": len(full_chain["bugs"]),
+        "deployment_requests": len(full_chain["deployment_requests"]),
         "jenkins_releases": len(full_chain["jenkins_releases"]),
         "knowledge_deposits": len(full_chain["knowledge_deposits"]),
         "execution_traces": len(full_chain["execution_traces"]),

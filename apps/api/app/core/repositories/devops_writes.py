@@ -58,6 +58,30 @@ class DevopsWriteRepository:
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])
 
+    def save_deployment_request_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self.upsert_deployment_requests(cursor, {record["id"]: record})
+                if audit_events and self._upsert_audit_events is not None:
+                    self._upsert_audit_events(cursor, audit_events)
+
+    def save_deployment_run_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self.upsert_deployment_runs(cursor, {record["id"]: record})
+                if audit_events and self._upsert_audit_events is not None:
+                    self._upsert_audit_events(cursor, audit_events)
+
     def save_online_log_metrics(self, payload: dict[str, Any]) -> None:
         metrics = payload.get("online_log_metrics", {})
         with self._connect() as connection:
@@ -161,13 +185,14 @@ class DevopsWriteRepository:
                   id, product_id, version_id, job_name, build_id, build_number,
                   environment, status, trigger_actor, commit_sha, duration_seconds,
                   started_at, deployed_at, failure_reason, source_channel,
+                  deployment_request_id,
                   created_by, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s, %s,
                   %s::timestamptz, %s::timestamptz, %s, %s,
-                  %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                  %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   product_id = EXCLUDED.product_id,
@@ -184,6 +209,7 @@ class DevopsWriteRepository:
                   deployed_at = EXCLUDED.deployed_at,
                   failure_reason = EXCLUDED.failure_reason,
                   source_channel = EXCLUDED.source_channel,
+                  deployment_request_id = EXCLUDED.deployment_request_id,
                   created_by = EXCLUDED.created_by,
                   updated_at = EXCLUDED.updated_at
                 """,
@@ -203,7 +229,156 @@ class DevopsWriteRepository:
                     release.get("deployed_at"),
                     release.get("failure_reason"),
                     release.get("source_channel"),
+                    release.get("deployment_request_id"),
                     release["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def upsert_deployment_requests(
+        self,
+        cursor,
+        deployment_requests: dict[str, dict[str, Any]],
+    ) -> None:
+        for deployment_request in deployment_requests.values():
+            created_at = deployment_request.get("created_at")
+            updated_at = deployment_request.get("updated_at") or created_at
+            requirement_ids = [
+                str(requirement_id)
+                for requirement_id in deployment_request.get("requirement_ids", [])
+                if requirement_id
+            ]
+            cursor.execute(
+                """
+                INSERT INTO deployment_requests (
+                  id, product_id, version_id, title, environment, status,
+                  deploy_window_start, deploy_window_end, release_branch, commit_sha,
+                  artifact_version, release_readiness_task_id, rollback_plan, risk_level,
+                  gate_summary, assigned_ops_user, approved_by, started_at, finished_at,
+                  failure_reason, created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s,
+                  %s::timestamptz, %s::timestamptz, %s, %s,
+                  %s, %s, %s, %s,
+                  %s::jsonb, %s, %s, %s::timestamptz, %s::timestamptz,
+                  %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  version_id = EXCLUDED.version_id,
+                  title = EXCLUDED.title,
+                  environment = EXCLUDED.environment,
+                  status = EXCLUDED.status,
+                  deploy_window_start = EXCLUDED.deploy_window_start,
+                  deploy_window_end = EXCLUDED.deploy_window_end,
+                  release_branch = EXCLUDED.release_branch,
+                  commit_sha = EXCLUDED.commit_sha,
+                  artifact_version = EXCLUDED.artifact_version,
+                  release_readiness_task_id = EXCLUDED.release_readiness_task_id,
+                  rollback_plan = EXCLUDED.rollback_plan,
+                  risk_level = EXCLUDED.risk_level,
+                  gate_summary = EXCLUDED.gate_summary,
+                  assigned_ops_user = EXCLUDED.assigned_ops_user,
+                  approved_by = EXCLUDED.approved_by,
+                  started_at = EXCLUDED.started_at,
+                  finished_at = EXCLUDED.finished_at,
+                  failure_reason = EXCLUDED.failure_reason,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    deployment_request["id"],
+                    deployment_request["product_id"],
+                    deployment_request["version_id"],
+                    deployment_request["title"],
+                    deployment_request.get("environment", "prod"),
+                    deployment_request.get("status", "pending_ops"),
+                    deployment_request.get("deploy_window_start"),
+                    deployment_request.get("deploy_window_end"),
+                    deployment_request.get("release_branch"),
+                    deployment_request.get("commit_sha"),
+                    deployment_request.get("artifact_version"),
+                    deployment_request.get("release_readiness_task_id"),
+                    deployment_request.get("rollback_plan"),
+                    deployment_request.get("risk_level", "medium"),
+                    json.dumps(deployment_request.get("gate_summary", {}), ensure_ascii=False),
+                    deployment_request.get("assigned_ops_user"),
+                    deployment_request.get("approved_by"),
+                    deployment_request.get("started_at"),
+                    deployment_request.get("finished_at"),
+                    deployment_request.get("failure_reason"),
+                    deployment_request["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
+            cursor.execute(
+                "DELETE FROM deployment_request_requirements WHERE deployment_request_id = %s",
+                (deployment_request["id"],),
+            )
+            for requirement_id in requirement_ids:
+                cursor.execute(
+                    """
+                    INSERT INTO deployment_request_requirements (
+                      deployment_request_id, requirement_id, created_at, updated_at
+                    )
+                    VALUES (%s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()))
+                    ON CONFLICT (deployment_request_id, requirement_id) DO UPDATE SET
+                      updated_at = EXCLUDED.updated_at
+                    """,
+                    (
+                        deployment_request["id"],
+                        requirement_id,
+                        created_at,
+                        updated_at,
+                    ),
+                )
+
+    def upsert_deployment_runs(
+        self,
+        cursor,
+        deployment_runs: dict[str, dict[str, Any]],
+    ) -> None:
+        for deployment_run in deployment_runs.values():
+            created_at = deployment_run.get("created_at")
+            updated_at = deployment_run.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO deployment_runs (
+                  id, deployment_request_id, executor_type, external_job_name,
+                  external_build_id, status, log_url, started_at, finished_at,
+                  failure_reason, created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s,
+                  %s, %s, %s, %s::timestamptz, %s::timestamptz,
+                  %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  deployment_request_id = EXCLUDED.deployment_request_id,
+                  executor_type = EXCLUDED.executor_type,
+                  external_job_name = EXCLUDED.external_job_name,
+                  external_build_id = EXCLUDED.external_build_id,
+                  status = EXCLUDED.status,
+                  log_url = EXCLUDED.log_url,
+                  started_at = EXCLUDED.started_at,
+                  finished_at = EXCLUDED.finished_at,
+                  failure_reason = EXCLUDED.failure_reason,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    deployment_run["id"],
+                    deployment_run["deployment_request_id"],
+                    deployment_run.get("executor_type", "manual"),
+                    deployment_run.get("external_job_name"),
+                    deployment_run.get("external_build_id"),
+                    deployment_run.get("status", "running"),
+                    deployment_run.get("log_url"),
+                    deployment_run.get("started_at"),
+                    deployment_run.get("finished_at"),
+                    deployment_run.get("failure_reason"),
+                    deployment_run["created_by"],
                     created_at,
                     updated_at,
                 ),

@@ -121,6 +121,7 @@ def version_release_readiness_checklist(
     *,
     blockers: list[dict[str, Any]],
     branch_quality_governance: list[dict[str, Any]],
+    deployments: list[dict[str, Any]],
     releases: list[dict[str, Any]],
     status_impact: dict[str, Any] | None,
     summary: dict[str, int],
@@ -134,6 +135,14 @@ def version_release_readiness_checklist(
     release_blocker_count = sum(
         1 for blocker in blockers if blocker.get("source_type") == "jenkins_release"
     )
+    deployment_blocker_count = sum(
+        1 for blocker in blockers if blocker.get("source_type") == "deployment_request"
+    )
+    successful_deployment_count = sum(
+        1 for deployment in deployments if successful_release(deployment)
+    )
+    failed_deployment_count = sum(1 for deployment in deployments if failed_release(deployment))
+    has_successful_deployment = successful_deployment_count > 0
     successful_release_count = sum(1 for release in releases if successful_release(release))
     failed_release_count = sum(1 for release in releases if failed_release(release))
     has_successful_release = successful_release_count > 0
@@ -374,7 +383,63 @@ def version_release_readiness_checklist(
             value="知识可检索",
         )
 
-    release_must_be_successful = target_status == "released"
+    deployment_must_be_successful = target_status == "released"
+    if deployment_must_be_successful and not has_successful_deployment:
+        deployment_item = _readiness_item(
+            action_label="发起部署",
+            action_target_id=version_id,
+            action_target_type="deployments",
+            detail=(
+                f"推进到已发布需要成功运维部署单；当前成功 {successful_deployment_count} 个，"
+                f"失败 {failed_deployment_count} 个，部署阻塞 {deployment_blocker_count} 个。"
+            ),
+            key="deployments",
+            level="error",
+            status="missing",
+            title="运维部署",
+            value="成功部署缺失",
+        )
+    elif failed_deployment_count or deployment_blocker_count:
+        deployment_item = _readiness_item(
+            action_label="处理部署",
+            action_target_id=version_id,
+            action_target_type="deployments",
+            detail=(
+                f"成功 {successful_deployment_count} 个，失败 {failed_deployment_count} 个，"
+                f"部署阻塞 {deployment_blocker_count} 个。"
+            ),
+            key="deployments",
+            level="error" if deployment_blocker_count else "warning",
+            status="blocked" if deployment_blocker_count else "risk",
+            title="运维部署",
+            value="部署待治理",
+        )
+    elif has_successful_deployment:
+        deployment_item = _readiness_item(
+            action_label="查看部署",
+            action_target_id=version_id,
+            action_target_type="deployments",
+            detail=f"已有 {successful_deployment_count} 个成功部署单。",
+            key="deployments",
+            level="success",
+            status="ready",
+            title="运维部署",
+            value="部署已完成",
+        )
+    else:
+        deployment_item = _readiness_item(
+            action_label="查看部署",
+            action_target_id=version_id,
+            action_target_type="deployments",
+            detail="当前阶段暂不强制要求成功部署单。",
+            key="deployments",
+            level="info",
+            status="not_applicable",
+            title="运维部署",
+            value="部署待执行",
+        )
+
+    release_must_be_successful = False
     if release_must_be_successful and not has_successful_release:
         release_item = _readiness_item(
             action_label="补充发布",
@@ -476,6 +541,7 @@ def version_release_readiness_checklist(
         review_item,
         bug_item,
         knowledge_item,
+        deployment_item,
         release_item,
         status_item,
     ]

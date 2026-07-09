@@ -941,15 +941,15 @@ describe('IterationVersionsPage', () => {
                 title: 'release/2026-dashboard',
               },
               {
-                action_label: '排查发布',
+                action_label: '处理部署',
                 action_target_id: 'version_dashboard',
                 action_target_type: 'product_version',
                 id: null,
-                reason: '缺少成功发布记录，不能确认版本已完成发布。',
-                resolution_hint: '登记或同步成功发布记录后解除发布阻塞。',
+                reason: '缺少成功运维部署单，不能确认版本已完成发布。',
+                resolution_hint: '创建部署单并登记成功部署结果后解除发布阻塞。',
                 severity: 'high',
-                source_type: 'jenkins_release',
-                title: '缺少成功发布记录',
+                source_type: 'deployment_request',
+                title: '缺少成功部署证据',
               },
             ],
             next_actions: [
@@ -969,19 +969,19 @@ describe('IterationVersionsPage', () => {
                 title: '后端建议：先关闭发布阻塞 Bug',
               },
               {
-                action_label: '排查发布',
+                action_label: '处理部署',
                 action_target_id: 'version_dashboard',
                 action_target_type: 'product_version',
                 full_chain_subject_id: 'version_dashboard',
                 full_chain_subject_type: 'product_version',
                 id: null,
                 priority: 2,
-                reason: '缺少成功发布记录，不能确认版本已完成发布。',
-                resolution_hint: '登记或同步成功发布记录后解除发布阻塞。',
+                reason: '缺少成功运维部署单，不能确认版本已完成发布。',
+                resolution_hint: '创建部署单并登记成功部署结果后解除发布阻塞。',
                 severity: 'high',
-                source_label: '发布记录',
-                source_type: 'jenkins_release',
-                title: '后端建议：补充成功发布记录',
+                source_label: '运维部署',
+                source_type: 'deployment_request',
+                title: '后端建议：补充成功部署单',
               },
               {
                 action_label: '处理评审',
@@ -1090,7 +1090,7 @@ describe('IterationVersionsPage', () => {
                 '后端统一结论：当前版本有 4 个发布阻塞项，未关闭 Bug 1 个，门禁失败 1 份，状态推进阻塞需求 1 条。',
               level: 'error',
               next_action:
-                '后端统一动作：先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。',
+                '后端统一动作：先处理阻塞队列中的 Bug、运维部署和分支问题，再重新查看推进影响。',
               risks: ['发布阻塞 4', '后端统一风险'],
               title: '版本治理结论',
               value: '版本暂不建议推进',
@@ -1113,7 +1113,7 @@ describe('IterationVersionsPage', () => {
               },
             ],
             release_readiness_checklist: {
-              blocked_items: 5,
+              blocked_items: 6,
               items: [
                 {
                   action_label: '处理需求',
@@ -1193,15 +1193,26 @@ describe('IterationVersionsPage', () => {
                   value: '知识可检索',
                 },
                 {
-                  action_label: '排查发布',
+                  action_label: '处理部署',
                   action_target_id: 'version_dashboard',
-                  action_target_type: 'releases',
-                  detail: '后端清单：成功 0 条，失败 1 条，发布阻塞 1 个。',
-                  key: 'releases',
+                  action_target_type: 'deployments',
+                  detail: '后端清单：成功 0 个，失败 0 个，部署阻塞 1 个。',
+                  key: 'deployments',
                   level: 'error',
                   status: 'blocked',
+                  title: '运维部署',
+                  value: '部署待治理',
+                },
+                {
+                  action_label: '查看发布',
+                  action_target_id: 'version_dashboard',
+                  action_target_type: 'releases',
+                  detail: '后端清单：成功 0 条，失败 1 条，发布阻塞 0 个。',
+                  key: 'releases',
+                  level: 'warning',
+                  status: 'risk',
                   title: '发布证据',
-                  value: '发布待治理',
+                  value: '发布记录有风险',
                 },
                 {
                   action_label: '处理推进阻塞',
@@ -1219,10 +1230,10 @@ describe('IterationVersionsPage', () => {
               missing_items: 0,
               not_applicable_items: 0,
               ready_items: 2,
-              risk_items: 0,
+              risk_items: 1,
               summary: '后端清单：发布准备未通过。',
               title: '发布准备清单',
-              total_items: 9,
+              total_items: 10,
               value: '发布准备未通过',
             },
             releases: [
@@ -1234,6 +1245,7 @@ describe('IterationVersionsPage', () => {
                 status: 'failed',
               },
             ],
+            deployments: [],
             requirement_status_counts: [
               { count: 1, status: 'developing' },
               { count: 1, status: 'submitted' },
@@ -1297,12 +1309,15 @@ describe('IterationVersionsPage', () => {
               knowledge_deposits: 1,
               open_bugs: 1,
               pending_code_review_reports: 1,
+              deployments: 0,
+              failed_deployments: 0,
               failed_releases: 1,
               releases: 1,
               requirements: 1,
               searchable_knowledge_deposits: 1,
               severe_bugs: 1,
               severe_code_inspection_reports: 1,
+              successful_deployments: 0,
               successful_releases: 0,
               tasks: 1,
               vectorized_knowledge_deposits: 0,
@@ -1355,7 +1370,7 @@ describe('IterationVersionsPage', () => {
     expect(screen.getByRole('button', { name: /维护分支/ })).toBeInTheDocument();
     expect(screen.getByText('优先处理建议')).toBeInTheDocument();
     expect(screen.getByText('后端建议：先关闭发布阻塞 Bug')).toBeInTheDocument();
-    expect(screen.getByText('后端建议：补充成功发布记录')).toBeInTheDocument();
+    expect(screen.getByText('后端建议：补充成功部署单')).toBeInTheDocument();
     expect(screen.getByText('后端建议：确认代码评审')).toBeInTheDocument();
     expect(screen.getAllByText('4 个阻塞项').length).toBeGreaterThan(0);
     expect(screen.getByText('版本治理结论')).toBeInTheDocument();
@@ -1363,11 +1378,11 @@ describe('IterationVersionsPage', () => {
     expect(
       screen.getByText('后端统一结论：当前版本有 4 个发布阻塞项，未关闭 Bug 1 个，门禁失败 1 份，状态推进阻塞需求 1 条。'),
     ).toBeInTheDocument();
-    expect(screen.getByText('下一步动作：后端统一动作：先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。')).toBeInTheDocument();
+    expect(screen.getByText('下一步动作：后端统一动作：先处理阻塞队列中的 Bug、运维部署和分支问题，再重新查看推进影响。')).toBeInTheDocument();
     expect(screen.getByText('发布阻塞 4')).toBeInTheDocument();
     expect(screen.getByText('后端统一风险')).toBeInTheDocument();
     expect(screen.getAllByText('Bug').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('发布记录').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('运维部署').length).toBeGreaterThan(0);
     expect(screen.getByText('下一阶段：测试中')).toBeInTheDocument();
     expect(screen.getByText('交付链路总览')).toBeInTheDocument();
     expect(screen.getByText('版本推进前的关键环节按研发链路排序，红/黄环节优先治理。')).toBeInTheDocument();
@@ -1388,10 +1403,11 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('Bug 收敛').length).toBeGreaterThan(0);
     expect(screen.getAllByText('1 个 Bug · 未关闭 1 个').length).toBeGreaterThan(0);
     expect(screen.getAllByText('1 条知识沉淀 · 可检索 1 条 · 向量就绪 0 条').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('0 个部署单 · 部署阻塞 1 个 · 成功 0 个 · 失败 0 个').length).toBeGreaterThan(0);
     expect(screen.getAllByText('发布证据').length).toBeGreaterThan(0);
     expect(
       screen.getAllByText(
-        '1 条记录 · 发布阻塞 1 个 · 成功 0 条 · 失败 1 条 · 最近 failed deploy-dashboard · 2026-06-04 18:00',
+        '1 条记录 · 暂无发布阻塞 · 成功 0 条 · 失败 1 条 · 最近 failed deploy-dashboard · 2026-06-04 18:00',
       ).length,
     ).toBeGreaterThan(0);
     expect(screen.getAllByText('状态推进').length).toBeGreaterThan(0);
@@ -1436,14 +1452,15 @@ describe('IterationVersionsPage', () => {
       'href',
       '/delivery/full-chain?subject_id=knowledge_deposit_dashboard&subject_type=knowledge_deposit',
     );
-    expect(screen.getByRole('link', { name: /补充发布/ })).toHaveAttribute(
-      'href',
-      '/governance/devops?version_id=version_dashboard',
-    );
+    expect(
+      screen
+        .getAllByRole('link', { name: /处理部署/ })
+        .every((link) => link.getAttribute('href') === '/governance/devops?version_id=version_dashboard'),
+    ).toBe(true);
     expect(screen.getByText('交付健康摘要')).toBeInTheDocument();
     expect(screen.getByText('发布准入')).toBeInTheDocument();
     expect(screen.getAllByText('4 个阻塞项').length).toBeGreaterThan(0);
-    expect(screen.getByText('阻塞来源：Bug 1、代码评审 1、代码分支 1、发布记录 1。')).toBeInTheDocument();
+    expect(screen.getByText('阻塞来源：Bug 1、代码评审 1、代码分支 1、运维部署 1。')).toBeInTheDocument();
     expect(screen.getByText('质量风险')).toBeInTheDocument();
     expect(screen.getByText('2 个严重风险')).toBeInTheDocument();
     expect(screen.getByText('严重 Bug 1，严重巡检 1，未关闭 Bug 1。')).toBeInTheDocument();
@@ -1472,7 +1489,7 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('优先级 1').length).toBeGreaterThan(0);
     expect(screen.getByText('高风险 · Bug')).toBeInTheDocument();
     expect(screen.getAllByText('优先级 2').length).toBeGreaterThan(0);
-    expect(screen.getByText('高风险 · 发布记录')).toBeInTheDocument();
+    expect(screen.getByText('高风险 · 运维部署')).toBeInTheDocument();
     expect(screen.getAllByText('优先级 3').length).toBeGreaterThan(0);
     expect(screen.getByText('中风险 · 代码评审')).toBeInTheDocument();
     expect(screen.getAllByText('优先级 4').length).toBeGreaterThan(0);
@@ -1493,7 +1510,7 @@ describe('IterationVersionsPage', () => {
     expect(screen.getAllByText('解除条件').length).toBeGreaterThan(0);
     expect(screen.getByText('修复、验证并关闭 blocker/critical Bug 后解除发布阻塞。')).toBeInTheDocument();
     expect(screen.getByText('创建或推进版本分支状态，使其满足测试/发布准入要求。')).toBeInTheDocument();
-    expect(screen.getByText('登记或同步成功发布记录后解除发布阻塞。')).toBeInTheDocument();
+    expect(screen.getByText('创建部署单并登记成功部署结果后解除发布阻塞。')).toBeInTheDocument();
     expect(screen.getByText('确认代码评审结论、补充整改或关闭待确认项后解除版本准入阻塞。')).toBeInTheDocument();
     expect(
       screen
@@ -1511,7 +1528,7 @@ describe('IterationVersionsPage', () => {
     ).toBe(true);
     expect(
       screen
-        .getAllByRole('link', { name: '排查发布' })
+        .getAllByRole('link', { name: '处理部署' })
         .every((link) => link.getAttribute('href') === '/governance/devops?version_id=version_dashboard'),
     ).toBe(true);
     expect(

@@ -290,6 +290,47 @@ def version_evidence_coverage(
     domains.extend(
         [
             _evidence_domain(
+                action_label=(
+                    "处理部署"
+                    if "deployment_request" in blocker_sources
+                    else "查看部署"
+                ),
+                action_target_id=version_id,
+                action_target_type="deployments",
+                detail=(
+                    f"{summary['deployments']} 个部署单 · "
+                    f"成功 {summary['successful_deployments']} 个 · "
+                    f"失败/回滚 {summary['failed_deployments']} 个"
+                    if summary["deployments"]
+                    else "当前阶段暂无运维部署单"
+                ),
+                key="deployments",
+                level=(
+                    "error"
+                    if "deployment_request" in blocker_sources
+                    else "success"
+                    if summary["successful_deployments"]
+                    else "warning"
+                    if target_status == "released"
+                    else "info"
+                ),
+                status=(
+                    "blocked"
+                    if "deployment_request" in blocker_sources
+                    else "covered"
+                    if summary["successful_deployments"]
+                    else "missing"
+                    if target_status == "released"
+                    else "not_applicable"
+                ),
+                title="运维部署",
+                value=(
+                    f"{summary['successful_deployments']} 成功"
+                    if summary["successful_deployments"]
+                    else "部署待执行"
+                ),
+            ),
+            _evidence_domain(
                 action_label="查看发布",
                 action_target_id=version_id,
                 action_target_type="releases",

@@ -98,7 +98,7 @@ export function VersionDashboardActions({
             version_id: dashboard.version.id,
           })}
         >
-          发布记录
+          部署/发布记录
         </Button>
         <Button
           href={fullChainSubjectHref('product_version', dashboard.version.id)}
@@ -305,6 +305,17 @@ export function VersionDashboardMetrics({
         dashboard.summary.pending_code_review_reports,
         dashboard.summary.pending_code_review_reports ? '#d48806' : undefined,
       )}
+      {dashboardMetric('运维部署', dashboard.summary.deployments)}
+      {dashboardMetric(
+        '成功部署',
+        dashboard.summary.successful_deployments,
+        dashboard.summary.successful_deployments ? '#389e0d' : undefined,
+      )}
+      {dashboardMetric(
+        '失败部署',
+        dashboard.summary.failed_deployments,
+        dashboard.summary.failed_deployments ? '#cf1322' : undefined,
+      )}
       {dashboardMetric('发布记录', dashboard.summary.releases)}
       {dashboardMetric(
         '成功发布',
@@ -356,6 +367,9 @@ function evidenceActionHref(
     return internalHref('/assets/knowledge', { version_id: targetId });
   }
   if (targetType === 'releases') {
+    return internalHref('/governance/devops', { version_id: targetId });
+  }
+  if (targetType === 'deployments' || targetType === 'deployment_request') {
     return internalHref('/governance/devops', { version_id: targetId });
   }
   if (targetType === 'product_version_advance') {

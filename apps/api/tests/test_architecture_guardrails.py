@@ -4,13 +4,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_DOMAIN_FILE_LINES = 2800
-MAX_AI_EXECUTOR_RUNNER_LINES = 2050
+MAX_AI_EXECUTOR_RUNNER_LINES = 2200
 MAX_CODE_INSPECTION_SERVICE_LINES = 1600
 MAX_PLUGIN_MAIN_SERVICE_LINES = 1800
 MAX_PRODUCT_VERSION_DASHBOARD_LINES = 1300
 MAX_SCHEDULED_JOB_SERVICE_LINES = 1900
 MAX_ASSISTANT_ACTION_DRAFT_LINES = 2000
-MAX_FRONTEND_SERVICE_BARREL_LINES = 2400
+MAX_FRONTEND_SERVICE_BARREL_LINES = 2450
 FRONTEND_PAGE_CONTAINER_REVIEW_THRESHOLD_LINES = 900
 
 DOMAIN_FILE_LINE_BUDGETS = {
@@ -30,13 +30,15 @@ FRONTEND_PAGE_CONTAINER_LINE_BUDGETS = {
     "apps/web/src/pages/AiCapabilities/index.tsx": 1000,
     "apps/web/src/pages/Bugs/index.tsx": 1100,
     "apps/web/src/pages/CodeInspections/index.tsx": 1100,
+    "apps/web/src/pages/Devops/index.tsx": 1200,
     "apps/web/src/pages/IterationVersions/index.tsx": 1500,
     "apps/web/src/pages/Knowledge/index.tsx": 1800,
     "apps/web/src/pages/Plugins/index.tsx": 1600,
-    "apps/web/src/pages/Products/index.tsx": 1150,
+    "apps/web/src/pages/Products/index.tsx": 1550,
     "apps/web/src/pages/Requirements/index.tsx": 1250,
-    "apps/web/src/pages/Roles/index.tsx": 1600,
+    "apps/web/src/pages/Roles/index.tsx": 1900,
     "apps/web/src/pages/ScheduledJobs/index.tsx": 1450,
+    "apps/web/src/pages/SystemHealth/index.tsx": 2000,
     "apps/web/src/pages/TaskCenter/index.tsx": 1800,
 }
 

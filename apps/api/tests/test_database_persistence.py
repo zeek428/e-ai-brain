@@ -641,7 +641,12 @@ class FakeSnapshotRepository:
             "tasks": [dict(item) for item in tasks_payload.get("ai_tasks", {}).values()],
         }
 
-    def list_pending_review_summaries(self, *, read_scope: str | None = None) -> list[dict]:
+    def list_pending_review_summaries(
+        self,
+        *,
+        product_scope_ids: list[str] | None = None,
+        read_scope: str | None = None,
+    ) -> list[dict]:
         tasks_payload = self.ai_tasks_payload or {}
         workflow_payload = self.workflow_runtime_payload or {}
         tasks = tasks_payload.get("ai_tasks", {})
@@ -661,6 +666,10 @@ class FakeSnapshotRepository:
             if review.get("status") == "pending"
             and (task := tasks.get(review.get("ai_task_id"))) is not None
             and can_read_task(task)
+            and (
+                product_scope_ids is None
+                or str(task.get("product_id")) in set(product_scope_ids)
+            )
         ]
 
     def save_workflow_runtime(self, payload: dict) -> None:

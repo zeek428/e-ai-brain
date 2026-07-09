@@ -18,6 +18,7 @@ const fullChainTypeLabels: Record<string, string> = {
   human_review: '人工确认',
   iteration_version: '迭代版本',
   jenkins_release: '发布',
+  deployment_request: '运维部署',
   knowledge_deposit: '知识沉淀',
   product_version: '迭代版本',
   requirement: '需求',
@@ -43,6 +44,7 @@ const fullChainTypeColors: Record<string, string> = {
   code_inspection_report: 'magenta',
   git_snapshot: 'blue',
   jenkins_release: 'orange',
+  deployment_request: 'orange',
   knowledge_deposit: 'green',
   review: 'cyan',
 };
@@ -56,6 +58,7 @@ const requirementStatusLabels: Record<string, { color: string; label: string }> 
   deferred: { color: 'default', label: '暂缓' },
   designing: { color: 'blue', label: '设计中' },
   developing: { color: 'geekblue', label: '开发中' },
+  deploying: { color: 'orange', label: '部署中' },
   draft: { color: 'default', label: '草稿' },
   planned: { color: 'cyan', label: '已排期' },
   ready_for_dev: { color: 'lime', label: '待开发' },
@@ -174,6 +177,11 @@ function buildFullChainStageItems(fullChain: RequirementFullChainRecord) {
       title: '执行诊断',
     },
     {
+      count: summary.deploymentRequests,
+      detail: `${summary.deploymentRequests} 项`,
+      title: '运维部署',
+    },
+    {
       count: summary.jenkinsReleases,
       detail: `${summary.jenkinsReleases} 项`,
       title: '发布',
@@ -286,6 +294,7 @@ function buildFullChainMarkdownReport(fullChain: RequirementFullChainRecord) {
     `- 代码巡检：${fullChain.summary.codeInspectionReports}`,
     `- Bug：${fullChain.summary.bugs}`,
     `- 执行诊断：${fullChain.summary.executionTraces}`,
+    `- 运维部署：${fullChain.summary.deploymentRequests}`,
     `- 发布记录：${fullChain.summary.jenkinsReleases}`,
     `- 知识沉淀：${fullChain.summary.knowledgeDeposits}`,
     `- 审计事件：${fullChain.summary.auditEvents}`,
@@ -344,6 +353,13 @@ function buildFullChainMarkdownReport(fullChain: RequirementFullChainRecord) {
         `- ${trace.title || `执行诊断：${trace.id}`} (${trace.id}) · ${trace.status} · ${trace.node_count} 节点 · ${trace.failed_node_count} 失败 · ${formatTraceDuration(
           trace.duration_ms,
         )}`,
+    ),
+    '',
+    '### 运维部署',
+    markdownList(
+      fullChain.deploymentRequests,
+      (deployment) =>
+        `- ${deployment.title} (${deployment.id}) · ${deployment.environment} · ${deployment.status}`,
     ),
     '',
     '### 发布记录',
@@ -627,6 +643,24 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
       label: `发布 (${fullChain.jenkinsReleases.length})`,
     },
     {
+      children: fullChain.deploymentRequests.length ? (
+        <Space orientation="vertical" size={10}>
+          {fullChain.deploymentRequests.map((deployment) =>
+            renderEntityDetail({
+              href: withQuery('/governance/devops', 'deployment_id', deployment.id),
+              linkLabel: `查看部署 ${deployment.id}`,
+              meta: `${deployment.environment} · ${deployment.status} · ${deployment.createdAt}`,
+              title: deployment.title,
+            }),
+          )}
+        </Space>
+      ) : (
+        renderEmptyStage()
+      ),
+      key: 'deployment_requests',
+      label: `运维部署 (${fullChain.deploymentRequests.length})`,
+    },
+    {
       children: fullChain.knowledgeDeposits.length ? (
         <Space orientation="vertical" size={10}>
           {fullChain.knowledgeDeposits.map((deposit) =>
@@ -838,6 +872,7 @@ export function RequirementFullChainView({
               'code_review',
               'bugs',
               'execution_traces',
+              'deployment_requests',
               'jenkins_releases',
               'knowledge_deposits',
               'audit_events',

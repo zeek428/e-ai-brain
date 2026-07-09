@@ -158,7 +158,12 @@ function normalizeBugStatus(status?: string): BugRecord['status'] {
 }
 
 function normalizeBugSource(source?: string): BugRecord['source'] {
-  if (source === 'ai_auto_test' || source === 'ai_post_release' || source === 'code_inspection') {
+  if (
+    source === 'ai_auto_test' ||
+    source === 'ai_post_release' ||
+    source === 'code_inspection' ||
+    source === 'deployment_failure'
+  ) {
     return source;
   }
   return 'manual_test';

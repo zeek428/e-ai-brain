@@ -52,16 +52,18 @@ BLOCKER_SEVERITY_PRIORITY = {
 }
 BLOCKER_SOURCE_PRIORITY = {
     "bug": 1,
-    "jenkins_release": 2,
-    "code_inspection_report": 3,
-    "code_review_report": 4,
-    "requirement": 5,
-    "product_version_branch_config": 6,
+    "deployment_request": 2,
+    "jenkins_release": 3,
+    "code_inspection_report": 4,
+    "code_review_report": 5,
+    "requirement": 6,
+    "product_version_branch_config": 7,
 }
 BLOCKER_SOURCE_LABELS = {
     "bug": "Bug",
     "code_inspection_report": "代码巡检",
     "code_review_report": "代码评审",
+    "deployment_request": "运维部署",
     "jenkins_release": "发布记录",
     "product_version_branch_config": "代码分支",
     "requirement": "需求",
@@ -70,6 +72,7 @@ FULL_CHAIN_SUBJECT_TYPES = {
     "bug",
     "code_inspection_report",
     "code_review_report",
+    "deployment_request",
     "jenkins_release",
     "product_version",
     "product_version_branch_config",
@@ -102,6 +105,11 @@ def _blocker_action_context(source_type: str) -> tuple[str, str]:
         return (
             "排查发布",
             "排查失败或取消的发布记录，完成重新发布或登记成功发布。",
+        )
+    if source_type == "deployment_request":
+        return (
+            "处理部署",
+            "处理失败或回滚的部署单，完成重新部署并登记成功结果。",
         )
     if source_type == "product_version_branch_config":
         return (
@@ -433,6 +441,37 @@ def _version_releases(current_store: Any, version_id: str) -> list[dict[str, Any
         reverse=True,
     )
     return releases
+
+
+def _version_deployments(current_store: Any, version_id: str) -> list[dict[str, Any]]:
+    deployments = [
+        dict(deployment)
+        for deployment in _memory_records(current_store, "deployment_requests")
+        if deployment.get("version_id") == version_id
+    ]
+    runs_by_request: dict[str, list[dict[str, Any]]] = {}
+    for run in _memory_records(current_store, "deployment_runs"):
+        request_id = str(run.get("deployment_request_id") or "")
+        if not request_id:
+            continue
+        runs_by_request.setdefault(request_id, []).append(dict(run))
+    for deployment in deployments:
+        deployment["runs"] = sorted(
+            runs_by_request.get(str(deployment.get("id") or ""), []),
+            key=lambda item: item.get("started_at") or item.get("created_at") or "",
+            reverse=True,
+        )
+    deployments.sort(
+        key=lambda item: (
+            item.get("finished_at")
+            or item.get("started_at")
+            or item.get("updated_at")
+            or item.get("created_at")
+            or ""
+        ),
+        reverse=True,
+    )
+    return deployments
 
 
 def _public_knowledge_deposit(
@@ -875,6 +914,7 @@ def _build_blockers(
     bugs: list[dict[str, Any]],
     code_inspection_reports: list[dict[str, Any]],
     code_review_reports: list[dict[str, Any]],
+    deployments: list[dict[str, Any]],
     releases: list[dict[str, Any]],
     status_impact: dict[str, Any] | None,
     target_status: str | None,
@@ -936,19 +976,30 @@ def _build_blockers(
                     title=release.get("job_name") or release.get("build_id") or release.get("id"),
                 )
             )
+    for deployment in deployments:
+        if _failed_release(deployment):
+            blockers.append(
+                _dashboard_blocker(
+                    blocker_id=deployment.get("id"),
+                    reason="运维部署失败、取消或回滚",
+                    severity="high",
+                    source_type="deployment_request",
+                    title=deployment.get("title") or deployment.get("id"),
+                )
+            )
     if target_status == "released" and not any(
-        _successful_release(release) for release in releases
+        _successful_release(deployment) for deployment in deployments
     ):
         blockers.append(
             _dashboard_blocker(
                 action_target_id=version_id,
                 action_target_type="product_version",
                 blocker_id=None,
-                reason="缺少成功发布记录，不能确认版本已完成发布。",
-                resolution_hint="登记或同步成功发布记录后解除发布阻塞。",
+                reason="缺少成功运维部署单，不能确认版本已完成发布。",
+                resolution_hint="创建部署单并登记成功部署结果后解除发布阻塞。",
                 severity="high",
-                source_type="jenkins_release",
-                title="缺少成功发布记录",
+                source_type="deployment_request",
+                title="缺少成功部署证据",
             )
         )
     blockers.extend(_branch_blockers(branch_configs=branch_configs, target_status=target_status))
@@ -999,6 +1050,7 @@ def product_version_dashboard_response(
         version_id=version_id,
     )
     releases = _version_releases(read_store, version_id)
+    deployments = _version_deployments(read_store, version_id)
     next_status = VERSION_NEXT_STATUS.get(str(version.get("status") or ""))
     status_impact = (
         {
@@ -1018,6 +1070,7 @@ def product_version_dashboard_response(
             bugs=bugs,
             code_inspection_reports=code_inspection_reports,
             code_review_reports=code_review_reports,
+            deployments=deployments,
             releases=releases,
             status_impact=status_impact,
             target_status=next_status,
@@ -1102,6 +1155,11 @@ def product_version_dashboard_response(
         "open_bugs": open_bug_count,
         "pending_code_review_reports": pending_code_review_report_count,
         "failed_releases": sum(1 for release in releases if _failed_release(release)),
+        "deployments": len(deployments),
+        "failed_deployments": sum(1 for deployment in deployments if _failed_release(deployment)),
+        "successful_deployments": sum(
+            1 for deployment in deployments if _successful_release(deployment)
+        ),
         "releases": len(releases),
         "requirements": len(requirements),
         "searchable_knowledge_deposits": searchable_knowledge_deposit_count,
@@ -1125,6 +1183,7 @@ def product_version_dashboard_response(
         code_inspection_reports=code_inspection_reports,
         code_review_reports=code_review_reports,
         knowledge_deposits=knowledge_deposits,
+        deployments=deployments,
         releases=releases,
         status_impact=status_impact,
         summary=summary,
@@ -1147,6 +1206,7 @@ def product_version_dashboard_response(
         blockers=blockers,
         branch_quality_governance=branch_quality_governance,
         releases=releases,
+        deployments=deployments,
         status_impact=status_impact,
         summary=summary,
         version_id=version_id,
@@ -1161,6 +1221,7 @@ def product_version_dashboard_response(
         "code_inspection_reports": code_inspection_reports[:20],
         "code_review_reports": code_review_reports[:20],
         "delivery_stage_overview": delivery_stage_overview,
+        "deployments": deployments[:20],
         "evidence_coverage": evidence_coverage,
         "governance_conclusion": governance_conclusion,
         "knowledge_deposits": knowledge_deposits[:20],

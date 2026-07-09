@@ -42,6 +42,7 @@ def validate_jenkins_release_payload(payload: Any) -> tuple[str | None, str | No
 def validate_jenkins_release_context(
     current_store: Any,
     *,
+    deployment_request_id: str | None = None,
     product_id: str,
     version_id: str,
 ) -> None:
@@ -55,6 +56,14 @@ def validate_jenkins_release_context(
         raise api_error(404, "NOT_FOUND", "Product version not found")
     if version["status"] == "archived":
         raise api_error(400, "PRODUCT_VERSION_ARCHIVED", "Archived version cannot be used")
+    if deployment_request_id is not None:
+        deployment = read_memory_dict(current_store, "deployment_requests").get(deployment_request_id)
+        if (
+            deployment is None
+            or deployment.get("product_id") != product_id
+            or deployment.get("version_id") != version_id
+        ):
+            raise api_error(404, "NOT_FOUND", "Deployment request not found")
 
 
 def list_jenkins_releases_response(
@@ -107,6 +116,7 @@ def create_jenkins_release_response(
     write_store = operational_write_store(current_store)
     validate_jenkins_release_context(
         write_store,
+        deployment_request_id=payload.deployment_request_id,
         product_id=payload.product_id,
         version_id=payload.version_id,
     )
@@ -120,6 +130,7 @@ def create_jenkins_release_response(
         "created_at": now,
         "created_by": user["id"],
         "deployed_at": deployed_at,
+        "deployment_request_id": payload.deployment_request_id,
         "duration_seconds": payload.duration_seconds,
         "environment": ensure_non_blank(payload.environment, "environment"),
         "failure_reason": payload.failure_reason,
@@ -137,6 +148,7 @@ def create_jenkins_release_response(
         "build_number",
         "commit_sha",
         "deployed_at",
+        "deployment_request_id",
         "duration_seconds",
         "failure_reason",
         "source_channel",

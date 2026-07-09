@@ -25,6 +25,7 @@ REQUIREMENT_CLOSABLE_STATUSES = {
     "developing",
     "code_reviewing",
     "testing",
+    "deploying",
     "released",
     "task_created",
     "closed",

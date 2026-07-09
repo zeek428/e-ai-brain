@@ -316,6 +316,48 @@ def _version_jenkins_releases(
     )
 
 
+def _version_deployment_requests(
+    current_store: Any,
+    *,
+    product_id: Any,
+    version_id: str,
+) -> list[dict[str, Any]]:
+    deployments = sort_by_lifecycle_time(
+        [
+            deployment
+            for deployment in _read_memory_dict(
+                current_store,
+                "deployment_requests",
+            ).values()
+            if deployment.get("product_id") == product_id
+            and str(deployment.get("version_id")) == version_id
+        ],
+        "started_at",
+        "finished_at",
+        "created_at",
+        "updated_at",
+    )
+    runs_by_request: dict[str, list[dict[str, Any]]] = {}
+    for run in _read_memory_dict(current_store, "deployment_runs").values():
+        request_id = str(run.get("deployment_request_id") or "")
+        if not request_id:
+            continue
+        runs_by_request.setdefault(request_id, []).append(run)
+    return [
+        {
+            **deployment,
+            "runs": sort_by_lifecycle_time(
+                runs_by_request.get(str(deployment.get("id") or ""), []),
+                "started_at",
+                "finished_at",
+                "created_at",
+                "updated_at",
+            ),
+        }
+        for deployment in deployments
+    ]
+
+
 def _empty_iteration_version_full_chain_payload(
     current_store: Any,
     *,
@@ -336,6 +378,11 @@ def _empty_iteration_version_full_chain_payload(
         product_id=iteration_version.get("product_id"),
         version_id=version_id,
     )
+    deployment_requests = _version_deployment_requests(
+        current_store,
+        product_id=iteration_version.get("product_id"),
+        version_id=version_id,
+    )
     linked_subjects: set[tuple[str, str]] = {
         ("product_version", version_id),
         ("iteration_version", version_id),
@@ -348,6 +395,9 @@ def _empty_iteration_version_full_chain_payload(
     for release in jenkins_releases:
         linked_subjects.add(("jenkins_release_record", str(release["id"])))
         linked_subjects.add(("jenkins_release", str(release["id"])))
+    for deployment in deployment_requests:
+        linked_subjects.add(("deployment_request", str(deployment["id"])))
+        linked_subjects.add(("deployment", str(deployment["id"])))
     audit_events = sort_by_lifecycle_time(
         [
             audit_event_public(event)
@@ -424,6 +474,21 @@ def _empty_iteration_version_full_chain_payload(
     )
     timeline.extend(
         full_chain_event(
+            event_type="deployment_request",
+            occurred_at=first_present_value(
+                deployment,
+                ("finished_at", "started_at", "created_at", "updated_at"),
+            )
+            or version_time,
+            subject_id=str(deployment["id"]),
+            status=deployment.get("status"),
+            title=f"部署：{deployment.get('title') or deployment['id']}",
+            metadata={"environment": deployment.get("environment")},
+        )
+        for deployment in deployment_requests
+    )
+    timeline.extend(
+        full_chain_event(
             event_type="jenkins_release",
             occurred_at=first_present_value(
                 release,
@@ -489,6 +554,7 @@ def _empty_iteration_version_full_chain_payload(
         "code_review_reports": [],
         "code_inspection_reports": current_store.snapshot(code_inspection_reports),
         "bugs": [],
+        "deployment_requests": current_store.snapshot(deployment_requests),
         "jenkins_releases": current_store.snapshot(jenkins_releases),
         "knowledge_deposits": [],
         "execution_traces": current_store.snapshot(execution_traces),
@@ -502,6 +568,7 @@ def _empty_iteration_version_full_chain_payload(
             "code_review_reports": 0,
             "code_inspection_reports": len(code_inspection_reports),
             "bugs": 0,
+            "deployment_requests": len(deployment_requests),
             "jenkins_releases": len(jenkins_releases),
             "knowledge_deposits": 0,
             "execution_traces": len(execution_traces),
@@ -723,6 +790,48 @@ def requirement_full_chain_payload(
         "created_at",
         "updated_at",
     )
+    deployment_requests = sort_by_lifecycle_time(
+        [
+            deployment
+            for deployment in _read_memory_dict(
+                current_store,
+                "deployment_requests",
+            ).values()
+            if deployment.get("product_id") == requirement.get("product_id")
+            and (
+                str(requirement_id)
+                in {str(item) for item in deployment.get("requirement_ids", [])}
+                or (
+                    not deployment.get("requirement_ids")
+                    and requirement.get("version_id")
+                    and deployment.get("version_id") == requirement.get("version_id")
+                )
+            )
+        ],
+        "started_at",
+        "finished_at",
+        "created_at",
+        "updated_at",
+    )
+    deployment_runs_by_request: dict[str, list[dict[str, Any]]] = {}
+    for run in _read_memory_dict(current_store, "deployment_runs").values():
+        request_id = str(run.get("deployment_request_id") or "")
+        if not request_id:
+            continue
+        deployment_runs_by_request.setdefault(request_id, []).append(run)
+    deployment_requests = [
+        {
+            **deployment,
+            "runs": sort_by_lifecycle_time(
+                deployment_runs_by_request.get(str(deployment.get("id") or ""), []),
+                "started_at",
+                "finished_at",
+                "created_at",
+                "updated_at",
+            ),
+        }
+        for deployment in deployment_requests
+    ]
     linked_subjects: set[tuple[str, str]] = {
         ("requirement", requirement_id),
     }
@@ -750,6 +859,9 @@ def requirement_full_chain_payload(
     for release in jenkins_releases:
         linked_subjects.add(("jenkins_release_record", str(release["id"])))
         linked_subjects.add(("jenkins_release", str(release["id"])))
+    for deployment in deployment_requests:
+        linked_subjects.add(("deployment_request", str(deployment["id"])))
+        linked_subjects.add(("deployment", str(deployment["id"])))
     for deposit in knowledge_deposits:
         linked_subjects.add(("knowledge_deposit", str(deposit["id"])))
     audit_events = sort_by_lifecycle_time(
@@ -884,6 +996,20 @@ def requirement_full_chain_payload(
     )
     timeline.extend(
         full_chain_event(
+            event_type="deployment_request",
+            occurred_at=first_present_value(
+                deployment,
+                ("finished_at", "started_at", "created_at", "updated_at"),
+            ),
+            subject_id=str(deployment["id"]),
+            status=deployment.get("status"),
+            title=f"部署：{deployment.get('title') or deployment['id']}",
+            metadata={"environment": deployment.get("environment")},
+        )
+        for deployment in deployment_requests
+    )
+    timeline.extend(
+        full_chain_event(
             event_type="jenkins_release",
             occurred_at=first_present_value(
                 release,
@@ -985,6 +1111,7 @@ def requirement_full_chain_payload(
         "code_review_reports": current_store.snapshot(code_review_reports),
         "code_inspection_reports": current_store.snapshot(code_inspection_reports),
         "bugs": current_store.snapshot(bugs),
+        "deployment_requests": current_store.snapshot(deployment_requests),
         "jenkins_releases": current_store.snapshot(jenkins_releases),
         "knowledge_deposits": current_store.snapshot(knowledge_deposits),
         "execution_traces": current_store.snapshot(execution_traces),
@@ -998,6 +1125,7 @@ def requirement_full_chain_payload(
             "code_review_reports": len(code_review_reports),
             "code_inspection_reports": len(code_inspection_reports),
             "bugs": len(bugs),
+            "deployment_requests": len(deployment_requests),
             "jenkins_releases": len(jenkins_releases),
             "knowledge_deposits": len(knowledge_deposits),
             "execution_traces": len(execution_traces),

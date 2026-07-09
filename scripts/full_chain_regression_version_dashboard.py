@@ -12,16 +12,18 @@ VERSION_DASHBOARD_BLOCKER_SEVERITY_PRIORITY = {
 }
 VERSION_DASHBOARD_BLOCKER_SOURCE_PRIORITY = {
     "bug": 1,
-    "jenkins_release": 2,
-    "code_inspection_report": 3,
-    "code_review_report": 4,
-    "requirement": 5,
-    "product_version_branch_config": 6,
+    "deployment_request": 2,
+    "jenkins_release": 3,
+    "code_inspection_report": 4,
+    "code_review_report": 5,
+    "requirement": 6,
+    "product_version_branch_config": 7,
 }
 VERSION_DASHBOARD_FULL_CHAIN_SUBJECT_TYPES = {
     "bug",
     "code_inspection_report",
     "code_review_report",
+    "deployment_request",
     "jenkins_release",
     "product_version",
     "product_version_branch_config",
@@ -35,6 +37,7 @@ VERSION_DASHBOARD_DELIVERY_STAGE_KEYS = [
     "code-reviews",
     "bugs",
     "knowledge-deposits",
+    "deployments",
     "releases",
     "status-impact",
 ]
@@ -267,15 +270,24 @@ def validate_version_dashboard_delivery_stage_overview(dashboard: dict[str, Any]
             )
     summary = dashboard.get("summary") or {}
     blocker_count = int(summary.get("blockers") or 0)
+    deployment_stage = next((stage for stage in stages if stage.get("key") == "deployments"), {})
     release_stage = next((stage for stage in stages if stage.get("key") == "releases"), {})
     if blocker_count:
         _assert(
             any(stage.get("level") in {"error", "warning"} for stage in stages),
             f"Version dashboard delivery stages should expose blocker pressure: {stages}",
         )
-    has_release_blocker = any(
-        blocker.get("source_type") == "jenkins_release"
+    has_deployment_blocker = any(
+        blocker.get("source_type") == "deployment_request"
         for blocker in dashboard.get("blockers") or []
+    )
+    _assert(
+        "successful_deployments" in summary,
+        f"Version dashboard missed successful deployment summary: {summary}",
+    )
+    _assert(
+        "failed_deployments" in summary,
+        f"Version dashboard missed failed deployment summary: {summary}",
     )
     _assert(
         "successful_releases" in summary,
@@ -285,23 +297,28 @@ def validate_version_dashboard_delivery_stage_overview(dashboard: dict[str, Any]
         "failed_releases" in summary,
         f"Version dashboard missed failed release summary: {summary}",
     )
+    deployment_stage_detail = str(deployment_stage.get("detail") or "")
+    _assert(
+        "成功" in deployment_stage_detail and "失败" in deployment_stage_detail,
+        f"Version dashboard deployment stage missed deployment evidence counts: {deployment_stage}",
+    )
+    if has_deployment_blocker:
+        _assert(
+            deployment_stage.get("level") == "error",
+            (
+                "Version dashboard deployment stage should be error when deployment "
+                f"blockers exist: {deployment_stage}"
+            ),
+        )
+        _assert(
+            "部署阻塞" in deployment_stage_detail,
+            f"Version dashboard deployment stage missed deployment blocker detail: {deployment_stage}",
+        )
     release_stage_detail = str(release_stage.get("detail") or "")
     _assert(
         "成功" in release_stage_detail and "失败" in release_stage_detail,
         f"Version dashboard release stage missed release evidence counts: {release_stage}",
     )
-    if has_release_blocker:
-        _assert(
-            release_stage.get("level") == "error",
-            (
-                "Version dashboard release stage should be error when release "
-                f"blockers exist: {release_stage}"
-            ),
-        )
-        _assert(
-            "发布阻塞" in release_stage_detail,
-            f"Version dashboard release stage missed release blocker detail: {release_stage}",
-        )
 
 
 def validate_version_dashboard_evidence_coverage(

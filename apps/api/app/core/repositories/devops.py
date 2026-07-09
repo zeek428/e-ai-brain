@@ -48,6 +48,25 @@ class DevopsReadRepository:
     ) -> None:
         self._write_repository.save_jenkins_release_record(record, audit_event=audit_event)
 
+    def save_deployment_request_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._write_repository.save_deployment_request_record(
+            record,
+            audit_events=audit_events,
+        )
+
+    def save_deployment_run_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._write_repository.save_deployment_run_record(record, audit_events=audit_events)
+
     def save_online_log_metrics(self, payload: dict[str, Any]) -> None:
         self._write_repository.save_online_log_metrics(payload)
 
@@ -72,6 +91,20 @@ class DevopsReadRepository:
         releases: dict[str, dict[str, Any]],
     ) -> None:
         self._write_repository.upsert_jenkins_release_records(cursor, releases)
+
+    def upsert_deployment_requests(
+        self,
+        cursor,
+        deployment_requests: dict[str, dict[str, Any]],
+    ) -> None:
+        self._write_repository.upsert_deployment_requests(cursor, deployment_requests)
+
+    def upsert_deployment_runs(
+        self,
+        cursor,
+        deployment_runs: dict[str, dict[str, Any]],
+    ) -> None:
+        self._write_repository.upsert_deployment_runs(cursor, deployment_runs)
 
     def upsert_online_log_metrics(
         self,
@@ -130,6 +163,97 @@ class DevopsReadRepository:
                 releases = self._load_jenkins_release_records(cursor)
         return {"jenkins_release_records": releases}
 
+    def load_deployment_requests(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                deployment_requests = self._load_deployment_requests(cursor)
+                deployment_runs = self._load_deployment_runs(cursor)
+        return {
+            "deployment_requests": deployment_requests,
+            "deployment_runs": deployment_runs,
+        }
+
+    def list_deployment_requests(
+        self,
+        *,
+        environment: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        status: str | None = None,
+        version_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("d.product_id = %s")
+            params.append(product_id)
+        if version_id is not None:
+            where_clauses.append("d.version_id = %s")
+            params.append(version_id)
+        if status is not None:
+            where_clauses.append("d.status = %s")
+            params.append(status)
+        if environment is not None:
+            where_clauses.append("d.environment = %s")
+            params.append(environment)
+        if product_scope_ids is not None:
+            if not product_scope_ids:
+                return []
+            where_clauses.append("d.product_id = ANY(%s)")
+            params.append(product_scope_ids)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT d.id, d.product_id, d.version_id, d.title, d.environment,
+                           d.status, d.deploy_window_start, d.deploy_window_end,
+                           d.release_branch, d.commit_sha, d.artifact_version,
+                           d.release_readiness_task_id, d.rollback_plan, d.risk_level,
+                           d.gate_summary, d.assigned_ops_user, d.approved_by,
+                           d.started_at, d.finished_at, d.failure_reason, d.created_by,
+                           d.created_at, d.updated_at,
+                           COALESCE(
+                             array_agg(r.requirement_id ORDER BY r.requirement_id)
+                               FILTER (WHERE r.requirement_id IS NOT NULL),
+                             ARRAY[]::text[]
+                           ) AS requirement_ids
+                    FROM deployment_requests d
+                    LEFT JOIN deployment_request_requirements r
+                      ON r.deployment_request_id = d.id
+                    {where_clause}
+                    GROUP BY d.id
+                    ORDER BY COALESCE(d.updated_at, d.created_at) DESC, d.id DESC
+                    """,
+                    tuple(params),
+                )
+                return [self._deployment_request_from_row(row) for row in cursor.fetchall()]
+
+    def list_deployment_runs(
+        self,
+        *,
+        deployment_request_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause = ""
+        params: list[Any] = []
+        if deployment_request_id is not None:
+            where_clause = "WHERE deployment_request_id = %s"
+            params.append(deployment_request_id)
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, deployment_request_id, executor_type, external_job_name,
+                           external_build_id, status, log_url, started_at, finished_at,
+                           failure_reason, created_by, created_at, updated_at
+                    FROM deployment_runs
+                    {where_clause}
+                    ORDER BY COALESCE(started_at, created_at) DESC, id DESC
+                    """,
+                    tuple(params),
+                )
+                return [self._deployment_run_from_row(row) for row in cursor.fetchall()]
+
     def list_jenkins_release_records(
         self,
         *,
@@ -157,12 +281,12 @@ class DevopsReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, product_id, version_id, job_name, build_id, build_number,
-                           environment, status, trigger_actor, commit_sha, duration_seconds,
-                           started_at, deployed_at, failure_reason, source_channel,
-                           created_by, created_at, updated_at
-                    FROM jenkins_release_records
-                    {where_clause}
+                SELECT id, product_id, version_id, job_name, build_id, build_number,
+                       environment, status, trigger_actor, commit_sha, duration_seconds,
+                       started_at, deployed_at, failure_reason, source_channel,
+                       deployment_request_id, created_by, created_at, updated_at
+                FROM jenkins_release_records
+                {where_clause}
                     ORDER BY COALESCE(deployed_at, created_at) DESC,
                              COALESCE(updated_at, created_at) DESC,
                              id DESC
@@ -227,6 +351,7 @@ class DevopsReadRepository:
         *,
         category: str | None = None,
         name: str | None = None,
+        product_scope_ids: list[str] | None = None,
         status: str | None = None,
         page: int | None = None,
         page_size: int | None = None,
@@ -316,11 +441,59 @@ class DevopsReadRepository:
                                'version_id', version_id
                            )
                        )::text AS source_payload
-                FROM jenkins_release_records
-                UNION ALL
-                SELECT '线上日志'::text AS category,
-                       id,
-                       environment AS name,
+	                FROM jenkins_release_records
+	                UNION ALL
+	                SELECT '运维部署'::text AS category,
+	                       d.id,
+	                       d.title AS name,
+	                       d.status,
+	                       COALESCE(d.updated_at, d.created_at, d.finished_at, d.started_at) AS updated_at,
+	                       COALESCE(d.artifact_version, d.environment) AS value,
+	                       d.product_id,
+	                       d.version_id,
+	                       NULL::text AS module_code,
+	                       NULL::text AS repository_id,
+	                       d.environment,
+	                       jsonb_strip_nulls(
+	                           jsonb_build_object(
+	                               'approved_by', d.approved_by,
+	                               'artifact_version', d.artifact_version,
+	                               'assigned_ops_user', d.assigned_ops_user,
+	                               'commit_sha', d.commit_sha,
+	                               'created_at', d.created_at,
+	                               'created_by', d.created_by,
+	                               'deploy_window_end', d.deploy_window_end,
+	                               'deploy_window_start', d.deploy_window_start,
+	                               'environment', d.environment,
+	                               'failure_reason', d.failure_reason,
+	                               'finished_at', d.finished_at,
+	                               'gate_summary', d.gate_summary,
+	                               'product_id', d.product_id,
+	                               'release_branch', d.release_branch,
+	                               'release_readiness_task_id', d.release_readiness_task_id,
+	                               'requirement_ids',
+	                               COALESCE(
+	                                   jsonb_agg(r.requirement_id ORDER BY r.requirement_id)
+	                                       FILTER (WHERE r.requirement_id IS NOT NULL),
+	                                   '[]'::jsonb
+	                               ),
+	                               'risk_level', d.risk_level,
+	                               'rollback_plan', d.rollback_plan,
+	                               'started_at', d.started_at,
+	                               'status', d.status,
+	                               'title', d.title,
+	                               'updated_at', d.updated_at,
+	                               'version_id', d.version_id
+	                           )
+	                       )::text AS source_payload
+	                FROM deployment_requests d
+	                LEFT JOIN deployment_request_requirements r
+	                  ON r.deployment_request_id = d.id
+	                GROUP BY d.id
+	                UNION ALL
+	                SELECT '线上日志'::text AS category,
+	                       id,
+	                       environment AS name,
                        status,
                        COALESCE(updated_at, created_at, window_start) AS updated_at,
                        error_rate::text AS value,
@@ -377,6 +550,15 @@ class DevopsReadRepository:
                 """
             )
             params.append(f"%{name.strip()}%")
+        if product_scope_ids is not None:
+            if not product_scope_ids:
+                payload: dict[str, Any] = {"items": [], "total": 0}
+                if page is not None or page_size is not None:
+                    payload["page"] = page or 1
+                    payload["page_size"] = page_size or 10
+                return payload
+            where_clauses.append("product_id = ANY(%s)")
+            params.append(product_scope_ids)
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
         use_pagination = page is not None or page_size is not None
         resolved_page = page or 1
@@ -459,12 +641,48 @@ class DevopsReadRepository:
             SELECT id, product_id, version_id, job_name, build_id, build_number,
                    environment, status, trigger_actor, commit_sha, duration_seconds,
                    started_at, deployed_at, failure_reason, source_channel,
-                   created_by, created_at, updated_at
+                   deployment_request_id, created_by, created_at, updated_at
             FROM jenkins_release_records
             ORDER BY COALESCE(deployed_at, created_at), id
             """
         )
         return {row[0]: self._jenkins_release_from_row(row) for row in cursor.fetchall()}
+
+    def _load_deployment_requests(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT d.id, d.product_id, d.version_id, d.title, d.environment,
+                   d.status, d.deploy_window_start, d.deploy_window_end,
+                   d.release_branch, d.commit_sha, d.artifact_version,
+                   d.release_readiness_task_id, d.rollback_plan, d.risk_level,
+                   d.gate_summary, d.assigned_ops_user, d.approved_by,
+                   d.started_at, d.finished_at, d.failure_reason, d.created_by,
+                   d.created_at, d.updated_at,
+                   COALESCE(
+                     array_agg(r.requirement_id ORDER BY r.requirement_id)
+                       FILTER (WHERE r.requirement_id IS NOT NULL),
+                     ARRAY[]::text[]
+                   ) AS requirement_ids
+            FROM deployment_requests d
+            LEFT JOIN deployment_request_requirements r
+              ON r.deployment_request_id = d.id
+            GROUP BY d.id
+            ORDER BY COALESCE(d.updated_at, d.created_at), d.id
+            """
+        )
+        return {row[0]: self._deployment_request_from_row(row) for row in cursor.fetchall()}
+
+    def _load_deployment_runs(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, deployment_request_id, executor_type, external_job_name,
+                   external_build_id, status, log_url, started_at, finished_at,
+                   failure_reason, created_by, created_at, updated_at
+            FROM deployment_runs
+            ORDER BY COALESCE(started_at, created_at), id
+            """
+        )
+        return {row[0]: self._deployment_run_from_row(row) for row in cursor.fetchall()}
 
     def _load_online_log_metrics(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -520,9 +738,10 @@ class DevopsReadRepository:
             "build_id": row[4],
             "build_number": row[5],
             "commit_sha": row[9],
-            "created_at": row[16].isoformat() if row[16] else None,
-            "created_by": row[15],
+            "created_at": row[17].isoformat() if row[17] else None,
+            "created_by": row[16],
             "deployed_at": row[12].isoformat() if row[12] else None,
+            "deployment_request_id": row[15],
             "duration_seconds": row[10],
             "environment": row[6],
             "failure_reason": row[13],
@@ -533,7 +752,7 @@ class DevopsReadRepository:
             "started_at": row[11].isoformat() if row[11] else None,
             "status": row[7],
             "trigger_actor": row[8],
-            "updated_at": row[17].isoformat() if row[17] else None,
+            "updated_at": row[18].isoformat() if row[18] else None,
             "version_id": row[2],
         }
         for optional_key in (
@@ -541,6 +760,7 @@ class DevopsReadRepository:
             "commit_sha",
             "created_at",
             "deployed_at",
+            "deployment_request_id",
             "duration_seconds",
             "failure_reason",
             "source_channel",
@@ -551,6 +771,86 @@ class DevopsReadRepository:
             if release[optional_key] is None:
                 release.pop(optional_key)
         return release
+
+    def _deployment_request_from_row(self, row) -> dict[str, Any]:
+        gate_summary = row[14] or {}
+        if isinstance(gate_summary, str):
+            gate_summary = json.loads(gate_summary)
+        request = {
+            "approved_by": row[16],
+            "artifact_version": row[10],
+            "assigned_ops_user": row[15],
+            "commit_sha": row[9],
+            "created_at": row[21].isoformat() if row[21] else None,
+            "created_by": row[20],
+            "deploy_window_end": row[7].isoformat() if row[7] else None,
+            "deploy_window_start": row[6].isoformat() if row[6] else None,
+            "environment": row[4],
+            "failure_reason": row[19],
+            "finished_at": row[18].isoformat() if row[18] else None,
+            "gate_summary": gate_summary,
+            "id": row[0],
+            "product_id": row[1],
+            "release_branch": row[8],
+            "release_readiness_task_id": row[11],
+            "requirement_ids": list(row[23] or []),
+            "risk_level": row[13],
+            "rollback_plan": row[12],
+            "started_at": row[17].isoformat() if row[17] else None,
+            "status": row[5],
+            "title": row[3],
+            "updated_at": row[22].isoformat() if row[22] else None,
+            "version_id": row[2],
+        }
+        for optional_key in (
+            "approved_by",
+            "artifact_version",
+            "assigned_ops_user",
+            "commit_sha",
+            "created_at",
+            "deploy_window_end",
+            "deploy_window_start",
+            "failure_reason",
+            "finished_at",
+            "release_branch",
+            "release_readiness_task_id",
+            "rollback_plan",
+            "started_at",
+            "updated_at",
+        ):
+            if request[optional_key] is None:
+                request.pop(optional_key)
+        return request
+
+    def _deployment_run_from_row(self, row) -> dict[str, Any]:
+        run = {
+            "created_at": row[11].isoformat() if row[11] else None,
+            "created_by": row[10],
+            "deployment_request_id": row[1],
+            "executor_type": row[2],
+            "external_build_id": row[4],
+            "external_job_name": row[3],
+            "failure_reason": row[9],
+            "finished_at": row[8].isoformat() if row[8] else None,
+            "id": row[0],
+            "log_url": row[6],
+            "started_at": row[7].isoformat() if row[7] else None,
+            "status": row[5],
+            "updated_at": row[12].isoformat() if row[12] else None,
+        }
+        for optional_key in (
+            "created_at",
+            "external_build_id",
+            "external_job_name",
+            "failure_reason",
+            "finished_at",
+            "log_url",
+            "started_at",
+            "updated_at",
+        ):
+            if run[optional_key] is None:
+                run.pop(optional_key)
+        return run
 
     def _online_log_metric_from_row(self, row) -> dict[str, Any]:
         top_errors = row[12] or []

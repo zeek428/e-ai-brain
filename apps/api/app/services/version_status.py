@@ -17,10 +17,7 @@ VERSION_REQUIREMENT_AUTO_ADVANCE = {
         "approved": "ready_for_dev",
         "planned": "ready_for_dev",
     },
-    "released": {
-        "ready_for_release": "released",
-        "testing": "released",
-    },
+    "released": {},
     "testing": {
         "approved": "testing",
         "code_reviewing": "testing",
@@ -38,6 +35,7 @@ VERSION_REQUIREMENT_ALLOWED_UNCHANGED = {
         "code_reviewing",
         "deferred",
         "developing",
+        "deploying",
         "ready_for_dev",
         "ready_for_release",
         "rejected",
@@ -49,6 +47,7 @@ VERSION_REQUIREMENT_ALLOWED_UNCHANGED = {
         "cancelled",
         "closed",
         "deferred",
+        "deploying",
         "rejected",
         "released",
     },
@@ -65,6 +64,7 @@ VERSION_REQUIREMENT_ALLOWED_UNCHANGED = {
         "cancelled",
         "closed",
         "deferred",
+        "deploying",
         "ready_for_release",
         "rejected",
         "released",
@@ -86,7 +86,8 @@ REQUIREMENT_BATCH_ADVANCE_TRANSITIONS = {
     "developing": {"cancelled", "closed", "code_reviewing", "deferred", "testing"},
     "code_reviewing": {"cancelled", "closed", "deferred", "testing"},
     "testing": {"cancelled", "closed", "deferred", "ready_for_release"},
-    "ready_for_release": {"cancelled", "closed", "deferred", "released"},
+    "ready_for_release": {"cancelled", "closed", "deferred", "deploying"},
+    "deploying": {"cancelled", "closed", "deferred", "ready_for_release"},
     "released": {"accepted", "closed"},
 }
 REQUIREMENT_BATCH_ADVANCE_TARGET_STATUSES = {
@@ -101,6 +102,7 @@ REQUIREMENT_BATCH_ADVANCE_VERSION_REQUIRED_STATUSES = {
     "code_reviewing",
     "testing",
     "ready_for_release",
+    "deploying",
     "released",
     "accepted",
 }

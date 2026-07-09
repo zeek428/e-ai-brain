@@ -876,6 +876,60 @@ export function VersionDashboardQualityDeliveryTables({
         scroll={{ x: 900 }}
         size="small"
       />
+      <Table<ProductVersionDashboard['deployments'][number]>
+        columns={[
+          {
+            dataIndex: 'id',
+            render: (value) => (
+              <Typography.Link
+                href={fullChainSubjectHref('deployment_request', String(value ?? '-'))}
+              >
+                {String(value ?? '-')}
+              </Typography.Link>
+            ),
+            title: '部署编号',
+            width: 190,
+          },
+          { dataIndex: 'title', ellipsis: true, title: '部署标题', width: 220 },
+          { dataIndex: 'environment', title: '环境', width: 100 },
+          { dataIndex: 'releaseBranch', ellipsis: true, title: '发布分支', width: 180 },
+          { dataIndex: 'artifactVersion', ellipsis: true, title: '制品版本', width: 160 },
+          {
+            dataIndex: 'requirementIds',
+            render: (value) => (Array.isArray(value) ? `${value.length} 条需求` : '-'),
+            title: '关联需求',
+            width: 120,
+          },
+          {
+            dataIndex: 'status',
+            render: (value) => dashboardStatusTag(String(value), statusLabelMap),
+            title: '状态',
+            width: 120,
+          },
+          { dataIndex: 'createdAt', title: '时间', width: 170 },
+          {
+            key: 'action',
+            render: (_, row) => (
+              <Button
+                href={fullChainSubjectHref('deployment_request', row.id)}
+                icon={<LinkOutlined />}
+                size="small"
+                type="link"
+              >
+                全链路
+              </Button>
+            ),
+            title: '操作',
+            width: 110,
+          },
+        ]}
+        dataSource={dashboard.deployments}
+        locale={{ emptyText: '当前版本暂无运维部署记录' }}
+        pagination={dashboard.deployments.length > 5 ? { pageSize: 5 } : false}
+        rowKey="id"
+        scroll={{ x: 1370 }}
+        size="small"
+      />
       <Table<ProductVersionDashboard['releases'][number]>
         columns={[
           {

@@ -27,7 +27,7 @@
 | [api/delivery-and-tasks.md](api/delivery-and-tasks.md) | 需求管理、AI 任务、人工确认、回写与导出 |
 | [api/review-and-knowledge.md](api/review-and-knowledge.md) | GitLab/GitHub 代码 Review、知识中心 |
 | [api/quality-operations-and-insights.md](api/quality-operations-and-insights.md) | 质量、运营、洞察和诊断分册组索引 |
-| [api/devops-quality-and-code-inspection.md](api/devops-quality-and-code-inspection.md) | 研发运营数据、定时作业、GitLab/Jenkins/线上日志指标、代码巡检、质量治理 |
+| [api/devops-quality-and-code-inspection.md](api/devops-quality-and-code-inspection.md) | 研发运营数据、运维部署、定时作业、GitLab/Jenkins/线上日志指标、代码巡检、质量治理 |
 | [api/user-insights-and-bugs.md](api/user-insights-and-bugs.md) | 用户洞察、用户反馈、用户使用指标、迭代规划建议、Bug 管理 |
 | [api/lifecycle-dashboard-and-diagnostics.md](api/lifecycle-dashboard-and-diagnostics.md) | 生命周期上下文、首页 IT 团队看板、执行诊断 |
 | [api/audit-and-errors.md](api/audit-and-errors.md) | 审计事件、核心接口错误语义、错误码 |

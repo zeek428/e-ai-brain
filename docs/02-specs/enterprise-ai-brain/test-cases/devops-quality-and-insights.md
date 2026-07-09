@@ -102,6 +102,40 @@
 
 ---
 
+### TC-AIBRAIN-DEPLOY-FUNC-016B: 运维部署单推进需求发布
+
+| 项目 | 内容 |
+|------|------|
+| 用例编号 | TC-AIBRAIN-DEPLOY-FUNC-016B |
+| 用例名称 | 运维部署单推进需求发布 |
+| 优先级 | P0 |
+| 模块 | DEPLOY / DEVOPS |
+| 创建人 | Codex |
+| 创建日期 | 2026-07-09 |
+
+**前置条件**:
+1. 产品和迭代版本已存在，版本未归档。
+2. 至少一条同产品同版本需求处于 `testing` 或 `ready_for_release`。
+3. 当前用户具备 `deployment.create`，发布或运维用户具备 `deployment.execute`。
+
+**测试步骤**:
+| 步骤 | 操作 | 预期结果 |
+|------|------|----------|
+| 1 | POST `/api/devops/deployments`，选择待部署需求、环境、风险等级和回滚方案 | 返回 `deployment_request_*`，状态为 `pending_ops`，写入部署单、部署范围和审计；若存在未关闭 blocker/critical Bug，返回 `DEPLOYMENT_BLOCKED`。 |
+| 2 | POST `/api/devops/deployments/{id}/start` | 部署单进入 `deploying`，写入 `deployment_runs(status=running)`，关联需求进入 `deploying`。 |
+| 3 | POST `/api/devops/deployments/{id}/complete`，`status=success` | 部署单进入 `succeeded`，运行进入 `success`，关联需求进入 `released`；迭代版本驾驶舱运维部署阶段展示成功部署证据。 |
+| 4 | 对另一条部署中的部署单登记 `status=failed` 或 `rolled_back` | 部署单进入失败或回滚，关联需求回到 `ready_for_release`，系统创建来源为 `deployment_failure` 的 Bug，证据包含部署单和运行信息。 |
+| 5 | 在日志监控页面打开运维部署行，执行启动、成功、失败、回滚或取消操作 | 页面调用对应部署 API，统一运营列表刷新后展示中文状态和最新执行结果。 |
+
+**预期结果**:
+1. 需求从测试完成到已发布必须经过可追踪部署单，发布评估确认不直接把需求置为已发布。
+2. 部署失败和回滚不会吞掉失败信息，必须回到待发布并形成 Bug 闭环。
+3. 部署单、部署运行、Jenkins 发布记录、Bug 和需求状态在全链路和版本驾驶舱中可追踪。
+
+**状态**: 已自动化覆盖。后端见 `apps/api/tests/test_operational_deployments.py`；前端见 `apps/web/tests/OperationalInsightsPages.test.tsx::creates and starts deployment requests from the DevOps page`。
+
+---
+
 ### TC-AIBRAIN-DEVOPS-FUNC-023: 采集运行记录登记与更新
 
 | 项目 | 内容 |

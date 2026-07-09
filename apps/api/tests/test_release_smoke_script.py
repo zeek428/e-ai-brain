@@ -152,12 +152,12 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         "branch_quality_pending_scan",
         "Version dashboard branch quality status mismatch",
         "blocker_actions",
-        "缺少成功发布记录",
+        "缺少成功运维部署",
         'action_target_type") == "product_version"',
         "release_evidence_blockers",
-        "successful_releases",
-        "failed_releases",
-        "Version dashboard release stage missed release evidence counts",
+        "successful_deployments",
+        "failed_deployments",
+        "Version dashboard deployment stage missed deployment evidence counts",
         "validate_ai_executor_runner_reliability",
         "validate_assistant_draft_governance",
         "validate_permission_visibility_quick_regression",
@@ -301,6 +301,7 @@ def test_full_chain_regression_validates_version_dashboard_evidence_coverage():
         "code-reviews": ("error", "blocked"),
         "bugs": ("error", "blocked"),
         "knowledge-deposits": ("warning", "risk"),
+        "deployments": ("error", "blocked"),
         "releases": ("error", "blocked"),
         "status-impact": ("success", "covered"),
     }
@@ -320,14 +321,14 @@ def test_full_chain_regression_validates_version_dashboard_evidence_coverage():
     ]
     dashboard = {
         "evidence_coverage": {
-            "blocking_domains": 4,
+            "blocking_domains": 5,
             "covered_domains": 3,
             "domains": domains,
             "gap_domains": 2,
             "level": "error",
-            "score": 33,
-            "summary": "4 个交付域存在阻断，需先处理阻塞队列。",
-            "total_domains": 9,
+            "score": 30,
+            "summary": "5 个交付域存在阻断，需先处理阻塞队列。",
+            "total_domains": 10,
         },
         "summary": {"blockers": 4},
     }
