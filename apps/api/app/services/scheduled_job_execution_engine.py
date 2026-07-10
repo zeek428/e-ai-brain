@@ -91,8 +91,7 @@ class ScheduledJobExecutionEngine:
         node = {
             "action_id": plugin_summary.get("action_id") or job.get("plugin_action_id"),
             "connection_environment": plugin_summary.get("connection_environment"),
-            "connection_id": plugin_summary.get("connection_id")
-            or job.get("plugin_connection_id"),
+            "connection_id": plugin_summary.get("connection_id") or job.get("plugin_connection_id"),
             "error_code": plugin_summary.get("error_code"),
             "error_message": plugin_summary.get("error_message"),
             "input_mapping": resolved_plugin_input_mapping,
@@ -102,8 +101,7 @@ class ScheduledJobExecutionEngine:
             "processing_mode": request_summary.get("processing_mode")
             or response_summary.get("processing_mode"),
             "records_imported": records_imported,
-            "request_method": request_summary.get("method")
-            or request_preview.get("method"),
+            "request_method": request_summary.get("method") or request_preview.get("method"),
             "request_summary": request_summary,
             "request_url": request_summary.get("url") or request_preview.get("url"),
             "response_status_code": response_summary.get("status_code"),
@@ -139,10 +137,7 @@ class ScheduledJobExecutionEngine:
         if len(summaries) == 1:
             return summaries[0]
         merged_json = cls._merged_response_json(
-            [
-                (summary.get("response_summary") or {}).get("json")
-                for summary in summaries
-            ],
+            [(summary.get("response_summary") or {}).get("json") for summary in summaries],
             merge_strategy=merge_strategy,
         )
         first = summaries[0]
@@ -328,8 +323,7 @@ class ScheduledJobExecutionEngine:
                 "label": "结果动作反馈内容",
                 "records_imported": plugin_records_imported,
                 "status": result_action_status,
-                "write_target": plugin_output_mapping.get("write_target")
-                or "scheduled_job_result",
+                "write_target": plugin_output_mapping.get("write_target") or "scheduled_job_result",
                 "write_target_label": write_preview.get("write_target_label")
                 or plugin_output_mapping.get("write_target")
                 or "scheduled_job_result",
@@ -404,6 +398,7 @@ class ScheduledJobExecutionEngine:
             "input": {
                 "findings_path": str(output_mapping.get("findings_path") or "$.findings"),
                 "knowledge_references": ai_processing.get("knowledge_references") or [],
+                "source_compaction": ai_processing.get("source_compaction"),
                 "source_finding_count": source_finding_count,
             },
             "label": "Skill 处理后内容",

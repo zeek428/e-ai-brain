@@ -45,9 +45,7 @@ def run_plugin_action_ai_processing_job(
     source_response_json = (plugin_summary.get("response_summary") or {}).get("json")
     if not isinstance(source_response_json, dict):
         source_response_json = (
-            {}
-            if source_response_json is None
-            else {"value": source_response_json}
+            {} if source_response_json is None else {"value": source_response_json}
         )
     source_row_count = JobExecutionEngine.plugin_records_imported_from_result(
         plugin_summary,
@@ -103,39 +101,40 @@ def run_plugin_action_ai_processing_job(
         action_records_imported,
         inferred_output_record_count(processed_json, output_mapping),
     )
+    skill_processing_input = {
+        "knowledge_references": ai_processing.get("knowledge_references") or [],
+        "source_row_count": source_row_count,
+    }
+    if (ai_processing.get("source_compaction") or {}).get("compacted"):
+        skill_processing_input["source_compaction"] = ai_processing["source_compaction"]
     execution_nodes = {
-            "data_connection": JobExecutionEngine.data_connection_execution_node(
-                job=job,
-                plugin_summary=plugin_summary,
-                records_imported=source_row_count,
-                resolved_plugin_input_mapping=resolved_plugin_input_mapping,
-            ),
-            "result_action": primary_result_action,
-            "result_actions": result_actions,
-            "skill_processing": {
-                "input": {
-                    "knowledge_references": ai_processing.get("knowledge_references") or [],
-                    "source_row_count": source_row_count,
-                },
-                "label": "Skill 处理后内容",
-                "model_gateway_called": True,
-                "model_gateway_config_id": ai_processing["model_gateway_config_id"],
-                "model_log_id": ai_processing["model_log_id"],
-                "note": "数据连接返回内容已通过平台 AI 大模型处理为结果动作可消费的结构化 JSON。",
-                "output": {
-                    "processed_json": processed_json,
-                    "records_imported": records_imported,
-                    "summary": (
-                        processed_json.get("summary")
-                        if isinstance(processed_json, dict)
-                        else None
-                    ),
-                },
-                "processing_mode": "model_gateway_json_transform",
-                "skill_codes": skill_codes,
-                "skill_ids": skill_ids,
-                "status": ai_processing["status"],
+        "data_connection": JobExecutionEngine.data_connection_execution_node(
+            job=job,
+            plugin_summary=plugin_summary,
+            records_imported=source_row_count,
+            resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+        ),
+        "result_action": primary_result_action,
+        "result_actions": result_actions,
+        "skill_processing": {
+            "input": skill_processing_input,
+            "label": "Skill 处理后内容",
+            "model_gateway_called": True,
+            "model_gateway_config_id": ai_processing["model_gateway_config_id"],
+            "model_log_id": ai_processing["model_log_id"],
+            "note": "数据连接返回内容已通过平台 AI 大模型处理为结果动作可消费的结构化 JSON。",
+            "output": {
+                "processed_json": processed_json,
+                "records_imported": records_imported,
+                "summary": (
+                    processed_json.get("summary") if isinstance(processed_json, dict) else None
+                ),
             },
+            "processing_mode": "model_gateway_json_transform",
+            "skill_codes": skill_codes,
+            "skill_ids": skill_ids,
+            "status": ai_processing["status"],
+        },
     }
     runner_node = ai_processing.get("runner_node")
     if isinstance(runner_node, dict):

@@ -73,6 +73,264 @@ CODE_INSPECTION_DEFAULT_OUTPUT_SCHEMA = {
     "type": "object",
 }
 
+AI_SOURCE_DEFAULT_SAMPLE_ROW_LIMIT = 80
+AI_SOURCE_DEFAULT_STRING_LIMIT = 360
+AI_SOURCE_DEFAULT_SCALAR_LIST_LIMIT = 40
+AI_SOURCE_ROW_PREFERRED_KEYS = (
+    "content",
+    "summary",
+    "title",
+    "description",
+    "feedback_type",
+    "sentiment",
+    "source_channel",
+    "channel",
+    "msg_type",
+    "ai_status",
+    "role_type",
+    "send_time",
+    "feedback_time",
+    "create_time",
+    "pt",
+    "product_id",
+    "tags",
+    "feedback_no",
+    "device_name",
+    "device_type",
+    "os_version",
+    "app_version",
+    "user_network",
+    "category",
+    "severity",
+    "risk_level",
+    "file_path",
+    "line_number",
+    "rule_id",
+    "recommendation",
+)
+AI_SOURCE_ROW_LOW_VALUE_KEYS = {
+    "external_user_id",
+    "open_kf_id",
+    "user_id",
+    "username",
+    "media_urls",
+    "bluetooth_list",
+    "signal_strength",
+}
+
+
+def _bounded_positive_int(value: Any, *, default: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return min(parsed, maximum)
+
+
+def _truncate_ai_source_string(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    return f"{value[:max_chars]}...<truncated {len(value) - max_chars} chars>"
+
+
+def _sample_ai_source_items(items: list[Any], limit: int) -> list[tuple[int, Any]]:
+    if len(items) <= limit:
+        return list(enumerate(items))
+    if limit <= 1:
+        return [(0, items[0])]
+    head_count = max(1, limit // 2)
+    tail_count = max(1, limit // 4)
+    middle_count = max(0, limit - head_count - tail_count)
+    indexes = list(range(head_count))
+    if middle_count:
+        start = head_count
+        end = max(start, len(items) - tail_count)
+        span = max(1, end - start)
+        for offset in range(middle_count):
+            index = start + int((offset + 1) * span / (middle_count + 1))
+            indexes.append(min(index, len(items) - 1))
+    indexes.extend(range(max(head_count, len(items) - tail_count), len(items)))
+    unique_indexes = sorted(set(indexes))[:limit]
+    return [(index, items[index]) for index in unique_indexes]
+
+
+def _compact_ai_source_row(row: dict[str, Any], *, index: int, max_chars: int) -> dict[str, Any]:
+    compacted: dict[str, Any] = {"_row_index": index}
+    for key in AI_SOURCE_ROW_PREFERRED_KEYS:
+        if key in row:
+            compacted[key] = _compact_ai_source_value(
+                row[key],
+                max_chars=max_chars,
+                max_scalar_list_items=12,
+                max_rows=12,
+                path=f"row.{key}",
+                stats=None,
+            )
+    for key, value in row.items():
+        if key in compacted or key in AI_SOURCE_ROW_LOW_VALUE_KEYS:
+            continue
+        if isinstance(value, (dict, list)):
+            continue
+        if value is None or value == "":
+            continue
+        compacted[key] = _compact_ai_source_value(
+            value,
+            max_chars=max_chars,
+            max_scalar_list_items=12,
+            max_rows=12,
+            path=f"row.{key}",
+            stats=None,
+        )
+        if len(compacted) >= 24:
+            break
+    return compacted
+
+
+def _compact_ai_source_value(
+    value: Any,
+    *,
+    max_chars: int,
+    max_scalar_list_items: int,
+    max_rows: int,
+    path: str,
+    stats: dict[str, Any] | None,
+) -> Any:
+    if isinstance(value, str):
+        truncated = _truncate_ai_source_string(value, max_chars)
+        if stats is not None and truncated != value:
+            stats["compacted"] = True
+            stats["truncated_strings"] = int(stats.get("truncated_strings") or 0) + 1
+        return truncated
+    if isinstance(value, dict):
+        return {
+            str(key): _compact_ai_source_value(
+                item,
+                max_chars=max_chars,
+                max_scalar_list_items=max_scalar_list_items,
+                max_rows=max_rows,
+                path=f"{path}.{key}",
+                stats=stats,
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        if not value:
+            return []
+        if all(isinstance(item, dict) for item in value):
+            if len(value) <= max_rows:
+                return [
+                    _compact_ai_source_value(
+                        item,
+                        max_chars=max_chars,
+                        max_scalar_list_items=max_scalar_list_items,
+                        max_rows=max_rows,
+                        path=f"{path}[{index}]",
+                        stats=stats,
+                    )
+                    for index, item in enumerate(value)
+                ]
+            sampled = _sample_ai_source_items(value, max_rows)
+            sample_rows = [
+                _compact_ai_source_row(item, index=index, max_chars=max_chars)
+                for index, item in sampled
+                if isinstance(item, dict)
+            ]
+            if stats is not None:
+                stats["compacted"] = True
+                stats.setdefault("sampled_lists", []).append(
+                    {
+                        "path": path,
+                        "sample_count": len(sample_rows),
+                        "total_count": len(value),
+                    },
+                )
+            return {
+                "_ai_brain_compacted_list": True,
+                "omitted_count": max(0, len(value) - len(sample_rows)),
+                "sample_count": len(sample_rows),
+                "sample_rows": sample_rows,
+                "sample_strategy": "head_middle_tail",
+                "total_count": len(value),
+            }
+        sampled_values = value[:max_scalar_list_items]
+        compacted_values = [
+            _compact_ai_source_value(
+                item,
+                max_chars=max_chars,
+                max_scalar_list_items=max_scalar_list_items,
+                max_rows=max_rows,
+                path=f"{path}[]",
+                stats=stats,
+            )
+            for item in sampled_values
+        ]
+        if len(value) <= max_scalar_list_items:
+            return compacted_values
+        if stats is not None:
+            stats["compacted"] = True
+            stats.setdefault("sampled_lists", []).append(
+                {
+                    "path": path,
+                    "sample_count": len(compacted_values),
+                    "total_count": len(value),
+                },
+            )
+        return {
+            "_ai_brain_compacted_list": True,
+            "omitted_count": max(0, len(value) - len(compacted_values)),
+            "sample_count": len(compacted_values),
+            "sample_values": compacted_values,
+            "total_count": len(value),
+        }
+    return value
+
+
+def ai_model_source_payload(
+    *,
+    job: dict[str, Any],
+    source_response_json: dict[str, Any],
+    source_row_count: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    job_config = job.get("config_json") if isinstance(job.get("config_json"), dict) else {}
+    ai_config = (
+        job_config.get("ai_processing") if isinstance(job_config.get("ai_processing"), dict) else {}
+    )
+    max_rows = _bounded_positive_int(
+        ai_config.get("max_source_sample_rows"),
+        default=AI_SOURCE_DEFAULT_SAMPLE_ROW_LIMIT,
+        maximum=200,
+    )
+    max_chars = _bounded_positive_int(
+        ai_config.get("max_source_field_chars"),
+        default=AI_SOURCE_DEFAULT_STRING_LIMIT,
+        maximum=1200,
+    )
+    stats: dict[str, Any] = {
+        "compacted": False,
+        "max_source_field_chars": max_chars,
+        "max_source_sample_rows": max_rows,
+        "source_row_count": source_row_count,
+    }
+    compacted = _compact_ai_source_value(
+        source_response_json,
+        max_chars=max_chars,
+        max_scalar_list_items=AI_SOURCE_DEFAULT_SCALAR_LIST_LIMIT,
+        max_rows=max_rows,
+        path="$",
+        stats=stats,
+    )
+    if not isinstance(compacted, dict):
+        compacted = {"value": compacted}
+    if stats["compacted"]:
+        compacted = {
+            "_ai_brain_compacted": True,
+            "compaction": stats,
+            "payload": compacted,
+        }
+    return compacted, stats
+
 
 def normalized_knowledge_document_ids(value: Any) -> list[str]:
     if value is None:
@@ -116,9 +374,7 @@ def readable_knowledge_documents_by_id(
             if document_is_readable(current_store, user, document)
         ]
     return {
-        document["id"]: dict(document)
-        for document in documents
-        if document.get("id") in requested
+        document["id"]: dict(document) for document in documents if document.get("id") in requested
     }
 
 
@@ -517,7 +773,9 @@ def _skill_output_schema_errors(
     allowed_types = (
         [item for item in schema_type if isinstance(item, str)]
         if isinstance(schema_type, list)
-        else [schema_type] if isinstance(schema_type, str) else []
+        else [schema_type]
+        if isinstance(schema_type, str)
+        else []
     )
     if value is None and "null" in allowed_types:
         return []
@@ -535,9 +793,7 @@ def _skill_output_schema_errors(
         expected = " or ".join(non_null_types)
         return [f"{path} expected {expected}, got {_json_value_type_name(value)}"]
     effective_type = (
-        matched_types[0]
-        if matched_types
-        else non_null_types[0] if non_null_types else None
+        matched_types[0] if matched_types else non_null_types[0] if non_null_types else None
     )
     if "enum" in schema:
         enum = schema.get("enum")
@@ -586,7 +842,7 @@ def _json_value_matches_schema_type(value: Any, schema_type: str) -> bool:
     if schema_type == "integer":
         return isinstance(value, int) and not isinstance(value, bool)
     if schema_type == "number":
-        return (isinstance(value, int | float) and not isinstance(value, bool))
+        return isinstance(value, int | float) and not isinstance(value, bool)
     if schema_type == "boolean":
         return isinstance(value, bool)
     if schema_type == "null":
@@ -723,6 +979,11 @@ def model_json_content(response_payload: dict[str, Any]) -> dict[str, Any]:
     return parsed
 
 
+def model_gateway_failure_detail(exc: Exception) -> str:
+    detail = str(exc).strip() or exc.__class__.__name__
+    return _truncate_ai_source_string(f"{exc.__class__.__name__}: {detail}", 500)
+
+
 def scheduled_job_ai_messages(
     current_store: Any,
     *,
@@ -731,6 +992,8 @@ def scheduled_job_ai_messages(
     source_response_json: dict[str, Any],
     source_row_count: int,
     knowledge_references: list[dict[str, Any]] | None = None,
+    model_source_response_json: dict[str, Any] | None = None,
+    source_compaction: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     agent = (
         read_memory_dict(current_store, "ai_agents").get(job.get("agent_id"))
@@ -815,11 +1078,16 @@ def scheduled_job_ai_messages(
             ),
             "write_target": output_mapping.get("write_target") or "user_feedback_insights",
         }
-    system_prompt = (
-        (agent or {}).get("system_prompt")
-        or "你是企业 AI 大脑的数据分析助手，负责把数据连接返回的原始数据整理为结果动作需要的 JSON。"
-    )
+    system_prompt = (agent or {}).get(
+        "system_prompt"
+    ) or "你是企业 AI 大脑的数据分析助手，负责把数据连接返回的原始数据整理为结果动作需要的 JSON。"
     job_config = job.get("config_json") or {}
+    if model_source_response_json is None or source_compaction is None:
+        model_source_response_json, source_compaction = ai_model_source_payload(
+            job=job,
+            source_response_json=source_response_json,
+            source_row_count=source_row_count,
+        )
     user_payload = {
         "instructions": instructions,
         "job": {
@@ -834,8 +1102,10 @@ def scheduled_job_ai_messages(
         "output_contract": output_contract,
         "skill_prompts": skill_prompts,
         "source_row_count": source_row_count,
-        "data_connection_response": source_response_json,
+        "data_connection_response": model_source_response_json,
     }
+    if source_compaction.get("compacted"):
+        user_payload["data_connection_response_compaction"] = source_compaction
     if knowledge_references:
         user_payload["knowledge_references"] = knowledge_references
     return [
@@ -864,11 +1134,18 @@ def run_scheduled_job_ai_processing(
         job=job,
         user=user,
     )
+    model_source_response_json, source_compaction = ai_model_source_payload(
+        job=job,
+        source_response_json=source_response_json,
+        source_row_count=source_row_count,
+    )
     messages = scheduled_job_ai_messages(
         current_store,
         job=job,
         knowledge_references=knowledge_references,
+        model_source_response_json=model_source_response_json,
         output_mapping=output_mapping,
+        source_compaction=source_compaction,
         source_response_json=source_response_json,
         source_row_count=source_row_count,
     )
@@ -921,6 +1198,7 @@ def run_scheduled_job_ai_processing(
         ValueError,
     ) as exc:
         latency_ms = int((perf_counter() - started) * 1000)
+        failure_detail = model_gateway_failure_detail(exc)
         model_log = model_gateway_log(
             current_store,
             provider=str(config.get("provider") or "openai_compatible"),
@@ -934,7 +1212,7 @@ def run_scheduled_job_ai_processing(
             latency_ms=latency_ms,
             status="failed",
             purpose="scheduled_job_ai_processing",
-            error="Scheduled job AI processing failed",
+            error=failure_detail,
         )
         audit_event = record_audit_event(
             current_store,
@@ -956,6 +1234,15 @@ def run_scheduled_job_ai_processing(
             502,
             "MODEL_GATEWAY_CALL_FAILED",
             "Scheduled job AI processing failed",
+            {
+                "failure_detail": failure_detail,
+                "latency_ms": latency_ms,
+                "model": model_log["model"],
+                "model_gateway_config_id": config.get("id"),
+                "model_log_id": model_log["id"],
+                "provider": model_log["provider"],
+                "source_compaction": source_compaction,
+            },
         ) from exc
 
     audit_event = record_audit_event(
@@ -999,6 +1286,7 @@ def run_scheduled_job_ai_processing(
         "model": config["default_chat_model"],
         "output_json": output_json,
         "provider": config["provider"],
+        "source_compaction": source_compaction,
         "status": "succeeded",
         "tokens": model_log["tokens"],
     }

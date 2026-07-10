@@ -50,11 +50,13 @@ def model_gateway_failure_diagnostics(exc: Exception) -> dict[str, Any]:
     return {
         key: detail[key]
         for key in (
+            "failure_detail",
             "latency_ms",
             "model",
             "model_gateway_config_id",
             "model_log_id",
             "provider",
+            "source_compaction",
         )
         if key in detail
     }

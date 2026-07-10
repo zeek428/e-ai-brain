@@ -14,6 +14,7 @@ import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_s
 import app.services.scheduled_job_config as scheduled_job_config
 import app.services.scheduled_job_data_connections as scheduled_job_data_connections_service
 import app.services.scheduled_job_result_actions as scheduled_job_result_actions_service
+import app.services.scheduled_job_user_feedback as scheduled_job_user_feedback_service
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
 from app.core.security import hash_password
@@ -75,6 +76,109 @@ def create_feedback(headers: dict[str, str], product_id: str) -> dict:
         },
         headers=headers,
     ).json()["data"]
+
+
+def test_scheduled_job_ai_messages_compacts_large_connection_rows_for_model_input():
+    app.state.store.reset()
+    rows = [
+        {
+            "app_version": "3.4.0",
+            "channel": "ios",
+            "content": f"第 {index} 条客服反馈：蓝牙连接不上，希望优化排障指引。" * 3,
+            "external_user_id": f"external-user-{index}",
+            "open_kf_id": f"open-kf-{index}",
+            "pt": "20260709",
+            "role_type": 0,
+            "send_time": "2026-07-09 10:00:00",
+            "user_id": f"user-{index}",
+        }
+        for index in range(1000)
+    ]
+
+    messages = scheduled_job_ai_processing_service.scheduled_job_ai_messages(
+        app.state.store,
+        job={
+            "id": "scheduled_job_large_feedback",
+            "job_type": "user_feedback_insight_extract",
+            "product_id": "product_feedback",
+            "skill_ids": [],
+            "source_system": "aliyun-maxcompute",
+            "timezone": "Asia/Shanghai",
+        },
+        output_mapping={},
+        source_response_json={
+            "data": {
+                "pageNum": 1,
+                "pageSize": 1000,
+                "rows": rows,
+                "totalNum": 12709,
+            },
+            "errCode": 0,
+            "errMsg": "success",
+        },
+        source_row_count=len(rows),
+    )
+
+    user_payload = json.loads(messages[1]["content"])
+    compacted_rows = user_payload["data_connection_response"]["payload"]["data"]["rows"]
+    assert user_payload["data_connection_response_compaction"]["compacted"] is True
+    assert compacted_rows["_ai_brain_compacted_list"] is True
+    assert compacted_rows["sample_count"] == 80
+    assert compacted_rows["total_count"] == 1000
+    assert compacted_rows["sample_rows"][0]["_row_index"] == 0
+    assert compacted_rows["sample_rows"][-1]["_row_index"] == 999
+    assert "external-user-999" not in messages[1]["content"]
+    assert "open-kf-999" not in messages[1]["content"]
+    assert len(messages[1]["content"]) < 60000
+
+
+def test_scheduled_job_ai_messages_preserves_small_nested_connection_payloads():
+    app.state.store.reset()
+
+    messages = scheduled_job_ai_processing_service.scheduled_job_ai_messages(
+        app.state.store,
+        job={
+            "id": "scheduled_job_small_payload",
+            "job_type": "generic_ai_analysis",
+            "product_id": "product_feedback",
+            "skill_ids": [],
+            "source_system": "internal",
+            "timezone": "Asia/Shanghai",
+        },
+        output_mapping={},
+        source_response_json={
+            "rows": [
+                {
+                    "content": "需要保留嵌套字段",
+                    "metadata": {"labels": ["客服", "蓝牙"], "severity": "medium"},
+                },
+            ],
+        },
+        source_row_count=1,
+    )
+
+    user_payload = json.loads(messages[1]["content"])
+    assert "data_connection_response_compaction" not in user_payload
+    assert user_payload["data_connection_response"]["rows"][0]["metadata"] == {
+        "labels": ["客服", "蓝牙"],
+        "severity": "medium",
+    }
+
+
+def test_user_feedback_source_row_count_falls_back_to_response_rows():
+    assert (
+        scheduled_job_user_feedback_service.source_row_count_from_response_summary(
+            {
+                "json": {
+                    "data": {
+                        "rows": [{"content": "连接失败"}, {"content": "充电异常"}],
+                        "totalNum": 120,
+                    },
+                },
+            },
+        )
+        == 2
+    )
 
 
 def test_scheduled_job_run_projection_adds_trace_graph_and_source_summary():
@@ -182,12 +286,10 @@ def test_scheduled_job_run_projection_adds_trace_graph_and_source_summary():
     ]
     assert by_node["data_connection"]["rerun_plan"]["single_node_supported"] is False
     assert (
-        by_node["data_connection"]["rerun_plan"]["side_effect_policy"]
-        == "external_read_or_fetch"
+        by_node["data_connection"]["rerun_plan"]["side_effect_policy"] == "external_read_or_fetch"
     )
     assert (
-        by_node["data_connection"]["rerun_plan"]["safe_next_action"]
-        == "rerun_full_scheduled_job"
+        by_node["data_connection"]["rerun_plan"]["safe_next_action"] == "rerun_full_scheduled_job"
     )
     assert by_node["result_action"]["rerun_supported"] is False
     assert by_node["result_action"]["rerun_plan"]["status"] == "blocked_by_side_effect_guard"
@@ -430,10 +532,7 @@ def test_skill_output_json_contract_rejects_nested_array_item_type_mismatch():
         )
 
     assert exc_info.value.detail["code"] == "SKILL_OUTPUT_SCHEMA_INVALID"
-    assert (
-        "$.insights[0].score expected number, got string"
-        in exc_info.value.detail["message"]
-    )
+    assert "$.insights[0].score expected number, got string" in exc_info.value.detail["message"]
 
 
 def test_code_inspection_ai_processing_has_default_output_schema_without_skill_schema():
@@ -1355,15 +1454,15 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     assert internal_weekly["resource_selectors"]["plugin_action"]["code_candidates"] == [
         "query_internal_business_data",
     ]
-    assert by_code["requirement_bug_risk_analysis"]["payload_defaults"][
-        "plugin_input_mapping"
-    ]["source_types"] == ["requirements", "bugs"]
-    assert by_code["user_insight_requirement_mining"]["payload_defaults"][
-        "plugin_input_mapping"
-    ]["source_types"] == ["user_insights", "requirements"]
-    assert by_code["product_feedback_trend_analysis"]["payload_defaults"][
-        "plugin_input_mapping"
-    ]["source_types"] == ["products", "user_insights", "bugs"]
+    assert by_code["requirement_bug_risk_analysis"]["payload_defaults"]["plugin_input_mapping"][
+        "source_types"
+    ] == ["requirements", "bugs"]
+    assert by_code["user_insight_requirement_mining"]["payload_defaults"]["plugin_input_mapping"][
+        "source_types"
+    ] == ["user_insights", "requirements"]
+    assert by_code["product_feedback_trend_analysis"]["payload_defaults"]["plugin_input_mapping"][
+        "source_types"
+    ] == ["products", "user_insights", "bugs"]
 
 
 def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
@@ -1749,9 +1848,7 @@ def test_plugin_action_invoke_ai_generated_runs_skill_before_result_action(monke
         headers=admin_headers,
     ).json()["data"]
     assert dry_run["stages"]["ai_processing"]["will_call_model_gateway"] is True
-    assert dry_run["stages"]["result_actions"][0]["write_preview_source"] == (
-        "skill_output_schema"
-    )
+    assert dry_run["stages"]["result_actions"][0]["write_preview_source"] == ("skill_output_schema")
 
     job = client.post(
         "/api/system/scheduled-jobs",
@@ -2190,7 +2287,9 @@ def test_scheduled_job_runs_multiple_data_connections_with_merged_dag_node():
     assert data_node["response_summary"]["json"]["row_count"] == 4
     assert len(data_node["response_summary"]["json"]["rows"]) == 4
     trace_nodes = run["result_summary"]["trace_graph"]["nodes"]
-    trace_data_nodes = [node for node in trace_nodes if str(node["id"]).startswith("data_connection_")]  # noqa: E501
+    trace_data_nodes = [
+        node for node in trace_nodes if str(node["id"]).startswith("data_connection_")
+    ]  # noqa: E501
     assert [node["id"] for node in trace_data_nodes] == ["data_connection_1", "data_connection_2"]
     assert [node["input"]["connection_id"] for node in trace_data_nodes] == [
         primary_connection["id"],
@@ -3480,9 +3579,9 @@ def test_scheduled_job_dry_run_previews_data_ai_contract_and_write_mapping():
     assert data["sample_reuse"]["reuse_wizard"]["progress_percent"] == 100
     assert data["sample_reuse"]["reuse_wizard"]["progress_label"] == "4/4 步已就绪"
     assert data["sample_reuse"]["reuse_wizard"]["total_steps"] == 4
-    assert "保存当前配置为定时作业" in data["sample_reuse"]["reuse_wizard"][
-        "next_action_description"
-    ]
+    assert (
+        "保存当前配置为定时作业" in data["sample_reuse"]["reuse_wizard"]["next_action_description"]
+    )
     assert [
         (item["key"], item["status"])
         for item in data["sample_reuse"]["reuse_wizard"]["handoff_summary"]
@@ -3591,12 +3690,11 @@ def test_scheduled_job_dry_run_previews_data_ai_contract_and_write_mapping():
     sample_data = sample_response.json()["data"]
     assert sample_data["status"] == "succeeded"
     assert sample_data["stages"]["data_connection"]["records_imported"] == 4
-    assert sample_data["stages"]["data_connection"]["sample_source"] == (
-        "connection_test_response"
+    assert sample_data["stages"]["data_connection"]["sample_source"] == ("connection_test_response")
+    assert (
+        sample_data["stages"]["data_connection"]["request_summary"]["processing_mode"]
+        == "sample_reuse"
     )
-    assert sample_data["stages"]["data_connection"]["request_summary"][
-        "processing_mode"
-    ] == "sample_reuse"
     assert sample_data["sample_reuse"]["data_connection_sample"] == {
         "records_imported": 4,
         "response_available": True,
@@ -3606,9 +3704,7 @@ def test_scheduled_job_dry_run_previews_data_ai_contract_and_write_mapping():
     assert sample_data["sample_reuse"]["reuse_wizard"]["sample_source"] == (
         "connection_test_response"
     )
-    assert sample_data["sample_reuse"]["reuse_wizard"]["progress_label"] == (
-        "4/4 步已就绪"
-    )
+    assert sample_data["sample_reuse"]["reuse_wizard"]["progress_label"] == ("4/4 步已就绪")
     assert sample_data["sample_reuse"]["reuse_wizard"]["progress_percent"] == 100
     assert sample_data["sample_reuse"]["reuse_wizard"]["steps"][0]["source"] == (
         "connection_test_response"
@@ -4854,8 +4950,7 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
     assert node_rerun_summary["execution_nodes"]["data_connection"]["records_imported"] == 2
     assert node_rerun_summary["execution_nodes"]["skill_processing"]["status"] == "not_run"
     assert (
-        node_rerun_summary["execution_nodes"]["skill_processing"]["model_gateway_called"]
-        is False
+        node_rerun_summary["execution_nodes"]["skill_processing"]["model_gateway_called"] is False
     )
     assert node_rerun_summary["execution_nodes"]["result_action"]["status"] == "not_run"
     assert node_rerun_summary["trace_graph"]["edges"] == [
@@ -4919,18 +5014,13 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
         "status": "succeeded",
         "upstream_strategy": "source_ai_output_snapshot_reused",
     }
-    assert (
-        result_action_rerun_summary["execution_nodes"]["data_connection"]["status"]
-        == "not_run"
-    )
+    assert result_action_rerun_summary["execution_nodes"]["data_connection"]["status"] == "not_run"
     assert (
         result_action_rerun_summary["execution_nodes"]["skill_processing"]["status"]
         == "reused_snapshot"
     )
     assert (
-        result_action_rerun_summary["execution_nodes"]["skill_processing"][
-            "model_gateway_called"
-        ]
+        result_action_rerun_summary["execution_nodes"]["skill_processing"]["model_gateway_called"]
         is False
     )
     assert (
@@ -5021,9 +5111,7 @@ def test_online_log_ai_analysis_runs_data_ai_and_generic_result_action(monkeypat
         is True
     )
     assert (
-        skill_node_rerun_summary["execution_nodes"]["skill_processing"]["output"][
-            "anomaly_count"
-        ]
+        skill_node_rerun_summary["execution_nodes"]["skill_processing"]["output"]["anomaly_count"]
         == 1
     )
     assert skill_node_rerun_summary["execution_nodes"]["result_action"]["status"] == "not_run"
@@ -5275,8 +5363,7 @@ def test_manual_scheduled_ai_job_run_creates_snapshot_collector_run_and_suggesti
     assert invalid_source_trigger_response.status_code == 400
     assert invalid_source_trigger_response.json()["detail"]["code"] == "VALIDATION_ERROR"
     assert (
-        "source_run_id is only supported for manual_rerun"
-        in invalid_source_trigger_response.text
+        "source_run_id is only supported for manual_rerun" in invalid_source_trigger_response.text
     )
 
     missing_source_response = client.post(
@@ -5344,29 +5431,25 @@ def test_scheduled_ai_job_run_loads_packaged_skill_files_into_snapshot():
     assert agent_snapshot["package_snapshot"]["entry"] == "AGENT.md"
     assert "可落地洞察" in agent_snapshot["package_snapshot"]["entry_content"]
     assert agent_snapshot["package_snapshot"]["checksum"] == agent["package_checksum"]
-    assert agent_snapshot["package_snapshot"]["runtime_boundary"][
-        "script_execution"
-    ] == "disabled_pending_sandbox"
+    assert (
+        agent_snapshot["package_snapshot"]["runtime_boundary"]["script_execution"]
+        == "disabled_pending_sandbox"
+    )
     assert agent_snapshot["package_snapshot"]["runtime_boundary"]["script_files"] == [
         "scripts/run.py",
     ]
-    assert "不会自动执行" in agent_snapshot["package_snapshot"]["runtime_boundary"][
-        "script_note"
-    ]
-    assert run["resolved_prompt_snapshot"]["agent_system_prompt"].startswith(
-        "# 文件包反馈分析角色"
-    )
+    assert "不会自动执行" in agent_snapshot["package_snapshot"]["runtime_boundary"]["script_note"]
+    assert run["resolved_prompt_snapshot"]["agent_system_prompt"].startswith("# 文件包反馈分析角色")
     skill_snapshot = run["resolved_skill_snapshots"][0]
     assert skill_snapshot["source_type"] == "package"
     assert skill_snapshot["package_snapshot"]["entry"] == "SKILL.md"
     assert "真实用户反馈" in skill_snapshot["package_snapshot"]["entry_content"]
     assert skill_snapshot["package_snapshot"]["checksum"] == skill["package_checksum"]
-    assert skill_snapshot["package_snapshot"]["runtime_boundary"][
-        "script_execution"
-    ] == "disabled_pending_sandbox"
+    assert (
+        skill_snapshot["package_snapshot"]["runtime_boundary"]["script_execution"]
+        == "disabled_pending_sandbox"
+    )
     assert skill_snapshot["package_snapshot"]["runtime_boundary"]["script_files"] == [
         "scripts/run.py",
     ]
-    assert "不会自动执行" in skill_snapshot["package_snapshot"]["runtime_boundary"][
-        "script_note"
-    ]
+    assert "不会自动执行" in skill_snapshot["package_snapshot"]["runtime_boundary"]["script_note"]

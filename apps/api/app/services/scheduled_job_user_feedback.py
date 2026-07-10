@@ -41,6 +41,27 @@ def normalized_insight_enum(value: Any, allowed_values: set[str], fallback: str)
     return fallback
 
 
+def source_row_count_from_response_summary(response_summary: dict[str, Any]) -> int:
+    response_json = response_summary.get("json")
+    if not isinstance(response_json, dict):
+        return 0
+    data = response_json.get("data")
+    if isinstance(data, dict):
+        rows = data.get("rows")
+        if isinstance(rows, list):
+            return len(rows)
+        row_count = data.get("row_count")
+        if isinstance(row_count, int) and row_count >= 0:
+            return row_count
+    rows = response_json.get("rows")
+    if isinstance(rows, list):
+        return len(rows)
+    row_count = response_json.get("row_count")
+    if isinstance(row_count, int) and row_count >= 0:
+        return row_count
+    return 0
+
+
 def resolve_job_plugin_output_mapping(current_store: Any, job: dict[str, Any]) -> dict[str, Any]:
     job_mapping = job.get("plugin_output_mapping") or {}
     if job_mapping:
@@ -295,12 +316,15 @@ def user_feedback_result_summary_from_ai_output(
     model_gateway_called = bool(
         ai_processing.get("model_gateway_called", not ai_processing.get("runner_task_id")),
     )
+    skill_processing_input = {
+        "insights_path": str(mapping.get("insights_path") or "$.insights"),
+        "knowledge_references": ai_processing.get("knowledge_references") or [],
+        "source_row_count": source_row_count,
+    }
+    if (ai_processing.get("source_compaction") or {}).get("compacted"):
+        skill_processing_input["source_compaction"] = ai_processing["source_compaction"]
     skill_processing_node = {
-        "input": {
-            "insights_path": str(mapping.get("insights_path") or "$.insights"),
-            "knowledge_references": ai_processing.get("knowledge_references") or [],
-            "source_row_count": source_row_count,
-        },
+        "input": skill_processing_input,
         "label": "Skill 处理后内容",
         "model_gateway_called": model_gateway_called,
         "note": "数据连接返回内容已通过 AI 处理为用户洞察写入可消费的结构化 JSON。",
@@ -383,10 +407,13 @@ def run_user_feedback_insight_extract_job(
     source_response_json = (plugin_summary.get("response_summary") or {}).get("json") or {}
     if not isinstance(source_response_json, dict):
         source_response_json = {}
+    response_summary = plugin_summary.get("response_summary") or {}
     source_row_count = records_imported_from_mapping(
-        plugin_summary.get("response_summary") or {},
+        response_summary,
         {"records_imported_path": mapping.get("records_imported_path")},
     )
+    if source_row_count == 0:
+        source_row_count = source_row_count_from_response_summary(response_summary)
     if scheduled_job_uses_local_ai_executor(job):
         ai_processing = dispatch_scheduled_job_ai_executor_processing(
             current_store,
