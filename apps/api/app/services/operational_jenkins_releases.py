@@ -57,7 +57,9 @@ def validate_jenkins_release_context(
     if version["status"] == "archived":
         raise api_error(400, "PRODUCT_VERSION_ARCHIVED", "Archived version cannot be used")
     if deployment_request_id is not None:
-        deployment = read_memory_dict(current_store, "deployment_requests").get(deployment_request_id)
+        deployment = read_memory_dict(current_store, "deployment_requests").get(
+            deployment_request_id
+        )
         if (
             deployment is None
             or deployment.get("product_id") != product_id

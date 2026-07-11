@@ -247,7 +247,9 @@ class DevopsReadRepository:
                            deployment_method, executor_channel, runner_id,
                            target_code, jenkins_connection_id, jenkins_job_name,
                            timeout_seconds, config_json, is_default, status,
-                           version, created_by, created_at, updated_at
+                           version, created_by, created_at, updated_at,
+                           rollout_strategy, wave_config, preflight_config,
+                           health_check_config, rollback_config, window_enforcement
                     FROM deployment_schemes
                     {where_clause}
                     ORDER BY is_default DESC, updated_at DESC, id ASC
@@ -255,6 +257,78 @@ class DevopsReadRepository:
                     tuple(params),
                 )
                 return [self._deployment_scheme_from_row(row) for row in cursor.fetchall()]
+
+    def page_deployment_schemes(
+        self,
+        *,
+        deployment_method: str | None,
+        environment: str | None,
+        name: str | None,
+        page: int,
+        page_size: int,
+        product_id: str | None,
+        product_scope_ids: list[str] | None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+    ) -> dict[str, Any]:
+        sort_columns = {
+            "code": "lower(code)",
+            "deployment_method": "lower(deployment_method)",
+            "environment": "lower(environment)",
+            "is_default": "is_default",
+            "name": "lower(name)",
+            "status": "lower(status)",
+            "updated_at": "COALESCE(updated_at, created_at)",
+        }
+        if sort_by not in sort_columns or sort_order not in {"asc", "desc"}:
+            raise ValueError("Invalid deployment scheme sort")
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        for expression, value in (
+            ("product_id = %s", product_id),
+            ("environment = %s", environment),
+            ("status = %s", status),
+            ("deployment_method = %s", deployment_method),
+        ):
+            if value is not None:
+                where_clauses.append(expression)
+                params.append(value)
+        if name is not None:
+            where_clauses.append("name ILIKE %s")
+            params.append(f"%{name}%")
+        if product_scope_ids is not None:
+            if not product_scope_ids:
+                return {"items": [], "total": 0}
+            where_clauses.append("product_id = ANY(%s)")
+            params.append(product_scope_ids)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        direction = sort_order.upper()
+        params.extend((page_size, (page - 1) * page_size))
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, code, name, environment,
+                           deployment_method, executor_channel, runner_id,
+                           target_code, jenkins_connection_id, jenkins_job_name,
+                           timeout_seconds, config_json, is_default, status,
+                           version, created_by, created_at, updated_at,
+                           rollout_strategy, wave_config, preflight_config,
+                           health_check_config, rollback_config, window_enforcement,
+                           COUNT(*) OVER() AS total_count
+                    FROM deployment_schemes
+                    {where_clause}
+                    ORDER BY {sort_columns[sort_by]} {direction}, id {direction}
+                    LIMIT %s OFFSET %s
+                    """,
+                    tuple(params),
+                )
+                rows = cursor.fetchall()
+        return {
+            "items": [self._deployment_scheme_from_row(row[:-1]) for row in rows],
+            "total": int(rows[0][-1]) if rows else 0,
+        }
 
     def list_deployment_requests(
         self,
@@ -297,11 +371,14 @@ class DevopsReadRepository:
                            d.started_at, d.finished_at, d.failure_reason, d.created_by,
                            d.created_at, d.updated_at, d.deployment_scheme_id,
                            d.deployment_method, d.executor_channel, d.scheme_snapshot,
+                           d.window_enforcement, d.current_wave, d.total_waves,
+                           d.quality_gate_run_id,
                            COALESCE(
                              array_agg(r.requirement_id ORDER BY r.requirement_id)
                                FILTER (WHERE r.requirement_id IS NOT NULL),
                              ARRAY[]::text[]
-                           ) AS requirement_ids
+                           ) AS requirement_ids,
+                           d.artifact_digest
                     FROM deployment_requests d
                     LEFT JOIN deployment_request_requirements r
                       ON r.deployment_request_id = d.id
@@ -312,6 +389,89 @@ class DevopsReadRepository:
                     tuple(params),
                 )
                 return [self._deployment_request_from_row(row) for row in cursor.fetchall()]
+
+    def page_deployment_requests(
+        self,
+        *,
+        environment: str | None,
+        page: int,
+        page_size: int,
+        product_id: str | None,
+        product_scope_ids: list[str] | None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+        title: str | None,
+        version_id: str | None,
+    ) -> dict[str, Any]:
+        sort_columns = {
+            "created_at": "COALESCE(d.created_at, d.updated_at)",
+            "environment": "lower(d.environment)",
+            "risk_level": "lower(d.risk_level)",
+            "status": "lower(d.status)",
+            "title": "lower(d.title)",
+            "updated_at": "COALESCE(d.updated_at, d.created_at)",
+        }
+        if sort_by not in sort_columns or sort_order not in {"asc", "desc"}:
+            raise ValueError("Invalid deployment request sort")
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        for expression, value in (
+            ("d.product_id = %s", product_id),
+            ("d.version_id = %s", version_id),
+            ("d.status = %s", status),
+            ("d.environment = %s", environment),
+        ):
+            if value is not None:
+                where_clauses.append(expression)
+                params.append(value)
+        if title is not None:
+            where_clauses.append("d.title ILIKE %s")
+            params.append(f"%{title}%")
+        if product_scope_ids is not None:
+            if not product_scope_ids:
+                return {"items": [], "total": 0}
+            where_clauses.append("d.product_id = ANY(%s)")
+            params.append(product_scope_ids)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        direction = sort_order.upper()
+        params.extend((page_size, (page - 1) * page_size))
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT d.id, d.product_id, d.version_id, d.title, d.environment,
+                           d.status, d.deploy_window_start, d.deploy_window_end,
+                           d.release_branch, d.commit_sha, d.artifact_version,
+                           d.release_readiness_task_id, d.rollback_plan, d.risk_level,
+                           d.gate_summary, d.assigned_ops_user, d.approved_by,
+                           d.started_at, d.finished_at, d.failure_reason, d.created_by,
+                           d.created_at, d.updated_at, d.deployment_scheme_id,
+                           d.deployment_method, d.executor_channel, d.scheme_snapshot,
+                           d.window_enforcement, d.current_wave, d.total_waves,
+                           d.quality_gate_run_id,
+                           COALESCE(
+                             (
+                               SELECT array_agg(link.requirement_id ORDER BY link.requirement_id)
+                               FROM deployment_request_requirements link
+                               WHERE link.deployment_request_id = d.id
+                             ),
+                             ARRAY[]::text[]
+                           ) AS requirement_ids,
+                           d.artifact_digest,
+                           COUNT(*) OVER() AS total_count
+                    FROM deployment_requests d
+                    {where_clause}
+                    ORDER BY {sort_columns[sort_by]} {direction}, d.id {direction}
+                    LIMIT %s OFFSET %s
+                    """,
+                    tuple(params),
+                )
+                rows = cursor.fetchall()
+        return {
+            "items": [self._deployment_request_from_row(row[:-1]) for row in rows],
+            "total": int(rows[0][-1]) if rows else 0,
+        }
 
     def list_deployment_runs(
         self,
@@ -333,7 +493,9 @@ class DevopsReadRepository:
                            external_queue_url, external_build_url, execution_snapshot,
                            logs, idempotency_key, next_sync_at, sync_attempts,
                            sync_lease_owner, sync_lease_until, started_at, finished_at,
-                           failure_reason, created_by, created_at, updated_at
+                           failure_reason, created_by, created_at, updated_at,
+                           operation, wave_number, wave_total, health_status,
+                           rollback_run_id, quality_gate_run_id
                     FROM deployment_runs
                     {where_clause}
                     ORDER BY COALESCE(started_at, created_at) DESC, id DESC
@@ -380,7 +542,9 @@ class DevopsReadRepository:
                               run.next_sync_at, run.sync_attempts, run.sync_lease_owner,
                               run.sync_lease_until, run.started_at, run.finished_at,
                               run.failure_reason, run.created_by, run.created_at,
-                              run.updated_at
+                              run.updated_at, run.operation, run.wave_number,
+                              run.wave_total, run.health_status,
+                              run.rollback_run_id, run.quality_gate_run_id
                     """,
                     (limit, worker_id, lease_seconds),
                 )
@@ -803,11 +967,14 @@ class DevopsReadRepository:
                    d.started_at, d.finished_at, d.failure_reason, d.created_by,
                    d.created_at, d.updated_at, d.deployment_scheme_id,
                    d.deployment_method, d.executor_channel, d.scheme_snapshot,
+                   d.window_enforcement, d.current_wave, d.total_waves,
+                   d.quality_gate_run_id,
                    COALESCE(
                      array_agg(r.requirement_id ORDER BY r.requirement_id)
                        FILTER (WHERE r.requirement_id IS NOT NULL),
                      ARRAY[]::text[]
-                   ) AS requirement_ids
+                   ) AS requirement_ids,
+                   d.artifact_digest
             FROM deployment_requests d
             LEFT JOIN deployment_request_requirements r
               ON r.deployment_request_id = d.id
@@ -824,7 +991,9 @@ class DevopsReadRepository:
                    deployment_method, executor_channel, runner_id,
                    target_code, jenkins_connection_id, jenkins_job_name,
                    timeout_seconds, config_json, is_default, status,
-                   version, created_by, created_at, updated_at
+                   version, created_by, created_at, updated_at,
+                   rollout_strategy, wave_config, preflight_config,
+                   health_check_config, rollback_config, window_enforcement
             FROM deployment_schemes
             ORDER BY product_id, environment, is_default DESC, id
             """
@@ -840,7 +1009,9 @@ class DevopsReadRepository:
                    external_queue_url, external_build_url, execution_snapshot,
                    logs, idempotency_key, next_sync_at, sync_attempts,
                    sync_lease_owner, sync_lease_until, started_at, finished_at,
-                   failure_reason, created_by, created_at, updated_at
+                   failure_reason, created_by, created_at, updated_at,
+                   operation, wave_number, wave_total, health_status,
+                   rollback_run_id, quality_gate_run_id
             FROM deployment_runs
             ORDER BY COALESCE(started_at, created_at), id
             """
@@ -942,8 +1113,12 @@ class DevopsReadRepository:
         scheme_snapshot = row[26] or {}
         if isinstance(scheme_snapshot, str):
             scheme_snapshot = json.loads(scheme_snapshot)
+        has_governance_fields = len(row) > 31
+        requirement_ids_index = 31 if has_governance_fields else 27
+        artifact_digest = row[32] if len(row) > 32 else None
         request = {
             "approved_by": row[16],
+            "artifact_digest": artifact_digest,
             "artifact_version": row[10],
             "assigned_ops_user": row[15],
             "commit_sha": row[9],
@@ -962,7 +1137,7 @@ class DevopsReadRepository:
             "product_id": row[1],
             "release_branch": row[8],
             "release_readiness_task_id": row[11],
-            "requirement_ids": list(row[27] or []),
+            "requirement_ids": list(row[requirement_ids_index] or []),
             "risk_level": row[13],
             "rollback_plan": row[12],
             "scheme_snapshot": scheme_snapshot,
@@ -971,9 +1146,14 @@ class DevopsReadRepository:
             "title": row[3],
             "updated_at": row[22].isoformat() if row[22] else None,
             "version_id": row[2],
+            "window_enforcement": row[27] if has_governance_fields else "warn",
+            "current_wave": row[28] if has_governance_fields else 0,
+            "total_waves": row[29] if has_governance_fields else 1,
+            "quality_gate_run_id": row[30] if has_governance_fields else None,
         }
         for optional_key in (
             "approved_by",
+            "artifact_digest",
             "artifact_version",
             "assigned_ops_user",
             "commit_sha",
@@ -988,6 +1168,7 @@ class DevopsReadRepository:
             "rollback_plan",
             "started_at",
             "updated_at",
+            "quality_gate_run_id",
         ):
             if request[optional_key] is None:
                 request.pop(optional_key)
@@ -1018,6 +1199,17 @@ class DevopsReadRepository:
             "created_at": row[17].isoformat() if row[17] else None,
             "updated_at": row[18].isoformat() if row[18] else None,
         }
+        if len(row) > 24:
+            scheme.update(
+                {
+                    "rollout_strategy": row[19],
+                    "wave_config": dict(row[20] or {}),
+                    "preflight_config": dict(row[21] or {}),
+                    "health_check_config": dict(row[22] or {}),
+                    "rollback_config": dict(row[23] or {}),
+                    "window_enforcement": row[24],
+                }
+            )
         for optional_key in (
             "runner_id",
             "target_code",
@@ -1065,6 +1257,12 @@ class DevopsReadRepository:
             "started_at": row[20].isoformat() if row[20] else None,
             "status": row[9],
             "updated_at": row[25].isoformat() if row[25] else None,
+            "operation": row[26] if len(row) > 26 else "deploy",
+            "wave_number": row[27] if len(row) > 27 else 1,
+            "wave_total": row[28] if len(row) > 28 else 1,
+            "health_status": row[29] if len(row) > 29 else "pending",
+            "rollback_run_id": row[30] if len(row) > 30 else None,
+            "quality_gate_run_id": row[31] if len(row) > 31 else None,
         }
         for optional_key in (
             "created_at",
@@ -1083,6 +1281,8 @@ class DevopsReadRepository:
             "log_url",
             "started_at",
             "updated_at",
+            "rollback_run_id",
+            "quality_gate_run_id",
         ):
             if run[optional_key] is None:
                 run.pop(optional_key)

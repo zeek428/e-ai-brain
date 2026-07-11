@@ -263,6 +263,7 @@ export type ScheduledJobTemplateWizardStepRecord = {
   description?: string;
   key: string;
   required?: boolean;
+  secret?: boolean;
   title: string;
 };
 
@@ -517,6 +518,7 @@ export type PluginConnectionSchemaFieldRecord = {
   path?: string;
   placeholder?: string;
   required?: boolean;
+  secret?: boolean;
   supports_system_variables?: boolean;
   type?: string;
   visible_when_source_types?: string[];
@@ -911,14 +913,19 @@ export type AiExecutorApprovalRequestApprovalResponse = {
 };
 
 export type RdTaskExecutorPolicyRecord = {
+  autonomy_mode?: string;
+  auto_merge_risk_threshold?: string;
   branch?: string | null;
   code_change_review_mode?: string;
+  cost_budget?: number | null;
   created_at?: string | null;
   created_by?: string | null;
   executor_type: string;
   id: string;
   instruction_template: string;
   name: string;
+  max_duration_seconds?: number;
+  max_iterations?: number;
   output_contract?: Record<string, unknown>;
   priority: number;
   product_id?: string | null;
@@ -926,29 +933,38 @@ export type RdTaskExecutorPolicyRecord = {
   repository_default_branch?: string | null;
   repository_id?: string | null;
   repository_name?: string | null;
+  quality_gate_policy_id?: string | null;
   runner_id?: string | null;
   runner_name?: string | null;
   status: string;
   task_type: string;
   timeout_seconds: number;
+  token_budget?: number | null;
   updated_at?: string | null;
   workspace_root: string;
 };
 
 export type RdTaskExecutorPolicyPayload = {
+  autonomy_mode?: string;
+  auto_merge_risk_threshold?: string;
   branch?: string | null;
   code_change_review_mode?: string;
+  cost_budget?: number | null;
   executor_type?: string;
   instruction_template?: string;
   name?: string;
+  max_duration_seconds?: number;
+  max_iterations?: number;
   output_contract?: Record<string, unknown>;
   priority?: number;
   product_id?: string | null;
   repository_id?: string | null;
+  quality_gate_policy_id?: string | null;
   runner_id?: string | null;
   status?: string;
   task_type?: string;
   timeout_seconds?: number;
+  token_budget?: number | null;
   workspace_root?: string;
 };
 

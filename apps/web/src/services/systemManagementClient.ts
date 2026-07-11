@@ -391,6 +391,18 @@ export type SystemHealthOperations = {
     };
     user_bindings?: Record<string, unknown>;
   };
+  execution_governance?: {
+    agent_loops?: { status_counts?: Record<string, number>; total?: number };
+    execution_resources?: { active?: number; status_counts?: Record<string, number>; total?: number };
+    external_event_inbox?: {
+      dead_letter_count?: number;
+      recent_dead_letters?: Array<Record<string, unknown>>;
+      status_counts?: Record<string, number>;
+      total?: number;
+    };
+    outbox?: { pending_count?: number; status_counts?: Record<string, number>; total?: number };
+    quality_gates?: { status_counts?: Record<string, number>; total?: number };
+  };
   help_and_retention?: {
     cleanup_status?: {
       cleanup_mode?: string;

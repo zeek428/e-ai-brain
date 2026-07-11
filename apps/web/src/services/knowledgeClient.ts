@@ -64,6 +64,11 @@ export type KnowledgeSearchResultRecord = {
   retrievalMode?: 'hybrid' | 'keyword' | 'vector';
   score?: number | null;
   sourceLabel: string;
+  documentVersionId?: string;
+  documentVersion?: number;
+  freshnessStatus?: string;
+  modality?: string;
+  pageNumber?: number;
   title: string;
 };
 
@@ -84,7 +89,12 @@ export type KnowledgeRagAnswerRecord = {
   };
 };
 
-export type KnowledgeQualityFeedbackValue = 'incorrect' | 'not_useful' | 'partial' | 'useful';
+export type KnowledgeQualityFeedbackValue =
+  | 'incorrect'
+  | 'not_useful'
+  | 'outdated'
+  | 'partial'
+  | 'useful';
 
 export type KnowledgeQualityEventRecord = {
   citationChunkId?: string | null;
@@ -114,7 +124,11 @@ export type KnowledgeAssetRecord = {
   assetType: string;
   filename: string;
   id: string;
+  documentVersionId?: string;
   mimeType?: string;
+  pageNumber?: number;
+  providerMetadata?: Record<string, unknown>;
+  boundingBoxes?: unknown[];
   sizeBytes: number;
   storageProvider?: string;
 };
@@ -214,11 +228,15 @@ export type KnowledgeChunkRecord = {
   content: string;
   heading?: string;
   id: string;
+  documentVersionId?: string;
   imageCount?: number;
   imageRefs?: string[];
   parentChunkId?: string;
   parentContent?: string;
   pageNumber?: number;
+  modality?: string;
+  boundingBoxes?: unknown[];
+  providerMetadata?: Record<string, unknown>;
   sectionTitle?: string;
   sourceAssetType?: string;
   sourceKind?: string;
@@ -226,6 +244,61 @@ export type KnowledgeChunkRecord = {
   tableColumns?: string[];
   tableCount?: number;
   tableIndex?: number;
+};
+
+export type KnowledgeProcessingProfileRecord = {
+  capabilities: string[];
+  credentialRef?: string | null;
+  id: string;
+  name: string;
+  productId?: string | null;
+  providerConfig: Record<string, unknown>;
+  providerType: string;
+  status: string;
+  version: number;
+};
+
+export type KnowledgeDocumentVersionRecord = {
+  activatedAt?: string;
+  contentHash: string;
+  createdAt?: string;
+  documentId: string;
+  expiresAt?: string;
+  freshnessStatus: string;
+  id: string;
+  outdatedFeedbackCount: number;
+  processingProfileId?: string;
+  status: string;
+  version: number;
+};
+
+export type KnowledgeCitationFeedbackRecord = {
+  chunkId?: string;
+  comment?: string;
+  createdAt?: string;
+  createdBy?: string;
+  documentVersionId?: string;
+  feedbackValue: string;
+  id: string;
+};
+
+export type KnowledgeStalenessRecord = {
+  documentId: string;
+  documentTitle: string;
+  documentVersionId: string;
+  expiresAt?: string;
+  freshnessStatus: string;
+  knowledgeSpaceId?: string;
+  outdatedFeedbackCount: number;
+  status: string;
+  version: number;
+};
+
+export type KnowledgeStalenessSummary = {
+  expired: number;
+  expiring: number;
+  flaggedOutdated: number;
+  fresh: number;
 };
 
 export type KnowledgeDocumentUploadPayload = {
@@ -237,6 +310,9 @@ export type KnowledgeDocumentUploadPayload = {
   knowledge_space_id: string;
   mime_type?: string;
   parser_engine?: string;
+  processing_profile_id?: string;
+  product_id?: string;
+  expires_in_days?: number;
   tags?: string[];
   title: string;
 };
@@ -248,6 +324,9 @@ export type KnowledgeDocumentFileUploadPayload = {
   folderId?: string | null;
   knowledgeSpaceId: string;
   parserEngine?: string;
+  processingProfileId?: string;
+  productId?: string;
+  expiresInDays?: number;
   tags?: string[];
   title: string;
 };
@@ -260,15 +339,19 @@ export type KnowledgeDocumentMutationPayload = {
   index_status?: string;
   knowledge_space_id?: string | null;
   permission_roles?: string[];
+  parser_engine?: string;
+  chunk_strategy?: string;
   tags?: string[];
   title?: string;
 };
 
 export type KnowledgeDocumentListItem = {
   active_chunk_set_id?: string | null;
+  active_document_version_id?: string | null;
   content?: string;
   created_at?: string;
   doc_type?: string;
+  document_version?: number;
   folder_id?: string | null;
   folder_path?: string | null;
   id: string;
@@ -276,6 +359,8 @@ export type KnowledgeDocumentListItem = {
   index_status?: string;
   knowledge_space_id?: string | null;
   permission_roles?: string[];
+  parser_engine?: string;
+  chunk_strategy?: string;
   source_asset_id?: string | null;
   tags?: string[];
   title: string;
@@ -302,9 +387,13 @@ type KnowledgeAssetListItem = {
   asset_type?: string;
   filename?: string;
   id: string;
+  document_version_id?: string;
   mime_type?: string;
   size_bytes?: number;
   storage_provider?: string;
+  page_number?: number;
+  provider_metadata?: Record<string, unknown>;
+  bounding_boxes?: unknown[];
 };
 
 type KnowledgeImportJobListItem = {
@@ -347,13 +436,18 @@ type KnowledgeChunkListItem = {
   chunk_set_id?: string;
   content?: string;
   id: string;
+  document_version_id?: string;
+  modality?: string;
   metadata?: {
     columns?: string[];
     chunk_role?: string;
     heading?: string;
     image_count?: number;
     image_refs?: string[];
+    modality?: string;
     page_number?: number;
+    bounding_boxes?: unknown[];
+    provider_metadata?: Record<string, unknown>;
     section_title?: string;
     source_asset_type?: string;
     source_kind?: string;
@@ -392,6 +486,11 @@ type KnowledgeSearchResultItem = {
     parent_chunk_id?: string;
     parent_content?: string;
     title?: string;
+    document_version_id?: string;
+    document_version?: number;
+    freshness_status?: string;
+    modality?: string;
+    page_number?: number;
   };
   title?: string;
 };
@@ -473,6 +572,54 @@ type KnowledgeIndexHealthItem = {
   };
 };
 
+type KnowledgeProcessingProfileItem = {
+  capabilities?: string[];
+  credential_ref?: string | null;
+  id: string;
+  name?: string;
+  product_id?: string | null;
+  provider_config?: Record<string, unknown>;
+  provider_type?: string;
+  status?: string;
+  version?: number;
+};
+
+type KnowledgeDocumentVersionItem = {
+  activated_at?: string;
+  content_hash?: string;
+  created_at?: string;
+  document_id: string;
+  expires_at?: string;
+  freshness_status?: string;
+  id: string;
+  outdated_feedback_count?: number;
+  processing_profile_id?: string;
+  status?: string;
+  version?: number;
+};
+
+type KnowledgeCitationFeedbackItem = {
+  chunk_id?: string;
+  comment?: string;
+  created_at?: string;
+  created_by?: string;
+  document_version_id?: string;
+  feedback_value?: string;
+  id: string;
+};
+
+type KnowledgeStalenessItem = {
+  document_id: string;
+  document_title?: string;
+  document_version_id: string;
+  expires_at?: string;
+  freshness_status?: string;
+  knowledge_space_id?: string;
+  outdated_feedback_count?: number;
+  status?: string;
+  version?: number;
+};
+
 function formatListDate(value?: string) {
   return formatDisplayDateTime(value);
 }
@@ -498,14 +645,18 @@ function normalizeKnowledgeStatus(status?: string): KnowledgeRecord['status'] {
 export function mapKnowledgeRecord(document: KnowledgeDocumentListItem): KnowledgeRecord {
   return {
     activeChunkSetId: document.active_chunk_set_id ?? undefined,
+    activeDocumentVersionId: document.active_document_version_id ?? undefined,
     content: document.content,
     documentType: document.doc_type ?? '-',
+    documentVersion: document.document_version,
     folderId: document.folder_id ?? undefined,
     folderPath: document.folder_path ?? undefined,
     id: document.id,
     indexError: document.index_error,
     knowledgeSpaceId: document.knowledge_space_id ?? undefined,
     ownerRole: document.permission_roles?.join(', ') || '-',
+    parserEngine: document.parser_engine,
+    chunkStrategy: document.chunk_strategy,
     permissionRoles: document.permission_roles,
     sourceAssetId: document.source_asset_id ?? undefined,
     status: normalizeKnowledgeStatus(document.index_status),
@@ -540,9 +691,13 @@ function mapKnowledgeAsset(item: KnowledgeAssetListItem): KnowledgeAssetRecord {
     assetType: item.asset_type ?? '-',
     filename: item.filename ?? item.id,
     id: item.id,
+    documentVersionId: item.document_version_id,
     mimeType: item.mime_type,
     sizeBytes: Number(item.size_bytes ?? 0),
     storageProvider: item.storage_provider,
+    pageNumber: item.page_number,
+    providerMetadata: item.provider_metadata,
+    boundingBoxes: item.bounding_boxes,
   };
 }
 
@@ -582,11 +737,15 @@ function mapKnowledgeChunk(item: KnowledgeChunkListItem): KnowledgeChunkRecord {
     content: item.content ?? '',
     heading: item.metadata?.heading,
     id: item.id,
+    documentVersionId: item.document_version_id,
     imageCount: item.metadata?.image_count,
     imageRefs: item.metadata?.image_refs,
     parentChunkId: item.parent_chunk_id,
     parentContent: item.parent_content,
     pageNumber: item.metadata?.page_number,
+    modality: item.modality ?? item.metadata?.modality,
+    boundingBoxes: item.metadata?.bounding_boxes,
+    providerMetadata: item.metadata?.provider_metadata,
     sectionTitle: item.metadata?.section_title,
     sourceAssetType: item.metadata?.source_asset_type,
     sourceKind: item.metadata?.source_kind,
@@ -594,6 +753,68 @@ function mapKnowledgeChunk(item: KnowledgeChunkListItem): KnowledgeChunkRecord {
     tableColumns: item.metadata?.columns,
     tableCount: item.metadata?.table_count,
     tableIndex: item.metadata?.table_index,
+  };
+}
+
+function mapKnowledgeProcessingProfile(
+  item: KnowledgeProcessingProfileItem,
+): KnowledgeProcessingProfileRecord {
+  return {
+    capabilities: item.capabilities ?? [],
+    credentialRef: item.credential_ref,
+    id: item.id,
+    name: item.name ?? item.id,
+    productId: item.product_id,
+    providerConfig: item.provider_config ?? {},
+    providerType: item.provider_type ?? 'builtin',
+    status: item.status ?? 'disabled',
+    version: Number(item.version ?? 1),
+  };
+}
+
+function mapKnowledgeDocumentVersion(
+  item: KnowledgeDocumentVersionItem,
+): KnowledgeDocumentVersionRecord {
+  return {
+    activatedAt: formatListDate(item.activated_at),
+    contentHash: item.content_hash ?? '',
+    createdAt: formatListDate(item.created_at),
+    documentId: item.document_id,
+    expiresAt: formatListDate(item.expires_at),
+    freshnessStatus: item.freshness_status ?? 'unknown',
+    id: item.id,
+    outdatedFeedbackCount: Number(item.outdated_feedback_count ?? 0),
+    processingProfileId: item.processing_profile_id,
+    status: item.status ?? 'processing',
+    version: Number(item.version ?? 1),
+  };
+}
+
+function mapKnowledgeCitationFeedback(
+  item: KnowledgeCitationFeedbackItem,
+): KnowledgeCitationFeedbackRecord {
+  return {
+    chunkId: item.chunk_id,
+    comment: item.comment,
+    createdAt: formatListDate(item.created_at),
+    createdBy: item.created_by,
+    documentVersionId: item.document_version_id,
+    feedbackValue: item.feedback_value ?? '-',
+    id: item.id,
+  };
+}
+
+function mapKnowledgeStaleness(item: KnowledgeStalenessItem): KnowledgeStalenessRecord {
+  return {
+    documentId: item.document_id,
+    documentTitle: item.document_title ?? item.document_id,
+    documentVersionId: item.document_version_id,
+    expiresAt: formatListDate(item.expires_at),
+    freshnessStatus: item.freshness_status ?? 'unknown',
+    knowledgeSpaceId: item.knowledge_space_id,
+    outdatedFeedbackCount: Number(item.outdated_feedback_count ?? 0),
+    status: item.status ?? '-',
+    version: Number(item.version ?? 1),
   };
 }
 
@@ -631,6 +852,9 @@ function mapKnowledgeSearchResult(
   const sourceParts = [
     item.source?.doc_type,
     item.source?.title,
+    item.source?.document_version ? `v${item.source.document_version}` : undefined,
+    item.source?.modality,
+    item.source?.page_number ? `第 ${item.source.page_number} 页` : undefined,
     item.chunk_index ? `chunk ${item.chunk_index}` : undefined,
   ].filter(Boolean);
   return {
@@ -648,6 +872,11 @@ function mapKnowledgeSearchResult(
           ? 'vector'
           : 'keyword',
     score: item.score,
+    documentVersionId: item.source?.document_version_id,
+    documentVersion: item.source?.document_version,
+    freshnessStatus: item.source?.freshness_status,
+    modality: item.source?.modality,
+    pageNumber: item.source?.page_number,
     sourceLabel: sourceParts.length ? sourceParts.join(' · ') : '-',
     title: item.title ?? item.document_id,
   };
@@ -826,6 +1055,58 @@ export async function fetchKnowledgeSpaces(): Promise<KnowledgeSpaceRecord[]> {
   return spaces.items.map(mapKnowledgeSpace);
 }
 
+export async function fetchKnowledgeProcessingProfiles(params: {
+  productId?: string;
+  status?: string;
+} = {}): Promise<KnowledgeProcessingProfileRecord[]> {
+  const token = requireAccessToken();
+  const query = new URLSearchParams();
+  appendQueryParam(query, 'product_id', params.productId);
+  appendQueryParam(query, 'status', params.status);
+  const queryString = query.toString();
+  const response = await apiRequest<ListResponse<KnowledgeProcessingProfileItem>>(
+    queryString
+      ? `/api/knowledge/processing-profiles?${queryString}`
+      : '/api/knowledge/processing-profiles',
+    { token },
+  );
+  return response.items.map(mapKnowledgeProcessingProfile);
+}
+
+export async function createKnowledgeProcessingProfile(payload: {
+  capabilities: string[];
+  credential_ref?: string;
+  name: string;
+  product_id?: string;
+  provider_config?: Record<string, unknown>;
+  provider_type: string;
+}): Promise<KnowledgeProcessingProfileRecord> {
+  const token = requireAccessToken();
+  const profile = await apiRequest<KnowledgeProcessingProfileItem>(
+    '/api/knowledge/processing-profiles',
+    { body: payload, method: 'POST', token },
+  );
+  return mapKnowledgeProcessingProfile(profile);
+}
+
+export async function updateKnowledgeProcessingProfile(
+  profileId: string,
+  payload: {
+    capabilities?: string[];
+    credential_ref?: string | null;
+    name?: string;
+    provider_config?: Record<string, unknown>;
+    status?: string;
+  },
+): Promise<KnowledgeProcessingProfileRecord> {
+  const token = requireAccessToken();
+  const profile = await apiRequest<KnowledgeProcessingProfileItem>(
+    `/api/knowledge/processing-profiles/${profileId}`,
+    { body: payload, method: 'PATCH', token },
+  );
+  return mapKnowledgeProcessingProfile(profile);
+}
+
 export async function createKnowledgeSpace(payload: {
   code: string;
   description?: string;
@@ -892,6 +1173,72 @@ export async function fetchKnowledgeDocumentAssets(
     { token },
   );
   return assets.items.map(mapKnowledgeAsset);
+}
+
+export async function fetchKnowledgeDocumentVersions(
+  documentId: string,
+): Promise<KnowledgeDocumentVersionRecord[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<KnowledgeDocumentVersionItem>>(
+    `/api/knowledge/documents/${documentId}/versions`,
+    { token },
+  );
+  return response.items.map(mapKnowledgeDocumentVersion);
+}
+
+export async function fetchKnowledgeCitationFeedback(
+  documentId: string,
+): Promise<KnowledgeCitationFeedbackRecord[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<KnowledgeCitationFeedbackItem>>(
+    `/api/knowledge/documents/${documentId}/citation-feedback`,
+    { token },
+  );
+  return response.items.map(mapKnowledgeCitationFeedback);
+}
+
+export async function fetchKnowledgeStaleness(
+  knowledgeSpaceId?: string,
+): Promise<{ items: KnowledgeStalenessRecord[]; summary: KnowledgeStalenessSummary }> {
+  const token = requireAccessToken();
+  const query = new URLSearchParams();
+  appendQueryParam(query, 'knowledge_space_id', knowledgeSpaceId);
+  const queryString = query.toString();
+  const response = await apiRequest<{
+    items?: KnowledgeStalenessItem[];
+    summary?: {
+      expired?: number;
+      expiring?: number;
+      flagged_outdated?: number;
+      fresh?: number;
+    };
+  }>(queryString ? `/api/knowledge/staleness?${queryString}` : '/api/knowledge/staleness', {
+    token,
+  });
+  return {
+    items: (response.items ?? []).map(mapKnowledgeStaleness),
+    summary: {
+      expired: Number(response.summary?.expired ?? 0),
+      expiring: Number(response.summary?.expiring ?? 0),
+      flaggedOutdated: Number(response.summary?.flagged_outdated ?? 0),
+      fresh: Number(response.summary?.fresh ?? 0),
+    },
+  };
+}
+
+export async function scanKnowledgeStaleness(): Promise<{
+  expiredCount: number;
+  expiredVersionIds: string[];
+}> {
+  const token = requireAccessToken();
+  const response = await apiRequest<{
+    expired_count?: number;
+    expired_version_ids?: string[];
+  }>('/api/knowledge/staleness/scan', { method: 'POST', token });
+  return {
+    expiredCount: Number(response.expired_count ?? 0),
+    expiredVersionIds: response.expired_version_ids ?? [],
+  };
 }
 
 export async function fetchKnowledgeImportJobs(params: {
@@ -981,7 +1328,12 @@ export async function activateKnowledgeChunkSet(documentId: string, chunkSetId: 
 
 export async function reparseKnowledgeDocument(
   documentId: string,
-  payload: { chunk_strategy?: string; parser_engine?: string },
+  payload: {
+    chunk_strategy?: string;
+    expires_in_days?: number;
+    parser_engine?: string;
+    processing_profile_id?: string;
+  },
 ) {
   const token = requireAccessToken();
   return apiRequest<{ import_job: KnowledgeImportJobListItem }>(
@@ -1023,6 +1375,15 @@ export async function uploadKnowledgeDocumentFile(payload: KnowledgeDocumentFile
   }
   if (payload.parserEngine) {
     formData.set('parser_engine', payload.parserEngine);
+  }
+  if (payload.processingProfileId) {
+    formData.set('processing_profile_id', payload.processingProfileId);
+  }
+  if (payload.productId) {
+    formData.set('product_id', payload.productId);
+  }
+  if (payload.expiresInDays) {
+    formData.set('expires_in_days', String(payload.expiresInDays));
   }
   if (payload.chunkStrategy) {
     formData.set('chunk_strategy', payload.chunkStrategy);

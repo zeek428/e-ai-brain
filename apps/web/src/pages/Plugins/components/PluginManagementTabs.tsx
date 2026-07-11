@@ -1,4 +1,5 @@
 import { Tabs } from 'antd';
+import { useState } from 'react';
 
 import type {
   AiExecutorRunnerListQuery,
@@ -13,6 +14,7 @@ import type {
 } from '../../../services/aiBrain';
 import { PluginActionTable } from './PluginActionTable';
 import { PluginConnectionTable } from './PluginConnectionTable';
+import { ExternalEventInboxPanel } from './ExternalEventInboxPanel';
 import { PluginMarketplaceTable } from './PluginMarketplaceTable';
 import { PluginRunnerTable } from './PluginRunnerTable';
 import { PluginTable } from './PluginTable';
@@ -131,9 +133,15 @@ export function PluginManagementTabs({
   testingConnectionId,
   testingRunnerId,
 }: PluginManagementTabsProps) {
+  const [activeKey, setActiveKey] = useState(() =>
+    new URLSearchParams(globalThis.location?.search ?? '').get('tab') === 'external-events'
+      ? 'external-events'
+      : 'plugins',
+  );
   return (
     <Tabs
-      defaultActiveKey="plugins"
+      activeKey={activeKey}
+      onChange={setActiveKey}
       items={[
         {
           key: 'marketplace',
@@ -230,6 +238,11 @@ export function PluginManagementTabs({
               onTrialAction={onTrialAction}
             />
           ),
+        },
+        {
+          key: 'external-events',
+          label: 'Webhook 事件',
+          children: activeKey === 'external-events' ? <ExternalEventInboxPanel /> : null,
         },
       ]}
     />

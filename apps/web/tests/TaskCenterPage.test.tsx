@@ -963,6 +963,7 @@ describe('TaskCenterPage', () => {
     expect(within(outputSummaryReport).getByText('验证方式')).toBeInTheDocument();
     expect(within(outputSummaryReport).getByText('npm test')).toBeInTheDocument();
     expect(within(outputSummaryReport).getByText('{"verdict":"fixed"}')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '原始数据' }));
     expect(screen.getByDisplayValue(/output_preview/)).toBeInTheDocument();
     await waitFor(() => {
       const relevantCalls = fetchMock.mock.calls

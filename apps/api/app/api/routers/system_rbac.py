@@ -250,10 +250,14 @@ def _map_repository_error(exc: ValueError) -> None:
 
 
 def _ensure_known_permission_codes(repository: Any, permission_codes: list[str]) -> None:
-    known_codes = {str(permission.get("code") or "") for permission in repository.list_permissions()}
+    known_codes = {
+        str(permission.get("code") or "") for permission in repository.list_permissions()
+    }
     unsupported = sorted(set(permission_codes) - known_codes)
     if unsupported:
-        raise api_error(400, "UNSUPPORTED_PERMISSION", f"Unsupported permission code: {unsupported[0]}")
+        raise api_error(
+            400, "UNSUPPORTED_PERMISSION", f"Unsupported permission code: {unsupported[0]}"
+        )
 
 
 def _ensure_known_menu_codes(repository: Any, menu_codes: list[str]) -> None:

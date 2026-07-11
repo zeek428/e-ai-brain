@@ -885,7 +885,10 @@ def test_assistant_tool_results_can_generate_plugin_connection_draft():
         "action": "create_plugin_connection",
         "draft_id": "assistant_draft_github_plugin_connection",
         "payload": {
-            "auth_config": {},
+            "auth_config": {
+                "token_ref": "env:GITHUB_TOKEN",
+                "webhook_secret_ref": "env:GITHUB_WEBHOOK_SECRET",
+            },
             "auth_type": "bearer",
             "endpoint_url": "https://api.github.com",
             "environment": "prod",
@@ -893,11 +896,17 @@ def test_assistant_tool_results_can_generate_plugin_connection_draft():
             "name": "生产 GitHub 连接",
             "plugin_id": "plugin_standard_github",
             "request_config": {
+                "environment": "prod",
+                "event_types": ["pull_request", "push", "workflow_run"],
                 "headers": {
                     "Accept": "application/vnd.github+json",
                     "X-GitHub-Api-Version": "2022-11-28",
                 },
+                "product_id": "",
                 "query": {},
+                "version_id": "",
+                "webhook_path": "/api/integrations/webhooks/github/{connection_id}",
+                "write_permissions": ["comment", "review", "merge"],
             },
             "status": "active",
             "timeout_seconds": 30,

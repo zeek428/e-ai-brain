@@ -137,12 +137,14 @@ Content-Type: application/json
 运维部署方案：
 
 ```http
-GET /api/devops/deployment-schemes?product_id=product_001&environment=prod&status=active
-GET /api/devops/deployment-runner-targets?method=docker
-GET /api/devops/deployment-jenkins-connections
+GET /api/devops/deployment-schemes?product_id=product_001&environment=prod&status=active&page=1&page_size=20&sort_by=updated_at&sort_order=desc
+GET /api/devops/deployment-runner-targets?product_id=product_001&environment=prod&method=docker
+GET /api/devops/deployment-jenkins-connections?product_id=product_001&environment=prod
 ```
 
-部署方案列表要求 `deployment.read`，并按用户产品 scope 过滤。Runner 目标和 Jenkins 候选接口只允许具备 `deployment.scheme.manage` 的用户访问；Runner 目标只返回具备 `deployment` capability、心跳健康且上报目标摘要的 Runner，不包含 SSH 私钥、主机密码、known_hosts 内容或 Docker 本地路径；Jenkins 候选只返回连接 ID、名称、环境、状态和就绪状态，不返回 `auth_config`。
+部署方案列表要求 `deployment.read`，并按用户产品 scope 过滤。传入 `page/page_size` 时通过 PostgreSQL read model 完成 `product_id/environment/deployment_method/status/name` 筛选、count/page 和白名单排序，返回 `page/page_size/total/query_time_ms`；`sort_by` 支持 `code/name/environment/deployment_method/is_default/status/updated_at`。不传分页仅保留旧下拉兼容。
+
+Runner 目标和 Jenkins 候选接口只允许具备 `deployment.scheme.manage` 的用户访问，并同时应用 `execution_resource_grants`：非全局用户只看到当前产品、环境已授权且 active 的资源。Runner 目标只返回具备 `deployment` capability、心跳健康且上报目标摘要的 Runner，不包含 SSH 私钥、主机密码、known_hosts 内容或 Docker 本地路径；Jenkins 候选只返回连接 ID、名称、环境、状态和就绪状态，不返回 `auth_config`。
 
 具备 `deployment.scheme.manage` 的发布负责人或管理员可创建、修改和删除方案：
 
@@ -165,15 +167,15 @@ Content-Type: application/json
 }
 ```
 
-`deployment_method` 允许 `manual`、`ssh`、`docker`、`jenkins`，服务端固定映射为 `manual`、`runner`、`runner`、`integration` 执行通道。SSH/Docker 必须引用具备部署能力且已上报同方法就绪目标的 Runner；Jenkins 必须引用 active Jenkins 连接并提供 `jenkins_job_name`。同产品、同环境最多一个 active 默认方案。修改使用 `PATCH /api/devops/deployment-schemes/{scheme_id}` 并提交当前 `version` 做乐观锁；切换默认方案时旧默认方案同步递增版本，当前 active 默认方案必须先设置替代默认方案才能停用、取消默认或迁移环境；仍被部署单引用的方案禁止删除。
+`deployment_method` 允许 `manual`、`ssh`、`docker`、`jenkins`，服务端固定映射为 `manual`、`runner`、`runner`、`integration` 执行通道。方案扩展字段包括 `rollout_strategy=all_at_once|canary|batch|blue_green`、`wave_config`、`preflight_config`、`health_check_config`、`rollback_config` 和 `window_enforcement=strict|warn|disabled`；配置值只能引用受控 Target/Job 和结构化参数，不能提交任意 Shell、主机或凭据。SSH/Docker 必须引用具备部署能力、已授权且已上报同方法就绪目标的 Runner；Jenkins 必须引用已授权 active 连接并提供部署 Job，可选健康检查/回滚 Job。同产品、同环境最多一个 active 默认方案。修改使用 `PATCH /api/devops/deployment-schemes/{scheme_id}` 并提交当前 `version` 做乐观锁；切换默认方案时旧默认方案同步递增版本，当前 active 默认方案必须先设置替代默认方案才能停用、取消默认或迁移环境；仍被部署单引用的方案禁止删除。
 
 运维部署单：
 
 ```http
-GET /api/devops/deployments?product_id=product_001&version_id=version_001&status=deploying&environment=prod
+GET /api/devops/deployments?product_id=product_001&version_id=version_001&status=deploying&environment=prod&page=1&page_size=20&sort_by=updated_at&sort_order=desc
 ```
 
-当前实现支持按产品、版本、状态和环境筛选部署单，并返回关联需求范围和最近执行记录：
+当前实现支持按产品、版本、状态、环境和标题筛选部署单，在 PostgreSQL 层完成 count/page 与 `created_at/environment/risk_level/status/title/updated_at` 白名单排序，并返回 `page/page_size/total/query_time_ms`、关联需求范围和当前页最近执行记录：
 
 ```json
 {
@@ -240,13 +242,15 @@ Content-Type: application/json
 {}
 ```
 
-启动成功后部署单进入 `deploying`，写入一条 `deployment_runs`，关联需求进入 `deploying`。执行矩阵如下：
+启动前会执行只读预检并创建前置质量门禁：严格模式必须处于 `deploy_window_start/end` 内，产品/版本/方案快照仍有效，Commit、制品版本和 `artifact_digest` 完整，阻塞 Bug/发布评估通过，回滚配置存在，Runner/Jenkins 就绪且产品环境授权仍 active。任何阻断都会保持 `pending_ops` 并返回结构化阻断项。
+
+启动通过后，部署单、首波 `deployment_runs`、`deployment_run_steps`、关联需求状态、审计和 `execution_outbox_events` 在同一数据库事务提交。API 不直接等待 Runner/Jenkins；execution worker 按幂等键认领派发。执行矩阵如下：
 
 | 部署方式 | 启动行为 | 结果来源 |
 | --- | --- | --- |
 | 人工 | run 直接进入 `running` | 人工调用 complete 登记 |
-| SSH / Docker | 创建 `executor_type=deployment` 的 Runner task，run 进入 `queued` | Runner 日志和完成回写自动同步 |
-| Jenkins | 使用方案中的连接、Job 和参数触发构建 | 后台同步器轮询 Jenkins，也可手工 sync |
+| SSH / Docker | Outbox 创建 `executor_type=deployment` 的 Runner task，run 进入 `queued` | Runner 日志和完成回写自动同步 |
+| Jenkins | Outbox 使用方案中的连接、Job 和参数触发构建 | Webhook 优先，后台同步器轮询补偿，也可手工 sync |
 
 只有人工部署使用完成接口：
 
@@ -262,6 +266,25 @@ Content-Type: application/json
 
 `status=success` 时部署单进入 `succeeded`，部署运行进入 `success`，关联需求进入 `released`；`status=failed` 或 `rolled_back` 时部署单进入失败或回滚状态，关联需求回到 `ready_for_release`，并创建来源为 `deployment_failure` 的 Bug。SSH/Docker/Jenkins 终态使用同一收口逻辑，但由执行通道回写触发，客户端不能人工伪造自动部署成功。
 
+灰度、分批和蓝绿策略按 `wave_config` 创建波次。每波部署后由 Worker 创建验证步骤，健康检查和冒烟检查通过才创建下一波；失败时按 `rollback_config.auto_on_failure/auto_risk_threshold` 选择自动回滚或 `waiting_takeover`。回滚使用独立运行：
+
+```http
+POST /api/devops/deployments/deployment_request_001/rollback
+Content-Type: application/json
+
+{"reason": "健康检查失败，回滚到上一稳定制品"}
+```
+
+SSH/Docker 使用 Runner 本地目标固定回滚能力，Jenkins 使用方案快照中的 rollback Job；平台不接收任意回滚命令。回滚成功进入 `rolled_back`，回滚失败进入 `failed` 并保留人工接管提示。
+
+部署详情：
+
+```http
+GET /api/devops/deployments/deployment_request_001
+```
+
+响应聚合部署单、需求、方案快照、质量门禁、发布波次、所有 deploy/verify/rollback runs、步骤证据、健康状态、回滚关联、派发 Outbox 和脱敏审计事件，供前端详情抽屉直接展示。
+
 统一运行观测接口：
 
 ```http
@@ -272,6 +295,28 @@ POST /api/devops/deployments/deployment_request_001/runs/deployment_run_001/sync
 日志接口要求 `deployment.read` 并按产品 scope 校验：Runner 返回逐条执行日志，Jenkins 和人工运行返回脱敏状态日志。`sync` 只用于 Jenkins 且要求 `deployment.execute`，用于立即同步队列、构建和取消结果；后台 `deployment_sync_worker` 也会按 `next_sync_at` 持续处理未终结 Jenkins run。
 
 Jenkins 连接在启动前再次校验；不可用时部署单保持 `pending_ops`。外部触发失败、缺少 Queue Location，或 Queue/Build URL 与配置的 Jenkins endpoint 不同源时，本次 run 和部署单进入可重试 `failed`，需求保持待发布，失败摘要只保存异常类型；系统不会向不同源 URL 转发 Jenkins Basic Auth 凭据。具备 `deployment.cancel` 的用户可调用 `POST /api/devops/deployments/{deployment_request_id}/cancel`。待执行或人工部署可直接进入 `cancelled`；运行中的 Runner/Jenkins 部署先进入 `cancelling` 并向外部通道发出取消请求，只有 Runner/Jenkins 确认终态后才进入 `cancelled`，关联需求随后回到 `ready_for_release`。Jenkins 取消请求发送失败时恢复 `deploying`，记录脱敏告警日志并允许重试取消。
+
+执行资源授权：
+
+```http
+GET /api/system/execution-resources?product_id=product_001&environment=prod&resource_type=runner_target&status=active
+POST /api/system/execution-resources
+PUT /api/system/execution-resources/{grant_id}
+```
+
+创建请求包含 `product_id/environment/resource_type=runner_target|jenkins_connection/resource_id/target_code`；Runner Target 必须填写目标编码。创建和更新要求全局管理员或 `system.settings.manage`，更新提交当前 `version` 与 `status=active|disabled`，版本不匹配返回 `RESOURCE_VERSION_CONFLICT`。列表允许发布负责人按产品 scope 查看，不能返回资源凭据或 Runner 本地配置。
+
+外部事件 Inbox：
+
+```http
+POST /api/integrations/webhooks/{provider}/{connection_id}
+GET /api/system/external-events?provider=github&status=failed&page=1&page_size=20
+POST /api/system/external-events/{event_id}/retry
+```
+
+Provider 支持 GitHub、GitLab、Jenkins 和受控可观测性来源。Webhook 根据连接中的 Secret 引用校验签名/专用 Token，每次请求（包括重复 Delivery）都必须先验签；以 Provider Delivery ID 幂等写入 `external_event_inbox` 并返回不包含 payload 的 `202` 确认。相同 Delivery ID 只有在 payload hash、事件类型和连接均一致时才视为重复，否则返回 `409 WEBHOOK_DELIVERY_CONFLICT` 并写审计。保存 payload 前执行字段白名单、大小限制和密钥脱敏。Worker 使用租约投影 PR/MR/CI、Jenkins、Prometheus/OpenTelemetry/Sentry 或用户行为事实；重放同一 Delivery 不得重复写质量证据或发布状态。事件列表要求管理员、`audit.read`、`system.health.read` 或 `system.plugins.manage`；只公开脱敏 context。仅 `failed/dead_letter` 可重试，其他状态返回 `EXTERNAL_EVENT_RETRY_INVALID`。
+
+GitHub/GitLab 评论、Review、request changes 和 merge 使用内部 `git_writeback_requested` Outbox 契约。连接必须显式声明对应 `write_permissions`，仓库必须属于同产品；merge 还必须引用 `passed`、无阻断且至少一份独立证据的质量门禁。幂等键相同的写回只保留一条 Outbox，Worker 执行前会再次校验连接、仓库和门禁，凭据仅在执行时从 `env:`/Vault 引用解析。
 
 研发运营统一聚合列表：
 

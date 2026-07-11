@@ -352,7 +352,9 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
     assert data["overall_status"] in {"ok", "warning", "degraded", "error"}
     assert data["summary"]["total"] >= 10
     checks = {item["key"]: item for item in data["checks"]}
-    assert {"postgres", "redis", "pgvector", "smtp", "dingtalk_login", "model_gateway"} <= set(checks)
+    assert {"postgres", "redis", "pgvector", "smtp", "dingtalk_login", "model_gateway"} <= set(
+        checks
+    )
     assert checks["dingtalk_login"]["status"] == "configured"
     assert checks["model_gateway"]["metrics"]["embedding_gateway"] in {
         "configured",
@@ -415,7 +417,10 @@ def test_system_health_center_aggregates_dependency_and_configuration_checks(mon
         for item in retention["cleanup_status"]["expired_records"]
     )
     assert retention["object_storage_cleanup"]["orphan_asset_count"] == 1
-    assert retention["object_storage_cleanup"]["sample_assets"][0]["asset_id"] == "knowledge_asset_orphan"
+    assert (
+        retention["object_storage_cleanup"]["sample_assets"][0]["asset_id"]
+        == "knowledge_asset_orphan"
+    )
     knowledge_governance = operations["knowledge_quality_loop"]["governance_summary"]
     assert knowledge_governance["governance_candidate_count"] >= 2
     assert knowledge_governance["index_failed_document_count"] >= 1

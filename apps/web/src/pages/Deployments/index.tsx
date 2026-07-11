@@ -35,9 +35,9 @@ import {
   completeDeploymentRequest,
   createDeploymentRequest,
   fetchDeploymentSchemes,
-  fetchDeploymentRequests,
+  fetchDeploymentRequestDetail,
+  fetchDeploymentRequestList,
   fetchDeploymentRunLogs,
-  fetchDevopsMetricList,
   fetchManagementRequirementList,
   fetchProductContextOptions,
   getStoredCurrentUser,
@@ -47,15 +47,17 @@ import {
   type DeploymentCompletePayload,
   type DeploymentRequestCreatePayload,
   type DeploymentRunLogRecord,
+  type DeploymentRequestRecord,
   type DeploymentSchemeRecord,
   type DeploymentStartPayload,
-  type OperationalMetricListQuery,
   type OperationalMetricRecord,
   type RemoteListPerformance,
 } from '../../services/aiBrain';
 import { DeploymentSchemePanel } from './DeploymentSchemePanel';
+import { DeploymentDetailDrawer } from './DeploymentDetailDrawer';
 
 type DeploymentRequestFormValues = {
+  artifactDigest?: string;
   artifactVersion?: string;
   assignedOpsUser?: string;
   commitSha?: string;
@@ -149,6 +151,7 @@ function buildDeploymentRequestPayload(
   values: DeploymentRequestFormValues,
 ): DeploymentRequestCreatePayload {
   return {
+    artifact_digest: optionalText(values.artifactDigest),
     artifact_version: optionalText(values.artifactVersion),
     assigned_ops_user: optionalText(values.assignedOpsUser),
     commit_sha: optionalText(values.commitSha),
@@ -168,11 +171,10 @@ function buildDeploymentRequestPayload(
 }
 
 const deploymentSortFieldMap: Record<string, string> = {
-  id: 'id',
-  name: 'name',
+  id: 'updated_at',
+  name: 'title',
   status: 'status',
   updatedAt: 'updated_at',
-  value: 'value',
 };
 
 function normalizeFilterText(value: unknown) {
@@ -187,10 +189,8 @@ function routeKeyword() {
   return params.get('deployment_id') ?? params.get('version_id') ?? undefined;
 }
 
-function buildDeploymentListQuery(query: ManagementListQuery): OperationalMetricListQuery {
+function deploymentListQuery(query: ManagementListQuery) {
   return {
-    category: '运维部署',
-    name: normalizeFilterText(query.filters.keyword),
     page: query.page,
     pageSize: query.pageSize,
     sortField: query.sortField
@@ -198,6 +198,26 @@ function buildDeploymentListQuery(query: ManagementListQuery): OperationalMetric
       : undefined,
     sortOrder: query.sortOrder,
     status: normalizeFilterText(query.filters.status),
+    title: normalizeFilterText(query.filters.keyword),
+  };
+}
+
+function deploymentMetricRow(record: DeploymentRequestRecord): OperationalMetricRecord {
+  return {
+    category: '运维部署',
+    deploymentMethod: record.deploymentMethod,
+    deploymentSchemeId: record.deploymentSchemeId,
+    environment: record.environment,
+    executorChannel: record.executorChannel,
+    id: record.id,
+    name: record.title,
+    productId: record.productId,
+    requirementIds: record.requirementIds,
+    riskLevel: record.riskLevel,
+    status: record.status,
+    updatedAt: record.updatedAt,
+    value: `${record.currentWave}/${record.totalWaves}`,
+    versionId: record.versionId,
   };
 }
 
@@ -207,6 +227,7 @@ export default function DeploymentsPage() {
   const [deploymentForm] = Form.useForm<DeploymentRequestFormValues>();
   const [deploymentActionForm] = Form.useForm<DeploymentActionFormValues>();
   const [deploymentOpen, setDeploymentOpen] = useState(false);
+  const [detailDeploymentId, setDetailDeploymentId] = useState<string>();
   const [deploymentLogState, setDeploymentLogState] = useState<{
     loading: boolean;
     logs: DeploymentRunLogRecord[];
@@ -296,12 +317,11 @@ export default function DeploymentsPage() {
   const reload = useCallback(async () => {
     setListState((current) => ({ ...current, status: 'loading' }));
     try {
-      const result = await fetchDevopsMetricList(buildDeploymentListQuery(listQuery));
+      const result = await fetchDeploymentRequestList(deploymentListQuery(listQuery));
       setListState({
         page: result.page,
         pageSize: result.pageSize,
-        performance: result.performance,
-        rows: result.rows,
+        rows: result.rows.map(deploymentMetricRow),
         status: 'ready',
         total: result.total,
       });
@@ -456,10 +476,7 @@ export default function DeploymentsPage() {
   );
 
   const deploymentWithRuns = useCallback(async (record: OperationalMetricRecord) => {
-    const deployments = await fetchDeploymentRequests({ productId: record.productId });
-    const deployment = deployments.find((item) => item.id === record.id);
-    if (!deployment) throw new Error('未找到部署运行记录');
-    return deployment;
+    return fetchDeploymentRequestDetail(record.id);
   }, []);
 
   const openDeploymentLogs = useCallback(async (record: OperationalMetricRecord) => {
@@ -598,6 +615,7 @@ export default function DeploymentsPage() {
           }
           return (
             <Space size={4} wrap={false}>
+              <Button onClick={() => setDetailDeploymentId(row.id)} size="small" type="link">详情</Button>
               {showStart ? (
                 <Button onClick={() => openDeploymentAction(row, 'start')} size="small" type="link">启动</Button>
               ) : null}
@@ -637,7 +655,7 @@ export default function DeploymentsPage() {
           );
         },
         title: '操作',
-        width: 360,
+        width: 420,
       },
     ],
     [
@@ -786,6 +804,18 @@ export default function DeploymentsPage() {
           <Form.Item label="发布分支" name="releaseBranch"><Input placeholder="release/2026.07" /></Form.Item>
           <Form.Item label="Commit SHA" name="commitSha"><Input /></Form.Item>
           <Form.Item label="制品版本" name="artifactVersion"><Input /></Form.Item>
+          <Form.Item
+            label="制品 SHA-256"
+            name="artifactDigest"
+            rules={[
+              {
+                pattern: /^sha256:[0-9a-fA-F]{64}$/,
+                message: '请输入 sha256: 开头的完整制品摘要',
+              },
+            ]}
+          >
+            <Input placeholder="sha256:..." />
+          </Form.Item>
           <Form.Item label="部署窗口开始" name="deployWindowStart">
             <DateStringPicker mode="dateTime" placeholder="请选择部署窗口开始时间" />
           </Form.Item>
@@ -828,6 +858,10 @@ export default function DeploymentsPage() {
           ) : deploymentLogState.loading ? null : <Empty description="暂无部署日志" />}
         </Spin>
       </Drawer>
+      <DeploymentDetailDrawer
+        deploymentId={detailDeploymentId}
+        onClose={() => setDetailDeploymentId(undefined)}
+      />
       <Modal
         destroyOnHidden
         okText="确认"

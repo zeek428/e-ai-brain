@@ -23,13 +23,29 @@ from app.services.knowledge_deposits import (
 )
 from app.services.knowledge_documents import knowledge_document_response
 from app.services.knowledge_indexing import replace_knowledge_chunks_result
+from app.services.knowledge_multimodal_governance import (
+    activate_document_version,
+    create_document_version_record,
+    fail_document_version,
+    get_processing_profile,
+    update_document_version_source,
+    version_response,
+)
 from app.services.object_storage import object_storage
+from app.services.product_scope import require_product_scope
 
 WRITE_SPACE_ROLES = {"admin", "contributor", "maintainer"}
 READ_SPACE_ROLES = WRITE_SPACE_ROLES | {"reader"}
 IMPORT_JOB_RUNNABLE_STATUSES = {"queued", "uploaded", "failed"}
 IMPORT_JOB_RETRYABLE_STATUSES = {"failed", "cancelled"}
-SUPPORTED_PARSER_ENGINES = {"plain_text", "markdown", "pdf_text", "ocr_json", "table_json"}
+SUPPORTED_PARSER_ENGINES = {
+    "markdown",
+    "multimodal",
+    "ocr_json",
+    "pdf_text",
+    "plain_text",
+    "table_json",
+}
 SUPPORTED_CHUNK_STRATEGIES = {"simple_text", "parent_child", "regex_section"}
 SAFE_FILENAME_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -52,10 +68,22 @@ def persist_knowledge_payload(
             "knowledge_assets": _memory_collection(current_store, "knowledge_assets"),
             "knowledge_chunk_sets": _memory_collection(current_store, "knowledge_chunk_sets"),
             "knowledge_chunks": _memory_collection(current_store, "knowledge_chunks"),
+            "knowledge_citation_feedback": _memory_collection(
+                current_store,
+                "knowledge_citation_feedback",
+            ),
             "knowledge_deposits": _memory_collection(current_store, "knowledge_deposits"),
+            "knowledge_document_versions": _memory_collection(
+                current_store,
+                "knowledge_document_versions",
+            ),
             "knowledge_documents": _memory_collection(current_store, "knowledge_documents"),
             "knowledge_folders": _memory_collection(current_store, "knowledge_folders"),
             "knowledge_import_jobs": _memory_collection(current_store, "knowledge_import_jobs"),
+            "knowledge_processing_profiles": _memory_collection(
+                current_store,
+                "knowledge_processing_profiles",
+            ),
             "knowledge_space_members": _memory_collection(
                 current_store,
                 "knowledge_space_members",
@@ -650,23 +678,35 @@ def validate_upload_content(
         raise api_error(400, "KNOWLEDGE_UPLOAD_TYPE_UNSUPPORTED", "file mime type is not allowed")
     if extension == ".pdf" and not content.startswith(b"%PDF"):
         raise api_error(400, "KNOWLEDGE_PDF_INVALID", "PDF signature is invalid")
+    if extension == ".png" and not content.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise api_error(400, "KNOWLEDGE_IMAGE_INVALID", "PNG signature is invalid")
+    if extension in {".jpg", ".jpeg"} and not content.startswith(b"\xff\xd8\xff"):
+        raise api_error(400, "KNOWLEDGE_IMAGE_INVALID", "JPEG signature is invalid")
 
 
 def create_asset_record(
     *,
     asset_type: str = "original",
+    bounding_boxes: list[Any] | None = None,
     content: bytes,
     current_store: Any,
     document_id: str,
+    document_version_id: str | None = None,
     filename: str,
     metadata: dict[str, Any] | None = None,
     mime_type: str,
+    page_number: int | None = None,
+    provider_metadata: dict[str, Any] | None = None,
     space_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
     settings = get_settings()
     digest = hashlib.sha256(content).hexdigest()
-    object_key = f"knowledge/{space_id}/{document_id}/v1/{asset_type}/{digest}/{filename}"
+    version_segment = document_version_id or "legacy-v1"
+    object_key = (
+        f"knowledge/{space_id}/{document_id}/{version_segment}/"
+        f"{asset_type}/{digest}/{filename}"
+    )
     bucket = settings.object_storage_bucket
     for existing_asset in _read_memory_collection(current_store, "knowledge_assets").values():
         if existing_asset.get("bucket") != bucket or existing_asset.get("object_key") != object_key:
@@ -677,6 +717,18 @@ def create_asset_record(
                 "metadata": {
                     **dict(existing_asset.get("metadata") or {}),
                     **dict(metadata),
+                },
+                "document_version_id": document_version_id
+                or existing_asset.get("document_version_id"),
+                "page_number": page_number
+                if page_number is not None
+                else existing_asset.get("page_number"),
+                "bounding_boxes": list(
+                    bounding_boxes or existing_asset.get("bounding_boxes") or []
+                ),
+                "provider_metadata": {
+                    **dict(existing_asset.get("provider_metadata") or {}),
+                    **dict(provider_metadata or {}),
                 },
                 "updated_at": now_iso(),
             }
@@ -696,6 +748,7 @@ def create_asset_record(
         "id": asset_id,
         "knowledge_space_id": space_id,
         "document_id": document_id,
+        "document_version_id": document_version_id,
         "asset_type": asset_type,
         "storage_provider": storage.provider,
         "bucket": stored.bucket,
@@ -705,6 +758,9 @@ def create_asset_record(
         "mime_type": mime_type,
         "size_bytes": stored.size_bytes,
         "metadata": dict(metadata or {}),
+        "page_number": page_number,
+        "bounding_boxes": list(bounding_boxes or []),
+        "provider_metadata": dict(provider_metadata or {}),
         "created_by": user["id"],
         "created_at": timestamp,
         "updated_at": timestamp,
@@ -720,6 +776,8 @@ def normalize_parser_engine(parser_engine: str | None, mime_type: str | None) ->
         normalized = "markdown"
     elif mime_type == "application/pdf":
         normalized = "pdf_text"
+    elif str(mime_type or "").startswith("image/"):
+        normalized = "multimodal"
     else:
         normalized = "plain_text"
     if normalized not in SUPPORTED_PARSER_ENGINES:
@@ -807,6 +865,7 @@ def _parse_ocr_json_payload(payload: Any, *, filename: str, parser_engine: str) 
                     "metadata": {
                         "image_count": len(images),
                         "image_refs": image_refs,
+                        "modality": "multimodal" if images or tables else "text",
                         "page_number": page_number,
                         "source_asset_type": "ocr_json",
                         "source_kind": "ocr_page",
@@ -831,6 +890,7 @@ def _parse_ocr_json_payload(payload: Any, *, filename: str, parser_engine: str) 
                     "match_text": page_text,
                     "metadata": {
                         "page_number": 1,
+                        "modality": "text",
                         "source_asset_type": "ocr_json",
                         "source_kind": "ocr_page",
                     },
@@ -931,6 +991,7 @@ def _parse_table_json_payload(payload: Any, *, filename: str, parser_engine: str
                 "match_text": table_markdown,
                 "metadata": {
                     "columns": columns,
+                    "modality": "table",
                     "source_asset_type": "table_json",
                     "source_kind": "table",
                     "table_index": table_index,
@@ -1074,6 +1135,9 @@ def upload_knowledge_document_result(
     mime_type: str,
     parser_engine: str | None = None,
     chunk_strategy: str | None = None,
+    processing_profile_id: str | None = None,
+    product_id: str | None = None,
+    expires_in_days: int | None = None,
     tags: list[str],
     title: str,
     user: dict[str, Any],
@@ -1089,6 +1153,9 @@ def upload_knowledge_document_result(
         mime_type=mime_type,
         parser_engine=parser_engine,
         chunk_strategy=chunk_strategy,
+        processing_profile_id=processing_profile_id,
+        product_id=product_id,
+        expires_in_days=expires_in_days,
         tags=tags,
         title=title,
         user=user,
@@ -1106,6 +1173,9 @@ def upload_knowledge_document_bytes_result(
     mime_type: str,
     parser_engine: str | None = None,
     chunk_strategy: str | None = None,
+    processing_profile_id: str | None = None,
+    product_id: str | None = None,
+    expires_in_days: int | None = None,
     tags: list[str],
     title: str,
     user: dict[str, Any],
@@ -1128,9 +1198,31 @@ def upload_knowledge_document_bytes_result(
     )
     normalized_parser = normalize_parser_engine(parser_engine, normalized_mime_type)
     normalized_chunk_strategy = normalize_chunk_strategy(chunk_strategy)
+    processing_profile = get_processing_profile(
+        current_store,
+        processing_profile_id,
+        user=user,
+    )
+    if normalized_parser == "multimodal" and processing_profile is None:
+        raise api_error(
+            400,
+            "KNOWLEDGE_PROCESSING_PROFILE_REQUIRED",
+            "Multimodal parser requires a processing profile",
+        )
+    if processing_profile is not None:
+        profile_product_id = processing_profile.get("product_id")
+        if product_id is not None and profile_product_id not in {None, product_id}:
+            raise api_error(
+                409,
+                "KNOWLEDGE_PROCESSING_PROFILE_SCOPE_MISMATCH",
+                "Processing profile does not belong to the selected product",
+            )
+        product_id = product_id or profile_product_id
+    if product_id is not None:
+        require_product_scope(user, product_id)
     settings = get_settings()
-    if normalized_parser == "pdf_text":
-        preview_content = f"{normalized_filename} 已上传，等待 PDF 文本解析。"
+    if normalized_parser in {"multimodal", "pdf_text"}:
+        preview_content = f"{normalized_filename} 已上传，等待内容解析。"
     else:
         preview_content = content.decode("utf-8", errors="replace").strip()
     preview_content = preview_content[: settings.knowledge_preview_max_chars]
@@ -1143,7 +1235,7 @@ def upload_knowledge_document_bytes_result(
         "content": preview_content,
         "source_type": "upload",
         "doc_type": doc_type or "manual",
-        "product_id": None,
+        "product_id": product_id,
         "knowledge_space_id": knowledge_space_id,
         "folder_id": folder_id,
         "permission_roles": ["admin"],
@@ -1156,18 +1248,38 @@ def upload_knowledge_document_bytes_result(
         "created_at": timestamp,
         "updated_at": timestamp,
         "document_version": 1,
+        "active_document_version_id": None,
         "active_chunk_set_id": None,
         "parser_engine": normalized_parser,
         "chunk_strategy": normalized_chunk_strategy,
     }
+    document_version = create_document_version_record(
+        content_hash=hashlib.sha256(content).hexdigest(),
+        current_store=current_store,
+        document_id=document_id,
+        expires_in_days=expires_in_days,
+        parser_config={
+            "chunk_strategy": normalized_chunk_strategy,
+            "parser_engine": normalized_parser,
+        },
+        processing_profile=processing_profile,
+        source_asset_id=None,
+        user=user,
+    )
     asset = create_asset_record(
         content=content,
         current_store=current_store,
         document_id=document_id,
+        document_version_id=document_version["id"],
         filename=normalized_filename,
         mime_type=normalized_mime_type,
         space_id=knowledge_space_id,
         user=user,
+    )
+    document_version = update_document_version_source(
+        current_store,
+        document_version_id=document_version["id"],
+        source_asset_id=asset["id"],
     )
     document["source_asset_id"] = asset["id"]
     import_job = {
@@ -1176,6 +1288,12 @@ def upload_knowledge_document_bytes_result(
         "source_asset_id": asset["id"],
         "parser_engine": normalized_parser,
         "chunk_strategy": normalized_chunk_strategy,
+        "processing_profile_id": processing_profile_id,
+        "document_version_id": document_version["id"],
+        "parser_config": {
+            "chunk_strategy": normalized_chunk_strategy,
+            "parser_engine": normalized_parser,
+        },
         "status": "queued",
         "progress": 0,
         "error_code": None,
@@ -1206,6 +1324,7 @@ def upload_knowledge_document_bytes_result(
         "asset": dict(asset),
         "document": knowledge_document_response(current_store, document, []),
         "import_job": dict(import_job),
+        "document_version": version_response(current_store, document_version),
     }
 
 
@@ -1339,6 +1458,18 @@ def run_knowledge_import_job_result(
         raise api_error(409, "IMPORT_JOB_STATE_INVALID", "Import job cannot be run")
     if source_asset is None:
         raise api_error(404, "NOT_FOUND", "Knowledge source asset not found")
+    document_version = _read_memory_record(
+        current_store,
+        "knowledge_document_versions",
+        import_job.get("document_version_id"),
+    )
+    if import_job.get("document_version_id") and document_version is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document version not found")
+    processing_profile = get_processing_profile(
+        current_store,
+        import_job.get("processing_profile_id"),
+        user=user,
+    )
 
     timestamp = now_iso()
     running_job = {
@@ -1366,12 +1497,24 @@ def run_knowledge_import_job_result(
             bucket=source_asset["bucket"],
             object_key=source_asset["object_key"],
         )
-        parsed = parse_asset_content(
-            content=source_content,
-            filename=source_asset.get("filename", document["id"]),
-            mime_type=source_asset.get("mime_type", "application/octet-stream"),
-            parser_engine=running_job.get("parser_engine", "plain_text"),
-        )
+        if running_job.get("parser_engine") == "multimodal":
+            if processing_profile is None:
+                raise ValueError("KNOWLEDGE_PROCESSING_PROFILE_REQUIRED")
+            from app.services import knowledge_multimodal
+
+            parsed = knowledge_multimodal.process_multimodal_asset(
+                content=source_content,
+                filename=source_asset.get("filename", document["id"]),
+                mime_type=source_asset.get("mime_type", "application/octet-stream"),
+                profile=processing_profile,
+            )
+        else:
+            parsed = parse_asset_content(
+                content=source_content,
+                filename=source_asset.get("filename", document["id"]),
+                mime_type=source_asset.get("mime_type", "application/octet-stream"),
+                parser_engine=running_job.get("parser_engine", "plain_text"),
+            )
         structured_assets: list[dict[str, Any]] = []
         structured_asset_by_type: dict[str, dict[str, Any]] = {}
         for sidecar in parsed.get("sidecar_assets") or []:
@@ -1380,9 +1523,13 @@ def run_knowledge_import_job_result(
                 content=str(sidecar["content"]).encode(),
                 current_store=current_store,
                 document_id=document["id"],
+                document_version_id=running_job.get("document_version_id"),
                 filename=sidecar["filename"],
                 metadata=sidecar.get("metadata", {}),
                 mime_type=sidecar["mime_type"],
+                page_number=sidecar.get("page_number"),
+                bounding_boxes=sidecar.get("bounding_boxes", []),
+                provider_metadata=sidecar.get("provider_metadata", {}),
                 space_id=space_id or source_asset["knowledge_space_id"],
                 user=user,
             )
@@ -1399,9 +1546,11 @@ def run_knowledge_import_job_result(
             content=parsed["content"].encode(),
             current_store=current_store,
             document_id=document["id"],
+            document_version_id=running_job.get("document_version_id"),
             filename=parsed["filename"],
             metadata=parsed_metadata,
             mime_type=parsed["mime_type"],
+            provider_metadata=parsed.get("provider_metadata", {}),
             space_id=space_id or source_asset["knowledge_space_id"],
             user=user,
         )
@@ -1410,6 +1559,7 @@ def run_knowledge_import_job_result(
         chunk_set = {
             "id": chunk_set_id,
             "document_id": document["id"],
+            "document_version_id": running_job.get("document_version_id"),
             "source_asset_id": source_asset["id"],
             "parsed_asset_id": parsed_asset["id"],
             "parser_engine": running_job.get("parser_engine", "plain_text"),
@@ -1463,6 +1613,15 @@ def run_knowledge_import_job_result(
                 "knowledge_space_id",
             )
             chunk["metadata"].update(source_metadata)
+            chunk["document_version_id"] = running_job.get("document_version_id")
+            chunk["modality"] = source_metadata.get("modality", "text")
+            chunk["embedding_model"] = chunk.get("metadata", {}).get("embedding_model")
+            chunk["metadata"]["document_version_id"] = running_job.get(
+                "document_version_id"
+            )
+            if document_version is not None:
+                chunk["metadata"]["document_version"] = document_version.get("version")
+                chunk["metadata"]["expires_at"] = document_version.get("expires_at")
             chunk["metadata"]["folder_id"] = document.get("folder_id")
             chunk["metadata"]["source_asset_id"] = source_asset["id"]
             chunk["metadata"]["parsed_asset_id"] = parsed_asset["id"]
@@ -1501,6 +1660,15 @@ def run_knowledge_import_job_result(
             "updated_at": now_iso(),
         }
         put_knowledge_chunk_set_to_memory(current_store, chunk_set_id, chunk_set)
+        activated_version = (
+            activate_document_version(
+                current_store,
+                document_id=document["id"],
+                document_version_id=running_job["document_version_id"],
+            )
+            if next_index_status != "index_failed" and running_job.get("document_version_id")
+            else document_version
+        )
         indexed_document = {
             **indexed_document,
             "active_chunk_set_id": chunk_set_id
@@ -1508,6 +1676,16 @@ def run_knowledge_import_job_result(
             else previous_active_id,
             "source_asset_id": source_asset["id"],
             "parsed_asset_id": parsed_asset["id"],
+            "active_document_version_id": (
+                running_job.get("document_version_id")
+                if next_index_status != "index_failed"
+                else document.get("active_document_version_id")
+            ),
+            "document_version": (
+                activated_version.get("version")
+                if activated_version is not None
+                else document.get("document_version", 1)
+            ),
             "updated_at": now_iso(),
         }
         put_knowledge_document_to_memory(current_store, indexed_document)
@@ -1545,8 +1723,18 @@ def run_knowledge_import_job_result(
             "chunk_set": dict(chunk_set),
             "parsed_asset": dict(parsed_asset),
             "parsed_assets": [dict(asset) for asset in [*structured_assets, parsed_asset]],
+            "document_version": (
+                version_response(current_store, activated_version)
+                if activated_version is not None
+                else None
+            ),
         }
     except Exception as exc:  # noqa: BLE001
+        failed_version = fail_document_version(
+            current_store,
+            document_version_id=running_job.get("document_version_id"),
+            error=str(exc) or "Knowledge import failed",
+        )
         failed_job = _mark_import_job_failed(
             current_store=current_store,
             document=document,
@@ -1570,6 +1758,11 @@ def run_knowledge_import_job_result(
         return {
             "document": knowledge_document_response(current_store, failed_document, []),
             "import_job": import_job_response(current_store, failed_job),
+            "document_version": (
+                version_response(current_store, failed_version)
+                if failed_version is not None
+                else None
+            ),
         }
 
 
@@ -1791,9 +1984,23 @@ def activate_knowledge_chunk_set_result(
     restored_index_status = chunk_set.get("index_status") or (
         "vector_indexed" if chunk_set.get("embedding_model") else "text_indexed"
     )
+    activated_version = None
+    if chunk_set.get("document_version_id"):
+        activated_version = activate_document_version(
+            current_store,
+            document_id=document_id,
+            document_version_id=chunk_set["document_version_id"],
+        )
     updated_document = {
         **document,
         "active_chunk_set_id": chunk_set_id,
+        "active_document_version_id": chunk_set.get("document_version_id")
+        or document.get("active_document_version_id"),
+        "document_version": (
+            activated_version.get("version")
+            if activated_version is not None
+            else document.get("document_version", 1)
+        ),
         "parsed_asset_id": chunk_set.get("parsed_asset_id") or document.get("parsed_asset_id"),
         "parser_engine": chunk_set.get("parser_engine"),
         "chunk_strategy": chunk_set.get("chunk_strategy"),
@@ -1833,6 +2040,8 @@ def reparse_knowledge_document_result(
     document_id: str,
     parser_engine: str | None,
     chunk_strategy: str | None,
+    processing_profile_id: str | None = None,
+    expires_in_days: int | None = None,
     user: dict[str, Any],
 ) -> dict[str, Any]:
     document = _read_memory_record(current_store, "knowledge_documents", document_id)
@@ -1850,13 +2059,61 @@ def reparse_knowledge_document_result(
         source_asset.get("mime_type"),
     )
     normalized_strategy = normalize_chunk_strategy(chunk_strategy or document.get("chunk_strategy"))
+    active_version = _read_memory_record(
+        current_store,
+        "knowledge_document_versions",
+        document.get("active_document_version_id"),
+    )
+    resolved_profile_id = processing_profile_id or (active_version or {}).get(
+        "processing_profile_id"
+    )
+    processing_profile = get_processing_profile(
+        current_store,
+        resolved_profile_id,
+        user=user,
+    )
+    if normalized_parser == "multimodal" and processing_profile is None:
+        raise api_error(
+            400,
+            "KNOWLEDGE_PROCESSING_PROFILE_REQUIRED",
+            "Multimodal parser requires a processing profile",
+        )
+    if (
+        processing_profile is not None
+        and processing_profile.get("product_id")
+        and processing_profile.get("product_id") != document.get("product_id")
+    ):
+        raise api_error(
+            409,
+            "KNOWLEDGE_PROCESSING_PROFILE_SCOPE_MISMATCH",
+            "Processing profile does not belong to the document product",
+        )
     timestamp = now_iso()
+    document_version = create_document_version_record(
+        content_hash=str(source_asset.get("content_hash") or ""),
+        current_store=current_store,
+        document_id=document_id,
+        expires_in_days=expires_in_days,
+        parser_config={
+            "chunk_strategy": normalized_strategy,
+            "parser_engine": normalized_parser,
+        },
+        processing_profile=processing_profile,
+        source_asset_id=source_asset_id,
+        user=user,
+    )
     import_job = {
         "id": current_store.new_id("knowledge_import_job"),
         "document_id": document_id,
         "source_asset_id": source_asset_id,
         "parser_engine": normalized_parser,
         "chunk_strategy": normalized_strategy,
+        "processing_profile_id": resolved_profile_id,
+        "document_version_id": document_version["id"],
+        "parser_config": {
+            "chunk_strategy": normalized_strategy,
+            "parser_engine": normalized_parser,
+        },
         "status": "queued",
         "progress": 0,
         "error_code": None,
@@ -1894,6 +2151,7 @@ def reparse_knowledge_document_result(
             [],
         ),
         "import_job": import_job_response(current_store, import_job),
+        "document_version": version_response(current_store, document_version),
     }
 
 

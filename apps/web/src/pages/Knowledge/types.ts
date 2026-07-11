@@ -9,6 +9,8 @@ export type KnowledgeFormValues = {
   knowledge_space_id?: string;
   permission_roles?: string[];
   parser_engine?: string;
+  processing_profile_id?: string;
+  expires_in_days?: number;
   tags?: string;
   title: string;
 };
@@ -56,4 +58,10 @@ export type KnowledgeAdvancedFilterValues = {
   ownerRole?: string;
 };
 
-export type KnowledgeWorkbenchTab = 'deposits' | 'documents' | 'governance' | 'imports' | 'search';
+export type KnowledgeWorkbenchTab =
+  | 'deposits'
+  | 'documents'
+  | 'governance'
+  | 'imports'
+  | 'processing'
+  | 'search';

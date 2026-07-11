@@ -354,6 +354,22 @@ class PostgresSnapshotRepository:
                     cursor,
                     "101_deployment_strategies.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "102_autonomous_delivery_governance.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "103_deployment_safety_enforcement.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "104_execution_resource_menu.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "105_knowledge_multimodal_governance.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1316,6 +1332,33 @@ class PostgresSnapshotRepository:
             version_id=version_id,
         )
 
+    def page_deployment_requests(
+        self,
+        *,
+        environment: str | None,
+        page: int,
+        page_size: int,
+        product_id: str | None,
+        product_scope_ids: list[str] | None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+        title: str | None,
+        version_id: str | None,
+    ) -> dict[str, Any]:
+        return self._devops_read_repository.page_deployment_requests(
+            environment=environment,
+            page=page,
+            page_size=page_size,
+            product_id=product_id,
+            product_scope_ids=product_scope_ids,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            status=status,
+            title=title,
+            version_id=version_id,
+        )
+
     def list_deployment_runs(
         self,
         *,
@@ -1648,6 +1691,151 @@ class PostgresSnapshotRepository:
             product_id=product_id,
             status=status,
             task_type=task_type,
+        )
+
+    def list_quality_gate_policies(
+        self,
+        *,
+        phase: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        status: str | None = None,
+        task_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_quality_gate_policies(
+            phase=phase,
+            product_id=product_id,
+            product_scope_ids=product_scope_ids,
+            status=status,
+            task_type=task_type,
+        )
+
+    def get_quality_gate_policy(self, policy_id: str) -> dict[str, Any] | None:
+        return self._execution_governance_read_repository.get_quality_gate_policy(policy_id)
+
+    def list_execution_context_manifests(
+        self,
+        *,
+        product_scope_ids: list[str] | None = None,
+        subject_id: str | None = None,
+        subject_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_execution_context_manifests(
+            product_scope_ids=product_scope_ids,
+            subject_id=subject_id,
+            subject_type=subject_type,
+        )
+
+    def list_quality_gate_runs(
+        self,
+        *,
+        phase: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        subject_id: str | None = None,
+        subject_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_quality_gate_runs(
+            phase=phase,
+            product_scope_ids=product_scope_ids,
+            subject_id=subject_id,
+            subject_type=subject_type,
+        )
+
+    def list_quality_gate_checks(self, quality_gate_run_id: str) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_quality_gate_checks(
+            quality_gate_run_id
+        )
+
+    def list_agent_loop_runs(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_agent_loop_runs(
+            ai_task_id=ai_task_id,
+            product_scope_ids=product_scope_ids,
+        )
+
+    def list_agent_loop_iterations(self, loop_run_id: str) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_agent_loop_iterations(loop_run_id)
+
+    def list_execution_resource_grants(
+        self,
+        *,
+        environment: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        resource_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_execution_resource_grants(
+            environment=environment,
+            product_id=product_id,
+            product_scope_ids=product_scope_ids,
+            resource_type=resource_type,
+            status=status,
+        )
+
+    def claim_execution_outbox_events(
+        self,
+        *,
+        lease_seconds: int,
+        limit: int,
+        worker_id: str,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.claim_execution_outbox_events(
+            lease_seconds=lease_seconds,
+            limit=limit,
+            worker_id=worker_id,
+        )
+
+    def list_execution_outbox_events(
+        self,
+        *,
+        aggregate_id: str | None = None,
+        aggregate_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_execution_outbox_events(
+            aggregate_id=aggregate_id,
+            aggregate_type=aggregate_type,
+            status=status,
+        )
+
+    def list_deployment_run_steps(
+        self,
+        *,
+        deployment_run_id: str,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_deployment_run_steps(
+            deployment_run_id=deployment_run_id,
+        )
+
+    def claim_external_event_inbox(
+        self,
+        *,
+        lease_seconds: int,
+        limit: int,
+        worker_id: str,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.claim_external_event_inbox(
+            lease_seconds=lease_seconds,
+            limit=limit,
+            worker_id=worker_id,
+        )
+
+    def list_external_event_inbox(
+        self,
+        *,
+        delivery_id: str | None = None,
+        provider: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_external_event_inbox(
+            delivery_id=delivery_id,
+            provider=provider,
+            status=status,
         )
 
     def count_rd_task_executor_policies(
@@ -2756,6 +2944,153 @@ class PostgresSnapshotRepository:
         audit_event: dict[str, Any] | None = None,
     ) -> None:
         self._bug_read_repository.delete_bug_record(record_id, audit_event=audit_event)
+
+    def save_quality_gate_policy_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+        expected_version: int | None = None,
+    ) -> None:
+        self._execution_governance_read_repository.save_quality_gate_policy_record(
+            record,
+            audit_events=audit_events,
+            expected_version=expected_version,
+        )
+
+    def save_execution_context_manifest_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._execution_governance_read_repository.save_execution_context_manifest_record(
+            record,
+            audit_event=audit_event,
+        )
+
+    def save_execution_resource_grant_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+        expected_version: int | None = None,
+    ) -> None:
+        self._execution_governance_read_repository.save_execution_resource_grant_record(
+            record,
+            audit_event=audit_event,
+            expected_version=expected_version,
+        )
+
+    def save_external_event_inbox_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._execution_governance_read_repository.save_external_event_inbox_record(
+            record,
+            audit_event=audit_event,
+        )
+
+    def save_quality_gate_bundle_record(
+        self,
+        *,
+        audit_events: list[dict[str, Any]] | None,
+        checks: list[dict[str, Any]],
+        run: dict[str, Any],
+    ) -> None:
+        self._execution_governance_read_repository.save_quality_gate_bundle_record(
+            audit_events=audit_events,
+            checks=checks,
+            run=run,
+        )
+
+    def save_agent_loop_bundle_record(
+        self,
+        *,
+        audit_events: list[dict[str, Any]] | None,
+        iterations: list[dict[str, Any]],
+        run: dict[str, Any],
+    ) -> None:
+        self._execution_governance_read_repository.save_agent_loop_bundle_record(
+            audit_events=audit_events,
+            iterations=iterations,
+            run=run,
+        )
+
+    def save_deployment_dispatch_result_transaction(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        outbox_event: dict[str, Any],
+        run: dict[str, Any],
+    ) -> None:
+        self._execution_governance_read_repository.save_deployment_dispatch_result_transaction(
+            audit_events=audit_events,
+            outbox_event=outbox_event,
+            run=run,
+        )
+
+    def save_execution_outbox_event_record(
+        self,
+        event: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._execution_governance_read_repository.save_execution_outbox_event_record(
+            event,
+            audit_event=audit_event,
+        )
+
+    def save_deployment_run_steps_records(
+        self,
+        steps: list[dict[str, Any]],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._execution_governance_read_repository.save_deployment_run_steps_records(
+            steps,
+            audit_events=audit_events,
+        )
+
+    def create_deployment_dispatch_transaction(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        deployment: dict[str, Any],
+        outbox_event: dict[str, Any],
+        requirements: list[dict[str, Any]],
+        run: dict[str, Any],
+        steps: list[dict[str, Any]],
+    ) -> None:
+        self._execution_governance_read_repository.create_deployment_dispatch_transaction(
+            audit_events=audit_events,
+            deployment=deployment,
+            outbox_event=outbox_event,
+            requirements=requirements,
+            run=run,
+            steps=steps,
+        )
+
+    def save_deployment_dispatch_failure_transaction(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        deployment: dict[str, Any],
+        outbox_event: dict[str, Any],
+        requirements: list[dict[str, Any]],
+        run: dict[str, Any],
+        steps: list[dict[str, Any]],
+    ) -> None:
+        self._execution_governance_read_repository.save_deployment_dispatch_failure_transaction(
+            audit_events=audit_events,
+            deployment=deployment,
+            outbox_event=outbox_event,
+            requirements=requirements,
+            run=run,
+            steps=steps,
+        )
 
     def save_gitlab_daily_code_metrics(self, payload: dict[str, Any]) -> None:
         self._devops_read_repository.save_gitlab_daily_code_metrics(payload)

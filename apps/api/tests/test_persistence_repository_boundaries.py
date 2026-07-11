@@ -8,6 +8,7 @@ from app.core.repositories.brain_apps import BrainAppReadRepository
 from app.core.repositories.bugs import BugReadRepository
 from app.core.repositories.code_inspections import CodeInspectionReadRepository
 from app.core.repositories.devops import DevopsReadRepository
+from app.core.repositories.execution_governance import ExecutionGovernanceReadRepository
 from app.core.repositories.git_review import GitReviewReadRepository
 from app.core.repositories.knowledge import KnowledgeReadRepository
 from app.core.repositories.knowledge_writes import KnowledgeWriteRepository
@@ -259,6 +260,39 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "093_bug_fix_task_type.sql" in applied_migrations
     assert "100_operational_deployment_menu.sql" in applied_migrations
     assert "101_deployment_strategies.sql" in applied_migrations
+    assert "102_autonomous_delivery_governance.sql" in applied_migrations
+
+
+def test_postgres_execution_governance_delegates_to_domain_repository(monkeypatch):
+    repository = PostgresSnapshotRepository("postgresql://unused")
+    calls: list[dict] = []
+
+    def fake_list_quality_gate_policies(self, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(kwargs)
+        return [{"id": "quality_gate_policy_001"}]
+
+    monkeypatch.setattr(
+        ExecutionGovernanceReadRepository,
+        "list_quality_gate_policies",
+        fake_list_quality_gate_policies,
+    )
+
+    assert repository.list_quality_gate_policies(
+        phase="pre_merge",
+        product_id="product_001",
+        product_scope_ids=["product_001"],
+        status="active",
+        task_type="development_planning",
+    ) == [{"id": "quality_gate_policy_001"}]
+    assert calls == [
+        {
+            "phase": "pre_merge",
+            "product_id": "product_001",
+            "product_scope_ids": ["product_001"],
+            "status": "active",
+            "task_type": "development_planning",
+        }
+    ]
 
 
 def test_assistant_action_draft_constraint_migrations_cover_supported_actions():

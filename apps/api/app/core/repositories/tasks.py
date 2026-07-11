@@ -82,7 +82,10 @@ class TaskReadRepository:
                     SELECT id, name, brain_app_id, product_id, task_type, executor_type,
                            runner_id, repository_id, workspace_root, branch,
                            code_change_review_mode, instruction_template, output_contract,
-                           timeout_seconds, priority, status, created_by, created_at, updated_at
+                           timeout_seconds, priority, status, created_by, created_at, updated_at,
+                           autonomy_mode, max_iterations, max_duration_seconds,
+                           token_budget, cost_budget, quality_gate_policy_id,
+                           auto_merge_risk_threshold
                     FROM rd_task_executor_policies
                     {where}
                     ORDER BY priority ASC, task_type ASC, product_id NULLS FIRST, id ASC
@@ -160,6 +163,10 @@ class TaskReadRepository:
                            policy.instruction_template, policy.output_contract,
                            policy.timeout_seconds, policy.priority, policy.status,
                            policy.created_by, policy.created_at, policy.updated_at,
+                           policy.autonomy_mode, policy.max_iterations,
+                           policy.max_duration_seconds, policy.token_budget,
+                           policy.cost_budget, policy.quality_gate_policy_id,
+                           policy.auto_merge_risk_threshold,
                            product.name AS product_name,
                            repository.name AS repository_name,
                            repository.default_branch AS repository_default_branch,
@@ -274,13 +281,19 @@ class TaskReadRepository:
                   id, name, brain_app_id, product_id, task_type, executor_type,
                   runner_id, repository_id, workspace_root, branch, instruction_template,
                   output_contract, timeout_seconds, priority, status,
-                  code_change_review_mode, created_by, created_at, updated_at
+                  code_change_review_mode, created_by, created_at, updated_at,
+                  autonomy_mode, max_iterations, max_duration_seconds,
+                  token_budget, cost_budget, quality_gate_policy_id,
+                  auto_merge_risk_threshold
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s, %s,
                   %s::jsonb, %s, %s, %s, %s, %s,
-                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
+                  %s, %s, %s,
+                  %s, %s, %s,
+                  %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   name = EXCLUDED.name,
@@ -298,6 +311,13 @@ class TaskReadRepository:
                   priority = EXCLUDED.priority,
                   status = EXCLUDED.status,
                   code_change_review_mode = EXCLUDED.code_change_review_mode,
+                  autonomy_mode = EXCLUDED.autonomy_mode,
+                  max_iterations = EXCLUDED.max_iterations,
+                  max_duration_seconds = EXCLUDED.max_duration_seconds,
+                  token_budget = EXCLUDED.token_budget,
+                  cost_budget = EXCLUDED.cost_budget,
+                  quality_gate_policy_id = EXCLUDED.quality_gate_policy_id,
+                  auto_merge_risk_threshold = EXCLUDED.auto_merge_risk_threshold,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -320,6 +340,13 @@ class TaskReadRepository:
                     policy.get("created_by"),
                     policy.get("created_at"),
                     policy.get("updated_at"),
+                    policy.get("autonomy_mode") or "single_pass",
+                    int(policy.get("max_iterations") or 1),
+                    int(policy.get("max_duration_seconds") or 3600),
+                    policy.get("token_budget"),
+                    policy.get("cost_budget"),
+                    policy.get("quality_gate_policy_id"),
+                    policy.get("auto_merge_risk_threshold") or "low",
                 ),
             )
 
@@ -349,11 +376,37 @@ class TaskReadRepository:
             "updated_at": row[18].isoformat() if row[18] else None,
             "workspace_root": row[8] or "",
         }
-        if len(row) > 19:
-            policy["product_name"] = row[19]
-            policy["repository_name"] = row[20]
-            policy["repository_default_branch"] = row[21]
-            policy["runner_name"] = row[22]
+        metadata_offset = 19
+        if len(row) > 19 and row[19] in {"autonomous_loop", "single_pass"}:
+            policy.update(
+                {
+                    "autonomy_mode": row[19],
+                    "max_iterations": row[20],
+                    "max_duration_seconds": row[21],
+                    "token_budget": row[22],
+                    "cost_budget": float(row[23]) if row[23] is not None else None,
+                    "quality_gate_policy_id": row[24],
+                    "auto_merge_risk_threshold": row[25],
+                }
+            )
+            metadata_offset = 26
+        else:
+            policy.update(
+                {
+                    "autonomy_mode": "single_pass",
+                    "max_iterations": 1,
+                    "max_duration_seconds": 3600,
+                    "token_budget": None,
+                    "cost_budget": None,
+                    "quality_gate_policy_id": None,
+                    "auto_merge_risk_threshold": "low",
+                }
+            )
+        if len(row) > metadata_offset:
+            policy["product_name"] = row[metadata_offset]
+            policy["repository_name"] = row[metadata_offset + 1]
+            policy["repository_default_branch"] = row[metadata_offset + 2]
+            policy["runner_name"] = row[metadata_offset + 3]
         return policy
 
     def load_workflow_runtime(self) -> dict[str, Any]:

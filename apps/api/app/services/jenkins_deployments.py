@@ -226,19 +226,65 @@ def trigger_jenkins_deployment(
     deployment: dict[str, Any],
     run: dict[str, Any],
     user: dict[str, Any],
+    operation: str = "deploy",
+    record_failure: bool = True,
 ) -> dict[str, Any]:
     snapshot = dict(deployment.get("scheme_snapshot") or {})
     connection_id = str(snapshot.get("jenkins_connection_id") or "").strip()
     connection = _connection_by_id(current_store, connection_id)
     if connection.get("status") != "active":
         raise api_error(409, "JENKINS_CONNECTION_UNAVAILABLE", "Jenkins connection is disabled")
-    job_name = str(snapshot.get("jenkins_job_name") or "").strip()
+    rollback_config = (
+        snapshot.get("rollback_config")
+        if isinstance(snapshot.get("rollback_config"), dict)
+        else {}
+    )
+    health_config = (
+        snapshot.get("health_check_config")
+        if isinstance(snapshot.get("health_check_config"), dict)
+        else {}
+    )
+    job_name = str(
+        (
+            rollback_config.get("job_name")
+            if operation == "rollback"
+            else health_config.get("job_name")
+            if operation == "verify"
+            else snapshot.get("jenkins_job_name")
+        )
+        or ""
+    ).strip()
+    if not job_name:
+        raise api_error(
+            409,
+            "JENKINS_ROLLBACK_NOT_CONFIGURED"
+            if operation == "rollback"
+            else "JENKINS_JOB_NOT_CONFIGURED",
+            "Jenkins rollback job is not configured"
+            if operation == "rollback"
+            else "Jenkins health verification job is not configured"
+            if operation == "verify"
+            else "Jenkins deployment job is not configured",
+        )
     endpoint = str(connection.get("endpoint_url") or "").rstrip("/") + "/"
     trigger_url = urljoin(endpoint, f"{_job_path(job_name)}/buildWithParameters")
     config = snapshot.get("config") if isinstance(snapshot.get("config"), dict) else {}
     configured_parameters = (
-        dict(config.get("parameters"))
-        if isinstance(config.get("parameters"), dict)
+        dict(
+            rollback_config.get("parameters")
+            if operation == "rollback"
+            else health_config.get("parameters")
+            if operation == "verify"
+            else config.get("parameters")
+        )
+        if isinstance(
+            rollback_config.get("parameters")
+            if operation == "rollback"
+            else health_config.get("parameters")
+            if operation == "verify"
+            else config.get("parameters"),
+            dict,
+        )
         else {}
     )
     parameters = {
@@ -246,6 +292,7 @@ def trigger_jenkins_deployment(
         "AI_BRAIN_DEPLOYMENT_REQUEST_ID": deployment["id"],
         "AI_BRAIN_DEPLOYMENT_RUN_ID": run["id"],
         "AI_BRAIN_ENVIRONMENT": deployment.get("environment") or "prod",
+        "AI_BRAIN_OPERATION": operation,
     }
     body = urlencode(
         {
@@ -259,41 +306,44 @@ def trigger_jenkins_deployment(
             queue_location = response.headers.get("Location")
     except Exception as exc:
         failure_reason = f"Jenkins trigger failed: {type(exc).__name__}"
-        _record_jenkins_trigger_failure(
-            current_store,
-            deployment=deployment,
-            error_type=type(exc).__name__,
-            failure_reason=failure_reason,
-            run=run,
-            user=user,
-        )
+        if record_failure:
+            _record_jenkins_trigger_failure(
+                current_store,
+                deployment=deployment,
+                error_type=type(exc).__name__,
+                failure_reason=failure_reason,
+                run=run,
+                user=user,
+            )
         raise api_error(
             502,
             "JENKINS_TRIGGER_FAILED",
             failure_reason,
         ) from exc
     if not queue_location:
-        _record_jenkins_trigger_failure(
-            current_store,
-            deployment=deployment,
-            error_type="missing_queue_location",
-            failure_reason="Jenkins did not return queue URL",
-            run=run,
-            user=user,
-        )
+        if record_failure:
+            _record_jenkins_trigger_failure(
+                current_store,
+                deployment=deployment,
+                error_type="missing_queue_location",
+                failure_reason="Jenkins did not return queue URL",
+                run=run,
+                user=user,
+            )
         raise api_error(502, "JENKINS_QUEUE_LOCATION_MISSING", "Jenkins did not return queue URL")
     try:
         queue_url = _resolve_jenkins_resource_url(endpoint, str(queue_location))
     except ValueError as exc:
         failure_reason = "Jenkins returned an invalid queue URL"
-        _record_jenkins_trigger_failure(
-            current_store,
-            deployment=deployment,
-            error_type="invalid_queue_url",
-            failure_reason=failure_reason,
-            run=run,
-            user=user,
-        )
+        if record_failure:
+            _record_jenkins_trigger_failure(
+                current_store,
+                deployment=deployment,
+                error_type="invalid_queue_url",
+                failure_reason=failure_reason,
+                run=run,
+                user=user,
+            )
         raise api_error(
             502,
             "JENKINS_RESOURCE_URL_INVALID",
@@ -312,6 +362,7 @@ def trigger_jenkins_deployment(
         "request_summary": {
             "deployment_request_id": deployment["id"],
             "job_name": job_name,
+            "operation": operation,
             "parameter_names": sorted(parameters),
         },
         "response_summary": {"queue_url": queue_url},
@@ -484,6 +535,22 @@ def sync_jenkins_deployment(
             "id": None,
             "logs": logs,
             "preserve_runner_task_id": True,
+            "result_json": {
+                "health_checks": [
+                    {
+                        "code": "jenkins_health_job",
+                        "passed": task_status == "succeeded",
+                    }
+                ]
+                if run.get("operation") == "verify"
+                else [],
+                "health_status": (
+                    "passed" if task_status == "succeeded" else "failed"
+                )
+                if run.get("operation") == "verify"
+                else None,
+                "operation": run.get("operation") or "deploy",
+            },
             "status": task_status,
         },
     )

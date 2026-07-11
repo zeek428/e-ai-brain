@@ -1,0 +1,40 @@
+.agent-governance-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-governance-iteration {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 12px;
+}
+
+.agent-governance-detail-row,
+.agent-governance-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-governance-detail-row ol,
+.agent-governance-section ol {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.agent-governance-evidence-list,
+.agent-governance-reference-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+@media (max-width: 640px) {
+  .agent-governance-panel-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

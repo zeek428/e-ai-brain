@@ -8,6 +8,8 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    maxWorkers: 4,
+    minWorkers: 1,
     setupFiles: './tests/setup.ts',
   },
 });

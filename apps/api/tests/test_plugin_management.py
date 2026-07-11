@@ -1179,9 +1179,22 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert by_code["github"]["template_version"] == "v1"
     assert by_code["github"]["version_status"] == "latest"
     assert by_code["github"]["connection_defaults"]["auth_type"] == "bearer"
-    assert by_code["github"]["connection_defaults"]["auth_config"] == {}
+    assert by_code["github"]["connection_defaults"]["auth_config"] == {
+        "token_ref": "env:GITHUB_TOKEN",
+        "webhook_secret_ref": "env:GITHUB_WEBHOOK_SECRET",
+    }
     assert by_code["github"]["connection_defaults"]["endpoint_url"] == "https://api.github.com"
-    assert by_code["github"]["connection_defaults"]["request_config"]["query"] == {}
+    github_request_config = by_code["github"]["connection_defaults"]["request_config"]
+    assert github_request_config["query"] == {}
+    assert github_request_config["event_types"] == [
+        "pull_request",
+        "push",
+        "workflow_run",
+    ]
+    assert github_request_config["write_permissions"] == ["comment", "review", "merge"]
+    assert github_request_config["webhook_path"] == (
+        "/api/integrations/webhooks/github/{connection_id}"
+    )
     github_repository_field = by_code["github"]["connection_schema"]["sections"][0]["fields"][0]
     assert github_repository_field["key"] == "repository_url"
     assert github_repository_field["label"] == "仓库地址"
@@ -1194,19 +1207,40 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
         == "2022-11-28"
     )
     assert by_code["gitlab"]["connection_defaults"]["auth_config"] == {
-        "header_name": "PRIVATE-TOKEN"
+        "header_name": "PRIVATE-TOKEN",
+        "secret_ref": "env:GITLAB_TOKEN",
+        "webhook_secret_ref": "env:GITLAB_WEBHOOK_SECRET",
     }
     assert by_code["gitlab"]["connection_defaults"]["endpoint_url"] == "http://gitlab.local"
-    assert by_code["gitlab"]["connection_defaults"]["request_config"]["query"] == {}
+    gitlab_request_config = by_code["gitlab"]["connection_defaults"]["request_config"]
+    assert gitlab_request_config["query"] == {}
+    assert gitlab_request_config["event_types"] == [
+        "Job Hook",
+        "Merge Request Hook",
+        "Pipeline Hook",
+        "Push Hook",
+    ]
+    assert gitlab_request_config["write_permissions"] == ["comment", "review", "merge"]
+    assert gitlab_request_config["webhook_path"] == (
+        "/api/integrations/webhooks/gitlab/{connection_id}"
+    )
     assert by_code["jenkins"]["installed"] is True
     assert by_code["jenkins"]["plugin_id"] == "plugin_standard_jenkins"
     assert by_code["jenkins"]["connection_defaults"]["auth_type"] == "basic"
     assert by_code["jenkins"]["connection_defaults"]["auth_config"] == {
         "password_ref": "env:JENKINS_API_TOKEN",
         "username": "jenkins-bot",
+        "webhook_secret_ref": "env:JENKINS_WEBHOOK_SECRET",
     }
+    assert by_code["jenkins"]["connection_defaults"]["request_config"]["webhook_path"] == (
+        "/api/integrations/webhooks/jenkins/{connection_id}"
+    )
     jenkins_fields = by_code["jenkins"]["connection_schema"]["sections"][0]["fields"]
-    assert [field["key"] for field in jenkins_fields] == ["username", "password_ref"]
+    assert [field["key"] for field in jenkins_fields] == [
+        "username",
+        "password_ref",
+        "webhook_secret_ref",
+    ]
     gitlab_project_field = by_code["gitlab"]["connection_schema"]["sections"][0]["fields"][0]
     assert gitlab_project_field["key"] == "gitlab_project_url"
     assert gitlab_project_field["label"] == "GitLab 地址"
@@ -1237,7 +1271,23 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert "线上日志指标查询" in by_code["observability"]["action_templates"]
     assert observability_defaults["auth_type"] == "api_key_header"
     assert observability_defaults["endpoint_url"] == "https://logs.example.com/api"
+    assert observability_defaults["auth_config"]["webhook_secret_ref"] == (
+        "env:OBSERVABILITY_WEBHOOK_SECRET"
+    )
+    assert observability_defaults["request_config"]["event_provider"] == "prometheus"
+    assert observability_defaults["request_config"]["webhook_path"] == (
+        "/api/integrations/webhooks/{event_provider}/{connection_id}"
+    )
     assert observability_defaults["request_config"]["query"]["window_minutes"] == 30
+    observability_provider_field = by_code["observability"]["connection_schema"]["sections"][0][
+        "fields"
+    ][0]
+    assert observability_provider_field["key"] == "event_provider"
+    assert [option["value"] for option in observability_provider_field["options"]] == [
+        "prometheus",
+        "opentelemetry",
+        "sentry",
+    ]
     assert by_code["github"]["connection_count"] == 0
     assert by_code["github"]["action_count"] == 0
     internal_item = by_code["internal_data_source"]
@@ -2952,7 +3002,8 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     assert "urllib.request.ProxyHandler({})" in runner_agent_text
     assert "_endpoint_is_loopback" in runner_agent_text
     assert "AI_BRAIN_BYPASS_PROXY" in runner_agent_text
-    assert "subprocess.run" not in runner_agent_text
+    assert "subprocess.run(command_args" not in runner_agent_text
+    assert "def _git_capture" in runner_agent_text
     assert 'exec "${PYTHON:-python3}" runner_agent.py' in install_text
     assert "启动 Runner" in start_stop_text
     assert "停止 Runner" in start_stop_text

@@ -679,7 +679,8 @@ class PluginReadRepository:
                            timeout_seconds, input_payload, request_config, result_json, logs,
                            status, error_code, error_message, claimed_at, finished_at,
                            created_by, created_at, updated_at, ai_task_id,
-                           deployment_run_id
+                           deployment_run_id, context_manifest_id, agent_loop_run_id,
+                           agent_loop_iteration_id, quality_gate_run_id, task_kind
                     FROM ai_executor_tasks
                     {where}
                     ORDER BY created_at ASC, id ASC
@@ -746,7 +747,8 @@ class PluginReadRepository:
                            timeout_seconds, input_payload, request_config, result_json, logs,
                            status, error_code, error_message, claimed_at, finished_at,
                            created_by, created_at, updated_at, ai_task_id,
-                           deployment_run_id
+                           deployment_run_id, context_manifest_id, agent_loop_run_id,
+                           agent_loop_iteration_id, quality_gate_run_id, task_kind
                     FROM ai_executor_tasks
                     {where}
                     ORDER BY {sort_column} {direction} {nulls}, id {direction}
@@ -1153,7 +1155,9 @@ class PluginReadRepository:
                   scheduled_job_run_id, executor_type, instruction, workspace_root,
                   timeout_seconds, input_payload, request_config, result_json, logs,
                   status, error_code, error_message, claimed_at, finished_at,
-                  created_by, created_at, updated_at, ai_task_id, deployment_run_id
+                  created_by, created_at, updated_at, ai_task_id, deployment_run_id,
+                  context_manifest_id, agent_loop_run_id, agent_loop_iteration_id,
+                  quality_gate_run_id, task_kind
                 )
                 VALUES (
                   %s, %s, %s, %s,
@@ -1161,7 +1165,8 @@ class PluginReadRepository:
                   %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb,
                   %s, %s, %s, %s::timestamptz, %s::timestamptz,
                   %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
-                  %s, %s
+                  %s, %s,
+                  %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   runner_id = EXCLUDED.runner_id,
@@ -1170,6 +1175,11 @@ class PluginReadRepository:
                   scheduled_job_run_id = EXCLUDED.scheduled_job_run_id,
                   ai_task_id = EXCLUDED.ai_task_id,
                   deployment_run_id = EXCLUDED.deployment_run_id,
+                  context_manifest_id = EXCLUDED.context_manifest_id,
+                  agent_loop_run_id = EXCLUDED.agent_loop_run_id,
+                  agent_loop_iteration_id = EXCLUDED.agent_loop_iteration_id,
+                  quality_gate_run_id = EXCLUDED.quality_gate_run_id,
+                  task_kind = EXCLUDED.task_kind,
                   executor_type = EXCLUDED.executor_type,
                   instruction = EXCLUDED.instruction,
                   workspace_root = EXCLUDED.workspace_root,
@@ -1209,6 +1219,11 @@ class PluginReadRepository:
                     task.get("updated_at") or task.get("created_at"),
                     task.get("ai_task_id"),
                     task.get("deployment_run_id"),
+                    task.get("context_manifest_id"),
+                    task.get("agent_loop_run_id"),
+                    task.get("agent_loop_iteration_id"),
+                    task.get("quality_gate_run_id"),
+                    task.get("task_kind", "coding"),
                 ),
             )
 
@@ -1886,6 +1901,11 @@ class PluginReadRepository:
             "updated_at": row[20].isoformat() if row[20] else None,
             "ai_task_id": row[21] if len(row) > 21 else None,
             "deployment_run_id": row[22] if len(row) > 22 else None,
+            "context_manifest_id": row[23] if len(row) > 23 else None,
+            "agent_loop_run_id": row[24] if len(row) > 24 else None,
+            "agent_loop_iteration_id": row[25] if len(row) > 25 else None,
+            "quality_gate_run_id": row[26] if len(row) > 26 else None,
+            "task_kind": row[27] if len(row) > 27 else "coding",
         }
 
     def _ai_executor_approval_request_from_row(self, row: Any) -> dict[str, Any]:

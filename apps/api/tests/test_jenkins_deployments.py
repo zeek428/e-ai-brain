@@ -3,6 +3,7 @@ import base64
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.operational_deployments import process_execution_outbox_events
 
 client = TestClient(app)
 
@@ -60,7 +61,13 @@ def create_context(headers: dict[str, str]) -> dict[str, str]:
     }
 
 
-def create_jenkins_scheme(headers: dict[str, str], context: dict[str, str]) -> dict:
+def create_jenkins_scheme(
+    headers: dict[str, str],
+    context: dict[str, str],
+    *,
+    health_check_config: dict | None = None,
+    rollback_config: dict | None = None,
+) -> dict:
     marketplace = client.get("/api/system/plugin-marketplace", headers=headers)
     assert marketplace.status_code == 200
     jenkins = next(
@@ -97,6 +104,9 @@ def create_jenkins_scheme(headers: dict[str, str], context: dict[str, str]) -> d
             "jenkins_job_name": "folder/deploy-product",
             "name": "Jenkins 生产部署",
             "product_id": context["product_id"],
+            "health_check_config": health_check_config or {},
+            "rollback_config": rollback_config or {},
+            "window_enforcement": "warn",
         },
         headers=headers,
     )
@@ -167,6 +177,7 @@ def test_jenkins_trigger_and_sync_release_requirement(monkeypatch):
     assert run["status"] == "queued"
     assert run["external_queue_url"] == "https://jenkins.example.com/queue/item/42/"
     assert run["plugin_invocation_log_id"]
+    assert started.json()["data"]["dispatch_events"][0]["status"] == "completed"
     expected_auth = "Basic " + base64.b64encode(
         b"jenkins-bot:jenkins-secret-token"
     ).decode("ascii")
@@ -267,18 +278,16 @@ def test_jenkins_trigger_failure_records_retryable_failed_run(monkeypatch):
         headers=headers,
     )
 
-    assert started.status_code == 502
-    assert started.json()["detail"]["code"] == "JENKINS_TRIGGER_FAILED"
+    assert started.status_code == 200
     persisted = client.get(
         f"/api/devops/deployments?product_id={context['product_id']}",
         headers=headers,
     ).json()["data"]["items"][0]
-    assert persisted["status"] == "failed"
-    assert persisted["runs"][0]["status"] == "failed"
-    assert persisted["runs"][0]["failure_reason"] == "Jenkins trigger failed: OSError"
-    assert app.state.store.requirements[context["requirement_id"]]["status"] == (
-        "ready_for_release"
-    )
+    assert persisted["status"] == "deploying"
+    assert persisted["runs"][0]["status"] == "queued"
+    assert persisted["dispatch_events"][0]["status"] == "failed"
+    assert "jenkins-secret-token" not in persisted["dispatch_events"][0]["last_error"]
+    assert app.state.store.requirements[context["requirement_id"]]["status"] == "deploying"
 
     monkeypatch.setattr(
         "app.services.jenkins_deployments.urlopen",
@@ -286,14 +295,65 @@ def test_jenkins_trigger_failure_records_retryable_failed_run(monkeypatch):
             location="https://jenkins.example.com/queue/item/44/"
         ),
     )
-    retried = client.post(
+    event = next(iter(app.state.store.execution_outbox_events.values()))
+    event["available_at"] = "2000-01-01T00:00:00+00:00"
+    processed = process_execution_outbox_events(
+        app.state.store,
+        limit=1,
+        worker_id="test-worker",
+    )
+    assert processed == 1
+    retried = client.get(
+        f"/api/devops/deployments?product_id={context['product_id']}",
+        headers=headers,
+    ).json()["data"]["items"][0]
+    assert retried["status"] == "deploying"
+    assert retried["runs"][0]["status"] == "queued"
+    assert retried["runs"][0]["external_queue_url"].endswith("/queue/item/44/")
+    assert retried["dispatch_events"][0]["status"] == "completed"
+
+
+def test_jenkins_dispatch_moves_to_dead_letter_after_retry_limit(monkeypatch):
+    app.state.store.reset()
+    monkeypatch.setenv("JENKINS_API_TOKEN", "jenkins-secret-token")
+    monkeypatch.setattr(
+        "app.services.operational_deployments.EXECUTION_OUTBOX_MAX_ATTEMPTS",
+        2,
+    )
+    headers = auth_headers()
+    context = create_context(headers)
+    scheme = create_jenkins_scheme(headers, context)
+    deployment = create_deployment(headers, context, scheme)
+
+    def failing_urlopen(request, timeout=30):  # type: ignore[no-untyped-def]
+        raise OSError("jenkins is unavailable")
+
+    monkeypatch.setattr("app.services.jenkins_deployments.urlopen", failing_urlopen)
+    started = client.post(
         f"/api/devops/deployments/{deployment['id']}/start",
         json={},
         headers=headers,
     )
-    assert retried.status_code == 200, retried.text
-    assert retried.json()["data"]["status"] == "deploying"
-    assert retried.json()["data"]["runs"][0]["status"] == "queued"
+    assert started.status_code == 200
+
+    event = next(iter(app.state.store.execution_outbox_events.values()))
+    event["available_at"] = "2000-01-01T00:00:00+00:00"
+    assert process_execution_outbox_events(
+        app.state.store,
+        limit=1,
+        worker_id="test-worker",
+    ) == 0
+
+    persisted = client.get(
+        f"/api/devops/deployments?product_id={context['product_id']}",
+        headers=headers,
+    ).json()["data"]["items"][0]
+    assert persisted["status"] == "failed"
+    assert persisted["runs"][0]["status"] == "failed"
+    assert persisted["dispatch_events"][0]["status"] == "dead_letter"
+    assert app.state.store.requirements[context["requirement_id"]]["status"] == (
+        "ready_for_release"
+    )
 
 
 def test_jenkins_missing_queue_location_records_failed_run(monkeypatch):
@@ -314,14 +374,14 @@ def test_jenkins_missing_queue_location_records_failed_run(monkeypatch):
         headers=headers,
     )
 
-    assert started.status_code == 502
-    assert started.json()["detail"]["code"] == "JENKINS_QUEUE_LOCATION_MISSING"
+    assert started.status_code == 200
     persisted = client.get(
         f"/api/devops/deployments?product_id={context['product_id']}",
         headers=headers,
     ).json()["data"]["items"][0]
     assert persisted["status"] == "failed"
     assert persisted["runs"][0]["status"] == "failed"
+    assert persisted["dispatch_events"][0]["status"] == "dead_letter"
 
 
 def test_jenkins_rejects_cross_origin_queue_url_without_forwarding_credentials(monkeypatch):
@@ -344,8 +404,7 @@ def test_jenkins_rejects_cross_origin_queue_url_without_forwarding_credentials(m
         headers=headers,
     )
 
-    assert started.status_code == 502
-    assert started.json()["detail"]["code"] == "JENKINS_RESOURCE_URL_INVALID"
+    assert started.status_code == 200
     assert requested_urls == [
         "https://jenkins.example.com/job/folder/job/deploy-product/buildWithParameters"
     ]
@@ -355,6 +414,7 @@ def test_jenkins_rejects_cross_origin_queue_url_without_forwarding_credentials(m
     ).json()["data"]["items"][0]
     assert persisted["status"] == "failed"
     assert persisted["runs"][0]["status"] == "failed"
+    assert persisted["dispatch_events"][0]["status"] == "dead_letter"
 
 
 def test_disabled_jenkins_connection_blocks_start_without_changing_deployment():
@@ -465,3 +525,133 @@ def test_background_sync_claims_due_runs_with_repository_lease(monkeypatch):
     }
     assert calls[1]["deployment_request_id"] == "deployment_request_lease"
     assert calls[1]["deployment_run_id"] == "deployment_run_lease"
+
+
+def test_jenkins_success_runs_health_job_before_release(monkeypatch):
+    app.state.store.reset()
+    monkeypatch.setenv("JENKINS_API_TOKEN", "jenkins-secret-token")
+    headers = auth_headers()
+    context = create_context(headers)
+    scheme = create_jenkins_scheme(
+        headers,
+        context,
+        health_check_config={"job_name": "folder/verify-product"},
+    )
+    deployment = create_deployment(headers, context, scheme)
+    triggered_jobs: list[str] = []
+
+    def fake_urlopen(request, timeout=30):  # type: ignore[no-untyped-def]
+        url = request.full_url
+        if url.endswith("/job/folder/job/deploy-product/buildWithParameters"):
+            triggered_jobs.append("deploy")
+            return FakeResponse(location="https://jenkins.example.com/queue/item/50/")
+        if url.endswith("/queue/item/50/api/json"):
+            return FakeResponse(
+                '{"cancelled": false, "executable": {'
+                '"number": 50, "url": "https://jenkins.example.com/job/deploy/50/"}}'
+            )
+        if url.endswith("/job/deploy/50/api/json"):
+            return FakeResponse('{"building": false, "result": "SUCCESS"}')
+        if url.endswith("/job/folder/job/verify-product/buildWithParameters"):
+            triggered_jobs.append("verify")
+            return FakeResponse(location="https://jenkins.example.com/queue/item/51/")
+        if url.endswith("/queue/item/51/api/json"):
+            return FakeResponse(
+                '{"cancelled": false, "executable": {'
+                '"number": 51, "url": "https://jenkins.example.com/job/verify/51/"}}'
+            )
+        if url.endswith("/job/verify/51/api/json"):
+            return FakeResponse('{"building": false, "result": "SUCCESS"}')
+        raise AssertionError(url)
+
+    monkeypatch.setattr("app.services.jenkins_deployments.urlopen", fake_urlopen)
+    started = client.post(
+        f"/api/devops/deployments/{deployment['id']}/start",
+        json={},
+        headers=headers,
+    ).json()["data"]
+    deploy_run = started["runs"][0]
+    client.post(
+        f"/api/devops/deployments/{deployment['id']}/runs/{deploy_run['id']}/sync",
+        headers=headers,
+    )
+    after_deploy = client.post(
+        f"/api/devops/deployments/{deployment['id']}/runs/{deploy_run['id']}/sync",
+        headers=headers,
+    ).json()["data"]["deployment"]
+
+    assert after_deploy["status"] == "verifying"
+    verify_run = client.get(
+        f"/api/devops/deployments/{deployment['id']}", headers=headers
+    ).json()["data"]["runs"][0]
+    assert verify_run["operation"] == "verify"
+    client.post(
+        f"/api/devops/deployments/{deployment['id']}/runs/{verify_run['id']}/sync",
+        headers=headers,
+    )
+    completed = client.post(
+        f"/api/devops/deployments/{deployment['id']}/runs/{verify_run['id']}/sync",
+        headers=headers,
+    ).json()["data"]["deployment"]
+
+    assert triggered_jobs == ["deploy", "verify"]
+    assert completed["status"] == "succeeded"
+    assert app.state.store.requirements[context["requirement_id"]]["status"] == "released"
+
+
+def test_jenkins_failure_dispatches_configured_rollback_job(monkeypatch):
+    app.state.store.reset()
+    monkeypatch.setenv("JENKINS_API_TOKEN", "jenkins-secret-token")
+    headers = auth_headers()
+    context = create_context(headers)
+    scheme = create_jenkins_scheme(
+        headers,
+        context,
+        rollback_config={
+            "auto_on_failure": True,
+            "enabled": True,
+            "job_name": "folder/rollback-product",
+        },
+    )
+    deployment = create_deployment(headers, context, scheme)
+    triggered_jobs: list[str] = []
+
+    def fake_urlopen(request, timeout=30):  # type: ignore[no-untyped-def]
+        url = request.full_url
+        if url.endswith("/job/folder/job/deploy-product/buildWithParameters"):
+            triggered_jobs.append("deploy")
+            return FakeResponse(location="https://jenkins.example.com/queue/item/60/")
+        if url.endswith("/queue/item/60/api/json"):
+            return FakeResponse(
+                '{"cancelled": false, "executable": {'
+                '"number": 60, "url": "https://jenkins.example.com/job/deploy/60/"}}'
+            )
+        if url.endswith("/job/deploy/60/api/json"):
+            return FakeResponse('{"building": false, "result": "FAILURE"}')
+        if url.endswith("/job/folder/job/rollback-product/buildWithParameters"):
+            triggered_jobs.append("rollback")
+            return FakeResponse(location="https://jenkins.example.com/queue/item/61/")
+        raise AssertionError(url)
+
+    monkeypatch.setattr("app.services.jenkins_deployments.urlopen", fake_urlopen)
+    started = client.post(
+        f"/api/devops/deployments/{deployment['id']}/start",
+        json={},
+        headers=headers,
+    ).json()["data"]
+    deploy_run = started["runs"][0]
+    client.post(
+        f"/api/devops/deployments/{deployment['id']}/runs/{deploy_run['id']}/sync",
+        headers=headers,
+    )
+    failed = client.post(
+        f"/api/devops/deployments/{deployment['id']}/runs/{deploy_run['id']}/sync",
+        headers=headers,
+    ).json()["data"]["deployment"]
+
+    assert triggered_jobs == ["deploy", "rollback"]
+    assert failed["status"] == "rolling_back"
+    rollback_run = client.get(
+        f"/api/devops/deployments/{deployment['id']}", headers=headers
+    ).json()["data"]["runs"][0]
+    assert rollback_run["operation"] == "rollback"

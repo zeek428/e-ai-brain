@@ -21,6 +21,7 @@ import {
   deleteDeploymentScheme,
   fetchDeploymentJenkinsConnections,
   fetchDeploymentRunnerTargets,
+  fetchDeploymentSchemeList,
   fetchDeploymentSchemes,
   updateDeploymentScheme,
   type DeploymentJenkinsConnectionRecord,
@@ -31,19 +32,31 @@ import {
 } from '../../services/aiBrain';
 
 type DeploymentSchemeFormValues = {
+  autoRollback: boolean;
+  autoRollbackRiskThreshold: 'low' | 'medium';
+  batchWaveCount?: number;
+  blueActiveSlot?: string;
+  blueTargetSlot?: string;
+  canaryPercent?: number;
   code: string;
   deploymentMethod: DeploymentMethod;
   environment: string;
   isDefault: boolean;
+  healthCheckRequired: boolean;
   jenkinsConnectionId?: string;
+  jenkinsHealthJobName?: string;
   jenkinsJobName?: string;
+  jenkinsRollbackJobName?: string;
   name: string;
   parametersJson?: string;
   productId: string;
   runnerId?: string;
+  rollbackEnabled: boolean;
+  rolloutStrategy: 'all_at_once' | 'batch' | 'blue_green' | 'canary';
   status: 'active' | 'disabled';
   targetCode?: string;
   timeoutSeconds: number;
+  windowEnforcement: 'disabled' | 'strict' | 'warn';
 };
 
 const deploymentMethodOptions = [
@@ -68,6 +81,19 @@ const environmentOptions = [
   { label: '沙箱环境', value: 'sandbox' },
 ];
 
+const rolloutStrategyOptions = [
+  { label: '全量', value: 'all_at_once' },
+  { label: '灰度', value: 'canary' },
+  { label: '分批', value: 'batch' },
+  { label: '蓝绿', value: 'blue_green' },
+];
+
+const windowEnforcementOptions = [
+  { label: '严格执行', value: 'strict' },
+  { label: '仅告警', value: 'warn' },
+  { label: '不校验', value: 'disabled' },
+];
+
 function parseParametersJson(value?: string): Record<string, unknown> {
   const text = value?.trim();
   if (!text) return {};
@@ -80,13 +106,28 @@ function parseParametersJson(value?: string): Record<string, unknown> {
 
 function schemeFormValues(scheme: DeploymentSchemeRecord): DeploymentSchemeFormValues {
   const parameters = scheme.config.parameters;
+  const waveConfig = scheme.waveConfig;
+  const healthConfig = scheme.healthCheckConfig;
+  const rollbackConfig = scheme.rollbackConfig;
   return {
+    autoRollback: Boolean(rollbackConfig.auto_on_failure),
+    autoRollbackRiskThreshold:
+      rollbackConfig.auto_risk_threshold === 'low' ? 'low' : 'medium',
+    batchWaveCount: Number(waveConfig.wave_count || 2),
+    blueActiveSlot: typeof waveConfig.active_slot === 'string' ? waveConfig.active_slot : 'blue',
+    blueTargetSlot: typeof waveConfig.target_slot === 'string' ? waveConfig.target_slot : 'green',
+    canaryPercent: Number(waveConfig.canary_percent || 10),
     code: scheme.code,
     deploymentMethod: scheme.deploymentMethod,
     environment: scheme.environment,
     isDefault: scheme.isDefault,
+    healthCheckRequired: Boolean(healthConfig.required),
     jenkinsConnectionId: scheme.jenkinsConnectionId,
+    jenkinsHealthJobName:
+      typeof healthConfig.job_name === 'string' ? healthConfig.job_name : undefined,
     jenkinsJobName: scheme.jenkinsJobName,
+    jenkinsRollbackJobName:
+      typeof rollbackConfig.job_name === 'string' ? rollbackConfig.job_name : undefined,
     name: scheme.name,
     parametersJson:
       parameters && typeof parameters === 'object' && !Array.isArray(parameters)
@@ -94,9 +135,12 @@ function schemeFormValues(scheme: DeploymentSchemeRecord): DeploymentSchemeFormV
         : undefined,
     productId: scheme.productId,
     runnerId: scheme.runnerId,
+    rollbackEnabled: Boolean(rollbackConfig.enabled),
+    rolloutStrategy: scheme.rolloutStrategy,
     status: scheme.status,
     targetCode: scheme.targetCode,
     timeoutSeconds: scheme.timeoutSeconds,
+    windowEnforcement: scheme.windowEnforcement,
   };
 }
 
@@ -107,19 +151,60 @@ function schemePayload(values: DeploymentSchemeFormValues): DeploymentSchemeCrea
     deployment_method: values.deploymentMethod,
     environment: values.environment,
     is_default: values.isDefault,
+    health_check_config: {},
     name: values.name.trim(),
+    preflight_config: {
+      require_artifact: values.windowEnforcement === 'strict',
+      require_rollback: values.environment === 'prod',
+    },
     product_id: values.productId,
+    rollback_config: {},
+    rollout_strategy: values.rolloutStrategy,
     status: values.status,
     timeout_seconds: values.timeoutSeconds,
+    wave_config: {},
+    window_enforcement: values.windowEnforcement,
   };
+  if (values.rolloutStrategy === 'canary') {
+    payload.wave_config = { canary_percent: values.canaryPercent ?? 10 };
+  } else if (values.rolloutStrategy === 'batch') {
+    payload.wave_config = { wave_count: values.batchWaveCount ?? 2 };
+  } else if (values.rolloutStrategy === 'blue_green') {
+    payload.wave_config = {
+      active_slot: values.blueActiveSlot?.trim(),
+      rollback_action: 'target.blue_green_rollback',
+      switch_action: 'target.blue_green_switch',
+      target_slot: values.blueTargetSlot?.trim(),
+    };
+  }
   if (values.deploymentMethod === 'ssh' || values.deploymentMethod === 'docker') {
     payload.runner_id = values.runnerId;
     payload.target_code = values.targetCode;
+    payload.health_check_config = { required: values.healthCheckRequired };
+    payload.rollback_config = {
+      auto_on_failure: values.autoRollback,
+      auto_risk_threshold: values.autoRollbackRiskThreshold,
+      enabled: values.rollbackEnabled,
+      human_takeover_on_failure: true,
+      strategy: 'target_command',
+    };
   }
   if (values.deploymentMethod === 'jenkins') {
     payload.jenkins_connection_id = values.jenkinsConnectionId;
     payload.jenkins_job_name = values.jenkinsJobName?.trim();
     payload.config = { parameters: parseParametersJson(values.parametersJson) };
+    payload.health_check_config = values.jenkinsHealthJobName?.trim()
+      ? { job_name: values.jenkinsHealthJobName.trim() }
+      : {};
+    payload.rollback_config = values.jenkinsRollbackJobName?.trim()
+      ? {
+          auto_on_failure: values.autoRollback,
+          auto_risk_threshold: values.autoRollbackRiskThreshold,
+          enabled: values.rollbackEnabled,
+          human_takeover_on_failure: true,
+          job_name: values.jenkinsRollbackJobName.trim(),
+        }
+      : {};
   }
   return payload;
 }
@@ -138,31 +223,71 @@ export function DeploymentSchemePanel({
   const [modalOpen, setModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [schemes, setSchemes] = useState<DeploymentSchemeRecord[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [sortField, setSortField] = useState('updated_at');
+  const [sortOrder, setSortOrder] = useState<'ascend' | 'descend'>('descend');
+  const [total, setTotal] = useState(0);
   const [runnerTargets, setRunnerTargets] = useState<DeploymentRunnerTargetRecord[]>([]);
   const [connections, setConnections] = useState<DeploymentJenkinsConnectionRecord[]>([]);
   const deploymentMethod = Form.useWatch('deploymentMethod', form);
+  const environment = Form.useWatch('environment', form);
+  const productId = Form.useWatch('productId', form);
+  const rolloutStrategy = Form.useWatch('rolloutStrategy', form);
   const selectedRunnerId = Form.useWatch('runnerId', form);
+  const windowEnforcement = Form.useWatch('windowEnforcement', form);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextSchemes, nextRunnerTargets, nextConnections] = canManage
-        ? await Promise.all([
-            fetchDeploymentSchemes(),
-            fetchDeploymentRunnerTargets(),
-            fetchDeploymentJenkinsConnections(),
-          ])
-        : [await fetchDeploymentSchemes(), [], []];
-      setSchemes(nextSchemes);
-      setRunnerTargets(nextRunnerTargets);
-      setConnections(nextConnections);
-      onSchemesChanged(nextSchemes);
+      const result = await fetchDeploymentSchemeList({
+        page,
+        pageSize,
+        sortField,
+        sortOrder,
+      });
+      setSchemes(result.rows);
+      setTotal(result.total);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '部署方案加载失败');
     } finally {
       setLoading(false);
     }
-  }, [canManage, onSchemesChanged]);
+  }, [page, pageSize, sortField, sortOrder]);
+
+  const refreshParentSchemes = useCallback(async () => {
+    onSchemesChanged(await fetchDeploymentSchemes());
+  }, [onSchemesChanged]);
+
+  useEffect(() => {
+    let active = true;
+    const timer = globalThis.setTimeout(() => {
+      if (!canManage || !modalOpen || !productId || !environment) {
+        setRunnerTargets([]);
+        setConnections([]);
+        return;
+      }
+      void Promise.all([
+        fetchDeploymentRunnerTargets({ environment, productId }),
+        fetchDeploymentJenkinsConnections({ environment, productId }),
+      ])
+        .then(([nextTargets, nextConnections]) => {
+          if (!active) return;
+          setRunnerTargets(nextTargets);
+          setConnections(nextConnections);
+        })
+        .catch((error: unknown) => {
+          if (!active) return;
+          setRunnerTargets([]);
+          setConnections([]);
+          message.error(error instanceof Error ? error.message : '执行资源加载失败');
+        });
+    }, 0);
+    return () => {
+      active = false;
+      globalThis.clearTimeout(timer);
+    };
+  }, [canManage, environment, modalOpen, productId]);
 
   useEffect(() => {
     const timer = globalThis.setTimeout(() => void reload(), 0);
@@ -234,12 +359,22 @@ export function DeploymentSchemePanel({
     setEditingScheme(undefined);
     form.resetFields();
     form.setFieldsValue({
+      autoRollback: false,
+      autoRollbackRiskThreshold: 'medium',
+      batchWaveCount: 2,
+      blueActiveSlot: 'blue',
+      blueTargetSlot: 'green',
+      canaryPercent: 10,
       deploymentMethod: 'manual',
       environment: 'prod',
+      healthCheckRequired: true,
       isDefault: false,
       productId: productOptions.length === 1 ? productOptions[0]?.value : undefined,
+      rollbackEnabled: true,
+      rolloutStrategy: 'all_at_once',
       status: 'active',
       timeoutSeconds: 1800,
+      windowEnforcement: 'strict',
     });
     setModalOpen(true);
   };
@@ -268,6 +403,7 @@ export function DeploymentSchemePanel({
     }
     closeModal();
     await reload();
+    await refreshParentSchemes();
   };
 
   const confirmDelete = useCallback((scheme: DeploymentSchemeRecord) => {
@@ -278,26 +414,45 @@ export function DeploymentSchemePanel({
         await deleteDeploymentScheme(scheme.id);
         message.success('部署方案已删除');
         await reload();
+        await refreshParentSchemes();
       },
       title: '删除部署方案',
     });
-  }, [reload]);
+  }, [refreshParentSchemes, reload]);
 
   const columns = useMemo<ProColumns<DeploymentSchemeRecord>[]>(
     () => [
-      { dataIndex: 'name', ellipsis: true, title: '方案名称', width: 210 },
+      { dataIndex: 'name', ellipsis: true, sorter: true, title: '方案名称', width: 210 },
       {
         dataIndex: 'productId',
         render: (_, row) => productNameById.get(row.productId) ?? row.productId,
         title: '所属产品',
         width: 170,
       },
-      { dataIndex: 'environment', title: '环境', width: 110 },
+      { dataIndex: 'environment', sorter: true, title: '环境', width: 110 },
       {
         dataIndex: 'deploymentMethod',
         render: (value) => deploymentMethodLabels[String(value)] ?? String(value),
+        sorter: true,
         title: '部署方式',
         width: 120,
+      },
+      {
+        dataIndex: 'rolloutStrategy',
+        render: (value) => ({
+          all_at_once: '全量',
+          batch: '分批',
+          blue_green: '蓝绿',
+          canary: '灰度',
+        })[String(value)] ?? String(value),
+        title: '发布策略',
+        width: 110,
+      },
+      {
+        dataIndex: 'windowEnforcement',
+        render: (value) => ({ disabled: '不校验', strict: '严格', warn: '告警' })[String(value)] ?? String(value),
+        title: '窗口策略',
+        width: 110,
       },
       {
         dataIndex: 'executorChannel',
@@ -319,16 +474,18 @@ export function DeploymentSchemePanel({
       {
         dataIndex: 'isDefault',
         render: (value) => (value ? <Tag color="blue">默认</Tag> : '-'),
+        sorter: true,
         title: '默认方案',
         width: 110,
       },
       {
         dataIndex: 'status',
         render: (value) => <Tag color={value === 'active' ? 'green' : 'default'}>{value === 'active' ? '启用' : '停用'}</Tag>,
+        sorter: true,
         title: '状态',
         width: 100,
       },
-      { dataIndex: 'updatedAt', ellipsis: true, title: '更新时间', width: 170 },
+      { dataIndex: 'updatedAt', ellipsis: true, sorter: true, title: '更新时间', width: 170 },
       {
         fixed: 'right',
         key: 'actions',
@@ -354,10 +511,33 @@ export function DeploymentSchemePanel({
         dataSource={schemes}
         headerTitle="部署方案列表"
         loading={loading}
+        onChange={(nextPagination, _filters, sorter) => {
+          const activeSorter = Array.isArray(sorter) ? sorter[0] : sorter;
+          const fieldMap: Record<string, string> = {
+            deploymentMethod: 'deployment_method',
+            environment: 'environment',
+            isDefault: 'is_default',
+            name: 'name',
+            status: 'status',
+            updatedAt: 'updated_at',
+          };
+          setPage(nextPagination.current ?? 1);
+          setPageSize(nextPagination.pageSize ?? 10);
+          if (activeSorter?.field && activeSorter.order) {
+            setSortField(fieldMap[String(activeSorter.field)] ?? String(activeSorter.field));
+            setSortOrder(activeSorter.order);
+          }
+        }}
         options={false}
-        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
+        pagination={{
+          current: page,
+          pageSize,
+          showSizeChanger: true,
+          showTotal: (count) => `共 ${count} 条`,
+          total,
+        }}
         rowKey="id"
-        scroll={{ x: 1520 }}
+        scroll={{ x: 1740 }}
         search={false}
         tableLayout="fixed"
         toolBarRender={() => [
@@ -387,7 +567,15 @@ export function DeploymentSchemePanel({
       >
         <Form<DeploymentSchemeFormValues> form={form} layout="vertical">
           <Form.Item label="所属产品" name="productId" rules={[{ required: true, message: '请选择所属产品' }]}>
-            <Select disabled={Boolean(editingScheme)} options={productOptions} />
+            <Select
+              disabled={Boolean(editingScheme)}
+              onChange={() => form.setFieldsValue({
+                jenkinsConnectionId: undefined,
+                runnerId: undefined,
+                targetCode: undefined,
+              })}
+              options={productOptions}
+            />
           </Form.Item>
           <Form.Item label="方案编码" name="code" rules={[{ required: true, message: '请输入方案编码' }]}>
             <Input placeholder="prod-compose" />
@@ -396,8 +584,44 @@ export function DeploymentSchemePanel({
             <Input placeholder="生产 Docker 部署" />
           </Form.Item>
           <Form.Item label="环境" name="environment" rules={[{ required: true }]}>
-            <Select options={environmentOptions} />
+            <Select
+              onChange={(value) => {
+                form.setFieldValue('windowEnforcement', value === 'prod' ? 'strict' : 'warn');
+                form.setFieldsValue({
+                  jenkinsConnectionId: undefined,
+                  runnerId: undefined,
+                  targetCode: undefined,
+                });
+              }}
+              options={environmentOptions}
+            />
           </Form.Item>
+          <Form.Item label="部署窗口" name="windowEnforcement" rules={[{ required: true }]}>
+            <Segmented block options={windowEnforcementOptions} />
+          </Form.Item>
+          <Form.Item label="发布策略" name="rolloutStrategy" rules={[{ required: true }]}>
+            <Segmented block options={rolloutStrategyOptions} />
+          </Form.Item>
+          {rolloutStrategy === 'canary' ? (
+            <Form.Item label="灰度流量比例" name="canaryPercent" rules={[{ required: true }]}>
+              <InputNumber max={99} min={1} style={{ width: '100%' }} suffix="%" />
+            </Form.Item>
+          ) : null}
+          {rolloutStrategy === 'batch' ? (
+            <Form.Item label="发布批次数" name="batchWaveCount" rules={[{ required: true }]}>
+              <InputNumber max={20} min={2} style={{ width: '100%' }} />
+            </Form.Item>
+          ) : null}
+          {rolloutStrategy === 'blue_green' ? (
+            <Space align="start" size={12} style={{ display: 'flex' }}>
+              <Form.Item label="当前槽位" name="blueActiveSlot" rules={[{ required: true }]}>
+                <Input placeholder="blue" />
+              </Form.Item>
+              <Form.Item label="目标槽位" name="blueTargetSlot" rules={[{ required: true }]}>
+                <Input placeholder="green" />
+              </Form.Item>
+            </Space>
+          ) : null}
           <Form.Item label="部署方式" name="deploymentMethod" rules={[{ required: true }]}>
             <Segmented
               block
@@ -422,6 +646,9 @@ export function DeploymentSchemePanel({
               <Form.Item label="部署目标" name="targetCode" rules={[{ required: true, message: '请选择部署目标' }]}>
                 <Select disabled={!selectedRunnerId} options={targetOptions} />
               </Form.Item>
+              <Form.Item label="部署后健康检查" name="healthCheckRequired" valuePropName="checked">
+                <Switch />
+              </Form.Item>
             </>
           ) : null}
           {deploymentMethod === 'jenkins' ? (
@@ -438,6 +665,48 @@ export function DeploymentSchemePanel({
               </Form.Item>
               <Form.Item label="Jenkins 参数 JSON" name="parametersJson">
                 <Input.TextArea placeholder={'{"IMAGE_TAG":"2026.07.11"}'} rows={4} />
+              </Form.Item>
+              <Form.Item
+                label="健康检查 Job"
+                name="jenkinsHealthJobName"
+                rules={[
+                  {
+                    required: environment === 'prod' && windowEnforcement === 'strict',
+                    message: '严格生产方案必须配置健康检查 Job',
+                  },
+                ]}
+              >
+                <Input placeholder="folder/verify-product" />
+              </Form.Item>
+              <Form.Item
+                label="回滚 Job"
+                name="jenkinsRollbackJobName"
+                rules={[
+                  {
+                    required: environment === 'prod' && windowEnforcement === 'strict',
+                    message: '严格生产方案必须配置回滚 Job',
+                  },
+                ]}
+              >
+                <Input placeholder="folder/rollback-product" />
+              </Form.Item>
+            </>
+          ) : null}
+          {deploymentMethod !== 'manual' ? (
+            <>
+              <Form.Item label="启用真实回滚" name="rollbackEnabled" valuePropName="checked">
+                <Switch />
+              </Form.Item>
+              <Form.Item label="健康失败自动回滚" name="autoRollback" valuePropName="checked">
+                <Switch />
+              </Form.Item>
+              <Form.Item label="自动回滚最高风险" name="autoRollbackRiskThreshold" rules={[{ required: true }]}>
+                <Select
+                  options={[
+                    { label: '低风险', value: 'low' },
+                    { label: '中风险', value: 'medium' },
+                  ]}
+                />
               </Form.Item>
             </>
           ) : null}

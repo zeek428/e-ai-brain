@@ -49,6 +49,9 @@ class KnowledgeWriteRepository:
         assets = payload.get("knowledge_assets", {})
         import_jobs = payload.get("knowledge_import_jobs", {})
         chunk_sets = payload.get("knowledge_chunk_sets", {})
+        processing_profiles = payload.get("knowledge_processing_profiles", {})
+        document_versions = payload.get("knowledge_document_versions", {})
+        citation_feedback = payload.get("knowledge_citation_feedback", {})
         documents = payload.get("knowledge_documents", {})
         chunks = self.clean_knowledge_chunk_references(
             documents,
@@ -64,23 +67,41 @@ class KnowledgeWriteRepository:
                 self.clear_dangling_knowledge_deposit_documents(cursor, documents)
                 self.clear_dangling_knowledge_chunk_documents(cursor, documents)
                 if self._delete_missing is not None:
+                    self._delete_missing(
+                        cursor,
+                        "knowledge_citation_feedback",
+                        citation_feedback,
+                    )
                     self._delete_missing(cursor, "knowledge_deposits", deposits)
                     self._delete_missing(cursor, "knowledge_chunks", chunks)
                     self._delete_missing(cursor, "knowledge_import_jobs", import_jobs)
                     self._delete_missing(cursor, "knowledge_chunk_sets", chunk_sets)
                     self._delete_missing(cursor, "knowledge_assets", assets)
+                    self._delete_missing(
+                        cursor,
+                        "knowledge_document_versions",
+                        document_versions,
+                    )
                     self._delete_missing(cursor, "knowledge_documents", documents)
+                    self._delete_missing(
+                        cursor,
+                        "knowledge_processing_profiles",
+                        processing_profiles,
+                    )
                     self._delete_missing(cursor, "knowledge_folders", folders)
                     self.delete_missing_knowledge_space_members(cursor, space_members)
                     self._delete_missing(cursor, "knowledge_spaces", spaces)
                 self.upsert_knowledge_spaces(cursor, spaces)
                 self.upsert_knowledge_space_members(cursor, space_members)
                 self.upsert_knowledge_folders(cursor, folders)
+                self.upsert_knowledge_processing_profiles(cursor, processing_profiles)
                 self.upsert_knowledge_documents(cursor, documents)
+                self.upsert_knowledge_document_versions(cursor, document_versions)
                 self.upsert_knowledge_assets(cursor, assets)
                 self.upsert_knowledge_chunk_sets(cursor, chunk_sets)
                 self.upsert_knowledge_chunks(cursor, chunks)
                 self.upsert_knowledge_import_jobs(cursor, import_jobs)
+                self.upsert_knowledge_citation_feedback(cursor, citation_feedback)
                 self.upsert_knowledge_deposits(cursor, deposits)
                 if audit_events and self._upsert_audit_events is not None:
                     self._upsert_audit_events(
@@ -132,7 +153,10 @@ class KnowledgeWriteRepository:
                         cursor,
                         {deposit["id"]: deposit for deposit in deposits},
                     )
-                cursor.execute("DELETE FROM knowledge_assets WHERE document_id = %s", (document_id,))
+                cursor.execute(
+                    "DELETE FROM knowledge_assets WHERE document_id = %s",
+                    (document_id,),
+                )
                 cursor.execute("DELETE FROM knowledge_documents WHERE id = %s", (document_id,))
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])
@@ -237,12 +261,14 @@ class KnowledgeWriteRepository:
                   doc_type, permission_scope, permission_roles, index_status, index_error,
                   vector_index_error, tags, created_by, created_at, updated_at,
                   knowledge_space_id, folder_id, source_asset_id, parsed_asset_id,
-                  active_chunk_set_id, parser_engine, chunk_strategy, document_version
+                  active_chunk_set_id, parser_engine, chunk_strategy, document_version,
+                  active_document_version_id
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s,
                   %s, %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now()), %s, %s, %s, %s, %s, %s, %s, %s
+                  COALESCE(%s::timestamptz, now()), %s, %s, %s, %s, %s, %s, %s, %s,
+                  %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   brain_app_id = EXCLUDED.brain_app_id,
@@ -267,6 +293,7 @@ class KnowledgeWriteRepository:
                   parser_engine = EXCLUDED.parser_engine,
                   chunk_strategy = EXCLUDED.chunk_strategy,
                   document_version = EXCLUDED.document_version,
+                  active_document_version_id = EXCLUDED.active_document_version_id,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -295,6 +322,7 @@ class KnowledgeWriteRepository:
                     document.get("parser_engine"),
                     document.get("chunk_strategy"),
                     document.get("document_version", 1),
+                    document.get("active_document_version_id"),
                 ),
             )
 
@@ -314,12 +342,13 @@ class KnowledgeWriteRepository:
                 INSERT INTO knowledge_chunks (
                   id, document_id, chunk_index, content, embedding, metadata,
                   permission_scope, created_at, updated_at, chunk_set_id,
-                  parent_chunk_id, content_hash
+                  parent_chunk_id, content_hash, document_version_id, modality,
+                  embedding_model
                 )
                 VALUES (
                   %s, %s, %s, %s, %s::vector, %s::jsonb, %s::jsonb,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
-                  %s, %s, %s
+                  %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   document_id = EXCLUDED.document_id,
@@ -331,6 +360,9 @@ class KnowledgeWriteRepository:
                   chunk_set_id = EXCLUDED.chunk_set_id,
                   parent_chunk_id = EXCLUDED.parent_chunk_id,
                   content_hash = EXCLUDED.content_hash,
+                  document_version_id = EXCLUDED.document_version_id,
+                  modality = EXCLUDED.modality,
+                  embedding_model = EXCLUDED.embedding_model,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -346,6 +378,10 @@ class KnowledgeWriteRepository:
                     chunk.get("chunk_set_id"),
                     chunk.get("parent_chunk_id"),
                     chunk.get("content_hash"),
+                    chunk.get("document_version_id"),
+                    chunk.get("modality", "text"),
+                    chunk.get("embedding_model")
+                    or (chunk.get("metadata") or {}).get("embedding_model"),
                 ),
             )
 
@@ -502,12 +538,13 @@ class KnowledgeWriteRepository:
                 INSERT INTO knowledge_assets (
                   id, knowledge_space_id, document_id, asset_type, storage_provider,
                   bucket, object_key, content_hash, filename, mime_type, size_bytes,
-                  metadata, created_by, created_at, updated_at
+                  metadata, created_by, created_at, updated_at, document_version_id,
+                  page_number, bounding_boxes, provider_metadata
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                   %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), %s, %s, %s::jsonb, %s::jsonb
                 )
                 ON CONFLICT (bucket, object_key) DO UPDATE SET
                   knowledge_space_id = EXCLUDED.knowledge_space_id,
@@ -519,6 +556,11 @@ class KnowledgeWriteRepository:
                   mime_type = EXCLUDED.mime_type,
                   size_bytes = EXCLUDED.size_bytes,
                   metadata = knowledge_assets.metadata || EXCLUDED.metadata,
+                  document_version_id = EXCLUDED.document_version_id,
+                  page_number = EXCLUDED.page_number,
+                  bounding_boxes = EXCLUDED.bounding_boxes,
+                  provider_metadata =
+                    knowledge_assets.provider_metadata || EXCLUDED.provider_metadata,
                   created_by = EXCLUDED.created_by,
                   updated_at = EXCLUDED.updated_at
                 """,
@@ -538,6 +580,142 @@ class KnowledgeWriteRepository:
                     asset["created_by"],
                     created_at,
                     updated_at,
+                    asset.get("document_version_id"),
+                    asset.get("page_number"),
+                    json.dumps(asset.get("bounding_boxes", []), ensure_ascii=False),
+                    json.dumps(asset.get("provider_metadata", {}), ensure_ascii=False),
+                ),
+            )
+
+    def upsert_knowledge_processing_profiles(
+        self,
+        cursor,
+        profiles: dict[str, dict[str, Any]],
+    ) -> None:
+        for profile in profiles.values():
+            created_at = profile.get("created_at")
+            updated_at = profile.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO knowledge_processing_profiles (
+                  id, name, product_id, provider_type, provider_config, credential_ref,
+                  capabilities, status, version, created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  name = EXCLUDED.name,
+                  product_id = EXCLUDED.product_id,
+                  provider_type = EXCLUDED.provider_type,
+                  provider_config = EXCLUDED.provider_config,
+                  credential_ref = EXCLUDED.credential_ref,
+                  capabilities = EXCLUDED.capabilities,
+                  status = EXCLUDED.status,
+                  version = EXCLUDED.version,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    profile["id"],
+                    profile["name"],
+                    profile.get("product_id"),
+                    profile.get("provider_type", "builtin"),
+                    json.dumps(profile.get("provider_config", {}), ensure_ascii=False),
+                    profile.get("credential_ref"),
+                    json.dumps(profile.get("capabilities", []), ensure_ascii=False),
+                    profile.get("status", "active"),
+                    profile.get("version", 1),
+                    profile.get("created_by"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def upsert_knowledge_document_versions(
+        self,
+        cursor,
+        versions: dict[str, dict[str, Any]],
+    ) -> None:
+        for version in versions.values():
+            created_at = version.get("created_at")
+            updated_at = version.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO knowledge_document_versions (
+                  id, document_id, version, source_asset_id, processing_profile_id,
+                  parser_config, content_hash, status, activated_at, expires_at,
+                  created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::timestamptz,
+                  %s::timestamptz, %s, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  source_asset_id = EXCLUDED.source_asset_id,
+                  processing_profile_id = EXCLUDED.processing_profile_id,
+                  parser_config = EXCLUDED.parser_config,
+                  content_hash = EXCLUDED.content_hash,
+                  status = EXCLUDED.status,
+                  activated_at = EXCLUDED.activated_at,
+                  expires_at = EXCLUDED.expires_at,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    version["id"],
+                    version["document_id"],
+                    version.get("version", 1),
+                    version.get("source_asset_id"),
+                    version.get("processing_profile_id"),
+                    json.dumps(version.get("parser_config", {}), ensure_ascii=False),
+                    version.get("content_hash", ""),
+                    version.get("status", "processing"),
+                    version.get("activated_at"),
+                    version.get("expires_at"),
+                    version.get("created_by"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def upsert_knowledge_citation_feedback(
+        self,
+        cursor,
+        feedback_items: dict[str, dict[str, Any]],
+    ) -> None:
+        for feedback in feedback_items.values():
+            cursor.execute(
+                """
+                INSERT INTO knowledge_citation_feedback (
+                  id, product_id, document_id, document_version_id, chunk_id,
+                  subject_type, subject_id, feedback_value, comment, created_by,
+                  created_at, related_event_id
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), %s
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  document_version_id = EXCLUDED.document_version_id,
+                  chunk_id = EXCLUDED.chunk_id,
+                  feedback_value = EXCLUDED.feedback_value,
+                  comment = EXCLUDED.comment,
+                  related_event_id = EXCLUDED.related_event_id
+                """,
+                (
+                    feedback["id"],
+                    feedback.get("product_id"),
+                    feedback["document_id"],
+                    feedback.get("document_version_id"),
+                    feedback.get("chunk_id"),
+                    feedback.get("subject_type"),
+                    feedback.get("subject_id"),
+                    feedback["feedback_value"],
+                    feedback.get("comment"),
+                    feedback.get("created_by"),
+                    feedback.get("created_at"),
+                    feedback.get("related_event_id"),
                 ),
             )
 
@@ -555,12 +733,12 @@ class KnowledgeWriteRepository:
                   id, document_id, source_asset_id, parsed_asset_id, parser_engine,
                   parser_version, chunk_strategy, embedding_model, embedding_dimension,
                   status, created_by, activated_at, created_at, updated_at,
-                  index_status, vector_index_error
+                  index_status, vector_index_error, document_version_id
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                   %s::timestamptz, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now()), %s, %s
+                  COALESCE(%s::timestamptz, now()), %s, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   document_id = EXCLUDED.document_id,
@@ -576,6 +754,7 @@ class KnowledgeWriteRepository:
                   activated_at = EXCLUDED.activated_at,
                   index_status = EXCLUDED.index_status,
                   vector_index_error = EXCLUDED.vector_index_error,
+                  document_version_id = EXCLUDED.document_version_id,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -595,6 +774,7 @@ class KnowledgeWriteRepository:
                     updated_at,
                     chunk_set.get("index_status"),
                     chunk_set.get("vector_index_error"),
+                    chunk_set.get("document_version_id"),
                 ),
             )
 
@@ -612,13 +792,13 @@ class KnowledgeWriteRepository:
                   id, document_id, source_asset_id, parser_engine, chunk_strategy,
                   status, progress, error_code, error_message, created_by, started_at,
                   finished_at, created_at, updated_at, locked_by, locked_until,
-                  attempt_count
+                  attempt_count, processing_profile_id, document_version_id, parser_config
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                   %s::timestamptz, %s::timestamptz,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
-                  %s, %s::timestamptz, %s
+                  %s, %s::timestamptz, %s, %s, %s, %s::jsonb
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   document_id = EXCLUDED.document_id,
@@ -635,6 +815,9 @@ class KnowledgeWriteRepository:
                   locked_by = EXCLUDED.locked_by,
                   locked_until = EXCLUDED.locked_until,
                   attempt_count = EXCLUDED.attempt_count,
+                  processing_profile_id = EXCLUDED.processing_profile_id,
+                  document_version_id = EXCLUDED.document_version_id,
+                  parser_config = EXCLUDED.parser_config,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -655,6 +838,9 @@ class KnowledgeWriteRepository:
                     import_job.get("locked_by"),
                     import_job.get("locked_until"),
                     import_job.get("attempt_count", 0),
+                    import_job.get("processing_profile_id"),
+                    import_job.get("document_version_id"),
+                    json.dumps(import_job.get("parser_config", {}), ensure_ascii=False),
                 ),
             )
 

@@ -534,3 +534,88 @@
 **状态**: 已自动化覆盖。主体、操作者、时间过滤见 `apps/api/tests/test_security_boundaries.py::test_audit_events_filter_by_actor_and_time_range`，审计列表 repository-first 读路径和运行态 store 过期回归见 `apps/api/tests/test_database_persistence.py::test_audit_event_list_uses_repository_when_runtime_store_is_stale`，审计详情和生命周期追踪入口见 `apps/web/tests/App.test.tsx::opens real audit detail and lifecycle trace actions from audit rows`。
 
 ---
+
+### TC-AIBRAIN-TASK-FUNC-025: Agent 自治循环与人工接管
+
+| 项目 | 内容 |
+|------|------|
+| 优先级 | P0 |
+| 适用阶段 | v1.2 |
+
+**测试步骤**:
+1. 配置 `autonomy_mode=autonomous_loop`、最大轮次/时长和 Token/费用预算并启动任务。
+2. 让首轮独立门禁返回可重试失败，再让下一轮通过。
+3. 重复一次场景，在循环运行中调用 `POST /api/ai-tasks/{task_id}/agent-loop/takeover`。
+
+**预期结果**:
+- 每轮保存计划、上下文版本、编码/verifier 任务、门禁、修改摘要、测试证据、失败分析和预算；下一轮指令包含上一轮失败证据。
+- 达标后进入人工确认或受控自动合入；预算耗尽、安全阻断或人工接管后不再派发下一轮。
+- 人工接管取消运行中循环任务但保留隔离工作区和已有证据，任务详情时间线可解释接管原因。
+
+**状态**: 已自动化覆盖，见 `apps/api/tests/test_rd_task_executor_policies.py::test_autonomous_loop_retries_failed_gate_with_versioned_context_then_merges`、`test_autonomous_loop_can_be_stopped_for_human_takeover_without_discarding_workspace` 和 `apps/web/tests/AgentGovernancePages.test.tsx`。
+
+---
+
+### TC-AIBRAIN-TASK-FUNC-026: 独立质量门禁与受控自动合入
+
+| 项目 | 内容 |
+|------|------|
+| 优先级 | P0 |
+| 适用阶段 | v1.2 |
+
+**测试步骤**:
+1. 配置 `auto_commit` 并让编码 Runner 回写成功，但让 required verifier 检查失败。
+2. 让测试全部通过但变更命中数据库迁移或受保护目录。
+3. 提供通过的独立 verifier/CI 证据且风险低于阈值。
+
+**预期结果**:
+- 步骤 1 不产生 merge 决策，任务保留门禁失败证据；编码 Runner 自报成功不计作唯一独立证据。
+- 步骤 2 强制进入人工确认；高风险安全发现、变更文件/行数超限同样阻止自动合入。
+- 只有步骤 3 自动创建已通过 Review 和幂等 merge 决策，任务详情按检查项展示来源、状态和结构化证据。
+
+**状态**: 已自动化覆盖，见 `apps/api/tests/test_quality_gates.py` 和 `apps/api/tests/test_rd_task_executor_policies.py::test_executor_policy_auto_commit_waits_for_independent_quality_gate_before_merge`。
+
+---
+
+### TC-AIBRAIN-TASK-FUNC-027: 版本化执行上下文清单
+
+| 项目 | 内容 |
+|------|------|
+| 优先级 | P0 |
+| 适用阶段 | v1.2 |
+
+**测试步骤**:
+1. 从带需求、Bug、仓库、版本和产品知识的任务启动执行。
+2. 查看任务详情“执行上下文”，再以同一事实重建一次清单。
+3. 尝试注入 scope 外产品或在摘要中放入 token-like 内容。
+
+**预期结果**:
+- 清单返回稳定版本/内容哈希、需求/Bug、仓库/分支、知识文档/chunk/版本、召回原因、验收标准、权限和截断摘要；相同内容去重。
+- scope 外产品被拒绝，凭据和完整知识正文不进入清单；任务详情能逐项核对 AI 收到的上下文。
+
+**状态**: 已自动化覆盖，见 `apps/api/tests/test_execution_context_manifests.py` 和 `apps/web/tests/AgentGovernancePages.test.tsx`。
+
+---
+
+### TC-AIBRAIN-KNOWLEDGE-FUNC-031: 多模态知识版本与新鲜度治理
+
+| 项目 | 内容 |
+|------|------|
+| 优先级 | P1 |
+| 适用阶段 | v1.2 |
+
+**测试步骤**:
+1. 创建测试 HTTP 多模态 Profile，使用 `env:` 凭据引用上传图片/PDF并选择 `parser_engine=multimodal`。
+2. 运行导入并查看资产、文档版本、chunk 和搜索来源。
+3. 重解析生成新版本，分别模拟成功和失败。
+4. 提交 `outdated` 引用反馈并执行新鲜度扫描。
+
+**预期结果**:
+- 原始资产保留在对象存储，解析生成 Markdown、OCR、版面、表格和图片标注资产；chunk/source 返回版本、模态、页码、位置框和脱敏 Provider 元数据。
+- 成功新版本才切换 active；失败版本不影响旧版本继续检索。
+- Profile 响应不解析或回显凭据；直接 token/password 配置被拒绝。
+- 过期反馈和时间扫描形成 `fresh/expiring/expired/flagged_outdated`，并关联具体版本。
+
+**状态**: 已自动化覆盖，见 `apps/api/tests/test_knowledge_multimodal_governance.py` 和 `apps/web/tests/KnowledgePage.test.tsx`。
+
+---

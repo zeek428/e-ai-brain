@@ -1,5 +1,5 @@
 import type { ProColumns } from '@ant-design/pro-components';
-import { Alert, Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Tag, message } from 'antd';
+import { Alert, Button, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Tag, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
@@ -22,19 +22,26 @@ import { formatDisplayDateTime } from '../../utils/dateTime';
 import { formatMutationError } from '../../utils/managementCrud';
 
 type PolicyFormValues = {
+  autonomy_mode: string;
+  auto_merge_risk_threshold: string;
   branch?: string;
   code_change_review_mode: string;
+  cost_budget?: number;
   executor_type: string;
   instruction_template: string;
   name: string;
+  max_duration_seconds: number;
+  max_iterations: number;
   output_contract_json?: string;
   priority: number;
   product_id?: string;
   repository_id?: string;
+  quality_gate_policy_id?: string;
   runner_id?: string;
   status: string;
   task_type: string;
   timeout_seconds: number;
+  token_budget?: number;
   workspace_root: string;
 };
 
@@ -84,7 +91,23 @@ const STATUS_OPTIONS = [
 
 const CODE_CHANGE_REVIEW_MODE_OPTIONS = [
   { label: '人工确认', value: 'manual_review' },
-  { label: '自动提交代码修改', value: 'auto_commit' },
+  { label: '独立门禁通过后自动提交', value: 'auto_commit' },
+];
+
+const AUTONOMY_MODE_OPTIONS = [
+  { label: '单次执行', value: 'single_pass' },
+  { label: 'Agent 自治循环', value: 'autonomous_loop' },
+];
+
+const AUTO_MERGE_RISK_OPTIONS = [
+  { label: '仅无风险', value: 'none' },
+  { label: '低风险及以下', value: 'low' },
+  { label: '中风险及以下', value: 'medium' },
+];
+
+const QUALITY_GATE_POLICY_OPTIONS = [
+  { label: '平台默认合并前门禁', value: '' },
+  { label: '系统严格合并前门禁', value: 'quality_gate_policy_system_pre_merge' },
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -329,6 +352,7 @@ export default function RdExecutorPoliciesPage() {
   });
   const [policyCandidates, setPolicyCandidates] = useState<RdTaskExecutorPolicyRecord[]>([]);
   const selectedExecutorType = Form.useWatch('executor_type', form);
+  const watchedAutonomyMode = Form.useWatch('autonomy_mode', form);
   const watchedCodeChangeReviewMode = Form.useWatch('code_change_review_mode', form);
   const watchedName = Form.useWatch('name', form);
   const watchedPriority = Form.useWatch('priority', form);
@@ -448,6 +472,7 @@ export default function RdExecutorPoliciesPage() {
   const conflictPolicies = policyCandidates.length ? policyCandidates : listState.rows;
   const modalPreview = useMemo(() => {
     const currentPolicy: RdTaskExecutorPolicyRecord = {
+      autonomy_mode: watchedAutonomyMode ?? 'single_pass',
       code_change_review_mode: watchedCodeChangeReviewMode ?? 'manual_review',
       executor_type: selectedExecutorType ?? 'codex',
       id: editingPolicy?.id ?? '__current_form_policy__',
@@ -475,6 +500,7 @@ export default function RdExecutorPoliciesPage() {
     products,
     selectedExecutorType,
     watchedCodeChangeReviewMode,
+    watchedAutonomyMode,
     watchedName,
     watchedPriority,
     watchedProductId,
@@ -513,14 +539,21 @@ export default function RdExecutorPoliciesPage() {
     setRepositories([]);
     form.resetFields();
     form.setFieldsValue({
+      autonomy_mode: 'single_pass',
+      auto_merge_risk_threshold: 'low',
       code_change_review_mode: 'manual_review',
+      cost_budget: undefined,
       executor_type: 'codex',
       instruction_template: '请基于研发任务 {{task_id}} / {{task_title}} 在当前仓库完成分析，并输出结构化结果。',
+      max_duration_seconds: 3600,
+      max_iterations: 1,
       output_contract_json: stableJson({ summary: 'string', details: 'object' }),
       priority: 100,
+      quality_gate_policy_id: '',
       status: 'active',
       task_type: 'product_detail_design',
       timeout_seconds: 1800,
+      token_budget: undefined,
       workspace_root: '',
     });
     setModalOpen(true);
@@ -531,19 +564,26 @@ export default function RdExecutorPoliciesPage() {
     await loadRepositories(policy.product_id);
     form.resetFields();
     form.setFieldsValue({
+      autonomy_mode: policy.autonomy_mode ?? 'single_pass',
+      auto_merge_risk_threshold: policy.auto_merge_risk_threshold ?? 'low',
       branch: policy.branch ?? undefined,
       code_change_review_mode: policy.code_change_review_mode ?? 'manual_review',
+      cost_budget: policy.cost_budget ?? undefined,
       executor_type: policy.executor_type,
       instruction_template: policy.instruction_template,
       name: policy.name,
+      max_duration_seconds: policy.max_duration_seconds ?? 3600,
+      max_iterations: policy.max_iterations ?? 1,
       output_contract_json: stableJson(policy.output_contract ?? {}),
       priority: policy.priority,
       product_id: policy.product_id ?? '',
+      quality_gate_policy_id: policy.quality_gate_policy_id ?? '',
       repository_id: policy.repository_id ?? '',
       runner_id: policy.runner_id ?? undefined,
       status: policy.status,
       task_type: policy.task_type,
       timeout_seconds: policy.timeout_seconds,
+      token_budget: policy.token_budget ?? undefined,
       workspace_root: policy.workspace_root,
     });
     setModalOpen(true);
@@ -554,19 +594,26 @@ export default function RdExecutorPoliciesPage() {
       const values = await form.validateFields();
       const outputContract = parseJsonObject(values.output_contract_json, '输出契约');
       const payload = {
+        autonomy_mode: values.autonomy_mode,
+        auto_merge_risk_threshold: values.auto_merge_risk_threshold,
         branch: values.branch || null,
         code_change_review_mode: values.code_change_review_mode,
+        cost_budget: values.cost_budget ?? null,
         executor_type: values.executor_type,
         instruction_template: values.instruction_template,
         name: values.name,
+        max_duration_seconds: values.max_duration_seconds,
+        max_iterations: values.autonomy_mode === 'autonomous_loop' ? values.max_iterations : 1,
         output_contract: outputContract,
         priority: values.priority,
         product_id: values.product_id || null,
+        quality_gate_policy_id: values.quality_gate_policy_id || null,
         repository_id: values.repository_id || null,
         runner_id: values.runner_id || null,
         status: values.status,
         task_type: values.task_type,
         timeout_seconds: values.timeout_seconds,
+        token_budget: values.token_budget ?? null,
         workspace_root: values.workspace_root,
       };
       if (editingPolicy) {
@@ -610,6 +657,23 @@ export default function RdExecutorPoliciesPage() {
       render: (_, row) => <Tag color="blue">{executorLabel(row.executor_type)}</Tag>,
       title: '执行器',
       width: 130,
+    },
+    {
+      dataIndex: 'autonomy_mode',
+      render: (_, row) => (
+        <Space orientation="vertical" size={2}>
+          <Tag color={row.autonomy_mode === 'autonomous_loop' ? 'cyan' : 'default'}>
+            {row.autonomy_mode === 'autonomous_loop' ? 'Agent 自治循环' : '单次执行'}
+          </Tag>
+          {row.autonomy_mode === 'autonomous_loop' ? (
+            <span style={{ color: 'rgba(0, 0, 0, 0.45)', fontSize: 12 }}>
+              最多 {row.max_iterations ?? 3} 轮
+            </span>
+          ) : null}
+        </Space>
+      ),
+      title: '执行模式',
+      width: 150,
     },
     {
       dataIndex: 'code_change_review_mode',
@@ -726,7 +790,7 @@ export default function RdExecutorPoliciesPage() {
         }}
         rowKey="id"
         tableLayout="fixed"
-        tableScroll={{ x: 2290 }}
+        tableScroll={{ x: 2440 }}
         tableTitle="研发执行器策略"
         title="研发执行器策略"
       />
@@ -776,12 +840,64 @@ export default function RdExecutorPoliciesPage() {
             <Input />
           </Form.Item>
           <Form.Item
+            label="执行模式"
+            name="autonomy_mode"
+            rules={[{ required: true, message: '请选择执行模式' }]}
+          >
+            <Segmented
+              block
+              options={AUTONOMY_MODE_OPTIONS}
+              onChange={(value) => {
+                if (value === 'autonomous_loop' && Number(form.getFieldValue('max_iterations') || 1) === 1) {
+                  form.setFieldValue('max_iterations', 3);
+                }
+              }}
+            />
+          </Form.Item>
+          <Form.Item
             label="代码提交方式"
             name="code_change_review_mode"
             rules={[{ required: true, message: '请选择代码提交方式' }]}
           >
             <Select options={CODE_CHANGE_REVIEW_MODE_OPTIONS} />
           </Form.Item>
+          <Form.Item label="独立质量门禁" name="quality_gate_policy_id">
+            <Select options={QUALITY_GATE_POLICY_OPTIONS} />
+          </Form.Item>
+          {watchedCodeChangeReviewMode === 'auto_commit' ? (
+            <Form.Item
+              label="自动合并风险"
+              name="auto_merge_risk_threshold"
+              rules={[{ required: true, message: '请选择自动合并风险阈值' }]}
+            >
+              <Select options={AUTO_MERGE_RISK_OPTIONS} />
+            </Form.Item>
+          ) : null}
+          {watchedAutonomyMode === 'autonomous_loop' ? (
+            <>
+              <Form.Item label="最大循环轮次" name="max_iterations" rules={[{ required: true, message: '请输入最大循环轮次' }]}>
+                <InputNumber max={20} min={2} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item label="自治时长上限（秒）" name="max_duration_seconds" rules={[{ required: true, message: '请输入自治时长上限' }]}>
+                <InputNumber max={86400} min={60} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item label="Token 预算" name="token_budget">
+                <InputNumber max={100000000} min={1} placeholder="不填表示不限" style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item label="费用预算（USD）" name="cost_budget">
+                <InputNumber max={100000} min={0.01} precision={2} placeholder="不填表示不限" style={{ width: '100%' }} />
+              </Form.Item>
+            </>
+          ) : null}
+          {watchedCodeChangeReviewMode === 'auto_commit' ? (
+            <Form.Item label="安全说明">
+              <Alert
+                showIcon
+                title="只有平台独立门禁通过且风险不高于阈值时才会自动合入；迁移、受保护目录和安全问题仍强制人工确认。"
+                type="info"
+              />
+            </Form.Item>
+          ) : null}
           <Form.Item label="超时秒数" name="timeout_seconds" rules={[{ required: true, message: '请输入超时秒数' }]}>
             <InputNumber max={86400} min={60} style={{ width: '100%' }} />
           </Form.Item>

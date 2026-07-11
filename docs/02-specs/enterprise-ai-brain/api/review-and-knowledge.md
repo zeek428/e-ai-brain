@@ -258,6 +258,16 @@ PATCH /api/knowledge/folders/{folder_id}
 
 空间成员角色支持 `reader`、`contributor`、`maintainer` 和 `admin`。空间是知识访问边界；目录只承担空间内组织结构，不作为独立安全边界。`PATCH /api/knowledge/folders/{folder_id}` 支持 `name`、`parent_folder_id`、`sort_order` 和 `status=active|archived`，移动目录时必须拒绝跨空间、移动到自身或移动到子孙目录。目录归档按整棵子树生效：父目录归档后，子目录在目录列表中不可见，且不得继续作为新建子目录、上传文档或批量移动文档的目标目录。
 
+多模态处理 Profile：
+
+```http
+GET /api/knowledge/processing-profiles?product_id=product_001&status=active
+POST /api/knowledge/processing-profiles
+PATCH /api/knowledge/processing-profiles/{profile_id}
+```
+
+创建字段为 `name/product_id/provider_type/provider_config/credential_ref/capabilities`。`provider_type` 支持 `builtin/http/mineru/paddleocr/gotenberg/multimodal_gateway`，`capabilities` 支持 OCR、版面、表格和图片描述/Embedding 等服务端白名单能力。`credential_ref` 只允许 `env:`/Vault 类引用；`provider_config` 中出现 token、password、secret、api_key 等直接凭据字段会被拒绝。Profile 可按产品限制，空产品表示通用；列表和更新要求知识管理权限及产品 scope。
+
 导入文档：
 
 ```http
@@ -294,11 +304,13 @@ POST /api/knowledge/documents/upload
   "doc_type": "runbook",
   "tags": ["payment", "runbook"],
   "parser_engine": "markdown",
-  "chunk_strategy": "parent_child"
+  "chunk_strategy": "parent_child",
+  "processing_profile_id": null,
+  "expires_in_days": 365
 }
 ```
 
-上传接口把原始文件写入配置的 S3-compatible 对象存储，默认私有化部署使用 MinIO；业务事实写入 PostgreSQL 的 `knowledge_documents`、`knowledge_assets` 和 `knowledge_import_jobs`。上传成功后文档进入 `importing`，`active_chunk_set_id` 为空，导入任务进入 `queued`，不会在请求内同步生成 chunk set；应用内 `knowledge_import_worker` 默认在非测试环境启用并自动消费 queued 任务，启动和空闲轮询时都会补偿扫描 repository 中遗漏的 queued 任务，补偿运行沿用导入任务 `created_by` 作为写入归属，确保 `knowledge_chunk_sets.created_by` 仍引用真实系统用户；`APP_ENV=test/testing/pytest` 默认关闭以保持单测可控。响应返回 `document`、原始 `asset` 和 `import_job`。文档资产通过 `GET /api/knowledge/documents/{document_id}/assets` 查询，导入任务通过 `GET /api/knowledge/import-jobs?knowledge_space_id=...&document_id=...&status=...` 查询，两者均先按知识空间或文档读权限过滤。对象预览必须通过 `GET /api/knowledge/assets/{asset_id}/preview` 鉴权代理，不向前端暴露永久对象存储 URL。
+上传接口把原始文件写入配置的 S3-compatible 对象存储，默认私有化部署使用 MinIO；业务事实写入 PostgreSQL 的 `knowledge_documents`、`knowledge_document_versions`、`knowledge_assets` 和 `knowledge_import_jobs`。支持文本、PDF、PNG/JPEG/TIFF/WebP 等受控扩展名与文件签名；图片自动使用 `parser_engine=multimodal` 并要求 active Profile。上传成功后文档进入 `importing`，新文档版本为 processing，导入任务进入 `queued`，不会在请求内同步生成 chunk。应用内 `knowledge_import_worker` 默认在非测试环境启用并自动消费 queued 任务；`APP_ENV=test/testing/pytest` 默认关闭以保持单测可控。响应返回 `document`、文档版本、原始 `asset` 和 `import_job`。文档资产通过 `GET /api/knowledge/documents/{document_id}/assets` 查询，导入任务通过 `GET /api/knowledge/import-jobs?knowledge_space_id=...&document_id=...&status=...` 查询，两者均先按知识空间或文档读权限过滤。对象预览必须通过 `GET /api/knowledge/assets/{asset_id}/preview` 鉴权代理，不向前端暴露永久对象存储 URL。
 
 导入任务操作：
 
@@ -309,19 +321,30 @@ POST /api/knowledge/import-jobs/{job_id}/cancel
 GET /api/knowledge/import-worker/status
 ```
 
-后台 worker 会先通过 PostgreSQL repository 对 queued 任务执行原子 claim，写入 `locked_by`、`locked_until` 并递增 `attempt_count`；只有获取租约的 worker 才能继续解析，任务完成、失败、取消或 retry 时必须清理锁字段。worker 会读取原始资产，按 `parser_engine` 生成独立 `parsed_markdown` 资产，再写入新的 `knowledge_chunk_sets` 和 `knowledge_chunks`；成功后切换文档 `active_chunk_set_id`，旧 active chunk set 归档。数据库唯一性以 `document_id + chunk_set_id + chunk_index` 为边界，允许同一文档的历史 chunk set 与当前 chunk set 保留相同 chunk 序号。`ocr_json` 和 `table_json` 解析器会额外写入结构化 `ocr_json` / `table_json` sidecar 资产，`parsed_markdown.metadata.structured_asset_ids` 指向这些结构化资产，chunk metadata 会补充 `page_number`、`image_count`、`image_refs`、`table_count`、`table_index`、`columns`、`source_kind`、`source_asset_type` 和 `structured_asset_id`；`regex_section` 分块会按 Markdown 标题、分隔线、中文章节和英文 Section/Chapter 标记切分，并在 chunk metadata 写入 `chunk_role=regex_section`、`section_title` 和 `split_pattern`；解析资产按 `bucket/object_key` 幂等 upsert，半成功重试不得重复创建同一对象资产。`run` 保留为测试、运维补偿和 worker 关闭场景下的手动触发入口。当前支持 `plain_text`、`markdown`、`pdf_text`、`ocr_json`、`table_json` 解析器和 `simple_text`、`parent_child`、`regex_section` 分块策略。`retry` 只把 failed/cancelled 任务重置为 `queued` 并在 worker 可用时重新入队，不得重复创建文档或原始资产；`cancel` 只能取消 queued/uploaded/failed 任务，状态不允许时返回 `IMPORT_JOB_STATE_INVALID`。`GET /api/knowledge/import-worker/status` 需要管理员或知识维护权限，返回 `enabled/running/worker_id/pending_count/active_job_id/queued_job_ids/processed_count/failed_count`，用于页面或运维检查后台队列状态。可通过 `KNOWLEDGE_IMPORT_WORKER_ENABLED`、`KNOWLEDGE_IMPORT_WORKER_POLL_INTERVAL_SECONDS` 和 `KNOWLEDGE_IMPORT_WORKER_LOCK_TTL_SECONDS` 调整 worker。
+后台 worker 会先通过 PostgreSQL repository 对 queued 任务执行原子 claim，写入 `locked_by`、`locked_until` 并递增 `attempt_count`；只有获取租约的 worker 才能继续解析，任务完成、失败、取消或 retry 时必须清理锁字段。worker 读取原始资产，按 `parser_engine` 生成独立 `parsed_markdown`，多模态 Provider 还会归一化 `ocr_json/page_layout_json/table_json/image_annotations` sidecar，再写入绑定 `document_version_id/processing_profile_id` 的 `knowledge_chunk_sets` 和 `knowledge_chunks`；资产/chunk 保存 `modality/page_number/bounding_boxes/content_hash/provider_metadata`。新版本成功后才切换 `active_document_version_id/active_chunk_set_id` 并 supersede 旧版本；失败版本标记 failed，旧 active 版本继续可检索。解析资产按 `bucket/object_key` 幂等 upsert，半成功重试不得重复创建同一对象资产。`run` 保留为测试、运维补偿和 worker 关闭场景下的手动触发入口。当前支持 `plain_text/markdown/pdf_text/ocr_json/table_json/multimodal` 解析器和 `simple_text/parent_child/regex_section` 分块策略。`retry` 只把 failed/cancelled 任务重置为 `queued`，不得重复创建文档或原始资产；`cancel` 只能取消 queued/uploaded/failed 任务。`GET /api/knowledge/import-worker/status` 需要管理员或知识维护权限。可通过 `KNOWLEDGE_IMPORT_WORKER_ENABLED`、`KNOWLEDGE_IMPORT_WORKER_POLL_INTERVAL_SECONDS` 和 `KNOWLEDGE_IMPORT_WORKER_LOCK_TTL_SECONDS` 调整 worker。
 
 分块版本与重解析：
 
 ```http
 GET /api/knowledge/documents/{document_id}/chunk-sets
 GET /api/knowledge/documents/{document_id}/chunks?chunk_set_id=knowledge_chunk_set_001
+GET /api/knowledge/documents/{document_id}/versions
+GET /api/knowledge/documents/{document_id}/citation-feedback
 POST /api/knowledge/documents/{document_id}/chunk-sets/{chunk_set_id}/activate
 POST /api/knowledge/documents/{document_id}/reparse
 POST /api/knowledge/documents/batch-move
 ```
 
-`chunk-sets` 返回文档所有分块版本的解析器、分块策略、chunk 数、状态、激活时间、`index_status` 和 `vector_index_error`；`chunks` 返回指定版本的 chunk 内容、`parent_chunk_id` 和 `metadata.chunk_role/heading/section_index/section_title/split_pattern`。`activate` 将历史版本设为 active、归档同文档其他版本，并按目标 chunk set 保存的索引状态恢复文档 `index_status`，不能只根据是否存在 embedding_model 猜测状态；`reparse` 基于原始资产创建新的 queued 导入任务并在 worker 可用时自动处理，只有导入任务成功后才切换 active，失败的新 chunk set 保持 `failed` 且旧 active 继续可检索。`batch-move` 接收 `document_ids` 与 `folder_id`，逐条校验写权限并返回 `updated` 和 `skipped`。
+`versions` 返回版本号、状态、内容哈希、解析 Profile、索引状态、active/superseded 时间、过期时间和新鲜度；`citation-feedback` 返回与文档版本/chunk 关联的持久化引用反馈。`chunk-sets` 返回文档所有分块版本的解析器、分块策略、chunk 数、状态、版本/Profile、激活时间、`index_status` 和 `vector_index_error`；`chunks` 返回指定版本的 chunk 内容、模态、页码、位置框、Provider 元数据、`parent_chunk_id` 和结构元数据。`activate` 将历史 chunk set 设为 active，并同步对应文档版本/索引状态；`reparse` 基于原始资产创建新文档版本和 queued 任务，可传新的 Profile 与 `expires_in_days`，只有成功后才切换 active。`batch-move` 接收 `document_ids` 与 `folder_id`，逐条校验写权限并返回 `updated` 和 `skipped`。
+
+新鲜度治理：
+
+```http
+GET /api/knowledge/staleness?knowledge_space_id=knowledge_space_001
+POST /api/knowledge/staleness/scan
+```
+
+列表按当前知识权限返回 active 版本的 `fresh/expiring/expired/flagged_outdated`、过期时间和 outdated 反馈数；扫描要求知识管理权限，只更新派生新鲜度和审计，不修改版本正文或把失败版本激活。
 
 查询文档：
 
@@ -390,7 +413,7 @@ POST /api/knowledge/search
 }
 ```
 
-前端知识中心提供“知识检索”弹窗，提交真实 `/api/knowledge/search` 请求并展示可访问结果的标题、来源、召回模式和内容摘要；后端返回 chunk 级命中结果，权限过滤必须在返回 chunk 前完成。存在可读向量 chunk 且 Embedding 网关可用时查询文本会生成 embedding，并只和 `embedding_config_id`、`embedding_model`、`embedding_dimension` 兼容的 chunk 计算 cosine 相似度，返回 `score` 与 `retrieval_mode=vector`；不兼容、缺失或仅文本索引可用时按关键词检索返回 `retrieval_mode=keyword` 且 `score=null`。启用 `parent_child` 时父块不作为直接命中结果返回，子块命中会在 `source.parent_chunk_id` 和 `source.parent_content` 中补充父块上下文；OCR/Table 导入的命中 chunk metadata 可包含页码、图片数量、图片引用、表格数量、表格序号、列名和结构化解析资产引用。无结果时展示真实空状态，不回退到示例数据。每次搜索会写入 `knowledge_quality_events`，响应 `metrics.quality_event_id` 可用于后续反馈关联。
+前端知识中心提供“知识检索”弹窗，提交真实 `/api/knowledge/search` 请求并展示可访问结果的标题、来源、召回模式和内容摘要；后端返回 chunk 级命中结果，权限过滤必须在返回 chunk 前完成。存在可读向量 chunk 且 Embedding 网关可用时查询文本会生成 embedding，并只和兼容向量计算 cosine 相似度；不兼容、缺失或仅文本索引可用时按关键词检索。source 额外返回实际命中的 `document_version_id/version_number/freshness_status/modality/page_number/bounding_boxes/structured_asset/provider_metadata`，父子分块继续返回父块上下文。无结果时展示真实空状态，不回退到示例数据。每次搜索会写入 `knowledge_quality_events`，响应 `metrics.quality_event_id` 可用于后续反馈关联。
 
 RAG 问答和质量反馈：
 
@@ -401,7 +424,7 @@ POST /api/knowledge/quality/feedback
 POST /api/knowledge/quality/citation-click
 ```
 
-`POST /api/knowledge/rag` 复用 Hybrid Search 返回 `answer`、`citations[]` 和 `metrics`，其中 `metrics` 包含 `citation_count`、`hit_count`、`latency_ms`、`no_result`、`no_result_rate`、`rag_citation_accuracy_proxy`、`retrieval` 和 `quality_event_id`。`GET /api/knowledge/quality/metrics` 要求 `knowledge.quality.read` 或知识管理权限，支持 `event_type`、`limit` 和 `since_days`，返回最近事件和汇总指标：检索/RAG 查询数、无结果率、引用数、引用点击率、反馈数、有用/无用反馈数和 RAG 引用准确率 proxy。`POST /api/knowledge/quality/feedback` 接收 `related_event_id`、`feedback_value=useful|not_useful|partial|incorrect`、可选 `feedback_comment`、`citation_chunk_id`、`citation_document_id`；`POST /api/knowledge/quality/citation-click` 接收 `related_event_id` 和可选引用 chunk/document ID，用于统计引用点击。质量事件不得保存完整 Prompt、模型输出或密钥。
+`POST /api/knowledge/rag` 复用 Hybrid Search 返回 `answer`、`citations[]` 和 `metrics`。`GET /api/knowledge/quality/metrics` 要求 `knowledge.quality.read` 或知识管理权限，返回检索/RAG、无结果、引用点击和反馈汇总。`POST /api/knowledge/quality/feedback` 接收 `related_event_id`、`feedback_value=useful|not_useful|partial|incorrect|outdated`、可选 `feedback_comment`、`citation_chunk_id`、`citation_document_id`；服务端从引用解析并持久化具体 `document_version_id`，`outdated` 会让 active 版本进入 `flagged_outdated`。`POST /api/knowledge/quality/citation-click` 记录引用点击。质量事件不得保存完整 Prompt、模型输出或密钥。
 
 知识沉淀：
 

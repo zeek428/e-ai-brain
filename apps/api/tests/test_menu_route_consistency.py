@@ -13,6 +13,7 @@ CRITICAL_MENU_PATHS = {
     "delivery.rd_executor_policies": "/delivery/rd-executor-policies",
     "diagnostics.execution_traces": "/governance/execution-traces",
     "system.ai_capabilities": "/tasks/ai-capabilities",
+    "system.execution_resources": "/system/execution-resources",
     "system.menus": "/system/menus",
     "system.settings": "/system/settings",
     "system.plugins": "/tasks/plugins",

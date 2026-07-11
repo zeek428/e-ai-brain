@@ -178,14 +178,18 @@ export type BugRecord = {
 
 export type KnowledgeRecord = {
   activeChunkSetId?: string;
+  activeDocumentVersionId?: string;
   content?: string;
   documentType: string;
+  documentVersion?: number;
   folderId?: string;
   folderPath?: string;
   id: string;
   indexError?: string | null;
   knowledgeSpaceId?: string;
   ownerRole: string;
+  parserEngine?: string;
+  chunkStrategy?: string;
   permissionRoles?: string[];
   sourceAssetId?: string;
   status:

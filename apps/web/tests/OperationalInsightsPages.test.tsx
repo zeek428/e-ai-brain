@@ -491,7 +491,7 @@ describe('operational insights pages', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
-      if (path.startsWith('/api/devops/operational-metrics')) {
+      if (path.startsWith('/api/devops/deployments?')) {
         return jsonResponse({
           data: {
             items: [
@@ -682,7 +682,7 @@ describe('operational insights pages', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
-      if (path.startsWith('/api/devops/operational-metrics')) {
+      if (path.startsWith('/api/devops/deployments?')) {
         return jsonResponse({ data: { items: [], page: 1, page_size: 10, total: 0 } });
       }
       if (path === '/api/devops/deployment-schemes' && init?.method === 'POST') {
@@ -774,10 +774,22 @@ describe('operational insights pages', () => {
           deployment_method: 'docker',
           environment: 'prod',
           is_default: false,
+          health_check_config: { required: true },
           name: '生产 Docker 部署',
+          preflight_config: { require_artifact: true, require_rollback: true },
           product_id: 'product_deploy',
+          rollback_config: {
+            auto_on_failure: false,
+            auto_risk_threshold: 'medium',
+            enabled: true,
+            human_takeover_on_failure: true,
+            strategy: 'target_command',
+          },
+          rollout_strategy: 'all_at_once',
           status: 'active',
           timeout_seconds: 1800,
+          wave_config: {},
+          window_enforcement: 'strict',
           runner_id: 'ai_executor_runner_003',
           target_code: 'production-compose',
         }),
@@ -793,7 +805,7 @@ describe('operational insights pages', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
       const path = String(input);
-      if (path.startsWith('/api/devops/operational-metrics')) {
+      if (path.startsWith('/api/devops/deployments?')) {
         return jsonResponse({
           data: {
             items: [
@@ -857,7 +869,7 @@ describe('operational insights pages', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
-      if (path.startsWith('/api/devops/operational-metrics')) {
+      if (path.startsWith('/api/devops/deployments?')) {
         return jsonResponse({
           data: {
             items: [
@@ -882,33 +894,28 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (path === '/api/devops/deployments?product_id=product_deploy') {
+      if (path === '/api/devops/deployments/deployment_request_jenkins') {
         return jsonResponse({
           data: {
-            items: [
+            deployment_method: 'jenkins',
+            environment: 'prod',
+            executor_channel: 'integration',
+            id: 'deployment_request_jenkins',
+            product_id: 'product_deploy',
+            requirement_ids: ['requirement_deploy'],
+            risk_level: 'medium',
+            runs: [
               {
                 deployment_method: 'jenkins',
-                environment: 'prod',
                 executor_channel: 'integration',
-                id: 'deployment_request_jenkins',
-                product_id: 'product_deploy',
-                requirement_ids: ['requirement_deploy'],
-                risk_level: 'medium',
-                runs: [
-                  {
-                    deployment_method: 'jenkins',
-                    executor_channel: 'integration',
-                    executor_type: 'jenkins',
-                    id: 'deployment_run_jenkins',
-                    status: 'running',
-                  },
-                ],
-                status: 'deploying',
-                title: 'Jenkins 生产部署',
-                version_id: 'version_deploy',
+                executor_type: 'jenkins',
+                id: 'deployment_run_jenkins',
+                status: 'running',
               },
             ],
-            total: 1,
+            status: 'deploying',
+            title: 'Jenkins 生产部署',
+            version_id: 'version_deploy',
           },
         });
       }

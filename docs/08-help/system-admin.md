@@ -48,6 +48,7 @@
 - 点击安全审计治理区的“周报”可以生成近 7 天管理员周报 Markdown，用于复盘告警、审计、高风险操作、知识质量和 AI 执行失败情况。
 - 优先处理区聚合当前最需要修复的依赖、配置或运行失败，并支持跳转到对应配置页面。
 - 分类检查覆盖 PostgreSQL、Redis、pgvector、MinIO/S3 对象存储、SMTP、钉钉登录、钉钉 MCP、模型网关、知识质量、AI 执行器、定时作业、观测告警和产品初始化。
+- 执行治理摘要会展示 Outbox/Inbox 待处理、重试和死信数量，以及 Agent 自治循环成功率和独立质量门禁通过率；积压或死信应先检查 execution worker 和外部连接，再按事件详情重试。
 - 快捷入口支持下钻到执行诊断、权限诊断、模型网关和插件运维。
 - 帮助中心维护可运行 `node scripts/check_help_center_assets.mjs` 或 `npm run help:check` 检查帮助路由、前端/Markdown 截图文件、截图过期状态、双份截图一致性和截图覆盖率；上线前可使用 `--strict-screenshots` 或 `npm run help:check:strict` 把缺截图路由升级为失败门禁。需要刷新截图时可先运行 `node scripts/capture_help_screenshots.mjs --list-targets` 或 `npm run help:screenshots:list` 查看自动派生目标，再使用 `READINESS_BEARER_TOKEN` 或 `--bearer-token` 运行 `node scripts/capture_help_screenshots.mjs`。系统健康页会从帮助中心内容自动派生截图覆盖清单，新增截图后应同时提交 public 和 docs 两份图片。
 
@@ -59,6 +60,12 @@
 - AI 执行器出现死信、超时或队列压力升高时，先进入插件运维确认 Runner 在线和审批是否卡住。
 - AI 执行策略出现需关注时，先执行“扫超时”释放过期租约，再复核任务 `timeout_seconds`、租约 `lease_timeout_seconds`、`max_reclaim_count` 和 Runner 心跳阈值是否过大或过小。
 - 数据归档清理体检出现过期候选时，先导出审计或运行证据，再按保留策略归档或清理；对象存储出现孤儿引用或清理失败时，复核知识文档删除结果并补偿清理 MinIO/S3 对象。
+
+## 执行资源授权
+
+系统管理员在“执行资源授权”中把部署 Runner Target 或 Jenkins Connection 授权到产品和环境。产品发布负责人只能使用已授权资源；授权不会复制 Runner 本地目标详情或 Jenkins 凭据。停用授权前应确认没有等待启动的部署单依赖该资源，历史部署证据会继续保留。
+
+![执行资源授权页面](assets/screenshots/help-execution-resources.png)
 - 看到 SMTP、钉钉、模型网关或插件异常时，先查看“最近错误”和“修复建议”，再进入对应配置页验证。
 - 菜单可见但接口返回 `FORBIDDEN` 时，进入“权限诊断”按用户、菜单路径和权限点排查。
 

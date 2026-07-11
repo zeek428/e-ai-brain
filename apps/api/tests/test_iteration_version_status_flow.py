@@ -1185,7 +1185,8 @@ def test_product_version_dashboard_blocks_release_without_successful_deployment(
     )
     assert (
         deployment_stage["detail"]
-        == "1 个部署单 · 暂无部署阻塞 · 成功 1 个 · 失败 0 个 · 最近 succeeded 生产部署 · 2026-06-04 18:00"
+        == "1 个部署单 · 暂无部署阻塞 · 成功 1 个 · 失败 0 个 · "
+        "最近 succeeded 生产部署 · 2026-06-04 18:00"
     )
     assert data_with_release["governance_conclusion"] == {
         "detail": (

@@ -148,9 +148,10 @@
 | Requirement | POST | `/api/requirements/{requirement_id}/generate-task` | 需求排期后生成 AI 任务。 |
 | AI Task | GET | `/api/ai-tasks` | 任务列表，支持按状态、任务类型、产品、需求、创建时间、关键词、创建人筛选，并返回分页结果。 |
 | AI Task | POST | `/api/ai-tasks` | 低层任务创建接口。 |
-| AI Task | POST | `/api/ai-tasks/{task_id}/start` | 启动任务；停在 `model_gateway_failed` 或 `code_review_executor_failed` 的失败任务可用同一 task_id 重试；管理员可显式传 `execution_mode=deterministic` 做受控验收。 |
-| AI Task | GET | `/api/ai-tasks/{task_id}` | 任务详情；PostgreSQL 运行时读取 task workflow source rows，并返回脱敏产品上下文、输入输出、可读 `output_summary`、待确认 Review、Review 列表、Graph Run、知识沉淀和 Mock Issue 回写状态。 |
-| AI Task | GET/POST/PATCH/DELETE | `/api/delivery/rd-task-executor-policies`, `/api/delivery/rd-task-executor-policies/{policy_id}` | 管理研发执行器策略；按任务类型、产品和优先级匹配插件管理下的 Codex、Claude Code 或 OpenClaw Runner，不接收 Agent/Skill/模型网关字段。策略字段 `code_change_review_mode` 支持 `manual_review`（默认，AI 完成后人工确认再 merge）和 `auto_commit`（AI 完成后自动创建已通过 Review 并请求 Runner merge 隔离 worktree）。前端可新增策略的任务类型覆盖 PRD/原型/产品详细设计（`product_detail_design`）、技术方案设计（`technical_solution`）、代码实现/开发计划（`development_planning`）、代码评审（`code_review`）、自动化测试（`automated_testing`）、Bug 修复（`bug_fix`）、发布上线评估（`release_readiness`）和上线后分析（`post_release_analysis`）；历史 `code_inspection_remediation` 仅保留老数据兼容，不再作为新增策略入口。带 `page/page_size` 的管理列表请求走服务端分页，支持策略名称、产品名称、执行器、任务类型、状态筛选，白名单排序，并返回 `query/performance`。 |
+| AI Task | POST | `/api/ai-tasks/{task_id}/start` | 启动任务；命中研发执行器策略时先冻结执行上下文，编码 Runner 成功后进入独立质量门禁，自治模式可按失败证据创建下一轮；停在可重试失败步骤的任务复用同一 task_id。 |
+| AI Task | GET | `/api/ai-tasks/{task_id}` | 任务详情；返回脱敏产品上下文、输入输出、可读 `output_summary`、Review/Graph/知识/回写，以及 `execution_context_manifest/agent_loop/quality_gate` 治理投影。 |
+| AI Task | POST | `/api/ai-tasks/{task_id}/agent-loop/takeover` | 请求人工接管运行中的 Agent 自治循环，取消仍在执行的循环 Runner 任务，停止继续派发并保留轮次、门禁和接管审计。 |
+| AI Task | GET/POST/PATCH/DELETE | `/api/delivery/rd-task-executor-policies`, `/api/delivery/rd-task-executor-policies/{policy_id}` | 管理研发执行器策略；按任务类型、产品和优先级匹配 Codex、Claude Code 或 OpenClaw Runner。策略支持 `autonomy_mode`、轮次/时长/Token/费用预算、`quality_gate_policy_id`、自动合并风险阈值和 `code_change_review_mode`；`auto_commit` 只有独立门禁通过且未命中高风险/迁移/保护路径才可 merge，否则降级人工确认。带分页时走服务端 read model。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/more-info` | 提交补充信息。 |
 | AI Task | POST | `/api/ai-tasks/batch-cancel` | 批量取消任务，逐条校验状态并返回 updated/skipped 明细。 |
 | AI Task | POST | `/api/ai-tasks/batch-retry` | 批量重试失败任务，逐条校验 `model_gateway_failed` / `code_review_executor_failed` 并返回 retried/updated/skipped 明细。 |
@@ -164,6 +165,8 @@
 | Review | POST | `/api/reviews/{review_id}/request-more-info` | 要求补充信息。 |
 | Knowledge | GET | `/api/knowledge/documents` | 知识文档列表；校验 `knowledge.read`，带分页参数时由 PostgreSQL read model 完成权限过滤、筛选、排序和分页。 |
 | Knowledge | GET | `/api/knowledge/index-health` | 知识索引健康中心；校验 `knowledge.read`，支持 `keyword/doc_type/knowledge_space_id/folder_id/permission_role/index_status/issue_limit`，按当前用户知识空间和角色权限在 PostgreSQL read model 聚合全量状态分布、可检索/向量/关键词兜底/失败/处理中/分块缺失统计、chunk embedding 覆盖、导入任务状态、embedding model 分布和健康问题列表，并返回 `query/performance`；前端健康面板必须展示 `status_counts` 文档状态分布、Chunk/Embedding 覆盖率、召回模式、权限命中和可操作问题，并以“解析状态”“Chunk & Embedding”“检索与权限”三段治理摘要解释当前范围是否可检索、是否缺分块/向量、权限范围是否命中。 |
+| Knowledge | GET/POST/PATCH | `/api/knowledge/processing-profiles`, `/api/knowledge/processing-profiles/{profile_id}` | 管理可插拔 OCR、版面、表格和多模态处理 Profile；支持产品 scope、启停和 `env:`/Vault 凭据引用，拒绝直接 Token/密码字段。 |
+| Knowledge | GET/POST | `/api/knowledge/staleness`, `/api/knowledge/staleness/scan` | 查询并扫描 active 文档版本新鲜度，返回 `fresh/expiring/expired/flagged_outdated` 和过期反馈；扫描不修改正文或激活失败版本。 |
 | Knowledge | POST | `/api/knowledge/documents` | 导入知识文档。 |
 | Knowledge | GET | `/api/knowledge/spaces` | 查询当前用户可访问的知识空间。 |
 | Knowledge | POST | `/api/knowledge/spaces` | 创建知识空间。 |
@@ -173,6 +176,8 @@
 | Knowledge | PATCH | `/api/knowledge/folders/{folder_id}` | 重命名、移动、排序或归档目录。 |
 | Knowledge | POST | `/api/knowledge/documents/upload` | 上传文件到对象存储并创建知识文档、原始资产和 queued 导入任务。 |
 | Knowledge | GET | `/api/knowledge/documents/{document_id}/assets` | 按文档查询可访问知识资产。 |
+| Knowledge | GET | `/api/knowledge/documents/{document_id}/versions` | 查询文档解析版本、Profile、内容哈希、状态、激活/替换时间、过期时间和新鲜度。 |
+| Knowledge | GET | `/api/knowledge/documents/{document_id}/citation-feedback` | 查询与具体文档版本/chunk 关联的持久化引用反馈。 |
 | Knowledge | GET | `/api/knowledge/assets/{asset_id}/preview` | 鉴权后预览知识资产内容。 |
 | Knowledge | GET | `/api/knowledge/import-jobs` | 查询可访问知识导入任务，支持按知识空间、文档和状态过滤。 |
 | Knowledge | POST | `/api/knowledge/import-jobs/{job_id}/run` | 运行 queued/failed 导入任务，生成解析资产、chunk set 和 chunk。 |
@@ -202,11 +207,18 @@
 | DevOps | GET | `/api/devops/gitlab/daily-code-metrics` | 查询真实 GitLab 每日提交和代码质量审核结果。 |
 | DevOps | POST | `/api/devops/gitlab/daily-code-metrics` | 登记真实 GitLab 每日提交和代码质量审核结果。 |
 | DevOps | GET | `/api/devops/operational-metrics` | 查询研发运营统一聚合列表，支持服务端分页、排序和筛选。 |
-| DevOps | GET | `/api/devops/deployments` | 查询运维部署单；要求 `deployment.read` 或 `devops.read`，按产品 scope 过滤。 |
+| DevOps | GET | `/api/devops/deployments` | 查询运维部署单；按产品 scope 在 PostgreSQL 层筛选、排序、分页并返回查询耗时。 |
+| DevOps | GET | `/api/devops/deployments/{deployment_request_id}` | 查询部署详情，聚合方案快照、门禁、波次、部署/验证/回滚运行、步骤证据、健康、派发和审计。 |
+| DevOps | GET/POST/PATCH/DELETE | `/api/devops/deployment-schemes`, `/api/devops/deployment-schemes/{scheme_id}` | 管理人工/SSH/Docker/Jenkins 方案、发布策略、窗口、健康检查和回滚；分页列表使用 PostgreSQL read model。 |
 | DevOps | POST | `/api/devops/deployments` | 从测试完成或待发布需求发起运维部署单；校验产品/版本/需求范围、阻塞 Bug 和发布评估任务。 |
 | DevOps | POST | `/api/devops/deployments/{deployment_request_id}/start` | 启动部署单，记录部署运行并把关联需求推进到 `deploying`。 |
 | DevOps | POST | `/api/devops/deployments/{deployment_request_id}/complete` | 登记部署成功、失败或回滚；成功推进需求到 `released`，失败/回滚生成 `deployment_failure` Bug。 |
 | DevOps | POST | `/api/devops/deployments/{deployment_request_id}/cancel` | 取消未完成部署单，并把部署中的需求退回 `ready_for_release`。 |
+| DevOps | POST | `/api/devops/deployments/{deployment_request_id}/rollback` | 创建独立回滚运行；SSH/Docker 使用 Runner Target 固定回滚能力，Jenkins 使用方案回滚 Job。 |
+| DevOps | GET/POST | `/api/devops/deployments/{deployment_request_id}/runs/{deployment_run_id}/logs`, `/api/devops/deployments/{deployment_request_id}/runs/{deployment_run_id}/sync` | 查询统一运行日志或立即同步 Jenkins 运行。 |
+| System | GET/POST/PUT | `/api/system/execution-resources`, `/api/system/execution-resources/{grant_id}` | 把 Runner Target/Jenkins Connection 按产品和环境授权、启停，写操作要求全局管理权限并使用版本冲突保护。 |
+| Integration | POST | `/api/integrations/webhooks/{provider}/{connection_id}` | 验签并以 Delivery ID 幂等接收 GitHub/GitLab/Jenkins/可观测性事件，返回 202；保存前裁剪脱敏 payload。 |
+| Integration | GET/POST | `/api/system/external-events`, `/api/system/external-events/{event_id}/retry` | 查询外部事件 Inbox；仅失败/死信事件可重试。 |
 | Collectors | GET | `/api/collectors/runs` | 查询 DevOps/洞察采集运行记录。 |
 | Collectors | POST | `/api/collectors/runs` | 登记一次真实采集或导入运行。 |
 | Collectors | PATCH | `/api/collectors/runs/{run_id}` | 更新采集运行状态、导入数量、错误说明或摘要。 |

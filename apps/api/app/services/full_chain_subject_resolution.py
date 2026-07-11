@@ -182,7 +182,9 @@ def resolve_requirement_id_from_full_chain_subject(
             if read_memory_dict(current_store, "requirements").get(requirement_id) is None:
                 raise api_error(404, "NOT_FOUND", "Requirement not found")
             return requirement_id
-        requirement_id = latest_requirement_id_for_version(current_store, deployment.get("version_id"))
+        requirement_id = latest_requirement_id_for_version(
+            current_store, deployment.get("version_id")
+        )
         if requirement_id is not None:
             return requirement_id
     tasks = lifecycle_subject_tasks(

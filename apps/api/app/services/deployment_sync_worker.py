@@ -70,6 +70,14 @@ def sync_due_jenkins_deployments(
 def _worker_loop(application: Any, stop_event: threading.Event, worker_id: str) -> None:
     while not stop_event.is_set():
         try:
+            from app.services.operational_deployments import (
+                process_execution_outbox_events,
+            )
+
+            process_execution_outbox_events(
+                application.state.store,
+                worker_id=worker_id,
+            )
             sync_due_jenkins_deployments(
                 application.state.store,
                 worker_id=worker_id,
@@ -81,7 +89,13 @@ def _worker_loop(application: Any, stop_event: threading.Event, worker_id: str) 
 
 def start_deployment_sync_worker(application: Any) -> None:
     repository = getattr(application.state.store, "repository", None)
-    if not callable(getattr(repository, "claim_due_deployment_runs", None)):
+    if not any(
+        callable(getattr(repository, method_name, None))
+        for method_name in (
+            "claim_due_deployment_runs",
+            "claim_execution_outbox_events",
+        )
+    ):
         return
     current = getattr(application.state, "deployment_sync_worker", None)
     if isinstance(current, dict) and current.get("thread") is not None:

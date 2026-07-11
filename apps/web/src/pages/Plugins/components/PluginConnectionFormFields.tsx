@@ -249,6 +249,12 @@ export function ConnectionSchemaFields({
                   <InputNumber placeholder={field.placeholder || field.label} style={schemaControlStyle} />
                 ) : field.type === 'boolean' ? (
                   <Switch />
+                ) : field.secret ? (
+                  <Input.Password
+                    autoComplete="new-password"
+                    placeholder={field.placeholder || field.label}
+                    style={schemaControlStyle}
+                  />
                 ) : (
                   <Input
                     placeholder={field.placeholder || field.label}

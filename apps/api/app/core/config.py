@@ -33,10 +33,11 @@ def _env_csv_set(name: str, default: str) -> set[str]:
 
 DEFAULT_APP_SECRET_KEY = "change-me-in-local-env"
 DEFAULT_KNOWLEDGE_UPLOAD_ALLOWED_EXTENSIONS = (
-    ".csv,.json,.md,.markdown,.pdf,.txt"
+    ".csv,.jpeg,.jpg,.json,.md,.markdown,.pdf,.png,.tif,.tiff,.txt,.webp"
 )
 DEFAULT_KNOWLEDGE_UPLOAD_ALLOWED_MIME_TYPES = (
     "application/json,application/octet-stream,application/pdf,"
+    "image/jpeg,image/png,image/tiff,image/webp,"
     "text/csv,text/markdown,text/plain,text/x-markdown"
 )
 LOCAL_APP_ENVIRONMENTS = {"dev", "development", "local"}
@@ -120,6 +121,13 @@ class Settings:
         )
         self.knowledge_import_worker_lock_ttl_seconds = float(
             os.getenv("KNOWLEDGE_IMPORT_WORKER_LOCK_TTL_SECONDS", "300.0"),
+        )
+        self.execution_worker_embedded_enabled = _env_bool(
+            "EXECUTION_WORKER_EMBEDDED_ENABLED",
+            "false",
+        )
+        self.execution_worker_poll_interval_seconds = float(
+            os.getenv("EXECUTION_WORKER_POLL_INTERVAL_SECONDS", "5.0"),
         )
         self.model_gateway_base_url = os.getenv("MODEL_GATEWAY_BASE_URL", "")
         self.model_gateway_api_key = os.getenv("MODEL_GATEWAY_API_KEY", "")

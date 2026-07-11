@@ -520,8 +520,8 @@ STANDARD_PLUGINS = [
         "category": "devops",
         "code": "gitlab",
         "description": (
-            "官方标准 GitLab 插件，用于连接 GitLab API、读取项目、分支、"
-            "提交、MR 和代码质量数据。"
+            "官方标准 GitLab 插件，用于连接 GitLab API、接收 Webhook，并读取或回写"
+            "项目、分支、提交、MR、流水线和代码质量数据。"
         ),
         "id": "plugin_standard_gitlab",
         "is_system": True,
@@ -534,8 +534,8 @@ STANDARD_PLUGINS = [
         "category": "devops",
         "code": "github",
         "description": (
-            "官方标准 GitHub 插件，用于连接 GitHub API、读取仓库、分支、"
-            "提交、PR 和代码质量数据。"
+            "官方标准 GitHub 插件，用于连接 GitHub API、接收 Webhook，并读取或回写"
+            "仓库、分支、提交、PR、Actions 和代码质量数据。"
         ),
         "id": "plugin_standard_github",
         "is_system": True,
@@ -547,7 +547,10 @@ STANDARD_PLUGINS = [
     {
         "category": "devops",
         "code": "jenkins",
-        "description": "官方标准 Jenkins 插件，用于触发参数化发布任务并同步队列、构建和取消状态。",
+        "description": (
+            "官方标准 Jenkins 插件，用于触发参数化发布任务，并通过回调同步队列、构建、"
+            "取消和部署结果。"
+        ),
         "id": "plugin_standard_jenkins",
         "is_system": True,
         "name": "Jenkins",
@@ -572,7 +575,10 @@ STANDARD_PLUGINS = [
     {
         "category": "operations",
         "code": "observability",
-        "description": "官方标准可观测平台插件，用于读取线上日志、错误率、延迟和异常指标。",
+        "description": (
+            "官方标准可观测平台插件，用于接收 Prometheus、OpenTelemetry 或 Sentry 事件，"
+            "并读取线上日志、错误率、延迟和异常指标。"
+        ),
         "id": "plugin_standard_observability",
         "is_system": True,
         "name": "可观测平台",
@@ -628,10 +634,21 @@ STANDARD_PLUGIN_MARKETPLACE_METADATA = {
         "summary": "连接企业邮件网关、SMTP/IMAP/POP3 或邮件 API，用于邮件收取和发送。",
     },
     "github": {
-        "action_templates": ["GitHub 代码巡检", "GitHub PR / 仓库读取"],
+        "action_templates": [
+            "GitHub 代码巡检",
+            "GitHub PR / 仓库读取",
+            "GitHub PR 评论 / Review / 合并回写",
+        ],
         "publisher": "AI Brain 官方",
-        "recommended_scenarios": ["代码仓库质量巡检", "安全告警同步", "PR 上下文读取"],
-        "summary": "连接 GitHub API，读取仓库、分支、PR、代码扫描和质量数据。",
+        "recommended_scenarios": [
+            "代码仓库质量巡检",
+            "Actions 与安全告警实时同步",
+            "PR 上下文读取与治理回写",
+        ],
+        "summary": (
+            "连接 GitHub API 与 Webhook，读取仓库、PR、Actions 和质量数据，并在独立门禁"
+            "通过后受控回写评论、Review 与合并状态。"
+        ),
     },
     "internal_data_source": {
         "action_templates": ["读取内部业务数据"],
@@ -645,22 +662,41 @@ STANDARD_PLUGIN_MARKETPLACE_METADATA = {
         "summary": "只读读取 AI Brain 内部业务数据，作为定时作业和 AI 处理的数据输入。",
     },
     "jenkins": {
-        "action_templates": ["触发参数化部署", "同步构建状态", "取消部署"],
+        "action_templates": ["触发参数化部署", "Webhook 同步构建状态", "取消部署"],
         "publisher": "AI Brain 官方",
-        "recommended_scenarios": ["生产发布", "测试环境部署", "构建状态同步"],
-        "summary": "连接 Jenkins API，触发受控 Job，并同步队列、构建和取消结果。",
+        "recommended_scenarios": ["生产发布", "测试环境部署", "构建状态实时回调"],
+        "summary": "连接 Jenkins API 与 Webhook，触发受控 Job，并同步队列、构建和取消结果。",
     },
     "gitlab": {
-        "action_templates": ["GitLab 代码巡检", "GitLab MR / 项目读取"],
+        "action_templates": [
+            "GitLab 代码巡检",
+            "GitLab MR / 项目读取",
+            "GitLab MR 评论 / Review / 合并回写",
+        ],
         "publisher": "AI Brain 官方",
-        "recommended_scenarios": ["代码仓库质量巡检", "漏洞发现同步", "MR 上下文读取"],
-        "summary": "连接 GitLab API，读取项目、分支、MR、提交和代码质量数据。",
+        "recommended_scenarios": [
+            "代码仓库质量巡检",
+            "Pipeline 与漏洞事件实时同步",
+            "MR 上下文读取与治理回写",
+        ],
+        "summary": (
+            "连接 GitLab API 与 Webhook，读取项目、MR、Pipeline 和质量数据，并在独立门禁"
+            "通过后受控回写评论、Review 与合并状态。"
+        ),
     },
     "observability": {
-        "action_templates": ["线上日志指标查询"],
+        "action_templates": ["线上日志指标查询", "监控与错误事件接入"],
         "publisher": "AI Brain 官方",
-        "recommended_scenarios": ["线上日志异常发现", "错误率突增分析", "生产告警复盘"],
-        "summary": "连接可观测平台，读取线上日志、错误率、延迟和异常指标。",
+        "recommended_scenarios": [
+            "Prometheus 告警接入",
+            "OpenTelemetry 信号接入",
+            "Sentry 错误同步",
+            "生产告警复盘",
+        ],
+        "summary": (
+            "连接 Prometheus、OpenTelemetry 或 Sentry，接收受验签事件并读取线上日志、"
+            "错误率、延迟和异常指标。"
+        ),
     },
 }
 STANDARD_PLUGIN_MARKETPLACE_METADATA.update(_dingtalk_marketplace_metadata())
@@ -731,18 +767,27 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
         "timeout_seconds": 30,
     },
     "github": {
-        "auth_config": {},
+        "auth_config": {
+            "token_ref": "env:GITHUB_TOKEN",
+            "webhook_secret_ref": "env:GITHUB_WEBHOOK_SECRET",
+        },
         "auth_type": "bearer",
         "endpoint_url": "https://api.github.com",
         "environment": "prod",
         "max_retries": 1,
         "name": "生产 GitHub 连接",
         "request_config": {
+            "environment": "prod",
+            "event_types": ["pull_request", "push", "workflow_run"],
             "headers": {
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
+            "product_id": "",
             "query": {},
+            "version_id": "",
+            "webhook_path": "/api/integrations/webhooks/github/{connection_id}",
+            "write_permissions": ["comment", "review", "merge"],
         },
         "status": "active",
         "timeout_seconds": 30,
@@ -770,6 +815,7 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
         "auth_config": {
             "password_ref": "env:JENKINS_API_TOKEN",
             "username": "jenkins-bot",
+            "webhook_secret_ref": "env:JENKINS_WEBHOOK_SECRET",
         },
         "auth_type": "basic",
         "endpoint_url": "https://jenkins.example.com",
@@ -777,20 +823,41 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
         "max_retries": 1,
         "name": "生产 Jenkins 连接",
         "protocol": "http",
-        "request_config": {},
+        "request_config": {
+            "environment": "prod",
+            "event_types": ["build", "deployment"],
+            "product_id": "",
+            "version_id": "",
+            "webhook_path": "/api/integrations/webhooks/jenkins/{connection_id}",
+        },
         "status": "active",
         "timeout_seconds": 30,
     },
     "gitlab": {
         "auth_config": {
             "header_name": "PRIVATE-TOKEN",
+            "secret_ref": "env:GITLAB_TOKEN",
+            "webhook_secret_ref": "env:GITLAB_WEBHOOK_SECRET",
         },
         "auth_type": "api_key_header",
         "endpoint_url": "http://gitlab.local",
         "environment": "prod",
         "max_retries": 1,
         "name": "生产 GitLab 连接",
-        "request_config": {"query": {}},
+        "request_config": {
+            "environment": "prod",
+            "event_types": [
+                "Job Hook",
+                "Merge Request Hook",
+                "Pipeline Hook",
+                "Push Hook",
+            ],
+            "product_id": "",
+            "query": {},
+            "version_id": "",
+            "webhook_path": "/api/integrations/webhooks/gitlab/{connection_id}",
+            "write_permissions": ["comment", "review", "merge"],
+        },
         "status": "active",
         "timeout_seconds": 30,
     },
@@ -798,6 +865,7 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
         "auth_config": {
             "header_name": "Authorization",
             "secret_ref": "vault/observability/api_key",
+            "webhook_secret_ref": "env:OBSERVABILITY_WEBHOOK_SECRET",
         },
         "auth_type": "api_key_header",
         "endpoint_url": "https://logs.example.com/api",
@@ -805,13 +873,20 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
         "max_retries": 1,
         "name": "生产可观测平台连接",
         "request_config": {
+            "environment": "prod",
+            "event_provider": "prometheus",
             "headers": {"Content-Type": "application/json"},
+            "product_id": "",
             "query": {
                 "app": "",
                 "environment": "prod",
                 "service": "",
                 "window_minutes": 30,
             },
+            "version_id": "",
+            "webhook_path": (
+                "/api/integrations/webhooks/{event_provider}/{connection_id}"
+            ),
         },
         "status": "active",
         "timeout_seconds": 30,
@@ -969,6 +1044,67 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                     },
                 ],
             },
+            {
+                "key": "event_governance",
+                "title": "Webhook 与回写治理",
+                "fields": [
+                    {
+                        "description": "仅保存 env: 环境变量引用，用于校验 GitHub Webhook 签名。",
+                        "key": "webhook_secret_ref",
+                        "label": "Webhook 密钥引用",
+                        "path": "auth_config.webhook_secret_ref",
+                        "placeholder": "env:GITHUB_WEBHOOK_SECRET",
+                        "required": True,
+                        "secret": True,
+                        "type": "secret_ref",
+                    },
+                    {
+                        "key": "product_id",
+                        "label": "绑定产品",
+                        "path": "request_config.product_id",
+                        "placeholder": "product_001",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "version_id",
+                        "label": "绑定版本",
+                        "path": "request_config.version_id",
+                        "placeholder": "version_001",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "environment",
+                        "label": "事件环境",
+                        "options": ["dev", "test", "staging", "prod"],
+                        "path": "request_config.environment",
+                        "required": True,
+                        "type": "select",
+                    },
+                    {
+                        "key": "event_types",
+                        "label": "接收事件",
+                        "options": ["pull_request", "push", "workflow_run"],
+                        "path": "request_config.event_types",
+                        "required": True,
+                        "type": "multi_select",
+                    },
+                    {
+                        "description": "合并仍需独立质量门禁通过；此处只声明连接允许的动作。",
+                        "key": "write_permissions",
+                        "label": "回写权限",
+                        "options": [
+                            {"label": "评论", "value": "comment"},
+                            {"label": "Review", "value": "review"},
+                            {"label": "合并", "value": "merge"},
+                        ],
+                        "path": "request_config.write_permissions",
+                        "required": True,
+                        "type": "multi_select",
+                    },
+                ],
+            },
         ],
     },
     "gitlab": {
@@ -994,6 +1130,72 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                         "placeholder": "http://gitlab.local/acme/ai-brain.git",
                         "required": False,
                         "type": "gitlab_project_url",
+                    },
+                ],
+            },
+            {
+                "key": "event_governance",
+                "title": "Webhook 与回写治理",
+                "fields": [
+                    {
+                        "description": "仅保存 env: 环境变量引用，用于校验 GitLab Webhook Token。",
+                        "key": "webhook_secret_ref",
+                        "label": "Webhook 密钥引用",
+                        "path": "auth_config.webhook_secret_ref",
+                        "placeholder": "env:GITLAB_WEBHOOK_SECRET",
+                        "required": True,
+                        "secret": True,
+                        "type": "secret_ref",
+                    },
+                    {
+                        "key": "product_id",
+                        "label": "绑定产品",
+                        "path": "request_config.product_id",
+                        "placeholder": "product_001",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "version_id",
+                        "label": "绑定版本",
+                        "path": "request_config.version_id",
+                        "placeholder": "version_001",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "environment",
+                        "label": "事件环境",
+                        "options": ["dev", "test", "staging", "prod"],
+                        "path": "request_config.environment",
+                        "required": True,
+                        "type": "select",
+                    },
+                    {
+                        "key": "event_types",
+                        "label": "接收事件",
+                        "options": [
+                            "Job Hook",
+                            "Merge Request Hook",
+                            "Pipeline Hook",
+                            "Push Hook",
+                        ],
+                        "path": "request_config.event_types",
+                        "required": True,
+                        "type": "multi_select",
+                    },
+                    {
+                        "description": "合并仍需独立质量门禁通过；此处只声明连接允许的动作。",
+                        "key": "write_permissions",
+                        "label": "回写权限",
+                        "options": [
+                            {"label": "评论", "value": "comment"},
+                            {"label": "Review", "value": "review"},
+                            {"label": "合并", "value": "merge"},
+                        ],
+                        "path": "request_config.write_permissions",
+                        "required": True,
+                        "type": "multi_select",
                     },
                 ],
             },
@@ -1184,8 +1386,106 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                         "secret": True,
                         "type": "secret_ref",
                     },
+                    {
+                        "description": "仅保存 env: 环境变量引用，用于校验 Jenkins 回调签名。",
+                        "key": "webhook_secret_ref",
+                        "label": "Webhook 密钥引用",
+                        "path": "auth_config.webhook_secret_ref",
+                        "placeholder": "env:JENKINS_WEBHOOK_SECRET",
+                        "required": True,
+                        "secret": True,
+                        "type": "secret_ref",
+                    },
                 ],
-            }
+            },
+            {
+                "key": "event_governance",
+                "title": "构建回调范围",
+                "fields": [
+                    {
+                        "key": "product_id",
+                        "label": "绑定产品",
+                        "path": "request_config.product_id",
+                        "placeholder": "product_001",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "version_id",
+                        "label": "绑定版本",
+                        "path": "request_config.version_id",
+                        "placeholder": "version_001",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "environment",
+                        "label": "事件环境",
+                        "options": ["dev", "test", "staging", "prod"],
+                        "path": "request_config.environment",
+                        "required": True,
+                        "type": "select",
+                    },
+                ],
+            },
+        ],
+    },
+    "observability": {
+        "schema_version": "v1",
+        "sections": [
+            {
+                "key": "event_source",
+                "title": "事件来源",
+                "fields": [
+                    {
+                        "description": "每个连接只接收一种协议，便于独立验签、授权和审计。",
+                        "key": "event_provider",
+                        "label": "事件协议",
+                        "options": [
+                            {"label": "Prometheus", "value": "prometheus"},
+                            {"label": "OpenTelemetry", "value": "opentelemetry"},
+                            {"label": "Sentry", "value": "sentry"},
+                        ],
+                        "path": "request_config.event_provider",
+                        "required": True,
+                        "type": "select",
+                    },
+                    {
+                        "description": "仅保存 env: 环境变量引用，用于 HMAC-SHA256 验签。",
+                        "key": "webhook_secret_ref",
+                        "label": "Webhook 密钥引用",
+                        "path": "auth_config.webhook_secret_ref",
+                        "placeholder": "env:OBSERVABILITY_WEBHOOK_SECRET",
+                        "required": True,
+                        "secret": True,
+                        "type": "secret_ref",
+                    },
+                    {
+                        "key": "product_id",
+                        "label": "绑定产品",
+                        "path": "request_config.product_id",
+                        "placeholder": "product_001",
+                        "required": True,
+                        "type": "text",
+                    },
+                    {
+                        "key": "version_id",
+                        "label": "绑定版本",
+                        "path": "request_config.version_id",
+                        "placeholder": "version_001",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "environment",
+                        "label": "事件环境",
+                        "options": ["dev", "test", "staging", "prod"],
+                        "path": "request_config.environment",
+                        "required": True,
+                        "type": "select",
+                    },
+                ],
+            },
         ],
     },
 }

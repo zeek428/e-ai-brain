@@ -6,7 +6,7 @@ from typing import Any
 from app.api.deps import api_error
 
 KNOWLEDGE_QUALITY_EVENT_TYPES = {"citation_click", "feedback", "rag", "search"}
-KNOWLEDGE_FEEDBACK_VALUES = {"incorrect", "not_useful", "partial", "useful"}
+KNOWLEDGE_FEEDBACK_VALUES = {"incorrect", "not_useful", "outdated", "partial", "useful"}
 
 
 def _now_iso() -> str:
@@ -167,7 +167,9 @@ def list_knowledge_quality_events(
         for event in _memory_events(current_store).values()
         if event_type is None or event.get("event_type") == event_type
     ]
-    events.sort(key=lambda event: (event.get("created_at") or "", event.get("id") or ""), reverse=True)
+    events.sort(
+        key=lambda event: (event.get("created_at") or "", event.get("id") or ""), reverse=True
+    )
     return events[:normalized_limit]
 
 
@@ -198,7 +200,9 @@ def knowledge_quality_summary(current_store: Any, *, since_days: int = 30) -> di
         elif event_type == "citation_click":
             citation_click_count += 1
     no_result_count = sum(1 for event in query_events if event.get("no_result"))
-    useful_feedback_count = sum(1 for event in feedback_events if event.get("feedback_value") == "useful")
+    useful_feedback_count = sum(
+        1 for event in feedback_events if event.get("feedback_value") == "useful"
+    )
     negative_feedback_count = sum(
         1 for event in feedback_events if event.get("feedback_value") in {"incorrect", "not_useful"}
     )

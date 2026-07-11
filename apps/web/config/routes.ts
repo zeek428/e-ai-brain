@@ -235,6 +235,12 @@ const routes = [
         component: './SystemSettings',
       },
       {
+        path: '/system/execution-resources',
+        name: '执行资源授权',
+        icon: 'ClusterOutlined',
+        component: './ExecutionResources',
+      },
+      {
         path: '/system/model-gateway',
         name: '模型网关',
         icon: 'ApiOutlined',

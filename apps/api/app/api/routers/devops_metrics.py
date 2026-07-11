@@ -15,12 +15,14 @@ from app.services.operational_deployments import (
     create_deployment_request_response,
     create_deployment_scheme_response,
     delete_deployment_scheme_response,
+    get_deployment_request_detail_response,
     get_deployment_run_logs_response,
     get_deployment_scheme_response,
     list_deployment_jenkins_connections_response,
     list_deployment_requests_response,
     list_deployment_runner_targets_response,
     list_deployment_schemes_response,
+    rollback_deployment_request_response,
     start_deployment_request_response,
     sync_jenkins_deployment_response,
     update_deployment_scheme_response,
@@ -88,6 +90,7 @@ class DeploymentRequestCreate(BaseModel):
     release_branch: str | None = None
     commit_sha: str | None = None
     artifact_version: str | None = None
+    artifact_digest: str | None = None
     release_readiness_task_id: str | None = None
     rollback_plan: str | None = None
     risk_level: str = "medium"
@@ -106,6 +109,12 @@ class DeploymentSchemeCreate(BaseModel):
     jenkins_job_name: str | None = None
     timeout_seconds: int = Field(default=1800, ge=30, le=86400)
     config: dict[str, Any] = Field(default_factory=dict)
+    rollout_strategy: str = "all_at_once"
+    wave_config: dict[str, Any] = Field(default_factory=dict)
+    preflight_config: dict[str, Any] = Field(default_factory=dict)
+    health_check_config: dict[str, Any] = Field(default_factory=dict)
+    rollback_config: dict[str, Any] = Field(default_factory=dict)
+    window_enforcement: str | None = None
     is_default: bool = False
     status: str = "active"
 
@@ -122,6 +131,12 @@ class DeploymentSchemeUpdate(BaseModel):
     jenkins_job_name: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=30, le=86400)
     config: dict[str, Any] | None = None
+    rollout_strategy: str | None = None
+    wave_config: dict[str, Any] | None = None
+    preflight_config: dict[str, Any] | None = None
+    health_check_config: dict[str, Any] | None = None
+    rollback_config: dict[str, Any] | None = None
+    window_enforcement: str | None = None
     is_default: bool | None = None
     status: str | None = None
 
@@ -145,6 +160,10 @@ class DeploymentCompleteRequest(BaseModel):
 
 class DeploymentCancelRequest(BaseModel):
     reason: str | None = None
+
+
+class DeploymentRollbackRequest(BaseModel):
+    reason: str
 
 
 class OnlineLogMetricRequest(BaseModel):
@@ -266,15 +285,39 @@ def deployment_requests(
     version_id: str | None = None,
     status: str | None = None,
     environment: str | None = None,
+    title: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    sort_by: str = "updated_at",
+    sort_order: str = "desc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     result = list_deployment_requests_response(
         current_store=store(request),
         environment=environment,
+        page=page,
+        page_size=page_size,
         product_id=product_id,
+        sort_by=sort_by,
+        sort_order=sort_order,
         status=status,
+        title=title,
         user=user,
         version_id=version_id,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/devops/deployments/{deployment_request_id}")
+def deployment_request_detail(
+    deployment_request_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = get_deployment_request_detail_response(
+        current_store=store(request),
+        deployment_request_id=deployment_request_id,
+        user=user,
     )
     return envelope(result, get_trace_id(request))
 
@@ -286,13 +329,23 @@ def deployment_schemes(
     environment: str | None = None,
     deployment_method: str | None = None,
     status: str | None = None,
+    name: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str = "updated_at",
+    sort_order: str = "desc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     result = list_deployment_schemes_response(
         current_store=store(request),
         deployment_method=deployment_method,
         environment=environment,
+        name=name,
+        page=page,
+        page_size=page_size,
         product_id=product_id,
+        sort_by=sort_by,
+        sort_order=sort_order,
         status=status,
         user=user,
     )
@@ -302,13 +355,17 @@ def deployment_schemes(
 @router.get("/api/devops/deployment-runner-targets")
 def deployment_runner_targets(
     request: Request,
+    product_id: str | None = None,
+    environment: str | None = None,
     runner_id: str | None = None,
     method: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     result = list_deployment_runner_targets_response(
         current_store=store(request),
+        environment=environment,
         method=method,
+        product_id=product_id,
         runner_id=runner_id,
         user=user,
     )
@@ -318,10 +375,14 @@ def deployment_runner_targets(
 @router.get("/api/devops/deployment-jenkins-connections")
 def deployment_jenkins_connections(
     request: Request,
+    product_id: str | None = None,
+    environment: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     result = list_deployment_jenkins_connections_response(
         current_store=store(request),
+        environment=environment,
+        product_id=product_id,
         user=user,
     )
     return envelope(result, get_trace_id(request))
@@ -439,6 +500,22 @@ def cancel_deployment_request(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     deployment = cancel_deployment_request_response(
+        current_store=store(request),
+        deployment_request_id=deployment_request_id,
+        payload=payload,
+        user=user,
+    )
+    return envelope(deployment, get_trace_id(request))
+
+
+@router.post("/api/devops/deployments/{deployment_request_id}/rollback")
+def rollback_deployment_request(
+    deployment_request_id: str,
+    payload: DeploymentRollbackRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    deployment = rollback_deployment_request_response(
         current_store=store(request),
         deployment_request_id=deployment_request_id,
         payload=payload,

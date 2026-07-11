@@ -27,19 +27,24 @@ import {
   batchMoveKnowledgeDocuments,
   cancelKnowledgeImportJob,
   createKnowledgeFolder,
+  createKnowledgeProcessingProfile,
   createKnowledgeSpace,
   createManagementKnowledgeDocument,
   deleteManagementKnowledgeDocument,
   fetchKnowledgeChunks,
+  fetchKnowledgeCitationFeedback,
   fetchKnowledgeChunkSets,
   fetchKnowledgeDeposits,
   fetchKnowledgeDocumentAssets,
+  fetchKnowledgeDocumentVersions,
   fetchKnowledgeFolders,
   fetchKnowledgeIndexHealth,
   fetchKnowledgeImportJobs,
   fetchKnowledgeImportWorkerStatus,
+  fetchKnowledgeProcessingProfiles,
   fetchKnowledgeSearchResults,
   fetchKnowledgeSpaces,
+  fetchKnowledgeStaleness,
   fetchLifecycleFullChain,
   fetchManagementKnowledgeList,
   fetchManagementRequirementList,
@@ -51,16 +56,21 @@ import {
   retryKnowledgeImportJob,
   retryKnowledgeDocumentIndex,
   runKnowledgeImportJob,
+  scanKnowledgeStaleness,
   updateManagementKnowledgeDocument,
   updateKnowledgeFolder,
+  updateKnowledgeProcessingProfile,
   uploadKnowledgeDocumentFile,
   type KnowledgeChunkRecord,
+  type KnowledgeCitationFeedbackRecord,
   type KnowledgeChunkSetRecord,
   type KnowledgeFolderRecord,
+  type KnowledgeDocumentVersionRecord,
   type KnowledgeAssetRecord,
   type KnowledgeImportJobRecord,
   type KnowledgeImportWorkerStatusRecord,
-  type KnowledgeListQuery,
+  type KnowledgeProcessingProfileRecord,
+  type KnowledgeStalenessRecord,
   type KnowledgeQualityFeedbackValue,
   type KnowledgeDepositRecord,
   type KnowledgeRagAnswerRecord,
@@ -76,7 +86,28 @@ import {
   type KnowledgeIndexHealthState,
 } from './components/KnowledgeIndexHealthPanel';
 import { KnowledgePageDialogs } from './components/KnowledgePageDialogs';
+import {
+  KnowledgeProcessingGovernancePanel,
+  type KnowledgeProcessingProfileFormValues,
+} from './components/KnowledgeProcessingGovernancePanel';
 import { KnowledgeWorkbenchPanels } from './components/KnowledgeWorkbenchPanels';
+import {
+  assetTypeLabels,
+  buildKnowledgeListQuery,
+  depositStatusLabels,
+  formatAssetSize,
+  hasFilterValues,
+  importJobStatusLabels,
+  INITIAL_STALENESS_SUMMARY,
+  isNoisyKnowledgeSpace,
+  KNOWLEDGE_ACTION_COLUMN_WIDTH,
+  KNOWLEDGE_TABLE_SCROLL_X,
+  modalityLabels,
+  normalizeAdvancedFilters,
+  normalizeFilterText,
+  removeAdvancedFilters,
+  statusLabels,
+} from './knowledgePageHelpers';
 import type {
   KnowledgeAdvancedFilterValues,
   KnowledgeBatchMoveFormValues,
@@ -88,114 +119,6 @@ import type {
   KnowledgeWorkbenchTab,
   RejectDepositFormValues,
 } from './types';
-
-const statusLabels: Record<KnowledgeRecord['status'], { color: string; label: string }> = {
-  archived: { color: 'default', label: '已归档' },
-  importing: { color: 'blue', label: '索引中' },
-  indexed: { color: 'green', label: '已索引' },
-  index_failed: { color: 'red', label: '索引失败' },
-  pending_index: { color: 'gold', label: '待索引' },
-  text_indexed: { color: 'cyan', label: '文本索引' },
-  vector_indexed: { color: 'green', label: '向量索引' },
-};
-
-const depositStatusLabels: Record<string, { color: string; label: string }> = {
-  approved: { color: 'green', label: '已入库' },
-  pending: { color: 'gold', label: '待审核' },
-  rejected: { color: 'red', label: '已拒绝' },
-};
-
-const importJobStatusLabels: Record<string, { color: string; label: string }> = {
-  cancelled: { color: 'default', label: '已取消' },
-  completed: { color: 'green', label: '已完成' },
-  failed: { color: 'red', label: '失败' },
-  parsing: { color: 'blue', label: '解析中' },
-  queued: { color: 'default', label: '排队中' },
-  uploaded: { color: 'default', label: '已上传' },
-};
-
-const assetTypeLabels: Record<string, string> = {
-  ocr_json: 'OCR 结果',
-  original: '原始文件',
-  parsed_markdown: '解析文本',
-  table_json: '表格数据',
-};
-
-const KNOWLEDGE_TABLE_SCROLL_X = 1520;
-const KNOWLEDGE_ACTION_COLUMN_WIDTH = 220;
-
-function formatAssetSize(sizeBytes: number) {
-  if (sizeBytes < 1024) {
-    return `${sizeBytes} B`;
-  }
-  if (sizeBytes < 1024 * 1024) {
-    return `${(sizeBytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-const knowledgeSortFieldMap: Record<string, string> = {
-  documentType: 'doc_type',
-  id: 'id',
-  ownerRole: 'permission_roles',
-  status: 'index_status',
-  title: 'title',
-  updatedAt: 'updated_at',
-};
-
-function normalizeFilterText(value: unknown) {
-  return String(value ?? '').trim() || undefined;
-}
-
-function hasFilterValues(filters: Record<string, unknown>) {
-  return Object.values(filters).some((value) => normalizeFilterText(value));
-}
-
-function normalizeAdvancedFilters(values: KnowledgeAdvancedFilterValues) {
-  return {
-    documentType: normalizeFilterText(values.documentType),
-    folderId: normalizeFilterText(values.folderId),
-    ownerRole: normalizeFilterText(values.ownerRole),
-  };
-}
-
-function removeAdvancedFilters(filters: ManagementListQuery['filters']) {
-  const restFilters = { ...filters };
-  delete restFilters.documentType;
-  delete restFilters.folderId;
-  delete restFilters.ownerRole;
-  return restFilters;
-}
-
-function isNoisyKnowledgeSpace(space: KnowledgeSpaceRecord) {
-  const normalized = `${space.code} ${space.name} ${space.description ?? ''}`.toLowerCase();
-  return [
-    'full-chain',
-    'smoke',
-    'test',
-    'tmp',
-    'temp',
-    'worker',
-    'parser',
-    '验证',
-    '测试',
-  ].some((keyword) => normalized.includes(keyword));
-}
-
-function buildKnowledgeListQuery(query: ManagementListQuery): KnowledgeListQuery {
-  return {
-    documentType: normalizeFilterText(query.filters.documentType),
-    folderId: normalizeFilterText(query.filters.folderId),
-    keyword: normalizeFilterText(query.filters.title),
-    knowledgeSpaceId: normalizeFilterText(query.filters.knowledgeSpaceId),
-    ownerRole: normalizeFilterText(query.filters.ownerRole),
-    page: query.page,
-    pageSize: query.pageSize,
-    sortField: query.sortField ? knowledgeSortFieldMap[query.sortField] ?? query.sortField : undefined,
-    sortOrder: query.sortOrder,
-    status: normalizeFilterText(query.filters.status),
-  };
-}
 
 export default function KnowledgePage() {
   const advancedFilterSubmitRef = useRef<HTMLButtonElement>(null);
@@ -215,7 +138,15 @@ export default function KnowledgePage() {
   const [importWorkerStatus, setImportWorkerStatus] =
     useState<KnowledgeImportWorkerStatusRecord | null>(null);
   const [importWorkerStatusLoading, setImportWorkerStatusLoading] = useState(false);
+  const [processingProfiles, setProcessingProfiles] = useState<KnowledgeProcessingProfileRecord[]>([]);
+  const [processingGovernanceLoading, setProcessingGovernanceLoading] = useState(false);
+  const [stalenessScanning, setStalenessScanning] = useState(false);
+  const [stalenessItems, setStalenessItems] = useState<KnowledgeStalenessRecord[]>([]);
+  const [stalenessSummary, setStalenessSummary] = useState(INITIAL_STALENESS_SUMMARY);
   const [chunkRows, setChunkRows] = useState<KnowledgeChunkRecord[]>([]);
+  const [detailVersionRows, setDetailVersionRows] = useState<KnowledgeDocumentVersionRecord[]>([]);
+  const [detailFeedbackRows, setDetailFeedbackRows] = useState<KnowledgeCitationFeedbackRecord[]>([]);
+  const [detailGovernanceLoading, setDetailGovernanceLoading] = useState(false);
   const [chunkSetRows, setChunkSetRows] = useState<KnowledgeChunkSetRecord[]>([]);
   const [chunksLoading, setChunksLoading] = useState(false);
   const [chunkSetsLoading, setChunkSetsLoading] = useState(false);
@@ -295,6 +226,15 @@ export default function KnowledgePage() {
   const folderOptions = useMemo(
     () => folders.map((folder) => ({ label: folder.path, value: folder.id })),
     [folders],
+  );
+  const processingProfileOptions = useMemo(
+    () => processingProfiles
+      .filter((profile) => profile.status === 'active')
+      .map((profile) => ({
+        label: `${profile.name} (${profile.providerType})`,
+        value: profile.id,
+      })),
+    [processingProfiles],
   );
   const spaceNameById = useMemo(
     () => new Map(spaces.map((space) => [space.id, space.name])),
@@ -540,6 +480,70 @@ export default function KnowledgePage() {
     }
   }, []);
 
+  const reloadProcessingProfiles = useCallback(async () => {
+    const profiles = await fetchKnowledgeProcessingProfiles();
+    setProcessingProfiles(profiles);
+    return profiles;
+  }, []);
+
+  const reloadProcessingGovernance = useCallback(async () => {
+    setProcessingGovernanceLoading(true);
+    try {
+      const [profiles, staleness] = await Promise.all([
+        fetchKnowledgeProcessingProfiles(),
+        fetchKnowledgeStaleness(selectedSpaceId),
+      ]);
+      setProcessingProfiles(profiles);
+      setStalenessItems(staleness.items);
+      setStalenessSummary(staleness.summary);
+    } catch (governanceError) {
+      message.error(formatMutationError(governanceError));
+    } finally {
+      setProcessingGovernanceLoading(false);
+    }
+  }, [selectedSpaceId]);
+
+  const handleCreateProcessingProfile = useCallback(async (
+    values: KnowledgeProcessingProfileFormValues,
+  ) => {
+    await createKnowledgeProcessingProfile({
+      capabilities: values.capabilities,
+      credential_ref: values.credential_ref?.trim() || undefined,
+      name: values.name.trim(),
+      provider_config: {
+        ...(values.endpoint_url?.trim() ? { endpoint_url: values.endpoint_url.trim() } : {}),
+        ...(values.stale_after_days ? { stale_after_days: values.stale_after_days } : {}),
+      },
+      provider_type: values.provider_type,
+    });
+    message.success('知识处理配置已创建');
+    await reloadProcessingGovernance();
+  }, [reloadProcessingGovernance]);
+
+  const handleToggleProcessingProfile = useCallback(async (
+    profile: KnowledgeProcessingProfileRecord,
+    enabled: boolean,
+  ) => {
+    await updateKnowledgeProcessingProfile(profile.id, {
+      status: enabled ? 'active' : 'disabled',
+    });
+    message.success(enabled ? '处理配置已启用' : '处理配置已停用');
+    await reloadProcessingGovernance();
+  }, [reloadProcessingGovernance]);
+
+  const handleScanStaleness = useCallback(async () => {
+    setStalenessScanning(true);
+    try {
+      const result = await scanKnowledgeStaleness();
+      message.success(`过期扫描完成，发现 ${result.expiredCount} 个过期版本`);
+      await reloadProcessingGovernance();
+    } catch (scanError) {
+      message.error(formatMutationError(scanError));
+    } finally {
+      setStalenessScanning(false);
+    }
+  }, [reloadProcessingGovernance]);
+
   const openImportJobsModal = useCallback(() => {
     const spaceId = selectedSpaceId ?? spaces[0]?.id;
     setActiveWorkbenchTab('imports');
@@ -565,7 +569,17 @@ export default function KnowledgePage() {
     if (nextTab === 'deposits') {
       void reloadDeposits();
     }
-  }, [reloadDeposits, reloadImportJobs, reloadImportWorkerStatus, selectedSpaceId, spaces]);
+    if (nextTab === 'processing') {
+      void reloadProcessingGovernance();
+    }
+  }, [
+    reloadDeposits,
+    reloadImportJobs,
+    reloadImportWorkerStatus,
+    reloadProcessingGovernance,
+    selectedSpaceId,
+    spaces,
+  ]);
 
   const selectWorkbenchSpace = useCallback((spaceId: string) => {
     setSelectedSpaceId(spaceId);
@@ -594,6 +608,24 @@ export default function KnowledgePage() {
 
   const openDocumentDetail = useCallback((row: KnowledgeRecord) => {
     setDetailDocument(row);
+    setDetailVersionRows([]);
+    setDetailFeedbackRows([]);
+  }, []);
+
+  const loadDocumentGovernance = useCallback(async (row: KnowledgeRecord) => {
+    setDetailGovernanceLoading(true);
+    try {
+      const [versions, feedback] = await Promise.all([
+        fetchKnowledgeDocumentVersions(row.id),
+        fetchKnowledgeCitationFeedback(row.id),
+      ]);
+      setDetailVersionRows(versions);
+      setDetailFeedbackRows(feedback);
+    } catch (governanceError) {
+      message.error(formatMutationError(governanceError));
+    } finally {
+      setDetailGovernanceLoading(false);
+    }
   }, []);
 
   const openEditModal = useCallback((row: KnowledgeRecord) => {
@@ -707,8 +739,8 @@ export default function KnowledgePage() {
   const handleReparseDocument = useCallback(async (row: KnowledgeRecord) => {
     try {
       await reparseKnowledgeDocument(row.id, {
-        chunk_strategy: 'parent_child',
-        parser_engine: 'markdown',
+        chunk_strategy: row.chunkStrategy ?? 'parent_child',
+        parser_engine: row.parserEngine ?? 'markdown',
       });
       message.success('文档已重新入队解析');
       await Promise.all([reloadImportJobs(selectedSpaceId ?? spaces[0]?.id), reload()]);
@@ -791,6 +823,8 @@ export default function KnowledgePage() {
           folderId: values.folder_id,
           knowledgeSpaceId: values.knowledge_space_id,
           parserEngine: values.parser_engine,
+          processingProfileId: values.processing_profile_id,
+          expiresInDays: values.expires_in_days,
           tags: splitCommaText(values.tags),
           title: values.title.trim(),
         });
@@ -960,19 +994,28 @@ export default function KnowledgePage() {
       }
       setRagFeedbackSubmittingValue(feedbackValue);
       try {
+        const primaryCitation = ragAnswer?.citations[0];
         await recordKnowledgeQualityFeedback({
+          citationChunkId: primaryCitation?.chunkId,
+          citationDocumentId: primaryCitation?.documentId,
           feedbackValue,
           relatedEventId,
         });
         setRagFeedbackValue(feedbackValue);
-        message.success(feedbackValue === 'useful' ? '已记录有用反馈' : '已记录无用反馈');
+        message.success(
+          feedbackValue === 'useful'
+            ? '已记录有用反馈'
+            : feedbackValue === 'outdated'
+              ? '已标记引用内容过期'
+              : '已记录无用反馈',
+        );
       } catch (feedbackError) {
         message.error(formatMutationError(feedbackError));
       } finally {
         setRagFeedbackSubmittingValue(undefined);
       }
     },
-    [ragAnswer?.metrics?.qualityEventId],
+    [ragAnswer],
   );
 
   const handleRecordCitationClick = useCallback(
@@ -1046,6 +1089,12 @@ export default function KnowledgePage() {
       mimeType: file.type || 'application/octet-stream',
       sizeBytes: file.size,
     });
+    if (file.type.startsWith('image/')) {
+      documentFormRef.current?.setFieldValue('parser_engine', 'multimodal');
+      void reloadProcessingProfiles().catch((profileError) => {
+        message.error(formatMutationError(profileError));
+      });
+    }
     if (!documentFormRef.current?.getFieldValue('title')) {
       const title = file.name.replace(/\.[^.]+$/, '');
       documentFormRef.current?.setFieldValue('title', title);
@@ -1065,6 +1114,17 @@ export default function KnowledgePage() {
         render: (_, row) => assetTypeLabels[row.assetType] ?? row.assetType,
       },
       {
+        dataIndex: 'documentVersionId',
+        title: '文档版本',
+        render: (_, row) => row.documentVersionId ?? '-',
+      },
+      {
+        dataIndex: 'pageNumber',
+        title: '页码',
+        render: (_, row) => row.pageNumber ?? '-',
+        width: 80,
+      },
+      {
         dataIndex: 'mimeType',
         title: 'MIME',
         render: (_, row) => row.mimeType ?? '-',
@@ -1078,6 +1138,11 @@ export default function KnowledgePage() {
         dataIndex: 'storageProvider',
         title: '存储',
         render: (_, row) => row.storageProvider ?? '-',
+      },
+      {
+        key: 'provider',
+        title: '解析 Provider',
+        render: (_, row) => String(row.providerMetadata?.model ?? row.providerMetadata?.provider_type ?? '-'),
       },
     ],
     [],
@@ -1222,6 +1287,17 @@ export default function KnowledgePage() {
           }
           return '普通块';
         },
+      },
+      {
+        dataIndex: 'modality',
+        title: '模态',
+        render: (_, row) => modalityLabels[row.modality ?? 'text'] ?? row.modality ?? '文本',
+        width: 90,
+      },
+      {
+        dataIndex: 'documentVersionId',
+        title: '文档版本',
+        render: (_, row) => row.documentVersionId ?? '-',
       },
       {
         dataIndex: 'heading',
@@ -1500,6 +1576,20 @@ export default function KnowledgePage() {
     />
   );
 
+  const knowledgeProcessingGovernancePanel = (
+    <KnowledgeProcessingGovernancePanel
+      loading={processingGovernanceLoading}
+      onCreateProfile={handleCreateProcessingProfile}
+      onRefresh={() => void reloadProcessingGovernance()}
+      onScanStaleness={handleScanStaleness}
+      onToggleProfile={handleToggleProcessingProfile}
+      profiles={processingProfiles}
+      scanning={stalenessScanning}
+      stalenessItems={stalenessItems}
+      stalenessSummary={stalenessSummary}
+    />
+  );
+
   const knowledgeBeforeTable = (
     <KnowledgeWorkbenchPanels
       activeWorkbenchTab={activeWorkbenchTab}
@@ -1516,6 +1606,7 @@ export default function KnowledgePage() {
       importWorkerStatusLoading={importWorkerStatusLoading}
       knowledgeHealthPanel={knowledgeHealthPanel}
       knowledgeHealthState={knowledgeHealthState}
+      processingGovernancePanel={knowledgeProcessingGovernancePanel}
       listRows={listState.rows}
       listTotal={listState.total}
       onCreateFolder={() => setIsFolderModalOpen(true)}
@@ -1640,6 +1731,9 @@ export default function KnowledgePage() {
         clearAdvancedFilters={clearAdvancedFilters}
         closeFullChainModal={closeFullChainModal}
         detailDocument={detailDocument}
+        detailFeedbackRows={detailFeedbackRows}
+        detailGovernanceLoading={detailGovernanceLoading}
+        detailVersionRows={detailVersionRows}
         documentFormRef={documentFormRef}
         documentInitialValues={documentInitialValues}
         documentSubmitRef={documentSubmitRef}
@@ -1681,6 +1775,9 @@ export default function KnowledgePage() {
         onEditDocument={openEditModal}
         onOpenAssetsModal={openAssetsModal}
         onOpenChunksModal={openChunksModal}
+        onLoadProcessingProfiles={reloadProcessingProfiles}
+        onLoadDocumentGovernance={loadDocumentGovernance}
+        processingProfileOptions={processingProfileOptions}
         rejectDepositSubmitRef={rejectDepositSubmitRef}
         rejectingDeposit={rejectingDeposit}
         roleOptions={roleOptions}

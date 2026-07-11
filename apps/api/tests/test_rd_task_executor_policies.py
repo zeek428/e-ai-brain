@@ -238,6 +238,17 @@ def test_rd_task_executor_policy_includes_product_knowledge_references_for_runne
             "title": "研发大脑项目编码规范",
         }
     ]
+    context_manifest_id = claimed_task["context_manifest_id"]
+    assert claimed_task["input_payload"]["context_manifest_id"] == context_manifest_id
+    assert claimed_task["request_config"]["context_manifest_id"] == context_manifest_id
+
+    detail = client.get(f"/api/ai-tasks/{created['id']}", headers=headers).json()["data"]
+    manifest = detail["execution_context_manifest"]
+    assert manifest["id"] == context_manifest_id
+    assert manifest["subject_id"] == created["id"]
+    assert manifest["knowledge_refs"][0]["document_id"] == "knowledge_project_doc"
+    assert manifest["knowledge_refs"][0]["retrieval_reason"] == "产品与版本权限范围匹配"
+    assert manifest["retrieval_summary"]["selected_knowledge_count"] == 1
 
 
 def test_executor_review_decision_exposes_workspace_isolation_action_to_runner():
@@ -412,7 +423,7 @@ def test_executor_review_decision_exposes_workspace_isolation_action_to_runner()
     )
 
 
-def test_executor_policy_auto_commit_requests_workspace_merge_without_pending_review():
+def test_executor_policy_auto_commit_waits_for_independent_quality_gate_before_merge():
     headers = auth_headers()
     requirement, technical_solution_task_id = create_confirmed_technical_solution_task(headers)
     runner = create_codex_runner(headers)
@@ -481,6 +492,72 @@ def test_executor_policy_auto_commit_requests_workspace_merge_without_pending_re
 
     detail = client.get(f"/api/ai-tasks/{created['id']}", headers=headers).json()["data"]
     assert detail["input"]["executor"]["executor_policy_id"] == policy_response.json()["data"]["id"]
+    assert detail["status"] == "running"
+    assert detail["current_step"] == "quality_gate_running"
+    assert detail["pending_review"] is None
+
+    before_gate = client.get(
+        f"/api/system/ai-executor-tasks/{runner_task_id}/runner-status?runner_id={runner['id']}",
+        headers={"X-Runner-Token": "runner-secret"},
+    ).json()["data"]["task"]
+    assert before_gate.get("workspace_isolation", {}).get("decision") is None
+
+    gate_claim = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "codex", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert gate_claim.status_code == 200
+    quality_task = gate_claim.json()["data"]["task"]
+    assert quality_task["task_kind"] == "quality_gate"
+    assert quality_task["quality_gate_run_id"] == detail["quality_gate"]["id"]
+    gate_completed = client.post(
+        f"/api/system/ai-executor-tasks/{quality_task['id']}/complete",
+        json={
+            "result_json": {
+                "changed_file_count": 2,
+                "changed_files": [
+                    "apps/web/src/pages/Login/index.tsx",
+                    "apps/web/tests/AuthFlow.test.tsx",
+                ],
+                "changed_lines": 18,
+                "checks": [
+                    {
+                        "evidence_ref": "platform://quality/unit-test/001",
+                        "independent": True,
+                        "source": "platform_verifier",
+                        "status": "passed",
+                        "summary": "19 tests passed",
+                        "type": "unit_test",
+                    },
+                    {
+                        "evidence_ref": "platform://quality/type-check/001",
+                        "independent": True,
+                        "source": "platform_verifier",
+                        "status": "passed",
+                        "summary": "TypeScript typecheck passed",
+                        "type": "type_check",
+                    },
+                    {
+                        "evidence_ref": "platform://quality/secret-scan/001",
+                        "independent": True,
+                        "source": "platform_scan",
+                        "status": "passed",
+                        "summary": "No credentials detected",
+                        "type": "secret_scan",
+                    },
+                ],
+                "risk_findings": [],
+                "summary": "Independent verification passed",
+            },
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert gate_completed.status_code == 200
+
+    detail = client.get(f"/api/ai-tasks/{created['id']}", headers=headers).json()["data"]
     assert detail["status"] == "completed"
     assert detail["current_step"] == "complete_archive"
     assert detail["pending_review"] is None
@@ -489,6 +566,7 @@ def test_executor_policy_auto_commit_requests_workspace_merge_without_pending_re
     assert detail["knowledge_deposits"]["items"][0]["content"] == (
         "开发计划已生成并通过自动提交策略"
     )
+    assert detail["quality_gate"]["status"] == "passed"
 
     runner_status = client.get(
         f"/api/system/ai-executor-tasks/{runner_task_id}/runner-status?runner_id={runner['id']}",
@@ -497,6 +575,280 @@ def test_executor_policy_auto_commit_requests_workspace_merge_without_pending_re
     assert runner_status["workspace_isolation"]["decision"]["action"] == "merge"
     assert runner_status["workspace_isolation"]["decision"]["decided_by"] == "system"
     assert runner_status["workspace_isolation"]["decision"]["status"] == "requested"
+
+
+def test_autonomous_loop_retries_failed_gate_with_versioned_context_then_merges():
+    headers = auth_headers()
+    requirement, technical_solution_task_id = create_confirmed_technical_solution_task(headers)
+    runner = create_codex_runner(headers)
+    policy_response = client.post(
+        "/api/delivery/rd-task-executor-policies",
+        json={
+            "autonomy_mode": "autonomous_loop",
+            "code_change_review_mode": "auto_commit",
+            "executor_type": "codex",
+            "instruction_template": "处理任务 {{task_id}}。",
+            "max_duration_seconds": 1800,
+            "max_iterations": 2,
+            "name": "Codex 两轮自治修复",
+            "output_contract": {"summary": "string"},
+            "priority": 10,
+            "product_id": requirement["product_id"],
+            "runner_id": runner["id"],
+            "status": "active",
+            "task_type": "development_planning",
+            "timeout_seconds": 600,
+            "token_budget": 100000,
+            "workspace_root": "/Users/zeek/source/e-ai-brain",
+        },
+        headers=headers,
+    )
+    assert policy_response.status_code == 200
+    policy = policy_response.json()["data"]
+    assert policy["autonomy_mode"] == "autonomous_loop"
+    assert policy["max_iterations"] == 2
+
+    created = client.post(
+        "/api/ai-tasks",
+        json={
+            "input": {"technical_solution_task_id": technical_solution_task_id},
+            "requirement_id": requirement["id"],
+            "task_type": "development_planning",
+            "title": "开发计划：自治循环验证",
+        },
+        headers=headers,
+    ).json()["data"]
+    first_start = client.post(
+        f"/api/ai-tasks/{created['id']}/start",
+        headers=headers,
+    ).json()["data"]
+    first_coding_id = first_start["executor_task_id"]
+    first_claim = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "codex", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret"},
+    ).json()["data"]["task"]
+    assert first_claim["id"] == first_coding_id
+    assert first_claim["agent_loop_run_id"]
+    assert "Agent 自治循环第 1 轮" in first_claim["instruction"]
+    client.post(
+        f"/api/system/ai-executor-tasks/{first_coding_id}/complete",
+        json={
+            "result_json": {
+                "agent_iteration": {
+                    "change_summary": "第一轮实现",
+                    "plan": {"steps": ["修改", "测试"]},
+                    "test_evidence": [],
+                },
+                "summary": "第一轮完成",
+                "workspace_isolation": {
+                    "base_workspace_root": "/Users/zeek/source/e-ai-brain",
+                    "branch_name": "ai-brain/agent-loop-task",
+                    "mode": "git_worktree",
+                    "status": "pending_review",
+                    "worktree_path": (
+                        "/Users/zeek/source/e-ai-brain/.ai-brain-worktrees/"
+                        "agent-loop-task"
+                    ),
+                },
+            },
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    first_gate = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "codex", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret"},
+    ).json()["data"]["task"]
+    assert first_gate["task_kind"] == "quality_gate"
+    failed_checks = [
+        {
+            "evidence_ref": f"platform://gate/1/{check_type}",
+            "source": "platform_scan" if check_type == "secret_scan" else "platform_verifier",
+            "status": "failed" if check_type == "unit_test" else "passed",
+            "summary": "first gate",
+            "type": check_type,
+        }
+        for check_type in ("unit_test", "type_check", "secret_scan")
+    ]
+    client.post(
+        f"/api/system/ai-executor-tasks/{first_gate['id']}/complete",
+        json={
+            "result_json": {
+                "changed_files": ["apps/web/src/pages/Login/index.tsx"],
+                "changed_lines": 10,
+                "checks": failed_checks,
+                "risk_findings": [],
+                "summary": "单元测试失败",
+            },
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+
+    retry_detail = client.get(
+        f"/api/ai-tasks/{created['id']}",
+        headers=headers,
+    ).json()["data"]
+    assert retry_detail["status"] == "running"
+    assert retry_detail["current_step"] == "agent_loop_retrying"
+    assert retry_detail["pending_review"] is None
+    assert retry_detail["agent_loop"]["current_iteration"] == 2
+    assert retry_detail["agent_loop"]["status"] == "executing"
+    assert len(retry_detail["agent_loop"]["iterations"]) == 2
+    assert retry_detail["execution_context_manifest"]["version"] == 2
+    assert retry_detail["execution_context_manifest"]["iteration_context"]["iteration"] == 2
+
+    retry_coding = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "codex", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret"},
+    ).json()["data"]["task"]
+    assert retry_coding["task_kind"] == "coding"
+    assert retry_coding["request_config"]["reuse_workspace"] is True
+    assert "第 2 轮" in retry_coding["instruction"]
+    client.post(
+        f"/api/system/ai-executor-tasks/{retry_coding['id']}/complete",
+        json={
+            "result_json": {
+                "agent_iteration": {
+                    "change_summary": "修复失败测试",
+                    "plan": {"steps": ["分析失败", "修复", "重测"]},
+                    "test_evidence": [{"command": "npm test", "status": "passed"}],
+                },
+                "summary": "第二轮修复完成",
+                "workspace_isolation": {
+                    "base_workspace_root": "/Users/zeek/source/e-ai-brain",
+                    "branch_name": "ai-brain/agent-loop-task",
+                    "mode": "git_worktree",
+                    "status": "pending_review",
+                    "worktree_path": (
+                        "/Users/zeek/source/e-ai-brain/.ai-brain-worktrees/"
+                        "agent-loop-task"
+                    ),
+                },
+            },
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    second_gate = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "codex", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret"},
+    ).json()["data"]["task"]
+    passed_checks = [
+        {
+            "evidence_ref": f"platform://gate/2/{check_type}",
+            "source": "platform_scan" if check_type == "secret_scan" else "platform_verifier",
+            "status": "passed",
+            "summary": "second gate",
+            "type": check_type,
+        }
+        for check_type in ("unit_test", "type_check", "secret_scan")
+    ]
+    client.post(
+        f"/api/system/ai-executor-tasks/{second_gate['id']}/complete",
+        json={
+            "result_json": {
+                "changed_files": ["apps/web/src/pages/Login/index.tsx"],
+                "changed_lines": 12,
+                "checks": passed_checks,
+                "risk_findings": [],
+                "summary": "第二轮独立验证通过",
+            },
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+
+    completed_detail = client.get(
+        f"/api/ai-tasks/{created['id']}",
+        headers=headers,
+    ).json()["data"]
+    assert completed_detail["status"] == "completed"
+    assert completed_detail["agent_loop"]["status"] == "succeeded"
+    assert completed_detail["agent_loop"]["iterations"][0]["status"] == "failed"
+    assert completed_detail["agent_loop"]["iterations"][1]["status"] == "passed"
+    retry_runner_status = client.get(
+        f"/api/system/ai-executor-tasks/{retry_coding['id']}/runner-status?runner_id={runner['id']}",
+        headers={"X-Runner-Token": "runner-secret"},
+    ).json()["data"]["task"]
+    assert retry_runner_status["workspace_isolation"]["decision"]["action"] == "merge"
+
+
+def test_autonomous_loop_can_be_stopped_for_human_takeover_without_discarding_workspace():
+    headers = auth_headers()
+    requirement, technical_solution_task_id = create_confirmed_technical_solution_task(headers)
+    runner = create_codex_runner(headers)
+    policy_response = client.post(
+        "/api/delivery/rd-task-executor-policies",
+        json={
+            "autonomy_mode": "autonomous_loop",
+            "code_change_review_mode": "auto_commit",
+            "executor_type": "codex",
+            "instruction_template": "处理任务 {{task_id}}。",
+            "max_duration_seconds": 1800,
+            "max_iterations": 3,
+            "name": "可人工接管的自治任务",
+            "output_contract": {"summary": "string"},
+            "priority": 10,
+            "product_id": requirement["product_id"],
+            "runner_id": runner["id"],
+            "status": "active",
+            "task_type": "development_planning",
+            "timeout_seconds": 600,
+            "workspace_root": "/Users/zeek/source/e-ai-brain",
+        },
+        headers=headers,
+    )
+    assert policy_response.status_code == 200
+    created = client.post(
+        "/api/ai-tasks",
+        json={
+            "input": {"technical_solution_task_id": technical_solution_task_id},
+            "requirement_id": requirement["id"],
+            "task_type": "development_planning",
+            "title": "开发计划：人工接管验证",
+        },
+        headers=headers,
+    ).json()["data"]
+    started = client.post(
+        f"/api/ai-tasks/{created['id']}/start",
+        headers=headers,
+    ).json()["data"]
+
+    takeover = client.post(
+        f"/api/ai-tasks/{created['id']}/agent-loop/takeover",
+        json={"reason": "需要人工核对验收标准"},
+        headers=headers,
+    )
+
+    assert takeover.status_code == 200
+    assert takeover.json()["data"]["status"] == "waiting_review"
+    detail = client.get(f"/api/ai-tasks/{created['id']}", headers=headers).json()["data"]
+    assert detail["status"] == "waiting_review"
+    assert detail["current_step"] == "agent_loop_human_takeover"
+    assert detail["agent_loop"]["status"] == "waiting_review"
+    assert detail["agent_loop"]["stop_reason"] == "human_takeover_requested"
+    assert detail["pending_review"]["stage"] == "agent_loop_takeover"
+    assert detail["pending_review"]["content"]["takeover_reason"] == (
+        "需要人工核对验收标准"
+    )
+    runner_tasks = client.get(
+        f"/api/system/ai-executor-tasks?ai_task_id={created['id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    runner_task = next(
+        item for item in runner_tasks if item["id"] == started["executor_task_id"]
+    )
+    assert runner_task["status"] == "cancelled"
+    assert runner_task.get("workspace_isolation", {}).get("decision") is None
 
 
 def test_task_detail_extracts_readable_executor_output_summary():

@@ -64,6 +64,7 @@ __all__ = [
     "CollectorRunRepository",
     "DashboardRepository",
     "DeploymentRepository",
+    "ExecutionGovernanceRepository",
     "GitlabDailyCodeMetricRepository",
     "GitlabReviewRepository",
     "IterationPlanningRepository",
@@ -618,6 +619,21 @@ class DeploymentRepository(Protocol):
         version_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    def page_deployment_requests(
+        self,
+        *,
+        environment: str | None,
+        page: int,
+        page_size: int,
+        product_id: str | None,
+        product_scope_ids: list[str] | None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None,
+        title: str | None,
+        version_id: str | None,
+    ) -> dict[str, Any]: ...
+
     def list_deployment_runs(
         self,
         *,
@@ -659,6 +675,192 @@ class DeploymentRepository(Protocol):
         record: dict[str, Any],
         *,
         audit_events: list[dict[str, Any]] | None = None,
+    ) -> None: ...
+
+
+class ExecutionGovernanceRepository(Protocol):
+    def list_quality_gate_policies(
+        self,
+        *,
+        phase: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        status: str | None = None,
+        task_type: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def get_quality_gate_policy(self, policy_id: str) -> dict[str, Any] | None: ...
+
+    def list_execution_context_manifests(
+        self,
+        *,
+        product_scope_ids: list[str] | None = None,
+        subject_id: str | None = None,
+        subject_type: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_quality_gate_runs(
+        self,
+        *,
+        phase: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        subject_id: str | None = None,
+        subject_type: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_quality_gate_checks(
+        self,
+        quality_gate_run_id: str,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_agent_loop_runs(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_agent_loop_iterations(
+        self,
+        loop_run_id: str,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_execution_resource_grants(
+        self,
+        *,
+        environment: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        resource_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def claim_execution_outbox_events(
+        self,
+        *,
+        lease_seconds: int,
+        limit: int,
+        worker_id: str,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_execution_outbox_events(
+        self,
+        *,
+        aggregate_id: str | None = None,
+        aggregate_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_deployment_run_steps(
+        self,
+        *,
+        deployment_run_id: str,
+    ) -> list[dict[str, Any]]: ...
+
+    def claim_external_event_inbox(
+        self,
+        *,
+        lease_seconds: int,
+        limit: int,
+        worker_id: str,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_external_event_inbox(
+        self,
+        *,
+        delivery_id: str | None = None,
+        provider: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def save_quality_gate_policy_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+        expected_version: int | None = None,
+    ) -> None: ...
+
+    def save_execution_context_manifest_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
+    def save_execution_resource_grant_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+        expected_version: int | None = None,
+    ) -> None: ...
+
+    def save_external_event_inbox_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def save_quality_gate_bundle_record(
+        self,
+        *,
+        audit_events: list[dict[str, Any]] | None,
+        checks: list[dict[str, Any]],
+        run: dict[str, Any],
+    ) -> None: ...
+
+    def save_agent_loop_bundle_record(
+        self,
+        *,
+        audit_events: list[dict[str, Any]] | None,
+        iterations: list[dict[str, Any]],
+        run: dict[str, Any],
+    ) -> None: ...
+
+    def save_deployment_dispatch_result_transaction(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        outbox_event: dict[str, Any],
+        run: dict[str, Any],
+    ) -> None: ...
+
+    def save_execution_outbox_event_record(
+        self,
+        event: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def save_deployment_run_steps_records(
+        self,
+        steps: list[dict[str, Any]],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None: ...
+
+    def create_deployment_dispatch_transaction(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        deployment: dict[str, Any],
+        outbox_event: dict[str, Any],
+        requirements: list[dict[str, Any]],
+        run: dict[str, Any],
+        steps: list[dict[str, Any]],
+    ) -> None: ...
+
+    def save_deployment_dispatch_failure_transaction(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        deployment: dict[str, Any],
+        outbox_event: dict[str, Any],
+        requirements: list[dict[str, Any]],
+        run: dict[str, Any],
+        steps: list[dict[str, Any]],
     ) -> None: ...
 
 

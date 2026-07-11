@@ -24,6 +24,15 @@ WORKFLOW_RUNTIME_FIELDS = [
     "human_reviews",
 ]
 KNOWLEDGE_FIELDS = [
+    "knowledge_spaces",
+    "knowledge_space_members",
+    "knowledge_folders",
+    "knowledge_assets",
+    "knowledge_import_jobs",
+    "knowledge_chunk_sets",
+    "knowledge_processing_profiles",
+    "knowledge_document_versions",
+    "knowledge_citation_feedback",
     "knowledge_documents",
     "knowledge_chunks",
     "knowledge_deposits",

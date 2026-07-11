@@ -134,7 +134,9 @@ export type TaskBatchRetryResult = {
 };
 
 export type TaskCenterTaskDetailRecord = TaskCenterTaskRecord & {
+  agentLoop?: Record<string, unknown>;
   currentStep: string;
+  executionContextManifest?: Record<string, unknown>;
   graphRunIds: string[];
   inputJson: unknown;
   moduleName: string;
@@ -142,6 +144,7 @@ export type TaskCenterTaskDetailRecord = TaskCenterTaskRecord & {
   outputSummary: string;
   pendingReviewId?: string;
   productName: string;
+  qualityGate?: Record<string, unknown>;
   requirementTitle: string;
   versionName: string;
 };
@@ -191,6 +194,8 @@ export type TaskListItem = {
 };
 
 type TaskDetailItem = TaskListItem & {
+  agent_loop?: unknown;
+  execution_context_manifest?: unknown;
   graph_runs?: unknown[];
   input?: unknown;
   input_json?: unknown;
@@ -200,6 +205,7 @@ type TaskDetailItem = TaskListItem & {
   output_summary?: unknown;
   pending_review?: unknown;
   product_context?: unknown;
+  quality_gate?: unknown;
   requirement_snapshot?: unknown;
   version_id?: string;
 };
@@ -440,9 +446,11 @@ export async function fetchTaskCenterTaskDetail(
     : [];
 
   return {
+    agentLoop: normalizeObjectRecord(detail.agent_loop),
     createdAt: formatListDate(detail.created_at ?? detail.updated_at),
     createdAtValue: detail.created_at ?? detail.updated_at,
     currentStep: formatUnknownValue(detail.current_step),
+    executionContextManifest: normalizeObjectRecord(detail.execution_context_manifest),
     graphRunIds,
     id: detail.id,
     inputJson: detail.input ?? detail.input_json ?? {},
@@ -458,6 +466,7 @@ export async function fetchTaskCenterTaskDetail(
     product: formatUnknownValue(product.name ?? product.code ?? detail.product_id),
     productId: detail.product_id,
     productName: formatUnknownValue(product.name ?? product.code ?? detail.product_id),
+    qualityGate: normalizeObjectRecord(detail.quality_gate),
     requirementId: detail.requirement_id,
     requirementTitle: formatUnknownValue(
       requirementSnapshot.title ?? requirementSnapshot.summary ?? detail.requirement_id,
@@ -466,6 +475,22 @@ export async function fetchTaskCenterTaskDetail(
     type: detail.task_type ?? '-',
     versionName: formatUnknownValue(version.name ?? version.code ?? detail.version_id),
   };
+}
+
+export async function requestTaskAgentLoopTakeover(taskId: string, reason?: string) {
+  const token = requireAccessToken();
+  return apiRequest<{
+    agent_loop: Record<string, unknown>;
+    cancelled_runner_task_ids: string[];
+    current_step: string;
+    review_id: string;
+    status: string;
+    task_id: string;
+  }>(`/api/ai-tasks/${taskId}/agent-loop/takeover`, {
+    body: { reason: reason || null },
+    method: 'POST',
+    token,
+  });
 }
 
 export async function startTaskCenterTask(taskId: string) {

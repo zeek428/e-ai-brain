@@ -90,7 +90,9 @@ def test_system_alert_incident_can_be_acknowledged_closed_and_subscribed():
 
     health_after_subscription_update = client.get("/api/system/health", headers=headers)
     assert health_after_subscription_update.status_code == 200
-    subscriptions = health_after_subscription_update.json()["data"]["operations"]["alert_center"]["subscriptions"]
+    subscriptions = health_after_subscription_update.json()["data"]["operations"]["alert_center"][
+        "subscriptions"
+    ]
     assert subscriptions[0]["enabled"] is False
 
 
@@ -197,7 +199,10 @@ def test_system_alert_notification_dispatch_marks_in_app_sent():
 
     health = client.get("/api/system/health", headers=headers)
     assert health.status_code == 200
-    assert health.json()["data"]["operations"]["alert_center"]["summary"]["pending_notification_count"] >= 1
+    assert (
+        health.json()["data"]["operations"]["alert_center"]["summary"]["pending_notification_count"]
+        >= 1
+    )
 
     dispatched = client.post(
         "/api/system/alerts/notifications/dispatch",

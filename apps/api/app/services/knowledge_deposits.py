@@ -221,6 +221,18 @@ def knowledge_write_store(current_store: Any) -> Any:
             knowledge_payload,
             "knowledge_chunk_sets",
         )
+        source_store.knowledge_processing_profiles = payload_collection(
+            knowledge_payload,
+            "knowledge_processing_profiles",
+        )
+        source_store.knowledge_document_versions = payload_collection(
+            knowledge_payload,
+            "knowledge_document_versions",
+        )
+        source_store.knowledge_citation_feedback = payload_collection(
+            knowledge_payload,
+            "knowledge_citation_feedback",
+        )
     load_model_gateway = getattr(repository, "load_model_gateway", None)
     if callable(load_model_gateway):
         model_gateway_payload = load_model_gateway() or {}

@@ -249,7 +249,7 @@ export const helpGroups: HelpGroup[] = [
       },
       {
         key: 'plugins',
-        keywords: ['插件', 'MCP', '钉钉', '诊断', '授权'],
+        keywords: ['插件', 'MCP', '钉钉', 'Webhook', '外部事件', '诊断', '授权'],
         role: '系统管理员或插件管理员',
         route: '/tasks/plugins',
         screenshots: [
@@ -266,6 +266,8 @@ export const helpGroups: HelpGroup[] = [
             heading: '使用建议',
             body: [
               '新增插件后先完成授权配置，再执行工具发现和健康诊断。',
+              'GitHub、GitLab、Jenkins 和可观测性连接可配置 Webhook Secret 引用、允许事件和产品上下文；外部事件先验签、幂等入库，再由后台 Worker 处理。',
+              '外部事件页只展示脱敏 Delivery 上下文，失败或死信事件可以人工重试。',
               '高风险动作需要明确业务场景、输入字段和审计摘要，避免把密钥或完整请求写入日志。',
             ],
           },
@@ -311,13 +313,13 @@ export const helpGroups: HelpGroup[] = [
       },
       {
         key: 'rd-tasks',
-        keywords: ['研发任务', 'AI Task', '确认', 'Runner', '执行器'],
+        keywords: ['研发任务', 'AI Task', 'Agent 自治循环', '质量门禁', '执行上下文', '确认', 'Runner', '执行器'],
         role: '研发、评审者、管理员',
         route: '/delivery/rd-tasks',
         screenshots: [
           {
             alt: '研发任务页面截图',
-            caption: '研发任务页展示 AI Task 状态、人工确认点和执行结果。',
+            caption: '研发任务页展示 AI Task 状态、自治循环、质量门禁、执行上下文和人工确认点。',
             src: '/help/screenshots/help-rd-tasks.png',
           },
         ],
@@ -328,15 +330,16 @@ export const helpGroups: HelpGroup[] = [
             heading: '状态理解',
             body: [
               'running 表示 AI 正在执行，waiting_review 表示等待人工确认，completed 表示流程完成。',
-              '任务详情中应优先查看输出摘要、人工确认点、执行诊断和关联知识引用。',
-              '确认通过后才会进入后续写回或合入动作，拒绝会保留审计记录。',
+              '任务详情中可查看自治轮次、独立质量门禁和执行上下文清单；编码 Runner 返回成功不等于门禁通过。',
+              '自治循环会把失败证据带入下一轮，预算耗尽、安全阻断或点击人工接管后停止继续派发。',
+              '人工确认模式需确认后合入；自动提交也必须通过独立门禁，高风险变更仍转人工确认。',
             ],
           },
         ],
       },
       {
         key: 'rd-executor-policies',
-        keywords: ['研发执行器策略', 'Codex', 'Claude', '自动提交', '人工确认'],
+        keywords: ['研发执行器策略', 'Codex', 'Claude', 'Agent 自治循环', '质量门禁', '自动提交', '人工确认'],
         role: '管理员或研发治理负责人',
         route: '/delivery/rd-executor-policies',
         screenshots: [
@@ -346,14 +349,15 @@ export const helpGroups: HelpGroup[] = [
             src: '/help/screenshots/help-rd-executor-policies.png',
           },
         ],
-        summary: '配置不同任务类型如何选择 AI 执行器、知识上下文和代码提交方式。',
+        summary: '配置任务如何选择 Runner、自治预算、独立质量门禁和代码提交方式。',
         title: '研发执行器策略',
         sections: [
           {
             heading: '配置重点',
             body: [
               '策略通常按任务类型、产品和优先级匹配，决定使用哪个 Runner 和是否自动启动。',
-              '代码提交方式建议默认人工确认；自动提交只适合边界清晰、测试充分的任务。',
+              '自治模式配置最大轮次、总时长和可选 Token/费用预算，门禁失败且预算允许时才进入下一轮。',
+              '代码提交方式建议默认人工确认；自动提交仍需平台独立门禁通过，迁移、高风险和受保护目录不会自动合入。',
             ],
           },
         ],
@@ -462,13 +466,13 @@ export const helpGroups: HelpGroup[] = [
       },
       {
         key: 'knowledge',
-        keywords: ['知识中心', '空间', '目录', '上传', 'Hybrid Search', 'RAG'],
+        keywords: ['知识中心', '空间', '目录', '上传', 'OCR', '多模态', '文档版本', '过期治理', 'Hybrid Search', 'RAG'],
         role: '知识管理员、研发、产品；viewer 按授权只读',
         route: '/assets/knowledge',
         screenshots: [
           {
             alt: '知识中心页面截图',
-            caption: '知识中心工作台覆盖空间目录、文档库、检索和 RAG 问答。',
+            caption: '知识中心工作台覆盖空间目录、版本化解析、多模态治理、检索和 RAG 问答。',
             src: '/help/screenshots/help-knowledge.png',
           },
         ],
@@ -481,13 +485,14 @@ export const helpGroups: HelpGroup[] = [
               '空间和目录用于组织知识归属，新文档和沉淀入库都必须选择知识空间。',
               '文档库用于上传、筛选、查看索引状态和打开详情。',
               '知识问答会基于 Hybrid Search 召回内容，并展示引用片段。',
+              '多模态治理维护 OCR/版面/表格处理 Profile，并扫描临近过期、已过期或用户标记过期的版本。',
             ],
           },
           {
             heading: '上传注意事项',
             body: [
-              'PDF、文本和常见文档需要通过文件校验后才会进入索引流程。',
-              '上传失败时先查看文件大小、类型、空间归属和导入任务状态。',
+              '图片或需要 OCR 的文档需选择多模态解析 Profile；Provider 凭据只允许使用 env 引用，不在平台保存明文。',
+              '新版本解析成功后才替换当前 active 版本，失败版本不会让旧知识立即不可检索。',
             ],
           },
         ],
@@ -524,13 +529,13 @@ export const helpGroups: HelpGroup[] = [
       },
       {
         key: 'deployments',
-        keywords: ['运维部署', '部署单', '部署方案', 'SSH', 'Docker', 'Jenkins', '上线', '回滚'],
+        keywords: ['运维部署', '部署单', '部署方案', 'SSH', 'Docker', 'Jenkins', '灰度', '蓝绿', '健康检查', '上线', '回滚'],
         role: '产品、研发、测试、发布运维或管理员',
         route: '/governance/deployments',
         screenshots: [
           {
             alt: '运维部署页面截图',
-            caption: '运维部署页集中管理部署单、部署方案、执行状态和统一日志。',
+            caption: '运维部署页集中管理部署单、发布波次、健康检查、回滚和统一审计证据。',
             src: '/help/screenshots/help-deployments.png',
           },
         ],
@@ -541,9 +546,11 @@ export const helpGroups: HelpGroup[] = [
             heading: '部署流程',
             body: [
               '先在“部署方案”按产品和环境配置执行方式，再从测试完成或待发布需求发起部署单。',
+              '方案可选择全量、灰度、分批或蓝绿发布，并配置严格部署窗口、健康检查和真实回滚动作。',
+              'Runner Target 和 Jenkins Connection 必须先按产品、环境授权；未授权资源不会进入候选。',
               '人工部署由负责人登记结果；SSH 和 Docker 通过具备部署能力的本地 Runner 执行；Jenkins 通过集成连接触发并同步状态。',
               '部署单保存创建时的方案快照，Runner 的主机、私钥和本地目录等配置不会上传到平台。',
-              '执行期间可查看统一日志；自动部署取消后会先进入取消中，收到外部终态后再完成取消。',
+              '部署详情可查看预检、质量门禁、每波运行、步骤证据、健康检查、回滚、派发和审计；自动部署取消后会先进入取消中，收到外部终态后再完成取消。',
               '部署失败或回滚会把需求退回待发布，并生成部署失败来源的 Bug。',
               '只读用户可以查看授权产品的部署证据；创建、执行、取消和方案维护按独立权限显示。',
             ],
@@ -709,6 +716,32 @@ export const helpGroups: HelpGroup[] = [
             body: [
               '先处理红色异常，再处理橙色或黄色待完善项。',
               '出现登录、插件、邮件或 AI 任务失败时，优先查看该页的最近错误和修复建议，再下钻到执行诊断、插件管理、系统设置或模型网关。',
+            ],
+          },
+        ],
+      },
+      {
+        key: 'execution-resources',
+        keywords: ['执行资源授权', 'Runner Target', 'Jenkins', '产品范围', '部署环境'],
+        related: ['deployments', 'system-health'],
+        role: '系统管理员；发布负责人按产品只读',
+        route: '/system/execution-resources',
+        screenshots: [
+          {
+            alt: '执行资源授权页面截图',
+            caption: '执行资源授权页按产品、环境和资源类型维护 Runner Target 与 Jenkins Connection 的可用范围。',
+            src: '/help/screenshots/help-execution-resources.png',
+          },
+        ],
+        summary: '把 Runner Target 或 Jenkins Connection 授权给指定产品和环境。',
+        title: '执行资源授权',
+        sections: [
+          {
+            heading: '授权边界',
+            body: [
+              '系统管理员选择产品、环境和资源类型后建立授权；Runner Target 同时固定 Runner 与目标编码。',
+              '产品发布负责人只能在部署方案中看到当前产品、当前环境已授权且就绪的资源。',
+              '授权记录不保存主机、私钥、密码或命令；停用授权会阻止新的方案绑定和部署启动，但保留历史证据。',
             ],
           },
         ],

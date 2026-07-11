@@ -53,6 +53,16 @@ from app.services.knowledge_management import (
     upload_knowledge_document_bytes_result,
     upload_knowledge_document_result,
 )
+from app.services.knowledge_multimodal_governance import (
+    create_processing_profile_result,
+    list_citation_feedback_result,
+    list_document_versions_result,
+    list_processing_profiles_result,
+    list_staleness_result,
+    record_citation_feedback_result,
+    scan_staleness_result,
+    update_processing_profile_result,
+)
 from app.services.knowledge_quality import (
     knowledge_quality_metrics_response,
     record_knowledge_quality_event,
@@ -171,6 +181,9 @@ class KnowledgeDocumentUploadRequest(BaseModel):
     doc_type: str = "manual"
     parser_engine: str | None = None
     chunk_strategy: str | None = None
+    processing_profile_id: str | None = None
+    product_id: str | None = None
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
     tags: list[str] = Field(default_factory=list)
 
 
@@ -184,6 +197,25 @@ class KnowledgeUploadPresignRequest(BaseModel):
 class KnowledgeDocumentReparseRequest(BaseModel):
     parser_engine: str | None = None
     chunk_strategy: str | None = None
+    processing_profile_id: str | None = None
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
+
+
+class KnowledgeProcessingProfileRequest(BaseModel):
+    name: str
+    product_id: str | None = None
+    provider_type: str
+    provider_config: dict[str, Any] = Field(default_factory=dict)
+    credential_ref: str | None = None
+    capabilities: list[str] = Field(default_factory=list)
+
+
+class KnowledgeProcessingProfilePatchRequest(BaseModel):
+    name: str | None = None
+    provider_config: dict[str, Any] | None = None
+    credential_ref: str | None = None
+    capabilities: list[str] | None = None
+    status: str | None = None
 
 
 class KnowledgeDocumentsBatchMoveRequest(BaseModel):
@@ -272,6 +304,92 @@ def list_knowledge_spaces(
         ),
         get_trace_id(request),
     )
+
+
+@router.get("/api/knowledge/processing-profiles")
+def list_knowledge_processing_profiles(
+    request: Request,
+    product_id: str | None = None,
+    status: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_knowledge_manage(user)
+    result = list_processing_profiles_result(
+        current_store=knowledge_write_store(store(request)),
+        product_id=product_id,
+        status=status,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/knowledge/processing-profiles")
+def create_knowledge_processing_profile(
+    request: Request,
+    payload: KnowledgeProcessingProfileRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_knowledge_manage(user)
+    result = create_processing_profile_result(
+        capabilities=payload.capabilities,
+        credential_ref=payload.credential_ref,
+        current_store=knowledge_write_store(store(request)),
+        name=payload.name,
+        product_id=payload.product_id,
+        provider_config=payload.provider_config,
+        provider_type=payload.provider_type,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.patch("/api/knowledge/processing-profiles/{profile_id}")
+def update_knowledge_processing_profile(
+    profile_id: str,
+    request: Request,
+    payload: KnowledgeProcessingProfilePatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_knowledge_manage(user)
+    result = update_processing_profile_result(
+        capabilities=payload.capabilities,
+        credential_ref=payload.credential_ref,
+        credential_ref_set="credential_ref" in payload.model_fields_set,
+        current_store=knowledge_write_store(store(request)),
+        name=payload.name,
+        profile_id=profile_id,
+        provider_config=payload.provider_config,
+        status=payload.status,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/knowledge/staleness")
+def list_knowledge_staleness(
+    request: Request,
+    knowledge_space_id: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = list_staleness_result(
+        current_store=knowledge_write_store(store(request)),
+        knowledge_space_id=knowledge_space_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/knowledge/staleness/scan")
+def scan_knowledge_staleness(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_knowledge_manage(user)
+    result = scan_staleness_result(
+        current_store=knowledge_write_store(store(request)),
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
 
 
 @router.post("/api/knowledge/spaces")
@@ -375,6 +493,9 @@ def upload_knowledge_document(
         mime_type=payload.mime_type,
         parser_engine=payload.parser_engine,
         chunk_strategy=payload.chunk_strategy,
+        processing_profile_id=payload.processing_profile_id,
+        product_id=payload.product_id,
+        expires_in_days=payload.expires_in_days,
         tags=payload.tags,
         title=payload.title,
         user=user,
@@ -397,6 +518,9 @@ async def upload_knowledge_document_file(
     doc_type: Annotated[str, Form()] = "manual",
     parser_engine: Annotated[str | None, Form()] = None,
     chunk_strategy: Annotated[str | None, Form()] = None,
+    processing_profile_id: Annotated[str | None, Form()] = None,
+    product_id: Annotated[str | None, Form()] = None,
+    expires_in_days: Annotated[int | None, Form()] = None,
     tags: Annotated[str | None, Form()] = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
@@ -412,6 +536,9 @@ async def upload_knowledge_document_file(
         mime_type=file.content_type or "application/octet-stream",
         parser_engine=parser_engine,
         chunk_strategy=chunk_strategy,
+        processing_profile_id=processing_profile_id,
+        product_id=product_id,
+        expires_in_days=expires_in_days,
         tags=_parse_form_tags(tags),
         title=title,
         user=user,
@@ -448,6 +575,34 @@ def list_knowledge_document_assets(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     result = list_knowledge_document_assets_result(
+        current_store=knowledge_write_store(store(request)),
+        document_id=document_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/knowledge/documents/{document_id}/versions")
+def list_knowledge_document_versions(
+    document_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = list_document_versions_result(
+        current_store=knowledge_write_store(store(request)),
+        document_id=document_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/knowledge/documents/{document_id}/citation-feedback")
+def list_knowledge_document_citation_feedback(
+    document_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = list_citation_feedback_result(
         current_store=knowledge_write_store(store(request)),
         document_id=document_id,
         user=user,
@@ -604,6 +759,8 @@ def reparse_knowledge_document(
         chunk_strategy=payload.chunk_strategy,
         document_id=document_id,
         parser_engine=payload.parser_engine,
+        processing_profile_id=payload.processing_profile_id,
+        expires_in_days=payload.expires_in_days,
         user=user,
     )
     enqueue_knowledge_import_job(
@@ -767,8 +924,9 @@ def create_knowledge_quality_feedback(
     payload: KnowledgeQualityFeedbackRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    current_store = knowledge_write_store(store(request))
     event = record_knowledge_quality_event(
-        store(request),
+        current_store,
         citation_chunk_id=payload.citation_chunk_id,
         citation_document_id=payload.citation_document_id,
         event_type="feedback",
@@ -778,6 +936,21 @@ def create_knowledge_quality_feedback(
         trace_id=get_trace_id(request),
         user=user,
     )
+    if payload.citation_document_id:
+        citation_feedback = record_citation_feedback_result(
+            chunk_id=payload.citation_chunk_id,
+            comment=payload.feedback_comment,
+            current_store=current_store,
+            document_id=payload.citation_document_id,
+            feedback_value=payload.feedback_value,
+            related_event_id=payload.related_event_id,
+            user=user,
+        )
+        event = {
+            **event,
+            "citation_feedback_id": citation_feedback["id"],
+            "document_version_id": citation_feedback.get("document_version_id"),
+        }
     return envelope(event, get_trace_id(request))
 
 

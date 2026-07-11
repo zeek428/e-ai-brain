@@ -316,7 +316,9 @@ class DevopsWriteRepository:
                   artifact_version, release_readiness_task_id, rollback_plan, risk_level,
                   gate_summary, deployment_scheme_id, deployment_method, executor_channel,
                   scheme_snapshot, assigned_ops_user, approved_by, started_at, finished_at,
-                  failure_reason, created_by, created_at, updated_at
+                  failure_reason, created_by, created_at, updated_at,
+                  window_enforcement, current_wave, total_waves, quality_gate_run_id,
+                  artifact_digest
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
@@ -324,7 +326,8 @@ class DevopsWriteRepository:
                   %s, %s, %s, %s,
                   %s::jsonb, %s, %s, %s,
                   %s::jsonb, %s, %s, %s::timestamptz, %s::timestamptz,
-                  %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                  %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
+                  %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   product_id = EXCLUDED.product_id,
@@ -350,6 +353,11 @@ class DevopsWriteRepository:
                   started_at = EXCLUDED.started_at,
                   finished_at = EXCLUDED.finished_at,
                   failure_reason = EXCLUDED.failure_reason,
+                  window_enforcement = EXCLUDED.window_enforcement,
+                  current_wave = EXCLUDED.current_wave,
+                  total_waves = EXCLUDED.total_waves,
+                  quality_gate_run_id = EXCLUDED.quality_gate_run_id,
+                  artifact_digest = EXCLUDED.artifact_digest,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -380,6 +388,11 @@ class DevopsWriteRepository:
                     deployment_request["created_by"],
                     created_at,
                     updated_at,
+                    deployment_request.get("window_enforcement", "warn"),
+                    int(deployment_request.get("current_wave", 0)),
+                    int(deployment_request.get("total_waves", 1)),
+                    deployment_request.get("quality_gate_run_id"),
+                    deployment_request.get("artifact_digest"),
                 ),
             )
             cursor.execute(
@@ -423,14 +436,18 @@ class DevopsWriteRepository:
                   id, product_id, code, name, environment, deployment_method,
                   executor_channel, runner_id, target_code, jenkins_connection_id,
                   jenkins_job_name, timeout_seconds, config_json, is_default,
-                  status, version, created_by, created_at, updated_at
+                  status, version, created_by, created_at, updated_at,
+                  rollout_strategy, wave_config, preflight_config,
+                  health_check_config, rollback_config, window_enforcement
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s,
                   %s, %s, %s::jsonb, %s,
                   %s, %s, %s, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()),
+                  %s, %s::jsonb, %s::jsonb,
+                  %s::jsonb, %s::jsonb, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   product_id = EXCLUDED.product_id,
@@ -448,6 +465,12 @@ class DevopsWriteRepository:
                   is_default = EXCLUDED.is_default,
                   status = EXCLUDED.status,
                   version = EXCLUDED.version,
+                  rollout_strategy = EXCLUDED.rollout_strategy,
+                  wave_config = EXCLUDED.wave_config,
+                  preflight_config = EXCLUDED.preflight_config,
+                  health_check_config = EXCLUDED.health_check_config,
+                  rollback_config = EXCLUDED.rollback_config,
+                  window_enforcement = EXCLUDED.window_enforcement,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -470,6 +493,12 @@ class DevopsWriteRepository:
                     scheme.get("created_by"),
                     created_at,
                     updated_at,
+                    scheme.get("rollout_strategy", "all_at_once"),
+                    json.dumps(scheme.get("wave_config", {}), ensure_ascii=False),
+                    json.dumps(scheme.get("preflight_config", {}), ensure_ascii=False),
+                    json.dumps(scheme.get("health_check_config", {}), ensure_ascii=False),
+                    json.dumps(scheme.get("rollback_config", {}), ensure_ascii=False),
+                    scheme.get("window_enforcement", "warn"),
                 ),
             )
 
@@ -490,7 +519,9 @@ class DevopsWriteRepository:
                   external_queue_url, external_build_url, execution_snapshot,
                   logs, idempotency_key, next_sync_at, sync_attempts,
                   sync_lease_owner, sync_lease_until, started_at, finished_at,
-                  failure_reason, created_by, created_at, updated_at
+                  failure_reason, created_by, created_at, updated_at,
+                  operation, wave_number, wave_total, health_status,
+                  rollback_run_id, quality_gate_run_id
                 )
                 VALUES (
                   %s, %s, %s, %s,
@@ -499,7 +530,9 @@ class DevopsWriteRepository:
                   %s, %s, %s::jsonb,
                   %s::jsonb, %s, %s::timestamptz, %s,
                   %s, %s::timestamptz, %s::timestamptz, %s::timestamptz,
-                  %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                  %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
+                  %s, %s, %s, %s,
+                  %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   deployment_request_id = EXCLUDED.deployment_request_id,
@@ -524,6 +557,12 @@ class DevopsWriteRepository:
                   started_at = EXCLUDED.started_at,
                   finished_at = EXCLUDED.finished_at,
                   failure_reason = EXCLUDED.failure_reason,
+                  operation = EXCLUDED.operation,
+                  wave_number = EXCLUDED.wave_number,
+                  wave_total = EXCLUDED.wave_total,
+                  health_status = EXCLUDED.health_status,
+                  rollback_run_id = EXCLUDED.rollback_run_id,
+                  quality_gate_run_id = EXCLUDED.quality_gate_run_id,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -553,6 +592,12 @@ class DevopsWriteRepository:
                     deployment_run["created_by"],
                     created_at,
                     updated_at,
+                    deployment_run.get("operation", "deploy"),
+                    int(deployment_run.get("wave_number", 1)),
+                    int(deployment_run.get("wave_total", 1)),
+                    deployment_run.get("health_status", "pending"),
+                    deployment_run.get("rollback_run_id"),
+                    deployment_run.get("quality_gate_run_id"),
                 ),
             )
 

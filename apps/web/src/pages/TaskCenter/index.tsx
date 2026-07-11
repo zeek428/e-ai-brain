@@ -54,6 +54,7 @@ import {
   getStoredCurrentUser,
   previewCodeReviewPullRequest,
   rejectTaskCenterReview,
+  requestTaskAgentLoopTakeover,
   requestTaskCenterReviewMoreInfo,
   snapshotCodeReviewPullRequest,
   type CodeReviewReportRecord,
@@ -139,6 +140,7 @@ export default function TaskCenterPage() {
   const codeReviewSourceLabel =
     selectedCodeReviewRepository?.provider === 'github' ? 'GitHub PR' : 'GitLab MR';
   const [taskDetailDialog, setTaskDetailDialog] = useState<TaskDetailDialogState>();
+  const [agentTakeoverLoading, setAgentTakeoverLoading] = useState(false);
   const [actionDialog, setActionDialog] = useState<{
     task: TaskCenterTaskRecord;
   }>();
@@ -777,6 +779,27 @@ export default function TaskCenterPage() {
     }
   }, []);
 
+  const handleRequestAgentTakeover = useCallback(async () => {
+    const task = taskDetailDialog?.task;
+    if (!task) {
+      return;
+    }
+    setAgentTakeoverLoading(true);
+    try {
+      await requestTaskAgentLoopTakeover(task.id, '用户从任务详情请求人工接管');
+      const detail = await fetchTaskCenterTaskDetail(task.id);
+      setTaskDetailDialog((current) =>
+        current?.task.id === task.id ? { ...current, detail, loading: false } : current,
+      );
+      message.success('自治循环已停止，任务已转为人工确认');
+      await reloadTaskCenter();
+    } catch (taskError) {
+      message.error(formatMutationError(taskError));
+    } finally {
+      setAgentTakeoverLoading(false);
+    }
+  }, [reloadTaskCenter, taskDetailDialog?.task]);
+
   const handleOpenWriteback = useCallback(async (task: TaskCenterTaskRecord) => {
     setWritebackDialog({ loading: true, submitting: false, task });
     try {
@@ -1381,6 +1404,8 @@ export default function TaskCenterPage() {
       <TaskDetailModal
         dialog={taskDetailDialog}
         onClose={() => setTaskDetailDialog(undefined)}
+        onRequestAgentTakeover={handleRequestAgentTakeover}
+        takeoverLoading={agentTakeoverLoading}
         taskStatusLabels={taskStatusLabels}
         taskTypeLabels={taskTypeLabels}
       />

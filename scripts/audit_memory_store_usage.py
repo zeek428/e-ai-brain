@@ -24,6 +24,10 @@ ALLOWED_DERIVED_CACHE_WRITES = {
 }
 ALLOWED_DERIVED_CACHE_SETATTR_FUNCTIONS = {
     (
+        "apps/api/app/services/ai_executor_runner_persistence.py",
+        "_replace_collection",
+    ),
+    (
         "apps/api/app/services/ai_executor_runner_approvals.py",
         "sync_ai_executor_approval_request_store",
     ),
@@ -35,7 +39,6 @@ ALLOWED_DERIVED_CACHE_SETATTR_FUNCTIONS = {
 }
 ALLOWED_MEMORY_FALLBACK_SETATTR_FUNCTIONS = {
     ("apps/api/app/services/ai_executor_runner_approvals.py", "_memory_dict"),
-    ("apps/api/app/services/ai_executor_runners.py", "_replace_collection"),
     ("apps/api/app/services/assistant_action_drafts.py", "_memory_audit_events"),
     ("apps/api/app/services/assistant_action_drafts.py", "_memory_collection"),
     ("apps/api/app/services/assistant_chat.py", "_memory_collection"),

@@ -199,6 +199,8 @@ async function redactPageForScreenshot(page) {
   await page.evaluate(() => {
     const maskText = (value) => String(value || '')
       .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, 'user@example.com')
+      .replace(/\/Users\/[^/\s]+/g, '/Users/user')
+      .replace(/[A-Z]:\\Users\\[^\\\s]+/gi, 'C:\\Users\\user')
       .replace(/ding[a-z0-9]{12,}/gi, 'ding********')
       .replace(/\b[0-9a-f]{24,}\b/gi, '********')
       .replace(/\b(?:sk|pk|api|token|secret|key)_[A-Za-z0-9_-]{12,}\b/g, '********');

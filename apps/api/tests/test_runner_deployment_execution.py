@@ -48,6 +48,7 @@ def runner_namespace(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
             "identity_file": "/secret/id_ed25519",
             "known_hosts_file": "/secret/known_hosts",
             "remote_command": "/opt/company/bin/deploy-from-ai-brain",
+            "rollback_command": "/opt/company/bin/rollback-from-ai-brain",
         },
         "production-compose": {
             "name": "生产 Docker Compose",
@@ -57,6 +58,24 @@ def runner_namespace(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
             "project_name": "product",
             "services": ["api", "web"],
             "pull": True,
+            "rollback_commands": [
+                {
+                    "argv": ["docker", "compose", "rollback", "api", "web"],
+                    "cwd": "/srv/product",
+                }
+            ],
+            "traffic_switch_commands": [
+                {
+                    "argv": ["/srv/product/bin/switch-slot", "green"],
+                    "cwd": "/srv/product",
+                }
+            ],
+            "blue_green_rollback_commands": [
+                {
+                    "argv": ["/srv/product/bin/switch-slot", "blue"],
+                    "cwd": "/srv/product",
+                }
+            ],
         },
     }
     config_path = tmp_path / "runner_config.json"
@@ -185,3 +204,108 @@ def test_deployment_cancel_request_completes_as_cancelled(tmp_path, monkeypatch)
 
     assert completions[0]["status"] == "cancelled"
     assert completions[0]["error_code"] == "AI_EXECUTOR_TASK_CANCELLED"
+
+
+def test_runner_executes_configured_ssh_and_docker_rollback_commands(tmp_path, monkeypatch):
+    namespace = runner_namespace(tmp_path, monkeypatch)
+    ssh_target = namespace["DEPLOYMENT_TARGETS"]["production-ssh"]  # type: ignore[index]
+    docker_target = namespace["DEPLOYMENT_TARGETS"]["production-compose"]  # type: ignore[index]
+
+    ssh_command = namespace["_deployment_ssh_command"](ssh_target, operation="rollback")
+    docker_commands = namespace["_configured_deployment_commands"](
+        docker_target,
+        "rollback_commands",
+    )
+
+    assert ssh_command[-1] == "/opt/company/bin/rollback-from-ai-brain"
+    assert docker_commands == [
+        {
+            "argv": ["docker", "compose", "rollback", "api", "web"],
+            "cwd": "/srv/product",
+        }
+    ]
+
+
+def test_failed_health_check_returns_structured_failure_for_auto_rollback(
+    tmp_path,
+    monkeypatch,
+):
+    namespace = runner_namespace(tmp_path, monkeypatch)
+    completions: list[dict] = []
+    namespace["_append_logs"] = lambda *args, **kwargs: None
+    namespace["_stream_process_output"] = lambda **kwargs: (
+        0,
+        "deployment command completed",
+        False,
+        None,
+    )
+    namespace["_deployment_health_checks"] = lambda target: (
+        False,
+        [{"code": "api", "passed": False, "status_code": 503}],
+    )
+    namespace["_complete_task"] = lambda task_id, **kwargs: completions.append(
+        {"task_id": task_id, **kwargs}
+    )
+
+    namespace["_run_deployment_task"](
+        {
+            "executor_type": "deployment",
+            "id": "runner_task_health_failure",
+            "input_payload": {
+                "deployment_method": "docker",
+                "operation": "deploy",
+                "target_code": "production-compose",
+            },
+            "timeout_seconds": 60,
+        }
+    )
+
+    assert completions[0]["status"] == "failed"
+    assert completions[0]["error_code"] == "DEPLOYMENT_HEALTH_CHECK_FAILED"
+    assert completions[0]["result_json"]["health_status"] == "failed"
+    assert completions[0]["result_json"]["health_checks"][0]["status_code"] == 503
+
+
+def test_blue_green_final_wave_executes_controlled_traffic_switch(tmp_path, monkeypatch):
+    namespace = runner_namespace(tmp_path, monkeypatch)
+    executions: list[list[str]] = []
+    completions: list[dict] = []
+    namespace["_append_logs"] = lambda *args, **kwargs: None
+    namespace["_deployment_health_checks"] = lambda target: (
+        True,
+        [{"code": "api", "passed": True, "status_code": 200}],
+    )
+
+    def fake_stream_process_output(**kwargs):  # type: ignore[no-untyped-def]
+        executions.append(kwargs["command_args"])
+        return 0, "ok", False, None
+
+    namespace["_stream_process_output"] = fake_stream_process_output
+    namespace["_complete_task"] = lambda task_id, **kwargs: completions.append(
+        {"task_id": task_id, **kwargs}
+    )
+
+    namespace["_run_deployment_task"](
+        {
+            "executor_type": "deployment",
+            "id": "runner_task_blue_green",
+            "input_payload": {
+                "deployment_method": "docker",
+                "operation": "deploy",
+                "rollout_strategy": "blue_green",
+                "target_code": "production-compose",
+                "wave": {
+                    "action": "traffic_switch",
+                    "switch_action": "target.blue_green_switch",
+                },
+                "wave_number": 2,
+                "wave_total": 2,
+            },
+            "timeout_seconds": 60,
+        }
+    )
+
+    assert executions[-1] == ["/srv/product/bin/switch-slot", "green"]
+    assert completions[0]["status"] == "succeeded"
+    assert completions[0]["result_json"]["traffic_switch_attempted"] is True
+    assert completions[0]["result_json"]["traffic_switch_passed"] is True

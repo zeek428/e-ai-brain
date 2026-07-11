@@ -70,6 +70,180 @@ afterEach(() => {
 });
 
 describe('KnowledgePage', () => {
+  it('loads multimodal profiles and document freshness only when governance is opened', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    let scanCount = 0;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      const url = String(input);
+      if (url === '/api/knowledge/documents' || url.startsWith('/api/knowledge/documents?')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                active_document_version_id: 'knowledge_document_version_002',
+                doc_type: 'architecture',
+                document_version: 2,
+                id: 'knowledge_multimodal',
+                index_status: 'vector_indexed',
+                knowledge_space_id: 'space_multimodal',
+                permission_roles: ['admin'],
+                title: '发布架构图',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (url.startsWith('/api/knowledge/index-health')) {
+        return jsonResponse(knowledgeHealthEnvelope());
+      }
+      if (url === '/api/knowledge/spaces') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'multimodal', id: 'space_multimodal', name: '多模态知识' }],
+            total: 1,
+          },
+        });
+      }
+      if (url === '/api/auth/roles') {
+        return jsonResponse(roleCatalogEnvelope);
+      }
+      if (url === '/api/knowledge/spaces/space_multimodal/folders') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (url === '/api/knowledge/processing-profiles') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                capabilities: ['ocr', 'layout', 'table', 'image_embedding'],
+                credential_ref: 'env:MULTIMODAL_GATEWAY_TOKEN',
+                id: 'knowledge_processing_profile_001',
+                name: '企业视觉解析',
+                provider_config: { stale_after_days: 90 },
+                provider_type: 'multimodal_gateway',
+                status: 'active',
+                version: 1,
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (url === '/api/knowledge/staleness?knowledge_space_id=space_multimodal') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                document_id: 'knowledge_multimodal',
+                document_title: '发布架构图',
+                document_version_id: 'knowledge_document_version_002',
+                expires_at: '2026-07-12T00:00:00Z',
+                freshness_status: scanCount ? 'expired' : 'expiring',
+                knowledge_space_id: 'space_multimodal',
+                outdated_feedback_count: 1,
+                status: scanCount ? 'expired' : 'active',
+                version: 2,
+              },
+            ],
+            summary: {
+              expired: scanCount ? 1 : 0,
+              expiring: scanCount ? 0 : 1,
+              flagged_outdated: 0,
+              fresh: 0,
+            },
+          },
+        });
+      }
+      if (url === '/api/knowledge/staleness/scan') {
+        expect(init?.method).toBe('POST');
+        scanCount += 1;
+        return jsonResponse({
+          data: {
+            expired_count: 1,
+            expired_version_ids: ['knowledge_document_version_002'],
+          },
+        });
+      }
+      if (url === '/api/knowledge/documents/knowledge_multimodal/versions') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                activated_at: '2026-07-11T00:00:00Z',
+                content_hash: 'sha256-value',
+                document_id: 'knowledge_multimodal',
+                expires_at: '2026-07-12T00:00:00Z',
+                freshness_status: 'flagged_outdated',
+                id: 'knowledge_document_version_002',
+                outdated_feedback_count: 1,
+                processing_profile_id: 'knowledge_processing_profile_001',
+                status: 'active',
+                version: 2,
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (url === '/api/knowledge/documents/knowledge_multimodal/citation-feedback') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                chunk_id: 'chunk_image_001',
+                comment: '旧版架构图',
+                document_version_id: 'knowledge_document_version_002',
+                feedback_value: 'outdated',
+                id: 'knowledge_citation_feedback_001',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<KnowledgePage />);
+
+    expect((await screen.findAllByText('发布架构图')).length).toBeGreaterThan(0);
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      '/api/knowledge/processing-profiles',
+      expect.anything(),
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: '多模态治理' }));
+
+    const governance = await screen.findByLabelText('多模态知识治理');
+    expect(await within(governance).findByText('企业视觉解析')).toBeInTheDocument();
+    expect(within(governance).getByText('多模态网关')).toBeInTheDocument();
+    expect(within(governance).getByText('OCR / 版面识别 / 表格解析 / 图片向量')).toBeInTheDocument();
+    expect(within(governance).getAllByText('发布架构图').length).toBeGreaterThan(0);
+    expect(within(governance).getByText('即将过期 1')).toBeInTheDocument();
+
+    fireEvent.click(within(governance).getByRole('button', { name: /扫描过期/ }));
+
+    await waitFor(() => expect(scanCount).toBe(1));
+    await waitFor(() => expect(within(governance).getByText('已过期 1')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('tab', { name: '文档库' }));
+    fireEvent.click(screen.getByRole('button', { name: '发布架构图' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '版本与反馈' }));
+
+    expect(await screen.findByText('当前生效')).toBeInTheDocument();
+    expect(screen.getByText('被标记过期')).toBeInTheDocument();
+    expect(screen.getByText('内容已过期')).toBeInTheDocument();
+    expect(screen.getByText('旧版架构图')).toBeInTheDocument();
+  });
+
   it('keeps the knowledge document list in a fixed-width scrollable table', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

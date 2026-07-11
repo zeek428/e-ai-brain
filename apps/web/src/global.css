@@ -276,6 +276,7 @@ body {
 
 .knowledge-page-stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   margin-bottom: 16px;
   min-width: 0;
@@ -324,9 +325,13 @@ body {
 }
 
 .knowledge-rag-header > div,
-.knowledge-panel-header > div {
+.knowledge-panel-header > div:not(.ant-space) {
   display: grid;
   gap: 4px;
+  min-width: 0;
+}
+
+.knowledge-panel-header > .ant-space {
   min-width: 0;
 }
 
@@ -359,6 +364,7 @@ body {
 .knowledge-question-panel,
 .knowledge-tab-panel {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 14px;
 }

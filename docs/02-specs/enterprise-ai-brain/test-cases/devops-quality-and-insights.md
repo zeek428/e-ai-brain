@@ -488,7 +488,7 @@
 
 **预期结果**:
 1. 已实现任务类型复用统一任务状态机、人工确认、审计和详情查询能力；`release_readiness` 和 `post_release_analysis` 已纳入当前自动化切片。
-2. v1 系列不自动改代码、不自动提交 PR、不自动部署上线。
+2. v1 MVP 不自动改码、提交 PR 或部署；v1.2 受治理扩展只能在隔离 worktree、独立质量门禁、策略/人工决策和部署安全门禁下执行对应动作。
 3. 自动化测试和上线后分析产生的 Bug 必须进入 Bug 管理闭环。
 
 **状态**: development_planning / automated_testing / release_readiness / post_release_analysis 自动化通过。2026-06-03 使用 AI 助手聊天界面真实需求复跑时，`task_066` development_planning 完成，`task_067` automated_testing 首次模型失败后以 `task_068` 完成，`task_070` release_readiness 在同任务重试能力上线后可重新触发但上游模型仍失败，post_release_analysis 因缺少已完成发布评估未继续；该批次用于验证失败重试和外部模型稳定性风险。
@@ -551,7 +551,7 @@
 
 **预期结果**:
 1. 发布上线评估和上线后分析不能绕过人工确认。
-2. 系统只给出风险判断和建议，不自动部署上线；上线后疑似回归进入 Bug 管理闭环。
+2. 发布评估任务只给出风险判断和建议，不直接部署；部署必须由独立部署单显式启动并通过部署安全门禁，上线后疑似回归进入 Bug 管理闭环。
 
 **状态**: 自动化通过
 
@@ -707,5 +707,68 @@
 4. 无法归属产品或模块的使用数据和反馈进入待归属队列，登记、归属和忽略处理由 `TC-AIBRAIN-ATTRIBUTION-FUNC-024` 覆盖。
 
 **状态**: 已自动化覆盖用户使用指标登记/查询、用户反馈、用户洞察详情弹窗和迭代规划基础闭环；待归属队列登记、归属和忽略处理由 `TC-AIBRAIN-ATTRIBUTION-FUNC-024` 覆盖；外部采集器和模型驱动规划仍属后续增强。
+
+---
+
+### TC-AIBRAIN-DEPLOY-FUNC-028: 生产部署安全、波次、健康与回滚
+
+| 项目 | 内容 |
+|------|------|
+| 优先级 | P0 |
+| 适用阶段 | v1.2 |
+
+**测试步骤**:
+1. 在严格窗口外或缺少 Commit/制品摘要/回滚配置时启动生产部署。
+2. 补齐预检，分别以全量、灰度、分批和蓝绿方案执行。
+3. 让某波健康检查失败，分别验证自动回滚与人工接管策略。
+
+**预期结果**:
+- 阻断场景保持 `pending_ops` 并返回结构化预检/门禁原因，不错误推进需求。
+- 每波保存 deploy/verify 步骤，只有健康和冒烟通过才进入下一波；蓝绿必须使用受控槽位与切换/回滚动作。
+- 回滚创建独立 `operation=rollback` 运行；SSH/Docker/Jenkins 使用受控 Target/Job，不接受页面任意命令。
+
+**状态**: 已自动化覆盖，见 `apps/api/tests/test_deployment_safety.py`、`test_deployment_rollouts.py`、`test_deployment_rollback.py`、`test_runner_deployment_execution.py`、`test_jenkins_deployments.py` 和 `apps/web/tests/DeploymentGovernancePage.test.tsx`。
+
+---
+
+### TC-AIBRAIN-DEPLOY-API-029: 事务 Outbox、外部 Inbox 与 Git 写回幂等
+
+| 项目 | 内容 |
+|------|------|
+| 优先级 | P0 |
+| 适用阶段 | v1.2 |
+
+**测试步骤**:
+1. 启动自动部署并在 API 提交后、Worker 消费前模拟进程重启，再重复消费同一 Outbox。
+2. 重放同一 GitHub/GitLab/Jenkins Delivery，分别提交正确签名的原载荷、错误签名和相同 Delivery ID 的不同载荷，再执行失败事件和死信重试。
+3. 请求 Git merge 写回，先使用失败门禁，再使用通过且有独立证据的门禁。
+
+**预期结果**:
+- 部署业务状态、运行、步骤、审计和 Outbox 原子存在；独立 Worker 通过租约、幂等键和完成回执避免重复领取，外部结果不确定时转对账或人工处理，不盲目重试。
+- 每次 Delivery（包括重复请求）都必须先验签；同一 Delivery 的原载荷返回不含 payload 的幂等确认，不同载荷、事件类型或连接返回 `409 WEBHOOK_DELIVERY_CONFLICT`，payload 入库前脱敏；失败/死信保留次数和错误摘要。
+- Git merge 在门禁失败、连接写权限被撤销或仓库跨产品时阻断；通过后由 Outbox 执行且不持久化 token，Worker 派发前再次校验当前连接权限和门禁。
+
+**状态**: 已自动化覆盖，见 `apps/api/tests/test_execution_outbox.py`、`test_external_event_inbox.py`、`test_git_ci_events.py`、`test_git_writeback.py` 和 `test_observability_events.py`。
+
+---
+
+### TC-AIBRAIN-DEPLOY-API-030: 执行资源 scope 与部署 read model
+
+| 项目 | 内容 |
+|------|------|
+| 优先级 | P0 |
+| 适用阶段 | v1.2 |
+
+**测试步骤**:
+1. 管理员把 Runner Target/Jenkins Connection 分别授权给两个产品和环境。
+2. 使用单产品发布负责人查询资源候选、创建部署方案，并尝试绑定 scope 外或未授权资源。
+3. 对部署单和部署方案列表执行分页、名称/状态筛选、排序和第二页查询；打开部署详情。
+
+**预期结果**:
+- 产品用户只看到本产品环境 active 授权，跨产品/未授权绑定被拒绝；授权更新使用 optimistic version。
+- 两个列表在 PostgreSQL 层执行 count/page、白名单排序与产品 scope，并返回查询耗时；非法 sort 被拒绝。
+- 详情聚合方案快照、门禁、波次、运行步骤、健康、回滚、派发和审计，前端不依赖全量列表拼装。
+
+**状态**: 已自动化覆盖，见 `apps/api/tests/test_execution_resource_grants.py`、`test_deployment_read_model.py`、`test_deployment_request_execution.py` 和 `apps/web/tests/ExecutionResourcesPage.test.tsx`、`DeploymentGovernancePage.test.tsx`。
 
 ---

@@ -17,10 +17,14 @@ function installFetchMock() {
   const createBodies: unknown[] = [];
   const policyItems = [
     {
+      autonomy_mode: 'autonomous_loop',
+      auto_merge_risk_threshold: 'low',
       code_change_review_mode: 'manual_review',
       executor_type: 'codex',
       id: 'rd_executor_policy_001',
       instruction_template: '处理 {{task_id}}',
+      max_duration_seconds: 3600,
+      max_iterations: 3,
       name: '开发计划走 Codex',
       output_contract: { summary: 'string' },
       priority: 10,
@@ -37,10 +41,14 @@ function installFetchMock() {
       workspace_root: '/Users/zeek/source/e-ai-brain',
     },
     {
+      autonomy_mode: 'single_pass',
+      auto_merge_risk_threshold: 'low',
       code_change_review_mode: 'manual_review',
       executor_type: 'codex',
       id: 'rd_executor_policy_002',
       instruction_template: '通用处理 {{task_id}}',
+      max_duration_seconds: 3600,
+      max_iterations: 1,
       name: '开发计划通用 Codex',
       output_contract: { summary: 'string' },
       priority: 20,
@@ -158,7 +166,7 @@ afterEach(() => {
 });
 
 describe('RdExecutorPoliciesPage', () => {
-  it('manages delivery executor policies without agent or skill fields', async () => {
+  it('manages delivery executor policies with explicit Agent autonomy governance', async () => {
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     vi.spyOn(message, 'success').mockImplementation(() => null as never);
     vi.spyOn(message, 'error').mockImplementation(() => null as never);
@@ -172,6 +180,8 @@ describe('RdExecutorPoliciesPage', () => {
     expect(screen.getByText('开发计划通用 Codex')).toBeInTheDocument();
     expect(screen.getAllByText('本地 Codex Runner').length).toBeGreaterThan(0);
     expect(screen.getAllByText('人工确认').length).toBeGreaterThan(0);
+    expect(screen.getByText('Agent 自治循环')).toBeInTheDocument();
+    expect(screen.getByText('最多 3 轮')).toBeInTheDocument();
     expect(screen.getAllByText('/Users/zeek/source/e-ai-brain').length).toBeGreaterThan(0);
     expect(screen.getByText('命中提示')).toBeInTheDocument();
     expect(screen.getByText('通用兜底')).toBeInTheDocument();
@@ -185,6 +195,7 @@ describe('RdExecutorPoliciesPage', () => {
     expect(within(dialog).getByLabelText('执行器')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Runner')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('代码提交方式')).toBeInTheDocument();
+    expect(within(dialog).getByText('执行模式')).toBeInTheDocument();
     expect(within(dialog).getByText('命中预览')).toBeInTheDocument();
     expect(within(dialog).getByText('当前表单策略将作为通用兜底策略')).toBeInTheDocument();
     expect(within(dialog).queryByText('AI角色')).not.toBeInTheDocument();
@@ -206,8 +217,14 @@ describe('RdExecutorPoliciesPage', () => {
     fireEvent.change(within(dialog).getByLabelText('工作区'), {
       target: { value: '/Users/zeek/source/e-ai-brain' },
     });
+    fireEvent.click(within(dialog).getByText('Agent 自治循环'));
+    expect(await within(dialog).findByLabelText('最大循环轮次')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('自治时长上限（秒）')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Token 预算')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('费用预算（USD）')).toBeInTheDocument();
     fireEvent.mouseDown(within(dialog).getByLabelText('代码提交方式'));
-    fireEvent.click(await screen.findByText('自动提交代码修改'));
+    fireEvent.click(await screen.findByText('独立门禁通过后自动提交'));
+    expect(await within(dialog).findByLabelText('自动合并风险')).toBeInTheDocument();
     fireEvent.mouseDown(within(dialog).getByLabelText('Runner'));
     fireEvent.click(await screen.findByText('本地 Codex Runner (Codex)'));
 
@@ -217,9 +234,13 @@ describe('RdExecutorPoliciesPage', () => {
       expect(createBodies).toHaveLength(1);
     });
     expect(createBodies[0]).toMatchObject({
+      autonomy_mode: 'autonomous_loop',
+      auto_merge_risk_threshold: 'low',
       code_change_review_mode: 'auto_commit',
       executor_type: 'codex',
       name: '新增策略',
+      max_duration_seconds: 3600,
+      max_iterations: 3,
       runner_id: 'runner_codex',
       task_type: 'development_planning',
       workspace_root: '/Users/zeek/source/e-ai-brain',

@@ -1,4 +1,10 @@
-import { CheckOutlined, CloseOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import {
+  CheckOutlined,
+  CloseOutlined,
+  HistoryOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+} from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, InputNumber, Select, Space, Tabs, Typography } from 'antd';
@@ -41,6 +47,7 @@ type KnowledgeWorkbenchPanelsProps = {
   importWorkerStatusLoading: boolean;
   knowledgeHealthPanel: ReactNode;
   knowledgeHealthState: KnowledgeIndexHealthState;
+  processingGovernancePanel: ReactNode;
   listRows: KnowledgeRecord[];
   listTotal: number;
   onCreateFolder: () => void;
@@ -91,6 +98,7 @@ export function KnowledgeWorkbenchPanels({
   importWorkerStatusLoading,
   knowledgeHealthPanel,
   knowledgeHealthState,
+  processingGovernancePanel,
   listRows,
   listTotal,
   onCreateFolder,
@@ -202,6 +210,17 @@ export function KnowledgeWorkbenchPanels({
               type={ragFeedbackValue === 'not_useful' ? 'primary' : 'default'}
             >
               无用
+            </Button>
+            <Button
+              danger={ragFeedbackValue === 'outdated'}
+              disabled={feedbackDisabled || ragAnswer.citations.length === 0}
+              icon={<HistoryOutlined />}
+              loading={ragFeedbackSubmittingValue === 'outdated'}
+              onClick={() => void onSubmitRagFeedback('outdated')}
+              size="small"
+              type={ragFeedbackValue === 'outdated' ? 'primary' : 'default'}
+            >
+              内容过期
             </Button>
           </Space>
         </div>
@@ -512,6 +531,11 @@ export function KnowledgeWorkbenchPanels({
             children: knowledgeImportJobsPanel,
             key: 'imports',
             label: '导入任务',
+          },
+          {
+            children: processingGovernancePanel,
+            key: 'processing',
+            label: '多模态治理',
           },
           {
             children: knowledgeDepositsPanel,

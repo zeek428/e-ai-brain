@@ -12,12 +12,12 @@ from app.services.knowledge_documents import (
     knowledge_repository_access_args,
     user_can_read_roles,
 )
+from app.services.knowledge_quality import record_knowledge_quality_event_best_effort
 from app.services.model_gateway import (
     ModelGatewayCallError,
     ModelGatewayConfigError,
     call_model_gateway_embeddings_with_context,
 )
-from app.services.knowledge_quality import record_knowledge_quality_event_best_effort
 
 KNOWLEDGE_SEARCHABLE_STATUSES = {"indexed", "text_indexed", "vector_indexed"}
 
@@ -257,6 +257,7 @@ def memory_knowledge_search_candidates(
     from app.services.knowledge_management import document_is_readable
 
     candidates = []
+    document_versions = getattr(current_store, "knowledge_document_versions", {})
     for document in knowledge_memory_records(current_store, "knowledge_documents"):
         if document.get("index_status") not in KNOWLEDGE_SEARCHABLE_STATUSES:
             continue
@@ -277,7 +278,20 @@ def memory_knowledge_search_candidates(
                     continue
             elif document.get("active_chunk_set_id"):
                 continue
-            candidates.append({"chunk": chunk, "document": document})
+            active_document_version = (
+                document_versions.get(document.get("active_document_version_id"))
+                if isinstance(document_versions, dict)
+                else None
+            )
+            candidates.append(
+                {
+                    "chunk": chunk,
+                    "document": {
+                        **document,
+                        "active_document_version": active_document_version,
+                    },
+                }
+            )
     return candidates
 
 
@@ -326,6 +340,8 @@ def knowledge_search_items(
             if {"keyword", "vector"}.issubset(retrieval_modes)
             else ("vector" if "vector" in retrieval_modes or score is not None else "keyword")
         )
+        if query in haystack and score is not None:
+            score += 1.0
         parent_chunk_id = chunk.get("parent_chunk_id")
         parent_content = None
         if parent_chunk_id:
@@ -333,6 +349,10 @@ def knowledge_search_items(
                 "metadata",
                 {},
             ).get("parent_content")
+        active_document_version = document.get("active_document_version")
+        from app.services.knowledge_multimodal_governance import version_freshness_status
+
+        chunk_metadata = chunk.get("metadata", {})
         items.append(
             {
                 "chunk_id": chunk["id"],
@@ -347,12 +367,32 @@ def knowledge_search_items(
                     or chunk.get("metadata", {}).get("source_asset_id"),
                     "chunk_id": chunk["id"],
                     "chunk_set_id": document.get("active_chunk_set_id")
-                    or chunk.get("metadata", {}).get("chunk_set_id"),
+                    or chunk_metadata.get("chunk_set_id"),
+                    "document_version_id": chunk.get("document_version_id")
+                    or document.get("active_document_version_id")
+                    or chunk_metadata.get("document_version_id"),
+                    "document_version": (active_document_version or {}).get("version")
+                    or chunk_metadata.get("document_version"),
+                    "expires_at": (active_document_version or {}).get("expires_at")
+                    or chunk_metadata.get("expires_at"),
+                    "freshness_status": version_freshness_status(
+                        active_document_version
+                        or {
+                            "status": "active",
+                            "expires_at": chunk_metadata.get("expires_at"),
+                        }
+                    ),
+                    "modality": chunk.get("modality")
+                    or chunk_metadata.get("modality", "text"),
+                    "page_number": chunk_metadata.get("page_number"),
+                    "bounding_boxes": chunk_metadata.get("bounding_boxes") or [],
+                    "provider_metadata": chunk_metadata.get("provider_metadata") or {},
+                    "structured_asset_id": chunk_metadata.get("structured_asset_id"),
                     "doc_type": document["doc_type"],
                     "folder_id": document.get("folder_id")
-                    or chunk.get("metadata", {}).get("folder_id"),
+                    or chunk_metadata.get("folder_id"),
                     "knowledge_space_id": document.get("knowledge_space_id")
-                    or chunk.get("metadata", {}).get("knowledge_space_id"),
+                    or chunk_metadata.get("knowledge_space_id"),
                     "parent_chunk_id": parent_chunk_id,
                     "parent_content": parent_content,
                     "retrieval_modes": sorted(retrieval_modes),

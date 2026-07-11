@@ -22,12 +22,18 @@ FastAPI 模块化单体
   ├─ product_config：产品、版本、模块、Git 资源和相关系统
   ├─ requirement：需求台账、审批和生成 AI 任务
   ├─ ai_task：AI 任务生命周期
+  ├─ agent_loop：Agent 自治循环、轮次预算和人工接管
+  ├─ quality_gate：研发合并和部署前后的独立质量门禁
+  ├─ execution_context：需求、Bug、仓库、知识和验收标准的版本化执行清单
   ├─ graph_runtime：LangGraph 运行、检查点和恢复
   ├─ review：人工确认
-  ├─ knowledge：文档导入、chunk、检索和沉淀
+  ├─ knowledge：版本化文档、多模态解析、chunk、检索和沉淀
   ├─ long_memory：GBrain 长期记忆、混合检索和知识图谱
   ├─ model_gateway：OpenAI-compatible 模型调用
   ├─ plugin_management：插件、连接、动作配置和连接测试
+  ├─ integration_events：Webhook 验签、幂等 Inbox、重试和业务投影
+  ├─ execution_resources：产品/环境 Runner Target 与 Jenkins 授权
+  ├─ deployment_orchestration：部署预检、波次、健康检查和回滚
   ├─ scheduled_jobs：定时作业定义、运行实例和 AI/插件装配快照
   ├─ code_inspection：周期性代码仓库巡检报告、finding、Bug 派生和通知反馈
   ├─ devops_metrics：GitLab、Jenkins 和线上日志指标采集
@@ -47,6 +53,8 @@ FastAPI 模块化单体
   └─ GBrain（长期记忆 / 知识图谱）
 ```
 
+独立 execution worker 从 PostgreSQL 认领 Outbox/Inbox，负责 Runner、Jenkins、Git Provider 等外部副作用和部署编排；API 只提交业务状态、审计和派发意图，不在请求事务外直接完成不可恢复的外部调用。
+
 ## 核心模块
 
 | 模块 | 职责 | 技术栈 |
@@ -57,11 +65,14 @@ FastAPI 模块化单体
 | product_config | 产品、版本、模块、Git 资源、内部 GitLab 项目绑定和相关系统主数据 | PostgreSQL |
 | requirement | 需求台账、审批、驳回、关闭和审批后生成 AI 任务 | PostgreSQL |
 | ai_task | AI 任务类型、生命周期、状态流转和任务详情 | PostgreSQL + LangGraph |
+| agent_loop / quality_gate | 自治轮次、执行上下文、独立验证证据、预算终止、人工接管和受控自动合入 | PostgreSQL + 隔离 Runner / CI |
 | graph_runtime | 研发大脑 LangGraph 节点、中断、恢复 | LangGraph |
-| knowledge | Markdown 导入、向量/关键词混合检索、权限过滤 | PostgreSQL + pgvector |
+| knowledge | 文本/图片/PDF 原始资产、版本化 OCR/版面/表格解析、向量/关键词混合检索、权限与过期治理 | PostgreSQL + pgvector + MinIO/S3 |
 | long_memory | 长期记忆、答案合成、知识图谱和多跳查询 | GBrain |
 | model_gateway | 聊天/embedding 模型统一入口 | OpenAI-compatible API |
 | plugin_management | 三方系统插件、连接、动作配置、请求配置和试运行；调用日志在定时作业运行详情体现 | PostgreSQL + HTTP/MCP HTTP |
+| integration_events | GitHub/GitLab、Jenkins、Prometheus/OpenTelemetry/Sentry 等事件验签、Inbox、幂等投影和重试 | PostgreSQL + Webhook |
+| deployment_orchestration | 人工/SSH/Docker/Jenkins 部署、窗口预检、灰度/分批/蓝绿发布、健康验证与真实回滚 | PostgreSQL + Outbox worker |
 | scheduled_jobs | 采集、AI 分析、动作调用、代码仓库巡检、迭代建议和看板刷新调度 | PostgreSQL + Redis/worker |
 | code_inspection | 定期扫描仓库质量、安全和规范问题，按提交人沉淀代码巡检报告、finding 明细、严重问题 Bug 去重和通知反馈 | PostgreSQL + 插件扫描服务 |
 | devops_metrics | GitLab 提交与代码质量、Jenkins 发布、线上运行日志指标采集和归属映射 | PostgreSQL + 定时采集器 |
@@ -82,10 +93,11 @@ FastAPI 模块化单体
 → 创建 requirement 并等待审批
 → 审批通过后生成 ai_task，固化 task_type、requirement_snapshot 和 product_context
 → 启动 graph_run
+→ 冻结 execution_context_manifest，并按策略启动 Agent 自治循环
 → 检索 knowledge_chunks
 → 可选查询 GBrain 长期记忆和知识图谱
 → 按 task_type 生成产品详细设计、技术方案、内部 GitLab MR Review 报告、开发计划、测试分析、发布评估或上线后分析
-→ 创建 human_reviews
+→ 编码结果进入独立 quality_gate；失败证据进入下一轮反思，门禁通过后进入 human_reviews 或受控自动合入
 → 人工确认后恢复 Graph
 → 生成 mock_issues / code_review_reports / Bug / Markdown / knowledge_deposits
 → lifecycle_context 写入需求、任务、提交、Review、测试、Bug、发布、日志和知识之间的关系边
@@ -112,6 +124,8 @@ FastAPI 模块化单体
 | 研发运营数据 | GitLab、Jenkins、线上日志、用户使用、用户反馈、迭代规划建议和 Bug 均按产品/版本/模块归属聚合，支撑首页 IT 团队看板 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 代码仓库巡检 | 定时作业通过插件扫描仓库质量/安全/规范问题，结果进入代码巡检报告表并保留提交人维度，严重问题可去重创建 `code_inspection` 来源 Bug，并记录邮件/钉钉机器人通知反馈 | [PRD](../../01-prd/enterprise-ai-brain/prd.md)、[技术规格](../enterprise-ai-brain/spec.md) 和 [API 文档](../enterprise-ai-brain/api.md) |
 | AI 编排 | LangGraph | [技术规格](../enterprise-ai-brain/spec.md) |
+| Agent 自治执行 | AgentLoopRun 管理执行轮次和预算，质量门禁独立于编码 Runner；自动合入必须具备独立证据，高风险变更转人工确认 | [技术规格](../enterprise-ai-brain/spec.md) |
+| 外部副作用 | 业务状态、审计与 Outbox 原子写入，独立 Worker 幂等执行 Runner/Jenkins/Git 写回；Webhook 先进入 Inbox | [技术规格](../enterprise-ai-brain/spec.md) |
 | 数据存储 | PostgreSQL + pgvector + Redis | [技术规格](../enterprise-ai-brain/spec.md) |
 | 知识检索 | PostgreSQL + pgvector 权限过滤，GBrain 提供长期记忆、混合检索和知识图谱补充 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 模型接入 | 模型网关，不直连业务代码 | [API 文档](../enterprise-ai-brain/api.md) 和 [技术规格](../enterprise-ai-brain/spec.md) |
@@ -124,8 +138,10 @@ FastAPI 模块化单体
 Docker Compose
   ├─ web：React 工作台
   ├─ api：FastAPI 服务
+  ├─ execution-worker：Outbox/Inbox、部署编排和外部回写
   ├─ postgres：PostgreSQL + pgvector
-  └─ redis：缓存/队列
+  ├─ redis：缓存/队列
+  └─ minio：知识原始资产和解析产物
 ```
 
 API 容器启动入口会在服务启动前按顺序执行 `apps/api/app/db/migrations/*.sql`，用于升级已有数据库卷；数据库结构或种子数据变更不得依赖清空 volume。PostgreSQL 服务使用同主版本 pgvector 镜像，避免已有 PG18 数据目录被错误挂载到 PG16。
@@ -151,11 +167,13 @@ API 容器启动入口会在服务启动前按顺序执行 `apps/api/app/db/migr
 - AI 助手问答使用服务端生成的脱敏 `system_context`；模型调用日志不保存完整用户问题、系统上下文、助手回答或 API Key。
 - 所有写操作、AI 高影响动作和研发运营采集结果写入审计事件或运行记录。
 - GitLab MR 代码 Review 只读取授权产品 Git 资源和 Merge Request，报告归档在 AI Brain 内部，不回写 GitLab 评论、审批状态或分支变更。
-- GitLab、Jenkins 和线上日志登记/导入或采集失败时保留失败原因，不得生成兜底指标；自动采集接入后保留最后成功时间和待归属状态。
+- 外部 Webhook 必须验签、按 Delivery ID 幂等、裁剪并脱敏 payload；失败事件可重试或进入死信，不能重复生成质量、发布或运行证据。
+- 执行资源按产品和环境授权，产品成员不能枚举或绑定 scope 外 Runner Target / Jenkins Connection。
+- 自动合入和生产部署必须执行独立门禁；严格窗口外、制品/回滚信息不完整、健康检查失败或高风险变更不得静默放行。
 
 ## 扩展性设计
 
-v1 不拆微服务，但模块边界保留未来提取点：`graph-runtime-worker`、`knowledge-service`、`long-memory-service`、`model-gateway-service`、`gitlab-review-service`、`code-review-executor-service`、`devops-metrics-worker`、`user-insights-worker`、`iteration-planning-service`、`bug-service`、`dashboard-service`、`integration-service`。
+v1 不拆微服务，但模块边界保留未来提取点：`graph-runtime-worker`、`execution-worker`、`quality-gate-service`、`knowledge-service`、`long-memory-service`、`model-gateway-service`、`gitlab-review-service`、`code-review-executor-service`、`devops-metrics-worker`、`user-insights-worker`、`iteration-planning-service`、`bug-service`、`dashboard-service`、`integration-service`。
 
 ---
-最后更新: 2026-06-02
+最后更新: 2026-07-11

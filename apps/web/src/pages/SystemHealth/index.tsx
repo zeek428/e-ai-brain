@@ -416,6 +416,7 @@ function SystemHealthOperationsPanel({
   const dingtalk = operations.dingtalk_lifecycle;
   const helpAndRetention = operations.help_and_retention;
   const securityAudit = operations.security_audit_governance;
+  const executionGovernance = operations.execution_governance;
   const products = productScores?.products ?? [];
   const alerts = alertCenter?.alerts ?? [];
   const alertRules = alertCenter?.rules ?? [];
@@ -448,6 +449,11 @@ function SystemHealthOperationsPanel({
   const securityGovernanceActions = securityAudit?.governance_actions ?? [];
   const governanceSummary = knowledge?.governance_summary ?? {};
   const governanceCandidates = knowledge?.governance_candidates ?? knowledge?.watch_documents ?? [];
+  const executionOutbox = executionGovernance?.outbox;
+  const externalEventInbox = executionGovernance?.external_event_inbox;
+  const agentLoops = executionGovernance?.agent_loops;
+  const executionQualityGates = executionGovernance?.quality_gates;
+  const executionResources = executionGovernance?.execution_resources;
 
   const openPermissionMenuPreview = () => {
     setPermissionPreviewError(undefined);
@@ -1047,6 +1053,61 @@ function SystemHealthOperationsPanel({
               <Empty description="暂无需要处理的执行任务" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             ) : null}
           </div>
+        </article>
+
+        <article className="system-health-ops-card">
+          <div className="system-health-ops-card-heading">
+            <strong>自治与事件治理</strong>
+            <Button size="small" type="link" onClick={() => navigateTo('/tasks/plugins?tab=external-events')}>
+              Webhook 事件
+            </Button>
+          </div>
+          <div className="system-health-ops-metric-grid">
+            <OperationMetric
+              title="Outbox 待派发"
+              tone={numericMetric(executionOutbox?.pending_count) > 100 ? 'warning' : 'success'}
+              value={formatMetricValue(executionOutbox?.pending_count)}
+            />
+            <OperationMetric
+              title="Inbox 待处理"
+              value={formatMetricValue(externalEventInbox?.status_counts?.pending)}
+            />
+            <OperationMetric
+              title="事件死信"
+              tone={numericMetric(externalEventInbox?.dead_letter_count) ? 'danger' : 'success'}
+              value={formatMetricValue(externalEventInbox?.dead_letter_count)}
+            />
+            <OperationMetric title="自治执行中" value={formatMetricValue(agentLoops?.status_counts?.executing)} />
+            <OperationMetric
+              title="门禁阻断"
+              tone={numericMetric(executionQualityGates?.status_counts?.blocked) ? 'warning' : 'success'}
+              value={formatMetricValue(executionQualityGates?.status_counts?.blocked)}
+            />
+            <OperationMetric title="有效资源授权" value={formatMetricValue(executionResources?.active)} />
+          </div>
+          <div className="system-health-quality-gates">
+            <Tag color={numericMetric(agentLoops?.status_counts?.succeeded) ? 'green' : 'default'}>
+              自治完成 {formatMetricValue(agentLoops?.status_counts?.succeeded)}
+            </Tag>
+            <Tag color={numericMetric(executionQualityGates?.status_counts?.passed) ? 'green' : 'default'}>
+              独立门禁通过 {formatMetricValue(executionQualityGates?.status_counts?.passed)}
+            </Tag>
+            <Tag color={numericMetric(externalEventInbox?.status_counts?.processed) ? 'blue' : 'default'}>
+              事件已处理 {formatMetricValue(externalEventInbox?.status_counts?.processed)}
+            </Tag>
+          </div>
+          {(externalEventInbox?.recent_dead_letters ?? []).slice(0, 3).map((event) => (
+            <Alert
+              className="system-health-ops-inline-alert"
+              key={String(event.id)}
+              showIcon
+              title={`${String(event.provider || 'external').toUpperCase()} · ${String(event.event_type || event.id)} · ${String(event.error_message || '处理失败')}`}
+              type="error"
+            />
+          ))}
+          {!executionGovernance ? (
+            <Text type="secondary">执行治理指标将在迁移和工作进程启动后显示。</Text>
+          ) : null}
         </article>
 
         <article className="system-health-ops-card">

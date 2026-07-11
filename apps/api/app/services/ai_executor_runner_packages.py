@@ -220,10 +220,11 @@ def _runner_start_command_block() -> str:
 
 
 def _runner_agent_python() -> str:
-    return r'''#!/usr/bin/env python3
+    return r"""#!/usr/bin/env python3
 from __future__ import annotations
 
 import json
+import hashlib
 import ipaddress
 import os
 import posixpath
@@ -791,14 +792,21 @@ def _deployment_target_summaries() -> list[dict]:
         name = str(target.get("name") or code).strip()
         if not str(code).strip() or not name or method not in {"ssh", "docker"}:
             continue
-        summaries.append(
-            {
-                "code": str(code).strip(),
-                "method": method,
-                "name": name,
-                "ready": bool(target.get("ready", True)),
-            }
-        )
+        summary = {
+            "code": str(code).strip(),
+            "method": method,
+            "name": name,
+            "ready": bool(target.get("ready", True)),
+        }
+        capabilities = {
+            "health_check_configured": bool(target.get("health_checks")),
+            "rollback_configured": bool(
+                target.get("rollback_command") or target.get("rollback_commands")
+            ),
+            "supports_blue_green": bool(target.get("traffic_switch_commands")),
+        }
+        summary.update({key: True for key, enabled in capabilities.items() if enabled})
+        summaries.append(summary)
     return sorted(summaries, key=lambda item: (item["method"], item["code"]))
 
 
@@ -1166,12 +1174,15 @@ def _required_deployment_target_text(target: dict, field: str) -> str:
     return value
 
 
-def _deployment_ssh_command(target: dict) -> list[str]:
+def _deployment_ssh_command(target: dict, *, operation: str = "deploy") -> list[str]:
     host = _required_deployment_target_text(target, "host")
     username = _required_deployment_target_text(target, "username")
     identity_file = _required_deployment_target_text(target, "identity_file")
     known_hosts_file = _required_deployment_target_text(target, "known_hosts_file")
-    remote_command = _required_deployment_target_text(target, "remote_command")
+    remote_command = _required_deployment_target_text(
+        target,
+        "rollback_command" if operation == "rollback" else "remote_command",
+    )
     port = int(target.get("port") or 22)
     if port < 1 or port > 65535:
         raise ValueError("Deployment target port is invalid")
@@ -1217,6 +1228,60 @@ def _deployment_docker_commands(target: dict) -> list[dict]:
     return commands
 
 
+def _configured_deployment_commands(target: dict, field: str) -> list[dict]:
+    raw_commands = target.get(field)
+    if not isinstance(raw_commands, list):
+        return []
+    commands: list[dict] = []
+    for item in raw_commands:
+        if not isinstance(item, dict) or not isinstance(item.get("argv"), list):
+            raise ValueError(f"Deployment target {field} command is invalid")
+        argv = [str(value) for value in item["argv"] if str(value)]
+        if not argv:
+            raise ValueError(f"Deployment target {field} command is empty")
+        cwd = str(
+            item.get("cwd")
+            or target.get("working_directory")
+            or os.path.dirname(os.path.abspath(CONFIG_PATH))
+        )
+        commands.append({"argv": argv, "cwd": cwd})
+    return commands
+
+
+def _deployment_health_checks(target: dict) -> tuple[bool, list[dict]]:
+    configured = target.get("health_checks")
+    if not isinstance(configured, list) or not configured:
+        return True, []
+    results: list[dict] = []
+    all_passed = True
+    for item in configured:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        expected_status = int(item.get("expected_status") or 200)
+        timeout_seconds = min(30, max(1, int(item.get("timeout_seconds") or 10)))
+        status_code = None
+        error_type = None
+        try:
+            request = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                status_code = int(response.status)
+        except Exception as exc:  # noqa: BLE001 - bounded health evidence only.
+            error_type = type(exc).__name__
+        passed = status_code == expected_status
+        all_passed = all_passed and passed
+        results.append(
+            {
+                "code": str(item.get("code") or "http_health"),
+                "error_type": error_type,
+                "expected_status": expected_status,
+                "passed": passed,
+                "status_code": status_code,
+            }
+        )
+    return all_passed, results
+
+
 def _deployment_result_json(
     *,
     deployment_method: str,
@@ -1224,6 +1289,15 @@ def _deployment_result_json(
     exit_code: int,
     output_preview: str,
     target_code: str,
+    operation: str = "deploy",
+    health_status: str = "pending",
+    health_checks: list[dict] | None = None,
+    smoke_tests: list[dict] | None = None,
+    traffic_switch_action: str | None = None,
+    traffic_switch_attempted: bool = False,
+    traffic_switch_passed: bool = False,
+    wave_number: int = 1,
+    wave_total: int = 1,
 ) -> dict:
     return {
         "command_shell": False,
@@ -1233,6 +1307,15 @@ def _deployment_result_json(
         "exit_code": exit_code,
         "output_preview": output_preview,
         "target_code": target_code,
+        "operation": operation,
+        "health_status": health_status,
+        "health_checks": health_checks or [],
+        "smoke_tests": smoke_tests or [],
+        "traffic_switch_action": traffic_switch_action,
+        "traffic_switch_attempted": traffic_switch_attempted,
+        "traffic_switch_passed": traffic_switch_passed,
+        "wave_number": wave_number,
+        "wave_total": wave_total,
     }
 
 
@@ -1243,12 +1326,17 @@ def _run_deployment_task(task: dict) -> None:
         input_payload = {}
     target_code = str(input_payload.get("target_code") or "").strip()
     deployment_method = str(input_payload.get("deployment_method") or "").strip().lower()
+    operation = str(input_payload.get("operation") or "deploy").strip().lower()
+    wave_number = int(input_payload.get("wave_number") or 1)
+    wave_total = int(input_payload.get("wave_total") or 1)
+    wave = input_payload.get("wave") if isinstance(input_payload.get("wave"), dict) else {}
     timeout_seconds = int(task.get("timeout_seconds") or 1800)
     target = DEPLOYMENT_TARGETS.get(target_code)
     if (
         not target_code
         or not isinstance(target, dict)
         or deployment_method not in {"ssh", "docker"}
+        or operation not in {"deploy", "rollback"}
         or str(target.get("method") or "").strip().lower() != deployment_method
         or not bool(target.get("ready", True))
     ):
@@ -1267,21 +1355,36 @@ def _run_deployment_task(task: dict) -> None:
     started_at = time.time()
     output_preview = ""
     try:
+        preflight_commands = _configured_deployment_commands(target, "preflight_commands")
         if deployment_method == "ssh":
             commands = [
                 {
-                    "argv": _deployment_ssh_command(target),
+                    "argv": _deployment_ssh_command(target, operation=operation),
                     "cwd": os.path.dirname(os.path.abspath(CONFIG_PATH)),
                 }
             ]
+        elif operation == "rollback":
+            rollback_field = (
+                "blue_green_rollback_commands"
+                if input_payload.get("rollout_strategy") == "blue_green"
+                and target.get("blue_green_rollback_commands")
+                else "rollback_commands"
+            )
+            commands = _configured_deployment_commands(target, rollback_field)
+            if not commands:
+                raise ValueError("Docker rollback commands are not configured")
         else:
             commands = _deployment_docker_commands(target)
+        commands = [*preflight_commands, *commands]
         _append_logs(
             task_id,
             [
                 {
                     "level": "info",
-                    "message": f"Starting {deployment_method} deployment target {target_code}",
+                    "message": (
+                        f"Starting {deployment_method} {operation} target {target_code} "
+                        f"wave {wave_number}/{wave_total}"
+                    ),
                 }
             ],
             status="running",
@@ -1309,6 +1412,9 @@ def _run_deployment_task(task: dict) -> None:
                         exit_code=exit_code,
                         output_preview=output_preview,
                         target_code=target_code,
+                        operation=operation,
+                        wave_number=wave_number,
+                        wave_total=wave_total,
                     ),
                 )
                 return
@@ -1326,6 +1432,9 @@ def _run_deployment_task(task: dict) -> None:
                         exit_code=exit_code,
                         output_preview=output_preview,
                         target_code=target_code,
+                        operation=operation,
+                        wave_number=wave_number,
+                        wave_total=wave_total,
                     ),
                 )
                 return
@@ -1341,15 +1450,71 @@ def _run_deployment_task(task: dict) -> None:
                         exit_code=exit_code,
                         output_preview=output_preview,
                         target_code=target_code,
+                        operation=operation,
+                        wave_number=wave_number,
+                        wave_total=wave_total,
                     ),
                 )
                 return
+        health_passed, health_checks = _deployment_health_checks(target)
+        smoke_results: list[dict] = []
+        smoke_commands = _configured_deployment_commands(target, "smoke_commands")
+        for smoke_index, command in enumerate(smoke_commands, start=1):
+            smoke_exit, preview, timed_out, server_status = _stream_process_output(
+                command_args=list(command["argv"]),
+                instruction="",
+                task_id=task_id,
+                timeout_seconds=timeout_seconds,
+                workspace_root=str(command["cwd"]),
+            )
+            output_preview = (output_preview + preview)[-MAX_OUTPUT_PREVIEW_CHARS:]
+            passed = smoke_exit == 0 and not timed_out and not server_status
+            smoke_results.append(
+                {
+                    "code": f"smoke_{smoke_index}",
+                    "exit_code": smoke_exit,
+                    "passed": passed,
+                }
+            )
+            health_passed = health_passed and passed
+            if not passed:
+                break
+        traffic_switch_action = str(wave.get("switch_action") or "").strip() or None
+        traffic_switch_attempted = False
+        traffic_switch_passed = False
+        if (
+            operation == "deploy"
+            and wave.get("action") == "traffic_switch"
+            and health_passed
+        ):
+            switch_commands = _configured_deployment_commands(
+                target,
+                "traffic_switch_commands",
+            )
+            if not switch_commands:
+                raise ValueError("Blue-green traffic switch commands are not configured")
+            traffic_switch_attempted = True
+            traffic_switch_passed = True
+            for command in switch_commands:
+                switch_exit, preview, timed_out, server_status = _stream_process_output(
+                    command_args=list(command["argv"]),
+                    instruction=json.dumps(input_payload, ensure_ascii=False),
+                    task_id=task_id,
+                    timeout_seconds=timeout_seconds,
+                    workspace_root=str(command["cwd"]),
+                )
+                output_preview = (output_preview + preview)[-MAX_OUTPUT_PREVIEW_CHARS:]
+                passed = switch_exit == 0 and not timed_out and not server_status
+                traffic_switch_passed = traffic_switch_passed and passed
+                health_passed = health_passed and passed
+                if not passed:
+                    break
         duration_ms = int((time.time() - started_at) * 1000)
         _complete_task(
             task_id,
-            status="succeeded",
-            error_code=None,
-            error_message=None,
+            status="succeeded" if health_passed else "failed",
+            error_code=None if health_passed else "DEPLOYMENT_HEALTH_CHECK_FAILED",
+            error_message=None if health_passed else "Deployment health or smoke check failed",
             logs=[
                 {
                     "level": "info",
@@ -1362,6 +1527,15 @@ def _run_deployment_task(task: dict) -> None:
                 exit_code=exit_code,
                 output_preview=output_preview,
                 target_code=target_code,
+                operation=operation,
+                health_status="passed" if health_passed else "failed",
+                health_checks=health_checks,
+                smoke_tests=smoke_results,
+                traffic_switch_action=traffic_switch_action,
+                traffic_switch_attempted=traffic_switch_attempted,
+                traffic_switch_passed=traffic_switch_passed,
+                wave_number=wave_number,
+                wave_total=wave_total,
             ),
         )
     except Exception as exc:  # noqa: BLE001 - report bounded local execution errors.
@@ -1375,6 +1549,318 @@ def _run_deployment_task(task: dict) -> None:
                 "executor_type": "deployment",
                 "target_code": target_code,
             },
+        )
+
+
+def _git_capture(workspace_root: str, args: list[str]) -> tuple[int, str]:
+    process = subprocess.run(
+        ["git", *args],
+        cwd=workspace_root,
+        env={**os.environ, "PATH": _runner_search_path()},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    return process.returncode, process.stdout or ""
+
+
+def _quality_gate_change_summary(workspace_root: str, base_branch: str) -> dict:
+    compare_ref = base_branch or "HEAD"
+    ref_status, _ = _git_capture(workspace_root, ["rev-parse", "--verify", compare_ref])
+    if ref_status != 0:
+        compare_ref = "HEAD"
+    _, names_output = _git_capture(
+        workspace_root,
+        ["diff", "--name-only", compare_ref, "--"],
+    )
+    _, status_output = _git_capture(workspace_root, ["status", "--porcelain=v1"])
+    changed_files = {line.strip() for line in names_output.splitlines() if line.strip()}
+    for line in status_output.splitlines():
+        path = line[3:].strip() if len(line) > 3 else ""
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        if path:
+            changed_files.add(path)
+    _, numstat_output = _git_capture(
+        workspace_root,
+        ["diff", "--numstat", compare_ref, "--"],
+    )
+    changed_lines = 0
+    for line in numstat_output.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) < 2:
+            continue
+        for value in parts[:2]:
+            if value.isdigit():
+                changed_lines += int(value)
+    _, diff_output = _git_capture(
+        workspace_root,
+        ["diff", "--no-ext-diff", "--unified=0", compare_ref, "--"],
+    )
+    return {
+        "changed_file_count": len(changed_files),
+        "changed_files": sorted(changed_files),
+        "changed_lines": changed_lines,
+        "compare_ref": compare_ref,
+        "diff_text": diff_output,
+    }
+
+
+def _quality_evidence_ref(task_id: str, check_type: str, content: str) -> str:
+    digest = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:20]
+    return f"runner://{RUNNER_ID}/{task_id}/{check_type}/{digest}"
+
+
+def _quality_catalog_commands(
+    catalog_code: str,
+    changed_files: list[str],
+    workspace_root: str,
+) -> list[dict]:
+    api_changed = any(path.startswith("apps/api/") for path in changed_files)
+    web_changed = any(path.startswith("apps/web/") for path in changed_files)
+    commands: list[dict] = []
+    if catalog_code == "project.unit_test":
+        if api_changed and os.path.isfile(os.path.join(workspace_root, "apps/api/pyproject.toml")):
+            commands.append(
+                {
+                    "argv": ["uv", "run", "pytest", "-q"],
+                    "cwd": os.path.join(workspace_root, "apps/api"),
+                }
+            )
+        if web_changed and os.path.isfile(os.path.join(workspace_root, "apps/web/package.json")):
+            commands.append(
+                {
+                    "argv": ["npm", "test"],
+                    "cwd": os.path.join(workspace_root, "apps/web"),
+                }
+            )
+    elif catalog_code == "project.type_check":
+        if api_changed and os.path.isfile(os.path.join(workspace_root, "apps/api/pyproject.toml")):
+            commands.append(
+                {
+                    "argv": ["uv", "run", "python", "-m", "compileall", "-q", "app"],
+                    "cwd": os.path.join(workspace_root, "apps/api"),
+                }
+            )
+        if web_changed and os.path.isfile(os.path.join(workspace_root, "apps/web/package.json")):
+            commands.append(
+                {
+                    "argv": ["npm", "run", "typecheck"],
+                    "cwd": os.path.join(workspace_root, "apps/web"),
+                }
+            )
+    elif catalog_code == "project.lint":
+        if web_changed and os.path.isfile(os.path.join(workspace_root, "apps/web/package.json")):
+            commands.append(
+                {
+                    "argv": ["npm", "run", "lint"],
+                    "cwd": os.path.join(workspace_root, "apps/web"),
+                }
+            )
+    return commands
+
+
+def _quality_scan_findings(check_type: str, diff_text: str, changed_files: list[str]) -> list[dict]:
+    added_lines = "\n".join(
+        line[1:]
+        for line in diff_text.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    )
+    findings: list[dict] = []
+    if check_type == "secret_scan":
+        secret_patterns = (
+            ("private_key", r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+            ("aws_access_key", r"\bAKIA[0-9A-Z]{16}\b"),
+            ("credential_in_url", r"https?://[^/@\s:]+:[^/@\s]+@"),
+            (
+                "hardcoded_secret",
+                r"(?i)\b(password|passwd|api[_-]?key|access[_-]?token|client[_-]?secret)\b"
+                r"\s*[:=]\s*['\"][^'\"]{8,}['\"]",
+            ),
+        )
+        for code, pattern in secret_patterns:
+            if re.search(pattern, added_lines):
+                findings.append(
+                    {
+                        "code": code,
+                        "severity": "critical",
+                        "summary": "Potential credential detected in added lines",
+                    }
+                )
+    elif check_type == "dangerous_command_scan":
+        dangerous_patterns = (
+            ("shell_true", r"\bshell\s*=\s*True\b"),
+            ("os_system", r"\bos\.system\s*\("),
+            ("download_and_execute", r"\b(curl|wget)\b[^\n|]*\|\s*(sh|bash)\b"),
+        )
+        for code, pattern in dangerous_patterns:
+            if re.search(pattern, added_lines, flags=re.IGNORECASE):
+                findings.append(
+                    {
+                        "code": code,
+                        "severity": "high",
+                        "summary": "Potentially dangerous command pattern detected",
+                    }
+                )
+    elif check_type == "dependency_scan":
+        dependency_files = {
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "yarn.lock",
+            "uv.lock",
+            "poetry.lock",
+            "requirements.txt",
+        }
+        touched = [
+            path
+            for path in changed_files
+            if os.path.basename(path) in dependency_files
+        ]
+        if touched:
+            findings.append(
+                {
+                    "code": "DEPENDENCY_CHANGE_REQUIRES_CI_SCAN",
+                    "files": touched,
+                    "severity": "high",
+                    "summary": "Dependency lock changes require an external vulnerability scan",
+                }
+            )
+    return findings
+
+
+def _run_quality_gate_task(task: dict) -> None:
+    task_id = str(task["id"])
+    workspace_root = str(task.get("workspace_root") or "")
+    timeout_seconds = int(task.get("timeout_seconds") or 1800)
+    input_payload = task.get("input_payload")
+    if not isinstance(input_payload, dict):
+        input_payload = {}
+    if not _workspace_allowed(workspace_root):
+        _complete_task(
+            task_id,
+            status="failed",
+            error_code="QUALITY_GATE_WORKSPACE_NOT_ALLOWED",
+            error_message="Quality gate workspace is outside the runner whitelist",
+            result_json={"checks": [], "workspace_root": workspace_root},
+        )
+        return
+    started_at = time.time()
+    try:
+        change_summary = _quality_gate_change_summary(
+            workspace_root,
+            str(input_payload.get("base_branch") or ""),
+        )
+        checks: list[dict] = []
+        risk_findings: list[dict] = []
+        definitions = input_payload.get("checks")
+        if not isinstance(definitions, list):
+            definitions = []
+        for definition in definitions:
+            if not isinstance(definition, dict):
+                continue
+            check_type = str(definition.get("type") or "").strip()
+            catalog_code = str(definition.get("catalog_code") or "").strip()
+            check_started = time.time()
+            output_parts: list[str] = []
+            check_status = "passed"
+            exit_code = 0
+            findings = _quality_scan_findings(
+                check_type,
+                change_summary["diff_text"],
+                change_summary["changed_files"],
+            )
+            if findings:
+                risk_findings.extend(findings)
+                check_status = "failed"
+                exit_code = 1
+                output_parts.append("; ".join(item["summary"] for item in findings))
+            commands = _quality_catalog_commands(
+                catalog_code,
+                change_summary["changed_files"],
+                workspace_root,
+            )
+            for command in commands:
+                command_exit, preview, timed_out, server_status = _stream_process_output(
+                    command_args=list(command["argv"]),
+                    instruction="",
+                    task_id=task_id,
+                    timeout_seconds=max(1, timeout_seconds - int(time.time() - started_at)),
+                    workspace_root=str(command["cwd"]),
+                )
+                output_parts.append(preview)
+                exit_code = command_exit
+                if server_status == "cancel_requested":
+                    _complete_task(
+                        task_id,
+                        status="cancelled",
+                        error_code="AI_EXECUTOR_TASK_CANCELLED",
+                        error_message="Quality gate cancelled by platform request",
+                        result_json={**change_summary, "checks": checks},
+                    )
+                    return
+                if server_status:
+                    return
+                if timed_out or command_exit != 0:
+                    check_status = "failed"
+                    break
+            if not commands and not findings:
+                output_parts.append(
+                    "No matching executable project changes; deterministic scan passed"
+                )
+            evidence_content = "\n".join(output_parts) or f"{check_type}:{check_status}"
+            checks.append(
+                {
+                    "duration_ms": int((time.time() - check_started) * 1000),
+                    "evidence_ref": _quality_evidence_ref(
+                        task_id,
+                        check_type,
+                        evidence_content,
+                    ),
+                    "exit_code": exit_code,
+                    "independent": True,
+                    "source": "platform_scan"
+                    if check_type in {"dangerous_command_scan", "dependency_scan", "secret_scan"}
+                    else "platform_verifier",
+                    "status": check_status,
+                    "summary": evidence_content[-1000:],
+                    "type": check_type,
+                }
+            )
+        result = {
+            key: value
+            for key, value in change_summary.items()
+            if key != "diff_text"
+        }
+        result.update(
+            {
+                "checks": checks,
+                "command_shell": False,
+                "duration_ms": int((time.time() - started_at) * 1000),
+                "executor_type": "quality_gate",
+                "risk_findings": risk_findings,
+                "summary": (
+                    "Independent quality verification passed"
+                    if all(item["status"] == "passed" for item in checks)
+                    else "Independent quality verification found blocking issues"
+                ),
+            }
+        )
+        _complete_task(
+            task_id,
+            status="succeeded",
+            error_code=None,
+            error_message=None,
+            result_json=result,
+        )
+    except Exception as exc:  # noqa: BLE001 - report bounded verifier failures.
+        _complete_task(
+            task_id,
+            status="failed",
+            error_code="QUALITY_GATE_EXECUTION_FAILED",
+            error_message=f"Quality gate execution failed: {type(exc).__name__}",
+            result_json={"checks": [], "workspace_root": workspace_root},
         )
 
 
@@ -1404,6 +1890,9 @@ def _run_task(task: dict) -> None:
     timeout_seconds = int(task.get("timeout_seconds") or 1800)
     if executor_type == "deployment":
         _run_deployment_task(task)
+        return
+    if task.get("task_kind") == "quality_gate":
+        _run_quality_gate_task(task)
         return
     high_risk_operations = _high_risk_operations(instruction)
     if high_risk_operations and not _task_has_approval(task):
@@ -1452,10 +1941,33 @@ def _run_task(task: dict) -> None:
     execution_workspace_root = workspace_root
     workspace_isolation: dict | None = None
     try:
-        execution_workspace_root, workspace_isolation = _prepare_isolated_workspace(
-            task,
-            workspace_root,
-        )
+        request_config = task.get("request_config")
+        if not isinstance(request_config, dict):
+            request_config = {}
+        reuse_workspace = bool(request_config.get("reuse_workspace"))
+        configured_isolation = request_config.get("workspace_isolation")
+        if reuse_workspace:
+            if not isinstance(configured_isolation, dict):
+                raise RuntimeError("Agent loop workspace isolation metadata is missing")
+            configured_path = os.path.realpath(
+                str(configured_isolation.get("worktree_path") or "")
+            )
+            if configured_path != os.path.realpath(workspace_root):
+                raise RuntimeError("Agent loop workspace does not match isolated worktree")
+            if not os.path.isdir(os.path.join(configured_path, ".git")) and not os.path.isfile(
+                os.path.join(configured_path, ".git")
+            ):
+                raise RuntimeError("Agent loop isolated worktree is unavailable")
+            execution_workspace_root = configured_path
+            workspace_isolation = {
+                **configured_isolation,
+                "status": "agent_loop_reused",
+            }
+        else:
+            execution_workspace_root, workspace_isolation = _prepare_isolated_workspace(
+                task,
+                workspace_root,
+            )
         _append_logs(
             task_id,
             [
@@ -1618,7 +2130,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-'''
+"""
 
 
 def _runner_shell_script(runner: dict[str, Any], package_options: dict[str, str]) -> str:

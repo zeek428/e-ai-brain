@@ -418,7 +418,9 @@ def build_role_risk_precheck(
     candidate_role = {
         **role,
         "menu_codes": _string_list(
-            menu_codes if menu_codes is not None else role.get("menu_codes") or role.get("menu_scope") or []
+            menu_codes
+            if menu_codes is not None
+            else role.get("menu_codes") or role.get("menu_scope") or []
         ),
         "permission_codes": _string_list(
             permission_codes
@@ -432,9 +434,7 @@ def build_role_risk_precheck(
         ),
         "scopes": [
             dict(scope)
-            for scope in (
-                scopes if scopes is not None else role.get("scopes", [])
-            )
+            for scope in (scopes if scopes is not None else role.get("scopes", []))
             if isinstance(scope, dict)
         ],
         "status": status or str(role.get("status") or "active"),
@@ -469,9 +469,16 @@ def build_role_risk_precheck(
             auto_fix_suggestions.append(
                 {
                     "action": "configure_scope",
-                    "description": "为角色配置产品、知识空间或全局 scope，避免只能看到入口但查不到数据。",
+                    "description": (
+                        "为角色配置产品、知识空间或全局 scope，"
+                        "避免只能看到入口但查不到数据。"
+                    ),
                     "scope_examples": [
-                        {"access_level": "read", "scope_id": "<product_id>", "scope_type": "product"},
+                        {
+                            "access_level": "read",
+                            "scope_id": "<product_id>",
+                            "scope_type": "product",
+                        },
                         {"access_level": "read", "scope_id": "*", "scope_type": "global"},
                     ],
                 }

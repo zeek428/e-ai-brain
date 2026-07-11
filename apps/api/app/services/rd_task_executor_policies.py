@@ -13,10 +13,18 @@ from app.core.listing import (
     sort_list_items,
 )
 from app.core.store import DEFAULT_BRAIN_APP_ID
+from app.services.agent_autonomy import (
+    attach_agent_loop_coding_task,
+    autonomy_enabled,
+    start_agent_loop,
+)
 from app.services.ai_executor_runners import (
     create_ai_executor_task,
     find_available_runner,
     sync_ai_executor_runner_store,
+)
+from app.services.execution_context_manifests import (
+    build_and_save_execution_context_manifest,
 )
 from app.services.knowledge_documents import (
     knowledge_query_repository,
@@ -29,6 +37,8 @@ RD_TASK_EXECUTOR_POLICY_MANAGE_PERMISSION = "delivery.rd_executor_policies.manag
 RD_TASK_EXECUTOR_TYPES = {"claude", "codex", "openclaw"}
 RD_TASK_EXECUTOR_POLICY_STATUSES = {"active", "disabled"}
 RD_TASK_CODE_CHANGE_REVIEW_MODES = {"auto_commit", "manual_review"}
+RD_TASK_AUTONOMY_MODES = {"autonomous_loop", "single_pass"}
+RD_TASK_AUTO_MERGE_RISK_THRESHOLDS = {"low", "medium", "none"}
 RD_TASK_KNOWLEDGE_REFERENCE_LIMIT = 6
 RD_TASK_KNOWLEDGE_REFERENCE_MAX_CHARS = 1200
 RD_TASK_EXECUTOR_POLICY_SORT_FIELDS = {
@@ -112,6 +122,28 @@ def _ensure_code_change_review_mode(value: Any) -> str:
             "code_change_review_mode must be manual_review or auto_commit",
         )
     return mode
+
+
+def _ensure_autonomy_mode(value: Any) -> str:
+    mode = str(value or "single_pass").strip().lower()
+    if mode not in RD_TASK_AUTONOMY_MODES:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "autonomy_mode must be single_pass or autonomous_loop",
+        )
+    return mode
+
+
+def _ensure_auto_merge_risk_threshold(value: Any) -> str:
+    threshold = str(value or "low").strip().lower()
+    if threshold not in RD_TASK_AUTO_MERGE_RISK_THRESHOLDS:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "auto_merge_risk_threshold must be none, low or medium",
+        )
+    return threshold
 
 
 def _repository(current_store: Any) -> Any | None:
@@ -230,6 +262,10 @@ def sync_rd_task_executor_policy_store(
 def _policy_public(current_store: Any, policy: dict[str, Any]) -> dict[str, Any]:
     sync_policy_resource_store(current_store, policy)
     public = dict(policy)
+    public["autonomy_mode"] = _ensure_autonomy_mode(public.get("autonomy_mode"))
+    public["auto_merge_risk_threshold"] = _ensure_auto_merge_risk_threshold(
+        public.get("auto_merge_risk_threshold")
+    )
     public["code_change_review_mode"] = _ensure_code_change_review_mode(
         public.get("code_change_review_mode")
     )
@@ -448,6 +484,29 @@ def _validate_resource_scope(current_store: Any, policy: dict[str, Any]) -> None
         and runner_id not in _read_memory_dict(current_store, "ai_executor_runners")
     ):
         raise api_error(400, "AI_EXECUTOR_RUNNER_NOT_FOUND", "runner_id does not exist")
+    quality_gate_policy_id = policy.get("quality_gate_policy_id")
+    if quality_gate_policy_id:
+        repository = getattr(current_store, "repository", None)
+        get_gate_policy = getattr(repository, "get_quality_gate_policy", None)
+        gate_policy = (
+            get_gate_policy(quality_gate_policy_id)
+            if callable(get_gate_policy)
+            else _read_memory_dict(current_store, "quality_gate_policies").get(
+                quality_gate_policy_id
+            )
+        )
+        if gate_policy is None:
+            raise api_error(
+                400,
+                "QUALITY_GATE_POLICY_NOT_FOUND",
+                "quality_gate_policy_id does not exist",
+            )
+        if gate_policy.get("product_id") not in {None, "", product_id}:
+            raise api_error(
+                400,
+                "QUALITY_GATE_POLICY_SCOPE_MISMATCH",
+                "quality gate policy must be global or belong to the policy product",
+            )
 
 
 def _policy_from_payload(
@@ -480,6 +539,15 @@ def _policy_from_payload(
 
     policy = {
         **base,
+        "autonomy_mode": _ensure_autonomy_mode(
+            value("autonomy_mode", base.get("autonomy_mode", "single_pass"))
+        ),
+        "auto_merge_risk_threshold": _ensure_auto_merge_risk_threshold(
+            value(
+                "auto_merge_risk_threshold",
+                base.get("auto_merge_risk_threshold", "low"),
+            )
+        ),
         "branch": _optional_text(value("branch", base.get("branch"))),
         "code_change_review_mode": _ensure_code_change_review_mode(
             value("code_change_review_mode", base.get("code_change_review_mode"))
@@ -489,15 +557,26 @@ def _policy_from_payload(
             value("instruction_template", base.get("instruction_template")),
             "instruction_template",
         ),
+        "cost_budget": value("cost_budget", base.get("cost_budget")),
+        "max_duration_seconds": int(
+            value("max_duration_seconds", base.get("max_duration_seconds", 3600)) or 3600
+        ),
+        "max_iterations": int(
+            value("max_iterations", base.get("max_iterations", 1)) or 1
+        ),
         "name": _ensure_non_blank(value("name", base.get("name")), "name"),
         "output_contract": dict(value("output_contract", base.get("output_contract") or {}) or {}),
         "priority": int(value("priority", base.get("priority", 100)) or 100),
         "product_id": _optional_text(value("product_id", base.get("product_id"))),
+        "quality_gate_policy_id": _optional_text(
+            value("quality_gate_policy_id", base.get("quality_gate_policy_id"))
+        ),
         "repository_id": _optional_text(value("repository_id", base.get("repository_id"))),
         "runner_id": _optional_text(value("runner_id", base.get("runner_id"))),
         "status": _ensure_status(value("status", base.get("status", "active"))),
         "task_type": _ensure_non_blank(value("task_type", base.get("task_type")), "task_type"),
         "timeout_seconds": int(value("timeout_seconds", base.get("timeout_seconds", 1800)) or 1800),
+        "token_budget": value("token_budget", base.get("token_budget")),
         "updated_at": now,
         "workspace_root": str(
             value("workspace_root", base.get("workspace_root", "")) or ""
@@ -507,6 +586,24 @@ def _policy_from_payload(
         raise api_error(400, "VALIDATION_ERROR", "timeout_seconds must be between 60 and 86400")
     if policy["priority"] < 1 or policy["priority"] > 10000:
         raise api_error(400, "VALIDATION_ERROR", "priority must be between 1 and 10000")
+    if policy["max_iterations"] < 1 or policy["max_iterations"] > 20:
+        raise api_error(400, "VALIDATION_ERROR", "max_iterations must be between 1 and 20")
+    if policy["max_duration_seconds"] < 60 or policy["max_duration_seconds"] > 86400:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "max_duration_seconds must be between 60 and 86400",
+        )
+    if policy["token_budget"] is not None:
+        policy["token_budget"] = int(policy["token_budget"])
+        if policy["token_budget"] <= 0:
+            raise api_error(400, "VALIDATION_ERROR", "token_budget must be greater than 0")
+    if policy["cost_budget"] is not None:
+        policy["cost_budget"] = float(policy["cost_budget"])
+        if policy["cost_budget"] <= 0:
+            raise api_error(400, "VALIDATION_ERROR", "cost_budget must be greater than 0")
+    if policy["autonomy_mode"] == "single_pass":
+        policy["max_iterations"] = 1
     _validate_resource_scope(current_store, policy)
     return policy
 
@@ -969,11 +1066,37 @@ def queue_rd_task_executor_task(
     )
     branch = _executor_branch(policy, task) or None
     repository_id = _executor_repository_id(policy, task) or None
+    context_manifest = build_and_save_execution_context_manifest(
+        branch=branch,
+        current_store=current_store,
+        knowledge_references=knowledge_references,
+        repository_ref=_task_repository(task),
+        task=task,
+        user=user,
+    )
+    context_manifest_id = context_manifest["id"]
+    agent_loop_run: dict[str, Any] | None = None
+    agent_loop_iteration: dict[str, Any] | None = None
+    if autonomy_enabled(policy):
+        agent_loop_run, agent_loop_iteration = start_agent_loop(
+            current_store,
+            context_manifest=context_manifest,
+            policy=policy,
+            task=task,
+        )
+        instruction = (
+            f"{instruction}\n\nAgent 自治循环第 1 轮。先制定实施计划，再修改代码、"
+            "执行验证并分析失败。输出中必须包含 agent_iteration.plan、"
+            "agent_iteration.change_summary、agent_iteration.test_evidence 和"
+            " agent_iteration.failure_analysis；不得绕过安全边界或伪造测试证据。"
+        )
     input_payload = {
         "branch": branch,
         "bug": (task.get("input_json") or {}).get("bug") or {},
         "code_change_review_mode": policy.get("code_change_review_mode") or "manual_review",
         "code_inspection": _code_inspection_payload(task, policy),
+        "context_manifest_id": context_manifest_id,
+        "agent_loop_run_id": (agent_loop_run or {}).get("id"),
         "knowledge_references": knowledge_references,
         "output_contract": policy.get("output_contract") or {},
         "product_context": task.get("product_context") or {},
@@ -988,16 +1111,22 @@ def queue_rd_task_executor_task(
     request_config = {
         "branch": branch,
         "code_change_review_mode": policy.get("code_change_review_mode") or "manual_review",
+        "context_manifest_id": context_manifest_id,
+        "agent_loop_run_id": (agent_loop_run or {}).get("id"),
+        "autonomy_mode": policy.get("autonomy_mode") or "single_pass",
         "executor_policy_id": policy["id"],
         "output_contract": policy.get("output_contract") or {},
         "repository_id": repository_id,
         "source": "rd_task_executor_policy",
     }
-    return create_ai_executor_task(
+    runner_task = create_ai_executor_task(
         current_store,
         action_id=None,
+        agent_loop_iteration_id=(agent_loop_iteration or {}).get("id"),
+        agent_loop_run_id=(agent_loop_run or {}).get("id"),
         ai_task_id=task["id"],
         connection_id=None,
+        context_manifest_id=context_manifest_id,
         created_by=user["id"],
         executor_type=policy["executor_type"],
         input_payload=input_payload,
@@ -1010,3 +1139,11 @@ def queue_rd_task_executor_task(
         timeout_seconds=int(policy.get("timeout_seconds") or 1800),
         workspace_root=workspace_root,
     )
+    if agent_loop_run is not None and agent_loop_iteration is not None:
+        attach_agent_loop_coding_task(
+            current_store,
+            coding_runner_task_id=runner_task["id"],
+            iteration_id=agent_loop_iteration["id"],
+            loop_run_id=agent_loop_run["id"],
+        )
+    return runner_task

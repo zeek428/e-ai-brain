@@ -10,6 +10,11 @@ from fastapi import Request
 
 from app.api.deps import api_error, require_permissions
 from app.core.listing import add_list_observability, sort_list_items
+from app.services.agent_autonomy import (
+    autonomy_enabled,
+    handle_agent_quality_gate_outcome,
+    record_agent_coding_completed,
+)
 from app.services.ai_executor_runner_constants import (
     AI_EXECUTOR_LOCAL_RUNNER_TYPES,
     AI_EXECUTOR_RUNNER_CAPABILITIES,
@@ -42,6 +47,17 @@ from app.services.ai_executor_runner_health import (
     runner_public as _runner_public,
 )
 from app.services.ai_executor_runner_packages import build_ai_executor_runner_install_package
+from app.services.ai_executor_runner_persistence import (
+    _delete_runner_record,
+    _existing_pending_review,
+    _memory_collection,
+    _persist_record,
+    _persist_task_state_records,
+    _read_collection,
+    _read_record,
+    sync_ai_executor_runner_store,
+    sync_ai_executor_task_store,
+)
 from app.services.ai_executor_runner_queue import (
     latest_task_for_runner as _latest_task_for_runner,
 )
@@ -74,8 +90,13 @@ from app.services.ai_executor_task_reliability import (
     apply_task_claim_lease,
     refresh_task_lease,
 )
-from app.services.operational_records import record_audit_event, save_single_repository_record
+from app.services.operational_records import record_audit_event
 from app.services.product_scope import product_scope_filter
+from app.services.quality_gates import (
+    complete_pre_merge_quality_gate,
+    quality_gate_allows_auto_merge,
+    start_pre_merge_quality_gate,
+)
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_output_summary import readable_task_output_summary
 from app.services.task_persistence_helpers import (
@@ -155,14 +176,20 @@ def _normalized_deployment_target_metadata(value: Any) -> list[dict[str, Any]]:
         if not code or not name or method not in {"ssh", "docker"} or code in seen:
             continue
         seen.add(code)
-        targets.append(
-            {
-                "code": code,
-                "method": method,
-                "name": name,
-                "ready": bool(item.get("ready", True)),
-            }
-        )
+        target = {
+            "code": code,
+            "method": method,
+            "name": name,
+            "ready": bool(item.get("ready", True)),
+        }
+        for capability in (
+            "health_check_configured",
+            "rollback_configured",
+            "supports_blue_green",
+        ):
+            if bool(item.get(capability)):
+                target[capability] = True
+        targets.append(target)
     return targets
 
 
@@ -196,94 +223,6 @@ def create_ai_executor_runner_install_package_response(
         arch=arch,
         install_mode=install_mode,
         target_os=target_os,
-    )
-
-
-def _repository(current_store: Any) -> Any | None:
-    repository = getattr(current_store, "repository", None)
-    required = (
-        "list_ai_executor_runners",
-        "list_ai_executor_tasks",
-        "save_ai_executor_runner_record",
-        "save_ai_executor_task_record",
-    )
-    if repository is not None and all(
-        callable(getattr(repository, name, None)) for name in required
-    ):
-        return repository
-    return None
-
-
-RUNNER_RECORD_METHOD_COLLECTIONS = {
-    "save_ai_executor_approval_request_record": "ai_executor_approval_requests",
-    "save_ai_executor_runner_record": "ai_executor_runners",
-    "save_ai_executor_task_record": "ai_executor_tasks",
-    "save_collector_run_record": "collector_runs",
-    "save_plugin_invocation_log_record": "plugin_invocation_logs",
-    "save_scheduled_job_record": "scheduled_jobs",
-    "save_scheduled_job_run_record": "scheduled_job_runs",
-}
-
-
-def _read_collection(
-    current_store: Any,
-    collection_name: str,
-) -> dict[str, dict[str, Any]]:
-    collection = getattr(current_store, collection_name, {})
-    return collection if isinstance(collection, dict) else {}
-
-
-def _read_record(
-    current_store: Any,
-    collection_name: str,
-    record_id: str | None,
-) -> dict[str, Any] | None:
-    if record_id is None:
-        return None
-    item = _read_collection(current_store, collection_name).get(str(record_id))
-    return item if isinstance(item, dict) else None
-
-
-def _memory_collection(
-    current_store: Any,
-    collection_name: str,
-) -> dict[str, dict[str, Any]]:
-    collection = getattr(current_store, collection_name)
-    if not isinstance(collection, dict):
-        raise TypeError(f"Runner record collection is not mutable: {collection_name}")
-    return collection
-
-
-def _memory_collection_for_method(
-    current_store: Any,
-    method_name: str,
-) -> dict[str, dict[str, Any]]:
-    collection_name = RUNNER_RECORD_METHOD_COLLECTIONS.get(method_name)
-    if collection_name is None:
-        raise ValueError(f"Unsupported runner record save method: {method_name}")
-    return _memory_collection(current_store, collection_name)
-
-
-def _replace_collection(
-    current_store: Any,
-    collection_name: str,
-    items: list[dict[str, Any]],
-) -> None:
-    setattr(
-        current_store,
-        collection_name,
-        {str(item["id"]): dict(item) for item in items if item.get("id") is not None},
-    )
-
-
-def sync_ai_executor_runner_store(current_store: Any, *, status: str | None = None) -> None:
-    repository = _repository(current_store)
-    if repository is None:
-        return
-    _replace_collection(
-        current_store,
-        "ai_executor_runners",
-        repository.list_ai_executor_runners(status=status),
     )
 
 
@@ -331,110 +270,6 @@ def _runner_public_with_latest_task(
     return item
 
 
-def sync_ai_executor_task_store(
-    current_store: Any,
-    *,
-    ai_task_id: str | None = None,
-    product_scope_ids: list[str] | None = None,
-    runner_id: str | None = None,
-    scheduled_job_run_id: str | None = None,
-    status: str | None = None,
-) -> None:
-    repository = _repository(current_store)
-    if repository is None:
-        return
-    _replace_collection(
-        current_store,
-        "ai_executor_tasks",
-        repository.list_ai_executor_tasks(
-            ai_task_id=ai_task_id,
-            product_scope_ids=product_scope_ids,
-            runner_id=runner_id,
-            scheduled_job_run_id=scheduled_job_run_id,
-            status=status,
-        ),
-    )
-
-
-def _persist_record(
-    current_store: Any,
-    method_name: str,
-    record: dict[str, Any],
-    *,
-    audit_event: dict[str, Any] | None = None,
-) -> None:
-    repository = getattr(current_store, "repository", None)
-    save_record = getattr(repository, method_name, None)
-    if callable(save_record):
-        save_single_repository_record(current_store, method_name, record, audit_event=audit_event)
-        return
-    if repository is None:
-        _memory_collection_for_method(current_store, method_name)[record["id"]] = record
-
-
-def _delete_runner_record(
-    current_store: Any,
-    *,
-    audit_event: dict[str, Any] | None = None,
-    collection_name: str,
-    method_name: str,
-    record_id: str,
-) -> None:
-    repository = getattr(current_store, "repository", None)
-    delete_record = getattr(repository, method_name, None)
-    if callable(delete_record):
-        delete_record(record_id, audit_event=audit_event)
-        return
-    if repository is None:
-        collection = getattr(current_store, collection_name)
-        if isinstance(collection, dict):
-            collection.pop(record_id, None)
-
-
-def _persist_task_state_records(
-    current_store: Any,
-    *,
-    audit_events: list[dict[str, Any]],
-    reviews: list[dict[str, Any]] | None,
-    task: dict[str, Any],
-) -> None:
-    repository = getattr(current_store, "repository", None)
-    save_records = getattr(repository, "save_task_state_records", None)
-    if callable(save_records):
-        save_records(task=task, audit_events=audit_events, reviews=reviews)
-        return
-    if repository is None:
-        _memory_collection(current_store, "ai_tasks")[task["id"]] = task
-        for review in reviews or []:
-            _memory_collection(current_store, "human_reviews")[review["id"]] = review
-
-
-def _existing_pending_review(
-    current_store: Any,
-    ai_task_id: str,
-    stage: str,
-) -> dict[str, Any] | None:
-    repository = getattr(current_store, "repository", None)
-    load_workflow_runtime = getattr(repository, "load_workflow_runtime", None)
-    if callable(load_workflow_runtime):
-        payload = load_workflow_runtime()
-        for review in payload.get("human_reviews", {}).values():
-            if (
-                review.get("ai_task_id") == ai_task_id
-                and review.get("stage") == stage
-                and review.get("status") == "pending"
-            ):
-                return review
-    for review in _read_collection(current_store, "human_reviews").values():
-        if (
-            review.get("ai_task_id") == ai_task_id
-            and review.get("stage") == stage
-            and review.get("status") == "pending"
-        ):
-            return review
-    return None
-
-
 def _executor_policy_id_from_task(ai_task: dict[str, Any]) -> str | None:
     input_json = ai_task.get("input_json") if isinstance(ai_task.get("input_json"), dict) else {}
     executor = input_json.get("executor") if isinstance(input_json.get("executor"), dict) else {}
@@ -477,10 +312,15 @@ def _complete_ai_task_with_auto_commit_if_configured(
     ai_task: dict[str, Any],
     executor_snapshot: dict[str, Any],
     output_json: dict[str, Any],
+    quality_gate_run: dict[str, Any] | None,
     runner_id: str,
 ) -> bool:
     policy = _load_executor_policy_for_ai_task(current_store, ai_task)
-    if _code_change_review_mode(policy) != "auto_commit":
+    if (
+        _code_change_review_mode(policy) != "auto_commit"
+        or quality_gate_run is None
+        or not quality_gate_allows_auto_merge(quality_gate_run)
+    ):
         return False
 
     write_store = task_workflow_write_store(current_store)
@@ -529,6 +369,7 @@ def _complete_ai_task_with_auto_commit_if_configured(
             **executor_snapshot,
             "code_change_review_mode": "auto_commit",
             "executor_policy_id": (policy or {}).get("id"),
+            "quality_gate_run_id": quality_gate_run["id"],
         },
     )
     from app.services.ai_executor_workspace_isolation import (
@@ -556,6 +397,7 @@ def _complete_ai_task_with_auto_commit_if_configured(
         current_step="complete_archive",
         state_snapshot={
             "code_change_review_mode": "auto_commit",
+            "quality_gate_run_id": quality_gate_run["id"],
             "review_id": review_id,
             "task_status": task["status"],
         },
@@ -571,6 +413,7 @@ def _complete_ai_task_with_auto_commit_if_configured(
             "code_change_review_mode": "auto_commit",
             "decision": "approved",
             "executor_policy_id": (policy or {}).get("id"),
+            "quality_gate_run_id": quality_gate_run["id"],
         },
     )
     record_task_audit_event(
@@ -582,6 +425,7 @@ def _complete_ai_task_with_auto_commit_if_configured(
         subject_id=task["id"],
         payload={
             "executor_policy_id": (policy or {}).get("id"),
+            "quality_gate_run_id": quality_gate_run["id"],
             "runner_id": runner_id,
             "runner_task_id": executor_snapshot.get("runner_task_id"),
         },
@@ -608,6 +452,78 @@ def _complete_ai_task_with_auto_commit_if_configured(
     return True
 
 
+def _move_ai_task_to_executor_review(
+    current_store: Any,
+    *,
+    ai_task: dict[str, Any],
+    actor_id: str,
+    executor_snapshot: dict[str, Any],
+    output_json: dict[str, Any],
+    quality_gate_run: dict[str, Any] | None = None,
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    review_output = (
+        {**output_json, "quality_gate": quality_gate_run}
+        if quality_gate_run is not None
+        else output_json
+    )
+    updated_task = {
+        **ai_task,
+        "current_step": "executor_completed",
+        "output_json": review_output,
+        "status": "waiting_review",
+        "updated_at": now,
+    }
+    reviews: list[dict[str, Any]] = []
+    existing_review = _existing_pending_review(
+        current_store,
+        updated_task["id"],
+        str(updated_task.get("task_type") or "executor_result"),
+    )
+    if existing_review is None:
+        review_id = current_store.new_id("review")
+        reviews.append(
+            {
+                "ai_task_id": updated_task["id"],
+                "content": review_output,
+                "created_at": now,
+                "decided_at": None,
+                "decided_by": None,
+                "decision_reason": None,
+                "id": review_id,
+                "questions": [],
+                "stage": updated_task.get("task_type") or "executor_result",
+                "status": "pending",
+                "updated_at": now,
+                "version": 1,
+            }
+        )
+    review_ids = list(updated_task.get("review_ids") or [])
+    for review in reviews or ([existing_review] if existing_review else []):
+        if review and review["id"] not in review_ids:
+            review_ids.append(review["id"])
+    updated_task["review_ids"] = review_ids
+    audit_event = record_audit_event(
+        current_store,
+        event_type="ai_task.executor_completed",
+        actor_id=actor_id,
+        subject_type="ai_task",
+        subject_id=updated_task["id"],
+        payload={
+            "ai_task_id": updated_task["id"],
+            **executor_snapshot,
+            "quality_gate_run_id": (quality_gate_run or {}).get("id"),
+            "quality_gate_status": (quality_gate_run or {}).get("status"),
+        },
+    )
+    _persist_task_state_records(
+        current_store,
+        audit_events=[audit_event],
+        reviews=reviews or None,
+        task=updated_task,
+    )
+
+
 def _sync_runner_completion_to_ai_task(
     current_store: Any,
     *,
@@ -616,6 +532,113 @@ def _sync_runner_completion_to_ai_task(
 ) -> None:
     ai_task = _load_ai_task(current_store, task.get("ai_task_id"))
     if ai_task is None:
+        return
+    if task.get("task_kind") == "quality_gate":
+        if task.get("status") in {"queued", "claimed", "running"}:
+            return
+        quality_gate_run = complete_pre_merge_quality_gate(
+            current_store,
+            verifier_runner_task=task,
+        )
+        if quality_gate_run is None:
+            return
+        output_json = (
+            ai_task.get("output_json")
+            if isinstance(ai_task.get("output_json"), dict)
+            else {}
+        )
+        output_json = {**output_json, "quality_gate": quality_gate_run}
+        executor_snapshot = (
+            output_json.get("executor")
+            if isinstance(output_json.get("executor"), dict)
+            else {}
+        )
+        policy = _load_executor_policy_for_ai_task(current_store, ai_task)
+        loop_outcome = handle_agent_quality_gate_outcome(
+            current_store,
+            ai_task=ai_task,
+            executor_policy=policy,
+            quality_gate_run=quality_gate_run,
+            verifier_runner_task=task,
+        )
+        if loop_outcome.get("action") == "retry":
+            retry_task = loop_outcome["runner_task"]
+            now = datetime.now(UTC).isoformat()
+            input_json = (
+                ai_task.get("input_json")
+                if isinstance(ai_task.get("input_json"), dict)
+                else {}
+            )
+            retry_executor = {
+                "executor_policy_id": _executor_policy_id_from_task(ai_task),
+                "executor_type": retry_task.get("executor_type"),
+                "runner_id": retry_task.get("runner_id"),
+                "runner_task_id": retry_task.get("id"),
+                "status": retry_task.get("status"),
+                "workspace_root": retry_task.get("workspace_root"),
+            }
+            updated_task = {
+                **ai_task,
+                "current_step": "agent_loop_retrying",
+                "input_json": {
+                    **input_json,
+                    "agent_loop": {
+                        "id": loop_outcome["loop"]["id"],
+                        "iteration": loop_outcome["loop"]["current_iteration"],
+                        "status": loop_outcome["loop"]["status"],
+                    },
+                    "executor": retry_executor,
+                },
+                "output_json": output_json,
+                "status": "running",
+                "updated_at": now,
+            }
+            audit_event = record_audit_event(
+                current_store,
+                event_type="ai_task.agent_loop_retrying",
+                actor_id="system",
+                subject_type="ai_task",
+                subject_id=updated_task["id"],
+                payload={
+                    "agent_loop_run_id": loop_outcome["loop"]["id"],
+                    "iteration": loop_outcome["loop"]["current_iteration"],
+                    "runner_task_id": retry_task["id"],
+                },
+            )
+            _persist_task_state_records(
+                current_store,
+                audit_events=[audit_event],
+                reviews=None,
+                task=updated_task,
+            )
+            return
+        if loop_outcome.get("action") == "review":
+            _move_ai_task_to_executor_review(
+                current_store,
+                ai_task=ai_task,
+                actor_id=runner_id,
+                executor_snapshot=executor_snapshot,
+                output_json=output_json,
+                quality_gate_run=quality_gate_run,
+            )
+            return
+        if _complete_ai_task_with_auto_commit_if_configured(
+            current_store,
+            ai_task=ai_task,
+            executor_snapshot=executor_snapshot,
+            output_json=output_json,
+            quality_gate_run=quality_gate_run,
+            runner_id=runner_id,
+        ):
+            return
+        _move_ai_task_to_executor_review(
+            current_store,
+            ai_task=ai_task,
+            actor_id=runner_id,
+            executor_snapshot=executor_snapshot,
+            output_json=output_json,
+            quality_gate_run=quality_gate_run,
+        )
         return
     runner_status = str(task.get("status") or "running")
     now = datetime.now(UTC).isoformat()
@@ -676,65 +699,62 @@ def _sync_runner_completion_to_ai_task(
         output_summary = readable_task_output_summary(output_json)
         if output_summary:
             output_json["summary"] = output_summary
-        if _complete_ai_task_with_auto_commit_if_configured(
+        policy = _load_executor_policy_for_ai_task(current_store, ai_task)
+        if _code_change_review_mode(policy) == "auto_commit" or autonomy_enabled(policy):
+            quality_gate_run, verifier_task = start_pre_merge_quality_gate(
+                current_store,
+                ai_task=ai_task,
+                coding_runner_task=task,
+                executor_policy=policy,
+            )
+            record_agent_coding_completed(
+                current_store,
+                coding_runner_task=task,
+                quality_gate_run_id=quality_gate_run["id"],
+                verifier_runner_task_id=verifier_task["id"],
+            )
+            updated_task = {
+                **ai_task,
+                "current_step": "quality_gate_running",
+                "input_json": {
+                    **input_json,
+                    "executor": executor_snapshot,
+                    "quality_gate": {
+                        "id": quality_gate_run["id"],
+                        "status": quality_gate_run["status"],
+                        "verifier_runner_task_id": verifier_task["id"],
+                    },
+                },
+                "output_json": output_json,
+                "status": "running",
+                "updated_at": now,
+            }
+            audit_event = record_audit_event(
+                current_store,
+                event_type="ai_task.quality_gate_started",
+                actor_id=runner_id,
+                subject_type="ai_task",
+                subject_id=updated_task["id"],
+                payload={
+                    "ai_task_id": updated_task["id"],
+                    "coding_runner_task_id": task["id"],
+                    "quality_gate_run_id": quality_gate_run["id"],
+                    "verifier_runner_task_id": verifier_task["id"],
+                },
+            )
+            _persist_task_state_records(
+                current_store,
+                audit_events=[audit_event],
+                reviews=None,
+                task=updated_task,
+            )
+            return
+        _move_ai_task_to_executor_review(
             current_store,
+            actor_id=runner_id,
             ai_task=ai_task,
             executor_snapshot=executor_snapshot,
             output_json=output_json,
-            runner_id=runner_id,
-        ):
-            return
-        updated_task = {
-            **ai_task,
-            "current_step": "executor_completed",
-            "output_json": output_json,
-            "status": "waiting_review",
-            "updated_at": now,
-        }
-        reviews: list[dict[str, Any]] = []
-        existing_review = _existing_pending_review(
-            current_store,
-            updated_task["id"],
-            str(updated_task.get("task_type") or "executor_result"),
-        )
-        if existing_review is None:
-            review_id = current_store.new_id("review")
-            review = {
-                "ai_task_id": updated_task["id"],
-                "content": output_json,
-                "created_at": now,
-                "decided_at": None,
-                "decided_by": None,
-                "decision_reason": None,
-                "id": review_id,
-                "questions": [],
-                "stage": updated_task.get("task_type") or "executor_result",
-                "status": "pending",
-                "updated_at": now,
-                "version": 1,
-            }
-            reviews.append(review)
-        review_ids = list(updated_task.get("review_ids") or [])
-        for review in reviews or ([existing_review] if existing_review else []):
-            if review and review["id"] not in review_ids:
-                review_ids.append(review["id"])
-        updated_task = {
-            **updated_task,
-            "review_ids": review_ids,
-        }
-        audit_event = record_audit_event(
-            current_store,
-            event_type="ai_task.executor_completed",
-            actor_id=runner_id,
-            subject_type="ai_task",
-            subject_id=updated_task["id"],
-            payload={"ai_task_id": updated_task["id"], **executor_snapshot},
-        )
-        _persist_task_state_records(
-            current_store,
-            audit_events=[audit_event],
-            reviews=reviews or None,
-            task=updated_task,
         )
         return
 

@@ -251,7 +251,8 @@ class PlatformOperationsRepository:
                           channel = EXCLUDED.channel,
                           target = EXCLUDED.target,
                           severity = EXCLUDED.severity,
-                          payload_json = system_alert_notifications.payload_json || EXCLUDED.payload_json,
+                          payload_json = system_alert_notifications.payload_json
+                            || EXCLUDED.payload_json,
                           updated_at = now()
                         WHERE system_alert_notifications.status IN ('pending', 'failed')
                         """,
@@ -493,7 +494,8 @@ class PlatformOperationsRepository:
                         WHERE event_type = 'feedback' AND feedback_value = 'useful'
                       ) AS useful_feedback_count,
                       COUNT(*) FILTER (
-                        WHERE event_type = 'feedback' AND feedback_value IN ('not_useful', 'incorrect')
+                        WHERE event_type = 'feedback'
+                          AND feedback_value IN ('not_useful', 'incorrect')
                       ) AS negative_feedback_count,
                       ROUND(AVG(latency_ms) FILTER (WHERE event_type IN ('search', 'rag')), 2)
                         AS avg_latency_ms

@@ -52,7 +52,12 @@ def create_ai_executor_task(
     timeout_seconds: int,
     workspace_root: str,
     ai_task_id: str | None = None,
+    agent_loop_iteration_id: str | None = None,
+    agent_loop_run_id: str | None = None,
+    context_manifest_id: str | None = None,
     deployment_run_id: str | None = None,
+    quality_gate_run_id: str | None = None,
+    task_kind: str = "coding",
 ) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
     task_id = current_store.new_id("ai_executor_task")
@@ -115,9 +120,12 @@ def create_ai_executor_task(
     }
     task = {
         "action_id": action_id,
+        "agent_loop_iteration_id": agent_loop_iteration_id,
+        "agent_loop_run_id": agent_loop_run_id,
         "ai_task_id": ai_task_id,
         "claimed_at": None,
         "connection_id": connection_id,
+        "context_manifest_id": context_manifest_id,
         "created_at": now,
         "created_by": created_by,
         "deployment_run_id": deployment_run_id,
@@ -130,12 +138,14 @@ def create_ai_executor_task(
         "instruction": instruction,
         "logs": [],
         "plugin_invocation_log_id": plugin_invocation_log_id,
+        "quality_gate_run_id": quality_gate_run_id,
         "request_config": task_request_config,
         "result_json": {},
         "runner_id": runner_id,
         "scheduled_job_id": scheduled_job_id,
         "scheduled_job_run_id": scheduled_job_run_id,
         "status": "queued",
+        "task_kind": task_kind,
         "timeout_seconds": timeout_seconds,
         "updated_at": now,
         "workspace_root": workspace_root,
@@ -152,6 +162,7 @@ def create_ai_executor_task(
             "scheduled_job_id": scheduled_job_id,
             "scheduled_job_run_id": scheduled_job_run_id,
             "ai_task_id": ai_task_id,
+            "context_manifest_id": context_manifest_id,
             "approval_id": (safety_snapshot.get("approval") or {}).get("approval_id"),
             "approved_by": (safety_snapshot.get("approval") or {}).get("approved_by"),
             "approved_operations": (safety_snapshot.get("approval") or {}).get(
@@ -160,6 +171,7 @@ def create_ai_executor_task(
             or [],
             "risk_level": safety_snapshot["risk_level"],
             "safety_status": safety_snapshot["status"],
+            "task_kind": task_kind,
             "workspace_root": workspace_root,
         },
     )

@@ -275,7 +275,9 @@ def _list_version_deployment_requests(repository: Any, *, version_id: str) -> li
     deployment_ids = [str(item["id"]) for item in deployments if item.get("id")]
     if not deployment_ids:
         return deployments
-    runs_by_request: dict[str, list[dict[str, Any]]] = {deployment_id: [] for deployment_id in deployment_ids}
+    runs_by_request: dict[str, list[dict[str, Any]]] = {
+        deployment_id: [] for deployment_id in deployment_ids
+    }
     for deployment_id in deployment_ids:
         runs_by_request[deployment_id] = repository.list_deployment_runs(
             deployment_request_id=deployment_id,

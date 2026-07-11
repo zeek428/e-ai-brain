@@ -7,7 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request as UrlRequest, urlopen
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 from fastapi import HTTPException, Request
 
@@ -38,7 +39,6 @@ from app.services.product_config_context import (
 from app.services.rbac_matrix import build_rbac_policy_matrix
 from app.services.system_settings import send_system_email, system_settings_response
 
-
 HEALTH_STATUS_RANK = {
     "ok": 0,
     "configured": 0,
@@ -67,7 +67,9 @@ def _runtime_repository(current_store: Any) -> Any | None:
     return getattr(current_store, "repository", None)
 
 
-def _items_from_store(current_store: Any, repository_method: str, memory_attr: str) -> list[dict[str, Any]]:
+def _items_from_store(
+    current_store: Any, repository_method: str, memory_attr: str
+) -> list[dict[str, Any]]:
     repository = _runtime_repository(current_store)
     list_items = getattr(repository, repository_method, None)
     if callable(list_items):
@@ -247,7 +249,10 @@ def _pgvector_check(current_store: Any, settings: Settings) -> dict[str, Any]:
         category="基础设施",
         component="pgvector",
         description="用于知识中心向量检索和安全随机值生成的 PostgreSQL 扩展。",
-        fix_suggestion="在数据库执行 create extension if not exists vector; create extension if not exists pgcrypto;",
+        fix_suggestion=(
+            "在数据库执行 create extension if not exists vector; "
+            "create extension if not exists pgcrypto;"
+        ),
         key="pgvector",
         metrics={"enabled_extensions": sorted(extensions), "missing_extensions": missing},
         status="ok" if not missing else "error",
@@ -284,7 +289,9 @@ def _smtp_check(current_store: Any) -> dict[str, Any]:
             "smtp_host": delivery.get("smtp_host"),
             "smtp_port": delivery.get("smtp_port"),
             "smtp_tls": delivery.get("smtp_tls"),
-            "test_recipient_configured": bool(settings_payload.get("test_recipient_email_configured")),
+            "test_recipient_configured": bool(
+                settings_payload.get("test_recipient_email_configured")
+            ),
         },
         status=status,
         title="SMTP 邮件发送",
@@ -298,7 +305,10 @@ def _dingtalk_login_check(settings: Settings) -> dict[str, Any]:
             category="身份集成",
             component="dingtalk_login",
             description="钉钉登录未启用，用户只能使用本地账号密码登录。",
-            fix_suggestion="如需企业 SSO，请配置 DINGTALK_LOGIN_ENABLED、Client ID、Client Secret 和回调地址。",
+            fix_suggestion=(
+                "如需企业 SSO，请配置 DINGTALK_LOGIN_ENABLED、Client ID、"
+                "Client Secret 和回调地址。"
+            ),
             key="dingtalk_login",
             status="disabled",
             title="钉钉登录",
@@ -354,7 +364,8 @@ def _dingtalk_mcp_check(current_store: Any) -> dict[str, Any]:
         item
         for item in dingtalk_connections
         if str(item.get("status") or "").lower() not in {"active", "enabled"}
-        or str((item.get("last_test_summary") or {}).get("status") or "").lower() in {"failed", "error"}
+        or str((item.get("last_test_summary") or {}).get("status") or "").lower()
+        in {"failed", "error"}
     ]
     if dingtalk_plugins and dingtalk_connections and not failed_connections:
         status = "configured"
@@ -404,7 +415,10 @@ def _object_storage_check(settings: Settings) -> dict[str, Any]:
             category="对象存储",
             component="object_storage",
             description="知识文件和 Bug 图片证据使用 MinIO/S3-compatible 对象存储。",
-            fix_suggestion="补齐 OBJECT_STORAGE_ENDPOINT、ACCESS_KEY、SECRET_KEY、BUCKET，并确认 bucket 私有。",
+            fix_suggestion=(
+                "补齐 OBJECT_STORAGE_ENDPOINT、ACCESS_KEY、SECRET_KEY、BUCKET，"
+                "并确认 bucket 私有。"
+            ),
             key="object_storage",
             last_error=f"缺失配置：{', '.join(missing)}" if missing else None,
             metrics={"bucket": settings.object_storage_bucket, "provider": provider},
@@ -424,7 +438,9 @@ def _object_storage_check(settings: Settings) -> dict[str, Any]:
     )
 
 
-def _model_gateway_check(current_store: Any, settings: Settings, platform_health: dict[str, str]) -> dict[str, Any]:
+def _model_gateway_check(
+    current_store: Any, settings: Settings, platform_health: dict[str, str]
+) -> dict[str, Any]:
     logs = _items_from_store(current_store, "list_model_gateway_logs", "model_gateway_logs")
     failed_logs = [item for item in logs if item.get("status") == "failed"]
     status = platform_health.get("model_gateway") or "not_configured"
@@ -498,7 +514,10 @@ def _knowledge_quality_check(
         category="知识质量",
         component="knowledge_quality",
         description="展示知识文档、分块、向量索引和 Hybrid Search 可用性。",
-        fix_suggestion="关注索引失败和仅关键词可检索文档，补建 embedding 并使用 RAG 反馈评估引用准确性。",
+        fix_suggestion=(
+            "关注索引失败和仅关键词可检索文档，补建 embedding 并使用 RAG "
+            "反馈评估引用准确性。"
+        ),
         key="knowledge_quality",
         last_error=_latest_error(issues, "description"),
         metrics={
@@ -705,7 +724,9 @@ def _product_plugin_health(current_store: Any) -> dict[str, dict[str, Any]]:
                 entry["checked_count"] += 1
             if not enabled or test_status == "failed":
                 entry["failed_count"] += 1
-            if checked_at and (entry["latest_checked_at"] is None or checked_at > entry["latest_checked_at"]):
+            if checked_at and (
+                entry["latest_checked_at"] is None or checked_at > entry["latest_checked_at"]
+            ):
                 entry["latest_checked_at"] = checked_at
     return health_by_product
 
@@ -805,7 +826,8 @@ def _product_onboarding_scores(
         searchable_product_documents = [
             document
             for document in product_documents
-            if str(document.get("index_status") or "") in {"indexed", "text_indexed", "vector_indexed"}
+            if str(document.get("index_status") or "")
+            in {"indexed", "text_indexed", "vector_indexed"}
         ]
         failed_product_documents = [
             document
@@ -839,7 +861,11 @@ def _product_onboarding_scores(
         if failed_product_documents:
             health_issues.append("存在知识索引失败文档")
         if health_issues:
-            recent_health_status = "degraded" if failed_plugin_connection_count or failed_product_documents else "attention"
+            recent_health_status = (
+                "degraded"
+                if failed_plugin_connection_count or failed_product_documents
+                else "attention"
+            )
         else:
             recent_health_status = "healthy"
 
@@ -948,7 +974,10 @@ def _product_onboarding_scores(
         if searchable_product_documents:
             score_breakdown.append(
                 _product_score_breakdown_item(
-                    evidence=f"可检索文档 {len(searchable_product_documents)} / 总文档 {len(product_documents)}",
+                    evidence=(
+                        f"可检索文档 {len(searchable_product_documents)}"
+                        f" / 总文档 {len(product_documents)}"
+                    ),
                     key="knowledge",
                     label="知识空间",
                     max_score=15,
@@ -1014,7 +1043,8 @@ def _product_onboarding_scores(
         score_breakdown.append(
             _product_score_breakdown_item(
                 evidence=(
-                    f"active {plugin_connection_count} / total {int(plugin_health.get('total_count') or 0)}"
+                    f"active {plugin_connection_count} / total "
+                    f"{int(plugin_health.get('total_count') or 0)}"
                     f" / failed {failed_plugin_connection_count}"
                 ),
                 key="plugin_connection",
@@ -1090,7 +1120,9 @@ def _product_onboarding_scores(
                     "failed_plugin_connection_count": failed_plugin_connection_count,
                     "issues": health_issues,
                     "status": recent_health_status,
-                    "summary": "健康检查正常" if not health_issues else "；".join(health_issues[:4]),
+                    "summary": "健康检查正常"
+                    if not health_issues
+                    else "；".join(health_issues[:4]),
                 },
                 "related_system_count": len(active_related_systems),
                 "score": score,
@@ -1133,7 +1165,10 @@ def _observability_check(current_store: Any) -> dict[str, Any]:
         category="观测告警",
         component="observability",
         description="平台已有 trace、审计和执行记录；外部指标、错误上报和告警接入可进一步闭环。",
-        fix_suggestion="生产环境建议开启 OpenTelemetry OTLP、Prometheus 指标和 Sentry 错误上报，并配置 API/任务/插件失败告警。",
+        fix_suggestion=(
+            "生产环境建议开启 OpenTelemetry OTLP、Prometheus 指标和 Sentry "
+            "错误上报，并配置 API/任务/插件失败告警。"
+        ),
         key="observability",
         metrics={
             "audit_event_count": len(audit_events),
@@ -1164,8 +1199,14 @@ def _int_range(values: list[int], *, default: int | None = None) -> dict[str, An
 def _task_configured_count(tasks: list[dict[str, Any]], config_key: str) -> int:
     count = 0
     for task in tasks:
-        request_config = task.get("request_config") if isinstance(task.get("request_config"), dict) else {}
-        reliability = request_config.get("reliability") if isinstance(request_config.get("reliability"), dict) else {}
+        request_config = (
+            task.get("request_config") if isinstance(task.get("request_config"), dict) else {}
+        )
+        reliability = (
+            request_config.get("reliability")
+            if isinstance(request_config.get("reliability"), dict)
+            else {}
+        )
         query = request_config.get("query") if isinstance(request_config.get("query"), dict) else {}
         if config_key in reliability or config_key in request_config or config_key in query:
             count += 1
@@ -1288,10 +1329,15 @@ def _ai_executor_strategy_config(
             "max_reclaim_count": _task_configured_count(tasks, "max_reclaim_count"),
             "timeout_seconds": sum(1 for task in tasks if task.get("timeout_seconds")),
         },
-        "dead_letter_after_reclaim_count": _int_range(reclaim_values, default=DEFAULT_MAX_RECLAIM_COUNT),
-        "lease_timeout_seconds": _int_range(lease_timeout_values, default=DEFAULT_LEASE_TIMEOUT_SECONDS),
+        "dead_letter_after_reclaim_count": _int_range(
+            reclaim_values, default=DEFAULT_MAX_RECLAIM_COUNT
+        ),
+        "lease_timeout_seconds": _int_range(
+            lease_timeout_values, default=DEFAULT_LEASE_TIMEOUT_SECONDS
+        ),
         "recommendation": (
-            "存在租约过期或策略异常，建议先执行超时扫描，再复核任务 timeout、租约和 Runner 心跳阈值。"
+            "存在租约过期或策略异常，建议先执行超时扫描，"
+            "再复核任务 timeout、租约和 Runner 心跳阈值。"
             if configuration_issues
             else "重试、取消、超时和死信策略已具备可操作闭环，建议按失败分布定期复盘阈值。"
         ),
@@ -1348,7 +1394,12 @@ def _ai_executor_ops(current_store: Any) -> dict[str, Any]:
     )[:5]
     failure_reason_counts: dict[str, int] = {}
     for task in tasks:
-        if str(task.get("status") or "").lower() not in {"cancelled", "dead_letter", "failed", "timed_out"}:
+        if str(task.get("status") or "").lower() not in {
+            "cancelled",
+            "dead_letter",
+            "failed",
+            "timed_out",
+        }:
             continue
         reason = (
             task.get("failure_reason")
@@ -1358,7 +1409,9 @@ def _ai_executor_ops(current_store: Any) -> dict[str, Any]:
             or "unknown"
         )
         normalized_reason = _redact_error_summary(str(reason)) or "unknown"
-        failure_reason_counts[normalized_reason] = failure_reason_counts.get(normalized_reason, 0) + 1
+        failure_reason_counts[normalized_reason] = (
+            failure_reason_counts.get(normalized_reason, 0) + 1
+        )
     total_capacity = sum(max(0, int(runner.get("max_concurrent_tasks") or 0)) for runner in runners)
     running_total = status_counts.get("claimed", 0) + status_counts.get("running", 0)
     queued_count = status_counts.get("queued", 0)
@@ -1527,7 +1580,9 @@ def _knowledge_quality_loop(
         or document in keyword_only_documents
         or document in zero_chunk_documents
     ]
-    stale_document_ids = {str(document.get("id")) for document in stale_documents if document.get("id")}
+    stale_document_ids = {
+        str(document.get("id")) for document in stale_documents if document.get("id")
+    }
     low_quality_document_ids = {
         str(document.get("id")) for document in low_quality_documents if document.get("id")
     }
@@ -1597,9 +1652,13 @@ def _knowledge_quality_loop(
     query_count = int(quality_metrics.get("query_count") or 0)
     return {
         "feedback_loop": {
-            "citation_accuracy_status": "observed" if citation_accuracy is not None else "waiting_feedback",
+            "citation_accuracy_status": "observed"
+            if citation_accuracy is not None
+            else "waiting_feedback",
             "citation_click_rate": citation_click_rate,
-            "citation_click_status": "observed" if citation_click_rate is not None else "waiting_clicks",
+            "citation_click_status": "observed"
+            if citation_click_rate is not None
+            else "waiting_clicks",
             "metrics_window_days": quality_metrics.get("since_days"),
             "no_result_rate": no_result_rate,
             "no_result_rate_status": "observed" if query_count else "waiting_queries",
@@ -1617,7 +1676,8 @@ def _knowledge_quality_loop(
         "quality_gates": [
             {
                 "metric": "searchable_ratio",
-                "passed": total_documents == 0 or searchable_documents >= total_documents - failed_documents,
+                "passed": total_documents == 0
+                or searchable_documents >= total_documents - failed_documents,
                 "target": "可检索文档应覆盖全部非失败文档",
                 "value": _ratio(searchable_documents, total_documents),
             },
@@ -1679,7 +1739,9 @@ def _knowledge_quality_loop(
             {
                 "document_id": document.get("id"),
                 "index_status": document.get("index_status"),
-                "reason": "过期" if str(document.get("id") or "") in stale_document_ids else "低质量",
+                "reason": "过期"
+                if str(document.get("id") or "") in stale_document_ids
+                else "低质量",
                 "title": document.get("title"),
                 "updated_at": document.get("updated_at"),
             }
@@ -1689,9 +1751,9 @@ def _knowledge_quality_loop(
 
 
 def _permission_diagnostics(*, current_store: Any, request: Request) -> dict[str, Any]:
-    repository = getattr(request.app.state, "authorization_repository", None) or _runtime_repository(
-        current_store
-    )
+    repository = getattr(
+        request.app.state, "authorization_repository", None
+    ) or _runtime_repository(current_store)
     if repository is None:
         return {
             "diagnostics": [
@@ -1794,7 +1856,10 @@ def _permission_diagnostics(*, current_store: Any, request: Request) -> dict[str
         },
         "user_menu_preview": {
             "available": True,
-            "description": "可基于用户有效角色和菜单授权预览该用户实际可见菜单，排查菜单和接口权限不一致。",
+            "description": (
+                "可基于用户有效角色和菜单授权预览该用户实际可见菜单，"
+                "排查菜单和接口权限不一致。"
+            ),
             "target": "/system/roles",
         },
     }
@@ -1818,7 +1883,9 @@ def _dingtalk_key_expiry_alerts(connections: list[dict[str, Any]]) -> list[dict[
     now = datetime.now(UTC)
     alerts: list[dict[str, Any]] = []
     for connection in connections:
-        auth_config = connection.get("auth_config") if isinstance(connection.get("auth_config"), dict) else {}
+        auth_config = (
+            connection.get("auth_config") if isinstance(connection.get("auth_config"), dict) else {}
+        )
         expires_at = _parse_datetime(auth_config.get("key_expires_at"))
         if expires_at is None:
             continue
@@ -1863,17 +1930,26 @@ def _dingtalk_lifecycle(
     expiry_alerts = _dingtalk_key_expiry_alerts(connections)
     corp_names = sorted(
         {
-            str(identity.get("corp_name") or settings.dingtalk_corp_name_map.get(str(identity.get("corp_id") or "")) or "")
+            str(
+                identity.get("corp_name")
+                or settings.dingtalk_corp_name_map.get(str(identity.get("corp_id") or ""))
+                or ""
+            )
             for identity in identities
-            if identity.get("corp_name") or settings.dingtalk_corp_name_map.get(str(identity.get("corp_id") or ""))
+            if identity.get("corp_name")
+            or settings.dingtalk_corp_name_map.get(str(identity.get("corp_id") or ""))
         }
     )
     authorization_subjects: list[dict[str, Any]] = []
     subject_type_counts: dict[str, int] = {}
     for connection in connections:
-        auth_config = connection.get("auth_config") if isinstance(connection.get("auth_config"), dict) else {}
+        auth_config = (
+            connection.get("auth_config") if isinstance(connection.get("auth_config"), dict) else {}
+        )
         request_config = (
-            connection.get("request_config") if isinstance(connection.get("request_config"), dict) else {}
+            connection.get("request_config")
+            if isinstance(connection.get("request_config"), dict)
+            else {}
         )
         query = request_config.get("query") if isinstance(request_config.get("query"), dict) else {}
         subject_type = (
@@ -1928,7 +2004,10 @@ def _dingtalk_lifecycle(
                 "plugin_code": connection.get("plugin_code") or connection.get("plugin_id"),
                 "secret_ref_configured": bool(auth_config.get("secret_ref")),
                 "status": connection.get("status"),
-                "subject_label": f"{connection.get('name') or connection.get('id') or '钉钉连接'} · {subject_type_label}",
+                "subject_label": (
+                    f"{connection.get('name') or connection.get('id') or '钉钉连接'}"
+                    f" · {subject_type_label}"
+                ),
                 "subject_type": normalized_subject_type,
                 "subject_type_label": subject_type_label,
             },
@@ -1988,11 +2067,41 @@ def _dingtalk_lifecycle(
 def _retention_policies() -> list[dict[str, Any]]:
     definitions = [
         ("audit_events", "审计事件", "AUDIT_RETENTION_DAYS", 365, "合规审计建议至少保留一年。"),
-        ("execution_traces", "执行诊断链路", "EXECUTION_TRACE_RETENTION_DAYS", 90, "链路详情用于排障，建议按季度归档。"),
-        ("model_gateway_logs", "模型调用元数据", "MODEL_LOG_RETENTION_DAYS", 90, "只保留调用元数据，不保存完整提示词。"),
-        ("scheduled_job_runs", "定时作业运行记录", "JOB_RUN_RETENTION_DAYS", 180, "作业结果建议保留到下一个审计周期。"),
-        ("knowledge_import_jobs", "知识导入任务", "KNOWLEDGE_IMPORT_RETENTION_DAYS", 180, "导入失败证据保留到问题闭环。"),
-        ("help_screenshots", "帮助截图", "HELP_SCREENSHOT_REFRESH_DAYS", 30, "界面明显变更后应刷新截图。"),
+        (
+            "execution_traces",
+            "执行诊断链路",
+            "EXECUTION_TRACE_RETENTION_DAYS",
+            90,
+            "链路详情用于排障，建议按季度归档。",
+        ),
+        (
+            "model_gateway_logs",
+            "模型调用元数据",
+            "MODEL_LOG_RETENTION_DAYS",
+            90,
+            "只保留调用元数据，不保存完整提示词。",
+        ),
+        (
+            "scheduled_job_runs",
+            "定时作业运行记录",
+            "JOB_RUN_RETENTION_DAYS",
+            180,
+            "作业结果建议保留到下一个审计周期。",
+        ),
+        (
+            "knowledge_import_jobs",
+            "知识导入任务",
+            "KNOWLEDGE_IMPORT_RETENTION_DAYS",
+            180,
+            "导入失败证据保留到问题闭环。",
+        ),
+        (
+            "help_screenshots",
+            "帮助截图",
+            "HELP_SCREENSHOT_REFRESH_DAYS",
+            30,
+            "界面明显变更后应刷新截图。",
+        ),
     ]
     policies: list[dict[str, Any]] = []
     for key, title, env_name, default_days, note in definitions:
@@ -2179,7 +2288,9 @@ def _object_storage_cleanup_candidates(current_store: Any) -> dict[str, list[dic
         asset for asset in orphan_assets if not asset.get("bucket") or not asset.get("object_key")
     ]
     blocked_assets = [
-        asset for asset in [*incomplete_assets, *cleanup_failed_assets] if asset not in orphan_assets
+        asset
+        for asset in [*incomplete_assets, *cleanup_failed_assets]
+        if asset not in orphan_assets
     ]
     return {
         "assets": assets,
@@ -2452,7 +2563,11 @@ def _collect_secret_refs(
         for key, child in value.items():
             path = f"{prefix}.{key}" if prefix else str(key)
             normalized_key = str(key).lower()
-            if normalized_key in {"secret_ref", "token_ref", "api_key_ref"} or normalized_key.endswith("_secret_ref"):
+            if normalized_key in {
+                "secret_ref",
+                "token_ref",
+                "api_key_ref",
+            } or normalized_key.endswith("_secret_ref"):
                 if isinstance(child, str) and child.strip():
                     status, issue = _secret_ref_validity(child.strip())
                     refs.append(
@@ -2460,7 +2575,9 @@ def _collect_secret_refs(
                             "issue": issue,
                             "path": path,
                             "status": status,
-                            "type": child.split(":", 1)[0] if ":" in child else child.split("/", 1)[0],
+                            "type": child.split(":", 1)[0]
+                            if ":" in child
+                            else child.split("/", 1)[0],
                         }
                     )
                 else:
@@ -2473,7 +2590,14 @@ def _collect_secret_refs(
                         }
                     )
                 continue
-            if normalized_key in {"api_key", "client_secret", "password", "secret", "smtp_password", "token"}:
+            if normalized_key in {
+                "api_key",
+                "client_secret",
+                "password",
+                "secret",
+                "smtp_password",
+                "token",
+            }:
                 if child:
                     direct_secret_paths.append(path)
                 continue
@@ -2553,7 +2677,10 @@ def _security_audit_governance(current_store: Any) -> dict[str, Any]:
     sensitive_config_events = [
         event
         for event in recent_audit_events
-        if any(keyword in str(event.get("event_type") or "").lower() for keyword in sensitive_event_keywords)
+        if any(
+            keyword in str(event.get("event_type") or "").lower()
+            for keyword in sensitive_event_keywords
+        )
     ]
     high_risk_operation_events = [
         event
@@ -2571,7 +2698,10 @@ def _security_audit_governance(current_store: Any) -> dict[str, Any]:
     if invalid_refs:
         governance_actions.append(
             {
-                "detail": f"发现 {len(invalid_refs)} 个异常密钥引用，建议补齐 env/vault 配置后重新体检。",
+                "detail": (
+                    f"发现 {len(invalid_refs)} 个异常密钥引用，"
+                    "建议补齐 env/vault 配置后重新体检。"
+                ),
                 "key": "fix_invalid_secret_refs",
                 "metric": len(invalid_refs),
                 "severity": "high",
@@ -2582,7 +2712,10 @@ def _security_audit_governance(current_store: Any) -> dict[str, Any]:
     if direct_secret_paths:
         governance_actions.append(
             {
-                "detail": f"发现 {len(direct_secret_paths)} 个直接密钥配置，建议迁移为 env:NAME 或 vault/path 引用。",
+                "detail": (
+                    f"发现 {len(direct_secret_paths)} 个直接密钥配置，"
+                    "建议迁移为 env:NAME 或 vault/path 引用。"
+                ),
                 "key": "migrate_direct_secrets",
                 "metric": len(direct_secret_paths),
                 "severity": "medium",
@@ -2593,7 +2726,10 @@ def _security_audit_governance(current_store: Any) -> dict[str, Any]:
     if sensitive_config_events:
         governance_actions.append(
             {
-                "detail": f"近 7 天有 {len(sensitive_config_events)} 次敏感配置或权限变更，建议复核确认原因和审计摘要。",
+                "detail": (
+                    f"近 7 天有 {len(sensitive_config_events)} 次敏感配置或权限变更，"
+                    "建议复核确认原因和审计摘要。"
+                ),
                 "key": "review_sensitive_changes",
                 "metric": len(sensitive_config_events),
                 "severity": "medium",
@@ -2604,7 +2740,10 @@ def _security_audit_governance(current_store: Any) -> dict[str, Any]:
     if high_risk_operation_events:
         governance_actions.append(
             {
-                "detail": f"近 7 天有 {len(high_risk_operation_events)} 次高风险或失败操作，建议进入审计与运行复盘。",
+                "detail": (
+                    f"近 7 天有 {len(high_risk_operation_events)} 次高风险或失败操作，"
+                    "建议进入审计与运行复盘。"
+                ),
                 "key": "review_high_risk_operations",
                 "metric": len(high_risk_operation_events),
                 "severity": "high",
@@ -2665,7 +2804,10 @@ def _security_audit_governance(current_store: Any) -> dict[str, Any]:
             "supported_formats": ["env:NAME", "vault/path"],
         },
         "sensitive_config_approval": {
-            "policy": "敏感配置变更需要系统管理员权限；系统邮件发送配置写入必须携带二次确认和确认原因，审计仅记录字段、配置状态和确认状态。",
+            "policy": (
+                "敏感配置变更需要系统管理员权限；系统邮件发送配置写入必须携带"
+                "二次确认和确认原因，审计仅记录字段、配置状态和确认状态。"
+            ),
             "required": True,
             "status": "configured",
             "tracked_event_count_7d": len(sensitive_config_events),
@@ -2699,7 +2841,9 @@ def _alert_rule_matches(rule: dict[str, Any], alert: dict[str, Any]) -> bool:
     return ALERT_SEVERITY_RANK.get(alert_severity, 0) >= ALERT_SEVERITY_RANK.get(severity_min, 2)
 
 
-def _apply_alert_rules(alerts: list[dict[str, Any]], rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _apply_alert_rules(
+    alerts: list[dict[str, Any]], rules: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     if not rules:
         return alerts
     for alert in alerts:
@@ -2741,7 +2885,11 @@ def _persist_alert_incidents(
                     {
                         **alert,
                         "metadata": {
-                            **(alert.get("metadata") if isinstance(alert.get("metadata"), dict) else {}),
+                            **(
+                                alert.get("metadata")
+                                if isinstance(alert.get("metadata"), dict)
+                                else {}
+                            ),
                             "origin": "system_health",
                         },
                     }
@@ -2924,7 +3072,11 @@ def _list_alert_notifications(
     items.sort(
         key=lambda item: (
             status_order.get(str(item.get("status") or ""), 9),
-            -(int(_parse_datetime(item.get("created_at")).timestamp()) if _parse_datetime(item.get("created_at")) else 0),
+            -(
+                int(_parse_datetime(item.get("created_at")).timestamp())
+                if _parse_datetime(item.get("created_at"))
+                else 0
+            ),
             str(item.get("id") or ""),
         )
     )
@@ -2940,7 +3092,11 @@ def _alert_notification_recipients(target: str) -> list[str]:
 
 
 def _alert_notification_message(notification: dict[str, Any]) -> tuple[str, str]:
-    payload = notification.get("payload_json") if isinstance(notification.get("payload_json"), dict) else {}
+    payload = (
+        notification.get("payload_json")
+        if isinstance(notification.get("payload_json"), dict)
+        else {}
+    )
     title = str(payload.get("title") or notification.get("alert_id") or "系统健康告警")
     severity = str(notification.get("severity") or "low")
     component = str(payload.get("component") or "-")
@@ -2980,7 +3136,9 @@ def _post_alert_webhook_notification(
         "channel": channel,
         "message": body,
         "notification_id": notification.get("id"),
-        "payload": notification.get("payload_json") if isinstance(notification.get("payload_json"), dict) else {},
+        "payload": notification.get("payload_json")
+        if isinstance(notification.get("payload_json"), dict)
+        else {},
         "severity": notification.get("severity"),
         "subject": subject,
     }
@@ -3095,7 +3253,9 @@ def _update_alert_notification_status(
         vars(current_store)["system_alert_notifications"] = stored
     now = _now_iso()
     existing = dict(stored.get(notification_id) or notification)
-    payload_json = existing.get("payload_json") if isinstance(existing.get("payload_json"), dict) else {}
+    payload_json = (
+        existing.get("payload_json") if isinstance(existing.get("payload_json"), dict) else {}
+    )
     updated = {
         **existing,
         "attempts": int(existing.get("attempts") or 0) + 1,
@@ -3467,6 +3627,102 @@ def _list_alert_rules(current_store: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _status_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        status = str(item.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _execution_governance_ops(current_store: Any) -> dict[str, Any]:
+    outbox = _items_from_store(
+        current_store,
+        "list_execution_outbox_events",
+        "execution_outbox_events",
+    )
+    inbox = _items_from_store(
+        current_store,
+        "list_external_event_inbox",
+        "external_event_inbox",
+    )
+    agent_loops = _items_from_store(
+        current_store,
+        "list_agent_loop_runs",
+        "agent_loop_runs",
+    )
+    quality_gates = _items_from_store(
+        current_store,
+        "list_quality_gate_runs",
+        "quality_gate_runs",
+    )
+    resource_grants = _items_from_store(
+        current_store,
+        "list_execution_resource_grants",
+        "execution_resource_grants",
+    )
+    dead_letters = [item for item in inbox if item.get("status") == "dead_letter"]
+    return {
+        "agent_loops": {
+            "status_counts": _status_counts(agent_loops),
+            "total": len(agent_loops),
+        },
+        "execution_resources": {
+            "active": sum(1 for item in resource_grants if item.get("status") == "active"),
+            "status_counts": _status_counts(resource_grants),
+            "total": len(resource_grants),
+        },
+        "external_event_inbox": {
+            "dead_letter_count": len(dead_letters),
+            "recent_dead_letters": [
+                {
+                    "attempt_count": item.get("attempt_count"),
+                    "error_message": item.get("error_message"),
+                    "event_type": item.get("event_type"),
+                    "id": item.get("id"),
+                    "provider": item.get("provider"),
+                    "received_at": item.get("received_at"),
+                }
+                for item in dead_letters[:10]
+            ],
+            "status_counts": _status_counts(inbox),
+            "total": len(inbox),
+        },
+        "outbox": {
+            "pending_count": sum(
+                1 for item in outbox if item.get("status") in {"pending", "processing"}
+            ),
+            "status_counts": _status_counts(outbox),
+            "total": len(outbox),
+        },
+        "quality_gates": {
+            "status_counts": _status_counts(quality_gates),
+            "total": len(quality_gates),
+        },
+    }
+
+
+def _execution_governance_check(current_store: Any) -> dict[str, Any]:
+    governance = _execution_governance_ops(current_store)
+    dead_letters = int(governance["external_event_inbox"]["dead_letter_count"])
+    pending_outbox = int(governance["outbox"]["pending_count"])
+    health_status = "degraded" if dead_letters else "warning" if pending_outbox > 100 else "ok"
+    return _check(
+        action_href="/tasks/plugins",
+        category="执行治理",
+        component="execution_governance",
+        description="监控事务 Outbox、外部事件 Inbox、独立质量门禁和 Agent 自治循环。",
+        metrics={
+            "external_event_dead_letters": dead_letters,
+            "outbox_pending": pending_outbox,
+        },
+        fix_suggestion="检查 Webhook 连接、死信事件和执行工作进程；修复后在插件管理中重试。",
+        key="execution_governance",
+        status=health_status,
+        title="执行治理链路",
+    )
+
+
 def _operations_snapshot(
     *,
     checks: list[dict[str, Any]],
@@ -3483,6 +3739,7 @@ def _operations_snapshot(
             request=request,
             settings=settings,
         ),
+        "execution_governance": _execution_governance_ops(current_store),
         "help_and_retention": {
             "cleanup_status": _retention_cleanup_status(current_store, retention_policies),
             "object_storage_cleanup": _object_storage_cleanup_status(current_store),
@@ -3643,7 +3900,9 @@ def _normalize_alert_subscription(
     if normalized_channel not in {"dingtalk", "email", "in_app", "webhook"}:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported alert subscription channel")
     normalized_severity = str(
-        severity_min if severity_min is not None else (existing or {}).get("severity_min") or "medium",
+        severity_min
+        if severity_min is not None
+        else (existing or {}).get("severity_min") or "medium",
     ).strip()
     if normalized_severity not in {"high", "info", "low", "medium"}:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported alert severity")
@@ -3736,14 +3995,18 @@ def _normalize_alert_rule(
     payload: dict[str, Any],
     rule_id: str | None = None,
 ) -> dict[str, Any]:
-    normalized_name = str(payload.get("name", existing.get("name") if existing else "") or "").strip()
+    normalized_name = str(
+        payload.get("name", existing.get("name") if existing else "") or ""
+    ).strip()
     if not normalized_name:
         raise api_error(400, "VALIDATION_ERROR", "name is required")
     normalized_source = str(
-        payload.get("source", existing.get("source") if existing else "system_check") or "system_check"
+        payload.get("source", existing.get("source") if existing else "system_check")
+        or "system_check"
     ).strip()
     normalized_severity = str(
-        payload.get("severity_min", existing.get("severity_min") if existing else "medium") or "medium"
+        payload.get("severity_min", existing.get("severity_min") if existing else "medium")
+        or "medium"
     ).strip()
     if normalized_severity not in ALERT_SEVERITY_RANK:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported alert severity")
@@ -3757,9 +4020,10 @@ def _normalize_alert_rule(
         raise api_error(400, "VALIDATION_ERROR", "condition_json must be an object")
     repository = _runtime_repository(current_store)
     new_id = getattr(repository, "next_id", None)
-    allocated_id = (
-        rule_id
-        or (new_id("system_alert_rule") if callable(new_id) else current_store.new_id("system_alert_rule"))
+    allocated_id = rule_id or (
+        new_id("system_alert_rule")
+        if callable(new_id)
+        else current_store.new_id("system_alert_rule")
     )
     return {
         "component": _normalize_optional_rule_text(
@@ -3884,7 +4148,9 @@ def update_system_alert_rule_response(
 ) -> dict[str, Any]:
     from app.core.trace import envelope
 
-    existing = next((rule for rule in _list_alert_rules(current_store) if rule.get("id") == rule_id), None)
+    existing = next(
+        (rule for rule in _list_alert_rules(current_store) if rule.get("id") == rule_id), None
+    )
     if existing is None:
         raise api_error(404, "ALERT_RULE_NOT_FOUND", "System alert rule not found")
     actor_id = str(user.get("id") or user.get("username") or "")
@@ -3943,11 +4209,22 @@ def admin_weekly_report_response(
         ) is not None
         and (now - created_at).days <= window_days
     ]
-    sensitive_keywords = {"auth", "config", "gateway", "permission", "role", "secret", "settings", "user"}
+    sensitive_keywords = {
+        "auth",
+        "config",
+        "gateway",
+        "permission",
+        "role",
+        "secret",
+        "settings",
+        "user",
+    }
     sensitive_events = [
         event
         for event in recent_audit_events
-        if any(keyword in str(event.get("event_type") or "").lower() for keyword in sensitive_keywords)
+        if any(
+            keyword in str(event.get("event_type") or "").lower() for keyword in sensitive_keywords
+        )
     ]
     high_risk_events = [
         event
@@ -3969,20 +4246,31 @@ def admin_weekly_report_response(
         "sensitive_change_count": len(sensitive_events),
         "window_days": window_days,
     }
+    knowledge_no_result_rate = report_summary["knowledge_no_result_rate"]
+    knowledge_no_result_rate_display = (
+        str(knowledge_no_result_rate) if knowledge_no_result_rate is not None else "-"
+    )
     markdown_lines = [
         f"# AI Brain 管理员周报（近 {window_days} 天）",
         "",
-        f"- 打开告警：{report_summary['alert_open_count']}，已关闭：{report_summary['alert_closed_count']}",
-        f"- 审计事件：{report_summary['audit_event_count']}，敏感配置/权限相关变更：{report_summary['sensitive_change_count']}",
+        (
+            f"- 打开告警：{report_summary['alert_open_count']}，"
+            f"已关闭：{report_summary['alert_closed_count']}"
+        ),
+        (
+            f"- 审计事件：{report_summary['audit_event_count']}，"
+            f"敏感配置/权限相关变更：{report_summary['sensitive_change_count']}"
+        ),
         f"- 高风险或失败操作：{report_summary['high_risk_operation_count']}",
         f"- AI 执行失败/死信/超时：{report_summary['runner_failed_total']}",
-        f"- 知识检索无结果率：{report_summary['knowledge_no_result_rate'] if report_summary['knowledge_no_result_rate'] is not None else '-'}",
+        f"- 知识检索无结果率：{knowledge_no_result_rate_display}",
         "",
         "## 待处理告警",
     ]
     for alert in alerts[:5]:
         markdown_lines.append(
-            f"- [{alert.get('severity')}] {alert.get('title')}，负责人：{alert.get('owner') or '未分配'}，状态：{alert.get('status')}"
+            f"- [{alert.get('severity')}] {alert.get('title')}，"
+            f"负责人：{alert.get('owner') or '未分配'}，状态：{alert.get('status')}"
         )
     if not alerts:
         markdown_lines.append("- 暂无告警。")
@@ -4072,6 +4360,7 @@ def system_health_report(
         _ai_executor_check(current_store),
         _scheduled_jobs_check(current_store),
         _observability_check(current_store),
+        _execution_governance_check(current_store),
         _product_onboarding_check(current_store),
     ]
     status_counts: dict[str, int] = {}

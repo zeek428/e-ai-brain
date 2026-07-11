@@ -5,8 +5,11 @@ from typing import Any
 from app.api.deps import api_error
 from app.core.listing import add_list_observability, ensure_list_enum, sort_list_items
 from app.core.store import DEFAULT_BRAIN_APP_ID
+from app.services.agent_autonomy import latest_agent_loop_for_task
+from app.services.execution_context_manifests import execution_context_manifest_for_task
 from app.services.mock_writeback import writeback_idempotency_key
 from app.services.product_scope import product_scope_filter
+from app.services.quality_gates import latest_quality_gate_for_task
 from app.services.task_access import can_read_task, task_read_scope
 from app.services.task_contexts import public_product_context
 from app.services.task_graph_runtime import graph_runs_for_task
@@ -38,7 +41,14 @@ def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dic
     return collection if isinstance(collection, dict) else {}
 
 
-def task_detail_projection(current_store: Any, task: dict[str, Any]) -> dict[str, Any]:
+def task_detail_projection(
+    current_store: Any,
+    task: dict[str, Any],
+    *,
+    execution_context_manifest: dict[str, Any] | None = None,
+    agent_loop: dict[str, Any] | None = None,
+    quality_gate: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     detail = current_store.snapshot(task)
     detail["product_context"] = public_product_context(task.get("product_context"))
     human_reviews = _read_memory_dict(current_store, "human_reviews")
@@ -67,6 +77,11 @@ def task_detail_projection(current_store: Any, task: dict[str, Any]) -> dict[str
     detail["pending_review"] = current_store.snapshot(pending_review) if pending_review else None
     detail["reviews"] = current_store.snapshot({"items": reviews, "total": len(reviews)})
     detail["graph_runs"] = current_store.snapshot(graph_runs)
+    detail["execution_context_manifest"] = current_store.snapshot(
+        execution_context_manifest
+    )
+    detail["agent_loop"] = current_store.snapshot(agent_loop)
+    detail["quality_gate"] = current_store.snapshot(quality_gate)
     detail["knowledge_deposits"] = {
         "items": [
             deposit
@@ -96,7 +111,28 @@ def get_ai_task_response(
         raise api_error(404, "NOT_FOUND", "AI task not found")
     if not can_read_task(user, task):
         raise api_error(403, "FORBIDDEN", "Insufficient role for this AI task")
-    return task_detail_projection(read_store, task)
+    context_manifest = execution_context_manifest_for_task(
+        current_store,
+        task_id=task_id,
+        product_scope_ids=product_scope_filter(user),
+    )
+    quality_gate = latest_quality_gate_for_task(
+        current_store,
+        product_scope_ids=product_scope_filter(user),
+        task_id=task_id,
+    )
+    agent_loop = latest_agent_loop_for_task(
+        current_store,
+        product_scope_ids=product_scope_filter(user),
+        task_id=task_id,
+    )
+    return task_detail_projection(
+        read_store,
+        task,
+        agent_loop=agent_loop,
+        execution_context_manifest=context_manifest,
+        quality_gate=quality_gate,
+    )
 
 
 def list_graph_runs_response(

@@ -20,7 +20,9 @@ import type {
   KnowledgeAssetRecord,
   KnowledgeChunkRecord,
   KnowledgeChunkSetRecord,
+  KnowledgeCitationFeedbackRecord,
   KnowledgeDepositRecord,
+  KnowledgeDocumentVersionRecord,
   RequirementFullChainRecord,
 } from '../../../services/aiBrain';
 import { joinTextList } from '../../../utils/managementCrud';
@@ -35,6 +37,32 @@ import type {
 } from '../types';
 
 const { Text } = Typography;
+
+const documentVersionStatusLabels: Record<string, string> = {
+  active: '当前生效',
+  expired: '已过期',
+  failed: '处理失败',
+  processing: '处理中',
+  superseded: '已替代',
+};
+
+const freshnessStatusLabels: Record<string, string> = {
+  expired: '已过期',
+  expiring: '即将过期',
+  failed: '处理失败',
+  flagged_outdated: '被标记过期',
+  fresh: '有效',
+  superseded: '已替代',
+  unknown: '未知',
+};
+
+const citationFeedbackLabels: Record<string, string> = {
+  incorrect: '内容错误',
+  not_useful: '无用',
+  outdated: '内容已过期',
+  partial: '部分有用',
+  useful: '有用',
+};
 
 type KnowledgePageDialogsProps = {
   advancedFilterSubmitRef: RefObject<HTMLButtonElement | null>;
@@ -54,6 +82,9 @@ type KnowledgePageDialogsProps = {
   clearAdvancedFilters: () => void;
   closeFullChainModal: () => void;
   detailDocument: KnowledgeRecord | null;
+  detailFeedbackRows: KnowledgeCitationFeedbackRecord[];
+  detailGovernanceLoading: boolean;
+  detailVersionRows: KnowledgeDocumentVersionRecord[];
   documentFormRef: RefObject<FormInstance<KnowledgeFormValues> | null>;
   documentInitialValues: Partial<KnowledgeFormValues>;
   documentSubmitRef: RefObject<HTMLButtonElement | null>;
@@ -95,6 +126,9 @@ type KnowledgePageDialogsProps = {
   onEditDocument: (row: KnowledgeRecord) => void;
   onOpenAssetsModal: (row: KnowledgeRecord) => void | Promise<void>;
   onOpenChunksModal: (row: KnowledgeRecord) => void | Promise<void>;
+  onLoadProcessingProfiles: () => void | Promise<unknown>;
+  onLoadDocumentGovernance: (row: KnowledgeRecord) => void | Promise<void>;
+  processingProfileOptions: { label: string; value: string }[];
   rejectDepositSubmitRef: RefObject<HTMLButtonElement | null>;
   rejectingDeposit: KnowledgeDepositRecord | null;
   roleOptions: { label: string; value: string }[];
@@ -138,6 +172,9 @@ export function KnowledgePageDialogs({
   clearAdvancedFilters,
   closeFullChainModal,
   detailDocument,
+  detailFeedbackRows,
+  detailGovernanceLoading,
+  detailVersionRows,
   documentFormRef,
   documentInitialValues,
   documentSubmitRef,
@@ -179,6 +216,9 @@ export function KnowledgePageDialogs({
   onEditDocument,
   onOpenAssetsModal,
   onOpenChunksModal,
+  onLoadProcessingProfiles,
+  onLoadDocumentGovernance,
+  processingProfileOptions,
   rejectDepositSubmitRef,
   rejectingDeposit,
   roleOptions,
@@ -350,6 +390,12 @@ export function KnowledgePageDialogs({
                       />
                       <Text type="secondary">生效分块</Text>
                       <Text>{detailDocument.activeChunkSetId ?? '-'}</Text>
+                      <Text type="secondary">生效文档版本</Text>
+                      <Text>
+                        {detailDocument.documentVersion
+                          ? `v${detailDocument.documentVersion} · ${detailDocument.activeDocumentVersionId ?? '-'}`
+                          : '-'}
+                      </Text>
                       <Text type="secondary">源资产</Text>
                       <Text>{detailDocument.sourceAssetId ?? '-'}</Text>
                       <Text type="secondary">索引错误</Text>
@@ -358,6 +404,45 @@ export function KnowledgePageDialogs({
                   ),
                   key: 'hits',
                   label: '引用/命中',
+                },
+                {
+                  children: (
+                    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+                      <ProTable<KnowledgeDocumentVersionRecord>
+                        columns={[
+                          { dataIndex: 'version', render: (_, row) => `v${row.version}`, title: '版本' },
+                          { dataIndex: 'status', render: (_, row) => documentVersionStatusLabels[row.status] ?? row.status, title: '状态' },
+                          { dataIndex: 'freshnessStatus', render: (_, row) => freshnessStatusLabels[row.freshnessStatus] ?? row.freshnessStatus, title: '有效性' },
+                          { dataIndex: 'processingProfileId', render: (_, row) => row.processingProfileId ?? '-', title: '处理配置' },
+                          { dataIndex: 'expiresAt', render: (_, row) => row.expiresAt ?? '-', title: '过期时间' },
+                          { dataIndex: 'outdatedFeedbackCount', title: '过期反馈' },
+                        ]}
+                        dataSource={detailVersionRows}
+                        loading={detailGovernanceLoading}
+                        options={false}
+                        pagination={false}
+                        rowKey="id"
+                        search={false}
+                      />
+                      <ProTable<KnowledgeCitationFeedbackRecord>
+                        columns={[
+                          { dataIndex: 'feedbackValue', render: (_, row) => citationFeedbackLabels[row.feedbackValue] ?? row.feedbackValue, title: '反馈' },
+                          { dataIndex: 'documentVersionId', render: (_, row) => row.documentVersionId ?? '-', title: '文档版本' },
+                          { dataIndex: 'chunkId', render: (_, row) => row.chunkId ?? '-', title: 'Chunk' },
+                          { dataIndex: 'comment', render: (_, row) => row.comment ?? '-', title: '说明' },
+                          { dataIndex: 'createdAt', render: (_, row) => row.createdAt ?? '-', title: '时间' },
+                        ]}
+                        dataSource={detailFeedbackRows}
+                        loading={detailGovernanceLoading}
+                        options={false}
+                        pagination={false}
+                        rowKey="id"
+                        search={false}
+                      />
+                    </Space>
+                  ),
+                  key: 'versions',
+                  label: '版本与反馈',
                 },
                 {
                   children: (
@@ -380,6 +465,11 @@ export function KnowledgePageDialogs({
                   label: '资产与分块',
                 },
               ]}
+              onChange={(key) => {
+                if (key === 'versions' && detailVersionRows.length === 0) {
+                  void onLoadDocumentGovernance(detailDocument);
+                }
+              }}
             />
           </div>
         ) : null}
@@ -462,11 +552,27 @@ export function KnowledgePageDialogs({
                     { label: '纯文本', value: 'plain_text' },
                     { label: 'Markdown', value: 'markdown' },
                     { label: 'PDF 文本', value: 'pdf_text' },
+                    { label: '多模态 OCR / 版面 / 表格', value: 'multimodal' },
                     { label: 'OCR JSON', value: 'ocr_json' },
                     { label: '表格 JSON', value: 'table_json' },
                   ]}
                   placeholder="按文件类型自动选择"
                 />
+              </Form.Item>
+              <Form.Item label="处理配置" name="processing_profile_id">
+                <Select
+                  allowClear
+                  onOpenChange={(open) => {
+                    if (open) {
+                      void onLoadProcessingProfiles();
+                    }
+                  }}
+                  options={processingProfileOptions}
+                  placeholder="多模态解析时选择"
+                />
+              </Form.Item>
+              <Form.Item label="有效天数" name="expires_in_days">
+                <InputNumber min={1} max={3650} precision={0} style={{ width: '100%' }} />
               </Form.Item>
               <Form.Item label="分块策略" name="chunk_strategy">
                 <Select
@@ -501,6 +607,7 @@ export function KnowledgePageDialogs({
                     <input
                       aria-label="选择知识文件"
                       onChange={(event) => void handleFileInputChange(event)}
+                      accept=".csv,.jpeg,.jpg,.json,.md,.markdown,.pdf,.png,.tif,.tiff,.txt,.webp"
                       style={{ display: 'none' }}
                       type="file"
                     />

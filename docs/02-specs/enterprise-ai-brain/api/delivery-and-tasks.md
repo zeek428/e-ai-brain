@@ -422,7 +422,11 @@ POST /api/ai-tasks/{task_id}/start
 }
 ```
 
-当前实现会先匹配 active 研发执行器策略：若命中 `rd_task_executor_policies`，任务不会装配 Agent/Skill，也不会走模型网关，而是创建关联 `ai_executor_tasks(ai_task_id=<task_id>)`，把任务置为 `running/current_step=waiting_ai_executor`，并返回 `executor_policy_id/executor_task_id/runner_id`；后续由插件管理下的 Codex、Claude Code 或 OpenClaw Runner 认领执行。策略 `code_change_review_mode` 默认为 `manual_review`，成功回写后任务进入 `waiting_review/current_step=executor_completed` 并创建待确认 Review；配置为 `auto_commit` 时，成功回写后系统自动创建已通过 Review、完成任务确认副作用，并向 Runner 下发隔离工作区 `merge` 决策。失败/取消/超时进入 `failed` 或 `cancelled`，隔离工作区仍按失败、取消或拒绝语义丢弃。命中研发执行器策略时，服务端会按任务 `product_id/version_id` 查询当前用户可读、已索引且同产品的知识中心片段，写入 Runner `input_payload.knowledge_references[]`，并在实际下发给执行器的 `instruction` 中追加“产品知识中心上下文”；有版本归属时，版本不匹配的文档不会进入上下文，产品级未绑定版本的文档可作为通用参考。未命中研发执行器策略时，当前实现会同步运行到下一个人工确认点或失败状态。`draft` 任务可启动；已失败且 `current_step` 为 `model_gateway_failed`、`code_review_executor_failed` 或 `executor_failed` 的任务可用同一 `task_id` 再次调用 start 重试，并记录 `ai_task.retry_started` 审计事件。非 code_review 任务若存在 active/default 的 OpenAI-compatible 模型网关配置且已配置 API Key，启动时调用 `{base_url}/chat/completions` 并要求 `response_format={"type":"json_object"}`；若没有结构化默认配置但设置了 `MODEL_GATEWAY_BASE_URL` 和 `MODEL_GATEWAY_API_KEY`，则使用环境模型网关。缺少可用模型网关或 active/default 配置缺失 API Key 返回 `MODEL_GATEWAY_CONFIG_INVALID`；provider 调用、响应解析或网络失败返回 `MODEL_GATEWAY_FAILED`。code_review 任务通过 `code_review_executor` 执行：默认 `claude_code_skill/code-review` 命令适配器由 `CODE_REVIEW_EXECUTOR_COMMAND` 配置，输入 JSON 通过 stdin 提供，输出必须是包含 `summary`、`risk_level` 和 `findings` 的 JSON 对象，系统会补齐并持久化 executor 元数据；显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 时复用模型网关适配器；默认外部命令为空且存在 active/default 或环境模型网关时，系统会自动使用 `model_gateway` 适配器，并以 MR/PR 快照、技术方案、需求和产品上下文作为 Review 输入。执行器配置缺失、调用失败、超时、响应解析或结构化报告校验失败返回 `CODE_REVIEW_EXECUTOR_FAILED`。这些失败都会把任务置为 `failed`；使用模型网关适配器时保留模型调用元数据日志；任务启动不得生成本地 fallback 输出。
+当前实现会先匹配 active 研发执行器策略。若命中 `rd_task_executor_policies`，任务不会装配定时作业 Agent/Skill，也不会走模型网关，而是先冻结 `execution_context_manifest`，再创建关联编码 `ai_executor_tasks(ai_task_id=<task_id>)`，把任务置为 `running/current_step=waiting_ai_executor`，并返回 `executor_policy_id/executor_task_id/runner_id`。上下文清单包含需求/Bug、产品、仓库、分支、版本化知识引用、召回原因、验收标准、权限和截断摘要；不包含 Git、插件或模型密钥。
+
+编码 Runner 成功只会推进到 `quality_gate_running`，平台另建 verifier Runner 任务执行服务端受控的测试、类型检查、lint、凭据/依赖/静态扫描、CI 和变更范围检查。`code_change_review_mode=manual_review` 在门禁结束后进入 `waiting_review`；`auto_commit` 也只有在门禁通过、至少一份独立证据、风险不高于阈值且未命中迁移/受保护路径时才自动创建已通过 Review 并请求 Runner `merge`。其余情况降级为人工确认。`autonomy_mode=autonomous_loop` 会在门禁失败且仍可重试、轮次/时长/Token/费用预算充足时，携带失败证据创建下一轮；预算耗尽、安全阻断或人工接管停止继续派发。失败、取消、超时、拒绝或不可恢复门禁失败会按隔离工作区语义 `discard`。
+
+未命中研发执行器策略时，当前实现会同步运行到下一个人工确认点或失败状态。`draft` 任务可启动；已失败且 `current_step` 为 `model_gateway_failed`、`code_review_executor_failed` 或 `executor_failed` 的任务可用同一 `task_id` 再次调用 start 重试，并记录 `ai_task.retry_started` 审计事件。非 code_review 任务若存在 active/default 的 OpenAI-compatible 模型网关配置且已配置 API Key，启动时调用 `{base_url}/chat/completions` 并要求 `response_format={"type":"json_object"}`；若没有结构化默认配置但设置了 `MODEL_GATEWAY_BASE_URL` 和 `MODEL_GATEWAY_API_KEY`，则使用环境模型网关。缺少可用模型网关或 active/default 配置缺失 API Key 返回 `MODEL_GATEWAY_CONFIG_INVALID`；provider 调用、响应解析或网络失败返回 `MODEL_GATEWAY_FAILED`。code_review 任务通过 `code_review_executor` 执行：默认 `claude_code_skill/code-review` 命令适配器由 `CODE_REVIEW_EXECUTOR_COMMAND` 配置，输入 JSON 通过 stdin 提供，输出必须是包含 `summary`、`risk_level` 和 `findings` 的 JSON 对象；显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 时复用模型网关适配器。执行器配置缺失、调用失败、超时、响应解析或结构化报告校验失败返回 `CODE_REVIEW_EXECUTOR_FAILED`。任务启动不得生成本地 fallback 输出。
 `execution_mode` 为空或 `model_gateway` 时保持上述生产默认路径；显式 `deterministic` 仅允许管理员用于本地/验收回归，会跳过研发执行器策略匹配和模型网关，必须写入 `ai_task.deterministic_execution_used` 审计事件并记录 `reason`，不会创建模型调用日志，也不会作为模型网关失败时的自动兜底。
 典型响应：
 启动权限按任务类型收敛：`product_detail_design` 和 `technical_solution` 仅允许 `product_owner`/`rd_owner`，`code_review` 仅允许 `reviewer`/`rd_owner`；`admin` 可执行全部本地管理操作。
@@ -473,13 +477,30 @@ POST /api/ai-tasks/{task_id}/start
 GET /api/ai-tasks/{task_id}
 ```
 
-响应包含 `task_type`、`input`、`output`、`output_summary`、`current_step`、`pending_review`、`reviews`、`mock_issues` 和 `knowledge_deposits`。`output_summary` 是用于任务详情和待确认界面的可读摘要；当 Runner 回写结果只包含 `output_preview` 时，服务端会优先提取 Codex 最终报告段，完整原始执行结果仍保留在 `output`。通过需求生成的任务必须在 `input` 中包含：
+响应包含 `task_type`、`input`、`output`、`output_summary`、`current_step`、`pending_review`、`reviews`、`mock_issues`、`knowledge_deposits`、`execution_context_manifest`、`agent_loop` 和 `quality_gate`。`output_summary` 是用于任务详情和待确认界面的可读摘要；当 Runner 回写结果只包含 `output_preview` 时，服务端会优先提取 Codex 最终报告段，完整原始执行结果仍保留在 `output`。
+
+- `execution_context_manifest` 返回版本、内容哈希、需求/Bug 引用、仓库/分支、知识文档/chunk/版本与召回原因、验收标准、权限快照、检索与截断摘要。
+- `agent_loop` 返回循环状态、当前/最大轮次、时长/Token/费用预算、停止原因和 `iterations[]`；每轮包含编码/verifier 任务、门禁、计划、修改摘要、测试证据、失败分析和验证结论。
+- `quality_gate` 返回最新门禁策略快照、状态、风险、独立证据数、阻断原因和 `checks[]`；检查项只返回结构化证据摘要，不返回完整日志或凭据。
+
+通过需求生成的任务必须在 `input` 中包含：
 
 - `task_type`: AI 任务类型，例如 `product_detail_design`、`technical_solution`、`development_planning`、`code_review`、`automated_testing`、`release_readiness` 或 `post_release_analysis`。
 - `requirement_id`: 来源需求 ID。
 - `requirement_snapshot`: 任务生成时的需求标题、优先级、背景、目标、约束和审批结论快照。
 - `product_context`: 任务生成时的产品、版本、模块和 Git 资源上下文快照。
 - `gitlab_mr_snapshot`: `code_review` 任务的兼容命名输入快照，可来自 GitLab MR 或 GitHub PR，包括 provider、project_id 或 project_path、mr_iid/PR number、标题、作者、source/target branch、commit sha 或 diff refs、变更文件摘要、diff 存储引用、Web URL 和快照时间。
+
+请求人工接管自治循环：
+
+```http
+POST /api/ai-tasks/{task_id}/agent-loop/takeover
+Content-Type: application/json
+
+{"reason": "门禁连续失败，转人工定位环境问题"}
+```
+
+要求任务执行权限和产品 scope。仅存在运行中自治循环的任务可接管；服务端先取消仍在运行的编码/verifier Runner 任务，再把循环和任务推进到人工接管/待确认状态，记录接管人、原因和审计。重复或已终结循环返回明确状态错误，不会再次派发下一轮。
 
 补充信息：
 

@@ -14,6 +14,7 @@ from app.services.rd_task_executor_policies import (
     list_rd_task_executor_policies_response,
     patch_rd_task_executor_policy_response,
 )
+from app.services.task_agent_governance import request_agent_loop_takeover_response
 from app.services.task_batch_operations import (
     batch_cancel_ai_tasks_response,
     batch_retry_ai_tasks_response,
@@ -52,18 +53,25 @@ class RdTaskExecutorPolicyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     branch: str | None = None
+    autonomy_mode: str = "single_pass"
+    auto_merge_risk_threshold: str = "low"
     code_change_review_mode: str = "manual_review"
+    cost_budget: float | None = None
     executor_type: str
     instruction_template: str
     name: str
+    max_duration_seconds: int = 3600
+    max_iterations: int = 1
     output_contract: dict[str, Any] = Field(default_factory=dict)
     priority: int = 100
     product_id: str | None = None
+    quality_gate_policy_id: str | None = None
     repository_id: str | None = None
     runner_id: str | None = None
     status: str = "active"
     task_type: str
     timeout_seconds: int = 1800
+    token_budget: int | None = None
     workspace_root: str = ""
 
 
@@ -71,18 +79,25 @@ class RdTaskExecutorPolicyPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     branch: str | None = None
+    autonomy_mode: str | None = None
+    auto_merge_risk_threshold: str | None = None
     code_change_review_mode: str | None = None
+    cost_budget: float | None = None
     executor_type: str | None = None
     instruction_template: str | None = None
     name: str | None = None
+    max_duration_seconds: int | None = None
+    max_iterations: int | None = None
     output_contract: dict[str, Any] | None = None
     priority: int | None = None
     product_id: str | None = None
+    quality_gate_policy_id: str | None = None
     repository_id: str | None = None
     runner_id: str | None = None
     status: str | None = None
     task_type: str | None = None
     timeout_seconds: int | None = None
+    token_budget: int | None = None
     workspace_root: str | None = None
 
 
@@ -112,6 +127,12 @@ class StartAiTaskRequest(BaseModel):
 
     execution_mode: Literal["model_gateway", "deterministic"] | None = None
     reason: str | None = None
+
+
+class AgentLoopTakeoverRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 @router.get("/api/delivery/rd-task-executor-policies")
@@ -320,6 +341,22 @@ def cancel_ai_task(
         user=user,
     )
     return envelope(payload, get_trace_id(request))
+
+
+@router.post("/api/ai-tasks/{task_id}/agent-loop/takeover")
+def request_agent_loop_takeover(
+    task_id: str,
+    request: Request,
+    payload: AgentLoopTakeoverRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = request_agent_loop_takeover_response(
+        current_store=store(request),
+        reason=payload.reason,
+        task_id=task_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
 
 
 @router.post("/api/ai-tasks/{task_id}/more-info")

@@ -15,6 +15,7 @@ d.vector_index_error, d.tags, d.created_by, d.created_at,
 d.updated_at, d.knowledge_space_id, d.folder_id,
 d.source_asset_id, d.parsed_asset_id, d.active_chunk_set_id,
 d.parser_engine, d.chunk_strategy, d.document_version,
+d.active_document_version_id,
 f.name AS folder_path, COUNT(c.id)
 """
 KNOWLEDGE_DOCUMENT_GROUP_BY = """
@@ -25,6 +26,7 @@ d.vector_index_error, d.tags, d.created_by, d.created_at,
 d.updated_at, d.knowledge_space_id, d.folder_id,
 d.source_asset_id, d.parsed_asset_id, d.active_chunk_set_id,
 d.parser_engine, d.chunk_strategy, d.document_version,
+d.active_document_version_id,
 f.name
 """
 KNOWLEDGE_DOCUMENT_SORT_COLUMNS = {
@@ -100,17 +102,23 @@ class KnowledgeReadRepository:
                 knowledge_assets = self._load_knowledge_assets(cursor)
                 knowledge_import_jobs = self._load_knowledge_import_jobs(cursor)
                 knowledge_chunk_sets = self._load_knowledge_chunk_sets(cursor)
+                knowledge_processing_profiles = self._load_knowledge_processing_profiles(cursor)
                 knowledge_documents = self._load_knowledge_documents(cursor)
+                knowledge_document_versions = self._load_knowledge_document_versions(cursor)
                 knowledge_chunks = self._load_knowledge_chunks(cursor)
+                knowledge_citation_feedback = self._load_knowledge_citation_feedback(cursor)
                 knowledge_deposits = self._load_knowledge_deposits(cursor)
         return {
             "knowledge_assets": knowledge_assets,
+            "knowledge_citation_feedback": knowledge_citation_feedback,
             "knowledge_chunk_sets": knowledge_chunk_sets,
             "knowledge_chunks": knowledge_chunks,
             "knowledge_deposits": knowledge_deposits,
+            "knowledge_document_versions": knowledge_document_versions,
             "knowledge_documents": knowledge_documents,
             "knowledge_folders": knowledge_folders,
             "knowledge_import_jobs": knowledge_import_jobs,
+            "knowledge_processing_profiles": knowledge_processing_profiles,
             "knowledge_space_members": knowledge_space_members,
             "knowledge_spaces": knowledge_spaces,
         }
@@ -893,9 +901,13 @@ class KnowledgeReadRepository:
                            c.id, c.chunk_index, c.content, c.embedding::text, c.metadata,
                            c.permission_scope, d.knowledge_space_id, d.folder_id,
                            d.source_asset_id, d.active_chunk_set_id, c.chunk_set_id,
-                           c.parent_chunk_id, c.content_hash, d.product_id, d.version_id
+                           c.parent_chunk_id, c.content_hash, d.product_id, d.version_id,
+                           c.document_version_id, c.modality, c.embedding_model,
+                           d.active_document_version_id, dv.version, dv.status, dv.expires_at
                     FROM knowledge_chunks c
                     JOIN knowledge_documents d ON d.id = c.document_id
+                    LEFT JOIN knowledge_document_versions dv
+                      ON dv.id = d.active_document_version_id
                     WHERE {' AND '.join(where_clauses)}
                     ORDER BY d.id, c.chunk_index, c.id
                     """,
@@ -918,6 +930,9 @@ class KnowledgeReadRepository:
                         ("chunk_set_id", row[15]),
                         ("parent_chunk_id", row[16]),
                         ("content_hash", row[17]),
+                        ("document_version_id", row[20]),
+                        ("modality", row[21]),
+                        ("embedding_model", row[22]),
                     ):
                         if value is not None:
                             chunk[optional_key] = value
@@ -942,6 +957,15 @@ class KnowledgeReadRepository:
                                 "product_id": row[18],
                                 "title": row[1],
                                 "version_id": row[19],
+                                "active_document_version_id": row[23],
+                                "active_document_version": {
+                                    "id": row[23],
+                                    "version": row[24],
+                                    "status": row[25],
+                                    "expires_at": _iso(row[26]),
+                                }
+                                if row[23]
+                                else None,
                             },
                         }
                 )
@@ -1035,9 +1059,13 @@ class KnowledgeReadRepository:
                    c.permission_scope, d.knowledge_space_id, d.folder_id,
                    d.source_asset_id, d.active_chunk_set_id, c.chunk_set_id,
                    c.parent_chunk_id, c.content_hash,
-                   {score_sql} AS vector_distance
+                   {score_sql} AS vector_distance,
+                   c.document_version_id, c.modality, c.embedding_model,
+                   d.active_document_version_id, dv.version, dv.status, dv.expires_at
             FROM knowledge_chunks c
             JOIN knowledge_documents d ON d.id = c.document_id
+            LEFT JOIN knowledge_document_versions dv
+              ON dv.id = d.active_document_version_id
             WHERE {where_sql}
             {order_sql}
             LIMIT %s
@@ -1125,6 +1153,9 @@ class KnowledgeReadRepository:
             ("chunk_set_id", row[15]),
             ("parent_chunk_id", row[16]),
             ("content_hash", row[17]),
+            ("document_version_id", row[19]),
+            ("modality", row[20]),
+            ("embedding_model", row[21]),
         ):
             if value is not None:
                 chunk[optional_key] = value
@@ -1146,6 +1177,15 @@ class KnowledgeReadRepository:
                 "source_asset_id": row[13],
                 "active_chunk_set_id": row[14],
                 "title": row[1],
+                "active_document_version_id": row[22],
+                "active_document_version": {
+                    "id": row[22],
+                    "version": row[23],
+                    "status": row[24],
+                    "expires_at": _iso(row[25]),
+                }
+                if row[22]
+                else None,
             },
         }
 
@@ -1204,12 +1244,14 @@ class KnowledgeReadRepository:
             ("parser_engine", 22),
             ("chunk_strategy", 23),
             ("document_version", 24),
+            ("active_document_version_id", 25),
         )
         for key, index in optional_row_fields:
             if len(row) > index and row[index] is not None:
                 document[key] = row[index]
         for optional_key in (
             "active_chunk_set_id",
+            "active_document_version_id",
             "brain_app_id",
             "chunk_strategy",
             "created_at",
@@ -1231,11 +1273,11 @@ class KnowledgeReadRepository:
         return document
 
     def _knowledge_document_summary_from_row(self, row: tuple[Any, ...]) -> dict[str, Any]:
-        document = self._knowledge_document_from_row(row[:25])
-        if len(row) > 26:
-            document["chunk_count"] = int(row[26] or 0)
-        if len(row) > 25 and row[25]:
-            document["folder_path"] = row[25]
+        document = self._knowledge_document_from_row(row[:26])
+        if len(row) > 27:
+            document["chunk_count"] = int(row[27] or 0)
+        if len(row) > 26 and row[26]:
+            document["folder_path"] = row[26]
         return document
 
     def _knowledge_document_where(
@@ -1343,6 +1385,9 @@ class KnowledgeReadRepository:
             ("chunk_set_id", 9),
             ("parent_chunk_id", 10),
             ("content_hash", 11),
+            ("document_version_id", 12),
+            ("modality", 13),
+            ("embedding_model", 14),
         )
         for key, index in optional_row_fields:
             if len(row) > index and row[index] is not None:
@@ -1456,8 +1501,18 @@ class KnowledgeReadRepository:
             "created_by": row[12],
             "created_at": _iso(row[13]),
             "updated_at": _iso(row[14]),
+            "document_version_id": row[15] if len(row) > 15 else None,
+            "page_number": row[16] if len(row) > 16 else None,
+            "bounding_boxes": list(row[17] or []) if len(row) > 17 else [],
+            "provider_metadata": dict(row[18] or {}) if len(row) > 18 else {},
         }
-        for optional_key in ("document_id", "created_at", "updated_at"):
+        for optional_key in (
+            "document_id",
+            "document_version_id",
+            "page_number",
+            "created_at",
+            "updated_at",
+        ):
             if asset[optional_key] is None:
                 asset.pop(optional_key)
         return asset
@@ -1482,6 +1537,9 @@ class KnowledgeReadRepository:
             "locked_by": row[14],
             "locked_until": _iso(row[15]),
             "attempt_count": row[16] or 0,
+            "processing_profile_id": row[17] if len(row) > 17 else None,
+            "document_version_id": row[18] if len(row) > 18 else None,
+            "parser_config": dict(row[19] or {}) if len(row) > 19 else {},
         }
         for optional_key in (
             "error_code",
@@ -1490,6 +1548,8 @@ class KnowledgeReadRepository:
             "locked_by",
             "locked_until",
             "source_asset_id",
+            "processing_profile_id",
+            "document_version_id",
             "started_at",
             "created_at",
             "updated_at",
@@ -1517,6 +1577,7 @@ class KnowledgeReadRepository:
             "updated_at": _iso(row[13]),
             "index_status": row[14],
             "vector_index_error": row[15],
+            "document_version_id": row[16] if len(row) > 16 else None,
         }
         for optional_key in (
             "activated_at",
@@ -1528,10 +1589,93 @@ class KnowledgeReadRepository:
             "created_at",
             "updated_at",
             "vector_index_error",
+            "document_version_id",
         ):
             if chunk_set[optional_key] is None:
                 chunk_set.pop(optional_key)
         return chunk_set
+
+    @staticmethod
+    def _knowledge_processing_profile_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+        profile = {
+            "id": row[0],
+            "name": row[1],
+            "product_id": row[2],
+            "provider_type": row[3],
+            "provider_config": dict(row[4] or {}),
+            "credential_ref": row[5],
+            "capabilities": list(row[6] or []),
+            "status": row[7],
+            "version": int(row[8] or 1),
+            "created_by": row[9],
+            "created_at": _iso(row[10]),
+            "updated_at": _iso(row[11]),
+        }
+        for key in ("product_id", "credential_ref", "created_by", "created_at", "updated_at"):
+            if profile[key] is None:
+                profile.pop(key)
+        return profile
+
+    @staticmethod
+    def _knowledge_document_version_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+        version = {
+            "id": row[0],
+            "document_id": row[1],
+            "version": int(row[2] or 1),
+            "source_asset_id": row[3],
+            "processing_profile_id": row[4],
+            "parser_config": dict(row[5] or {}),
+            "content_hash": row[6],
+            "status": row[7],
+            "activated_at": _iso(row[8]),
+            "expires_at": _iso(row[9]),
+            "created_by": row[10],
+            "created_at": _iso(row[11]),
+            "updated_at": _iso(row[12]),
+        }
+        for key in (
+            "source_asset_id",
+            "processing_profile_id",
+            "activated_at",
+            "expires_at",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ):
+            if version[key] is None:
+                version.pop(key)
+        return version
+
+    @staticmethod
+    def _knowledge_citation_feedback_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+        feedback = {
+            "id": row[0],
+            "product_id": row[1],
+            "document_id": row[2],
+            "document_version_id": row[3],
+            "chunk_id": row[4],
+            "subject_type": row[5],
+            "subject_id": row[6],
+            "feedback_value": row[7],
+            "comment": row[8],
+            "created_by": row[9],
+            "created_at": _iso(row[10]),
+            "related_event_id": row[11],
+        }
+        for key in (
+            "product_id",
+            "document_version_id",
+            "chunk_id",
+            "subject_type",
+            "subject_id",
+            "comment",
+            "created_by",
+            "created_at",
+            "related_event_id",
+        ):
+            if feedback[key] is None:
+                feedback.pop(key)
+        return feedback
 
     def _load_knowledge_spaces(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -1579,7 +1723,8 @@ class KnowledgeReadRepository:
             """
             SELECT id, knowledge_space_id, document_id, asset_type, storage_provider,
                    bucket, object_key, content_hash, filename, mime_type, size_bytes,
-                   metadata, created_by, created_at, updated_at
+                   metadata, created_by, created_at, updated_at, document_version_id,
+                   page_number, bounding_boxes, provider_metadata
             FROM knowledge_assets
             ORDER BY knowledge_space_id, document_id, asset_type, id
             """
@@ -1592,7 +1737,7 @@ class KnowledgeReadRepository:
             SELECT id, document_id, source_asset_id, parser_engine, chunk_strategy,
                    status, progress, error_code, error_message, created_by, started_at,
                    finished_at, created_at, updated_at, locked_by, locked_until,
-                   attempt_count
+                   attempt_count, processing_profile_id, document_version_id, parser_config
             FROM knowledge_import_jobs
             ORDER BY created_at, id
             """
@@ -1608,13 +1753,27 @@ class KnowledgeReadRepository:
             SELECT id, document_id, source_asset_id, parsed_asset_id, parser_engine,
                    parser_version, chunk_strategy, embedding_model, embedding_dimension,
                    status, created_by, activated_at, created_at, updated_at,
-                   index_status, vector_index_error
+                   index_status, vector_index_error, document_version_id
             FROM knowledge_chunk_sets
             ORDER BY document_id, created_at, id
             """
         )
         return {
             row[0]: self._knowledge_chunk_set_from_row(row)
+            for row in cursor.fetchall()
+        }
+
+    def _load_knowledge_processing_profiles(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, name, product_id, provider_type, provider_config, credential_ref,
+                   capabilities, status, version, created_by, created_at, updated_at
+            FROM knowledge_processing_profiles
+            ORDER BY name, id
+            """
+        )
+        return {
+            row[0]: self._knowledge_processing_profile_from_row(row)
             for row in cursor.fetchall()
         }
 
@@ -1625,24 +1784,55 @@ class KnowledgeReadRepository:
                    doc_type, permission_scope, permission_roles, index_status, index_error,
                    vector_index_error, tags, created_by, created_at, updated_at,
                    knowledge_space_id, folder_id, source_asset_id, parsed_asset_id,
-                   active_chunk_set_id, parser_engine, chunk_strategy, document_version
+                   active_chunk_set_id, parser_engine, chunk_strategy, document_version,
+                   active_document_version_id
             FROM knowledge_documents
             ORDER BY id
             """
         )
         return {row[0]: self._knowledge_document_from_row(row) for row in cursor.fetchall()}
 
+    def _load_knowledge_document_versions(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, document_id, version, source_asset_id, processing_profile_id,
+                   parser_config, content_hash, status, activated_at, expires_at,
+                   created_by, created_at, updated_at
+            FROM knowledge_document_versions
+            ORDER BY document_id, version, id
+            """
+        )
+        return {
+            row[0]: self._knowledge_document_version_from_row(row)
+            for row in cursor.fetchall()
+        }
+
     def _load_knowledge_chunks(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
             SELECT id, document_id, chunk_index, content, embedding::text, metadata,
                    permission_scope, created_at, updated_at, chunk_set_id, parent_chunk_id,
-                   content_hash
+                   content_hash, document_version_id, modality, embedding_model
             FROM knowledge_chunks
             ORDER BY document_id, chunk_index, id
             """
         )
         return {row[0]: self._knowledge_chunk_from_row(row) for row in cursor.fetchall()}
+
+    def _load_knowledge_citation_feedback(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, product_id, document_id, document_version_id, chunk_id,
+                   subject_type, subject_id, feedback_value, comment, created_by,
+                   created_at, related_event_id
+            FROM knowledge_citation_feedback
+            ORDER BY created_at, id
+            """
+        )
+        return {
+            row[0]: self._knowledge_citation_feedback_from_row(row)
+            for row in cursor.fetchall()
+        }
 
     def _load_knowledge_deposits(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(

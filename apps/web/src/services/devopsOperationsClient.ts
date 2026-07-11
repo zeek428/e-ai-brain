@@ -137,11 +137,59 @@ export type DeploymentRunRecord = {
   finishedAt?: string;
   id: string;
   logUrl?: string;
+  healthStatus?: string;
+  operation?: string;
   pluginInvocationLogId?: string;
   runnerTaskId?: string;
   startedAt?: string;
   status: string;
+  steps: DeploymentRunStepRecord[];
   updatedAt: string;
+  waveNumber?: number;
+  waveTotal?: number;
+};
+
+export type DeploymentRunStepRecord = {
+  evidence: Record<string, unknown>;
+  finishedAt?: string;
+  id: string;
+  sequence: number;
+  startedAt?: string;
+  status: string;
+  stepType: string;
+  summary?: string;
+};
+
+export type DeploymentDispatchEventRecord = {
+  attemptCount: number;
+  eventType: string;
+  id: string;
+  lastError?: string;
+  processedAt?: string;
+  status: string;
+  updatedAt?: string;
+};
+
+export type DeploymentAuditEventRecord = {
+  actorId?: string;
+  createdAt?: string;
+  eventType: string;
+  id: string;
+  payload: Record<string, unknown>;
+};
+
+export type DeploymentQualityGateRecord = {
+  blockedReasons: string[];
+  checks: Array<{
+    checkType: string;
+    id: string;
+    source: string;
+    status: string;
+    summary?: string;
+  }>;
+  id?: string;
+  status?: string;
+  summary?: string;
 };
 
 export type DeploymentMethod = 'docker' | 'jenkins' | 'manual' | 'ssh';
@@ -157,13 +205,19 @@ export type DeploymentSchemeRecord = {
   jenkinsConnectionId?: string;
   jenkinsJobName?: string;
   name: string;
+  healthCheckConfig: Record<string, unknown>;
+  preflightConfig: Record<string, unknown>;
   productId: string;
+  rollbackConfig: Record<string, unknown>;
+  rolloutStrategy: 'all_at_once' | 'batch' | 'blue_green' | 'canary';
   runnerId?: string;
   status: 'active' | 'disabled';
   targetCode?: string;
   timeoutSeconds: number;
   updatedAt?: string;
   version: number;
+  waveConfig: Record<string, unknown>;
+  windowEnforcement: 'disabled' | 'strict' | 'warn';
 };
 
 export type DeploymentRunnerTargetRecord = {
@@ -172,6 +226,9 @@ export type DeploymentRunnerTargetRecord = {
   name: string;
   ready: boolean;
   runnerId: string;
+  healthCheckConfigured: boolean;
+  rollbackConfigured: boolean;
+  supportsBlueGreen: boolean;
 };
 
 export type DeploymentJenkinsConnectionRecord = {
@@ -190,12 +247,18 @@ export type DeploymentSchemeCreatePayload = {
   is_default?: boolean;
   jenkins_connection_id?: string;
   jenkins_job_name?: string;
+  health_check_config?: Record<string, unknown>;
   name: string;
   product_id: string;
+  preflight_config?: Record<string, unknown>;
+  rollback_config?: Record<string, unknown>;
+  rollout_strategy?: 'all_at_once' | 'batch' | 'blue_green' | 'canary';
   runner_id?: string;
   status?: 'active' | 'disabled';
   target_code?: string;
   timeout_seconds?: number;
+  wave_config?: Record<string, unknown>;
+  window_enforcement?: 'disabled' | 'strict' | 'warn';
 };
 
 export type DeploymentSchemeUpdatePayload = Partial<DeploymentSchemeCreatePayload> & {
@@ -210,8 +273,11 @@ export type DeploymentRunLogRecord = {
 };
 
 export type DeploymentRequestRecord = {
+  auditEvents: DeploymentAuditEventRecord[];
   artifactVersion?: string;
+  artifactDigest?: string;
   commitSha?: string;
+  currentWave: number;
   createdAt: string;
   deploymentMethod: DeploymentMethod;
   deploymentSchemeId?: string;
@@ -224,6 +290,8 @@ export type DeploymentRequestRecord = {
   productId: string;
   releaseBranch?: string;
   requirementIds: string[];
+  dispatchEvents: DeploymentDispatchEventRecord[];
+  qualityGate?: DeploymentQualityGateRecord;
   riskLevel: string;
   rollbackPlan?: string;
   runs: DeploymentRunRecord[];
@@ -231,11 +299,30 @@ export type DeploymentRequestRecord = {
   startedAt?: string;
   status: string;
   title: string;
+  totalWaves: number;
   updatedAt: string;
   versionId: string;
+  windowEnforcement?: string;
+};
+
+export type DeploymentRequestListQuery = RemoteListQuery & {
+  environment?: string;
+  productId?: string;
+  status?: string;
+  title?: string;
+  versionId?: string;
+};
+
+export type DeploymentSchemeListQuery = RemoteListQuery & {
+  deploymentMethod?: DeploymentMethod;
+  environment?: string;
+  name?: string;
+  productId?: string;
+  status?: 'active' | 'disabled';
 };
 
 export type DeploymentRequestCreatePayload = {
+  artifact_digest?: string;
   artifact_version?: string;
   assigned_ops_user?: string;
   commit_sha?: string;
@@ -563,6 +650,40 @@ export async function fetchDeploymentRequests(params: {
   return response.items.map(mapDeploymentRequest);
 }
 
+export async function fetchDeploymentRequestList(
+  params: DeploymentRequestListQuery = {},
+): Promise<RemoteListResult<DeploymentRequestRecord>> {
+  const token = requireAccessToken();
+  const query = new URLSearchParams();
+  appendRemoteListParams(query, params);
+  appendQueryParam(query, 'environment', params.environment);
+  appendQueryParam(query, 'product_id', params.productId);
+  appendQueryParam(query, 'status', params.status);
+  appendQueryParam(query, 'title', params.title);
+  appendQueryParam(query, 'version_id', params.versionId);
+  const response = await apiRequest<ListResponse<FlexibleListItem>>(
+    `/api/devops/deployments?${query.toString()}`,
+    { token },
+  );
+  return {
+    page: response.page ?? params.page ?? 1,
+    pageSize: response.page_size ?? params.pageSize ?? 10,
+    rows: response.items.map(mapDeploymentRequest),
+    total: response.total,
+  };
+}
+
+export async function fetchDeploymentRequestDetail(
+  deploymentRequestId: string,
+): Promise<DeploymentRequestRecord> {
+  const token = requireAccessToken();
+  const item = await apiRequest<FlexibleListItem>(
+    `/api/devops/deployments/${encodeURIComponent(deploymentRequestId)}`,
+    { token },
+  );
+  return mapDeploymentRequest(item);
+}
+
 export async function fetchDeploymentSchemes(params: {
   deploymentMethod?: DeploymentMethod;
   environment?: string;
@@ -585,13 +706,40 @@ export async function fetchDeploymentSchemes(params: {
   return response.items.map(mapDeploymentScheme);
 }
 
+export async function fetchDeploymentSchemeList(
+  params: DeploymentSchemeListQuery = {},
+): Promise<RemoteListResult<DeploymentSchemeRecord>> {
+  const token = requireAccessToken();
+  const query = new URLSearchParams();
+  appendRemoteListParams(query, params);
+  appendQueryParam(query, 'deployment_method', params.deploymentMethod);
+  appendQueryParam(query, 'environment', params.environment);
+  appendQueryParam(query, 'name', params.name);
+  appendQueryParam(query, 'product_id', params.productId);
+  appendQueryParam(query, 'status', params.status);
+  const response = await apiRequest<ListResponse<FlexibleListItem>>(
+    `/api/devops/deployment-schemes?${query.toString()}`,
+    { token },
+  );
+  return {
+    page: response.page ?? params.page ?? 1,
+    pageSize: response.page_size ?? params.pageSize ?? 10,
+    rows: response.items.map(mapDeploymentScheme),
+    total: response.total,
+  };
+}
+
 export async function fetchDeploymentRunnerTargets(params: {
+  environment?: string;
   method?: 'docker' | 'ssh';
+  productId?: string;
   runnerId?: string;
 } = {}): Promise<DeploymentRunnerTargetRecord[]> {
   const token = requireAccessToken();
   const query = new URLSearchParams();
   appendQueryParam(query, 'method', params.method);
+  appendQueryParam(query, 'environment', params.environment);
+  appendQueryParam(query, 'product_id', params.productId);
   appendQueryParam(query, 'runner_id', params.runnerId);
   const queryString = query.toString();
   const response = await apiRequest<ListResponse<FlexibleListItem>>(
@@ -603,10 +751,19 @@ export async function fetchDeploymentRunnerTargets(params: {
   return response.items.map(mapDeploymentRunnerTarget);
 }
 
-export async function fetchDeploymentJenkinsConnections(): Promise<DeploymentJenkinsConnectionRecord[]> {
+export async function fetchDeploymentJenkinsConnections(params: {
+  environment?: string;
+  productId?: string;
+} = {}): Promise<DeploymentJenkinsConnectionRecord[]> {
   const token = requireAccessToken();
+  const query = new URLSearchParams();
+  appendQueryParam(query, 'environment', params.environment);
+  appendQueryParam(query, 'product_id', params.productId);
+  const queryString = query.toString();
   const response = await apiRequest<ListResponse<FlexibleListItem>>(
-    '/api/devops/deployment-jenkins-connections',
+    queryString
+      ? `/api/devops/deployment-jenkins-connections?${queryString}`
+      : '/api/devops/deployment-jenkins-connections',
     { token },
   );
   return response.items.map((item) => ({
@@ -827,18 +984,32 @@ function mapDeploymentScheme(item: FlexibleListItem): DeploymentSchemeRecord {
     deploymentMethod: deploymentMethodValue(item.deployment_method),
     environment: formatUnknownValue(item.environment),
     executorChannel: formatUnknownValue(item.executor_channel),
+    healthCheckConfig: normalizeObjectRecord(item.health_check_config) ?? {},
     id: formatUnknownValue(item.id),
     isDefault: Boolean(item.is_default),
     jenkinsConnectionId: emptyToUndefined(formatUnknownValue(item.jenkins_connection_id)),
     jenkinsJobName: emptyToUndefined(formatUnknownValue(item.jenkins_job_name)),
     name: formatUnknownValue(item.name),
+    preflightConfig: normalizeObjectRecord(item.preflight_config) ?? {},
     productId: formatUnknownValue(item.product_id),
+    rollbackConfig: normalizeObjectRecord(item.rollback_config) ?? {},
+    rolloutStrategy: (
+      ['batch', 'blue_green', 'canary'].includes(formatUnknownValue(item.rollout_strategy))
+        ? formatUnknownValue(item.rollout_strategy)
+        : 'all_at_once'
+    ) as DeploymentSchemeRecord['rolloutStrategy'],
     runnerId: emptyToUndefined(formatUnknownValue(item.runner_id)),
     status: item.status === 'disabled' ? 'disabled' : 'active',
     targetCode: emptyToUndefined(formatUnknownValue(item.target_code)),
     timeoutSeconds: Number(item.timeout_seconds ?? 1800),
     updatedAt: emptyToUndefined(formatListDate(formatUnknownValue(item.updated_at))),
     version: Number(item.version ?? 1),
+    waveConfig: normalizeObjectRecord(item.wave_config) ?? {},
+    windowEnforcement: (
+      ['disabled', 'strict'].includes(formatUnknownValue(item.window_enforcement))
+        ? formatUnknownValue(item.window_enforcement)
+        : 'warn'
+    ) as DeploymentSchemeRecord['windowEnforcement'],
   };
 }
 
@@ -847,8 +1018,11 @@ function mapDeploymentRunnerTarget(item: FlexibleListItem): DeploymentRunnerTarg
     code: formatUnknownValue(item.code),
     method: item.method === 'ssh' ? 'ssh' : 'docker',
     name: formatUnknownValue(item.name),
+    healthCheckConfigured: Boolean(item.health_check_configured),
     ready: item.ready !== false,
+    rollbackConfigured: Boolean(item.rollback_configured),
     runnerId: formatUnknownValue(item.runner_id),
+    supportsBlueGreen: Boolean(item.supports_blue_green),
   };
 }
 
@@ -867,18 +1041,58 @@ function mapDeploymentRun(item: FlexibleListItem): DeploymentRunRecord {
     finishedAt: emptyToUndefined(formatListDate(formatUnknownValue(item.finished_at))),
     id: formatUnknownValue(item.id),
     logUrl: emptyToUndefined(formatUnknownValue(item.log_url)),
+    healthStatus: emptyToUndefined(formatUnknownValue(item.health_status)),
+    operation: emptyToUndefined(formatUnknownValue(item.operation)),
     pluginInvocationLogId: emptyToUndefined(formatUnknownValue(item.plugin_invocation_log_id)),
     runnerTaskId: emptyToUndefined(formatUnknownValue(item.runner_task_id)),
     startedAt: emptyToUndefined(formatListDate(formatUnknownValue(item.started_at))),
     status: formatUnknownValue(item.status),
+    steps: Array.isArray(item.steps)
+      ? item.steps.map((step) => mapDeploymentRunStep(step as FlexibleListItem))
+      : [],
     updatedAt: formatListDate(formatUnknownValue(item.updated_at ?? item.created_at)),
+    waveNumber: numberOrUndefined(item.wave_number),
+    waveTotal: numberOrUndefined(item.wave_total),
+  };
+}
+
+function numberOrUndefined(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function mapDeploymentRunStep(item: FlexibleListItem): DeploymentRunStepRecord {
+  return {
+    evidence: normalizeObjectRecord(item.evidence) ?? {},
+    finishedAt: emptyToUndefined(formatListDate(formatUnknownValue(item.finished_at))),
+    id: formatUnknownValue(item.id),
+    sequence: numberOrUndefined(item.sequence) ?? 0,
+    startedAt: emptyToUndefined(formatListDate(formatUnknownValue(item.started_at))),
+    status: formatUnknownValue(item.status),
+    stepType: formatUnknownValue(item.step_type),
+    summary: emptyToUndefined(formatUnknownValue(item.summary)),
   };
 }
 
 function mapDeploymentRequest(item: FlexibleListItem): DeploymentRequestRecord {
+  const qualityGate = normalizeObjectRecord(item.quality_gate);
   return {
+    auditEvents: Array.isArray(item.audit_events)
+      ? item.audit_events.map((event) => {
+          const raw = event as FlexibleListItem;
+          return {
+            actorId: emptyToUndefined(formatUnknownValue(raw.actor_id)),
+            createdAt: emptyToUndefined(formatListDate(formatUnknownValue(raw.created_at))),
+            eventType: formatUnknownValue(raw.event_type),
+            id: formatUnknownValue(raw.id),
+            payload: normalizeObjectRecord(raw.payload) ?? {},
+          };
+        })
+      : [],
     artifactVersion: emptyToUndefined(formatUnknownValue(item.artifact_version)),
+    artifactDigest: emptyToUndefined(formatUnknownValue(item.artifact_digest)),
     commitSha: emptyToUndefined(formatUnknownValue(item.commit_sha)),
+    currentWave: numberOrUndefined(item.current_wave) ?? 0,
     createdAt: formatListDate(formatUnknownValue(item.created_at)),
     deploymentMethod: deploymentMethodValue(item.deployment_method),
     deploymentSchemeId: emptyToUndefined(formatUnknownValue(item.deployment_scheme_id)),
@@ -890,6 +1104,48 @@ function mapDeploymentRequest(item: FlexibleListItem): DeploymentRequestRecord {
     id: formatUnknownValue(item.id),
     productId: formatUnknownValue(item.product_id),
     releaseBranch: emptyToUndefined(formatUnknownValue(item.release_branch)),
+    dispatchEvents: Array.isArray(item.dispatch_events)
+      ? item.dispatch_events.map((event) => {
+          const raw = event as FlexibleListItem;
+          return {
+            attemptCount: numberOrUndefined(raw.attempt_count) ?? 0,
+            eventType: formatUnknownValue(raw.event_type),
+            id: formatUnknownValue(raw.id),
+            lastError: emptyToUndefined(formatUnknownValue(raw.last_error)),
+            processedAt: emptyToUndefined(formatListDate(formatUnknownValue(raw.processed_at))),
+            status: formatUnknownValue(raw.status),
+            updatedAt: emptyToUndefined(formatListDate(formatUnknownValue(raw.updated_at))),
+          };
+        })
+      : [],
+    qualityGate: qualityGate
+      ? {
+          blockedReasons: Array.isArray(qualityGate.blocked_reasons)
+            ? qualityGate.blocked_reasons.map((reason) => {
+                if (reason && typeof reason === 'object' && !Array.isArray(reason)) {
+                  const record = reason as Record<string, unknown>;
+                  return formatUnknownValue(record.message || record.code);
+                }
+                return formatUnknownValue(reason);
+              }).filter(Boolean)
+            : [],
+          checks: Array.isArray(qualityGate.checks)
+            ? qualityGate.checks.map((check) => {
+                const raw = check as FlexibleListItem;
+                return {
+                  checkType: formatUnknownValue(raw.check_type),
+                  id: formatUnknownValue(raw.id),
+                  source: formatUnknownValue(raw.source),
+                  status: formatUnknownValue(raw.status),
+                  summary: emptyToUndefined(formatUnknownValue(raw.summary)),
+                };
+              })
+            : [],
+          id: emptyToUndefined(formatUnknownValue(qualityGate.id)),
+          status: emptyToUndefined(formatUnknownValue(qualityGate.status)),
+          summary: emptyToUndefined(formatUnknownValue(qualityGate.summary)),
+        }
+      : undefined,
     requirementIds: normalizeStringArray(item.requirement_ids),
     riskLevel: formatUnknownValue(item.risk_level),
     rollbackPlan: emptyToUndefined(formatUnknownValue(item.rollback_plan)),
@@ -898,8 +1154,10 @@ function mapDeploymentRequest(item: FlexibleListItem): DeploymentRequestRecord {
     startedAt: emptyToUndefined(formatListDate(formatUnknownValue(item.started_at))),
     status: formatUnknownValue(item.status),
     title: formatUnknownValue(item.title),
+    totalWaves: numberOrUndefined(item.total_waves) ?? 1,
     updatedAt: formatListDate(formatUnknownValue(item.updated_at ?? item.created_at)),
     versionId: formatUnknownValue(item.version_id),
+    windowEnforcement: emptyToUndefined(formatUnknownValue(item.window_enforcement)),
   };
 }
 
