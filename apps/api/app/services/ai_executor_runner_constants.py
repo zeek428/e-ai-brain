@@ -11,6 +11,8 @@ AI_EXECUTOR_TYPES = {
     "openclaw",
 }
 AI_EXECUTOR_LOCAL_RUNNER_TYPES = AI_EXECUTOR_TYPES - {SYSTEM_DEFAULT_AI_EXECUTOR_TYPE}
+AI_EXECUTOR_RUNNER_CAPABILITIES = {"deployment"}
+DEPLOYMENT_EXECUTOR_TYPE = "deployment"
 
 AI_EXECUTOR_RUNNER_PROTOCOLS = {"mcp_http", "mcp_stdio", "runner_polling", "runner_websocket"}
 AI_EXECUTOR_RUNNER_STATUSES = {"active", "disabled", "offline"}
@@ -43,6 +45,7 @@ AI_EXECUTOR_RUNNER_SORT_FIELDS = {
 }
 
 AI_EXECUTOR_TASK_STATUSES = {
+    "cancel_requested",
     "cancelled",
     "claimed",
     "dead_letter",

@@ -1,6 +1,7 @@
 export type AiExecutorRunnerFormValues = {
   claude_command?: string;
   codex_command?: string;
+  deployment_capability?: boolean;
   endpoint_url: string;
   executor_types: string[];
   hermes_command?: string;

@@ -143,6 +143,8 @@ def _runner_env_text(runner: dict[str, Any], package_options: dict[str, str]) ->
             "AI_BRAIN_RUNNER_TOKEN=<runner_token>",
             "AI_BRAIN_EXECUTORS="
             + ",".join(str(item) for item in runner.get("executor_types") or []),
+            "AI_BRAIN_CAPABILITIES="
+            + ",".join(str(item) for item in runner.get("capabilities") or []),
             "AI_BRAIN_WORKSPACE_ROOTS="
             + ",".join(str(item) for item in runner.get("workspace_roots") or ["*"]),
             f"AI_BRAIN_HEARTBEAT_TIMEOUT_SECONDS={heartbeat_timeout_seconds}",
@@ -164,9 +166,11 @@ def _runner_env_text(runner: dict[str, Any], package_options: dict[str, str]) ->
 
 def _runner_config_json(runner: dict[str, Any], package_options: dict[str, str]) -> str:
     config = {
+        "deployment_targets": {},
         "executor_commands": _runner_executor_commands(runner),
         "package": dict(package_options),
         "runner": {
+            "capabilities": runner.get("capabilities") or [],
             "endpoint_url": _runner_endpoint(runner),
             "executor_types": runner.get("executor_types") or [],
             "heartbeat_timeout_seconds": int(runner.get("heartbeat_timeout_seconds") or 120),
@@ -262,6 +266,7 @@ def _load_config() -> dict:
 
 
 CONFIG = _load_config()
+DEPLOYMENT_TARGETS = dict(CONFIG.get("deployment_targets") or {})
 EXECUTOR_COMMANDS = dict(CONFIG.get("executor_commands") or {})
 SAFETY = CONFIG.get("safety") if isinstance(CONFIG.get("safety"), dict) else {}
 PRINT_BACKGROUND_LOGS = bool(
@@ -279,6 +284,7 @@ WORKSPACE_ROOTS = [
 ]
 _STREAM_END = object()
 SERVER_TERMINAL_STATUSES = {"cancelled", "dead_letter", "failed", "succeeded", "timed_out"}
+SERVER_CANCEL_REQUEST_STATUSES = {"cancel_requested"}
 WORKTREE_ISOLATION_ENABLED = bool(SAFETY.get("workspace_worktree_isolation_enabled", True))
 WORKTREE_PARENT_DIR_NAME = str(
     SAFETY.get("workspace_worktree_parent_dir_name") or ".ai-brain-worktrees"
@@ -290,6 +296,11 @@ WORKSPACE_ISOLATIONS_PATH = os.path.join(
 EXECUTOR_TYPES = [
     str(item).strip()
     for item in (CONFIG.get("runner") or {}).get("executor_types", [])
+    if str(item).strip()
+]
+RUNNER_CAPABILITIES = [
+    str(item).strip()
+    for item in (CONFIG.get("runner") or {}).get("capabilities", [])
     if str(item).strip()
 ]
 HIGH_RISK_PATTERNS = (
@@ -771,11 +782,33 @@ def _finalize_workspace_decisions() -> None:
                 print(f"Failed to report workspace decision failure: {report_exc}", file=sys.stderr)
 
 
+def _deployment_target_summaries() -> list[dict]:
+    summaries: list[dict] = []
+    for code, target in DEPLOYMENT_TARGETS.items():
+        if not isinstance(target, dict):
+            continue
+        method = str(target.get("method") or "").strip().lower()
+        name = str(target.get("name") or code).strip()
+        if not str(code).strip() or not name or method not in {"ssh", "docker"}:
+            continue
+        summaries.append(
+            {
+                "code": str(code).strip(),
+                "method": method,
+                "name": name,
+                "ready": bool(target.get("ready", True)),
+            }
+        )
+    return sorted(summaries, key=lambda item: (item["method"], item["code"]))
+
+
 def _heartbeat() -> None:
     metadata = {
+        "capabilities": RUNNER_CAPABILITIES,
         "command_allowlist": sorted(EXECUTOR_COMMANDS.keys()),
         "command_allowlist_enforced": _command_allowlist_enforced(),
         "executors": EXECUTOR_TYPES,
+        "deployment_targets": _deployment_target_summaries(),
         "instruction_passed_via_stdin": bool(
             SAFETY.get("instruction_passed_via_stdin", True)
         ),
@@ -1014,7 +1047,7 @@ def _stream_process_output(
             except Exception as exc:  # noqa: BLE001 - status polling must not kill execution.
                 status = ""
                 print(f"Failed to poll runner task status: {exc}", file=sys.stderr)
-            if status in SERVER_TERMINAL_STATUSES:
+            if status in SERVER_TERMINAL_STATUSES | SERVER_CANCEL_REQUEST_STATUSES:
                 server_terminal_status = status
                 termination_status = _terminate_process_tree(process)
                 log = {
@@ -1124,6 +1157,227 @@ def _resolve_executor_command(executor_type: str) -> tuple[str | None, list[str]
     return command, command_args, None
 
 
+def _required_deployment_target_text(target: dict, field: str) -> str:
+    value = str(target.get(field) or "").strip()
+    if not value:
+        raise ValueError(f"Deployment target field {field} is required")
+    if "\x00" in value or "\n" in value or "\r" in value:
+        raise ValueError(f"Deployment target field {field} is invalid")
+    return value
+
+
+def _deployment_ssh_command(target: dict) -> list[str]:
+    host = _required_deployment_target_text(target, "host")
+    username = _required_deployment_target_text(target, "username")
+    identity_file = _required_deployment_target_text(target, "identity_file")
+    known_hosts_file = _required_deployment_target_text(target, "known_hosts_file")
+    remote_command = _required_deployment_target_text(target, "remote_command")
+    port = int(target.get("port") or 22)
+    if port < 1 or port > 65535:
+        raise ValueError("Deployment target port is invalid")
+    return [
+        "ssh",
+        "-p",
+        str(port),
+        "-i",
+        identity_file,
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        f"UserKnownHostsFile={known_hosts_file}",
+        f"{username}@{host}",
+        remote_command,
+    ]
+
+
+def _deployment_docker_commands(target: dict) -> list[dict]:
+    working_directory = _required_deployment_target_text(target, "working_directory")
+    compose_files = _string_list(target.get("compose_files"))
+    if not compose_files:
+        raise ValueError("Deployment target compose_files is required")
+    project_name = _required_deployment_target_text(target, "project_name")
+    services = _string_list(target.get("services"))
+    common = ["docker", "compose"]
+    for compose_file in compose_files:
+        common.extend(["-f", compose_file])
+    common.extend(["--project-name", project_name])
+    commands: list[dict] = []
+    if bool(target.get("pull", False)):
+        commands.append(
+            {"argv": [*common, "pull", *services], "cwd": working_directory}
+        )
+    commands.append(
+        {
+            "argv": [*common, "up", "-d", "--remove-orphans", *services],
+            "cwd": working_directory,
+        }
+    )
+    return commands
+
+
+def _deployment_result_json(
+    *,
+    deployment_method: str,
+    duration_ms: int,
+    exit_code: int,
+    output_preview: str,
+    target_code: str,
+) -> dict:
+    return {
+        "command_shell": False,
+        "deployment_method": deployment_method,
+        "duration_ms": duration_ms,
+        "executor_type": "deployment",
+        "exit_code": exit_code,
+        "output_preview": output_preview,
+        "target_code": target_code,
+    }
+
+
+def _run_deployment_task(task: dict) -> None:
+    task_id = str(task["id"])
+    input_payload = task.get("input_payload")
+    if not isinstance(input_payload, dict):
+        input_payload = {}
+    target_code = str(input_payload.get("target_code") or "").strip()
+    deployment_method = str(input_payload.get("deployment_method") or "").strip().lower()
+    timeout_seconds = int(task.get("timeout_seconds") or 1800)
+    target = DEPLOYMENT_TARGETS.get(target_code)
+    if (
+        not target_code
+        or not isinstance(target, dict)
+        or deployment_method not in {"ssh", "docker"}
+        or str(target.get("method") or "").strip().lower() != deployment_method
+        or not bool(target.get("ready", True))
+    ):
+        _complete_task(
+            task_id,
+            status="failed",
+            error_code="DEPLOYMENT_TARGET_UNAVAILABLE",
+            error_message="Configured deployment target is unavailable",
+            result_json={
+                "deployment_method": deployment_method,
+                "executor_type": "deployment",
+                "target_code": target_code,
+            },
+        )
+        return
+    started_at = time.time()
+    output_preview = ""
+    try:
+        if deployment_method == "ssh":
+            commands = [
+                {
+                    "argv": _deployment_ssh_command(target),
+                    "cwd": os.path.dirname(os.path.abspath(CONFIG_PATH)),
+                }
+            ]
+        else:
+            commands = _deployment_docker_commands(target)
+        _append_logs(
+            task_id,
+            [
+                {
+                    "level": "info",
+                    "message": f"Starting {deployment_method} deployment target {target_code}",
+                }
+            ],
+            status="running",
+        )
+        exit_code = 0
+        for command in commands:
+            exit_code, preview, timed_out, server_status = _stream_process_output(
+                command_args=list(command["argv"]),
+                instruction=json.dumps(input_payload, ensure_ascii=False),
+                task_id=task_id,
+                timeout_seconds=timeout_seconds,
+                workspace_root=str(command["cwd"]),
+            )
+            output_preview = (output_preview + preview)[-MAX_OUTPUT_PREVIEW_CHARS:]
+            duration_ms = int((time.time() - started_at) * 1000)
+            if server_status == "cancel_requested":
+                _complete_task(
+                    task_id,
+                    status="cancelled",
+                    error_code="AI_EXECUTOR_TASK_CANCELLED",
+                    error_message="Deployment cancelled by platform request",
+                    result_json=_deployment_result_json(
+                        deployment_method=deployment_method,
+                        duration_ms=duration_ms,
+                        exit_code=exit_code,
+                        output_preview=output_preview,
+                        target_code=target_code,
+                    ),
+                )
+                return
+            if server_status:
+                return
+            if timed_out:
+                _complete_task(
+                    task_id,
+                    status="timed_out",
+                    error_code="AI_EXECUTOR_TASK_TIMEOUT",
+                    error_message=f"Deployment timed out after {timeout_seconds}s",
+                    result_json=_deployment_result_json(
+                        deployment_method=deployment_method,
+                        duration_ms=duration_ms,
+                        exit_code=exit_code,
+                        output_preview=output_preview,
+                        target_code=target_code,
+                    ),
+                )
+                return
+            if exit_code != 0:
+                _complete_task(
+                    task_id,
+                    status="failed",
+                    error_code="DEPLOYMENT_COMMAND_FAILED",
+                    error_message=output_preview or "Deployment command failed",
+                    result_json=_deployment_result_json(
+                        deployment_method=deployment_method,
+                        duration_ms=duration_ms,
+                        exit_code=exit_code,
+                        output_preview=output_preview,
+                        target_code=target_code,
+                    ),
+                )
+                return
+        duration_ms = int((time.time() - started_at) * 1000)
+        _complete_task(
+            task_id,
+            status="succeeded",
+            error_code=None,
+            error_message=None,
+            logs=[
+                {
+                    "level": "info",
+                    "message": f"Deployment target {target_code} completed",
+                }
+            ],
+            result_json=_deployment_result_json(
+                deployment_method=deployment_method,
+                duration_ms=duration_ms,
+                exit_code=exit_code,
+                output_preview=output_preview,
+                target_code=target_code,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - report bounded local execution errors.
+        _complete_task(
+            task_id,
+            status="failed",
+            error_code="DEPLOYMENT_EXECUTION_FAILED",
+            error_message=f"Deployment execution failed: {type(exc).__name__}",
+            result_json={
+                "deployment_method": deployment_method,
+                "executor_type": "deployment",
+                "target_code": target_code,
+            },
+        )
+
+
 def _high_risk_operations(instruction: str) -> list[str]:
     operations: list[str] = []
     for operation, pattern in HIGH_RISK_PATTERNS:
@@ -1148,6 +1402,9 @@ def _run_task(task: dict) -> None:
     workspace_root = str(task.get("workspace_root") or "")
     instruction = str(task.get("instruction") or "")
     timeout_seconds = int(task.get("timeout_seconds") or 1800)
+    if executor_type == "deployment":
+        _run_deployment_task(task)
+        return
     high_risk_operations = _high_risk_operations(instruction)
     if high_risk_operations and not _task_has_approval(task):
         _complete_task(
@@ -1217,6 +1474,29 @@ def _run_task(task: dict) -> None:
             workspace_root=execution_workspace_root,
         )
         duration_ms = int((time.time() - started_at) * 1000)
+        if server_terminal_status == "cancel_requested":
+            if workspace_isolation and workspace_isolation.get("mode") == "git_worktree":
+                _discard_isolated_workspace(workspace_isolation)
+                workspace_isolation = {
+                    **workspace_isolation,
+                    "status": "discarded_after_cancel",
+                }
+            _complete_task(
+                task_id,
+                status="cancelled",
+                error_code="AI_EXECUTOR_TASK_CANCELLED",
+                error_message="Task cancelled by platform request",
+                result_json=_executor_result_json(
+                    duration_ms=duration_ms,
+                    execution_workspace_root=execution_workspace_root,
+                    executor_type=executor_type,
+                    exit_code=exit_code,
+                    output_preview=preview,
+                    workspace_isolation=workspace_isolation,
+                    workspace_root=workspace_root,
+                ),
+            )
+            return
         if server_terminal_status:
             print(
                 f"Task {task_id} already reached server terminal status "

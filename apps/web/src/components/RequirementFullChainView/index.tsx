@@ -647,7 +647,7 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
         <Space orientation="vertical" size={10}>
           {fullChain.deploymentRequests.map((deployment) =>
             renderEntityDetail({
-              href: withQuery('/governance/devops', 'deployment_id', deployment.id),
+              href: withQuery('/governance/deployments', 'deployment_id', deployment.id),
               linkLabel: `查看部署 ${deployment.id}`,
               meta: `${deployment.environment} · ${deployment.status} · ${deployment.createdAt}`,
               title: deployment.title,

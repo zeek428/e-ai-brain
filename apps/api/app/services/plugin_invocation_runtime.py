@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from typing import Any
@@ -232,7 +234,10 @@ def _apply_dingtalk_document_write_defaults(
 
     normalized = dict(request_config)
     configured_tool_name = _non_blank_string(normalized.get("tool_name"))
-    if not configured_tool_name or configured_tool_name == DINGTALK_DOCUMENT_LEGACY_UPDATE_TOOL_NAME:
+    if (
+        not configured_tool_name
+        or configured_tool_name == DINGTALK_DOCUMENT_LEGACY_UPDATE_TOOL_NAME
+    ):
         normalized["tool_name"] = DINGTALK_DOCUMENT_UPDATE_TOOL_NAME
 
     mcp = _dict_config_section(normalized.get("mcp"))
@@ -332,6 +337,23 @@ def _build_headers_with_sources(
                 str(header_name),
                 str(secret_ref),
                 "auth_config.api_key_header",
+            )
+    if connection.get("auth_type") == "basic":
+        username = str(auth_config.get("username") or "").strip()
+        password_ref = str(auth_config.get("password_ref") or "").strip()
+        password = (
+            os.getenv(password_ref.removeprefix("env:"), "")
+            if password_ref.startswith("env:")
+            else ""
+        )
+        if username and password:
+            encoded = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
+            _set_header(
+                headers,
+                sources,
+                "Authorization",
+                f"Basic {encoded}",
+                "auth_config.basic",
             )
     string_headers = {str(key): str(value) for key, value in headers.items()}
     return string_headers, {

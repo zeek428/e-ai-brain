@@ -26,6 +26,7 @@ def system_default_ai_executor_runner() -> dict[str, Any]:
     return {
         "created_at": "1970-01-01T00:00:00+00:00",
         "created_by": "system",
+        "capabilities": [],
         "endpoint_url": "model-gateway://default",
         "executor_types": [SYSTEM_DEFAULT_AI_EXECUTOR_TYPE],
         "heartbeat_timeout_seconds": 0,
@@ -88,6 +89,11 @@ def runner_health_status(runner: dict[str, Any], heartbeat_age: int | None) -> s
         return "never_connected"
     timeout_seconds = int(runner.get("heartbeat_timeout_seconds") or 120)
     return "online" if heartbeat_age <= timeout_seconds else "offline"
+
+
+def runner_is_online(runner: dict[str, Any]) -> bool:
+    heartbeat_age = heartbeat_age_seconds(runner.get("last_heartbeat_at"))
+    return runner_health_status(runner, heartbeat_age) == "online"
 
 
 def runner_health_alert(

@@ -1357,7 +1357,7 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     response = client.get("/api/system/scheduled-job-templates", headers=admin_headers)
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["total"] == 10
+    assert data["total"] == 11
     by_code = {item["code"]: item for item in data["items"]}
 
     weekly = by_code["weekly_feedback_insight"]
@@ -1460,6 +1460,26 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     assert by_code["user_insight_requirement_mining"]["payload_defaults"]["plugin_input_mapping"][
         "source_types"
     ] == ["user_insights", "requirements"]
+    dingtalk_document_sync = by_code["dingtalk_document_sync"]
+    assert dingtalk_document_sync["name"] == "同步钉钉文档"
+    assert dingtalk_document_sync["payload_defaults"]["job_type"] == "plugin_action_invoke"
+    assert dingtalk_document_sync["payload_defaults"]["execution_mode"] == "ai_generated"
+    assert dingtalk_document_sync["payload_defaults"]["source_system"] == "internal_data_source"
+    assert dingtalk_document_sync["payload_defaults"]["plugin_input_mapping"][
+        "source_types"
+    ] == ["user_insights", "requirements", "products", "bugs"]
+    assert dingtalk_document_sync["payload_defaults"]["plugin_output_mapping"] == {
+        "write_target": "dingtalk_document",
+    }
+    assert [
+        item["type"] for item in dingtalk_document_sync["payload_defaults"]["result_actions"]
+    ] == ["sync_dingtalk_document"]
+    assert dingtalk_document_sync["payload_defaults"]["result_actions"][0][
+        "content_template"
+    ] == "{{dingtalk_markdown}}"
+    assert dingtalk_document_sync["resource_selectors"]["result_plugin_action"][
+        "code_candidates"
+    ] == ["update_dingtalk_document_content"]
     assert by_code["product_feedback_trend_analysis"]["payload_defaults"]["plugin_input_mapping"][
         "source_types"
     ] == ["products", "user_insights", "bugs"]
@@ -1509,6 +1529,8 @@ def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
     }
     assert catalog["generic_result_actions"] == [
         {"label": "仅保存运行结果", "value": "save_scheduled_job_result"},
+        {"label": "创建需求", "value": "create_requirements"},
+        {"label": "同步钉钉文档", "value": "sync_dingtalk_document"},
         {"label": "发送通知记录", "value": "send_notification"},
     ]
     assert {item["value"] for item in catalog["execution_modes"]} == {
@@ -1521,8 +1543,217 @@ def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
 def test_generic_result_actions_are_supported_for_plugin_invoke_jobs():
     assert scheduled_job_result_actions_service.validate_scheduled_job_result_actions(
         "plugin_action_invoke",
-        [{"type": "save_scheduled_job_result"}],
-    ) == [{"type": "save_scheduled_job_result"}]
+        [
+            {"type": "save_scheduled_job_result"},
+            {"requirements_path": "$.requirements", "type": "create_requirements"},
+            {
+                "document_id": "https://alidocs.dingtalk.com/i/nodes/doc_node_001",
+                "plugin_action_id": "plugin_action_dingtalk",
+                "type": "sync_dingtalk_document",
+            },
+        ],
+    ) == [
+        {"type": "save_scheduled_job_result"},
+        {
+            "max_items": 20,
+            "priority": "P1",
+            "requirements_path": "$.requirements",
+            "source": "user_feedback",
+            "type": "create_requirements",
+        },
+        {
+            "content_template": "{{dingtalk_markdown}}",
+            "document_id": "https://alidocs.dingtalk.com/i/nodes/doc_node_001",
+            "plugin_action_id": "plugin_action_dingtalk",
+            "type": "sync_dingtalk_document",
+            "write_mode": "append",
+        },
+    ]
+    with pytest.raises(HTTPException) as exc_info:
+        scheduled_job_result_actions_service.validate_scheduled_job_result_actions(
+            "online_log_ai_analysis",
+            [{"requirements_path": "$.requirements", "type": "create_requirements"}],
+        )
+    assert exc_info.value.status_code == 400
+
+
+def test_plugin_invoke_result_actions_create_requirements_and_sync_dingtalk(monkeypatch):
+    import app.services.plugins as plugin_services
+
+    app.state.store.reset()
+    product = {
+        "brain_app_id": "rd_brain",
+        "code": "ai-service",
+        "created_at": "2026-07-10T00:00:00+00:00",
+        "id": "product_ai_service",
+        "name": "AI 客服",
+        "owner_user_id": "user_admin",
+        "status": "active",
+        "updated_at": "2026-07-10T00:00:00+00:00",
+    }
+    app.state.store.products[product["id"]] = product
+    calls: list[dict] = []
+
+    def fake_invoke_plugin_action_response(**kwargs):
+        calls.append(kwargs)
+        return {
+            "id": "plugin_invocation_log_dingtalk",
+            "response_summary": {
+                "json": {
+                    "document_id": kwargs["input_payload"]["document_id"],
+                    "status": "updated",
+                },
+            },
+            "status": "succeeded",
+        }
+
+    monkeypatch.setattr(
+        plugin_services,
+        "invoke_plugin_action_response",
+        fake_invoke_plugin_action_response,
+    )
+
+    executed, total_records = scheduled_job_result_actions_service.execute_generic_result_actions(
+        current_store=app.state.store,
+        job={
+            "id": "scheduled_job_requirement_dingtalk",
+            "product_id": product["id"],
+            "result_action_policy": {"failure_policy": "fail_fast", "mode": "sequential"},
+        },
+        output_json={
+            "dingtalk_markdown": "## 本周高价值用户洞察\n- 支付失败反馈集中。",
+            "requirements": [
+                {
+                    "acceptance_criteria": ["失败时展示可操作错误原因"],
+                    "content": (
+                        "客服反馈支付失败后用户不知道下一步操作，"
+                        "需要优化错误提示和恢复路径。"
+                    ),
+                    "evidence": ["本周 18 条反馈中有 7 条提到支付失败"],
+                    "priority": "P1",
+                    "title": "优化支付失败恢复指引",
+                },
+            ],
+            "summary": "发现 1 个高价值需求机会。",
+        },
+        output_mapping={"requirements_path": "$.requirements", "write_target": "requirements"},
+        result_actions=[
+            {"requirements_path": "$.requirements", "type": "create_requirements"},
+            {
+                "content_template": "{{dingtalk_markdown}}\n\n{{requirements_markdown}}",
+                "document_id": "https://alidocs.dingtalk.com/i/nodes/doc_node_sync_001",
+                "plugin_action_id": "plugin_action_dingtalk_update",
+                "type": "sync_dingtalk_document",
+            },
+        ],
+        scheduled_job_run_id="scheduled_job_run_requirement_dingtalk",
+        user=ADMIN_SERVICE_USER,
+    )
+
+    assert total_records == 2
+    assert [item["type"] for item in executed] == ["create_requirements", "sync_dingtalk_document"]
+    created_requirement = next(iter(app.state.store.requirements.values()))
+    assert created_requirement["product_id"] == product["id"]
+    assert created_requirement["source"] == "user_feedback"
+    assert created_requirement["status"] == "submitted"
+    assert created_requirement["title"] == "优化支付失败恢复指引"
+    assert executed[0]["feedback"]["created_requirement_ids"] == [created_requirement["id"]]
+    assert calls[0]["action_id"] == "plugin_action_dingtalk_update"
+    assert calls[0]["input_payload"]["document_id"] == "doc_node_sync_001"
+    assert calls[0]["input_payload"]["mode"] == "append"
+    assert created_requirement["id"] in calls[0]["input_payload"]["markdown"]
+    assert executed[1]["feedback"]["document_id"] == "doc_node_sync_001"
+    assert executed[1]["feedback"]["plugin_invocation_log_id"] == "plugin_invocation_log_dingtalk"
+
+
+def test_create_requirements_result_action_is_scoped_and_idempotent_per_run():
+    app.state.store.reset()
+    product = {
+        "brain_app_id": "rd_brain",
+        "code": "scoped-product",
+        "created_at": "2026-07-10T00:00:00+00:00",
+        "id": "product_scoped_result_action",
+        "name": "作业所属产品",
+        "owner_user_id": "user_admin",
+        "status": "active",
+        "updated_at": "2026-07-10T00:00:00+00:00",
+    }
+    other_product = {
+        **product,
+        "code": "other-product",
+        "id": "product_other_result_action",
+        "name": "其他产品",
+    }
+    app.state.store.products[product["id"]] = product
+    app.state.store.products[other_product["id"]] = other_product
+    job = {
+        "id": "scheduled_job_scoped_requirements",
+        "product_id": product["id"],
+        "result_action_policy": {"failure_policy": "fail_fast", "mode": "sequential"},
+    }
+    output_json = {
+        "requirements": [
+            {
+                "content": "将已确认的高频反馈转化为产品改进需求。",
+                "priority": "P1",
+                "title": "改进高频反馈场景",
+            }
+        ]
+    }
+    action = {"requirements_path": "$.requirements", "type": "create_requirements"}
+
+    first, first_total = scheduled_job_result_actions_service.execute_generic_result_actions(
+        current_store=app.state.store,
+        job=job,
+        output_json=output_json,
+        output_mapping={"requirements_path": "$.requirements"},
+        result_actions=[action],
+        scheduled_job_run_id="scheduled_job_run_scoped_requirements",
+        user=ADMIN_SERVICE_USER,
+    )
+    second, second_total = scheduled_job_result_actions_service.execute_generic_result_actions(
+        current_store=app.state.store,
+        job=job,
+        output_json=output_json,
+        output_mapping={"requirements_path": "$.requirements"},
+        result_actions=[action],
+        scheduled_job_run_id="scheduled_job_run_scoped_requirements",
+        user=ADMIN_SERVICE_USER,
+    )
+
+    assert first_total == second_total == 1
+    assert len(app.state.store.requirements) == 1
+    assert first[0]["feedback"]["created_requirement_ids"] == second[0]["feedback"][
+        "created_requirement_ids"
+    ]
+    created_requirement = next(iter(app.state.store.requirements.values()))
+    assert created_requirement["product_id"] == product["id"]
+    assert created_requirement["raw_payload"]["scheduled_job_run_id"] == (
+        "scheduled_job_run_scoped_requirements"
+    )
+
+    blocked, blocked_total = scheduled_job_result_actions_service.execute_generic_result_actions(
+        current_store=app.state.store,
+        job=job,
+        output_json={
+            "requirements": [
+                {
+                    "content": "不应允许跨产品写入。",
+                    "product_id": other_product["id"],
+                    "title": "跨产品需求",
+                }
+            ]
+        },
+        output_mapping={"requirements_path": "$.requirements"},
+        result_actions=[action],
+        scheduled_job_run_id="scheduled_job_run_cross_product",
+        user=ADMIN_SERVICE_USER,
+    )
+
+    assert blocked_total == 0
+    assert blocked[0]["status"] == "failed"
+    assert blocked[0]["error_code"] == "RESULT_ACTION_PRODUCT_MISMATCH"
+    assert len(app.state.store.requirements) == 1
 
 
 def test_unavailable_scheduled_job_types_are_not_creatable_or_runnable():
@@ -3171,6 +3402,9 @@ def test_user_feedback_job_dispatches_local_ai_executor_and_completes_writeback(
     task = app.state.store.ai_executor_tasks[task_id]
     assert task["scheduled_job_run_id"] == run["id"]
     assert task["request_config"]["scheduled_job_ai_execution"]["stage"] == "ai_processing"
+    execution_actor = task["request_config"]["scheduled_job_ai_execution"]["execution_actor"]
+    assert execution_actor["id"] == "user_admin"
+    assert "admin" in execution_actor["roles"]
     assert task["input_payload"]["source_row_count"] == 2
 
     completed = client.post(

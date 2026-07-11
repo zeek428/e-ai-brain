@@ -48,13 +48,16 @@ def result_write_record_summary_fields(
     fields: dict[str, Any] = {}
     for key in (
         "candidate_count",
+        "created_requirement_ids",
         "delivery_id",
         "delivery_status",
+        "document_id",
         "preview_value",
         "report_preview",
         "sample_records",
         "source_row_count",
         "subject",
+        "write_mode",
     ):
         if key in feedback:
             fields[key] = feedback[key]

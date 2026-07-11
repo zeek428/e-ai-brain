@@ -93,6 +93,8 @@ def run_plugin_action_ai_processing_job(
         output_json=processed_json,
         output_mapping=output_mapping,
         result_actions=job.get("result_actions") or [],
+        scheduled_job_run_id=str(plugin_summary.get("scheduled_job_run_id") or "") or None,
+        user=user,
     )
     primary_result_action = result_actions[0] if result_actions else {}
     skill_ids = list(job.get("skill_ids", []))

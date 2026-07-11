@@ -94,11 +94,18 @@ export function VersionDashboardActions({
           代码巡检
         </Button>
         <Button
+          href={internalHref('/governance/deployments', {
+            version_id: dashboard.version.id,
+          })}
+        >
+          运维部署
+        </Button>
+        <Button
           href={internalHref('/governance/devops', {
             version_id: dashboard.version.id,
           })}
         >
-          部署/发布记录
+          发布记录
         </Button>
         <Button
           href={fullChainSubjectHref('product_version', dashboard.version.id)}
@@ -369,8 +376,14 @@ function evidenceActionHref(
   if (targetType === 'releases') {
     return internalHref('/governance/devops', { version_id: targetId });
   }
-  if (targetType === 'deployments' || targetType === 'deployment_request') {
-    return internalHref('/governance/devops', { version_id: targetId });
+  if (targetType === 'deployments') {
+    return internalHref('/governance/deployments', { version_id: targetId });
+  }
+  if (targetType === 'deployment_request') {
+    return internalHref('/governance/deployments', {
+      deployment_id: targetId,
+      version_id: versionId,
+    });
   }
   if (targetType === 'product_version_advance') {
     return undefined;

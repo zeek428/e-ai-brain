@@ -93,6 +93,7 @@ describe('AI Brain auth flow and routes', () => {
     expect(routes).toContain("path: '/delivery/versions'");
     expect(routes).toContain("path: '/assets/products'");
     expect(routes).toContain("path: '/governance/audit'");
+    expect(routes).toContain("path: '/governance/deployments'");
     expect(routes).not.toContain("path: '/governance/users'");
     expect(routes).toContain("path: '/system/users'");
     expect(routes).toContain("name: '用户管理'");

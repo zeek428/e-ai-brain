@@ -617,6 +617,19 @@ export default function ScheduledJobsPage() {
     [pluginActions],
   );
 
+  const findResultActionForTemplate = useCallback(
+    (template: ScheduledJobTemplateRecord | undefined) => {
+      const selector = templateSelector(template, 'result_plugin_action');
+      const hasSelector = [
+        'code_candidates',
+        'fallback_code_candidates',
+        'text_candidates',
+      ].some((key) => stringArrayFromUnknown(selector[key]).length > 0);
+      return hasSelector ? findByTemplateSelector(pluginActions, selector) : undefined;
+    },
+    [pluginActions],
+  );
+
   const findModelGatewayForTemplate = useCallback(
     (template: ScheduledJobTemplateRecord | undefined) => {
       const selector = templateSelector(template, 'model_gateway_config');
@@ -672,6 +685,18 @@ export default function ScheduledJobsPage() {
       const pluginConnectionIds = payloadConnectionIds.length
         ? payloadConnectionIds
         : uniqueStringList([connection?.id]);
+      const resultPluginAction = findResultActionForTemplate(template);
+      const resultPluginConnection = findConnectionForAction(resultPluginAction);
+      const resultActions = (templatePayloadResultActions(template) ?? []).map((resultAction) => {
+        if (resultAction.type !== 'sync_dingtalk_document') {
+          return resultAction;
+        }
+        return {
+          ...resultAction,
+          plugin_action_id: resultAction.plugin_action_id || resultPluginAction?.id,
+          plugin_connection_id: resultAction.plugin_connection_id || resultPluginConnection?.id,
+        };
+      });
       const jobType = templatePayloadString(template, 'job_type') ?? 'plugin_action_invoke';
       const templateConfigJson = templatePayloadRecordValue(template, 'config_json') ?? {};
       const nativeCodeScan = codeInspectionUsesNativeScan(jobType, templateConfigJson);
@@ -699,7 +724,7 @@ export default function ScheduledJobsPage() {
         plugin_input_mapping: templatePayloadRecordValue(template, 'plugin_input_mapping'),
         plugin_output_mapping: templatePayloadRecordValue(template, 'plugin_output_mapping'),
         product_id: productId,
-        result_actions: templatePayloadResultActions(template) ?? [],
+        result_actions: resultActions,
         schedule_type: templatePayloadString(template, 'schedule_type') ?? 'manual',
         skill_ids: templateSkillIds?.length ? templateSkillIds : (aiRequired ? skillIds : []),
         source_system: templatePayloadString(template, 'source_system') ?? 'ai-brain',
@@ -712,6 +737,7 @@ export default function ScheduledJobsPage() {
       findAgentForTemplate,
       findConnectionForAction,
       findModelGatewayForTemplate,
+      findResultActionForTemplate,
       findSkillForTemplate,
       form,
       availableJobTemplates,
@@ -1332,6 +1358,7 @@ export default function ScheduledJobsPage() {
         modelGatewayConfigs={modelGatewayConfigs}
         orchestrationNodes={orchestrationNodes}
         pluginActions={pluginActions}
+        pluginConnections={pluginConnections}
         productOptions={products.map((product) => ({
           label: `${product.name} (${product.code})`,
           value: product.id,

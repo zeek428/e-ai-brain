@@ -10,11 +10,9 @@ from fastapi import Request
 
 from app.api.deps import api_error, require_permissions
 from app.core.listing import add_list_observability, sort_list_items
-from app.services.ai_executor_runner_approvals import (
-    save_pending_ai_executor_approval_request,
-)
 from app.services.ai_executor_runner_constants import (
     AI_EXECUTOR_LOCAL_RUNNER_TYPES,
+    AI_EXECUTOR_RUNNER_CAPABILITIES,
     AI_EXECUTOR_RUNNER_PROTOCOLS,
     AI_EXECUTOR_RUNNER_SORT_FIELDS,
     AI_EXECUTOR_RUNNER_STATUSES,
@@ -23,6 +21,7 @@ from app.services.ai_executor_runner_constants import (
     AI_EXECUTOR_TASK_STATUSES,
     AI_EXECUTOR_TASK_TERMINAL_STATUSES,
     AI_EXECUTOR_TYPES,
+    DEPLOYMENT_EXECUTOR_TYPE,
     SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
     SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
 )
@@ -36,10 +35,11 @@ from app.services.ai_executor_runner_health import (
     runner_endpoint as _runner_endpoint,
 )
 from app.services.ai_executor_runner_health import (
-    runner_public as _runner_public,
+    runner_is_online,
+    system_default_ai_executor_runner,
 )
 from app.services.ai_executor_runner_health import (
-    system_default_ai_executor_runner,
+    runner_public as _runner_public,
 )
 from app.services.ai_executor_runner_packages import build_ai_executor_runner_install_package
 from app.services.ai_executor_runner_queue import (
@@ -51,7 +51,6 @@ from app.services.ai_executor_runner_queue import (
 from app.services.ai_executor_runner_readiness import (
     runner_readiness_summary as _runner_readiness_summary,
 )
-from app.services.ai_executor_runner_safety import runner_task_safety_snapshot
 from app.services.ai_executor_runner_task_context import (
     _ai_executor_task_visible_to_user,
     _load_ai_task,
@@ -67,6 +66,9 @@ from app.services.ai_executor_runner_task_context import (
 from app.services.ai_executor_runner_workspace import (
     reject_ai_executor_task_workspace,
     workspace_match_detail,
+)
+from app.services.ai_executor_task_creation import (
+    create_ai_executor_task as create_ai_executor_task,
 )
 from app.services.ai_executor_task_reliability import (
     apply_task_claim_lease,
@@ -130,6 +132,38 @@ def _normalized_executor_types(value: Any) -> list[str]:
     for executor_type in executor_types:
         _ensure_enum(executor_type, AI_EXECUTOR_LOCAL_RUNNER_TYPES, "executor_type")
     return executor_types
+
+
+def _normalized_runner_capabilities(value: Any) -> list[str]:
+    capabilities = _normalized_string_list(value, "capabilities")
+    for capability in capabilities:
+        _ensure_enum(capability, AI_EXECUTOR_RUNNER_CAPABILITIES, "capability")
+    return capabilities
+
+
+def _normalized_deployment_target_metadata(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    targets: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip()
+        name = str(item.get("name") or "").strip()
+        method = str(item.get("method") or "").strip().lower()
+        if not code or not name or method not in {"ssh", "docker"} or code in seen:
+            continue
+        seen.add(code)
+        targets.append(
+            {
+                "code": code,
+                "method": method,
+                "name": name,
+                "ready": bool(item.get("ready", True)),
+            }
+        )
+    return targets
 
 
 def _token_hash(token: str) -> str:
@@ -885,6 +919,9 @@ def create_ai_executor_runner_response(
     now = datetime.now(UTC).isoformat()
     runner_id = current_store.new_id("ai_executor_runner")
     runner = {
+        "capabilities": _normalized_runner_capabilities(
+            getattr(payload, "capabilities", None),
+        ),
         "created_at": now,
         "created_by": user["id"],
         "endpoint_url": _ensure_non_blank(
@@ -926,6 +963,7 @@ def create_ai_executor_runner_response(
         subject_type="ai_executor_runner",
         subject_id=runner_id,
         payload={
+            "capabilities": runner["capabilities"],
             "executor_types": runner["executor_types"],
             "protocol": runner["protocol"],
             "status": runner["status"],
@@ -1374,6 +1412,8 @@ def patch_ai_executor_runner_response(
         )
     if "executor_types" in updates:
         updates["executor_types"] = _normalized_executor_types(updates["executor_types"])
+    if "capabilities" in updates:
+        updates["capabilities"] = _normalized_runner_capabilities(updates["capabilities"])
     if "workspace_roots" in updates:
         updates["workspace_roots"] = _normalized_string_list(
             updates["workspace_roots"],
@@ -1398,6 +1438,7 @@ def patch_ai_executor_runner_response(
         subject_type="ai_executor_runner",
         subject_id=runner_id,
         payload={
+            "capabilities": runner.get("capabilities") or [],
             "executor_types": runner["executor_types"],
             "protocol": runner["protocol"],
             "status": runner["status"],
@@ -1547,7 +1588,12 @@ def runner_heartbeat_response(
 ) -> dict[str, Any]:
     runner = _authenticated_runner(current_store, request=request, runner_id=runner_id)
     now = datetime.now(UTC).isoformat()
-    merged_metadata = {**dict(runner.get("metadata") or {}), **dict(metadata or {})}
+    incoming_metadata = dict(metadata or {})
+    if "deployment_targets" in incoming_metadata:
+        incoming_metadata["deployment_targets"] = _normalized_deployment_target_metadata(
+            incoming_metadata.get("deployment_targets"),
+        )
+    merged_metadata = {**dict(runner.get("metadata") or {}), **incoming_metadata}
     runner = {
         **runner,
         "last_heartbeat_at": now,
@@ -1620,139 +1666,63 @@ def find_available_runner(
     )
 
 
-def create_ai_executor_task(
+def find_available_deployment_runner(
     current_store: Any,
     *,
-    action_id: str | None,
-    connection_id: str | None,
-    created_by: str,
-    executor_type: str,
-    input_payload: dict[str, Any],
-    instruction: str,
-    plugin_invocation_log_id: str | None,
-    request_config: dict[str, Any],
+    deployment_method: str,
     runner_id: str,
-    scheduled_job_id: str | None,
-    scheduled_job_run_id: str | None,
-    timeout_seconds: int,
-    workspace_root: str,
-    ai_task_id: str | None = None,
+    target_code: str,
 ) -> dict[str, Any]:
-    now = datetime.now(UTC).isoformat()
-    task_id = current_store.new_id("ai_executor_task")
-    safety_snapshot = runner_task_safety_snapshot(
-        instruction=instruction,
-        request_config=request_config,
-    )
-    if safety_snapshot["approval_required"] and not safety_snapshot["approval"]["approved"]:
-        approval_request = {
-            **dict(safety_snapshot.get("approval_request") or {}),
-            "approval_request_id": current_store.new_id("ai_executor_approval_request"),
-            "action_id": action_id,
-            "connection_id": connection_id,
-            "executor_type": executor_type,
-            "runner_id": runner_id,
-            "scheduled_job_id": scheduled_job_id,
-            "scheduled_job_run_id": scheduled_job_run_id,
-            "workspace_root": workspace_root,
-        }
-        safety_snapshot = {**safety_snapshot, "approval_request": approval_request}
-        save_pending_ai_executor_approval_request(
-            current_store,
-            approval_request=approval_request,
-            requested_by=created_by,
-            safety_snapshot=safety_snapshot,
-        )
-        record_audit_event(
-            current_store,
-            event_type="ai_executor_task.approval_requested",
-            actor_id=created_by,
-            subject_type="ai_executor_runner",
-            subject_id=runner_id,
-            payload={
-                "action_id": action_id,
-                "approval_request": approval_request,
-                "blocked_operations": safety_snapshot["blocked_operations"],
-                "connection_id": connection_id,
-                "executor_type": executor_type,
-                "risk_level": safety_snapshot["risk_level"],
-                "scheduled_job_id": scheduled_job_id,
-                "scheduled_job_run_id": scheduled_job_run_id,
-                "workspace_root": workspace_root,
-            },
-        )
+    sync_ai_executor_runner_store(current_store)
+    runner = _read_record(current_store, "ai_executor_runners", runner_id)
+    if (
+        runner is None
+        or runner.get("status") != "active"
+        or DEPLOYMENT_EXECUTOR_TYPE not in (runner.get("capabilities") or [])
+        or not runner_is_online(runner)
+    ):
         raise api_error(
             409,
-            "AI_EXECUTOR_APPROVAL_REQUIRED",
-            "AI executor instruction requires human approval before Runner dispatch",
-            {
-                "approval": safety_snapshot["approval"],
-                "approval_request": approval_request,
-                "blocked_operations": safety_snapshot["blocked_operations"],
-                "risk_level": safety_snapshot["risk_level"],
-                "safety": safety_snapshot,
-            },
+            "DEPLOYMENT_RUNNER_UNAVAILABLE",
+            "Configured deployment runner is unavailable",
         )
-    task_request_config = {
-        **dict(request_config or {}),
-        "ai_executor_safety": safety_snapshot,
-    }
-    task = {
-        "action_id": action_id,
-        "ai_task_id": ai_task_id,
-        "claimed_at": None,
-        "connection_id": connection_id,
-        "created_at": now,
-        "created_by": created_by,
-        "error_code": None,
-        "error_message": None,
-        "executor_type": executor_type,
-        "finished_at": None,
-        "id": task_id,
-        "input_payload": input_payload,
-        "instruction": instruction,
-        "logs": [],
-        "plugin_invocation_log_id": plugin_invocation_log_id,
-        "request_config": task_request_config,
-        "result_json": {},
-        "runner_id": runner_id,
-        "scheduled_job_id": scheduled_job_id,
-        "scheduled_job_run_id": scheduled_job_run_id,
-        "status": "queued",
-        "timeout_seconds": timeout_seconds,
-        "updated_at": now,
-        "workspace_root": workspace_root,
-    }
-    audit_event = record_audit_event(
-        current_store,
-        event_type="ai_executor_task.queued",
-        actor_id=created_by,
-        subject_type="ai_executor_task",
-        subject_id=task_id,
-        payload={
-            "executor_type": executor_type,
-            "runner_id": runner_id,
-            "scheduled_job_id": scheduled_job_id,
-            "scheduled_job_run_id": scheduled_job_run_id,
-            "ai_task_id": ai_task_id,
-            "approval_id": (safety_snapshot.get("approval") or {}).get("approval_id"),
-            "approved_by": (safety_snapshot.get("approval") or {}).get("approved_by"),
-            "approved_operations": (safety_snapshot.get("approval") or {}).get(
-                "approved_operations",
-            )
-            or [],
-            "risk_level": safety_snapshot["risk_level"],
-            "safety_status": safety_snapshot["status"],
-            "workspace_root": workspace_root,
-        },
+    metadata = runner.get("metadata") if isinstance(runner.get("metadata"), dict) else {}
+    targets = metadata.get("deployment_targets")
+    matching_target = next(
+        (
+            target
+            for target in targets or []
+            if isinstance(target, dict)
+            and target.get("code") == target_code
+            and target.get("method") == deployment_method
+            and bool(target.get("ready", True))
+        ),
+        None,
     )
-    _persist_record(
-        current_store,
-        "save_ai_executor_task_record",
-        task,
-        audit_event=audit_event,
+    if matching_target is None:
+        raise api_error(
+            409,
+            "DEPLOYMENT_TARGET_UNAVAILABLE",
+            "Configured deployment target is unavailable on the runner",
+        )
+    return runner
+
+
+def _sync_runner_task_to_deployment(
+    current_store: Any,
+    *,
+    runner_id: str,
+    task: dict[str, Any],
+) -> None:
+    if not task.get("deployment_run_id"):
+        return
+    from app.services.operational_deployments import sync_deployment_runner_task
+
+    sync_deployment_runner_task(
+        current_store=current_store,
+        runner_id=runner_id,
+        task=task,
     )
-    return task
 
 
 def claim_ai_executor_task_response(
@@ -1765,7 +1735,11 @@ def claim_ai_executor_task_response(
     runner = _authenticated_runner(current_store, request=request, runner_id=runner_id)
     requested_executor = executor_type.lower() if isinstance(executor_type, str) else None
     if requested_executor is not None:
-        _ensure_enum(requested_executor, AI_EXECUTOR_TYPES, "executor_type")
+        _ensure_enum(
+            requested_executor,
+            AI_EXECUTOR_TYPES | {DEPLOYMENT_EXECUTOR_TYPE},
+            "executor_type",
+        )
     sync_ai_executor_task_store(current_store, runner_id=runner_id, status="queued")
     queued = [
         task
@@ -1779,12 +1753,21 @@ def claim_ai_executor_task_response(
         return {"task": None}
     task: dict[str, Any] | None = None
     for candidate in queued:
-        if candidate.get("executor_type") not in (runner.get("executor_types") or []):
+        candidate_executor = candidate.get("executor_type")
+        supports_candidate = (
+            DEPLOYMENT_EXECUTOR_TYPE in (runner.get("capabilities") or [])
+            if candidate_executor == DEPLOYMENT_EXECUTOR_TYPE
+            else candidate_executor in (runner.get("executor_types") or [])
+        )
+        if not supports_candidate:
             raise api_error(
                 409,
                 "AI_EXECUTOR_TASK_UNSUPPORTED",
                 "Runner does not support task executor",
             )
+        if candidate_executor == DEPLOYMENT_EXECUTOR_TYPE:
+            task = candidate
+            break
         workspace_match = workspace_match_detail(runner, candidate.get("workspace_root"))
         if not workspace_match["allowed"]:
             reject_ai_executor_task_workspace(
@@ -1839,6 +1822,7 @@ def claim_ai_executor_task_response(
         task=task,
         runner_id=runner_id,
     )
+    _sync_runner_task_to_deployment(current_store, runner_id=runner_id, task=task)
     return {"task": _task_public(task)}
 
 
@@ -1914,6 +1898,8 @@ def append_ai_executor_task_logs_response(
     status = str(getattr(payload, "status", None) or task.get("status") or "running")
     if status not in {"claimed", "running"}:
         raise api_error(400, "VALIDATION_ERROR", "Log append status is invalid")
+    if task.get("status") == "cancel_requested":
+        status = "cancel_requested"
     now_dt = datetime.now(UTC)
     now = now_dt.isoformat()
     task = {
@@ -1939,6 +1925,7 @@ def append_ai_executor_task_logs_response(
     )
     _sync_runner_completion_to_scheduled_run(current_store, task=task, runner_id=runner_id)
     _sync_runner_completion_to_ai_task(current_store, task=task, runner_id=runner_id)
+    _sync_runner_task_to_deployment(current_store, runner_id=runner_id, task=task)
     return {"logs": list(task.get("logs") or []), "task": _task_public(task)}
 
 
@@ -1950,27 +1937,59 @@ def cancel_ai_executor_task_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     _ensure_admin(user)
-    task = _sync_visible_ai_executor_task_by_id(current_store, task_id=task_id, user=user)
+    _sync_visible_ai_executor_task_by_id(current_store, task_id=task_id, user=user)
+    task = request_ai_executor_task_cancel(
+        current_store,
+        actor_id=user["id"],
+        reason=str(getattr(payload, "reason", None) or "cancelled by user"),
+        task_id=task_id,
+    )
+    return {"task": _task_public(task)}
+
+
+def request_ai_executor_task_cancel(
+    current_store: Any,
+    *,
+    actor_id: str,
+    reason: str,
+    task_id: str,
+) -> dict[str, Any]:
+    task = _sync_ai_executor_task_by_id(current_store, task_id)
     if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
         raise api_error(409, "AI_EXECUTOR_TASK_TERMINAL", "Terminal task cannot be cancelled")
     now = datetime.now(UTC).isoformat()
-    reason = str(getattr(payload, "reason", None) or "cancelled by user")
+    terminal_without_runner = task.get("status") == "queued"
+    next_status = "cancelled" if terminal_without_runner else "cancel_requested"
     task = {
         **task,
-        "error_code": "AI_EXECUTOR_TASK_CANCELLED",
+        "error_code": (
+            "AI_EXECUTOR_TASK_CANCELLED"
+            if terminal_without_runner
+            else "AI_EXECUTOR_TASK_CANCEL_REQUESTED"
+        ),
         "error_message": reason,
-        "finished_at": now,
+        "finished_at": now if terminal_without_runner else None,
         "logs": _append_task_logs(
             task,
-            [{"level": "warning", "message": f"Task cancelled: {reason}", "timestamp": now}],
+            [
+                {
+                    "level": "warning",
+                    "message": (
+                        f"Task cancelled before claim: {reason}"
+                        if terminal_without_runner
+                        else f"Task cancellation requested: {reason}"
+                    ),
+                    "timestamp": now,
+                }
+            ],
         ),
-        "status": "cancelled",
+        "status": next_status,
         "updated_at": now,
     }
     audit_event = record_audit_event(
         current_store,
-        event_type="ai_executor_task.cancelled",
-        actor_id=user["id"],
+        event_type=f"ai_executor_task.{next_status}",
+        actor_id=actor_id,
         subject_type="ai_executor_task",
         subject_id=task_id,
         payload={"reason": reason, "runner_id": task.get("runner_id")},
@@ -1981,17 +2000,20 @@ def cancel_ai_executor_task_response(
         task,
         audit_event=audit_event,
     )
-    _sync_runner_completion_to_scheduled_run(
-        current_store,
-        task=task,
-        runner_id=str(task.get("runner_id") or user["id"]),
-    )
-    _sync_runner_completion_to_ai_task(
-        current_store,
-        task=task,
-        runner_id=str(task.get("runner_id") or user["id"]),
-    )
-    return {"task": _task_public(task)}
+    runner_id = str(task.get("runner_id") or actor_id)
+    if terminal_without_runner:
+        _sync_runner_completion_to_scheduled_run(
+            current_store,
+            task=task,
+            runner_id=runner_id,
+        )
+        _sync_runner_completion_to_ai_task(
+            current_store,
+            task=task,
+            runner_id=runner_id,
+        )
+    _sync_runner_task_to_deployment(current_store, runner_id=runner_id, task=task)
+    return task
 
 
 def retry_ai_executor_task_response(
@@ -2151,4 +2173,5 @@ def complete_ai_executor_task_response(
         task=task,
         runner_id=runner_id,
     )
+    _sync_runner_task_to_deployment(current_store, runner_id=runner_id, task=task)
     return {"task": _task_public(task)}

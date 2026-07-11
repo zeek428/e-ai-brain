@@ -1455,7 +1455,7 @@ describe('IterationVersionsPage', () => {
     expect(
       screen
         .getAllByRole('link', { name: /处理部署/ })
-        .every((link) => link.getAttribute('href') === '/governance/devops?version_id=version_dashboard'),
+        .every((link) => link.getAttribute('href') === '/governance/deployments?version_id=version_dashboard'),
     ).toBe(true);
     expect(screen.getByText('交付健康摘要')).toBeInTheDocument();
     expect(screen.getByText('发布准入')).toBeInTheDocument();
@@ -1529,7 +1529,7 @@ describe('IterationVersionsPage', () => {
     expect(
       screen
         .getAllByRole('link', { name: '处理部署' })
-        .every((link) => link.getAttribute('href') === '/governance/devops?version_id=version_dashboard'),
+        .every((link) => link.getAttribute('href') === '/governance/deployments?version_id=version_dashboard'),
     ).toBe(true);
     expect(
       screen
@@ -1588,6 +1588,7 @@ describe('IterationVersionsPage', () => {
       '/delivery/versions?branch_config_id=version_branch_dashboard&version_id=version_dashboard',
     );
     expect(cockpitLinks).toContain('/governance/devops?version_id=version_dashboard');
+    expect(cockpitLinks).toContain('/governance/deployments?version_id=version_dashboard');
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
       '/api/product-versions/version_dashboard/dashboard',
       'GET',

@@ -1224,6 +1224,8 @@ def _rerun_generic_result_action_trace_node(
             output_json=source_output_json,
             output_mapping=output_mapping,
             result_actions=result_action_config,
+            scheduled_job_run_id=run_id,
+            user=user,
         )
         if any(action.get("status") == "failed" for action in result_actions):
             status = "failed"

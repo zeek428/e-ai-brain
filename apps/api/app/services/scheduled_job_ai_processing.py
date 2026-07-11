@@ -1012,6 +1012,11 @@ def scheduled_job_ai_messages(
                         "prompt": prompt,
                     },
                 )
+    result_action_types = {
+        str(action.get("type") or "")
+        for action in (job.get("result_actions") or [])
+        if isinstance(action, dict)
+    }
     if job.get("job_type") == "code_repository_inspection":
         instructions = [
             "分析 data_connection_response 中的仓库扫描数据，提取质量、安全和规范问题。",
@@ -1066,7 +1071,7 @@ def scheduled_job_ai_messages(
             "分析 data_connection_response 中的数据，提取有价值的信息。",
             "必须只返回 JSON 对象，不要返回 Markdown。",
             (
-                "返回 JSON 必须包含 insights 数组；每个 insight 至少包含 "
+                "返回 JSON 默认包含 insights 数组；每个 insight 至少包含 "
                 "content、feedback_type、sentiment、source_channel 和 tags。"
             ),
             "如果源数据已有可用洞察，也要校验、清洗并输出为结果动作可消费的结构。",
@@ -1078,6 +1083,29 @@ def scheduled_job_ai_messages(
             ),
             "write_target": output_mapping.get("write_target") or "user_feedback_insights",
         }
+        if "create_requirements" in result_action_types:
+            instructions.extend(
+                [
+                    (
+                        "当前结果动作会写入需求管理，必须额外返回 requirements 数组；"
+                        "每个 requirement 至少包含 title、content、priority、evidence "
+                        "和 acceptance_criteria。"
+                    ),
+                    (
+                        "只有当用户洞察具备高频、明确业务价值或可落地改进方向时才生成需求；"
+                        "不要把单条情绪反馈直接写成需求。"
+                    ),
+                ],
+            )
+            output_contract["requirements_path"] = "$.requirements"
+        if "sync_dingtalk_document" in result_action_types:
+            instructions.append(
+                (
+                    "当前结果动作会同步钉钉文档，必须额外返回 dingtalk_markdown 字段，"
+                    "内容用 Markdown 汇总本次判断依据、需求候选和后续建议。"
+                ),
+            )
+            output_contract["dingtalk_markdown_path"] = "$.dingtalk_markdown"
     system_prompt = (agent or {}).get(
         "system_prompt"
     ) or "你是企业 AI 大脑的数据分析助手，负责把数据连接返回的原始数据整理为结果动作需要的 JSON。"

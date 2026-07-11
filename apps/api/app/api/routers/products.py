@@ -13,6 +13,7 @@ from app.core.repositories.authorization import (
     PRODUCT_MEMBER_ROLES,
 )
 from app.core.trace import envelope, get_trace_id
+from app.services.operational_deployments import ensure_default_deployment_scheme
 from app.services.product_config_context import (
     delete_product_config_record,
     ensure_enum,
@@ -331,6 +332,11 @@ def create_product(
         "products",
         product,
         audit_event=audit_event,
+    )
+    ensure_default_deployment_scheme(
+        current_store,
+        created_by=user["id"],
+        product_id=product_id,
     )
     return envelope(product, get_trace_id(request))
 

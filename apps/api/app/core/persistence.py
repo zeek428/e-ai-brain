@@ -346,6 +346,14 @@ class PostgresSnapshotRepository:
                     cursor,
                     "099_deployment_requests.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "100_operational_deployment_menu.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "101_deployment_strategies.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -838,6 +846,9 @@ class PostgresSnapshotRepository:
             "deployment_requests": list(
                 (deployments_payload.get("deployment_requests") or {}).values()
             ),
+            "deployment_schemes": list(
+                (deployments_payload.get("deployment_schemes") or {}).values()
+            ),
             "deployment_runs": list((deployments_payload.get("deployment_runs") or {}).values()),
             "gitlab_daily_code_metrics": list(
                 (gitlab_metrics_payload.get("gitlab_daily_code_metrics") or {}).values()
@@ -1269,6 +1280,25 @@ class PostgresSnapshotRepository:
     def load_deployment_requests(self) -> dict[str, Any]:
         return self._devops_read_repository.load_deployment_requests()
 
+    def list_deployment_schemes(
+        self,
+        *,
+        deployment_method: str | None = None,
+        environment: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        scheme_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._devops_read_repository.list_deployment_schemes(
+            deployment_method=deployment_method,
+            environment=environment,
+            product_id=product_id,
+            product_scope_ids=product_scope_ids,
+            scheme_id=scheme_id,
+            status=status,
+        )
+
     def list_deployment_requests(
         self,
         *,
@@ -1293,6 +1323,19 @@ class PostgresSnapshotRepository:
     ) -> list[dict[str, Any]]:
         return self._devops_read_repository.list_deployment_runs(
             deployment_request_id=deployment_request_id,
+        )
+
+    def claim_due_deployment_runs(
+        self,
+        *,
+        lease_seconds: int,
+        limit: int,
+        worker_id: str,
+    ) -> list[dict[str, Any]]:
+        return self._devops_read_repository.claim_due_deployment_runs(
+            lease_seconds=lease_seconds,
+            limit=limit,
+            worker_id=worker_id,
         )
 
     def list_jenkins_release_records(
@@ -1334,6 +1377,7 @@ class PostgresSnapshotRepository:
         self,
         *,
         category: str | None = None,
+        exclude_category: str | None = None,
         name: str | None = None,
         product_scope_ids: list[str] | None = None,
         status: str | None = None,
@@ -1344,6 +1388,7 @@ class PostgresSnapshotRepository:
     ) -> dict[str, Any]:
         return self._devops_read_repository.list_operational_metric_items(
             category=category,
+            exclude_category=exclude_category,
             name=name,
             product_scope_ids=product_scope_ids,
             status=status,
@@ -2748,6 +2793,30 @@ class PostgresSnapshotRepository:
     ) -> None:
         self._devops_read_repository.save_deployment_request_record(
             record,
+            audit_events=audit_events,
+        )
+
+    def save_deployment_scheme_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+        expected_version: int | None = None,
+    ) -> None:
+        self._devops_read_repository.save_deployment_scheme_record(
+            record,
+            audit_events=audit_events,
+            expected_version=expected_version,
+        )
+
+    def delete_deployment_scheme_record(
+        self,
+        scheme_id: str,
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._devops_read_repository.delete_deployment_scheme_record(
+            scheme_id,
             audit_events=audit_events,
         )
 

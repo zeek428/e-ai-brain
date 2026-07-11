@@ -14,6 +14,37 @@ from app.core.listing import (
 from app.services.product_scope import product_scope_filter
 
 OPERATIONAL_METRIC_SORT_FIELDS = {"category", "id", "name", "status", "updated_at", "value"}
+DEPLOYMENT_METRIC_CATEGORY = "运维部署"
+
+
+def _has_permission(user: dict[str, Any], permission: str) -> bool:
+    roles = set(user.get("roles") or [])
+    permissions = set(user.get("permissions") or [])
+    return "admin" in roles or "system.admin" in permissions or permission in permissions
+
+
+def _authorized_operational_metric_filters(
+    *,
+    category: str | None,
+    exclude_category: str | None,
+    user: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    can_read_deployments = _has_permission(user, "deployment.read")
+    can_read_devops = _has_permission(user, "devops.read")
+
+    if category is not None:
+        required = "deployment.read" if category == DEPLOYMENT_METRIC_CATEGORY else "devops.read"
+        if not _has_permission(user, required):
+            raise api_error(403, "FORBIDDEN", "Permission denied")
+        return category, exclude_category
+
+    if can_read_deployments and can_read_devops:
+        return category, exclude_category
+    if can_read_deployments:
+        return DEPLOYMENT_METRIC_CATEGORY, exclude_category
+    if can_read_devops:
+        return category, DEPLOYMENT_METRIC_CATEGORY
+    raise api_error(403, "FORBIDDEN", "Permission denied")
 
 
 def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
@@ -131,6 +162,7 @@ def list_operational_metrics_response(
     *,
     category: str | None,
     current_store: Any,
+    exclude_category: str | None,
     name: str | None,
     page: int | None,
     page_size: int | None,
@@ -145,7 +177,17 @@ def list_operational_metrics_response(
     resolved_sort_by = sort_by or "updated_at"
     if resolved_sort_by not in OPERATIONAL_METRIC_SORT_FIELDS:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
-    filters = {"category": category, "name": name, "status": status}
+    resolved_category, resolved_exclude_category = _authorized_operational_metric_filters(
+        category=category,
+        exclude_category=exclude_category,
+        user=user,
+    )
+    filters = {
+        "category": resolved_category,
+        "exclude_category": resolved_exclude_category,
+        "name": name,
+        "status": status,
+    }
     scoped_product_ids = product_scope_filter(user)
 
     repository = operational_query_repository(current_store)
@@ -157,7 +199,8 @@ def list_operational_metrics_response(
     if callable(list_items):
         return add_list_observability(
             list_items(
-                category=category,
+                category=resolved_category,
+                exclude_category=resolved_exclude_category,
                 name=name,
                 status=status,
                 product_scope_ids=scoped_product_ids,
@@ -183,8 +226,14 @@ def list_operational_metrics_response(
             for item in items
             if item.get("product_id") is not None and str(item.get("product_id")) in scoped_set
         ]
-    if category is not None:
-        items = [item for item in items if item.get("category") == category]
+    if resolved_category is not None:
+        items = [item for item in items if item.get("category") == resolved_category]
+    if resolved_exclude_category is not None:
+        items = [
+            item
+            for item in items
+            if item.get("category") != resolved_exclude_category
+        ]
     if status is not None:
         items = [item for item in items if item.get("status") == status]
     items = [

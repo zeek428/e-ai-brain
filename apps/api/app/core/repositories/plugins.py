@@ -561,7 +561,7 @@ class PluginReadRepository:
                     SELECT id, name, protocol, endpoint_url, executor_types, workspace_roots,
                            token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
                            last_heartbeat_at, metadata, created_by, created_at, updated_at,
-                           token_rotated_at, token_version
+                           token_rotated_at, token_version, capabilities
                     FROM ai_executor_runners
                     {where}
                     ORDER BY updated_at DESC, id ASC
@@ -622,7 +622,7 @@ class PluginReadRepository:
                     SELECT id, name, protocol, endpoint_url, executor_types, workspace_roots,
                            token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
                            last_heartbeat_at, metadata, created_by, created_at, updated_at,
-                           token_rotated_at, token_version
+                           token_rotated_at, token_version, capabilities
                     FROM ai_executor_runners
                     {where}
                     ORDER BY {sort_column} {direction} {nulls}, id {direction}
@@ -678,7 +678,8 @@ class PluginReadRepository:
                            scheduled_job_run_id, executor_type, instruction, workspace_root,
                            timeout_seconds, input_payload, request_config, result_json, logs,
                            status, error_code, error_message, claimed_at, finished_at,
-                           created_by, created_at, updated_at, ai_task_id
+                           created_by, created_at, updated_at, ai_task_id,
+                           deployment_run_id
                     FROM ai_executor_tasks
                     {where}
                     ORDER BY created_at ASC, id ASC
@@ -744,7 +745,8 @@ class PluginReadRepository:
                            scheduled_job_run_id, executor_type, instruction, workspace_root,
                            timeout_seconds, input_payload, request_config, result_json, logs,
                            status, error_code, error_message, claimed_at, finished_at,
-                           created_by, created_at, updated_at, ai_task_id
+                           created_by, created_at, updated_at, ai_task_id,
+                           deployment_run_id
                     FROM ai_executor_tasks
                     {where}
                     ORDER BY {sort_column} {direction} {nulls}, id {direction}
@@ -1095,13 +1097,13 @@ class PluginReadRepository:
                   id, name, protocol, endpoint_url, executor_types, workspace_roots,
                   token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
                   last_heartbeat_at, metadata, created_by, created_at, updated_at,
-                  token_rotated_at, token_version
+                  token_rotated_at, token_version, capabilities
                 )
                 VALUES (
                   %s, %s, %s, %s, %s::jsonb, %s::jsonb,
                   %s, %s, %s, %s,
                   %s::timestamptz, %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now()), %s::timestamptz, %s
+                  COALESCE(%s::timestamptz, now()), %s::timestamptz, %s, %s::jsonb
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   name = EXCLUDED.name,
@@ -1117,6 +1119,7 @@ class PluginReadRepository:
                   metadata = EXCLUDED.metadata,
                   token_rotated_at = EXCLUDED.token_rotated_at,
                   token_version = EXCLUDED.token_version,
+                  capabilities = EXCLUDED.capabilities,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -1137,6 +1140,7 @@ class PluginReadRepository:
                     runner.get("updated_at") or runner.get("created_at"),
                     runner.get("token_rotated_at"),
                     runner.get("token_version", 1),
+                    _json(runner.get("capabilities"), []),
                 ),
             )
 
@@ -1149,14 +1153,15 @@ class PluginReadRepository:
                   scheduled_job_run_id, executor_type, instruction, workspace_root,
                   timeout_seconds, input_payload, request_config, result_json, logs,
                   status, error_code, error_message, claimed_at, finished_at,
-                  created_by, created_at, updated_at, ai_task_id
+                  created_by, created_at, updated_at, ai_task_id, deployment_run_id
                 )
                 VALUES (
                   %s, %s, %s, %s,
                   %s, %s, %s, %s,
                   %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb,
                   %s, %s, %s, %s::timestamptz, %s::timestamptz,
-                  %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()), %s
+                  %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
+                  %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   runner_id = EXCLUDED.runner_id,
@@ -1164,6 +1169,7 @@ class PluginReadRepository:
                   scheduled_job_id = EXCLUDED.scheduled_job_id,
                   scheduled_job_run_id = EXCLUDED.scheduled_job_run_id,
                   ai_task_id = EXCLUDED.ai_task_id,
+                  deployment_run_id = EXCLUDED.deployment_run_id,
                   executor_type = EXCLUDED.executor_type,
                   instruction = EXCLUDED.instruction,
                   workspace_root = EXCLUDED.workspace_root,
@@ -1202,6 +1208,7 @@ class PluginReadRepository:
                     task.get("created_at"),
                     task.get("updated_at") or task.get("created_at"),
                     task.get("ai_task_id"),
+                    task.get("deployment_run_id"),
                 ),
             )
 
@@ -1642,11 +1649,24 @@ class PluginReadRepository:
                         WHERE scoped_task.id = ai_executor_tasks.ai_task_id
                           AND scoped_task.product_id = ANY(%s)
                       )
+                      OR EXISTS (
+                        SELECT 1
+                        FROM deployment_runs scoped_deployment_run
+                        JOIN deployment_requests scoped_deployment
+                          ON scoped_deployment.id = scoped_deployment_run.deployment_request_id
+                        WHERE scoped_deployment_run.id = ai_executor_tasks.deployment_run_id
+                          AND scoped_deployment.product_id = ANY(%s)
+                      )
                     )
                     """,
                 )
                 params.extend(
-                    [normalized_product_ids, normalized_product_ids, normalized_product_ids],
+                    [
+                        normalized_product_ids,
+                        normalized_product_ids,
+                        normalized_product_ids,
+                        normalized_product_ids,
+                    ],
                 )
         return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
 
@@ -1838,6 +1858,7 @@ class PluginReadRepository:
             "updated_at": row[14].isoformat() if row[14] else None,
             "token_rotated_at": row[15].isoformat() if len(row) > 15 and row[15] else None,
             "token_version": row[16] if len(row) > 16 and row[16] is not None else 1,
+            "capabilities": row[17] or [] if len(row) > 17 else [],
         }
 
     def _ai_executor_task_from_row(self, row: Any) -> dict[str, Any]:
@@ -1864,6 +1885,7 @@ class PluginReadRepository:
             "created_at": row[19].isoformat() if row[19] else None,
             "updated_at": row[20].isoformat() if row[20] else None,
             "ai_task_id": row[21] if len(row) > 21 else None,
+            "deployment_run_id": row[22] if len(row) > 22 else None,
         }
 
     def _ai_executor_approval_request_from_row(self, row: Any) -> dict[str, Any]:

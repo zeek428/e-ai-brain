@@ -42,6 +42,24 @@ def ensure_plugin_connection_auth_requirements(
         if not isinstance(token_ref, str) or not token_ref.strip():
             raise api_error(400, "VALIDATION_ERROR", "GitHub token_ref is required")
         return
+    if plugin_code == "jenkins":
+        if auth_type != "basic":
+            raise api_error(400, "VALIDATION_ERROR", "Jenkins connection requires basic auth_type")
+        username = (auth_config or {}).get("username")
+        if not isinstance(username, str) or not username.strip():
+            raise api_error(400, "VALIDATION_ERROR", "Jenkins username is required")
+        password_ref = (auth_config or {}).get("password_ref")
+        if not isinstance(password_ref, str) or not password_ref.strip():
+            raise api_error(400, "VALIDATION_ERROR", "Jenkins password_ref is required")
+        if not password_ref.strip().startswith("env:") or not password_ref.removeprefix(
+            "env:"
+        ).strip():
+            raise api_error(
+                400,
+                "VALIDATION_ERROR",
+                "Jenkins password_ref must use an env: environment variable reference",
+            )
+        return
     if plugin_code != "gitlab":
         return
     if auth_type != "api_key_header":

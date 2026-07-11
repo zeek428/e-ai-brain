@@ -61,6 +61,7 @@ type ScheduledJobFormModalProps = {
   modelGatewayConfigs: ModelGatewayConfigRecord[];
   orchestrationNodes: ScheduledJobOrchestrationNode[];
   pluginActions: PluginActionRecord[];
+  pluginConnections: PluginConnectionRecord[];
   productOptions: SelectOption[];
   productRepositories: ProductGitRepositoryOption[];
   productRequiredRule: FormRule;
@@ -248,6 +249,7 @@ export function ScheduledJobFormModal({
   modelGatewayConfigs,
   orchestrationNodes,
   pluginActions,
+  pluginConnections,
   productOptions,
   productRepositories,
   productRequiredRule,
@@ -415,7 +417,12 @@ export function ScheduledJobFormModal({
           codeInspectionResultActionOptions={codeInspectionResultActionOptions}
           genericResultActionOptions={genericResultActionOptions}
           isCodeInspectionJob={selectedJobType === 'code_repository_inspection'}
-          isGenericResultActionJob={selectedJobType === 'online_log_ai_analysis'}
+          isGenericResultActionJob={
+            selectedJobType === 'online_log_ai_analysis' || selectedJobType === 'plugin_action_invoke'
+          }
+          pluginActions={pluginActions}
+          pluginConnections={pluginConnections}
+          selectedJobType={selectedJobType}
           severityThresholdOptions={severityThresholdSelectOptions}
         />
         <ScheduledJobScheduleConfigSection scheduleTypeOptions={scheduleTypeSelectOptions} />

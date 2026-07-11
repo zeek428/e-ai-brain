@@ -74,6 +74,7 @@ export function usePluginRunnerOperations({
     runnerForm.setFieldsValue({
       claude_command: 'claude',
       codex_command: 'codex',
+      deployment_capability: false,
       endpoint_url: defaultRunnerEndpoint(),
       executor_types: ['codex', 'openclaw'],
       hermes_command: 'hermes',
@@ -99,6 +100,7 @@ export function usePluginRunnerOperations({
     runnerForm.setFieldsValue({
       claude_command: executorCommands.claude || 'claude',
       codex_command: executorCommands.codex || 'codex',
+      deployment_capability: (runner.capabilities ?? []).includes('deployment'),
       endpoint_url: runner.endpoint_url ?? 'runner://local',
       executor_types: runner.executor_types ?? ['codex'],
       hermes_command: executorCommands.hermes || 'hermes',

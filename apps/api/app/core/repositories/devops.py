@@ -59,6 +59,30 @@ class DevopsReadRepository:
             audit_events=audit_events,
         )
 
+    def save_deployment_scheme_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+        expected_version: int | None = None,
+    ) -> None:
+        self._write_repository.save_deployment_scheme_record(
+            record,
+            audit_events=audit_events,
+            expected_version=expected_version,
+        )
+
+    def delete_deployment_scheme_record(
+        self,
+        scheme_id: str,
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._write_repository.delete_deployment_scheme_record(
+            scheme_id,
+            audit_events=audit_events,
+        )
+
     def save_deployment_run_record(
         self,
         record: dict[str, Any],
@@ -98,6 +122,13 @@ class DevopsReadRepository:
         deployment_requests: dict[str, dict[str, Any]],
     ) -> None:
         self._write_repository.upsert_deployment_requests(cursor, deployment_requests)
+
+    def upsert_deployment_schemes(
+        self,
+        cursor,
+        deployment_schemes: dict[str, dict[str, Any]],
+    ) -> None:
+        self._write_repository.upsert_deployment_schemes(cursor, deployment_schemes)
 
     def upsert_deployment_runs(
         self,
@@ -166,12 +197,64 @@ class DevopsReadRepository:
     def load_deployment_requests(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
+                deployment_schemes = self._load_deployment_schemes(cursor)
                 deployment_requests = self._load_deployment_requests(cursor)
                 deployment_runs = self._load_deployment_runs(cursor)
         return {
+            "deployment_schemes": deployment_schemes,
             "deployment_requests": deployment_requests,
             "deployment_runs": deployment_runs,
         }
+
+    def list_deployment_schemes(
+        self,
+        *,
+        deployment_method: str | None = None,
+        environment: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        scheme_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
+        if environment is not None:
+            where_clauses.append("environment = %s")
+            params.append(environment)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        if deployment_method is not None:
+            where_clauses.append("deployment_method = %s")
+            params.append(deployment_method)
+        if scheme_id is not None:
+            where_clauses.append("id = %s")
+            params.append(scheme_id)
+        if product_scope_ids is not None:
+            if not product_scope_ids:
+                return []
+            where_clauses.append("product_id = ANY(%s)")
+            params.append(product_scope_ids)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, code, name, environment,
+                           deployment_method, executor_channel, runner_id,
+                           target_code, jenkins_connection_id, jenkins_job_name,
+                           timeout_seconds, config_json, is_default, status,
+                           version, created_by, created_at, updated_at
+                    FROM deployment_schemes
+                    {where_clause}
+                    ORDER BY is_default DESC, updated_at DESC, id ASC
+                    """,
+                    tuple(params),
+                )
+                return [self._deployment_scheme_from_row(row) for row in cursor.fetchall()]
 
     def list_deployment_requests(
         self,
@@ -212,7 +295,8 @@ class DevopsReadRepository:
                            d.release_readiness_task_id, d.rollback_plan, d.risk_level,
                            d.gate_summary, d.assigned_ops_user, d.approved_by,
                            d.started_at, d.finished_at, d.failure_reason, d.created_by,
-                           d.created_at, d.updated_at,
+                           d.created_at, d.updated_at, d.deployment_scheme_id,
+                           d.deployment_method, d.executor_channel, d.scheme_snapshot,
                            COALESCE(
                              array_agg(r.requirement_id ORDER BY r.requirement_id)
                                FILTER (WHERE r.requirement_id IS NOT NULL),
@@ -243,14 +327,62 @@ class DevopsReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, deployment_request_id, executor_type, external_job_name,
-                           external_build_id, status, log_url, started_at, finished_at,
+                    SELECT id, deployment_request_id, executor_type, deployment_method,
+                           executor_channel, runner_task_id, plugin_invocation_log_id,
+                           external_job_name, external_build_id, status, log_url,
+                           external_queue_url, external_build_url, execution_snapshot,
+                           logs, idempotency_key, next_sync_at, sync_attempts,
+                           sync_lease_owner, sync_lease_until, started_at, finished_at,
                            failure_reason, created_by, created_at, updated_at
                     FROM deployment_runs
                     {where_clause}
                     ORDER BY COALESCE(started_at, created_at) DESC, id DESC
                     """,
                     tuple(params),
+                )
+                return [self._deployment_run_from_row(row) for row in cursor.fetchall()]
+
+    def claim_due_deployment_runs(
+        self,
+        *,
+        lease_seconds: int,
+        limit: int,
+        worker_id: str,
+    ) -> list[dict[str, Any]]:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    WITH due_runs AS (
+                      SELECT id
+                      FROM deployment_runs
+                      WHERE deployment_method = 'jenkins'
+                        AND executor_channel = 'integration'
+                        AND status IN ('queued', 'running', 'cancelling')
+                        AND COALESCE(next_sync_at, now()) <= now()
+                        AND (sync_lease_until IS NULL OR sync_lease_until < now())
+                      ORDER BY next_sync_at NULLS FIRST, created_at, id
+                      LIMIT %s
+                      FOR UPDATE SKIP LOCKED
+                    )
+                    UPDATE deployment_runs run
+                    SET sync_lease_owner = %s,
+                        sync_lease_until = now() + (%s || ' seconds')::interval,
+                        updated_at = now()
+                    FROM due_runs
+                    WHERE run.id = due_runs.id
+                    RETURNING run.id, run.deployment_request_id, run.executor_type,
+                              run.deployment_method, run.executor_channel,
+                              run.runner_task_id, run.plugin_invocation_log_id,
+                              run.external_job_name, run.external_build_id, run.status,
+                              run.log_url, run.external_queue_url, run.external_build_url,
+                              run.execution_snapshot, run.logs, run.idempotency_key,
+                              run.next_sync_at, run.sync_attempts, run.sync_lease_owner,
+                              run.sync_lease_until, run.started_at, run.finished_at,
+                              run.failure_reason, run.created_by, run.created_at,
+                              run.updated_at
+                    """,
+                    (limit, worker_id, lease_seconds),
                 )
                 return [self._deployment_run_from_row(row) for row in cursor.fetchall()]
 
@@ -350,6 +482,7 @@ class DevopsReadRepository:
         self,
         *,
         category: str | None = None,
+        exclude_category: str | None = None,
         name: str | None = None,
         product_scope_ids: list[str] | None = None,
         status: str | None = None,
@@ -441,59 +574,67 @@ class DevopsReadRepository:
                                'version_id', version_id
                            )
                        )::text AS source_payload
-	                FROM jenkins_release_records
-	                UNION ALL
-	                SELECT '运维部署'::text AS category,
-	                       d.id,
-	                       d.title AS name,
-	                       d.status,
-	                       COALESCE(d.updated_at, d.created_at, d.finished_at, d.started_at) AS updated_at,
-	                       COALESCE(d.artifact_version, d.environment) AS value,
-	                       d.product_id,
-	                       d.version_id,
-	                       NULL::text AS module_code,
-	                       NULL::text AS repository_id,
-	                       d.environment,
-	                       jsonb_strip_nulls(
-	                           jsonb_build_object(
-	                               'approved_by', d.approved_by,
-	                               'artifact_version', d.artifact_version,
-	                               'assigned_ops_user', d.assigned_ops_user,
-	                               'commit_sha', d.commit_sha,
-	                               'created_at', d.created_at,
-	                               'created_by', d.created_by,
-	                               'deploy_window_end', d.deploy_window_end,
-	                               'deploy_window_start', d.deploy_window_start,
-	                               'environment', d.environment,
-	                               'failure_reason', d.failure_reason,
-	                               'finished_at', d.finished_at,
-	                               'gate_summary', d.gate_summary,
-	                               'product_id', d.product_id,
-	                               'release_branch', d.release_branch,
-	                               'release_readiness_task_id', d.release_readiness_task_id,
-	                               'requirement_ids',
-	                               COALESCE(
-	                                   jsonb_agg(r.requirement_id ORDER BY r.requirement_id)
-	                                       FILTER (WHERE r.requirement_id IS NOT NULL),
-	                                   '[]'::jsonb
-	                               ),
-	                               'risk_level', d.risk_level,
-	                               'rollback_plan', d.rollback_plan,
-	                               'started_at', d.started_at,
-	                               'status', d.status,
-	                               'title', d.title,
-	                               'updated_at', d.updated_at,
-	                               'version_id', d.version_id
-	                           )
-	                       )::text AS source_payload
-	                FROM deployment_requests d
-	                LEFT JOIN deployment_request_requirements r
-	                  ON r.deployment_request_id = d.id
-	                GROUP BY d.id
-	                UNION ALL
-	                SELECT '线上日志'::text AS category,
-	                       id,
-	                       environment AS name,
+                FROM jenkins_release_records
+                UNION ALL
+                SELECT '运维部署'::text AS category,
+                       d.id,
+                       d.title AS name,
+                       d.status,
+                       COALESCE(
+                           d.updated_at,
+                           d.created_at,
+                           d.finished_at,
+                           d.started_at
+                       ) AS updated_at,
+                       COALESCE(d.artifact_version, d.environment) AS value,
+                       d.product_id,
+                       d.version_id,
+                       NULL::text AS module_code,
+                       NULL::text AS repository_id,
+                       d.environment,
+                       jsonb_strip_nulls(
+                           jsonb_build_object(
+                               'approved_by', d.approved_by,
+                               'artifact_version', d.artifact_version,
+                               'assigned_ops_user', d.assigned_ops_user,
+                               'commit_sha', d.commit_sha,
+                               'created_at', d.created_at,
+                               'created_by', d.created_by,
+                               'deploy_window_end', d.deploy_window_end,
+                               'deploy_window_start', d.deploy_window_start,
+                               'deployment_method', d.deployment_method,
+                               'deployment_scheme_id', d.deployment_scheme_id,
+                               'environment', d.environment,
+                               'executor_channel', d.executor_channel,
+                               'failure_reason', d.failure_reason,
+                               'finished_at', d.finished_at,
+                               'gate_summary', d.gate_summary,
+                               'product_id', d.product_id,
+                               'release_branch', d.release_branch,
+                               'release_readiness_task_id', d.release_readiness_task_id,
+                               'requirement_ids',
+                               COALESCE(
+                                   jsonb_agg(r.requirement_id ORDER BY r.requirement_id)
+                                       FILTER (WHERE r.requirement_id IS NOT NULL),
+                                   '[]'::jsonb
+                               ),
+                               'risk_level', d.risk_level,
+                               'rollback_plan', d.rollback_plan,
+                               'started_at', d.started_at,
+                               'status', d.status,
+                               'title', d.title,
+                               'updated_at', d.updated_at,
+                               'version_id', d.version_id
+                           )
+                       )::text AS source_payload
+                FROM deployment_requests d
+                LEFT JOIN deployment_request_requirements r
+                  ON r.deployment_request_id = d.id
+                GROUP BY d.id
+                UNION ALL
+                SELECT '线上日志'::text AS category,
+                       id,
+                       environment AS name,
                        status,
                        COALESCE(updated_at, created_at, window_start) AS updated_at,
                        error_rate::text AS value,
@@ -531,6 +672,9 @@ class DevopsReadRepository:
         if category is not None:
             where_clauses.append("category = %s")
             params.append(category)
+        if exclude_category is not None:
+            where_clauses.append("category <> %s")
+            params.append(exclude_category)
         if status is not None:
             where_clauses.append("status = %s")
             params.append(status)
@@ -657,7 +801,8 @@ class DevopsReadRepository:
                    d.release_readiness_task_id, d.rollback_plan, d.risk_level,
                    d.gate_summary, d.assigned_ops_user, d.approved_by,
                    d.started_at, d.finished_at, d.failure_reason, d.created_by,
-                   d.created_at, d.updated_at,
+                   d.created_at, d.updated_at, d.deployment_scheme_id,
+                   d.deployment_method, d.executor_channel, d.scheme_snapshot,
                    COALESCE(
                      array_agg(r.requirement_id ORDER BY r.requirement_id)
                        FILTER (WHERE r.requirement_id IS NOT NULL),
@@ -672,11 +817,29 @@ class DevopsReadRepository:
         )
         return {row[0]: self._deployment_request_from_row(row) for row in cursor.fetchall()}
 
+    def _load_deployment_schemes(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, product_id, code, name, environment,
+                   deployment_method, executor_channel, runner_id,
+                   target_code, jenkins_connection_id, jenkins_job_name,
+                   timeout_seconds, config_json, is_default, status,
+                   version, created_by, created_at, updated_at
+            FROM deployment_schemes
+            ORDER BY product_id, environment, is_default DESC, id
+            """
+        )
+        return {row[0]: self._deployment_scheme_from_row(row) for row in cursor.fetchall()}
+
     def _load_deployment_runs(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
-            SELECT id, deployment_request_id, executor_type, external_job_name,
-                   external_build_id, status, log_url, started_at, finished_at,
+            SELECT id, deployment_request_id, executor_type, deployment_method,
+                   executor_channel, runner_task_id, plugin_invocation_log_id,
+                   external_job_name, external_build_id, status, log_url,
+                   external_queue_url, external_build_url, execution_snapshot,
+                   logs, idempotency_key, next_sync_at, sync_attempts,
+                   sync_lease_owner, sync_lease_until, started_at, finished_at,
                    failure_reason, created_by, created_at, updated_at
             FROM deployment_runs
             ORDER BY COALESCE(started_at, created_at), id
@@ -776,6 +939,9 @@ class DevopsReadRepository:
         gate_summary = row[14] or {}
         if isinstance(gate_summary, str):
             gate_summary = json.loads(gate_summary)
+        scheme_snapshot = row[26] or {}
+        if isinstance(scheme_snapshot, str):
+            scheme_snapshot = json.loads(scheme_snapshot)
         request = {
             "approved_by": row[16],
             "artifact_version": row[10],
@@ -783,9 +949,12 @@ class DevopsReadRepository:
             "commit_sha": row[9],
             "created_at": row[21].isoformat() if row[21] else None,
             "created_by": row[20],
+            "deployment_method": row[24],
+            "deployment_scheme_id": row[23],
             "deploy_window_end": row[7].isoformat() if row[7] else None,
             "deploy_window_start": row[6].isoformat() if row[6] else None,
             "environment": row[4],
+            "executor_channel": row[25],
             "failure_reason": row[19],
             "finished_at": row[18].isoformat() if row[18] else None,
             "gate_summary": gate_summary,
@@ -793,9 +962,10 @@ class DevopsReadRepository:
             "product_id": row[1],
             "release_branch": row[8],
             "release_readiness_task_id": row[11],
-            "requirement_ids": list(row[23] or []),
+            "requirement_ids": list(row[27] or []),
             "risk_level": row[13],
             "rollback_plan": row[12],
+            "scheme_snapshot": scheme_snapshot,
             "started_at": row[17].isoformat() if row[17] else None,
             "status": row[5],
             "title": row[3],
@@ -814,6 +984,7 @@ class DevopsReadRepository:
             "finished_at",
             "release_branch",
             "release_readiness_task_id",
+            "deployment_scheme_id",
             "rollback_plan",
             "started_at",
             "updated_at",
@@ -822,26 +993,91 @@ class DevopsReadRepository:
                 request.pop(optional_key)
         return request
 
-    def _deployment_run_from_row(self, row) -> dict[str, Any]:
-        run = {
-            "created_at": row[11].isoformat() if row[11] else None,
-            "created_by": row[10],
-            "deployment_request_id": row[1],
-            "executor_type": row[2],
-            "external_build_id": row[4],
-            "external_job_name": row[3],
-            "failure_reason": row[9],
-            "finished_at": row[8].isoformat() if row[8] else None,
+    def _deployment_scheme_from_row(self, row) -> dict[str, Any]:
+        config = row[12] or {}
+        if isinstance(config, str):
+            config = json.loads(config)
+        scheme = {
             "id": row[0],
-            "log_url": row[6],
-            "started_at": row[7].isoformat() if row[7] else None,
-            "status": row[5],
-            "updated_at": row[12].isoformat() if row[12] else None,
+            "product_id": row[1],
+            "code": row[2],
+            "name": row[3],
+            "environment": row[4],
+            "deployment_method": row[5],
+            "executor_channel": row[6],
+            "runner_id": row[7],
+            "target_code": row[8],
+            "jenkins_connection_id": row[9],
+            "jenkins_job_name": row[10],
+            "timeout_seconds": row[11],
+            "config": config,
+            "is_default": row[13],
+            "status": row[14],
+            "version": row[15],
+            "created_by": row[16],
+            "created_at": row[17].isoformat() if row[17] else None,
+            "updated_at": row[18].isoformat() if row[18] else None,
+        }
+        for optional_key in (
+            "runner_id",
+            "target_code",
+            "jenkins_connection_id",
+            "jenkins_job_name",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ):
+            if scheme[optional_key] is None:
+                scheme.pop(optional_key)
+        return scheme
+
+    def _deployment_run_from_row(self, row) -> dict[str, Any]:
+        execution_snapshot = row[13] or {}
+        if isinstance(execution_snapshot, str):
+            execution_snapshot = json.loads(execution_snapshot)
+        logs = row[14] or []
+        if isinstance(logs, str):
+            logs = json.loads(logs)
+        run = {
+            "created_at": row[24].isoformat() if row[24] else None,
+            "created_by": row[23],
+            "deployment_request_id": row[1],
+            "deployment_method": row[3],
+            "executor_type": row[2],
+            "executor_channel": row[4],
+            "runner_task_id": row[5],
+            "plugin_invocation_log_id": row[6],
+            "external_job_name": row[7],
+            "external_build_id": row[8],
+            "external_queue_url": row[11],
+            "external_build_url": row[12],
+            "execution_snapshot": execution_snapshot,
+            "logs": logs,
+            "idempotency_key": row[15],
+            "next_sync_at": row[16].isoformat() if row[16] else None,
+            "sync_attempts": row[17],
+            "sync_lease_owner": row[18],
+            "sync_lease_until": row[19].isoformat() if row[19] else None,
+            "failure_reason": row[22],
+            "finished_at": row[21].isoformat() if row[21] else None,
+            "id": row[0],
+            "log_url": row[10],
+            "started_at": row[20].isoformat() if row[20] else None,
+            "status": row[9],
+            "updated_at": row[25].isoformat() if row[25] else None,
         }
         for optional_key in (
             "created_at",
+            "runner_task_id",
+            "plugin_invocation_log_id",
             "external_build_id",
             "external_job_name",
+            "external_queue_url",
+            "external_build_url",
+            "idempotency_key",
+            "next_sync_at",
+            "sync_lease_owner",
+            "sync_lease_until",
             "failure_reason",
             "finished_at",
             "log_url",

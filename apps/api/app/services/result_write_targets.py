@@ -208,6 +208,41 @@ RESULT_WRITE_TARGETS = [
             "online_log_ai_analysis",
         ],
     },
+    {
+        "code": "requirements",
+        "default_result_mapping": {
+            "priority": "P1",
+            "requirements_path": "$.requirements",
+            "source": "user_feedback",
+            "write_target": "requirements",
+        },
+        "description": "把 AI 提炼出的需求候选写入需求管理，默认创建为待处理需求。",
+        "form_label": "需求管理",
+        "label": "需求管理",
+        "mapping_fields": [
+            {
+                "description": "AI 输出中需求候选数组所在路径。",
+                "key": "requirements_path",
+                "label": "需求列表 JSONPath",
+                "placeholder": "$.requirements",
+                "required": True,
+            },
+            {
+                "description": "当候选未给出优先级时使用的默认值。",
+                "key": "priority",
+                "label": "默认优先级",
+                "options": [
+                    {"label": "P0", "value": "P0"},
+                    {"label": "P1", "value": "P1"},
+                    {"label": "P2", "value": "P2"},
+                ],
+                "placeholder": "P1",
+                "required": True,
+                "type": "select",
+            },
+        ],
+        "supported_job_types": ["plugin_action_invoke"],
+    },
 ]
 
 

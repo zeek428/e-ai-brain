@@ -67,6 +67,10 @@ from app.core.repositories.authorization import (
 from app.core.store import MemoryStore
 from app.core.trace import get_trace_id, new_trace_id
 from app.core.users import MemoryUserRepository, PostgresUserRepository
+from app.services.deployment_sync_worker import (
+    start_deployment_sync_worker,
+    stop_deployment_sync_worker,
+)
 from app.services.knowledge_import_worker import (
     start_knowledge_import_worker,
     stop_knowledge_import_worker,
@@ -175,9 +179,11 @@ def build_authorization_repository() -> (
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     start_knowledge_import_worker(application, settings)
+    start_deployment_sync_worker(application)
     try:
         yield
     finally:
+        stop_deployment_sync_worker(application)
         stop_knowledge_import_worker(application)
 
 

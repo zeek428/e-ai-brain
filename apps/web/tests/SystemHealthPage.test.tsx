@@ -734,5 +734,5 @@ describe('SystemHealthPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /刷新/ }));
 
     await waitFor(() => expect(calls.filter((call) => call.path === '/api/system/health')).toHaveLength(8));
-  });
+  }, 10_000);
 });

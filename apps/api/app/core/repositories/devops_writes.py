@@ -6,6 +6,12 @@ from contextlib import AbstractContextManager
 from typing import Any
 
 
+class DeploymentSchemeVersionConflictError(RuntimeError):
+    def __init__(self, current_version: int | None) -> None:
+        super().__init__("Deployment scheme version conflict")
+        self.current_version = current_version
+
+
 class DevopsWriteRepository:
     def __init__(
         self,
@@ -67,6 +73,59 @@ class DevopsWriteRepository:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self.upsert_deployment_requests(cursor, {record["id"]: record})
+                if audit_events and self._upsert_audit_events is not None:
+                    self._upsert_audit_events(cursor, audit_events)
+
+    def save_deployment_scheme_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+        expected_version: int | None = None,
+    ) -> None:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                if expected_version is not None:
+                    cursor.execute(
+                        "SELECT version FROM deployment_schemes WHERE id = %s FOR UPDATE",
+                        (record["id"],),
+                    )
+                    row = cursor.fetchone()
+                    current_version = int(row[0]) if row is not None else None
+                    if current_version != expected_version:
+                        raise DeploymentSchemeVersionConflictError(current_version)
+                if record.get("is_default") and record.get("status", "active") == "active":
+                    cursor.execute(
+                        """
+                        UPDATE deployment_schemes
+                        SET is_default = false,
+                            version = version + 1,
+                            updated_at = now()
+                        WHERE product_id = %s
+                          AND environment = %s
+                          AND id <> %s
+                          AND is_default = true
+                          AND status = 'active'
+                        """,
+                        (
+                            record["product_id"],
+                            record.get("environment", "prod"),
+                            record["id"],
+                        ),
+                    )
+                self.upsert_deployment_schemes(cursor, {record["id"]: record})
+                if audit_events and self._upsert_audit_events is not None:
+                    self._upsert_audit_events(cursor, audit_events)
+
+    def delete_deployment_scheme_record(
+        self,
+        scheme_id: str,
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM deployment_schemes WHERE id = %s", (scheme_id,))
                 if audit_events and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, audit_events)
 
@@ -255,13 +314,15 @@ class DevopsWriteRepository:
                   id, product_id, version_id, title, environment, status,
                   deploy_window_start, deploy_window_end, release_branch, commit_sha,
                   artifact_version, release_readiness_task_id, rollback_plan, risk_level,
-                  gate_summary, assigned_ops_user, approved_by, started_at, finished_at,
+                  gate_summary, deployment_scheme_id, deployment_method, executor_channel,
+                  scheme_snapshot, assigned_ops_user, approved_by, started_at, finished_at,
                   failure_reason, created_by, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
                   %s::timestamptz, %s::timestamptz, %s, %s,
                   %s, %s, %s, %s,
+                  %s::jsonb, %s, %s, %s,
                   %s::jsonb, %s, %s, %s::timestamptz, %s::timestamptz,
                   %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
@@ -280,6 +341,10 @@ class DevopsWriteRepository:
                   rollback_plan = EXCLUDED.rollback_plan,
                   risk_level = EXCLUDED.risk_level,
                   gate_summary = EXCLUDED.gate_summary,
+                  deployment_scheme_id = EXCLUDED.deployment_scheme_id,
+                  deployment_method = EXCLUDED.deployment_method,
+                  executor_channel = EXCLUDED.executor_channel,
+                  scheme_snapshot = EXCLUDED.scheme_snapshot,
                   assigned_ops_user = EXCLUDED.assigned_ops_user,
                   approved_by = EXCLUDED.approved_by,
                   started_at = EXCLUDED.started_at,
@@ -303,6 +368,10 @@ class DevopsWriteRepository:
                     deployment_request.get("rollback_plan"),
                     deployment_request.get("risk_level", "medium"),
                     json.dumps(deployment_request.get("gate_summary", {}), ensure_ascii=False),
+                    deployment_request.get("deployment_scheme_id"),
+                    deployment_request.get("deployment_method", "manual"),
+                    deployment_request.get("executor_channel", "manual"),
+                    json.dumps(deployment_request.get("scheme_snapshot", {}), ensure_ascii=False),
                     deployment_request.get("assigned_ops_user"),
                     deployment_request.get("approved_by"),
                     deployment_request.get("started_at"),
@@ -323,7 +392,12 @@ class DevopsWriteRepository:
                     INSERT INTO deployment_request_requirements (
                       deployment_request_id, requirement_id, created_at, updated_at
                     )
-                    VALUES (%s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()))
+                    VALUES (
+                      %s,
+                      %s,
+                      COALESCE(%s::timestamptz, now()),
+                      COALESCE(%s::timestamptz, now())
+                    )
                     ON CONFLICT (deployment_request_id, requirement_id) DO UPDATE SET
                       updated_at = EXCLUDED.updated_at
                     """,
@@ -334,6 +408,70 @@ class DevopsWriteRepository:
                         updated_at,
                     ),
                 )
+
+    def upsert_deployment_schemes(
+        self,
+        cursor,
+        deployment_schemes: dict[str, dict[str, Any]],
+    ) -> None:
+        for scheme in deployment_schemes.values():
+            created_at = scheme.get("created_at")
+            updated_at = scheme.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO deployment_schemes (
+                  id, product_id, code, name, environment, deployment_method,
+                  executor_channel, runner_id, target_code, jenkins_connection_id,
+                  jenkins_job_name, timeout_seconds, config_json, is_default,
+                  status, version, created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s,
+                  %s, %s, %s::jsonb, %s,
+                  %s, %s, %s, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  code = EXCLUDED.code,
+                  name = EXCLUDED.name,
+                  environment = EXCLUDED.environment,
+                  deployment_method = EXCLUDED.deployment_method,
+                  executor_channel = EXCLUDED.executor_channel,
+                  runner_id = EXCLUDED.runner_id,
+                  target_code = EXCLUDED.target_code,
+                  jenkins_connection_id = EXCLUDED.jenkins_connection_id,
+                  jenkins_job_name = EXCLUDED.jenkins_job_name,
+                  timeout_seconds = EXCLUDED.timeout_seconds,
+                  config_json = EXCLUDED.config_json,
+                  is_default = EXCLUDED.is_default,
+                  status = EXCLUDED.status,
+                  version = EXCLUDED.version,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    scheme["id"],
+                    scheme["product_id"],
+                    scheme["code"],
+                    scheme["name"],
+                    scheme.get("environment", "prod"),
+                    scheme.get("deployment_method", "manual"),
+                    scheme.get("executor_channel", "manual"),
+                    scheme.get("runner_id"),
+                    scheme.get("target_code"),
+                    scheme.get("jenkins_connection_id"),
+                    scheme.get("jenkins_job_name"),
+                    scheme.get("timeout_seconds", 1800),
+                    json.dumps(scheme.get("config", {}), ensure_ascii=False),
+                    bool(scheme.get("is_default", False)),
+                    scheme.get("status", "active"),
+                    scheme.get("version", 1),
+                    scheme.get("created_by"),
+                    created_at,
+                    updated_at,
+                ),
+            )
 
     def upsert_deployment_runs(
         self,
@@ -346,22 +484,43 @@ class DevopsWriteRepository:
             cursor.execute(
                 """
                 INSERT INTO deployment_runs (
-                  id, deployment_request_id, executor_type, external_job_name,
-                  external_build_id, status, log_url, started_at, finished_at,
+                  id, deployment_request_id, executor_type, deployment_method,
+                  executor_channel, runner_task_id, plugin_invocation_log_id,
+                  external_job_name, external_build_id, status, log_url,
+                  external_queue_url, external_build_url, execution_snapshot,
+                  logs, idempotency_key, next_sync_at, sync_attempts,
+                  sync_lease_owner, sync_lease_until, started_at, finished_at,
                   failure_reason, created_by, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s,
-                  %s, %s, %s, %s::timestamptz, %s::timestamptz,
+                  %s, %s, %s,
+                  %s, %s, %s, %s,
+                  %s, %s, %s::jsonb,
+                  %s::jsonb, %s, %s::timestamptz, %s,
+                  %s, %s::timestamptz, %s::timestamptz, %s::timestamptz,
                   %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   deployment_request_id = EXCLUDED.deployment_request_id,
                   executor_type = EXCLUDED.executor_type,
+                  deployment_method = EXCLUDED.deployment_method,
+                  executor_channel = EXCLUDED.executor_channel,
+                  runner_task_id = EXCLUDED.runner_task_id,
+                  plugin_invocation_log_id = EXCLUDED.plugin_invocation_log_id,
                   external_job_name = EXCLUDED.external_job_name,
                   external_build_id = EXCLUDED.external_build_id,
                   status = EXCLUDED.status,
                   log_url = EXCLUDED.log_url,
+                  external_queue_url = EXCLUDED.external_queue_url,
+                  external_build_url = EXCLUDED.external_build_url,
+                  execution_snapshot = EXCLUDED.execution_snapshot,
+                  logs = EXCLUDED.logs,
+                  idempotency_key = EXCLUDED.idempotency_key,
+                  next_sync_at = EXCLUDED.next_sync_at,
+                  sync_attempts = EXCLUDED.sync_attempts,
+                  sync_lease_owner = EXCLUDED.sync_lease_owner,
+                  sync_lease_until = EXCLUDED.sync_lease_until,
                   started_at = EXCLUDED.started_at,
                   finished_at = EXCLUDED.finished_at,
                   failure_reason = EXCLUDED.failure_reason,
@@ -371,10 +530,23 @@ class DevopsWriteRepository:
                     deployment_run["id"],
                     deployment_run["deployment_request_id"],
                     deployment_run.get("executor_type", "manual"),
+                    deployment_run.get("deployment_method", "manual"),
+                    deployment_run.get("executor_channel", "manual"),
+                    deployment_run.get("runner_task_id"),
+                    deployment_run.get("plugin_invocation_log_id"),
                     deployment_run.get("external_job_name"),
                     deployment_run.get("external_build_id"),
                     deployment_run.get("status", "running"),
                     deployment_run.get("log_url"),
+                    deployment_run.get("external_queue_url"),
+                    deployment_run.get("external_build_url"),
+                    json.dumps(deployment_run.get("execution_snapshot", {}), ensure_ascii=False),
+                    json.dumps(deployment_run.get("logs", []), ensure_ascii=False),
+                    deployment_run.get("idempotency_key"),
+                    deployment_run.get("next_sync_at"),
+                    deployment_run.get("sync_attempts", 0),
+                    deployment_run.get("sync_lease_owner"),
+                    deployment_run.get("sync_lease_until"),
                     deployment_run.get("started_at"),
                     deployment_run.get("finished_at"),
                     deployment_run.get("failure_reason"),

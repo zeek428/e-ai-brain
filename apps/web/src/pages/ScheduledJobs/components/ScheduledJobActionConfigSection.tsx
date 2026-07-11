@@ -1,6 +1,7 @@
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import { Alert, Button, Form, Input, Select, Space, Typography } from 'antd';
+import { Alert, Button, Form, Input, InputNumber, Select, Space, Typography } from 'antd';
 
+import type { PluginActionRecord, PluginConnectionRecord } from '../../../services/aiBrain';
 import { ScheduledJobFormSection } from './ScheduledJobFormSection';
 
 const notificationChannelOptions = [
@@ -13,18 +14,41 @@ export function ScheduledJobActionConfigSection({
   genericResultActionOptions,
   isCodeInspectionJob,
   isGenericResultActionJob,
+  selectedJobType,
+  pluginActions,
+  pluginConnections,
   severityThresholdOptions,
 }: {
   codeInspectionResultActionOptions: Array<{ label: string; value: string }>;
   genericResultActionOptions: Array<{ label: string; value: string }>;
   isCodeInspectionJob: boolean;
   isGenericResultActionJob: boolean;
+  selectedJobType?: string;
+  pluginActions: PluginActionRecord[];
+  pluginConnections: PluginConnectionRecord[];
   severityThresholdOptions: Array<{ label: string; value: string }>;
 }) {
+  const visibleGenericResultActionOptions =
+    selectedJobType === 'plugin_action_invoke'
+      ? genericResultActionOptions
+      : genericResultActionOptions.filter(
+          (option) => !['create_requirements', 'sync_dingtalk_document'].includes(option.value),
+        );
   const resultActionOptions = isCodeInspectionJob
     ? codeInspectionResultActionOptions
-    : genericResultActionOptions;
+    : visibleGenericResultActionOptions;
   const showResultActions = isCodeInspectionJob || isGenericResultActionJob;
+  const dingtalkActionOptions = pluginActions
+    .filter((action) => {
+      const mapping = action.result_mapping ?? {};
+      const text = `${action.code ?? ''} ${action.name ?? ''}`.toLowerCase();
+      return mapping.write_target === 'dingtalk_document' || text.includes('dingtalk') || text.includes('钉钉');
+    })
+    .map((action) => ({ label: `${action.name} (${action.code})`, value: action.id }));
+  const pluginConnectionOptions = pluginConnections.map((connection) => ({
+    label: `${connection.name} (${connection.status ?? '-'})`,
+    value: connection.id,
+  }));
 
   return (
     <ScheduledJobFormSection label="结果动作" marker="输出">
@@ -74,6 +98,118 @@ export function ScheduledJobActionConfigSection({
                             </Form.Item>
                             <Form.Item name={[field.name, 'webhook_url']} style={{ marginBottom: 8 }}>
                               <Input placeholder="钉钉机器人 Webhook" />
+                            </Form.Item>
+                          </Space>
+                        );
+                      }
+                      if (actionType === 'create_requirements') {
+                        return (
+                          <div
+                            style={{
+                              display: 'grid',
+                              gap: 8,
+                              gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
+                              width: '100%',
+                            }}
+                          >
+                            <Form.Item
+                              name={[field.name, 'priority']}
+                              initialValue="P1"
+                              style={{ marginBottom: 8 }}
+                            >
+                              <Select
+                                options={[
+                                  { label: 'P0', value: 'P0' },
+                                  { label: 'P1', value: 'P1' },
+                                  { label: 'P2', value: 'P2' },
+                                ]}
+                                placeholder="优先级"
+                              />
+                            </Form.Item>
+                            <Form.Item
+                              name={[field.name, 'requirements_path']}
+                              initialValue="$.requirements"
+                              style={{ marginBottom: 8 }}
+                            >
+                              <Input placeholder="需求列表 JSONPath" />
+                            </Form.Item>
+                            <Form.Item
+                              name={[field.name, 'max_items']}
+                              initialValue={20}
+                              style={{ marginBottom: 8 }}
+                            >
+                              <InputNumber min={1} max={100} placeholder="数量" style={{ width: '100%' }} />
+                            </Form.Item>
+                          </div>
+                        );
+                      }
+                      if (actionType === 'sync_dingtalk_document') {
+                        return (
+                          <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+                            <div
+                              style={{
+                                display: 'grid',
+                                gap: 8,
+                                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                                width: '100%',
+                              }}
+                            >
+                              <Form.Item
+                                name={[field.name, 'plugin_action_id']}
+                                rules={[{ required: true, message: '请选择钉钉更新动作' }]}
+                                style={{ marginBottom: 0 }}
+                              >
+                                <Select
+                                  options={dingtalkActionOptions}
+                                  placeholder="钉钉文档 - 更新内容"
+                                  showSearch
+                                  optionFilterProp="label"
+                                />
+                              </Form.Item>
+                              <Form.Item name={[field.name, 'plugin_connection_id']} style={{ marginBottom: 0 }}>
+                                <Select
+                                  allowClear
+                                  options={pluginConnectionOptions}
+                                  placeholder="钉钉连接"
+                                  showSearch
+                                  optionFilterProp="label"
+                                />
+                              </Form.Item>
+                            </div>
+                            <div
+                              style={{
+                                display: 'grid',
+                                gap: 8,
+                                gridTemplateColumns: 'minmax(180px, 1fr) minmax(100px, 120px)',
+                                width: '100%',
+                              }}
+                            >
+                              <Form.Item
+                                name={[field.name, 'document_id']}
+                                rules={[{ required: true, message: '请输入钉钉文档链接或 ID' }]}
+                                style={{ marginBottom: 0 }}
+                              >
+                                <Input placeholder="钉钉文档链接或 ID" />
+                              </Form.Item>
+                              <Form.Item
+                                name={[field.name, 'write_mode']}
+                                initialValue="append"
+                                style={{ marginBottom: 0 }}
+                              >
+                                <Select
+                                  options={[
+                                    { label: '追加', value: 'append' },
+                                    { label: '覆盖', value: 'overwrite' },
+                                  ]}
+                                />
+                              </Form.Item>
+                            </div>
+                            <Form.Item
+                              name={[field.name, 'content_template']}
+                              initialValue="{{dingtalk_markdown}}\n\n{{requirements_markdown}}"
+                              style={{ marginBottom: 8 }}
+                            >
+                              <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="写入内容模板" />
                             </Form.Item>
                           </Space>
                         );

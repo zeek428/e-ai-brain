@@ -1130,6 +1130,7 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
         "github",
         "gitlab",
         "internal_data_source",
+        "jenkins",
         "observability",
     }
     assert by_code["ai_executor"]["installed"] is True
@@ -1197,6 +1198,15 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     }
     assert by_code["gitlab"]["connection_defaults"]["endpoint_url"] == "http://gitlab.local"
     assert by_code["gitlab"]["connection_defaults"]["request_config"]["query"] == {}
+    assert by_code["jenkins"]["installed"] is True
+    assert by_code["jenkins"]["plugin_id"] == "plugin_standard_jenkins"
+    assert by_code["jenkins"]["connection_defaults"]["auth_type"] == "basic"
+    assert by_code["jenkins"]["connection_defaults"]["auth_config"] == {
+        "password_ref": "env:JENKINS_API_TOKEN",
+        "username": "jenkins-bot",
+    }
+    jenkins_fields = by_code["jenkins"]["connection_schema"]["sections"][0]["fields"]
+    assert [field["key"] for field in jenkins_fields] == ["username", "password_ref"]
     gitlab_project_field = by_code["gitlab"]["connection_schema"]["sections"][0]["fields"][0]
     assert gitlab_project_field["key"] == "gitlab_project_url"
     assert gitlab_project_field["label"] == "GitLab 地址"
@@ -3421,16 +3431,35 @@ def test_ai_executor_runner_token_rotation_logs_cancel_and_timeout_controls():
         headers=admin_headers,
     )
     assert cancelled.status_code == 200
-    assert cancelled.json()["data"]["task"]["status"] == "cancelled"
-    assert cancelled.json()["data"]["task"]["error_code"] == "AI_EXECUTOR_TASK_CANCELLED"
+    assert cancelled.json()["data"]["task"]["status"] == "cancel_requested"
+    assert (
+        cancelled.json()["data"]["task"]["error_code"]
+        == "AI_EXECUTOR_TASK_CANCEL_REQUESTED"
+    )
 
     runner_status = client.get(
         f"/api/system/ai-executor-tasks/{task_id}/runner-status?runner_id={runner['id']}",
         headers={"X-Runner-Token": "runner-secret-v2"},
     )
     assert runner_status.status_code == 200
-    assert runner_status.json()["data"]["task"]["status"] == "cancelled"
-    assert runner_status.json()["data"]["task"]["error_code"] == "AI_EXECUTOR_TASK_CANCELLED"
+    assert runner_status.json()["data"]["task"]["status"] == "cancel_requested"
+    assert (
+        runner_status.json()["data"]["task"]["error_code"]
+        == "AI_EXECUTOR_TASK_CANCEL_REQUESTED"
+    )
+
+    confirmed_cancel = client.post(
+        f"/api/system/ai-executor-tasks/{task_id}/complete",
+        json={
+            "error_code": "AI_EXECUTOR_TASK_CANCELLED",
+            "error_message": "用户手动停止",
+            "runner_id": runner["id"],
+            "status": "cancelled",
+        },
+        headers={"X-Runner-Token": "runner-secret-v2"},
+    )
+    assert confirmed_cancel.status_code == 200
+    assert confirmed_cancel.json()["data"]["task"]["status"] == "cancelled"
 
     late_complete = client.post(
         f"/api/system/ai-executor-tasks/{task_id}/complete",
@@ -3818,6 +3847,7 @@ def test_result_write_targets_registry_drives_action_mapping_forms():
         "code_inspection_reports",
         "dingtalk_document",
         "email_notifications",
+        "requirements",
         "scheduled_job_result",
         "user_feedback_insights",
     }
@@ -3871,6 +3901,16 @@ def test_result_write_targets_registry_drives_action_mapping_forms():
         {"label": "追加内容", "value": "append"},
         {"label": "覆盖内容", "value": "overwrite"},
     ]
+    requirements = by_code["requirements"]
+    assert requirements["label"] == "需求管理"
+    assert requirements["default_result_mapping"] == {
+        "priority": "P1",
+        "requirements_path": "$.requirements",
+        "source": "user_feedback",
+        "write_target": "requirements",
+    }
+    assert requirements["mapping_fields"][0]["label"] == "需求列表 JSONPath"
+    assert requirements["mapping_fields"][1]["type"] == "select"
 
 
 def test_plugin_resources_delete_requires_unused_dependencies():

@@ -311,6 +311,20 @@ def result_write_preview(
             "write_target_label": write_target_label,
         }
 
+    if write_target == "requirements":
+        requirements = json_path_value(
+            raw_json,
+            str(mapping.get("requirements_path") or default_mapping.get("requirements_path")),
+        )
+        sample_records = requirements[:3] if isinstance(requirements, list) else []
+        return {
+            "candidate_count": len(requirements) if isinstance(requirements, list) else 0,
+            "records_imported": len(requirements) if isinstance(requirements, list) else 0,
+            "sample_records": [compact_preview_value(record) for record in sample_records],
+            "write_target": write_target,
+            "write_target_label": write_target_label,
+        }
+
     preview_value = json_path_value(raw_json, mapping.get("records_imported_path"))
     if preview_value is None:
         for path in (

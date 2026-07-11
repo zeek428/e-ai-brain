@@ -108,6 +108,46 @@ def _load_ai_task(current_store: Any, ai_task_id: str | None) -> dict[str, Any] 
     return None
 
 
+def _load_deployment_run(
+    current_store: Any,
+    deployment_run_id: str | None,
+) -> dict[str, Any] | None:
+    if not deployment_run_id:
+        return None
+    run = _read_record(current_store, "deployment_runs", deployment_run_id)
+    if run is not None:
+        return run
+    repository = getattr(current_store, "repository", None)
+    list_runs = getattr(repository, "list_deployment_runs", None)
+    if callable(list_runs):
+        for candidate in list_runs():
+            if candidate.get("id") == deployment_run_id:
+                return candidate
+    return None
+
+
+def _load_deployment_request(
+    current_store: Any,
+    deployment_request_id: str | None,
+) -> dict[str, Any] | None:
+    if not deployment_request_id:
+        return None
+    deployment = _read_record(
+        current_store,
+        "deployment_requests",
+        deployment_request_id,
+    )
+    if deployment is not None:
+        return deployment
+    repository = getattr(current_store, "repository", None)
+    list_requests = getattr(repository, "list_deployment_requests", None)
+    if callable(list_requests):
+        for candidate in list_requests():
+            if candidate.get("id") == deployment_request_id:
+                return candidate
+    return None
+
+
 def _ai_executor_task_product_id(current_store: Any, task: dict[str, Any]) -> Any:
     if task.get("product_id") is not None:
         return task.get("product_id")
@@ -125,6 +165,14 @@ def _ai_executor_task_product_id(current_store: Any, task: dict[str, Any]) -> An
     ai_task = _load_ai_task(current_store, task.get("ai_task_id"))
     if ai_task is not None:
         return ai_task.get("product_id")
+    deployment_run = _load_deployment_run(current_store, task.get("deployment_run_id"))
+    if deployment_run is not None:
+        deployment = _load_deployment_request(
+            current_store,
+            deployment_run.get("deployment_request_id"),
+        )
+        if deployment is not None:
+            return deployment.get("product_id")
     return None
 
 
@@ -183,4 +231,3 @@ def _datetime_value(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
-

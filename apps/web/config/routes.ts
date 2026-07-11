@@ -164,6 +164,12 @@ const routes = [
         component: './Devops',
       },
       {
+        path: '/governance/deployments',
+        name: '运维部署',
+        icon: 'CloudServerOutlined',
+        component: './Deployments',
+      },
+      {
         path: '/governance/insights',
         name: '用户洞察',
         icon: 'RobotOutlined',

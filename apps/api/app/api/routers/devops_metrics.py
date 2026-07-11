@@ -13,8 +13,17 @@ from app.services.operational_deployments import (
     cancel_deployment_request_response,
     complete_deployment_request_response,
     create_deployment_request_response,
+    create_deployment_scheme_response,
+    delete_deployment_scheme_response,
+    get_deployment_run_logs_response,
+    get_deployment_scheme_response,
+    list_deployment_jenkins_connections_response,
     list_deployment_requests_response,
+    list_deployment_runner_targets_response,
+    list_deployment_schemes_response,
     start_deployment_request_response,
+    sync_jenkins_deployment_response,
+    update_deployment_scheme_response,
 )
 from app.services.operational_gitlab_metrics import (
     create_gitlab_metric_response,
@@ -70,6 +79,7 @@ class JenkinsReleaseRequest(BaseModel):
 class DeploymentRequestCreate(BaseModel):
     product_id: str
     version_id: str
+    deployment_scheme_id: str | None = None
     title: str
     requirement_ids: list[str] = Field(default_factory=list)
     environment: str = "prod"
@@ -82,6 +92,38 @@ class DeploymentRequestCreate(BaseModel):
     rollback_plan: str | None = None
     risk_level: str = "medium"
     assigned_ops_user: str | None = None
+
+
+class DeploymentSchemeCreate(BaseModel):
+    product_id: str
+    code: str
+    name: str
+    environment: str = "prod"
+    deployment_method: str = "manual"
+    runner_id: str | None = None
+    target_code: str | None = None
+    jenkins_connection_id: str | None = None
+    jenkins_job_name: str | None = None
+    timeout_seconds: int = Field(default=1800, ge=30, le=86400)
+    config: dict[str, Any] = Field(default_factory=dict)
+    is_default: bool = False
+    status: str = "active"
+
+
+class DeploymentSchemeUpdate(BaseModel):
+    version: int = Field(ge=1)
+    code: str | None = None
+    name: str | None = None
+    environment: str | None = None
+    deployment_method: str | None = None
+    runner_id: str | None = None
+    target_code: str | None = None
+    jenkins_connection_id: str | None = None
+    jenkins_job_name: str | None = None
+    timeout_seconds: int | None = Field(default=None, ge=30, le=86400)
+    config: dict[str, Any] | None = None
+    is_default: bool | None = None
+    status: str | None = None
 
 
 class DeploymentStartRequest(BaseModel):
@@ -126,6 +168,7 @@ class OnlineLogMetricRequest(BaseModel):
 def operational_metrics(
     request: Request,
     category: str | None = None,
+    exclude_category: str | None = None,
     name: str | None = None,
     status: str | None = None,
     page: int | None = Query(default=None, ge=1),
@@ -138,6 +181,7 @@ def operational_metrics(
     payload = list_operational_metrics_response(
         category=category,
         current_store=store(request),
+        exclude_category=exclude_category,
         name=name,
         page=page,
         page_size=page_size,
@@ -235,6 +279,112 @@ def deployment_requests(
     return envelope(result, get_trace_id(request))
 
 
+@router.get("/api/devops/deployment-schemes")
+def deployment_schemes(
+    request: Request,
+    product_id: str | None = None,
+    environment: str | None = None,
+    deployment_method: str | None = None,
+    status: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = list_deployment_schemes_response(
+        current_store=store(request),
+        deployment_method=deployment_method,
+        environment=environment,
+        product_id=product_id,
+        status=status,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/devops/deployment-runner-targets")
+def deployment_runner_targets(
+    request: Request,
+    runner_id: str | None = None,
+    method: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = list_deployment_runner_targets_response(
+        current_store=store(request),
+        method=method,
+        runner_id=runner_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/devops/deployment-jenkins-connections")
+def deployment_jenkins_connections(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = list_deployment_jenkins_connections_response(
+        current_store=store(request),
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/devops/deployment-schemes")
+def create_deployment_scheme(
+    payload: DeploymentSchemeCreate,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = create_deployment_scheme_response(
+        current_store=store(request),
+        payload=payload,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/devops/deployment-schemes/{scheme_id}")
+def get_deployment_scheme(
+    scheme_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = get_deployment_scheme_response(
+        current_store=store(request),
+        scheme_id=scheme_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.patch("/api/devops/deployment-schemes/{scheme_id}")
+def update_deployment_scheme(
+    scheme_id: str,
+    payload: DeploymentSchemeUpdate,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = update_deployment_scheme_response(
+        current_store=store(request),
+        payload=payload,
+        scheme_id=scheme_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.delete("/api/devops/deployment-schemes/{scheme_id}")
+def delete_deployment_scheme(
+    scheme_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = delete_deployment_scheme_response(
+        current_store=store(request),
+        scheme_id=scheme_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
 @router.post("/api/devops/deployments")
 def create_deployment_request(
     payload: DeploymentRequestCreate,
@@ -295,6 +445,38 @@ def cancel_deployment_request(
         user=user,
     )
     return envelope(deployment, get_trace_id(request))
+
+
+@router.post("/api/devops/deployments/{deployment_request_id}/runs/{deployment_run_id}/sync")
+def sync_deployment_run(
+    deployment_request_id: str,
+    deployment_run_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = sync_jenkins_deployment_response(
+        current_store=store(request),
+        deployment_request_id=deployment_request_id,
+        deployment_run_id=deployment_run_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/devops/deployments/{deployment_request_id}/runs/{deployment_run_id}/logs")
+def deployment_run_logs(
+    deployment_request_id: str,
+    deployment_run_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = get_deployment_run_logs_response(
+        current_store=store(request),
+        deployment_request_id=deployment_request_id,
+        deployment_run_id=deployment_run_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
 
 
 @router.get("/api/ops/online-log-metrics")

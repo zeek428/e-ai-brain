@@ -180,6 +180,7 @@ class PluginActionAiExecutorApprovalRequest(BaseModel):
 
 
 class AiExecutorRunnerRequest(BaseModel):
+    capabilities: list[str] = Field(default_factory=list)
     endpoint_url: str = "runner://local"
     executor_types: list[str] = Field(default_factory=lambda: ["codex"])
     heartbeat_timeout_seconds: int = 120
@@ -193,6 +194,7 @@ class AiExecutorRunnerRequest(BaseModel):
 
 
 class AiExecutorRunnerPatchRequest(BaseModel):
+    capabilities: list[str] | None = None
     endpoint_url: str | None = None
     executor_types: list[str] | None = None
     heartbeat_timeout_seconds: int | None = None

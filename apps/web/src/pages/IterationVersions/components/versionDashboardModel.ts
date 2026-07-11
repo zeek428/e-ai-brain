@@ -160,13 +160,13 @@ export function blockerActionHref(blocker: DashboardActionTarget, versionId: str
     });
   }
   if (targetType === 'deployment_request' || targetType === 'deployments') {
-    return internalHref('/governance/devops', {
+    return internalHref('/governance/deployments', {
       deployment_id: targetId,
       version_id: versionId,
     });
   }
   if (targetType === 'product_version') {
-    return internalHref('/governance/devops', { version_id: targetId });
+    return internalHref('/governance/deployments', { version_id: targetId });
   }
   return undefined;
 }
@@ -272,10 +272,10 @@ function deliveryStageActionHref(
     return internalHref('/governance/devops', { version_id: targetId });
   }
   if (targetType === 'deployments') {
-    return internalHref('/governance/devops', { version_id: targetId });
+    return internalHref('/governance/deployments', { version_id: targetId });
   }
   if (targetType === 'deployment_request') {
-    return internalHref('/governance/devops', {
+    return internalHref('/governance/deployments', {
       deployment_id: targetId,
       version_id: dashboard.version.id,
     });
@@ -843,11 +843,11 @@ export function buildDashboardDeliveryStageItems(dashboard?: ProductVersionDashb
     },
     {
       actionHref: latestDeployment
-        ? internalHref('/governance/devops', {
+        ? internalHref('/governance/deployments', {
             deployment_id: latestDeployment.id,
             version_id: dashboard.version.id,
           })
-        : internalHref('/governance/devops', { version_id: dashboard.version.id }),
+        : internalHref('/governance/deployments', { version_id: dashboard.version.id }),
       actionLabel: deploymentBlockerCount ? '处理部署' : '查看部署',
       detail: deploymentDetailParts.join(' · '),
       key: 'deployments',

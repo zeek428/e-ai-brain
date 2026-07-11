@@ -802,6 +802,7 @@ export type ProductVersionListQuery = RemoteListQuery & {
 
 export type OperationalMetricListQuery = RemoteListQuery & {
   category?: string;
+  excludeCategory?: string;
   name?: string;
   status?: string;
 };

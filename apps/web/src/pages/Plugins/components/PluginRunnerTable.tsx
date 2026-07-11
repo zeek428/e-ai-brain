@@ -51,7 +51,7 @@ type PluginRunnerTableProps = {
 const SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID = 'ai_executor_runner_system_default';
 const SYSTEM_DEFAULT_AI_EXECUTOR_TYPE = 'model_gateway';
 const RUNNER_ACTION_COLUMN_WIDTH = 520;
-const RUNNER_TABLE_SCROLL_X = 2780;
+const RUNNER_TABLE_SCROLL_X = 2940;
 
 const aiExecutorTypeLabelByValue = new Map([
   [SYSTEM_DEFAULT_AI_EXECUTOR_TYPE, '系统默认模型'],
@@ -271,6 +271,15 @@ export function PluginRunnerTable({
               </Space>
             )
             : '-',
+        },
+        {
+          dataIndex: 'capabilities',
+          title: '附加能力',
+          width: 160,
+          render: (value) =>
+            Array.isArray(value) && value.includes('deployment')
+              ? <Tag color="blue">部署执行</Tag>
+              : '-',
         },
         {
           dataIndex: 'workspace_roots',

@@ -375,6 +375,67 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
         "wizard_steps": STANDARD_WIZARD_STEPS,
     },
     {
+        "category": "collaboration",
+        "code": "dingtalk_document_sync",
+        "description": (
+            "读取已配置的数据来源，经 AI 汇总、分析或判断后，"
+            "把结构化摘要同步到指定钉钉文档。"
+        ),
+        "name": "同步钉钉文档",
+        "payload_defaults": {
+            "cron_expression": "0 10 * * MON",
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "plugin_action_invoke",
+            "name": "同步钉钉文档",
+            "plugin_input_mapping": {
+                "source_types": ["user_insights", "requirements", "products", "bugs"],
+                "window_end": "{{now}}",
+                "window_start": "{{current_date-30}}",
+            },
+            "plugin_output_mapping": {
+                "write_target": "dingtalk_document",
+            },
+            "result_actions": [
+                {
+                    "content_template": "{{dingtalk_markdown}}",
+                    "document_id": "",
+                    "plugin_action_id": "",
+                    "type": "sync_dingtalk_document",
+                    "write_mode": "append",
+                },
+            ],
+            "schedule_type": "cron",
+            "source_system": "internal_data_source",
+        },
+        "recommended_scenarios": [
+            "运营周报同步",
+            "用户洞察同步",
+            "需求风险同步",
+            "巡检摘要同步",
+            "钉钉知识沉淀",
+        ],
+        "resource_selectors": {
+            "agent": {
+                "text_candidates": ["文档同步", "运营分析", "业务摘要", "数据分析"],
+            },
+            "knowledge_document": {"strategy": "first_indexed_optional"},
+            "model_gateway_config": {"strategy": "default_or_first_active"},
+            "plugin_action": {"code_candidates": ["query_internal_business_data"]},
+            "plugin_connection": {"strategy": "same_plugin_as_action"},
+            "product": {"strategy": "first_active"},
+            "result_plugin_action": {
+                "code_candidates": ["update_dingtalk_document_content"],
+                "text_candidates": ["钉钉文档 - 更新内容", "dingtalk_document"],
+            },
+            "skill": {
+                "text_candidates": ["文档同步", "运营分析", "业务摘要", "数据分析"],
+            },
+        },
+        "template_version": "v1",
+        "wizard_steps": STANDARD_WIZARD_STEPS,
+    },
+    {
         "category": "insights",
         "code": "product_feedback_trend_analysis",
         "description": "读取产品、用户洞察和 Bug 数据，经 AI 分析产品体验趋势和重点改进方向。",

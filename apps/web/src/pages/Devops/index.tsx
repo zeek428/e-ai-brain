@@ -1,31 +1,22 @@
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Select, Space, message } from 'antd';
+import { Button, Form, Input, Modal, Select } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DateStringPicker } from '../../components/DateStringPicker';
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
-import type { ProductContextOption, RequirementRecord } from '../../data/management';
+import type { ProductContextOption } from '../../data/management';
 import {
   formatRemoteRowsError,
   normalizeRemoteRowsError,
   type RemoteRowsError,
 } from '../../hooks/useRemoteRows';
 import {
-  cancelDeploymentRequest,
-  completeDeploymentRequest,
-  createDeploymentRequest,
   createGitLabDailyCodeMetric,
   createJenkinsRelease,
   createOnlineLogMetric,
   fetchDevopsMetricList,
-  fetchManagementRequirementList,
   fetchProductContextOptions,
   fetchProductGitRepositories,
-  startDeploymentRequest,
-  type DeploymentCancelPayload,
-  type DeploymentCompletePayload,
-  type DeploymentRequestCreatePayload,
-  type DeploymentStartPayload,
   type GitLabDailyCodeMetricCreatePayload,
   type JenkinsReleaseCreatePayload,
   type OnlineLogMetricCreatePayload,
@@ -65,33 +56,6 @@ type JenkinsReleaseFormValues = {
   versionId: string;
 };
 
-type DeploymentRequestFormValues = {
-  artifactVersion?: string;
-  assignedOpsUser?: string;
-  commitSha?: string;
-  deployWindowEnd?: string;
-  deployWindowStart?: string;
-  environment?: string;
-  releaseBranch?: string;
-  releaseReadinessTaskId?: string;
-  requirementIds: string[];
-  riskLevel?: string;
-  rollbackPlan?: string;
-  productId: string;
-  title: string;
-  versionId: string;
-};
-
-type DeploymentActionType = 'cancel' | 'failed' | 'rolled_back' | 'start' | 'success';
-
-type DeploymentActionFormValues = {
-  externalBuildId?: string;
-  externalJobName?: string;
-  failureReason?: string;
-  logUrl?: string;
-  reason?: string;
-};
-
 type OnlineLogMetricFormValues = {
   anomalySummary?: string;
   coreEventCount?: string;
@@ -110,37 +74,12 @@ type OnlineLogMetricFormValues = {
 const gitlabMetricStatus = 'collected';
 const jenkinsReleaseStatus = 'success';
 const onlineLogMetricStatus = 'collected';
-const deploymentDefaultEnvironment = 'prod';
-const deploymentEligibleRequirementStatuses = new Set<RequirementRecord['status']>([
-  'ready_for_release',
-  'testing',
-]);
 const jenkinsStatusOptions = [
   { label: 'success', value: 'success' },
   { label: 'failed', value: 'failed' },
   { label: 'running', value: 'running' },
   { label: 'canceled', value: 'canceled' },
 ];
-const deploymentRiskOptions = [
-  { label: '低', value: 'low' },
-  { label: '中', value: 'medium' },
-  { label: '高', value: 'high' },
-  { label: '严重', value: 'critical' },
-];
-const deploymentStatusLabels: Record<string, { color: string; label: string }> = {
-  approved: { color: 'blue', label: '已准入' },
-  cancelled: { color: 'default', label: '已取消' },
-  deploying: { color: 'processing', label: '部署中' },
-  draft: { color: 'default', label: '草稿' },
-  failed: { color: 'red', label: '部署失败' },
-  pending_ops: { color: 'gold', label: '待运维执行' },
-  rolled_back: { color: 'volcano', label: '已回滚' },
-  succeeded: { color: 'green', label: '部署成功' },
-};
-const deploymentRequirementStatusLabels: Record<string, string> = {
-  ready_for_release: '待发布',
-  testing: '测试中',
-};
 function parseTopErrors(value?: string): Record<string, unknown>[] {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -272,25 +211,6 @@ function buildJenkinsReleasePayload(values: JenkinsReleaseFormValues): JenkinsRe
   };
 }
 
-function buildDeploymentRequestPayload(values: DeploymentRequestFormValues): DeploymentRequestCreatePayload {
-  return {
-    artifact_version: optionalText(values.artifactVersion),
-    assigned_ops_user: optionalText(values.assignedOpsUser),
-    commit_sha: optionalText(values.commitSha),
-    deploy_window_end: optionalText(values.deployWindowEnd),
-    deploy_window_start: optionalText(values.deployWindowStart),
-    environment: optionalText(values.environment) ?? deploymentDefaultEnvironment,
-    release_branch: optionalText(values.releaseBranch),
-    release_readiness_task_id: optionalText(values.releaseReadinessTaskId),
-    requirement_ids: values.requirementIds,
-    risk_level: values.riskLevel ?? 'medium',
-    rollback_plan: optionalText(values.rollbackPlan),
-    product_id: values.productId,
-    title: values.title.trim(),
-    version_id: values.versionId,
-  };
-}
-
 function buildOnlineLogMetricPayload(values: OnlineLogMetricFormValues): OnlineLogMetricCreatePayload {
   return {
     anomaly_summary: optionalText(values.anomalySummary),
@@ -326,6 +246,7 @@ function buildOperationalMetricListQuery(query: ManagementListQuery): Operationa
   const filters = query.filters;
   return {
     category: normalizeFilterText(filters.category),
+    excludeCategory: '运维部署',
     name: normalizeFilterText(filters.name),
     page: query.page,
     pageSize: query.pageSize,
@@ -363,15 +284,9 @@ const baseColumns: ProColumns<OperationalMetricRecord>[] = [
     dataIndex: 'status',
     sorter: true,
     title: '状态',
-    render: (_, row) => {
-      const deploymentStatus = row.category === '运维部署' ? deploymentStatusLabels[row.status] : undefined;
-      return (
-        <StatusTag
-          color={deploymentStatus?.color ?? (row.status === '-' ? 'default' : 'blue')}
-          label={deploymentStatus?.label ?? row.status}
-        />
-      );
-    },
+    render: (_, row) => (
+      <StatusTag color={row.status === '-' ? 'default' : 'blue'} label={row.status} />
+    ),
     width: 110,
   },
   {
@@ -386,18 +301,9 @@ const baseColumns: ProColumns<OperationalMetricRecord>[] = [
 export default function DevopsPage() {
   const [metricForm] = Form.useForm<GitLabMetricFormValues>();
   const [jenkinsForm] = Form.useForm<JenkinsReleaseFormValues>();
-  const [deploymentForm] = Form.useForm<DeploymentRequestFormValues>();
-  const [deploymentActionForm] = Form.useForm<DeploymentActionFormValues>();
   const [onlineLogForm] = Form.useForm<OnlineLogMetricFormValues>();
   const [metricOpen, setMetricOpen] = useState(false);
   const [jenkinsOpen, setJenkinsOpen] = useState(false);
-  const [deploymentOpen, setDeploymentOpen] = useState(false);
-  const [deploymentAction, setDeploymentAction] = useState<{
-    record: OperationalMetricRecord;
-    type: DeploymentActionType;
-  } | null>(null);
-  const [deploymentRequirements, setDeploymentRequirements] = useState<RequirementRecord[]>([]);
-  const [deploymentRequirementsLoading, setDeploymentRequirementsLoading] = useState(false);
   const [onlineLogOpen, setOnlineLogOpen] = useState(false);
   const [productContexts, setProductContexts] = useState<ProductContextOption[]>([]);
   const [repositoryState, setRepositoryState] = useState<{
@@ -449,28 +355,10 @@ export default function DevopsPage() {
   }, [listQuery]);
   const selectedProductId = Form.useWatch('productId', metricForm);
   const selectedJenkinsProductId = Form.useWatch('productId', jenkinsForm);
-  const selectedDeploymentProductId = Form.useWatch('productId', deploymentForm);
-  const selectedDeploymentVersionId = Form.useWatch('versionId', deploymentForm);
   const productOptions = useMemo(() => productOptionsFromContexts(productContexts), [productContexts]);
   const jenkinsVersionOptions = useMemo(
     () => versionOptionsFromContexts(productContexts, selectedJenkinsProductId),
     [productContexts, selectedJenkinsProductId],
-  );
-  const deploymentVersionOptions = useMemo(
-    () => versionOptionsFromContexts(productContexts, selectedDeploymentProductId),
-    [productContexts, selectedDeploymentProductId],
-  );
-  const deploymentRequirementOptions = useMemo(
-    () =>
-      deploymentRequirements
-        .filter((requirement) => deploymentEligibleRequirementStatuses.has(requirement.status))
-        .map((requirement) => ({
-          label: `${requirement.id} · ${requirement.title} · ${
-            deploymentRequirementStatusLabels[requirement.status] ?? requirement.status
-          }`,
-          value: requirement.id,
-        })),
-    [deploymentRequirements],
   );
   const repositoryOptions = useMemo(
     () =>
@@ -552,13 +440,6 @@ export default function DevopsPage() {
   }, [jenkinsForm, jenkinsOpen, productOptions]);
 
   useEffect(() => {
-    if (!deploymentOpen || productOptions.length !== 1 || deploymentForm.getFieldValue('productId')) {
-      return;
-    }
-    deploymentForm.setFieldValue('productId', productOptions[0]?.value);
-  }, [deploymentForm, deploymentOpen, productOptions]);
-
-  useEffect(() => {
     if (!onlineLogOpen || productOptions.length !== 1 || onlineLogForm.getFieldValue('productId')) {
       return;
     }
@@ -571,53 +452,6 @@ export default function DevopsPage() {
     }
     jenkinsForm.setFieldValue('versionId', jenkinsVersionOptions[0]?.value);
   }, [jenkinsForm, jenkinsOpen, jenkinsVersionOptions]);
-
-  useEffect(() => {
-    if (!deploymentOpen || deploymentVersionOptions.length !== 1 || deploymentForm.getFieldValue('versionId')) {
-      return;
-    }
-    deploymentForm.setFieldValue('versionId', deploymentVersionOptions[0]?.value);
-  }, [deploymentForm, deploymentOpen, deploymentVersionOptions]);
-
-  useEffect(() => {
-    if (!deploymentOpen || !selectedDeploymentProductId || !selectedDeploymentVersionId) {
-      setDeploymentRequirements([]);
-      return;
-    }
-    let mounted = true;
-    setDeploymentRequirementsLoading(true);
-    deploymentForm.setFieldValue('requirementIds', []);
-    void fetchManagementRequirementList({
-      page: 1,
-      pageSize: 100,
-      productId: selectedDeploymentProductId,
-      versionId: selectedDeploymentVersionId,
-    })
-      .then((result) => {
-        if (mounted) {
-          setDeploymentRequirements(result.rows);
-          const eligibleRequirements = result.rows.filter((requirement) =>
-            deploymentEligibleRequirementStatuses.has(requirement.status),
-          );
-          if (eligibleRequirements.length === 1) {
-            deploymentForm.setFieldValue('requirementIds', [eligibleRequirements[0]?.id]);
-          }
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setDeploymentRequirements([]);
-        }
-      })
-      .finally(() => {
-        if (mounted) {
-          setDeploymentRequirementsLoading(false);
-        }
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [deploymentForm, deploymentOpen, selectedDeploymentProductId, selectedDeploymentVersionId]);
 
   useEffect(() => {
     if (!metricOpen || !selectedProductId) {
@@ -668,71 +502,6 @@ export default function DevopsPage() {
     await reload();
   };
 
-  const submitDeploymentRequest = async () => {
-    if (!deploymentForm.getFieldValue('productId') && productOptions.length === 1) {
-      deploymentForm.setFieldValue('productId', productOptions[0]?.value);
-    }
-    const productId = deploymentForm.getFieldValue('productId') as string | undefined;
-    const currentVersionOptions = versionOptionsFromContexts(productContexts, productId);
-    if (!deploymentForm.getFieldValue('versionId') && currentVersionOptions.length === 1) {
-      deploymentForm.setFieldValue('versionId', currentVersionOptions[0]?.value);
-    }
-    const values = await deploymentForm.validateFields();
-    await createDeploymentRequest(buildDeploymentRequestPayload(values));
-    message.success('部署单已创建');
-    setDeploymentOpen(false);
-    deploymentForm.resetFields();
-    setDeploymentRequirements([]);
-    await reload();
-  };
-
-  const openDeploymentAction = useCallback((record: OperationalMetricRecord, type: DeploymentActionType) => {
-    deploymentActionForm.resetFields();
-    setDeploymentAction({ record, type });
-  }, [deploymentActionForm]);
-
-  const submitDeploymentAction = async () => {
-    if (!deploymentAction) {
-      return;
-    }
-    const values = await deploymentActionForm.validateFields();
-    const sharedPayload: DeploymentStartPayload = {
-      executor_type: 'manual',
-      external_build_id: optionalText(values.externalBuildId),
-      external_job_name: optionalText(values.externalJobName),
-      log_url: optionalText(values.logUrl),
-    };
-    const deploymentId = deploymentAction.record.id;
-    if (deploymentAction.type === 'start') {
-      await startDeploymentRequest(deploymentId, sharedPayload);
-      message.success('部署已启动');
-    } else if (deploymentAction.type === 'success') {
-      const payload: DeploymentCompletePayload = {
-        ...sharedPayload,
-        status: 'success',
-      };
-      await completeDeploymentRequest(deploymentId, payload);
-      message.success('部署已标记成功');
-    } else if (deploymentAction.type === 'failed' || deploymentAction.type === 'rolled_back') {
-      const payload: DeploymentCompletePayload = {
-        ...sharedPayload,
-        failure_reason: values.failureReason?.trim(),
-        status: deploymentAction.type,
-      };
-      await completeDeploymentRequest(deploymentId, payload);
-      message.success(deploymentAction.type === 'failed' ? '部署已标记失败' : '部署已标记回滚');
-    } else if (deploymentAction.type === 'cancel') {
-      const payload: DeploymentCancelPayload = {
-        reason: optionalText(values.reason),
-      };
-      await cancelDeploymentRequest(deploymentId, payload);
-      message.success('部署已取消');
-    }
-    setDeploymentAction(null);
-    deploymentActionForm.resetFields();
-    await reload();
-  };
-
   const submitOnlineLogMetric = async () => {
     if (!onlineLogForm.getFieldValue('productId') && productOptions.length === 1) {
       onlineLogForm.setFieldValue('productId', productOptions[0]?.value);
@@ -744,73 +513,11 @@ export default function DevopsPage() {
     await reload();
   };
 
-  const columns = useMemo<ProColumns<OperationalMetricRecord>[]>(
-    () => [
-      ...baseColumns,
-      {
-        key: 'action',
-        render: (_, row) => {
-          if (row.category !== '运维部署') {
-            return '-';
-          }
-          const status = row.status;
-          const canStart = status === 'approved' || status === 'failed' || status === 'pending_ops';
-          const canComplete = status === 'deploying';
-          const canCancel = !['cancelled', 'rolled_back', 'succeeded'].includes(status);
-          return (
-            <Space size={4} wrap>
-              {canStart ? (
-                <Button onClick={() => openDeploymentAction(row, 'start')} size="small" type="link">
-                  启动
-                </Button>
-              ) : null}
-              {canComplete ? (
-                <>
-                  <Button onClick={() => openDeploymentAction(row, 'success')} size="small" type="link">
-                    成功
-                  </Button>
-                  <Button onClick={() => openDeploymentAction(row, 'failed')} size="small" type="link">
-                    失败
-                  </Button>
-                  <Button onClick={() => openDeploymentAction(row, 'rolled_back')} size="small" type="link">
-                    回滚
-                  </Button>
-                </>
-              ) : null}
-              {canCancel ? (
-                <Button danger onClick={() => openDeploymentAction(row, 'cancel')} size="small" type="link">
-                  取消
-                </Button>
-              ) : null}
-            </Space>
-          );
-        },
-        title: '操作',
-        width: 210,
-      },
-    ],
-    [openDeploymentAction],
-  );
-
-  const deploymentActionTitle =
-    deploymentAction?.type === 'start'
-      ? '启动部署'
-      : deploymentAction?.type === 'success'
-        ? '确认部署成功'
-        : deploymentAction?.type === 'failed'
-          ? '登记部署失败'
-          : deploymentAction?.type === 'rolled_back'
-            ? '登记部署回滚'
-            : '取消部署';
-  const deploymentActionNeedsFailureReason =
-    deploymentAction?.type === 'failed' || deploymentAction?.type === 'rolled_back';
-  const deploymentActionIsCancel = deploymentAction?.type === 'cancel';
-
   return (
     <>
       <ManagementListPage<OperationalMetricRecord>
         breadcrumbGroup="运营治理"
-        columns={columns}
+        columns={baseColumns}
         dataSource={listState.rows}
         viewStorageKey="governance.devops"
         filters={[
@@ -820,7 +527,6 @@ export default function DevopsPage() {
             options: [
               { label: 'GitLab 指标', value: 'GitLab 指标' },
               { label: 'Jenkins 发布', value: 'Jenkins 发布' },
-              { label: '运维部署', value: '运维部署' },
               { label: '线上日志', value: '线上日志' },
             ],
             type: 'select',
@@ -847,9 +553,6 @@ export default function DevopsPage() {
           </Button>,
           <Button aria-label="登记 Jenkins 发布" key="jenkins-release" onClick={() => setJenkinsOpen(true)}>
             登记 Jenkins 发布
-          </Button>,
-          <Button aria-label="发起部署" key="deployment-request" onClick={() => setDeploymentOpen(true)} type="primary">
-            发起部署
           </Button>,
           <Button aria-label="登记线上日志" key="online-log" onClick={() => setOnlineLogOpen(true)}>
             登记线上日志
@@ -952,123 +655,6 @@ export default function DevopsPage() {
           <Form.Item label="失败原因" name="failureReason">
             <Input.TextArea rows={3} />
           </Form.Item>
-        </Form>
-      </Modal>
-      <Modal
-        destroyOnHidden
-        okText="创建部署单"
-        okButtonProps={{ 'aria-label': '创建部署单' }}
-        onCancel={() => {
-          setDeploymentOpen(false);
-          deploymentForm.resetFields();
-          setDeploymentRequirements([]);
-        }}
-        onOk={() => void submitDeploymentRequest()}
-        open={deploymentOpen}
-        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
-        title="发起运维部署"
-      >
-        <Form<DeploymentRequestFormValues> form={deploymentForm} initialValues={{ environment: deploymentDefaultEnvironment, riskLevel: 'medium' }} layout="vertical">
-          <Form.Item label="所属产品" name="productId" rules={[{ required: true, message: '请选择所属产品' }]}>
-            <Select
-              onChange={() => {
-                deploymentForm.setFieldsValue({ requirementIds: [], versionId: undefined });
-                setDeploymentRequirements([]);
-              }}
-              options={productOptions}
-            />
-          </Form.Item>
-          <Form.Item label="产品版本" name="versionId" rules={[{ required: true, message: '请选择产品版本' }]}>
-            <Select
-              onChange={() => {
-                deploymentForm.setFieldValue('requirementIds', []);
-              }}
-              options={deploymentVersionOptions}
-            />
-          </Form.Item>
-          <Form.Item label="部署标题" name="title" rules={[{ required: true, message: '请输入部署标题' }]}>
-            <Input placeholder="例如：生产环境发布 2026.07.09" />
-          </Form.Item>
-          <Form.Item label="部署需求" name="requirementIds" rules={[{ required: true, message: '请选择待部署需求' }]}>
-            <Select
-              disabled={!selectedDeploymentVersionId}
-              loading={deploymentRequirementsLoading}
-              mode="multiple"
-              options={deploymentRequirementOptions}
-              placeholder={selectedDeploymentVersionId ? '请选择测试完成或待发布需求' : '请先选择产品版本'}
-            />
-          </Form.Item>
-          <Form.Item label="部署环境" name="environment">
-            <Input placeholder={deploymentDefaultEnvironment} />
-          </Form.Item>
-          <Form.Item label="风险等级" name="riskLevel">
-            <Select options={deploymentRiskOptions} />
-          </Form.Item>
-          <Form.Item label="发布分支" name="releaseBranch">
-            <Input placeholder="release/2026.07" />
-          </Form.Item>
-          <Form.Item label="Commit SHA" name="commitSha">
-            <Input />
-          </Form.Item>
-          <Form.Item label="制品版本" name="artifactVersion">
-            <Input />
-          </Form.Item>
-          <Form.Item label="部署窗口开始" name="deployWindowStart">
-            <DateStringPicker mode="dateTime" placeholder="请选择部署窗口开始时间" />
-          </Form.Item>
-          <Form.Item label="部署窗口结束" name="deployWindowEnd">
-            <DateStringPicker mode="dateTime" placeholder="请选择部署窗口结束时间" />
-          </Form.Item>
-          <Form.Item label="运维负责人" name="assignedOpsUser">
-            <Input placeholder="用户 ID 或账号" />
-          </Form.Item>
-          <Form.Item label="发布评估任务 ID" name="releaseReadinessTaskId">
-            <Input placeholder="可选，关联已确认的发布评估任务" />
-          </Form.Item>
-          <Form.Item label="回滚方案" name="rollbackPlan">
-            <Input.TextArea rows={3} />
-          </Form.Item>
-        </Form>
-      </Modal>
-      <Modal
-        destroyOnHidden
-        okText="确认"
-        okButtonProps={{ 'aria-label': '确认部署操作' }}
-        onCancel={() => setDeploymentAction(null)}
-        onOk={() => void submitDeploymentAction()}
-        open={deploymentAction !== null}
-        title={deploymentActionTitle}
-      >
-        <Form<DeploymentActionFormValues> form={deploymentActionForm} layout="vertical">
-          <Form.Item label="部署单">
-            <Input disabled value={deploymentAction?.record.name ?? deploymentAction?.record.id ?? '-'} />
-          </Form.Item>
-          {deploymentActionIsCancel ? (
-            <Form.Item label="取消原因" name="reason">
-              <Input.TextArea rows={3} />
-            </Form.Item>
-          ) : (
-            <>
-              <Form.Item label="外部 Job" name="externalJobName">
-                <Input placeholder="Jenkins Job / Pipeline" />
-              </Form.Item>
-              <Form.Item label="外部 Build ID" name="externalBuildId">
-                <Input />
-              </Form.Item>
-              <Form.Item label="日志链接" name="logUrl">
-                <Input />
-              </Form.Item>
-              {deploymentActionNeedsFailureReason ? (
-                <Form.Item
-                  label={deploymentAction?.type === 'rolled_back' ? '回滚原因' : '失败原因'}
-                  name="failureReason"
-                  rules={[{ required: true, message: '请输入原因' }]}
-                >
-                  <Input.TextArea rows={3} />
-                </Form.Item>
-              ) : null}
-            </>
-          )}
         </Form>
       </Modal>
       <Modal

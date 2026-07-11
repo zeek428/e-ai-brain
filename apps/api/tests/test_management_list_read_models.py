@@ -1,5 +1,13 @@
+import inspect
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
+
 from app.core.persistence import PostgresRuntimeStore
+from app.core.repositories.devops import DevopsReadRepository
 from app.core.users import MemoryUserRepository
+from app.services.devops_metrics import list_operational_metrics_response
 from tests.test_database_persistence import FakeSnapshotRepository, app, auth_headers, client
 
 
@@ -14,6 +22,136 @@ def _use_repository(repository: FakeSnapshotRepository):
 def _restore_repository(original_store, original_users) -> None:
     app.state.store = original_store
     app.state.user_repository = original_users
+
+
+def _operational_metric_user(*permissions: str) -> dict:
+    return {
+        "permissions": list(permissions),
+        "roles": [],
+        "scope_summary": [
+            {"access_level": "read", "scope_id": "*", "scope_type": "global"}
+        ],
+    }
+
+
+def _list_operational_metrics(repository, user: dict, **filters):  # type: ignore[no-untyped-def]
+    return list_operational_metrics_response(
+        category=filters.get("category"),
+        current_store=SimpleNamespace(repository=repository),
+        exclude_category=filters.get("exclude_category"),
+        name=None,
+        page=1,
+        page_size=10,
+        sort_by="updated_at",
+        sort_order="desc",
+        started_at=None,
+        status=None,
+        trace_id="trace_operational_access",
+        user=user,
+    )
+
+
+class _RecordingOperationalRepository:
+    def __init__(self) -> None:
+        self.reads: list[dict] = []
+
+    def list_operational_metric_items(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.reads.append(dict(kwargs))
+        return {"items": [], "page": 1, "page_size": 10, "total": 0}
+
+
+def test_operational_metrics_restrict_mixed_list_to_authorized_category():
+    deployment_repository = _RecordingOperationalRepository()
+    _list_operational_metrics(
+        deployment_repository,
+        _operational_metric_user("deployment.read"),
+    )
+    assert deployment_repository.reads[0]["category"] == "运维部署"
+    assert deployment_repository.reads[0]["exclude_category"] is None
+
+    devops_repository = _RecordingOperationalRepository()
+    _list_operational_metrics(
+        devops_repository,
+        _operational_metric_user("devops.read"),
+        exclude_category="线上日志",
+    )
+    assert devops_repository.reads[0]["category"] is None
+    assert devops_repository.reads[0]["exclude_category"] == "运维部署"
+
+
+def test_operational_deployment_read_model_preserves_execution_channel_fields():
+    source = inspect.getsource(DevopsReadRepository.list_operational_metric_items)
+
+    assert "'deployment_method', d.deployment_method" in source
+    assert "'deployment_scheme_id', d.deployment_scheme_id" in source
+    assert "'executor_channel', d.executor_channel" in source
+
+
+@pytest.mark.parametrize(
+    ("permissions", "category"),
+    [
+        (("devops.read",), "运维部署"),
+        (("deployment.read",), "Jenkins 发布"),
+        ((), None),
+    ],
+)
+def test_operational_metrics_reject_unauthorized_category(
+    permissions: tuple[str, ...],
+    category: str | None,
+):
+    with pytest.raises(HTTPException) as exc_info:
+        _list_operational_metrics(
+            _RecordingOperationalRepository(),
+            _operational_metric_user(*permissions),
+            category=category,
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail["code"] == "FORBIDDEN"
+
+
+def test_operational_metrics_exclude_category_updates_items_and_total():
+    current_store = SimpleNamespace(
+        deployment_requests={
+            "deployment_001": {
+                "id": "deployment_001",
+                "product_id": "product_ops",
+                "status": "pending_ops",
+                "title": "生产部署",
+                "updated_at": "2026-07-10T09:00:00+00:00",
+            }
+        },
+        gitlab_daily_code_metrics={},
+        jenkins_release_records={
+            "release_001": {
+                "id": "release_001",
+                "job_name": "release-job",
+                "product_id": "product_ops",
+                "status": "success",
+                "updated_at": "2026-07-10T08:00:00+00:00",
+            }
+        },
+        online_log_metrics={},
+    )
+
+    result = list_operational_metrics_response(
+        category=None,
+        current_store=current_store,
+        exclude_category="运维部署",
+        name=None,
+        page=1,
+        page_size=10,
+        sort_by="updated_at",
+        sort_order="desc",
+        started_at=None,
+        status=None,
+        trace_id="trace_operational_exclusion",
+        user=_operational_metric_user("deployment.read", "devops.read"),
+    )
+
+    assert result["total"] == 1
+    assert [item["id"] for item in result["items"]] == ["release_001"]
+    assert result["query"]["filters"]["exclude_category"] == "运维部署"
 
 
 def test_operational_metrics_use_repository_read_model_for_sql_pagination():
@@ -60,6 +198,7 @@ def test_operational_metrics_use_repository_read_model_for_sql_pagination():
             (
                 "/api/devops/operational-metrics"
                 "?category=Jenkins 发布"
+                "&exclude_category=运维部署"
                 "&name=deploy"
                 "&status=success"
                 "&page=1&page_size=1"
@@ -76,6 +215,7 @@ def test_operational_metrics_use_repository_read_model_for_sql_pagination():
         assert repository.operational_metric_reads == [
             {
                 "category": "Jenkins 发布",
+                "exclude_category": "运维部署",
                 "name": "deploy",
                 "page": 1,
                 "page_size": 1,

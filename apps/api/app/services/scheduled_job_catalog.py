@@ -235,6 +235,8 @@ CODE_INSPECTION_RESULT_ACTION_DEFINITIONS = [
 ]
 GENERIC_RESULT_ACTION_DEFINITIONS = [
     {"label": "仅保存运行结果", "value": "save_scheduled_job_result"},
+    {"label": "创建需求", "value": "create_requirements"},
+    {"label": "同步钉钉文档", "value": "sync_dingtalk_document"},
     {"label": "发送通知记录", "value": "send_notification"},
 ]
 CODE_INSPECTION_SEVERITY_THRESHOLD_DEFINITIONS = [

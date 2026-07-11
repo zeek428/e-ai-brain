@@ -129,6 +129,7 @@ export function runnerPayload(values: AiExecutorRunnerFormValues): Partial<AiExe
     metadata.target_os = values.target_os;
   }
   return {
+    capabilities: values.deployment_capability ? ['deployment'] : [],
     endpoint_url: values.endpoint_url,
     executor_types: values.executor_types,
     heartbeat_timeout_seconds: values.heartbeat_timeout_seconds,

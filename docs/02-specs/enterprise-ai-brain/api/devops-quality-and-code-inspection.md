@@ -134,6 +134,39 @@ Content-Type: application/json
 
 服务端校验产品处于 active 状态且版本归属该产品，archived 版本不得登记发布记录；`deployment_request_id` 可选，传入时必须属于同一产品和版本；`status` 只能为 `success`、`failed`、`running` 或 `canceled`，构建编号和耗时不得为负数，部署时间不得早于开始时间；写入 `jenkins_release_records` 后记录 `jenkins_release.created` 审计事件。
 
+运维部署方案：
+
+```http
+GET /api/devops/deployment-schemes?product_id=product_001&environment=prod&status=active
+GET /api/devops/deployment-runner-targets?method=docker
+GET /api/devops/deployment-jenkins-connections
+```
+
+部署方案列表要求 `deployment.read`，并按用户产品 scope 过滤。Runner 目标和 Jenkins 候选接口只允许具备 `deployment.scheme.manage` 的用户访问；Runner 目标只返回具备 `deployment` capability、心跳健康且上报目标摘要的 Runner，不包含 SSH 私钥、主机密码、known_hosts 内容或 Docker 本地路径；Jenkins 候选只返回连接 ID、名称、环境、状态和就绪状态，不返回 `auth_config`。
+
+具备 `deployment.scheme.manage` 的发布负责人或管理员可创建、修改和删除方案：
+
+```http
+POST /api/devops/deployment-schemes
+Content-Type: application/json
+
+{
+  "product_id": "product_001",
+  "code": "prod-docker",
+  "name": "生产 Docker 部署",
+  "environment": "prod",
+  "deployment_method": "docker",
+  "runner_id": "ai_executor_runner_003",
+  "target_code": "production-compose",
+  "timeout_seconds": 1800,
+  "config": {},
+  "is_default": true,
+  "status": "active"
+}
+```
+
+`deployment_method` 允许 `manual`、`ssh`、`docker`、`jenkins`，服务端固定映射为 `manual`、`runner`、`runner`、`integration` 执行通道。SSH/Docker 必须引用具备部署能力且已上报同方法就绪目标的 Runner；Jenkins 必须引用 active Jenkins 连接并提供 `jenkins_job_name`。同产品、同环境最多一个 active 默认方案。修改使用 `PATCH /api/devops/deployment-schemes/{scheme_id}` 并提交当前 `version` 做乐观锁；切换默认方案时旧默认方案同步递增版本，当前 active 默认方案必须先设置替代默认方案才能停用、取消默认或迁移环境；仍被部署单引用的方案禁止删除。
+
 运维部署单：
 
 ```http
@@ -153,6 +186,9 @@ GET /api/devops/deployments?product_id=product_001&version_id=version_001&status
         "title": "生产部署",
         "environment": "prod",
         "status": "pending_ops",
+        "deployment_scheme_id": "deployment_scheme_001",
+        "deployment_method": "docker",
+        "executor_channel": "runner",
         "requirement_ids": ["requirement_001"],
         "risk_level": "medium",
         "rollback_plan": "回滚到上一稳定版本",
@@ -179,6 +215,7 @@ Content-Type: application/json
 {
   "product_id": "product_001",
   "version_id": "version_001",
+  "deployment_scheme_id": "deployment_scheme_001",
   "title": "生产部署",
   "requirement_ids": ["requirement_001"],
   "environment": "prod",
@@ -192,23 +229,26 @@ Content-Type: application/json
 }
 ```
 
-服务端校验产品和版本归属、需求必须处于 `testing` 或 `ready_for_release`、同版本 blocker/critical 未关闭 Bug 不存在；如传入 `release_readiness_task_id`，必须是同产品版本下已完成的 `release_readiness` 任务。创建成功后写入 `deployment_requests` 和 `deployment_request_requirements`，状态为 `pending_ops`，记录 `deployment_request.created` 审计事件。
+服务端校验方案属于同产品和环境且处于 active，产品和版本归属正确，需求必须处于 `testing` 或 `ready_for_release`，同版本不存在未关闭 blocker/critical Bug；如传入 `release_readiness_task_id`，必须是同产品版本下已完成的 `release_readiness` 任务。未显式传方案时只允许解析同产品、同环境的 active 默认方案。创建成功后写入 `deployment_requests` 和 `deployment_request_requirements`，并固化 `scheme_snapshot`；后续修改方案不会改变既有部署单。初始状态为 `pending_ops`，同时记录 `deployment_request.created` 审计事件。
 
-具备 `deployment.execute` 的发布负责人或运维人员可启动和完成部署：
+具备 `deployment.execute` 的发布负责人或运维人员可启动部署，执行方式完全取自部署单方案快照，客户端无需再指定执行器：
 
 ```http
 POST /api/devops/deployments/deployment_request_001/start
 Content-Type: application/json
 
-{
-  "executor_type": "manual",
-  "external_job_name": "rd-brain-prod-deploy",
-  "external_build_id": "build-20260709-001",
-  "log_url": "https://jenkins.example/job/..."
-}
+{}
 ```
 
-启动成功后部署单进入 `deploying`，写入一条 `deployment_runs(status=running)`，关联需求进入 `deploying`。
+启动成功后部署单进入 `deploying`，写入一条 `deployment_runs`，关联需求进入 `deploying`。执行矩阵如下：
+
+| 部署方式 | 启动行为 | 结果来源 |
+| --- | --- | --- |
+| 人工 | run 直接进入 `running` | 人工调用 complete 登记 |
+| SSH / Docker | 创建 `executor_type=deployment` 的 Runner task，run 进入 `queued` | Runner 日志和完成回写自动同步 |
+| Jenkins | 使用方案中的连接、Job 和参数触发构建 | 后台同步器轮询 Jenkins，也可手工 sync |
+
+只有人工部署使用完成接口：
 
 ```http
 POST /api/devops/deployments/deployment_request_001/complete
@@ -220,7 +260,18 @@ Content-Type: application/json
 }
 ```
 
-`status=success` 时部署单进入 `succeeded`，部署运行进入 `success`，关联需求进入 `released`；`status=failed` 或 `rolled_back` 时部署单进入失败或回滚状态，关联需求回到 `ready_for_release`，并创建来源为 `deployment_failure` 的 Bug。具备 `deployment.cancel` 的用户可调用 `POST /api/devops/deployments/{deployment_request_id}/cancel` 取消未完成部署，运行中的 run 会标记为 `canceled`，部署中的需求回到 `ready_for_release`。
+`status=success` 时部署单进入 `succeeded`，部署运行进入 `success`，关联需求进入 `released`；`status=failed` 或 `rolled_back` 时部署单进入失败或回滚状态，关联需求回到 `ready_for_release`，并创建来源为 `deployment_failure` 的 Bug。SSH/Docker/Jenkins 终态使用同一收口逻辑，但由执行通道回写触发，客户端不能人工伪造自动部署成功。
+
+统一运行观测接口：
+
+```http
+GET /api/devops/deployments/deployment_request_001/runs/deployment_run_001/logs
+POST /api/devops/deployments/deployment_request_001/runs/deployment_run_001/sync
+```
+
+日志接口要求 `deployment.read` 并按产品 scope 校验：Runner 返回逐条执行日志，Jenkins 和人工运行返回脱敏状态日志。`sync` 只用于 Jenkins 且要求 `deployment.execute`，用于立即同步队列、构建和取消结果；后台 `deployment_sync_worker` 也会按 `next_sync_at` 持续处理未终结 Jenkins run。
+
+Jenkins 连接在启动前再次校验；不可用时部署单保持 `pending_ops`。外部触发失败、缺少 Queue Location，或 Queue/Build URL 与配置的 Jenkins endpoint 不同源时，本次 run 和部署单进入可重试 `failed`，需求保持待发布，失败摘要只保存异常类型；系统不会向不同源 URL 转发 Jenkins Basic Auth 凭据。具备 `deployment.cancel` 的用户可调用 `POST /api/devops/deployments/{deployment_request_id}/cancel`。待执行或人工部署可直接进入 `cancelled`；运行中的 Runner/Jenkins 部署先进入 `cancelling` 并向外部通道发出取消请求，只有 Runner/Jenkins 确认终态后才进入 `cancelled`，关联需求随后回到 `ready_for_release`。Jenkins 取消请求发送失败时恢复 `deploying`，记录脱敏告警日志并允许重试取消。
 
 研发运营统一聚合列表：
 
@@ -228,7 +279,7 @@ Content-Type: application/json
 GET /api/devops/operational-metrics?category=Jenkins%20发布&name=deploy&status=success&page=1&page_size=10&sort_by=updated_at&sort_order=desc
 ```
 
-该接口面向研发运营主列表聚合 GitLab 每日代码指标、Jenkins 发布记录、运维部署单和线上运行日志指标，返回统一行字段 `category`、`name`、`value`、`status`、`updated_at` 以及原始上下文字段。支持 `category` 精确筛选，`name` 文本筛选，`status` 精确筛选，`page/page_size` 服务端分页，`sort_by` 支持 `category/id/name/status/updated_at/value`，`sort_order` 支持 `asc/desc`。PostgreSQL 运行时必须通过 repository SQL read model 聚合查询四类来源，并在 SQL 层完成筛选、排序和分页；MemoryStore 仅保留为测试 helper fallback。前端研发运营指标主列表必须调用该接口，不再并发拉取四类原始接口后本地拼装、排序或分页；登记弹窗仍使用各原始 POST 接口写入真实指标或部署单。
+该接口面向运营治理列表聚合 GitLab 每日代码指标、Jenkins 发布记录、运维部署单和线上运行日志指标，返回统一行字段 `category`、`name`、`value`、`status`、`updated_at` 以及原始上下文字段；运维部署行必须额外保留 `deployment_method`、`executor_channel` 和 `deployment_scheme_id`，供页面准确展示执行方式和操作。支持 `category` 精确筛选、`exclude_category` 精确排除、`name` 文本筛选、`status` 精确筛选、`page/page_size` 服务端分页，`sort_by` 支持 `category/id/name/status/updated_at/value`，`sort_order` 支持 `asc/desc`。PostgreSQL 运行时必须通过 repository SQL read model 聚合查询四类来源，并在 SQL 层完成筛选、排序和分页；MemoryStore 仅保留为测试 helper fallback。日志监控使用 `exclude_category=运维部署`，独立运维部署页面使用 `category=运维部署`；两者不在前端拉全量后本地拼装、排序或分页，登记弹窗仍使用各原始 POST 接口写入真实指标或部署单。服务端必须同时执行类别权限收窄：仅具备 `deployment.read` 时强制限定 `category=运维部署`，仅具备 `devops.read` 时强制排除运维部署，显式查询无权类别返回 `403 FORBIDDEN`。
 
 线上运行日志运营指标：
 
@@ -401,7 +452,7 @@ GET /api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_001&status=fai
 POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 ```
 
-`GET /api/system/scheduled-job-catalog` 是定时作业配置的服务端注册中心，要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`。响应字段包括：`job_types[]`（`value/label/category/default_execution_mode/requires_product/requires_plugin_resource/requires_ai_assembly/allow_create/runnable/unavailable_reason`）、`required_job_types.product/plugin_resource/ai_processing`、`execution_modes[]`、`schedule_types[]`、`connection_environments[]`，以及 `code_inspection.native_scan_mode/default_scan_mode/scan_modes/scanner_engines/builtin_rules/ignore_rules/result_actions/severity_thresholds/default_result_actions` 和 `generic_result_actions[]`。`generic_result_actions[]` 至少包含 `save_scheduled_job_result` 与 `send_notification`，用于 `online_log_ai_analysis` 等通用 AI 分析作业的结果保存和通知登记。前端新增/编辑弹窗、AI 助手定时作业草案和测试 mock 必须以该响应为首选来源；新增入口只展示 `allow_create=true` 且 `runnable=true` 的类型，`allow_create=false` 或 `runnable=false` 的类型仅用于历史作业标签、兼容读取和内部迁移。只有接口不可用时才允许使用本地静态选项降级，且降级不得覆盖服务端校验。
+`GET /api/system/scheduled-job-catalog` 是定时作业配置的服务端注册中心，要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`。响应字段包括：`job_types[]`（`value/label/category/default_execution_mode/requires_product/requires_plugin_resource/requires_ai_assembly/allow_create/runnable/unavailable_reason`）、`required_job_types.product/plugin_resource/ai_processing`、`execution_modes[]`、`schedule_types[]`、`connection_environments[]`，以及 `code_inspection.native_scan_mode/default_scan_mode/scan_modes/scanner_engines/builtin_rules/ignore_rules/result_actions/severity_thresholds/default_result_actions` 和 `generic_result_actions[]`。`generic_result_actions[]` 至少包含 `save_scheduled_job_result`、`send_notification`、`create_requirements` 与 `sync_dingtalk_document`；其中 `create_requirements` 与 `sync_dingtalk_document` 仅用于 AI 模式下的 `plugin_action_invoke` 作业，典型场景包括同步钉钉文档、用户洞察转需求、运营周报归档和巡检摘要沉淀。前端新增/编辑弹窗、AI 助手定时作业草案和测试 mock 必须以该响应为首选来源；新增入口只展示 `allow_create=true` 且 `runnable=true` 的类型，`allow_create=false` 或 `runnable=false` 的类型仅用于历史作业标签、兼容读取和内部迁移。只有接口不可用时才允许使用本地静态选项降级，且降级不得覆盖服务端校验。
 
 `POST /api/system/scheduled-jobs` 和 `POST /api/system/scheduled-jobs/dry-run` 对已登记但 `allow_create=false` 的 `job_type` 返回 `400 SCHEDULED_JOB_TYPE_UNAVAILABLE`，错误消息使用 catalog 的 `unavailable_reason`；未知 `job_type` 继续走通用枚举校验返回 `VALIDATION_ERROR`。`POST /api/system/scheduled-jobs/{job_id}/run` 对 `runnable=false` 的历史作业返回 `400 SCHEDULED_JOB_TYPE_NOT_RUNNABLE`，不得创建伪成功运行记录，也不得落 collector run 或插件调用日志。
 
@@ -439,7 +490,7 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 }
 ```
 
-`job_type` 首批允许 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`code_repository_inspection`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。`execution_mode` 只允许 `deterministic`、`ai_assisted`、`ai_generated`，前端用户侧标签为“AI执行”，其中 `deterministic` 展示为“不调用 AI”。`user_feedback_collect` 表示仅取数采集，不执行平台 Skill/大模型处理；若用户反馈作业同时配置动作、AI 模型、AI角色或 Skills，后端必须按兼容规则归一为 `user_feedback_insight_extract` 并使用 `ai_generated`，避免配置了 AI 链路却静默直通。`iteration_plan_suggestion_generate`、`online_log_ai_analysis` 和 `user_feedback_insight_extract` 属于 AI 必选链路作业，服务端即使收到 `deterministic` 也必须按有效 `ai_generated` 校验并要求 active AI角色（Agent）、作业显式提交的 active Skills 和 active 模型网关（可取 AI角色默认模型网关或作业覆盖项）；缺失时分别返回 `AI_AGENT_REQUIRED`、`AI_SKILL_REQUIRED` 或 `MODEL_GATEWAY_CONFIG_REQUIRED`，后端不得使用 AI角色默认 Skill 兜底空 `skill_ids`。`plugin_action_invoke` 在 `deterministic` 下仍可作为普通取数/执行调用；在 `ai_assisted/ai_generated` 下必须同样要求 active AI角色、显式 Skills 和 active 模型网关，正式运行时先调用 Skill/模型处理数据连接响应，再以 AI 输出执行通用结果动作。`plugin_connection_ids` 和 `plugin_action_ids` 分别表示按顺序配置的多个数据连接和多个动作；服务端会保存到 `config_json.orchestration` 并在响应顶层展开，`plugin_connection_id` 和 `plugin_action_id` 仍取第一项，用于兼容当前动作调用、来源链路和旧客户端；多个数据连接必须归属主 `plugin_action_id` 所在插件，否则返回 `400 PLUGIN_CONNECTION_MISMATCH`。例外：`code_repository_inspection + config_json.scan_mode=native_full_scan` 不要求 `plugin_action_id/plugin_action_ids`，`plugin_connection_id/plugin_connection_ids` 可为空，也可绑定 active GitHub/GitLab 凭据连接供 clone/fetch 读取 token。`knowledge_document_ids` 为可选知识引用；配置后运行时必须先按当前用户权限读取可检索知识 chunk，并以 `knowledge_references` 注入 AI角色/Skill 模型请求上下文。`result_actions` 为可选结果写入动作列表；`code_repository_inspection` 使用该字段按顺序执行 `write_code_inspection_report`、`create_bug_for_severe_findings`、`create_task_for_severe_findings`、`send_notification` 等处理，并通过 `config_json.repository_id/branch` 指定扫描仓库和扫描分支；`online_log_ai_analysis` 和 AI 模式下的 `plugin_action_invoke` 使用该字段执行 `save_scheduled_job_result` 或 `send_notification` 通用结果动作，运行结果通过 `feedback.write_preview` 和结果写入记录展示写入目标、写入数量、主题、投递状态和收件人样例。指定 `model_gateway_config_id` 时覆盖 AI角色默认模型网关，但仍必须指向 active 模型网关配置。`cron_expression` 和 `interval_seconds` 按 `schedule_type` 二选一，前端必须紧跟调度方式展示；`source_system` 为内部来源标识，模板或默认值写入 payload，但新增/编辑表单不展示给用户填写；`timezone` 默认 `Asia/Shanghai`。作业创建、修改、启停、手动触发、从运行记录复跑和取消必须写入审计；从现有作业或运行记录快照复制出的新增请求可携带 `config_json.template_source={source_type,source_id,title}`，服务端在 `scheduled_job.created/updated` 审计 payload 中返回 `template_source`，用于追踪作业模板来源；前端必须在复制弹窗、作业列表和运行详情中展示 `template_source`，避免来源仅存在于高级 JSON 或审计里。运行接口 `trigger_type` 允许 `manual`、`manual_rerun` 和 `scheduler`，未传默认 `manual`，非法值返回 `400 VALIDATION_ERROR`；运行记录复跑不新增专用 API，前端读取运行记录的 `scheduled_job_id` 后调用 `POST /api/system/scheduled-jobs/{job_id}/run` 并传入 `{"trigger_type":"manual_rerun","source_run_id":"<历史运行 ID>"}`，成功后展示返回的新运行实例详情；若携带 `source_run_id`，服务端必须校验来源运行存在、属于同一作业且触发类型为 `manual_rerun`，响应和后续运行列表必须返回轻量 `source_run_summary` 便于对比来源运行与本次运行。运行终态审计事件 `scheduled_job_run.succeeded/failed` 的 payload 必须包含 `scheduled_job_id`、可选 `source_run_id`、`job_type`、`product_id`、`status`、`trigger_type`、`records_imported`、`collector_run_id`、可选 `plugin_invocation_log_id` 和 `error_code`，并在存在对应配置时补充 `execution_mode`、`agent_id`、`skill_ids`、`model_gateway_config_id`、`model_gateway_called`、`knowledge_document_ids`、`plugin_code`、`plugin_action_id`、`plugin_action_ids`、`plugin_action_code`、`plugin_connection_id`、`plugin_connection_ids`、`plugin_connection_environment`、`result_action_types` 和 `result_write_target`，用于区分普通手动运行、复跑、调度触发、AI 装配、多环境连接和结果写入目标；审计 payload 不保存完整请求响应、Prompt、模型输出或密钥。
+`job_type` 首批允许 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`code_repository_inspection`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。`execution_mode` 只允许 `deterministic`、`ai_assisted`、`ai_generated`，前端用户侧标签为“AI执行”，其中 `deterministic` 展示为“不调用 AI”。`user_feedback_collect` 表示仅取数采集，不执行平台 Skill/大模型处理；若用户反馈作业同时配置动作、AI 模型、AI角色或 Skills，后端必须按兼容规则归一为 `user_feedback_insight_extract` 并使用 `ai_generated`，避免配置了 AI 链路却静默直通。`iteration_plan_suggestion_generate`、`online_log_ai_analysis` 和 `user_feedback_insight_extract` 属于 AI 必选链路作业，服务端即使收到 `deterministic` 也必须按有效 `ai_generated` 校验并要求 active AI角色（Agent）、作业显式提交的 active Skills 和 active 模型网关（可取 AI角色默认模型网关或作业覆盖项）；缺失时分别返回 `AI_AGENT_REQUIRED`、`AI_SKILL_REQUIRED` 或 `MODEL_GATEWAY_CONFIG_REQUIRED`，后端不得使用 AI角色默认 Skill 兜底空 `skill_ids`。`plugin_action_invoke` 在 `deterministic` 下仍可作为普通取数/执行调用；在 `ai_assisted/ai_generated` 下必须同样要求 active AI角色、显式 Skills 和 active 模型网关，正式运行时先调用 Skill/模型处理数据连接响应，再以 AI 输出执行通用结果动作。`plugin_connection_ids` 和 `plugin_action_ids` 分别表示按顺序配置的多个数据连接和多个动作；服务端会保存到 `config_json.orchestration` 并在响应顶层展开，`plugin_connection_id` 和 `plugin_action_id` 仍取第一项，用于兼容当前动作调用、来源链路和旧客户端；多个数据连接必须归属主 `plugin_action_id` 所在插件，否则返回 `400 PLUGIN_CONNECTION_MISMATCH`。例外：`code_repository_inspection + config_json.scan_mode=native_full_scan` 不要求 `plugin_action_id/plugin_action_ids`，`plugin_connection_id/plugin_connection_ids` 可为空，也可绑定 active GitHub/GitLab 凭据连接供 clone/fetch 读取 token。`knowledge_document_ids` 为可选知识引用；配置后运行时必须先按当前用户权限读取可检索知识 chunk，并以 `knowledge_references` 注入 AI角色/Skill 模型请求上下文。`result_actions` 为可选结果写入动作列表；`code_repository_inspection` 使用该字段按顺序执行 `write_code_inspection_report`、`create_bug_for_severe_findings`、`create_task_for_severe_findings`、`send_notification` 等处理，并通过 `config_json.repository_id/branch` 指定扫描仓库和扫描分支；`online_log_ai_analysis` 使用该字段执行 `save_scheduled_job_result` 或 `send_notification` 通用结果动作；AI 模式下的 `plugin_action_invoke` 还支持 `create_requirements` 与 `sync_dingtalk_document`，前者从 AI 输出的 `requirements` 数组创建需求管理记录，后者调用钉钉文档更新动作把 `dingtalk_markdown` 或模板渲染内容写入指定文档，运行结果通过 `feedback.write_preview` 和结果写入记录展示写入目标、写入数量、需求 ID、钉钉文档 ID、主题、投递状态和样例。指定 `model_gateway_config_id` 时覆盖 AI角色默认模型网关，但仍必须指向 active 模型网关配置。`cron_expression` 和 `interval_seconds` 按 `schedule_type` 二选一，前端必须紧跟调度方式展示；`source_system` 为内部来源标识，模板或默认值写入 payload，但新增/编辑表单不展示给用户填写；`timezone` 默认 `Asia/Shanghai`。作业创建、修改、启停、手动触发、从运行记录复跑和取消必须写入审计；从现有作业或运行记录快照复制出的新增请求可携带 `config_json.template_source={source_type,source_id,title}`，服务端在 `scheduled_job.created/updated` 审计 payload 中返回 `template_source`，用于追踪作业模板来源；前端必须在复制弹窗、作业列表和运行详情中展示 `template_source`，避免来源仅存在于高级 JSON 或审计里。运行接口 `trigger_type` 允许 `manual`、`manual_rerun` 和 `scheduler`，未传默认 `manual`，非法值返回 `400 VALIDATION_ERROR`；运行记录复跑不新增专用 API，前端读取运行记录的 `scheduled_job_id` 后调用 `POST /api/system/scheduled-jobs/{job_id}/run` 并传入 `{"trigger_type":"manual_rerun","source_run_id":"<历史运行 ID>"}`，成功后展示返回的新运行实例详情；若携带 `source_run_id`，服务端必须校验来源运行存在、属于同一作业且触发类型为 `manual_rerun`，响应和后续运行列表必须返回轻量 `source_run_summary` 便于对比来源运行与本次运行。运行终态审计事件 `scheduled_job_run.succeeded/failed` 的 payload 必须包含 `scheduled_job_id`、可选 `source_run_id`、`job_type`、`product_id`、`status`、`trigger_type`、`records_imported`、`collector_run_id`、可选 `plugin_invocation_log_id` 和 `error_code`，并在存在对应配置时补充 `execution_mode`、`agent_id`、`skill_ids`、`model_gateway_config_id`、`model_gateway_called`、`knowledge_document_ids`、`plugin_code`、`plugin_action_id`、`plugin_action_ids`、`plugin_action_code`、`plugin_connection_id`、`plugin_connection_ids`、`plugin_connection_environment`、`result_action_types` 和 `result_write_target`，用于区分普通手动运行、复跑、调度触发、AI 装配、多环境连接和结果写入目标；审计 payload 不保存完整请求响应、Prompt、模型输出或密钥。
 
 定时作业链路按“数据来源 -> AI执行处理 -> 动作写入/通知”理解：作业定义中 `plugin_connection_ids` 表示按顺序配置的数据来源连接，`execution_mode/model_gateway_config_id/agent_id/skill_ids/knowledge_document_ids` 共同组成 AI执行配置，`plugin_action_ids` 表示数据来源阶段使用的读取/取数动作模板，`plugin_input_mapping` 表示运行时传给连接/动作的输入参数。页面支持两类数据来源：直接取数连接（例如用户反馈、AI 客服聊天记录、HTTP API）和授权连接 + 读取动作（例如钉钉文档 MCP、GitHub、GitLab、邮箱）；后者会在 `config_json.orchestration.data_source_mode=authorized_read_action` 中记录来源方式，并把具体对象参数保存到 `plugin_input_mapping`。`plugin_connection_id` / `plugin_action_id` 是第一项兼容字段。`plugin_output_mapping` 是作业级覆盖项；为空时运行时复用动作模板的 `result_mapping`。插件输出映射第一阶段支持 `records_imported_path` 这类摘要字段映射和 `write_target` 写入目标，JSONPath 子集支持 `$` 根、点路径、`['key']` / `["key"]` bracket key、数组下标和 `[*]` 通配，动作试运行、定时作业 dry-run、正式运行写入预览和结果写入记录必须复用同一解析口径。真实业务入库仍必须通过对应业务 service 完成；通用结果写入或通知动作使用 `result_actions` 表达。
 

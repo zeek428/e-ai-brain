@@ -63,6 +63,7 @@ __all__ = [
     "BugRepository",
     "CollectorRunRepository",
     "DashboardRepository",
+    "DeploymentRepository",
     "GitlabDailyCodeMetricRepository",
     "GitlabReviewRepository",
     "IterationPlanningRepository",
@@ -593,6 +594,74 @@ class JenkinsReleaseRecordRepository(Protocol):
     ) -> None: ...
 
 
+class DeploymentRepository(Protocol):
+    def load_deployment_requests(self) -> dict[str, Any] | None: ...
+
+    def list_deployment_schemes(
+        self,
+        *,
+        deployment_method: str | None = None,
+        environment: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        scheme_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_deployment_requests(
+        self,
+        *,
+        environment: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        status: str | None = None,
+        version_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_deployment_runs(
+        self,
+        *,
+        deployment_request_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def claim_due_deployment_runs(
+        self,
+        *,
+        lease_seconds: int,
+        limit: int,
+        worker_id: str,
+    ) -> list[dict[str, Any]]: ...
+
+    def save_deployment_scheme_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+        expected_version: int | None = None,
+    ) -> None: ...
+
+    def delete_deployment_scheme_record(
+        self,
+        scheme_id: str,
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None: ...
+
+    def save_deployment_request_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None: ...
+
+    def save_deployment_run_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_events: list[dict[str, Any]] | None = None,
+    ) -> None: ...
+
+
 class OnlineLogMetricRepository(Protocol):
     def load_online_log_metrics(self) -> dict[str, Any] | None: ...
 
@@ -621,6 +690,7 @@ class OperationalMetricReadModelRepository(Protocol):
         self,
         *,
         category: str | None = None,
+        exclude_category: str | None = None,
         name: str | None = None,
         product_scope_ids: list[str] | None = None,
         status: str | None = None,

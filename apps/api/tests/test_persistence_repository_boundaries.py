@@ -92,6 +92,19 @@ def test_postgres_system_state_delegates_to_domain_repository(monkeypatch):
     ]
 
 
+def test_ai_executor_task_product_scope_includes_deployment_runs():
+    repository = PluginReadRepository(lambda: None)
+
+    where, params = repository._ai_executor_task_where(
+        product_scope_ids=["product_scope"],
+    )
+
+    assert "FROM deployment_runs scoped_deployment_run" in where
+    assert "JOIN deployment_requests scoped_deployment" in where
+    assert "scoped_deployment_run.id = ai_executor_tasks.deployment_run_id" in where
+    assert params == [["product_scope"]] * 4
+
+
 def test_postgres_table_maintenance_delegates_to_domain_repository(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
     calls: list[tuple[str, dict]] = []
@@ -244,6 +257,8 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "089_user_password_login_state.sql" in applied_migrations
     assert "090_role_boundary_cleanup.sql" in applied_migrations
     assert "093_bug_fix_task_type.sql" in applied_migrations
+    assert "100_operational_deployment_menu.sql" in applied_migrations
+    assert "101_deployment_strategies.sql" in applied_migrations
 
 
 def test_assistant_action_draft_constraint_migrations_cover_supported_actions():
@@ -2174,6 +2189,7 @@ def test_postgres_devops_read_models_delegate_to_domain_repository(monkeypatch):
     )[0]["source"] == "list_online_logs"
     result = repository.list_operational_metric_items(
         category="GitLab 指标",
+        exclude_category="运维部署",
         name="repo-api",
         page=3,
         page_size=15,
@@ -2218,6 +2234,7 @@ def test_postgres_devops_read_models_delegate_to_domain_repository(monkeypatch):
             "list_operational_metric_items",
             {
                 "category": "GitLab 指标",
+                "exclude_category": "运维部署",
                 "name": "repo-api",
                 "page": 3,
                 "page_size": 15,

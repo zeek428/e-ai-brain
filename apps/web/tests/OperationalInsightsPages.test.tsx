@@ -4,8 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import './proComponentsMock';
 
+import DeploymentsPage from '../src/pages/Deployments';
 import DevopsPage from '../src/pages/Devops';
 import InsightsPage from '../src/pages/Insights';
+import { saveCurrentUser } from '../src/services/aiBrain';
 
 function fillDatePicker(label: string, value: string) {
   const input = screen.getByLabelText(label);
@@ -481,7 +483,7 @@ describe('operational insights pages', () => {
     );
   });
 
-  it('creates and starts deployment requests from the DevOps page', async () => {
+  it('creates and starts deployment requests from the operational deployment page', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
         headers: { 'Content-Type': 'application/json' },
@@ -497,13 +499,38 @@ describe('operational insights pages', () => {
                 category: '运维部署',
                 environment: 'prod',
                 id: 'deployment_request_001',
+                product_id: 'product_deploy',
+                requirement_ids: ['requirement_deploy'],
+                risk_level: 'medium',
                 status: 'pending_ops',
                 title: '生产部署',
                 updated_at: '2026-06-01T12:00:00Z',
+                version_id: 'version_deploy',
               },
             ],
             page: 1,
             page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      if (path.startsWith('/api/devops/deployment-schemes')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'default-manual-prod',
+                deployment_method: 'manual',
+                environment: 'prod',
+                executor_channel: 'manual',
+                id: 'deployment_scheme_manual',
+                is_default: true,
+                name: '默认人工部署',
+                product_id: 'product_deploy',
+                status: 'active',
+                version: 1,
+              },
+            ],
             total: 1,
           },
         });
@@ -584,12 +611,31 @@ describe('operational insights pages', () => {
       return jsonResponse({ data: { items: [], total: 0 } });
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    saveCurrentUser({
+      display_name: 'AI Brain Admin',
+      id: 'user_admin',
+      permissions: [
+        'deployment.read',
+        'deployment.create',
+        'deployment.execute',
+        'deployment.cancel',
+        'deployment.scheme.manage',
+      ],
+      roles: ['admin'],
+      username: 'admin@example.com',
+    });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<DevopsPage />);
+    render(<DeploymentsPage />);
 
+    expect(await screen.findByText('运维部署')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '部署单' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '部署方案' })).toBeInTheDocument();
+    expect(screen.getByText('部署单列表')).toBeInTheDocument();
     expect(await screen.findByText('生产部署')).toBeInTheDocument();
-    expect(screen.getByText('待运维执行')).toBeInTheDocument();
+    expect(screen.getByText('部署平台')).toBeInTheDocument();
+    expect(screen.getByText('v1.0.0')).toBeInTheDocument();
+    expect(screen.getAllByText('待运维执行').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: '发起部署' }));
     await screen.findByRole('dialog', { name: '发起运维部署' });
     await waitFor(() => expect(screen.getByLabelText('部署需求')).not.toBeDisabled());
@@ -603,6 +649,7 @@ describe('operational insights pages', () => {
         '/api/devops/deployments',
         'POST',
         JSON.stringify({
+          deployment_scheme_id: 'deployment_scheme_manual',
           environment: 'prod',
           requirement_ids: ['requirement_deploy'],
           risk_level: 'medium',
@@ -622,9 +669,356 @@ describe('operational insights pages', () => {
       expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
         '/api/devops/deployments/deployment_request_001/start',
         'POST',
-        JSON.stringify({ executor_type: 'manual' }),
+        JSON.stringify({}),
       ]),
     );
+  });
+
+  it('creates a Docker deployment scheme from a ready Runner target', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      if (path.startsWith('/api/devops/operational-metrics')) {
+        return jsonResponse({ data: { items: [], page: 1, page_size: 10, total: 0 } });
+      }
+      if (path === '/api/devops/deployment-schemes' && init?.method === 'POST') {
+        return jsonResponse({
+          data: {
+            code: 'prod-compose',
+            deployment_method: 'docker',
+            environment: 'prod',
+            executor_channel: 'runner',
+            id: 'deployment_scheme_docker',
+            is_default: false,
+            name: '生产 Docker 部署',
+            product_id: 'product_deploy',
+            runner_id: 'ai_executor_runner_003',
+            status: 'active',
+            target_code: 'production-compose',
+            timeout_seconds: 1800,
+            version: 1,
+          },
+        });
+      }
+      if (path.startsWith('/api/devops/deployment-schemes')) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path.startsWith('/api/devops/deployment-runner-targets')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'production-compose',
+                method: 'docker',
+                name: '生产 Compose',
+                ready: true,
+                runner_id: 'ai_executor_runner_003',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path.startsWith('/api/devops/deployment-jenkins-connections')) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path.startsWith('/api/products?active_only=true')) {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'deploy-platform', id: 'product_deploy', name: '部署平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path.startsWith('/api/product-versions?active_only=true')) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    saveCurrentUser({
+      display_name: 'AI Brain Admin',
+      id: 'user_admin',
+      permissions: ['deployment.read', 'deployment.scheme.manage'],
+      roles: ['admin'],
+      username: 'admin@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DeploymentsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '部署方案' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新增部署方案' }));
+    await screen.findByRole('dialog', { name: '新增部署方案' });
+    fireEvent.change(screen.getByLabelText('方案编码'), { target: { value: 'prod-compose' } });
+    fireEvent.change(screen.getByLabelText('方案名称'), { target: { value: '生产 Docker 部署' } });
+    fireEvent.click(screen.getByRole('radio', { name: 'Docker' }));
+    fireEvent.mouseDown((await screen.findByLabelText('Runner')).parentElement as HTMLElement);
+    fireEvent.click(await screen.findByRole('option', { name: 'ai_executor_runner_003' }));
+    await waitFor(() => expect(screen.getByLabelText('部署目标')).not.toBeDisabled());
+    fireEvent.mouseDown(screen.getByLabelText('部署目标').parentElement as HTMLElement);
+    fireEvent.click(await screen.findByRole('option', { name: '生产 Compose' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存部署方案' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/devops/deployment-schemes',
+        'POST',
+        JSON.stringify({
+          code: 'prod-compose',
+          config: {},
+          deployment_method: 'docker',
+          environment: 'prod',
+          is_default: false,
+          name: '生产 Docker 部署',
+          product_id: 'product_deploy',
+          status: 'active',
+          timeout_seconds: 1800,
+          runner_id: 'ai_executor_runner_003',
+          target_code: 'production-compose',
+        }),
+      ]),
+    );
+  });
+
+  it('keeps deployment management read only without deployment action permissions', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const path = String(input);
+      if (path.startsWith('/api/devops/operational-metrics')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                category: '运维部署',
+                environment: 'prod',
+                id: 'deployment_request_read_only',
+                status: 'pending_ops',
+                title: '只读部署单',
+                updated_at: '2026-06-01T12:00:00Z',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-tester');
+    saveCurrentUser({
+      display_name: 'Tester',
+      id: 'user_tester',
+      permissions: ['deployment.read'],
+      roles: ['tester'],
+      username: 'tester@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DeploymentsPage />);
+
+    expect(await screen.findByText('只读部署单')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '发起部署' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '启动' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '取消' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: '部署方案' }));
+    expect(await screen.findByText('部署方案列表')).toBeInTheDocument();
+    const requestedPaths = fetchMock.mock.calls.map(([path]) => String(path));
+    expect(requestedPaths).not.toContain('/api/devops/deployment-runner-targets');
+    expect(requestedPaths).not.toContain('/api/devops/deployment-jenkins-connections');
+    fireEvent.click(screen.getByRole('tab', { name: '部署单' }));
+
+    saveCurrentUser({
+      display_name: 'Tester',
+      id: 'user_tester',
+      permissions: ['deployment.read', 'deployment.create'],
+      roles: ['tester'],
+      username: 'tester@example.com',
+    });
+
+    expect(await screen.findByRole('button', { name: '发起部署' })).toBeInTheDocument();
+  });
+
+  it('shows deployment logs and manually syncs a running Jenkins deployment', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      if (path.startsWith('/api/devops/operational-metrics')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                category: '运维部署',
+                deployment_method: 'jenkins',
+                environment: 'prod',
+                executor_channel: 'integration',
+                id: 'deployment_request_jenkins',
+                product_id: 'product_deploy',
+                requirement_ids: ['requirement_deploy'],
+                risk_level: 'medium',
+                status: 'deploying',
+                title: 'Jenkins 生产部署',
+                updated_at: '2026-06-01T12:00:00Z',
+                version_id: 'version_deploy',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/devops/deployments?product_id=product_deploy') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                deployment_method: 'jenkins',
+                environment: 'prod',
+                executor_channel: 'integration',
+                id: 'deployment_request_jenkins',
+                product_id: 'product_deploy',
+                requirement_ids: ['requirement_deploy'],
+                risk_level: 'medium',
+                runs: [
+                  {
+                    deployment_method: 'jenkins',
+                    executor_channel: 'integration',
+                    executor_type: 'jenkins',
+                    id: 'deployment_run_jenkins',
+                    status: 'running',
+                  },
+                ],
+                status: 'deploying',
+                title: 'Jenkins 生产部署',
+                version_id: 'version_deploy',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (
+        path === '/api/devops/deployments/deployment_request_jenkins/runs/deployment_run_jenkins/logs'
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_at: '2026-06-01T12:01:00Z',
+                level: 'info',
+                message: 'Jenkins Build #42 正在执行',
+                source: 'jenkins',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (
+        path === '/api/devops/deployments/deployment_request_jenkins/runs/deployment_run_jenkins/sync'
+        && init?.method === 'POST'
+      ) {
+        return jsonResponse({
+          data: {
+            deployment: {
+              deployment_method: 'jenkins',
+              environment: 'prod',
+              executor_channel: 'integration',
+              id: 'deployment_request_jenkins',
+              product_id: 'product_deploy',
+              requirement_ids: ['requirement_deploy'],
+              risk_level: 'medium',
+              runs: [],
+              status: 'deploying',
+              title: 'Jenkins 生产部署',
+              version_id: 'version_deploy',
+            },
+            run: { id: 'deployment_run_jenkins', status: 'running' },
+          },
+        });
+      }
+      if (
+        path === '/api/devops/deployments/deployment_request_jenkins/cancel'
+        && init?.method === 'POST'
+      ) {
+        return jsonResponse({
+          data: {
+            deployment_method: 'jenkins',
+            environment: 'prod',
+            executor_channel: 'integration',
+            id: 'deployment_request_jenkins',
+            product_id: 'product_deploy',
+            requirement_ids: ['requirement_deploy'],
+            risk_level: 'medium',
+            runs: [],
+            status: 'cancelling',
+            title: 'Jenkins 生产部署',
+            version_id: 'version_deploy',
+          },
+        });
+      }
+      if (path.startsWith('/api/products?active_only=true')) {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'deploy-platform', id: 'product_deploy', name: '部署平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path.startsWith('/api/product-versions?active_only=true')) {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'v1', id: 'version_deploy', name: 'v1', product_id: 'product_deploy', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    saveCurrentUser({
+      display_name: 'AI Brain Admin',
+      id: 'user_admin',
+      permissions: ['deployment.cancel', 'deployment.execute', 'deployment.read'],
+      roles: ['admin'],
+      username: 'admin@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DeploymentsPage />);
+
+    expect(await screen.findByText('Jenkins 生产部署')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await screen.findByRole('dialog', { name: '取消部署' });
+    fireEvent.click(screen.getByRole('button', { name: '确认部署操作' }));
+    expect(await screen.findByText('取消请求已提交')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '查看部署日志' }));
+    expect(await screen.findByText('Jenkins Build #42 正在执行')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '同步部署状态' }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/devops/deployments/deployment_request_jenkins/runs/deployment_run_jenkins/sync',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    );
+
   });
 
   it('records real online log metrics from the DevOps page', async () => {
@@ -745,12 +1139,17 @@ describe('operational insights pages', () => {
 
     await screen.findByText('日志监控');
     expect(screen.getByText('日志监控指标')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '发起部署' })).not.toBeInTheDocument();
     expect(screen.queryByText('采集运行记录')).not.toBeInTheDocument();
     expect(screen.queryByText('待归属数据队列')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '登记采集运行' })).not.toBeInTheDocument();
     await waitFor(() => {
       const paths = fetchMock.mock.calls.map(([path]) => String(path));
-      expect(paths.some((path) => path.startsWith('/api/devops/operational-metrics'))).toBe(true);
+      const metricsPath = paths.find((path) => path.startsWith('/api/devops/operational-metrics'));
+      expect(metricsPath).toBeDefined();
+      expect(new URL(metricsPath as string, window.location.origin).searchParams.get('exclude_category')).toBe(
+        '运维部署',
+      );
       expect(paths).not.toContain('/api/collectors/runs');
       expect(paths).not.toContain('/api/attribution/pending-items');
     });

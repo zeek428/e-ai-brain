@@ -20,6 +20,7 @@ VIEWER_ASSISTANT_BOUNDARY_MIGRATION = Path(
 )
 VIEWER_PRODUCT_READ_MENU_MIGRATION = Path("app/db/migrations/085_viewer_product_read_menu.sql")
 ROLE_BOUNDARY_CLEANUP_MIGRATION = Path("app/db/migrations/090_role_boundary_cleanup.sql")
+DEPLOYMENT_MENU_MIGRATION = Path("app/db/migrations/100_operational_deployment_menu.sql")
 
 
 def _role_permissions(role_code: str) -> set[str]:
@@ -127,6 +128,52 @@ def test_task_center_menu_resource_is_rd_task_under_delivery():
         for resource in resources.values()
         if resource["parent_code"] == "task"
     )
+
+
+def test_operational_deployment_menu_resource_and_default_grants_are_seeded():
+    resources = {
+        resource["code"]: resource
+        for resource in authorization_repository.COMPATIBILITY_MENU_RESOURCES
+    }
+
+    assert resources["governance.deployments"] == {
+        "code": "governance.deployments",
+        "name": "运维部署",
+        "path": "/governance/deployments",
+        "parent_code": "governance",
+        "menu_type": "page",
+        "sort_order": 52,
+        "required_permissions": ["deployment.read"],
+        "status": "active",
+    }
+    for role_code in {
+        "admin",
+        "product_owner",
+        "rd_owner",
+        "release_owner",
+        "test_owner",
+        "tester",
+    }:
+        assert "governance" in COMPATIBILITY_ROLE_MENU_GRANTS[role_code]
+        assert "governance.deployments" in COMPATIBILITY_ROLE_MENU_GRANTS[role_code]
+
+    sql = DEPLOYMENT_MENU_MIGRATION.read_text(encoding="utf-8")
+    assert "'governance.deployments'" in sql
+    assert "'/governance/deployments'" in sql
+    assert "'[\"deployment.read\"]'::jsonb" in sql
+    for role_code in {
+        "admin",
+        "product_owner",
+        "rd_owner",
+        "release_owner",
+        "test_owner",
+        "tester",
+    }:
+        assert f"('{role_code}', 'governance.deployments')" in sql
+
+    roles_by_code = {role["code"]: role for role in ROLE_DEFINITIONS}
+    for role_code in {"product_owner", "rd_owner", "release_owner", "test_owner", "tester"}:
+        assert "运维部署" in roles_by_code[role_code]["menu_scope"]
 
 
 def test_rbac_menu_move_migration_moves_rd_tasks_under_delivery():
@@ -273,6 +320,7 @@ def test_role_definitions_keep_new_roles_within_reviewed_defaults():
             "deployment.create",
             "deployment.execute",
             "deployment.cancel",
+            "deployment.scheme.manage",
             "assistant.chat",
             "system.scheduled_jobs.run",
             "workspace.read",

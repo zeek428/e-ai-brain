@@ -1,4 +1,4 @@
-import { Form, Input, InputNumber, Select, Space, Typography } from 'antd';
+import { Form, Input, InputNumber, Select, Space, Switch, Typography } from 'antd';
 
 import {
   aiExecutorRunnerArchOptions,
@@ -45,6 +45,14 @@ export function PluginRunnerFormFields({ editingRunner }: { editingRunner: boole
       </Form.Item>
       <Form.Item label="执行器类型" name="executor_types" rules={[{ required: true, message: '请选择至少一个执行器类型' }]}>
         <Select mode="multiple" options={aiExecutorTypeOptions} />
+      </Form.Item>
+      <Form.Item
+        extra="启用后，Runner 可认领绑定到本机白名单目标的 SSH 或 Docker 部署任务。"
+        label="部署执行能力"
+        name="deployment_capability"
+        valuePropName="checked"
+      >
+        <Switch aria-label="部署执行能力" />
       </Form.Item>
       <Typography.Text strong>执行器命令配置</Typography.Text>
       <Space wrap>

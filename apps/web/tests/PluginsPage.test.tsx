@@ -2346,6 +2346,7 @@ describe('PluginsPage', () => {
     fireEvent.change(within(dialog).getByLabelText('OpenClaw 命令'), {
       target: { value: 'openclaw' },
     });
+    fireEvent.click(within(dialog).getByRole('switch', { name: '部署执行能力' }));
     expect(within(dialog).getByLabelText('目标系统')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('CPU 架构')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
@@ -2353,6 +2354,7 @@ describe('PluginsPage', () => {
     await waitFor(() =>
       expect(runnerBodies).toEqual([
         expect.objectContaining({
+          capabilities: ['deployment'],
           executor_types: ['codex', 'openclaw'],
           metadata: expect.objectContaining({
             executor_commands: {

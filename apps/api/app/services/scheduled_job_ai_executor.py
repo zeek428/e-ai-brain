@@ -44,6 +44,42 @@ RUNNER_ACTIVE_STATUSES = {"claimed", "queued", "running"}
 RUNNER_FAILED_STATUSES = {"cancelled", "dead_letter", "failed", "timed_out"}
 
 
+def _execution_actor_snapshot(user: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(user.get("id") or ""),
+        "permissions": [str(item) for item in user.get("permissions") or []],
+        "roles": [str(item) for item in user.get("roles") or []],
+        "scope_summary": [
+            dict(scope)
+            for scope in user.get("scope_summary") or []
+            if isinstance(scope, dict)
+        ],
+    }
+
+
+def _runner_result_actor(
+    *,
+    job: dict[str, Any],
+    runner_id: str,
+    stage_context: dict[str, Any],
+    task: dict[str, Any],
+) -> dict[str, Any]:
+    snapshot = stage_context.get("execution_actor")
+    if isinstance(snapshot, dict) and snapshot.get("id"):
+        return _execution_actor_snapshot(snapshot)
+    product_id = str(job.get("product_id") or "").strip()
+    return {
+        "id": str(task.get("created_by") or runner_id),
+        "permissions": [],
+        "roles": [],
+        "scope_summary": (
+            [{"access_level": "write", "scope_id": product_id, "scope_type": "product"}]
+            if product_id
+            else []
+        ),
+    }
+
+
 def _next_run_after(job: dict[str, Any], timestamp: str | None) -> str | None:
     if not timestamp:
         return job.get("next_run_at")
@@ -255,6 +291,7 @@ def dispatch_scheduled_job_ai_executor_processing(
     request_config = {
         **config,
         AI_EXECUTOR_STAGE_MARKER: {
+            "execution_actor": _execution_actor_snapshot(user),
             "knowledge_references": knowledge_references,
             "output_mapping": output_mapping,
             "output_schema": output_schema,
@@ -466,6 +503,7 @@ def _generic_ai_executor_result_summary(
     resolved_plugin_input_mapping: dict[str, Any],
     runner_node: dict[str, Any],
     source_row_count: int,
+    user: dict[str, Any],
 ) -> tuple[dict[str, Any], int]:
     result_actions, action_records_imported = execute_generic_result_actions(
         current_store=current_store,
@@ -473,6 +511,8 @@ def _generic_ai_executor_result_summary(
         output_json=output_json,
         output_mapping=output_mapping,
         result_actions=job.get("result_actions") or [],
+        scheduled_job_run_id=str(plugin_summary.get("scheduled_job_run_id") or "") or None,
+        user=user,
     )
     records_imported = max(
         action_records_imported,
@@ -749,6 +789,12 @@ def sync_ai_executor_completion_to_scheduled_run(
     source_row_count = int(stage_context.get("source_row_count") or 0)
     plugin_summary = _existing_plugin_summary(run, task)
     runner_node = _runner_node_from_task(task)
+    result_actor = _runner_result_actor(
+        job=job,
+        runner_id=runner_id,
+        stage_context=stage_context,
+        task=task,
+    )
     result_summary = dict(run.get("result_summary") or {})
     execution_nodes = dict(result_summary.get("execution_nodes") or {})
     execution_nodes["runner_execution"] = runner_node
@@ -823,7 +869,7 @@ def sync_ai_executor_completion_to_scheduled_run(
                     processed_json=output_json,
                     resolved_plugin_input_mapping=resolved_plugin_input_mapping,
                     source_row_count=source_row_count,
-                    user={"id": task.get("created_by") or runner_id, "roles": ["admin"]},
+                    user=result_actor,
                 )
             elif job.get("job_type") == "code_repository_inspection":
                 result_summary, records_imported = _code_inspection_ai_executor_result_summary(
@@ -836,7 +882,7 @@ def sync_ai_executor_completion_to_scheduled_run(
                     runner_node=runner_node,
                     run=run,
                     source_finding_count=source_row_count,
-                    user={"id": task.get("created_by") or runner_id, "roles": ["admin"]},
+                    user=result_actor,
                 )
             else:
                 result_summary, records_imported = _generic_ai_executor_result_summary(
@@ -851,6 +897,7 @@ def sync_ai_executor_completion_to_scheduled_run(
                     resolved_plugin_input_mapping=resolved_plugin_input_mapping,
                     runner_node=runner_node,
                     source_row_count=source_row_count,
+                    user=result_actor,
                 )
             result_summary.setdefault("execution_nodes", {})["runner_execution"] = runner_node
             run_status = "succeeded"

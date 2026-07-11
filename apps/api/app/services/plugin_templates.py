@@ -545,6 +545,17 @@ STANDARD_PLUGINS = [
         "status": "active",
     },
     {
+        "category": "devops",
+        "code": "jenkins",
+        "description": "官方标准 Jenkins 插件，用于触发参数化发布任务并同步队列、构建和取消状态。",
+        "id": "plugin_standard_jenkins",
+        "is_system": True,
+        "name": "Jenkins",
+        "protocol": "http",
+        "risk_level": "high",
+        "status": "active",
+    },
+    {
         "category": "collaboration",
         "code": "email",
         "description": (
@@ -632,6 +643,12 @@ STANDARD_PLUGIN_MARKETPLACE_METADATA = {
             "产品反馈趋势分析",
         ],
         "summary": "只读读取 AI Brain 内部业务数据，作为定时作业和 AI 处理的数据输入。",
+    },
+    "jenkins": {
+        "action_templates": ["触发参数化部署", "同步构建状态", "取消部署"],
+        "publisher": "AI Brain 官方",
+        "recommended_scenarios": ["生产发布", "测试环境部署", "构建状态同步"],
+        "summary": "连接 Jenkins API，触发受控 Job，并同步队列、构建和取消结果。",
     },
     "gitlab": {
         "action_templates": ["GitLab 代码巡检", "GitLab MR / 项目读取"],
@@ -746,6 +763,21 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
                 "window_start": "{{current_date-30}}",
             },
         },
+        "status": "active",
+        "timeout_seconds": 30,
+    },
+    "jenkins": {
+        "auth_config": {
+            "password_ref": "env:JENKINS_API_TOKEN",
+            "username": "jenkins-bot",
+        },
+        "auth_type": "basic",
+        "endpoint_url": "https://jenkins.example.com",
+        "environment": "prod",
+        "max_retries": 1,
+        "name": "生产 Jenkins 连接",
+        "protocol": "http",
+        "request_config": {},
         "status": "active",
         "timeout_seconds": 30,
     },
@@ -1126,6 +1158,34 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                     },
                 ],
             },
+        ],
+    },
+    "jenkins": {
+        "schema_version": "v1",
+        "sections": [
+            {
+                "key": "connection",
+                "title": "Jenkins 连接",
+                "fields": [
+                    {
+                        "key": "username",
+                        "label": "用户名",
+                        "path": "auth_config.username",
+                        "required": True,
+                        "type": "text",
+                    },
+                    {
+                        "description": "仅保存 env: 环境变量引用，不保存 API Token 明文。",
+                        "key": "password_ref",
+                        "label": "API Token 引用",
+                        "path": "auth_config.password_ref",
+                        "placeholder": "env:JENKINS_API_TOKEN",
+                        "required": True,
+                        "secret": True,
+                        "type": "secret_ref",
+                    },
+                ],
+            }
         ],
     },
 }

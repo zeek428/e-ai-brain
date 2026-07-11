@@ -204,10 +204,19 @@ export type ScheduledJobRecord = {
 
 export type ScheduledJobResultAction = {
   channels?: string[];
+  content_template?: string;
+  document_id?: string;
+  max_items?: number;
+  plugin_action_id?: string;
+  plugin_connection_id?: string;
+  priority?: string;
   recipients?: string[];
+  requirements_path?: string;
   severity_threshold?: string;
+  source?: string;
   type: string;
   webhook_url?: string;
+  write_mode?: string;
 };
 
 export type ScheduledJobCatalogOption = {
@@ -758,6 +767,7 @@ export type PluginInvocationLogRecord = {
 };
 
 export type AiExecutorRunnerRecord = {
+  capabilities?: string[];
   created_at?: string | null;
   endpoint_url?: string;
   executor_types?: string[];
