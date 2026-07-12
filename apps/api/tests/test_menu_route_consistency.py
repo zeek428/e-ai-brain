@@ -12,6 +12,7 @@ CRITICAL_MENU_PATHS = {
     "code_inspection.reports": "/governance/code-inspections",
     "delivery.rd_executor_policies": "/delivery/rd-executor-policies",
     "diagnostics.execution_traces": "/governance/execution-traces",
+    "governance.worker_operations": "/governance/worker-operations",
     "system.ai_capabilities": "/tasks/ai-capabilities",
     "system.execution_resources": "/system/execution-resources",
     "system.menus": "/system/menus",

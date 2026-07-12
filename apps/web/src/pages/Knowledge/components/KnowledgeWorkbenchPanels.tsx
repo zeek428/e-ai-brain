@@ -17,6 +17,7 @@ import type {
   KnowledgeFolderRecord,
   KnowledgeImportJobRecord,
   KnowledgeImportWorkerStatusRecord,
+  KnowledgeProcessingProfileRecord,
   KnowledgeQualityFeedbackValue,
   KnowledgeRagAnswerRecord,
   KnowledgeRagCitationRecord,
@@ -29,6 +30,7 @@ import type {
   KnowledgeWorkbenchTab,
 } from '../types';
 import type { KnowledgeIndexHealthState } from './KnowledgeIndexHealthPanel';
+import { KnowledgeVisualSearchPanel } from './KnowledgeVisualSearchPanel';
 
 const { Text } = Typography;
 
@@ -48,6 +50,7 @@ type KnowledgeWorkbenchPanelsProps = {
   knowledgeHealthPanel: ReactNode;
   knowledgeHealthState: KnowledgeIndexHealthState;
   processingGovernancePanel: ReactNode;
+  processingProfiles: KnowledgeProcessingProfileRecord[];
   listRows: KnowledgeRecord[];
   listTotal: number;
   onCreateFolder: () => void;
@@ -99,6 +102,7 @@ export function KnowledgeWorkbenchPanels({
   knowledgeHealthPanel,
   knowledgeHealthState,
   processingGovernancePanel,
+  processingProfiles,
   listRows,
   listTotal,
   onCreateFolder,
@@ -521,6 +525,11 @@ export function KnowledgeWorkbenchPanels({
             children: knowledgeQuestionPanel,
             key: 'search',
             label: '问答检索',
+          },
+          {
+            children: <KnowledgeVisualSearchPanel profiles={processingProfiles} />,
+            key: 'visual',
+            label: '图片检索',
           },
           {
             children: knowledgeHealthPanel,

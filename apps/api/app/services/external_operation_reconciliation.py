@@ -35,6 +35,7 @@ def record_external_operation(
     operation_type: str,
     product_id: str,
     provider: str,
+    reference: dict[str, Any] | None = None,
     status: str,
 ) -> dict[str, Any]:
     existing = next(
@@ -56,6 +57,7 @@ def record_external_operation(
         "operation_type": operation_type,
         "product_id": product_id,
         "provider": provider,
+        "reference": dict(reference or {}),
         "status": status,
         "updated_at": now,
     }

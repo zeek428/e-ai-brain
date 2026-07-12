@@ -11,7 +11,10 @@ from app.core.persistence import PostgresRuntimeStore, PostgresSnapshotRepositor
 from app.services.deployment_sync_worker import sync_due_jenkins_deployments
 from app.services.execution_worker_observability import record_execution_worker_heartbeat
 from app.services.external_event_inbox import process_external_event_inbox_events
-from app.services.operational_deployments import process_execution_outbox_events
+from app.services.operational_deployments import (
+    process_execution_outbox_events,
+    reconcile_platform_external_operations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +36,20 @@ def run_execution_worker_iteration(
         current_store,
         worker_id=worker_id,
     )
+    supports_reconciliation = hasattr(current_store, "repository") or hasattr(
+        current_store,
+        "external_operations",
+    )
+    reconciliation_count = (
+        len(reconcile_platform_external_operations(current_store, actor_id=worker_id))
+        if supports_reconciliation
+        else 0
+    )
     counts = {
         "external_event_count": external_event_count,
         "jenkins_sync_count": jenkins_sync_count,
         "outbox_count": outbox_count,
+        "reconciliation_count": reconciliation_count,
     }
     record_execution_worker_heartbeat(current_store, counts=counts, worker_id=worker_id)
     return counts

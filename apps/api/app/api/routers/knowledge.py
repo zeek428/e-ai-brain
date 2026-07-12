@@ -69,7 +69,10 @@ from app.services.knowledge_quality import (
 )
 from app.services.knowledge_rag import knowledge_rag_response
 from app.services.knowledge_search import knowledge_search_response
-from app.services.knowledge_visual_search import visual_search_response
+from app.services.knowledge_visual_search import (
+    visual_search_response,
+    visual_search_with_image_response,
+)
 
 router = APIRouter(tags=["knowledge"])
 settings = get_settings()
@@ -104,6 +107,28 @@ def search_knowledge_visually(
         visual_search_response(
             current_store=store(request),
             query_embedding=payload.query_embedding,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/knowledge/search/visual-file")
+async def search_knowledge_visually_with_file(
+    request: Request,
+    file: Annotated[UploadFile, File()],
+    processing_profile_id: Annotated[str, Form()],
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_any_permission_or_roles(user, {"knowledge.read"}, {"knowledge_owner", "rd_owner"})
+    content = await file.read(10 * 1024 * 1024 + 1)
+    return envelope(
+        visual_search_with_image_response(
+            content=content,
+            current_store=store(request),
+            filename=file.filename or "visual-query",
+            mime_type=file.content_type or "application/octet-stream",
+            processing_profile_id=processing_profile_id,
             user=user,
         ),
         get_trace_id(request),

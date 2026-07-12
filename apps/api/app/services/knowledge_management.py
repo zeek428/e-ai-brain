@@ -1555,6 +1555,27 @@ def run_knowledge_import_job_result(
             user=user,
         )
         put_knowledge_asset_to_memory(current_store, parsed_asset)
+        if parsed.get("visual_embeddings"):
+            from app.services.knowledge_visual_search import save_knowledge_visual_embedding
+
+            for visual_embedding in parsed["visual_embeddings"]:
+                save_knowledge_visual_embedding(
+                    current_store,
+                    {
+                        "asset_id": source_asset["id"],
+                        "bounding_box": visual_embedding.get("bounding_box"),
+                        "document_id": document["id"],
+                        "document_version_id": running_job.get("document_version_id"),
+                        "embedding": visual_embedding["embedding"],
+                        "id": current_store.new_id("knowledge_visual_embedding"),
+                        "page_number": visual_embedding.get("page_number"),
+                        "product_id": document.get("product_id"),
+                        "processing_profile_id": (
+                            processing_profile.get("id") if processing_profile else None
+                        ),
+                        "created_at": timestamp,
+                    },
+                )
         chunk_set_id = current_store.new_id("knowledge_chunk_set")
         chunk_set = {
             "id": chunk_set_id,
@@ -2224,6 +2245,17 @@ def asset_preview_result(
         required="read",
     )
     content = object_storage().get_bytes(bucket=asset["bucket"], object_key=asset["object_key"])
+    mime_type = str(asset.get("mime_type") or "")
+    if mime_type.startswith("image/"):
+        if len(content) > 5 * 1024 * 1024:
+            raise api_error(413, "PAYLOAD_TOO_LARGE", "Image preview exceeds 5 MB")
+        import base64
+
+        return {
+            "asset": dict(asset),
+            "content_base64": base64.b64encode(content).decode("ascii"),
+            "preview_type": "image",
+        }
     text_content = content.decode("utf-8", errors="replace")
     return {
         "asset": dict(asset),

@@ -64,4 +64,5 @@ export type KnowledgeWorkbenchTab =
   | 'governance'
   | 'imports'
   | 'processing'
-  | 'search';
+  | 'search'
+  | 'visual';

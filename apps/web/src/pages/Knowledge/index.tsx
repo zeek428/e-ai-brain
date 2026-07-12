@@ -1607,6 +1607,7 @@ export default function KnowledgePage() {
       knowledgeHealthPanel={knowledgeHealthPanel}
       knowledgeHealthState={knowledgeHealthState}
       processingGovernancePanel={knowledgeProcessingGovernancePanel}
+      processingProfiles={processingProfiles}
       listRows={listState.rows}
       listTotal={listState.total}
       onCreateFolder={() => setIsFolderModalOpen(true)}

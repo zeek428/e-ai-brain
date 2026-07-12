@@ -133,6 +133,21 @@ export type KnowledgeAssetRecord = {
   storageProvider?: string;
 };
 
+export type KnowledgeVisualSearchResultRecord = {
+  assetId?: string;
+  boundingBox?: number[] | null;
+  documentId: string;
+  pageNumber?: number | null;
+  score: number;
+};
+
+export type KnowledgeAssetPreview = {
+  asset: KnowledgeAssetRecord;
+  content?: string;
+  contentBase64?: string;
+  previewType: 'image' | 'text';
+};
+
 export type KnowledgeImportJobRecord = {
   assetFilename?: string;
   chunkStrategy?: string;
@@ -394,6 +409,14 @@ type KnowledgeAssetListItem = {
   page_number?: number;
   provider_metadata?: Record<string, unknown>;
   bounding_boxes?: unknown[];
+};
+
+type KnowledgeVisualSearchResultItem = {
+  asset_id?: string;
+  bounding_box?: number[] | null;
+  document_id: string;
+  page_number?: number | null;
+  score: number;
 };
 
 type KnowledgeImportJobListItem = {
@@ -698,6 +721,18 @@ function mapKnowledgeAsset(item: KnowledgeAssetListItem): KnowledgeAssetRecord {
     pageNumber: item.page_number,
     providerMetadata: item.provider_metadata,
     boundingBoxes: item.bounding_boxes,
+  };
+}
+
+function mapKnowledgeVisualSearchResult(
+  item: KnowledgeVisualSearchResultItem,
+): KnowledgeVisualSearchResultRecord {
+  return {
+    assetId: item.asset_id,
+    boundingBox: item.bounding_box,
+    documentId: item.document_id,
+    pageNumber: item.page_number,
+    score: item.score,
   };
 }
 
@@ -1173,6 +1208,40 @@ export async function fetchKnowledgeDocumentAssets(
     { token },
   );
   return assets.items.map(mapKnowledgeAsset);
+}
+
+export async function fetchKnowledgeAssetPreview(assetId: string): Promise<KnowledgeAssetPreview> {
+  const token = requireAccessToken();
+  const response = await apiRequest<{
+    asset: KnowledgeAssetListItem;
+    content?: string;
+    content_base64?: string;
+    preview_type: 'image' | 'text';
+  }>(`/api/knowledge/assets/${assetId}/preview`, { token });
+  return {
+    asset: mapKnowledgeAsset(response.asset),
+    content: response.content,
+    contentBase64: response.content_base64,
+    previewType: response.preview_type,
+  };
+}
+
+export async function searchKnowledgeVisuallyWithFile(
+  file: File,
+  processingProfileId: string,
+): Promise<{ items: KnowledgeVisualSearchResultRecord[]; queryProfileId: string }> {
+  const token = requireAccessToken();
+  const formData = new FormData();
+  formData.set('file', file);
+  formData.set('processing_profile_id', processingProfileId);
+  const response = await apiFormRequest<{
+    items: KnowledgeVisualSearchResultItem[];
+    query_profile_id: string;
+  }>('/api/knowledge/search/visual-file', { body: formData, token });
+  return {
+    items: response.items.map(mapKnowledgeVisualSearchResult),
+    queryProfileId: response.query_profile_id,
+  };
 }
 
 export async function fetchKnowledgeDocumentVersions(

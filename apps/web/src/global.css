@@ -428,6 +428,26 @@ body {
   border-top: 1px solid #eef2f7;
 }
 
+.knowledge-visual-search-panel {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  width: 100%;
+}
+
+.knowledge-visual-search-panel .ant-table-wrapper {
+  min-width: 0;
+}
+
+.knowledge-visual-dropzone {
+  align-items: center;
+  border: 1px dashed #91caff;
+  display: flex;
+  gap: 10px;
+  min-height: 72px;
+  padding: 16px;
+}
+
 .knowledge-health-summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

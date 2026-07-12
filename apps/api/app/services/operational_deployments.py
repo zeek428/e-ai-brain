@@ -2760,14 +2760,25 @@ def process_execution_outbox_events(
             from app.services.external_operation_reconciliation import record_external_operation
 
             payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            product_id = str(payload.get("product_id") or "")
+            provider = str(payload.get("provider") or payload.get("executor_channel") or "")
+            if event.get("aggregate_type") == "deployment_request":
+                try:
+                    deployment, _ = _outbox_deployment_and_run(current_store, event)
+                    product_id = product_id or str(deployment.get("product_id") or "")
+                    provider = provider or str(deployment.get("executor_channel") or "")
+                except Exception:  # noqa: BLE001 - the dispatch path remains the authoritative error.
+                    pass
             external_operation = record_external_operation(
                 current_store,
                 idempotency_key=str(event.get("idempotency_key") or event["id"]),
                 operation_type=str(event.get("event_type")),
-                product_id=str(payload.get("product_id") or ""),
-                provider=str(
-                    payload.get("provider") or payload.get("executor_channel") or "runner"
-                ),
+                product_id=product_id,
+                provider=provider or "runner",
+                reference={
+                    "deployment_request_id": payload.get("deployment_request_id"),
+                    "deployment_run_id": payload.get("deployment_run_id"),
+                },
                 status="reconciling",
             )
         try:
@@ -2848,6 +2859,74 @@ def process_execution_outbox_events(
                     worker_id=worker_id,
                 )
     return processed
+
+
+def reconcile_platform_external_operations(
+    current_store: Any,
+    *,
+    actor_id: str,
+) -> list[dict[str, Any]]:
+    """Read-only provider reconciliation for uncertain dispatches; never re-dispatches work."""
+    from app.services.external_operation_reconciliation import reconcile_external_operations
+
+    def provider_lookup(operation: dict[str, Any]) -> dict[str, Any]:
+        reference = (
+            operation.get("reference") if isinstance(operation.get("reference"), dict) else {}
+        )
+        deployment_request_id = str(reference.get("deployment_request_id") or "")
+        deployment_run_id = str(reference.get("deployment_run_id") or "")
+        runner_task = _existing_runner_task_for_outbox(
+            current_store,
+            str(operation.get("idempotency_key") or ""),
+        )
+        if runner_task is not None:
+            status = str(runner_task.get("status") or "")
+            if status == "succeeded":
+                return {"provider_status": "succeeded", "receipt": f"runner:{runner_task['id']}"}
+            if status in {"cancelled", "failed", "timed_out", "dead_letter"}:
+                return {
+                    "provider_status": "failed",
+                    "receipt": f"runner:{runner_task['id']}:{status}",
+                }
+            return {"provider_status": "unknown", "receipt": f"runner:{runner_task['id']}:{status}"}
+        if not deployment_request_id or not deployment_run_id:
+            return {"provider_status": "unknown", "receipt": "provider reference unavailable"}
+        try:
+            deployment, run = _outbox_deployment_and_run(
+                current_store,
+                {
+                    "aggregate_id": deployment_request_id,
+                    "payload": {"deployment_run_id": deployment_run_id},
+                },
+            )
+            if deployment.get("deployment_method") == "jenkins":
+                from app.services.jenkins_deployments import sync_jenkins_deployment
+
+                run = sync_jenkins_deployment(
+                    current_store=current_store,
+                    deployment_request_id=deployment_request_id,
+                    deployment_run_id=deployment_run_id,
+                    actor_id=actor_id,
+                )["run"]
+            status = str(run.get("status") or "")
+            if status in {"succeeded", "rolled_back"}:
+                return {
+                    "provider_status": "succeeded",
+                    "receipt": f"deployment:{deployment_run_id}:{status}",
+                }
+            if status in {"failed", "cancelled"}:
+                return {
+                    "provider_status": "failed",
+                    "receipt": f"deployment:{deployment_run_id}:{status}",
+                }
+            return {
+                "provider_status": "unknown",
+                "receipt": f"deployment:{deployment_run_id}:{status}",
+            }
+        except Exception as exc:  # noqa: BLE001 - unknown state must remain non-retryable.
+            return {"provider_status": "unknown", "receipt": f"lookup:{type(exc).__name__}"}
+
+    return reconcile_external_operations(current_store, provider_lookup=provider_lookup)
 
 
 def _queue_followup_deployment_operation(

@@ -31,6 +31,8 @@ import {
 
 export { ApiRequestError, apiRequest };
 export type { RemoteListPerformance, RemoteListQueryEcho };
+export { fetchExecutionOperationsOverview, reconcileExecutionOperations } from './executionOperationsClient';
+export type { ExecutionOperationRecord, ExecutionOperationsOverview } from './executionOperationsClient';
 export {
   AUTH_STATE_EVENT,
   buildDingTalkStartUrl,
@@ -291,6 +293,7 @@ export {
   fetchKnowledgeChunkSets,
   fetchKnowledgeDeposits,
   fetchKnowledgeDocumentAssets,
+  fetchKnowledgeAssetPreview,
   fetchKnowledgeDocumentVersions,
   fetchKnowledgeFolders,
   fetchKnowledgeIndexHealth,
@@ -298,6 +301,7 @@ export {
   fetchKnowledgeImportWorkerStatus,
   fetchKnowledgeProcessingProfiles,
   fetchKnowledgeSearchResults,
+  searchKnowledgeVisuallyWithFile,
   fetchKnowledgeSpaces,
   fetchKnowledgeStaleness,
   fetchManagementKnowledge,
@@ -318,6 +322,7 @@ export {
 } from './knowledgeClient';
 export type {
   KnowledgeAssetRecord,
+  KnowledgeAssetPreview,
   KnowledgeCitationFeedbackRecord,
   KnowledgeChunkRecord,
   KnowledgeChunkSetRecord,
@@ -338,6 +343,7 @@ export type {
   KnowledgeQualityFeedbackValue,
   KnowledgeQualityEventRecord,
   KnowledgeProcessingProfileRecord,
+  KnowledgeVisualSearchResultRecord,
   KnowledgeRagAnswerRecord,
   KnowledgeRagCitationRecord,
   KnowledgeSearchResultRecord,

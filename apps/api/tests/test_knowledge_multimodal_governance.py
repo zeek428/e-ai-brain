@@ -55,6 +55,13 @@ class FakeMultimodalProvider:
                 "model": "fake-vision-v1",
                 "request_id": "provider-request-001",
             },
+            "image_embeddings": [
+                {
+                    "bounding_box": [20, 30, 600, 420],
+                    "embedding": [1.0, 0.0],
+                    "page_number": 1,
+                }
+            ],
         }
 
 
@@ -144,6 +151,9 @@ def test_multimodal_processing_versions_search_feedback_and_staleness(monkeypatc
     ).json()["data"]["items"]
     assert {chunk["modality"] for chunk in chunks} >= {"image", "table", "text"}
     assert {chunk["document_version_id"] for chunk in chunks} == {version_id}
+    visual_embeddings = app.state.store.knowledge_visual_embeddings
+    assert len(visual_embeddings) == 1
+    assert next(iter(visual_embeddings.values()))["document_version_id"] == version_id
 
     search_response = client.post(
         "/api/knowledge/search",

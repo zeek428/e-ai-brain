@@ -214,6 +214,7 @@ def build_multimodal_parse_result(
     normalized_tables: list[dict[str, Any]] = []
     image_annotations: list[dict[str, Any]] = []
     sidecar_assets: list[dict[str, Any]] = []
+    visual_embeddings: list[dict[str, Any]] = []
     modalities: set[str] = set()
 
     for page_index, raw_page in enumerate(pages, start=1):
@@ -367,6 +368,25 @@ def build_multimodal_parse_result(
                 "provider_metadata": provider_metadata,
             }
         )
+    raw_visual_embeddings = provider_result.get("image_embeddings")
+    if isinstance(raw_visual_embeddings, list):
+        for raw_embedding in raw_visual_embeddings:
+            if not isinstance(raw_embedding, dict):
+                continue
+            embedding = raw_embedding.get("embedding")
+            if not isinstance(embedding, list) or not embedding or len(embedding) > 4096:
+                continue
+            try:
+                vector = [float(value) for value in embedding]
+            except (TypeError, ValueError):
+                continue
+            visual_embeddings.append(
+                {
+                    "bounding_box": raw_embedding.get("bounding_box") or raw_embedding.get("bbox"),
+                    "embedding": vector,
+                    "page_number": raw_embedding.get("page_number") or raw_embedding.get("page"),
+                }
+            )
     return {
         "asset_type": "parsed_markdown",
         "content": "\n\n".join(markdown_sections),
@@ -382,6 +402,7 @@ def build_multimodal_parse_result(
         "provider_metadata": provider_metadata,
         "sidecar_assets": sidecar_assets,
         "source_map": source_map,
+        "visual_embeddings": visual_embeddings,
     }
 
 

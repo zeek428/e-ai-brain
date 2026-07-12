@@ -188,6 +188,12 @@ const routes = [
         component: './ExecutionTraces',
       },
       {
+        path: '/governance/worker-operations',
+        name: 'Worker 运维',
+        icon: 'ClusterOutlined',
+        component: './WorkerOperations',
+      },
+      {
         path: '/governance/code-inspections',
         name: '代码巡检',
         icon: 'CodeOutlined',

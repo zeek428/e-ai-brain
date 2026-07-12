@@ -49,6 +49,7 @@ def test_execution_worker_iteration_processes_outbox_and_jenkins_sync(monkeypatc
         "external_event_count": 4,
         "jenkins_sync_count": 3,
         "outbox_count": 2,
+        "reconciliation_count": 0,
     }
     assert calls == [
         ("outbox", "execution-worker-test"),
