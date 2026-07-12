@@ -7,6 +7,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.api.deps import api_error
+from app.services.agent_budget_governance import (
+    evaluate_agent_circuit_breaker,
+    reserve_agent_budget,
+)
 from app.services.ai_executor_task_creation import create_ai_executor_task
 from app.services.execution_context_manifests import (
     build_and_save_execution_context_manifest,
@@ -59,11 +63,7 @@ def _loop_and_iterations(
     if callable(list_runs) and callable(list_iterations):
         runs = list(list_runs(ai_task_id=ai_task_id))
         run = next(
-            (
-                item
-                for item in runs
-                if loop_run_id is None or item.get("id") == loop_run_id
-            ),
+            (item for item in runs if loop_run_id is None or item.get("id") == loop_run_id),
             None,
         )
         return run, list(list_iterations(run["id"])) if run else []
@@ -161,6 +161,13 @@ def start_agent_loop(
         },
     )
     _save_loop_bundle(current_store, audit_events=[audit], iterations=[iteration], run=run)
+    budget_ledger = reserve_agent_budget(
+        current_store,
+        ai_task_id=task["id"],
+        cost_budget=run.get("cost_budget"),
+        token_budget=run.get("token_budget"),
+    )
+    run["budget_ledger_id"] = budget_ledger["id"]
     return deepcopy(run), deepcopy(iteration)
 
 
@@ -185,10 +192,7 @@ def attach_agent_loop_coding_task(
 def _tokens_and_cost(result: dict[str, Any]) -> tuple[int, float]:
     usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
     token_usage = int(
-        result.get("token_usage")
-        or result.get("tokens_used")
-        or usage.get("total_tokens")
-        or 0
+        result.get("token_usage") or result.get("tokens_used") or usage.get("total_tokens") or 0
     )
     if token_usage <= 0:
         match = TOKEN_USAGE_PATTERN.search(str(result.get("output_preview") or ""))
@@ -221,9 +225,7 @@ def record_agent_coding_completed(
         else {}
     )
     agent_iteration = (
-        result.get("agent_iteration")
-        if isinstance(result.get("agent_iteration"), dict)
-        else {}
+        result.get("agent_iteration") if isinstance(result.get("agent_iteration"), dict) else {}
     )
     token_usage, cost_amount = _tokens_and_cost(result)
     now = datetime.now(UTC).isoformat()
@@ -234,8 +236,7 @@ def record_agent_coding_completed(
             "quality_gate_run_id": quality_gate_run_id,
             "status": "verifying",
             "plan": agent_iteration.get("plan") or {},
-            "change_summary": agent_iteration.get("change_summary")
-            or result.get("summary"),
+            "change_summary": agent_iteration.get("change_summary") or result.get("summary"),
             "test_evidence": agent_iteration.get("test_evidence") or [],
             "token_usage": token_usage,
             "cost_amount": cost_amount,
@@ -281,9 +282,7 @@ def _elapsed_seconds(started_at: Any, now: datetime) -> float:
 def _retry_stop_reason(run: dict[str, Any], now: datetime) -> str | None:
     if int(run.get("current_iteration") or 0) >= int(run.get("max_iterations") or 1):
         return "max_iterations_reached"
-    if _elapsed_seconds(run.get("started_at"), now) >= int(
-        run.get("max_duration_seconds") or 3600
-    ):
+    if _elapsed_seconds(run.get("started_at"), now) >= int(run.get("max_duration_seconds") or 3600):
         return "max_duration_reached"
     token_budget = run.get("token_budget")
     if token_budget is not None and int(run.get("token_used") or 0) >= int(token_budget):
@@ -319,17 +318,18 @@ def handle_agent_quality_gate_outcome(
         for reason in quality_gate_run.get("blocked_reasons") or []
         if isinstance(reason, dict)
     }
+    failure_fingerprint = "|".join(sorted(reason_codes)) or None
     iteration.update(
         {
             "status": "passed" if quality_gate_run.get("status") == "passed" else "failed",
             "failure_analysis": {
                 "blocked_reasons": quality_gate_run.get("blocked_reasons") or [],
+                "failure_fingerprint": failure_fingerprint,
                 "summary": quality_gate_run.get("summary"),
             },
+            "failure_fingerprint": failure_fingerprint,
             "verification_summary": {
-                "independent_evidence_count": quality_gate_run.get(
-                    "independent_evidence_count"
-                ),
+                "independent_evidence_count": quality_gate_run.get("independent_evidence_count"),
                 "quality_gate_run_id": quality_gate_run["id"],
                 "status": quality_gate_run.get("status"),
             },
@@ -338,21 +338,16 @@ def handle_agent_quality_gate_outcome(
         }
     )
     if quality_gate_run.get("status") == "passed":
-        auto_commit = str(
-            (executor_policy or {}).get("code_change_review_mode") or "manual_review"
-        ) == "auto_commit"
-        complete_without_review = auto_commit and quality_gate_allows_auto_merge(
-            quality_gate_run
+        auto_commit = (
+            str((executor_policy or {}).get("code_change_review_mode") or "manual_review")
+            == "auto_commit"
         )
+        complete_without_review = auto_commit and quality_gate_allows_auto_merge(quality_gate_run)
         run.update(
             {
                 "status": "succeeded" if complete_without_review else "waiting_review",
-                "stop_reason": None
-                if complete_without_review
-                else "manual_review_required",
-                "finished_at": now
-                if complete_without_review
-                else None,
+                "stop_reason": None if complete_without_review else "manual_review_required",
+                "finished_at": now if complete_without_review else None,
                 "updated_at": now,
                 "version": int(run.get("version") or 1) + 1,
             }
@@ -364,7 +359,12 @@ def handle_agent_quality_gate_outcome(
         }
 
     safety_stop = bool(reason_codes.intersection(SAFETY_STOP_REASON_CODES))
-    stop_reason = "safety_boundary_triggered" if safety_stop else _retry_stop_reason(run, now_dt)
+    circuit_open = evaluate_agent_circuit_breaker(iterations)
+    stop_reason = (
+        "safety_boundary_triggered"
+        if safety_stop
+        else circuit_open or _retry_stop_reason(run, now_dt)
+    )
     if stop_reason:
         run.update(
             {
@@ -416,10 +416,13 @@ def handle_agent_quality_gate_outcome(
         if isinstance(previous_result.get("workspace_isolation"), dict)
         else {}
     )
-    previous_manifest = execution_context_manifest_for_task(
-        current_store,
-        task_id=ai_task["id"],
-    ) or {}
+    previous_manifest = (
+        execution_context_manifest_for_task(
+            current_store,
+            task_id=ai_task["id"],
+        )
+        or {}
+    )
     permission = previous_manifest.get("permission_snapshot") or {}
     manifest_user = {
         "id": ai_task.get("created_by") or "system",
@@ -549,9 +552,7 @@ def latest_agent_loop_for_task(
     list_runs = getattr(repository, "list_agent_loop_runs", None)
     list_iterations = getattr(repository, "list_agent_loop_iterations", None)
     if callable(list_runs) and callable(list_iterations):
-        runs = list(
-            list_runs(ai_task_id=task_id, product_scope_ids=product_scope_ids)
-        )
+        runs = list(list_runs(ai_task_id=task_id, product_scope_ids=product_scope_ids))
         if not runs:
             return None
         run = runs[0]

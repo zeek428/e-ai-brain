@@ -92,6 +92,8 @@ def _require_merge_gate(
         or gate.get("status") != "passed"
         or gate.get("blocked_reasons")
         or int(gate.get("independent_evidence_count") or 0) < 1
+        or int(gate.get("verified_attestation_count") or 0) < 1
+        or not gate.get("verifier_trust_isolated")
     ):
         raise api_error(
             409,

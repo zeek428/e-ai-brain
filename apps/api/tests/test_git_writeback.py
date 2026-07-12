@@ -67,6 +67,8 @@ def _store() -> MemoryStore:
             "status": "passed",
             "blocked_reasons": [],
             "independent_evidence_count": 2,
+            "verified_attestation_count": 1,
+            "verifier_trust_isolated": True,
         },
         "quality_gate_failed": {
             "id": "quality_gate_failed",

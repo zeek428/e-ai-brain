@@ -9,6 +9,7 @@ from typing import Any
 from app.core.config import Settings, get_settings
 from app.core.persistence import PostgresRuntimeStore, PostgresSnapshotRepository
 from app.services.deployment_sync_worker import sync_due_jenkins_deployments
+from app.services.execution_worker_observability import record_execution_worker_heartbeat
 from app.services.external_event_inbox import process_external_event_inbox_events
 from app.services.operational_deployments import process_execution_outbox_events
 
@@ -32,11 +33,13 @@ def run_execution_worker_iteration(
         current_store,
         worker_id=worker_id,
     )
-    return {
+    counts = {
         "external_event_count": external_event_count,
         "jenkins_sync_count": jenkins_sync_count,
         "outbox_count": outbox_count,
     }
+    record_execution_worker_heartbeat(current_store, counts=counts, worker_id=worker_id)
+    return counts
 
 
 def build_execution_worker_store(settings: Settings) -> PostgresRuntimeStore:
