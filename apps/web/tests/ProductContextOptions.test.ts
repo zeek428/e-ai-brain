@@ -38,7 +38,7 @@ describe('product context option services', () => {
           },
         });
       }
-      if (path === '/api/product-versions?active_only=true&page_size=100') {
+      if (path === '/api/product-versions?page_size=100') {
         return jsonResponse({
           data: {
             items: [
@@ -47,7 +47,7 @@ describe('product context option services', () => {
                 id: 'version_a',
                 name: '版本 A',
                 product_id: 'product_a',
-                status: 'active',
+                status: 'testing',
               },
             ],
             page: 1,
@@ -56,7 +56,7 @@ describe('product context option services', () => {
           },
         });
       }
-      if (path === '/api/product-versions?active_only=true&page_size=100&page=2') {
+      if (path === '/api/product-versions?page_size=100&page=2') {
         return jsonResponse({
           data: {
             items: [
@@ -65,7 +65,7 @@ describe('product context option services', () => {
                 id: 'version_ai_brain',
                 name: 'AI Brain 2026',
                 product_id: 'product_ai_brain',
-                status: 'active',
+                status: 'released',
               },
             ],
             page: 2,
@@ -84,7 +84,7 @@ describe('product context option services', () => {
         code: 'PRODUCT-A',
         id: 'product_a',
         name: '产品 A',
-        versions: [{ code: 'v-a', id: 'version_a', name: '版本 A', status: 'active' }],
+        versions: [{ code: 'v-a', id: 'version_a', name: '版本 A', status: 'testing' }],
       },
       {
         code: 'AI-BRAIN',
@@ -95,14 +95,14 @@ describe('product context option services', () => {
             code: '2026-ai-brain',
             id: 'version_ai_brain',
             name: 'AI Brain 2026',
-            status: 'active',
+            status: 'released',
           },
         ],
       },
     ]);
     expect(fetchMock.mock.calls.map(([path]) => String(path))).toEqual(expect.arrayContaining([
       '/api/products?active_only=true&page_size=100&page=2',
-      '/api/product-versions?active_only=true&page_size=100&page=2',
+      '/api/product-versions?page_size=100&page=2',
     ]));
   });
 });

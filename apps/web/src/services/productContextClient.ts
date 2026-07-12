@@ -49,6 +49,10 @@ function isBugAssignableVersion(version: ProductVersionListItem): boolean {
   return (version.status ?? '').toLowerCase() !== 'archived';
 }
 
+function isDeploymentEligibleVersion(version: ProductVersionListItem): boolean {
+  return (version.status ?? '').toLowerCase() !== 'archived';
+}
+
 function mapProductContexts(
   products: ProductListItem[],
   versions: ProductVersionListItem[],
@@ -121,12 +125,12 @@ export async function fetchProductContextOptions(): Promise<ProductContextOption
       pageSize: PRODUCT_CONTEXT_PAGE_SIZE,
       token,
     }),
-    fetchAllListItems<ProductVersionListItem>('/api/product-versions?active_only=true', {
+    fetchAllListItems<ProductVersionListItem>('/api/product-versions', {
       pageSize: VERSION_CONTEXT_PAGE_SIZE,
       token,
     }),
   ]);
-  return mapProductContexts(products, versions);
+  return mapProductContexts(products, versions.filter(isDeploymentEligibleVersion));
 }
 
 export async function fetchBugProductContextOptions(): Promise<ProductContextOption[]> {
