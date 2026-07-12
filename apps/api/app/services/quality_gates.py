@@ -5,9 +5,11 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
+from app.services.acceptance_test_plans import evaluate_acceptance_coverage
 from app.services.ai_executor_task_creation import create_ai_executor_task
 from app.services.execution_attestations import verify_execution_attestation
 from app.services.operational_records import read_memory_dict, record_audit_event
+from app.services.task_workflow_context import task_workflow_read_store
 
 DEFAULT_PRE_MERGE_POLICY = {
     "id": "quality_gate_policy_system_pre_merge",
@@ -300,9 +302,7 @@ def start_pre_merge_quality_gate(
         else {}
     )
     workspace_root = str(
-        workspace_isolation.get("worktree_path")
-        or coding_runner_task.get("workspace_root")
-        or ""
+        workspace_isolation.get("worktree_path") or coding_runner_task.get("workspace_root") or ""
     )
     verification_runner = _select_verification_runner(
         current_store,
@@ -479,6 +479,26 @@ def complete_pre_merge_quality_gate(
                 "message": "独立验证证明缺失、不可信或未隔离，必须人工确认",
             }
         )
+    source_store = task_workflow_read_store(current_store)
+    acceptance_task = getattr(source_store, "ai_tasks", {}).get(run.get("subject_id"))
+    acceptance_coverage = (
+        evaluate_acceptance_coverage(current_store, ai_task=acceptance_task)
+        if acceptance_task is not None
+        else {"blocked_reasons": []}
+    )
+    for reason_code in acceptance_coverage.get("blocked_reasons") or []:
+        reasons.append(
+            {
+                "code": reason_code,
+                "details": {
+                    "flaky_case_ids": acceptance_coverage.get("flaky_case_ids") or [],
+                    "unmapped_criteria": acceptance_coverage.get("unmapped_criteria") or [],
+                },
+                "message": "需求验收计划未完整通过"
+                if reason_code == "ACCEPTANCE_GATE_BLOCKED"
+                else "验收结果存在不稳定执行",
+            }
+        )
     failed_required = [
         check["check_type"]
         for check in checks
@@ -588,9 +608,7 @@ def complete_pre_merge_quality_gate(
         )
 
     failure_reasons = [
-        reason
-        for reason in reasons
-        if reason["code"] not in MANUAL_REVIEW_REASON_CODES
+        reason for reason in reasons if reason["code"] not in MANUAL_REVIEW_REASON_CODES
     ]
     run.update(
         {
@@ -610,6 +628,7 @@ def complete_pre_merge_quality_gate(
                     "changed_files": changed_files,
                     "changed_lines": changed_lines,
                 },
+                "acceptance_coverage": acceptance_coverage,
             },
         }
     )
@@ -724,10 +743,7 @@ def create_pre_deploy_quality_gate(
                 "command_catalog_code": None,
                 "exit_code": 0 if passed else None,
                 "duration_ms": 0,
-                "summary": str(
-                    item.get("summary")
-                    or ("检查通过" if passed else "检查未通过")
-                ),
+                "summary": str(item.get("summary") or ("检查通过" if passed else "检查未通过")),
                 "details": deepcopy(item.get("details") or {}),
                 "started_at": now,
                 "finished_at": now,

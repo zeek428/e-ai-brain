@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routers.assistant import router as assistant_router
+from app.api.routers.acceptance_tests import router as acceptance_tests_router
 from app.api.routers.attribution import router as attribution_router
 from app.api.routers.audit import router as audit_router
 from app.api.routers.auth import router as auth_router
@@ -212,6 +213,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(assistant_router)
+app.include_router(acceptance_tests_router)
 app.include_router(audit_router)
 app.include_router(attribution_router)
 app.include_router(auth_router)

@@ -720,6 +720,13 @@ class ExecutionGovernanceRepository(Protocol):
         runner_task_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    def list_trusted_delivery_records(
+        self,
+        *,
+        product_scope_ids: list[str] | None = None,
+        record_type: str,
+    ) -> list[dict[str, Any]]: ...
+
     def list_agent_loop_runs(
         self,
         *,
@@ -796,6 +803,13 @@ class ExecutionGovernanceRepository(Protocol):
     ) -> dict[str, Any]: ...
 
     def save_execution_attestation_record(self, record: dict[str, Any]) -> None: ...
+
+    def save_trusted_delivery_record(
+        self,
+        *,
+        record: dict[str, Any],
+        record_type: str,
+    ) -> None: ...
 
     def save_execution_resource_grant_record(
         self,

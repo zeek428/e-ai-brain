@@ -101,6 +101,36 @@ class ExecutionGovernanceWriteRepository:
             with connection.cursor() as cursor:
                 self.upsert_execution_attestations(cursor, {str(record["id"]): record})
 
+    def save_trusted_delivery_record(
+        self,
+        *,
+        record: dict[str, Any],
+        record_type: str,
+    ) -> None:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO trusted_delivery_records (
+                      record_type, id, product_id, payload_json, created_at, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s::jsonb, COALESCE(%s::timestamptz, now()),
+                            COALESCE(%s::timestamptz, now()))
+                    ON CONFLICT (record_type, id) DO UPDATE SET
+                      product_id = EXCLUDED.product_id,
+                      payload_json = EXCLUDED.payload_json,
+                      updated_at = EXCLUDED.updated_at
+                    """,
+                    (
+                        record_type,
+                        record["id"],
+                        record.get("product_id"),
+                        json.dumps(record, ensure_ascii=False),
+                        record.get("created_at"),
+                        record.get("updated_at") or record.get("created_at"),
+                    ),
+                )
+
     def save_execution_resource_grant_record(
         self,
         record: dict[str, Any],

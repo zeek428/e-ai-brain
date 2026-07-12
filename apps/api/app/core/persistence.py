@@ -370,6 +370,14 @@ class PostgresSnapshotRepository:
                     cursor,
                     "105_knowledge_multimodal_governance.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "106_trusted_execution_attestations.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "107_trusted_delivery_records.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1757,6 +1765,17 @@ class PostgresSnapshotRepository:
             runner_task_id=runner_task_id,
         )
 
+    def list_trusted_delivery_records(
+        self,
+        *,
+        product_scope_ids: list[str] | None = None,
+        record_type: str,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_trusted_delivery_records(
+            product_scope_ids=product_scope_ids,
+            record_type=record_type,
+        )
+
     def list_agent_loop_runs(
         self,
         *,
@@ -2982,6 +3001,17 @@ class PostgresSnapshotRepository:
 
     def save_execution_attestation_record(self, record: dict[str, Any]) -> None:
         self._execution_governance_read_repository.save_execution_attestation_record(record)
+
+    def save_trusted_delivery_record(
+        self,
+        *,
+        record: dict[str, Any],
+        record_type: str,
+    ) -> None:
+        self._execution_governance_read_repository.save_trusted_delivery_record(
+            record=record,
+            record_type=record_type,
+        )
 
     def save_execution_resource_grant_record(
         self,

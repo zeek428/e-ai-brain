@@ -226,6 +226,43 @@ class ExecutionGovernanceReadRepository:
                 )
                 return [self._execution_attestation_from_row(row) for row in cursor.fetchall()]
 
+    def list_trusted_delivery_records(
+        self,
+        *,
+        product_scope_ids: list[str] | None = None,
+        record_type: str,
+    ) -> list[dict[str, Any]]:
+        clauses = ["record_type = %s"]
+        params: list[Any] = [record_type]
+        if product_scope_ids is not None:
+            normalized_scope = [str(item) for item in product_scope_ids if str(item).strip()]
+            if normalized_scope:
+                clauses.append("product_id = ANY(%s)")
+                params.append(normalized_scope)
+            else:
+                clauses.append("FALSE")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, payload_json, created_at, updated_at
+                    FROM trusted_delivery_records
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY updated_at DESC, id DESC
+                    """,
+                    tuple(params),
+                )
+                return [
+                    {
+                        **(row[2] or {}),
+                        "id": row[0],
+                        "product_id": row[1],
+                        "created_at": row[3],
+                        "updated_at": row[4],
+                    }
+                    for row in cursor.fetchall()
+                ]
+
     def list_agent_loop_runs(
         self,
         *,
