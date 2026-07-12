@@ -197,6 +197,11 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _attestation_key_fingerprint(public_key: str | None) -> str | None:
+    value = str(public_key or "").strip()
+    return hashlib.sha256(value.encode("utf-8")).hexdigest() if value else None
+
+
 def create_ai_executor_runner_install_package_response(
     *,
     arch: str | None = None,
@@ -967,6 +972,20 @@ def create_ai_executor_runner_response(
             AI_EXECUTOR_RUNNER_STATUSES,
             "status",
         ),
+        "trust_boundary_id": str(getattr(payload, "trust_boundary_id", None) or "").strip() or None,
+        "trust_domain": _ensure_enum(
+            getattr(payload, "trust_domain", None) or "coding",
+            {"coding", "verification", "deployment"},
+            "trust_domain",
+        ),
+        "attestation_public_key": (
+            str(getattr(payload, "attestation_public_key", None) or "").strip() or None
+        ),
+        "attestation_status": _ensure_enum(
+            getattr(payload, "attestation_status", None) or "pending",
+            {"pending", "active", "revoked"},
+            "attestation_status",
+        ),
         "token_hash": _token_hash(runner_token),
         "token_rotated_at": None,
         "token_version": 1,
@@ -976,6 +995,9 @@ def create_ai_executor_runner_response(
             "workspace_roots",
         ),
     }
+    runner["attestation_key_fingerprint"] = _attestation_key_fingerprint(
+        runner["attestation_public_key"],
+    )
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_runner.created",

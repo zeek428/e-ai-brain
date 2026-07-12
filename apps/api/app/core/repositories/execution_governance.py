@@ -197,6 +197,35 @@ class ExecutionGovernanceReadRepository:
                 )
                 return [self._quality_gate_check_from_row(row) for row in cursor.fetchall()]
 
+    def list_execution_attestations(
+        self,
+        *,
+        subject_id: str | None = None,
+        runner_task_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for field, value in (("subject_id", subject_id), ("runner_task_id", runner_task_id)):
+            if value is not None:
+                clauses.append(f"{field} = %s")
+                params.append(value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, subject_type, subject_id, runner_task_id, runner_id,
+                           trust_domain, trust_boundary_id, payload_json, payload_sha256,
+                           signature, public_key_fingerprint, verification_status,
+                           verification_error_code, verified_at, created_at, updated_at
+                    FROM execution_attestations
+                    {where}
+                    ORDER BY created_at DESC, id DESC
+                    """,
+                    tuple(params),
+                )
+                return [self._execution_attestation_from_row(row) for row in cursor.fetchall()]
+
     def list_agent_loop_runs(
         self,
         *,
@@ -476,6 +505,9 @@ class ExecutionGovernanceReadRepository:
     ) -> dict[str, Any]:
         return self._write_repository.save_execution_context_manifest_record(*args, **kwargs)
 
+    def save_execution_attestation_record(self, *args: Any, **kwargs: Any) -> None:
+        self._write_repository.save_execution_attestation_record(*args, **kwargs)
+
     def save_execution_resource_grant_record(self, *args: Any, **kwargs: Any) -> None:
         self._write_repository.save_execution_resource_grant_record(*args, **kwargs)
 
@@ -610,6 +642,29 @@ class ExecutionGovernanceReadRepository:
                 "finished_at": row[14],
                 "created_at": row[15],
                 "updated_at": row[16],
+            }
+        )
+
+    @staticmethod
+    def _execution_attestation_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+        return _without_none(
+            {
+                "id": row[0],
+                "subject_type": row[1],
+                "subject_id": row[2],
+                "runner_task_id": row[3],
+                "runner_id": row[4],
+                "trust_domain": row[5],
+                "trust_boundary_id": row[6],
+                "payload": row[7] or {},
+                "payload_sha256": row[8],
+                "signature": row[9],
+                "public_key_fingerprint": row[10],
+                "verification_status": row[11],
+                "verification_error_code": row[12],
+                "verified_at": row[13],
+                "created_at": row[14],
+                "updated_at": row[15],
             }
         )
 

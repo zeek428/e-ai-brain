@@ -1746,6 +1746,17 @@ class PostgresSnapshotRepository:
             quality_gate_run_id
         )
 
+    def list_execution_attestations(
+        self,
+        *,
+        subject_id: str | None = None,
+        runner_task_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._execution_governance_read_repository.list_execution_attestations(
+            subject_id=subject_id,
+            runner_task_id=runner_task_id,
+        )
+
     def list_agent_loop_runs(
         self,
         *,
@@ -2968,6 +2979,9 @@ class PostgresSnapshotRepository:
             record,
             audit_event=audit_event,
         )
+
+    def save_execution_attestation_record(self, record: dict[str, Any]) -> None:
+        self._execution_governance_read_repository.save_execution_attestation_record(record)
 
     def save_execution_resource_grant_record(
         self,

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "FastAPI backend for Enterprise AI Brain"
 requires-python = ">=3.11"
 dependencies = [
+  "cryptography>=49.0.0",
   "fastapi>=0.115.0",
   "langgraph>=1.2.2",
   "minio>=7.2.15",

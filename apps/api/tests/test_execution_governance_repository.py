@@ -96,6 +96,42 @@ def test_autonomous_delivery_migration_defines_governance_primitives():
     assert "UNIQUE (loop_run_id, iteration_number)" in sql
 
 
+def test_execution_attestation_repository_persists_and_reads_verified_proofs():
+    cursor = _Cursor(
+        rows=[
+            (
+                "execution_attestation_001",
+                "ai_executor_task",
+                "ai_executor_task_001",
+                "ai_executor_task_001",
+                "runner_verify_001",
+                "verification",
+                "boundary-verify",
+                {"result_commit": "def456"},
+                "payload-hash",
+                "signature",
+                "key-fingerprint",
+                "verified",
+                None,
+                "2026-07-12T00:00:00+00:00",
+                "2026-07-12T00:00:00+00:00",
+                "2026-07-12T00:00:00+00:00",
+            )
+        ]
+    )
+    repository = ExecutionGovernanceReadRepository(_Connect(cursor))
+
+    records = repository.list_execution_attestations(
+        subject_id="ai_executor_task_001",
+    )
+
+    assert records[0]["verification_status"] == "verified"
+    assert records[0]["trust_boundary_id"] == "boundary-verify"
+    sql, params = cursor.executed[0]
+    assert "FROM execution_attestations" in sql
+    assert params == ("ai_executor_task_001",)
+
+
 def test_quality_gate_policy_list_is_product_scoped():
     cursor = _Cursor(
         rows=[

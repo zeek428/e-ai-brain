@@ -561,7 +561,9 @@ class PluginReadRepository:
                     SELECT id, name, protocol, endpoint_url, executor_types, workspace_roots,
                            token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
                            last_heartbeat_at, metadata, created_by, created_at, updated_at,
-                           token_rotated_at, token_version, capabilities
+                           token_rotated_at, token_version, capabilities, trust_domain,
+                           trust_boundary_id, attestation_public_key,
+                           attestation_key_fingerprint, attestation_status
                     FROM ai_executor_runners
                     {where}
                     ORDER BY updated_at DESC, id ASC
@@ -622,7 +624,9 @@ class PluginReadRepository:
                     SELECT id, name, protocol, endpoint_url, executor_types, workspace_roots,
                            token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
                            last_heartbeat_at, metadata, created_by, created_at, updated_at,
-                           token_rotated_at, token_version, capabilities
+                           token_rotated_at, token_version, capabilities, trust_domain,
+                           trust_boundary_id, attestation_public_key,
+                           attestation_key_fingerprint, attestation_status
                     FROM ai_executor_runners
                     {where}
                     ORDER BY {sort_column} {direction} {nulls}, id {direction}
@@ -1099,13 +1103,16 @@ class PluginReadRepository:
                   id, name, protocol, endpoint_url, executor_types, workspace_roots,
                   token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
                   last_heartbeat_at, metadata, created_by, created_at, updated_at,
-                  token_rotated_at, token_version, capabilities
+                  token_rotated_at, token_version, capabilities, trust_domain,
+                  trust_boundary_id, attestation_public_key,
+                  attestation_key_fingerprint, attestation_status
                 )
                 VALUES (
                   %s, %s, %s, %s, %s::jsonb, %s::jsonb,
                   %s, %s, %s, %s,
                   %s::timestamptz, %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now()), %s::timestamptz, %s, %s::jsonb
+                  COALESCE(%s::timestamptz, now()), %s::timestamptz, %s, %s::jsonb, %s,
+                  %s, %s, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   name = EXCLUDED.name,
@@ -1122,6 +1129,11 @@ class PluginReadRepository:
                   token_rotated_at = EXCLUDED.token_rotated_at,
                   token_version = EXCLUDED.token_version,
                   capabilities = EXCLUDED.capabilities,
+                  trust_domain = EXCLUDED.trust_domain,
+                  trust_boundary_id = EXCLUDED.trust_boundary_id,
+                  attestation_public_key = EXCLUDED.attestation_public_key,
+                  attestation_key_fingerprint = EXCLUDED.attestation_key_fingerprint,
+                  attestation_status = EXCLUDED.attestation_status,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -1143,6 +1155,11 @@ class PluginReadRepository:
                     runner.get("token_rotated_at"),
                     runner.get("token_version", 1),
                     _json(runner.get("capabilities"), []),
+                    runner.get("trust_domain", "coding"),
+                    runner.get("trust_boundary_id"),
+                    runner.get("attestation_public_key"),
+                    runner.get("attestation_key_fingerprint"),
+                    runner.get("attestation_status", "pending"),
                 ),
             )
 
@@ -1874,6 +1891,11 @@ class PluginReadRepository:
             "token_rotated_at": row[15].isoformat() if len(row) > 15 and row[15] else None,
             "token_version": row[16] if len(row) > 16 and row[16] is not None else 1,
             "capabilities": row[17] or [] if len(row) > 17 else [],
+            "trust_domain": row[18] if len(row) > 18 else "coding",
+            "trust_boundary_id": row[19] if len(row) > 19 else None,
+            "attestation_public_key": row[20] if len(row) > 20 else None,
+            "attestation_key_fingerprint": row[21] if len(row) > 21 else None,
+            "attestation_status": row[22] if len(row) > 22 else "pending",
         }
 
     def _ai_executor_task_from_row(self, row: Any) -> dict[str, Any]:

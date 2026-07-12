@@ -180,6 +180,8 @@ class PluginActionAiExecutorApprovalRequest(BaseModel):
 
 
 class AiExecutorRunnerRequest(BaseModel):
+    attestation_public_key: str | None = None
+    attestation_status: str = "pending"
     capabilities: list[str] = Field(default_factory=list)
     endpoint_url: str = "runner://local"
     executor_types: list[str] = Field(default_factory=lambda: ["codex"])
@@ -190,10 +192,14 @@ class AiExecutorRunnerRequest(BaseModel):
     protocol: str = "runner_polling"
     runner_token: str | None = None
     status: str = "active"
+    trust_boundary_id: str | None = None
+    trust_domain: str = "coding"
     workspace_roots: list[str] = Field(default_factory=list)
 
 
 class AiExecutorRunnerPatchRequest(BaseModel):
+    attestation_public_key: str | None = None
+    attestation_status: str | None = None
     capabilities: list[str] | None = None
     endpoint_url: str | None = None
     executor_types: list[str] | None = None
@@ -204,6 +210,8 @@ class AiExecutorRunnerPatchRequest(BaseModel):
     protocol: str | None = None
     runner_token: str | None = None
     status: str | None = None
+    trust_boundary_id: str | None = None
+    trust_domain: str | None = None
     workspace_roots: list[str] | None = None
 
 

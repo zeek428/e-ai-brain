@@ -96,6 +96,11 @@ class ExecutionGovernanceWriteRepository:
                 self._upsert_audit_events(cursor, [audit_event] if audit_event else [])
         return persisted
 
+    def save_execution_attestation_record(self, record: dict[str, Any]) -> None:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                self.upsert_execution_attestations(cursor, {str(record["id"]): record})
+
     def save_execution_resource_grant_record(
         self,
         record: dict[str, Any],
@@ -116,6 +121,57 @@ class ExecutionGovernanceWriteRepository:
                     {str(record["id"]): record},
                 )
                 self._upsert_audit_events(cursor, [audit_event] if audit_event else [])
+
+    def upsert_execution_attestations(
+        self,
+        cursor: Any,
+        records: dict[str, dict[str, Any]],
+    ) -> None:
+        for record in records.values():
+            cursor.execute(
+                """
+                INSERT INTO execution_attestations (
+                  id, subject_type, subject_id, runner_task_id, runner_id,
+                  trust_domain, trust_boundary_id, payload_json, payload_sha256,
+                  signature, public_key_fingerprint, verification_status,
+                  verification_error_code, verified_at, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s,
+                  %s, %s, %s::jsonb, %s,
+                  %s, %s, %s,
+                  %s, %s::timestamptz, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (runner_task_id) DO UPDATE SET
+                  payload_json = EXCLUDED.payload_json,
+                  payload_sha256 = EXCLUDED.payload_sha256,
+                  signature = EXCLUDED.signature,
+                  public_key_fingerprint = EXCLUDED.public_key_fingerprint,
+                  verification_status = EXCLUDED.verification_status,
+                  verification_error_code = EXCLUDED.verification_error_code,
+                  verified_at = EXCLUDED.verified_at,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    record["id"],
+                    record["subject_type"],
+                    record["subject_id"],
+                    record["runner_task_id"],
+                    record["runner_id"],
+                    record["trust_domain"],
+                    record.get("trust_boundary_id"),
+                    json.dumps(record.get("payload") or {}),
+                    record["payload_sha256"],
+                    record.get("signature"),
+                    record.get("public_key_fingerprint"),
+                    record["verification_status"],
+                    record.get("verification_error_code"),
+                    record.get("verified_at"),
+                    record.get("created_at"),
+                    record.get("updated_at") or record.get("created_at"),
+                ),
+            )
 
     def save_external_event_inbox_record(
         self,

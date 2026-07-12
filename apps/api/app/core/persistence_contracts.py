@@ -713,6 +713,13 @@ class ExecutionGovernanceRepository(Protocol):
         quality_gate_run_id: str,
     ) -> list[dict[str, Any]]: ...
 
+    def list_execution_attestations(
+        self,
+        *,
+        subject_id: str | None = None,
+        runner_task_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def list_agent_loop_runs(
         self,
         *,
@@ -787,6 +794,8 @@ class ExecutionGovernanceRepository(Protocol):
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
+
+    def save_execution_attestation_record(self, record: dict[str, Any]) -> None: ...
 
     def save_execution_resource_grant_record(
         self,
