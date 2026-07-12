@@ -87,3 +87,31 @@ def reconcile_external_operations(
         _save(current_store, operation)
         outcomes.append({"id": operation["id"], "status": operation["status"]})
     return outcomes
+
+
+def update_external_operation_status(
+    current_store: Any,
+    *,
+    idempotency_key: str,
+    status: str,
+    receipt: str | None = None,
+) -> dict[str, Any] | None:
+    operation = next(
+        (
+            item
+            for item in _records(current_store)
+            if item.get("idempotency_key") == idempotency_key
+        ),
+        None,
+    )
+    if operation is None:
+        return None
+    operation.update(
+        {
+            "provider_receipt": receipt or operation.get("provider_receipt"),
+            "status": status,
+            "updated_at": _now(),
+        }
+    )
+    _save(current_store, operation)
+    return deepcopy(operation)

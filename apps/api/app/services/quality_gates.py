@@ -354,6 +354,37 @@ def start_pre_merge_quality_gate(
         timeout_seconds=int(coding_runner_task.get("timeout_seconds") or 1800),
         workspace_root=workspace_root,
     )
+    if verification_runner is None:
+        now = datetime.now(UTC).isoformat()
+        verifier_task.update(
+            {
+                "error_code": "VERIFIER_TRUST_DOMAIN_UNAVAILABLE",
+                "error_message": "No isolated verification Runner is available",
+                "finished_at": now,
+                "status": "blocked",
+                "updated_at": now,
+            }
+        )
+        run.update(
+            {
+                "blocked_reasons": [
+                    {
+                        "code": "VERIFIER_TRUST_DOMAIN_UNAVAILABLE",
+                        "message": "没有可用的独立验证执行器，必须人工确认",
+                    }
+                ],
+                "status": "blocked",
+                "summary": "独立验证执行器不可用，已转人工确认",
+                "updated_at": now,
+            }
+        )
+        repository = getattr(current_store, "repository", None)
+        save_task = getattr(repository, "save_ai_executor_task_record", None)
+        if callable(save_task):
+            save_task(verifier_task)
+        read_memory_dict(current_store, "ai_executor_tasks")[verifier_task["id"]] = deepcopy(
+            verifier_task
+        )
     run["policy_snapshot"] = {
         **run["policy_snapshot"],
         "coding_runner_task_id": coding_runner_task["id"],

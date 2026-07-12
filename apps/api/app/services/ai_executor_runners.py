@@ -79,7 +79,7 @@ from app.services.ai_executor_runner_task_context import (
     _status_for_runner_task,
     _task_public,
 )
-from app.services.ai_executor_runner_trust import runner_trust_fields
+from app.services.ai_executor_runner_trust import patch_runner_trust_fields, runner_trust_fields
 from app.services.ai_executor_runner_workspace import (
     reject_ai_executor_task_workspace,
     workspace_match_detail,
@@ -708,6 +708,17 @@ def _sync_runner_completion_to_ai_task(
                 quality_gate_run_id=quality_gate_run["id"],
                 verifier_runner_task_id=verifier_task["id"],
             )
+            if verifier_task.get("status") == "blocked":
+                output_json["quality_gate"] = quality_gate_run
+                _move_ai_task_to_executor_review(
+                    current_store,
+                    actor_id=runner_id,
+                    ai_task=ai_task,
+                    executor_snapshot=executor_snapshot,
+                    output_json=output_json,
+                    quality_gate_run=quality_gate_run,
+                )
+                return
             updated_task = {
                 **ai_task,
                 "current_step": "quality_gate_running",
@@ -1442,6 +1453,7 @@ def patch_ai_executor_runner_response(
             updates[int_key] = int(updates[int_key])
     if "metadata" in updates:
         updates["metadata"] = dict(updates["metadata"] or {})
+    updates = patch_runner_trust_fields(updates, runner=runner, ensure_enum=_ensure_enum)
     runner = {**runner, **updates, "updated_at": datetime.now(UTC).isoformat()}
     audit_event = record_audit_event(
         current_store,

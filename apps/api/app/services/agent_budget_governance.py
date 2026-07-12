@@ -15,11 +15,40 @@ def _save(current_store: Any, record: dict[str, Any]) -> None:
     read_memory_dict(current_store, "agent_budget_ledgers")[record["id"]] = deepcopy(record)
 
 
+def _ledger(current_store: Any, ledger_id: str) -> dict[str, Any] | None:
+    repository = getattr(current_store, "repository", None)
+    list_records = getattr(repository, "list_trusted_delivery_records", None)
+    if callable(list_records):
+        return next(
+            (
+                dict(record)
+                for record in list_records(record_type="agent_budget_ledger")
+                if record.get("id") == ledger_id
+            ),
+            None,
+        )
+    record = read_memory_dict(current_store, "agent_budget_ledgers").get(ledger_id)
+    return dict(record) if record else None
+
+
+def latest_agent_budget_ledger(current_store: Any, *, ai_task_id: str) -> dict[str, Any] | None:
+    repository = getattr(current_store, "repository", None)
+    list_records = getattr(repository, "list_trusted_delivery_records", None)
+    records = (
+        list_records(record_type="agent_budget_ledger")
+        if callable(list_records)
+        else read_memory_dict(current_store, "agent_budget_ledgers").values()
+    )
+    matches = [dict(record) for record in records if record.get("ai_task_id") == ai_task_id]
+    return max(matches, key=lambda record: str(record.get("created_at") or "")) if matches else None
+
+
 def reserve_agent_budget(
     current_store: Any,
     *,
     ai_task_id: str,
     cost_budget: float | None,
+    product_id: str | None = None,
     token_budget: int | None,
 ) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
@@ -30,7 +59,7 @@ def reserve_agent_budget(
         "cost_settled": 0.0,
         "created_at": now,
         "id": current_store.new_id("agent_budget_ledger"),
-        "product_id": None,
+        "product_id": product_id,
         "status": "reserved",
         "token_budget": token_budget,
         "token_reserved": int(token_budget or 0),
@@ -48,7 +77,7 @@ def settle_agent_budget(
     cost_used: float,
     token_used: int,
 ) -> dict[str, Any]:
-    ledger = read_memory_dict(current_store, "agent_budget_ledgers").get(ledger_id)
+    ledger = _ledger(current_store, ledger_id)
     if ledger is None:
         raise ValueError("Agent budget ledger not found")
     ledger = {

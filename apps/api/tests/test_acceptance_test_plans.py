@@ -1,3 +1,5 @@
+import pytest
+
 from app.core.store import MemoryStore
 from app.services.acceptance_test_plans import (
     activate_acceptance_test_plan,
@@ -67,3 +69,25 @@ def test_conflicting_case_results_for_same_commit_are_flaky_and_blocked() -> Non
 
     assert result["blocked_reasons"] == ["ACCEPTANCE_FLAKY"]
     assert result["flaky_case_ids"] == [case["id"]]
+
+
+def test_active_acceptance_plan_cannot_be_mutated_after_snapshot() -> None:
+    store = MemoryStore()
+    plan = create_acceptance_test_plan(
+        store,
+        created_by="user_admin",
+        product_id="product_001",
+        requirement_id="requirement_001",
+        title="冻结验收范围",
+    )
+    activate_acceptance_test_plan(store, plan_id=plan["id"], user_id="user_admin")
+
+    with pytest.raises(ValueError, match="immutable"):
+        create_acceptance_test_case(
+            store,
+            case_code="acceptance.late_case",
+            criterion="不得在激活后插入",
+            created_by="user_admin",
+            plan_id=plan["id"],
+            title="后加用例",
+        )

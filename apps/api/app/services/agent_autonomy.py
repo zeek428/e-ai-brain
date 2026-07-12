@@ -9,7 +9,9 @@ from typing import Any
 from app.api.deps import api_error
 from app.services.agent_budget_governance import (
     evaluate_agent_circuit_breaker,
+    latest_agent_budget_ledger,
     reserve_agent_budget,
+    settle_agent_budget,
 )
 from app.services.ai_executor_task_creation import create_ai_executor_task
 from app.services.execution_context_manifests import (
@@ -160,14 +162,15 @@ def start_agent_loop(
             "max_iterations": run["max_iterations"],
         },
     )
-    _save_loop_bundle(current_store, audit_events=[audit], iterations=[iteration], run=run)
     budget_ledger = reserve_agent_budget(
         current_store,
         ai_task_id=task["id"],
         cost_budget=run.get("cost_budget"),
+        product_id=task.get("product_id"),
         token_budget=run.get("token_budget"),
     )
     run["budget_ledger_id"] = budget_ledger["id"]
+    _save_loop_bundle(current_store, audit_events=[audit], iterations=[iteration], run=run)
     return deepcopy(run), deepcopy(iteration)
 
 
@@ -187,6 +190,14 @@ def attach_agent_loop_coding_task(
     iteration["coding_runner_task_id"] = coding_runner_task_id
     iteration["updated_at"] = datetime.now(UTC).isoformat()
     _save_loop_bundle(current_store, audit_events=[], iterations=[iteration], run=run)
+    ledger = latest_agent_budget_ledger(current_store, ai_task_id=str(run["ai_task_id"]))
+    if ledger is not None:
+        settle_agent_budget(
+            current_store,
+            ledger_id=ledger["id"],
+            cost_used=float(run.get("cost_used") or 0),
+            token_used=int(run.get("token_used") or 0),
+        )
 
 
 def _tokens_and_cost(result: dict[str, Any]) -> tuple[int, float]:

@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import CurrentUser, store
+from app.api.deps import CurrentUser, api_error, require_any_permission_or_roles, store
 from app.core.trace import envelope, get_trace_id
 from app.services.devops_metrics import list_operational_metrics_response
 from app.services.operational_deployments import (
@@ -38,6 +38,12 @@ from app.services.operational_jenkins_releases import (
 from app.services.operational_online_logs import (
     create_online_log_metric_response,
     list_online_log_metrics_response,
+)
+from app.services.product_scope import require_product_scope
+from app.services.production_change_controls import (
+    approve_production_change,
+    production_deployment_control,
+    set_release_freeze,
 )
 
 router = APIRouter(tags=["devops-metrics"])
@@ -146,6 +152,16 @@ class DeploymentStartRequest(BaseModel):
     external_job_name: str | None = None
     external_build_id: str | None = None
     log_url: str | None = None
+
+
+class ProductionChangeApprovalRequest(BaseModel):
+    decision: str = "approved"
+    role_code: str
+
+
+class ReleaseFreezeRequest(BaseModel):
+    product_id: str
+    status: str = "active"
 
 
 class DeploymentCompleteRequest(BaseModel):
@@ -474,6 +490,59 @@ def start_deployment_request(
         user=user,
     )
     return envelope(deployment, get_trace_id(request))
+
+
+@router.get("/api/devops/deployments/{deployment_request_id}/production-change-control")
+def get_production_change_control(
+    deployment_request_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    control = production_deployment_control(store(request), deployment_id=deployment_request_id)
+    if control is None:
+        return envelope(None, get_trace_id(request))
+    require_product_scope(user, control["product_id"])
+    return envelope(control, get_trace_id(request))
+
+
+@router.post("/api/devops/deployments/{deployment_request_id}/production-change-control/approve")
+def approve_production_change_control(
+    deployment_request_id: str,
+    payload: ProductionChangeApprovalRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    control = production_deployment_control(store(request), deployment_id=deployment_request_id)
+    if control is None:
+        raise api_error(404, "NOT_FOUND", "Production change control not found")
+    require_product_scope(user, control["product_id"])
+    require_any_permission_or_roles(user, {"deployment.execute"}, {"release_owner", "test_owner"})
+    approval = approve_production_change(
+        store(request),
+        control_id=control["id"],
+        decision=payload.decision,
+        role_code=payload.role_code,
+        user_id=user["id"],
+        user_roles=set(user.get("roles") or []),
+    )
+    return envelope(approval, get_trace_id(request))
+
+
+@router.post("/api/devops/release-freezes")
+def update_release_freeze(
+    payload: ReleaseFreezeRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_product_scope(user, payload.product_id)
+    require_any_permission_or_roles(user, {"deployment.execute"}, {"release_owner"})
+    freeze = set_release_freeze(
+        store(request),
+        created_by=user["id"],
+        product_id=payload.product_id,
+        status=payload.status,
+    )
+    return envelope(freeze, get_trace_id(request))
 
 
 @router.post("/api/devops/deployments/{deployment_request_id}/complete")

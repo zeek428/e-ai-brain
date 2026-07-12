@@ -118,6 +118,8 @@ def create_acceptance_test_case(
     )
     if plan is None:
         raise ValueError("Acceptance test plan not found")
+    if plan.get("status") == "active":
+        raise ValueError("Active acceptance test plan is immutable")
     now = _now()
     record = {
         "case_code": case_code.strip(),
@@ -249,12 +251,18 @@ def evaluate_acceptance_coverage(current_store: Any, *, ai_task: dict[str, Any])
             "plan": None,
             "unmapped_criteria": criteria,
         }
+    snapshot_cases = (plan.get("plan_snapshot") or {}).get("cases") or []
+    case_ids = {
+        str(case.get("id") or "")
+        for case in snapshot_cases
+        if isinstance(case, dict) and str(case.get("id") or "")
+    }
     cases = [
         item
         for item in _records(current_store, "acceptance_test_cases", CASE_TYPE)
-        if item.get("plan_id") == plan["id"]
+        if item.get("id") in case_ids
     ]
-    mapped = {str(item.get("criterion") or "") for item in cases if item.get("status") == "active"}
+    mapped = {str(item.get("criterion") or "") for item in snapshot_cases if isinstance(item, dict)}
     unmapped = [criterion for criterion in criteria if criterion not in mapped]
     runs = _records(current_store, "acceptance_test_runs", RUN_TYPE)
     flaky_case_ids: list[str] = []

@@ -41,14 +41,19 @@ def _create_ready_deployment_context(headers: dict[str, str]) -> dict[str, str]:
     }
 
 
-def _create_deployment(headers: dict[str, str], context: dict[str, str]) -> dict[str, object]:
+def _create_deployment(
+    headers: dict[str, str],
+    context: dict[str, str],
+    *,
+    risk_level: str = "medium",
+) -> dict[str, object]:
     response = client.post(
         "/api/devops/deployments",
         json={
             "environment": "prod",
             "product_id": context["product_id"],
             "requirement_ids": [context["requirement_id"]],
-            "risk_level": "medium",
+            "risk_level": risk_level,
             "rollback_plan": "回滚到上一稳定版本。",
             "title": "生产部署",
             "version_id": context["version_id"],
@@ -120,3 +125,48 @@ def test_deployment_failure_reopens_requirement_and_creates_bug():
     assert bugs[0]["source"] == "deployment_failure"
     assert bugs[0]["status"] == "open"
     assert bugs[0]["evidence"]["deployment_request_id"] == deployment["id"]
+
+
+def test_high_risk_production_deployment_requires_independent_change_control():
+    from app.services.production_change_controls import (
+        approve_production_change,
+        production_deployment_control,
+    )
+
+    headers = auth_headers()
+    context = _create_ready_deployment_context(headers)
+    deployment = _create_deployment(headers, context, risk_level="high")
+
+    blocked = client.post(
+        f"/api/devops/deployments/{deployment['id']}/start",
+        json={"external_job_name": "prod-deploy", "external_build_id": "build-high"},
+        headers=headers,
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "PRODUCTION_CHANGE_CONTROL_REQUIRED"
+
+    control = production_deployment_control(app.state.store, deployment_id=deployment["id"])
+    assert control is not None
+    approve_production_change(
+        app.state.store,
+        control_id=control["id"],
+        decision="approved",
+        role_code="release_owner",
+        user_id="user_release",
+        user_roles={"release_owner"},
+    )
+    approve_production_change(
+        app.state.store,
+        control_id=control["id"],
+        decision="approved",
+        role_code="test_owner",
+        user_id="user_test",
+        user_roles={"test_owner"},
+    )
+
+    started = client.post(
+        f"/api/devops/deployments/{deployment['id']}/start",
+        json={"external_job_name": "prod-deploy", "external_build_id": "build-high"},
+        headers=headers,
+    )
+    assert started.status_code == 200

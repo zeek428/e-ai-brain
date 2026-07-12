@@ -97,6 +97,7 @@ def approve_production_change(
     decision: str,
     role_code: str,
     user_id: str,
+    user_roles: set[str] | None = None,
 ) -> dict[str, Any]:
     control = next(
         (
@@ -112,8 +113,16 @@ def approve_production_change(
     )
     if control is None:
         raise ValueError("Production change control not found")
+    allowed_roles = set(control.get("required_roles") or [])
+    effective_roles = user_roles if user_roles is not None else {role_code}
+    role_authorized = role_code in effective_roles or "admin" in effective_roles
     status = (
-        "approved" if decision == "approved" and user_id != control["created_by"] else "rejected"
+        "approved"
+        if decision == "approved"
+        and user_id != control["created_by"]
+        and role_code in allowed_roles
+        and role_authorized
+        else "rejected"
     )
     now = _now()
     approval = {
@@ -185,3 +194,29 @@ def production_deployment_can_start(
         if item.get("control_id") == control["id"]
     ]
     return deployment_can_start(control, approvals, frozen=frozen)
+
+
+def production_deployment_control(
+    current_store: Any,
+    *,
+    deployment_id: str,
+) -> dict[str, Any] | None:
+    return next(
+        (
+            dict(item)
+            for item in _records(
+                current_store,
+                "production_change_controls",
+                "production_change_control",
+            )
+            if item.get("deployment_id") == deployment_id
+        ),
+        None,
+    )
+
+
+def production_release_is_frozen(current_store: Any, *, product_id: str) -> bool:
+    return any(
+        item.get("product_id") == product_id and item.get("status") == "active"
+        for item in _records(current_store, "release_freezes", "release_freeze")
+    )

@@ -133,8 +133,7 @@ def test_failed_required_check_blocks_auto_merge() -> None:
     unit_check = next(
         check
         for check in store.quality_gate_checks.values()
-        if check["quality_gate_run_id"] == run["id"]
-        and check["check_type"] == "unit_test"
+        if check["quality_gate_run_id"] == run["id"] and check["check_type"] == "unit_test"
     )
     assert unit_check["source"] == "platform_verifier"
 
@@ -159,6 +158,7 @@ def test_quality_gate_never_reuses_coding_runner_when_verifier_is_unavailable() 
     )
 
     assert verifier["runner_id"] == ""
+    assert verifier["status"] == "blocked"
     assert verifier["request_config"]["trust_isolation_required"] is True
 
 
@@ -199,9 +199,9 @@ def test_verifier_cannot_override_platform_evidence_source() -> None:
     assert {check["source"] for check in checks if check["check_type"] == "secret_scan"} == {
         "platform_scan"
     }
-    assert {
-        check["source"] for check in checks if check["check_type"] != "secret_scan"
-    } == {"platform_verifier"}
+    assert {check["source"] for check in checks if check["check_type"] != "secret_scan"} == {
+        "platform_verifier"
+    }
 
 
 def test_migration_and_protected_path_force_manual_review_after_checks_pass() -> None:
@@ -216,9 +216,7 @@ def test_migration_and_protected_path_force_manual_review_after_checks_pass() ->
         {
             "result_json": {
                 "changed_file_count": 1,
-                "changed_files": [
-                    "apps/api/app/db/migrations/103_sensitive_change.sql"
-                ],
+                "changed_files": ["apps/api/app/db/migrations/103_sensitive_change.sql"],
                 "changed_lines": 12,
                 "checks": _reported_checks(),
                 "risk_findings": [],

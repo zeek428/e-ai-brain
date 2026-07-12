@@ -17,6 +17,7 @@ from app.services.acceptance_test_plans import (
     record_acceptance_test_run,
 )
 from app.services.product_scope import product_scope_filter, require_product_scope
+from app.services.task_workflow_context import task_workflow_read_store
 
 router = APIRouter(tags=["acceptance-tests"])
 
@@ -77,6 +78,15 @@ def create_requirement_acceptance_test_plan(
 ) -> dict[str, Any]:
     _require_manage(user)
     require_product_scope(user, payload.product_id, status_code=403, message="Product scope denied")
+    requirement = getattr(task_workflow_read_store(store(request)), "requirements", {}).get(
+        requirement_id
+    )
+    if requirement is None:
+        raise api_error(404, "NOT_FOUND", "Requirement not found")
+    if str(requirement.get("product_id") or "") != payload.product_id:
+        raise api_error(
+            409, "VALIDATION_ERROR", "Requirement product_id does not match plan product_id"
+        )
     if not payload.title.strip():
         raise api_error(400, "VALIDATION_ERROR", "title is required")
     plan = create_acceptance_test_plan(

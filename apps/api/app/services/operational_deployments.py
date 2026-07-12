@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any
+from urllib.error import URLError
 
 from app.api.deps import api_error, require_any_permission_or_roles
 from app.core.repositories.devops_writes import DeploymentSchemeVersionConflictError
@@ -140,8 +141,7 @@ def _deployment_preflight_evidence(
     scheme = deployment.get("scheme_snapshot") or {}
     config = scheme.get("preflight_config") or {}
     strict_production = (
-        deployment.get("environment") == "prod"
-        and deployment.get("window_enforcement") == "strict"
+        deployment.get("environment") == "prod" and deployment.get("window_enforcement") == "strict"
     )
     quality_gate = _quality_gate_run_by_id(
         current_store,
@@ -188,9 +188,7 @@ def _deployment_preflight_evidence(
         else {}
     )
     executor_channel = str(deployment.get("executor_channel") or "manual")
-    rollout_health_required = str(
-        scheme.get("rollout_strategy") or "all_at_once"
-    ) != "all_at_once"
+    rollout_health_required = str(scheme.get("rollout_strategy") or "all_at_once") != "all_at_once"
     target_capabilities: dict[str, Any] = {}
     if runner_binding is not None:
         metadata = (
@@ -211,8 +209,7 @@ def _deployment_preflight_evidence(
         health_ready = executor_channel == "manual"
         if executor_channel == "runner":
             health_ready = bool(
-                health_config.get("required")
-                and target_capabilities.get("health_check_configured")
+                health_config.get("required") and target_capabilities.get("health_check_configured")
             )
         elif executor_channel == "integration":
             health_ready = bool(health_config.get("job_name"))
@@ -413,9 +410,7 @@ def _deployment_requirement_transition_records(
     requirements: list[dict[str, Any]] = []
     audit_events: list[dict[str, Any]] = []
     for requirement_id in deployment.get("requirement_ids", []):
-        requirement = read_memory_dict(current_store, "requirements").get(
-            str(requirement_id)
-        )
+        requirement = read_memory_dict(current_store, "requirements").get(str(requirement_id))
         if requirement is None or requirement.get("status") not in from_statuses:
             continue
         updated = dict(requirement)
@@ -637,10 +632,7 @@ def _validate_deployment_context(
         for bug in read_memory_records(current_store, "bugs")
         if bug.get("product_id") == product_id
         and bug.get("version_id") == version_id
-        and (
-            bug.get("requirement_id") in requirement_ids
-            or not bug.get("requirement_id")
-        )
+        and (bug.get("requirement_id") in requirement_ids or not bug.get("requirement_id"))
         and bug.get("severity") in DEPLOYMENT_BLOCKING_BUG_SEVERITIES
         and bug.get("status") in DEPLOYMENT_OPEN_BUG_STATUSES
     ]
@@ -675,22 +667,17 @@ def _pre_deploy_gate_checks(
 ) -> list[dict[str, Any]]:
     scheme = deployment.get("scheme_snapshot") or {}
     strict_production = (
-        deployment.get("environment") == "prod"
-        and deployment.get("window_enforcement") == "strict"
+        deployment.get("environment") == "prod" and deployment.get("window_enforcement") == "strict"
     )
     rollback_config = (
-        scheme.get("rollback_config")
-        if isinstance(scheme.get("rollback_config"), dict)
-        else {}
+        scheme.get("rollback_config") if isinstance(scheme.get("rollback_config"), dict) else {}
     )
     health_config = (
         scheme.get("health_check_config")
         if isinstance(scheme.get("health_check_config"), dict)
         else {}
     )
-    rollout_health_required = str(
-        scheme.get("rollout_strategy") or "all_at_once"
-    ) != "all_at_once"
+    rollout_health_required = str(scheme.get("rollout_strategy") or "all_at_once") != "all_at_once"
     executor_channel = str(deployment.get("executor_channel") or "manual")
     health_ready = executor_channel == "manual"
     if executor_channel == "runner":
@@ -713,8 +700,7 @@ def _pre_deploy_gate_checks(
         {
             "code": "deployment_window",
             "passed": bool(
-                deployment.get("deploy_window_start")
-                and deployment.get("deploy_window_end")
+                deployment.get("deploy_window_start") and deployment.get("deploy_window_end")
             ),
             "required": strict_production,
             "summary": "部署窗口配置完整",
@@ -1128,11 +1114,7 @@ def list_deployment_schemes_response(
     ensure_enum(status, DEPLOYMENT_SCHEME_STATUSES, "status")
     use_pagination = page is not None or page_size is not None
     if use_pagination and (
-        page is None
-        or page_size is None
-        or page < 1
-        or page_size < 1
-        or page_size > 100
+        page is None or page_size is None or page < 1 or page_size < 1 or page_size > 100
     ):
         raise api_error(400, "VALIDATION_ERROR", "Invalid deployment scheme pagination")
     if sort_by not in {
@@ -1360,11 +1342,15 @@ def list_deployment_jenkins_connections_response(
         connection_environment = str(connection.get("environment") or "prod")
         if environment is not None and connection_environment != environment:
             continue
-        if not has_global_access and (
-            "jenkins_connection",
-            str(connection["id"]),
-            "",
-        ) not in grant_keys:
+        if (
+            not has_global_access
+            and (
+                "jenkins_connection",
+                str(connection["id"]),
+                "",
+            )
+            not in grant_keys
+        ):
             continue
         items.append(
             {
@@ -1809,11 +1795,7 @@ def get_deployment_run_logs_response(
     )
     channel = str(run.get("executor_channel") or "manual")
     source = (
-        "runner"
-        if channel == "runner"
-        else "jenkins"
-        if channel == "integration"
-        else "manual"
+        "runner" if channel == "runner" else "jenkins" if channel == "integration" else "manual"
     )
     fallback_time = run.get("updated_at") or run.get("started_at") or run.get("created_at")
     items = [
@@ -2006,6 +1988,18 @@ def create_deployment_request_response(
         },
     )
     _save_deployment_request_record(write_store, deployment, audit_events=[audit_event])
+    if environment == "prod" and payload.risk_level in {"high", "critical"}:
+        from app.services.production_change_controls import create_production_change_control
+
+        control = create_production_change_control(
+            write_store,
+            created_by=user["id"],
+            deployment_id=deployment_id,
+            product_id=payload.product_id,
+            required_roles=["release_owner", "test_owner"],
+        )
+        deployment["production_change_control_id"] = control["id"]
+        _save_deployment_request_record(write_store, deployment, audit_events=[])
     return _deployment_public_response(write_store, deployment)
 
 
@@ -2030,6 +2024,27 @@ def start_deployment_request_response(
             return _deployment_public_response(write_store, deployment)
     if deployment.get("status") not in DEPLOYMENT_STARTABLE_STATUSES:
         raise api_error(409, "DEPLOYMENT_STATE_INVALID", "Deployment cannot be started")
+    if deployment.get("environment") == "prod":
+        from app.services.production_change_controls import (
+            production_deployment_can_start,
+            production_release_is_frozen,
+        )
+
+        if production_release_is_frozen(write_store, product_id=str(deployment["product_id"])):
+            raise api_error(409, "RELEASE_FROZEN", "Production deployment is frozen")
+        if deployment.get("risk_level") in {
+            "high",
+            "critical",
+        } and not production_deployment_can_start(
+            write_store,
+            deployment_id=deployment_request_id,
+            product_id=str(deployment["product_id"]),
+        ):
+            raise api_error(
+                409,
+                "PRODUCTION_CHANGE_CONTROL_REQUIRED",
+                "Production deployment requires independent release and test approval",
+            )
     executor_channel = str(deployment.get("executor_channel") or "manual")
     deployment_method = str(deployment.get("deployment_method") or "manual")
     scheme_snapshot = dict(deployment.get("scheme_snapshot") or {})
@@ -2077,7 +2092,9 @@ def start_deployment_request_response(
         "executor_type": (
             payload.executor_type or "manual"
             if executor_channel == "manual"
-            else "deployment" if executor_channel == "runner" else "jenkins"
+            else "deployment"
+            if executor_channel == "runner"
+            else "jenkins"
         ),
         "execution_snapshot": dict(deployment.get("scheme_snapshot") or {}),
         "external_build_id": payload.external_build_id,
@@ -2330,16 +2347,19 @@ def _existing_runner_task_for_outbox(
 ) -> dict[str, Any] | None:
     repository = getattr(current_store, "repository", None)
     list_tasks = getattr(repository, "list_ai_executor_tasks", None)
-    tasks = list(list_tasks()) if callable(list_tasks) else read_memory_records(
-        current_store,
-        "ai_executor_tasks",
+    tasks = (
+        list(list_tasks())
+        if callable(list_tasks)
+        else read_memory_records(
+            current_store,
+            "ai_executor_tasks",
+        )
     )
     return next(
         (
             task
             for task in tasks
-            if (task.get("request_config") or {}).get("outbox_idempotency_key")
-            == idempotency_key
+            if (task.get("request_config") or {}).get("outbox_idempotency_key") == idempotency_key
         ),
         None,
     )
@@ -2397,11 +2417,10 @@ def _dispatch_deployment_outbox_event(
                     "product_id": deployment.get("product_id"),
                     "release_branch": deployment.get("release_branch"),
                     "rollback_config": scheme_snapshot.get("rollback_config") or {},
-                    "rollout_strategy": scheme_snapshot.get("rollout_strategy")
-                    or "all_at_once",
-                    "smoke_test_config": (
-                        scheme_snapshot.get("health_check_config") or {}
-                    ).get("smoke_test")
+                    "rollout_strategy": scheme_snapshot.get("rollout_strategy") or "all_at_once",
+                    "smoke_test_config": (scheme_snapshot.get("health_check_config") or {}).get(
+                        "smoke_test"
+                    )
                     or {},
                     "target_code": scheme_snapshot.get("target_code"),
                     "version_id": deployment.get("version_id"),
@@ -2516,9 +2535,7 @@ def _record_deployment_outbox_failure(
     error_label = error_code or type(exc).__name__
     event.update(
         {
-            "available_at": (
-                now + timedelta(seconds=min(300, 2 ** min(attempts, 8)))
-            ).isoformat(),
+            "available_at": (now + timedelta(seconds=min(300, 2 ** min(attempts, 8)))).isoformat(),
             "last_error": f"{type(exc).__name__}: {error_label}",
             "lease_owner": None,
             "lease_until": None,
@@ -2546,7 +2563,9 @@ def _record_deployment_outbox_failure(
             "status": (
                 "waiting_takeover"
                 if terminal and operation == "rollback"
-                else "failed" if terminal else deployment.get("status")
+                else "failed"
+                if terminal
+                else deployment.get("status")
             ),
             "updated_at": now_iso,
         }
@@ -2596,9 +2615,7 @@ def _record_deployment_outbox_failure(
             target_status="ready_for_release",
         )
     event_type = (
-        "execution.outbox.dead_lettered"
-        if terminal
-        else "execution.outbox.retry_scheduled"
+        "execution.outbox.dead_lettered" if terminal else "execution.outbox.retry_scheduled"
     )
     audit = record_audit_event(
         current_store,
@@ -2677,9 +2694,7 @@ def _record_generic_outbox_failure(
     terminal = attempts >= EXECUTION_OUTBOX_MAX_ATTEMPTS
     event.update(
         {
-            "available_at": (
-                now + timedelta(seconds=min(300, 2 ** min(attempts, 8)))
-            ).isoformat(),
+            "available_at": (now + timedelta(seconds=min(300, 2 ** min(attempts, 8)))).isoformat(),
             "last_error": f"{type(exc).__name__}: dispatch_failed",
             "lease_owner": None,
             "lease_until": None,
@@ -2691,9 +2706,7 @@ def _record_generic_outbox_failure(
     audit = record_audit_event(
         current_store,
         event_type=(
-            "execution.outbox.dead_lettered"
-            if terminal
-            else "execution.outbox.retry_scheduled"
+            "execution.outbox.dead_lettered" if terminal else "execution.outbox.retry_scheduled"
         ),
         actor_id=worker_id,
         subject_type="execution_outbox_event",
@@ -2708,6 +2721,18 @@ def _record_generic_outbox_failure(
     if callable(save_event):
         save_event(event, audit_event=audit)
     read_memory_dict(current_store, "execution_outbox_events")[event["id"]] = event
+
+
+def _save_execution_outbox_event(current_store: Any, event: dict[str, Any]) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_event = getattr(repository, "save_execution_outbox_event_record", None)
+    if callable(save_event):
+        save_event(event)
+    read_memory_dict(current_store, "execution_outbox_events")[event["id"]] = event
+
+
+def _external_result_is_uncertain(exc: Exception) -> bool:
+    return isinstance(exc, (TimeoutError, URLError, ConnectionError, OSError))
 
 
 def process_execution_outbox_events(
@@ -2725,6 +2750,26 @@ def process_execution_outbox_events(
     )
     processed = 0
     for event in events:
+        external_operation = None
+        if event.get("event_type") in {
+            "deployment_dispatch_requested",
+            "deployment_rollback_requested",
+            "deployment_verify_requested",
+            "git_writeback_requested",
+        }:
+            from app.services.external_operation_reconciliation import record_external_operation
+
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            external_operation = record_external_operation(
+                current_store,
+                idempotency_key=str(event.get("idempotency_key") or event["id"]),
+                operation_type=str(event.get("event_type")),
+                product_id=str(payload.get("product_id") or ""),
+                provider=str(
+                    payload.get("provider") or payload.get("executor_channel") or "runner"
+                ),
+                status="reconciling",
+            )
         try:
             if event.get("event_type") in {
                 "deployment_dispatch_requested",
@@ -2744,8 +2789,50 @@ def process_execution_outbox_events(
                 )
             else:
                 raise RuntimeError("Unsupported execution outbox event")
+            if external_operation is not None:
+                from app.services.external_operation_reconciliation import (
+                    update_external_operation_status,
+                )
+
+                update_external_operation_status(
+                    current_store,
+                    idempotency_key=external_operation["idempotency_key"],
+                    status="succeeded",
+                )
             processed += 1
         except Exception as exc:  # noqa: BLE001 - durable outbox retries bounded failures.
+            if external_operation is not None and _external_result_is_uncertain(exc):
+                from app.services.external_operation_reconciliation import (
+                    update_external_operation_status,
+                )
+
+                update_external_operation_status(
+                    current_store,
+                    idempotency_key=external_operation["idempotency_key"],
+                    status="unknown",
+                )
+                event.update(
+                    {
+                        "last_error": f"{type(exc).__name__}: external_result_unknown",
+                        "lease_owner": None,
+                        "lease_until": None,
+                        "processed_at": datetime.now(UTC).isoformat(),
+                        "status": "completed",
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                )
+                _save_execution_outbox_event(current_store, event)
+                continue
+            if external_operation is not None:
+                from app.services.external_operation_reconciliation import (
+                    update_external_operation_status,
+                )
+
+                update_external_operation_status(
+                    current_store,
+                    idempotency_key=external_operation["idempotency_key"],
+                    status="failed",
+                )
             if event.get("aggregate_type") == "deployment_request":
                 _record_deployment_outbox_failure(
                     current_store,
@@ -2774,9 +2861,7 @@ def _queue_followup_deployment_operation(
 ) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
     run_id = current_store.new_id("deployment_run")
-    next_wave = int(parent_run.get("wave_number") or 1) + (
-        1 if operation == "deploy" else 0
-    )
+    next_wave = int(parent_run.get("wave_number") or 1) + (1 if operation == "deploy" else 0)
     deployment = dict(deployment)
     deployment.update(
         {
@@ -2799,13 +2884,9 @@ def _queue_followup_deployment_operation(
         "executor_type": parent_run.get("executor_type") or "deployment",
         "deployment_method": deployment.get("deployment_method") or "manual",
         "executor_channel": deployment.get("executor_channel") or "manual",
-        "status": "queued"
-        if deployment.get("executor_channel") != "manual"
-        else "running",
+        "status": "queued" if deployment.get("executor_channel") != "manual" else "running",
         "execution_snapshot": dict(deployment.get("scheme_snapshot") or {}),
-        "idempotency_key": (
-            f"deployment-{operation}:{deployment['id']}:{next_wave}:{run_id}"
-        ),
+        "idempotency_key": (f"deployment-{operation}:{deployment['id']}:{next_wave}:{run_id}"),
         "operation": operation,
         "wave_number": next_wave,
         "wave_total": int(deployment.get("total_waves") or 1),
@@ -2877,11 +2958,9 @@ def _queue_followup_deployment_operation(
                 },
             ]
         )
-        if (
-            (deployment.get("scheme_snapshot") or {}).get("rollout_strategy")
-            == "blue_green"
-            and next_wave == int(deployment.get("total_waves") or 1)
-        ):
+        if (deployment.get("scheme_snapshot") or {}).get(
+            "rollout_strategy"
+        ) == "blue_green" and next_wave == int(deployment.get("total_waves") or 1):
             steps.append(
                 {
                     "id": current_store.new_id("deployment_run_step"),
@@ -2993,8 +3072,7 @@ def complete_deployment_request_response(
     if payload.status in {"failed", "rolled_back"}:
         failure_reason = ensure_non_blank(failure_reason, "failure_reason")
     finished_at = (
-        parse_optional_time(payload.finished_at, "finished_at")
-        or datetime.now(UTC).isoformat()
+        parse_optional_time(payload.finished_at, "finished_at") or datetime.now(UTC).isoformat()
     )
     now = datetime.now(UTC).isoformat()
     next_status = "succeeded" if payload.status == "success" else payload.status
@@ -3114,8 +3192,7 @@ def cancel_deployment_request_response(
         if run.get("status") in {"queued", "running", "cancelling"}
     ]
     waits_for_external_confirmation = any(
-        run.get("executor_channel") in {"runner", "integration"}
-        for run in active_runs
+        run.get("executor_channel") in {"runner", "integration"} for run in active_runs
     )
     next_status = "cancelling" if waits_for_external_confirmation else "cancelled"
     deployment.update(
@@ -3239,8 +3316,7 @@ def rollback_deployment_request_response(
         raise api_error(409, "DEPLOYMENT_RUN_MISSING", "Deployment has no run to roll back")
     rollback_config = (deployment.get("scheme_snapshot") or {}).get("rollback_config") or {}
     if deployment.get("executor_channel") != "manual" and not any(
-        rollback_config.get(field)
-        for field in ("command", "enabled", "job_name", "strategy")
+        rollback_config.get(field) for field in ("command", "enabled", "job_name", "strategy")
     ):
         raise api_error(
             409,
@@ -3295,17 +3371,13 @@ def sync_deployment_runner_task(
         return
     run = dict(run)
     deployment_request_id = str(run.get("deployment_request_id") or "")
-    deployment = read_memory_dict(write_store, "deployment_requests").get(
-        deployment_request_id
-    )
+    deployment = read_memory_dict(write_store, "deployment_requests").get(deployment_request_id)
     if deployment is None:
         return
     deployment = dict(deployment)
     task_status = str(task.get("status") or "")
     operation = str(run.get("operation") or "deploy")
-    result_json = (
-        task.get("result_json") if isinstance(task.get("result_json"), dict) else {}
-    )
+    result_json = task.get("result_json") if isinstance(task.get("result_json"), dict) else {}
     wave_number = int(run.get("wave_number") or 1)
     wave_total = int(run.get("wave_total") or deployment.get("total_waves") or 1)
     strict_runner_health_required = (
@@ -3418,11 +3490,7 @@ def sync_deployment_runner_task(
                 else str(result_json.get("health_status"))
             )
             or (
-                "healthy"
-                if task_status == "succeeded"
-                else "unhealthy"
-                if terminal
-                else "pending"
+                "healthy" if task_status == "succeeded" else "unhealthy" if terminal else "pending"
             ),
             "updated_at": now,
         }
@@ -3477,16 +3545,14 @@ def sync_deployment_runner_task(
     for step in steps:
         step_type = step.get("step_type")
         active_step_type = (
-            "rollback"
-            if operation == "rollback"
-            else "deploy"
-            if operation == "deploy"
-            else None
+            "rollback" if operation == "rollback" else "deploy" if operation == "deploy" else None
         )
         if active_step_type is not None and step_type == active_step_type:
             step.update(
                 {
-                    "status": "passed" if task_status == "succeeded" else "failed"
+                    "status": "passed"
+                    if task_status == "succeeded"
+                    else "failed"
                     if terminal
                     else "running",
                     "finished_at": task.get("finished_at") or now if terminal else None,
@@ -3508,8 +3574,10 @@ def sync_deployment_runner_task(
             )
         elif step_type == "smoke_test" and terminal:
             smoke_tests = result_json.get("smoke_tests") or []
-            smoke_passed = all(item.get("passed") for item in smoke_tests) if smoke_tests else (
-                task_status == "succeeded"
+            smoke_passed = (
+                all(item.get("passed") for item in smoke_tests)
+                if smoke_tests
+                else (task_status == "succeeded")
             )
             step.update(
                 {

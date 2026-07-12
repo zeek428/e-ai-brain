@@ -18,6 +18,20 @@ def test_visual_search_never_returns_hidden_product_asset() -> None:
             "product_id": "product_002",
         },
     }
+    store.knowledge_documents = {
+        "doc_visible": {
+            "id": "doc_visible",
+            "index_status": "indexed",
+            "permission_roles": ["developer"],
+            "product_id": "product_001",
+        },
+        "doc_hidden": {
+            "id": "doc_hidden",
+            "index_status": "indexed",
+            "permission_roles": ["developer"],
+            "product_id": "product_002",
+        },
+    }
     user = {
         "permissions": [],
         "roles": ["developer"],
