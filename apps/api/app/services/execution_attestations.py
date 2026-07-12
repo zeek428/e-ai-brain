@@ -52,6 +52,25 @@ def _save_attestation(current_store: Any, record: dict[str, Any]) -> None:
         records[record["id"]] = deepcopy(record)
 
 
+def _existing_attestation(current_store: Any, runner_task_id: str) -> dict[str, Any] | None:
+    repository = getattr(current_store, "repository", None)
+    list_records = getattr(repository, "list_execution_attestations", None)
+    if callable(list_records):
+        records = list_records(runner_task_id=runner_task_id)
+        return deepcopy(records[0]) if records else None
+    records = getattr(current_store, "execution_attestations", {})
+    if not isinstance(records, dict):
+        return None
+    return next(
+        (
+            deepcopy(record)
+            for record in records.values()
+            if record.get("runner_task_id") == runner_task_id
+        ),
+        None,
+    )
+
+
 def _record(
     current_store: Any,
     *,
@@ -64,11 +83,13 @@ def _record(
 ) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
     payload_sha256 = hashlib.sha256(_canonical_payload_bytes(payload)).hexdigest()
+    runner_task_id = str(runner_task.get("id") or "")
+    existing = _existing_attestation(current_store, runner_task_id)
     record = {
-        "id": current_store.new_id("execution_attestation"),
+        "id": str((existing or {}).get("id") or current_store.new_id("execution_attestation")),
         "subject_type": "ai_executor_task",
-        "subject_id": str(runner_task.get("id") or ""),
-        "runner_task_id": str(runner_task.get("id") or ""),
+        "subject_id": runner_task_id,
+        "runner_task_id": runner_task_id,
         "runner_id": str(runner_task.get("runner_id") or ""),
         "trust_domain": str((runner or {}).get("trust_domain") or ""),
         "trust_boundary_id": str((runner or {}).get("trust_boundary_id") or "") or None,
@@ -102,6 +123,8 @@ def verify_execution_attestation(
     signature = str(proof.get("signature") or "").strip() or None
     boundary = str((runner or {}).get("trust_boundary_id") or "").strip()
     coding_boundary = _coding_boundary(current_store, coding_runner_task)
+    coding_runner_id = str((coding_runner_task or {}).get("runner_id") or "").strip()
+    verifier_runner_id = str(runner_task.get("runner_id") or "").strip()
     if (
         runner is None
         or runner.get("status") != "active"
@@ -109,6 +132,7 @@ def verify_execution_attestation(
         or runner.get("trust_domain") != required_trust_domain
         or not boundary
         or boundary == coding_boundary
+        or (coding_runner_id and coding_runner_id == verifier_runner_id)
     ):
         record = _record(
             current_store,
@@ -123,6 +147,22 @@ def verify_execution_attestation(
             "id": record["id"],
             "status": "blocked",
             "error_code": "VERIFIER_TRUST_DOMAIN_UNAVAILABLE",
+            "payload_sha256": record["payload_sha256"],
+        }
+    if str(payload.get("runner_task_id") or "") != str(runner_task.get("id") or ""):
+        record = _record(
+            current_store,
+            runner=runner,
+            runner_task=runner_task,
+            payload=payload,
+            signature=signature,
+            status="invalid",
+            error_code="EXECUTION_ATTESTATION_INVALID",
+        )
+        return {
+            "id": record["id"],
+            "status": "invalid",
+            "error_code": "EXECUTION_ATTESTATION_INVALID",
             "payload_sha256": record["payload_sha256"],
         }
     try:
