@@ -611,7 +611,7 @@ function renderRoleRiskPrecheck(result: RoleRiskPrecheck | undefined) {
   if (!result) {
     return (
       <Alert
-        message="保存前可先运行风险预检"
+        title="保存前可先运行风险预检"
         description="预检会检查菜单权限缺口、数据范围覆盖和高风险权限，避免菜单能点但接口 Forbidden。"
         showIcon
         type="info"
@@ -648,7 +648,7 @@ function renderRoleRiskPrecheck(result: RoleRiskPrecheck | undefined) {
   return (
     <div className="role-risk-precheck-result">
       <Alert
-        message={`风险预检：${roleRiskStatusLabel(result.decision.status)}`}
+        title={`风险预检：${roleRiskStatusLabel(result.decision.status)}`}
         description={`候选配置包含 ${result.decision.risk_count} 个风险项；${
           result.decision.can_save ? '允许保存，但建议确认提示项。' : '存在阻断项，请按修复建议处理后再保存。'
         }`}

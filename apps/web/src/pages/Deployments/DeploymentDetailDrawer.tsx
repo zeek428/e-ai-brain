@@ -120,7 +120,7 @@ function GatePanel({ deployment }: { deployment: DeploymentRequestRecord }) {
       {gate.summary ? <Text>{gate.summary}</Text> : null}
       {gate.blockedReasons.length ? (
         <Alert
-          message="门禁阻断"
+          title="门禁阻断"
           description={gate.blockedReasons.join('；')}
           showIcon
           type="error"
@@ -269,7 +269,7 @@ export function DeploymentDetailDrawer({
               <Descriptions.Item label="窗口策略">{currentData.windowEnforcement || '-'}</Descriptions.Item>
             </Descriptions>
             {currentData.failureReason ? (
-              <Alert message="执行异常" description={currentData.failureReason} showIcon type="error" />
+              <Alert title="执行异常" description={currentData.failureReason} showIcon type="error" />
             ) : null}
             <Tabs items={tabs} />
             <Collapse

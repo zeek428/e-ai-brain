@@ -69,11 +69,16 @@ from app.services.knowledge_quality import (
 )
 from app.services.knowledge_rag import knowledge_rag_response
 from app.services.knowledge_search import knowledge_search_response
+from app.services.knowledge_visual_search import visual_search_response
 
 router = APIRouter(tags=["knowledge"])
 settings = get_settings()
 KNOWLEDGE_DEPOSIT_DECIDE_PERMISSION = "knowledge.deposit.decide"
 KNOWLEDGE_MANAGE_PERMISSION = "knowledge.manage"
+
+
+class KnowledgeVisualSearchRequest(BaseModel):
+    query_embedding: list[float] = Field(min_length=1, max_length=4096)
 
 
 def _require_knowledge_manage(user: dict[str, Any]) -> None:
@@ -86,6 +91,23 @@ def _require_knowledge_manage(user: dict[str, Any]) -> None:
 
 def _request_started_at(request: Request) -> float | None:
     return getattr(request.state, "started_at", None)
+
+
+@router.post("/api/knowledge/search/visual")
+def search_knowledge_visually(
+    payload: KnowledgeVisualSearchRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_any_permission_or_roles(user, {"knowledge.read"}, {"knowledge_owner", "rd_owner"})
+    return envelope(
+        visual_search_response(
+            current_store=store(request),
+            query_embedding=payload.query_embedding,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
 
 
 def _parse_form_tags(value: str | None) -> list[str]:

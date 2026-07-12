@@ -79,6 +79,7 @@ from app.services.ai_executor_runner_task_context import (
     _status_for_runner_task,
     _task_public,
 )
+from app.services.ai_executor_runner_trust import runner_trust_fields
 from app.services.ai_executor_runner_workspace import (
     reject_ai_executor_task_workspace,
     workspace_match_detail,
@@ -195,11 +196,6 @@ def _normalized_deployment_target_metadata(value: Any) -> list[dict[str, Any]]:
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _attestation_key_fingerprint(public_key: str | None) -> str | None:
-    value = str(public_key or "").strip()
-    return hashlib.sha256(value.encode("utf-8")).hexdigest() if value else None
 
 
 def create_ai_executor_runner_install_package_response(
@@ -548,15 +544,11 @@ def _sync_runner_completion_to_ai_task(
         if quality_gate_run is None:
             return
         output_json = (
-            ai_task.get("output_json")
-            if isinstance(ai_task.get("output_json"), dict)
-            else {}
+            ai_task.get("output_json") if isinstance(ai_task.get("output_json"), dict) else {}
         )
         output_json = {**output_json, "quality_gate": quality_gate_run}
         executor_snapshot = (
-            output_json.get("executor")
-            if isinstance(output_json.get("executor"), dict)
-            else {}
+            output_json.get("executor") if isinstance(output_json.get("executor"), dict) else {}
         )
         policy = _load_executor_policy_for_ai_task(current_store, ai_task)
         loop_outcome = handle_agent_quality_gate_outcome(
@@ -570,9 +562,7 @@ def _sync_runner_completion_to_ai_task(
             retry_task = loop_outcome["runner_task"]
             now = datetime.now(UTC).isoformat()
             input_json = (
-                ai_task.get("input_json")
-                if isinstance(ai_task.get("input_json"), dict)
-                else {}
+                ai_task.get("input_json") if isinstance(ai_task.get("input_json"), dict) else {}
             )
             retry_executor = {
                 "executor_policy_id": _executor_policy_id_from_task(ai_task),
@@ -972,20 +962,7 @@ def create_ai_executor_runner_response(
             AI_EXECUTOR_RUNNER_STATUSES,
             "status",
         ),
-        "trust_boundary_id": str(getattr(payload, "trust_boundary_id", None) or "").strip() or None,
-        "trust_domain": _ensure_enum(
-            getattr(payload, "trust_domain", None) or "coding",
-            {"coding", "verification", "deployment"},
-            "trust_domain",
-        ),
-        "attestation_public_key": (
-            str(getattr(payload, "attestation_public_key", None) or "").strip() or None
-        ),
-        "attestation_status": _ensure_enum(
-            getattr(payload, "attestation_status", None) or "pending",
-            {"pending", "active", "revoked"},
-            "attestation_status",
-        ),
+        **runner_trust_fields(payload, ensure_enum=_ensure_enum),
         "token_hash": _token_hash(runner_token),
         "token_rotated_at": None,
         "token_version": 1,
@@ -995,9 +972,6 @@ def create_ai_executor_runner_response(
             "workspace_roots",
         ),
     }
-    runner["attestation_key_fingerprint"] = _attestation_key_fingerprint(
-        runner["attestation_public_key"],
-    )
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_runner.created",
@@ -1235,8 +1209,7 @@ def list_ai_executor_tasks_response(
         )
         and (runner_id is None or task.get("runner_id") == runner_id)
         and (
-            scheduled_job_run_id is None
-            or task.get("scheduled_job_run_id") == scheduled_job_run_id
+            scheduled_job_run_id is None or task.get("scheduled_job_run_id") == scheduled_job_run_id
         )
         and (status is None or task.get("status") == status)
     ]
@@ -1371,8 +1344,7 @@ def test_ai_executor_runner_response(
             heartbeat_status = "failed"
         elif health_status == "offline":
             heartbeat_detail = (
-                f"Runner 心跳超时，最近心跳 {heartbeat_age} 秒前，"
-                f"超时时间 {heartbeat_timeout} 秒。"
+                f"Runner 心跳超时，最近心跳 {heartbeat_age} 秒前，超时时间 {heartbeat_timeout} 秒。"
             )
             heartbeat_status = "failed"
         else:
@@ -1387,9 +1359,7 @@ def test_ai_executor_runner_response(
         )
 
     overall_status = (
-        "failed"
-        if any(item["status"] == "failed" for item in diagnostics)
-        else "succeeded"
+        "failed" if any(item["status"] == "failed" for item in diagnostics) else "succeeded"
     )
     latency_ms = int((perf_counter() - started_at) * 1000)
     result = {
@@ -2083,9 +2053,7 @@ def retry_ai_executor_task_response(
     reason = str(getattr(payload, "reason", None) or "manual retry")
     request_config = dict(source_task.get("request_config") or {})
     retry_history = [
-        item
-        for item in request_config.get("retry_history") or []
-        if isinstance(item, dict)
+        item for item in request_config.get("retry_history") or [] if isinstance(item, dict)
     ]
     retry_metadata = {
         "reason": reason,

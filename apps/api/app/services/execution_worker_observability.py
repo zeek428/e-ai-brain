@@ -4,7 +4,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
-from app.services.operational_records import read_memory_dict, read_memory_records
+from app.services.operational_records import read_memory_records
 
 
 def record_execution_worker_heartbeat(
@@ -26,7 +26,9 @@ def record_execution_worker_heartbeat(
     save_record = getattr(repository, "save_trusted_delivery_record", None)
     if callable(save_record):
         save_record(record=record, record_type="execution_worker_heartbeat")
-    read_memory_dict(current_store, "execution_worker_heartbeats")[worker_id] = deepcopy(record)
+    heartbeats = getattr(current_store, "execution_worker_heartbeats", None)
+    if isinstance(heartbeats, dict):
+        heartbeats[worker_id] = deepcopy(record)
     return record
 
 

@@ -11,8 +11,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routers.assistant import router as assistant_router
 from app.api.routers.acceptance_tests import router as acceptance_tests_router
+from app.api.routers.assistant import router as assistant_router
 from app.api.routers.attribution import router as attribution_router
 from app.api.routers.audit import router as audit_router
 from app.api.routers.auth import router as auth_router
@@ -24,8 +24,8 @@ from app.api.routers.collectors import router as collectors_router
 from app.api.routers.dashboard import router as dashboard_router
 from app.api.routers.devops_metrics import router as devops_metrics_router
 from app.api.routers.execution_resources import router as execution_resources_router
-from app.api.routers.execution_workers import router as execution_workers_router
 from app.api.routers.execution_traces import router as execution_traces_router
+from app.api.routers.execution_workers import router as execution_workers_router
 from app.api.routers.export import router as export_router
 from app.api.routers.external_events import router as external_events_router
 from app.api.routers.git_review import router as git_review_router

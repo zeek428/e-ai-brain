@@ -142,7 +142,7 @@ export default function RequirementFullChainPage() {
     >
       <Spin spinning={isLoading}>
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-          {visibleError ? <Alert message={formatRemoteRowsError(visibleError)} type="error" /> : null}
+          {visibleError ? <Alert title={formatRemoteRowsError(visibleError)} type="error" /> : null}
           {chain ? <RequirementFullChainView fullChain={chain} versionRequirements={versionRequirements} /> : null}
         </Space>
       </Spin>

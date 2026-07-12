@@ -486,7 +486,7 @@ export function KnowledgePageDialogs({
       >
         <Spin spinning={isFullChainLoading}>
           <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-            {fullChainError ? <Alert message={formatRemoteRowsError(fullChainError)} type="error" /> : null}
+            {fullChainError ? <Alert title={formatRemoteRowsError(fullChainError)} type="error" /> : null}
             {fullChain ? (
               <RequirementFullChainView
                 fullChain={fullChain}

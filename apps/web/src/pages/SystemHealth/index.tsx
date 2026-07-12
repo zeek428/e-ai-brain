@@ -1582,7 +1582,7 @@ function SystemHealthOperationsPanel({
         {permissionPreviewError ? (
           <Alert
             className="system-health-ops-inline-alert"
-            message={formatRemoteRowsError(permissionPreviewError)}
+            title={formatRemoteRowsError(permissionPreviewError)}
             showIcon
             type="error"
           />
@@ -1640,7 +1640,7 @@ function SystemHealthOperationsPanel({
                 ))}
               </div>
             ) : (
-              <Alert message="菜单视角无阻断" showIcon type="success" />
+              <Alert title="菜单视角无阻断" showIcon type="success" />
             )}
           </div>
         ) : null}

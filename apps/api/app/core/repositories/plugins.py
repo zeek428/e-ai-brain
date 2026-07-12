@@ -803,8 +803,7 @@ class PluginReadRepository:
                     tuple(params),
                 )
                 return [
-                    self._ai_executor_approval_request_from_row(row)
-                    for row in cursor.fetchall()
+                    self._ai_executor_approval_request_from_row(row) for row in cursor.fetchall()
                 ]
 
     def count_ai_executor_approval_requests(
@@ -869,8 +868,7 @@ class PluginReadRepository:
                     tuple(params),
                 )
                 return [
-                    self._ai_executor_approval_request_from_row(row)
-                    for row in cursor.fetchall()
+                    self._ai_executor_approval_request_from_row(row) for row in cursor.fetchall()
                 ]
 
     def save_ai_executor_approval_request_record(
@@ -1103,16 +1101,16 @@ class PluginReadRepository:
                   id, name, protocol, endpoint_url, executor_types, workspace_roots,
                   token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
                   last_heartbeat_at, metadata, created_by, created_at, updated_at,
-                  token_rotated_at, token_version, capabilities, trust_domain,
+                  token_rotated_at, token_version, trust_domain,
                   trust_boundary_id, attestation_public_key,
-                  attestation_key_fingerprint, attestation_status
+                  attestation_key_fingerprint, attestation_status, capabilities
                 )
                 VALUES (
                   %s, %s, %s, %s, %s::jsonb, %s::jsonb,
                   %s, %s, %s, %s,
                   %s::timestamptz, %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now()), %s::timestamptz, %s, %s::jsonb, %s,
-                  %s, %s, %s, %s
+                  COALESCE(%s::timestamptz, now()), %s::timestamptz, %s, %s,
+                  %s, %s, %s, %s, %s::jsonb
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   name = EXCLUDED.name,
@@ -1154,12 +1152,12 @@ class PluginReadRepository:
                     runner.get("updated_at") or runner.get("created_at"),
                     runner.get("token_rotated_at"),
                     runner.get("token_version", 1),
-                    _json(runner.get("capabilities"), []),
                     runner.get("trust_domain", "coding"),
                     runner.get("trust_boundary_id"),
                     runner.get("attestation_public_key"),
                     runner.get("attestation_key_fingerprint"),
                     runner.get("attestation_status", "pending"),
+                    _json(runner.get("capabilities"), []),
                 ),
             )
 
@@ -1349,9 +1347,7 @@ class PluginReadRepository:
         clauses = [where.removeprefix("WHERE ")] if where else []
         if product_scope_ids is not None:
             normalized_product_ids = [
-                str(product_id)
-                for product_id in product_scope_ids
-                if str(product_id).strip()
+                str(product_id) for product_id in product_scope_ids if str(product_id).strip()
             ]
             if not normalized_product_ids:
                 clauses.append("FALSE")
@@ -1403,9 +1399,7 @@ class PluginReadRepository:
                 params.append(value)
         if product_scope_ids is not None:
             normalized_product_ids = [
-                str(product_id)
-                for product_id in product_scope_ids
-                if str(product_id).strip()
+                str(product_id) for product_id in product_scope_ids if str(product_id).strip()
             ]
             if not normalized_product_ids:
                 clauses.append("FALSE")
@@ -1651,9 +1645,7 @@ class PluginReadRepository:
         clauses = [where.removeprefix("WHERE ")] if where else []
         if product_scope_ids is not None:
             normalized_product_ids = [
-                str(product_id)
-                for product_id in product_scope_ids
-                if str(product_id).strip()
+                str(product_id) for product_id in product_scope_ids if str(product_id).strip()
             ]
             if not normalized_product_ids:
                 clauses.append("FALSE")
