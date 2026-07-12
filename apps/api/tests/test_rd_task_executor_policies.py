@@ -1,3 +1,8 @@
+import base64
+import json
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -15,12 +20,59 @@ def create_codex_runner(headers: dict[str, str]) -> dict:
             "name": "本地 Codex 研发执行器",
             "protocol": "runner_polling",
             "runner_token": "runner-secret",
+            "trust_boundary_id": "coding-pool-a",
+            "trust_domain": "coding",
             "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
         },
         headers=headers,
     )
     assert response.status_code == 200
     return response.json()["data"]
+
+
+def create_verification_runner(
+    headers: dict[str, str],
+) -> tuple[dict, Ed25519PrivateKey]:
+    signing_key = Ed25519PrivateKey.generate()
+    public_key = signing_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    response = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "attestation_public_key": base64.b64encode(public_key).decode("ascii"),
+            "attestation_status": "active",
+            "executor_types": ["codex"],
+            "name": "独立 Codex 验证执行器",
+            "protocol": "runner_polling",
+            "runner_token": "verifier-secret",
+            "trust_boundary_id": "verification-pool-a",
+            "trust_domain": "verification",
+            "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    return response.json()["data"], signing_key
+
+
+def signed_execution_attestation(
+    signing_key: Ed25519PrivateKey,
+    *,
+    runner_task_id: str,
+) -> dict:
+    payload = {"runner_task_id": runner_task_id, "status": "succeeded"}
+    serialized = json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return {
+        "payload": payload,
+        "signature": base64.b64encode(signing_key.sign(serialized)).decode("ascii"),
+    }
 
 
 def test_rd_task_executor_policy_queues_runner_and_creates_review_on_success():
@@ -427,6 +479,7 @@ def test_executor_policy_auto_commit_waits_for_independent_quality_gate_before_m
     headers = auth_headers()
     requirement, technical_solution_task_id = create_confirmed_technical_solution_task(headers)
     runner = create_codex_runner(headers)
+    verification_runner, signing_key = create_verification_runner(headers)
 
     policy_response = client.post(
         "/api/delivery/rd-task-executor-policies",
@@ -504,8 +557,8 @@ def test_executor_policy_auto_commit_waits_for_independent_quality_gate_before_m
 
     gate_claim = client.post(
         "/api/system/ai-executor-tasks/claim",
-        json={"executor_type": "codex", "runner_id": runner["id"]},
-        headers={"X-Runner-Token": "runner-secret"},
+        json={"executor_type": "codex", "runner_id": verification_runner["id"]},
+        headers={"X-Runner-Token": "verifier-secret"},
     )
     assert gate_claim.status_code == 200
     quality_task = gate_claim.json()["data"]["task"]
@@ -547,13 +600,17 @@ def test_executor_policy_auto_commit_waits_for_independent_quality_gate_before_m
                         "type": "secret_scan",
                     },
                 ],
+                "execution_attestation": signed_execution_attestation(
+                    signing_key,
+                    runner_task_id=quality_task["id"],
+                ),
                 "risk_findings": [],
                 "summary": "Independent verification passed",
             },
-            "runner_id": runner["id"],
+            "runner_id": verification_runner["id"],
             "status": "succeeded",
         },
-        headers={"X-Runner-Token": "runner-secret"},
+        headers={"X-Runner-Token": "verifier-secret"},
     )
     assert gate_completed.status_code == 200
 
@@ -581,6 +638,7 @@ def test_autonomous_loop_retries_failed_gate_with_versioned_context_then_merges(
     headers = auth_headers()
     requirement, technical_solution_task_id = create_confirmed_technical_solution_task(headers)
     runner = create_codex_runner(headers)
+    verification_runner, signing_key = create_verification_runner(headers)
     policy_response = client.post(
         "/api/delivery/rd-task-executor-policies",
         json={
@@ -659,8 +717,8 @@ def test_autonomous_loop_retries_failed_gate_with_versioned_context_then_merges(
     )
     first_gate = client.post(
         "/api/system/ai-executor-tasks/claim",
-        json={"executor_type": "codex", "runner_id": runner["id"]},
-        headers={"X-Runner-Token": "runner-secret"},
+        json={"executor_type": "codex", "runner_id": verification_runner["id"]},
+        headers={"X-Runner-Token": "verifier-secret"},
     ).json()["data"]["task"]
     assert first_gate["task_kind"] == "quality_gate"
     failed_checks = [
@@ -683,10 +741,10 @@ def test_autonomous_loop_retries_failed_gate_with_versioned_context_then_merges(
                 "risk_findings": [],
                 "summary": "单元测试失败",
             },
-            "runner_id": runner["id"],
+            "runner_id": verification_runner["id"],
             "status": "succeeded",
         },
-        headers={"X-Runner-Token": "runner-secret"},
+        headers={"X-Runner-Token": "verifier-secret"},
     )
 
     retry_detail = client.get(
@@ -738,8 +796,8 @@ def test_autonomous_loop_retries_failed_gate_with_versioned_context_then_merges(
     )
     second_gate = client.post(
         "/api/system/ai-executor-tasks/claim",
-        json={"executor_type": "codex", "runner_id": runner["id"]},
-        headers={"X-Runner-Token": "runner-secret"},
+        json={"executor_type": "codex", "runner_id": verification_runner["id"]},
+        headers={"X-Runner-Token": "verifier-secret"},
     ).json()["data"]["task"]
     passed_checks = [
         {
@@ -758,13 +816,17 @@ def test_autonomous_loop_retries_failed_gate_with_versioned_context_then_merges(
                 "changed_files": ["apps/web/src/pages/Login/index.tsx"],
                 "changed_lines": 12,
                 "checks": passed_checks,
+                "execution_attestation": signed_execution_attestation(
+                    signing_key,
+                    runner_task_id=second_gate["id"],
+                ),
                 "risk_findings": [],
                 "summary": "第二轮独立验证通过",
             },
-            "runner_id": runner["id"],
+            "runner_id": verification_runner["id"],
             "status": "succeeded",
         },
-        headers={"X-Runner-Token": "runner-secret"},
+        headers={"X-Runner-Token": "verifier-secret"},
     )
 
     completed_detail = client.get(

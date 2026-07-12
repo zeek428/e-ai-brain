@@ -1,3 +1,9 @@
+import base64
+import json
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from app.core.store import MemoryStore
 from app.services.quality_gates import (
     complete_pre_merge_quality_gate,
@@ -46,6 +52,54 @@ def _reported_checks(*, failed_type: str | None = None) -> list[dict]:
     ]
 
 
+def _configure_isolated_verifier(store: MemoryStore) -> Ed25519PrivateKey:
+    signing_key = Ed25519PrivateKey.generate()
+    public_key = signing_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    store.ai_executor_runners.update(
+        {
+            "runner_001": {
+                "attestation_status": "active",
+                "executor_types": ["codex"],
+                "id": "runner_001",
+                "status": "active",
+                "trust_boundary_id": "coding-pool-a",
+                "trust_domain": "coding",
+            },
+            "runner_verifier_001": {
+                "attestation_public_key": base64.b64encode(public_key).decode("ascii"),
+                "attestation_status": "active",
+                "executor_types": ["codex"],
+                "id": "runner_verifier_001",
+                "status": "active",
+                "trust_boundary_id": "verification-pool-a",
+                "trust_domain": "verification",
+            },
+        }
+    )
+    return signing_key
+
+
+def _signed_attestation(
+    signing_key: Ed25519PrivateKey,
+    *,
+    runner_task_id: str,
+) -> dict:
+    payload = {"runner_task_id": runner_task_id, "status": "succeeded"}
+    serialized = json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return {
+        "payload": payload,
+        "signature": base64.b64encode(signing_key.sign(serialized)).decode("ascii"),
+    }
+
+
 def test_failed_required_check_blocks_auto_merge() -> None:
     store = MemoryStore()
     run, verifier = start_pre_merge_quality_gate(
@@ -73,7 +127,8 @@ def test_failed_required_check_blocks_auto_merge() -> None:
     assert completed["status"] == "failed"
     assert not quality_gate_allows_auto_merge(completed)
     assert {reason["code"] for reason in completed["blocked_reasons"]} == {
-        "REQUIRED_CHECK_FAILED"
+        "REQUIRED_CHECK_FAILED",
+        "VERIFIER_ATTESTATION_REQUIRED",
     }
     unit_check = next(
         check
@@ -82,6 +137,29 @@ def test_failed_required_check_blocks_auto_merge() -> None:
         and check["check_type"] == "unit_test"
     )
     assert unit_check["source"] == "platform_verifier"
+
+
+def test_quality_gate_never_reuses_coding_runner_when_verifier_is_unavailable() -> None:
+    store = MemoryStore()
+    coding_task = _coding_task()
+    store.ai_executor_runners["runner_001"] = {
+        "attestation_status": "active",
+        "executor_types": ["codex"],
+        "id": "runner_001",
+        "status": "active",
+        "trust_boundary_id": "coding-pool-a",
+        "trust_domain": "coding",
+    }
+
+    _, verifier = start_pre_merge_quality_gate(
+        store,
+        ai_task=_ai_task(),
+        coding_runner_task=coding_task,
+        executor_policy={"code_change_review_mode": "auto_commit"},
+    )
+
+    assert verifier["runner_id"] == ""
+    assert verifier["request_config"]["trust_isolation_required"] is True
 
 
 def test_verifier_cannot_override_platform_evidence_source() -> None:
@@ -194,3 +272,59 @@ def test_high_risk_security_finding_blocks_auto_merge() -> None:
     reason_codes = {reason["code"] for reason in completed["blocked_reasons"]}
     assert "SECURITY_FINDING" in reason_codes
     assert "HIGH_RISK_TASK_REQUIRES_MANUAL_REVIEW" in reason_codes
+
+
+def test_auto_merge_requires_verified_attestation_from_an_isolated_verifier() -> None:
+    passed_without_proof = {
+        "blocked_reasons": [],
+        "status": "passed",
+        "verified_attestation_count": 0,
+        "verifier_trust_isolated": False,
+    }
+    passed_with_proof = {
+        **passed_without_proof,
+        "verified_attestation_count": 1,
+        "verifier_trust_isolated": True,
+    }
+
+    assert not quality_gate_allows_auto_merge(passed_without_proof)
+    assert quality_gate_allows_auto_merge(passed_with_proof)
+
+
+def test_isolated_verifier_attestation_allows_auto_merge() -> None:
+    store = MemoryStore()
+    signing_key = _configure_isolated_verifier(store)
+    coding_task = _coding_task()
+    store.ai_executor_tasks[coding_task["id"]] = coding_task
+    _, verifier = start_pre_merge_quality_gate(
+        store,
+        ai_task=_ai_task(),
+        coding_runner_task=coding_task,
+        executor_policy={"code_change_review_mode": "auto_commit"},
+    )
+
+    assert verifier["runner_id"] == "runner_verifier_001"
+    verifier.update(
+        {
+            "result_json": {
+                "changed_files": ["apps/api/app/services/example.py"],
+                "changed_lines": 2,
+                "checks": _reported_checks(),
+                "execution_attestation": _signed_attestation(
+                    signing_key,
+                    runner_task_id=verifier["id"],
+                ),
+                "risk_findings": [],
+            },
+            "status": "succeeded",
+        }
+    )
+
+    completed = complete_pre_merge_quality_gate(store, verifier_runner_task=verifier)
+
+    assert completed is not None
+    assert completed["status"] == "passed"
+    assert completed["blocked_reasons"] == []
+    assert completed["verified_attestation_count"] == 1
+    assert completed["verifier_trust_isolated"] is True
+    assert quality_gate_allows_auto_merge(completed)

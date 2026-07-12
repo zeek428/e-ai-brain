@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.services.ai_executor_task_creation import create_ai_executor_task
+from app.services.execution_attestations import verify_execution_attestation
 from app.services.operational_records import read_memory_dict, record_audit_event
 
 DEFAULT_PRE_MERGE_POLICY = {
@@ -62,6 +63,7 @@ MANUAL_REVIEW_REASON_CODES = {
     "DATABASE_MIGRATION_REQUIRES_MANUAL_REVIEW",
     "HIGH_RISK_TASK_REQUIRES_MANUAL_REVIEW",
     "PROTECTED_PATH_REQUIRES_MANUAL_REVIEW",
+    "VERIFIER_ATTESTATION_REQUIRED",
 }
 
 
@@ -75,6 +77,50 @@ def _policy_candidates(current_store: Any) -> list[dict[str, Any]]:
         for policy in read_memory_dict(current_store, "quality_gate_policies").values()
         if policy.get("phase") == "pre_merge" and policy.get("status") == "active"
     ]
+
+
+def _runner_records(current_store: Any) -> list[dict[str, Any]]:
+    repository = getattr(current_store, "repository", None)
+    list_runners = getattr(repository, "list_ai_executor_runners", None)
+    if callable(list_runners):
+        return [dict(runner) for runner in list_runners()]
+    runners = read_memory_dict(current_store, "ai_executor_runners")
+    return [dict(runner) for runner in runners.values()]
+
+
+def _runner_trust_boundary(current_store: Any, runner_id: str) -> str:
+    runner = next(
+        (item for item in _runner_records(current_store) if item.get("id") == runner_id),
+        None,
+    )
+    return str((runner or {}).get("trust_boundary_id") or "").strip()
+
+
+def _select_verification_runner(
+    current_store: Any,
+    *,
+    coding_runner_task: dict[str, Any],
+) -> dict[str, Any] | None:
+    coding_runner_id = str(coding_runner_task.get("runner_id") or "").strip()
+    coding_boundary = str(coding_runner_task.get("runner_trust_boundary_id") or "").strip()
+    if not coding_boundary:
+        coding_boundary = _runner_trust_boundary(current_store, coding_runner_id)
+    executor_type = str(coding_runner_task.get("executor_type") or "").strip()
+    candidates = []
+    for runner in _runner_records(current_store):
+        supported_executors = set(runner.get("executor_types") or [])
+        boundary = str(runner.get("trust_boundary_id") or "").strip()
+        if (
+            runner.get("status") == "active"
+            and runner.get("attestation_status") == "active"
+            and runner.get("trust_domain") == "verification"
+            and boundary
+            and boundary != coding_boundary
+            and runner.get("id") != coding_runner_id
+            and (not executor_type or executor_type in supported_executors)
+        ):
+            candidates.append(runner)
+    return min(candidates, key=lambda item: str(item.get("id") or "")) if candidates else None
 
 
 def resolve_pre_merge_quality_gate_policy(
@@ -258,6 +304,10 @@ def start_pre_merge_quality_gate(
         or coding_runner_task.get("workspace_root")
         or ""
     )
+    verification_runner = _select_verification_runner(
+        current_store,
+        coding_runner_task=coding_runner_task,
+    )
     verifier_task = create_ai_executor_task(
         current_store,
         action_id=None,
@@ -294,8 +344,10 @@ def start_pre_merge_quality_gate(
             "coding_runner_task_id": coding_runner_task["id"],
             "context_manifest_id": run.get("context_manifest_id"),
             "source": "platform_quality_gate",
+            "required_trust_domain": "verification",
+            "trust_isolation_required": True,
         },
-        runner_id=str(coding_runner_task.get("runner_id") or ""),
+        runner_id=str((verification_runner or {}).get("id") or ""),
         scheduled_job_id=None,
         scheduled_job_run_id=None,
         task_kind="quality_gate",
@@ -306,6 +358,8 @@ def start_pre_merge_quality_gate(
         **run["policy_snapshot"],
         "coding_runner_task_id": coding_runner_task["id"],
         "verifier_runner_task_id": verifier_task["id"],
+        "verifier_runner_id": verifier_task.get("runner_id") or None,
+        "verifier_trust_isolation_required": True,
     }
     _save_gate_bundle(current_store, audit_events=[], checks=checks, run=run)
     return deepcopy(run), verifier_task
@@ -329,6 +383,18 @@ def _gate_run_and_checks(
         if check.get("quality_gate_run_id") == quality_gate_run_id
     ]
     return deepcopy(run) if run else None, [deepcopy(check) for check in checks]
+
+
+def _runner_task_record(current_store: Any, runner_task_id: str) -> dict[str, Any] | None:
+    repository = getattr(current_store, "repository", None)
+    list_tasks = getattr(repository, "list_ai_executor_tasks", None)
+    if callable(list_tasks):
+        return next(
+            (task for task in list_tasks() if task.get("id") == runner_task_id),
+            None,
+        )
+    task = read_memory_dict(current_store, "ai_executor_tasks").get(runner_task_id)
+    return deepcopy(task) if task else None
 
 
 def _matches_protected_path(path: str, patterns: list[str]) -> bool:
@@ -387,7 +453,32 @@ def complete_pre_merge_quality_gate(
             }
         )
 
+    policy = run.get("policy_snapshot") or {}
+    coding_runner_task = _runner_task_record(
+        current_store,
+        str(policy.get("coding_runner_task_id") or ""),
+    )
+    attestation = verify_execution_attestation(
+        current_store,
+        runner_task=verifier_runner_task,
+        required_trust_domain="verification",
+        coding_runner_task=coding_runner_task,
+    )
+    verifier_trust_isolated = attestation.get("status") == "verified"
+
     reasons: list[dict[str, Any]] = []
+    if not verifier_trust_isolated:
+        reasons.append(
+            {
+                "code": "VERIFIER_ATTESTATION_REQUIRED",
+                "details": {
+                    "attestation_id": attestation.get("id"),
+                    "error_code": attestation.get("error_code"),
+                    "status": attestation.get("status"),
+                },
+                "message": "独立验证证明缺失、不可信或未隔离，必须人工确认",
+            }
+        )
     failed_required = [
         check["check_type"]
         for check in checks
@@ -426,7 +517,6 @@ def complete_pre_merge_quality_gate(
     changed_files = [str(item) for item in result.get("changed_files") or []]
     changed_file_count = int(result.get("changed_file_count") or len(changed_files))
     changed_lines = int(result.get("changed_lines") or 0)
-    policy = run.get("policy_snapshot") or {}
     max_files = policy.get("max_changed_files")
     max_lines = policy.get("max_changed_lines")
     if max_files is not None and changed_file_count > int(max_files):
@@ -506,6 +596,8 @@ def complete_pre_merge_quality_gate(
         {
             "status": "failed" if failure_reasons else "passed",
             "independent_evidence_count": len(independent_evidence),
+            "verified_attestation_count": 1 if verifier_trust_isolated else 0,
+            "verifier_trust_isolated": verifier_trust_isolated,
             "summary": result.get("summary")
             or ("独立质量门禁通过" if not failure_reasons else "独立质量门禁未通过"),
             "blocked_reasons": reasons,
@@ -531,6 +623,9 @@ def complete_pre_merge_quality_gate(
             "ai_task_id": run["subject_id"],
             "blocked_reasons": reasons,
             "independent_evidence_count": len(independent_evidence),
+            "attestation_id": attestation.get("id"),
+            "verified_attestation_count": 1 if verifier_trust_isolated else 0,
+            "verifier_trust_isolated": verifier_trust_isolated,
             "status": run["status"],
             "verifier_runner_task_id": verifier_runner_task.get("id"),
         },
@@ -545,7 +640,12 @@ def complete_pre_merge_quality_gate(
 
 
 def quality_gate_allows_auto_merge(run: dict[str, Any]) -> bool:
-    return run.get("status") == "passed" and not run.get("blocked_reasons")
+    return (
+        run.get("status") == "passed"
+        and not run.get("blocked_reasons")
+        and int(run.get("verified_attestation_count") or 0) >= 1
+        and bool(run.get("verifier_trust_isolated"))
+    )
 
 
 def latest_quality_gate_for_task(
