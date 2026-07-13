@@ -27,6 +27,7 @@ def runner_namespace(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
             "executor_types": ["codex"],
             "name": "部署 Runner",
             "runner_token": "deployment-token",
+            "trust_domain": "deployment",
         },
         headers=headers,
     ).json()["data"]

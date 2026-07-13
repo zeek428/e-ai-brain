@@ -53,11 +53,13 @@ it('manages product and environment scoped Runner targets with optimistic status
             capabilities: ['deployment'],
             executor_types: ['deployment'],
             id: 'runner_001',
+            health_status: 'online',
             metadata: {
               deployment_targets: [{ code: 'prod-docker', method: 'docker', name: '生产 Docker', ready: true }],
             },
             name: '本地部署 Runner',
             status: 'active',
+            trust_domain: 'deployment',
           }],
           total: 1,
         },
@@ -90,6 +92,7 @@ it('manages product and environment scoped Runner targets with optimistic status
 
   expect(await screen.findByText('研发大脑平台')).toBeInTheDocument();
   expect(screen.getByText('生产 Docker')).toBeInTheDocument();
+  expect(screen.getByText('已就绪')).toBeInTheDocument();
   expect(screen.getAllByText('生产环境').length).toBeGreaterThan(0);
   fireEvent.click(screen.getByRole('switch', { name: '停用生产 Docker授权' }));
   await waitFor(() => expect(updateBodies).toEqual([{ status: 'disabled', version: 2 }]));

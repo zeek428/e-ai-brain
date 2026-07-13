@@ -1,6 +1,7 @@
 import { FileTextOutlined, SyncOutlined } from '@ant-design/icons';
 import { PageContainer, type ProColumns } from '@ant-design/pro-components';
 import {
+  Alert,
   Button,
   Drawer,
   Empty,
@@ -298,6 +299,16 @@ export default function DeploymentsPage() {
           label: `${scheme.name} · ${deploymentMethodLabels[scheme.deploymentMethod]}`,
           value: scheme.id,
         })),
+    [deploymentSchemes, selectedDeploymentEnvironment, selectedDeploymentProductId],
+  );
+  const deploymentAutomaticSchemeCount = useMemo(
+    () => deploymentSchemes.filter(
+      (scheme) =>
+        scheme.status === 'active'
+        && scheme.productId === selectedDeploymentProductId
+        && scheme.environment === (selectedDeploymentEnvironment || deploymentDefaultEnvironment)
+        && scheme.deploymentMethod !== 'manual',
+    ).length,
     [deploymentSchemes, selectedDeploymentEnvironment, selectedDeploymentProductId],
   );
   const productNameById = useMemo(
@@ -683,6 +694,12 @@ export default function DeploymentsPage() {
     deploymentAction?.type === 'failed' || deploymentAction?.type === 'rolled_back';
   const deploymentActionIsCancel = deploymentAction?.type === 'cancel';
   const deploymentActionIsStart = deploymentAction?.type === 'start';
+  const openDeploymentSchemeConfiguration = () => {
+    setDeploymentOpen(false);
+    deploymentForm.resetFields();
+    setDeploymentRequirements([]);
+    setActiveTab('schemes');
+  };
 
   return (
     <PageContainer
@@ -800,6 +817,28 @@ export default function DeploymentsPage() {
               placeholder={selectedDeploymentProductId ? '请选择当前产品和环境的部署方案' : '请先选择所属产品'}
             />
           </Form.Item>
+          {selectedDeploymentProductId && deploymentSchemeOptions.length > 0 && deploymentAutomaticSchemeCount === 0 ? (
+            <Alert
+              action={canManageSchemes ? (
+                <Button onClick={openDeploymentSchemeConfiguration} size="small" type="link">配置部署方案</Button>
+              ) : undefined}
+              description="当前仅可使用人工部署。配置并启用 SSH、Docker 或 Jenkins 方案后，会自动出现在此处。"
+              title="当前产品和环境尚未配置自动部署方案"
+              showIcon
+              type="info"
+            />
+          ) : null}
+          {selectedDeploymentProductId && deploymentSchemeOptions.length === 0 ? (
+            <Alert
+              action={canManageSchemes ? (
+                <Button onClick={openDeploymentSchemeConfiguration} size="small" type="link">配置部署方案</Button>
+              ) : undefined}
+              description="请先为当前产品和部署环境创建并启用部署方案。"
+              title="当前产品和环境没有可用部署方案"
+              showIcon
+              type="warning"
+            />
+          ) : null}
           <Form.Item label="风险等级" name="riskLevel"><Select options={deploymentRiskOptions} /></Form.Item>
           <Form.Item label="发布分支" name="releaseBranch"><Input placeholder="release/2026.07" /></Form.Item>
           <Form.Item label="Commit SHA" name="commitSha"><Input /></Form.Item>

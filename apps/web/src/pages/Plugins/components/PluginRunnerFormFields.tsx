@@ -4,6 +4,7 @@ import {
   aiExecutorRunnerArchOptions,
   aiExecutorRunnerProtocolOptions,
   aiExecutorRunnerTargetOsOptions,
+  aiExecutorRunnerTrustDomainOptions,
   aiExecutorTypeOptions,
   runnerInstallModeOptions,
 } from './pluginRunnerHelpers';
@@ -47,12 +48,27 @@ export function PluginRunnerFormFields({ editingRunner }: { editingRunner: boole
         <Select mode="multiple" options={aiExecutorTypeOptions} />
       </Form.Item>
       <Form.Item
-        extra="启用后，Runner 可认领绑定到本机白名单目标的 SSH 或 Docker 部署任务。"
+        extra="启用后会固定为部署信任域，只能认领绑定到本机白名单目标的 SSH 或 Docker 部署任务。"
         label="部署执行能力"
         name="deployment_capability"
         valuePropName="checked"
       >
         <Switch aria-label="部署执行能力" />
+      </Form.Item>
+      <Form.Item noStyle shouldUpdate={(prev, current) => prev.deployment_capability !== current.deployment_capability}>
+        {({ getFieldValue }) => {
+          const isDeploymentRunner = Boolean(getFieldValue('deployment_capability'));
+          return (
+            <Form.Item label="运行信任域" name="trust_domain" rules={[{ required: true }]}>
+              <Select
+                disabled={isDeploymentRunner}
+                options={isDeploymentRunner
+                  ? aiExecutorRunnerTrustDomainOptions.filter((option) => option.value === 'deployment')
+                  : aiExecutorRunnerTrustDomainOptions.filter((option) => option.value !== 'deployment')}
+              />
+            </Form.Item>
+          );
+        }}
       </Form.Item>
       <Typography.Text strong>执行器命令配置</Typography.Text>
       <Space wrap>
@@ -74,8 +90,21 @@ export function PluginRunnerFormFields({ editingRunner }: { editingRunner: boole
         <Form.Item label="目标系统" name="target_os" rules={[{ required: true, message: '请选择目标系统' }]}>
           <Select options={aiExecutorRunnerTargetOsOptions} style={{ width: 180 }} />
         </Form.Item>
-        <Form.Item label="CPU 架构" name="package_arch" rules={[{ required: true, message: '请选择 CPU 架构' }]}>
-          <Select options={aiExecutorRunnerArchOptions} style={{ width: 160 }} />
+        <Form.Item noStyle shouldUpdate={(prev, current) => prev.package_arch !== current.package_arch}>
+          {({ getFieldValue }) => {
+            const selectedArch = getFieldValue('package_arch');
+            return (
+              <Form.Item label="CPU 架构" name="package_arch" rules={[{ required: true, message: '请选择 CPU 架构' }]}>
+                <Select
+                  labelRender={({ value }) =>
+                    aiExecutorRunnerArchOptions.find((option) => option.value === value)?.label ?? String(value)
+                  }
+                  options={aiExecutorRunnerArchOptions.filter((option) => option.value !== selectedArch)}
+                  style={{ width: 250 }}
+                />
+              </Form.Item>
+            );
+          }}
         </Form.Item>
         <Form.Item noStyle shouldUpdate={(prev, current) => prev.target_os !== current.target_os}>
           {({ getFieldValue }) => (

@@ -3,6 +3,7 @@ import { Form, Modal } from 'antd';
 
 import { PluginRunnerFormFields } from './PluginRunnerFormFields';
 import {
+  runnerDefaultPackageArch,
   runnerDefaultInstallMode,
   type AiExecutorRunnerFormValues,
 } from './pluginRunnerHelpers';
@@ -33,6 +34,8 @@ export function PluginRunnerModal({
       onCancel={onCancel}
       onOk={() => void onSubmit()}
       open={open}
+      style={{ maxWidth: 'calc(100vw - 32px)' }}
+      styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
       title={isEditing ? '编辑执行器' : '新增执行器'}
       width={760}
     >
@@ -49,18 +52,22 @@ export function PluginRunnerModal({
           protocol: 'runner_polling',
           status: 'active',
           target_os: 'linux',
+          trust_domain: 'coding',
         }}
         layout="vertical"
         onValuesChange={(changedValues) => {
-          if (!Object.prototype.hasOwnProperty.call(changedValues, 'target_os')) {
-            return;
+          if (Object.prototype.hasOwnProperty.call(changedValues, 'deployment_capability')) {
+            form.setFieldValue(
+              'trust_domain',
+              changedValues.deployment_capability ? 'deployment' : 'coding',
+            );
           }
-          const targetOs = stringValue(changedValues.target_os, 'linux');
-          form.setFieldValue('install_mode', runnerDefaultInstallMode(targetOs));
-          if (targetOs === 'manual') {
-            form.setFieldValue('package_arch', 'universal');
-          } else if (!form.getFieldValue('package_arch')) {
-            form.setFieldValue('package_arch', 'amd64');
+          if (Object.prototype.hasOwnProperty.call(changedValues, 'target_os')) {
+            const targetOs = stringValue(changedValues.target_os, 'linux');
+            form.setFieldsValue({
+              install_mode: runnerDefaultInstallMode(targetOs),
+              package_arch: runnerDefaultPackageArch(targetOs),
+            });
           }
         }}
       >

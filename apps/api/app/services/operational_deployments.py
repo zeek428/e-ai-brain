@@ -1256,6 +1256,8 @@ def list_deployment_runner_targets_response(
             continue
         if "deployment" not in (runner.get("capabilities") or []):
             continue
+        if runner.get("trust_domain") != "deployment":
+            continue
         if not runner_is_online(runner):
             continue
         metadata = runner.get("metadata") if isinstance(runner.get("metadata"), dict) else {}

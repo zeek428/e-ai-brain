@@ -31,6 +31,7 @@ def create_deployment_runner(headers: dict[str, str]) -> dict:
             "executor_types": ["codex"],
             "name": "部署 Runner",
             "runner_token": "deployment-runner-token",
+            "trust_domain": "deployment",
             "workspace_roots": ["/workspace"],
         },
         headers=headers,
@@ -219,6 +220,66 @@ def test_offline_runner_is_not_available_for_deployment_schemes():
     )
 
     assert listed.status_code == 200
+    assert listed.json()["data"]["items"] == []
+    assert created.status_code == 409
+    assert created.json()["detail"]["code"] == "DEPLOYMENT_RUNNER_UNAVAILABLE"
+
+
+def test_coding_runner_is_not_available_for_deployment_schemes():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = client.post(
+        "/api/products",
+        json={"code": "coding-runner", "name": "编码 Runner 产品"},
+        headers=headers,
+    ).json()["data"]
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "capabilities": ["deployment"],
+            "executor_types": ["codex"],
+            "name": "编码 Runner",
+            "runner_token": "coding-runner-token",
+            "trust_domain": "coding",
+        },
+        headers=headers,
+    ).json()["data"]
+    heartbeat = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
+        json={
+            "metadata": {
+                "deployment_targets": [
+                    {
+                        "code": "production-compose",
+                        "method": "docker",
+                        "name": "生产 Docker Compose",
+                        "ready": True,
+                    }
+                ]
+            }
+        },
+        headers={"X-Runner-Token": "coding-runner-token"},
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+
+    listed = client.get(
+        f"/api/devops/deployment-runner-targets?runner_id={runner['id']}",
+        headers=headers,
+    )
+    created = client.post(
+        "/api/devops/deployment-schemes",
+        json={
+            "code": "coding-docker",
+            "deployment_method": "docker",
+            "environment": "prod",
+            "name": "编码 Docker 部署",
+            "product_id": product["id"],
+            "runner_id": runner["id"],
+            "target_code": "production-compose",
+        },
+        headers=headers,
+    )
+
     assert listed.json()["data"]["items"] == []
     assert created.status_code == 409
     assert created.json()["detail"]["code"] == "DEPLOYMENT_RUNNER_UNAVAILABLE"

@@ -43,6 +43,7 @@ def _store() -> MemoryStore:
                 ]
             },
             "status": "active",
+            "trust_domain": "deployment",
         }
     }
     return store

@@ -535,11 +535,11 @@ export const helpGroups: HelpGroup[] = [
         screenshots: [
           {
             alt: '运维部署页面截图',
-            caption: '运维部署页集中管理部署单、发布波次、健康检查、回滚和统一审计证据。',
+            caption: '发起部署会提示自动部署方案缺失，并引导到对应的方案与执行资源配置。',
             src: '/help/screenshots/help-deployments.png',
           },
         ],
-        summary: '配置人工、SSH、Docker 或 Jenkins 方案，从待发布需求发起并跟踪部署。',
+        summary: '配置人工、SSH、Docker 或 Jenkins 方案；资源未就绪时按提示完成 Runner、授权与方案配置。',
         title: '运维部署',
         sections: [
           {
@@ -740,7 +740,7 @@ export const helpGroups: HelpGroup[] = [
             heading: '授权边界',
             body: [
               '系统管理员选择产品、环境和资源类型后建立授权；Runner Target 同时固定 Runner 与目标编码。',
-              '产品发布负责人只能在部署方案中看到当前产品、当前环境已授权且就绪的资源。',
+              '授权列表会标明 Runner 未在线、非部署信任域、未启用部署能力或目标未上报等原因；产品发布负责人只能在部署方案中看到当前产品、当前环境已授权且就绪的资源。',
               '授权记录不保存主机、私钥、密码或命令；停用授权会阻止新的方案绑定和部署启动，但保留历史证据。',
             ],
           },

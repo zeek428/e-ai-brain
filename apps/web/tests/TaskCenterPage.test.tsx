@@ -47,10 +47,7 @@ describe('TaskCenterPage', () => {
       ) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (
-        path === '/api/product-versions?active_only=true' ||
-        path === '/api/product-versions?active_only=true&page_size=100'
-      ) {
+      if (path === '/api/product-versions?page_size=100') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (path === '/api/ai-tasks/task_cancel/cancel' && init?.method === 'POST') {
@@ -730,10 +727,7 @@ describe('TaskCenterPage', () => {
           },
         });
       }
-      if (
-        path === '/api/product-versions?active_only=true' ||
-        path === '/api/product-versions?active_only=true&page_size=100'
-      ) {
+      if (path === '/api/product-versions?page_size=100') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (

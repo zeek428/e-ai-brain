@@ -34,14 +34,25 @@ type DeploymentTarget = {
   method?: string;
   name: string;
   ready?: boolean;
+  runnerCapabilities: string[];
+  runnerHealthStatus?: string;
   runnerId: string;
   runnerName: string;
+  runnerStatus?: string;
+  runnerTrustDomain?: string;
 };
 
 type GrantRow = ExecutionResourceGrantRecord & {
   environment_name: string;
   product_name: string;
+  resource_readiness: ResourceReadiness;
   resource_name: string;
+};
+
+type ResourceReadiness = {
+  color: 'default' | 'green' | 'orange' | 'red';
+  label: string;
+  ready: boolean;
 };
 
 const ENVIRONMENT_OPTIONS = [
@@ -80,7 +91,7 @@ function deploymentTargets(runners: AiExecutorRunnerRecord[]): DeploymentTarget[
       }
       const item = value as Record<string, unknown>;
       const code = String(item.code ?? '').trim();
-      if (!code || item.ready === false) {
+      if (!code) {
         return [];
       }
       return [{
@@ -88,11 +99,37 @@ function deploymentTargets(runners: AiExecutorRunnerRecord[]): DeploymentTarget[
         method: String(item.method ?? '').trim() || undefined,
         name: String(item.name ?? code),
         ready: item.ready !== false,
+        runnerCapabilities: runner.capabilities ?? [],
+        runnerHealthStatus: runner.health_status,
         runnerId: runner.id,
         runnerName: runner.name,
+        runnerStatus: runner.status,
+        runnerTrustDomain: runner.trust_domain,
       }];
     });
   });
+}
+
+function runnerTargetReadiness(target?: DeploymentTarget): ResourceReadiness {
+  if (!target) return { color: 'red', label: '部署目标未上报', ready: false };
+  if (target.runnerStatus !== 'active') return { color: 'red', label: 'Runner 未启用', ready: false };
+  if (target.runnerHealthStatus && target.runnerHealthStatus !== 'online') {
+    return { color: 'orange', label: 'Runner 未在线', ready: false };
+  }
+  if (!target.runnerCapabilities.includes('deployment')) {
+    return { color: 'red', label: '未启用部署能力', ready: false };
+  }
+  if (target.runnerTrustDomain !== 'deployment') {
+    return { color: 'red', label: '非部署信任域', ready: false };
+  }
+  if (!target.ready) return { color: 'orange', label: '部署目标未就绪', ready: false };
+  return { color: 'green', label: '已就绪', ready: true };
+}
+
+function jenkinsConnectionReadiness(connection?: PluginConnectionRecord): ResourceReadiness {
+  if (!connection) return { color: 'red', label: 'Jenkins 连接不存在', ready: false };
+  if (connection.status !== 'active') return { color: 'orange', label: 'Jenkins 连接未启用', ready: false };
+  return { color: 'green', label: '已就绪', ready: true };
 }
 
 export default function ExecutionResourcesPage() {
@@ -112,8 +149,8 @@ export default function ExecutionResourcesPage() {
       const [nextGrants, nextProducts, nextRunners, nextConnections] = await Promise.all([
         fetchExecutionResourceGrants(),
         fetchExecutionResourceProducts(),
-        fetchAiExecutorRunners({ status: 'active' }),
-        fetchPluginConnections({ status: 'active' }),
+        fetchAiExecutorRunners(),
+        fetchPluginConnections(),
       ]);
       setGrants(nextGrants);
       setProducts(nextProducts);
@@ -141,10 +178,14 @@ export default function ExecutionResourcesPage() {
     const product = products.find((item) => item.id === grant.product_id);
     const target = targets.find((item) => item.runnerId === grant.resource_id && item.code === grant.target_code);
     const connection = connections.find((item) => item.id === grant.resource_id);
+    const resourceReadiness = grant.resource_type === 'runner_target'
+      ? runnerTargetReadiness(target)
+      : jenkinsConnectionReadiness(connection);
     return {
       ...grant,
       environment_name: environmentLabel(grant.environment),
       product_name: product?.name ?? grant.product_id,
+      resource_readiness: resourceReadiness,
       resource_name: grant.resource_type === 'runner_target'
         ? target?.name ?? grant.target_code ?? grant.resource_id
         : connection?.name ?? grant.resource_id,
@@ -152,14 +193,17 @@ export default function ExecutionResourcesPage() {
   }), [connections, grants, products, targets]);
 
   const resourceOptions = useMemo(() => selectedResourceType === 'runner_target'
-    ? targets.map((target) => ({
+    ? targets.filter((target) => runnerTargetReadiness(target).ready).map((target) => ({
         label: `${target.name} · ${target.runnerName}${target.method ? ` · ${target.method.toUpperCase()}` : ''}`,
         value: `${target.runnerId}::${target.code}`,
       }))
-    : jenkinsConnections.map((connection) => ({
+    : jenkinsConnections.filter((connection) => jenkinsConnectionReadiness(connection).ready).map((connection) => ({
         label: `${connection.name} · ${connection.environment ?? 'default'}`,
         value: connection.id,
       })), [jenkinsConnections, selectedResourceType, targets]);
+  const resourceNotFoundContent = selectedResourceType === 'runner_target'
+    ? '没有可授权的 Runner 目标：请检查 Runner 在线状态、部署能力、部署信任域和目标上报。'
+    : '没有可授权的 Jenkins 连接：请先在插件管理中创建并启用 Jenkins 连接。';
 
   const openCreate = () => {
     form.resetFields();
@@ -232,6 +276,12 @@ export default function ExecutionResourcesPage() {
       width: 280,
     },
     {
+      dataIndex: 'resource_readiness',
+      render: (_, row) => <Tag color={row.resource_readiness.color}>{row.resource_readiness.label}</Tag>,
+      title: '资源就绪状态',
+      width: 150,
+    },
+    {
       dataIndex: 'status',
       render: (_, row) => <StatusTag color={row.status === 'active' ? 'green' : 'default'} label={row.status === 'active' ? '启用' : '停用'} />,
       title: '状态',
@@ -277,7 +327,7 @@ export default function ExecutionResourcesPage() {
         primaryAction="新增授权"
         rowKey="id"
         tableLayout="fixed"
-        tableScroll={{ x: 1100 }}
+        tableScroll={{ x: 1250 }}
         tableTitle="执行资源授权"
         title="执行资源授权"
         viewStorageKey="system.execution_resources"
@@ -308,7 +358,7 @@ export default function ExecutionResourcesPage() {
           </Form.Item>
           <Form.Item label="执行资源" name="resource_key" rules={[{ required: true, message: '请选择执行资源' }]}>
             <Select
-              notFoundContent={selectedResourceType === 'runner_target' ? '没有已就绪的 Runner 部署目标' : '没有可用的 Jenkins 连接'}
+              notFoundContent={resourceNotFoundContent}
               optionFilterProp="label"
               options={resourceOptions}
               showSearch

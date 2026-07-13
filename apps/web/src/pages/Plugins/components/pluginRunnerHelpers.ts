@@ -16,6 +16,7 @@ export type AiExecutorRunnerFormValues = {
   runner_token?: string;
   status: string;
   target_os?: string;
+  trust_domain?: 'coding' | 'deployment' | 'verification';
   workspace_roots?: string;
 };
 
@@ -42,9 +43,15 @@ export const aiExecutorRunnerTargetOsOptions = [
 ];
 
 export const aiExecutorRunnerArchOptions = [
-  { label: 'amd64', value: 'amd64' },
-  { label: 'arm64', value: 'arm64' },
-  { label: 'universal', value: 'universal' },
+  { label: 'Intel 64 位（amd64）', value: 'amd64' },
+  { label: 'Apple 芯片 / ARM64（arm64）', value: 'arm64' },
+  { label: '通用架构（universal）', value: 'universal' },
+];
+
+export const aiExecutorRunnerTrustDomainOptions = [
+  { label: '编码', value: 'coding' },
+  { label: '验证', value: 'verification' },
+  { label: '部署', value: 'deployment' },
 ];
 
 const defaultInstallModeByTargetOs = new Map([
@@ -115,10 +122,17 @@ export function runnerDefaultInstallMode(targetOs: unknown) {
   return defaultInstallModeByTargetOs.get(key) ?? 'systemd';
 }
 
+export function runnerDefaultPackageArch(targetOs: unknown) {
+  const key = runnerStringValue(targetOs, 'linux');
+  if (key === 'macos') return 'arm64';
+  if (key === 'manual') return 'universal';
+  return 'amd64';
+}
+
 export function runnerPackageOptionsFromMetadata(metadata: Record<string, unknown> | undefined) {
   const targetOs = runnerStringValue(metadata?.target_os, 'linux');
   return {
-    arch: runnerStringValue(metadata?.package_arch, targetOs === 'manual' ? 'universal' : 'amd64'),
+    arch: runnerStringValue(metadata?.package_arch, runnerDefaultPackageArch(targetOs)),
     install_mode: runnerStringValue(metadata?.install_mode, runnerDefaultInstallMode(targetOs)),
     target_os: targetOs,
   };

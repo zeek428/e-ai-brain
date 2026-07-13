@@ -1703,12 +1703,13 @@ def find_available_deployment_runner(
         runner is None
         or runner.get("status") != "active"
         or DEPLOYMENT_EXECUTOR_TYPE not in (runner.get("capabilities") or [])
+        or runner.get("trust_domain") != "deployment"
         or not runner_is_online(runner)
     ):
         raise api_error(
             409,
             "DEPLOYMENT_RUNNER_UNAVAILABLE",
-            "Configured deployment runner is unavailable",
+            "Configured deployment runner must be available and in the deployment trust domain",
         )
     metadata = runner.get("metadata") if isinstance(runner.get("metadata"), dict) else {}
     targets = metadata.get("deployment_targets")

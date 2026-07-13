@@ -1,6 +1,7 @@
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { ProTable, type ProColumns } from '@ant-design/pro-components';
 import {
+  Alert,
   Button,
   Form,
   Input,
@@ -30,6 +31,7 @@ import {
   type DeploymentSchemeCreatePayload,
   type DeploymentSchemeRecord,
 } from '../../services/aiBrain';
+import { navigateTo } from '../../utils/navigation';
 
 type DeploymentSchemeFormValues = {
   autoRollback: boolean;
@@ -335,6 +337,18 @@ export function DeploymentSchemePanel({
         })),
     [connections],
   );
+  const runnerResourceMissing = Boolean(
+    productId
+    && environment
+    && (deploymentMethod === 'ssh' || deploymentMethod === 'docker')
+    && methodTargets.length === 0,
+  );
+  const jenkinsResourceMissing = Boolean(
+    productId
+    && environment
+    && deploymentMethod === 'jenkins'
+    && connections.length === 0,
+  );
 
   useEffect(() => {
     if (!modalOpen || (deploymentMethod !== 'ssh' && deploymentMethod !== 'docker')) return;
@@ -634,6 +648,34 @@ export function DeploymentSchemePanel({
               options={deploymentMethodOptions}
             />
           </Form.Item>
+          {runnerResourceMissing ? (
+            <Alert
+              action={(
+                <Space size={4} wrap>
+                  <Button onClick={() => navigateTo('/tasks/plugins')} size="small" type="link">配置部署 Runner</Button>
+                  <Button onClick={() => navigateTo('/system/execution-resources')} size="small" type="link">授权部署目标</Button>
+                </Space>
+              )}
+              description="需要部署信任域 Runner 在线上报对应 SSH 或 Docker 目标，并授权给当前产品和环境。"
+              title={`${deploymentMethod === 'ssh' ? 'SSH' : 'Docker'} 部署资源尚未就绪`}
+              showIcon
+              type="warning"
+            />
+          ) : null}
+          {jenkinsResourceMissing ? (
+            <Alert
+              action={(
+                <Space size={4} wrap>
+                  <Button onClick={() => navigateTo('/tasks/plugins')} size="small" type="link">配置 Jenkins 连接</Button>
+                  <Button onClick={() => navigateTo('/system/execution-resources')} size="small" type="link">授权 Jenkins 连接</Button>
+                </Space>
+              )}
+              description="需要启用当前环境的 Jenkins 连接，并授权给当前产品和环境。"
+              title="Jenkins 部署资源尚未就绪"
+              showIcon
+              type="warning"
+            />
+          ) : null}
           {deploymentMethod === 'ssh' || deploymentMethod === 'docker' ? (
             <>
               <Form.Item label="Runner" name="runnerId" rules={[{ required: true, message: '请选择 Runner' }]}>

@@ -87,6 +87,7 @@ export function usePluginRunnerOperations({
       protocol: 'runner_polling',
       status: 'active',
       target_os: 'linux',
+      trust_domain: 'coding',
       workspace_roots: '/Users/zeek/source/e-ai-brain',
     });
     setRunnerModalOpen(true);
@@ -114,6 +115,7 @@ export function usePluginRunnerOperations({
       protocol: runner.protocol ?? 'runner_polling',
       status: runner.status,
       target_os: packageOptions.target_os,
+      trust_domain: runner.trust_domain ?? 'coding',
       workspace_roots: arrayToLines(runner.workspace_roots),
     });
     setRunnerModalOpen(true);

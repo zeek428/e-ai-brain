@@ -792,6 +792,7 @@ export type AiExecutorRunnerRecord = {
   metadata?: Record<string, unknown>;
   name: string;
   protocol?: string;
+  trust_domain?: 'coding' | 'deployment' | 'verification';
   queue_summary?: {
     available_slots?: number;
     cancelled?: number;

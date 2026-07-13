@@ -139,6 +139,7 @@ export function runnerPayload(values: AiExecutorRunnerFormValues): Partial<AiExe
     protocol: values.protocol,
     ...(values.runner_token ? { runner_token: values.runner_token } : {}),
     status: values.status,
+    trust_domain: values.deployment_capability ? 'deployment' : values.trust_domain ?? 'coding',
     workspace_roots: linesToArray(values.workspace_roots),
   };
 }

@@ -2349,6 +2349,12 @@ describe('PluginsPage', () => {
     fireEvent.click(within(dialog).getByRole('switch', { name: '部署执行能力' }));
     expect(within(dialog).getByLabelText('目标系统')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('CPU 架构')).toBeInTheDocument();
+    fireEvent.mouseDown(within(dialog).getByLabelText('CPU 架构'));
+    const architectureMenu = screen.getAllByRole('listbox').at(-1);
+    expect(within(architectureMenu as HTMLElement).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'arm64',
+      'universal',
+    ]);
     fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
 
     await waitFor(() =>
@@ -2369,6 +2375,7 @@ describe('PluginsPage', () => {
           }),
           name: '本地 OpenClaw 执行器',
           protocol: 'runner_polling',
+          trust_domain: 'deployment',
           workspace_roots: ['/Users/zeek/source/e-ai-brain'],
         }),
       ]),

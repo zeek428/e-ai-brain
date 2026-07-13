@@ -42,7 +42,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (path.startsWith('/api/product-versions?active_only=true')) {
+      if (path.startsWith('/api/product-versions?')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/insights/user-feedback' && init?.method === 'POST') {
@@ -190,7 +190,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (path.startsWith('/api/product-versions?active_only=true')) {
+      if (path.startsWith('/api/product-versions?')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (path.startsWith('/api/insights/items')) {
@@ -230,7 +230,7 @@ describe('operational insights pages', () => {
       if (path.startsWith('/api/products?active_only=true')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (path.startsWith('/api/product-versions?active_only=true')) {
+      if (path.startsWith('/api/product-versions?')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (path.startsWith('/api/insights/items')) {
@@ -321,7 +321,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (String(input).startsWith('/api/product-versions?active_only=true')) {
+      if (String(input).startsWith('/api/product-versions?')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/products/product_api/git-repositories?active_only=true') {
@@ -424,7 +424,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (String(input).startsWith('/api/product-versions?active_only=true')) {
+      if (String(input).startsWith('/api/product-versions?')) {
         return jsonResponse({
           data: {
             items: [
@@ -570,7 +570,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (path.startsWith('/api/product-versions?active_only=true')) {
+      if (path.startsWith('/api/product-versions?')) {
         return jsonResponse({
           data: {
             items: [
@@ -638,6 +638,8 @@ describe('operational insights pages', () => {
     expect(screen.getAllByText('待运维执行').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: '发起部署' }));
     await screen.findByRole('dialog', { name: '发起运维部署' });
+    expect(await screen.findByText('当前产品和环境尚未配置自动部署方案')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '配置部署方案' })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText('部署需求')).not.toBeDisabled());
     fireEvent.change(screen.getByLabelText('部署标题'), { target: { value: '生产部署' } });
     await waitFor(() => expect(screen.getByText(/requirement_deploy/)).toBeInTheDocument());
@@ -734,7 +736,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (path.startsWith('/api/product-versions?active_only=true')) {
+      if (path.startsWith('/api/product-versions?')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       return jsonResponse({ data: { items: [], total: 0 } });
@@ -987,7 +989,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (path.startsWith('/api/product-versions?active_only=true')) {
+      if (path.startsWith('/api/product-versions?')) {
         return jsonResponse({
           data: {
             items: [{ code: 'v1', id: 'version_deploy', name: 'v1', product_id: 'product_deploy', status: 'active' }],
@@ -1071,7 +1073,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (String(input).startsWith('/api/product-versions?active_only=true')) {
+      if (String(input).startsWith('/api/product-versions?')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       return jsonResponse({ data: { items: [], total: 0 } });

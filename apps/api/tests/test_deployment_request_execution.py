@@ -83,6 +83,7 @@ def create_runner_scheme(
             "executor_types": ["codex"],
             "name": "部署 Runner",
             "runner_token": runner_token,
+            "trust_domain": "deployment",
         },
         headers=headers,
     )
