@@ -12,6 +12,7 @@ from app.services.ai_executor_runner_approvals import (
     approve_plugin_action_ai_executor_response,
     list_ai_executor_approval_requests_response,
 )
+from app.services.ai_executor_runner_deployment_probes import test_ai_executor_runner_response
 from app.services.ai_executor_runner_task_status import (
     runner_ai_executor_task_status_response,
 )
@@ -31,7 +32,6 @@ from app.services.ai_executor_runners import (
     retry_ai_executor_task_response,
     rotate_ai_executor_runner_token_response,
     runner_heartbeat_response,
-    test_ai_executor_runner_response,
 )
 from app.services.ai_executor_workspace_isolation import (
     complete_ai_executor_workspace_isolation_decision,

@@ -863,6 +863,8 @@ def _drain_output_queue(
     output_queue: queue.Queue,
     pending_logs: list[dict],
     output_preview: str,
+    *,
+    suppress_output: bool = False,
 ) -> tuple[bool, str]:
     reader_done = False
     while True:
@@ -874,6 +876,9 @@ def _drain_output_queue(
             reader_done = True
             continue
         if not isinstance(item, str):
+            continue
+        if suppress_output:
+            output_preview = "Deployment connectivity probe output redacted."
             continue
         output_preview = (output_preview + item)[-MAX_OUTPUT_PREVIEW_CHARS:]
         message = item.rstrip()
@@ -994,6 +999,7 @@ def _stream_process_output(
     task_id: str,
     timeout_seconds: int,
     workspace_root: str,
+    suppress_output: bool = False,
 ) -> tuple[int, str, bool, str | None]:
     process = subprocess.Popen(
         command_args,
@@ -1035,6 +1041,9 @@ def _stream_process_output(
         if item is _STREAM_END:
             reader_done = True
         elif isinstance(item, str):
+            if suppress_output:
+                output_preview = "Deployment connectivity probe output redacted."
+                continue
             output_preview = (output_preview + item)[-MAX_OUTPUT_PREVIEW_CHARS:]
             message = item.rstrip()
             if message:
@@ -1097,6 +1106,7 @@ def _stream_process_output(
         output_queue,
         pending_logs,
         output_preview,
+        suppress_output=suppress_output,
     )
     reader_done = reader_done or drained_done
     if not server_terminal_status:
@@ -1228,6 +1238,35 @@ def _deployment_docker_commands(target: dict) -> list[dict]:
     return commands
 
 
+def _deployment_probe_commands(target: dict, deployment_method: str) -> list[dict]:
+    if deployment_method == "ssh":
+        probe_target = {**target, "remote_command": "true"}
+        return [
+            {
+                "argv": _deployment_ssh_command(probe_target),
+                "cwd": os.path.dirname(os.path.abspath(CONFIG_PATH)),
+            }
+        ]
+    if deployment_method == "docker":
+        working_directory = _required_deployment_target_text(target, "working_directory")
+        compose_files = _string_list(target.get("compose_files"))
+        if not compose_files:
+            raise ValueError("Deployment target compose_files is required")
+        project_name = _required_deployment_target_text(target, "project_name")
+        compose_command = ["docker", "compose"]
+        for compose_file in compose_files:
+            compose_command.extend(["-f", compose_file])
+        compose_command.extend(["--project-name", project_name, "config", "--quiet"])
+        return [
+            {
+                "argv": ["docker", "info", "--format", "{{.ServerVersion}}"],
+                "cwd": working_directory,
+            },
+            {"argv": compose_command, "cwd": working_directory},
+        ]
+    raise ValueError("Unsupported deployment connectivity probe method")
+
+
 def _configured_deployment_commands(target: dict, field: str) -> list[dict]:
     raw_commands = target.get(field)
     if not isinstance(raw_commands, list):
@@ -1336,7 +1375,7 @@ def _run_deployment_task(task: dict) -> None:
         not target_code
         or not isinstance(target, dict)
         or deployment_method not in {"ssh", "docker"}
-        or operation not in {"deploy", "rollback"}
+        or operation not in {"deploy", "probe", "rollback"}
         or str(target.get("method") or "").strip().lower() != deployment_method
         or not bool(target.get("ready", True))
     ):
@@ -1355,8 +1394,14 @@ def _run_deployment_task(task: dict) -> None:
     started_at = time.time()
     output_preview = ""
     try:
-        preflight_commands = _configured_deployment_commands(target, "preflight_commands")
-        if deployment_method == "ssh":
+        preflight_commands = (
+            []
+            if operation == "probe"
+            else _configured_deployment_commands(target, "preflight_commands")
+        )
+        if operation == "probe":
+            commands = _deployment_probe_commands(target, deployment_method)
+        elif deployment_method == "ssh":
             commands = [
                 {
                     "argv": _deployment_ssh_command(target, operation=operation),
@@ -1397,6 +1442,7 @@ def _run_deployment_task(task: dict) -> None:
                 task_id=task_id,
                 timeout_seconds=timeout_seconds,
                 workspace_root=str(command["cwd"]),
+                suppress_output=operation == "probe",
             )
             output_preview = (output_preview + preview)[-MAX_OUTPUT_PREVIEW_CHARS:]
             duration_ms = int((time.time() - started_at) * 1000)
@@ -1456,6 +1502,32 @@ def _run_deployment_task(task: dict) -> None:
                     ),
                 )
                 return
+        if operation == "probe":
+            duration_ms = int((time.time() - started_at) * 1000)
+            _complete_task(
+                task_id,
+                status="succeeded",
+                error_code=None,
+                error_message=None,
+                logs=[
+                    {
+                        "level": "info",
+                        "message": f"Deployment target {target_code} connectivity probe completed",
+                    }
+                ],
+                result_json=_deployment_result_json(
+                    deployment_method=deployment_method,
+                    duration_ms=duration_ms,
+                    exit_code=exit_code,
+                    output_preview=output_preview,
+                    target_code=target_code,
+                    operation=operation,
+                    health_status="passed",
+                    wave_number=wave_number,
+                    wave_total=wave_total,
+                ),
+            )
+            return
         health_passed, health_checks = _deployment_health_checks(target)
         smoke_results: list[dict] = []
         smoke_commands = _configured_deployment_commands(target, "smoke_commands")

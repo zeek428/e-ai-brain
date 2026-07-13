@@ -55,7 +55,13 @@ it('manages product and environment scoped Runner targets with optimistic status
             id: 'runner_001',
             health_status: 'online',
             metadata: {
-              deployment_targets: [{ code: 'prod-docker', method: 'docker', name: '生产 Docker', ready: true }],
+              deployment_targets: [{
+                code: 'prod-docker',
+                connectivity_probe: { status: 'succeeded' },
+                method: 'docker',
+                name: '生产 Docker',
+                ready: true,
+              }],
             },
             name: '本地部署 Runner',
             status: 'active',
@@ -103,4 +109,65 @@ it('manages product and environment scoped Runner targets with optimistic status
   expect(within(dialog).getByLabelText('产品')).toBeInTheDocument();
   expect(within(dialog).getByText('Runner 目标')).toBeInTheDocument();
   expect(within(dialog).getByLabelText('执行资源')).toBeInTheDocument();
+});
+
+it('marks an unverified deployment target as not ready', async () => {
+  const response = (body: unknown) => new Response(JSON.stringify(body), {
+    headers: { 'Content-Type': 'application/json' },
+    status: 200,
+  });
+  const fetchMock = vi.fn<typeof fetch>(async (input) => {
+    const url = new URL(String(input), 'http://localhost');
+    if (url.pathname === '/api/system/execution-resources') {
+      return response({
+        data: {
+          items: [{
+            environment: 'prod',
+            id: 'execution_resource_grant_001',
+            product_id: 'product_001',
+            resource_id: 'runner_001',
+            resource_type: 'runner_target',
+            status: 'active',
+            target_code: 'prod-docker',
+            updated_at: '2026-07-13T02:00:00Z',
+            version: 1,
+          }],
+          total: 1,
+        },
+      });
+    }
+    if (url.pathname === '/api/products') {
+      return response({ data: { items: [{ id: 'product_001', name: '研发大脑平台', status: 'active' }], total: 1 } });
+    }
+    if (url.pathname === '/api/system/ai-executor-runners') {
+      return response({
+        data: {
+          items: [{
+            capabilities: ['deployment'],
+            executor_types: ['deployment'],
+            id: 'runner_001',
+            health_status: 'online',
+            metadata: {
+              deployment_targets: [{ code: 'prod-docker', method: 'docker', name: '生产 Docker', ready: true }],
+            },
+            name: '本地部署 Runner',
+            status: 'active',
+            trust_domain: 'deployment',
+          }],
+          total: 1,
+        },
+      });
+    }
+    if (url.pathname === '/api/system/plugin-connections') {
+      return response({ data: { items: [], total: 0 } });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  });
+  window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<ExecutionResourcesPage />);
+
+  expect(await screen.findByText('生产 Docker')).toBeInTheDocument();
+  expect(screen.getByText('未完成真实探测')).toBeInTheDocument();
 });

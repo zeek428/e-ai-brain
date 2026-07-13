@@ -222,6 +222,8 @@ export type DeploymentSchemeRecord = {
 
 export type DeploymentRunnerTargetRecord = {
   code: string;
+  connectivityProbeCheckedAt?: string;
+  connectivityProbeStatus?: string;
   method: 'docker' | 'ssh';
   name: string;
   ready: boolean;
@@ -1016,6 +1018,12 @@ function mapDeploymentScheme(item: FlexibleListItem): DeploymentSchemeRecord {
 function mapDeploymentRunnerTarget(item: FlexibleListItem): DeploymentRunnerTargetRecord {
   return {
     code: formatUnknownValue(item.code),
+    connectivityProbeCheckedAt: item.connectivity_probe_checked_at
+      ? formatUnknownValue(item.connectivity_probe_checked_at)
+      : undefined,
+    connectivityProbeStatus: item.connectivity_probe_status
+      ? formatUnknownValue(item.connectivity_probe_status)
+      : undefined,
     method: item.method === 'ssh' ? 'ssh' : 'docker',
     name: formatUnknownValue(item.name),
     healthCheckConfigured: Boolean(item.health_check_configured),

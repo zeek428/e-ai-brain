@@ -539,7 +539,7 @@ export const helpGroups: HelpGroup[] = [
             src: '/help/screenshots/help-deployments.png',
           },
         ],
-        summary: '配置人工、SSH、Docker 或 Jenkins 方案；资源未就绪时按提示完成 Runner、授权与方案配置。',
+        summary: '配置人工、SSH、Docker 或 Jenkins 方案；SSH/Docker 先完成 Runner 真实探测，再按提示完成授权与方案配置。',
         title: '运维部署',
         sections: [
           {
@@ -549,6 +549,7 @@ export const helpGroups: HelpGroup[] = [
               '方案可选择全量、灰度、分批或蓝绿发布，并配置严格部署窗口、健康检查和真实回滚动作。',
               'Runner Target 和 Jenkins Connection 必须先按产品、环境授权；未授权资源不会进入候选。',
               '人工部署由负责人登记结果；SSH 和 Docker 通过具备部署能力的本地 Runner 执行；Jenkins 通过集成连接触发并同步状态。',
+              '部署 Runner 的“探测”会创建无副作用任务：SSH 仅连接后执行 true，Docker 仅检查 Engine 和 Compose 配置。探测成功仅在 10 分钟内可用于启动部署，心跳和目标上报不能替代该证据。',
               '部署单保存创建时的方案快照，Runner 的主机、私钥和本地目录等配置不会上传到平台。',
               '部署详情可查看预检、质量门禁、每波运行、步骤证据、健康检查、回滚、派发和审计；自动部署取消后会先进入取消中，收到外部终态后再完成取消。',
               '部署失败或回滚会把需求退回待发布，并生成部署失败来源的 Bug。',
@@ -740,7 +741,7 @@ export const helpGroups: HelpGroup[] = [
             heading: '授权边界',
             body: [
               '系统管理员选择产品、环境和资源类型后建立授权；Runner Target 同时固定 Runner 与目标编码。',
-              '授权列表会标明 Runner 未在线、非部署信任域、未启用部署能力或目标未上报等原因；产品发布负责人只能在部署方案中看到当前产品、当前环境已授权且就绪的资源。',
+              '授权列表会标明 Runner 未在线、非部署信任域、未启用部署能力、目标未上报、未完成真实探测、探测失败或探测过期等原因；产品发布负责人只能在部署方案中看到当前产品、当前环境已授权且就绪的资源。',
               '授权记录不保存主机、私钥、密码或命令；停用授权会阻止新的方案绑定和部署启动，但保留历史证据。',
             ],
           },

@@ -584,6 +584,9 @@ export function RunnerTestDiagnosticsContent({
             检测时间 {result.checked_at}
           </Typography.Text>
         ) : null}
+        {(result.probe_tasks?.length ?? 0) > 0 ? (
+          <Tag color="processing">已下发 {result.probe_tasks?.length} 个真实连通性探测</Tag>
+        ) : null}
       </Space>
       <Table
         columns={[

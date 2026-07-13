@@ -1034,6 +1034,11 @@ export type AiExecutorRunnerTestResult = {
   health_status?: string | null;
   heartbeat_age_seconds?: number | null;
   latency_ms?: number | null;
+  probe_tasks?: Array<{
+    id: string;
+    status: string;
+    target_code: string;
+  }>;
   runner?: AiExecutorRunnerRecord;
   runner_id: string;
   status: string;

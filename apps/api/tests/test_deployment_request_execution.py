@@ -64,6 +64,54 @@ def create_deployment(
     return response.json()["data"]
 
 
+def complete_runner_connectivity_probe(
+    headers: dict[str, str],
+    *,
+    runner_id: str,
+    runner_token: str,
+) -> str:
+    queued = client.post(
+        f"/api/system/ai-executor-runners/{runner_id}/test",
+        headers=headers,
+    )
+    assert queued.status_code == 200, queued.text
+    probe_tasks = queued.json()["data"]["probe_tasks"]
+    assert len(probe_tasks) == 1
+    probe_task_id = probe_tasks[0]["id"]
+    claimed = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"runner_id": runner_id},
+        headers={"X-Runner-Token": runner_token},
+    )
+    assert claimed.status_code == 200, claimed.text
+    task = claimed.json()["data"]["task"]
+    assert task["id"] == probe_task_id
+    assert task["task_kind"] == "deployment_connectivity_probe"
+    assert task["input_payload"]["operation"] == "probe"
+    completed = client.post(
+        f"/api/system/ai-executor-tasks/{probe_task_id}/complete",
+        json={
+            "logs": [
+                {
+                    "level": "info",
+                    "message": "Docker engine and Compose configuration are reachable",
+                }
+            ],
+            "result_json": {
+                "deployment_method": "docker",
+                "duration_ms": 24,
+                "operation": "probe",
+                "target_code": "production-compose",
+            },
+            "runner_id": runner_id,
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": runner_token},
+    )
+    assert completed.status_code == 200, completed.text
+    return probe_task_id
+
+
 def create_runner_scheme(
     headers: dict[str, str],
     context: dict[str, str],
@@ -72,6 +120,7 @@ def create_runner_scheme(
     rollout_strategy: str = "all_at_once",
     wave_config: dict | None = None,
     health_probe_configured: bool | None = None,
+    probe_target: bool = True,
 ) -> tuple[dict, str]:
     if health_probe_configured is None:
         health_probe_configured = rollout_strategy != "all_at_once"
@@ -107,6 +156,12 @@ def create_runner_scheme(
         headers={"X-Runner-Token": runner_token},
     )
     assert heartbeat.status_code == 200, heartbeat.text
+    if probe_target:
+        complete_runner_connectivity_probe(
+            headers,
+            runner_id=runner["id"],
+            runner_token=runner_token,
+        )
     scheme_response = client.post(
         "/api/devops/deployment-schemes",
         json={
@@ -265,6 +320,137 @@ def test_runner_cancel_waits_for_external_confirmation():
     assert persisted["status"] == "cancelled"
     assert persisted["runs"][0]["status"] == "cancelled"
     assert app.state.store.requirements[context["requirement_id"]]["status"] == "ready_for_release"
+
+
+def test_runner_deployment_start_requires_a_fresh_connectivity_probe():
+    app.state.store.reset()
+    headers = auth_headers()
+    context = create_context(headers, "runner-probe-required")
+    scheme, _runner_token = create_runner_scheme(headers, context, probe_target=False)
+    deployment = create_deployment(headers, context, scheme_id=scheme["id"])
+
+    started = client.post(
+        f"/api/devops/deployments/{deployment['id']}/start",
+        json={},
+        headers=headers,
+    )
+
+    assert started.status_code == 409
+    assert started.json()["detail"]["code"] == "DEPLOYMENT_TARGET_CONNECTIVITY_UNVERIFIED"
+
+
+def test_running_probe_log_does_not_replace_the_last_successful_evidence():
+    app.state.store.reset()
+    headers = auth_headers()
+    context = create_context(headers, "runner-probe-evidence")
+    scheme, runner_token = create_runner_scheme(headers, context)
+
+    queued = client.post(
+        f"/api/system/ai-executor-runners/{scheme['runner_id']}/test",
+        headers=headers,
+    )
+    assert queued.status_code == 200, queued.text
+    probe_task_id = queued.json()["data"]["probe_tasks"][0]["id"]
+    claimed = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"runner_id": scheme["runner_id"]},
+        headers={"X-Runner-Token": runner_token},
+    )
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["data"]["task"]["id"] == probe_task_id
+    logs = client.post(
+        f"/api/system/ai-executor-tasks/{probe_task_id}/logs",
+        json={
+            "logs": [{"level": "info", "message": "Probe still running"}],
+            "runner_id": scheme["runner_id"],
+            "status": "running",
+        },
+        headers={"X-Runner-Token": runner_token},
+    )
+    assert logs.status_code == 200, logs.text
+
+    targets = client.get(
+        f"/api/devops/deployment-runner-targets?runner_id={scheme['runner_id']}&method=docker",
+        headers=headers,
+    )
+    assert targets.status_code == 200, targets.text
+    assert targets.json()["data"]["items"][0]["ready"] is True
+    assert targets.json()["data"]["items"][0]["connectivity_probe_status"] == "succeeded"
+
+
+def test_runner_probe_dispatch_logs_and_deployment_execution_complete_end_to_end():
+    app.state.store.reset()
+    headers = auth_headers()
+    context = create_context(headers, "runner-probe-e2e")
+    scheme, runner_token = create_runner_scheme(headers, context, probe_target=False)
+    deployment = create_deployment(headers, context, scheme_id=scheme["id"])
+
+    blocked = client.post(
+        f"/api/devops/deployments/{deployment['id']}/start",
+        json={},
+        headers=headers,
+    )
+    assert blocked.status_code == 409
+    probe_task_id = complete_runner_connectivity_probe(
+        headers,
+        runner_id=scheme["runner_id"],
+        runner_token=runner_token,
+    )
+    probe_logs = client.get(
+        f"/api/system/ai-executor-tasks/{probe_task_id}/logs",
+        headers=headers,
+    )
+    assert probe_logs.status_code == 200, probe_logs.text
+    assert "Docker engine and Compose" in probe_logs.json()["data"]["logs"][0]["message"]
+
+    targets = client.get(
+        f"/api/devops/deployment-runner-targets?runner_id={scheme['runner_id']}&method=docker",
+        headers=headers,
+    )
+    assert targets.status_code == 200, targets.text
+    assert targets.json()["data"]["items"][0]["ready"] is True
+    assert targets.json()["data"]["items"][0]["connectivity_probe_status"] == "succeeded"
+
+    started = client.post(
+        f"/api/devops/deployments/{deployment['id']}/start",
+        json={},
+        headers=headers,
+    )
+    assert started.status_code == 200, started.text
+    run = started.json()["data"]["runs"][0]
+    runner_task_id = run["runner_task_id"]
+    claimed = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"runner_id": scheme["runner_id"]},
+        headers={"X-Runner-Token": runner_token},
+    )
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["data"]["task"]["id"] == runner_task_id
+    completed = client.post(
+        f"/api/system/ai-executor-tasks/{runner_task_id}/complete",
+        json={
+            "logs": [{"level": "info", "message": "Docker deployment completed"}],
+            "result_json": {
+                "deployment_method": "docker",
+                "duration_ms": 46,
+                "health_status": "passed",
+                "operation": "deploy",
+                "target_code": "production-compose",
+            },
+            "runner_id": scheme["runner_id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": runner_token},
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["data"]["task"]["logs"][-1]["message"] == "Docker deployment completed"
+
+    persisted = client.get(
+        f"/api/devops/deployments?product_id={context['product_id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert persisted[0]["status"] == "succeeded"
+    assert persisted[0]["runs"][0]["status"] == "success"
 
 
 def test_runner_success_syncs_logs_and_releases_requirement():

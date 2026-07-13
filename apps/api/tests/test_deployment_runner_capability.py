@@ -132,6 +132,10 @@ def test_heartbeat_sanitizes_deployment_target_metadata():
                         "name": "生产 Docker Compose",
                         "method": "docker",
                         "ready": True,
+                        "connectivity_probe": {
+                            "checked_at": "2026-07-13T00:00:00+00:00",
+                            "status": "succeeded",
+                        },
                         "host": "secret.internal",
                         "identity_file": "/secret/id_ed25519",
                         "working_directory": "/srv/private",
@@ -161,9 +165,11 @@ def test_heartbeat_sanitizes_deployment_target_metadata():
         "items": [
             {
                 "code": "production-compose",
+                "connectivity_probe_checked_at": None,
+                "connectivity_probe_status": "not_probed",
                 "method": "docker",
                 "name": "生产 Docker Compose",
-                "ready": True,
+                "ready": False,
                 "runner_id": runner["id"],
             }
         ],

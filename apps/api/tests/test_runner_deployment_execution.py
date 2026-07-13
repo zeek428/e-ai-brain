@@ -1,4 +1,5 @@
 import json
+import sys
 import zipfile
 from io import BytesIO
 
@@ -114,6 +115,34 @@ def test_ssh_deployment_uses_fixed_argv_and_json_stdin(tmp_path, monkeypatch):
     assert all(";" not in argument for argument in command)
 
 
+def test_ssh_connectivity_probe_uses_non_mutating_fixed_argv(tmp_path, monkeypatch):
+    namespace = runner_namespace(tmp_path, monkeypatch)
+    target = namespace["DEPLOYMENT_TARGETS"]["production-ssh"]  # type: ignore[index]
+
+    commands = namespace["_deployment_probe_commands"](target, "ssh")
+
+    assert commands == [
+        {
+            "argv": [
+                "ssh",
+                "-p",
+                "2222",
+                "-i",
+                "/secret/id_ed25519",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=yes",
+                "-o",
+                "UserKnownHostsFile=/secret/known_hosts",
+                "deploy@app.internal",
+                "true",
+            ],
+            "cwd": str(tmp_path),
+        }
+    ]
+
+
 def test_docker_deployment_uses_fixed_compose_commands(tmp_path, monkeypatch):
     namespace = runner_namespace(tmp_path, monkeypatch)
     target = namespace["DEPLOYMENT_TARGETS"]["production-compose"]  # type: ignore[index]
@@ -137,6 +166,140 @@ def test_docker_deployment_uses_fixed_compose_commands(tmp_path, monkeypatch):
             "cwd": "/srv/product",
         },
     ]
+
+
+def test_docker_connectivity_probe_checks_engine_and_compose_config(tmp_path, monkeypatch):
+    namespace = runner_namespace(tmp_path, monkeypatch)
+    target = namespace["DEPLOYMENT_TARGETS"]["production-compose"]  # type: ignore[index]
+
+    commands = namespace["_deployment_probe_commands"](target, "docker")
+
+    assert commands == [
+        {"argv": ["docker", "info", "--format", "{{.ServerVersion}}"], "cwd": "/srv/product"},
+        {
+            "argv": [
+                "docker",
+                "compose",
+                "-f",
+                "compose.yaml",
+                "-f",
+                "compose.prod.yaml",
+                "--project-name",
+                "product",
+                "config",
+                "--quiet",
+            ],
+            "cwd": "/srv/product",
+        },
+    ]
+
+
+def test_runner_executes_connectivity_probe_and_returns_structured_evidence(tmp_path, monkeypatch):
+    namespace = runner_namespace(tmp_path, monkeypatch)
+    executions: list[dict] = []
+    logs: list[dict] = []
+    completions: list[dict] = []
+
+    def fake_stream_process_output(**kwargs):  # type: ignore[no-untyped-def]
+        executions.append(kwargs)
+        return 0, "probe ok\n", False, None
+
+    namespace["_append_logs"] = lambda task_id, entries, **kwargs: logs.extend(entries)
+    namespace["_stream_process_output"] = fake_stream_process_output
+    namespace["_complete_task"] = lambda task_id, **kwargs: completions.append(
+        {"task_id": task_id, **kwargs}
+    )
+
+    namespace["_run_deployment_task"](
+        {
+            "executor_type": "deployment",
+            "id": "runner_task_probe",
+            "input_payload": {
+                "deployment_method": "docker",
+                "operation": "probe",
+                "target_code": "production-compose",
+            },
+            "timeout_seconds": 60,
+        }
+    )
+
+    assert [item["command_args"] for item in executions] == [
+        ["docker", "info", "--format", "{{.ServerVersion}}"],
+        [
+            "docker",
+            "compose",
+            "-f",
+            "compose.yaml",
+            "-f",
+            "compose.prod.yaml",
+            "--project-name",
+            "product",
+            "config",
+            "--quiet",
+        ],
+    ]
+    assert all("pull" not in item["command_args"] for item in executions)
+    assert all("up" not in item["command_args"] for item in executions)
+    assert all(item["suppress_output"] is True for item in executions)
+    assert completions[0]["status"] == "succeeded"
+    assert completions[0]["result_json"]["operation"] == "probe"
+    assert completions[0]["result_json"]["health_status"] == "passed"
+    assert any("Starting docker probe" in item["message"] for item in logs)
+    assert "connectivity probe completed" in completions[0]["logs"][0]["message"]
+
+
+def test_runner_connectivity_probe_timeout_is_reported_without_a_deployment(tmp_path, monkeypatch):
+    namespace = runner_namespace(tmp_path, monkeypatch)
+    completions: list[dict] = []
+    namespace["_append_logs"] = lambda *args, **kwargs: None
+    namespace["_stream_process_output"] = lambda **kwargs: (
+        -9,
+        "probe timed out",
+        True,
+        None,
+    )
+    namespace["_complete_task"] = lambda task_id, **kwargs: completions.append(
+        {"task_id": task_id, **kwargs}
+    )
+
+    namespace["_run_deployment_task"](
+        {
+            "executor_type": "deployment",
+            "id": "runner_task_probe_timeout",
+            "input_payload": {
+                "deployment_method": "ssh",
+                "operation": "probe",
+                "target_code": "production-ssh",
+            },
+            "timeout_seconds": 15,
+        }
+    )
+
+    assert completions[0]["status"] == "timed_out"
+    assert completions[0]["error_code"] == "AI_EXECUTOR_TASK_TIMEOUT"
+    assert completions[0]["result_json"]["operation"] == "probe"
+
+
+def test_connectivity_probe_output_is_not_written_to_platform_logs(tmp_path, monkeypatch):
+    namespace = runner_namespace(tmp_path, monkeypatch)
+    flushed_logs: list[dict] = []
+    namespace["_flush_log_batch"] = lambda task_id, logs, **kwargs: flushed_logs.extend(logs)
+    namespace["_print_local_log"] = lambda *args, **kwargs: None
+
+    exit_code, output_preview, timed_out, server_status = namespace["_stream_process_output"](
+        command_args=[sys.executable, "-c", "print('ssh app.internal private-output')"],
+        instruction="",
+        suppress_output=True,
+        task_id="runner_task_redacted_probe",
+        timeout_seconds=5,
+        workspace_root=str(tmp_path),
+    )
+
+    assert exit_code == 0
+    assert output_preview == "Deployment connectivity probe output redacted."
+    assert timed_out is False
+    assert server_status is None
+    assert flushed_logs == []
 
 
 def test_deployment_execution_reports_result_without_local_secrets(tmp_path, monkeypatch):

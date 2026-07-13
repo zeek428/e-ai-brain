@@ -73,6 +73,10 @@ function isSystemDefaultRunner(runner: AiExecutorRunnerRecord) {
     || runner.metadata?.is_system === true;
 }
 
+function isDeploymentRunner(runner: AiExecutorRunnerRecord) {
+  return runner.capabilities?.includes('deployment') ?? false;
+}
+
 function latestRunnerTaskId(runner: AiExecutorRunnerRecord): string | undefined {
   const metadataTaskId = runner.metadata?.latest_task_id;
   return runner.latest_task_id ?? (typeof metadataTaskId === 'string' ? metadataTaskId : undefined);
@@ -370,15 +374,16 @@ export function PluginRunnerTable({
           valueType: 'option',
           width: RUNNER_ACTION_COLUMN_WIDTH,
           render: (_, row) => {
+            const deploymentRunner = isDeploymentRunner(row);
             const testButton = (
               <Button
-                aria-label={`测试执行器 ${row.name}`}
+                aria-label={`${deploymentRunner ? '探测部署 Runner' : '测试执行器'} ${row.name}`}
                 icon={<PlayCircleOutlined />}
                 loading={testingRunnerId === row.id}
                 onClick={() => onTestRunner(row)}
                 type="link"
               >
-                测试
+                {deploymentRunner ? '探测' : '测试'}
               </Button>
             );
             if (isSystemDefaultRunner(row)) {

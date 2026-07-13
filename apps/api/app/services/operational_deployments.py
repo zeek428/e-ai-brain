@@ -7,6 +7,7 @@ from urllib.error import URLError
 
 from app.api.deps import api_error, require_any_permission_or_roles
 from app.core.repositories.devops_writes import DeploymentSchemeVersionConflictError
+from app.services.ai_executor_runner_deployment_probes import deployment_target_probe_state
 from app.services.ai_executor_runner_health import runner_is_online
 from app.services.bugs import save_bug_record
 from app.services.deployment_health import health_evidence_passed
@@ -912,7 +913,9 @@ def _validate_scheme_execution_resource(
 ) -> None:
     method = str(record.get("deployment_method") or "manual")
     if method in {"ssh", "docker"}:
-        from app.services.ai_executor_runners import find_available_deployment_runner
+        from app.services.ai_executor_runner_deployment_probes import (
+            find_available_deployment_runner,
+        )
 
         find_available_deployment_runner(
             current_store,
@@ -1281,12 +1284,15 @@ def list_deployment_runner_targets_response(
                 and ("runner_target", str(runner["id"]), code) not in grant_keys
             ):
                 continue
+            probe = deployment_target_probe_state(target)
             item = {
                 "code": code,
                 "method": target_method,
                 "name": name,
-                "ready": bool(target.get("ready", True)),
+                "ready": bool(probe["ready"]),
                 "runner_id": str(runner["id"]),
+                "connectivity_probe_checked_at": probe.get("checked_at"),
+                "connectivity_probe_status": probe["status"],
             }
             for capability in (
                 "health_check_configured",
@@ -2054,11 +2060,14 @@ def start_deployment_request_response(
     if executor_channel != "manual":
         _require_scheme_execution_resource_grant(write_store, scheme_snapshot)
     if executor_channel == "runner":
-        from app.services.ai_executor_runners import find_available_deployment_runner
+        from app.services.ai_executor_runner_deployment_probes import (
+            find_available_deployment_runner,
+        )
 
         runner_binding = find_available_deployment_runner(
             write_store,
             deployment_method=deployment_method,
+            require_connectivity_probe=True,
             runner_id=ensure_non_blank(scheme_snapshot.get("runner_id"), "runner_id"),
             target_code=ensure_non_blank(scheme_snapshot.get("target_code"), "target_code"),
         )
@@ -2383,14 +2392,15 @@ def _dispatch_deployment_outbox_event(
     wave = wave_plan[min(max(wave_number - 1, 0), len(wave_plan) - 1)]
     now = datetime.now(UTC).isoformat()
     if executor_channel == "runner":
-        from app.services.ai_executor_runners import (
-            create_ai_executor_task,
+        from app.services.ai_executor_runner_deployment_probes import (
             find_available_deployment_runner,
         )
+        from app.services.ai_executor_runners import create_ai_executor_task
 
         runner = find_available_deployment_runner(
             current_store,
             deployment_method=deployment_method,
+            require_connectivity_probe=True,
             runner_id=ensure_non_blank(scheme_snapshot.get("runner_id"), "runner_id"),
             target_code=ensure_non_blank(scheme_snapshot.get("target_code"), "target_code"),
         )

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import UTC, datetime
-from time import perf_counter
 from typing import Any
 
 from fastapi import Request
@@ -30,21 +29,19 @@ from app.services.ai_executor_runner_constants import (
     SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
     SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
 )
-from app.services.ai_executor_runner_health import (
-    is_system_default_runner as _is_system_default_runner,
+from app.services.ai_executor_runner_deployment_probes import (
+    normalized_deployment_target_metadata,
+    preserve_deployment_target_probe_metadata,
+    runner_with_deployment_probe_result,
 )
 from app.services.ai_executor_runner_health import (
     is_system_default_runner_id as _is_system_default_runner_id,
 )
 from app.services.ai_executor_runner_health import (
-    runner_endpoint as _runner_endpoint,
-)
-from app.services.ai_executor_runner_health import (
-    runner_is_online,
-    system_default_ai_executor_runner,
-)
-from app.services.ai_executor_runner_health import (
     runner_public as _runner_public,
+)
+from app.services.ai_executor_runner_health import (
+    system_default_ai_executor_runner,
 )
 from app.services.ai_executor_runner_packages import build_ai_executor_runner_install_package
 from app.services.ai_executor_runner_persistence import (
@@ -161,37 +158,6 @@ def _normalized_runner_capabilities(value: Any) -> list[str]:
     for capability in capabilities:
         _ensure_enum(capability, AI_EXECUTOR_RUNNER_CAPABILITIES, "capability")
     return capabilities
-
-
-def _normalized_deployment_target_metadata(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    targets: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        code = str(item.get("code") or "").strip()
-        name = str(item.get("name") or "").strip()
-        method = str(item.get("method") or "").strip().lower()
-        if not code or not name or method not in {"ssh", "docker"} or code in seen:
-            continue
-        seen.add(code)
-        target = {
-            "code": code,
-            "method": method,
-            "name": name,
-            "ready": bool(item.get("ready", True)),
-        }
-        for capability in (
-            "health_check_configured",
-            "rollback_configured",
-            "supports_blue_green",
-        ):
-            if bool(item.get(capability)):
-                target[capability] = True
-        targets.append(target)
-    return targets
 
 
 def _token_hash(token: str) -> str:
@@ -1253,151 +1219,6 @@ def list_ai_executor_tasks_response(
     return {"items": items, "total": total}
 
 
-def _runner_test_diagnostic(
-    *,
-    detail: str,
-    name: str,
-    status: str,
-    latency_ms: int | None = None,
-) -> dict[str, Any]:
-    item: dict[str, Any] = {
-        "detail": detail,
-        "name": name,
-        "status": status,
-    }
-    if latency_ms is not None:
-        item["latency_ms"] = latency_ms
-    return item
-
-
-def test_ai_executor_runner_response(
-    *,
-    current_store: Any,
-    runner_id: str,
-    user: dict[str, Any],
-) -> dict[str, Any]:
-    _ensure_admin(user)
-    started_at = perf_counter()
-    sync_ai_executor_runner_store(current_store)
-    if _is_system_default_runner_id(runner_id):
-        runner = system_default_ai_executor_runner()
-    else:
-        runner = _read_record(current_store, "ai_executor_runners", runner_id)
-    if runner is None:
-        raise api_error(404, "NOT_FOUND", "AI executor runner not found")
-
-    public_runner = _runner_public(runner)
-    diagnostics: list[dict[str, Any]] = []
-    if _is_system_default_runner(runner):
-        diagnostics.extend(
-            [
-                _runner_test_diagnostic(
-                    detail="系统默认执行器由 AI Brain 模型网关托管，无需 Runner Token 或心跳。",
-                    name="system_managed",
-                    status="succeeded",
-                ),
-                _runner_test_diagnostic(
-                    detail="支持 model_gateway 执行器类型，可用于系统内置 AI 执行。",
-                    name="executor_types",
-                    status="succeeded",
-                ),
-            ],
-        )
-    else:
-        runner_status = str(runner.get("status") or "unknown")
-        diagnostics.append(
-            _runner_test_diagnostic(
-                detail=f"Runner 注册状态 {runner_status}。",
-                name="runner_registration",
-                status="succeeded" if runner_status == "active" else "failed",
-            ),
-        )
-        token_configured = bool(public_runner.get("token_configured"))
-        diagnostics.append(
-            _runner_test_diagnostic(
-                detail=(
-                    "Runner Token 已配置。"
-                    if token_configured
-                    else "Runner Token 未配置，无法安全领取任务。"
-                ),
-                name="runner_token",
-                status="succeeded" if token_configured else "failed",
-            ),
-        )
-        executor_types = [str(item) for item in runner.get("executor_types") or []]
-        diagnostics.append(
-            _runner_test_diagnostic(
-                detail=(
-                    "已配置执行器类型：" + "、".join(executor_types)
-                    if executor_types
-                    else "未配置执行器类型，无法匹配任务。"
-                ),
-                name="executor_types",
-                status="succeeded" if executor_types else "failed",
-            ),
-        )
-        endpoint_url = _runner_endpoint(runner)
-        diagnostics.append(
-            _runner_test_diagnostic(
-                detail=f"执行器端点 {endpoint_url}。",
-                name="runner_endpoint",
-                status="succeeded" if endpoint_url else "failed",
-            ),
-        )
-        health_status = str(public_runner.get("health_status") or "unknown")
-        heartbeat_age = public_runner.get("heartbeat_age_seconds")
-        heartbeat_timeout = int(runner.get("heartbeat_timeout_seconds") or 120)
-        if health_status == "online":
-            heartbeat_detail = f"Runner 心跳正常，{heartbeat_age} 秒前上报。"
-            heartbeat_status = "succeeded"
-        elif health_status == "never_connected":
-            heartbeat_detail = "Runner 尚未上报心跳，请启动本地 Runner 或检查安装包配置。"
-            heartbeat_status = "failed"
-        elif health_status == "offline":
-            heartbeat_detail = (
-                f"Runner 心跳超时，最近心跳 {heartbeat_age} 秒前，超时时间 {heartbeat_timeout} 秒。"
-            )
-            heartbeat_status = "failed"
-        else:
-            heartbeat_detail = f"Runner 当前健康状态为 {health_status}。"
-            heartbeat_status = "failed"
-        diagnostics.append(
-            _runner_test_diagnostic(
-                detail=heartbeat_detail,
-                name="runner_heartbeat",
-                status=heartbeat_status,
-            ),
-        )
-
-    overall_status = (
-        "failed" if any(item["status"] == "failed" for item in diagnostics) else "succeeded"
-    )
-    latency_ms = int((perf_counter() - started_at) * 1000)
-    result = {
-        "checked_at": datetime.now(UTC).isoformat(),
-        "diagnostics": diagnostics,
-        "health_status": public_runner.get("health_status"),
-        "heartbeat_age_seconds": public_runner.get("heartbeat_age_seconds"),
-        "latency_ms": latency_ms,
-        "runner": public_runner,
-        "runner_id": runner_id,
-        "status": overall_status,
-    }
-    record_audit_event(
-        current_store,
-        event_type="ai_executor_runner.tested",
-        actor_id=user["id"],
-        subject_type="ai_executor_runner",
-        subject_id=runner_id,
-        payload={
-            "health_status": result["health_status"],
-            "latency_ms": latency_ms,
-            "status": overall_status,
-        },
-    )
-    return result
-
-
 def patch_ai_executor_runner_response(
     *,
     current_store: Any,
@@ -1614,8 +1435,15 @@ def runner_heartbeat_response(
     now = datetime.now(UTC).isoformat()
     incoming_metadata = dict(metadata or {})
     if "deployment_targets" in incoming_metadata:
-        incoming_metadata["deployment_targets"] = _normalized_deployment_target_metadata(
+        incoming_metadata["deployment_targets"] = normalized_deployment_target_metadata(
             incoming_metadata.get("deployment_targets"),
+        )
+        existing_metadata = (
+            runner.get("metadata") if isinstance(runner.get("metadata"), dict) else {}
+        )
+        incoming_metadata["deployment_targets"] = preserve_deployment_target_probe_metadata(
+            incoming_metadata["deployment_targets"],
+            existing_metadata.get("deployment_targets"),
         )
     merged_metadata = {**dict(runner.get("metadata") or {}), **incoming_metadata}
     runner = {
@@ -1688,49 +1516,6 @@ def find_available_runner(
         "AI_EXECUTOR_RUNNER_UNAVAILABLE",
         "No active AI executor runner supports the requested executor and workspace",
     )
-
-
-def find_available_deployment_runner(
-    current_store: Any,
-    *,
-    deployment_method: str,
-    runner_id: str,
-    target_code: str,
-) -> dict[str, Any]:
-    sync_ai_executor_runner_store(current_store)
-    runner = _read_record(current_store, "ai_executor_runners", runner_id)
-    if (
-        runner is None
-        or runner.get("status") != "active"
-        or DEPLOYMENT_EXECUTOR_TYPE not in (runner.get("capabilities") or [])
-        or runner.get("trust_domain") != "deployment"
-        or not runner_is_online(runner)
-    ):
-        raise api_error(
-            409,
-            "DEPLOYMENT_RUNNER_UNAVAILABLE",
-            "Configured deployment runner must be available and in the deployment trust domain",
-        )
-    metadata = runner.get("metadata") if isinstance(runner.get("metadata"), dict) else {}
-    targets = metadata.get("deployment_targets")
-    matching_target = next(
-        (
-            target
-            for target in targets or []
-            if isinstance(target, dict)
-            and target.get("code") == target_code
-            and target.get("method") == deployment_method
-            and bool(target.get("ready", True))
-        ),
-        None,
-    )
-    if matching_target is None:
-        raise api_error(
-            409,
-            "DEPLOYMENT_TARGET_UNAVAILABLE",
-            "Configured deployment target is unavailable on the runner",
-        )
-    return runner
 
 
 def _sync_runner_task_to_deployment(
@@ -1913,7 +1698,7 @@ def append_ai_executor_task_logs_response(
     task_id: str,
 ) -> dict[str, Any]:
     runner_id = _ensure_non_blank(getattr(payload, "runner_id", None), "runner_id")
-    _authenticated_runner(current_store, request=request, runner_id=runner_id)
+    runner = _authenticated_runner(current_store, request=request, runner_id=runner_id)
     sync_ai_executor_task_store(current_store, runner_id=runner_id)
     task = _read_record(current_store, "ai_executor_tasks", task_id)
     if task is None or task.get("runner_id") != runner_id:
@@ -1948,6 +1733,26 @@ def append_ai_executor_task_logs_response(
         task,
         audit_event=audit_event,
     )
+    probe_runner = runner_with_deployment_probe_result(runner, task=task)
+    if probe_runner is not None:
+        probe_audit_event = record_audit_event(
+            current_store,
+            event_type="ai_executor_runner.deployment_connectivity_recorded",
+            actor_id=runner_id,
+            subject_type="ai_executor_runner",
+            subject_id=runner_id,
+            payload={
+                "status": task["status"],
+                "target_code": task["input_payload"].get("target_code"),
+                "task_id": task["id"],
+            },
+        )
+        _persist_record(
+            current_store,
+            "save_ai_executor_runner_record",
+            probe_runner,
+            audit_event=probe_audit_event,
+        )
     _sync_runner_completion_to_scheduled_run(current_store, task=task, runner_id=runner_id)
     _sync_runner_completion_to_ai_task(current_store, task=task, runner_id=runner_id)
     _sync_runner_task_to_deployment(current_store, runner_id=runner_id, task=task)
@@ -2145,7 +1950,7 @@ def complete_ai_executor_task_response(
     task_id: str,
 ) -> dict[str, Any]:
     runner_id = _ensure_non_blank(getattr(payload, "runner_id", None), "runner_id")
-    _authenticated_runner(current_store, request=request, runner_id=runner_id)
+    runner = _authenticated_runner(current_store, request=request, runner_id=runner_id)
     sync_ai_executor_task_store(current_store, runner_id=runner_id)
     task = _read_record(current_store, "ai_executor_tasks", task_id)
     if task is None or task.get("runner_id") != runner_id:
@@ -2186,6 +1991,26 @@ def complete_ai_executor_task_response(
         task,
         audit_event=audit_event,
     )
+    probe_runner = runner_with_deployment_probe_result(runner, task=task)
+    if probe_runner is not None:
+        probe_audit_event = record_audit_event(
+            current_store,
+            event_type="ai_executor_runner.deployment_connectivity_recorded",
+            actor_id=runner_id,
+            subject_type="ai_executor_runner",
+            subject_id=runner_id,
+            payload={
+                "status": task["status"],
+                "target_code": task["input_payload"].get("target_code"),
+                "task_id": task["id"],
+            },
+        )
+        _persist_record(
+            current_store,
+            "save_ai_executor_runner_record",
+            probe_runner,
+            audit_event=probe_audit_event,
+        )
     _sync_runner_completion_to_scheduled_run(
         current_store,
         task=task,

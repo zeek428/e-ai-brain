@@ -96,6 +96,17 @@ const windowEnforcementOptions = [
   { label: '不校验', value: 'disabled' },
 ];
 
+function runnerTargetOptionLabel(target: DeploymentRunnerTargetRecord) {
+  if (target.ready) return target.name;
+  const reason = {
+    failed: '真实探测失败',
+    not_probed: '未完成真实探测',
+    stale: '真实探测已过期',
+    timed_out: '真实探测超时',
+  }[target.connectivityProbeStatus ?? ''] ?? '未就绪';
+  return `${target.name}（${reason}）`;
+}
+
 function parseParametersJson(value?: string): Record<string, unknown> {
   const text = value?.trim();
   if (!text) return {};
@@ -322,7 +333,7 @@ export function DeploymentSchemePanel({
         .filter((target) => target.runnerId === selectedRunnerId)
         .map((target) => ({
           disabled: !target.ready,
-          label: target.ready ? target.name : `${target.name}（未就绪）`,
+          label: runnerTargetOptionLabel(target),
           value: target.code,
         })),
     [methodTargets, selectedRunnerId],
@@ -656,7 +667,7 @@ export function DeploymentSchemePanel({
                   <Button onClick={() => navigateTo('/system/execution-resources')} size="small" type="link">授权部署目标</Button>
                 </Space>
               )}
-              description="需要部署信任域 Runner 在线上报对应 SSH 或 Docker 目标，并授权给当前产品和环境。"
+              description="需要部署信任域 Runner 在线上报目标、完成真实连通性探测，并授权给当前产品和环境。"
               title={`${deploymentMethod === 'ssh' ? 'SSH' : 'Docker'} 部署资源尚未就绪`}
               showIcon
               type="warning"

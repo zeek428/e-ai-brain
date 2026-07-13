@@ -31,6 +31,7 @@ type GrantFormValues = {
 
 type DeploymentTarget = {
   code: string;
+  connectivityProbeStatus?: string;
   method?: string;
   name: string;
   ready?: boolean;
@@ -94,8 +95,15 @@ function deploymentTargets(runners: AiExecutorRunnerRecord[]): DeploymentTarget[
       if (!code) {
         return [];
       }
+      const probe = item.connectivity_probe;
+      const connectivityProbeStatus = probe
+        && typeof probe === 'object'
+        && !Array.isArray(probe)
+        ? String((probe as Record<string, unknown>).status ?? '').trim() || undefined
+        : undefined;
       return [{
         code,
+        connectivityProbeStatus,
         method: String(item.method ?? '').trim() || undefined,
         name: String(item.name ?? code),
         ready: item.ready !== false,
@@ -123,6 +131,15 @@ function runnerTargetReadiness(target?: DeploymentTarget): ResourceReadiness {
     return { color: 'red', label: '非部署信任域', ready: false };
   }
   if (!target.ready) return { color: 'orange', label: '部署目标未就绪', ready: false };
+  if (target.connectivityProbeStatus === 'stale') {
+    return { color: 'orange', label: '真实探测已过期', ready: false };
+  }
+  if (target.connectivityProbeStatus === 'failed' || target.connectivityProbeStatus === 'timed_out') {
+    return { color: 'red', label: '真实探测失败', ready: false };
+  }
+  if (target.connectivityProbeStatus !== 'succeeded') {
+    return { color: 'orange', label: '未完成真实探测', ready: false };
+  }
   return { color: 'green', label: '已就绪', ready: true };
 }
 
@@ -202,7 +219,7 @@ export default function ExecutionResourcesPage() {
         value: connection.id,
       })), [jenkinsConnections, selectedResourceType, targets]);
   const resourceNotFoundContent = selectedResourceType === 'runner_target'
-    ? '没有可授权的 Runner 目标：请检查 Runner 在线状态、部署能力、部署信任域和目标上报。'
+    ? '没有可授权的 Runner 目标：请检查 Runner 在线、部署信任域、目标上报和真实连通性探测。'
     : '没有可授权的 Jenkins 连接：请先在插件管理中创建并启用 Jenkins 连接。';
 
   const openCreate = () => {

@@ -309,9 +309,12 @@ export function usePluginRunnerOperations({
     try {
       const result = await testAiExecutorRunner(runner.id);
       openRunnerTestDiagnostics(runner, result);
+      const probeCount = result.probe_tasks?.length ?? 0;
       if (result.status === 'succeeded') {
         message.success({
-          content: `执行器测试通过，耗时 ${result.latency_ms ?? '-'}ms`,
+          content: probeCount > 0
+            ? `已下发 ${probeCount} 个真实连通性探测任务，请等待 Runner 回传结果`
+            : `执行器测试通过，耗时 ${result.latency_ms ?? '-'}ms`,
           duration: 3,
           key: messageKey,
         });
