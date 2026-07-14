@@ -37,6 +37,7 @@ import {
   createDeploymentRequest,
   fetchDeploymentSchemes,
   fetchDeploymentConnectivityProbe,
+  fetchDeploymentConnectivityProbeLogs,
   fetchDeploymentRequestDetail,
   fetchDeploymentRequestList,
   fetchDeploymentRunLogs,
@@ -48,6 +49,7 @@ import {
   syncDeploymentRun,
   type DeploymentCancelPayload,
   type DeploymentCompletePayload,
+  type DeploymentConnectivityProbeRecord,
   type DeploymentRequestCreatePayload,
   type DeploymentRunLogRecord,
   type DeploymentRequestRecord,
@@ -58,6 +60,12 @@ import {
 } from '../../services/aiBrain';
 import { DeploymentSchemePanel } from './DeploymentSchemePanel';
 import { DeploymentDetailDrawer } from './DeploymentDetailDrawer';
+import {
+  DeploymentActionModal,
+  type DeploymentAction,
+  type DeploymentActionFormValues,
+  type DeploymentActionType,
+} from './DeploymentActionModal';
 
 type DeploymentRequestFormValues = {
   artifactDigest?: string;
@@ -76,16 +84,6 @@ type DeploymentRequestFormValues = {
   productId: string;
   title: string;
   versionId: string;
-};
-
-type DeploymentActionType = 'cancel' | 'failed' | 'probe_and_start' | 'rolled_back' | 'start' | 'success';
-
-type DeploymentActionFormValues = {
-  externalBuildId?: string;
-  externalJobName?: string;
-  failureReason?: string;
-  logUrl?: string;
-  reason?: string;
 };
 
 const deploymentDefaultEnvironment = 'prod';
@@ -116,6 +114,7 @@ const deploymentChannelLabels: Record<string, string> = {
   manual: '人工',
   runner: 'Runner',
 };
+const activeRunnerProbeStatuses = new Set(['claimed', 'queued', 'running']);
 const deploymentStatusLabels: Record<string, { color: string; label: string }> = {
   approved: { color: 'blue', label: '已准入' },
   cancelled: { color: 'default', label: '已取消' },
@@ -232,15 +231,15 @@ export default function DeploymentsPage() {
   const [deploymentOpen, setDeploymentOpen] = useState(false);
   const [detailDeploymentId, setDetailDeploymentId] = useState<string>();
   const [deploymentLogState, setDeploymentLogState] = useState<{
+    kind?: 'deployment' | 'probe';
     loading: boolean;
     logs: DeploymentRunLogRecord[];
     record?: OperationalMetricRecord;
   }>({ loading: false, logs: [] });
-  const [deploymentAction, setDeploymentAction] = useState<{
-    record: OperationalMetricRecord;
-    type: DeploymentActionType;
-  } | null>(null);
+  const [deploymentAction, setDeploymentAction] = useState<DeploymentAction | null>(null);
   const [deploymentActionSubmitting, setDeploymentActionSubmitting] = useState(false);
+  const [deploymentProbe, setDeploymentProbe] = useState<DeploymentConnectivityProbeRecord | null>(null);
+  const [deploymentProbeStartRequested, setDeploymentProbeStartRequested] = useState(false);
   const [deploymentRequirements, setDeploymentRequirements] = useState<RequirementRecord[]>([]);
   const [deploymentRequirementsLoading, setDeploymentRequirementsLoading] = useState(false);
   const [deploymentSchemes, setDeploymentSchemes] = useState<DeploymentSchemeRecord[]>([]);
@@ -484,6 +483,8 @@ export default function DeploymentsPage() {
   const openDeploymentAction = useCallback(
     (record: OperationalMetricRecord, type: DeploymentActionType) => {
       deploymentActionForm.resetFields();
+      setDeploymentProbe(null);
+      setDeploymentProbeStartRequested(false);
       setDeploymentAction({ record, type });
     },
     [deploymentActionForm],
@@ -494,18 +495,75 @@ export default function DeploymentsPage() {
   }, []);
 
   const openDeploymentLogs = useCallback(async (record: OperationalMetricRecord) => {
-    setDeploymentLogState({ loading: true, logs: [], record });
+    setDeploymentLogState({ kind: 'deployment', loading: true, logs: [], record });
     try {
       const deployment = await deploymentWithRuns(record);
       const run = deployment.runs[0];
       if (!run) throw new Error('当前部署单还没有运行记录');
       const logs = await fetchDeploymentRunLogs(deployment.id, run.id);
-      setDeploymentLogState({ loading: false, logs, record });
+      setDeploymentLogState({ kind: 'deployment', loading: false, logs, record });
     } catch (error) {
-      setDeploymentLogState({ loading: false, logs: [], record });
+      setDeploymentLogState({ kind: 'deployment', loading: false, logs: [], record });
       message.error(error instanceof Error ? error.message : '部署日志加载失败');
     }
   }, [deploymentWithRuns]);
+
+  const openDeploymentProbeLogs = useCallback(async () => {
+    const record = deploymentAction?.record;
+    if (!record) return;
+    setDeploymentLogState({ kind: 'probe', loading: true, logs: [], record });
+    try {
+      const result = await fetchDeploymentConnectivityProbeLogs(record.id);
+      setDeploymentLogState({ kind: 'probe', loading: false, logs: result.logs, record });
+    } catch (error) {
+      setDeploymentLogState({ kind: 'probe', loading: false, logs: [], record });
+      message.error(error instanceof Error ? error.message : 'Runner 探测日志加载失败');
+    }
+  }, [deploymentAction]);
+
+  useEffect(() => {
+    if (
+      deploymentAction?.type !== 'probe_and_start'
+      || !deploymentProbe
+      || !activeRunnerProbeStatuses.has(deploymentProbe.status)
+    ) {
+      return undefined;
+    }
+    const delaySeconds = Math.min(Math.max(deploymentProbe.nextPollAfterSeconds ?? 2, 1), 10);
+    const timer = globalThis.setTimeout(() => {
+      void fetchDeploymentConnectivityProbe(deploymentAction.record.id)
+        .then(setDeploymentProbe)
+        .catch((error) => {
+          message.error(error instanceof Error ? error.message : '探测状态刷新失败，请稍后重试');
+        });
+    }, delaySeconds * 1000);
+    return () => globalThis.clearTimeout(timer);
+  }, [deploymentAction, deploymentProbe]);
+
+  useEffect(() => {
+    if (
+      !deploymentProbeStartRequested
+      || !deploymentProbe?.ready
+      || deploymentAction?.type !== 'probe_and_start'
+      || deploymentActionSubmitting
+    ) {
+      return;
+    }
+    const deploymentId = deploymentAction.record.id;
+    setDeploymentProbeStartRequested(false);
+    setDeploymentActionSubmitting(true);
+    void startDeploymentRequest(deploymentId, {})
+      .then(async () => {
+        message.success('连通性探测通过，部署已启动');
+        setDeploymentAction(null);
+        setDeploymentProbe(null);
+        await reload();
+      })
+      .catch((error) => {
+        message.error(error instanceof Error ? error.message : '部署启动失败');
+      })
+      .finally(() => setDeploymentActionSubmitting(false));
+  }, [deploymentAction, deploymentActionSubmitting, deploymentProbe, deploymentProbeStartRequested, reload]);
 
   const syncDeploymentStatus = useCallback(async (record: OperationalMetricRecord) => {
     try {
@@ -533,20 +591,11 @@ export default function DeploymentsPage() {
       };
       const deploymentId = deploymentAction.record.id;
       if (deploymentAction.type === 'probe_and_start') {
-        let probe = await requestDeploymentConnectivityProbe(deploymentId);
-        const deadline = Date.now() + 90_000;
-        while (!probe.ready && probe.kind === 'runner' && Date.now() < deadline) {
-          await new Promise<void>((resolve) => {
-            globalThis.setTimeout(resolve, 1500);
-          });
-          probe = await fetchDeploymentConnectivityProbe(deploymentId);
-        }
+        const probe = await requestDeploymentConnectivityProbe(deploymentId);
+        setDeploymentProbe(probe);
         if (!probe.ready) {
-          throw new Error(
-            probe.kind === 'runner'
-              ? 'Runner 连通性探测尚未通过，请检查 Runner 日志后重试。'
-              : 'Jenkins 预检未通过，请检查连接、凭据和 Job 权限。',
-          );
+          setDeploymentProbeStartRequested(true);
+          return;
         }
         await startDeploymentRequest(deploymentId, {});
         message.success('连通性探测通过，部署已启动');
@@ -715,22 +764,6 @@ export default function DeploymentsPage() {
     ],
   );
 
-  const deploymentActionTitle =
-    deploymentAction?.type === 'probe_and_start'
-      ? '重新探测并启动部署'
-      : deploymentAction?.type === 'start'
-      ? '启动部署'
-      : deploymentAction?.type === 'success'
-        ? '确认部署成功'
-        : deploymentAction?.type === 'failed'
-          ? '登记部署失败'
-          : deploymentAction?.type === 'rolled_back'
-            ? '登记部署回滚'
-            : '取消部署';
-  const deploymentActionNeedsFailureReason =
-    deploymentAction?.type === 'failed' || deploymentAction?.type === 'rolled_back';
-  const deploymentActionIsCancel = deploymentAction?.type === 'cancel';
-  const deploymentActionIsStart = deploymentAction?.type === 'start' || deploymentAction?.type === 'probe_and_start';
   const openDeploymentSchemeConfiguration = () => {
     setDeploymentOpen(false);
     deploymentForm.resetFields();
@@ -909,7 +942,11 @@ export default function DeploymentsPage() {
       <Drawer
         onClose={() => setDeploymentLogState({ loading: false, logs: [] })}
         open={Boolean(deploymentLogState.record)}
-        title={`部署日志 · ${deploymentLogState.record?.name ?? ''}`}
+        title={
+          deploymentLogState.kind === 'probe'
+            ? `Runner 探测日志 · ${deploymentLogState.record?.name ?? ''}`
+            : `部署日志 · ${deploymentLogState.record?.name ?? ''}`
+        }
         size="large"
       >
         <Spin spinning={deploymentLogState.loading}>
@@ -939,49 +976,19 @@ export default function DeploymentsPage() {
         deploymentId={detailDeploymentId}
         onClose={() => setDetailDeploymentId(undefined)}
       />
-      <Modal
-        destroyOnHidden
-        okText="确认"
-        okButtonProps={{ 'aria-label': '确认部署操作' }}
-        onCancel={() => setDeploymentAction(null)}
-        onOk={() => void submitDeploymentAction()}
-        open={deploymentAction !== null}
-        title={deploymentActionTitle}
-      >
-        <Form<DeploymentActionFormValues> form={deploymentActionForm} layout="vertical">
-          <Form.Item label="部署单"><Input disabled value={deploymentAction?.record.name ?? '-'} /></Form.Item>
-          <Form.Item label="部署方式">
-            <Input
-              disabled
-              value={deploymentMethodLabels[deploymentAction?.record.deploymentMethod ?? 'manual']}
-            />
-          </Form.Item>
-          <Form.Item label="执行通道">
-            <Input
-              disabled
-              value={deploymentChannelLabels[deploymentAction?.record.executorChannel ?? 'manual']}
-            />
-          </Form.Item>
-          {deploymentActionIsCancel ? (
-            <Form.Item label="取消原因" name="reason"><Input.TextArea rows={3} /></Form.Item>
-          ) : deploymentActionIsStart ? null : (
-            <>
-              <Form.Item label="外部 Job" name="externalJobName"><Input placeholder="Jenkins Job / Pipeline" /></Form.Item>
-              <Form.Item label="外部 Build ID" name="externalBuildId"><Input /></Form.Item>
-              <Form.Item label="日志链接" name="logUrl"><Input /></Form.Item>
-              {deploymentActionNeedsFailureReason ? (
-                <Form.Item
-                  label={deploymentAction?.type === 'rolled_back' ? '回滚原因' : '失败原因'}
-                  name="failureReason"
-                  rules={[{ required: true, message: '请输入原因' }]}
-                >
-                  <Input.TextArea rows={3} />
-                </Form.Item>
-              ) : null}
-            </>
-          )}
-        </Form>
-      </Modal>
+      <DeploymentActionModal
+        action={deploymentAction}
+        form={deploymentActionForm}
+        loading={deploymentActionSubmitting}
+        onCancel={() => {
+          setDeploymentProbeStartRequested(false);
+          setDeploymentProbe(null);
+          setDeploymentAction(null);
+        }}
+        onConfirm={() => void submitDeploymentAction()}
+        onOpenProbeLogs={() => void openDeploymentProbeLogs()}
+        probe={deploymentProbe}
+      />
     </PageContainer>
   );
 }

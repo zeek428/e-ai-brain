@@ -176,9 +176,12 @@ Content-Type: application/json
 GET /api/devops/deployments?product_id=product_001&version_id=version_001&status=deploying&environment=prod&page=1&page_size=20&sort_by=updated_at&sort_order=desc
 POST /api/devops/deployments/deployment_request_001/connectivity-probe
 GET /api/devops/deployments/deployment_request_001/connectivity-probe
+GET /api/devops/deployments/deployment_request_001/connectivity-probe/logs
 ```
 
-自动部署单可在启动前调用 `connectivity-probe`。Runner 方式返回排队探测任务并通过 GET 查询结果；Jenkins 方式同步返回 API/Job 预检结果。只有 `ready=true` 时才可继续调用 `start`；前端“探测并启动”在成功后自动执行该动作。
+自动部署单可在启动前调用 `connectivity-probe`。Runner 方式返回受控探测任务，并通过 GET 返回排队或运行状态、剩余等待秒数、建议下次查询时间、失败分类、安全重试条件和部署单范围的日志链接；Jenkins 方式同步返回 API/Job 预检结果。只有 `ready=true` 时才可继续调用 `start`；前端“探测并启动”会展示过程和 Runner 日志，并在成功后自动执行该动作。Runner 探测超时、失败、取消或配置变化后才允许重新发起，活动任务会被复用，避免并发重复探测。
+
+发布候选的强制集成门禁复用既有非生产 Jenkins 验收 Job：`.github/workflows/nonproduction-jenkins-acceptance.yml` 只创建平台部署记录、预检、触发并同步该 Job，不创建或重配部署环境。隔离 SSH、Docker、Jenkins Compose 环境仅用于可选的 `deployment_protocol_regression` 协议回归。
 
 当前实现支持按产品、版本、状态、环境和标题筛选部署单，在 PostgreSQL 层完成 count/page 与 `created_at/environment/risk_level/status/title/updated_at` 白名单排序，并返回 `page/page_size/total/query_time_ms`、关联需求范围和当前页最近执行记录：
 

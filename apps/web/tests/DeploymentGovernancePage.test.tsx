@@ -334,3 +334,96 @@ it('re-probes an automatic deployment before starting it', async () => {
     );
   });
 });
+
+it('keeps failed connectivity probe details actionable with scoped Runner logs and a safe retry', async () => {
+  const jsonResponse = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 200,
+    });
+  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const path = String(input);
+    if (path.startsWith('/api/devops/deployments?')) {
+      return jsonResponse({
+        data: {
+          items: [{
+            current_wave: 0,
+            deployment_method: 'docker',
+            environment: 'prod',
+            executor_channel: 'runner',
+            id: 'deployment_003',
+            product_id: 'product_001',
+            requirement_ids: ['requirement_001'],
+            risk_level: 'medium',
+            status: 'approved',
+            title: '探测超时 Docker 部署',
+            total_waves: 1,
+            updated_at: '2026-07-14T01:00:00Z',
+            version_id: 'version_001',
+          }],
+          page: 1,
+          page_size: 10,
+          total: 1,
+        },
+      });
+    }
+    if (path === '/api/devops/deployments/deployment_003/connectivity-probe' && init?.method === 'POST') {
+      return jsonResponse({
+        data: {
+          deployment_id: 'deployment_003',
+          failure: {
+            category: 'timeout',
+            message: 'Runner 连通性探测超时，请查看日志后重新探测。',
+          },
+          kind: 'runner',
+          log_url: '/api/devops/deployments/deployment_003/connectivity-probe/logs',
+          max_age_seconds: 600,
+          next_poll_after_seconds: null,
+          probe: { error_code: 'AI_EXECUTOR_TASK_TIMEOUT', ready: false, status: 'timed_out' },
+          ready: false,
+          retry: { allowed: true, after_seconds: 0 },
+          status: 'timed_out',
+          task: { id: 'runner_task_probe_timeout', status: 'timed_out', timeout_seconds: 60 },
+        },
+      });
+    }
+    if (path === '/api/devops/deployments/deployment_003/connectivity-probe/logs') {
+      return jsonResponse({
+        data: {
+          logs: [{ level: 'error', message: 'Docker engine probe timed out', timestamp: '2026-07-14T01:00:00Z' }],
+          task: { id: 'runner_task_probe_timeout', status: 'timed_out' },
+        },
+      });
+    }
+    if (path.startsWith('/api/products?active_only=true')) {
+      return jsonResponse({ data: { items: [{ code: 'p1', id: 'product_001', name: '研发平台', status: 'active' }], total: 1 } });
+    }
+    if (path.startsWith('/api/product-versions?active_only=true')) {
+      return jsonResponse({ data: { items: [], total: 0 } });
+    }
+    return jsonResponse({ data: { items: [], page: 1, page_size: 10, total: 0 } });
+  });
+  window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+  saveCurrentUser({
+    display_name: 'AI Brain Admin',
+    id: 'user_admin',
+    permissions: ['deployment.execute', 'deployment.read'],
+    roles: ['admin'],
+    username: 'admin@example.com',
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<DeploymentsPage />);
+  fireEvent.click(await screen.findByRole('button', { name: '探测并启动' }));
+  const dialog = await screen.findByRole('dialog', { name: '重新探测并启动部署' });
+  fireEvent.click(within(dialog).getByRole('button', { name: '确认部署操作' }));
+
+  expect(await within(dialog).findByText('Runner 连通性探测超时，请查看日志后重新探测。')).toBeInTheDocument();
+  expect(within(dialog).getByText('可立即重新探测')).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole('button', { name: '查看 Runner 日志' }));
+  expect(await screen.findByText('Docker engine probe timed out')).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith(
+    '/api/devops/deployments/deployment_003/connectivity-probe/logs',
+    expect.any(Object),
+  );
+});

@@ -9,9 +9,15 @@ from app.api.deps import api_error, require_any_permission_or_roles
 from app.core.repositories.devops_writes import DeploymentSchemeVersionConflictError
 from app.services.ai_executor_runner_deployment_probes import (
     deployment_probe_max_age_seconds,
+    deployment_target_probe_progress,
     deployment_target_probe_state,
+    deployment_target_probe_task,
 )
 from app.services.ai_executor_runner_health import runner_is_online
+from app.services.ai_executor_runner_persistence import (
+    _read_record,
+    sync_ai_executor_runner_store,
+)
 from app.services.bugs import save_bug_record
 from app.services.deployment_health import health_evidence_passed
 from app.services.deployment_preflight import (
@@ -2104,15 +2110,20 @@ def deployment_connectivity_probe_response(
             deployment_method=method,
             target_code=ensure_non_blank(scheme.get("target_code"), "target_code"),
         )
-        probe = deployment_target_probe_state(target or {}, max_age_seconds=max_age_seconds)
+        progress = deployment_target_probe_progress(
+            write_store,
+            deployment_method=method,
+            max_age_seconds=max_age_seconds,
+            runner_id=str(runner["id"]),
+            target=target or {},
+        )
         return {
             "deployment_id": deployment_request_id,
             "kind": "runner",
+            "log_url": f"/api/devops/deployments/{deployment_request_id}/connectivity-probe/logs",
             "max_age_seconds": max_age_seconds,
-            "probe": probe,
-            "ready": bool(probe.get("ready")),
-            "status": "succeeded" if probe.get("ready") else "queued",
-            "task_id": task["id"],
+            "task_id": progress["task"]["id"] if progress.get("task") else task["id"],
+            **progress,
         }
     if channel == "integration" and method == "jenkins":
         _validate_scheme_execution_resource(write_store, scheme, user=user)
@@ -2178,14 +2189,20 @@ def deployment_connectivity_probe_status_response(
             deployment_method=method,
             target_code=ensure_non_blank(scheme.get("target_code"), "target_code"),
         )
-        probe = deployment_target_probe_state(target or {}, max_age_seconds=max_age_seconds)
+        progress = deployment_target_probe_progress(
+            write_store,
+            deployment_method=method,
+            max_age_seconds=max_age_seconds,
+            runner_id=str(runner["id"]),
+            target=target or {},
+        )
         return {
             "deployment_id": deployment_request_id,
             "kind": "runner",
+            "log_url": f"/api/devops/deployments/{deployment_request_id}/connectivity-probe/logs",
             "max_age_seconds": max_age_seconds,
-            "probe": probe,
-            "ready": bool(probe.get("ready")),
-            "status": probe.get("status"),
+            "task_id": progress["task"]["id"] if progress.get("task") else None,
+            **progress,
         }
     if channel == "integration" and method == "jenkins":
         from app.services.jenkins_deployments import (
@@ -2217,6 +2234,64 @@ def deployment_connectivity_probe_status_response(
         "DEPLOYMENT_CONNECTIVITY_PROBE_NOT_REQUIRED",
         "Manual deployment does not have an automated connectivity probe",
     )
+
+
+def deployment_connectivity_probe_logs_response(
+    *,
+    current_store: Any,
+    deployment_request_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    """Expose only the probe logs that belong to a deployable product target."""
+    require_any_permission_or_roles(user, {"deployment.execute"}, {"release_owner"})
+    write_store = task_workflow_write_store(current_store)
+    deployment = dict(_deployment_by_id(write_store, deployment_request_id))
+    require_product_scope(user, deployment.get("product_id"))
+    if str(deployment.get("executor_channel") or "manual") != "runner":
+        raise api_error(
+            409,
+            "DEPLOYMENT_CONNECTIVITY_PROBE_LOGS_NOT_AVAILABLE",
+            "Only Runner deployment probes provide Runner task logs",
+        )
+    scheme = dict(deployment.get("scheme_snapshot") or {})
+    method = str(deployment.get("deployment_method") or "manual")
+    from app.services.ai_executor_runner_deployment_probes import deployment_runner_target_metadata
+
+    runner_id = ensure_non_blank(scheme.get("runner_id"), "runner_id")
+    target_code = ensure_non_blank(scheme.get("target_code"), "target_code")
+    # Historical probe logs remain useful even after a timed-out Runner goes offline.
+    sync_ai_executor_runner_store(write_store)
+    runner = _read_record(write_store, "ai_executor_runners", runner_id)
+    if runner is None:
+        raise api_error(
+            404,
+            "DEPLOYMENT_CONNECTIVITY_PROBE_NOT_FOUND",
+            "The Runner bound to this deployment no longer exists",
+        )
+    target = deployment_runner_target_metadata(
+        runner,
+        deployment_method=method,
+        target_code=target_code,
+    )
+    task = deployment_target_probe_task(
+        write_store,
+        deployment_method=method,
+        runner_id=runner_id,
+        target=target or {},
+    )
+    if task is None:
+        raise api_error(
+            404,
+            "DEPLOYMENT_CONNECTIVITY_PROBE_NOT_FOUND",
+            "No connectivity probe task is available for this deployment target",
+        )
+    return {
+        "logs": list(task.get("logs") or []),
+        "task": {
+            "id": task["id"],
+            "status": task.get("status"),
+        },
+    }
 
 
 def start_deployment_request_response(

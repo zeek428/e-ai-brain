@@ -33,8 +33,10 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "-m 'not nonproduction_jenkins_gate'"
 markers = [
-  "external_deployment_e2e: runs against the isolated real SSH, Docker and Jenkins environment",
+  "deployment_protocol_regression: runs against the isolated real SSH, Docker and Jenkins protocol environment",
+  "nonproduction_jenkins_gate: must run against the pre-provisioned non-production Jenkins acceptance job",
 ]
 
 [tool.ruff]

@@ -15,6 +15,7 @@ from app.services.operational_deployments import (
     create_deployment_request_response,
     create_deployment_scheme_response,
     delete_deployment_scheme_response,
+    deployment_connectivity_probe_logs_response,
     deployment_connectivity_probe_response,
     deployment_connectivity_probe_status_response,
     get_deployment_request_detail_response,
@@ -540,6 +541,20 @@ def deployment_connectivity_probe_status(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     result = deployment_connectivity_probe_status_response(
+        current_store=store(request),
+        deployment_request_id=deployment_request_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/devops/deployments/{deployment_request_id}/connectivity-probe/logs")
+def deployment_connectivity_probe_logs(
+    deployment_request_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = deployment_connectivity_probe_logs_response(
         current_store=store(request),
         deployment_request_id=deployment_request_id,
         user=user,

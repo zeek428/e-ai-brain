@@ -1,6 +1,8 @@
-# Isolated Deployment E2E Environment
+# Isolated Deployment Protocol Regression Environment
 
-This environment is intentionally separate from the application development stack. It provides a disposable SSH host, Docker Compose target, and Jenkins instance for validating the full deployment path: Runner claim, non-mutating probe, execution, log return, timeout handling, and rollback.
+This environment is intentionally separate from the application development stack. It provides a disposable SSH host, Docker Compose target, and Jenkins instance for protocol regression: Runner claim, non-mutating probe, execution, log return, timeout handling, and rollback.
+
+It is not a release-candidate gate. Release candidates must use the existing non-production Jenkins acceptance Job through `.github/workflows/nonproduction-jenkins-acceptance.yml`; that workflow creates only an AI Brain deployment record and never creates or reconfigures a deployment environment.
 
 It must never be pointed at production hosts, production Docker daemons, or production Jenkins.
 
@@ -25,7 +27,7 @@ Jenkins is exposed only on `127.0.0.1:18080`; its disposable jobs are `e2e-deplo
 5. Create a Jenkins connection for `http://127.0.0.1:18080`, authorize it for the same product/environment, and create an `e2e-deploy` deployment scheme. Use only disposable credentials or no-security local Jenkins.
 6. Create separate SSH, Docker and Jenkins deployment records that are ready to start. Create one additional SSH deployment using `e2e-ssh-timeout` with a 30-second scheme timeout to exercise timeout handling. Export their IDs plus a disposable admin bearer token as the `AI_BRAIN_E2E_*` variables used below.
 
-## Execute the optional gate
+## Run the optional protocol regression
 
 ```bash
 cd apps/api
@@ -35,10 +37,14 @@ AI_BRAIN_E2E_SSH_DEPLOYMENT_ID=deployment_ssh \
 AI_BRAIN_E2E_DOCKER_DEPLOYMENT_ID=deployment_docker \
 AI_BRAIN_E2E_JENKINS_DEPLOYMENT_ID=deployment_jenkins \
 AI_BRAIN_E2E_TIMEOUT_DEPLOYMENT_ID=deployment_ssh_timeout \
-uv run pytest -m external_deployment_e2e tests/integration/test_external_deployment_e2e.py -q
+uv run pytest -m deployment_protocol_regression tests/integration/test_external_deployment_e2e.py -q
 ```
 
-The test first calls the real connectivity probe, waits for evidence, starts the deployment, waits for Runner/Jenkins completion and returned logs, then requests and verifies rollback. The timeout target validates bounded timeout reporting. The main E2E group is skipped unless its three deployment IDs are provided; the timeout case is skipped only when its separate deployment ID is absent. The GitHub Actions workflow is manual and requires a self-hosted runner labelled `deployment-e2e` with the same isolated environment.
+The test first calls the real connectivity probe, waits for evidence, starts the deployment, waits for Runner/Jenkins completion and returned logs, then requests and verifies rollback. The timeout target validates bounded timeout reporting. The protocol regression group is skipped unless its three deployment IDs are provided; the timeout case is skipped only when its separate deployment ID is absent. The GitHub Actions workflow is manual and requires a self-hosted runner labelled `deployment-e2e` with the same isolated environment.
+
+## Configure the release-candidate Jenkins gate
+
+Create a non-mutating Jenkins acceptance Job in an existing non-production Jenkins environment. It must be available to the deployment scheme's configured credential and should only validate the intended deployment integration, such as artifact access, Jenkins parameters, Runner log return and status synchronization. Configure the `nonproduction-jenkins-gate` GitHub Environment with the two secrets and five variables listed by `.github/workflows/nonproduction-jenkins-acceptance.yml`, then mark the **Non-production Jenkins deployment acceptance** check as required for release branches or invoke it from the release-candidate workflow via `workflow_call`.
 
 ## Clean up
 

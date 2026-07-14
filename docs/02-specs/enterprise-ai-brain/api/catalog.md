@@ -212,7 +212,8 @@
 | DevOps | GET/POST/PATCH/DELETE | `/api/devops/deployment-schemes`, `/api/devops/deployment-schemes/{scheme_id}` | 管理人工/SSH/Docker/Jenkins 方案、发布策略、窗口、健康检查和回滚；分页列表使用 PostgreSQL read model。 |
 | DevOps | POST | `/api/devops/deployments` | 从测试完成或待发布需求发起运维部署单；校验产品/版本/需求范围、阻塞 Bug 和发布评估任务。 |
 | DevOps | POST | `/api/devops/deployments/{deployment_request_id}/start` | 启动部署单，记录部署运行并把关联需求推进到 `deploying`。 |
-| DevOps | GET/POST | `/api/devops/deployments/{deployment_request_id}/connectivity-probe` | 获取或触发自动部署连通性预检；Runner 使用本地受控探测任务，Jenkins 校验 API 与 Job。 |
+| DevOps | GET/POST | `/api/devops/deployments/{deployment_request_id}/connectivity-probe` | 获取或触发自动部署连通性预检；Runner 使用本地受控探测任务，响应返回任务、排队/运行状态、剩余等待、下次查询时间、失败分类、安全重试条件和日志链接；Jenkins 校验 API 与 Job。 |
+| DevOps | GET | `/api/devops/deployments/{deployment_request_id}/connectivity-probe/logs` | 查询当前部署单关联 Runner 连通性探测任务的脱敏日志；按部署执行权限和产品 scope 校验。 |
 | DevOps | POST | `/api/devops/deployment-jenkins-connections/{connection_id}/connectivity-probe` | 在配置方案时预检受授权 Jenkins 连接和 Job。 |
 | DevOps | POST | `/api/devops/deployments/{deployment_request_id}/complete` | 登记部署成功、失败或回滚；成功推进需求到 `released`，失败/回滚生成 `deployment_failure` Bug。 |
 | DevOps | POST | `/api/devops/deployments/{deployment_request_id}/cancel` | 取消未完成部署单，并把部署中的需求退回 `ready_for_release`。 |

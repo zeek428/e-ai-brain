@@ -1,10 +1,10 @@
-name: Deployment external E2E
+name: Deployment protocol regression
 
 on:
   workflow_dispatch:
 
 jobs:
-  external-deployment-e2e:
+  deployment-protocol-regression:
     runs-on: [self-hosted, deployment-e2e]
     environment: deployment-e2e
     steps:
@@ -13,7 +13,7 @@ jobs:
       - name: Install API test dependencies
         working-directory: apps/api
         run: uv sync --group dev
-      - name: Run isolated SSH, Docker and Jenkins deployment E2E gate
+      - name: Run optional isolated SSH, Docker and Jenkins protocol regression
         working-directory: apps/api
         env:
           AI_BRAIN_E2E_BASE_URL: ${{ secrets.AI_BRAIN_E2E_BASE_URL }}
@@ -22,4 +22,4 @@ jobs:
           AI_BRAIN_E2E_JENKINS_DEPLOYMENT_ID: ${{ secrets.AI_BRAIN_E2E_JENKINS_DEPLOYMENT_ID }}
           AI_BRAIN_E2E_SSH_DEPLOYMENT_ID: ${{ secrets.AI_BRAIN_E2E_SSH_DEPLOYMENT_ID }}
           AI_BRAIN_E2E_TIMEOUT_DEPLOYMENT_ID: ${{ secrets.AI_BRAIN_E2E_TIMEOUT_DEPLOYMENT_ID }}
-        run: uv run pytest -m external_deployment_e2e tests/integration/test_external_deployment_e2e.py -q
+        run: uv run pytest -m deployment_protocol_regression tests/integration/test_external_deployment_e2e.py -q

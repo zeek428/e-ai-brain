@@ -27,6 +27,7 @@ from app.services.operational_records import record_audit_event
 DEPLOYMENT_PROBE_MAX_AGE_SECONDS = 600
 DEPLOYMENT_PROBE_TASK_KIND = "deployment_connectivity_probe"
 _PROBE_TERMINAL_STATUSES = {"cancelled", "dead_letter", "failed", "succeeded", "timed_out"}
+_PROBE_ACTIVE_STATUSES = {"claimed", "queued", "running"}
 _CONFIG_FINGERPRINT_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _PROBE_MAX_AGE_BY_ENVIRONMENT = {
     "dev": 3600,
@@ -374,6 +375,158 @@ def _existing_probe_task(
         ):
             return dict(task)
     return None
+
+
+def _probe_task_matches_target(
+    task: dict[str, Any],
+    *,
+    deployment_method: str,
+    runner_id: str,
+    target_code: str,
+    target_config_fingerprint: str,
+) -> bool:
+    payload = task.get("input_payload") if isinstance(task.get("input_payload"), dict) else {}
+    return (
+        task.get("runner_id") == runner_id
+        and task.get("task_kind") == DEPLOYMENT_PROBE_TASK_KIND
+        and payload.get("deployment_method") == deployment_method
+        and payload.get("target_code") == target_code
+        and payload.get("target_config_fingerprint") == target_config_fingerprint
+    )
+
+
+def deployment_target_probe_task(
+    current_store: Any,
+    *,
+    deployment_method: str,
+    runner_id: str,
+    target: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the active or most recently completed probe for one runner target."""
+    target_code = str(target.get("code") or "").strip()
+    target_config_fingerprint = str(target.get("config_fingerprint") or "").strip().lower()
+    if not target_code or not _CONFIG_FINGERPRINT_PATTERN.fullmatch(target_config_fingerprint):
+        return None
+    sync_ai_executor_task_store(current_store, runner_id=runner_id)
+    task = _existing_probe_task(
+        current_store,
+        deployment_method=deployment_method,
+        runner_id=runner_id,
+        target_code=target_code,
+        target_config_fingerprint=target_config_fingerprint,
+    )
+    if task is not None:
+        return task
+    probe = target.get("connectivity_probe")
+    task_id = str(probe.get("task_id") or "").strip() if isinstance(probe, dict) else ""
+    completed = _read_record(current_store, "ai_executor_tasks", task_id) if task_id else None
+    if completed is None or not _probe_task_matches_target(
+        completed,
+        deployment_method=deployment_method,
+        runner_id=runner_id,
+        target_code=target_code,
+        target_config_fingerprint=target_config_fingerprint,
+    ):
+        return None
+    return dict(completed)
+
+
+def _probe_task_summary(task: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    status = str(task.get("status") or "queued")
+    timeout_seconds = int(task.get("timeout_seconds") or 60)
+    started_at = _parse_utc_datetime(task.get("started_at") or task.get("claimed_at"))
+    created_at = _parse_utc_datetime(task.get("created_at"))
+    deadline_base = started_at or created_at
+    remaining_wait_seconds = None
+    if deadline_base is not None and status in _PROBE_ACTIVE_STATUSES:
+        remaining_wait_seconds = max(
+            0,
+            int((deadline_base - (now or datetime.now(UTC))).total_seconds()) + timeout_seconds,
+        )
+    return {
+        "id": task["id"],
+        "remaining_wait_seconds": remaining_wait_seconds,
+        "status": status,
+        "timeout_seconds": timeout_seconds,
+    }
+
+
+def _probe_failure(status: str, error_code: str | None) -> dict[str, str] | None:
+    normalized_code = str(error_code or "").upper()
+    if status == "timed_out" or "TIMEOUT" in normalized_code:
+        return {
+            "category": "timeout",
+            "message": "Runner 连通性探测超时，请查看日志后重新探测。",
+        }
+    if status == "dead_letter":
+        return {
+            "category": "delivery_failed",
+            "message": "Runner 未能接收探测任务，请检查 Runner 在线状态后重新探测。",
+        }
+    if status == "cancelled":
+        return {
+            "category": "cancelled",
+            "message": "Runner 连通性探测已取消，可在确认目标状态后重新探测。",
+        }
+    if status == "failed":
+        return {
+            "category": "execution_failed",
+            "message": "Runner 连通性探测失败，请查看日志并检查目标配置后重新探测。",
+        }
+    if status == "configuration_changed":
+        return {
+            "category": "configuration_changed",
+            "message": "Runner 目标配置已变更，需要重新探测后才能启动部署。",
+        }
+    if status in {"config_fingerprint_missing", "invalid"}:
+        return {
+            "category": "configuration_unverified",
+            "message": "Runner 尚未上报可验证的目标配置，请检查 Runner 配置并重新连接。",
+        }
+    if status == "stale":
+        return {
+            "category": "evidence_stale",
+            "message": "连通性探测证据已过期，需要重新探测后才能启动部署。",
+        }
+    return None
+
+
+def deployment_target_probe_progress(
+    current_store: Any,
+    *,
+    deployment_method: str,
+    max_age_seconds: int,
+    runner_id: str,
+    target: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a deployment-scoped, non-sensitive probe status for the UI."""
+    now = datetime.now(UTC)
+    probe = deployment_target_probe_state(target, max_age_seconds=max_age_seconds, now=now)
+    task = deployment_target_probe_task(
+        current_store,
+        deployment_method=deployment_method,
+        runner_id=runner_id,
+        target=target,
+    )
+    task_summary = _probe_task_summary(task, now=now) if task is not None else None
+    task_status = str((task_summary or {}).get("status") or "")
+    status = (
+        task_status
+        if task_status in _PROBE_ACTIVE_STATUSES
+        else str(probe.get("status") or "failed")
+    )
+    ready = bool(probe.get("ready")) and status == "succeeded"
+    failure = _probe_failure(status, str(probe.get("error_code") or ""))
+    retry_allowed = not ready and status not in _PROBE_ACTIVE_STATUSES
+    return {
+        "failure": failure,
+        "next_poll_after_seconds": 2 if status in _PROBE_ACTIVE_STATUSES else None,
+        "probe": probe,
+        "ready": ready,
+        "retry": {"allowed": retry_allowed, "after_seconds": 0 if retry_allowed else None},
+        "status": status,
+        "task": task_summary,
+    }
 
 
 def queue_deployment_target_probe_task(

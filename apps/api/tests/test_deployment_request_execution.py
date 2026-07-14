@@ -353,15 +353,16 @@ def test_deployment_connectivity_probe_endpoint_queues_runner_probe_and_reports_
     )
 
     assert queued.status_code == 200, queued.text
-    assert queued.json()["data"] == {
-        "deployment_id": deployment["id"],
-        "kind": "runner",
-        "max_age_seconds": 600,
-        "probe": {"ready": False, "status": "not_probed"},
-        "ready": False,
-        "status": "queued",
-        "task_id": queued.json()["data"]["task_id"],
-    }
+    queued_data = queued.json()["data"]
+    assert queued_data["deployment_id"] == deployment["id"]
+    assert queued_data["kind"] == "runner"
+    assert queued_data["max_age_seconds"] == 600
+    assert queued_data["probe"] == {"ready": False, "status": "not_probed"}
+    assert queued_data["ready"] is False
+    assert queued_data["status"] == "queued"
+    assert queued_data["task_id"] == queued_data["task"]["id"]
+    assert queued_data["task"]["status"] == "queued"
+    assert queued_data["next_poll_after_seconds"] == 2
 
     probe_task_id = complete_runner_connectivity_probe(
         headers,
@@ -376,6 +377,102 @@ def test_deployment_connectivity_probe_endpoint_queues_runner_probe_and_reports_
     assert status.status_code == 200, status.text
     assert status.json()["data"]["ready"] is True
     assert status.json()["data"]["status"] == "succeeded"
+
+
+def test_deployment_connectivity_probe_reports_task_progress_failure_retry_and_logs():
+    app.state.store.reset()
+    headers = auth_headers()
+    context = create_context(headers, "runner-probe-progress")
+    scheme, runner_token = create_runner_scheme(headers, context, probe_target=False)
+    deployment = create_deployment(headers, context, scheme_id=scheme["id"])
+
+    queued = client.post(
+        f"/api/devops/deployments/{deployment['id']}/connectivity-probe",
+        headers=headers,
+    )
+    assert queued.status_code == 200, queued.text
+    queued_data = queued.json()["data"]
+    probe_task_id = queued_data["task_id"]
+    assert queued_data["status"] == "queued"
+    assert queued_data["task"]["id"] == probe_task_id
+    assert queued_data["task"]["status"] == "queued"
+    assert queued_data["task"]["timeout_seconds"] == 60
+    assert queued_data["task"]["remaining_wait_seconds"] is not None
+    assert queued_data["next_poll_after_seconds"] == 2
+    assert queued_data["retry"] == {"allowed": False, "after_seconds": None}
+    assert queued_data["log_url"].endswith("/connectivity-probe/logs")
+
+    claimed = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"runner_id": scheme["runner_id"]},
+        headers={"X-Runner-Token": runner_token},
+    )
+    assert claimed.status_code == 200, claimed.text
+    logs = client.post(
+        f"/api/system/ai-executor-tasks/{probe_task_id}/logs",
+        json={
+            "logs": [{"level": "info", "message": "Runner is checking Docker connectivity"}],
+            "runner_id": scheme["runner_id"],
+            "status": "running",
+        },
+        headers={"X-Runner-Token": runner_token},
+    )
+    assert logs.status_code == 200, logs.text
+
+    running = client.get(
+        f"/api/devops/deployments/{deployment['id']}/connectivity-probe",
+        headers=headers,
+    )
+    assert running.status_code == 200, running.text
+    running_data = running.json()["data"]
+    assert running_data["status"] == "running"
+    assert running_data["task"]["id"] == probe_task_id
+    assert running_data["task"]["status"] == "running"
+    assert running_data["next_poll_after_seconds"] == 2
+
+    scoped_logs = client.get(
+        f"/api/devops/deployments/{deployment['id']}/connectivity-probe/logs",
+        headers=headers,
+    )
+    assert scoped_logs.status_code == 200, scoped_logs.text
+    assert scoped_logs.json()["data"]["task"]["id"] == probe_task_id
+    assert (
+        scoped_logs.json()["data"]["logs"][-1]["message"]
+        == "Runner is checking Docker connectivity"
+    )
+
+    completed = client.post(
+        f"/api/system/ai-executor-tasks/{probe_task_id}/complete",
+        json={
+            "error_code": "AI_EXECUTOR_TASK_TIMEOUT",
+            "error_message": "Deployment connectivity probe timed out",
+            "runner_id": scheme["runner_id"],
+            "status": "timed_out",
+        },
+        headers={"X-Runner-Token": runner_token},
+    )
+    assert completed.status_code == 200, completed.text
+
+    timed_out = client.get(
+        f"/api/devops/deployments/{deployment['id']}/connectivity-probe",
+        headers=headers,
+    )
+    assert timed_out.status_code == 200, timed_out.text
+    timed_out_data = timed_out.json()["data"]
+    assert timed_out_data["status"] == "timed_out"
+    assert timed_out_data["failure"] == {
+        "category": "timeout",
+        "message": "Runner 连通性探测超时，请查看日志后重新探测。",
+    }
+    assert timed_out_data["retry"] == {"allowed": True, "after_seconds": 0}
+
+    app.state.store.ai_executor_runners[scheme["runner_id"]]["status"] = "inactive"
+    offline_runner_logs = client.get(
+        f"/api/devops/deployments/{deployment['id']}/connectivity-probe/logs",
+        headers=headers,
+    )
+    assert offline_runner_logs.status_code == 200, offline_runner_logs.text
+    assert offline_runner_logs.json()["data"]["task"]["id"] == probe_task_id
 
 
 def test_running_probe_log_does_not_replace_the_last_successful_evidence():

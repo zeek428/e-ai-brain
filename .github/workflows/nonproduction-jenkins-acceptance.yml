@@ -1,0 +1,34 @@
+name: Non-production Jenkins deployment acceptance
+
+on:
+  push:
+    branches:
+      - 'release/**'
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: nonproduction-jenkins-acceptance-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  jenkins-acceptance:
+    runs-on: [self-hosted, deployment-integration]
+    environment: nonproduction-jenkins-gate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install API test dependencies
+        working-directory: apps/api
+        run: uv sync --group dev
+      - name: Trigger the pre-provisioned non-production Jenkins acceptance job
+        working-directory: apps/api
+        env:
+          AI_BRAIN_JENKINS_GATE_BASE_URL: ${{ secrets.AI_BRAIN_JENKINS_GATE_BASE_URL }}
+          AI_BRAIN_JENKINS_GATE_BEARER_TOKEN: ${{ secrets.AI_BRAIN_JENKINS_GATE_BEARER_TOKEN }}
+          AI_BRAIN_JENKINS_GATE_ENVIRONMENT: ${{ vars.AI_BRAIN_JENKINS_GATE_ENVIRONMENT }}
+          AI_BRAIN_JENKINS_GATE_JOB_NAME: ${{ vars.AI_BRAIN_JENKINS_GATE_JOB_NAME }}
+          AI_BRAIN_JENKINS_GATE_PRODUCT_ID: ${{ vars.AI_BRAIN_JENKINS_GATE_PRODUCT_ID }}
+          AI_BRAIN_JENKINS_GATE_SCHEME_ID: ${{ vars.AI_BRAIN_JENKINS_GATE_SCHEME_ID }}
+          AI_BRAIN_JENKINS_GATE_VERSION_ID: ${{ vars.AI_BRAIN_JENKINS_GATE_VERSION_ID }}
+        run: uv run pytest -m nonproduction_jenkins_gate tests/integration/test_nonproduction_jenkins_gate.py -q

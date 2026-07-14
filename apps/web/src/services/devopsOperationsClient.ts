@@ -243,12 +243,36 @@ export type DeploymentJenkinsConnectionRecord = {
 
 export type DeploymentConnectivityProbeRecord = {
   deploymentId: string;
+  failure?: {
+    category: string;
+    message: string;
+  };
   kind: 'jenkins' | 'runner';
+  logUrl?: string;
   maxAgeSeconds: number;
+  nextPollAfterSeconds?: number;
   probe: Record<string, unknown>;
   ready: boolean;
+  retry?: {
+    afterSeconds?: number;
+    allowed: boolean;
+  };
   status: string;
+  task?: {
+    id: string;
+    remainingWaitSeconds?: number;
+    status: string;
+    timeoutSeconds?: number;
+  };
   taskId?: string;
+};
+
+export type DeploymentConnectivityProbeLogsResponse = {
+  logs: DeploymentRunLogRecord[];
+  task?: {
+    id: string;
+    status: string;
+  };
 };
 
 export type DeploymentJenkinsConnectionProbeRecord = {
@@ -854,13 +878,38 @@ export async function startDeploymentRequest(
 }
 
 function mapDeploymentConnectivityProbe(item: FlexibleListItem): DeploymentConnectivityProbeRecord {
+  const failure = normalizeObjectRecord(item.failure);
+  const retry = normalizeObjectRecord(item.retry);
+  const task = normalizeObjectRecord(item.task);
   return {
     deploymentId: formatUnknownValue(item.deployment_id),
+    failure: failure
+      ? {
+        category: formatUnknownValue(failure.category),
+        message: formatUnknownValue(failure.message),
+      }
+      : undefined,
     kind: item.kind === 'jenkins' ? 'jenkins' : 'runner',
+    logUrl: emptyToUndefined(formatUnknownValue(item.log_url)),
     maxAgeSeconds: numberOrUndefined(item.max_age_seconds) ?? 0,
+    nextPollAfterSeconds: numberOrUndefined(item.next_poll_after_seconds),
     probe: normalizeObjectRecord(item.probe) ?? {},
     ready: Boolean(item.ready),
+    retry: retry
+      ? {
+        afterSeconds: numberOrUndefined(retry.after_seconds),
+        allowed: Boolean(retry.allowed),
+      }
+      : undefined,
     status: formatUnknownValue(item.status),
+    task: task
+      ? {
+        id: formatUnknownValue(task.id),
+        remainingWaitSeconds: numberOrUndefined(task.remaining_wait_seconds),
+        status: formatUnknownValue(task.status),
+        timeoutSeconds: numberOrUndefined(task.timeout_seconds),
+      }
+      : undefined,
     taskId: emptyToUndefined(formatUnknownValue(item.task_id)),
   };
 }
@@ -885,6 +934,30 @@ export async function fetchDeploymentConnectivityProbe(
     { method: 'GET', token },
   );
   return mapDeploymentConnectivityProbe(item);
+}
+
+export async function fetchDeploymentConnectivityProbeLogs(
+  deploymentRequestId: string,
+): Promise<DeploymentConnectivityProbeLogsResponse> {
+  const token = requireAccessToken();
+  const result = await apiRequest<{ logs: FlexibleListItem[]; task?: FlexibleListItem }>(
+    `/api/devops/deployments/${encodeURIComponent(deploymentRequestId)}/connectivity-probe/logs`,
+    { token },
+  );
+  return {
+    logs: (result.logs ?? []).map((item) => ({
+      createdAt: emptyToUndefined(formatListDate(formatUnknownValue(item.timestamp || item.created_at))),
+      level: formatUnknownValue(item.level || 'info'),
+      message: formatUnknownValue(item.message),
+      source: 'runner',
+    })),
+    task: result.task
+      ? {
+        id: formatUnknownValue(result.task.id),
+        status: formatUnknownValue(result.task.status),
+      }
+      : undefined,
+  };
 }
 
 export async function probeDeploymentJenkinsConnection(

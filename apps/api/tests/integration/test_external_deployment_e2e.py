@@ -1,4 +1,4 @@
-"""Optional real-provider deployment E2E gate.
+"""Optional isolated deployment-provider protocol regression.
 
 Run only in the isolated compose environment described in
 infra/e2e/deployment-external/README.md. It never targets production systems.
@@ -12,7 +12,7 @@ import time
 import httpx
 import pytest
 
-pytestmark = pytest.mark.external_deployment_e2e
+pytestmark = pytest.mark.deployment_protocol_regression
 
 BASE_URL = os.getenv("AI_BRAIN_E2E_BASE_URL", "").rstrip("/")
 TOKEN = os.getenv("AI_BRAIN_E2E_BEARER_TOKEN", "")
@@ -60,7 +60,7 @@ def _wait_for_deployment_status(
 @pytest.fixture(scope="module")
 def external_client() -> httpx.Client:
     if not BASE_URL or not TOKEN or len(_deployment_ids()) != 3:
-        pytest.skip("External deployment E2E environment is not configured")
+        pytest.skip("Isolated deployment protocol regression environment is not configured")
     with httpx.Client(
         base_url=BASE_URL,
         headers={"Authorization": f"Bearer {TOKEN}"},
