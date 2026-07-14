@@ -111,6 +111,24 @@ def create_jenkins_scheme(
         headers=headers,
     )
     assert scheme.status_code == 200, scheme.text
+    from app.services.jenkins_deployments import jenkins_connection_config_fingerprint
+
+    connection_record = app.state.store.plugin_connections[connection.json()["data"]["id"]]
+    connection_record["request_config"] = {
+        "_ai_brain_deployment_preflight": {
+            "jobs": {
+                "folder/deploy-product": {
+                    "checked_at": "2099-01-01T00:00:00+00:00",
+                    "connection_config_fingerprint": jenkins_connection_config_fingerprint(
+                        connection_record
+                    ),
+                    "duration_ms": 1,
+                    "error_code": None,
+                    "status": "succeeded",
+                }
+            }
+        }
+    }
     return scheme.json()["data"]
 
 
@@ -210,6 +228,58 @@ def test_jenkins_trigger_and_sync_release_requirement(monkeypatch):
     assert completed_sync.json()["data"]["deployment"]["status"] == "succeeded"
     assert completed_sync.json()["data"]["run"]["status"] == "success"
     assert app.state.store.requirements[context["requirement_id"]]["status"] == "released"
+
+
+def test_jenkins_connectivity_probe_checks_api_and_job_and_records_short_lived_evidence(
+    monkeypatch,
+):
+    app.state.store.reset()
+    monkeypatch.setenv("JENKINS_API_TOKEN", "jenkins-secret-token")
+    headers = auth_headers()
+    context = create_context(headers)
+    scheme = create_jenkins_scheme(headers, context)
+    connection_id = scheme["jenkins_connection_id"]
+    calls: list[str] = []
+
+    def fake_urlopen(request, timeout=30):  # type: ignore[no-untyped-def]
+        calls.append(request.full_url)
+        if request.full_url.endswith("/api/json") and "/job/" not in request.full_url:
+            return FakeResponse('{"mode": "NORMAL"}')
+        if request.full_url.endswith("/job/folder/job/deploy-product/api/json"):
+            return FakeResponse('{"name": "deploy-product", "buildable": true}')
+        raise AssertionError(request.full_url)
+
+    monkeypatch.setattr("app.services.jenkins_deployments.urlopen", fake_urlopen)
+    response = client.post(
+        f"/api/devops/deployment-jenkins-connections/{connection_id}/connectivity-probe",
+        json={
+            "environment": "prod",
+            "jenkins_job_name": "folder/deploy-product",
+            "product_id": context["product_id"],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["probe"]["ready"] is True
+    assert calls == [
+        "https://jenkins.example.com/api/json",
+        "https://jenkins.example.com/job/folder/job/deploy-product/api/json",
+    ]
+    evidence = app.state.store.plugin_connections[connection_id]["request_config"][
+        "_ai_brain_deployment_preflight"
+    ]["jobs"]["folder/deploy-product"]
+    assert evidence["status"] == "succeeded"
+    assert evidence["connection_config_fingerprint"]
+
+    deployment = create_deployment(headers, context, scheme)
+    deployment_probe = client.post(
+        f"/api/devops/deployments/{deployment['id']}/connectivity-probe",
+        headers=headers,
+    )
+    assert deployment_probe.status_code == 200, deployment_probe.text
+    assert deployment_probe.json()["data"]["kind"] == "jenkins"
+    assert deployment_probe.json()["data"]["ready"] is True
 
 
 def test_jenkins_cancel_waits_for_aborted_confirmation(monkeypatch):

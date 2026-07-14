@@ -7,7 +7,10 @@ from urllib.error import URLError
 
 from app.api.deps import api_error, require_any_permission_or_roles
 from app.core.repositories.devops_writes import DeploymentSchemeVersionConflictError
-from app.services.ai_executor_runner_deployment_probes import deployment_target_probe_state
+from app.services.ai_executor_runner_deployment_probes import (
+    deployment_probe_max_age_seconds,
+    deployment_target_probe_state,
+)
 from app.services.ai_executor_runner_health import runner_is_online
 from app.services.bugs import save_bug_record
 from app.services.deployment_health import health_evidence_passed
@@ -1373,6 +1376,36 @@ def list_deployment_jenkins_connections_response(
     return {"items": items, "total": len(items)}
 
 
+def probe_deployment_jenkins_connection_response(
+    *,
+    connection_id: str,
+    current_store: Any,
+    environment: str,
+    job_name: str,
+    product_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_any_permission_or_roles(user, {"deployment.scheme.manage"}, {"release_owner"})
+    write_store = task_workflow_write_store(current_store)
+    binding = {
+        "deployment_method": "jenkins",
+        "environment": ensure_non_blank(environment, "environment"),
+        "jenkins_connection_id": ensure_non_blank(connection_id, "jenkins_connection_id"),
+        "jenkins_job_name": ensure_non_blank(job_name, "jenkins_job_name"),
+        "product_id": ensure_non_blank(product_id, "product_id"),
+    }
+    require_product_scope(user, binding["product_id"])
+    _validate_scheme_execution_resource(write_store, binding, user=user)
+    from app.services.jenkins_deployments import probe_jenkins_deployment_connection
+
+    return probe_jenkins_deployment_connection(
+        current_store=write_store,
+        connection_id=binding["jenkins_connection_id"],
+        job_name=binding["jenkins_job_name"],
+        user_id=user["id"],
+    )
+
+
 def create_deployment_scheme_response(
     *,
     current_store: Any,
@@ -1434,6 +1467,11 @@ def create_deployment_scheme_response(
         record["window_enforcement"],
         DEPLOYMENT_WINDOW_ENFORCEMENTS,
         "window_enforcement",
+    )
+    deployment_probe_max_age_seconds(
+        environment=str(record["environment"]),
+        risk_level="medium",
+        scheme=record,
     )
     build_rollout_wave_plan(record)
     event = record_audit_event(
@@ -1506,6 +1544,11 @@ def update_deployment_scheme_response(
         "rollback_config",
     ):
         updated[config_field] = dict(updated.get(config_field) or {})
+    deployment_probe_max_age_seconds(
+        environment=str(updated["environment"]),
+        risk_level="medium",
+        scheme=updated,
+    )
     build_rollout_wave_plan(updated)
     updated["version"] = int(existing.get("version") or 1) + 1
     updated["updated_at"] = datetime.now(UTC).isoformat()
@@ -2011,6 +2054,171 @@ def create_deployment_request_response(
     return _deployment_public_response(write_store, deployment)
 
 
+def deployment_connectivity_probe_response(
+    *,
+    current_store: Any,
+    deployment_request_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    """Run or queue the non-mutating preflight needed before an automatic deployment."""
+    require_any_permission_or_roles(user, {"deployment.execute"}, {"release_owner"})
+    write_store = task_workflow_write_store(current_store)
+    deployment = dict(_deployment_by_id(write_store, deployment_request_id))
+    require_product_scope(user, deployment.get("product_id"))
+    scheme = dict(deployment.get("scheme_snapshot") or {})
+    channel = str(deployment.get("executor_channel") or "manual")
+    method = str(deployment.get("deployment_method") or "manual")
+    max_age_seconds = deployment_probe_max_age_seconds(
+        environment=str(deployment.get("environment") or "prod"),
+        risk_level=str(deployment.get("risk_level") or "medium"),
+        scheme=scheme,
+    )
+    if channel == "runner":
+        from app.services.ai_executor_runner_deployment_probes import (
+            deployment_runner_target_metadata,
+            find_available_deployment_runner,
+            queue_deployment_target_probe_task,
+        )
+
+        runner = find_available_deployment_runner(
+            write_store,
+            deployment_method=method,
+            runner_id=ensure_non_blank(scheme.get("runner_id"), "runner_id"),
+            target_code=ensure_non_blank(scheme.get("target_code"), "target_code"),
+        )
+        task = queue_deployment_target_probe_task(
+            current_store=write_store,
+            deployment_method=method,
+            requested_by=user["id"],
+            runner=runner,
+            target_code=ensure_non_blank(scheme.get("target_code"), "target_code"),
+        )
+        if task is None:
+            raise api_error(
+                409,
+                "DEPLOYMENT_TARGET_CONFIGURATION_UNVERIFIED",
+                "Runner must report a target configuration fingerprint before it can be probed",
+            )
+        target = deployment_runner_target_metadata(
+            runner,
+            deployment_method=method,
+            target_code=ensure_non_blank(scheme.get("target_code"), "target_code"),
+        )
+        probe = deployment_target_probe_state(target or {}, max_age_seconds=max_age_seconds)
+        return {
+            "deployment_id": deployment_request_id,
+            "kind": "runner",
+            "max_age_seconds": max_age_seconds,
+            "probe": probe,
+            "ready": bool(probe.get("ready")),
+            "status": "succeeded" if probe.get("ready") else "queued",
+            "task_id": task["id"],
+        }
+    if channel == "integration" and method == "jenkins":
+        _validate_scheme_execution_resource(write_store, scheme, user=user)
+        from app.services.jenkins_deployments import probe_jenkins_deployment_connection
+
+        result = probe_jenkins_deployment_connection(
+            current_store=write_store,
+            connection_id=ensure_non_blank(
+                scheme.get("jenkins_connection_id"),
+                "jenkins_connection_id",
+            ),
+            job_name=ensure_non_blank(scheme.get("jenkins_job_name"), "jenkins_job_name"),
+            user_id=user["id"],
+        )
+        probe = dict(result["probe"])
+        return {
+            "deployment_id": deployment_request_id,
+            "kind": "jenkins",
+            "max_age_seconds": max_age_seconds,
+            "probe": probe,
+            "ready": bool(probe.get("ready")),
+            "status": probe.get("status"),
+        }
+    raise api_error(
+        409,
+        "DEPLOYMENT_CONNECTIVITY_PROBE_NOT_REQUIRED",
+        "Manual deployment does not have an automated connectivity probe",
+    )
+
+
+def deployment_connectivity_probe_status_response(
+    *,
+    current_store: Any,
+    deployment_request_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_any_permission_or_roles(user, {"deployment.execute"}, {"release_owner"})
+    write_store = task_workflow_write_store(current_store)
+    deployment = dict(_deployment_by_id(write_store, deployment_request_id))
+    require_product_scope(user, deployment.get("product_id"))
+    scheme = dict(deployment.get("scheme_snapshot") or {})
+    channel = str(deployment.get("executor_channel") or "manual")
+    method = str(deployment.get("deployment_method") or "manual")
+    max_age_seconds = deployment_probe_max_age_seconds(
+        environment=str(deployment.get("environment") or "prod"),
+        risk_level=str(deployment.get("risk_level") or "medium"),
+        scheme=scheme,
+    )
+    if channel == "runner":
+        from app.services.ai_executor_runner_deployment_probes import (
+            deployment_runner_target_metadata,
+            find_available_deployment_runner,
+        )
+
+        runner = find_available_deployment_runner(
+            write_store,
+            deployment_method=method,
+            runner_id=ensure_non_blank(scheme.get("runner_id"), "runner_id"),
+            target_code=ensure_non_blank(scheme.get("target_code"), "target_code"),
+        )
+        target = deployment_runner_target_metadata(
+            runner,
+            deployment_method=method,
+            target_code=ensure_non_blank(scheme.get("target_code"), "target_code"),
+        )
+        probe = deployment_target_probe_state(target or {}, max_age_seconds=max_age_seconds)
+        return {
+            "deployment_id": deployment_request_id,
+            "kind": "runner",
+            "max_age_seconds": max_age_seconds,
+            "probe": probe,
+            "ready": bool(probe.get("ready")),
+            "status": probe.get("status"),
+        }
+    if channel == "integration" and method == "jenkins":
+        from app.services.jenkins_deployments import (
+            _connection_by_id,
+            jenkins_deployment_preflight_state,
+        )
+
+        probe = jenkins_deployment_preflight_state(
+            _connection_by_id(
+                write_store,
+                ensure_non_blank(
+                    scheme.get("jenkins_connection_id"),
+                    "jenkins_connection_id",
+                ),
+            ),
+            job_name=ensure_non_blank(scheme.get("jenkins_job_name"), "jenkins_job_name"),
+            max_age_seconds=max_age_seconds,
+        )
+        return {
+            "deployment_id": deployment_request_id,
+            "kind": "jenkins",
+            "max_age_seconds": max_age_seconds,
+            "probe": probe,
+            "ready": bool(probe.get("ready")),
+            "status": probe.get("status"),
+        }
+    raise api_error(
+        409,
+        "DEPLOYMENT_CONNECTIVITY_PROBE_NOT_REQUIRED",
+        "Manual deployment does not have an automated connectivity probe",
+    )
+
+
 def start_deployment_request_response(
     *,
     current_store: Any,
@@ -2056,6 +2264,11 @@ def start_deployment_request_response(
     executor_channel = str(deployment.get("executor_channel") or "manual")
     deployment_method = str(deployment.get("deployment_method") or "manual")
     scheme_snapshot = dict(deployment.get("scheme_snapshot") or {})
+    probe_max_age_seconds = deployment_probe_max_age_seconds(
+        environment=str(deployment.get("environment") or "prod"),
+        risk_level=str(deployment.get("risk_level") or "medium"),
+        scheme=scheme_snapshot,
+    )
     runner_binding: dict[str, Any] | None = None
     if executor_channel != "manual":
         _require_scheme_execution_resource_grant(write_store, scheme_snapshot)
@@ -2070,9 +2283,26 @@ def start_deployment_request_response(
             require_connectivity_probe=True,
             runner_id=ensure_non_blank(scheme_snapshot.get("runner_id"), "runner_id"),
             target_code=ensure_non_blank(scheme_snapshot.get("target_code"), "target_code"),
+            max_probe_age_seconds=probe_max_age_seconds,
         )
     elif executor_channel == "integration" and deployment_method == "jenkins":
         _validate_scheme_execution_resource(write_store, scheme_snapshot, user=user)
+        from app.services.jenkins_deployments import (
+            _connection_by_id,
+            require_jenkins_deployment_preflight,
+        )
+
+        require_jenkins_deployment_preflight(
+            connection=_connection_by_id(
+                write_store,
+                ensure_non_blank(
+                    scheme_snapshot.get("jenkins_connection_id"),
+                    "jenkins_connection_id",
+                ),
+            ),
+            job_name=ensure_non_blank(scheme_snapshot.get("jenkins_job_name"), "jenkins_job_name"),
+            max_age_seconds=probe_max_age_seconds,
+        )
     now_datetime = datetime.now(UTC)
     window_evidence = _deployment_window_evidence(deployment, now=now_datetime)
     preflight_evidence = _deployment_preflight_evidence(
@@ -2386,6 +2616,11 @@ def _dispatch_deployment_outbox_event(
     scheme_snapshot = dict(deployment.get("scheme_snapshot") or {})
     executor_channel = str(deployment.get("executor_channel") or "manual")
     deployment_method = str(deployment.get("deployment_method") or "manual")
+    probe_max_age_seconds = deployment_probe_max_age_seconds(
+        environment=str(deployment.get("environment") or "prod"),
+        risk_level=str(deployment.get("risk_level") or "medium"),
+        scheme=scheme_snapshot,
+    )
     operation = str((event.get("payload") or {}).get("operation") or "deploy")
     wave_plan = build_rollout_wave_plan(scheme_snapshot)
     wave_number = int(run.get("wave_number") or 1)
@@ -2393,6 +2628,7 @@ def _dispatch_deployment_outbox_event(
     now = datetime.now(UTC).isoformat()
     if executor_channel == "runner":
         from app.services.ai_executor_runner_deployment_probes import (
+            deployment_runner_target_metadata,
             find_available_deployment_runner,
         )
         from app.services.ai_executor_runners import create_ai_executor_task
@@ -2403,7 +2639,14 @@ def _dispatch_deployment_outbox_event(
             require_connectivity_probe=True,
             runner_id=ensure_non_blank(scheme_snapshot.get("runner_id"), "runner_id"),
             target_code=ensure_non_blank(scheme_snapshot.get("target_code"), "target_code"),
+            max_probe_age_seconds=probe_max_age_seconds,
         )
+        target = deployment_runner_target_metadata(
+            runner,
+            deployment_method=deployment_method,
+            target_code=ensure_non_blank(scheme_snapshot.get("target_code"), "target_code"),
+        )
+        target_config_fingerprint = str((target or {}).get("config_fingerprint") or "")
         runner_task = _existing_runner_task_for_outbox(
             current_store,
             str(event["idempotency_key"]),
@@ -2435,6 +2678,7 @@ def _dispatch_deployment_outbox_event(
                     )
                     or {},
                     "target_code": scheme_snapshot.get("target_code"),
+                    "target_config_fingerprint": target_config_fingerprint,
                     "version_id": deployment.get("version_id"),
                     "wave": wave,
                     "wave_config": scheme_snapshot.get("wave_config") or {},

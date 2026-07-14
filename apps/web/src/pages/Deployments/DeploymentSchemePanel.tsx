@@ -1,4 +1,10 @@
-import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import {
+  DeleteOutlined,
+  EditOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SafetyCertificateOutlined,
+} from '@ant-design/icons';
 import { ProTable, type ProColumns } from '@ant-design/pro-components';
 import {
   Alert,
@@ -24,6 +30,7 @@ import {
   fetchDeploymentRunnerTargets,
   fetchDeploymentSchemeList,
   fetchDeploymentSchemes,
+  probeDeploymentJenkinsConnection,
   updateDeploymentScheme,
   type DeploymentJenkinsConnectionRecord,
   type DeploymentMethod,
@@ -41,6 +48,7 @@ type DeploymentSchemeFormValues = {
   blueTargetSlot?: string;
   canaryPercent?: number;
   code: string;
+  connectivityProbeMaxAgeSeconds?: number;
   deploymentMethod: DeploymentMethod;
   environment: string;
   isDefault: boolean;
@@ -99,6 +107,8 @@ const windowEnforcementOptions = [
 function runnerTargetOptionLabel(target: DeploymentRunnerTargetRecord) {
   if (target.ready) return target.name;
   const reason = {
+    config_fingerprint_missing: 'Runner 版本过旧，未上报配置指纹',
+    configuration_changed: '本地目标配置已变化，需要重新探测',
     failed: '真实探测失败',
     not_probed: '未完成真实探测',
     stale: '真实探测已过期',
@@ -131,6 +141,10 @@ function schemeFormValues(scheme: DeploymentSchemeRecord): DeploymentSchemeFormV
     blueTargetSlot: typeof waveConfig.target_slot === 'string' ? waveConfig.target_slot : 'green',
     canaryPercent: Number(waveConfig.canary_percent || 10),
     code: scheme.code,
+    connectivityProbeMaxAgeSeconds:
+      typeof scheme.preflightConfig.connectivity_probe_max_age_seconds === 'number'
+        ? scheme.preflightConfig.connectivity_probe_max_age_seconds
+        : undefined,
     deploymentMethod: scheme.deploymentMethod,
     environment: scheme.environment,
     isDefault: scheme.isDefault,
@@ -167,6 +181,7 @@ function schemePayload(values: DeploymentSchemeFormValues): DeploymentSchemeCrea
     health_check_config: {},
     name: values.name.trim(),
     preflight_config: {
+      connectivity_probe_max_age_seconds: values.connectivityProbeMaxAgeSeconds,
       require_artifact: values.windowEnforcement === 'strict',
       require_rollback: values.environment === 'prod',
     },
@@ -431,6 +446,29 @@ export function DeploymentSchemePanel({
     await refreshParentSchemes();
   };
 
+  const probeJenkinsConnection = async () => {
+    const values = form.getFieldsValue();
+    if (
+      !values.productId
+      || !values.environment
+      || !values.jenkinsConnectionId
+      || !values.jenkinsJobName?.trim()
+    ) {
+      message.error('请先选择产品、环境、Jenkins 连接并填写 Job');
+      return;
+    }
+    const result = await probeDeploymentJenkinsConnection(values.jenkinsConnectionId, {
+      environment: values.environment,
+      jenkins_job_name: values.jenkinsJobName.trim(),
+      product_id: values.productId,
+    });
+    if (result.probe.ready === true) {
+      message.success('Jenkins 连接与 Job 预检通过');
+      return;
+    }
+    message.error('Jenkins 预检未通过，请检查连接、凭据和 Job 权限');
+  };
+
   const confirmDelete = useCallback((scheme: DeploymentSchemeRecord) => {
     Modal.confirm({
       content: `确定删除部署方案「${scheme.name}」吗？已被部署单使用的方案不能删除。`,
@@ -650,13 +688,15 @@ export function DeploymentSchemePanel({
           <Form.Item label="部署方式" name="deploymentMethod" rules={[{ required: true }]}>
             <Segmented
               block
-              onChange={() => form.setFieldsValue({
+              onChange={(value) => form.setFieldsValue({
+                deploymentMethod: value as DeploymentMethod,
                 jenkinsConnectionId: undefined,
                 jenkinsJobName: undefined,
                 runnerId: undefined,
                 targetCode: undefined,
               })}
               options={deploymentMethodOptions}
+              value={deploymentMethod}
             />
           </Form.Item>
           {runnerResourceMissing ? (
@@ -714,7 +754,18 @@ export function DeploymentSchemePanel({
                 <Select options={jenkinsConnectionOptions} />
               </Form.Item>
               <Form.Item label="Jenkins Job" name="jenkinsJobName" rules={[{ required: true, message: '请输入 Jenkins Job' }]}>
-                <Input />
+                <Input
+                  addonAfter={(
+                    <Button
+                      aria-label="预检 Jenkins Job"
+                      icon={<SafetyCertificateOutlined />}
+                      onClick={() => void probeJenkinsConnection()}
+                      size="small"
+                      title="预检 Jenkins Job"
+                      type="text"
+                    />
+                  )}
+                />
               </Form.Item>
               <Form.Item label="Jenkins 参数 JSON" name="parametersJson">
                 <Input.TextArea placeholder={'{"IMAGE_TAG":"2026.07.11"}'} rows={4} />
@@ -747,6 +798,13 @@ export function DeploymentSchemePanel({
           ) : null}
           {deploymentMethod !== 'manual' ? (
             <>
+              <Form.Item
+                label="连通性探测有效期（秒）"
+                name="connectivityProbeMaxAgeSeconds"
+                rules={[{ type: 'number', min: 60, max: 3600, message: '有效期需在 60 到 3600 秒之间' }]}
+              >
+                <InputNumber min={60} max={3600} placeholder="按环境和风险策略" style={{ width: '100%' }} />
+              </Form.Item>
               <Form.Item label="启用真实回滚" name="rollbackEnabled" valuePropName="checked">
                 <Switch />
               </Form.Item>

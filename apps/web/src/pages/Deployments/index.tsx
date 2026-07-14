@@ -36,12 +36,14 @@ import {
   completeDeploymentRequest,
   createDeploymentRequest,
   fetchDeploymentSchemes,
+  fetchDeploymentConnectivityProbe,
   fetchDeploymentRequestDetail,
   fetchDeploymentRequestList,
   fetchDeploymentRunLogs,
   fetchManagementRequirementList,
   fetchProductContextOptions,
   getStoredCurrentUser,
+  requestDeploymentConnectivityProbe,
   startDeploymentRequest,
   syncDeploymentRun,
   type DeploymentCancelPayload,
@@ -76,7 +78,7 @@ type DeploymentRequestFormValues = {
   versionId: string;
 };
 
-type DeploymentActionType = 'cancel' | 'failed' | 'rolled_back' | 'start' | 'success';
+type DeploymentActionType = 'cancel' | 'failed' | 'probe_and_start' | 'rolled_back' | 'start' | 'success';
 
 type DeploymentActionFormValues = {
   externalBuildId?: string;
@@ -238,6 +240,7 @@ export default function DeploymentsPage() {
     record: OperationalMetricRecord;
     type: DeploymentActionType;
   } | null>(null);
+  const [deploymentActionSubmitting, setDeploymentActionSubmitting] = useState(false);
   const [deploymentRequirements, setDeploymentRequirements] = useState<RequirementRecord[]>([]);
   const [deploymentRequirementsLoading, setDeploymentRequirementsLoading] = useState(false);
   const [deploymentSchemes, setDeploymentSchemes] = useState<DeploymentSchemeRecord[]>([]);
@@ -518,37 +521,62 @@ export default function DeploymentsPage() {
   }, [deploymentWithRuns, reload]);
 
   const submitDeploymentAction = async () => {
-    if (!deploymentAction) return;
-    const values = await deploymentActionForm.validateFields();
-    const sharedPayload: DeploymentStartPayload = {
-      executor_type: 'manual',
-      external_build_id: optionalText(values.externalBuildId),
-      external_job_name: optionalText(values.externalJobName),
-      log_url: optionalText(values.logUrl),
-    };
-    const deploymentId = deploymentAction.record.id;
-    if (deploymentAction.type === 'start') {
-      await startDeploymentRequest(deploymentId, {});
-      message.success('部署已启动');
-    } else if (deploymentAction.type === 'success') {
-      await completeDeploymentRequest(deploymentId, { ...sharedPayload, status: 'success' });
-      message.success('部署已标记成功');
-    } else if (deploymentAction.type === 'failed' || deploymentAction.type === 'rolled_back') {
-      const payload: DeploymentCompletePayload = {
-        ...sharedPayload,
-        failure_reason: values.failureReason?.trim(),
-        status: deploymentAction.type,
+    if (!deploymentAction || deploymentActionSubmitting) return;
+    setDeploymentActionSubmitting(true);
+    try {
+      const values = await deploymentActionForm.validateFields();
+      const sharedPayload: DeploymentStartPayload = {
+        executor_type: 'manual',
+        external_build_id: optionalText(values.externalBuildId),
+        external_job_name: optionalText(values.externalJobName),
+        log_url: optionalText(values.logUrl),
       };
-      await completeDeploymentRequest(deploymentId, payload);
-      message.success(deploymentAction.type === 'failed' ? '部署已标记失败' : '部署已标记回滚');
-    } else {
-      const payload: DeploymentCancelPayload = { reason: optionalText(values.reason) };
-      const cancelled = await cancelDeploymentRequest(deploymentId, payload);
-      message.success(cancelled.status === 'cancelling' ? '取消请求已提交' : '部署已取消');
+      const deploymentId = deploymentAction.record.id;
+      if (deploymentAction.type === 'probe_and_start') {
+        let probe = await requestDeploymentConnectivityProbe(deploymentId);
+        const deadline = Date.now() + 90_000;
+        while (!probe.ready && probe.kind === 'runner' && Date.now() < deadline) {
+          await new Promise<void>((resolve) => {
+            globalThis.setTimeout(resolve, 1500);
+          });
+          probe = await fetchDeploymentConnectivityProbe(deploymentId);
+        }
+        if (!probe.ready) {
+          throw new Error(
+            probe.kind === 'runner'
+              ? 'Runner 连通性探测尚未通过，请检查 Runner 日志后重试。'
+              : 'Jenkins 预检未通过，请检查连接、凭据和 Job 权限。',
+          );
+        }
+        await startDeploymentRequest(deploymentId, {});
+        message.success('连通性探测通过，部署已启动');
+      } else if (deploymentAction.type === 'start') {
+        await startDeploymentRequest(deploymentId, {});
+        message.success('部署已启动');
+      } else if (deploymentAction.type === 'success') {
+        await completeDeploymentRequest(deploymentId, { ...sharedPayload, status: 'success' });
+        message.success('部署已标记成功');
+      } else if (deploymentAction.type === 'failed' || deploymentAction.type === 'rolled_back') {
+        const payload: DeploymentCompletePayload = {
+          ...sharedPayload,
+          failure_reason: values.failureReason?.trim(),
+          status: deploymentAction.type,
+        };
+        await completeDeploymentRequest(deploymentId, payload);
+        message.success(deploymentAction.type === 'failed' ? '部署已标记失败' : '部署已标记回滚');
+      } else {
+        const payload: DeploymentCancelPayload = { reason: optionalText(values.reason) };
+        const cancelled = await cancelDeploymentRequest(deploymentId, payload);
+        message.success(cancelled.status === 'cancelling' ? '取消请求已提交' : '部署已取消');
+      }
+      setDeploymentAction(null);
+      deploymentActionForm.resetFields();
+      await reload();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '部署操作失败');
+    } finally {
+      setDeploymentActionSubmitting(false);
     }
-    setDeploymentAction(null);
-    deploymentActionForm.resetFields();
-    await reload();
   };
 
   const columns = useMemo<ProColumns<OperationalMetricRecord>[]>(
@@ -614,6 +642,7 @@ export default function DeploymentsPage() {
           const canComplete = row.status === 'deploying' && (row.executorChannel ?? 'manual') === 'manual';
           const rowCanCancel = !['cancelled', 'rolled_back', 'succeeded'].includes(row.status);
           const showStart = canExecute && canStart;
+          const automaticDeployment = (row.executorChannel ?? 'manual') !== 'manual';
           const showComplete = canExecute && canComplete;
           const showCancel = canCancel && rowCanCancel;
           const showLogs = !['approved', 'draft', 'pending_ops'].includes(row.status);
@@ -628,7 +657,13 @@ export default function DeploymentsPage() {
             <Space size={4} wrap={false}>
               <Button onClick={() => setDetailDeploymentId(row.id)} size="small" type="link">详情</Button>
               {showStart ? (
-                <Button onClick={() => openDeploymentAction(row, 'start')} size="small" type="link">启动</Button>
+                <Button
+                  onClick={() => openDeploymentAction(row, automaticDeployment ? 'probe_and_start' : 'start')}
+                  size="small"
+                  type="link"
+                >
+                  {automaticDeployment ? '探测并启动' : '启动'}
+                </Button>
               ) : null}
               {showComplete ? (
                 <>
@@ -681,7 +716,9 @@ export default function DeploymentsPage() {
   );
 
   const deploymentActionTitle =
-    deploymentAction?.type === 'start'
+    deploymentAction?.type === 'probe_and_start'
+      ? '重新探测并启动部署'
+      : deploymentAction?.type === 'start'
       ? '启动部署'
       : deploymentAction?.type === 'success'
         ? '确认部署成功'
@@ -693,7 +730,7 @@ export default function DeploymentsPage() {
   const deploymentActionNeedsFailureReason =
     deploymentAction?.type === 'failed' || deploymentAction?.type === 'rolled_back';
   const deploymentActionIsCancel = deploymentAction?.type === 'cancel';
-  const deploymentActionIsStart = deploymentAction?.type === 'start';
+  const deploymentActionIsStart = deploymentAction?.type === 'start' || deploymentAction?.type === 'probe_and_start';
   const openDeploymentSchemeConfiguration = () => {
     setDeploymentOpen(false);
     deploymentForm.resetFields();
@@ -756,6 +793,7 @@ export default function DeploymentsPage() {
         />
       )}
       <Modal
+        confirmLoading={deploymentActionSubmitting}
         destroyOnHidden
         okText="创建部署单"
         okButtonProps={{ 'aria-label': '创建部署单' }}

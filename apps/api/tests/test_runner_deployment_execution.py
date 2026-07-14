@@ -248,6 +248,56 @@ def test_runner_executes_connectivity_probe_and_returns_structured_evidence(tmp_
     assert "connectivity probe completed" in completions[0]["logs"][0]["message"]
 
 
+def test_runner_rejects_deployment_when_target_configuration_fingerprint_changes(
+    tmp_path,
+    monkeypatch,
+):
+    namespace = runner_namespace(tmp_path, monkeypatch)
+    completions: list[dict] = []
+    namespace["_append_logs"] = lambda *args, **kwargs: None
+    namespace["_stream_process_output"] = lambda **kwargs: (_ for _ in ()).throw(
+        AssertionError("must not execute a target with a stale configuration fingerprint")
+    )
+    namespace["_complete_task"] = lambda task_id, **kwargs: completions.append(
+        {"task_id": task_id, **kwargs}
+    )
+
+    namespace["_run_deployment_task"](
+        {
+            "executor_type": "deployment",
+            "id": "runner_task_changed_target",
+            "input_payload": {
+                "deployment_method": "docker",
+                "operation": "probe",
+                "target_code": "production-compose",
+                "target_config_fingerprint": "0" * 64,
+            },
+            "timeout_seconds": 60,
+        }
+    )
+
+    assert completions == [
+        {
+            "error_code": "DEPLOYMENT_TARGET_CONFIGURATION_CHANGED",
+            "error_message": (
+                "Deployment target configuration changed after the platform issued this task; "
+                "a new connectivity probe is required"
+            ),
+            "result_json": {
+                "deployment_method": "docker",
+                "executor_type": "deployment",
+                "expected_target_config_fingerprint": "0" * 64,
+                "target_code": "production-compose",
+                "target_config_fingerprint": namespace["_deployment_target_config_fingerprint"](
+                    namespace["DEPLOYMENT_TARGETS"]["production-compose"]
+                ),
+            },
+            "status": "failed",
+            "task_id": "runner_task_changed_target",
+        }
+    ]
+
+
 def test_runner_connectivity_probe_timeout_is_reported_without_a_deployment(tmp_path, monkeypatch):
     namespace = runner_namespace(tmp_path, monkeypatch)
     completions: list[dict] = []

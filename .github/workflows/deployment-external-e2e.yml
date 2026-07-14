@@ -1,0 +1,25 @@
+name: Deployment external E2E
+
+on:
+  workflow_dispatch:
+
+jobs:
+  external-deployment-e2e:
+    runs-on: [self-hosted, deployment-e2e]
+    environment: deployment-e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install API test dependencies
+        working-directory: apps/api
+        run: uv sync --group dev
+      - name: Run isolated SSH, Docker and Jenkins deployment E2E gate
+        working-directory: apps/api
+        env:
+          AI_BRAIN_E2E_BASE_URL: ${{ secrets.AI_BRAIN_E2E_BASE_URL }}
+          AI_BRAIN_E2E_BEARER_TOKEN: ${{ secrets.AI_BRAIN_E2E_BEARER_TOKEN }}
+          AI_BRAIN_E2E_DOCKER_DEPLOYMENT_ID: ${{ secrets.AI_BRAIN_E2E_DOCKER_DEPLOYMENT_ID }}
+          AI_BRAIN_E2E_JENKINS_DEPLOYMENT_ID: ${{ secrets.AI_BRAIN_E2E_JENKINS_DEPLOYMENT_ID }}
+          AI_BRAIN_E2E_SSH_DEPLOYMENT_ID: ${{ secrets.AI_BRAIN_E2E_SSH_DEPLOYMENT_ID }}
+          AI_BRAIN_E2E_TIMEOUT_DEPLOYMENT_ID: ${{ secrets.AI_BRAIN_E2E_TIMEOUT_DEPLOYMENT_ID }}
+        run: uv run pytest -m external_deployment_e2e tests/integration/test_external_deployment_e2e.py -q

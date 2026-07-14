@@ -145,6 +145,7 @@ def create_runner_scheme(
                 "deployment_targets": [
                     {
                         "code": "production-compose",
+                        "config_fingerprint": "a" * 64,
                         "health_check_configured": health_probe_configured,
                         "method": "docker",
                         "name": "生产 Docker Compose",
@@ -339,6 +340,44 @@ def test_runner_deployment_start_requires_a_fresh_connectivity_probe():
     assert started.json()["detail"]["code"] == "DEPLOYMENT_TARGET_CONNECTIVITY_UNVERIFIED"
 
 
+def test_deployment_connectivity_probe_endpoint_queues_runner_probe_and_reports_evidence():
+    app.state.store.reset()
+    headers = auth_headers()
+    context = create_context(headers, "runner-probe-endpoint")
+    scheme, runner_token = create_runner_scheme(headers, context, probe_target=False)
+    deployment = create_deployment(headers, context, scheme_id=scheme["id"])
+
+    queued = client.post(
+        f"/api/devops/deployments/{deployment['id']}/connectivity-probe",
+        headers=headers,
+    )
+
+    assert queued.status_code == 200, queued.text
+    assert queued.json()["data"] == {
+        "deployment_id": deployment["id"],
+        "kind": "runner",
+        "max_age_seconds": 600,
+        "probe": {"ready": False, "status": "not_probed"},
+        "ready": False,
+        "status": "queued",
+        "task_id": queued.json()["data"]["task_id"],
+    }
+
+    probe_task_id = complete_runner_connectivity_probe(
+        headers,
+        runner_id=scheme["runner_id"],
+        runner_token=runner_token,
+    )
+    assert probe_task_id == queued.json()["data"]["task_id"]
+    status = client.get(
+        f"/api/devops/deployments/{deployment['id']}/connectivity-probe",
+        headers=headers,
+    )
+    assert status.status_code == 200, status.text
+    assert status.json()["data"]["ready"] is True
+    assert status.json()["data"]["status"] == "succeeded"
+
+
 def test_running_probe_log_does_not_replace_the_last_successful_evidence():
     app.state.store.reset()
     headers = auth_headers()
@@ -529,6 +568,49 @@ def test_runner_success_syncs_logs_and_releases_requirement():
     ]
     assert {item["source"] for item in log_items} == {"runner"}
     assert app.state.store.requirements[context["requirement_id"]]["status"] == "released"
+
+
+def test_runner_target_configuration_change_invalidates_previous_probe_evidence():
+    app.state.store.reset()
+    headers = auth_headers()
+    context = create_context(headers, "runner-config-fingerprint")
+    scheme, runner_token = create_runner_scheme(headers, context)
+    deployment = create_deployment(headers, context, scheme_id=scheme["id"])
+
+    heartbeat = client.post(
+        f"/api/system/ai-executor-runners/{scheme['runner_id']}/heartbeat",
+        json={
+            "metadata": {
+                "deployment_targets": [
+                    {
+                        "code": "production-compose",
+                        "config_fingerprint": "b" * 64,
+                        "health_check_configured": True,
+                        "method": "docker",
+                        "name": "生产 Docker Compose",
+                        "ready": True,
+                    }
+                ]
+            }
+        },
+        headers={"X-Runner-Token": runner_token},
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+
+    target = client.get(
+        f"/api/devops/deployment-runner-targets?runner_id={scheme['runner_id']}&method=docker",
+        headers=headers,
+    )
+    assert target.status_code == 200, target.text
+    assert target.json()["data"]["items"][0]["connectivity_probe_status"] == "not_probed"
+
+    blocked = client.post(
+        f"/api/devops/deployments/{deployment['id']}/start",
+        json={},
+        headers=headers,
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "DEPLOYMENT_TARGET_CONNECTIVITY_UNVERIFIED"
 
 
 def test_strict_deployment_window_blocks_start_outside_window():

@@ -15,6 +15,8 @@ from app.services.operational_deployments import (
     create_deployment_request_response,
     create_deployment_scheme_response,
     delete_deployment_scheme_response,
+    deployment_connectivity_probe_response,
+    deployment_connectivity_probe_status_response,
     get_deployment_request_detail_response,
     get_deployment_run_logs_response,
     get_deployment_scheme_response,
@@ -22,6 +24,7 @@ from app.services.operational_deployments import (
     list_deployment_requests_response,
     list_deployment_runner_targets_response,
     list_deployment_schemes_response,
+    probe_deployment_jenkins_connection_response,
     rollback_deployment_request_response,
     start_deployment_request_response,
     sync_jenkins_deployment_response,
@@ -152,6 +155,12 @@ class DeploymentStartRequest(BaseModel):
     external_job_name: str | None = None
     external_build_id: str | None = None
     log_url: str | None = None
+
+
+class DeploymentJenkinsConnectionProbeRequest(BaseModel):
+    product_id: str
+    environment: str
+    jenkins_job_name: str
 
 
 class ProductionChangeApprovalRequest(BaseModel):
@@ -404,6 +413,24 @@ def deployment_jenkins_connections(
     return envelope(result, get_trace_id(request))
 
 
+@router.post("/api/devops/deployment-jenkins-connections/{connection_id}/connectivity-probe")
+def deployment_jenkins_connection_probe(
+    connection_id: str,
+    payload: DeploymentJenkinsConnectionProbeRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = probe_deployment_jenkins_connection_response(
+        connection_id=connection_id,
+        current_store=store(request),
+        environment=payload.environment,
+        job_name=payload.jenkins_job_name,
+        product_id=payload.product_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
 @router.post("/api/devops/deployment-schemes")
 def create_deployment_scheme(
     payload: DeploymentSchemeCreate,
@@ -490,6 +517,34 @@ def start_deployment_request(
         user=user,
     )
     return envelope(deployment, get_trace_id(request))
+
+
+@router.post("/api/devops/deployments/{deployment_request_id}/connectivity-probe")
+def deployment_connectivity_probe(
+    deployment_request_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = deployment_connectivity_probe_response(
+        current_store=store(request),
+        deployment_request_id=deployment_request_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/devops/deployments/{deployment_request_id}/connectivity-probe")
+def deployment_connectivity_probe_status(
+    deployment_request_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = deployment_connectivity_probe_status_response(
+        current_store=store(request),
+        deployment_request_id=deployment_request_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
 
 
 @router.get("/api/devops/deployments/{deployment_request_id}/production-change-control")

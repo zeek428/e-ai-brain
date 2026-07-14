@@ -241,6 +241,22 @@ export type DeploymentJenkinsConnectionRecord = {
   status: string;
 };
 
+export type DeploymentConnectivityProbeRecord = {
+  deploymentId: string;
+  kind: 'jenkins' | 'runner';
+  maxAgeSeconds: number;
+  probe: Record<string, unknown>;
+  ready: boolean;
+  status: string;
+  taskId?: string;
+};
+
+export type DeploymentJenkinsConnectionProbeRecord = {
+  connectionId: string;
+  jobName: string;
+  probe: Record<string, unknown>;
+};
+
 export type DeploymentSchemeCreatePayload = {
   code: string;
   config?: Record<string, unknown>;
@@ -835,6 +851,56 @@ export async function startDeploymentRequest(
     },
   );
   return mapDeploymentRequest(item);
+}
+
+function mapDeploymentConnectivityProbe(item: FlexibleListItem): DeploymentConnectivityProbeRecord {
+  return {
+    deploymentId: formatUnknownValue(item.deployment_id),
+    kind: item.kind === 'jenkins' ? 'jenkins' : 'runner',
+    maxAgeSeconds: numberOrUndefined(item.max_age_seconds) ?? 0,
+    probe: normalizeObjectRecord(item.probe) ?? {},
+    ready: Boolean(item.ready),
+    status: formatUnknownValue(item.status),
+    taskId: emptyToUndefined(formatUnknownValue(item.task_id)),
+  };
+}
+
+export async function requestDeploymentConnectivityProbe(
+  deploymentRequestId: string,
+): Promise<DeploymentConnectivityProbeRecord> {
+  const token = requireAccessToken();
+  const item = await apiRequest<FlexibleListItem>(
+    `/api/devops/deployments/${encodeURIComponent(deploymentRequestId)}/connectivity-probe`,
+    { method: 'POST', token },
+  );
+  return mapDeploymentConnectivityProbe(item);
+}
+
+export async function fetchDeploymentConnectivityProbe(
+  deploymentRequestId: string,
+): Promise<DeploymentConnectivityProbeRecord> {
+  const token = requireAccessToken();
+  const item = await apiRequest<FlexibleListItem>(
+    `/api/devops/deployments/${encodeURIComponent(deploymentRequestId)}/connectivity-probe`,
+    { method: 'GET', token },
+  );
+  return mapDeploymentConnectivityProbe(item);
+}
+
+export async function probeDeploymentJenkinsConnection(
+  connectionId: string,
+  payload: { environment: string; jenkins_job_name: string; product_id: string },
+): Promise<DeploymentJenkinsConnectionProbeRecord> {
+  const token = requireAccessToken();
+  const item = await apiRequest<FlexibleListItem>(
+    `/api/devops/deployment-jenkins-connections/${encodeURIComponent(connectionId)}/connectivity-probe`,
+    { body: payload, method: 'POST', token },
+  );
+  return {
+    connectionId: formatUnknownValue(item.connection_id),
+    jobName: formatUnknownValue(item.job_name),
+    probe: normalizeObjectRecord(item.probe) ?? {},
+  };
 }
 
 export async function completeDeploymentRequest(

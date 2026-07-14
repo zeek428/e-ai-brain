@@ -783,6 +783,38 @@ def _finalize_workspace_decisions() -> None:
                 print(f"Failed to report workspace decision failure: {report_exc}", file=sys.stderr)
 
 
+def _deployment_target_fingerprint_value(value, *, key: str = ""):
+    # Only the final digest leaves the Runner. Include every local setting so a
+    # credential or command change cannot reuse prior connectivity evidence.
+    if isinstance(value, dict):
+        return {
+            str(item_key): _deployment_target_fingerprint_value(
+                item_value,
+                key=str(item_key),
+            )
+            for item_key, item_value in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, list):
+        return [
+            _deployment_target_fingerprint_value(item, key=key)
+            for item in value
+        ]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def _deployment_target_config_fingerprint(target: dict) -> str:
+    canonical = _deployment_target_fingerprint_value(target)
+    encoded = json.dumps(
+        canonical,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _deployment_target_summaries() -> list[dict]:
     summaries: list[dict] = []
     for code, target in DEPLOYMENT_TARGETS.items():
@@ -794,6 +826,7 @@ def _deployment_target_summaries() -> list[dict]:
             continue
         summary = {
             "code": str(code).strip(),
+            "config_fingerprint": _deployment_target_config_fingerprint(target),
             "method": method,
             "name": name,
             "ready": bool(target.get("ready", True)),
@@ -1388,6 +1421,26 @@ def _run_deployment_task(task: dict) -> None:
                 "deployment_method": deployment_method,
                 "executor_type": "deployment",
                 "target_code": target_code,
+            },
+        )
+        return
+    expected_fingerprint = str(input_payload.get("target_config_fingerprint") or "").strip().lower()
+    target_fingerprint = _deployment_target_config_fingerprint(target)
+    if expected_fingerprint and expected_fingerprint != target_fingerprint:
+        _complete_task(
+            task_id,
+            status="failed",
+            error_code="DEPLOYMENT_TARGET_CONFIGURATION_CHANGED",
+            error_message=(
+                "Deployment target configuration changed after the platform issued this task; "
+                "a new connectivity probe is required"
+            ),
+            result_json={
+                "deployment_method": deployment_method,
+                "executor_type": "deployment",
+                "expected_target_config_fingerprint": expected_fingerprint,
+                "target_code": target_code,
+                "target_config_fingerprint": target_fingerprint,
             },
         )
         return

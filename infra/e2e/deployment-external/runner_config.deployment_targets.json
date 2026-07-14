@@ -1,0 +1,42 @@
+{
+  "deployment_targets": {
+    "e2e-docker": {
+      "compose_files": ["docker-compose.yml"],
+      "method": "docker",
+      "name": "E2E Docker Compose",
+      "project_name": "ai-brain-e2e",
+      "ready": true,
+      "rollback_commands": [
+        {
+          "argv": ["docker", "compose", "-f", "docker-compose.yml", "--project-name", "ai-brain-e2e", "down"],
+          "cwd": "REPLACE_WITH_ABSOLUTE_TARGETS_DIRECTORY"
+        }
+      ],
+      "services": ["e2e-app"],
+      "working_directory": "REPLACE_WITH_ABSOLUTE_TARGETS_DIRECTORY"
+    },
+    "e2e-ssh": {
+      "host": "127.0.0.1",
+      "identity_file": "REPLACE_WITH_DISPOSABLE_PRIVATE_KEY_PATH",
+      "known_hosts_file": "REPLACE_WITH_KNOWN_HOSTS_PATH",
+      "method": "ssh",
+      "name": "E2E SSH Host",
+      "port": 2222,
+      "ready": true,
+      "remote_command": "printf 'e2e deployment completed\\n'",
+      "rollback_command": "printf 'e2e rollback completed\\n'",
+      "username": "e2e"
+    },
+    "e2e-ssh-timeout": {
+      "host": "127.0.0.1",
+      "identity_file": "REPLACE_WITH_DISPOSABLE_PRIVATE_KEY_PATH",
+      "known_hosts_file": "REPLACE_WITH_KNOWN_HOSTS_PATH",
+      "method": "ssh",
+      "name": "E2E SSH Timeout Host",
+      "port": 2222,
+      "ready": true,
+      "remote_command": "sleep 35",
+      "username": "e2e"
+    }
+  }
+}

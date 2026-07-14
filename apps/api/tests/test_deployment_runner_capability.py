@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.ai_executor_runner_constants import AI_EXECUTOR_TYPES
+from app.services.ai_executor_runner_deployment_probes import deployment_probe_max_age_seconds
 from app.services.ai_executor_runner_task_context import (
     _ai_executor_task_product_id,
     _ai_executor_task_visible_to_user,
@@ -42,6 +43,17 @@ def create_deployment_runner(headers: dict[str, str]) -> dict:
 
 def test_deployment_is_a_runner_capability_not_an_ai_executor_type():
     assert "deployment" not in AI_EXECUTOR_TYPES
+
+
+def test_connectivity_probe_policy_is_stricter_for_production_and_high_risk_deployments():
+    assert deployment_probe_max_age_seconds(environment="dev", risk_level="low") == 1800
+    assert deployment_probe_max_age_seconds(environment="prod", risk_level="medium") == 600
+    assert deployment_probe_max_age_seconds(environment="prod", risk_level="high") == 300
+    assert deployment_probe_max_age_seconds(
+        environment="prod",
+        risk_level="medium",
+        scheme={"preflight_config": {"connectivity_probe_max_age_seconds": 120}},
+    ) == 120
 
 
 def test_deployment_runner_task_inherits_product_scope_from_deployment_request():
@@ -129,6 +141,7 @@ def test_heartbeat_sanitizes_deployment_target_metadata():
                 "deployment_targets": [
                     {
                         "code": "production-compose",
+                        "config_fingerprint": "a" * 64,
                         "name": "生产 Docker Compose",
                         "method": "docker",
                         "ready": True,
@@ -150,6 +163,7 @@ def test_heartbeat_sanitizes_deployment_target_metadata():
     assert targets == [
         {
             "code": "production-compose",
+            "config_fingerprint": "a" * 64,
             "method": "docker",
             "name": "生产 Docker Compose",
             "ready": True,

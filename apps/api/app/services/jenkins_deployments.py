@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from datetime import UTC, datetime, timedelta
+from time import perf_counter
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
@@ -10,6 +14,25 @@ from app.api.deps import api_error
 from app.services.operational_records import read_memory_dict, record_audit_event
 from app.services.plugin_invocation_runtime import _build_headers_with_sources
 from app.services.task_workflow_context import task_workflow_write_store
+
+JENKINS_PREFLIGHT_MAX_AGE_SECONDS = 600
+_JENKINS_PREFLIGHT_CONFIG_KEY = "_ai_brain_deployment_preflight"
+_SECRET_CONFIG_KEY = re.compile(
+    r"(?:authorization|credential|password|private[_-]?key|secret|token)",
+    re.IGNORECASE,
+)
+
+
+def _parse_utc_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _repository(current_store: Any) -> Any | None:
@@ -27,6 +50,211 @@ def _connection_by_id(current_store: Any, connection_id: str) -> dict[str, Any]:
             if candidate.get("id") == connection_id:
                 return dict(candidate)
     raise api_error(404, "NOT_FOUND", "Jenkins connection not found")
+
+
+def _save_plugin_connection(
+    current_store: Any,
+    connection: dict[str, Any],
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _repository(current_store)
+    save_record = getattr(repository, "save_plugin_connection_record", None)
+    if callable(save_record):
+        save_record(connection, audit_event=audit_event)
+    read_memory_dict(current_store, "plugin_connections")[str(connection["id"])] = connection
+
+
+def _fingerprint_value(value: Any, *, key: str = "") -> Any:
+    if _SECRET_CONFIG_KEY.search(key):
+        return "<redacted>"
+    if isinstance(value, dict):
+        return {
+            str(item_key): _fingerprint_value(item_value, key=str(item_key))
+            for item_key, item_value in sorted(value.items(), key=lambda item: str(item[0]))
+            if str(item_key) != _JENKINS_PREFLIGHT_CONFIG_KEY
+        }
+    if isinstance(value, list):
+        return [_fingerprint_value(item, key=key) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def jenkins_connection_config_fingerprint(connection: dict[str, Any]) -> str:
+    canonical = {
+        "auth_config": _fingerprint_value(connection.get("auth_config") or {}),
+        "auth_type": str(connection.get("auth_type") or ""),
+        "endpoint_url": str(connection.get("endpoint_url") or ""),
+        "request_config": _fingerprint_value(connection.get("request_config") or {}),
+        "status": str(connection.get("status") or ""),
+        "timeout_seconds": int(connection.get("timeout_seconds") or 30),
+    }
+    encoded = json.dumps(canonical, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _jenkins_preflight_record(connection: dict[str, Any], job_name: str) -> dict[str, Any] | None:
+    request_config = connection.get("request_config")
+    if not isinstance(request_config, dict):
+        return None
+    preflight = request_config.get(_JENKINS_PREFLIGHT_CONFIG_KEY)
+    if not isinstance(preflight, dict):
+        return None
+    jobs = preflight.get("jobs")
+    if not isinstance(jobs, dict):
+        return None
+    record = jobs.get(job_name)
+    return dict(record) if isinstance(record, dict) else None
+
+
+def jenkins_deployment_preflight_state(
+    connection: dict[str, Any],
+    *,
+    job_name: str,
+    max_age_seconds: int = JENKINS_PREFLIGHT_MAX_AGE_SECONDS,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    record = _jenkins_preflight_record(connection, job_name)
+    if record is None:
+        return {"ready": False, "status": "not_probed"}
+    state: dict[str, Any] = {
+        "checked_at": record.get("checked_at"),
+        "duration_ms": record.get("duration_ms"),
+        "error_code": record.get("error_code"),
+        "ready": False,
+        "status": str(record.get("status") or "failed"),
+    }
+    if (
+        record.get("connection_config_fingerprint")
+        != jenkins_connection_config_fingerprint(connection)
+    ):
+        return {**state, "status": "configuration_changed"}
+    if state["status"] != "succeeded":
+        return state
+    checked_at = _parse_utc_datetime(record.get("checked_at"))
+    if checked_at is None:
+        return {**state, "status": "invalid"}
+    age_seconds = max(0, int(((now or datetime.now(UTC)) - checked_at).total_seconds()))
+    if age_seconds > max_age_seconds:
+        return {**state, "age_seconds": age_seconds, "status": "stale"}
+    return {**state, "age_seconds": age_seconds, "ready": True}
+
+
+def _store_jenkins_preflight(
+    current_store: Any,
+    *,
+    connection: dict[str, Any],
+    job_name: str,
+    record: dict[str, Any],
+    user_id: str,
+) -> dict[str, Any]:
+    request_config = dict(connection.get("request_config") or {})
+    previous = request_config.get(_JENKINS_PREFLIGHT_CONFIG_KEY)
+    jobs = dict(previous.get("jobs") or {}) if isinstance(previous, dict) else {}
+    jobs[job_name] = record
+    updated = {
+        **connection,
+        "request_config": {
+            **request_config,
+            _JENKINS_PREFLIGHT_CONFIG_KEY: {"jobs": jobs},
+        },
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    event = record_audit_event(
+        current_store,
+        event_type=f"deployment.jenkins_preflight.{record['status']}",
+        actor_id=user_id,
+        subject_type="plugin_connection",
+        subject_id=str(connection["id"]),
+        payload={"job_name": job_name, "status": record["status"]},
+    )
+    _save_plugin_connection(current_store, updated, audit_event=event)
+    return updated
+
+
+def probe_jenkins_deployment_connection(
+    *,
+    current_store: Any,
+    connection_id: str,
+    job_name: str,
+    user_id: str,
+) -> dict[str, Any]:
+    """Perform a non-mutating Jenkins API and Job accessibility preflight."""
+    connection = _connection_by_id(current_store, connection_id)
+    normalized_job_name = str(job_name or "").strip()
+    if connection.get("status") != "active":
+        raise api_error(409, "JENKINS_CONNECTION_UNAVAILABLE", "Jenkins connection is disabled")
+    if not normalized_job_name:
+        raise api_error(400, "VALIDATION_ERROR", "jenkins_job_name is required")
+    endpoint = str(connection.get("endpoint_url") or "").rstrip("/")
+    started_at = perf_counter()
+    status = "succeeded"
+    error_code: str | None = None
+    try:
+        _request_json(connection, f"{endpoint}/api/json")
+        job_payload = _request_json(
+            connection,
+            f"{endpoint}/{_job_path(normalized_job_name)}/api/json",
+        )
+        if not job_payload.get("name"):
+            raise ValueError("Jenkins Job did not return a name")
+    except HTTPError as exc:
+        status = "failed"
+        error_code = (
+            "JENKINS_AUTHORIZATION_FAILED"
+            if exc.code in {401, 403}
+            else "JENKINS_JOB_UNAVAILABLE"
+        )
+    except URLError:
+        status = "failed"
+        error_code = "JENKINS_CONNECTIVITY_FAILED"
+    except Exception:  # noqa: BLE001 - external preflight errors are reduced to bounded evidence.
+        status = "failed"
+        error_code = "JENKINS_PREFLIGHT_FAILED"
+    record = {
+        "checked_at": datetime.now(UTC).isoformat(),
+        "connection_config_fingerprint": jenkins_connection_config_fingerprint(connection),
+        "duration_ms": int((perf_counter() - started_at) * 1000),
+        "error_code": error_code,
+        "status": status,
+    }
+    updated_connection = _store_jenkins_preflight(
+        current_store,
+        connection=connection,
+        job_name=normalized_job_name,
+        record=record,
+        user_id=user_id,
+    )
+    return {
+        "connection_id": connection_id,
+        "job_name": normalized_job_name,
+        "probe": jenkins_deployment_preflight_state(
+            updated_connection,
+            job_name=normalized_job_name,
+        ),
+    }
+
+
+def require_jenkins_deployment_preflight(
+    *,
+    connection: dict[str, Any],
+    job_name: str,
+    max_age_seconds: int,
+) -> dict[str, Any]:
+    state = jenkins_deployment_preflight_state(
+        connection,
+        job_name=job_name,
+        max_age_seconds=max_age_seconds,
+    )
+    if not state["ready"]:
+        raise api_error(
+            409,
+            "JENKINS_CONNECTIVITY_UNVERIFIED",
+            "Configured Jenkins Job requires a successful recent connectivity preflight",
+            {"job_name": job_name, "max_age_seconds": max_age_seconds, "probe": state},
+        )
+    return state
 
 
 def _save_plugin_invocation_log(current_store: Any, record: dict[str, Any]) -> None:
@@ -265,6 +493,20 @@ def trigger_jenkins_deployment(
             else "Jenkins health verification job is not configured"
             if operation == "verify"
             else "Jenkins deployment job is not configured",
+        )
+    if operation == "deploy":
+        from app.services.ai_executor_runner_deployment_probes import (
+            deployment_probe_max_age_seconds,
+        )
+
+        require_jenkins_deployment_preflight(
+            connection=connection,
+            job_name=job_name,
+            max_age_seconds=deployment_probe_max_age_seconds(
+                environment=str(deployment.get("environment") or "prod"),
+                risk_level=str(deployment.get("risk_level") or "medium"),
+                scheme=snapshot,
+            ),
         )
     endpoint = str(connection.get("endpoint_url") or "").rstrip("/") + "/"
     trigger_url = urljoin(endpoint, f"{_job_path(job_name)}/buildWithParameters")

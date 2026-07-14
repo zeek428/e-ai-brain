@@ -140,11 +140,12 @@ Content-Type: application/json
 GET /api/devops/deployment-schemes?product_id=product_001&environment=prod&status=active&page=1&page_size=20&sort_by=updated_at&sort_order=desc
 GET /api/devops/deployment-runner-targets?product_id=product_001&environment=prod&method=docker
 GET /api/devops/deployment-jenkins-connections?product_id=product_001&environment=prod
+POST /api/devops/deployment-jenkins-connections/connection_jenkins/connectivity-probe
 ```
 
 部署方案列表要求 `deployment.read`，并按用户产品 scope 过滤。传入 `page/page_size` 时通过 PostgreSQL read model 完成 `product_id/environment/deployment_method/status/name` 筛选、count/page 和白名单排序，返回 `page/page_size/total/query_time_ms`；`sort_by` 支持 `code/name/environment/deployment_method/is_default/status/updated_at`。不传分页仅保留旧下拉兼容。
 
-Runner 目标和 Jenkins 候选接口只允许具备 `deployment.scheme.manage` 的用户访问，并同时应用 `execution_resource_grants`：非全局用户只看到当前产品、环境已授权且 active 的资源。Runner 目标只返回具备 `deployment` capability、部署信任域、心跳健康且上报目标摘要的 Runner；每项返回 `connectivity_probe_status/connectivity_probe_checked_at`，只有平台记录的成功探测在 10 分钟有效期内才返回 `ready=true`。不包含 SSH 私钥、主机密码、known_hosts 内容或 Docker 本地路径；Jenkins 候选只返回连接 ID、名称、环境、状态和就绪状态，不返回 `auth_config`。
+Runner 目标和 Jenkins 候选接口只允许具备 `deployment.scheme.manage` 的用户访问，并同时应用 `execution_resource_grants`：非全局用户只看到当前产品、环境已授权且 active 的资源。Runner 目标只返回具备 `deployment` capability、部署信任域、心跳健康且上报目标摘要的 Runner；每项返回 `connectivity_probe_status/connectivity_probe_checked_at`，只有平台记录的成功探测、且探测配置指纹仍与 Runner 当前本地目标一致时才返回 `ready=true`。探测有效期按环境、部署风险和方案的 `preflight_config.connectivity_probe_max_age_seconds` 取更严格值。Jenkins Job 预检使用该 POST 接口提交 `product_id/environment/jenkins_job_name`，服务端请求 Jenkins API 和 Job 只读端点并保存短期证据。所有响应不包含 SSH 私钥、主机密码、known_hosts 内容、Docker 本地路径或 `auth_config`。
 
 具备 `deployment.scheme.manage` 的发布负责人或管理员可创建、修改和删除方案：
 
@@ -167,13 +168,17 @@ Content-Type: application/json
 }
 ```
 
-`deployment_method` 允许 `manual`、`ssh`、`docker`、`jenkins`，服务端固定映射为 `manual`、`runner`、`runner`、`integration` 执行通道。方案扩展字段包括 `rollout_strategy=all_at_once|canary|batch|blue_green`、`wave_config`、`preflight_config`、`health_check_config`、`rollback_config` 和 `window_enforcement=strict|warn|disabled`；配置值只能引用受控 Target/Job 和结构化参数，不能提交任意 Shell、主机或凭据。SSH/Docker 必须引用具备部署能力、已授权且已上报同方法目标的 Runner；启动部署时还必须要求该目标有平台记录的近期成功真实探测，不能由心跳或 Runner 上报伪造。Jenkins 必须引用已授权 active 连接并提供部署 Job，可选健康检查/回滚 Job。同产品、同环境最多一个 active 默认方案。修改使用 `PATCH /api/devops/deployment-schemes/{scheme_id}` 并提交当前 `version` 做乐观锁；切换默认方案时旧默认方案同步递增版本，当前 active 默认方案必须先设置替代默认方案才能停用、取消默认或迁移环境；仍被部署单引用的方案禁止删除。
+`deployment_method` 允许 `manual`、`ssh`、`docker`、`jenkins`，服务端固定映射为 `manual`、`runner`、`runner`、`integration` 执行通道。方案扩展字段包括 `rollout_strategy=all_at_once|canary|batch|blue_green`、`wave_config`、`preflight_config`、`health_check_config`、`rollback_config` 和 `window_enforcement=strict|warn|disabled`；`preflight_config.connectivity_probe_max_age_seconds` 可将探测有效期收紧为 60 至 3600 秒。配置值只能引用受控 Target/Job 和结构化参数，不能提交任意 Shell、主机或凭据。SSH/Docker 必须引用具备部署能力、已授权且已上报同方法目标的 Runner；启动部署时还必须要求该目标有平台记录的近期成功真实探测，且本地目标配置指纹未变，不能由心跳或 Runner 上报伪造。Jenkins 必须引用已授权 active 连接并提供部署 Job；启动前需要同连接与 Job 的近期成功预检，可选健康检查/回滚 Job。同产品、同环境最多一个 active 默认方案。修改使用 `PATCH /api/devops/deployment-schemes/{scheme_id}` 并提交当前 `version` 做乐观锁；切换默认方案时旧默认方案同步递增版本，当前 active 默认方案必须先设置替代默认方案才能停用、取消默认或迁移环境；仍被部署单引用的方案禁止删除。
 
 运维部署单：
 
 ```http
 GET /api/devops/deployments?product_id=product_001&version_id=version_001&status=deploying&environment=prod&page=1&page_size=20&sort_by=updated_at&sort_order=desc
+POST /api/devops/deployments/deployment_request_001/connectivity-probe
+GET /api/devops/deployments/deployment_request_001/connectivity-probe
 ```
+
+自动部署单可在启动前调用 `connectivity-probe`。Runner 方式返回排队探测任务并通过 GET 查询结果；Jenkins 方式同步返回 API/Job 预检结果。只有 `ready=true` 时才可继续调用 `start`；前端“探测并启动”在成功后自动执行该动作。
 
 当前实现支持按产品、版本、状态、环境和标题筛选部署单，在 PostgreSQL 层完成 count/page 与 `created_at/environment/risk_level/status/title/updated_at` 白名单排序，并返回 `page/page_size/total/query_time_ms`、关联需求范围和当前页最近执行记录：
 
