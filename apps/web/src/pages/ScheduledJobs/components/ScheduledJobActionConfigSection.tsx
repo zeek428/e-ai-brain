@@ -9,6 +9,148 @@ const notificationChannelOptions = [
   { label: '钉钉机器人', value: 'dingtalk' },
 ];
 
+function ScheduledJobResultActionFields({
+  dingtalkActionOptions,
+  fieldName,
+  pluginConnectionOptions,
+  severityThresholdOptions,
+}: {
+  dingtalkActionOptions: Array<{ label: string; value: string }>;
+  fieldName: number;
+  pluginConnectionOptions: Array<{ label: string; value: string }>;
+  severityThresholdOptions: Array<{ label: string; value: string }>;
+}) {
+  const actionType = Form.useWatch(['result_actions', fieldName, 'type']);
+
+  if (
+    actionType === 'create_bug_for_severe_findings'
+    || actionType === 'create_task_for_severe_findings'
+  ) {
+    return (
+      <Form.Item name={[fieldName, 'severity_threshold']} style={{ marginBottom: 8, width: 150 }}>
+        <Select options={severityThresholdOptions} placeholder="严重级别" />
+      </Form.Item>
+    );
+  }
+  if (actionType === 'send_notification') {
+    return (
+      <Space orientation="vertical" size={8} style={{ width: 360 }}>
+        <Form.Item
+          name={[fieldName, 'channels']}
+          rules={[{ required: true, message: '请选择通知渠道' }]}
+          style={{ marginBottom: 0 }}
+        >
+          <Select mode="multiple" options={notificationChannelOptions} placeholder="通知渠道" />
+        </Form.Item>
+        <Form.Item name={[fieldName, 'recipients']} style={{ marginBottom: 0 }}>
+          <Select mode="tags" placeholder="邮件收件人" tokenSeparators={[',', '，']} />
+        </Form.Item>
+        <Form.Item name={[fieldName, 'webhook_url']} style={{ marginBottom: 8 }}>
+          <Input placeholder="钉钉机器人 Webhook" />
+        </Form.Item>
+      </Space>
+    );
+  }
+  if (actionType === 'create_requirements') {
+    return (
+      <div
+        style={{
+          display: 'grid',
+          gap: 8,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
+          width: '100%',
+        }}
+      >
+        <Form.Item name={[fieldName, 'priority']} initialValue="P1" style={{ marginBottom: 8 }}>
+          <Select
+            options={[
+              { label: 'P0', value: 'P0' },
+              { label: 'P1', value: 'P1' },
+              { label: 'P2', value: 'P2' },
+            ]}
+            placeholder="优先级"
+          />
+        </Form.Item>
+        <Form.Item name={[fieldName, 'requirements_path']} initialValue="$.requirements" style={{ marginBottom: 8 }}>
+          <Input placeholder="需求列表 JSONPath" />
+        </Form.Item>
+        <Form.Item name={[fieldName, 'max_items']} initialValue={20} style={{ marginBottom: 8 }}>
+          <InputNumber min={1} max={100} placeholder="数量" style={{ width: '100%' }} />
+        </Form.Item>
+      </div>
+    );
+  }
+  if (actionType === 'sync_dingtalk_document') {
+    return (
+      <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+        <div
+          style={{
+            display: 'grid',
+            gap: 8,
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            width: '100%',
+          }}
+        >
+          <Form.Item
+            name={[fieldName, 'plugin_action_id']}
+            rules={[{ required: true, message: '请选择钉钉更新动作' }]}
+            style={{ marginBottom: 0 }}
+          >
+            <Select
+              options={dingtalkActionOptions}
+              placeholder="钉钉文档 - 更新内容"
+              showSearch
+              optionFilterProp="label"
+            />
+          </Form.Item>
+          <Form.Item name={[fieldName, 'plugin_connection_id']} style={{ marginBottom: 0 }}>
+            <Select
+              allowClear
+              options={pluginConnectionOptions}
+              placeholder="钉钉连接"
+              showSearch
+              optionFilterProp="label"
+            />
+          </Form.Item>
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gap: 8,
+            gridTemplateColumns: 'minmax(180px, 1fr) minmax(100px, 120px)',
+            width: '100%',
+          }}
+        >
+          <Form.Item
+            name={[fieldName, 'document_id']}
+            rules={[{ required: true, message: '请输入钉钉文档链接或 ID' }]}
+            style={{ marginBottom: 0 }}
+          >
+            <Input placeholder="钉钉文档链接或 ID" />
+          </Form.Item>
+          <Form.Item name={[fieldName, 'write_mode']} initialValue="append" style={{ marginBottom: 0 }}>
+            <Select
+              options={[
+                { label: '追加', value: 'append' },
+                { label: '覆盖', value: 'overwrite' },
+              ]}
+            />
+          </Form.Item>
+        </div>
+        <Form.Item
+          name={[fieldName, 'content_template']}
+          initialValue="{{dingtalk_markdown}}"
+          style={{ marginBottom: 8 }}
+        >
+          <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="写入内容模板" />
+        </Form.Item>
+      </Space>
+    );
+  }
+
+  return null;
+}
+
 export function ScheduledJobActionConfigSection({
   codeInspectionResultActionOptions,
   genericResultActionOptions,
@@ -28,12 +170,19 @@ export function ScheduledJobActionConfigSection({
   pluginConnections: PluginConnectionRecord[];
   severityThresholdOptions: Array<{ label: string; value: string }>;
 }) {
-  const visibleGenericResultActionOptions =
-    selectedJobType === 'plugin_action_invoke'
-      ? genericResultActionOptions
-      : genericResultActionOptions.filter(
-          (option) => !['create_requirements', 'sync_dingtalk_document'].includes(option.value),
-        );
+  const supportsDingtalkDocumentSync = [
+    'plugin_action_invoke',
+    'user_feedback_insight_extract',
+  ].includes(selectedJobType ?? '');
+  const visibleGenericResultActionOptions = genericResultActionOptions.filter((option) => {
+    if (option.value === 'create_requirements') {
+      return selectedJobType === 'plugin_action_invoke';
+    }
+    if (option.value === 'sync_dingtalk_document') {
+      return supportsDingtalkDocumentSync;
+    }
+    return true;
+  });
   const resultActionOptions = isCodeInspectionJob
     ? codeInspectionResultActionOptions
     : visibleGenericResultActionOptions;
@@ -67,156 +216,12 @@ export function ScheduledJobActionConfigSection({
                   >
                     <Select options={resultActionOptions} placeholder="请选择结果动作" />
                   </Form.Item>
-                  <Form.Item noStyle shouldUpdate>
-                    {({ getFieldValue }) => {
-                      const actionType = getFieldValue(['result_actions', field.name, 'type']);
-                      if (
-                        actionType === 'create_bug_for_severe_findings'
-                        || actionType === 'create_task_for_severe_findings'
-                      ) {
-                        return (
-                          <Form.Item
-                            name={[field.name, 'severity_threshold']}
-                            style={{ marginBottom: 8, width: 150 }}
-                          >
-                            <Select options={severityThresholdOptions} placeholder="严重级别" />
-                          </Form.Item>
-                        );
-                      }
-                      if (actionType === 'send_notification') {
-                        return (
-                          <Space orientation="vertical" size={8} style={{ width: 360 }}>
-                            <Form.Item
-                              name={[field.name, 'channels']}
-                              rules={[{ required: true, message: '请选择通知渠道' }]}
-                              style={{ marginBottom: 0 }}
-                            >
-                              <Select mode="multiple" options={notificationChannelOptions} placeholder="通知渠道" />
-                            </Form.Item>
-                            <Form.Item name={[field.name, 'recipients']} style={{ marginBottom: 0 }}>
-                              <Select mode="tags" placeholder="邮件收件人" tokenSeparators={[',', '，']} />
-                            </Form.Item>
-                            <Form.Item name={[field.name, 'webhook_url']} style={{ marginBottom: 8 }}>
-                              <Input placeholder="钉钉机器人 Webhook" />
-                            </Form.Item>
-                          </Space>
-                        );
-                      }
-                      if (actionType === 'create_requirements') {
-                        return (
-                          <div
-                            style={{
-                              display: 'grid',
-                              gap: 8,
-                              gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
-                              width: '100%',
-                            }}
-                          >
-                            <Form.Item
-                              name={[field.name, 'priority']}
-                              initialValue="P1"
-                              style={{ marginBottom: 8 }}
-                            >
-                              <Select
-                                options={[
-                                  { label: 'P0', value: 'P0' },
-                                  { label: 'P1', value: 'P1' },
-                                  { label: 'P2', value: 'P2' },
-                                ]}
-                                placeholder="优先级"
-                              />
-                            </Form.Item>
-                            <Form.Item
-                              name={[field.name, 'requirements_path']}
-                              initialValue="$.requirements"
-                              style={{ marginBottom: 8 }}
-                            >
-                              <Input placeholder="需求列表 JSONPath" />
-                            </Form.Item>
-                            <Form.Item
-                              name={[field.name, 'max_items']}
-                              initialValue={20}
-                              style={{ marginBottom: 8 }}
-                            >
-                              <InputNumber min={1} max={100} placeholder="数量" style={{ width: '100%' }} />
-                            </Form.Item>
-                          </div>
-                        );
-                      }
-                      if (actionType === 'sync_dingtalk_document') {
-                        return (
-                          <Space orientation="vertical" size={8} style={{ width: '100%' }}>
-                            <div
-                              style={{
-                                display: 'grid',
-                                gap: 8,
-                                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-                                width: '100%',
-                              }}
-                            >
-                              <Form.Item
-                                name={[field.name, 'plugin_action_id']}
-                                rules={[{ required: true, message: '请选择钉钉更新动作' }]}
-                                style={{ marginBottom: 0 }}
-                              >
-                                <Select
-                                  options={dingtalkActionOptions}
-                                  placeholder="钉钉文档 - 更新内容"
-                                  showSearch
-                                  optionFilterProp="label"
-                                />
-                              </Form.Item>
-                              <Form.Item name={[field.name, 'plugin_connection_id']} style={{ marginBottom: 0 }}>
-                                <Select
-                                  allowClear
-                                  options={pluginConnectionOptions}
-                                  placeholder="钉钉连接"
-                                  showSearch
-                                  optionFilterProp="label"
-                                />
-                              </Form.Item>
-                            </div>
-                            <div
-                              style={{
-                                display: 'grid',
-                                gap: 8,
-                                gridTemplateColumns: 'minmax(180px, 1fr) minmax(100px, 120px)',
-                                width: '100%',
-                              }}
-                            >
-                              <Form.Item
-                                name={[field.name, 'document_id']}
-                                rules={[{ required: true, message: '请输入钉钉文档链接或 ID' }]}
-                                style={{ marginBottom: 0 }}
-                              >
-                                <Input placeholder="钉钉文档链接或 ID" />
-                              </Form.Item>
-                              <Form.Item
-                                name={[field.name, 'write_mode']}
-                                initialValue="append"
-                                style={{ marginBottom: 0 }}
-                              >
-                                <Select
-                                  options={[
-                                    { label: '追加', value: 'append' },
-                                    { label: '覆盖', value: 'overwrite' },
-                                  ]}
-                                />
-                              </Form.Item>
-                            </div>
-                            <Form.Item
-                              name={[field.name, 'content_template']}
-                              initialValue="{{dingtalk_markdown}}\n\n{{requirements_markdown}}"
-                              style={{ marginBottom: 8 }}
-                            >
-                              <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="写入内容模板" />
-                            </Form.Item>
-                          </Space>
-                        );
-                      }
-                      return null;
-                    }}
-                  </Form.Item>
+                  <ScheduledJobResultActionFields
+                    dingtalkActionOptions={dingtalkActionOptions}
+                    fieldName={field.name}
+                    pluginConnectionOptions={pluginConnectionOptions}
+                    severityThresholdOptions={severityThresholdOptions}
+                  />
                   <Button danger icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
                 </Space>
               ))}
@@ -226,6 +231,18 @@ export function ScheduledJobActionConfigSection({
               >
                 新增结果动作
               </Button>
+              {supportsDingtalkDocumentSync ? (
+                <Button
+                  icon={<PlusOutlined />}
+                  onClick={() => add({
+                    content_template: '{{dingtalk_markdown}}',
+                    type: 'sync_dingtalk_document',
+                    write_mode: 'append',
+                  })}
+                >
+                  新增钉钉文档更新
+                </Button>
+              ) : null}
             </Space>
           )}
         </Form.List>

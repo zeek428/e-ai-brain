@@ -236,7 +236,7 @@ export function ScheduledJobDataConnectionSection({
                   extra={
                     dataSourceMode === 'authorized_read_action'
                       ? '例如读取指定钉钉文档、搜索钉钉文档、查询仓库或收取邮件'
-                      : '用于调用所选连接的取数接口，并携带默认结果映射'
+                      : '用于调用所选连接的取数接口，并携带默认结果映射；钉钉文档 - 更新内容请在下方结果动作中配置'
                   }
                 >
                   <Select

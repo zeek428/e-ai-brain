@@ -418,7 +418,9 @@ export function ScheduledJobFormModal({
           genericResultActionOptions={genericResultActionOptions}
           isCodeInspectionJob={selectedJobType === 'code_repository_inspection'}
           isGenericResultActionJob={
-            selectedJobType === 'online_log_ai_analysis' || selectedJobType === 'plugin_action_invoke'
+            selectedJobType === 'online_log_ai_analysis'
+            || selectedJobType === 'plugin_action_invoke'
+            || selectedJobType === 'user_feedback_insight_extract'
           }
           pluginActions={pluginActions}
           pluginConnections={pluginConnections}

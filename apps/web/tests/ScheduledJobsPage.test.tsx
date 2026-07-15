@@ -197,6 +197,12 @@ function installScheduledJobsFetchMock(
               { label: 'medium', value: 'medium' },
             ],
           },
+          generic_result_actions: [
+            { label: '仅保存运行结果', value: 'save_scheduled_job_result' },
+            { label: '创建需求', value: 'create_requirements' },
+            { label: '同步钉钉文档', value: 'sync_dingtalk_document' },
+            { label: '发送通知记录', value: 'send_notification' },
+          ],
           connection_environments: [
             { label: '默认', value: 'default' },
             { label: '开发', value: 'dev' },
@@ -1163,6 +1169,15 @@ function installScheduledJobsFetchMock(
               status: 'active',
             },
             {
+              action_type: 'mcp_tool',
+              code: 'update_dingtalk_document_content',
+              id: 'plugin_action_dingtalk_update',
+              name: '钉钉文档 - 更新内容',
+              plugin_id: 'plugin_dingtalk',
+              result_mapping: { write_target: 'dingtalk_document' },
+              status: 'active',
+            },
+            {
               action_type: 'http_request',
               code: 'scan_github_code_inspection',
               id: 'plugin_action_github_scan',
@@ -1560,7 +1575,9 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('Skills')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('知识引用')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('结果动作')).toBeInTheDocument();
-    expect(within(dialog).getByText('当前作业使用数据来源动作的结果映射生成写入反馈')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /新增结果动作/ })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /新增钉钉文档更新/ })).toBeInTheDocument();
+    expect(within(dialog).queryByText('当前作业使用数据来源动作的结果映射生成写入反馈')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('数据扫描执行')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('结果写入执行')).not.toBeInTheDocument();
     expect(consoleError).not.toHaveBeenCalled();
@@ -2031,6 +2048,26 @@ describe('ScheduledJobsPage', () => {
     );
     expect(jobCreateBodies[2]).not.toHaveProperty('connection_environment');
   }, 15000);
+
+  it('configures DingTalk document updates as a result action for weekly feedback insights', async () => {
+    installScheduledJobsFetchMock();
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
+    fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
+    fireEvent.click(await screen.findByText('每周用户反馈洞察抽取'));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /新增钉钉文档更新/ }));
+
+    const dingtalkActionSelect = await within(dialog).findByText('钉钉文档 - 更新内容');
+    expect(dingtalkActionSelect).toBeInTheDocument();
+    expect(await within(dialog).findByPlaceholderText('钉钉文档链接或 ID')).toBeInTheDocument();
+    fireEvent.mouseDown(dingtalkActionSelect);
+    expect(await screen.findByText('钉钉文档 - 更新内容 (update_dingtalk_document_content)')).toBeInTheDocument();
+  });
 
   it('opens the create dialog from an assistant scheduled job draft and confirms through the server draft', async () => {
     const { assistantDraftConfirmIds, assistantDraftPatchBodies, jobCreateBodies } = installScheduledJobsFetchMock();

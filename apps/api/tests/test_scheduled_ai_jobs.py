@@ -1577,6 +1577,34 @@ def test_generic_result_actions_are_supported_for_plugin_invoke_jobs():
     assert exc_info.value.status_code == 400
 
 
+def test_feedback_insight_jobs_can_sync_dingtalk_document_but_not_create_requirements():
+    assert scheduled_job_result_actions_service.validate_scheduled_job_result_actions(
+        "user_feedback_insight_extract",
+        [
+            {
+                "document_id": "https://alidocs.dingtalk.com/i/nodes/weekly_insight_doc",
+                "plugin_action_id": "plugin_action_dingtalk_update",
+                "type": "sync_dingtalk_document",
+                "write_mode": "overwrite",
+            },
+        ],
+    ) == [
+        {
+            "content_template": "{{dingtalk_markdown}}",
+            "document_id": "https://alidocs.dingtalk.com/i/nodes/weekly_insight_doc",
+            "plugin_action_id": "plugin_action_dingtalk_update",
+            "type": "sync_dingtalk_document",
+            "write_mode": "overwrite",
+        },
+    ]
+    with pytest.raises(HTTPException) as exc_info:
+        scheduled_job_result_actions_service.validate_scheduled_job_result_actions(
+            "user_feedback_insight_extract",
+            [{"requirements_path": "$.requirements", "type": "create_requirements"}],
+        )
+    assert exc_info.value.status_code == 400
+
+
 def test_plugin_invoke_result_actions_create_requirements_and_sync_dingtalk(monkeypatch):
     import app.services.plugins as plugin_services
 

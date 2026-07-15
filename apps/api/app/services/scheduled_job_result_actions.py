@@ -35,7 +35,15 @@ GENERIC_RESULT_ACTION_TYPES = {
     "sync_dingtalk_document",
 }
 GENERIC_NOTIFICATION_CHANNELS = {"dingtalk", "email"}
-GENERIC_RESULT_ACTION_JOB_TYPES = {"online_log_ai_analysis", "plugin_action_invoke"}
+GENERIC_RESULT_ACTION_JOB_TYPES = {
+    "online_log_ai_analysis",
+    "plugin_action_invoke",
+    "user_feedback_insight_extract",
+}
+DINGTALK_DOCUMENT_SYNC_RESULT_ACTION_JOB_TYPES = {
+    "plugin_action_invoke",
+    "user_feedback_insight_extract",
+}
 DINGTALK_WRITE_MODES = {"append", "overwrite"}
 
 
@@ -60,7 +68,7 @@ def validate_scheduled_job_result_actions(job_type: str, actions: Any) -> list[d
             _ensure_plugin_invoke_result_action(job_type, action_type)
             normalized.append(_normalize_create_requirements_action(action))
         elif action_type == "sync_dingtalk_document":
-            _ensure_plugin_invoke_result_action(job_type, action_type)
+            _ensure_dingtalk_document_sync_result_action(job_type, action_type)
             normalized.append(_normalize_sync_dingtalk_document_action(action))
         else:
             normalized.append({**action, "type": action_type})
@@ -205,6 +213,15 @@ def _ensure_plugin_invoke_result_action(job_type: str, action_type: str) -> None
             400,
             "VALIDATION_ERROR",
             f"{action_type} is only supported for plugin_action_invoke jobs",
+        )
+
+
+def _ensure_dingtalk_document_sync_result_action(job_type: str, action_type: str) -> None:
+    if job_type not in DINGTALK_DOCUMENT_SYNC_RESULT_ACTION_JOB_TYPES:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            f"{action_type} is only supported for plugin_action_invoke or user_feedback_insight_extract jobs",
         )
 
 
