@@ -217,7 +217,22 @@
   background: #f8fbff;
 }
 
-.help-screenshot-card img {
+.help-screenshot-preview-trigger {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.help-screenshot-preview-trigger:focus-visible {
+  outline: 2px solid #1677ff;
+  outline-offset: 3px;
+}
+
+.help-screenshot-preview-trigger img {
   display: block;
   width: 100%;
   max-height: 560px;
@@ -226,6 +241,20 @@
   object-fit: contain;
   object-position: top left;
   background: #ffffff;
+}
+
+.help-screenshot-preview-modal {
+  max-width: calc(100vw - 32px);
+}
+
+.help-screenshot-preview-modal .ant-modal-body {
+  max-height: 72vh;
+  overflow: auto;
+}
+
+.help-screenshot-preview-image {
+  display: block;
+  width: 100%;
 }
 
 .help-screenshot-card figcaption {

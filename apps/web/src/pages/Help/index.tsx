@@ -1,6 +1,6 @@
 import { BookOutlined, LinkOutlined, SearchOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { Button, Empty, Input, Space, Tag } from 'antd';
+import { Button, Empty, Input, Modal, Space, Tag } from 'antd';
 import { useMemo, useState } from 'react';
 
 import { navigateTo } from '../../utils/navigation';
@@ -11,6 +11,7 @@ import {
   helpArticles,
   helpGroups,
   type HelpArticle,
+  type HelpScreenshot,
 } from './helpContent';
 import './Help.css';
 
@@ -58,6 +59,7 @@ function HelpArticleButton({
 
 export default function HelpPage() {
   const [query, setQuery] = useState('');
+  const [previewScreenshot, setPreviewScreenshot] = useState<HelpScreenshot | null>(null);
   const [selectedKey, setSelectedKey] = useState(getInitialArticleKey);
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -186,7 +188,14 @@ export default function HelpPage() {
                 <div className="help-screenshot-grid">
                   {selectedArticle.screenshots.map((screenshot) => (
                     <figure className="help-screenshot-card" key={screenshot.src}>
-                      <img alt={screenshot.alt} src={screenshot.src} />
+                      <button
+                        aria-label={`查看图片 ${screenshot.alt}`}
+                        className="help-screenshot-preview-trigger"
+                        onClick={() => setPreviewScreenshot(screenshot)}
+                        type="button"
+                      >
+                        <img alt={screenshot.alt} src={screenshot.src} />
+                      </button>
                       {screenshot.caption ? <figcaption>{screenshot.caption}</figcaption> : null}
                     </figure>
                   ))}
@@ -209,6 +218,23 @@ export default function HelpPage() {
           </article>
         </section>
       </main>
+      <Modal
+        className="help-screenshot-preview-modal"
+        destroyOnHidden
+        footer={null}
+        onCancel={() => setPreviewScreenshot(null)}
+        open={Boolean(previewScreenshot)}
+        title={previewScreenshot ? `图片预览 · ${previewScreenshot.alt}` : '图片预览'}
+        width={1120}
+      >
+        {previewScreenshot ? (
+          <img
+            alt={previewScreenshot.alt}
+            className="help-screenshot-preview-image"
+            src={previewScreenshot.src}
+          />
+        ) : null}
+      </Modal>
     </PageContainer>
   );
 }

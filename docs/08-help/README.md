@@ -97,7 +97,7 @@ docs/08-help/
 
 ## 截图规范
 
-截图放在 `docs/08-help/assets/screenshots/`，文件名使用页面路径和用途命名：
+截图放在 `docs/08-help/assets/screenshots/`，文件名使用页面路径和用途命名。前端帮助中心中的截图支持点击后在预览弹窗中查看原图：
 
 ```text
 assets-knowledge-overview.png
