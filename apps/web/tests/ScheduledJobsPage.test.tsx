@@ -3825,6 +3825,130 @@ describe('ScheduledJobsPage', () => {
     );
   });
 
+  it('shows DingTalk document result action status directly in a feedback insight run detail', async () => {
+    installScheduledJobsFetchMock({
+      resultWriteRecords: [
+        {
+          created_at: '2026-07-15T05:45:10Z',
+          feedback: {
+            document_id: 'feedback_insight_doc',
+            plugin_invocation_log_id: 'plugin_invocation_log_feedback_dingtalk',
+            write_mode: 'append',
+          },
+          id: 'result_write_record_scheduled_job_run_feedback_dingtalk_2',
+          plugin_invocation_log_id: 'plugin_invocation_log_feedback_dingtalk',
+          records_imported: 1,
+          scheduled_job_id: 'scheduled_job_feedback_dingtalk',
+          scheduled_job_run_id: 'scheduled_job_run_feedback_dingtalk',
+          source_type: 'scheduled_job_run',
+          status: 'succeeded',
+          summary_fields: {
+            document_id: 'feedback_insight_doc',
+            write_mode: 'append',
+          },
+          write_target: 'dingtalk_document',
+          write_target_label: '钉钉文档',
+        },
+      ],
+      runs: [
+        {
+          id: 'scheduled_job_run_feedback_dingtalk',
+          records_imported: 13,
+          result_summary: {
+            execution_nodes: {
+              result_actions: [
+                {
+                  feedback: { records_imported: 13 },
+                  records_imported: 13,
+                  status: 'succeeded',
+                  write_target: 'user_feedback_insights',
+                  write_target_label: '用户洞察表',
+                },
+                {
+                  action_type: 'sync_dingtalk_document',
+                  feedback: {
+                    document_id: 'feedback_insight_doc',
+                    plugin_invocation_log_id: 'plugin_invocation_log_feedback_dingtalk',
+                    write_mode: 'append',
+                  },
+                  records_imported: 1,
+                  status: 'succeeded',
+                  write_target: 'dingtalk_document',
+                  write_target_label: '钉钉文档',
+                },
+              ],
+            },
+          },
+          scheduled_job_id: 'scheduled_job_feedback_dingtalk',
+          status: 'succeeded',
+          trigger_type: 'manual',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_feedback_dingtalk' }),
+    );
+
+    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const statusSummary = within(dialog).getByLabelText('结果动作执行情况');
+    expect(statusSummary).toHaveTextContent('钉钉文档更新');
+    expect(statusSummary).toHaveTextContent('成功');
+    expect(statusSummary).toHaveTextContent('feedback_insight_doc');
+    expect(statusSummary).toHaveTextContent('plugin_invocation_log_feedback_dingtalk');
+  });
+
+  it('shows a configured DingTalk document action as not run when a historical run has no action evidence', async () => {
+    installScheduledJobsFetchMock({
+      runs: [
+        {
+          config_snapshot: {
+            result_actions: [
+              {
+                document_id: 'https://alidocs.dingtalk.com/i/nodes/feedback_insight_doc',
+                plugin_action_id: 'plugin_action_dingtalk_update',
+                type: 'sync_dingtalk_document',
+                write_mode: 'append',
+              },
+            ],
+          },
+          id: 'scheduled_job_run_feedback_dingtalk_not_run',
+          result_summary: {
+            execution_nodes: {
+              result_actions: [
+                {
+                  records_imported: 13,
+                  status: 'succeeded',
+                  write_target: 'user_feedback_insights',
+                  write_target_label: '用户洞察表',
+                },
+              ],
+            },
+          },
+          scheduled_job_id: 'scheduled_job_feedback_dingtalk',
+          status: 'succeeded',
+          trigger_type: 'manual',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_feedback_dingtalk_not_run' }),
+    );
+
+    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const statusSummary = within(dialog).getByLabelText('结果动作执行情况');
+    expect(statusSummary).toHaveTextContent('钉钉文档更新');
+    expect(statusSummary).toHaveTextContent('未执行');
+    expect(statusSummary).toHaveTextContent('未生成调用日志');
+  });
+
   it('shows AI code inspection run results in the same three-stage detail chain', async () => {
     installScheduledJobsFetchMock({
       runs: [

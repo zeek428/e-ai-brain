@@ -26,6 +26,7 @@ from app.services.scheduled_job_constants import USER_FEEDBACK_INSIGHT_WRITE_TAR
 from app.services.scheduled_job_execution_engine import (
     ScheduledJobExecutionEngine as JobExecutionEngine,
 )
+from app.services.scheduled_job_result_actions import execute_generic_result_actions
 from app.services.scheduled_job_runtime import exception_error_code_and_message
 from app.services.scheduled_job_store import read_memory_dict as _read_memory_dict
 from app.services.user_feedback import (
@@ -290,6 +291,18 @@ def user_feedback_result_summary_from_ai_output(
             )
             if result_action_policy["failure_policy"] == "fail_fast":
                 raise
+    configured_result_actions = job.get("result_actions")
+    if isinstance(configured_result_actions, list) and configured_result_actions:
+        additional_result_actions, _ = execute_generic_result_actions(
+            current_store=current_store,
+            job=job,
+            output_json=processed_json,
+            output_mapping=mapping,
+            result_actions=configured_result_actions,
+            scheduled_job_run_id=str(plugin_summary.get("scheduled_job_run_id") or "") or None,
+            user=user,
+        )
+        result_actions.extend(additional_result_actions)
     primary_result_action = (
         result_actions[0]
         if result_actions

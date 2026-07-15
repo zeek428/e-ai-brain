@@ -1607,6 +1607,95 @@ def test_feedback_insight_jobs_can_sync_dingtalk_document_but_not_create_require
     assert exc_info.value.status_code == 400
 
 
+def test_feedback_insight_job_executes_configured_dingtalk_result_action(monkeypatch):
+    import app.services.plugins as plugin_services
+
+    app.state.store.reset()
+    product = {
+        "brain_app_id": "rd_brain",
+        "code": "feedback-dingtalk-product",
+        "created_at": "2026-07-15T00:00:00+00:00",
+        "id": "product_feedback_dingtalk",
+        "name": "用户反馈洞察产品",
+        "owner_user_id": "user_admin",
+        "status": "active",
+        "updated_at": "2026-07-15T00:00:00+00:00",
+    }
+    app.state.store.products[product["id"]] = product
+    calls: list[dict] = []
+
+    def fake_invoke_plugin_action_response(**kwargs):
+        calls.append(kwargs)
+        return {
+            "id": "plugin_invocation_log_feedback_dingtalk",
+            "response_summary": {
+                "json": {
+                    "document_id": kwargs["input_payload"]["document_id"],
+                    "status": "updated",
+                },
+            },
+            "status": "succeeded",
+        }
+
+    monkeypatch.setattr(
+        plugin_services,
+        "invoke_plugin_action_response",
+        fake_invoke_plugin_action_response,
+    )
+
+    summary, _ = scheduled_job_user_feedback_service.user_feedback_result_summary_from_ai_output(
+        current_store=app.state.store,
+        ai_processing={"model_gateway_called": True, "status": "succeeded"},
+        job={
+            "id": "scheduled_job_feedback_dingtalk",
+            "job_type": "user_feedback_insight_extract",
+            "plugin_action_id": "plugin_action_feedback_source",
+            "plugin_output_mapping": {"insights_path": "$.insights"},
+            "product_id": product["id"],
+            "result_action_policy": {"failure_policy": "fail_fast", "mode": "sequential"},
+            "result_actions": [
+                {
+                    "content_template": "{{dingtalk_markdown}}",
+                    "document_id": "https://alidocs.dingtalk.com/i/nodes/feedback_insight_doc",
+                    "plugin_action_id": "plugin_action_dingtalk_update",
+                    "type": "sync_dingtalk_document",
+                    "write_mode": "append",
+                },
+            ],
+        },
+        plugin_summary={
+            "action_id": "plugin_action_feedback_source",
+            "scheduled_job_run_id": "scheduled_job_run_feedback_dingtalk",
+        },
+        processed_json={
+            "dingtalk_markdown": "## 本周用户反馈洞察\n- 登录失败反馈需要优先处理。",
+            "insights": [
+                {
+                    "content": "登录失败后没有可操作的恢复提示。",
+                    "feedback_type": "improvement",
+                    "sentiment": "negative",
+                },
+            ],
+            "summary": "发现 1 条需要跟进的用户反馈洞察。",
+        },
+        resolved_plugin_input_mapping={},
+        source_row_count=1,
+        user=ADMIN_SERVICE_USER,
+    )
+
+    result_actions = summary["execution_nodes"]["result_actions"]
+    assert [action["write_target"] for action in result_actions] == [
+        "user_feedback_insights",
+        "dingtalk_document",
+    ]
+    assert calls[0]["action_id"] == "plugin_action_dingtalk_update"
+    assert calls[0]["input_payload"]["document_id"] == "feedback_insight_doc"
+    assert calls[0]["input_payload"]["mode"] == "append"
+    assert result_actions[1]["feedback"]["plugin_invocation_log_id"] == (
+        "plugin_invocation_log_feedback_dingtalk"
+    )
+
+
 def test_plugin_invoke_result_actions_create_requirements_and_sync_dingtalk(monkeypatch):
     import app.services.plugins as plugin_services
 

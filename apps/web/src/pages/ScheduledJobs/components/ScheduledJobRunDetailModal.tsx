@@ -92,6 +92,129 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
+const resultActionLabelByType = new Map([
+  ['create_requirements', '创建需求'],
+  ['save_scheduled_job_result', '保存运行结果'],
+  ['send_notification', '发送通知'],
+  ['sync_dingtalk_document', '钉钉文档更新'],
+]);
+
+const resultActionLabelByWriteTarget = new Map([
+  ['dingtalk_document', '钉钉文档更新'],
+  ['email_notifications', '邮件通知'],
+  ['requirements', '创建需求'],
+  ['scheduled_job_result', '保存运行结果'],
+  ['user_feedback_insights', '用户洞察写入'],
+]);
+
+function resultActionStatusLabel(status: string | undefined) {
+  if (status === 'succeeded') {
+    return '成功';
+  }
+  if (status === 'failed') {
+    return '失败';
+  }
+  if (status === 'not_run') {
+    return '未执行';
+  }
+  if (status === 'running') {
+    return '执行中';
+  }
+  return status || '未知';
+}
+
+function resultActionStatusColor(status: string | undefined) {
+  if (status === 'succeeded') {
+    return 'green';
+  }
+  if (status === 'failed') {
+    return 'red';
+  }
+  if (status === 'not_run') {
+    return 'default';
+  }
+  return 'blue';
+}
+
+function resultActionsFromRun(run: ScheduledJobRunRecord): Array<Record<string, unknown>> {
+  const actions = arrayOfRecords(getRunExecutionNode(run, 'result_actions'));
+  const primaryAction = recordValue(getRunExecutionNode(run, 'result_action'));
+  const executedActions = actions.length ? actions : primaryAction ? [primaryAction] : [];
+  const configuredActions = arrayOfRecords(recordValue(run.config_snapshot)?.result_actions);
+  const executedActionTypes = new Set(
+    executedActions
+      .map((action) => stringValue(action.action_type) ?? stringValue(action.type))
+      .filter((type): type is string => Boolean(type)),
+  );
+  const unexecutedConfiguredActions = configuredActions
+    .filter((action) => {
+      const type = stringValue(action.type);
+      return type && !executedActionTypes.has(type);
+    })
+    .map<Record<string, unknown>>((action) => ({
+      action_type: action.type,
+      feedback: {
+        error_message: '本次运行未执行该已配置动作，未生成调用日志。',
+        write_mode: action.write_mode,
+      },
+      records_imported: 0,
+      status: 'not_run',
+      write_target: action.type === 'sync_dingtalk_document' ? 'dingtalk_document' : undefined,
+    }));
+  if (executedActions.length || unexecutedConfiguredActions.length) {
+    return [...executedActions, ...unexecutedConfiguredActions];
+  }
+  return [];
+}
+
+function ResultActionExecutionSummary({ run }: { run: ScheduledJobRunRecord }) {
+  const actions = resultActionsFromRun(run);
+  if (!actions.length) {
+    return null;
+  }
+  return (
+    <Space aria-label="结果动作执行情况" orientation="vertical" size={8} style={{ width: '100%' }}>
+      <Typography.Text strong>结果动作执行情况</Typography.Text>
+      <Descriptions
+        bordered
+        column={1}
+        items={actions.map((action, index) => {
+          const feedback = recordValue(action.feedback) ?? {};
+          const status = stringValue(action.status);
+          const actionType = stringValue(action.action_type) ?? stringValue(action.type);
+          const writeTarget = stringValue(action.write_target);
+          const label = stringValue(action.action_name)
+            ?? resultActionLabelByType.get(actionType ?? '')
+            ?? stringValue(action.write_target_label)
+            ?? resultActionLabelByWriteTarget.get(writeTarget ?? '')
+            ?? '结果动作';
+          const recordsImported = action.records_imported ?? feedback.records_imported;
+          const documentId = stringValue(feedback.document_id);
+          const writeMode = stringValue(feedback.write_mode);
+          const invocationLogId = stringValue(feedback.plugin_invocation_log_id);
+          const errorMessage = stringValue(action.error_message) ?? stringValue(feedback.error_message);
+          return {
+            children: (
+              <Space size={[8, 8]} wrap>
+                <Typography.Text>{label}</Typography.Text>
+                <Tag color={resultActionStatusColor(status)}>{resultActionStatusLabel(status)}</Tag>
+                {recordsImported !== undefined ? <Tag>写入 {String(recordsImported)} 条</Tag> : null}
+                {documentId ? <Tag color="blue">文档 {documentId}</Tag> : null}
+                {writeMode ? <Tag>方式 {writeMode === 'append' ? '追加' : '覆盖'}</Tag> : null}
+                {invocationLogId ? <Tag color="purple">调用日志 {invocationLogId}</Tag> : null}
+                {errorMessage ? <Typography.Text type="danger">{errorMessage}</Typography.Text> : null}
+              </Space>
+            ),
+            key: `${actionType ?? writeTarget ?? 'result_action'}-${index}`,
+            label: `动作 ${index + 1}`,
+          };
+        })}
+        size="small"
+      />
+    </Space>
+  );
+}
+
 function packageBoundaryItems(run: ScheduledJobRunRecord) {
   const items: Array<{
     entry?: string;
@@ -445,6 +568,7 @@ export function ScheduledJobRunDetailModal({
             ]}
             size="small"
           />
+          <ResultActionExecutionSummary run={run} />
           <RunSourceComparison run={run} />
           <RunExecutionChain run={run} />
           <RepositoryExecutionDetails run={run} />
