@@ -2033,7 +2033,11 @@ export async function runScheduledJob(
 ) {
   const token = requireAccessToken();
   return apiRequest<ScheduledJobRunRecord>(`/api/system/scheduled-jobs/${jobId}/run`, {
-    body: { source_run_id: sourceRunId, trigger_type: triggerType },
+    body: {
+      return_immediately: true,
+      source_run_id: sourceRunId,
+      trigger_type: triggerType,
+    },
     method: 'POST',
     token,
   });

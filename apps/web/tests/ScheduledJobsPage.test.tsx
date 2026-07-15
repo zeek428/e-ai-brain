@@ -3318,7 +3318,11 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(within(skillTraceNode).getByRole('button', { name: '复跑整条运行记录' }));
     await waitFor(() => expect(runJobIds).toEqual(['scheduled_job_weekly_feedback']));
     expect(runJobBodies).toEqual([
-      { source_run_id: 'scheduled_job_run_weekly_feedback', trigger_type: 'manual_rerun' },
+      {
+        return_immediately: true,
+        source_run_id: 'scheduled_job_run_weekly_feedback',
+        trigger_type: 'manual_rerun',
+      },
     ]);
     expect(within(dialog).getByText('data_connection → skill_processing')).toBeInTheDocument();
     expect(within(dialog).getByText('skill_processing → result_action')).toBeInTheDocument();
@@ -4090,7 +4094,11 @@ describe('ScheduledJobsPage', () => {
 
     await waitFor(() => expect(runJobIds).toEqual(['scheduled_job_weekly_feedback']));
     expect(runJobBodies).toEqual([
-      { source_run_id: 'scheduled_job_run_weekly_feedback', trigger_type: 'manual_rerun' },
+      {
+        return_immediately: true,
+        source_run_id: 'scheduled_job_run_weekly_feedback',
+        trigger_type: 'manual_rerun',
+      },
     ]);
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
     expect(dialog).toHaveTextContent('scheduled_job_run_weekly_feedback_rerun');
@@ -4132,7 +4140,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(runButton);
 
     await waitFor(() => expect(runButton).toBeDisabled());
-    expect(runJobBodies).toEqual([{ trigger_type: 'manual' }]);
+    expect(runJobBodies).toEqual([{ return_immediately: true, trigger_type: 'manual' }]);
 
     resolveRun({
       id: 'scheduled_job_run_weekly_feedback',
@@ -4191,7 +4199,9 @@ describe('ScheduledJobsPage', () => {
     expect(await screen.findByText('代码仓库质量安全规范巡检')).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: '运行作业 代码仓库质量安全规范巡检' }));
 
-    await waitFor(() => expect(runJobBodies).toEqual([{ trigger_type: 'manual' }]));
+    await waitFor(() =>
+      expect(runJobBodies).toEqual([{ return_immediately: true, trigger_type: 'manual' }]),
+    );
     expect(await screen.findByRole('tab', { name: '运行记录' })).toHaveAttribute('aria-selected', 'true');
     expect(
       await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_immediate' }),

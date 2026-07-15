@@ -1214,7 +1214,6 @@ export default function ScheduledJobsPage() {
       } else {
         message.error(run.error_message ? `作业运行失败：${run.error_message}` : `作业运行 ${run.status}`);
       }
-      void reload();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '作业运行失败');
     } finally {

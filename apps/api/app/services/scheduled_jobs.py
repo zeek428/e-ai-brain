@@ -3,8 +3,11 @@ from __future__ import annotations
 import os
 import threading
 from datetime import UTC, datetime
+from time import perf_counter, sleep
 from types import SimpleNamespace
 from typing import Any
+
+from fastapi import HTTPException
 
 from app.api.deps import api_error
 from app.services import scheduled_job_result_actions as job_result_actions
@@ -119,9 +122,13 @@ __all__ = [
     "rerun_scheduled_job_trace_node_response",
     "scheduled_job_trace_node_rerun_preview_response",
     "scheduled_job_template_from_run_response",
+    "start_scheduled_job_run_response",
 ]
 persist_record = job_store.persist_record
 resolve_plugin_input_mapping = job_runtime.resolve_plugin_input_mapping
+
+SCHEDULED_JOB_IMMEDIATE_START_TIMEOUT_SECONDS = 2.0
+SCHEDULED_JOB_IMMEDIATE_START_POLL_SECONDS = 0.02
 
 
 def _next_run_after(job: dict[str, Any], timestamp: str | None) -> str | None:
@@ -1167,6 +1174,119 @@ def execute_queued_scheduled_job_run_response(
         audit_event=audit_event,
     )
     return public_scheduled_job_run(run, current_store=current_store)
+
+
+def start_scheduled_job_run_response(
+    *,
+    current_store: Any,
+    job_id: str,
+    return_immediately: bool,
+    source_run_id: str | None,
+    trigger_type: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    """Start manual runs in the background when the caller needs an immediate run record."""
+    if not return_immediately:
+        return run_scheduled_job_response(
+            current_store=current_store,
+            job_id=job_id,
+            source_run_id=source_run_id,
+            trigger_type=trigger_type,
+            user=user,
+        )
+
+    existing_run_ids = {
+        str(run.get("id"))
+        for run in job_store.read_memory_dict(current_store, "scheduled_job_runs").values()
+        if run.get("id") is not None
+    }
+    result: dict[str, dict[str, Any]] = {}
+    error: dict[str, HTTPException] = {}
+    done = threading.Event()
+
+    def worker() -> None:
+        try:
+            result["run"] = run_scheduled_job_response(
+                current_store=current_store,
+                job_id=job_id,
+                source_run_id=source_run_id,
+                trigger_type=trigger_type,
+                user=_scheduled_job_worker_user(user),
+            )
+        except HTTPException as exc:
+            error["exception"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(
+        target=worker,
+        name=f"scheduled-job-immediate-start-{job_id}",
+        daemon=True,
+    ).start()
+
+    deadline = perf_counter() + SCHEDULED_JOB_IMMEDIATE_START_TIMEOUT_SECONDS
+    while perf_counter() < deadline:
+        run = _visible_started_scheduled_job_run(
+            current_store,
+            existing_run_ids=existing_run_ids,
+            job_id=job_id,
+        )
+        if run is not None:
+            return public_scheduled_job_run(run, current_store=current_store)
+        if done.is_set():
+            if error.get("exception") is not None:
+                raise error["exception"]
+            if result.get("run") is not None:
+                return result["run"]
+            break
+        sleep(SCHEDULED_JOB_IMMEDIATE_START_POLL_SECONDS)
+
+    if error.get("exception") is not None:
+        raise error["exception"]
+    if result.get("run") is not None:
+        return result["run"]
+    raise api_error(
+        504,
+        "SCHEDULED_JOB_RUN_START_TIMEOUT",
+        "Scheduled job run did not start in time",
+    )
+
+
+def _visible_started_scheduled_job_run(
+    current_store: Any,
+    *,
+    existing_run_ids: set[str],
+    job_id: str,
+) -> dict[str, Any] | None:
+    candidates = [
+        run
+        for run in job_store.read_memory_dict(current_store, "scheduled_job_runs").values()
+        if run.get("id") is not None
+        and str(run.get("id")) not in existing_run_ids
+        and str(run.get("scheduled_job_id")) == job_id
+        and run.get("collector_run_id")
+    ]
+    if not candidates:
+        return None
+    candidate = max(
+        candidates,
+        key=lambda item: str(item.get("created_at") or item.get("started_at") or ""),
+    )
+    repository = job_store.scheduled_jobs_query_repository(current_store)
+    if repository is None:
+        return candidate
+    persisted_runs = repository.list_scheduled_job_runs(
+        scheduled_job_id=job_id,
+        status=None,
+    )
+    return next(
+        (
+            persisted_run
+            for persisted_run in persisted_runs
+            if str(persisted_run.get("id")) == str(candidate.get("id"))
+        ),
+        None,
+    )
 
 
 def run_scheduled_job_response(

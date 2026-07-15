@@ -30,9 +30,9 @@ from app.services.scheduled_jobs import (
     list_scheduled_jobs_response,
     patch_scheduled_job_response,
     rerun_scheduled_job_trace_node_response,
-    run_scheduled_job_response,
     scheduled_job_template_from_run_response,
     scheduled_job_trace_node_rerun_preview_response,
+    start_scheduled_job_run_response,
 )
 
 router = APIRouter(tags=["scheduled-jobs"])
@@ -151,6 +151,7 @@ class ScheduledJobPatchRequest(BaseModel):
 
 
 class ScheduledJobRunRequest(BaseModel):
+    return_immediately: bool = False
     source_run_id: str | None = None
     trigger_type: str = "manual"
 
@@ -462,9 +463,10 @@ def run_scheduled_job(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     return envelope(
-        run_scheduled_job_response(
+        start_scheduled_job_run_response(
             current_store=store(request),
             job_id=job_id,
+            return_immediately=(payload.return_immediately if payload else False),
             source_run_id=(payload.source_run_id if payload else None),
             trigger_type=(payload.trigger_type if payload else "manual"),
             user=user,

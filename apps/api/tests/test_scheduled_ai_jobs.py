@@ -1,4 +1,5 @@
 import json
+import threading
 from datetime import UTC, datetime
 from io import BytesIO
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ import app.services.scheduled_job_user_feedback as scheduled_job_user_feedback_s
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
 from app.core.security import hash_password
+from app.core.store import MemoryStore
 from app.core.users import MemoryUserRepository
 from app.main import app
 from app.services.dynamic_parameters import dynamic_time_parameters
@@ -5452,6 +5454,69 @@ def test_ai_scheduled_job_requires_explicit_skill_ids_even_when_agent_has_defaul
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "AI_SKILL_REQUIRED"
     assert "AI processing job requires skill_ids" in response.text
+
+
+def test_return_immediately_exposes_a_started_run_before_execution_finishes(monkeypatch):
+    store = MemoryStore()
+    job_id = "scheduled_job_background_start"
+    store.scheduled_jobs[job_id] = {
+        "id": job_id,
+        "name": "后台启动洞察作业",
+    }
+    started = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+
+    def fake_run_scheduled_job_response(
+        *,
+        current_store,
+        job_id,
+        source_run_id,
+        trigger_type,
+        user,
+    ):
+        del source_run_id, user
+        run_id = current_store.new_id("scheduled_job_run")
+        run = {
+            "collector_run_id": "collector_run_background_start",
+            "created_at": "2026-07-15T08:00:00+00:00",
+            "finished_at": None,
+            "id": run_id,
+            "records_imported": 0,
+            "result_summary": {},
+            "scheduled_job_id": job_id,
+            "started_at": "2026-07-15T08:00:00+00:00",
+            "status": "running",
+            "trigger_type": trigger_type,
+        }
+        current_store.scheduled_job_runs[run_id] = run
+        started.set()
+        release.wait(timeout=1)
+        completed.set()
+        return {**run, "finished_at": "2026-07-15T08:01:00+00:00", "status": "succeeded"}
+
+    monkeypatch.setattr(
+        scheduled_jobs_service,
+        "run_scheduled_job_response",
+        fake_run_scheduled_job_response,
+    )
+
+    run = scheduled_jobs_service.start_scheduled_job_run_response(
+        current_store=store,
+        job_id=job_id,
+        return_immediately=True,
+        source_run_id=None,
+        trigger_type="manual",
+        user=ADMIN_SERVICE_USER,
+    )
+
+    assert started.is_set()
+    assert completed.is_set() is False
+    assert run["id"].startswith("scheduled_job_run_")
+    assert run["scheduled_job_name"] == "后台启动洞察作业"
+    assert run["status"] == "running"
+    release.set()
+    assert completed.wait(timeout=1)
 
 
 def test_manual_scheduled_ai_job_run_creates_snapshot_collector_run_and_suggestion():
