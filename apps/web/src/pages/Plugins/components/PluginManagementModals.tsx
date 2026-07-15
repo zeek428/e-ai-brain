@@ -60,6 +60,7 @@ type PluginManagementModalsProps = {
   pluginForm: FormInstance<PluginFormValues>;
   pluginModalOpen: boolean;
   pluginOptions: SelectOption[];
+  productOptions: SelectOption[];
   requestPreview: Record<string, unknown>;
   resultWriteTargetOptions: SelectOption[];
   resultWriteTargets: ResultWriteTargetRecord[];
@@ -155,6 +156,7 @@ export function PluginManagementModals({
   pluginForm,
   pluginModalOpen,
   pluginOptions,
+  productOptions,
   requestPreview,
   resultWriteTargetOptions,
   resultWriteTargets,
@@ -293,6 +295,7 @@ export function PluginManagementModals({
         open={connectionModalOpen}
         pluginCode={pluginCode}
         pluginOptions={pluginOptions}
+        productOptions={productOptions}
         schema={selectedConnectionSchema}
         systemVariableOptions={systemVariableOptions}
       />

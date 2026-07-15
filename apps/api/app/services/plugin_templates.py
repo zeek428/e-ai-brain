@@ -1262,9 +1262,9 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                         "type": "text",
                     },
                     {
-                        "description": "选填，限制读取某一个产品。",
+                        "description": "选填，只能选择当前有权限读取的产品。",
                         "key": "product_id",
-                        "label": "产品 ID",
+                        "label": "产品",
                         "path": "request_config.query.product_id",
                         "required": False,
                         "type": "text",

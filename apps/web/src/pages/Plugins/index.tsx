@@ -2,6 +2,7 @@ import { PageContainer } from '@ant-design/pro-components';
 import { Form, Modal, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import type { ProductRecord } from '../../data/management';
 import {
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
@@ -14,6 +15,7 @@ import {
   createPluginAction,
   createPluginConnection,
   fetchAiExecutorRunnersPage,
+  fetchManagementProducts,
   fetchPluginActionsPage,
   fetchPluginActionTemplates,
   fetchPluginConnections,
@@ -136,6 +138,7 @@ export default function PluginsPage() {
   const [actionForm] = Form.useForm<ActionFormValues>();
   const [runnerForm] = Form.useForm<AiExecutorRunnerFormValues>();
   const [plugins, setPlugins] = useState<PluginRecord[]>([]);
+  const [products, setProducts] = useState<ProductRecord[]>([]);
   const [marketplaceItems, setMarketplaceItems] = useState<PluginMarketplaceItem[]>([]);
   const [dingtalkObservability, setDingtalkObservability] = useState<PluginObservabilityResult | undefined>();
   const [actionTemplates, setActionTemplates] = useState<PluginActionTemplateRecord[]>([]);
@@ -204,6 +207,10 @@ export default function PluginsPage() {
     () => plugins.map((plugin) => ({ label: `${plugin.name} (${plugin.protocol})`, value: plugin.id })),
     [plugins],
   );
+  const productOptions = useMemo(
+    () => products.map((product) => ({ label: `${product.name} (${product.code})`, value: product.id })),
+    [products],
+  );
   const connectionOptions = useMemo(
     () =>
       selectableConnections.map((connection) => ({
@@ -267,6 +274,7 @@ export default function PluginsPage() {
     try {
       const [
         nextPlugins,
+        nextProducts,
         nextMarketplaceItems,
         nextDingtalkObservability,
         nextActionTemplates,
@@ -278,6 +286,7 @@ export default function PluginsPage() {
         nextJobs,
       ] = await Promise.all([
         fetchPlugins(),
+        fetchManagementProducts(),
         fetchPluginMarketplace(),
         fetchPluginObservability('dingtalk'),
         fetchPluginActionTemplates(),
@@ -289,6 +298,7 @@ export default function PluginsPage() {
         fetchScheduledJobs(),
       ]);
       setPlugins(nextPlugins);
+      setProducts(nextProducts);
       setMarketplaceItems(nextMarketplaceItems);
       setDingtalkObservability(nextDingtalkObservability);
       setActionTemplates(nextActionTemplates);
@@ -1514,6 +1524,7 @@ export default function PluginsPage() {
         pluginForm={pluginForm}
         pluginModalOpen={pluginModalOpen}
         pluginOptions={pluginOptions}
+        productOptions={productOptions}
         requestPreview={requestPreview}
         resultWriteTargetOptions={resultWriteTargetOptions}
         resultWriteTargets={resultWriteTargets}

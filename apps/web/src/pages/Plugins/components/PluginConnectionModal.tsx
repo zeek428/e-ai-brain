@@ -74,6 +74,7 @@ type PluginConnectionModalProps = {
   open: boolean;
   pluginCode?: string;
   pluginOptions: SelectOption[];
+  productOptions: SelectOption[];
   schema?: PluginConnectionSchemaRecord;
   systemVariableOptions: SystemVariableOption[];
 };
@@ -100,6 +101,7 @@ export function PluginConnectionModal({
   open,
   pluginCode,
   pluginOptions,
+  productOptions,
   schema,
   systemVariableOptions,
 }: PluginConnectionModalProps) {
@@ -331,6 +333,7 @@ export function PluginConnectionModal({
         ) : null}
         <ConnectionSchemaFields
           pluginCode={pluginCode}
+          productOptions={productOptions}
           schema={schema}
           systemVariableOptions={systemVariableOptions}
         />

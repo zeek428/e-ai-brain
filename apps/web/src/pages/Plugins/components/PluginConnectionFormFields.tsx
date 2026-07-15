@@ -1,11 +1,16 @@
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import { Alert, Button, Checkbox, Form, Input, InputNumber, Select, Space, Switch } from 'antd';
+import { CodeOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { Alert, Button, Checkbox, Dropdown, Form, Input, InputNumber, Select, Space, Switch, Tooltip } from 'antd';
 
 import { type PluginConnectionSchemaFieldRecord, type PluginConnectionSchemaRecord } from '../../../services/aiBrain';
 import { parseGitLabProjectAddress, parseGitRepositoryAddress } from './pluginConnectionAddressHelpers';
 
 type SystemVariableOption = {
   description?: string;
+  label: string;
+  value: string;
+};
+
+type SelectOption = {
   label: string;
   value: string;
 };
@@ -120,6 +125,7 @@ function isSchemaFieldVisible(
 
 type ConnectionSchemaFieldsProps = {
   pluginCode?: string;
+  productOptions: SelectOption[];
   schema?: PluginConnectionSchemaRecord;
   systemVariableOptions: SystemVariableOption[];
 };
@@ -133,16 +139,11 @@ const schemaSectionGridStyle = {
 } as const;
 
 const schemaFieldShellStyle = {
-  alignItems: 'flex-start',
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: 8,
   minWidth: 0,
   width: '100%',
 } as const;
 
 const schemaFieldItemStyle = {
-  flex: '1 1 220px',
   marginBottom: 8,
   minWidth: 0,
 } as const;
@@ -154,6 +155,7 @@ const schemaControlStyle = {
 
 export function ConnectionSchemaFields({
   pluginCode,
+  productOptions,
   schema,
   systemVariableOptions,
 }: ConnectionSchemaFieldsProps) {
@@ -231,7 +233,22 @@ export function ConnectionSchemaFields({
                 ];
                 const fieldName = ['schema_values', field.key];
                 const schemaOptions = normalizeSchemaOptions(field);
-                const control = field.type === 'multi_select' && schemaOptions.length > 0 ? (
+                const isInternalDataSourceProductField =
+                  pluginCode === 'internal_data_source' && field.key === 'product_id';
+                const systemVariableMenuItems = systemVariableOptions.map((option) => ({
+                  key: option.value,
+                  label: option.label,
+                }));
+                const control = isInternalDataSourceProductField ? (
+                  <Select
+                    allowClear
+                    optionFilterProp="label"
+                    options={productOptions}
+                    placeholder="请选择产品"
+                    showSearch
+                    style={schemaControlStyle}
+                  />
+                ) : field.type === 'multi_select' && schemaOptions.length > 0 ? (
                   <Select
                     mode="multiple"
                     options={schemaOptions}
@@ -258,6 +275,24 @@ export function ConnectionSchemaFields({
                 ) : (
                   <Input
                     placeholder={field.placeholder || field.label}
+                    suffix={field.supports_system_variables ? (
+                      <Dropdown
+                        menu={{
+                          items: systemVariableMenuItems,
+                          onClick: ({ key }) => form.setFieldValue(fieldName, key),
+                        }}
+                        trigger={['click']}
+                      >
+                        <Tooltip title="插入系统变量">
+                          <Button
+                            aria-label={`插入${field.label}系统变量`}
+                            icon={<CodeOutlined />}
+                            size="small"
+                            type="text"
+                          />
+                        </Tooltip>
+                      </Dropdown>
+                    ) : undefined}
                     style={schemaControlStyle}
                   />
                 );
@@ -273,19 +308,6 @@ export function ConnectionSchemaFields({
                     >
                       {control}
                     </Form.Item>
-                    {field.supports_system_variables ? (
-                      <Select
-                        allowClear
-                        options={systemVariableOptions}
-                        placeholder="系统变量"
-                        style={{ flex: '0 1 180px', marginTop: 30, minWidth: 150 }}
-                        onChange={(value) => {
-                          if (value) {
-                            form.setFieldValue(fieldName, value);
-                          }
-                        }}
-                      />
-                    ) : null}
                   </div>
                 );
               })}

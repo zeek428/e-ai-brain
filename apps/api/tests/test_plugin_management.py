@@ -1303,6 +1303,14 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert internal_source_field["key"] == "source_types"
     assert internal_source_field["type"] == "multi_select"
     assert internal_source_field["options"] == internal_data_source_source_options()
+    internal_filter_fields = {
+        field["key"]: field for field in internal_item["connection_schema"]["sections"][1]["fields"]
+    }
+    assert internal_filter_fields["product_id"]["label"] == "产品"
+    assert (
+        internal_filter_fields["product_id"]["path"]
+        == "request_config.query.product_id"
+    )
     assert internal_item["connection_schema"]["sections"][2]["title"] == "按源过滤"
     internal_source_filter_fields = {
         field["key"]: field for field in internal_item["connection_schema"]["sections"][2]["fields"]

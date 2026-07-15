@@ -238,6 +238,24 @@ function installPluginsFetchMock(
     });
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+    if (input === '/api/products') {
+      return jsonResponse({
+        data: {
+          items: [
+            {
+              code: 'ai-brain',
+              id: 'product_ai_brain',
+              name: 'AI Brain',
+              status: 'active',
+            },
+          ],
+          total: 1,
+        },
+      });
+    }
+    if (input === '/api/product-versions') {
+      return jsonResponse({ data: { items: [], total: 0 } });
+    }
     if (input === '/api/system/plugins' && init?.method === 'GET') {
       const pluginItems = [
         {
@@ -577,6 +595,13 @@ function installPluginsFetchMock(
                         path: 'request_config.query.window_end',
                         required: false,
                         supports_system_variables: true,
+                        type: 'text',
+                      },
+                      {
+                        key: 'product_id',
+                        label: '产品',
+                        path: 'request_config.query.product_id',
+                        required: false,
                         type: 'text',
                       },
                     ],
@@ -3552,11 +3577,18 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByText('需求数据')).toBeInTheDocument();
     expect(within(dialog).getByText('产品数据')).toBeInTheDocument();
     expect(within(dialog).getByText('Bug 数据')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('产品')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('产品 ID')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '插入开始时间系统变量' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '插入结束时间系统变量' })).toBeInTheDocument();
     expect(within(dialog).getByLabelText('需求状态')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('需求优先级')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Bug 状态')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Bug 严重级别')).toBeInTheDocument();
 
+    fireEvent.click(within(dialog).getByRole('button', { name: '插入开始时间系统变量' }));
+    fireEvent.click(await screen.findByText('当前日期 - 7 天'));
+    expect(within(dialog).getByLabelText('开始时间')).toHaveValue('{{current_date-7}}');
     fireEvent.mouseDown(within(dialog).getByLabelText('需求状态'));
     fireEvent.click(await screen.findByText('已排期'));
     fireEvent.mouseDown(within(dialog).getByLabelText('需求优先级'));
@@ -3565,6 +3597,8 @@ describe('PluginsPage', () => {
     fireEvent.click(await screen.findByText('待处理'));
     fireEvent.mouseDown(within(dialog).getByLabelText('Bug 严重级别'));
     fireEvent.click((await screen.findAllByText('critical')).at(-1)!);
+    fireEvent.mouseDown(within(dialog).getByLabelText('产品'));
+    fireEvent.click(await screen.findByText('AI Brain (ai-brain)'));
 
     fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '内部数据源连接' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
@@ -3578,10 +3612,11 @@ describe('PluginsPage', () => {
           name: '内部数据源连接',
           plugin_id: 'plugin_standard_internal_data_source',
           request_config: {
-	            query: {
-	              field_mode: 'summary',
-	              limit: 100,
-	              source_filters: {
+            query: {
+              field_mode: 'summary',
+              limit: 100,
+              product_id: 'product_ai_brain',
+              source_filters: {
                 bugs: {
                   severity: 'critical',
                   status: 'open',
@@ -3593,7 +3628,7 @@ describe('PluginsPage', () => {
               },
               source_types: ['user_insights', 'requirements', 'products', 'bugs'],
               window_end: '{{now}}',
-              window_start: '{{current_date-30}}',
+              window_start: '{{current_date-7}}',
             },
           },
         }),
