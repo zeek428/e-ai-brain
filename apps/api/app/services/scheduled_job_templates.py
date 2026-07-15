@@ -353,6 +353,7 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
             "job_type": "plugin_action_invoke",
             "name": "用户洞察需求机会挖掘",
             "plugin_input_mapping": {
+                "limit": 100,
                 "source_types": ["user_insights"],
                 "window_end": "{{now}}",
                 "window_start": "{{current_date-30}}",

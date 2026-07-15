@@ -399,6 +399,26 @@ export function dataSourceModeFromConfig(configJson: unknown): ScheduledJobDataS
   return mode === 'authorized_read_action' ? 'authorized_read_action' : 'direct_connection';
 }
 
+export function scheduledJobInputMappingForEdit(
+  job: Partial<ScheduledJobRecord>,
+): Record<string, unknown> {
+  const inputMapping = recordValue(job.plugin_input_mapping) ?? {};
+  const createsRequirements = (job.result_actions ?? []).some(
+    (action) => action.type === 'create_requirements',
+  );
+  if (job.source_system !== 'internal_data_source' || !createsRequirements) {
+    return inputMapping;
+  }
+  const sourceTypes = stringArrayFromUnknown(inputMapping.source_types);
+  return {
+    ...inputMapping,
+    limit: recordNumberValue(inputMapping, 'limit') ?? 100,
+    source_types: sourceTypes.length ? sourceTypes : ['user_insights'],
+    window_end: recordStringValue(inputMapping, 'window_end') ?? '{{now}}',
+    window_start: recordStringValue(inputMapping, 'window_start') ?? '{{current_date-30}}',
+  };
+}
+
 export function hasRequiredFormValue(value: unknown) {
   if (Array.isArray(value)) {
     return value.length > 0;

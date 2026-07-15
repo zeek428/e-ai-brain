@@ -50,6 +50,7 @@ import {
   requiresAiAssembly,
   scheduledJobAssistantDraftModifiedFields,
   scheduledJobConfigWithOrchestration,
+  scheduledJobInputMappingForEdit,
   scheduledJobRouteParams,
   scheduledJobRunIdFromAssistantResult,
   scheduledJobTemplateValuesFromRecord,
@@ -933,6 +934,7 @@ export default function ScheduledJobsPage() {
     const pluginActionIds = multiIdsFromScheduledJob(job, 'plugin_action_ids', 'plugin_action_id');
     const primaryConnectionId = primaryId(pluginConnectionIds);
     const editConfigJson = recordValue(job.config_json) ?? {};
+    const pluginInputMapping = scheduledJobInputMappingForEdit(job);
     if (job.job_type === 'code_repository_inspection' && !recordStringValue(editConfigJson, 'scan_mode')) {
       editConfigJson.scan_mode = 'sync_existing_alerts';
     }
@@ -963,6 +965,8 @@ export default function ScheduledJobsPage() {
       plugin_action_ids: nativeCodeScan ? [] : pluginActionIds,
       plugin_connection_id: primaryConnectionId,
       plugin_connection_ids: pluginConnectionIds,
+      plugin_input_mapping: pluginInputMapping,
+      plugin_output_mapping: job.plugin_output_mapping ?? {},
       product_id: job.product_id ?? undefined,
       result_actions:
         job.result_actions?.length

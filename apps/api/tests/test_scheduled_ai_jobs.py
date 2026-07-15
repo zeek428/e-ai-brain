@@ -1461,6 +1461,9 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     ] == ["requirements", "bugs"]
     user_insight_requirement_mining = by_code["user_insight_requirement_mining"]
     assert user_insight_requirement_mining["payload_defaults"]["plugin_input_mapping"][
+        "limit"
+    ] == 100
+    assert user_insight_requirement_mining["payload_defaults"]["plugin_input_mapping"][
         "source_types"
     ] == ["user_insights"]
     assert user_insight_requirement_mining["payload_defaults"]["result_actions"] == [

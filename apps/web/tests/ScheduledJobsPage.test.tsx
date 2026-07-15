@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import './proComponentsMock';
 
 import ScheduledJobsPage from '../src/pages/ScheduledJobs';
+import { scheduledJobInputMappingForEdit } from '../src/pages/ScheduledJobs/components/scheduledJobFormTransformHelpers';
 import { buildScheduledJobRunDetailExportPayload } from '../src/pages/ScheduledJobs/components/scheduledJobRunDetailExport';
 import {
   ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
@@ -1239,6 +1240,10 @@ function installScheduledJobsFetchMock(
               id: 'plugin_action_system_internal_data_source_query',
               input_schema: {
                 properties: {
+                  limit: {
+                    title: '每类最大行数',
+                    type: 'integer',
+                  },
                   source_types: {
                     items: { type: 'string' },
                     title: '源数据',
@@ -1692,6 +1697,84 @@ describe('ScheduledJobsPage', () => {
       product_id: 'product_ai_brain',
       result_actions: [{ type: 'create_requirements' }],
       skill_ids: ['skill_user_insight_to_requirement'],
+    });
+  });
+
+  it('keeps internal data source parameters when editing requirement mining jobs', async () => {
+    const { jobUpdateBodies } = installScheduledJobsFetchMock({
+      jobs: [
+        {
+          agent_id: 'agent_product',
+          config_json: {
+            orchestration: {
+              data_source_mode: 'direct_connection',
+              plugin_action_ids: ['plugin_action_system_internal_data_source_query'],
+              plugin_connection_ids: ['plugin_connection_system_internal_data_source'],
+              read_action_id: 'plugin_action_system_internal_data_source_query',
+            },
+          },
+          enabled: true,
+          execution_mode: 'ai_generated',
+          id: 'scheduled_job_insight_requirement_mining',
+          job_type: 'plugin_action_invoke',
+          model_gateway_config_id: 'model_gateway_scheduled_job',
+          name: '用户洞察需求机会挖掘',
+          plugin_action_id: 'plugin_action_system_internal_data_source_query',
+          plugin_connection_id: 'plugin_connection_system_internal_data_source',
+          plugin_input_mapping: {
+            limit: 100,
+            source_types: ['user_insights'],
+            window_end: '{{now}}',
+            window_start: '{{current_date-30}}',
+          },
+          product_id: 'product_ai_brain',
+          result_actions: [{ type: 'create_requirements' }],
+          schedule_type: 'manual',
+          skill_ids: ['skill_user_insight_to_requirement'],
+          source_system: 'internal_data_source',
+          status: 'active',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '编辑作业 用户洞察需求机会挖掘' }));
+    const dialog = await screen.findByRole('dialog', { name: '编辑定时作业' });
+
+    expect(within(dialog).getByLabelText('每类最大行数')).toHaveValue('100');
+    expect(within(dialog).getByText('用户洞察数据')).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText('名称'), {
+      target: { value: '用户洞察需求机会挖掘 v2' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() =>
+      expect(jobUpdateBodies).toEqual([
+        expect.objectContaining({
+          name: '用户洞察需求机会挖掘 v2',
+          plugin_input_mapping: {
+            limit: 100,
+            source_types: ['user_insights'],
+            window_end: '{{now}}',
+            window_start: '{{current_date-30}}',
+          },
+        }),
+      ]),
+    );
+  });
+
+  it('restores missing requirement mining defaults for legacy internal data source jobs', () => {
+    expect(scheduledJobInputMappingForEdit({
+      plugin_input_mapping: {},
+      result_actions: [{ type: 'create_requirements' }],
+      source_system: 'internal_data_source',
+    })).toEqual({
+      limit: 100,
+      source_types: ['user_insights'],
+      window_end: '{{now}}',
+      window_start: '{{current_date-30}}',
     });
   });
 
