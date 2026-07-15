@@ -2390,7 +2390,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByText('定时作业模型 (scheduled-job-model)'));
     fireEvent.mouseDown(within(dialog).getByLabelText('AI角色'));
     fireEvent.click(await screen.findByText('洞察 Agent (insight_agent)'));
-    fireEvent.mouseDown(within(dialog).getByLabelText('取数动作'));
+    fireEvent.mouseDown(within(dialog).getByLabelText('数据读取动作'));
     fireEvent.click(await screen.findByText('获取本周用户反馈数据'));
 
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
@@ -2479,6 +2479,9 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).queryByDisplayValue('week_start')).not.toBeInTheDocument();
     expect(within(dialog).getByText('定时作业模型 (scheduled-job-model)')).toBeInTheDocument();
     expect(within(dialog).getByText('支付页无响应排障知识 (runbook)')).toBeInTheDocument();
+    expect(within(dialog).getByText('用户洞察会在 AI 分析成功后自动写入')).toBeInTheDocument();
+    expect(within(dialog).queryByText('写入代码巡检报告')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('严重问题自动创建 Bug')).not.toBeInTheDocument();
 
     fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '每周用户反馈洞察 v2' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
@@ -2492,6 +2495,7 @@ describe('ScheduledJobsPage', () => {
             week_end: '{{last_full_week.end}}',
             week_start: '{{last_full_week.start}}',
           },
+          result_actions: [],
         }),
       ]),
     );

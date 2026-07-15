@@ -199,7 +199,7 @@ export function ScheduledJobDataConnectionSection({
             ? pluginActions.find((action) => action.id === selectedActionId)
             : undefined;
           const connectionLabel = dataSourceMode === 'authorized_read_action' ? '授权连接' : '取数连接';
-          const actionLabelText = dataSourceMode === 'authorized_read_action' ? '读取动作' : '取数动作';
+          const actionLabelText = '数据读取动作';
           return (
             <>
               <Form.Item
@@ -236,7 +236,7 @@ export function ScheduledJobDataConnectionSection({
                   extra={
                     dataSourceMode === 'authorized_read_action'
                       ? '例如读取指定钉钉文档、搜索钉钉文档、查询仓库或收取邮件'
-                      : '用于调用所选连接的取数接口，并携带默认结果映射；钉钉文档 - 更新内容请在下方结果动作中配置'
+                      : '仅用于调用所选连接获取原始数据，并携带默认结果映射；结果写入请在下方结果动作中配置'
                   }
                 >
                   <Select

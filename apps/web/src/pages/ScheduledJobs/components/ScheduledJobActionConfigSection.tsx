@@ -174,6 +174,7 @@ export function ScheduledJobActionConfigSection({
     'plugin_action_invoke',
     'user_feedback_insight_extract',
   ].includes(selectedJobType ?? '');
+  const isUserFeedbackInsightJob = selectedJobType === 'user_feedback_insight_extract';
   const visibleGenericResultActionOptions = genericResultActionOptions.filter((option) => {
     if (option.value === 'create_requirements') {
       return selectedJobType === 'plugin_action_invoke';
@@ -206,6 +207,14 @@ export function ScheduledJobActionConfigSection({
           {(fields, { add, remove }) => (
             <Space orientation="vertical" size={8} style={{ width: '100%' }}>
               <Typography.Text strong>结果动作</Typography.Text>
+              {isUserFeedbackInsightJob ? (
+                <Alert
+                  showIcon
+                  type="info"
+                  title="用户洞察会在 AI 分析成功后自动写入"
+                  description="此处仅配置额外输出，例如同步钉钉文档或发送通知；不需要配置代码巡检报告或创建 Bug。"
+                />
+              ) : null}
               {fields.map(({ key, ...field }) => (
                 <Space key={key} align="start" size={8} style={{ width: '100%' }}>
                   <Form.Item

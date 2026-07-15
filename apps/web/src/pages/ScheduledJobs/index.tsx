@@ -962,7 +962,12 @@ export default function ScheduledJobsPage() {
       plugin_connection_id: primaryConnectionId,
       plugin_connection_ids: pluginConnectionIds,
       product_id: job.product_id ?? undefined,
-      result_actions: job.result_actions?.length ? job.result_actions : defaultCodeInspectionActions,
+      result_actions:
+        job.result_actions?.length
+          ? job.result_actions
+          : job.job_type === 'code_repository_inspection'
+            ? cloneResultActions(defaultCodeInspectionActions)
+            : [],
       schedule_type: job.schedule_type ?? 'manual',
       skill_ids: job.skill_ids ?? [],
       source_system: job.source_system ?? 'ai-brain',
