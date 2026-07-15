@@ -2,6 +2,7 @@ import { Alert, Col, Form, Input, InputNumber, Radio, Row, Select, Typography } 
 import type { FormItemProps } from 'antd';
 
 import type { PluginActionRecord, PluginConnectionRecord } from '../../../services/aiBrain';
+import { SYSTEM_VARIABLE_OPTIONS } from '../../Plugins/components/pluginSystemVariableOptions';
 import { dataSourceModeOptions } from './scheduledJobFormTransformHelpers';
 import { ScheduledJobFormSection } from './ScheduledJobFormSection';
 
@@ -80,6 +81,15 @@ const internalDataSourceTypeOptions = [
   { label: 'Bug 数据', value: 'bugs' },
 ];
 
+const internalDataSourceWindowOptions = [
+  {
+    description: '当前日期前 30 天，适合近 30 天用户洞察范围',
+    label: '当前日期 - 30 天',
+    value: '{{current_date-30}}',
+  },
+  ...SYSTEM_VARIABLE_OPTIONS,
+];
+
 function isInternalDataSourceAction(action: PluginActionRecord | undefined): boolean {
   return Boolean(action && actionToolName(action) === 'internal_data_source.query');
 }
@@ -136,6 +146,17 @@ function renderSchemaInput(
 ) {
   if (isInternalDataSourceAction(action) && key === 'source_types') {
     return <Select mode="multiple" options={internalDataSourceTypeOptions} placeholder="请选择源数据" />;
+  }
+  if (isInternalDataSourceAction(action) && (key === 'window_start' || key === 'window_end')) {
+    return (
+      <Select
+        allowClear
+        optionFilterProp="label"
+        options={internalDataSourceWindowOptions}
+        placeholder={`请选择${inputLabel(key, property)}`}
+        showSearch
+      />
+    );
   }
   if (Array.isArray(property.enum)) {
     return <Select options={property.enum.map((value) => ({ label: String(value), value }))} />;

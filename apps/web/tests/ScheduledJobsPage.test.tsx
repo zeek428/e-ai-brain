@@ -420,25 +420,19 @@ function installScheduledJobsFetchMock(
                 job_type: 'plugin_action_invoke',
                 name: '用户洞察需求机会挖掘',
                 plugin_input_mapping: {
-                  source_types: ['user_insights', 'requirements'],
+                  source_types: ['user_insights'],
                   window_end: '{{now}}',
                   window_start: '{{current_date-30}}',
                 },
-                result_actions: [
-                  {
-                    max_items: 20,
-                    priority: 'P1',
-                    requirements_path: '$.requirements',
-                    source: 'user_feedback',
-                    type: 'create_requirements',
-                  },
-                ],
+                result_actions: [{ type: 'create_requirements' }],
                 schedule_type: 'cron',
                 source_system: 'internal_data_source',
               },
               resource_selectors: {
+                agent: { code_candidates: ['product'] },
                 plugin_action: { code_candidates: ['query_internal_business_data'] },
                 plugin_connection: { strategy: 'same_plugin_as_action' },
+                skill: { code_candidates: ['to_require'] },
               },
               template_version: 'v1',
               wizard_steps: [
@@ -1250,6 +1244,14 @@ function installScheduledJobsFetchMock(
                     title: '源数据',
                     type: 'array',
                   },
+                  window_end: {
+                    title: '结束时间',
+                    type: 'string',
+                  },
+                  window_start: {
+                    title: '开始时间',
+                    type: 'string',
+                  },
                 },
                 required: ['source_types'],
                 type: 'object',
@@ -1374,6 +1376,7 @@ function installScheduledJobsFetchMock(
         data: {
           items: [
             { code: 'insight_agent', id: 'agent_insight', name: '洞察 Agent', status: 'active' },
+            { code: 'product', id: 'agent_product', name: 'product', status: 'active' },
             { code: 'code_reviewer', id: 'agent_legacy_code_reviewer', name: '旧代码审查角色', status: 'active' },
             { code: 'code-reviewer', id: 'agent_code_reviewer', name: '代码审查角色', status: 'active' },
           ],
@@ -1386,6 +1389,7 @@ function installScheduledJobsFetchMock(
         data: {
           items: [
             { code: 'weekly_feedback_analysis', id: 'skill_feedback', name: '每周反馈分析', status: 'active' },
+            { code: 'to_require', id: 'skill_user_insight_to_requirement', name: '用户洞察内容转需求', status: 'active' },
             { code: 'code_inspection_analysis', id: 'skill_legacy_code_inspection', name: '代码巡检分析', status: 'active' },
             { code: 'code_analysis_skill', id: 'skill_code_inspection', name: '代码分析skill', status: 'active' },
           ],
@@ -1666,6 +1670,15 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByText('用户洞察数据')).toBeInTheDocument();
     expect(within(dialog).getByText('AI 将从用户洞察中识别高价值、可落地的改进方向，并创建到所选产品的需求池。')).toBeInTheDocument();
     expect(within(dialog).getAllByText('创建需求')).not.toHaveLength(0);
+    expect(within(dialog).getByText('product (product)')).toBeInTheDocument();
+    expect(within(dialog).getByText('用户洞察内容转需求 (to_require)')).toBeInTheDocument();
+    expect(within(dialog).queryByPlaceholderText('优先级')).not.toBeInTheDocument();
+    expect(within(dialog).queryByPlaceholderText('需求列表 JSONPath')).not.toBeInTheDocument();
+    expect(within(dialog).queryByPlaceholderText('数量')).not.toBeInTheDocument();
+
+    fireEvent.mouseDown(within(dialog).getByLabelText('开始时间'));
+    expect(await screen.findByRole('option', { name: '当前日期 - 30 天' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('option', { name: '当前日期 - 30 天' }));
 
     fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
     await waitFor(() => expect(jobCreateBodies).toHaveLength(1));
@@ -1673,10 +1686,12 @@ describe('ScheduledJobsPage', () => {
       plugin_action_ids: ['plugin_action_system_internal_data_source_query'],
       plugin_connection_ids: ['plugin_connection_system_internal_data_source'],
       plugin_input_mapping: {
-        source_types: ['user_insights', 'requirements'],
+        source_types: ['user_insights'],
       },
+      agent_id: 'agent_product',
       product_id: 'product_ai_brain',
       result_actions: [{ type: 'create_requirements' }],
+      skill_ids: ['skill_user_insight_to_requirement'],
     });
   });
 

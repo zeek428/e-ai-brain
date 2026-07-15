@@ -1,5 +1,5 @@
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import { Alert, Button, Form, Input, InputNumber, Select, Space, Typography } from 'antd';
+import { Alert, Button, Form, Input, Select, Space, Typography } from 'antd';
 
 import type { PluginActionRecord, PluginConnectionRecord } from '../../../services/aiBrain';
 import { ScheduledJobFormSection } from './ScheduledJobFormSection';
@@ -52,33 +52,7 @@ function ScheduledJobResultActionFields({
     );
   }
   if (actionType === 'create_requirements') {
-    return (
-      <div
-        style={{
-          display: 'grid',
-          gap: 8,
-          gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
-          width: '100%',
-        }}
-      >
-        <Form.Item name={[fieldName, 'priority']} initialValue="P1" style={{ marginBottom: 8 }}>
-          <Select
-            options={[
-              { label: 'P0', value: 'P0' },
-              { label: 'P1', value: 'P1' },
-              { label: 'P2', value: 'P2' },
-            ]}
-            placeholder="优先级"
-          />
-        </Form.Item>
-        <Form.Item name={[fieldName, 'requirements_path']} initialValue="$.requirements" style={{ marginBottom: 8 }}>
-          <Input placeholder="需求列表 JSONPath" />
-        </Form.Item>
-        <Form.Item name={[fieldName, 'max_items']} initialValue={20} style={{ marginBottom: 8 }}>
-          <InputNumber min={1} max={100} placeholder="数量" style={{ width: '100%' }} />
-        </Form.Item>
-      </div>
-    );
+    return null;
   }
   if (actionType === 'sync_dingtalk_document') {
     return (

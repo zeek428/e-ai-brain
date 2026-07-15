@@ -1462,15 +1462,15 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     user_insight_requirement_mining = by_code["user_insight_requirement_mining"]
     assert user_insight_requirement_mining["payload_defaults"]["plugin_input_mapping"][
         "source_types"
-    ] == ["user_insights", "requirements"]
+    ] == ["user_insights"]
     assert user_insight_requirement_mining["payload_defaults"]["result_actions"] == [
-        {
-            "max_items": 20,
-            "priority": "P1",
-            "requirements_path": "$.requirements",
-            "source": "user_feedback",
-            "type": "create_requirements",
-        },
+        {"type": "create_requirements"},
+    ]
+    assert user_insight_requirement_mining["resource_selectors"]["agent"]["code_candidates"] == [
+        "product"
+    ]
+    assert user_insight_requirement_mining["resource_selectors"]["skill"]["code_candidates"] == [
+        "to_require"
     ]
     dingtalk_document_sync = by_code["dingtalk_document_sync"]
     assert dingtalk_document_sync["name"] == "同步钉钉文档"
