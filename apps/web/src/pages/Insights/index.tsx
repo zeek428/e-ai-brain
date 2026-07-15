@@ -142,6 +142,17 @@ function productOptionsFromContexts(productContexts: ProductContextOption[]) {
   }));
 }
 
+function productNameMap(productContexts: ProductContextOption[]) {
+  return Object.fromEntries(productContexts.map((product) => [product.id, product.name]));
+}
+
+function productDisplayText(productId: string | undefined, namesById: Record<string, string>) {
+  if (!productId || productId === '-') {
+    return '-';
+  }
+  return namesById[productId] || productId;
+}
+
 function versionOptionsFromContexts(productContexts: ProductContextOption[], productId?: string) {
   return (
     productContexts
@@ -157,6 +168,7 @@ function useInsightColumns(
   onConvert: (row: UserInsightRecord) => void,
   onDetail: (row: UserInsightRecord) => void,
   onTriage: (row: UserInsightRecord) => void,
+  productNamesById: Record<string, string>,
 ) {
   return useMemo<ProColumns<UserInsightRecord>[]>(
     () => [
@@ -177,7 +189,14 @@ function useInsightColumns(
         ),
         sorter: true,
         title: '摘要',
-        width: 420,
+        width: 320,
+      },
+      {
+        dataIndex: 'productId',
+        ellipsis: true,
+        render: (_, row) => productDisplayText(row.productId, productNamesById),
+        title: '所属产品',
+        width: 160,
       },
       {
         dataIndex: 'owner',
@@ -233,7 +252,7 @@ function useInsightColumns(
         width: 128,
       },
     ],
-    [onConvert, onDetail, onTriage],
+    [onConvert, onDetail, onTriage, productNamesById],
   );
 }
 
@@ -291,6 +310,7 @@ export default function InsightsPage() {
     }
   }, [listQuery]);
   const productOptions = useMemo(() => productOptionsFromContexts(productContexts), [productContexts]);
+  const productNamesById = useMemo(() => productNameMap(productContexts), [productContexts]);
   const convertProductId = Form.useWatch('productId', convertForm);
   const versionOptions = useMemo(
     () => versionOptionsFromContexts(productContexts, convertProductId),
@@ -347,6 +367,7 @@ export default function InsightsPage() {
         triageNote: undefined,
       });
     },
+    productNamesById,
   );
 
   useEffect(() => {
@@ -444,7 +465,7 @@ export default function InsightsPage() {
         }}
         rowKey="id"
         tableLayout="fixed"
-        tableScroll={{ x: 994 }}
+        tableScroll={{ x: 1054 }}
         tableTitle="用户洞察"
         title="用户洞察"
       />
@@ -466,7 +487,9 @@ export default function InsightsPage() {
               </Descriptions.Item>
               <Descriptions.Item label="归属用户">{detailTarget.owner}</Descriptions.Item>
               <Descriptions.Item label="更新时间">{detailTarget.updatedAt}</Descriptions.Item>
-              <Descriptions.Item label="产品 ID">{detailTarget.productId || '-'}</Descriptions.Item>
+              <Descriptions.Item label="所属产品">
+                {productDisplayText(detailTarget.productId, productNamesById)}
+              </Descriptions.Item>
               <Descriptions.Item label="版本 ID">{detailTarget.versionId || '-'}</Descriptions.Item>
               <Descriptions.Item label="模块编码">{detailTarget.moduleCode || '-'}</Descriptions.Item>
               <Descriptions.Item label="功能编码">{detailTarget.featureCode || '-'}</Descriptions.Item>

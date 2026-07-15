@@ -120,12 +120,15 @@ describe('operational insights pages', () => {
     expect(screen.getByText('2026-06-20 21:02')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '数据类型' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '摘要' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '所属产品' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '操作' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('table')).toHaveTextContent('研发平台'));
     fireEvent.click(screen.getByRole('button', { name: '详情' }));
-    expect(await screen.findByRole('dialog', { name: '用户洞察详情' })).toBeInTheDocument();
+    const detailDialog = await screen.findByRole('dialog', { name: '用户洞察详情' });
     expect(screen.getAllByText('已有反馈内容')).not.toHaveLength(0);
-    expect(screen.getByText('产品 ID')).toBeInTheDocument();
-    expect(screen.getByText('product_api')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('所属产品')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('研发平台')).toBeInTheDocument();
+    expect(within(detailDialog).queryByText('product_api')).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByLabelText('Close')[0]);
     fireEvent.click(screen.getByRole('button', { name: '登记反馈' }));
     await waitFor(() => expect(screen.getAllByLabelText('所属产品')).toHaveLength(2));

@@ -576,7 +576,7 @@ export const helpGroups: HelpGroup[] = [
             src: '/help/screenshots/help-insights.png',
           },
         ],
-        summary: '沉淀用户反馈、行为指标和迭代建议。',
+        summary: '沉淀用户反馈、行为指标和迭代建议；列表和详情会显示所属产品名称。',
         title: '用户洞察',
         sections: [
           {
@@ -584,6 +584,7 @@ export const helpGroups: HelpGroup[] = [
             body: [
               '负向反馈会进入治理视图，并可关联到迭代建议、需求或 Bug。',
               '建议定期按产品查看高频问题，避免反馈只停留在单条记录。',
+              '列表和详情中的“所属产品”优先展示产品名称；没有可见产品配置时才显示产品 ID。',
             ],
           },
         ],
