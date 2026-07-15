@@ -141,6 +141,20 @@ def _next_run_after(job: dict[str, Any], timestamp: str | None) -> str | None:
         return job.get("next_run_at")
 
 
+def require_product_for_requirement_result_actions(
+    product_id: Any,
+    result_actions: list[dict[str, Any]],
+) -> None:
+    if any(action.get("type") == "create_requirements" for action in result_actions) and not str(
+        product_id or ""
+    ).strip():
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "product_id is required when result_actions includes create_requirements",
+        )
+
+
 def create_scheduled_job_response(
     *,
     current_store: Any,
@@ -163,6 +177,7 @@ def create_scheduled_job_response(
         plugin_connection_ids,
     ) = validate_plugin_refs(current_store, payload)
     result_actions = job_result_actions.validate_scheduled_job_result_actions(job_type, payload.result_actions)  # noqa: E501
+    require_product_for_requirement_result_actions(payload.product_id, result_actions)
     knowledge_document_ids = validate_knowledge_document_ids(
         current_store,
         payload.knowledge_document_ids,
@@ -264,6 +279,7 @@ def dry_run_scheduled_job_response(
         job_type,
         payload.result_actions,
     )
+    require_product_for_requirement_result_actions(payload.product_id, configured_result_actions)
     config_json = scheduled_job_config_with_code_inspection_defaults(
         current_store,
         config_json=payload.config_json,
@@ -533,6 +549,7 @@ def patch_scheduled_job_response(
     ) = validate_plugin_refs(current_store, draft)
     draft_result_actions = payload_field(draft, "result_actions", [])
     result_actions = job_result_actions.validate_scheduled_job_result_actions(job_type, draft_result_actions)  # noqa: E501
+    require_product_for_requirement_result_actions(payload_field(draft, "product_id"), result_actions)
     knowledge_document_ids = validate_knowledge_document_ids(
         current_store,
         payload_field(draft, "knowledge_document_ids", []),

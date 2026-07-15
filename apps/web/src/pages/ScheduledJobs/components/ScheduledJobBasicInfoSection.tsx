@@ -25,6 +25,20 @@ export function ScheduledJobBasicInfoSection({
   productOptions,
   productRequiredRule,
 }: ScheduledJobBasicInfoSectionProps) {
+  const resultActions = Form.useWatch('result_actions');
+  const requirementResultActionProductRule: FormRule = {
+    validator(_: unknown, value: unknown) {
+      const createsRequirements = Array.isArray(resultActions) && resultActions.some(
+        (action) => action && typeof action === 'object'
+          && (action as { type?: unknown }).type === 'create_requirements',
+      );
+      if (createsRequirements && !(typeof value === 'string' && value.trim())) {
+        return Promise.reject(new Error('创建需求结果动作需要选择产品'));
+      }
+      return Promise.resolve();
+    },
+  };
+
   return (
     <FormSection label="基础信息" marker="基本">
       <Row gutter={12}>
@@ -42,7 +56,7 @@ export function ScheduledJobBasicInfoSection({
           <Form.Item
             label="所属产品"
             name="product_id"
-            rules={[productRequiredRule]}
+            rules={[productRequiredRule, requirementResultActionProductRule]}
           >
             <Select
               allowClear

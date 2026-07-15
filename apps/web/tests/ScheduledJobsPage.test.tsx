@@ -411,6 +411,44 @@ function installScheduledJobsFetchMock(
               ],
             },
             {
+              code: 'user_insight_requirement_mining',
+              name: '用户洞察需求机会挖掘',
+              payload_defaults: {
+                cron_expression: '0 11 * * MON',
+                enabled: true,
+                execution_mode: 'ai_generated',
+                job_type: 'plugin_action_invoke',
+                name: '用户洞察需求机会挖掘',
+                plugin_input_mapping: {
+                  source_types: ['user_insights', 'requirements'],
+                  window_end: '{{now}}',
+                  window_start: '{{current_date-30}}',
+                },
+                result_actions: [
+                  {
+                    max_items: 20,
+                    priority: 'P1',
+                    requirements_path: '$.requirements',
+                    source: 'user_feedback',
+                    type: 'create_requirements',
+                  },
+                ],
+                schedule_type: 'cron',
+                source_system: 'internal_data_source',
+              },
+              resource_selectors: {
+                plugin_action: { code_candidates: ['query_internal_business_data'] },
+                plugin_connection: { strategy: 'same_plugin_as_action' },
+              },
+              template_version: 'v1',
+              wizard_steps: [
+                { key: 'data_connection', required: true, title: '数据连接' },
+                { key: 'ai_processing', required: true, title: 'AI 处理' },
+                { key: 'result_write', required: true, title: '结果写入' },
+                { key: 'schedule', required: true, title: '调度' },
+              ],
+            },
+            {
               code: 'gitlab_mr_review',
               name: 'GitLab MR AI 审查',
               payload_defaults: {
@@ -1201,6 +1239,26 @@ function installScheduledJobsFetchMock(
               plugin_id: 'plugin_standard_ai_executor',
               status: 'active',
             },
+            {
+              action_type: 'internal_query',
+              code: 'query_internal_business_data',
+              id: 'plugin_action_system_internal_data_source_query',
+              input_schema: {
+                properties: {
+                  source_types: {
+                    items: { type: 'string' },
+                    title: '源数据',
+                    type: 'array',
+                  },
+                },
+                required: ['source_types'],
+                type: 'object',
+              },
+              name: '读取内部业务数据',
+              plugin_id: 'plugin_standard_internal_data_source',
+              request_config: { tool_name: 'internal_data_source.query' },
+              status: 'active',
+            },
           ],
           total: 4,
         },
@@ -1250,6 +1308,15 @@ function installScheduledJobsFetchMock(
               id: 'connection_ai_executor_system',
               name: '系统默认 AI 执行器',
               plugin_id: 'plugin_standard_ai_executor',
+              status: 'active',
+            },
+            {
+              environment: 'prod',
+              id: 'plugin_connection_system_internal_data_source',
+              name: '内部业务数据连接',
+              plugin_code: 'internal_data_source',
+              plugin_id: 'plugin_standard_internal_data_source',
+              plugin_name: '内部数据源',
               status: 'active',
             },
           ],
@@ -1559,7 +1626,7 @@ describe('ScheduledJobsPage', () => {
     ) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(dialog).queryByLabelText('连接环境')).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText('取数连接')).toBeInTheDocument();
-    expect(within(dialog).getByText('用于用户反馈、AI 客服聊天记录、HTTP API 等直接取数连接，可选择多个同类连接')).toBeInTheDocument();
+    expect(within(dialog).getByText('用于内部业务数据、用户反馈、AI 客服聊天记录、HTTP API 等直接取数连接，可选择多个同类连接')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('执行链路')).toHaveTextContent('数据来源 → AI执行 → 动作 → 运行记录');
     expect(within(dialog).getByLabelText('数据来源')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('AI执行配置')).toBeInTheDocument();
@@ -1581,6 +1648,36 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).queryByText('数据扫描执行')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('结果写入执行')).not.toBeInTheDocument();
     expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('configures internal user insights for AI requirement mining from the scene template', async () => {
+    const { jobCreateBodies } = installScheduledJobsFetchMock();
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
+    const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
+
+    fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
+    fireEvent.click(await screen.findByText('用户洞察需求机会挖掘'));
+
+    expect(await within(dialog).findByText('内部业务数据连接 · 内部数据源')).toBeInTheDocument();
+    expect(within(dialog).getByText('读取内部业务数据 (internal_data_source.query)')).toBeInTheDocument();
+    expect(within(dialog).getByText('用户洞察数据')).toBeInTheDocument();
+    expect(within(dialog).getByText('AI 将从用户洞察中识别高价值、可落地的改进方向，并创建到所选产品的需求池。')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('创建需求')).not.toHaveLength(0);
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
+    await waitFor(() => expect(jobCreateBodies).toHaveLength(1));
+    expect(jobCreateBodies[0]).toMatchObject({
+      plugin_action_ids: ['plugin_action_system_internal_data_source_query'],
+      plugin_connection_ids: ['plugin_connection_system_internal_data_source'],
+      plugin_input_mapping: {
+        source_types: ['user_insights', 'requirements'],
+      },
+      product_id: 'product_ai_brain',
+      result_actions: [{ type: 'create_requirements' }],
+    });
   });
 
   it('exposes native code inspection rule configuration in the create dialog', async () => {
@@ -1881,7 +1978,8 @@ describe('ScheduledJobsPage', () => {
     const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
     fireEvent.mouseDown(within(dialog).getByLabelText('取数连接'));
 
-    expect(await screen.findByText('测试 MaxCompute 项目')).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: '内部业务数据连接 · 内部数据源' })).toBeInTheDocument();
+    expect(screen.getByText('测试 MaxCompute 项目')).toBeInTheDocument();
     expect(screen.getByText('生产 MaxCompute 项目')).toBeInTheDocument();
     expect(screen.queryByText('生产 MaxCompute 项目 (prod)')).not.toBeInTheDocument();
 

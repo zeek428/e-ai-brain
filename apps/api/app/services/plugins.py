@@ -85,6 +85,7 @@ from app.services.plugin_store_helpers import (
     ensure_enum,
     ensure_non_blank,
     ensure_plugin_mutable,
+    ensure_standard_internal_data_source_resources,
     ensure_standard_plugins,
     merge_masked_config,
     persist_record,
@@ -588,6 +589,9 @@ def list_plugin_connections_response(
             sort_order=sort_order,
             started_at=started_at,
         )
+    sync_plugin_store(current_store)
+    ensure_standard_plugins(current_store)
+    ensure_standard_internal_data_source_resources(current_store)
     sync_plugin_connection_store(
         current_store,
         environment=environment,
@@ -1258,6 +1262,9 @@ def list_plugin_actions_response(
             sort_order=sort_order,
             started_at=started_at,
         )
+    sync_plugin_store(current_store)
+    ensure_standard_plugins(current_store)
+    ensure_standard_internal_data_source_resources(current_store)
     sync_plugin_action_store(current_store, plugin_id=plugin_id, status=status)
     items = []
     for action in _read_memory_dict(current_store, "plugin_actions").values():

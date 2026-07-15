@@ -1484,6 +1484,36 @@ def test_plugin_action_templates_are_structured_for_dynamic_forms():
     assert email_receive_template["request_config"]["query"]["since"] == "{{poll_since}}"
 
 
+def test_standard_internal_data_source_resources_are_available_for_scheduled_jobs():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    connections_response = client.get("/api/system/plugin-connections", headers=admin_headers)
+    assert connections_response.status_code == 200, connections_response.text
+    connections = connections_response.json()["data"]["items"]
+    connection = next(
+        item
+        for item in connections
+        if item["id"] == "plugin_connection_system_internal_data_source"
+    )
+    assert connection["plugin_code"] == "internal_data_source"
+    assert connection["name"] == "内部业务数据连接"
+    assert connection["endpoint_url"] == "internal://e-ai-brain/business-data"
+
+    actions_response = client.get("/api/system/plugin-actions", headers=admin_headers)
+    assert actions_response.status_code == 200, actions_response.text
+    actions = actions_response.json()["data"]["items"]
+    action = next(
+        item
+        for item in actions
+        if item["id"] == "plugin_action_system_internal_data_source_query"
+    )
+    assert action["connection_id"] == connection["id"]
+    assert action["code"] == "query_internal_business_data"
+    assert action["request_config"] == {"tool_name": "internal_data_source.query"}
+    assert action["input_schema"]["required"] == ["source_types"]
+
+
 def test_internal_data_source_connection_and_action_read_business_data():
     app.state.store.reset()
     admin_headers = auth_headers()

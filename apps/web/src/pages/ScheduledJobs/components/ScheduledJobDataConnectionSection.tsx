@@ -1,4 +1,4 @@
-import { Col, Form, Input, InputNumber, Radio, Row, Select, Typography } from 'antd';
+import { Alert, Col, Form, Input, InputNumber, Radio, Row, Select, Typography } from 'antd';
 import type { FormItemProps } from 'antd';
 
 import type { PluginActionRecord, PluginConnectionRecord } from '../../../services/aiBrain';
@@ -73,6 +73,36 @@ function actionLabel(action: PluginActionRecord): string {
   return toolName ? `${action.name} (${toolName})` : action.name;
 }
 
+const internalDataSourceTypeOptions = [
+  { label: '用户洞察数据', value: 'user_insights' },
+  { label: '需求数据', value: 'requirements' },
+  { label: '产品数据', value: 'products' },
+  { label: 'Bug 数据', value: 'bugs' },
+];
+
+function isInternalDataSourceAction(action: PluginActionRecord | undefined): boolean {
+  return Boolean(action && actionToolName(action) === 'internal_data_source.query');
+}
+
+function connectionLabel(connection: PluginConnectionRecord): string {
+  const pluginName = connection.plugin_name ?? (
+    connection.plugin_code === 'internal_data_source' ? '内部数据源' : undefined
+  );
+  return pluginName ? `${connection.name} · ${pluginName}` : connection.name;
+}
+
+function isInternalDataSourceConnection(connection: PluginConnectionRecord): boolean {
+  return connection.plugin_code === 'internal_data_source'
+    || connection.plugin_name === '内部数据源';
+}
+
+function displayConnections(connections: PluginConnectionRecord[]): PluginConnectionRecord[] {
+  return [
+    ...connections.filter(isInternalDataSourceConnection),
+    ...connections.filter((connection) => !isInternalDataSourceConnection(connection)),
+  ];
+}
+
 function inputLabel(key: string, property: Record<string, unknown>): string {
   if (key === 'document_id') {
     return '文档 ID / 文档 URL';
@@ -99,7 +129,17 @@ function inputPlaceholder(key: string, property: Record<string, unknown>): strin
   return undefined;
 }
 
-function renderSchemaInput(key: string, property: Record<string, unknown>) {
+function renderSchemaInput(
+  action: PluginActionRecord,
+  key: string,
+  property: Record<string, unknown>,
+) {
+  if (isInternalDataSourceAction(action) && key === 'source_types') {
+    return <Select mode="multiple" options={internalDataSourceTypeOptions} placeholder="请选择源数据" />;
+  }
+  if (Array.isArray(property.enum)) {
+    return <Select options={property.enum.map((value) => ({ label: String(value), value }))} />;
+  }
   const type = property.type;
   if (type === 'integer' || type === 'number') {
     return <InputNumber min={0} placeholder={inputPlaceholder(key, property)} style={{ width: '100%' }} />;
@@ -146,7 +186,7 @@ function DataSourceActionParameters({
             name={['plugin_input_mapping', key]}
             rules={requiredFields.has(key) ? [{ required: true, message: `请填写${inputLabel(key, property)}` }] : []}
           >
-            {renderSchemaInput(key, property)}
+            {renderSchemaInput(action, key, property)}
           </Form.Item>
         </Col>
       ))}
@@ -178,6 +218,7 @@ export function ScheduledJobDataConnectionSection({
       <Form.Item noStyle shouldUpdate>
         {({ getFieldValue }) => {
           const dataSourceMode = String(getFieldValue('data_source_mode') ?? 'direct_connection');
+          const selectableConnections = displayConnections(filteredPluginConnections);
           const selectedConnectionIds = stringArray(getFieldValue('plugin_connection_ids'));
           const selectedPluginIds = new Set(
             selectedConnectionIds
@@ -198,20 +239,21 @@ export function ScheduledJobDataConnectionSection({
           const selectedAction = selectedActionId
             ? pluginActions.find((action) => action.id === selectedActionId)
             : undefined;
-          const connectionLabel = dataSourceMode === 'authorized_read_action' ? '授权连接' : '取数连接';
+          const usesInternalDataSource = isInternalDataSourceAction(selectedAction);
+          const connectionFieldLabel = dataSourceMode === 'authorized_read_action' ? '授权连接' : '取数连接';
           const actionLabelText = '数据读取动作';
           return (
             <>
               <Form.Item
-                label={connectionLabel}
+                label={connectionFieldLabel}
                 name="plugin_connection_ids"
-                rules={[requiredForPluginResource(`请选择${connectionLabel}`)]}
+                rules={[requiredForPluginResource(`请选择${connectionFieldLabel}`)]}
                 extra={
                   usesNativeScan
                     ? '可选 GitHub/GitLab 凭据连接；代码 URL 仍以产品代码库配置为准'
                     : dataSourceMode === 'authorized_read_action'
                       ? '用于钉钉文档、GitHub、GitLab、邮箱等授权型连接，具体读取对象由下方读取动作参数决定'
-                      : '用于用户反馈、AI 客服聊天记录、HTTP API 等直接取数连接，可选择多个同类连接'
+                      : '用于内部业务数据、用户反馈、AI 客服聊天记录、HTTP API 等直接取数连接，可选择多个同类连接'
                 }
               >
                 <Select
@@ -220,10 +262,10 @@ export function ScheduledJobDataConnectionSection({
                   maxTagCount={2}
                   onChange={onPluginConnectionChange}
                   optionFilterProp="label"
-                  placeholder={usesNativeScan ? '请选择 Git 凭据连接，可留空' : `请选择${connectionLabel}`}
+                  placeholder={usesNativeScan ? '请选择 Git 凭据连接，可留空' : `请选择${connectionFieldLabel}`}
                   showSearch
-                  options={filteredPluginConnections.map((connection) => ({
-                    label: connection.name,
+                  options={selectableConnections.map((connection) => ({
+                    label: connectionLabel(connection),
                     value: connection.id,
                   }))}
                 />
@@ -250,8 +292,15 @@ export function ScheduledJobDataConnectionSection({
                   />
                 </Form.Item>
               ) : null}
-              {!usesNativeScan && dataSourceMode === 'authorized_read_action' ? (
+              {!usesNativeScan && (dataSourceMode === 'authorized_read_action' || usesInternalDataSource) ? (
                 <DataSourceActionParameters action={selectedAction} />
+              ) : null}
+              {usesInternalDataSource ? (
+                <Alert
+                  showIcon
+                  type="info"
+                  title="AI 将从用户洞察中识别高价值、可落地的改进方向，并创建到所选产品的需求池。"
+                />
               ) : null}
             </>
           );

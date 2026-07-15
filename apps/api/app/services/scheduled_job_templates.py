@@ -357,7 +357,15 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
                 "window_end": "{{now}}",
                 "window_start": "{{current_date-30}}",
             },
-            "result_actions": [{"type": "save_scheduled_job_result"}],
+            "result_actions": [
+                {
+                    "max_items": 20,
+                    "priority": "P1",
+                    "requirements_path": "$.requirements",
+                    "source": "user_feedback",
+                    "type": "create_requirements",
+                },
+            ],
             "schedule_type": "cron",
             "source_system": "internal_data_source",
         },

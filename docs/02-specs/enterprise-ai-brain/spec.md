@@ -27,7 +27,7 @@
 
 ## 定时作业动作边界
 
-定时作业中的“数据来源动作”只允许读取外部或内部数据；会产生外部副作用的动作必须配置为 `result_actions`，并在数据读取和 AI 处理成功后才执行。`user_feedback_insight_extract` 支持 `sync_dingtalk_document` 结果动作，用 AI 输出的 `dingtalk_markdown` 追加或覆盖目标钉钉文档；该动作不得作为取数动作展示或执行。`create_requirements` 仍只允许 `plugin_action_invoke` 作业使用，避免用户反馈洞察在未经过业务确认时直接写入需求台账。
+定时作业中的“数据来源动作”只允许读取外部或内部数据；会产生外部副作用的动作必须配置为 `result_actions`，并在数据读取和 AI 处理成功后才执行。平台内置零配置的 `internal_data_source` 连接和 `internal_data_source.query` 动作，可按当前用户产品权限读取用户洞察、需求、产品和 Bug；该连接和动作在定时作业下拉查询时自动可用。`user_feedback_insight_extract` 支持 `sync_dingtalk_document` 结果动作，用 AI 输出的 `dingtalk_markdown` 追加或覆盖目标钉钉文档；该动作不得作为取数动作展示或执行。`create_requirements` 仍只允许 `plugin_action_invoke` 作业使用，避免用户反馈洞察在未经过业务确认时直接写入需求台账。包含 `create_requirements` 的作业定义必须指定 `product_id`；服务端拒绝缺少产品的新增、编辑和试运行请求。
 
 ## AI 助手工作台升级
 

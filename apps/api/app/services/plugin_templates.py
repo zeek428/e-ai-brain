@@ -14,6 +14,43 @@ from app.services.internal_data_sources import (
 from app.services.result_write_targets import result_write_target_default_mapping
 
 DINGTALK_MCP_PROTOCOL = "mcp_streamable_http"
+SYSTEM_INTERNAL_DATA_SOURCE_CONNECTION_ID = "plugin_connection_system_internal_data_source"
+SYSTEM_INTERNAL_DATA_SOURCE_ACTION_ID = "plugin_action_system_internal_data_source_query"
+
+SYSTEM_INTERNAL_DATA_SOURCE_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "source_types": {
+            "description": "选择本次作业读取的内部业务数据类型。",
+            "items": {"type": "string"},
+            "title": "源数据",
+            "type": "array",
+        },
+        "field_mode": {
+            "description": "summary 返回常用字段，detail 返回更完整的业务字段。",
+            "enum": ["summary", "detail"],
+            "title": "字段模式",
+            "type": "string",
+        },
+        "limit": {
+            "description": "每类源数据最多返回条数。",
+            "minimum": 1,
+            "title": "每类最大行数",
+            "type": "integer",
+        },
+        "window_start": {
+            "description": "支持系统变量，例如 {{current_date-30}}。",
+            "title": "开始时间",
+            "type": "string",
+        },
+        "window_end": {
+            "description": "支持系统变量，例如 {{now}}。",
+            "title": "结束时间",
+            "type": "string",
+        },
+    },
+    "required": ["source_types"],
+}
 
 DINGTALK_MCP_P0_CAPABILITIES: dict[str, dict[str, Any]] = {
     "dingtalk_aitable": {

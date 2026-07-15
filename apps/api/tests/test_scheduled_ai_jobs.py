@@ -1459,9 +1459,19 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     assert by_code["requirement_bug_risk_analysis"]["payload_defaults"]["plugin_input_mapping"][
         "source_types"
     ] == ["requirements", "bugs"]
-    assert by_code["user_insight_requirement_mining"]["payload_defaults"]["plugin_input_mapping"][
+    user_insight_requirement_mining = by_code["user_insight_requirement_mining"]
+    assert user_insight_requirement_mining["payload_defaults"]["plugin_input_mapping"][
         "source_types"
     ] == ["user_insights", "requirements"]
+    assert user_insight_requirement_mining["payload_defaults"]["result_actions"] == [
+        {
+            "max_items": 20,
+            "priority": "P1",
+            "requirements_path": "$.requirements",
+            "source": "user_feedback",
+            "type": "create_requirements",
+        },
+    ]
     dingtalk_document_sync = by_code["dingtalk_document_sync"]
     assert dingtalk_document_sync["name"] == "同步钉钉文档"
     assert dingtalk_document_sync["payload_defaults"]["job_type"] == "plugin_action_invoke"
@@ -1577,6 +1587,42 @@ def test_generic_result_actions_are_supported_for_plugin_invoke_jobs():
             [{"requirements_path": "$.requirements", "type": "create_requirements"}],
         )
     assert exc_info.value.status_code == 400
+
+
+def test_create_requirements_scheduled_jobs_require_a_product():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    connection = next(
+        item
+        for item in client.get("/api/system/plugin-connections", headers=admin_headers).json()["data"]["items"]
+        if item["id"] == "plugin_connection_system_internal_data_source"
+    )
+    action = next(
+        item
+        for item in client.get("/api/system/plugin-actions", headers=admin_headers).json()["data"]["items"]
+        if item["id"] == "plugin_action_system_internal_data_source_query"
+    )
+
+    response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "用户洞察需求机会挖掘",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "plugin_input_mapping": {"source_types": ["user_insights"]},
+            "result_actions": [{"type": "create_requirements"}],
+            "schedule_type": "manual",
+            "source_system": "internal_data_source",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+    assert "product_id is required" in response.json()["detail"]["message"]
 
 
 def test_feedback_insight_jobs_can_sync_dingtalk_document_but_not_create_requirements():

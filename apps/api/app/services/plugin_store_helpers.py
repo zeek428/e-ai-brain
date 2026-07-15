@@ -10,7 +10,15 @@ from app.services.plugin_constants import (
     MASKED_SECRET_PLACEHOLDER,
 )
 from app.services.plugin_projection import latest_standard_plugin_template_version
-from app.services.plugin_templates import STANDARD_PLUGINS
+from app.services.plugin_templates import (
+    STANDARD_PLUGINS,
+    SYSTEM_INTERNAL_DATA_SOURCE_ACTION_ID,
+    SYSTEM_INTERNAL_DATA_SOURCE_CONNECTION_ID,
+    SYSTEM_INTERNAL_DATA_SOURCE_INPUT_SCHEMA,
+    plugin_action_payload_from_template,
+    plugin_action_template_for_plugin_code,
+    plugin_connection_payload_from_template,
+)
 
 
 def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
@@ -263,6 +271,67 @@ def ensure_standard_plugins(current_store: Any) -> None:
         if existing and existing.get("id") != plugin["id"]:
             _delete_memory_record(current_store, "integration_plugins", existing["id"])
         persist_record(current_store, "save_plugin_record", plugin)
+
+
+def ensure_standard_internal_data_source_resources(current_store: Any) -> None:
+    """Provision the zero-configuration internal data source for scheduled jobs."""
+    plugins_by_code = {
+        str(plugin.get("code")): plugin
+        for plugin in _read_memory_dict(current_store, "integration_plugins").values()
+    }
+    plugin = plugins_by_code.get("internal_data_source")
+    if plugin is None:
+        return
+
+    plugin_id = str(plugin["id"])
+    sync_plugin_connection_store(current_store, plugin_id=plugin_id)
+    connection = _read_memory_record(
+        current_store,
+        "plugin_connections",
+        SYSTEM_INTERNAL_DATA_SOURCE_CONNECTION_ID,
+    )
+    now = datetime.now(UTC).isoformat()
+    if connection is None:
+        connection = {
+            **plugin_connection_payload_from_template(
+                "internal_data_source",
+                plugin_id=plugin_id,
+            ),
+            "created_at": now,
+            "created_by": "system",
+            "id": SYSTEM_INTERNAL_DATA_SOURCE_CONNECTION_ID,
+            "updated_at": now,
+        }
+        _put_memory_record(current_store, "plugin_connections", connection)
+        persist_record(current_store, "save_plugin_connection_record", connection)
+
+    sync_plugin_action_store(current_store, plugin_id=plugin_id)
+    action = _read_memory_record(
+        current_store,
+        "plugin_actions",
+        SYSTEM_INTERNAL_DATA_SOURCE_ACTION_ID,
+    )
+    if action is not None:
+        return
+    action_template = plugin_action_template_for_plugin_code("internal_data_source")
+    if action_template is None:
+        return
+    action = {
+        **plugin_action_payload_from_template(
+            action_template,
+            connection_id=str(connection["id"]),
+            plugin_id=plugin_id,
+        ),
+        "created_at": now,
+        "created_by": "system",
+        "description": action_template.get("description"),
+        "id": SYSTEM_INTERNAL_DATA_SOURCE_ACTION_ID,
+        "input_schema": SYSTEM_INTERNAL_DATA_SOURCE_INPUT_SCHEMA,
+        "output_schema": {},
+        "updated_at": now,
+    }
+    _put_memory_record(current_store, "plugin_actions", action)
+    persist_record(current_store, "save_plugin_action_record", action)
 
 
 def ensure_plugin_mutable(plugin: dict[str, Any]) -> None:
