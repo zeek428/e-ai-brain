@@ -283,8 +283,10 @@ export default function ScheduledJobsPage() {
     focusedResultWriteRecordId,
     labels: selectedRunLabels,
     openRunDetail,
+    refreshRunDetail,
     resultWriteRecords: selectedRunResultWriteRecords,
     resultWriteRecordsLoading: selectedRunResultWriteRecordsLoading,
+    runDetailRefreshing,
     selectedRun,
   } = useScheduledJobRunDetailState({
     agentById,
@@ -1400,8 +1402,10 @@ export default function ScheduledJobsPage() {
         onClose={closeRunDetail}
         onCopyRun={openCopyRunModal}
         onGenerateTemplate={generateTemplateFromRun}
+        onRefresh={refreshRunDetail}
         onTraceFullRunRerunRequested={handleTraceFullRunRerunRequested}
         onTraceNodeRerunCreated={handleTraceNodeRerunCreated}
+        refreshing={runDetailRefreshing}
         resultWriteRecords={selectedRunResultWriteRecords}
         resultWriteRecordsLoading={selectedRunResultWriteRecordsLoading}
         run={selectedRun}

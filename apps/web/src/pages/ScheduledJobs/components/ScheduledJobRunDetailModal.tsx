@@ -41,8 +41,10 @@ type ScheduledJobRunDetailModalProps = {
   onClose: () => void;
   onCopyRun: (run: ScheduledJobRunRecord) => void;
   onGenerateTemplate: (run: ScheduledJobRunRecord) => void | Promise<void>;
+  onRefresh: () => void | Promise<void>;
   onTraceFullRunRerunRequested?: (request: Record<string, unknown>) => void | Promise<void>;
   onTraceNodeRerunCreated?: (run: ScheduledJobRunRecord) => void;
+  refreshing: boolean;
   resultWriteRecords: ResultWriteRecord[];
   resultWriteRecordsLoading: boolean;
   run?: ScheduledJobRunRecord;
@@ -397,8 +399,10 @@ export function ScheduledJobRunDetailModal({
   onClose,
   onCopyRun,
   onGenerateTemplate,
+  onRefresh,
   onTraceFullRunRerunRequested,
   onTraceNodeRerunCreated,
+  refreshing,
   resultWriteRecords,
   resultWriteRecordsLoading,
   run,
@@ -514,7 +518,22 @@ export function ScheduledJobRunDetailModal({
         </Space>
       )}
       open={Boolean(run)}
-      title="运行结果详情"
+      title={
+        <Space size={8}>
+          <span>运行结果详情</span>
+          {run ? (
+            <Button
+              aria-label="刷新运行结果"
+              icon={<ReloadOutlined />}
+              loading={refreshing}
+              size="small"
+              onClick={() => void onRefresh()}
+            >
+              刷新
+            </Button>
+          ) : null}
+        </Space>
+      }
       width={980}
       onCancel={onClose}
     >

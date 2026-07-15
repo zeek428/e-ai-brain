@@ -209,6 +209,11 @@ export const helpGroups: HelpGroup[] = [
             caption: '定时作业页用于维护作业配置、手动触发和查看运行记录。',
             src: '/help/screenshots/help-scheduled-jobs.png',
           },
+          {
+            alt: '定时作业运行结果详情刷新截图',
+            caption: '运行结果详情标题栏可刷新当前运行状态、日志和结果动作写入记录。',
+            src: '/help/screenshots/help-scheduled-job-run-detail.png',
+          },
         ],
         summary: '管理定时作业、手动触发任务并查看运行记录。',
         title: '定时作业',
@@ -218,6 +223,7 @@ export const helpGroups: HelpGroup[] = [
             body: [
               '在作业列表查看启停状态、下次运行时间、最近运行结果和产品归属。',
               '手动触发后页面会切到运行记录，并置顶展示新运行记录。',
+              '打开运行结果详情后，可在标题栏点击“刷新”获取运行中的最新状态、日志和结果动作写入记录。',
               '邮件通知类动作依赖系统设置中的邮件发送配置。',
             ],
           },

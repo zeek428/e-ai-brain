@@ -3580,6 +3580,47 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getAllByText('scheduled_job_run_weekly_feedback').length).toBeGreaterThan(0);
   });
 
+  it('refreshes scheduled job run details with the latest execution state', async () => {
+    const runs: ScheduledJobRunRecord[] = [
+      {
+        config_snapshot: {
+          execution_mode: 'ai_generated',
+          job_type: 'user_feedback_insight_extract',
+          skill_ids: ['skill_feedback'],
+        },
+        id: 'scheduled_job_run_refresh',
+        result_summary: { message: '任务正在执行' },
+        scheduled_job_id: 'scheduled_job_weekly_feedback',
+        status: 'running',
+        trigger_type: 'manual',
+      },
+    ];
+    const { runListCalls } = installScheduledJobsFetchMock({ runs });
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
+    fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_refresh' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    expect(dialog).toHaveTextContent('任务正在执行');
+    expect(dialog).toHaveTextContent('running');
+
+    runs[0] = {
+      ...runs[0],
+      finished_at: '2026-07-15T08:00:00Z',
+      result_summary: { message: '任务已完成，已创建 2 条需求' },
+      status: 'succeeded',
+    };
+    fireEvent.click(within(dialog).getByRole('button', { name: '刷新运行结果' }));
+
+    await waitFor(() => {
+      expect(dialog).toHaveTextContent('任务已完成，已创建 2 条需求');
+      expect(dialog).toHaveTextContent('succeeded');
+    });
+    expect(runListCalls).toContain('/api/system/scheduled-job-runs?run_id=scheduled_job_run_refresh');
+  });
+
   it('confirms an AI processing Trace DAG node rerun when preflight is ready', async () => {
     const { traceNodeRerunCalls } = installScheduledJobsFetchMock({
       runs: [buildReadyTraceNodeRerunRun()],

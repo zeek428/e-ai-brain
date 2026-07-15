@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { message } from 'antd';
 
 import {
+  fetchScheduledJobRuns,
   fetchResultWriteRecords,
   type AiAgentRecord,
   type AiSkillRecord,
@@ -45,6 +46,7 @@ export function useScheduledJobRunDetailState({
   const [focusedResultWriteRecordId, setFocusedResultWriteRecordId] = useState<string | undefined>();
   const [resultWriteRecords, setResultWriteRecords] = useState<ResultWriteRecord[]>([]);
   const [resultWriteRecordsLoading, setResultWriteRecordsLoading] = useState(false);
+  const [runDetailRefreshing, setRunDetailRefreshing] = useState(false);
   const [handledRouteRunKey, setHandledRouteRunKey] = useState<string | undefined>();
 
   const openRunDetail = (run: ScheduledJobRunRecord, resultWriteRecordId?: string) => {
@@ -56,6 +58,27 @@ export function useScheduledJobRunDetailState({
     setSelectedRun(undefined);
     setFocusedResultWriteRecordId(undefined);
   };
+
+  const refreshRunDetail = useCallback(async () => {
+    const runId = selectedRun?.id;
+    if (!runId) {
+      return;
+    }
+    setRunDetailRefreshing(true);
+    try {
+      const latestRuns = await fetchScheduledJobRuns({ runIds: [runId] });
+      const latestRun = latestRuns.find((item) => item.id === runId);
+      if (!latestRun) {
+        message.warning('暂未查询到该运行记录的最新数据');
+        return;
+      }
+      setSelectedRun((current) => (current?.id === runId ? latestRun : current));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '运行结果刷新失败');
+    } finally {
+      setRunDetailRefreshing(false);
+    }
+  }, [selectedRun?.id]);
 
   useEffect(() => {
     const routeParams = scheduledJobRouteParams();
@@ -108,7 +131,7 @@ export function useScheduledJobRunDetailState({
     return () => {
       ignore = true;
     };
-  }, [selectedRun?.id]);
+  }, [selectedRun]);
 
   const selectedRunConfigSnapshot = selectedRun?.config_snapshot;
   const selectedRunAgentId = snapshotStringValue(selectedRunConfigSnapshot, 'agent_id');
@@ -143,8 +166,10 @@ export function useScheduledJobRunDetailState({
     focusedResultWriteRecordId,
     labels,
     openRunDetail,
+    refreshRunDetail,
     resultWriteRecords,
     resultWriteRecordsLoading,
+    runDetailRefreshing,
     selectedRun,
   };
 }
