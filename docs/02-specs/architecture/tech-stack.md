@@ -2,7 +2,7 @@
 
 ## 选型原则
 
-1. v1 MVP 优先跑通“需求 → 审批 → 产品详细设计 → 技术方案 → 内部 GitLab MR 预览和 diff 快照 → 内部 GitLab MR 代码 Review → 人工确认 → 内部报告归档 → 知识沉淀”的最小研发闭环；MVP-A 已包含 GitLab 只读输入依赖，代码开发辅助、自动化测试、发布上线评估、上线后分析和研发运营看板按后续阶段扩展。
+1. v2.0 在 v1 交付基础上优先跑通“产品需求 → 正式评估 → 规划版本归组 → 统一策略与岗位组队 → 工作项 DAG 并行 → 审核返工/人类决策 → 开发测试与远程代码提交 → 待发布”的闭环；部署由策略显式开启并复用现有人工门禁。
 2. 优先选择团队易理解、可本地部署、可替换的技术组件。
 3. AI、知识检索、外部集成保留清晰抽象边界，避免业务代码直连供应商或外部系统。
 4. AI 助手是工作台内的系统问答入口，仍复用模型网关 Chat 边界和服务端脱敏上下文，不引入独立模型 SDK 或绕过审计的前端直连。
@@ -14,10 +14,11 @@
 | 前端框架 | React + TypeScript + Ant Design Pro | 待锁定 | 以 Ant Design Pro 模板作为前端工程基础，适合构建后台工作台式交互，包括任务中心、看板和 AI 助手聊天工作台。 |
 | 前端组件框架 | Ant Design | ^6.4.3 | 默认使用 Ant Design 组件、主题 token 和交互规范，避免重复自造基础 UI。 |
 | 后端框架 | FastAPI + Python | 待锁定 | 与 AI/LangGraph 生态契合，开发效率高。 |
-| AI 编排 | LangGraph | 待锁定 | 支持长运行状态图、检查点、人机中断和恢复；Agent 自治轮次、预算与独立质量门禁由业务治理表补充。 |
+| AI 编排 | LangGraph + `langgraph-checkpoint-postgres` | 与锁文件一致 | 任务图和版本级协作图使用 PostgreSQL Checkpointer 保存 thread/checkpoint/pending writes；领域表与事件 Inbox 是业务事实源，领域状态/审计/Outbox 同事务，Checkpoint 独立保存游标并通过幂等命令恢复。 |
 | 数据库 | PostgreSQL + pgvector | 待锁定 | 同时承载结构化数据和 v1 向量检索。 |
 | 缓存/队列 | Redis | 待锁定 | 支持临时状态、短期缓存和后续队列化。 |
 | 事务消息 | PostgreSQL Outbox / Inbox | 内置 | 业务状态、审计与外部派发意图原子提交；Webhook 幂等接收后由独立 Worker 投影。 |
+| 研发协作调度 | PostgreSQL DAG + lease/幂等键 | 内置 | 工作项、依赖、席位、审核返工、决策和预算均为持久业务状态；多 Worker 通过数据库租约安全并行。 |
 | 对象存储 | MinIO / S3-compatible | 待锁定 | 保存知识原始文件、OCR/版面/表格解析产物和受保护预览资产。 |
 | 容器化 | Docker Compose | Compose v2 | 满足本地开发和 v1 演示部署。 |
 | GitLab API | 内部 GitLab MR 元信息和 diff 快照 | v1 MVP 用于代码 Review 输入；只读授权 MR，不回写评论或审批状态。 |

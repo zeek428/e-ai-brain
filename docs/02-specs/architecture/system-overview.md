@@ -2,7 +2,7 @@
 
 ## 业务背景
 
-AI Brain 是企业 AI 大脑平台。v1 以产品研发大脑为样板，第一期跑通研发需求从提交、审批、产品详细设计、技术方案、内部 GitLab MR 预览和 diff 快照、内部 GitLab MR 代码 Review、人工确认、内部报告归档到知识沉淀的最小闭环；自动化测试、发布上线评估、上线后分析和完整 Bug 管理按后续阶段扩展。系统通过软件研发全流程感知把需求、设计、代码、测试、发布和线上反馈纳入同一产品上下文，并提供 AI 助手聊天工作台，基于脱敏系统上下文回答 AI Brain 配置、需求任务、代码仓库、模型网关状态和项目开发进展问题。
+AI Brain 是企业 AI 大脑平台。v1 建立了产品研发大脑的需求、AI 任务、Runner、质量门禁、代码评审、部署治理、知识和审计基础；v2.0 将产品需求作为研发协同唯一入口，通过正式需求评估、规划版本优先归组、统一研发执行策略和 AI/真人多岗位协作，把复杂目标拆为可并行、可审核、可返工、可升级人类决策的工作项 DAG。默认完成开发、测试、远程代码提交并停在待发布，不自动部署。现有定时作业保持原调度与 Agent/Skill 装配语义。
 
 详细产品范围以项目级 PRD 为准：[enterprise-ai-brain/prd.md](../../01-prd/enterprise-ai-brain/prd.md)。
 
@@ -20,12 +20,14 @@ FastAPI 模块化单体
   ├─ brain_app：业务大脑配置
   ├─ assistant：AI Brain 系统问答和项目进展助手
   ├─ product_config：产品、版本、模块、Git 资源和相关系统
-  ├─ requirement：需求台账、审批和生成 AI 任务
+  ├─ requirement：需求台账、审批、正式评估和规划版本归组
+  ├─ rd_policy：统一研发执行策略、动态岗位和岗位执行器
+  ├─ rd_collaboration：版本级协作运行、席位、工作项 DAG、审核返工和人类决策
   ├─ ai_task：AI 任务生命周期
   ├─ agent_loop：Agent 自治循环、轮次预算和人工接管
   ├─ quality_gate：研发合并和部署前后的独立质量门禁
   ├─ execution_context：需求、Bug、仓库、知识和验收标准的版本化执行清单
-  ├─ graph_runtime：LangGraph 运行、检查点和恢复
+  ├─ graph_runtime：任务图/协作图、PostgreSQL Checkpointer、中断和恢复
   ├─ review：人工确认
   ├─ knowledge：版本化文档、多模态解析、chunk、检索和沉淀
   ├─ long_memory：GBrain 长期记忆、混合检索和知识图谱
@@ -64,9 +66,11 @@ FastAPI 模块化单体
 | assistant | 基于服务端脱敏系统上下文回答 AI Brain 系统信息、项目进展、产品、任务、Git 仓库和模型网关状态问题 | FastAPI + 模型网关 Chat |
 | product_config | 产品、版本、模块、Git 资源、内部 GitLab 项目绑定和相关系统主数据 | PostgreSQL |
 | requirement | 需求台账、审批、驳回、关闭和审批后生成 AI 任务 | PostgreSQL |
+| rd_policy | 需求评估、版本归组、岗位、执行器、预算、门禁、Git、风险和交付终点统一策略 | PostgreSQL |
+| rd_collaboration | 版本级运行、AI/真人岗位席位、工作项 DAG、并行调度、审核返工、决策请求和岗位反馈 | PostgreSQL + LangGraph |
 | ai_task | AI 任务类型、生命周期、状态流转和任务详情 | PostgreSQL + LangGraph |
 | agent_loop / quality_gate | 自治轮次、执行上下文、独立验证证据、预算终止、人工接管和受控自动合入 | PostgreSQL + 隔离 Runner / CI |
-| graph_runtime | 研发大脑 LangGraph 节点、中断、恢复 | LangGraph |
+| graph_runtime | 研发任务图和版本协作图的节点、持久化检查点、中断与恢复 | LangGraph + PostgreSQL Checkpointer |
 | knowledge | 文本/图片/PDF 原始资产、版本化 OCR/版面/表格解析、向量/关键词混合检索、权限与过期治理 | PostgreSQL + pgvector + MinIO/S3 |
 | long_memory | 长期记忆、答案合成、知识图谱和多跳查询 | GBrain |
 | model_gateway | 聊天/embedding 模型统一入口 | OpenAI-compatible API |
@@ -89,16 +93,19 @@ FastAPI 模块化单体
 ## 数据流向
 
 ```text
-提交研发需求
-→ 创建 requirement 并等待审批
-→ 审批通过后生成 ai_task，固化 task_type、requirement_snapshot 和 product_context
-→ 启动 graph_run
-→ 冻结 execution_context_manifest，并按策略启动 Agent 自治循环
+提交产品需求
+→ 创建 requirement 并完成审批
+→ 正式评估需求，LLM 提出建议、确定性服务校验风险/权限/完整度
+→ 优先归入兼容 planning 版本，无合适版本才创建新规划版本
+→ 冻结统一研发执行策略、需求、版本、岗位和执行器快照
+→ 以 product_version 为根幂等创建唯一活动 rd_collaboration_run，冻结多需求范围并保存工作项 DAG
+→ 并行派发 ready 工作项到 AI 执行器或真人席位
+→ AI 工作项复用 ai_task / Agent Loop / Runner，冻结 execution_context_manifest
 → 检索 knowledge_chunks
 → 可选查询 GBrain 长期记忆和知识图谱
 → 按 task_type 生成产品详细设计、技术方案、内部 GitLab MR Review 报告、开发计划、测试分析、发布评估或上线后分析
-→ 编码结果进入独立 quality_gate；失败证据进入下一轮反思，门禁通过后进入 human_reviews 或受控自动合入
-→ 人工确认后恢复 Graph
+→ 编码结果进入独立 quality_gate；审核失败创建返工项，高风险/超权限问题创建人类决策请求
+→ 人工决策先写领域事件 Inbox，再以原 LangGraph thread 恢复协作图；领域状态与 Outbox 原子提交，Checkpoint 独立持久化执行游标
 → 生成 mock_issues / code_review_reports / Bug / Markdown / knowledge_deposits
 → lifecycle_context 写入需求、任务、提交、Review、测试、Bug、发布、日志和知识之间的关系边
 → lifecycle_context 归集需求变更、设计缺口、代码质量、Review、测试、Bug、发布和线上异常风险信号
@@ -109,7 +116,8 @@ FastAPI 模块化单体
 → AI 自动测试和人工测试登记 Bug，关联产品、任务、提交、发布或日志
 → 首页 IT 团队看板聚合需求、研发进展、Bug、代码质量、发布、线上健康、用户洞察、用户反馈和迭代规划建议
 → AI 助手读取脱敏系统上下文并通过模型网关 Chat 回答系统状态和项目进展问题
-→ 写入 audit_events
+→ 集成工作项通过 Outbox 推送并对账远程分支/commit/MR-PR 证据；默认在测试和门禁通过后停在 ready_for_release，策略允许且人工确认后才进入部署域
+→ 反馈归因到岗位、席位、执行器和策略版本并写入 audit_events
 ```
 
 ## 关键设计决策
@@ -118,12 +126,18 @@ FastAPI 模块化单体
 |--------|------|----------|
 | v1 系统形态 | 模块化单体 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 业务主体 | 产品、需求、AI 任务、Bug、知识中心、研发度量/看板和用户洞察（含迭代规划建议）是一等主体或独立运营视图 | [PRD](../../01-prd/enterprise-ai-brain/prd.md) 和 [技术规格](../enterprise-ai-brain/spec.md) |
-| 需求任务关系 | 需求审批后生成 AI 任务，任务保存需求快照和产品上下文 | [技术规格](../enterprise-ai-brain/spec.md) |
+| 需求任务关系 | 需求评估通过并归入规划版本后创建协作运行；工作项按需生成 AI 任务并保存评估、需求、版本、策略和产品上下文快照 | [技术规格](../enterprise-ai-brain/spec.md) |
+| v2 研发入口 | 产品需求先正式评估，再优先归入兼容规划版本；协作工作项按需生成底层 AI 任务 | [PRD](../../01-prd/enterprise-ai-brain/prd.md) 和 [技术规格](../enterprise-ai-brain/spec.md) |
+| 入口适配 | Bug、代码巡检、AI 助手和旧生成任务入口只创建或关联需求；定时作业引擎不创建协作运行 | [技术规格](../enterprise-ai-brain/spec.md) |
+| 统一研发策略 | 原研发执行器策略原位升级为一套规则，统一控制岗位、执行器、预算、门禁、Git、风险和交付终点，不存在双模式或策略外回退 | [技术规格](../enterprise-ai-brain/spec.md) |
+| 协作聚合 | 产品版本是根聚合，一个版本可包含多条需求且同一时刻最多一个活动运行，启动时冻结范围和策略 | [技术规格](../enterprise-ai-brain/spec.md) |
+| 混合研发团队 | 动态研发岗位独立于系统 RBAC，席位可由 AI 执行器或真人账号承担；真人操作仍经 RBAC 与产品范围鉴权 | [技术规格](../enterprise-ai-brain/spec.md) |
 | AI 任务类型 | v1 MVP 覆盖产品详细设计、技术方案和内部 GitLab MR 代码 Review；后续扩展开发计划、自动化测试、发布评估和上线后分析，统一使用 task_type、状态机、人工确认和审计 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 全流程感知 | 需求、设计、代码、Review、测试、Bug、发布、线上日志、用户使用、用户反馈、迭代规划建议、知识和审计通过 lifecycle_context 串联，支持上下游追溯和风险定位 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 研发运营数据 | GitLab、Jenkins、线上日志、用户使用、用户反馈、迭代规划建议和 Bug 均按产品/版本/模块归属聚合，支撑首页 IT 团队看板 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 代码仓库巡检 | 定时作业通过插件扫描仓库质量/安全/规范问题，结果进入代码巡检报告表并保留提交人维度，严重问题可去重创建 `code_inspection` 来源 Bug，并记录邮件/钉钉机器人通知反馈 | [PRD](../../01-prd/enterprise-ai-brain/prd.md)、[技术规格](../enterprise-ai-brain/spec.md) 和 [API 文档](../enterprise-ai-brain/api.md) |
-| AI 编排 | LangGraph | [技术规格](../enterprise-ai-brain/spec.md) |
+| AI 编排 | LangGraph 负责任务图和版本协作图，PostgreSQL Checkpointer 负责真实 interrupt/resume；确定性领域服务拥有状态写权限 | [技术规格](../enterprise-ai-brain/spec.md) |
+| 恢复一致性 | 领域表和事件 Inbox 是事实源，领域状态/审计/Outbox 同事务；Checkpoint 独立保存执行游标，节点通过幂等命令恢复 | [技术规格](../enterprise-ai-brain/spec.md) |
 | Agent 自治执行 | AgentLoopRun 管理执行轮次和预算，质量门禁独立于编码 Runner；自动合入必须具备独立证据，高风险变更转人工确认 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 外部副作用 | 业务状态、审计与 Outbox 原子写入，独立 Worker 幂等执行 Runner/Jenkins/Git 写回；Webhook 先进入 Inbox | [技术规格](../enterprise-ai-brain/spec.md) |
 | 数据存储 | PostgreSQL + pgvector + Redis | [技术规格](../enterprise-ai-brain/spec.md) |

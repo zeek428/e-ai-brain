@@ -2,6 +2,93 @@
 
 > API 分册。覆盖需求、AI 任务、人工确认、回写与导出。主入口见 [../api.md](../api.md)。
 
+## v2.0 需求驱动研发协同契约
+
+产品需求是研发协同唯一入口。调用顺序为：创建需求 → 正式评估 → 规划版本归组 → 创建协作运行 → 执行工作项/审核/返工 → 质量门禁与远程 Git 提交 → 按策略停在 `ready_for_release` 或经人工确认进入部署。
+
+### 正式需求评估与版本归组
+
+```http
+POST /api/requirements/{requirement_id}/assessments
+GET /api/requirements/{requirement_id}/assessments/latest
+POST /api/requirement-assessments/{assessment_id}/decisions
+```
+
+创建评估请求可选提供 `strategy_id`；未提供时按产品解析唯一 active 统一研发执行策略。响应包含 `assessment_id/status/requirement_revision/strategy_snapshot_id/completeness/risk/effort/dependencies/acceptance_criteria/version_candidates/recommended_action/deterministic_checks`。LLM 提供结构化建议，服务端校验 Schema、风险下限、权限和版本兼容性。状态统一为 `draft | evaluating | waiting_human | needs_info | rework_required | accepted | deferred | rejected | failed | cancelled`。`accepted` 后需求原子进入 `approved`，服务端按 `iteration_config` 选择兼容 `planning` 版本；若无合适候选，原子创建新规划版本并写入 `selected_version_id/version_created/grouping_reason`，成功后需求进入 `planned`。非 accepted 状态不得进入组版或协作运行。
+
+同一 `requirement_revision + strategy_snapshot_id` 的进行中或成功评估幂等复用；需求发生实质修改后必须创建新评估，旧评估只作历史证据。人工决策请求体包含 `decision=approve|reject|request_more_info`、`comment` 和 `version` 乐观锁。
+
+### 统一研发执行策略
+
+```http
+GET  /api/delivery/rd-task-executor-policies
+POST /api/delivery/rd-task-executor-policies
+GET  /api/delivery/rd-task-executor-policies/{policy_id}
+PATCH /api/delivery/rd-task-executor-policies/{policy_id}
+DELETE /api/delivery/rd-task-executor-policies/{policy_id}
+POST /api/delivery/rd-task-executor-policies/{policy_id}/validate
+```
+
+原入口原位升级，不接受旧版单任务匹配写契约，也不提供任何旧/新双模式字段。策略主体必须包含：
+
+```json
+{
+  "name": "默认产品研发交付策略",
+  "product_id": "product_001",
+  "status": "active",
+  "matching_config": {},
+  "assessment_config": {},
+  "iteration_config": {},
+  "team_config": {},
+  "autonomy_config": {},
+  "quality_gate_config": {},
+  "git_config": {},
+  "deployment_config": {"mode": "disabled"},
+  "delivery_target": "ready_for_release",
+  "role_bindings": [
+    {"role_code": "developer", "actor_mode": "ai", "executor_profile_id": "executor_codex_01"},
+    {"role_code": "tester", "actor_mode": "ai", "executor_profile_id": "executor_test_01"}
+  ]
+}
+```
+
+`delivery_target` 允许 `ready_for_release | deployed`，默认 `ready_for_release`；`deployed` 仍须通过现有发布评估、资源预检和人工确认。保存及激活前整体校验岗位、执行器、预算、门禁、Git 与风险配置。运行时冻结策略快照；策略缺失或无效返回 `RD_EXECUTION_POLICY_REQUIRED/INVALID`，不得走策略外执行路径。
+
+评估后策略复核最多自动单调收紧两轮：只允许降低自动化、收紧风险/权限/工具/仓库/预算、增加门禁或必需岗位、或把 `deployed` 改为 `ready_for_release`。新增必需评估岗位必须补齐兼容意见；不可比较或可能扩大边界返回 `RD_POLICY_HUMAN_DECISION_REQUIRED`，超过两轮返回 `RD_POLICY_RESOLUTION_LIMIT`。
+
+### 研发岗位、执行器与协作运行
+
+```http
+GET/POST/PATCH /api/delivery/rd-roles
+GET/POST/PATCH /api/delivery/rd-executor-profiles
+POST           /api/product-versions/{version_id}/collaboration-runs
+GET            /api/requirements/{requirement_id}/collaboration-run
+GET            /api/delivery/rd-collaboration-runs/{run_id}
+GET            /api/delivery/rd-collaboration-runs/{run_id}/work-items
+POST           /api/delivery/rd-work-items/{work_item_id}/claim
+POST           /api/delivery/rd-work-items/{work_item_id}/submit
+POST           /api/delivery/rd-work-items/{work_item_id}/review
+POST           /api/delivery/decision-requests/{decision_request_id}/decide
+```
+
+`rd-roles` 管理独立于系统 RBAC 的动态研发岗位；协作席位通过 `subject_type=ai_executor|human_user` 绑定 AI 执行器档案或真人账号。P0 真人选择只接受显式 `user_ids`，且调用时仍校验系统权限、产品范围、工作项席位和状态。产品版本是协作聚合根：同一版本最多一个非终态运行。创建运行要求版本为 `planning`、至少包含一条 `planned` 需求、纳入需求最新评估均为 accepted，服务端锁定版本并冻结范围、策略、需求、岗位和执行器快照，然后推进版本为 `active`。需求 GET 端点只定位所属版本运行，不创建第二个运行。
+
+权限点分别为 `delivery.rd_roles.manage`、`delivery.rd_executor_profiles.manage`、`delivery.requirement_assessments.read/decide`、`delivery.rd_collaboration.read/plan/work` 和 `delivery.decision_requests.decide`；策略继续使用 `delivery.rd_executor_policies.manage`，部署继续使用现有部署权限。岗位或席位不会自动授予这些权限。
+
+工作项包含 `owner_seat_id/dependencies/input_contract/output_contract/acceptance_criteria/risk_level/status/ai_task_id/reviewer_seat_id/idempotency_key`。依赖满足后才能进入 `ready`，无依赖项可并行；审核失败保留原 attempt，同范围返工在下一次领取时创建新 attempt，范围/依赖/负责人变化则创建新计划版本和替代工作项。高风险、超权限、冲突、预算超限、门禁失败或部署边界创建 `decision_requests` 并暂停受影响分支。详情响应聚合 DAG、租约、AI 任务/Runner、审核、返工、门禁、Git、预算和角色反馈。
+
+集成工作项通过 Outbox 推送版本开发分支或创建/更新 MR/PR，并保存 repository/provider、工作分支、版本开发分支、目标分支、local/remote commit SHA、MR/PR ID 和状态、Outbox ID、执行身份、时间、对账状态与质量证据。`ready_for_release` 完成判定只验证每个必需仓库已有对账成功的远程证据，不在完成接口内临时执行 push。
+
+### 一次性升级控制
+
+```http
+GET  /api/system/rd-collaboration-upgrade/preflight
+POST /api/system/rd-collaboration-upgrade/maintenance-fence
+POST /api/system/rd-collaboration-upgrade/cutover
+```
+
+仅系统管理员可调用。围栏请求包含 `enabled/reason/version`，启用后研发 approve/reject/direct-generate、AI 任务 start/retry、策略/协作写入和 Runner 新领取返回 `423 RD_UPGRADE_MAINTENANCE`，定时作业运行不受影响。cutover 只有在 preflight 无阻断、备份确认、Schema 109 已应用且围栏启用时执行策略转换、旧 draft 取消和 Schema v2 激活；新应用健康标记成功后才允许执行清理迁移 110。失败保持围栏，不重新开放旧写路径。
+
 ### 需求管理
 
 新增需求：
@@ -32,18 +119,18 @@ POST /api/requirements
 规则：
 
 - 新增后状态为 `submitted`。
-- 需求支持 `draft | submitted | approved | planned | designing | ready_for_dev | developing | code_reviewing | testing | ready_for_release | released | accepted | rejected | deferred | cancelled | closed` 生命周期；历史 `pending_approval` 和 `task_created` 分别兼容为 `submitted` 和 `designing`。
+- 需求支持 `draft | submitted | approved | planned | designing | ready_for_dev | developing | code_reviewing | testing | ready_for_release | deploying | released | accepted | rejected | deferred | cancelled | closed` 生命周期。
 - `source` 表示需求来源，允许 `business_department | product_planning | user_feedback | internal_research | other`，默认 `business_department`；列表支持按 `source` 筛选和排序。
-- `input.product_id` 必填且必须指向启用产品；`input.version_id` 可选，填写时必须指向同产品 `planning` 或 `active` 迭代版本。
-- 审批通过调用 `POST /api/requirements/{requirement_id}/approve`。
-- 审批通过但未选择迭代版本时进入 `approved` 需求池；已选择或后续补充有效迭代版本时进入 `planned`。
-- 批量分配负责人调用 `POST /api/requirements/batch-assign-owner`，批量推进状态调用 `POST /api/requirements/batch-advance-status`，批量排期调用 `POST /api/requirements/batch-schedule`，批量生成任务调用 `POST /api/requirements/batch-generate-tasks`；静态路由必须先于 `/api/requirements/{requirement_id}` 注册，避免被动态详情路由吞掉。
-- 只有 `planned` 需求可以调用 `POST /api/requirements/{requirement_id}/generate-task` 或被批量生成任务接口处理。
+- `input.product_id` 必填且必须指向启用产品；`input.version_id` 可选，填写时只能指向同产品 `planning` 版本并作为评估/组版候选，不能绕过评估直接排期。
+- v2.0 不再通过独立 approve/reject 操作先改变需求状态；正式评估 accepted 后需求进入 `approved`，评估 deferred/rejected 分别推进需求为 `deferred/rejected`。
+- 评估通过后系统优先归入兼容 `planning` 版本，无合适版本才创建新规划版本并进入 `planned`。旧 approve/reject 调用在没有相应评估决策时返回 `REQUIREMENT_ASSESSMENT_REQUIRED`。
+- 批量分配负责人调用 `POST /api/requirements/batch-assign-owner`；批量排期只用于有权限人员调整自动组版结果且目标必须是 `planning`。旧 `batch-advance-status/batch-generate-tasks` 不得绕过协作工作项和门禁推进研发阶段或创建任务。
+- v2.0 只有最新评估为 `accepted` 且已归入 `planning` 版本的需求可以创建协作运行；底层 AI 任务由协作工作项生成，不允许绕过评估直接批量生成研发任务。
 - 生成产品详细设计任务后需求状态进入 `designing`，后续 AI 任务创建和人工确认会继续推进到 `ready_for_dev`、`developing`、`code_reviewing`、`testing`、`ready_for_release`、`released` 或 `accepted`。需求仍保留原始输入和审批结论。
 - 关闭需求后不得再生成新 AI 任务。
 - 删除需求仅允许未生成 AI 任务的记录；已有 `task_ids` 时返回 `409 RESOURCE_IN_USE`，并在错误详情中返回 `related_counts.ai_tasks` 与 `related_total`，供前端展示占用数量和处理建议。
 
-生成任务请求体：
+旧版直接生成任务接口在 v2.0 升级后停用；以下请求体仅用于识别旧客户端并返回 `RD_COLLABORATION_REQUIRED`，调用方应先完成评估和组版，再使用 `POST /api/product-versions/{version_id}/collaboration-runs`：
 
 ```json
 {
@@ -51,11 +138,9 @@ POST /api/requirements
 }
 ```
 
-规则：
+规则：研发协作编排服务根据工作项类型创建 `product_detail_design`、`technical_solution`、`code_review` 等底层 AI 任务；人和外部客户端不得直接选择 `task_type` 绕过正式评估、版本归组、岗位和策略快照。
 
-- `task_type` 可选，默认生成 `product_detail_design` 任务。
-- v1 MVP 的需求审批流默认只通过该接口生成产品详细设计任务；技术方案任务在产品详细设计确认后生成。
-- `code_review` 任务需要已确认技术方案和 GitLab MR / GitHub PR diff 快照，默认通过变更预览/快照流程和低层 `POST /api/ai-tasks` 创建，不由需求审批流一次性自动生成。
+其他旧入口同步适配：Bug `promote-ai-task`、代码巡检整改结果动作和 AI 助手 `create_rd_task` 只幂等创建或关联正式需求并返回 `requirement_id/assessment_url`，不返回可启动 `ai_task_id`。定时作业的定义、调度、锁、重试、AI角色/Skill 快照和运行历史不变；代码巡检结果动作的写入目标改为需求交付适配，不由定时作业引擎创建协作运行。
 
 批量排期请求：
 
@@ -77,7 +162,7 @@ POST /api/requirements/batch-schedule
 规则：
 
 - 仅 `product_owner`、`rd_owner` 或 `admin` 可调用。
-- `product_id` 必须为启用产品，`version_id` 必须属于该产品且状态为 `planning` 或 `active`；需求管理页目标版本下拉应读取产品版本并过滤 `testing`、`released` 和 `archived`。
+- 该接口仅用于有权限人员调整自动归组结果；`product_id` 必须为启用产品，`version_id` 必须属于该产品且状态为 `planning`，并记录调整前后版本、原因和操作者。不得把新需求直接排入已开发或测试版本。
 - `approved` 需求池需求和 `planned` 已排期需求可以批量更新为目标 `version_id`，状态统一为 `planned`。
 - 缺失、重复、跨产品或已进入设计/开发/评审/测试/发布/验收等交付阶段的需求不更新，进入 `skipped` 明细；目标产品或目标版本非法时整个请求返回错误。
 - 成功请求以追加/upsert 方式记录一条 `requirement.batch_scheduled` 审计事件，subject 为 `requirement_batch`；每条实际更新的需求另记录 `requirement.updated`，payload 包含 `batch_id`、来源版本、目标版本和 reason；不得通过覆盖式审计快照保存删除历史批次审计。
@@ -217,7 +302,7 @@ POST /api/requirements/batch-advance-status
 }
 ```
 
-批量生成任务请求：
+旧批量生成任务请求：
 
 ```http
 POST /api/requirements/batch-generate-tasks
@@ -233,39 +318,16 @@ POST /api/requirements/batch-generate-tasks
 }
 ```
 
-规则：
+规则：v2.0 固定返回 `409 RD_COLLABORATION_REQUIRED`，不创建任务、不推进需求状态；响应给出需要先完成评估、组版并启动版本协作的处理入口。历史成功响应仅作为旧审计数据保留，不再属于写契约。
 
-- 仅 `product_owner`、`rd_owner` 或 `admin` 可调用。
-- `product_id` 必须为启用产品；请求内需求必须属于该产品且状态为 `planned`。
-- 每条合法需求生成一个 draft `product_detail_design` AI 任务，需求 `task_ids` 追加新任务 ID，状态进入 `designing`。
-- 缺失、重复、跨产品或非 `planned` 需求不生成任务，进入 `skipped` 明细；合法项继续处理，不因部分跳过回滚整个批次。
-- 成功请求记录一条 `requirement.batch_tasks_generated` 审计事件，subject 为 `requirement_task_batch`；每个生成任务沿用 `ai_task.created` 审计，payload 带 `batch_id`、operation 和 reason。
-
-响应体：
+兼容错误响应：
 
 ```json
 {
   "data": {
-    "batch_id": "requirement_task_batch_001",
-    "product_id": "product_001",
-    "reason": "批量进入产品详细设计",
-    "generated_count": 2,
-    "skipped_count": 1,
-    "generated": [
-      {
-        "requirement_id": "requirement_001",
-        "task_id": "task_001",
-        "task_status": "draft",
-        "task_type": "product_detail_design"
-      }
-    ],
-    "skipped": [
-      {
-        "id": "requirement_003",
-        "code": "REQUIREMENT_STATE_INVALID",
-        "message": "Only planned requirements can generate tasks"
-      }
-    ]
+    "code": "RD_COLLABORATION_REQUIRED",
+    "message": "Complete assessment and start the product-version collaboration run",
+    "next_action": "open_requirement_assessment"
   },
   "trace_id": "trace_xxx"
 }
@@ -298,7 +360,7 @@ POST /api/requirements/batch-generate-tasks
 | `automated_testing` | 自动化测试。 |
 | `release_readiness` | 发布上线评估。 |
 | `post_release_analysis` | 上线后分析。 |
-| `bug_fix` | Bug 修复自动化任务，由 Bug 管理 `promote-ai-task` 接口创建并可直接进入研发执行器策略。 |
+| `bug_fix` | 历史 Bug 修复任务类型，只读兼容；v2.0 Bug 先创建或关联正式需求，实际修复 AI 任务由协作工作项创建。 |
 
 创建任务：
 
@@ -374,7 +436,7 @@ POST /api/ai-tasks
 规则：
 
 - `title` 必填。
-- `requirement_id` 必填，后端从需求解析产品、版本、模块、Git 资源和相关系统上下文并写入任务快照。
+- `requirement_id`、`collaboration_run_id` 和 `work_item_id` 必填；该低层接口只允许协作编排服务身份调用，后端从冻结工作项和策略快照解析产品、版本、岗位执行器、Git 资源和上下文。
 - 需求必须已进入交付状态：`planned`、`designing`、`ready_for_dev`、`developing`、`code_reviewing`、`testing`、`ready_for_release` 或 `released`；创建成功后追加任务到 `task_ids`，并按任务类型推进需求状态。`closed`、`submitted`、`approved`、`rejected` 等状态返回 `409 REQUIREMENT_STATE_INVALID`。
 - `task_type = technical_solution` 时，`input.product_detail_design_task_id` 必须指向同一需求、同一产品版本下已完成的 `product_detail_design` 任务。
 - `task_type = development_planning`、`automated_testing` 或 `release_readiness` 时，`input.technical_solution_task_id` 必须指向同一需求、同一产品版本下已完成的 `technical_solution` 任务；否则返回 `TECHNICAL_SOLUTION_NOT_CONFIRMED` 或上下文不匹配错误。`release_readiness` 创建时会把源技术方案输出、同产品/版本/需求 Bug、Jenkins 发布记录、线上日志指标和 GitLab 每日代码指标写入 `input_json` 快照；无记录时保存真实空数组。
@@ -384,7 +446,7 @@ POST /api/ai-tasks
 - code_review 任务只归档 AI Brain 内部 Review 报告，不向 GitLab/GitHub 回写评论、审批状态、request changes、合并状态或分支变更。
 - `automated_testing` 任务进入人工确认前不会登记 Bug；人工确认 `approve` 或 `edit-approve` 后，输出中的 `bug_suggestions` 才会生成 `source=ai_auto_test` 的 Bug 记录。
 - `post_release_analysis` 任务进入人工确认前不会登记 Bug；人工确认 `approve` 或 `edit-approve` 后，输出中的 `bug_suggestions` 才会生成 `source=ai_post_release` 的 Bug 记录，并记录 `bug.created` 与 `post_release_analysis.bugs_created` 审计事件。
-- 前端默认通过已排期需求的 `generate-task` 创建产品详细设计任务，后续阶段才直接调用该低层接口。
+- 前端不直接调用该低层接口；产品详细设计和后续任务均由版本协作工作项创建。
 
 响应：
 
@@ -417,17 +479,17 @@ POST /api/ai-tasks/{task_id}/start
 
 ```json
 {
-  "execution_mode": "model_gateway | deterministic",
-  "reason": "本次全链路回归使用确定性输出，避免外部模型网关波动"
+  "collaboration_run_id": "rd_run_001",
+  "work_item_id": "rd_work_item_001",
+  "reason": "协作编排服务派发就绪工作项"
 }
 ```
 
-当前实现会先匹配 active 研发执行器策略。若命中 `rd_task_executor_policies`，任务不会装配定时作业 Agent/Skill，也不会走模型网关，而是先冻结 `execution_context_manifest`，再创建关联编码 `ai_executor_tasks(ai_task_id=<task_id>)`，把任务置为 `running/current_step=waiting_ai_executor`，并返回 `executor_policy_id/executor_task_id/runner_id`。上下文清单包含需求/Bug、产品、仓库、分支、版本化知识引用、召回原因、验收标准、权限和截断摘要；不包含 Git、插件或模型密钥。
+v2.0 中该端点是协作编排服务的底层执行入口。任务必须绑定协作运行和工作项，并使用运行冻结的策略、岗位席位与执行器快照；服务端校验工作项为 `ready`、依赖已满足、席位和执行器可用、预算未耗尽后，创建关联 `ai_executor_tasks(ai_task_id=<task_id>)` 或策略声明的模型执行，任务进入 `running/current_step=waiting_ai_executor`。上下文清单包含需求评估、需求/版本、工作项输入输出契约、仓库/分支、知识版本、验收标准、权限和截断摘要，不包含 Git、插件或模型密钥。
 
 编码 Runner 成功只会推进到 `quality_gate_running`，平台另建 verifier Runner 任务执行服务端受控的测试、类型检查、lint、凭据/依赖/静态扫描、CI 和变更范围检查。`code_change_review_mode=manual_review` 在门禁结束后进入 `waiting_review`；`auto_commit` 也只有在门禁通过、至少一份独立证据、风险不高于阈值且未命中迁移/受保护路径时才自动创建已通过 Review 并请求 Runner `merge`。其余情况降级为人工确认。`autonomy_mode=autonomous_loop` 会在门禁失败且仍可重试、轮次/时长/Token/费用预算充足时，携带失败证据创建下一轮；预算耗尽、安全阻断或人工接管停止继续派发。失败、取消、超时、拒绝或不可恢复门禁失败会按隔离工作区语义 `discard`。
 
-未命中研发执行器策略时，当前实现会同步运行到下一个人工确认点或失败状态。`draft` 任务可启动；已失败且 `current_step` 为 `model_gateway_failed`、`code_review_executor_failed` 或 `executor_failed` 的任务可用同一 `task_id` 再次调用 start 重试，并记录 `ai_task.retry_started` 审计事件。非 code_review 任务若存在 active/default 的 OpenAI-compatible 模型网关配置且已配置 API Key，启动时调用 `{base_url}/chat/completions` 并要求 `response_format={"type":"json_object"}`；若没有结构化默认配置但设置了 `MODEL_GATEWAY_BASE_URL` 和 `MODEL_GATEWAY_API_KEY`，则使用环境模型网关。缺少可用模型网关或 active/default 配置缺失 API Key 返回 `MODEL_GATEWAY_CONFIG_INVALID`；provider 调用、响应解析或网络失败返回 `MODEL_GATEWAY_FAILED`。code_review 任务通过 `code_review_executor` 执行：默认 `claude_code_skill/code-review` 命令适配器由 `CODE_REVIEW_EXECUTOR_COMMAND` 配置，输入 JSON 通过 stdin 提供，输出必须是包含 `summary`、`risk_level` 和 `findings` 的 JSON 对象；显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 时复用模型网关适配器。执行器配置缺失、调用失败、超时、响应解析或结构化报告校验失败返回 `CODE_REVIEW_EXECUTOR_FAILED`。任务启动不得生成本地 fallback 输出。
-`execution_mode` 为空或 `model_gateway` 时保持上述生产默认路径；显式 `deterministic` 仅允许管理员用于本地/验收回归，会跳过研发执行器策略匹配和模型网关，必须写入 `ai_task.deterministic_execution_used` 审计事件并记录 `reason`，不会创建模型调用日志，也不会作为模型网关失败时的自动兜底。
+策略、岗位绑定、执行器档案、权限或协作上下文缺失时返回 `RD_EXECUTION_POLICY_REQUIRED`、`RD_ROLE_ASSIGNMENT_REQUIRED`、`RD_EXECUTOR_UNAVAILABLE` 或 `RD_WORK_ITEM_NOT_READY`，并保持工作项阻断；不再回退到策略外模型网关、code-review executor 或确定性本地输出。测试环境需要确定性执行时必须通过测试专用依赖注入替换执行器，不对生产 API 暴露绕过统一策略的 `execution_mode`。
 典型响应：
 启动权限按任务类型收敛：`product_detail_design` 和 `technical_solution` 仅允许 `product_owner`/`rd_owner`，`code_review` 仅允许 `reviewer`/`rd_owner`；`admin` 可执行全部本地管理操作。
 
@@ -442,7 +504,7 @@ POST /api/ai-tasks/{task_id}/start
 }
 ```
 
-命中研发执行器策略时，典型响应为：
+统一研发执行策略成功派发时，典型响应为：
 
 ```json
 {
