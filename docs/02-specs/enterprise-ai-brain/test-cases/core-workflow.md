@@ -4,34 +4,36 @@
 
 ## 详细测试用例
 
-### TC-AIBRAIN-TASK-FUNC-001: 创建并启动产品详细设计 AI 任务
+### TC-AIBRAIN-TASK-FUNC-001: 协作工作项内部创建并派发产品详细设计 AI 任务
 
 | 项目 | 内容 |
 |------|------|
 | 用例编号 | TC-AIBRAIN-TASK-FUNC-001 |
-| 用例名称 | 创建并启动产品详细设计 AI 任务 |
+| 用例名称 | 协作工作项内部创建并派发产品详细设计 AI 任务 |
 | 优先级 | P0 |
 | 模块 | TASK |
 | 创建人 | Claude |
 | 创建日期 | 2026-05-27 |
 
 **前置条件**:
-1. 用户已通过本地账号登录并持有 Bearer Token。
-2. 系统存在启用状态的 `rd_brain`。
-3. 系统存在启用产品、`planning` 或 `active` 迭代版本和状态为 `planned` 的已排期需求。
+1. 用户已通过本地账号登录并持有 Bearer Token，系统同时具备协作编排服务身份。
+2. 系统存在启用状态的 `rd_brain`、统一研发执行策略、AI 数字员工和执行器档案。
+3. 系统存在已完成正式评估和组版的需求、`active` 迭代版本、协作运行及状态为 `ready` 的产品详细设计工作项。
 
 **测试步骤**:
 | 步骤 | 操作 | 预期结果 |
 |------|------|----------|
-| 1 | POST `/api/ai-tasks` 创建任务 | 返回 `data.id`，状态为 `draft`。 |
-| 2 | POST `/api/ai-tasks/{id}/start` | 返回 `review_id`，任务进入 `waiting_review`，或模型失败时进入 `failed` 并记录错误码。 |
-| 3 | 对 `current_step=model_gateway_failed` 的失败任务再次 POST `/api/ai-tasks/{id}/start` | 使用同一 task_id 重试模型调用；成功时进入 `waiting_review`，审计包含 `ai_task.retry_started`。 |
-| 4 | GET `/api/ai-tasks/{id}` | 返回任务详情、当前状态和 trace_id。 |
+| 1 | 真人分别 POST `/api/ai-tasks` 和 `/api/ai-tasks/{id}/start` | 均返回 `409 RD_COLLABORATION_REQUIRED`，不创建、不启动、不推进需求。 |
+| 2 | 协作编排器调用内部 `create_ai_task_for_work_item` | 创建唯一 AI 任务并关联 `collaboration_run_id/work_item_id`，冻结岗位、`ai_employee_id`、`executor_profile_id` 和策略快照。 |
+| 3 | 协作编排器调用内部 `dispatch_ai_task_for_work_item` | 工作项从 ready 进入 running，任务进入运行；成功时进入独立质量门禁/待审核，失败时记录错误和可恢复状态。 |
+| 4 | 重复创建、派发或 Runner 完成事件并查询详情 | 幂等返回同一任务/结果，任务详情返回协作、工作项、员工、执行器、当前状态和 trace_id。 |
 
 **测试数据**:
 ```json
 {
   "brain_app_code": "rd_brain",
+  "collaboration_run_id": "rd_run_001",
+  "work_item_id": "rd_work_item_design_001",
   "task_type": "product_detail_design",
   "title": "支持 Markdown 知识导入",
   "input": {
@@ -46,10 +48,10 @@
 
 **预期结果**:
 1. API 响应使用 `{data, trace_id}` envelope。
-2. 创建和启动操作均写入审计事件。
-3. 任务详情返回 `task_type = product_detail_design`。
+2. 内部创建和派发操作均写入审计事件；外部拒绝写入安全审计但无业务副作用。
+3. 任务详情返回 `task_type = product_detail_design`、协作/工作项引用以及独立员工和执行器归因。
 
-**状态**: 已自动化覆盖。后端证据见 `apps/api/tests/test_api_contract_completion.py::test_brain_apps_and_task_list_contracts_are_available`、`apps/api/tests/test_requirement_lifecycle.py`、`apps/api/tests/test_graph_runtime.py::test_ai_task_graph_is_compiled_by_langgraph`、`apps/api/tests/test_graph_runtime.py::test_starting_task_creates_graph_run_checkpoint_and_task_detail_projection`；模型网关失败和同任务重试路径见 `apps/api/tests/test_model_gateway.py`。DB-first 迁移期的任务生成、后续任务创建、启动成功、启动配置失败、启动调用失败和 retry 失败 no-persist 回归见 `apps/api/tests/test_database_persistence.py::test_generate_task_writes_requirement_and_ai_task_without_request_persist`、`apps/api/tests/test_database_persistence.py::test_create_followup_task_writes_requirement_and_ai_task_without_request_persist`、`apps/api/tests/test_database_persistence.py::test_start_task_writes_review_graph_and_checkpoint_without_request_persist`、`apps/api/tests/test_database_persistence.py::test_start_task_config_failure_writes_failed_state_without_request_persist` 和 `apps/api/tests/test_database_persistence.py::test_start_task_call_failure_and_retry_write_failed_logs_without_request_persist`。
+**状态**: v2.0 待由 `test_rd_requirement_entry_adapters.py` 和 `test_rd_work_item_execution.py` 自动化；现有直接创建/启动测试在一次性切换时重写为兼容拒绝与内部服务测试。
 
 ---
 
@@ -65,7 +67,7 @@
 | 创建日期 | 2026-05-27 |
 
 **前置条件**:
-1. AI 任务已启动。
+1. AI 任务已由协作工作项内部派发。
 2. 测试模型或夹具可让 `is_information_enough` 返回不足。
 
 **测试步骤**:
@@ -74,7 +76,7 @@
 | 1 | 等待任务运行到信息评估节点 | 任务状态变为 `waiting_more_info`。 |
 | 2 | GET 任务详情 | 返回 clarifying questions。 |
 | 3 | POST `/api/ai-tasks/{id}/more-info` | 任务回到 `draft`，补充信息写入 input。 |
-| 4 | POST `/api/ai-tasks/{id}/start` | 任务继续运行到下一确认点或完成。 |
+| 4 | 协作编排器消费补充事件并按原 thread 恢复 | 任务按平台冻结的恢复目标继续运行到下一确认点或完成；真人调用 `/start` 仍被拒绝。 |
 | 5 | 在任务管理待确认弹窗点击“要求补充”，再在任务操作弹窗提交补充说明 | 页面分别调用真实 `/api/reviews/{id}/request-more-info` 和 `/api/ai-tasks/{id}/more-info`，任务状态从 `waiting_more_info` 回到 `draft`。 |
 
 **测试数据**:
@@ -91,7 +93,7 @@
 
 **预期结果**:
 1. 中断前后 Graph State 不丢失。
-2. 补充信息作为审计事件记录。
+2. 补充信息作为审计事件记录，由协作编排器继续原任务，不创建新任务或开放真人直接启动。
 
 **状态**: 已自动化覆盖。后端状态流转见 `apps/api/tests/test_review_actions.py::test_reject_and_request_more_info_move_task_to_documented_states`，前端任务弹窗补充信息链路见 `apps/web/tests/App.test.tsx::requests and submits more information from task management dialogs`。Review reject/request-more-info 主路径 DB-first no-persist 回归见 `apps/api/tests/test_database_persistence.py::test_reject_and_more_info_reviews_write_decisions_without_request_persist`；cancel/submit-more-info 任务状态 DB-first no-persist 回归见 `apps/api/tests/test_database_persistence.py::test_cancel_and_submit_more_info_write_task_state_without_request_persist`。
 
@@ -226,24 +228,24 @@
 | 创建日期 | 2026-05-29 |
 
 **前置条件**:
-1. 用户已登录并具备创建需求、启动 AI 任务和处理人工确认的权限。
-2. 系统已完成一次从需求审批到 AI 任务人工确认的最小闭环。
+1. 用户已登录并具备创建需求、参与正式评估、处理协作工作项或人工确认的权限。
+2. 系统已完成一次从需求评估、版本归组、协作工作项到人工确认的最小闭环。
 
 **测试步骤**:
 | 步骤 | 操作 | 预期结果 |
 |------|------|----------|
-| 1 | 创建需求并提交审批 | 写入 `requirement.created` 或等价审计事件。 |
-| 2 | 审批需求并生成 AI 任务 | 写入 `requirement.approved` 和 `ai_task.created` 审计事件。 |
-| 3 | 启动 AI 任务并进入人工确认 | 写入 `ai_task.started` 和 `review.created` 审计事件。 |
+| 1 | 创建需求并发起正式评估 | 写入 `requirement.created` 和 `requirement_assessment.created` 或等价审计事件。 |
+| 2 | 提交评估意见与 accepted 决策并完成版本归组 | 写入评估意见、`requirement_assessment.decided` 和版本 assignment 审计；需求依次达到 `approved/planned`。 |
+| 3 | 创建协作运行，调度器领取工作项并通过内部服务创建/派发 AI 任务 | 写入协作运行、工作项 attempt、`ai_task.created/started` 和 `review.created` 审计；公开 create/start 返回 `RD_COLLABORATION_REQUIRED`。 |
 | 4 | approve 人工确认 | 写入 `review.submitted` 审计事件，包含 review_id、task_id 和 actor_id。 |
 | 5 | GET `/api/audit/events?ai_task_id={task_id}` | 返回上述任务相关审计事件，按 created_at 倒序或稳定排序返回。 |
 
 **预期结果**:
-1. 创建、审批、启动、人工确认等写操作均可追踪。
+1. 创建、评估、归组、协作派发、人工确认等写操作均可追踪。
 2. 审计事件包含主体类型、主体 ID、操作者、事件类型和发生时间。
 3. API 响应包含 `trace_id`，但审计表不要求持久化完整 `trace_id`。
 
-**状态**: 已自动化覆盖。任务闭环审计见 `apps/api/tests/test_database_persistence.py::test_start_task_writes_review_graph_and_checkpoint_without_request_persist` 和 `apps/api/tests/test_database_persistence.py::test_approve_review_writes_completion_records_without_request_persist`，主体/操作者/时间过滤见 `apps/api/tests/test_security_boundaries.py::test_audit_events_filter_by_actor_and_time_range`，持久化写入见 `apps/api/tests/test_database_persistence.py`。
+**状态**: v1 审计持久化已覆盖；v2.0 评估、归组、协作运行、工作项 attempt 和内部任务派发审计待按实施计划重写。现有主体/操作者/时间过滤与 DB-first 写入回归继续保留。
 
 ---
 

@@ -243,16 +243,15 @@ PATCH /api/bugs/{bug_id}
 
 `status`、`severity`、`assignee` 至少提供一个；`status` 仍逐条校验 Bug 状态机，非法状态流转、重复 ID 或不存在的 Bug 不阻塞其他合法记录，而是进入 `skipped` 明细。成功更新的 Bug 写入逐条 `bug.updated` 审计，批次写入 `bug.batch_updated` 审计，响应返回 `batch_id`、`updated_count`、`skipped_count`、`updated` 和 `skipped`。
 
-推进 AI 任务请求体：
+创建或关联整改需求请求体：
 
 ```json
 {
-  "auto_start": true,
   "title": "Bug 修复：知识检索权限过滤异常"
 }
 ```
 
-`POST /api/bugs/{bug_id}/promote-ai-task` 要求 Bug 写权限。接口会基于 Bug 的产品、版本、模块、复现步骤、证据和可选需求上下文创建 `task_type=bug_fix` 的 AI Task，并把 Bug 快照写入 `input_json.bug`；同时在 Bug 的 `evidence.ai_task_automation` 中记录 `latest_task_id` 和历史 `task_ids`。`auto_start=true` 时，创建后立即复用 `POST /api/ai-tasks/{task_id}/start` 的现有执行链路；若存在 active 的 `bug_fix` 研发执行器策略，则任务进入 `running/current_step=waiting_ai_executor` 并创建 `ai_executor_task` 交由 Runner 认领。重复 Bug、已关闭 Bug 或已有未结束自动化任务的 Bug 返回 `409 BUG_STATE_INVALID` 或 `409 BUG_AI_TASK_IN_PROGRESS`。接口写入 `ai_task.created` 与 `bug.ai_task_promoted` 审计事件。
+v2.0 激活后，兼容入口 `POST /api/bugs/{bug_id}/promote-ai-task` 要求 Bug 写权限，但不再直接创建或启动 AI Task。接口按 Bug、产品和开放状态幂等创建或关联正式整改需求，把 Bug 的产品、版本、模块、复现步骤和证据写入需求来源上下文，并返回 `requirement_id`、`created` 和正式评估入口；相同 Bug 已有关联的开放需求时复用原需求。重复归并 Bug、已关闭 Bug 或产品范围不匹配返回 `409 BUG_STATE_INVALID` 或范围错误。接口写入 `bug.requirement_promoted` 审计；后续统一走需求评估、版本归组和协作运行，任何 `auto_start` 语义均不再接受，公开 AI-task create/start 仍返回 `RD_COLLABORATION_REQUIRED`。
 
 登记请求体：
 

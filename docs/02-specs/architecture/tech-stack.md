@@ -18,7 +18,7 @@
 | 数据库 | PostgreSQL + pgvector | 待锁定 | 同时承载结构化数据和 v1 向量检索。 |
 | 缓存/队列 | Redis | 待锁定 | 支持临时状态、短期缓存和后续队列化。 |
 | 事务消息 | PostgreSQL Outbox / Inbox | 内置 | 业务状态、审计与外部派发意图原子提交；Webhook 幂等接收后由独立 Worker 投影。 |
-| 研发协作调度 | PostgreSQL DAG + lease/幂等键 | 内置 | 工作项、依赖、席位、审核返工、决策和预算均为持久业务状态；多 Worker 通过数据库租约安全并行。 |
+| 研发协作调度 | PostgreSQL DAG + lease/幂等键 | 内置 | 工作项、依赖、岗位、真人/AI 数字员工席位、员工与执行器快照、审核返工、阻塞恢复、决策和预算均为持久业务状态；多 Worker 通过数据库租约安全并行。 |
 | 对象存储 | MinIO / S3-compatible | 待锁定 | 保存知识原始文件、OCR/版面/表格解析产物和受保护预览资产。 |
 | 容器化 | Docker Compose | Compose v2 | 满足本地开发和 v1 演示部署。 |
 | GitLab API | 内部 GitLab MR 元信息和 diff 快照 | v1 MVP 用于代码 Review 输入；只读授权 MR，不回写评论或审批状态。 |

@@ -18,7 +18,7 @@
 | 用例编号 | 异常类型 | 触发条件 | 预期结果 |
 |----------|----------|----------|----------|
 | TC-AIBRAIN-AUTH-ERR-001 | 未授权 | 无 Bearer Token 调用写接口 | 返回 `UNAUTHORIZED`。 |
-| TC-AIBRAIN-TASK-ERR-002 | 非法状态 | completed 任务再次 start | 返回 `TASK_STATE_INVALID`。 |
+| TC-AIBRAIN-TASK-ERR-002 | 绕过研发协作 | 人工或公开调用方直接创建、启动或批量重试研发 AI 任务 | 返回 `RD_COLLABORATION_REQUIRED`，不创建执行实例、不改变任务或工作项状态，并记录被拒绝的绕过尝试。 |
 | TC-AIBRAIN-REVIEW-ERR-003 | 版本冲突 | 使用过期 version 确认 | 返回 `REVIEW_VERSION_CONFLICT`。 |
 | TC-AIBRAIN-GRAPH-ERR-004 | 模型失败 | 模型网关返回错误 | 任务进入 failed 或可重试状态，记录审计。 |
 | TC-AIBRAIN-KNOWLEDGE-ERR-005 | embedding 维度不匹配 | embedding 写入 pgvector 失败 | 文档保持 `text_indexed`，记录 `vector_index_error`，关键词检索仍返回带来源结果。 |
@@ -30,11 +30,11 @@
 
 | 用例编号 | 接口 | 场景 | 预期结果 |
 |----------|------|------|----------|
-| TC-AIBRAIN-TASK-API-001 | POST /api/ai-tasks | 正常创建 `product_detail_design` 任务 | 201/200，返回 task id 和 task_type；端点由 `app.api.routers.tasks` 单一路由注册。 |
+| TC-AIBRAIN-TASK-API-001 | POST /api/ai-tasks | 人工或公开调用方直接创建研发任务 | 返回 409 `RD_COLLABORATION_REQUIRED`；研发任务只能由协作运行针对已就绪工作项调用内部服务 `create_ai_task_for_work_item` 创建；不产生成功创建审计。 |
 | TC-AIBRAIN-TASK-API-002 | GET /api/ai-tasks/{id} | 查询无权限任务 | 403 或 404；端点由 `app.api.routers.tasks` 单一路由注册。 |
-| TC-AIBRAIN-TASK-API-019 | POST /api/ai-tasks | 创建七类研发全链路 task_type | 均返回对应 task_type，非法类型返回 `VALIDATION_ERROR`；端点由 `app.api.routers.tasks` 单一路由注册。 |
+| TC-AIBRAIN-TASK-API-019 | POST /api/ai-tasks | 尝试直接创建任一研发全链路 task_type | 所有研发任务类型统一返回 409 `RD_COLLABORATION_REQUIRED`；任务类型由工作项模板和冻结策略确定，公开接口不得覆盖。 |
 | TC-AIBRAIN-TASK-API-020C | POST /api/ai-tasks/batch-cancel | 批量取消任务 | 合法未完成任务进入 `cancelled`；终态、重复和不存在任务返回 skipped；写入 `ai_task.batch_cancelled` 和逐任务 `ai_task.cancelled` 审计；端点由 `app.api.routers.tasks` 单一路由注册。 |
-| TC-AIBRAIN-TASK-API-020D | POST /api/ai-tasks/batch-retry | 批量重试任务 | 可重试失败任务复用 `/start` 进入 `waiting_review`；终态、重复和不存在任务返回 skipped；写入 `ai_task.batch_retried` 和逐任务 `ai_task.retry_started` 审计；端点由 `app.api.routers.tasks` 单一路由注册。 |
+| TC-AIBRAIN-TASK-API-020D | POST /api/ai-tasks/batch-retry | 人工批量重试研发任务 | 返回 409 `RD_COLLABORATION_REQUIRED`；失败恢复由工作项调度器按 attempt、幂等键和策略重试上限执行，人工只能处理对应 decision request 或重置工作项。 |
 | TC-AIBRAIN-REVIEW-API-003 | POST /api/reviews/{id}/edit-approve | 修改后采纳 | 保存 edited_content 并恢复 graph；端点由 `app.api.routers.tasks` 单一路由注册。 |
 | TC-AIBRAIN-KNOWLEDGE-API-004 | POST /api/knowledge/search | 正常检索 | 返回 items，包含 title、snippet、source。 |
 | TC-AIBRAIN-OUTPUT-API-005 | GET /api/export/tasks/{task_id}/markdown | MVP-A 导出方案 | 返回 `text/markdown`，并通过 Header 或日志关联 trace_id。 |
@@ -42,10 +42,10 @@
 | TC-AIBRAIN-AUDIT-API-013 | GET /api/audit/events?subject_type={type}&subject_id={id} | 按主体查询 | 返回指定主体的审计事件；支持服务端筛选、排序、分页和非法排序字段校验。 |
 | TC-AIBRAIN-CONFIG-API-008D | POST /api/product-versions/{version_id}/advance-status | 版本状态推进 | 支持 preview_only 影响预览；确认推进后按版本阶段同步需求状态；阻塞项返回稳定错误码；普通 PATCH 改状态返回 `PRODUCT_VERSION_STATUS_ADVANCE_REQUIRED`。 |
 | TC-AIBRAIN-CONFIG-FUNC-008E | GET/POST/PATCH/DELETE /api/product-versions/{version_id}/branch-configs | 迭代版本代码分支配置 | 同一版本可维护多个代码库分支；同一版本同一仓库只允许一条配置；仓库必须属于同产品；分支配置写入 `product_version_branch_configs` 并记录审计。 |
-| TC-AIBRAIN-REQ-API-011E | POST /api/requirements/batch-schedule | 多需求批量排期 | 同产品 `approved/planned` 需求更新为目标迭代版本并进入 `planned`；不合规需求返回 skipped；写入 `requirement.batch_scheduled` 和逐需求 `requirement.updated` 审计。 |
-| TC-AIBRAIN-REQ-API-011F | POST /api/requirements/batch-generate-tasks | 多需求批量生成任务 | 同产品 `planned` 需求各生成 draft 产品详细设计任务并进入 `designing`；不合规需求返回 skipped；写入 `requirement.batch_tasks_generated` 和逐任务 `ai_task.created` 审计；需求批量任务端点由 `app.api.routers.requirements` 单一路由注册。 |
+| TC-AIBRAIN-REQ-API-011E | POST /api/requirements/batch-schedule | 人工批量调整规划版本归组 | 仅已接受评估、目标为 `planning` 且产品、容量、仓库、交付终点和依赖硬条件全部兼容的需求进入 `planned`；不兼容项 skipped，高风险或候选争议项保持原状态并创建 decision request；写入归组决策与逐需求审计。 |
+| TC-AIBRAIN-REQ-API-011F | POST /api/requirements/batch-generate-tasks | 尝试绕过协作运行批量生成任务 | 返回 409 `RD_COLLABORATION_REQUIRED`；不创建任务、不推进需求状态、不写成功审计，页面不提供该操作入口。 |
 | TC-AIBRAIN-REQ-API-011G | POST /api/requirements/batch-assign-owner | 多需求批量分配负责人 | 非关闭/非取消需求更新 `assignee` 且状态不变化；关闭、取消、重复和不存在需求返回 skipped；写入 `requirement.batch_owner_assigned` 和逐条 `requirement.updated` 审计；端点由 `app.api.routers.requirements` 单一路由注册。 |
-| TC-AIBRAIN-REQ-API-011H | POST /api/requirements/batch-advance-status | 多需求批量推进状态 | 合法且已归属迭代的需求按研发流程前进路径更新状态；未排期、不符合路径、重复和不存在需求返回 skipped；写入 `requirement.batch_status_advanced` 和逐条 `requirement.updated` 审计；端点由 `app.api.routers.requirements` 单一路由注册。 |
+| TC-AIBRAIN-REQ-API-011H | POST /api/requirements/batch-advance-status | 尝试批量推进研发交付状态 | 任何交付目标状态均返回 409 `RD_COLLABORATION_REQUIRED`；仅既无活动协作运行、也不存在非终态工作项的需求可按安全规则批量 `cancelled/closed`，且不得写入 `requirement.batch_status_advanced` 成功审计。 |
 | TC-AIBRAIN-DEVOPS-API-014 | GET/POST /api/devops/gitlab/daily-code-metrics | 登记和查询 GitLab 每日指标 | 仅产品负责人、研发负责人或管理员可登记；产品和 GitLab 仓库归属校验通过后写入 `gitlab_daily_code_metrics` 并记录审计；GET 按产品、仓库和日期返回真实记录，无数据时返回空集合。 |
 | TC-AIBRAIN-DEVOPS-API-023 | GET/POST/PATCH /api/collectors/runs | 查询、登记和更新采集运行记录 | GET 返回真实运行台账；POST/PATCH 仅产品负责人、研发负责人或管理员可写，写入 `collector_runs` 并记录 `collector_run.created/updated`；failed 必须有错误说明，终态不可回退。 |
 | TC-AIBRAIN-OPS-API-015 | GET/POST /api/ops/online-log-metrics | 登记和查询线上运行日志指标 | 仅产品负责人、研发负责人或管理员可登记；产品和模块归属校验通过后写入 `online_log_metrics` 并记录审计；GET 按产品、模块、环境和时间窗口返回真实记录，无数据时返回空集合。 |

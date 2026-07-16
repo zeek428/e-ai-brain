@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.565 |
+| 功能版本 | v2.0.0 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -24,7 +24,7 @@
 | [api/product-config.md](api/product-config.md) | 产品、迭代版本、模块、Git 仓库、相关系统归属、版本分支、版本驾驶舱 |
 | [api/platform-settings-and-model-gateway.md](api/platform-settings-and-model-gateway.md) | 相关系统、模型网关配置、连接测试、模型调用日志 |
 | [api/assistant-workbench.md](api/assistant-workbench.md) | AI 助手聊天、引用候选、动作草案、草案模板、助手效果指标、会话历史 |
-| [api/delivery-and-tasks.md](api/delivery-and-tasks.md) | 需求管理、AI 任务、人工确认、回写与导出 |
+| [api/delivery-and-tasks.md](api/delivery-and-tasks.md) | 正式需求评估、版本归组、统一研发执行策略、AI/真人协作、工作项、AI 任务、人工确认、回写与导出 |
 | [api/review-and-knowledge.md](api/review-and-knowledge.md) | GitLab/GitHub 代码 Review、知识中心 |
 | [api/quality-operations-and-insights.md](api/quality-operations-and-insights.md) | 质量、运营、洞察和诊断分册组索引 |
 | [api/devops-quality-and-code-inspection.md](api/devops-quality-and-code-inspection.md) | 研发运营数据、运维部署、定时作业、GitLab/Jenkins/线上日志指标、代码巡检、质量治理 |

@@ -5,15 +5,18 @@
 ## 职责边界
 
 - 产品资产提供产品、模块、Git 仓库、关联系统和迭代版本上下文。
-- 需求交付负责需求创建、审批、排期、版本归集、状态推进、批量生成任务和需求全链路查看。
-- 研发任务负责从需求生成 AI 任务、启动执行、人工确认、补充信息、Mock Issue 写回、知识沉淀和代码评审报告归档。
-- 运维部署由运营治理页面发起和执行，需求交付负责消费部署结果：测试完成/待发布需求启动部署后进入部署中，成功后进入已发布，失败或回滚后回到待发布并关联 Bug。
+- 需求交付负责需求创建、正式评估、规划版本归组、协作运行、DAG 工作项、审核返工、超权限决策和需求全链路查看；产品需求是唯一研发入口。
+- 研发任务是协作工作项的内部执行记录，只能由编排器创建、派发和恢复；人工确认、补充信息、Mock Issue 写回、知识沉淀和代码评审报告均回挂工作项与协作运行。
+- 运维部署由运营治理页面发起和执行。默认策略在远程提交、开发测试和质量门禁完成后让产品版本保持 `ready_for_release`、协作运行以 `completion_reason=ready_for_release` 完成；只有策略目标为 deployed 且人工门禁通过时才进入现有部署域。
 - 迭代版本状态推进由 `app.services.version_status` 承载，需求状态同步和阻塞规则必须在 domain service 内维护。
 
 ## 关键数据
 
 - `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`
-- `requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`
+- `requirements`、`requirement_assessments`、`requirement_assessment_opinions`、`requirement_iteration_assignments`
+- `rd_collaboration_runs`、`rd_run_seats`、`rd_role_sessions`、`rd_work_items`、`rd_work_item_dependencies`、`rd_work_item_attempts`、`rd_collaboration_events`
+- `rd_role_definitions`、`rd_ai_employees`、`rd_executor_profiles`、`rd_task_executor_policy_role_bindings`、`decision_requests`、`role_feedback_records`
+- `ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`
 - `gitlab_mr_snapshots`、`code_review_reports`、`mock_issues`、`knowledge_deposits`
 - `deployment_requests`、`deployment_request_requirements`、`deployment_runs`
 - `product_version_branch_configs` 维护迭代版本关联代码分支。
@@ -33,20 +36,21 @@
 - 需求管理：`/delivery/requirements`
 - 迭代版本：`/delivery/versions`
 - 研发任务：`/delivery/rd-tasks`
+- 研发协同工作台：`/delivery/collaboration`
 - 需求全链路：`/delivery/requirements/:requirementId/full-chain`
 - 统一需求全链路工作台：`/delivery/full-chain?subject_type=<type>&subject_id=<id>`
 - 核心接口见 [../api/delivery-and-tasks.md](../api/delivery-and-tasks.md) 的 requirement、task、review、export 章节，[../api/product-config.md](../api/product-config.md) 的 product config 章节，以及 [../api/review-and-knowledge.md](../api/review-and-knowledge.md) 的 git review 章节。
 
 ## 当前落地要求
 
-- 新增需求可以不指定迭代版本，后续通过批量排期或版本归集进入交付计划。
+- 新增需求可以不指定迭代版本；正式评估 accepted 后优先自动归入兼容的 `planning` 版本，无合适版本才创建新版本；人工批量调整只是受约束的归组修正入口。
 - 需求、Bug、任务、用户洞察、日志监控和迭代版本等表单复用的产品/迭代版本上下文选项必须按服务端分页 `total` 拉取完整可选集合；不得只读取第一页或固定前 100 条，避免产品、目标版本或版本归集入口在数据量增长后不可选。
 - 迭代版本推进到开发中、测试中、已发布等阶段时，必须按规则同步或校验需求状态，并提供影响预览；推进到已发布不再自动把待发布需求改为已发布，必须依赖成功运维部署单。
 - 迭代版本驾驶舱必须按版本聚合需求、AI 任务、版本代码分支、Bug、代码巡检、代码评审、知识沉淀、运维部署、发布记录、状态推进影响和阻塞项，作为版本进入下一阶段前的交付健康视图。入口要求 `product.read` 并按版本归属产品校验 scope；Bug、代码巡检和知识沉淀明细分别按 `bug.read`、`code_inspection.read`、`knowledge.read` 降级隐藏；知识沉淀明细只展示沉淀标题、状态、来源任务、知识文档 ID/标题、索引状态、chunk/embedding 覆盖、关键词/混合/不可用检索模式和全链路入口，不返回知识正文；页面必须先展示交付链路总览和发布准备清单，按研发链路顺序聚合需求范围、研发任务、代码分支、代码巡检、代码评审、Bug 收敛、知识沉淀、运维部署、发布证据和状态推进判断，每个交付链路卡片必须提供直达处理入口，其中知识沉淀要展示可检索数量和向量就绪数量，运维部署要展示成功/失败部署单数量以及最近部署状态，发布证据要展示 Jenkins 等构建/发布记录，再展示需求/任务/Bug 状态分布，并把状态推进影响拆成同步推进、阻塞和保持不变的需求明细；阻塞项区域必须先按严重级别和来源类型展示处理队列，每条阻塞项必须展示解除条件和处理入口，能直接进入需求、Bug、代码巡检、版本分支、部署单或发布记录治理；页面明细表格必须固定列宽并允许横向滚动，避免长文本导致布局变形。
 - 迭代版本代码分支配置属于产品配置子资源；在 PostgreSQL runtime 下，分支配置更新和删除必须按 `branch_config_id` 从 repository 单记录读取源记录，再通过产品配置仓储边界写入变更和审计，不能依赖运行时内存全量集合。
 - 需求、任务、版本和 Review 的列表型接口优先在 SQL/repository/read model 层完成筛选、排序和分页；其中需求列表必须校验 `requirement.read`，并按当前用户产品 scope 在服务端过滤，PostgreSQL 运行态需将产品 scope 下推到 read model，不能由前端或本地内存二次过滤兜底。
 - 需求全链路必须聚合需求、产品、迭代版本、版本代码分支、AI 任务、Review、PR/MR 快照、代码评审、代码巡检、Bug、执行诊断、运维部署、发布、知识沉淀和审计事件；从 Bug、迭代版本、版本代码分支配置、代码巡检、部署单、AI 助手或执行诊断等主体进入统一工作台时，页面必须展示入口主体和已解析需求 ID，避免跨页面跳转后丢失上下文。版本分支入口使用 `product_version_branch_config` / `branch_config` 主体解析回同版本最新需求链路，并继续按产品 scope 校验；执行诊断只返回脱敏 Trace 摘要，阶段明细通过 `source_id + source_type` 跳转执行诊断中心查看完整链路。
-- 任务启动、Graph run/checkpoint、代码评审报告和 Review 决策产物属于 DB-first 写路径：Graph、报告、派生 Bug、知识沉淀和审计事件不得直接操作 `current_store` 业务集合或调用 `current_store.audit()`；MemoryStore 仅作为测试 fallback，PostgreSQL 运行态必须通过任务启动/评审决策 repository 事务提交完整产物链路。
+- 工作项内部任务创建/派发、Graph run/checkpoint、代码评审报告和 Review 决策产物属于 DB-first 写路径：Graph、报告、派生 Bug、知识沉淀和审计事件不得直接操作 `current_store` 业务集合或调用 `current_store.audit()`；MemoryStore 仅作为测试 fallback，PostgreSQL 运行态必须通过工作项执行/评审决策 repository 事务提交完整产物链路。公开 AI-task create/start/batch-retry 不能承担该写路径。
 - Mock Issue 写回必须通过 `save_mock_writeback_record` 写入结果和审计事件；PostgreSQL 运行态写回结果和审计在同一 repository 事务中提交，并刷新本地读缓存以保持幂等重复提交，MemoryStore 仅作为测试 fallback，不得由服务层直接写 `current_store.mock_writebacks` 或调用 `current_store.audit()`。
 - GitLab MR / GitHub PR 快照成功、复用和失败审计必须通过 `save_git_review_snapshot_record` 统一写入；PostgreSQL 运行态快照和审计在同一事务提交，MemoryStore 仅作为测试 fallback，不得由服务层直接写 `current_store.gitlab_mr_snapshots` 或追加 `current_store.audit_events`。
 

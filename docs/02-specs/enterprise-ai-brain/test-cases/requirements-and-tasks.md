@@ -25,7 +25,7 @@
 | 1 | 进入首页 IT 团队看板 | MVP 可展示需求、研发进展、知识沉淀和审计摘要；尚未接入真实采集器的线上系统健康和发布能力展示空状态或禁用态；GitLab 每日指标、用户使用指标、用户反馈和迭代规划建议来自真实结构表，不返回示例数据或伪造统计。 |
 | 2 | 进入产品管理 | 可以查看和维护产品、版本、模块和 Git 资源。 |
 | 3 | 进入需求管理 | 可以查看需求列表、需求详情和审批状态。 |
-| 4 | 进入任务中心 | 可以查看 AI 任务列表；任务类型展示业务中文标签；列表行内仅展示单一“操作”入口，启动产品详细设计任务、确认 Review 输出、从已确认产品详细设计创建技术方案任务、对已完成技术方案执行 Markdown 导出等动作均在上方摘要、下方纵向操作的任务操作弹窗中完成。 |
+| 4 | 进入任务中心 | 可以只读查看协作工作项产生的 AI 任务、任务类型、结果和 Review；不提供直接创建或启动入口。协作推进、工作项审核/返工和人工决策从研发协同工作台处理，已完成任务仍可按权限导出 Markdown。 |
 | 5 | 进入 Bug 管理 | v1.1 可展示真实 Bug 列表、权限校验和真实空列表；登记、分派、验证、关闭和重复归并按 TC-AIBRAIN-BUG-FUNC-018 验收。 |
 | 6 | 进入研发运营看板 | MVP 可展示真实接口空状态；GitLab、运维部署、Jenkins 与线上日志支持真实登记/导入和查询，外部自动采集和完整下钻按 v1.2 验收。 |
 | 7 | 进入用户洞察 | MVP 可展示真实用户反馈、用户使用指标和迭代规划建议列表；无反馈/Bug 证据时生成建议返回真实空集合；无使用指标时返回真实空集合。 |
@@ -197,14 +197,14 @@
 |------|------|----------|
 | 1 | 在需求管理勾选同产品 `approved/planned` 需求，点击“调整组版”，选择目标版本并确认 | 目标版本下拉只展示 `planning` 并过滤已启动版本；前端发送 `POST /api/requirements/batch-schedule`，请求体包含产品、目标版本、需求、调整原因和最新评估版本。 |
 | 2 | 在规划版本页面点击“调整需求范围”，勾选可归集需求并确认 | 前端复用同一调整接口；只有评估 accepted 且尚未进入活动协作的需求可加入。 |
-| 3 | 通过 API 混入 `submitted`、跨产品或重复需求 ID | 合法需求进入 `updated`，不合规需求进入 `skipped` 并返回稳定 code。 |
+| 3 | 通过 API 混入 `submitted`、跨产品、重复、策略/容量/仓库/交付终点/硬依赖不兼容和高风险覆盖需求 | 只有全部硬条件兼容的需求进入 `updated`；不兼容项进入 `skipped`，候选争议或高风险覆盖保持原状态并创建 `decision_request`。 |
 | 4 | 查询需求列表和审计列表 | 已更新需求状态为 `planned` 且版本为目标版本；审计包含追加保存的 `requirement.batch_scheduled` 和每条更新需求的 `requirement.updated`，payload 带 `batch_id`，历史批次审计不被覆盖删除。 |
 
 **预期结果**:
 1. 多需求可快速手动归集到一个产品迭代版本，不需要逐条编辑。
-2. 批量操作不影响已进入交付阶段的需求，并保留可追溯审计。
+2. 人工批量调整不影响已进入交付阶段的需求，也不能绕过自动组版使用的硬条件，并保留可追溯审计和决策。
 
-**状态**: 已自动化覆盖。见 `apps/api/tests/test_requirement_batch_schedule.py` 与 `apps/web/tests/App.test.tsx` 中批量排期页面用例。
+**状态**: v1 基础能力已覆盖；v2.0 切换时扩展 `test_requirement_iteration_grouping.py`、`test_requirement_batch_schedule.py` 和页面用例覆盖硬条件与决策请求。
 
 ---
 
@@ -269,12 +269,12 @@
 
 ---
 
-### TC-AIBRAIN-REQ-FUNC-011H: 多需求批量推进状态
+### TC-AIBRAIN-REQ-FUNC-011H: v2.0 批量状态管理不得绕过研发协作
 
 | 项目 | 内容 |
 |------|------|
 | 用例编号 | TC-AIBRAIN-REQ-FUNC-011H |
-| 用例名称 | 多需求批量推进状态 |
+| 用例名称 | v2.0 批量状态管理不得绕过研发协作 |
 | 优先级 | P1 |
 | 模块 | REQUIREMENT |
 | 创建人 | Codex |
@@ -282,21 +282,21 @@
 
 **前置条件**:
 1. 用户已登录并具备产品负责人、研发负责人或管理员角色。
-2. 系统存在至少一条已归属迭代版本且可从当前状态推进到目标状态的需求、一条未排期需求，以及一条终态或不符合路径的需求。
+2. 系统存在 submitted、planned、developing 需求，以及分别带有活动协作运行、非终态工作项和无活动协作的需求。
 
 **测试步骤**:
 | 步骤 | 操作 | 预期结果 |
 |------|------|----------|
-| 1 | 在需求管理勾选多条需求，点击“批量推进状态” | 弹窗展示目标状态和推进原因输入框；前端只发送一次 `POST /api/requirements/batch-advance-status`。 |
-| 2 | 选择目标状态并确认 | 请求体包含 `target_status`、`requirement_ids` 和 reason；合法需求状态更新为目标状态。 |
-| 3 | 通过 API 混入未排期需求、不符合路径需求、重复需求 ID 和不存在需求 ID | 合法需求进入 `updated`；未排期需求返回 `REQUIREMENT_VERSION_REQUIRED`；不符合路径需求返回 `REQUIREMENT_STATE_INVALID`；重复需求返回 `DUPLICATE_REQUIREMENT`；不存在需求返回 `NOT_FOUND`；前端结果弹窗展示批次号、成功数、跳过数和 skipped 原因。 |
-| 4 | 查询需求详情和审计列表 | 需求详情返回目标状态；审计包含批次级 `requirement.batch_status_advanced` 和逐条 `requirement.updated`，payload 带 `batch_id`、`from_status`、`to_status` 和 reason。 |
+| 1 | 在需求管理批量操作中查看目标状态 | 页面只提供“取消”和“关闭”，不提供 planned、设计、开发、评审、测试、待发布、部署、发布或验收状态。 |
+| 2 | 直接调用 API 并传入 `target_status=ready_for_release` 或其他交付状态 | 整个请求返回 `409 RD_COLLABORATION_REQUIRED`，所有需求状态不变，不写成功审计。 |
+| 3 | 传入 `target_status=closed`，混入活动协作、非终态工作项、无活动协作、重复和不存在需求 | 只有既无活动协作运行、也不存在非终态工作项的合法需求关闭；其他项返回带 run/work-item 引用的 skipped 原因。 |
+| 4 | 查询需求详情和审计列表 | 成功项记录 `requirement.batch_closed` 与逐需求 `requirement.updated`；不存在 `requirement.batch_status_advanced` 交付推进事件。 |
 
 **预期结果**:
-1. 需求可按研发流程批量前进，减少逐条编辑成本。
-2. 批量推进不会绕过状态机或迭代版本归属要求，不符合路径或未排期的需求只跳过，不影响合法项。
+1. 需求交付状态只能由评估、组版、协作工作项、审核、版本动作和门禁证据推进。
+2. 批量接口只承担安全取消/关闭管理，不形成第二条研发推进路径。
 
-**状态**: 已自动化覆盖。见 `apps/api/tests/test_requirement_batch_schedule.py::test_batch_advance_status_updates_valid_requirements_and_records_audit` 与 `apps/web/tests/App.test.tsx` 中需求管理批量推进状态页面用例。
+**状态**: v2.0 切换时重写现有自动化，覆盖 `RD_COLLABORATION_REQUIRED`、活动协作阻断和前端目标状态收口。
 
 ---
 
@@ -330,12 +330,12 @@
 
 ---
 
-### TC-AIBRAIN-TASK-FUNC-020D: 研发任务批量重试
+### TC-AIBRAIN-TASK-FUNC-020D: v2.0 失败任务由工作项调度恢复
 
 | 项目 | 内容 |
 |------|------|
 | 用例编号 | TC-AIBRAIN-TASK-FUNC-020D |
-| 用例名称 | 研发任务批量重试 |
+| 用例名称 | v2.0 失败任务由工作项调度恢复 |
 | 优先级 | P1 |
 | 模块 | AI_TASK |
 | 创建人 | Codex |
@@ -343,20 +343,21 @@
 
 **前置条件**:
 1. 用户已登录并具备研发负责人、评审人或管理员角色。
-2. 系统存在至少一条 `failed` 且 `current_step=model_gateway_failed` 或 `code_review_executor_failed` 的失败任务。
+2. 系统存在关联协作工作项的可恢复失败任务、不可恢复任务和预算耗尽任务。
 
 **测试步骤**:
 | 步骤 | 操作 | 预期结果 |
 |------|------|----------|
-| 1 | 在研发任务勾选可重试失败任务，点击“批量重试” | 前端只发送一次 `POST /api/ai-tasks/batch-retry`，请求体包含 `task_ids` 和批量重试原因。 |
-| 2 | 通过 API 混入已完成任务、重复任务 ID 和不存在任务 ID | 可重试失败任务复用 `/start` 状态机进入 `waiting_review` 并返回 `updated`；仍失败任务保留在 `retried` 并携带错误码和错误信息；终态、重复和不存在任务进入 `skipped`，code 分别稳定返回 `TASK_STATE_INVALID`、`DUPLICATE_TASK` 和 `NOT_FOUND`；前端结果弹窗展示批次号、重试数、成功数、仍失败数、错误信息和 skipped 原因。 |
-| 3 | 查询任务详情、待确认 Review 和审计列表 | 已重试成功任务保留原 task id，新增待确认 Review；审计包含批次级 `ai_task.batch_retried` 和逐任务 `ai_task.retry_started`。 |
+| 1 | 打开任务中心并选择失败任务 | 页面不提供批量重试或直接 start；提供跳转关联工作项、查看证据和请求人工处理。 |
+| 2 | 真人调用 `POST /api/ai-tasks/batch-retry` 或 `/start` | 返回 `409 RD_COLLABORATION_REQUIRED`，任务和工作项不变。 |
+| 3 | 工作项调度器处理可恢复失败、不可恢复失败和预算耗尽 | 可恢复失败复用原 task id 创建新 attempt 并内部派发；不可恢复或预算耗尽进入 `awaiting_human/rework_required/failed`，保存原因和恢复目标。 |
+| 4 | 查询任务、工作项、attempt、事件和审计 | 所有恢复结果可追溯，重复调度幂等，不存在真人直接启动审计。 |
 
 **预期结果**:
-1. 模型网关或代码评审执行器恢复后，可批量恢复失败任务，避免为同一阶段复制新任务。
-2. 批量重试部分失败不阻塞其他合法任务，响应能区分 `retried`、`updated` 和 `skipped`。
+1. 模型网关或执行器恢复后，由协作调度器安全恢复失败工作项，避免复制任务或绕过预算和策略。
+2. 真人只能处理工作项决策，不能通过任务批量重试形成第二条运行路径。
 
-**状态**: 已自动化覆盖。见 `apps/api/tests/test_api_contract_completion.py::test_ai_task_batch_retry_restarts_retryable_failed_tasks_and_skips_invalid_items` 与 `apps/web/tests/App.test.tsx` 中研发任务批量重试页面用例。
+**状态**: v2.0 切换时由 `test_rd_requirement_entry_adapters.py` 和 `test_rd_work_item_execution.py` 重写覆盖。
 
 ---
 
@@ -627,11 +628,11 @@
 | 优先级 | P0 |
 | 适用阶段 | v2.0 |
 
-1. 为同产品准备一个容量和范围兼容的 `planning` 版本，提交需求并创建正式评估，确认需求仍为 `submitted`。
-2. 让评估通过，验证需求归入既有版本；再提交一个与现有版本不兼容的需求。
-3. 模拟信息不足、高风险需人工决策和评估拒绝。
+1. 为同产品准备一个容量和范围兼容的 `planning` 版本，提交需求并创建正式评估，确认需求仍为 `submitted`；普通请求尝试指定任意 `strategy_id`。
+2. 由被分配的真人/AI 评估者提交岗位意见，由需求负责人提交补充回答，再分别执行 `accept/reject/request_more_info/request_rework/defer` 决策。
+3. 让评估通过，验证需求归入既有版本；再提交一个无候选的低风险需求、一个候选并列需求和一个高风险新建版本需求。
 
-**预期结果**: 评估持久化需求/策略版本、完整度、风险、依赖、工作量、候选版本和确定性检查；accepted 后需求先进入 `approved`，兼容时复用已有规划版本、不兼容时才新建，组版后进入 `planned`；非 accepted 评估不能组版或创建协作运行，重复请求幂等，旧 approve/reject 不能绕过评估。
+**预期结果**: 评估持久化需求/策略版本、完整度、风险、依赖、工作量、候选版本和确定性检查；普通请求不能覆盖策略。`opinions/answers/decisions` 分别校验执行主体、输入版本和乐观锁并映射到规范状态；accepted 后需求先进入 `approved`，兼容时复用已有规划版本、无候选低风险需求才自动新建，候选并列或高风险建版保持 `approved` 并创建组版决策，成功组版后进入 `planned`。非 accepted 评估不能组版或创建协作运行，重复请求幂等，旧 approve/reject 不能绕过评估。
 
 ---
 
@@ -642,7 +643,7 @@
 | 优先级 | P0 |
 | 适用阶段 | v2.0 |
 
-1. 通过原研发执行器策略入口提交唯一顶层契约 `matching_config/assessment_config/iteration_config/delivery_target/team_config/autonomy_config/quality_gate_config/git_config/deployment_config/role_bindings`。
+1. 通过原研发执行器策略入口提交唯一顶层契约 `name/brain_app_id/product_id/status/matching_config/assessment_config/iteration_config/delivery_target/team_config/autonomy_config/quality_gate_config/git_config/deployment_config/role_bindings`。
 2. 提交旧版单任务策略、缺少岗位执行器的策略，以及不存在 active 策略时启动评估/协作。
 3. 修改策略后读取既有运行详情。
 
@@ -657,11 +658,11 @@
 | 优先级 | P0 |
 | 适用阶段 | v2.0 |
 
-1. 新增文档/安全岗位，用 AI 执行器与真人用户分别占用岗位席位。
+1. 新增文档/安全岗位、两个复用同一执行器的 AI 数字员工和真人用户；分别用 AI 员工与真人占用岗位席位。
 2. 给同一规划版本加入两条 accepted/planned 需求，并发启动协作运行；创建含并行开发、测试、文档和集成依赖的工作项图并尝试循环依赖。
 3. 提交结果、执行独立审核并让一个工作项审核失败。
 
-**预期结果**: 动态岗位不修改系统 RBAC；P0 真人只能从显式 user_ids 选择并受系统权限、产品范围和席位约束；同一版本并发启动返回同一活动运行并冻结两条需求范围；无依赖项并行派发，循环依赖被拒绝；审核失败保留原 attempt，同范围返工创建新 attempt，范围变化创建新计划版本。
+**预期结果**: 动态岗位和 AI 员工档案不修改系统 RBAC；P0 真人只能从显式 user_ids、AI 只能从显式 ai_employee_ids 选择。AI 席位分别冻结 `ai_employee_id` 和 `executor_profile_id`，两个员工复用执行器时仍可独立归因；同一版本并发启动返回同一活动运行并冻结两条需求范围；无依赖项并行派发，循环依赖被拒绝；审核失败保留原 attempt，同范围返工创建新 attempt，范围变化创建新计划版本。
 
 ---
 
@@ -674,9 +675,9 @@
 
 1. 让 LLM 返回合法拆解建议，再返回循环依赖、越权负责人、低报风险和超预算建议。
 2. 触发敏感目录、数据库迁移、质量门禁失败和岗位冲突。
-3. 人工批准、拒绝或要求补充信息，并重复提交相同决策版本。
+3. 让工作项分别进入 `blocked` 和 `awaiting_human`，人工批准、拒绝或要求补充信息，并重复提交相同决策版本。
 
-**预期结果**: 合法建议经平台写入；非法 DAG、权限、风险和预算建议不能改变状态；高风险问题创建决策请求并只暂停受影响分支；决策采用乐观锁和幂等，审计可追溯建议与最终平台判断。
+**预期结果**: 合法建议经平台写入；非法 DAG、权限、风险和预算建议不能改变状态；高风险问题创建决策请求并只暂停受影响分支。暂停时保存平台冻结的 `resume_state`、attempt 和解除条件；`blocked` 重新校验后只能进入 ready/cancelled，`awaiting_human` 只能按决策进入 running/rework_required/cancelled；客户端伪造恢复目标被拒绝。决策采用乐观锁和幂等，审计可追溯建议与最终平台判断。
 
 ---
 
@@ -690,7 +691,7 @@
 1. 使用默认 `delivery_target=ready_for_release`，让集成工作项通过 Outbox 完成远程推送并保存分支、local/remote SHA、MR/PR 和对账证据，再完成测试和门禁。
 2. 使用 `delivery_target=deployed` 重复场景，分别模拟未通过和通过人工发布门禁。
 
-**预期结果**: 缺少或不匹配远程证据时不能进入待发布；完成判定不临时执行 push。默认策略在协作运行与版本进入 `ready_for_release` 后停止且不创建部署单；部署目标未确认时中断，确认后只通过现有部署域推进。
+**预期结果**: 缺少或不匹配远程证据时不能进入待发布；完成判定不临时执行 push。默认策略让产品版本进入并保持 `ready_for_release`，协作运行进入 `completed` 且 `completion_reason=ready_for_release`，不创建部署单；部署目标未确认时中断，确认后只通过现有部署域推进并以 `completion_reason=deployed` 完成。
 
 ---
 
@@ -702,10 +703,10 @@
 | 适用阶段 | v2.0 |
 
 1. 完成包含审核、返工、门禁与交付反馈的协作运行。
-2. 查询岗位、席位、执行器和策略版本的经验记录。
-3. 验证 Bug、代码巡检和 AI 助手旧入口只创建/关联需求；在升级前后执行同一现有定时作业并比较定义、AI角色/Skill 快照和运行结果。
+2. 查询岗位、真人用户或 AI 数字员工、执行器和策略版本的经验记录；验证复用同一执行器的不同 AI 员工仍分别归因。
+3. 验证 Bug、代码巡检和 AI 助手旧入口只创建/关联需求；需求交付状态批量推进及公开 AI 任务创建/启动返回 `RD_COLLABORATION_REQUIRED`；在升级前后执行同一现有定时作业并比较定义、AI角色/Skill 快照和运行结果。
 
-**预期结果**: 反馈归因到岗位、席位、执行器、attempt 和策略快照，经验候选可审核、版本化和检索；旧入口不产生可启动 AI 任务；定时作业表、配置、触发、调度和 Agent/Skill 装配语义不变，代码巡检结果动作的业务目标变为需求并单独审计。
+**预期结果**: 反馈分别归因到岗位、席位、真人用户或 AI 数字员工、执行器、attempt 和策略快照，经验候选可审核、版本化和检索；旧入口不产生可启动 AI 任务，批量状态和公开 AI 任务端点不形成旁路；定时作业表、配置、触发、调度和 Agent/Skill 装配语义不变，代码巡检结果动作的业务目标变为需求并单独审计。
 
 ---
 
@@ -732,8 +733,8 @@
 
 1. 应用非破坏迁移 109，确认旧字段仍存在且尚未改变运行规则。
 2. 启用维护围栏，尝试需求 approve/generate、任务 start/retry、策略写入、协作写入、Runner 领取和定时作业运行。
-3. 分别模拟预检阻断、转换成功、新应用健康失败和清理迁移 110 重试。
+3. 分别模拟预检阻断、转换成功、新应用健康失败、清理迁移 110 重试、Worker 图版本不一致、v2 写入冒烟失败和全部成功。
 
-**预期结果**: 围栏阻断研发写入与 Runner 新领取但不阻断定时作业；预检失败不删除旧字段；切换成功后只启用 v2 规则，健康失败保持维护状态且不开放旧写路径；健康通过后清理迁移可幂等删除旧字段。
+**预期结果**: 围栏阻断研发写入与 Runner 新领取但不阻断定时作业；预检失败不删除旧字段；切换成功后只启用 v2 规则。健康、清理、Worker/Schema/图版本或写入冒烟任一步失败都保持维护状态；全部成功后显式解除围栏，v2 评估和协作写入恢复，旧 approve/generate/batch-delivery-advance/AI-task-create/start 仍永久拒绝。
 
 ---

@@ -66,10 +66,10 @@ GET /api/audit/events/export?subject_type=knowledge_document&created_from=2026-0
 | GET `/api/auth/dingtalk/callback` | 302 回前端错误页 | DINGTALK_CORP_NOT_ALLOWED / DINGTALK_ACCOUNT_NOT_BOUND / DINGTALK_ACCOUNT_PENDING_APPROVAL / DINGTALK_ACCOUNT_INACTIVE / EXTERNAL_IDENTITY_CONFLICT | 否 | 自动开户成功记录 `dingtalk_account.provisioned`；拒绝只保存 corp_id 等非敏感摘要。 | 展示企业不允许、未绑定、待审批、账号停用或绑定冲突的明确提示。 |
 | POST `/api/auth/dingtalk/exchange-ticket` | 401 | DINGTALK_TICKET_INVALID | 否 | 记录失败摘要可选；不得记录 ticket 明文。 | 回到登录页重新发起钉钉登录。 |
 | POST `/api/auth/dingtalk/bind/start` / bind callback | 302/409 | EXTERNAL_IDENTITY_CONFLICT | 否 | 绑定成功记录 `dingtalk_account.bound`，解绑成功记录 `dingtalk_account.unbound`；冲突不返回被占用用户敏感信息。 | 提示该钉钉账号已绑定其它 AI Brain 账号，联系管理员处理。 |
-| POST `/api/ai-tasks` 创建任务 | 400 | VALIDATION_ERROR / PRODUCT_VERSION_ARCHIVED | 否 | 写入校验失败审计可选，成功必须审计。 | 标出无效字段或提示选择有效产品版本。 |
-| POST `/api/ai-tasks/{task_id}/start` | 409 | TASK_STATE_INVALID | 否 | 记录启动失败和当前状态。 | 刷新任务详情并禁用不可用动作。 |
-| POST `/api/ai-tasks/{task_id}/start` | 400 | MODEL_GATEWAY_CONFIG_INVALID | 否 | 记录任务失败和配置缺陷，不记录密钥明文。 | 提示管理员补齐 active/default 模型网关密钥或配置。 |
-| POST `/api/ai-tasks/{task_id}/start` | 502/503 | MODEL_GATEWAY_FAILED | 是 | 记录模型网关失败、provider、model、purpose 和 trace_id。 | 展示可重试提示，不展示完整 prompt 或输出。 |
+| POST `/api/ai-tasks`、POST `/api/ai-tasks/{task_id}/start`、POST `/api/ai-tasks/batch-retry` | 409 | RD_COLLABORATION_REQUIRED | 否 | 记录被拒绝的绕过动作、操作者、入口、关联需求/任务和 trace_id；不得记录成功创建、启动或重试审计。 | 隐藏直接操作入口，引导查看需求对应的协作运行、工作项或待人工决策。 |
+| 协作运行内部 `create_ai_task_for_work_item` / `dispatch_ai_task_for_work_item` | 400/409 | VALIDATION_ERROR / WORK_ITEM_STATE_INVALID / STRATEGY_SNAPSHOT_INVALID | 否 | 记录工作项、冻结策略、角色席位、AI 数字员工、执行器配置和失败原因。 | 在协作工作台展示阻塞原因；确定性修复后通过工作项恢复动作继续，不允许改走公开任务入口。 |
+| 协作运行内部任务派发 | 400 | MODEL_GATEWAY_CONFIG_INVALID | 否 | 记录任务失败、工作项 attempt 和配置缺陷，不记录密钥明文。 | 提示管理员修复冻结执行器所依赖的模型网关配置，再由调度器恢复工作项。 |
+| 协作运行内部任务派发 | 502/503 | MODEL_GATEWAY_FAILED | 是，由调度器按策略处理 | 记录模型网关失败、provider、model、purpose、work_item_id、attempt 和 trace_id。 | 展示调度器重试进度；超过上限后进入 blocked 或创建 decision request，不展示完整 prompt 或输出。 |
 | POST `/api/system/model-gateway-configs/test` | 400 | MODEL_GATEWAY_CONFIG_INVALID / VALIDATION_ERROR | 否 | 记录可选；不得记录密钥明文。 | 提示补齐 base_url、API Key、Chat 模型和 Embedding 模型。 |
 | POST `/api/system/model-gateway-configs/test` | 200 | `ok=false`，检测段返回 MODEL_GATEWAY_CHAT_FAILED / MODEL_GATEWAY_EMBEDDING_FAILED | 是 | 写入 `model_gateway_config.tested`，只记录 provider 和测试状态。 | 展示失败段、模型和错误码，不自动保存配置。 |
 | GET `/api/ai-tasks/{task_id}` | 403/404 | FORBIDDEN / NOT_FOUND | 否 | 无权限访问不写高频审计，安全审计可采样记录。 | 显示无权限或不存在，不泄露敏感主体。 |

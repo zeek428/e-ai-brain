@@ -19,9 +19,13 @@
 - LLM output is a proposal; deterministic services own state, DAG validation, leases, permissions, budgets, idempotency, and risk floors.
 - High/critical risk, permission expansion, protected branches, production changes, and policy conflicts require human confirmation.
 - New policies default to `delivery_target=ready_for_release` and deployment disabled.
-- AI roles use only executor profiles and role bindings frozen in the strategy snapshot.
+- AI roles select explicit AI digital employees plus executor profiles through role bindings frozen in the strategy snapshot; employee identity never replaces executor authorization.
 - R&D role definitions never grant RBAC permissions; human assignment separately checks permissions and product scope.
+- AI digital employees are persistent actors distinct from role definitions and executor profiles; AI seats freeze both `ai_employee_id` and `executor_profile_id`.
 - P0 human assignment uses explicit user IDs; team pools, calendars, and capacity-based automatic selection are not inferred.
+- Requirement `batch-advance-status` may only cancel/close when no active collaboration work exists; all delivery targets and external AI-task create/start/batch-retry calls return `RD_COLLABORATION_REQUIRED`.
+- `blocked/awaiting_human` work items persist a platform-controlled `resume_state`; clients cannot choose arbitrary recovery states.
+- Default delivery leaves the product version at `ready_for_release` and completes the collaboration run with `completion_reason=ready_for_release`.
 - Coding success is not completion; independent quality evidence and reviewer separation are mandatory.
 - All new production behavior starts with a failing test and follows red-green-refactor.
 - Do not deploy. Completion for this development branch is tests, browser validation, documentation, commit, and remote push.
@@ -64,6 +68,7 @@ Run:
 ```bash
 rg -n "轻量需求评估.*不.*阻塞|task_compat|team_delivery|未命中策略.*沿用" docs/01-prd docs/02-specs docs/glossary.md
 rg -n "needs_more_info|waiting_human_decision|rd_role_assignments|rd_decision_requests|rd_role_feedback|/api/requirements/\{[^}]+\}/collaboration-runs" docs/01-prd docs/02-specs docs/glossary.md
+rg -n "subject_type=ai_executor|批量推进.*ready_for_release|启动权限按任务类型|生成任务响应" docs/01-prd docs/02-specs docs/glossary.md
 ```
 
 Expected: no active statement permits bypassing assessment or falling back outside the unified policy, and no non-canonical v2 name or requirement-level collaboration-run creation path remains.
@@ -85,7 +90,7 @@ git commit -m "docs: adopt requirement-driven rd collaboration"
 - Create: `apps/api/tests/test_requirement_driven_rd_schema.py`
 
 **Interfaces:**
-- Produces: `rd_role_definitions`, `rd_executor_profiles`, `rd_task_executor_policy_role_bindings`, `requirement_assessments`, `requirement_assessment_opinions`, `rd_collaboration_runs`, `rd_run_seats`, `rd_role_sessions`, `rd_work_items`, `rd_work_item_dependencies`, `rd_work_item_attempts`, `rd_collaboration_events`, `decision_requests`, `role_feedback_records`, and `rd_collaboration_upgrade_state`.
+- Produces: `rd_role_definitions`, `rd_ai_employees`, `rd_executor_profiles`, `rd_task_executor_policy_role_bindings`, `requirement_assessments`, `requirement_assessment_opinions`, `rd_collaboration_runs`, `rd_run_seats`, `rd_role_sessions`, `rd_work_items`, `rd_work_item_dependencies`, `rd_work_item_attempts`, `rd_collaboration_events`, `decision_requests`, `role_feedback_records`, and `rd_collaboration_upgrade_state`.
 - Produces: generalized graph subjects, policy/version references, version delivery statuses, work-item linkage on `ai_tasks`, and `rd_collaboration_upgrade_state` maintenance/cutover metadata.
 
 - [ ] **Step 1: Write failing migration-contract tests**
@@ -97,7 +102,7 @@ def test_requirement_driven_collaboration_migration_is_registered():
 
 
 def test_new_collaboration_tables_have_standard_timestamps(migration_sql):
-    for table in ("rd_role_definitions", "requirement_assessments", "rd_work_items"):
+    for table in ("rd_role_definitions", "rd_ai_employees", "requirement_assessments", "rd_work_items"):
         assert_table_has_created_and_updated_at(migration_sql, table)
 ```
 
@@ -109,7 +114,7 @@ Expected: FAIL because migration 109 and new collections are absent.
 
 - [ ] **Step 3: Add normalized tables, constraints, indexes, and compatibility-safe columns**
 
-Migration 109 is additive only: create canonical tables and indexes, add nullable graph/version/task links, seed permission definitions, and add cutover-state metadata. It must not convert policies, cancel tasks, change API behavior, or remove old columns; those actions happen only after maintenance fencing and preflight in Task 14.
+Migration 109 is additive only: create canonical tables and indexes including stable AI employee identity, add work-item `resume_state`/suspension metadata and collaboration `completion_reason`, add nullable graph/version/task links, seed permission definitions including `delivery.rd_ai_employees.manage`, and add cutover-state metadata. It must not convert policies, cancel tasks, change API behavior, or remove old columns; those actions happen only after maintenance fencing and preflight in Task 14.
 
 - [ ] **Step 4: Generalize graph subjects and version statuses**
 
@@ -139,7 +144,7 @@ git commit -m "feat: add requirement-driven collaboration schema"
 - Create: `apps/api/tests/test_rd_collaboration_repository.py`
 
 **Interfaces:**
-- Produces: list/get/save methods for roles, executor profiles, unified policies and bindings, assessments/opinions, collaboration runs, seats, sessions, work items/dependencies/attempts/events, decisions, and feedback.
+- Produces: list/get/save methods for roles, AI digital employees, executor profiles, unified policies and bindings, assessments/opinions, collaboration runs, seats, sessions, work items/dependencies/attempts/events, decisions, and feedback.
 - Produces: `save_assessment_bundle`, `assign_requirement_to_version`, `claim_ready_work_item`, `save_work_item_attempt_bundle`, and `apply_decision_bundle` transaction methods.
 
 - [ ] **Step 1: Write failing repository transaction tests**
@@ -152,7 +157,7 @@ def test_claim_ready_work_item_is_atomic(repository, ready_work_item):
     assert second is None
 ```
 
-Cover optimistic decisions, DAG edge uniqueness, plan-version uniqueness, assessment-version uniqueness, and requirement/version assignment idempotency.
+Cover optimistic decisions, DAG edge uniqueness, plan-version uniqueness, assessment-version uniqueness, AI employee/executor identity separation, work-item suspension/resume atomicity, and requirement/version assignment idempotency.
 
 - [ ] **Step 2: Verify red**
 
@@ -188,7 +193,7 @@ git commit -m "feat: persist rd collaboration state"
 - Produces: `resolve_initial_rd_policy(store, *, requirement) -> dict`.
 - Produces: `resolve_final_rd_policy(store, *, requirement, assessment) -> dict`.
 - Produces: `resolve_work_item_binding(policy_snapshot, *, role_code, task_type) -> dict`.
-- API remains `/api/delivery/rd-task-executor-policies` but accepts one strategy payload with `assessment_config`, `iteration_config`, `delivery_target`, `team_config`, `autonomy_config`, `quality_gate_config`, `git_config`, `deployment_config`, and `role_bindings`.
+- API remains `/api/delivery/rd-task-executor-policies` but accepts one strategy payload with `name`, `brain_app_id`, `product_id`, `status`, `matching_config`, `assessment_config`, `iteration_config`, `delivery_target`, `team_config`, `autonomy_config`, `quality_gate_config`, `git_config`, `deployment_config`, and `role_bindings`.
 
 - [ ] **Step 1: Write failing unified-policy API tests**
 
@@ -219,18 +224,19 @@ Keep each service focused. Initial resolution uses stable requirement fields onl
 
 Run the Step 2 command, then commit `feat: upgrade rd execution policy` with only policy and focused test files.
 
-### Task 5: Add R&D Role Definitions and Executor Profiles
+### Task 5: Add R&D Roles, AI Digital Employees, and Executor Profiles
 
 **Files:**
 - Create: `apps/api/app/api/routers/rd_organization.py`
 - Create: `apps/api/app/services/rd_role_definitions.py`
+- Create: `apps/api/app/services/rd_ai_employees.py`
 - Create: `apps/api/app/services/rd_executor_profiles.py`
 - Modify: `apps/api/app/main.py`
 - Create: `apps/api/tests/test_rd_organization.py`
 
 **Interfaces:**
-- Produces: CRUD under `/api/delivery/rd-roles` and `/api/delivery/rd-executor-profiles`.
-- Produces: `qualify_human_actor(user, *, role_definition, product_id) -> bool` and `qualify_ai_actor(profile, *, role_definition, policy_binding) -> bool`.
+- Produces: CRUD under `/api/delivery/rd-roles`, `/api/delivery/rd-ai-employees`, and `/api/delivery/rd-executor-profiles`.
+- Produces: `qualify_human_actor(user, *, role_definition, product_id) -> bool` and `qualify_ai_actor(employee, profile, *, role_definition, policy_binding) -> bool`.
 
 - [ ] **Step 1: Write failing RBAC-separation tests**
 
@@ -249,6 +255,15 @@ def test_human_seat_requires_permission_scope_and_explicit_selector(client, prod
     )
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "RD_HUMAN_SELECTOR_INVALID"
+
+
+def test_ai_employee_identity_is_distinct_from_executor_profile(client, admin_headers):
+    employee_a = create_ai_employee(client, admin_headers, code="dev-a")
+    employee_b = create_ai_employee(client, admin_headers, code="dev-b")
+    seat_a = create_ai_seat(employee_id=employee_a["id"], executor_profile_id="executor-shared")
+    seat_b = create_ai_seat(employee_id=employee_b["id"], executor_profile_id="executor-shared")
+    assert seat_a["ai_employee_id"] != seat_b["ai_employee_id"]
+    assert seat_a["executor_profile_id"] == seat_b["executor_profile_id"]
 ```
 
 - [ ] **Step 2: Verify red**
@@ -257,7 +272,7 @@ Run: `cd apps/api && uv run pytest tests/test_rd_organization.py -q`
 
 - [ ] **Step 3: Implement scoped CRUD and qualification**
 
-Human seats must use explicit `user_ids` in P0 and pass existing RBAC, product scope, collaboration permission, and seat-state checks. AI profiles use service identity, trust domain, tool policy, and execution-resource grants; neither path stores secrets. Seed and test the canonical permission matrix from the design.
+Human seats must use explicit `user_ids` in P0 and pass existing RBAC, product scope, collaboration permission, and seat-state checks. AI seats use explicit `ai_employee_ids` for actor identity and a separate executor profile for service identity, trust domain, tool policy, and execution-resource grants. Employee records store stable identity/capability/persona metadata but no secrets or permissions. Seed and test the canonical permission matrix, including `delivery.rd_ai_employees.manage`.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -276,7 +291,7 @@ Run the Step 2 command, then commit `feat: add rd organization catalog`.
 
 **Interfaces:**
 - Produces: `POST /api/requirements/{id}/assessments`, `GET /api/requirements/{id}/assessments/latest`, and `POST /api/requirement-assessments/{assessment_id}/opinions|answers|decisions`.
-- Produces: `start_requirement_assessment`, `record_assessment_opinion`, `finalize_requirement_assessment`.
+- Produces: `start_requirement_assessment`, `record_assessment_opinion`, `submit_assessment_answers`, `decide_requirement_assessment`, and `finalize_requirement_assessment`.
 - Consumes: initial/final policy resolution from Task 4 and role/executor qualification from Task 5.
 
 - [ ] **Step 1: Write failing assessment state tests**
@@ -289,7 +304,7 @@ def test_assessment_resolves_initial_policy_before_ai_roles(client, submitted_re
     assert assessment["status"] == "evaluating"
 ```
 
-Cover `waiting_human/needs_info/rework_required/accepted/deferred/rejected`, risk floor, at most two monotonic policy-strengthening rounds, required-opinion completion after strengthening, incomparable policies, human conflict, and idempotent repeated start.
+Cover assigned human/AI opinion authorization, answer-created revisions, `accept/reject/request_more_info/request_rework/defer`, `waiting_human/needs_info/rework_required/accepted/deferred/rejected`, risk floor, at most two monotonic policy-strengthening rounds, required-opinion completion after strengthening, incomparable policies, human conflict, ordinary callers being unable to supply arbitrary `strategy_id`, and idempotent repeated start.
 
 - [ ] **Step 2: Verify red**
 
@@ -297,7 +312,7 @@ Run: `cd apps/api && uv run pytest tests/test_requirement_assessments.py -q`
 
 - [ ] **Step 3: Implement assessment orchestration**
 
-Create one opinion request per required role. Assessment AI tasks are internal execution units authorized by the initial policy and are the only pre-accepted exception to normal work-item task creation; they cannot create code, Git, or deployment side effects. Human roles create pending decisions. Finalization requires all mandatory compatible opinions, stores evidence/confidence/cost/actor/executor attribution, and atomically advances `submitted + accepted` to `approved`. Existing standalone approve/reject endpoints cannot bypass this transition.
+Create one opinion request per required role. Assessment AI tasks are internal execution units authorized by the initial policy and are the only pre-accepted exception to normal work-item task creation; they cannot create code, Git, or deployment side effects. Opinions require the assigned actor; answers create a new requirement/assessment revision; decisions accept only the five canonical actions and use optimistic locking. Finalization requires all mandatory compatible opinions, stores evidence/confidence/cost/actor/executor attribution, and atomically advances `submitted + accepted` to `approved`. Existing standalone approve/reject endpoints cannot bypass this transition, and public callers cannot override policy resolution with arbitrary strategy IDs.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -328,7 +343,7 @@ def test_accepted_requirement_prefers_compatible_planning_version(store):
     assert result["created_version"] is False
 ```
 
-Cover no candidate, tied candidates requiring human decision, capacity, policy mismatch, concurrent replay, and refusal to mutate active/testing versions.
+Cover no candidate, high-risk new-version confirmation, tied candidates requiring human decision while the requirement remains `approved`, capacity, policy mismatch, concurrent replay, manual batch scheduling rechecking all hard constraints, and refusal to mutate active/testing versions.
 
 - [ ] **Step 2: Verify red**
 
@@ -336,7 +351,7 @@ Run: `cd apps/api && uv run pytest tests/test_requirement_iteration_grouping.py 
 
 - [ ] **Step 3: Implement deterministic grouping and new states**
 
-Use a transaction lock on requirement and candidate versions. Accepted assessment atomically advances the requirement to `approved`; successful assignment advances it to `planned`. Add `ready_for_release/deploying` version transitions, keep `ready_for_release` distinct from `released`, and reject automatic additions once a version is active or its scope is frozen.
+Use a transaction lock on requirement and candidate versions. Accepted assessment atomically advances the requirement to `approved`; successful assignment advances it to `planned`. Tied candidates and high-risk new-version creation produce a decision request without prematurely setting `planned`. Manual `batch-schedule` is not a bypass: it rechecks strategy, capacity, repository, delivery-target, and hard-dependency compatibility and only accepts `planning` versions. Add `ready_for_release/deploying` version transitions, keep `ready_for_release` distinct from `released`, and reject automatic additions once a version is active or its scope is frozen.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -351,6 +366,8 @@ Run the Step 2 command plus `tests/test_requirement_batch_schedule.py`, then com
 - Modify: `apps/api/app/services/code_inspections.py`
 - Modify: `apps/api/app/services/assistant_action_drafts.py`
 - Modify: `apps/api/app/services/assistant_chat_intents.py`
+- Modify: `apps/api/app/services/task_creation.py`
+- Modify: `apps/api/app/services/task_start_execution.py`
 - Modify: `apps/web/src/pages/Requirements/index.tsx`
 - Modify: `apps/web/src/services/bugClient.ts`
 - Modify: `apps/web/src/services/requirementClient.ts`
@@ -359,7 +376,7 @@ Run the Step 2 command plus `tests/test_requirement_batch_schedule.py`, then com
 
 **Interfaces:**
 - Produces: `create_or_link_rd_requirement(store, *, source_type, source_id, product_id, evidence, actor_id) -> dict` with an idempotency key by source object and open requirement.
-- Retires direct task creation from requirement, Bug, code-inspection, and assistant entry points while leaving scheduled-job definition and execution semantics unchanged.
+- Retires delivery-state batch advancement and public task create/start in addition to direct task creation from requirement, Bug, code-inspection, and assistant entry points, while leaving scheduled-job definition and execution semantics unchanged.
 
 - [ ] **Step 1: Write failing bypass tests**
 
@@ -371,7 +388,7 @@ def test_bug_promotion_creates_requirement_not_ai_task(client, bug, rd_owner_hea
     assert response.json()["data"].get("ai_task_id") is None
 ```
 
-Also assert requirement `generate-task/batch-generate-tasks` return `RD_COLLABORATION_REQUIRED`, code-inspection remediation writes a requirement linked to the finding/report, assistant `create_rd_task` creates a requirement draft, duplicate adapters reuse the open requirement, and the Requirements page has no direct-generate buttons.
+Also assert requirement `generate-task/batch-generate-tasks` return `RD_COLLABORATION_REQUIRED`; `batch-advance-status` rejects every delivery target and only permits safe cancel/close; public `POST /api/ai-tasks`, `/api/ai-tasks/{id}/start`, and `/api/ai-tasks/batch-retry` reject human/external callers; code-inspection remediation writes a requirement linked to the finding/report; assistant `create_rd_task` creates a requirement draft; duplicate adapters reuse the open requirement; and the Requirements/Task pages have no direct-generate, direct-start, batch-retry, or delivery-state advance controls.
 
 - [ ] **Step 2: Verify red**
 
@@ -381,7 +398,7 @@ Expected: FAIL because current services and UI still create AI tasks directly.
 
 - [ ] **Step 3: Implement one requirement adapter and compatibility responses**
 
-Route every legacy source through `create_or_link_rd_requirement`. Preserve source evidence and audit linkage. Do not change `scheduled_jobs/scheduled_job_runs`, locking, retry, Agent/Skill snapshots, or scheduler behavior; only the code-inspection result write target changes from direct task to requirement.
+Route every legacy source through `create_or_link_rd_requirement`. Preserve source evidence and audit linkage. Return compatibility errors from public task create/start and delivery-state batch advancement; expose `create_ai_task_for_work_item` and `dispatch_ai_task_for_work_item` only as internal services for Task 11. Do not change `scheduled_jobs/scheduled_job_runs`, locking, retry, Agent/Skill snapshots, or scheduler behavior; only the code-inspection result write target changes from direct task to requirement.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -401,7 +418,7 @@ Run the Step 2 command, then commit `feat: route rd work through requirements`.
 
 **Interfaces:**
 - Produces: `POST /api/product-versions/{version_id}/collaboration-runs`, `GET /api/requirements/{requirement_id}/collaboration-run`, run detail, plan/replan, work-item claim/complete/block, review/rework, event, and `POST /api/delivery/decision-requests/{id}/decide` APIs.
-- Produces: `validate_work_item_plan`, `ready_work_items`, `claim_work_item`, `complete_attempt`, and `apply_decision`.
+- Produces: `validate_work_item_plan`, `ready_work_items`, `claim_work_item`, `suspend_work_item`, `resume_work_item`, `complete_attempt`, and `apply_decision`.
 
 - [ ] **Step 1: Write failing DAG and scheduling tests**
 
@@ -411,7 +428,7 @@ def test_scheduler_does_not_release_item_before_dependencies_are_approved(store)
     assert "integration-item" not in {item["id"] for item in items}
 ```
 
-Cover cycles, acceptance coverage, reviewer separation, capacity, leases, rework attempts, plan versions, stale decisions, and no-progress escalation.
+Cover cycles, acceptance coverage, reviewer separation, capacity, leases, rework attempts, plan versions, stale decisions, no-progress escalation, distinct AI employee/executor attribution, and platform-controlled recovery from `blocked/awaiting_human`.
 
 Also cover one non-terminal run per version, concurrent idempotent start, scope freeze at start, all included requirements having accepted assessments, and range changes producing a new plan version plus decision request.
 
@@ -421,7 +438,7 @@ Run: `cd apps/api && uv run pytest tests/test_rd_collaboration_runtime.py tests/
 
 - [ ] **Step 3: Implement deterministic control plane**
 
-LLM plans are JSON proposals only. The product version is the aggregate root: lock it during start, freeze requirement and repository scope, move it from `planning` to `active`, and return the same run for duplicate starts. Persist each plan version and validate scope, permissions, budgets, dependencies, role availability, and review separation before activation.
+LLM plans are JSON proposals only. The product version is the aggregate root: lock it during start, freeze requirement and repository scope, move it from `planning` to `active`, and return the same run for duplicate starts. Persist each plan version and validate scope, permissions, budgets, dependencies, role availability, and review separation before activation. AI seats freeze both employee and executor identities. Suspending an item persists `resume_state`, attempt, decision/event, and release conditions; only the scheduler or decision service may move `blocked/awaiting_human` to validated `ready/running/rework_required/cancelled` states.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -487,12 +504,12 @@ Run the Step 2 command, then commit `feat: persist rd collaboration graph checkp
 - Create: `apps/api/tests/test_rd_work_item_execution.py`
 
 **Interfaces:**
-- Produces: `create_ai_task_for_work_item`, completion event projection, independent review creation, and rework attempt dispatch.
+- Produces: internal-only `create_ai_task_for_work_item` and `dispatch_ai_task_for_work_item`, completion event projection, independent review creation, and rework attempt dispatch.
 - Consumes: frozen role binding, execution context manifest, Agent Loop, Runner, quality gates, and work-item scheduler.
 
 - [ ] **Step 1: Write failing execution integration tests**
 
-Assert an AI work item creates one linked AI task, uses only the frozen role executor, coding success enters verification, passed review approves the work item, failed gate creates rework, and duplicate Runner completion is idempotent.
+Assert an AI work item creates one linked AI task through the internal service, freezes separate AI employee and executor IDs, uses only the frozen executor, coding success enters verification, passed review approves the work item, failed gate enters `rework_required` with the original attempt preserved, and duplicate Runner completion is idempotent. Also assert public task create/start cannot invoke these services.
 
 - [ ] **Step 2: Verify red**
 
@@ -522,12 +539,12 @@ Run the Step 2 command, then commit `feat: execute rd collaboration work items`.
 - Create: `apps/api/tests/test_rd_feedback_attribution.py`
 
 **Interfaces:**
-- Produces: `record_version_git_delivery`, `verify_version_git_delivery`, `complete_collaboration_at_ready_for_release`, and `enter_policy_controlled_deployment`.
+- Produces: `record_version_git_delivery`, `verify_version_git_delivery`, `complete_collaboration_at_ready_for_release`, and `enter_policy_controlled_deployment`; default completion leaves the version at `ready_for_release` and writes run `status=completed/completion_reason=ready_for_release`.
 - Produces: role/actor/executor/attempt feedback records and governed experience candidates.
 
 - [ ] **Step 1: Write failing delivery-boundary tests**
 
-Assert the integration work item pushes through Outbox and stores repository/branch/local SHA/remote SHA/MR-PR/outbox/reconciliation evidence. `ready_for_release` only verifies this evidence and creates no push or deployment request; missing or mismatched remote evidence blocks completion. `deployed` creates a request only after readiness, scope, approval, and rollback gates.
+Assert the integration work item pushes through Outbox and stores repository/branch/local SHA/remote SHA/MR-PR/outbox/reconciliation evidence. `ready_for_release` only verifies this evidence and creates no push or deployment request; missing or mismatched remote evidence blocks completion. Default completion leaves the product version at `ready_for_release`, completes the run with `completion_reason=ready_for_release`, and creates no deployment request. `deployed` creates a request only after readiness, scope, approval, and rollback gates and completes with `completion_reason=deployed`.
 
 - [ ] **Step 2: Verify red**
 
@@ -535,7 +552,7 @@ Run: `cd apps/api && uv run pytest tests/test_rd_collaboration_delivery.py tests
 
 - [ ] **Step 3: Implement delivery and attribution projections**
 
-Reuse existing trusted delivery records, deployment requests/runs, reconciliation, and Outbox. Experience records remain candidates until governance approval and cannot mutate live policy automatically.
+Reuse existing trusted delivery records, deployment requests/runs, reconciliation, and Outbox. Experience records separately persist role/seat plus `human_user_id` or `ai_employee_id`, executor profile, attempt, and strategy snapshot. They remain candidates until governance approval and cannot mutate live policy automatically.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -546,6 +563,7 @@ Run the Step 2 command and existing deployment tests, then commit `feat: complet
 **Files:**
 - Refactor: `apps/web/src/pages/RdExecutorPolicies/index.tsx`
 - Create: `apps/web/src/pages/RdExecutorPolicies/PolicyRoleBindings.tsx`
+- Create: `apps/web/src/pages/RdExecutorPolicies/AiEmployeeCatalog.tsx`
 - Create: `apps/web/src/pages/Requirements/RequirementAssessmentDrawer.tsx`
 - Create: `apps/web/src/pages/IterationVersions/RequirementGroupingPanel.tsx`
 - Create: `apps/web/src/pages/RdCollaboration/index.tsx`
@@ -562,11 +580,11 @@ Run the Step 2 command and existing deployment tests, then commit `feat: complet
 
 **Interfaces:**
 - Consumes: Tasks 4-12 APIs.
-- Produces: one unified policy editor, assessment review, grouping explanation, collaboration DAG/board, role seats, work-item attempts, blockers, and human decisions.
+- Produces: one unified policy editor, AI digital employee catalog, assessment review, grouping explanation, collaboration DAG/board, role seats, work-item attempts, blockers, and human decisions.
 
 - [ ] **Step 1: Write failing user-flow tests**
 
-Test unified policy editing without old executor fields, requirement assessment decisions, existing-version grouping rationale, work-item review/rework, RBAC read-only states, and deployment-disabled completion.
+Test unified policy editing without old executor fields, separate AI employee/executor selection, full assessment opinion/answer/decision actions, existing-version grouping rationale, absence of delivery-state batch advancement and public task-start controls, work-item review/rework/recovery, RBAC read-only states, and deployment-disabled completion with version/run status separation.
 
 - [ ] **Step 2: Verify red**
 
@@ -622,6 +640,15 @@ def test_maintenance_fence_blocks_rd_writes_but_not_scheduled_jobs(client, admin
 
 def test_destructive_cleanup_is_not_in_automatic_migration_registry():
     assert "110_requirement_driven_rd_cutover.sql" not in registered_migration_names()
+
+
+def test_fence_can_open_only_after_v2_workers_and_smoke_write_are_healthy(client, admin_headers):
+    response = disable_rd_fence(client, admin_headers)
+    assert response.status_code == 409
+    mark_cleanup_worker_and_smoke_checks_successful()
+    assert disable_rd_fence(client, admin_headers).status_code == 200
+    assert start_v2_assessment(client, admin_headers).status_code != 423
+    assert legacy_generate_task(client, admin_headers).status_code == 409
 ```
 
 - [ ] **Step 2: Verify red**
@@ -630,7 +657,7 @@ Run: `cd apps/api && uv run pytest tests/test_rd_collaboration_migration.py test
 
 - [ ] **Step 3: Implement maintenance-fenced preflight and one-way cutover**
 
-The API and scripts never deploy. Enable the fence before preflight; block requirement approval/rejection/direct task generation, AI task start/retry, policy writes, collaboration writes, and Runner claims while leaving scheduled jobs unchanged. Convert policies and cancel legacy drafts only after blockers are zero. Set Schema v2, start the new application with old columns still present, validate health, then record the health marker. Migration 110 is destructive and must be executed explicitly by `rd_collaboration_cutover.py cleanup` as one SQL transaction after that marker; do not register it in the automatic additive compatibility runner. Cleanup failure keeps maintenance enabled and is retryable; it never reopens the old write path.
+The API and scripts never deploy. Enable the fence before preflight; block requirement approval/rejection/direct task generation, AI task start/retry, policy writes, collaboration writes, and Runner claims while leaving scheduled jobs unchanged. Convert policies and cancel legacy drafts only after blockers are zero. Set Schema v2, start the new application with old columns still present, validate health, then record the health marker. Migration 110 is destructive and must be executed explicitly by `rd_collaboration_cutover.py cleanup` as one SQL transaction after that marker; do not register it in the automatic additive compatibility runner. After cleanup, resume v2 workers, verify worker/schema/graph-version equality, execute v2 assessment and collaboration write smoke tests, and only then disable the fence with the expected schema version and health marker. Any failure keeps maintenance enabled and retryable. After release, v2 writes succeed while all legacy write paths remain rejected.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -654,7 +681,7 @@ Run the Step 2 command plus `python scripts/rd_collaboration_upgrade_check.py --
 
 - [ ] **Step 1: Extend full-chain regression**
 
-Cover requirement submission, assessment, compatible planning-version selection, two requirements sharing one version run, policy snapshot, collaboration DAG, AI work item, independent review, rework, reconciled remote branch/commit evidence, `ready_for_release`, deployment-disabled stop, and audit/feedback attribution. Also verify Bug/code-inspection/assistant legacy entry adapters create requirements rather than AI tasks and a representative scheduled job retains its pre-upgrade definition, schedule, Agent/Skill snapshot, and run semantics.
+Cover requirement submission; assigned opinions, answers, and all assessment decisions; compatible planning-version selection; two requirements sharing one version run; policy snapshot; distinct AI employee/executor identity; collaboration DAG; blocked/human-wait recovery; internal AI work-item execution and retry; independent review; rework; reconciled remote branch/commit evidence; product version `ready_for_release`; run `completed/completion_reason=ready_for_release`; deployment-disabled stop; and actor/executor feedback attribution. Also verify Bug/code-inspection/assistant legacy entry adapters create requirements rather than AI tasks, delivery-state batch advancement and public AI-task create/start/batch-retry are rejected, maintenance-fence release restores only v2 writes, and a representative scheduled job retains its pre-upgrade definition, schedule, Agent/Skill snapshot, and run semantics.
 
 - [ ] **Step 2: Run focused backend and frontend suites**
 
@@ -683,9 +710,10 @@ Run final diff review, commit remaining docs/tests, and push the current `codex/
 - Requirement assessment resolves policy before and after AI evaluation in Tasks 4 and 6.
 - Version grouping is deterministic and idempotent in Task 7.
 - Direct R&D entry bypasses are converted to requirement adapters in Task 8.
-- Human/AI roles, RBAC separation, seats, sessions, DAG, review, rework, decisions, and attribution are covered by Tasks 5, 9, 11, and 12.
+- Public delivery-state batch advancement and AI-task create/start bypasses are rejected in Task 8; internal work-item services are integrated in Task 11.
+- Human/AI roles, persistent AI employee identity, executor separation, RBAC separation, seats, sessions, DAG, review, recovery, rework, decisions, and attribution are covered by Tasks 5, 9, 11, and 12.
 - Existing LangGraph is reused and upgraded with a PostgreSQL Checkpointer in Task 10; domain state and event Inbox remain the consistency source.
 - Scheduled-job engine behavior is explicitly unchanged in Global Constraints, Tasks 8, 11, 14, and 15.
-- Delivery ends at `ready_for_release` by default and enters deployment only through policy in Task 12; remote Git evidence is recorded before readiness completion.
-- Additive schema, maintenance fence, zero-active-task preflight, policy conversion, draft cancellation, one-way activation, and cleanup are covered by Tasks 2 and 14.
+- Delivery leaves the version at `ready_for_release` and completes the run with `completion_reason=ready_for_release` by default; deployment is entered only through policy in Task 12, after remote Git evidence is recorded.
+- Additive schema, maintenance fence, zero-active-task preflight, policy conversion, draft cancellation, one-way activation, cleanup, v2 Worker/smoke verification, and safe fence release are covered by Tasks 2 and 14.
 - No implementation step contains an unresolved placeholder.

@@ -135,26 +135,32 @@
 | Requirement | GET | `/api/requirements` | 需求列表；校验 `requirement.read`，分页、排序、筛选和产品 scope 过滤由 SQL read model 完成。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/batch-assign-owner` | 批量分配需求负责人。 |
-| Requirement | POST | `/api/requirements/batch-advance-status` | 按研发流程批量推进需求状态。 |
-| Requirement | POST | `/api/requirements/batch-schedule` | 批量归集同产品需求到迭代版本。 |
-| Requirement | POST | `/api/requirements/batch-generate-tasks` | 批量为同产品已排期需求生成产品详细设计任务。 |
+| Requirement | POST | `/api/requirements/batch-advance-status` | v2.0 不得推进任何研发交付状态；仅在既无活动协作运行、也不存在非终态工作项时允许批量取消/关闭，其余目标返回 `RD_COLLABORATION_REQUIRED`。 |
+| Requirement | POST | `/api/requirements/batch-schedule` | v2.0 仅供有权限人员调整自动组版结果；目标必须为 `planning`，并重新校验产品、容量、仓库、交付终点和依赖硬条件。 |
+| Requirement | POST | `/api/requirements/batch-generate-tasks` | v2.0 兼容拒绝端点，固定返回 `RD_COLLABORATION_REQUIRED`，不创建任务或推进需求状态。 |
 | Requirement | GET | `/api/requirements/{requirement_id}` | 需求详情。 |
 | Requirement | GET | `/api/requirements/{requirement_id}/full-chain`, `/api/lifecycle/full-chain` | 需求全链路详情，按时间线聚合需求、迭代版本、版本代码分支、AI 任务、Review、PR/MR 快照、代码评审、代码巡检报告、Bug、执行诊断、发布、知识沉淀和审计事件；统一主体入口可按 Bug、迭代版本、版本代码分支配置、代码巡检报告、执行诊断主体或 AI 助手引用解析到同一链路，并返回 `anchor`，其中 `iteration_version` 作为 `product_version` 兼容别名处理，`product_version_branch_config` / `branch_config` 按版本分支配置解析到同版本需求链路；版本或版本分支暂无需求时返回 `status=empty`、`requirement=null` 的版本级空链路而非接口异常；接口要求 `requirement.read`、`task.read` 或 `workspace.read` 任一读权限，并按需求或入口主体所属产品 scope 校验，缺权限返回 403，产品范围不匹配返回 404。 |
 | Requirement | PATCH | `/api/requirements/{requirement_id}` | 更新待审批或已驳回需求。 |
 | Requirement | DELETE | `/api/requirements/{requirement_id}` | 删除未生成任务的需求；已生成 AI 任务时返回 `409 RESOURCE_IN_USE`，错误详情包含 `related_counts.ai_tasks` 与 `related_total`，前端提示先通过全链路或任务中心处理关联任务，或关闭/取消需求。 |
-| Requirement | POST | `/api/requirements/{requirement_id}/approve` | 审批通过需求。 |
-| Requirement | POST | `/api/requirements/{requirement_id}/reject` | 驳回需求。 |
+| Requirement | POST | `/api/requirements/{requirement_id}/approve` | v2.0 兼容拒绝端点；正式结论必须通过评估 decision 写入。 |
+| Requirement | POST | `/api/requirements/{requirement_id}/reject` | v2.0 兼容拒绝端点；正式结论必须通过评估 decision 写入。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/close` | 关闭需求。 |
-| Requirement | POST | `/api/requirements/{requirement_id}/generate-task` | 需求排期后生成 AI 任务。 |
+| Requirement | POST | `/api/requirements/{requirement_id}/generate-task` | v2.0 兼容拒绝端点，固定返回 `RD_COLLABORATION_REQUIRED`；任务只能由协作工作项内部创建。 |
+| Requirement Assessment | POST/GET | `/api/requirements/{requirement_id}/assessments`, `/api/requirements/{requirement_id}/assessments/latest` | 创建或查询正式需求评估；同一需求修订与策略快照幂等复用，实质修改后创建新评估。 |
+| Requirement Assessment | POST | `/api/requirement-assessments/{assessment_id}/opinions`, `/answers`, `/decisions` | 分配岗位提交意见、需求负责人补充事实、授权决策人执行 `accept/reject/request_more_info/request_rework/defer`；accepted 后才进入版本归组。 |
 | AI Task | GET | `/api/ai-tasks` | 任务列表，支持按状态、任务类型、产品、需求、创建时间、关键词、创建人筛选，并返回分页结果。 |
-| AI Task | POST | `/api/ai-tasks` | 低层任务创建接口。 |
-| AI Task | POST | `/api/ai-tasks/{task_id}/start` | 启动任务；命中研发执行器策略时先冻结执行上下文，编码 Runner 成功后进入独立质量门禁，自治模式可按失败证据创建下一轮；停在可重试失败步骤的任务复用同一 task_id。 |
+| AI Task | POST | `/api/ai-tasks` | v2.0 对真人和外部调用固定返回 `RD_COLLABORATION_REQUIRED`；协作编排器通过内部 `create_ai_task_for_work_item` 创建任务。 |
+| AI Task | POST | `/api/ai-tasks/{task_id}/start` | v2.0 对真人和外部调用固定返回 `RD_COLLABORATION_REQUIRED`；调度器通过内部 `dispatch_ai_task_for_work_item` 使用冻结的岗位、AI 数字员工与执行器快照派发。 |
 | AI Task | GET | `/api/ai-tasks/{task_id}` | 任务详情；返回脱敏产品上下文、输入输出、可读 `output_summary`、Review/Graph/知识/回写，以及 `execution_context_manifest/agent_loop/quality_gate` 治理投影。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/agent-loop/takeover` | 请求人工接管运行中的 Agent 自治循环，取消仍在执行的循环 Runner 任务，停止继续派发并保留轮次、门禁和接管审计。 |
-| AI Task | GET/POST/PATCH/DELETE | `/api/delivery/rd-task-executor-policies`, `/api/delivery/rd-task-executor-policies/{policy_id}` | 管理研发执行器策略；按任务类型、产品和优先级匹配 Codex、Claude Code 或 OpenClaw Runner。策略支持 `autonomy_mode`、轮次/时长/Token/费用预算、`quality_gate_policy_id`、自动合并风险阈值和 `code_change_review_mode`；`auto_commit` 只有独立门禁通过且未命中高风险/迁移/保护路径才可 merge，否则降级人工确认。带分页时走服务端 read model。 |
+| Delivery Policy | GET/POST/PATCH/DELETE | `/api/delivery/rd-task-executor-policies`, `/api/delivery/rd-task-executor-policies/{policy_id}` | 原入口原位升级为唯一统一研发执行策略；整体管理匹配、评估、版本归组、交付终点、团队、自治、质量门禁、Git、部署和 `role_bindings`，不接受旧单任务匹配写契约。 |
+| Delivery Team | GET/POST/PATCH | `/api/delivery/rd-roles`, `/api/delivery/rd-ai-employees`, `/api/delivery/rd-executor-profiles` | 分别管理动态研发岗位、稳定 AI 数字员工身份和运行执行器配置；三者不得合并，AI 席位同时冻结员工与执行器。 |
+| Delivery Run | POST/GET | `/api/product-versions/{version_id}/collaboration-runs`, `/api/delivery/rd-collaboration-runs/{run_id}` | 以产品版本为聚合根创建和查询协作运行；同一版本最多一个非终态运行，创建时冻结需求、策略、岗位、员工和执行器快照。 |
+| Delivery Work Item | GET/POST | `/api/delivery/rd-collaboration-runs/{run_id}/work-items`, `/api/delivery/rd-work-items/{work_item_id}/claim`, `/submit`, `/review` | 查询 DAG 并执行领取、提交和审核；依赖满足后并行，失败可返工，`blocked/awaiting_human` 只能按冻结 `resume_state` 恢复。 |
+| Delivery Decision | POST | `/api/delivery/decision-requests/{decision_request_id}/decide` | 对高风险、超权限、冲突、预算、门禁或部署边界进行人工决策，并恢复或取消受影响工作项。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/more-info` | 提交补充信息。 |
 | AI Task | POST | `/api/ai-tasks/batch-cancel` | 批量取消任务，逐条校验状态并返回 updated/skipped 明细。 |
-| AI Task | POST | `/api/ai-tasks/batch-retry` | 批量重试失败任务，逐条校验 `model_gateway_failed` / `code_review_executor_failed` 并返回 retried/updated/skipped 明细。 |
+| AI Task | POST | `/api/ai-tasks/batch-retry` | v2.0 对真人和外部调用固定返回 `RD_COLLABORATION_REQUIRED`；失败恢复由工作项调度器按 attempt、幂等键、预算和重试上限内部执行。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/cancel` | 取消任务。 |
 | Graph Runtime | GET | `/api/graph-runs` | Graph Run 列表，支持按 `task_id` 查询任务运行态；返回 `runtime`、`node_path`、`checkpoint_id` 和 `state_snapshot.graph_runtime`，并按任务读权限过滤。 |
 | Review | GET | `/api/reviews/pending` | 待确认列表；支持 `ai_task_id` 精准筛选某个 AI 任务的待确认项，支持 `page/page_size/sort_by/sort_order`，排序字段为 `created_at`、`updated_at`、`id`、`ai_task_id`、`stage`、`status`；PostgreSQL 运行时优先通过待确认 Review count/page SQL 摘要查询，并按任务读权限范围过滤，响应包含 `query/performance`。 |
