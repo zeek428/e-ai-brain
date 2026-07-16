@@ -200,6 +200,7 @@ function installScheduledJobsFetchMock(
           },
           generic_result_actions: [
             { label: '仅保存运行结果', value: 'save_scheduled_job_result' },
+            { label: '写入内部业务数据 - 用户洞察', value: 'write_internal_user_insights' },
             { label: '创建需求', value: 'create_requirements' },
             { label: '同步钉钉文档', value: 'sync_dingtalk_document' },
             { label: '发送通知记录', value: 'send_notification' },
@@ -1700,6 +1701,24 @@ describe('ScheduledJobsPage', () => {
     });
   });
 
+  it('offers the internal user-insights write action for plugin invocation jobs', async () => {
+    installScheduledJobsFetchMock();
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
+    const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
+    fireEvent.mouseDown(within(dialog).getByLabelText('作业类型'));
+    const jobTypeOptions = await screen.findAllByText('插件执行调用');
+    fireEvent.click(jobTypeOptions.at(-1)!);
+
+    fireEvent.click(await within(dialog).findByRole('button', { name: /新增结果动作/ }));
+    const resultActionType = await within(dialog).findByLabelText('结果动作类型');
+    fireEvent.mouseDown(resultActionType);
+
+    expect(await screen.findByText('写入内部业务数据 - 用户洞察')).toBeInTheDocument();
+  });
+
   it('keeps internal data source parameters when editing requirement mining jobs', async () => {
     const { jobUpdateBodies } = installScheduledJobsFetchMock({
       jobs: [
@@ -3154,7 +3173,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_copied_weekly_feedback' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     expect(within(dialog).getByLabelText('模板来源 scheduled_job_run_original_weekly_feedback')).toHaveTextContent(
       '运行快照',
     );
@@ -3430,7 +3449,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_weekly_feedback' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     expect(within(dialog).getByRole('link', { name: '执行诊断' })).toHaveAttribute(
       'href',
       '/governance/execution-traces?source_id=scheduled_job_run_weekly_feedback&source_type=scheduled_job_run',
@@ -3685,7 +3704,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_refresh' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     expect(dialog).toHaveTextContent('任务正在执行');
     expect(dialog).toHaveTextContent('running');
 
@@ -3715,7 +3734,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_weekly_feedback' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     const skillTraceNode = within(dialog).getByLabelText('Trace 节点 经过 Skill 处理后的内容');
     expect(skillTraceNode).toHaveTextContent('单节点复跑可用');
     expect(skillTraceNode).toHaveTextContent('副作用 model_gateway_call');
@@ -3752,7 +3771,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_weekly_feedback' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     const resultActionTraceNode = within(dialog).getByLabelText('Trace 节点 结果写入反馈内容');
     expect(resultActionTraceNode).toHaveTextContent('单节点复跑可用');
     expect(resultActionTraceNode).toHaveTextContent('副作用 idempotent_result_write');
@@ -3809,7 +3828,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_weekly_feedback' }));
 
-    const detailDialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const detailDialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     fireEvent.click(within(detailDialog).getByRole('button', { name: '生成模板' }));
 
     await waitFor(() => expect(generatedTemplateRequests).toEqual(['scheduled_job_run_weekly_feedback']));
@@ -3899,7 +3918,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_openclaw_scan' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('openclaw');
     expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('ai_executor_runner_local');
     expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('ai_executor_task_openclaw_scan');
@@ -3971,7 +3990,7 @@ describe('ScheduledJobsPage', () => {
       await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_system_executor_scan' }),
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     expect(within(dialog).getByText('运行摘要')).toBeInTheDocument();
     expect(within(dialog).getByText('插件执行调用完成')).toBeInTheDocument();
     expect(dialog).not.toHaveTextContent('No handler implemented');
@@ -4045,7 +4064,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_email_notification' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     const resultActionNode = within(dialog).getByLabelText('流程节点 动作反馈内容');
     expect(resultActionNode).toHaveTextContent('邮件通知记录');
     expect(resultActionNode).toHaveTextContent('mail_001');
@@ -4130,7 +4149,7 @@ describe('ScheduledJobsPage', () => {
       await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_feedback_dingtalk' }),
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     const statusSummary = within(dialog).getByLabelText('结果动作执行情况');
     expect(statusSummary).toHaveTextContent('钉钉文档更新');
     expect(statusSummary).toHaveTextContent('成功');
@@ -4179,7 +4198,7 @@ describe('ScheduledJobsPage', () => {
       await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_feedback_dingtalk_not_run' }),
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     const statusSummary = within(dialog).getByLabelText('结果动作执行情况');
     expect(statusSummary).toHaveTextContent('钉钉文档更新');
     expect(statusSummary).toHaveTextContent('未执行');
@@ -4288,7 +4307,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_code_inspection_ai' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     expect(within(dialog).getByRole('link', { name: '执行诊断' })).toHaveAttribute(
       'href',
       '/governance/execution-traces?source_id=scheduled_job_run_code_inspection_ai&source_type=scheduled_job_run',
@@ -4335,7 +4354,7 @@ describe('ScheduledJobsPage', () => {
 
     render(<ScheduledJobsPage />);
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     expect(dialog).toHaveTextContent('scheduled_job_run_deep_link');
     expect(dialog).toHaveTextContent('代码仓库巡检');
     expect(dialog).toHaveTextContent('plugin_invocation_log_deep_link');
@@ -4392,7 +4411,7 @@ describe('ScheduledJobsPage', () => {
 
     render(<ScheduledJobsPage />);
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     await waitFor(() =>
       expect(resultWriteRecordCalls).toContain(
         '/api/system/result-write-records?scheduled_job_run_id=scheduled_job_run_write_trace',
@@ -4461,7 +4480,7 @@ describe('ScheduledJobsPage', () => {
         trigger_type: 'manual_rerun',
       },
     ]);
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     expect(dialog).toHaveTextContent('scheduled_job_run_weekly_feedback_rerun');
     expect(dialog).toHaveTextContent('运行记录复跑');
     expect(dialog).toHaveTextContent('scheduled_job_run_weekly_feedback');
@@ -4520,7 +4539,7 @@ describe('ScheduledJobsPage', () => {
       trigger_type: 'manual',
     });
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     expect(dialog).toHaveTextContent('model_log_110');
     await waitFor(() => expect(runButton).not.toBeDisabled());
   });
@@ -4605,7 +4624,7 @@ describe('ScheduledJobsPage', () => {
     expect(await screen.findByText('代码仓库质量安全规范巡检')).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: '运行作业 代码仓库质量安全规范巡检' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const dialog = await screen.findByRole('dialog', { name: /运行结果详情/ });
     expect(dialog).toHaveTextContent('failed');
     const askAiLink = within(dialog).getByRole('link', { name: '问 AI' });
     const askAiHref = askAiLink.getAttribute('href') ?? '';

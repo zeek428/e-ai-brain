@@ -34,17 +34,17 @@
 - 首页团队看板允许 Python 聚合，但输入必须来自 PostgreSQL source rows 或可重建只读缓存；看板快照写入优先调用 `save_dashboard_metric_snapshot_record`，MemoryStore 仅作为测试 fallback，通过 helper 写入 `dashboard_metric_snapshots` 并保留稳定快照 ID 与首次创建时间。
 - AI 助手聊天运行可作为执行诊断根节点，关联用户消息、助手消息、模型网关日志和审计事件；`source_id` 支持按 `assistant_message_id` 反查整条助手运行链路，详情只展示排障元数据，不展示完整对话、Prompt 或知识正文。
 - 代码巡检报告列表必须优先走 PostgreSQL read model，在数据库层完成产品 scope、仓库、风险、状态、摘要、提交人、排序和分页；列表接口必须校验 `code_inspection.read` 权限，产品 scope 不能只依赖前端菜单隐藏；MemoryStore 仅作为测试和降级路径。
-- 代码巡检服务入口 `code_inspections.py` 必须聚焦报告写入、治理概览、详情和 Bug/整改任务写回编排；巡检枚举、严重级别归一化、提交人摘要和结果动作校验统一由 `code_inspection_common` 维护，并由架构守护测试防止通用规则回流主服务文件。
-- 代码巡检报告、finding、通知、误报忽略审批和整改任务派生属于 DB-first 写路径：服务层不得直接写 `current_store.code_inspection_*` 或 `current_store.ai_tasks`；MemoryStore fallback 由 `persist_code_inspection_records` / `persist_ai_task_record` 承接，PostgreSQL 运行态的报告、finding、通知和审计必须在同一数据库事务中提交。
+- 代码巡检服务入口 `code_inspections.py` 必须聚焦报告写入、治理概览、详情和 Bug/整改需求写回编排；巡检枚举、严重级别归一化、提交人摘要和结果动作校验统一由 `code_inspection_common` 维护，并由架构守护测试防止通用规则回流主服务文件。
+- 代码巡检报告、finding、通知、误报忽略审批和整改需求派生属于 DB-first 写路径：服务层不得直接写 `current_store.code_inspection_*`、`current_store.requirements` 或 `current_store.ai_tasks`；MemoryStore fallback 仅用于测试，PostgreSQL 运行态必须通过需求适配器把报告、finding、仓库、文件、行号、规则和修复建议写为正式需求证据，并与报告/finding 回填、通知和审计在一致性边界内提交。v2.0 不得从代码巡检直接写入 `ai_tasks`；历史 `created_task_ids/created_task_id` 只读。
 - 代码巡检本地完整扫描需记录仓库、分支、提交、提交人、规则版本、扫描范围、增量基线 Commit、扫描覆盖、质量门禁和 suppression 摘要。
 - 代码巡检报告详情中的 finding 可提交误报/忽略申请，审批状态按 `none/pending/approved/rejected` 流转；审批通过后同步报告 suppression 统计、规则治理概览和审计事件，不能只在前端隐藏问题。
 - 代码巡检治理概览首屏必须展示“代码巡检治理结论”，基于 `governance_pressure`、`summary`、`sla` 和 `rule_governance` 既有字段派生总体判断、主要风险标签和下一步动作；优先级顺序为质量门禁失败、分支闭环、提交人闭环、Bug/整改覆盖缺口、待审批忽略/接受风险、到期接受风险和健康观察。
 - 代码巡检治理概览必须展示规则包与误报治理，包含最近报告规则/扫描器版本、版本不一致提示、规则/扫描器版本分布、suppression 总量和 baseline/已接受风险/忽略项/严重级别阈值等过滤原因分布。
 - 代码巡检治理概览必须展示质量门禁趋势，按日期聚合通过、失败、跳过和未知门禁数，便于判断规则升级或仓库质量门禁是否持续恶化。
 - 代码巡检治理概览必须展示质量门禁失败原因分布，按门禁指标或规则聚合触发次数、影响报告数、最高严重级别、实际值/阈值和最近报告摘要，帮助定位是规则阈值、严重问题数量还是单个扫描维度导致门禁失败。
-- 代码巡检严重问题 SLA 必须同时展示 Bug 覆盖率和整改任务覆盖率，未关联 Bug 或未派生整改任务的严重 finding 要暴露数量和最早时间。
-- 代码巡检报告详情必须展示单报告治理闭环摘要，基于当前报告未审批忽略的严重 finding 计算闭环状态、Bug 覆盖、整改任务覆盖、待审批忽略、已接受风险和治理待办，并在 finding 表中暴露整改任务链接。
-- 严重代码巡检 finding 可派生 Bug 或整改任务，并通过 fingerprint 去重。
+- 代码巡检严重问题 SLA 必须同时展示 Bug 覆盖率和整改需求覆盖率，未关联 Bug 或未创建/关联整改需求的严重 finding 要暴露数量和最早时间。
+- 代码巡检报告详情必须展示单报告治理闭环摘要，基于当前报告未审批忽略的严重 finding 计算闭环状态、Bug 覆盖、整改需求覆盖、待审批忽略、已接受风险和治理待办，并在 finding 表中暴露整改需求链接。
+- 严重代码巡检 finding 可派生 Bug 或正式整改需求，并分别通过 fingerprint/需求业务键去重；后续 AI 工作项只能由需求评估、组版和版本协作创建。
 - Bug 列表属于管理型列表，必须校验 `bug.read` 并按当前用户产品 scope 在服务端过滤；PostgreSQL 运行态需将产品 scope 下推到 Bug read model 后再分页计数，避免前端或内存 fallback 暴露其他产品记录。Bug 创建、批量更新、编辑和删除属于 DB-first 写路径：服务层不得直接调用 `current_store.audit()` 或写 `current_store.bugs`；MemoryStore fallback 由 `save_bug_record` / `delete_bug_record` 承接，PostgreSQL 运行态的 Bug 单记录写入、删除和审计必须在同一数据库事务中提交。
 - 用户洞察列表固定列宽、服务端筛选和详情查看保持稳定，优质反馈可转需求。
 - 运维部署单属于 DB-first 写路径：创建、启动、完成、失败、回滚和取消必须写入 `deployment_requests` / `deployment_runs` 并同步审计；部署成功推进关联需求到 `released`，失败或回滚推进回 `ready_for_release` 并创建 `deployment_failure` 来源 Bug。部署单列表和操作必须按产品 scope 过滤，Jenkins 发布记录可关联部署单但不能替代部署成功门禁。

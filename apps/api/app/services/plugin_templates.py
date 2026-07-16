@@ -59,7 +59,12 @@ DINGTALK_MCP_P0_CAPABILITIES: dict[str, dict[str, Any]] = {
         "description": "钉钉官方 AI 表格 MCP 插件，用于查询或新增 AI 表格记录。",
         "mcp_id": "9555",
         "name": "钉钉 AI 表格",
-        "recommended_scenarios": ["业务台账定时读取", "项目数据汇总", "AI 表格记录分析", "洞察结果同步"],
+        "recommended_scenarios": [
+            "业务台账定时读取",
+            "项目数据汇总",
+            "AI 表格记录分析",
+            "洞察结果同步",
+        ],
         "risk_level": "high",
         "server_name": "aitable",
         "summary": "通过钉钉官方 MCP 连接 AI 表格记录查询和新增能力。",
@@ -519,13 +524,13 @@ def _dingtalk_connection_schemas() -> dict[str, dict[str, Any]]:
                             "fields": [
                                 {
                                     "description": (
-                                        "在连接中填写一次；新增记录动作会自动从所选连接读取，"
-                                        "无需在动作里重复填写。"
+                                        "可直接粘贴钉钉 AI 表格链接，系统会自动提取 Base ID；"
+                                        "新增记录动作会自动从所选连接读取，无需在动作里重复填写。"
                                     ),
                                     "key": "base_id",
-                                    "label": "钉钉表格 Base ID",
+                                    "label": "钉钉表格链接或 Base ID",
                                     "path": "request_config.base_id",
-                                    "placeholder": "请输入钉钉 AI 表格 Base ID",
+                                    "placeholder": "粘贴钉钉 AI 表格链接或输入 Base ID",
                                     "required": True,
                                     "type": "text",
                                 },

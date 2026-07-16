@@ -28,9 +28,9 @@ from app.services.plugin_connection_config import (
     normalize_github_connection_request_config,
     normalize_gitlab_connection_config,
 )
+from app.services.plugin_connection_test_request import connection_test_request_parts
 from app.services.plugin_constants import (
     AI_EXECUTOR_RUNNER_PROTOCOLS,
-    MCP_HTTP_PROTOCOLS,
     PLUGIN_ACTION_SORT_FIELDS,
     PLUGIN_ACTION_TYPES,
     PLUGIN_AUTH_TYPES,
@@ -910,40 +910,27 @@ def test_plugin_connection_response(
         now=resolution_now,
     )
     request_query = _dict_config_section(request_config.get("query"))
-    is_mcp_http_protocol = plugin.get("protocol") in MCP_HTTP_PROTOCOLS
     network_query = _query_with_url_key(connection, request_query)
     summary_query = _query_with_url_key(connection, request_query, mask=True)
-    request_method = (
-        "INTERNAL_READ"
-        if plugin.get("protocol") == INTERNAL_DATA_SOURCE_PROTOCOL
-        else "POST"
-        if is_mcp_http_protocol
-        else "GET"
-    )
     network_request_url = _url_with_query(str(connection.get("endpoint_url") or ""), network_query)
     summary_request_url = _url_with_query(str(connection.get("endpoint_url") or ""), summary_query)
-    request_body: dict[str, Any] | None = None
     request_headers, header_sources = _build_headers_with_sources(
         connection,
         {"request_config": {}},
     )
-    if is_mcp_http_protocol:
-        request_body = {
-            "id": f"connection_test_{connection_id}",
-            "jsonrpc": "2.0",
-            "method": "tools/list",
-            "params": {},
-        }
-        request_headers = {
-            **request_headers,
-            "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json",
-        }
-        header_sources = {
-            **header_sources,
-            "Accept": "system.default",
-            "Content-Type": "system.default",
-        }
+    (
+        is_mcp_http_protocol,
+        request_method,
+        request_body,
+        request_headers,
+        header_sources,
+    ) = connection_test_request_parts(
+        connection_id=connection_id,
+        header_sources=header_sources,
+        plugin_protocol=plugin.get("protocol"),
+        request_config=request_config,
+        request_headers=request_headers,
+    )
     masked_placeholder_headers = [
         header_name
         for header_name, header_value in request_headers.items()
@@ -1023,6 +1010,11 @@ def test_plugin_connection_response(
             step_start = perf_counter()
             request = Request(
                 network_request_url,
+                data=(
+                    json.dumps(request_body, ensure_ascii=False).encode("utf-8")
+                    if request_body is not None
+                    else None
+                ),
                 headers=request_headers,
                 method=request_method,
             )
@@ -1039,7 +1031,7 @@ def test_plugin_connection_response(
                 diagnostics.append(
                     ConnectionDiagnosticsService.diagnostic_step(
                         "network_request",
-                        detail="HTTP GET 调用完成",
+                        detail=f"HTTP {request_method} 调用完成",
                         latency_ms=int((perf_counter() - step_start) * 1000),
                         status_code=getattr(response, "status", None),
                     ),

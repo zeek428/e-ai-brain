@@ -47,6 +47,7 @@ type PluginManagementModalsProps = {
   advancedConnectionJsonOpen: boolean;
   advancedConnectionRequestJsonOpen: boolean;
   connectionForm: FormInstance<PluginConnectionFormValues>;
+  connectionBaseId: string;
   connectionModalOpen: boolean;
   connectionOptions: SelectOption[];
   connectionSubmitAction?: 'save' | 'save-test';
@@ -55,8 +56,10 @@ type PluginManagementModalsProps = {
   editingConnection: boolean;
   editingPlugin: boolean;
   editingRunner: boolean;
+  internalBusinessDataWriteScenario: string;
   maxComputeScenario: string;
   pluginCode?: string;
+  pluginProtocol?: string;
   pluginForm: FormInstance<PluginFormValues>;
   pluginModalOpen: boolean;
   pluginOptions: SelectOption[];
@@ -143,6 +146,7 @@ export function PluginManagementModals({
   advancedConnectionJsonOpen,
   advancedConnectionRequestJsonOpen,
   connectionForm,
+  connectionBaseId,
   connectionModalOpen,
   connectionOptions,
   connectionSubmitAction,
@@ -151,8 +155,10 @@ export function PluginManagementModals({
   editingConnection,
   editingPlugin,
   editingRunner,
+  internalBusinessDataWriteScenario,
   maxComputeScenario,
   pluginCode,
+  pluginProtocol,
   pluginForm,
   pluginModalOpen,
   pluginOptions,
@@ -294,6 +300,7 @@ export function PluginManagementModals({
         onValuesChange={onConnectionValuesChange}
         open={connectionModalOpen}
         pluginCode={pluginCode}
+        pluginProtocol={pluginProtocol}
         pluginOptions={pluginOptions}
         productOptions={productOptions}
         schema={selectedConnectionSchema}
@@ -303,9 +310,11 @@ export function PluginManagementModals({
       <PluginActionModal
         actionScenario={actionScenario}
         advancedJsonOpen={advancedActionJsonOpen}
+        connectionBaseId={connectionBaseId}
         connectionOptions={connectionOptions}
         defaultWriteTarget={defaultWriteTarget}
         form={actionForm}
+        internalBusinessDataWriteScenario={internalBusinessDataWriteScenario}
         isEditing={Boolean(editingAction)}
         maxComputeScenario={maxComputeScenario}
         onApplyJsonToVisual={onApplyActionJsonToVisual}

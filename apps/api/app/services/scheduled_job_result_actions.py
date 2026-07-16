@@ -25,6 +25,7 @@ from app.services.scheduled_job_common import ensure_enum
 from app.services.scheduled_job_config import scheduled_job_result_action_policy
 from app.services.scheduled_job_runtime import exception_error_code_and_message
 from app.services.system_settings import send_system_email
+from app.services.user_feedback import write_ai_generated_user_feedback_insights
 from app.services.version_status import validate_requirement_version
 
 REQUIREMENT_PRIORITIES = {"P0", "P1", "P2"}
@@ -33,6 +34,7 @@ GENERIC_RESULT_ACTION_TYPES = {
     "save_scheduled_job_result",
     "send_notification",
     "sync_dingtalk_document",
+    "write_internal_user_insights",
 }
 GENERIC_NOTIFICATION_CHANNELS = {"dingtalk", "email"}
 GENERIC_RESULT_ACTION_JOB_TYPES = {
@@ -67,6 +69,9 @@ def validate_scheduled_job_result_actions(job_type: str, actions: Any) -> list[d
         elif action_type == "create_requirements":
             _ensure_plugin_invoke_result_action(job_type, action_type)
             normalized.append(_normalize_create_requirements_action(action))
+        elif action_type == "write_internal_user_insights":
+            _ensure_plugin_invoke_result_action(job_type, action_type)
+            normalized.append(_normalize_write_internal_user_insights_action(action))
         elif action_type == "sync_dingtalk_document":
             _ensure_dingtalk_document_sync_result_action(job_type, action_type)
             normalized.append(_normalize_sync_dingtalk_document_action(action))
@@ -221,7 +226,8 @@ def _ensure_dingtalk_document_sync_result_action(job_type: str, action_type: str
         raise api_error(
             400,
             "VALIDATION_ERROR",
-            f"{action_type} is only supported for plugin_action_invoke or user_feedback_insight_extract jobs",
+            f"{action_type} is only supported for plugin_action_invoke "
+            "or user_feedback_insight_extract jobs",
         )
 
 
@@ -240,6 +246,23 @@ def _normalize_create_requirements_action(action: dict[str, Any]) -> dict[str, A
         "requirements_path": str(action.get("requirements_path") or "$.requirements"),
         "source": source,
         "type": "create_requirements",
+    }
+
+
+def _normalize_write_internal_user_insights_action(action: dict[str, Any]) -> dict[str, Any]:
+    max_items = int(action.get("max_items") or 100)
+    if max_items <= 0 or max_items > 1000:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "write_internal_user_insights max_items must be 1-1000",
+        )
+    return {
+        **action,
+        "insights_path": str(action.get("insights_path") or "$.insights"),
+        "max_items": max_items,
+        "source_channel": str(action.get("source_channel") or "scheduled_job_ai"),
+        "type": "write_internal_user_insights",
     }
 
 
@@ -384,6 +407,43 @@ def _generic_result_action_node(
                 },
             },
         )
+    elif action_type == "write_internal_user_insights":
+        created_insights, skipped_insights = _write_internal_user_insights_from_output(
+            action=action,
+            current_store=current_store,
+            job=job,
+            output_json=output_json,
+            user=user,
+        )
+        records_imported = len(created_insights)
+        feedback.update(
+            {
+                "created_insight_ids": [item["id"] for item in created_insights],
+                "records_imported": records_imported,
+                "sample_records": [
+                    compact_preview_value(
+                        {
+                            "content": item.get("content"),
+                            "id": item.get("id"),
+                            "sentiment": item.get("sentiment"),
+                        },
+                    )
+                    for item in created_insights[:3]
+                ],
+                "skipped_insights": skipped_insights,
+                "write_preview": {
+                    **write_preview,
+                    "candidate_count": len(created_insights) + skipped_insights,
+                    "created_insight_ids": [item["id"] for item in created_insights],
+                    "records_imported": records_imported,
+                    "sample_records": [
+                        compact_preview_value(item) for item in created_insights[:3]
+                    ],
+                    "write_target": write_target,
+                    "write_target_label": result_write_target_label(write_target),
+                },
+            },
+        )
     elif action_type == "sync_dingtalk_document":
         dingtalk_feedback = _sync_dingtalk_document(
             action=action,
@@ -417,6 +477,8 @@ def _write_target_for_action(action_type: str) -> str:
         return "requirements"
     if action_type == "sync_dingtalk_document":
         return "dingtalk_document"
+    if action_type == "write_internal_user_insights":
+        return "user_feedback_insights"
     return "scheduled_job_result"
 
 
@@ -426,6 +488,10 @@ def _merge_result_action_context(context: dict[str, Any], result: dict[str, Any]
         created = feedback.get("created_requirements")
         if isinstance(created, list):
             context["created_requirements"] = created
+    if result.get("action_type") == "write_internal_user_insights":
+        created_ids = feedback.get("created_insight_ids")
+        if isinstance(created_ids, list):
+            context["created_insight_ids"] = created_ids
 
 
 def _result_action_mapping(action: dict[str, Any], action_type: str) -> dict[str, Any]:
@@ -440,7 +506,35 @@ def _result_action_mapping(action: dict[str, Any], action_type: str) -> dict[str
             "document_id": action.get("document_id"),
             "write_mode": action.get("write_mode") or "append",
         }
+    if action_type == "write_internal_user_insights":
+        return {
+            "insights_path": action.get("insights_path") or "$.insights",
+            "records_imported_path": "$.row_count",
+        }
     return {}
+
+
+def _write_internal_user_insights_from_output(
+    *,
+    action: dict[str, Any],
+    current_store: Any,
+    job: dict[str, Any],
+    output_json: dict[str, Any],
+    user: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], int]:
+    if user is None:
+        raise api_error(403, "PERMISSION_DENIED", "User context is required")
+    insights = _list_at_first_path(
+        output_json,
+        [str(action.get("insights_path") or "$.insights"), "$.insights", "$.items"],
+    )
+    return write_ai_generated_user_feedback_insights(
+        current_store,
+        default_product_id=str(job.get("product_id") or "").strip() or None,
+        insights=insights[: int(action.get("max_items") or 100)],
+        source_channel=str(action.get("source_channel") or "scheduled_job_ai"),
+        user=user,
+    )
 
 
 def _list_at_first_path(payload: dict[str, Any], paths: list[str]) -> list[dict[str, Any]]:

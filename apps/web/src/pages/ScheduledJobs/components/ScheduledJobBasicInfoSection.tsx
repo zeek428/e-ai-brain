@@ -26,14 +26,16 @@ export function ScheduledJobBasicInfoSection({
   productRequiredRule,
 }: ScheduledJobBasicInfoSectionProps) {
   const resultActions = Form.useWatch('result_actions');
-  const requirementResultActionProductRule: FormRule = {
+  const businessResultActionProductRule: FormRule = {
     validator(_: unknown, value: unknown) {
-      const createsRequirements = Array.isArray(resultActions) && resultActions.some(
+      const requiresProduct = Array.isArray(resultActions) && resultActions.some(
         (action) => action && typeof action === 'object'
-          && (action as { type?: unknown }).type === 'create_requirements',
+          && ['create_requirements', 'write_internal_user_insights'].includes(
+            String((action as { type?: unknown }).type ?? ''),
+          ),
       );
-      if (createsRequirements && !(typeof value === 'string' && value.trim())) {
-        return Promise.reject(new Error('创建需求结果动作需要选择产品'));
+      if (requiresProduct && !(typeof value === 'string' && value.trim())) {
+        return Promise.reject(new Error('写入业务数据或创建需求结果动作需要选择产品'));
       }
       return Promise.resolve();
     },
@@ -56,7 +58,7 @@ export function ScheduledJobBasicInfoSection({
           <Form.Item
             label="所属产品"
             name="product_id"
-            rules={[productRequiredRule, requirementResultActionProductRule]}
+            rules={[productRequiredRule, businessResultActionProductRule]}
           >
             <Select
               allowClear

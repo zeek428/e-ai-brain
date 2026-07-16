@@ -672,6 +672,7 @@ export type PluginConnectionRecord = {
   plugin_id: string;
   plugin_name?: string | null;
   request_config?: Record<string, unknown>;
+  schema_values?: Record<string, unknown>;
   status: string;
   test_history?: PluginConnectionTestHistoryRecord[];
   timeout_seconds?: number;

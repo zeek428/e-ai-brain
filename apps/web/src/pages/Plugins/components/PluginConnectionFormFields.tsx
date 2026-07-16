@@ -3,6 +3,7 @@ import { Alert, Button, Checkbox, Dropdown, Form, Input, InputNumber, Select, Sp
 
 import { type PluginConnectionSchemaFieldRecord, type PluginConnectionSchemaRecord } from '../../../services/aiBrain';
 import { parseGitLabProjectAddress, parseGitRepositoryAddress } from './pluginConnectionAddressHelpers';
+import { dingtalkAITableBaseIdFromLink } from './pluginFormTransformHelpers';
 
 type SystemVariableOption = {
   description?: string;
@@ -243,6 +244,14 @@ export function ConnectionSchemaFields({
                 const schemaOptions = normalizeSchemaOptions(field);
                 const isInternalDataSourceProductField =
                   pluginCode === 'internal_data_source' && field.key === 'product_id';
+                const isDingTalkAITableBaseIdField =
+                  pluginCode === 'dingtalk_aitable' && field.key === 'base_id';
+                const normalizeDingTalkAITableBaseId = (value: string | undefined) => {
+                  const baseId = dingtalkAITableBaseIdFromLink(value);
+                  if (baseId && baseId !== value?.trim()) {
+                    form.setFieldValue(fieldName, baseId);
+                  }
+                };
                 const systemVariableMenuItems = systemVariableOptions.map((option) => ({
                   key: option.value,
                   label: option.label,
@@ -282,6 +291,22 @@ export function ConnectionSchemaFields({
                   />
                 ) : (
                   <Input
+                    onBlur={(event) => {
+                      if (isDingTalkAITableBaseIdField) {
+                        normalizeDingTalkAITableBaseId(event.target.value);
+                      }
+                    }}
+                    onPaste={(event) => {
+                      if (!isDingTalkAITableBaseIdField) {
+                        return;
+                      }
+                      const pastedValue = event.clipboardData.getData('text');
+                      const baseId = dingtalkAITableBaseIdFromLink(pastedValue);
+                      if (baseId && baseId !== pastedValue.trim()) {
+                        event.preventDefault();
+                        form.setFieldValue(fieldName, baseId);
+                      }
+                    }}
                     placeholder={field.placeholder || field.label}
                     suffix={field.supports_system_variables ? (
                       <Dropdown

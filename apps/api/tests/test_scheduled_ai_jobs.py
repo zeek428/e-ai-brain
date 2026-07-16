@@ -1544,6 +1544,10 @@ def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
     }
     assert catalog["generic_result_actions"] == [
         {"label": "仅保存运行结果", "value": "save_scheduled_job_result"},
+        {
+            "label": "写入内部业务数据 - 用户洞察",
+            "value": "write_internal_user_insights",
+        },
         {"label": "创建需求", "value": "create_requirements"},
         {"label": "同步钉钉文档", "value": "sync_dingtalk_document"},
         {"label": "发送通知记录", "value": "send_notification"},
@@ -1560,6 +1564,7 @@ def test_generic_result_actions_are_supported_for_plugin_invoke_jobs():
         "plugin_action_invoke",
         [
             {"type": "save_scheduled_job_result"},
+            {"type": "write_internal_user_insights"},
             {"requirements_path": "$.requirements", "type": "create_requirements"},
             {
                 "document_id": "https://alidocs.dingtalk.com/i/nodes/doc_node_001",
@@ -1569,6 +1574,12 @@ def test_generic_result_actions_are_supported_for_plugin_invoke_jobs():
         ],
     ) == [
         {"type": "save_scheduled_job_result"},
+        {
+            "insights_path": "$.insights",
+            "max_items": 100,
+            "source_channel": "scheduled_job_ai",
+            "type": "write_internal_user_insights",
+        },
         {
             "max_items": 20,
             "priority": "P1",
@@ -1592,17 +1603,72 @@ def test_generic_result_actions_are_supported_for_plugin_invoke_jobs():
     assert exc_info.value.status_code == 400
 
 
+def test_plugin_invoke_result_action_writes_ai_insights_to_internal_business_data():
+    app.state.store.reset()
+    product = {
+        "brain_app_id": "rd_brain",
+        "code": "ai-service",
+        "created_at": "2026-07-10T00:00:00+00:00",
+        "id": "product_ai_service",
+        "name": "AI 客服",
+        "owner_user_id": "user_admin",
+        "status": "active",
+        "updated_at": "2026-07-10T00:00:00+00:00",
+    }
+    app.state.store.products[product["id"]] = product
+
+    executed, total_records = scheduled_job_result_actions_service.execute_generic_result_actions(
+        current_store=app.state.store,
+        job={
+            "id": "scheduled_job_write_internal_insights",
+            "product_id": product["id"],
+            "result_action_policy": {"failure_policy": "fail_fast", "mode": "sequential"},
+        },
+        output_json={
+            "insights": [
+                {
+                    "content": "支付失败后缺少可恢复的下一步指引。",
+                    "feedback_type": "improvement",
+                    "sentiment": "negative",
+                    "source_channel": "ai_customer_service",
+                    "tags": ["支付", "恢复路径"],
+                },
+            ],
+            "row_count": 1,
+        },
+        output_mapping={"insights_path": "$.insights"},
+        result_actions=[{"type": "write_internal_user_insights"}],
+        scheduled_job_run_id="scheduled_job_run_write_internal_insights",
+        user=ADMIN_SERVICE_USER,
+    )
+
+    assert total_records == 1
+    assert executed[0]["type"] == "write_internal_user_insights"
+    assert executed[0]["write_target"] == "user_feedback_insights"
+    assert executed[0]["feedback"]["records_imported"] == 1
+    created_feedback = next(iter(app.state.store.user_feedback.values()))
+    assert created_feedback["content"] == "支付失败后缺少可恢复的下一步指引。"
+    assert created_feedback["product_id"] == product["id"]
+    assert created_feedback["source_channel"] == "ai_customer_service"
+
+
 def test_create_requirements_scheduled_jobs_require_a_product():
     app.state.store.reset()
     admin_headers = auth_headers()
     connection = next(
         item
-        for item in client.get("/api/system/plugin-connections", headers=admin_headers).json()["data"]["items"]
+        for item in client.get(
+            "/api/system/plugin-connections",
+            headers=admin_headers,
+        ).json()["data"]["items"]
         if item["id"] == "plugin_connection_system_internal_data_source"
     )
     action = next(
         item
-        for item in client.get("/api/system/plugin-actions", headers=admin_headers).json()["data"]["items"]
+        for item in client.get(
+            "/api/system/plugin-actions",
+            headers=admin_headers,
+        ).json()["data"]["items"]
         if item["id"] == "plugin_action_system_internal_data_source_query"
     )
 

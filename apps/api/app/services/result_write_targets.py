@@ -35,7 +35,27 @@ RESULT_WRITE_TARGETS = [
         "form_label": "用户洞察表",
         "label": "用户洞察表",
         "mapping_fields": [],
-        "supported_job_types": ["user_feedback_insight_extract"],
+        "supported_job_types": ["plugin_action_invoke", "user_feedback_insight_extract"],
+    },
+    {
+        "code": "bugs",
+        "default_result_mapping": {
+            "bugs_path": "$.bugs",
+            "write_target": "bugs",
+        },
+        "description": "把 AI 识别出的缺陷候选写入 Bug 管理。",
+        "form_label": "Bug 管理",
+        "label": "Bug 管理",
+        "mapping_fields": [
+            {
+                "description": "AI 输出中 Bug 候选数组所在路径。",
+                "key": "bugs_path",
+                "label": "Bug 列表 JSONPath",
+                "placeholder": "$.bugs",
+                "required": True,
+            },
+        ],
+        "supported_job_types": ["plugin_action_invoke"],
     },
     {
         "code": "code_inspection_reports",
@@ -95,7 +115,7 @@ RESULT_WRITE_TARGETS = [
                 "required": False,
             },
         ],
-        "supported_job_types": ["code_repository_inspection"],
+        "supported_job_types": ["code_repository_inspection", "plugin_action_invoke"],
     },
     {
         "code": "email_notifications",

@@ -264,6 +264,11 @@ export const helpGroups: HelpGroup[] = [
             caption: '插件管理页集中维护标准插件、连接、动作和执行器。',
             src: '/help/screenshots/help-plugins.png',
           },
+          {
+            alt: '写入内部业务数据动作',
+            caption: '通用内部写入场景通过结果写入目标选择用户洞察、Bug 管理或代码巡检报告。',
+            src: '/help/screenshots/help-plugin-internal-write-action.png',
+          },
         ],
         summary: '管理标准插件、授权配置、健康诊断和动作模板。',
         title: '插件管理',

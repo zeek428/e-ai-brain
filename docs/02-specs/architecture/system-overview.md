@@ -66,8 +66,8 @@ FastAPI 模块化单体
 | assistant | 基于服务端脱敏系统上下文回答 AI Brain 系统信息、项目进展、产品、任务、Git 仓库和模型网关状态问题 | FastAPI + 模型网关 Chat |
 | product_config | 产品、版本、模块、Git 资源、内部 GitLab 项目绑定和相关系统主数据 | PostgreSQL |
 | requirement | 需求台账、正式评估、补充/决策、规划版本归组、取消和关闭；不直接创建研发 AI 任务 | PostgreSQL |
-| rd_policy | 需求评估、版本归组、岗位、AI 数字员工候选、执行器、预算、门禁、Git、风险和交付终点统一策略 | PostgreSQL |
-| rd_collaboration | 版本级运行、真人/AI 员工岗位席位、工作项 DAG、并行调度、暂停恢复、审核返工、决策请求和岗位反馈 | PostgreSQL + LangGraph |
+| rd_policy | 需求评估、版本归组、岗位、AI 数字员工候选、执行器、预算、门禁、Git、风险和交付终点统一策略；`policy_version` 乐观锁控制更新，active 产品策略优先于业务大脑默认策略；独立不可变快照表保存策略版本、Schema、哈希和规范化 payload | PostgreSQL |
+| rd_collaboration | 版本级运行、真人/AI 员工岗位席位、工作项 DAG、并行调度、运行/工作项暂停恢复、审核返工、决策请求、岗位反馈和经验治理 | PostgreSQL + LangGraph |
 | ai_task | AI 任务类型、生命周期、状态流转和任务详情 | PostgreSQL + LangGraph |
 | agent_loop / quality_gate | 自治轮次、执行上下文、独立验证证据、预算终止、人工接管和受控自动合入 | PostgreSQL + 隔离 Runner / CI |
 | graph_runtime | 研发任务图和版本协作图的节点、持久化检查点、中断与恢复 | LangGraph + PostgreSQL Checkpointer |
@@ -97,20 +97,22 @@ FastAPI 模块化单体
 → 创建 requirement 并完成审批
 → 正式评估需求，LLM 提出建议、确定性服务校验风险/权限/完整度
 → 优先归入兼容 planning 版本，无合适版本才创建新规划版本
-→ 冻结统一研发执行策略、需求、版本、岗位、真人/AI 员工和执行器快照
-→ 以 product_version 为根幂等创建唯一活动 rd_collaboration_run，冻结多需求范围并保存工作项 DAG
+→ 冻结统一研发执行策略 base 快照；评估自动收紧按 assessment context/revision 生成父链清晰的 final 派生快照，不修改策略版本
+→ product_version.scope_version 随需求成员/修订/验收、仓库、分支等冻结输入变化原子递增；以产品版本为根幂等创建唯一活动 rd_collaboration_run，引用独立不可变 final 策略快照并冻结多需求范围、岗位、真人/AI 员工、执行器和工作项 DAG
+→ 评估、启动、领取、提交、审核、决策和工作项取消把幂等键、请求哈希、结果引用及脱敏响应快照与领域状态原子写入；claim 只在原租约有效期内重放
 → 并行派发 ready 工作项到 AI 数字员工或真人席位；AI 席位另行冻结执行器
 → AI 工作项复用 ai_task / Agent Loop / Runner，冻结 execution_context_manifest
 → 检索 knowledge_chunks
 → 可选查询 GBrain 长期记忆和知识图谱
 → 按 task_type 生成产品详细设计、技术方案、内部 GitLab MR Review 报告、开发计划、测试分析、发布评估或上线后分析
 → 编码结果进入独立 quality_gate；审核失败创建返工项，高风险/超权限问题创建人类决策请求
-→ 人工决策先写领域事件 Inbox，按平台冻结的 resume_state 恢复、返工或取消，再以原 LangGraph thread 恢复协作图；领域状态与 Outbox 原子提交，Checkpoint 独立持久化执行游标
+→ 人工决策选项冻结 outcome 与主体状态映射；补充信息进入 waiting_more_info 并通过 answers 子资源生成新版本。工作项按冻结 resume_state 恢复/返工/取消，运行按 resume_state/suspended_decision_request_id/suspended_at 从 running/integrating/verifying 恢复；领域状态与 Outbox 原子提交，Checkpoint 独立持久化执行游标
+→ P0 反馈写不可变岗位归因记录；P1 再生成 pending 经验候选，只有经权限、自审隔离、业务大脑/产品/岗位/工作项/场景/风险/信任域/置信度和策略校验批准的版本可带证据引用进入后续岗位上下文
 → 生成 mock_issues / code_review_reports / Bug / Markdown / knowledge_deposits
 → lifecycle_context 写入需求、任务、提交、Review、测试、Bug、发布、日志和知识之间的关系边
 → lifecycle_context 归集需求变更、设计缺口、代码质量、Review、测试、Bug、发布和线上异常风险信号
 → GitLab、Jenkins、线上日志通过真实登记/导入或定时采集映射产品归属
-→ 代码仓库巡检定时作业通过插件扫描质量/安全/规范 finding，按提交人写入代码巡检报告，严重问题去重派生 Bug，并记录邮件/钉钉机器人通知反馈
+→ 代码仓库巡检定时作业通过插件扫描质量/安全/规范 finding，按提交人写入代码巡检报告，严重问题去重派生 Bug 并创建/关联正式整改需求，历史任务字段只读，同时记录邮件/钉钉机器人通知反馈
 → 用户使用数据和用户反馈定时采集并映射产品、模块、功能和用户群体
 → iteration_planning 结合需求池、Bug、线上日志、发布记录、用户使用和用户反馈生成迭代规划建议
 → AI 自动测试和人工测试登记 Bug，关联产品、任务、提交、发布或日志

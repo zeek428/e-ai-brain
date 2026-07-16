@@ -5,7 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import './proComponentsMock';
 
 import PluginsPage from '../src/pages/Plugins';
-import { buildVisualRequestConfig } from '../src/pages/Plugins/components/pluginFormTransformHelpers';
+import {
+  actionScenarioForEditingAction,
+  buildActionRequestPreview,
+  buildVisualRequestConfig,
+  buildVisualResultMapping,
+  normalizeDingTalkAITableResultMapping,
+  resultWriteTargetLabel,
+} from '../src/pages/Plugins/components/pluginFormTransformHelpers';
 import {
   ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
@@ -971,6 +978,23 @@ function installPluginsFetchMock(
               mapping_fields: [],
             },
             {
+              code: 'bugs',
+              default_result_mapping: {
+                bugs_path: '$.bugs',
+                write_target: 'bugs',
+              },
+              form_label: 'Bug 管理',
+              label: 'Bug 管理',
+              mapping_fields: [
+                {
+                  key: 'bugs_path',
+                  label: 'Bug 列表 JSONPath',
+                  placeholder: '$.bugs',
+                  required: true,
+                },
+              ],
+            },
+            {
               code: 'code_inspection_reports',
               default_result_mapping: {
                 branch_path: '$.branch',
@@ -1094,7 +1118,7 @@ function installPluginsFetchMock(
               ],
             },
           ],
-          total: 5,
+          total: 6,
         },
       });
     }
@@ -2796,6 +2820,105 @@ describe('PluginsPage', () => {
     });
   });
 
+  it('allows a DingTalk AI Table action to use a Base ID when the connection is not configured yet', () => {
+    const writeTargets = [{
+      code: 'dingtalk_aitable_records',
+      default_result_mapping: {
+        records_template: '{{result_json}}',
+        table_id: '',
+        write_target: 'dingtalk_aitable_records',
+      },
+      label: '钉钉表格',
+      mapping_fields: [
+        { key: 'table_id', label: '数据表 Table ID', required: true, type: 'input' as const },
+        { key: 'records_template', label: '新增记录内容', required: true, type: 'textarea' as const },
+      ],
+    }];
+    const values = {
+      action_type: 'mcp_tool',
+      base_id: 'https://alidocs.dingtalk.com/i/nodes/ndMj49yWjY44OlDEsRBpgNK483pmz5aA?utm_scene=team_space',
+      request_config: '{}',
+      table_id: 'tbl-001',
+      write_target: 'dingtalk_aitable_records',
+    };
+
+    expect(buildActionRequestPreview(values, {
+      endpoint_url: 'https://mcp.example.com',
+      id: 'connection_dingtalk_aitable',
+      name: '钉钉表格连接',
+      plugin_code: 'dingtalk_aitable',
+      plugin_id: 'plugin_dingtalk_aitable',
+      request_config: {},
+      status: 'active',
+    })).toEqual(expect.objectContaining({
+      arguments: expect.objectContaining({ baseId: 'ndMj49yWjY44OlDEsRBpgNK483pmz5aA' }),
+    }));
+    expect(buildVisualResultMapping(values, writeTargets)).toEqual(expect.objectContaining({
+      base_id: 'ndMj49yWjY44OlDEsRBpgNK483pmz5aA',
+      table_id: 'tbl-001',
+      write_target: 'dingtalk_aitable_records',
+    }));
+  });
+
+  it('normalizes a legacy DingTalk AI Table action Base ID for editing', () => {
+    expect(normalizeDingTalkAITableResultMapping(
+      {
+        records_template: '{{result_json}}',
+        table_id: 'Sheet1',
+        write_target: 'dingtalk_aitable_records',
+      },
+      {
+        arguments: {
+          baseId: 'https://alidocs.dingtalk.com/i/nodes/ndMj49yWjY44OlDEsRBpgNK483pmz5aA?utm_scene=team_space',
+        },
+        tool_name: 'create_records',
+      },
+    )).toEqual({
+      base_id: 'ndMj49yWjY44OlDEsRBpgNK483pmz5aA',
+      records_template: '{{result_json}}',
+      table_id: 'Sheet1',
+      write_target: 'dingtalk_aitable_records',
+    });
+  });
+
+  it('keeps the internal business data scene when an action still uses MaxCompute for data retrieval', () => {
+    expect(actionScenarioForEditingAction(
+      {
+        action_type: 'http_request',
+        code: 'write_internal_user_insights',
+        id: 'plugin_action_user_insights',
+        name: '写入内部业务数据 - 用户洞察',
+        plugin_id: 'plugin_maxcompute',
+        request_config: { tool_name: 'maxcompute.execute_sql' },
+        requires_human_review: false,
+        result_mapping: { write_target: 'user_feedback_insights' },
+        status: 'active',
+      },
+      [],
+      [],
+    )).toBe('write_internal_business_data');
+    expect(actionScenarioForEditingAction(
+      {
+        action_type: 'http_request',
+        code: 'write_internal_bugs',
+        id: 'plugin_action_bugs',
+        name: '写入缺陷候选',
+        plugin_id: 'plugin_custom',
+        request_config: {},
+        requires_human_review: false,
+        result_mapping: { bugs_path: '$.bugs', write_target: 'bugs' },
+        status: 'active',
+      },
+      [],
+      [],
+    )).toBe('write_internal_business_data');
+  });
+
+  it('uses business labels when a standard write target has not loaded yet', () => {
+    expect(resultWriteTargetLabel('user_feedback_insights')).toBe('用户洞察表');
+    expect(resultWriteTargetLabel('bugs')).toBe('Bug 管理');
+  });
+
   it('shows template version status and copies an official plugin as custom', async () => {
     const { pluginCopyBodies } = installPluginsFetchMock({ includeOfficialPlugins: true });
 
@@ -2828,9 +2951,9 @@ describe('PluginsPage', () => {
     const dialog = await findDialogByTitle('新增动作');
     expect(within(dialog).queryByLabelText('插件')).not.toBeInTheDocument();
     expect(within(dialog).getByText('代码巡检报告')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText('请求路径')).toHaveValue('/repos/{{owner}}/{{repo}}/dependabot/alerts');
-    expect(within(dialog).getByDisplayValue('state')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('fixed')).toBeInTheDocument();
+    expect(within(dialog).getByText('HTTP 请求')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('请求路径')).not.toBeInTheDocument();
+    expect(within(dialog).queryByDisplayValue('state')).not.toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
 
@@ -2982,7 +3105,7 @@ describe('PluginsPage', () => {
     ).toBeNull();
     expect(within(dialog).getByText('GitHub (http)')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('名称')).toHaveValue('生产 GitHub 连接');
-    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('https://api.github.com');
+    expect(await within(dialog).findByLabelText('请求地址（Endpoint URL）')).toHaveValue('https://api.github.com');
     await waitFor(() => expect(within(dialog).getByDisplayValue('vault/github/token')).toBeInTheDocument());
     expect(within(dialog).getByDisplayValue('Accept')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('application/vnd.github+json')).toBeInTheDocument();
@@ -3463,7 +3586,7 @@ describe('PluginsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
     fireEvent.click(await screen.findByText('GitLab (http)'));
 
-    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('http://gitlab.local');
+    expect(await within(dialog).findByLabelText('请求地址（Endpoint URL）')).toHaveValue('http://gitlab.local');
     expect(await within(dialog).findByLabelText('Header 名')).toHaveValue('PRIVATE-TOKEN');
     expect(within(dialog).getByLabelText('Header 值/密钥引用')).toHaveValue('');
     expect(within(dialog).getByLabelText('GitLab 地址')).toBeInTheDocument();
@@ -3502,7 +3625,7 @@ describe('PluginsPage', () => {
     fireEvent.change(await within(dialog).findByLabelText('GitLab 地址'), {
       target: { value: 'http://gitlab.local/rd-platform/ai-brain.git' },
     });
-    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('http://gitlab.local');
+    expect(await within(dialog).findByLabelText('请求地址（Endpoint URL）')).toHaveValue('http://gitlab.local');
     fireEvent.change(within(dialog).getByLabelText('Header 值/密钥引用'), {
       target: { value: 'vault/gitlab/prod-token' },
     });
@@ -3536,7 +3659,8 @@ describe('PluginsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
     fireEvent.click(await screen.findByText('GitHub (http)'));
 
-    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('https://api.github.com');
+    expect(await within(dialog).findByLabelText('请求地址（Endpoint URL）')).toHaveValue('https://api.github.com');
+    expect(within(dialog).getByLabelText('请求方法')).toBeInTheDocument();
     expect(await within(dialog).findByLabelText('Token / 密钥引用')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('Accept')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('application/vnd.github+json')).toBeInTheDocument();
@@ -3549,7 +3673,7 @@ describe('PluginsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
     fireEvent.click(await screen.findByText('邮箱 (http)'));
 
-    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('https://mail-gateway.example.com/api');
+    expect(await within(dialog).findByLabelText('请求地址（Endpoint URL）')).toHaveValue('https://mail-gateway.example.com/api');
     expect(await within(dialog).findByLabelText('Header 名')).toHaveValue('Authorization');
     expect(within(dialog).getByDisplayValue('Content-Type')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('application/json')).toBeInTheDocument();
@@ -3564,10 +3688,10 @@ describe('PluginsPage', () => {
     fireEvent.click(await screen.findByText('内部数据源 (internal_read_model)'));
 
     await waitFor(() =>
-      expect(within(dialog).queryByLabelText('Endpoint URL')).not.toBeInTheDocument(),
+      expect(within(dialog).queryByLabelText('请求地址（Endpoint URL）')).not.toBeInTheDocument(),
     );
     expect(within(dialog).queryByLabelText('认证')).not.toBeInTheDocument();
-    expect(within(dialog).queryByText('高级查询 Params')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('Params')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('Headers')).not.toBeInTheDocument();
     expect(within(dialog).getByText('内部数据源用于读取 AI Brain 内部业务数据。')).toBeInTheDocument();
     expect(
@@ -3746,6 +3870,31 @@ describe('PluginsPage', () => {
     );
   });
 
+  it('clears an existing action connection when the connection selection is removed', async () => {
+    const { actionUpdateBodies } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(screen.getByRole('tab', { name: '动作' }));
+    fireEvent.click(await screen.findByRole('button', { name: '编辑动作 调用反馈 API' }));
+    const dialog = await findDialogByTitle('编辑动作');
+    const connectionField = within(dialog).getByLabelText('连接');
+    const clearButton = connectionField.closest('.ant-select')?.querySelector<HTMLElement>('.ant-select-clear');
+    expect(clearButton).toBeTruthy();
+    fireEvent.mouseDown(clearButton!);
+    fireEvent.click(clearButton!);
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
+
+    await waitFor(() =>
+      expect(actionUpdateBodies).toEqual([
+        expect.objectContaining({
+          connection_id: null,
+        }),
+      ]),
+    );
+  });
+
   it('prefills the scene template when editing official plugin actions', async () => {
     installPluginsFetchMock({ includeOfficialActions: true, includeOfficialPlugins: true });
 
@@ -3754,12 +3903,17 @@ describe('PluginsPage', () => {
     const actionsTab = screen.getByRole('tab', { name: '动作' });
     fireEvent.click(actionsTab);
     await waitFor(() => expect(actionsTab).toHaveAttribute('aria-selected', 'true'));
-    fireEvent.click(await screen.findByRole('button', { name: '编辑动作 GitHub 代码巡检' }));
+    const editButton = await screen.findByRole('button', { name: '编辑动作 GitHub 代码巡检' });
+    const actionRow = editButton.closest('tr');
+    expect(actionRow).not.toBeNull();
+    expect(within(actionRow!).getByText('HTTP 请求')).toBeInTheDocument();
+    fireEvent.click(editButton);
 
     const dialog = await findDialogByTitle('编辑动作');
 
     expect(within(dialog).getByText('GitHub 代码巡检')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText('请求路径')).toHaveValue('/repos/{{owner}}/{{repo}}/dependabot/alerts');
+    expect(within(dialog).getByText('HTTP 请求')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('请求路径')).not.toBeInTheDocument();
     expect(within(dialog).getByText('代码巡检报告')).toBeInTheDocument();
   });
 
@@ -3856,6 +4010,58 @@ describe('PluginsPage', () => {
     );
   });
 
+  it('offers the internal business data write scenario for source actions', async () => {
+    const { actionBodies } = installPluginsFetchMock({ includeOfficialPlugins: true });
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
+
+    const dialog = await findDialogByTitle('新增动作');
+    fireEvent.mouseDown(within(dialog).getByLabelText('配置场景'));
+    fireEvent.click((await screen.findAllByText('写入内部业务数据')).at(-1)!);
+
+    expect(await within(dialog).findByText('内部业务数据写入场景')).toBeInTheDocument();
+    expect(within(dialog).getByText('用户洞察表')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('名称')).toHaveValue('写入内部业务数据');
+    expect(within(dialog).getByLabelText('编码')).toHaveValue('write_internal_business_data');
+    expect(within(dialog).queryByLabelText('洞察列表 JSONPath')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('源表行数 JSONPath')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('连接')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('动作类型')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('请求方法')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('请求路径')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('请求预览')).not.toBeInTheDocument();
+
+    fireEvent.mouseDown(within(dialog).getByLabelText('结果写入目标'));
+    const resultTargetList = (await screen.findAllByRole('listbox')).at(-1)!;
+    expect(within(resultTargetList).getByRole('option', { name: '用户洞察表' })).toBeInTheDocument();
+    expect(within(resultTargetList).getByRole('option', { name: 'Bug 管理' })).toBeInTheDocument();
+    expect(within(resultTargetList).queryByRole('option', { name: '钉钉文档' })).not.toBeInTheDocument();
+    expect(within(resultTargetList).queryByRole('option', { name: '邮件通知记录' })).not.toBeInTheDocument();
+    expect(within(resultTargetList).queryByRole('option', { name: '仅保存运行结果' })).not.toBeInTheDocument();
+    fireEvent.click((await screen.findAllByText('Bug 管理')).at(-1)!);
+    expect(await within(dialog).findByLabelText('Bug 列表 JSONPath')).toHaveValue('$.bugs');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
+
+    await waitFor(() =>
+      expect(actionBodies).toEqual([
+        expect.objectContaining({
+          code: 'write_internal_business_data',
+          connection_id: null,
+          plugin_id: 'plugin_standard_internal_data_source',
+          request_config: {},
+          result_mapping: {
+            bugs_path: '$.bugs',
+            write_target: 'bugs',
+          },
+        }),
+      ]),
+    );
+  });
+
   it('offers code inspection reports as an action write target', async () => {
     const { actionBodies } = installPluginsFetchMock();
 
@@ -3930,10 +4136,9 @@ describe('PluginsPage', () => {
     fireEvent.click(await screen.findByText('GitHub 代码巡检'));
 
     expect(within(dialog).getByText('代码巡检报告')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText('请求路径')).toHaveValue('/repos/{{owner}}/{{repo}}/dependabot/alerts');
+    expect(within(dialog).getByText('HTTP 请求')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('请求路径')).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText('Finding 列表 JSONPath')).toHaveValue('$.dependabot_alerts');
-    expect(within(dialog).getByDisplayValue('state')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('fixed')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
 
     await waitFor(() =>
@@ -3961,9 +4166,8 @@ describe('PluginsPage', () => {
     fireEvent.mouseDown(within(nextDialog).getByLabelText('配置场景'));
     fireEvent.click(await screen.findByText('GitLab 代码巡检'));
 
-    expect(within(nextDialog).getByLabelText('请求路径')).toHaveValue(
-      '/api/{{api_version}}/projects/{{project_id}}/vulnerability_findings',
-    );
+    expect(within(nextDialog).getByText('HTTP 请求')).toBeInTheDocument();
+    expect(within(nextDialog).queryByLabelText('请求路径')).not.toBeInTheDocument();
     fireEvent.click(within(nextDialog).getByRole('button', { name: /确\s*定/ }));
 
     await waitFor(() =>
@@ -4001,12 +4205,8 @@ describe('PluginsPage', () => {
 
     expect(within(dialog).queryByLabelText('插件')).not.toBeInTheDocument();
     expect(within(dialog).getByText('生产邮箱网关')).toBeInTheDocument();
-    expect(within(dialog).getByText('POST')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText('请求路径')).toHaveValue('/messages/send');
-    expect(within(dialog).getByDisplayValue('Content-Type')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('application/json')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('to')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('{{default_to}}')).toBeInTheDocument();
+    expect(within(dialog).getByText('HTTP 请求')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('请求路径')).not.toBeInTheDocument();
     expect(within(dialog).getByText('邮件通知记录')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('收件人 JSONPath')).toHaveValue('$.recipients');
     expect(within(dialog).getByLabelText('主题 JSONPath')).toHaveValue('$.subject');

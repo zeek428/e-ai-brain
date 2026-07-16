@@ -306,27 +306,28 @@
 |------|------|
 | 用例编号 | TC-AIBRAIN-TASK-FUNC-020C |
 | 用例名称 | 研发任务批量取消 |
-| 优先级 | P1 |
+| 优先级 | P0 |
 | 模块 | AI_TASK |
 | 创建人 | Codex |
 | 创建日期 | 2026-06-05 |
 
 **前置条件**:
 1. 用户已登录并具备研发负责人或管理员角色。
-2. 系统存在至少一条可取消任务和一条已完成或已失败的终态任务。
+2. 系统存在未关联协作工作项的历史可取消任务、终态任务，以及关联 `collaboration_run_id/work_item_id` 的 v2 协作任务。
 
 **测试步骤**:
 | 步骤 | 操作 | 预期结果 |
 |------|------|----------|
-| 1 | 在研发任务勾选可取消任务，点击“批量取消” | 前端只发送一次 `POST /api/ai-tasks/batch-cancel`，请求体包含 `task_ids` 和批量取消原因。 |
-| 2 | 通过 API 混入终态任务、重复任务 ID 和不存在任务 ID | 合法任务进入 `updated` 并变为 `cancelled`；终态、重复和不存在任务进入 `skipped`，code 分别稳定返回 `TASK_STATE_INVALID`、`DUPLICATE_TASK` 和 `NOT_FOUND`；前端结果弹窗展示批次号、取消数、跳过数和 skipped 原因。 |
-| 3 | 查询任务详情、待确认 Review 和审计列表 | 已取消任务状态为 `cancelled`，待处理 Review 被取消；审计包含批次级 `ai_task.batch_cancelled` 和逐任务 `ai_task.cancelled`，payload 带 `batch_id` 与 reason。 |
+| 1 | 对 v2 协作任务调用单个 `/cancel` | 返回 `409 RD_COLLABORATION_REQUIRED` 和工作项/运行入口，任务、Review、attempt、工作项和运行均不改变。 |
+| 2 | 批量请求混入一个 v2 协作任务和一个历史任务 | 整批返回 `409 RD_COLLABORATION_REQUIRED`，历史任务也不发生部分取消。 |
+| 3 | 仅对历史任务批量取消，并混入终态、重复和不存在 ID | 合法历史任务进入 `updated/cancelled`；终态、重复和不存在任务进入 `skipped`，code 稳定返回 `TASK_STATE_INVALID`、`DUPLICATE_TASK` 和 `NOT_FOUND`。 |
+| 4 | 调用 `POST /api/delivery/rd-work-items/{id}/cancel`，提交 `reason/version/idempotency_key`；分别取消低风险可选项和影响必需交付的高风险项，并模拟事务失败、Runner 取消 Outbox 失败和 Runner 迟到完成 | 低风险成功时原子取消 AI task、pending Review、当前 attempt 和工作项，撤销租约、重算运行状态并写协作事件、审计和 Runner 取消 Outbox；领域事务失败时全部回滚，Outbox 可幂等重试。高风险返回 `202` 和 decision request，未决前状态不越过暂停边界；迟到结果只作审计证据，不能复活工作项。 |
 
 **预期结果**:
-1. 研发任务可一次取消多条未完成任务，减少逐条进入操作弹窗的成本。
-2. 部分失败不影响合法任务取消，并保留批次级与任务级审计。
+1. 历史非协作任务继续支持批量取消和逐项 skipped 结果。
+2. v2 协作任务不能绕过工作项状态机，取消结果在协作聚合内保持原子一致。
 
-**状态**: 已自动化覆盖。见 `apps/api/tests/test_api_contract_completion.py::test_ai_task_batch_cancel_updates_valid_tasks_and_skips_terminal_tasks` 与 `apps/web/tests/App.test.tsx` 中研发任务批量取消页面用例；handler 防回退见 `apps/api/tests/test_router_boundaries.py::test_ai_task_batch_cancel_handler_does_not_call_legacy_main`。
+**状态**: 历史任务路径已自动化覆盖；v2.0 需新增单个/批量 `RD_COLLABORATION_REQUIRED` 和工作项取消原子性测试。既有覆盖见 `apps/api/tests/test_api_contract_completion.py::test_ai_task_batch_cancel_updates_valid_tasks_and_skips_terminal_tasks` 与 `apps/api/tests/test_router_boundaries.py::test_ai_task_batch_cancel_handler_does_not_call_legacy_main`。
 
 ---
 
@@ -632,7 +633,7 @@
 2. 由被分配的真人/AI 评估者提交岗位意见，由需求负责人提交补充回答，再分别执行 `accept/reject/request_more_info/request_rework/defer` 决策。
 3. 让评估通过，验证需求归入既有版本；再提交一个无候选的低风险需求、一个候选并列需求和一个高风险新建版本需求。
 
-**预期结果**: 评估持久化需求/策略版本、完整度、风险、依赖、工作量、候选版本和确定性检查；普通请求不能覆盖策略。`opinions/answers/decisions` 分别校验执行主体、输入版本和乐观锁并映射到规范状态；accepted 后需求先进入 `approved`，兼容时复用已有规划版本、无候选低风险需求才自动新建，候选并列或高风险建版保持 `approved` 并创建组版决策，成功组版后进入 `planned`。非 accepted 评估不能组版或创建协作运行，重复请求幂等，旧 approve/reject 不能绕过评估。
+**预期结果**: 评估持久化需求修订、初始/最终不可变策略快照、完整度、风险、依赖、工作量、候选版本和确定性检查；普通请求不能覆盖策略。同一 `requirement_id + requirement_revision + initial_strategy_snapshot_id` 进行中或成功评估受唯一约束保护，切换 final/effective 快照不会释放该业务键；`requirement_id + request_id` 由持久化命令幂等记录约束，重复摘要返回原结果、不同摘要返回 `RD_IDEMPOTENCY_CONFLICT`。`opinions/answers/decisions` 分别校验执行主体、输入版本、意见快照外键和乐观锁并映射到规范状态；accepted 后需求先进入 `approved`，兼容时复用已有规划版本、无候选低风险需求才自动新建，候选并列或高风险建版保持 `approved` 并创建组版决策，成功组版后进入 `planned`。非 accepted 评估不能组版或创建协作运行，旧 approve/reject 不能绕过评估。
 
 ---
 
@@ -643,11 +644,11 @@
 | 优先级 | P0 |
 | 适用阶段 | v2.0 |
 
-1. 通过原研发执行器策略入口提交唯一顶层契约 `name/brain_app_id/product_id/status/matching_config/assessment_config/iteration_config/delivery_target/team_config/autonomy_config/quality_gate_config/git_config/deployment_config/role_bindings`。
+1. 通过原研发执行器策略入口提交唯一顶层契约 `name/brain_app_id/product_id/status/matching_config/assessment_config/iteration_config/delivery_target/team_config/autonomy_config/quality_gate_config/git_config/deployment_config/role_bindings`；以 `policy_version` 创建、读取并通过 `expected_policy_version` 并发更新，尝试同时启用两个默认策略或两个同产品策略。
 2. 提交旧版单任务策略、缺少岗位执行器的策略，以及不存在 active 策略时启动评估/协作。
-3. 修改策略后读取既有运行详情。
+3. 并发冻结同一规范化策略；让两个评估从同一 `policy_version`/base 快照分别自动收紧出不同 final payload，再执行一次没有收紧差异的评估；修改策略后读取既有评估、岗位意见、运行、反馈和经验来源引用；尝试构造空身份列、base 带 parent、derived 缺 parent/越界 revision/跨 policy version parent，尝试 UPDATE/DELETE 快照、删除仍有快照的策略，以及篡改快照 payload、哈希或 Schema 版本。
 
-**预期结果**: 只存在一套写契约和运行规则；旧契约、同义字段和不完整策略被拒绝，缺少策略时明确阻断且无旁路；策略复核最多自动单调收紧两轮，新增岗位补齐意见，不可比较或可能放宽的变化进入人工决策；既有运行继续显示不可变快照。
+**预期结果**: 只存在一套写契约和运行规则；旧契约、同义字段和不完整策略被拒绝，缺少策略时明确阻断且无旁路。策略创建为 `policy_version=1`，成功更新原子递增，过期版本返回乐观锁冲突；同一业务大脑最多一个 active 默认策略、同一产品最多一个 active 产品策略，产品策略优先。策略复核最多自动单调收紧两轮，新增岗位补齐意见，不可比较或可能放宽的变化进入人工决策。base 快照使用 revision 0 且 parent 为空，自动收紧生成带同策略版本 parent、assessment context 和 revision 1..2 的 `assessment_resolved` 快照；身份列为非空并受 CHECK/唯一约束保护，两个评估可有不同 final payload 且互不冲突，同一快照身份的不同哈希被拒绝；没有差异时 final/effective 直接引用 base，不生成空派生快照。数据库触发器拒绝 UPDATE/DELETE，策略及所有消费者外键为 `ON DELETE RESTRICT`，有快照的策略 DELETE 返回 `RD_POLICY_IN_USE`；策略修改不改变历史解释，快照缺失、哈希不一致或 Schema 不兼容返回 `RD_POLICY_SNAPSHOT_INVALID`。
 
 ---
 
@@ -659,10 +660,10 @@
 | 适用阶段 | v2.0 |
 
 1. 新增文档/安全岗位、两个复用同一执行器的 AI 数字员工和真人用户；分别用 AI 员工与真人占用岗位席位。
-2. 给同一规划版本加入两条 accepted/planned 需求，并发启动协作运行；创建含并行开发、测试、文档和集成依赖的工作项图并尝试循环依赖。
-3. 提交结果、执行独立审核并让一个工作项审核失败。
+2. 给同一规划版本加入两条 accepted/planned 需求，读取列表/详情中的 `scope_version`；分别修改需求成员、需求修订/验收、仓库和分支冻结输入，验证范围版本原子递增，再使用相同和不同 `request_id/scope_version` 并发启动协作运行；创建含并行开发、测试、文档和集成依赖的工作项图并尝试重复边与循环依赖。
+3. 使用 `expected_version/lease_seconds/idempotency_key` claim，在租约有效期内重复相同请求，再在租约过期后重复旧键；使用 `attempt_id/lease_token/version/output/evidence/idempotency_key` submit，再以 `decision/comment/version/idempotency_key` 执行独立审核并分别触发 approve、request_rework 和 reject。
 
-**预期结果**: 动态岗位和 AI 员工档案不修改系统 RBAC；P0 真人只能从显式 user_ids、AI 只能从显式 ai_employee_ids 选择。AI 席位分别冻结 `ai_employee_id` 和 `executor_profile_id`，两个员工复用执行器时仍可独立归因；同一版本并发启动返回同一活动运行并冻结两条需求范围；无依赖项并行派发，循环依赖被拒绝；审核失败保留原 attempt，同范围返工创建新 attempt，范围变化创建新计划版本。
+**预期结果**: 动态岗位和 AI 员工档案不修改系统 RBAC；P0 真人只能从显式 user_ids、AI 只能从显式 ai_employee_ids 选择。AI 席位分别冻结 `ai_employee_id` 和 `executor_profile_id`，两个员工复用执行器时仍可独立归因；`product_versions.scope_version` 是持久化范围事实版本，四类输入变化均在同一事务递增，列表、详情、候选分组和冲突响应返回当前值。同一范围和快照并发启动以完整成功响应快照幂等返回唯一活动运行并标记 `idempotent_replay=true`，不同或过期 `scope_version` 返回 `RD_SCOPE_VERSION_CONFLICT/RD_ACTIVE_RUN_CONFLICT`。活动运行、命令幂等、依赖边、工作项幂等键和 attempt 编号/幂等键均有数据库唯一约束；无依赖项并行派发，重复边和循环依赖被拒绝。claim/submit/review 的成功和幂等重放响应完整返回工作项、attempt、运行版本、next_state、idempotent_replay 和 trace_id；claim 只在原租约有效期内重放同一 attempt 和加密租约 token，过期后旧键固定返回 `RD_WORK_ITEM_LEASE_EXPIRED` 且不创建新 attempt。冲突无部分写。approve -> approved，request_rework -> rework_required 并保留原 attempt，reject -> failed 且必需项触发运行级重规划/终止决策；同范围返工创建新 attempt，范围变化创建新计划版本。
 
 ---
 
@@ -675,13 +676,13 @@
 
 1. 让 LLM 返回合法拆解建议，再返回循环依赖、越权负责人、低报风险和超预算建议。
 2. 触发敏感目录、数据库迁移、质量门禁失败和岗位冲突。
-3. 让工作项分别进入 `blocked` 和 `awaiting_human`，人工批准、拒绝或要求补充信息，并重复提交相同决策版本。
+3. 让工作项分别进入 `blocked` 和 `awaiting_human`；再让协作运行分别从 `running/integrating/verifying` 进入 `waiting_human`。检查 `plan_version=0` 的非计划决策及选项冻结的 `code/label/outcome/subject_transition/requires_comment/input_schema/effect_preview`，使用 `selected_option/comment/version/idempotency_key` 人工批准、拒绝或要求补充信息；通过 answers 子资源补充后再次决策，并重复提交相同、不同摘要或过期决策；并发创建同主体/类型/计划版本的 `pending/waiting_more_info` 请求，直接构造不完整暂停字段和非法 resume_state。
 
-**预期结果**: 合法建议经平台写入；非法 DAG、权限、风险和预算建议不能改变状态；高风险问题创建决策请求并只暂停受影响分支。暂停时保存平台冻结的 `resume_state`、attempt 和解除条件；`blocked` 重新校验后只能进入 ready/cancelled，`awaiting_human` 只能按决策进入 running/rework_required/cancelled；客户端伪造恢复目标被拒绝。决策采用乐观锁和幂等，审计可追溯建议与最终平台判断。
+**预期结果**: 合法建议经平台写入；非法 DAG、权限、风险和预算建议不能改变状态；高风险问题创建决策请求并只暂停受影响分支。服务端只按冻结 option 的 outcome/subject_transition 执行确定性映射，客户端和 LLM 不能注入任意目标状态；request_more_info 进入 `waiting_more_info`，answers 形成新版本后才可再次决策。答案提交及重放完整返回 pending 决策请求、新 options/options_hash、受影响主体、next_state、idempotent_replay 和 trace_id，冲突不写部分答案。`plan_version` 非空且非计划决策固定为 0，同一有效主体/类型/计划版本最多一个 `pending/waiting_more_info` 请求。工作项暂停时保存平台冻结的 `resume_state`、attempt 和解除条件；运行暂停时原子保存 `resume_state/suspended_decision_request_id/suspended_at`，三个来源阶段均按冻结值恢复并清空字段。数据库 FK/CHECK 拒绝缺字段、非法阶段、悬空决策引用和非 waiting_human 残留暂停字段。`blocked` 重新校验后只能进入 ready/cancelled，`awaiting_human` 只能按决策进入 running/rework_required/cancelled；客户端伪造恢复目标被拒绝。决策成功/重放响应返回决策结果、受影响主体、运行版本、next_state、idempotent_replay 和 trace_id；乐观锁、不同摘要幂等冲突、过期或已替代请求返回稳定错误且无部分写，审计可追溯建议与最终平台判断。
 
 ---
 
-### TC-AIBRAIN-RD-FUNC-036: 默认待发布终点与可选部署边界
+### TC-AIBRAIN-RD-FUNC-036: 默认待发布终点与可信远程交付
 
 | 项目 | 内容 |
 |------|------|
@@ -689,24 +690,54 @@
 | 适用阶段 | v2.0 |
 
 1. 使用默认 `delivery_target=ready_for_release`，让集成工作项通过 Outbox 完成远程推送并保存分支、local/remote SHA、MR/PR 和对账证据，再完成测试和门禁。
-2. 使用 `delivery_target=deployed` 重复场景，分别模拟未通过和通过人工发布门禁。
+2. 删除或篡改远程 commit/MR/PR 对账证据，重复完成判定。
 
-**预期结果**: 缺少或不匹配远程证据时不能进入待发布；完成判定不临时执行 push。默认策略让产品版本进入并保持 `ready_for_release`，协作运行进入 `completed` 且 `completion_reason=ready_for_release`，不创建部署单；部署目标未确认时中断，确认后只通过现有部署域推进并以 `completion_reason=deployed` 完成。
+**预期结果**: P0 集成工作项必须完成最小工作分支隔离、远程 push 或 MR/PR Outbox、版本级集成测试和不可变交付证据。缺少或不匹配远程证据时不能进入待发布，完成判定不临时执行 push。默认策略让产品版本进入并保持 `ready_for_release`，协作运行进入 `completed` 且 `completion_reason=ready_for_release`，不创建部署单。
 
 ---
 
-### TC-AIBRAIN-RD-FUNC-037: 岗位反馈经验与定时作业隔离
+### TC-AIBRAIN-RD-FUNC-036B: P1 可选部署边界
 
 | 项目 | 内容 |
 |------|------|
 | 优先级 | P1 |
+| 适用阶段 | v2.0 P1 |
+
+1. 在已经具备可信远程交付和 `ready_for_release` 证据的版本上使用 `delivery_target=deployed`。
+2. 分别模拟未通过和通过人工发布门禁、部署失败回滚和部署成功。
+
+**预期结果**: 部署目标未确认时中断，不改变 P0 已完成的研发交付事实；确认后只通过现有部署域推进。失败或回滚保持版本 `ready_for_release`，成功后协作运行以 `completion_reason=deployed` 完成，所有部署副作用仍受既有 Outbox、资源授权和人工门禁约束。
+
+---
+
+### TC-AIBRAIN-RD-FUNC-037A: 基础反馈归因、入口与定时作业隔离
+
+| 项目 | 内容 |
+|------|------|
+| 优先级 | P0 |
 | 适用阶段 | v2.0 |
 
 1. 完成包含审核、返工、门禁与交付反馈的协作运行。
-2. 查询岗位、真人用户或 AI 数字员工、执行器和策略版本的经验记录；验证复用同一执行器的不同 AI 员工仍分别归因。
-3. 验证 Bug、代码巡检和 AI 助手旧入口只创建/关联需求；需求交付状态批量推进及公开 AI 任务创建/启动返回 `RD_COLLABORATION_REQUIRED`；在升级前后执行同一现有定时作业并比较定义、AI角色/Skill 快照和运行结果。
+2. 查询业务大脑、产品、岗位、席位、真人用户或 AI 数字员工、执行器、工作项、attempt 和策略快照的反馈记录；验证复用同一执行器的不同 AI 员工仍分别归因，重复恢复不重复反馈。
+3. 验证 Bug、代码巡检和 AI 助手旧入口只创建/关联需求；需求交付状态批量推进及公开 AI 任务创建/启动/重试/取消返回 `RD_COLLABORATION_REQUIRED`。
+4. 在升级前后执行同一现有定时作业并比较表结构可读性、作业定义、触发、锁、重试、AI角色/Skill 快照和运行结果。
 
-**预期结果**: 反馈分别归因到岗位、席位、真人用户或 AI 数字员工、执行器、attempt 和策略快照，经验候选可审核、版本化和检索；旧入口不产生可启动 AI 任务，批量状态和公开 AI 任务端点不形成旁路；定时作业表、配置、触发、调度和 Agent/Skill 装配语义不变，代码巡检结果动作的业务目标变为需求并单独审计。
+**预期结果**: P0 `role_feedback_records` 是不可变、可追溯的基础证据，完整归因到业务大脑、产品、岗位、席位、真人用户或 AI 数字员工、执行器、工作项、attempt 和不可变策略快照；幂等恢复不重复写入。旧入口不产生可启动 AI 任务，批量状态和公开 AI 任务端点不形成旁路；定时作业表、历史记录、配置、触发、调度、锁、重试和 Agent/Skill 装配语义不变，代码巡检结果动作的业务目标变为需求并单独审计。
+
+---
+
+### TC-AIBRAIN-RD-FUNC-037B: 岗位经验治理与受控复用
+
+| 项目 | 内容 |
+|------|------|
+| 优先级 | P1 |
+| 适用阶段 | v2.0 P1 |
+
+1. 由多个 P0 反馈证据生成经验候选，分别执行 approve/reject/retire 和并发旧版本审核；尝试由唯一证据产生者自审及越产品范围审核。
+2. 按业务大脑、产品、岗位、工作项类型、场景、风险、仓库/工具信任域、最低置信度、状态、版本和证据主体组合查询；使用无权限、跨业务大脑或跨产品账号查询。
+3. 启动后续同岗位协作，分别模拟全部范围匹配、低置信度、权限不匹配、跨产品、跨信任域和策略冲突经验的检索注入，并追踪被引用的经验 ID、版本与来源证据。
+
+**预期结果**: 经验候选进入 `pending/approved/rejected/retired` 生命周期，审核校验权限、业务大脑/产品范围、自审隔离和 `review_version`；被拒绝或退役的版本不可复活。查询 API 在服务端执行全部范围和权限过滤，不泄露跨业务大脑/跨产品元数据。只有 approved、未退役、达到最低置信度且业务大脑、产品、岗位、工作项、场景、风险、仓库/工具信任域及策略全部兼容的版本，才能带 ID/版本/证据引用进入后续岗位上下文；其他经验不注入，经验不能直接修改生产策略、放宽权限或跳过门禁。
 
 ---
 

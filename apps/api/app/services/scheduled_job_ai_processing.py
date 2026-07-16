@@ -1098,6 +1098,12 @@ def scheduled_job_ai_messages(
                 ],
             )
             output_contract["requirements_path"] = "$.requirements"
+        if "write_internal_user_insights" in result_action_types:
+            instructions.append(
+                "当前结果动作会写入内部业务数据 - 用户洞察，必须返回 insights 数组；"
+                "每个 insight 至少包含 content、feedback_type、sentiment、source_channel 和 tags。",
+            )
+            output_contract["insights_path"] = "$.insights"
         if "sync_dingtalk_document" in result_action_types:
             instructions.append(
                 (

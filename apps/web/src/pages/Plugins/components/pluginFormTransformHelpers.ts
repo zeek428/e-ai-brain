@@ -31,9 +31,25 @@ export type RequestParameterRow = {
 };
 
 export const MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO = 'maxcompute_weekly_feedback';
+export const INTERNAL_BUSINESS_DATA_WRITE_SCENARIO = 'write_internal_business_data';
+const INTERNAL_BUSINESS_DATA_WRITE_TARGETS = new Set([
+  'bugs',
+  'code_inspection_reports',
+  'user_feedback_insights',
+]);
 export const MAXCOMPUTE_DEFAULT_FIELDS =
   'feedback_id,user_id,product_id,module_code,feedback_type,content,sentiment,created_at';
 export const DEFAULT_RESULT_WRITE_TARGET = 'scheduled_job_result';
+const DEFAULT_RESULT_WRITE_TARGET_OPTIONS = [
+  { label: '仅保存运行结果', value: 'scheduled_job_result' },
+  { label: '用户洞察表', value: 'user_feedback_insights' },
+  { label: 'Bug 管理', value: 'bugs' },
+  { label: '代码巡检报告', value: 'code_inspection_reports' },
+  { label: '邮件通知记录', value: 'email_notifications' },
+  { label: '钉钉文档', value: 'dingtalk_document' },
+  { label: '钉钉表格', value: 'dingtalk_aitable_records' },
+  { label: '需求管理', value: 'requirements' },
+];
 const DINGTALK_DOCUMENT_UPDATE_TOOL_NAME = 'update_document';
 const DINGTALK_AITABLE_RECORDS_WRITE_TARGET = 'dingtalk_aitable_records';
 const DINGTALK_AITABLE_CREATE_RECORDS_TOOL_NAME = 'create_records';
@@ -65,6 +81,12 @@ function pluginDraftFieldChanged(
   const currentValue = currentPayload[field];
   if (field === 'requires_human_review') {
     return Boolean(initialValue) !== Boolean(currentValue);
+  }
+  if (field === 'connection_id') {
+    const normalizedConnectionId = (value: unknown): string | undefined => (
+      typeof value === 'string' && value.trim() ? value.trim() : undefined
+    );
+    return normalizedConnectionId(initialValue) !== normalizedConnectionId(currentValue);
   }
   if (
     field === 'result_mapping'
@@ -189,7 +211,7 @@ export function dingtalkDocumentIdFromLink(value: string | undefined): string | 
   }
   try {
     const parsed = new URL(trimmed);
-    for (const key of ['document_id', 'doc_id', 'docKey', 'dentryUuid', 'node_id']) {
+    for (const key of ['base_id', 'baseId', 'document_id', 'doc_id', 'docKey', 'dentryUuid', 'node_id']) {
       const parameterValue = parsed.searchParams.get(key);
       if (parameterValue) {
         return parameterValue;
@@ -199,6 +221,27 @@ export function dingtalkDocumentIdFromLink(value: string | undefined): string | 
     // Plain document IDs are accepted as-is.
   }
   return trimmed;
+}
+
+export function dingtalkAITableBaseIdFromLink(value: string | undefined): string | undefined {
+  return dingtalkDocumentIdFromLink(value);
+}
+
+export function normalizeDingTalkAITableResultMapping(
+  resultMapping: Record<string, unknown>,
+  requestConfig: Record<string, unknown>,
+): Record<string, unknown> {
+  if (stringValue(resultMapping.write_target) !== DINGTALK_AITABLE_RECORDS_WRITE_TARGET) {
+    return resultMapping;
+  }
+  const argumentsConfig = configSection(requestConfig, 'arguments');
+  const actionArguments = isPlainRecord(argumentsConfig) ? argumentsConfig : {};
+  const baseId = dingtalkAITableBaseIdFromLink(
+    stringValue(resultMapping.base_id)
+    || stringValue(actionArguments.baseId)
+    || stringValue(actionArguments.base_id),
+  );
+  return baseId ? { ...resultMapping, base_id: baseId } : resultMapping;
 }
 
 function rowsToRecord(rows: RequestParameterRow[] | undefined): Record<string, unknown> {
@@ -368,7 +411,9 @@ export function schemaValuesFromPayload(
           ? buildGitRepositoryAddress(payload)
           : field.type === 'gitlab_project_url'
             ? buildGitLabProjectAddress(payload)
-            : valueAtPath(payload, field.path),
+            : field.path === 'request_config.base_id'
+              ? dingtalkAITableBaseIdFromLink(stringValue(valueAtPath(payload, field.path)))
+              : valueAtPath(payload, field.path),
       ])
       .filter(([, value]) => value !== undefined),
   );
@@ -411,7 +456,13 @@ function applySchemaValuesToRequestConfig(
     if (!field.path?.startsWith('request_config.')) {
       return;
     }
-    setValueAtPath(root, field.path, value);
+    setValueAtPath(
+      root,
+      field.path,
+      field.path === 'request_config.base_id'
+        ? dingtalkAITableBaseIdFromLink(stringValue(value))
+        : value,
+    );
   });
   return isPlainRecord(root.request_config) ? root.request_config : requestConfig;
 }
@@ -478,8 +529,9 @@ export function buildVisualRequestConfig(values: Partial<PluginActionFormValues>
         provider: stringValue(mcpConfig.provider).trim() || 'dingtalk',
         server_name: stringValue(mcpConfig.server_name).trim() || 'aitable',
       };
-      if (values.base_id?.trim()) {
-        argumentsConfig.baseId = values.base_id.trim();
+      const baseId = dingtalkAITableBaseIdFromLink(values.base_id);
+      if (baseId) {
+        argumentsConfig.baseId = baseId;
       }
       if (values.table_id?.trim()) {
         argumentsConfig.tableId = values.table_id.trim();
@@ -509,6 +561,86 @@ export function buildVisualRequestConfig(values: Partial<PluginActionFormValues>
     config.headers = headers;
   }
   return config;
+}
+
+export function actionScenarioFormValues({
+  actionTemplates,
+  plugins,
+  resultWriteTargets,
+  scenario,
+  selectableConnections,
+}: {
+  actionTemplates: PluginActionTemplateRecord[];
+  plugins: PluginRecord[];
+  resultWriteTargets: ResultWriteTargetRecord[];
+  scenario?: string;
+  selectableConnections: PluginConnectionRecord[];
+}): Partial<PluginActionFormValues> | undefined {
+  const pluginByCode = (code: string) => plugins.find((plugin) => plugin.code === code);
+  if (scenario === INTERNAL_BUSINESS_DATA_WRITE_SCENARIO) {
+    const resultMapping = defaultResultMappingForWriteTarget('user_feedback_insights', resultWriteTargets);
+    return {
+      action_type: 'http_request',
+      code: 'write_internal_business_data',
+      connection_id: undefined,
+      description: '将 AI 处理结果写入所选内部业务数据目标。数据连接仍用于获取原始数据，实际写入由定时作业的结果动作执行。',
+      header_rows: [],
+      method: 'GET',
+      name: '写入内部业务数据',
+      param_rows: [],
+      path: undefined,
+      plugin_id: pluginByCode('internal_data_source')?.id,
+      request_config: stableJson({}),
+      result_mapping: stableJson(resultMapping),
+      scenario,
+      ...resultMappingVisualFields(resultMapping, resultWriteTargets),
+    };
+  }
+
+  const template = actionTemplates.find((item) => item.code === scenario);
+  if (!template) {
+    return undefined;
+  }
+  const plugin = pluginByCode(template.plugin_code) ?? plugins.find((item) => item.id === template.plugin_id);
+  const requestConfig = isPlainRecord(template.request_config) ? template.request_config : {};
+  const resultMapping = isPlainRecord(template.result_mapping)
+    ? template.result_mapping
+    : defaultResultMappingForWriteTarget(DEFAULT_RESULT_WRITE_TARGET, resultWriteTargets);
+  const formDefaults = isPlainRecord(template.form_defaults) ? template.form_defaults : {};
+  const isMaxComputeTemplate = template.code === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO;
+  const templatePluginId = stringValue(template.plugin_id) || undefined;
+  const pluginId = plugin?.id ?? templatePluginId ?? (
+    isMaxComputeTemplate && plugins.length === 1 ? plugins[0].id : undefined
+  );
+  const connectionId = pluginId
+    ? selectableConnections.find((connection) => connection.plugin_id === pluginId)?.id
+    : undefined;
+  const tableName = stringValue(formDefaults.table_name, stringValue(requestConfig.table, 'ods_user_feedback'));
+  const timeField = stringValue(formDefaults.time_field, stringValue(requestConfig.time_field, 'created_at'));
+  const returnedFields = stringValue(
+    formDefaults.returned_fields,
+    Array.isArray(requestConfig.fields) ? requestConfig.fields.map(String).join(',') : MAXCOMPUTE_DEFAULT_FIELDS,
+  );
+  return {
+    action_type: stringValue(template.action_type, 'http_request'),
+    code: stringValue(template.default_code, template.code),
+    connection_id: connectionId
+      ?? (isMaxComputeTemplate && selectableConnections.length === 1 ? selectableConnections[0].id : undefined),
+    header_rows: recordToRows(requestConfig.headers),
+    max_rows: numberValue(formDefaults.max_rows, numberValue(requestConfig.limit, 1000)),
+    method: stringValue(requestConfig.method, 'GET'),
+    name: stringValue(template.default_name, template.name),
+    param_rows: recordToRows(requestConfig.query),
+    path: stringValue(requestConfig.path) || undefined,
+    plugin_id: pluginId,
+    request_config: stableJson(requestConfig),
+    result_mapping: stableJson(resultMapping),
+    returned_fields: returnedFields,
+    scenario,
+    table_name: tableName,
+    time_field: timeField,
+    ...resultMappingVisualFields(resultMapping, resultWriteTargets),
+  };
 }
 
 function parseOptionalJsonRecord(value: string | undefined): Record<string, unknown> {
@@ -545,27 +677,19 @@ export function buildActionRequestPreview(
       ? buildMaxComputeRequestConfig(formValues)
       : buildVisualRequestConfig(formValues);
   const previewConfig = { ...config };
-  if (
-    formValues.write_target === DINGTALK_AITABLE_RECORDS_WRITE_TARGET
-    && connection?.plugin_code === 'dingtalk_aitable'
-  ) {
-    const connectionRequestConfig = connection.request_config ?? {};
-    const connectionBaseId =
-      stringValue(connectionRequestConfig.base_id).trim()
-      || stringValue(
-        isPlainRecord(connectionRequestConfig.query)
-          ? connectionRequestConfig.query.base_id
-          : undefined,
-      ).trim();
-    if (connectionBaseId) {
+  if (formValues.write_target === DINGTALK_AITABLE_RECORDS_WRITE_TARGET) {
+    const connectionBaseId = dingtalkAITableBaseId(connection);
+    const actionBaseId = dingtalkAITableBaseIdFromLink(stringValue(formValues.base_id)) ?? '';
+    const baseId = connectionBaseId || actionBaseId;
+    if (baseId) {
       const argumentsConfig = isPlainRecord(previewConfig.arguments)
         ? { ...previewConfig.arguments }
         : {};
-      previewConfig.arguments = { ...argumentsConfig, baseId: connectionBaseId };
+      previewConfig.arguments = { ...argumentsConfig, baseId };
     }
   }
-  const method = String(previewConfig.method ?? 'POST').toUpperCase();
   const connectionRequestConfig = connection?.request_config ?? {};
+  const method = String(previewConfig.method ?? connectionRequestConfig.method ?? 'GET').toUpperCase();
   const connectionQuery =
     connectionRequestConfig.query && typeof connectionRequestConfig.query === 'object'
       ? connectionRequestConfig.query
@@ -593,6 +717,21 @@ export function buildActionRequestPreview(
       ? `${baseUrl}/${path.replace(/^\//, '')}${queryString ? `?${queryString}` : ''}`
       : `${baseUrl}${queryString ? `?${queryString}` : ''}`,
   };
+}
+
+export function dingtalkAITableBaseId(connection?: PluginConnectionRecord): string {
+  if (!connection || connection.plugin_code !== 'dingtalk_aitable') {
+    return '';
+  }
+  const requestConfig = connection.request_config ?? {};
+  const query = isPlainRecord(requestConfig.query) ? requestConfig.query : {};
+  const schemaValues = connection.schema_values ?? {};
+  const configuredBaseId = (
+    stringValue(requestConfig.base_id).trim()
+    || stringValue(query.base_id).trim()
+    || stringValue(schemaValues.base_id).trim()
+  );
+  return dingtalkAITableBaseIdFromLink(configuredBaseId) ?? '';
 }
 
 export function buildConnectionAuthConfig(
@@ -626,8 +765,12 @@ export function buildConnectionRequestConfig(
   schema?: PluginConnectionSchemaRecord,
 ): Record<string, unknown> {
   const config: Record<string, unknown> = {};
+  const method = values.request_method?.trim().toUpperCase();
   const query = rowsToRecord(values.connection_param_rows);
   const headers = rowsToRecord(values.connection_header_rows);
+  if (method && method !== 'GET') {
+    config.method = method;
+  }
   if (Object.keys(query).length > 0) {
     config.query = query;
   }
@@ -681,7 +824,7 @@ export function buildActionPayload(
   return {
     action_type: values.action_type,
     code: values.code,
-    connection_id: values.connection_id,
+    connection_id: values.connection_id?.trim() || null,
     description: values.description,
     name: values.name,
     ...(values.plugin_id ? { plugin_id: values.plugin_id } : {}),
@@ -755,7 +898,9 @@ export function resultWriteTargetLabel(
   if (target) {
     return target.form_label || target.label;
   }
-  return writeTarget || DEFAULT_RESULT_WRITE_TARGET;
+  return DEFAULT_RESULT_WRITE_TARGET_OPTIONS.find(
+    (option) => option.value === (writeTarget || DEFAULT_RESULT_WRITE_TARGET),
+  )?.label ?? writeTarget ?? DEFAULT_RESULT_WRITE_TARGET;
 }
 
 function writeTargetFromResultMapping(resultMapping: Record<string, unknown>): string {
@@ -824,6 +969,13 @@ export function buildVisualResultMapping(
             : rawValue.trim();
       }
     });
+    if (
+      writeTarget === DINGTALK_AITABLE_RECORDS_WRITE_TARGET
+      && typeof values.base_id === 'string'
+      && values.base_id.trim()
+    ) {
+      nextMapping.base_id = dingtalkAITableBaseIdFromLink(values.base_id) ?? values.base_id.trim();
+    }
     return mergeWriteTarget(nextMapping, writeTarget);
   }
   return mergeWriteTarget(
@@ -884,7 +1036,24 @@ export function actionScenarioForExistingAction(
       return template.code;
     }
   }
+  if (INTERNAL_BUSINESS_DATA_WRITE_TARGETS.has(stringValue(actionResultMapping.write_target) ?? '')) {
+    return INTERNAL_BUSINESS_DATA_WRITE_SCENARIO;
+  }
   return undefined;
+}
+
+export function actionScenarioForEditingAction(
+  action: PluginActionRecord,
+  templates: PluginActionTemplateRecord[],
+  plugins: PluginRecord[],
+): string | undefined {
+  const configuredScenario = actionScenarioForExistingAction(action, templates, plugins);
+  if (configuredScenario) {
+    return configuredScenario;
+  }
+  return stringValue(action.request_config?.tool_name) === 'maxcompute.execute_sql'
+    ? MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
+    : undefined;
 }
 
 export function pluginConnectionDraftFormValues(
@@ -913,6 +1082,7 @@ export function pluginConnectionDraftFormValues(
     plugin_id: stringValue(payload.plugin_id),
     query_key: stringValue(authConfig.query_key, 'key') || 'key',
     request_config: stableJson(requestConfig),
+    request_method: stringValue(requestConfig.method, 'GET').toUpperCase(),
     schema_values: schemaValuesFromPayload(payload, schema),
     secret_ref: stringValue(authConfig.secret_ref) || undefined,
     status: stringValue(payload.status, 'active'),

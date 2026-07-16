@@ -51,12 +51,8 @@ import {
   type ScheduledJobRecord,
 } from '../../services/aiBrain';
 import { navigateTo } from '../../utils/navigation';
-import {
-  type PluginConnectionFormValues,
-} from './components/PluginConnectionModal';
-import {
-  type PluginActionFormValues,
-} from './components/PluginActionModal';
+import type { PluginConnectionFormValues } from './components/PluginConnectionModal';
+import type { PluginActionFormValues } from './components/PluginActionModal';
 import type { PluginFormValues } from './components/PluginModal';
 import { PluginManagementModals } from './components/PluginManagementModals';
 import { PluginManagementTabs } from './components/PluginManagementTabs';
@@ -68,11 +64,13 @@ import {
 } from './components/pluginRunnerHelpers';
 import {
   DEFAULT_RESULT_WRITE_TARGET,
-  MAXCOMPUTE_DEFAULT_FIELDS,
+  INTERNAL_BUSINESS_DATA_WRITE_SCENARIO,
   MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO,
-  actionScenarioForExistingAction,
+  actionScenarioForEditingAction,
+  actionScenarioFormValues,
   buildActionPayload,
   buildActionRequestPreview,
+  dingtalkAITableBaseId,
   buildConnectionAuthConfig,
   buildConnectionPayload,
   buildConnectionRequestConfig,
@@ -85,7 +83,7 @@ import {
   isFormValidationError,
   isPlainRecord,
   mergeWriteTarget,
-  numberValue,
+  normalizeDingTalkAITableResultMapping,
   parseJsonObject,
   pluginActionDraftFormValues,
   pluginAssistantDraftModifiedFields,
@@ -248,7 +246,13 @@ export default function PluginsPage() {
     : undefined;
   const selectedConnectionSchema = selectedConnectionMarketplaceItem?.connection_schema;
   const actionTemplateOptions = useMemo(
-    () => actionTemplates.map((template) => ({ label: template.name, value: template.code })),
+    () => [
+      {
+        label: '写入内部业务数据',
+        value: INTERNAL_BUSINESS_DATA_WRITE_SCENARIO,
+      },
+      ...actionTemplates.map((template) => ({ label: template.name, value: template.code })),
+    ],
     [actionTemplates],
   );
   const resultWriteTargetOptions = useMemo(
@@ -261,6 +265,9 @@ export default function PluginsPage() {
   const requestPreview = useMemo(
     () => buildActionRequestPreview(actionFormValues, connectionById.get(actionFormValues?.connection_id ?? '')),
     [actionFormValues, connectionById],
+  );
+  const actionConnectionBaseId = dingtalkAITableBaseId(
+    connectionById.get(actionFormValues?.connection_id ?? ''),
   );
   const connectionDefaultsForPlugin = useCallback((plugin?: PluginRecord) => {
     const item = plugin
@@ -487,6 +494,7 @@ export default function PluginsPage() {
       environment: 'default',
       max_retries: 0,
       plugin_id: defaultPlugin?.id,
+      request_method: defaultPlugin?.protocol === 'http' ? 'GET' : undefined,
       status: 'active',
       timeout_seconds: 30,
       ...defaults,
@@ -507,6 +515,7 @@ export default function PluginsPage() {
       environment: 'default',
       max_retries: 0,
       plugin_id: pluginId ?? undefined,
+      request_method: plugin?.protocol === 'http' ? 'GET' : undefined,
       status: 'active',
       timeout_seconds: 30,
       ...defaults,
@@ -548,6 +557,9 @@ export default function PluginsPage() {
       plugin_id: connection.plugin_id,
       query_key: typeof authConfig.query_key === 'string' ? authConfig.query_key : undefined,
       request_config: stableJson(requestConfig),
+      request_method: typeof requestConfig.method === 'string'
+        ? requestConfig.method.toUpperCase()
+        : 'GET',
       schema_values: schemaValuesFromPayload(connection, schema),
       secret_ref: typeof authConfig.secret_ref === 'string' ? authConfig.secret_ref : undefined,
       status: connection.status,
@@ -582,6 +594,7 @@ export default function PluginsPage() {
       password_ref: undefined,
       plugin_id: pluginId,
       query_key: undefined,
+      request_method: plugin?.protocol === 'http' ? 'GET' : undefined,
       schema_values: {},
       secret_ref: undefined,
       token_ref: undefined,
@@ -792,19 +805,33 @@ export default function PluginsPage() {
 
   const submitAction = async () => {
     try {
-      const values = await actionForm.validateFields();
+      const validatedValues = await actionForm.validateFields();
+      // Standard scenarios hide their fixed request details. Keep those template
+      // values when submitting while still validating the visible form fields.
+      const values = { ...actionForm.getFieldsValue(true), ...validatedValues };
+      const isInternalBusinessDataWrite = values.scenario === INTERNAL_BUSINESS_DATA_WRITE_SCENARIO;
       const selectedActionConnection = values.connection_id
         ? connectionById.get(values.connection_id)
         : undefined;
+      const internalDataSourcePlugin = plugins.find((plugin) => plugin.code === 'internal_data_source');
       const normalizedValues = {
         ...values,
-        plugin_id: selectedActionConnection?.plugin_id ?? values.plugin_id,
+        connection_id: isInternalBusinessDataWrite ? undefined : values.connection_id,
+        plugin_id: isInternalBusinessDataWrite
+          ? internalDataSourcePlugin?.id ?? values.plugin_id
+          : selectedActionConnection?.plugin_id ?? values.plugin_id,
       };
       if (!normalizedValues.plugin_id) {
-        throw new Error('请选择连接');
+        throw new Error(
+          isInternalBusinessDataWrite
+            ? '内部数据源插件尚未就绪，请刷新后重试'
+            : '请选择连接',
+        );
       }
       const requestConfig =
-        normalizedValues.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO && !advancedActionJsonOpen
+        isInternalBusinessDataWrite
+          ? {}
+          : normalizedValues.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO && !advancedActionJsonOpen
           ? buildMaxComputeRequestConfig(normalizedValues)
           : advancedActionJsonOpen
             ? parseJsonObject(normalizedValues.request_config, '请求配置')
@@ -1000,11 +1027,12 @@ export default function PluginsPage() {
 
   const openEditActionModal = (action: PluginActionRecord) => {
     const requestConfig = action.request_config ?? {};
-    const resultMapping = action.result_mapping ?? {};
+    const resultMapping = normalizeDingTalkAITableResultMapping(
+      action.result_mapping ?? {},
+      requestConfig,
+    );
     const isMaxComputeAction = requestConfig.tool_name === 'maxcompute.execute_sql';
-    const scenario = isMaxComputeAction
-      ? MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
-      : actionScenarioForExistingAction(action, actionTemplates, plugins);
+    const scenario = actionScenarioForEditingAction(action, actionTemplates, plugins);
     setEditingAction(action);
     setAssistantActionDraftSource(undefined);
     setPendingConnectionTestSeed(undefined);
@@ -1050,56 +1078,14 @@ export default function PluginsPage() {
 
   const applyActionScenario = (scenario?: string) => {
     setActionScenario(scenario);
-    const pluginByCode = (code: string) => plugins.find((plugin) => plugin.code === code);
-    const connectionForPlugin = (pluginId?: string) =>
-      pluginId ? selectableConnections.find((connection) => connection.plugin_id === pluginId)?.id : undefined;
-    const template = actionTemplates.find((item) => item.code === scenario);
-    if (template) {
-      const plugin = pluginByCode(template.plugin_code) ?? plugins.find((item) => item.id === template.plugin_id);
-      const requestConfig = isPlainRecord(template.request_config) ? template.request_config : {};
-      const resultMapping = isPlainRecord(template.result_mapping)
-        ? template.result_mapping
-        : defaultResultMappingForWriteTarget(DEFAULT_RESULT_WRITE_TARGET, resultWriteTargets);
-      const formDefaults = isPlainRecord(template.form_defaults) ? template.form_defaults : {};
-      const isMaxComputeTemplate = template.code === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO;
-      const tableName = stringValue(
-        formDefaults.table_name,
-        stringValue(requestConfig.table, 'ods_user_feedback'),
-      );
-      const timeField = stringValue(
-        formDefaults.time_field,
-        stringValue(requestConfig.time_field, 'created_at'),
-      );
-      const returnedFields = stringValue(
-        formDefaults.returned_fields,
-        Array.isArray(requestConfig.fields)
-          ? requestConfig.fields.map(String).join(',')
-          : MAXCOMPUTE_DEFAULT_FIELDS,
-      );
-      const maxRows = numberValue(formDefaults.max_rows, numberValue(requestConfig.limit, 1000));
-      const templatePluginId = stringValue(template.plugin_id) || undefined;
-      const pluginId = plugin?.id ?? templatePluginId ?? (
-        isMaxComputeTemplate && plugins.length === 1 ? plugins[0].id : undefined
-      );
-      const nextValues: Partial<ActionFormValues> = {
-        action_type: stringValue(template.action_type, 'http_request'),
-        code: stringValue(template.default_code, template.code),
-        connection_id: connectionForPlugin(pluginId)
-          ?? (isMaxComputeTemplate && selectableConnections.length === 1 ? selectableConnections[0].id : undefined),
-        header_rows: recordToRows(requestConfig.headers),
-        max_rows: maxRows,
-        method: stringValue(requestConfig.method, 'GET'),
-        name: stringValue(template.default_name, template.name),
-        param_rows: recordToRows(requestConfig.query),
-        path: stringValue(requestConfig.path) || undefined,
-        plugin_id: pluginId,
-        request_config: stableJson(requestConfig),
-        result_mapping: stableJson(resultMapping),
-        returned_fields: returnedFields,
-        table_name: tableName,
-        time_field: timeField,
-        ...resultMappingVisualFields(resultMapping, resultWriteTargets),
-      };
+    const nextValues = actionScenarioFormValues({
+      actionTemplates,
+      plugins,
+      resultWriteTargets,
+      scenario,
+      selectableConnections,
+    });
+    if (nextValues) {
       actionForm.setFieldsValue(nextValues);
       return;
     }
@@ -1127,7 +1113,9 @@ export default function PluginsPage() {
   const syncActionJsonFromVisual = () => {
     const values = actionForm.getFieldsValue();
     const requestConfig =
-      values.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
+      values.scenario === INTERNAL_BUSINESS_DATA_WRITE_SCENARIO
+        ? {}
+        : values.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
         ? buildMaxComputeRequestConfig(values)
         : buildVisualRequestConfig(values);
     actionForm.setFieldsValue({
@@ -1208,6 +1196,7 @@ export default function PluginsPage() {
           config.query,
           schemaManagedRequestKeys(selectedConnectionSchema, 'query'),
         ),
+        request_method: typeof config.method === 'string' ? config.method.toUpperCase() : 'GET',
         schema_values: schemaValuesFromPayload({ request_config: config }, selectedConnectionSchema),
       });
       message.success('已从请求 JSON 同步到 Params / Headers');
@@ -1509,6 +1498,7 @@ export default function PluginsPage() {
         advancedConnectionJsonOpen={advancedConnectionJsonOpen}
         advancedConnectionRequestJsonOpen={advancedConnectionRequestJsonOpen}
         connectionForm={connectionForm}
+        connectionBaseId={actionConnectionBaseId}
         connectionModalOpen={connectionModalOpen}
         connectionOptions={connectionOptions}
         connectionSubmitAction={connectionSubmitAction}
@@ -1517,10 +1507,12 @@ export default function PluginsPage() {
         editingConnection={Boolean(editingConnection)}
         editingPlugin={Boolean(editingPlugin)}
         editingRunner={Boolean(editingRunner)}
+        internalBusinessDataWriteScenario={INTERNAL_BUSINESS_DATA_WRITE_SCENARIO}
         maxComputeScenario={MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO}
         pluginCode={
           typeof selectedConnectionPluginCode === 'string' ? selectedConnectionPluginCode : undefined
         }
+        pluginProtocol={selectedConnectionPlugin?.protocol}
         pluginForm={pluginForm}
         pluginModalOpen={pluginModalOpen}
         pluginOptions={pluginOptions}

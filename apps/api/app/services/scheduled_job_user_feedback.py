@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 from app.api.deps import api_error
@@ -30,9 +29,7 @@ from app.services.scheduled_job_result_actions import execute_generic_result_act
 from app.services.scheduled_job_runtime import exception_error_code_and_message
 from app.services.scheduled_job_store import read_memory_dict as _read_memory_dict
 from app.services.user_feedback import (
-    USER_FEEDBACK_SENTIMENTS,
-    USER_FEEDBACK_TYPES,
-    create_user_feedback_response,
+    write_ai_generated_user_feedback_insights,
 )
 
 
@@ -121,50 +118,14 @@ def _write_user_feedback_insights(
     job: dict[str, Any],
     user: dict[str, Any],
 ) -> tuple[list[str], int]:
-    created_ids: list[str] = []
-    skipped = 0
-    for insight in insights:
-        if not isinstance(insight, dict) or not str(insight.get("content") or "").strip():
-            skipped += 1
-            continue
-        product_id = insight.get("product_id") or job.get("product_id")
-        if not isinstance(product_id, str) or not product_id:
-            skipped += 1
-            continue
-        feature_code = insight.get("feature_code")
-        module_code = insight.get("module_code")
-        related_requirement_id = insight.get("related_requirement_id")
-        payload = SimpleNamespace(
-            content=str(insight["content"]),
-            feature_code=feature_code if isinstance(feature_code, str) else None,
-            feedback_type=normalized_insight_enum(
-                insight.get("feedback_type"),
-                USER_FEEDBACK_TYPES,
-                "improvement",
-            ),
-            module_code=module_code if isinstance(module_code, str) else None,
-            product_id=product_id,
-            related_requirement_id=related_requirement_id
-            if isinstance(related_requirement_id, str)
-            else None,
-            satisfaction_score=insight.get("satisfaction_score")
-            if isinstance(insight.get("satisfaction_score"), int)
-            else None,
-            sentiment=normalized_insight_enum(
-                insight.get("sentiment"),
-                USER_FEEDBACK_SENTIMENTS,
-                "neutral",
-            ),
-            source_channel=str(insight.get("source_channel") or "maxcompute_weekly_ai"),
-            tags=insight.get("tags") if isinstance(insight.get("tags"), list) else [],
-        )
-        created = create_user_feedback_response(
-            current_store=current_store,
-            payload=payload,
-            user=user,
-        )
-        created_ids.append(created["id"])
-    return created_ids, skipped
+    created, skipped = write_ai_generated_user_feedback_insights(
+        current_store,
+        default_product_id=str(job.get("product_id") or "").strip() or None,
+        insights=insights,
+        source_channel="maxcompute_weekly_ai",
+        user=user,
+    )
+    return [item["id"] for item in created], skipped
 
 
 def _result_action_base(

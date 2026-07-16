@@ -978,7 +978,9 @@ def test_dingtalk_aitable_create_records_trial_uses_configured_target(monkeypatc
             "endpoint_url": "https://mcp-gw.dingtalk.com/server/aitable-instance-123",
             "name": "钉钉表格个人授权",
             "plugin_id": dingtalk_aitable["plugin_id"],
-            "request_config": {"base_id": "base-001"},
+            "request_config": {
+                "base_id": "https://alidocs.dingtalk.com/i/nodes/ndMj49yWjY44OlDEsRBpgNK483pmz5aA?utm_scene=team_space"
+            },
         },
         headers=headers,
     ).json()["data"]
@@ -1046,13 +1048,13 @@ def test_dingtalk_aitable_create_records_trial_uses_configured_target(monkeypatc
     assert data["status"] == "succeeded"
     assert data["request_preview"]["tool_name"] == "create_records"
     assert data["request_preview"]["arguments"] == {
-        "baseId": "base-001",
+        "baseId": "ndMj49yWjY44OlDEsRBpgNK483pmz5aA",
         "records": [{"cells": {"field_title": "测试记录"}}],
         "tableId": "tbl-001",
     }
     assert captured_requests[0]["body"]["params"] == {
         "arguments": {
-            "baseId": "base-001",
+            "baseId": "ndMj49yWjY44OlDEsRBpgNK483pmz5aA",
             "records": [{"cells": {"field_title": "测试记录"}}],
             "tableId": "tbl-001",
         },
@@ -1178,6 +1180,24 @@ def test_plugin_action_create_can_derive_plugin_from_connection():
 
     assert mismatched.status_code == 400
     assert mismatched.json()["detail"]["code"] == "PLUGIN_CONNECTION_MISMATCH"
+
+
+def test_plugin_action_patch_can_clear_connection_reference():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugin, _connection, action = create_plugin_bundle(admin_headers)
+
+    response = client.patch(
+        f"/api/system/plugin-actions/{action['id']}",
+        json={"connection_id": None},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["connection_id"] is None
+    assert data["plugin_id"] == plugin["id"]
+    assert app.state.store.plugin_actions[action["id"]]["connection_id"] is None
 
 
 def create_product(headers: dict[str, str]) -> dict:
@@ -4056,6 +4076,7 @@ def test_result_write_targets_registry_drives_action_mapping_forms():
     items = response.json()["data"]["items"]
     by_code = {item["code"]: item for item in items}
     assert set(by_code) >= {
+        "bugs",
         "code_inspection_reports",
         "dingtalk_aitable_records",
         "dingtalk_document",
@@ -4064,6 +4085,13 @@ def test_result_write_targets_registry_drives_action_mapping_forms():
         "scheduled_job_result",
         "user_feedback_insights",
     }
+    bugs = by_code["bugs"]
+    assert bugs["label"] == "Bug 管理"
+    assert bugs["default_result_mapping"] == {
+        "bugs_path": "$.bugs",
+        "write_target": "bugs",
+    }
+    assert bugs["mapping_fields"][0]["key"] == "bugs_path"
     user_insights = by_code["user_feedback_insights"]
     assert user_insights["default_result_mapping"] == {
         "insights_path": "$.insights",
@@ -5118,6 +5146,64 @@ def test_plugin_connection_can_be_tested_with_structured_result_and_audit():
     assert "plugin_connection.test_succeeded" in [event["event_type"] for event in audit_events]
 
 
+def test_http_plugin_connection_test_uses_configured_method_and_body(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugin, _, _ = create_plugin_bundle(admin_headers)
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://example.com/api/feedback",
+            "environment": "default",
+            "name": "用户反馈 POST 接口",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "body": {"scope": "weekly"},
+                "method": "POST",
+                "query": {"start_pt": "{{current_date-7}}"},
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self, size=-1):
+            return b'{"ok": true}'
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = request.data
+        captured["method"] = request.get_method()
+        captured["url"] = request.full_url
+        return FakeResponse()
+
+    monkeypatch.setattr(plugin_services, "urlopen", fake_urlopen)
+
+    response = client.post(
+        f"/api/system/plugin-connections/{connection['id']}/test",
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    assert captured["method"] == "POST"
+    assert json.loads(captured["body"].decode("utf-8")) == {"scope": "weekly"}
+    result = response.json()["data"]
+    assert result["status"] == "succeeded"
+    assert result["request_summary"]["body"] == {"scope": "weekly"}
+    assert result["request_summary"]["method"] == "POST"
+    assert result["diagnostics"][-1]["detail"] == "HTTP POST 调用完成"
+
+
 def test_plugin_connection_test_generates_repair_suggestions_for_failed_response(monkeypatch):
     app.state.store.reset()
     admin_headers = auth_headers()
@@ -5461,6 +5547,19 @@ def test_json_path_mapping_supports_brackets_indexes_and_wildcards():
             "write_target": "user_feedback_insights",
         },
     )["records_imported"] == 2
+    assert result_write_preview(
+        {"json": {"bugs": [{"id": "bug-1"}, {"id": "bug-2"}]}},
+        {
+            "bugs_path": "$.bugs",
+            "write_target": "bugs",
+        },
+    ) == {
+        "candidate_count": 2,
+        "records_imported": 2,
+        "sample_records": [{"id": "bug-1"}, {"id": "bug-2"}],
+        "write_target": "bugs",
+        "write_target_label": "Bug 管理",
+    }
     assert result_mapping_hits(
         {"json": {"data.rows": [{"id": "feedback-1"}]}},
         {"rows_path": "$['data.rows']"},

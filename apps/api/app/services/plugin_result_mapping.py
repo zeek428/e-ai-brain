@@ -243,6 +243,20 @@ def result_write_preview(
             "write_target_label": write_target_label,
         }
 
+    if write_target == "bugs":
+        bugs = json_path_value(
+            raw_json,
+            str(mapping.get("bugs_path") or default_mapping.get("bugs_path")),
+        )
+        sample_records = bugs[:3] if isinstance(bugs, list) else []
+        return {
+            "candidate_count": len(bugs) if isinstance(bugs, list) else 0,
+            "records_imported": len(bugs) if isinstance(bugs, list) else 0,
+            "sample_records": [compact_preview_value(record) for record in sample_records],
+            "write_target": write_target,
+            "write_target_label": write_target_label,
+        }
+
     if write_target == "email_notifications":
         recipients = json_path_value(
             raw_json,
@@ -332,7 +346,9 @@ def result_write_preview(
         record_count = len(records) if isinstance(records, list) else 0
         if record_count == 0 and isinstance(record_ids, list):
             record_count = len(record_ids)
-        if record_count == 0 and (record_ids is not None or status is not None or raw_json is not None):
+        if record_count == 0 and (
+            record_ids is not None or status is not None or raw_json is not None
+        ):
             record_count = 1
         return {
             "base_id": compact_preview_value(mapping.get("base_id")),

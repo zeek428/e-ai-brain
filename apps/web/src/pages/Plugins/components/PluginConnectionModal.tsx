@@ -32,6 +32,7 @@ export type PluginConnectionFormValues = {
   plugin_id: string;
   query_key?: string;
   request_config?: string;
+  request_method?: string;
   schema_values?: Record<string, unknown>;
   secret_ref?: string;
   status: string;
@@ -73,6 +74,7 @@ type PluginConnectionModalProps = {
   ) => void;
   open: boolean;
   pluginCode?: string;
+  pluginProtocol?: string;
   pluginOptions: SelectOption[];
   productOptions: SelectOption[];
   schema?: PluginConnectionSchemaRecord;
@@ -100,14 +102,20 @@ export function PluginConnectionModal({
   onValuesChange,
   open,
   pluginCode,
+  pluginProtocol,
   pluginOptions,
   productOptions,
   schema,
   systemVariableOptions,
 }: PluginConnectionModalProps) {
+  const selectedPluginId = Form.useWatch('plugin_id', form);
+  const selectedPluginOption = pluginOptions.find((option) => option.value === selectedPluginId);
   const isInternalDataSourceConnection = pluginCode === 'internal_data_source';
   const isGitlabConnection = pluginCode === 'gitlab';
   const isDingTalkConnection = pluginCode?.startsWith('dingtalk_') ?? false;
+  const isHttpConnection = pluginProtocol === 'http'
+    || ['email', 'github', 'gitlab'].includes(pluginCode ?? '')
+    || selectedPluginOption?.label.endsWith('(http)') === true;
   return (
     <Modal
       footer={[
@@ -165,7 +173,7 @@ export function PluginConnectionModal({
                 ? '从钉钉 AI Hub MCP 详情复制 StreamableHttp URL 或 JSON Config 中的 url，支持粘贴包含 key 的完整 URL。'
                 : undefined
             }
-            label={isDingTalkConnection ? 'StreamableHttp URL' : 'Endpoint URL'}
+            label={isDingTalkConnection ? 'StreamableHttp URL' : isHttpConnection ? '请求地址（Endpoint URL）' : 'Endpoint URL'}
             name="endpoint_url"
             rules={[{ required: true }]}
           >
@@ -173,7 +181,9 @@ export function PluginConnectionModal({
               placeholder={
                 isDingTalkConnection
                   ? 'https://mcp-gw.dingtalk.com/server/<实例ID>?key=...'
-                  : undefined
+                  : isHttpConnection
+                    ? 'https://api.example.com/v1/resources'
+                    : undefined
               }
             />
           </Form.Item>
@@ -339,12 +349,25 @@ export function PluginConnectionModal({
         />
         {!isInternalDataSourceConnection ? (
           <>
+            {isHttpConnection ? (
+              <Form.Item
+                extra="直接数据源可填写完整接口地址；GitHub、GitLab 等标准插件可保留基础地址，由动作场景补充固定请求路径。"
+                label="请求方法"
+                name="request_method"
+              >
+                <Select
+                  options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((value) => ({ label: value, value }))}
+                  placeholder="GET"
+                  style={{ width: 180 }}
+                />
+              </Form.Item>
+            ) : null}
             <RequestParameterRows
               addText="添加 Params"
               name="connection_param_rows"
               namePlaceholder="参数名"
               systemVariableOptions={systemVariableOptions}
-              title="高级查询 Params"
+              title="Params"
               valuePlaceholder="参数值"
             />
             <RequestParameterRows
@@ -383,7 +406,7 @@ export function PluginConnectionModal({
                 placeholder={
                   isInternalDataSourceConnection
                     ? '{"query":{"source_filters":{"requirements":{"priority":"P0"},"bugs":{"severity":"critical"}}}}'
-                    : '{"query":{"start_pt":"{{current_date-7}}"},"headers":{"Authorization":"APPCODE xxx"}}'
+                    : '{"method":"GET","query":{"start_pt":"{{current_date-7}}"},"headers":{"Authorization":"APPCODE xxx"}}'
                 }
                 rows={4}
               />

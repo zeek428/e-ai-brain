@@ -242,6 +242,7 @@ export const resultActionLabelByValue = new Map(
   [
     ...codeInspectionResultActionOptions,
     { label: '仅保存运行结果', value: 'save_scheduled_job_result' },
+    { label: '写入内部业务数据 - 用户洞察', value: 'write_internal_user_insights' },
   ].map((option) => [option.value, option.label]),
 );
 

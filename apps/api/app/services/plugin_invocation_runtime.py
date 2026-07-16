@@ -176,7 +176,7 @@ def dingtalk_document_id_from_url(value: Any) -> Any:
     if not parsed.scheme or not parsed.netloc:
         return stripped
     query = parse_qs(parsed.query)
-    for key in ("document_id", "doc_id", "docKey", "dentryUuid", "node_id"):
+    for key in ("base_id", "baseId", "document_id", "doc_id", "docKey", "dentryUuid", "node_id"):
         if query.get(key):
             return query[key][0]
     segments = [unquote(segment) for segment in parsed.path.split("/") if segment]
@@ -210,6 +210,8 @@ def _mcp_arguments(
     if request_config.get("tool_name") == DINGTALK_AITABLE_CREATE_RECORDS_TOOL_NAME:
         if "baseId" not in arguments and arguments.get("base_id"):
             arguments["baseId"] = arguments.get("base_id")
+        if "baseId" in arguments:
+            arguments["baseId"] = dingtalk_document_id_from_url(arguments["baseId"])
         if "tableId" not in arguments and arguments.get("table_id"):
             arguments["tableId"] = arguments.get("table_id")
         if "records" not in arguments and arguments.get("record"):
@@ -338,8 +340,10 @@ def _apply_dingtalk_aitable_record_write_defaults(
         connection_base_id = _non_blank_string(
             _dict_config_section(connection_config.get("query")).get("base_id")
         )
+    connection_base_id = dingtalk_document_id_from_url(connection_base_id)
+    result_mapping_base_id = dingtalk_document_id_from_url(result_mapping.get("base_id"))
     mapping_argument_defaults = {
-        "baseId": connection_base_id or result_mapping.get("base_id"),
+        "baseId": connection_base_id or result_mapping_base_id,
         "records": result_mapping.get("records_template"),
         "tableId": result_mapping.get("table_id"),
     }
@@ -351,6 +355,8 @@ def _apply_dingtalk_aitable_record_write_defaults(
             arguments[key] = value
     if "records" in arguments:
         arguments["records"] = _dingtalk_aitable_records_from_value(arguments["records"])
+    if "baseId" in arguments:
+        arguments["baseId"] = dingtalk_document_id_from_url(arguments["baseId"])
     arguments.pop("base_id", None)
     arguments.pop("table_id", None)
     if arguments:

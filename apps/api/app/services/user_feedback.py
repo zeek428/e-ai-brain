@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 from app.api.deps import api_error, require_any_permission_or_roles
 from app.core.listing import add_list_observability, paginated_list_payload
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.product_config_context import product_config_source_store
+from app.services.product_scope import require_product_scope
 from app.services.user_insights import (
     ensure_enum,
     ensure_non_blank,
@@ -324,6 +326,75 @@ def create_user_feedback_response(
         audit_event=audit_event,
     )
     return feedback
+
+
+def write_ai_generated_user_feedback_insights(
+    current_store: Any,
+    *,
+    default_product_id: str | None,
+    insights: list[Any],
+    source_channel: str,
+    user: dict[str, Any],
+) -> tuple[list[dict[str, Any]], int]:
+    """Persist structured AI insight candidates through the user-feedback write boundary."""
+    created: list[dict[str, Any]] = []
+    skipped = 0
+    for insight in insights:
+        if not isinstance(insight, dict) or not str(insight.get("content") or "").strip():
+            skipped += 1
+            continue
+        candidate_product_id = str(insight.get("product_id") or "").strip()
+        if (
+            default_product_id
+            and candidate_product_id
+            and candidate_product_id != default_product_id
+        ):
+            raise api_error(
+                409,
+                "RESULT_ACTION_PRODUCT_MISMATCH",
+                "User insight candidate does not belong to the scheduled job product",
+            )
+        product_id = default_product_id or candidate_product_id
+        if not product_id:
+            raise api_error(400, "VALIDATION_ERROR", "User insight product_id is required")
+        require_product_scope(user, product_id)
+        feature_code = insight.get("feature_code")
+        module_code = insight.get("module_code")
+        related_requirement_id = insight.get("related_requirement_id")
+        payload = SimpleNamespace(
+            content=str(insight["content"]),
+            feature_code=feature_code if isinstance(feature_code, str) else None,
+            feedback_type=(
+                str(insight.get("feedback_type"))
+                if str(insight.get("feedback_type") or "") in USER_FEEDBACK_TYPES
+                else "improvement"
+            ),
+            module_code=module_code if isinstance(module_code, str) else None,
+            product_id=product_id,
+            related_requirement_id=(
+                related_requirement_id if isinstance(related_requirement_id, str) else None
+            ),
+            satisfaction_score=(
+                insight.get("satisfaction_score")
+                if isinstance(insight.get("satisfaction_score"), int)
+                else None
+            ),
+            sentiment=(
+                str(insight.get("sentiment"))
+                if str(insight.get("sentiment") or "") in USER_FEEDBACK_SENTIMENTS
+                else "neutral"
+            ),
+            source_channel=str(insight.get("source_channel") or source_channel),
+            tags=insight.get("tags") if isinstance(insight.get("tags"), list) else [],
+        )
+        created.append(
+            create_user_feedback_response(
+                current_store=current_store,
+                payload=payload,
+                user=user,
+            ),
+        )
+    return created, skipped
 
 
 def patch_user_feedback_response(

@@ -136,6 +136,16 @@ function writeModeLabel(value?: string) {
   return value ?? '-';
 }
 
+function actionInvocationLabel(actionType?: string) {
+  if (actionType === 'mcp_tool') {
+    return 'MCP 工具';
+  }
+  if (actionType === 'internal_query') {
+    return '内部数据读取';
+  }
+  return 'HTTP 请求';
+}
+
 function trialInputGuide(action?: PluginActionRecord) {
   const requestConfig = isRecord(action?.request_config) ? action.request_config : {};
   const resultMapping = isRecord(action?.result_mapping) ? action.result_mapping : {};
@@ -185,7 +195,7 @@ function trialInputGuide(action?: PluginActionRecord) {
     description: '默认使用动作里保存的请求配置试运行，通常保持输入为 {} 即可。只有需要临时覆盖请求参数时，才在高级 JSON 中填写键值，例如 {"start_pt":"20260601"}。',
     recommendedInputJson: '{}',
     tags: [
-      { label: '动作类型', value: action?.action_type ?? '-' },
+      { label: '调用方式', value: actionInvocationLabel(action?.action_type) },
       { label: '写入目标', value: writeTarget ?? '仅保存运行结果' },
     ],
     title: '试运行输入通常无需填写',

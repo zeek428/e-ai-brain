@@ -6,6 +6,8 @@
 
 产品需求是研发协同唯一入口。调用顺序为：创建需求 → 正式评估 → 规划版本归组 → 创建协作运行 → 执行工作项/审核/返工 → 质量门禁与远程 Git 提交 → 按策略停在 `ready_for_release` 或经人工确认进入部署。默认不部署时，产品版本保持 `ready_for_release`，协作运行进入 `completed`，并记录 `completion_reason=ready_for_release`。
 
+阶段边界：P0 覆盖需求评估、版本归组、协作开发测试、工作项取消、基础反馈归因和可信远程交付，并以 `ready_for_release` 为终点；岗位经验审核/复用和可选部署属于 P1。本分册同时描述 P0 与 P1 契约，P1 小节会显式标注，不能据此把 P1 当作 P0 阻塞项。
+
 ### 正式需求评估与版本归组
 
 ```http
@@ -16,11 +18,11 @@ POST /api/requirement-assessments/{assessment_id}/answers
 POST /api/requirement-assessments/{assessment_id}/decisions
 ```
 
-创建评估时服务端按业务大脑、产品和稳定需求字段解析唯一 active 统一研发执行策略，普通请求不能传入 `strategy_id` 覆盖匹配。只有同时具备 `delivery.rd_executor_policies.manage` 和 `delivery.requirement_assessments.decide` 的人工覆盖请求可以提交候选策略，并仍须通过匹配、单调收紧、风险和审计校验。响应包含 `assessment_id/status/requirement_revision/strategy_snapshot_id/completeness/risk/effort/dependencies/acceptance_criteria/version_candidates/recommended_action/deterministic_checks`。LLM 提供结构化建议，服务端校验 Schema、风险下限、权限和版本兼容性。状态统一为 `draft | evaluating | waiting_human | needs_info | rework_required | accepted | deferred | rejected | failed | cancelled`。
+创建评估时服务端按业务大脑、产品和稳定需求字段解析唯一 active 统一研发执行策略，普通请求不能传入 `strategy_id` 覆盖匹配。请求体包含 `request_id`、`requirement_revision` 和可选 `reason`；`request_id` 在当前需求内幂等，`requirement_revision` 必须等于服务端最新修订。只有同时具备 `delivery.rd_executor_policies.manage` 和 `delivery.requirement_assessments.decide` 的人工覆盖请求可以提交候选策略，并仍须通过匹配、单调收紧、风险和审计校验。响应包含 `assessment_id/status/requirement_revision/initial_strategy_snapshot_id/final_strategy_snapshot_id/strategy_snapshot_id/completeness/risk/effort/dependencies/acceptance_criteria/version_candidates/recommended_action/deterministic_checks/version`，其中 `strategy_snapshot_id` 始终等于当前实际生效的快照（完成复核后等于 `final_strategy_snapshot_id`）。LLM 提供结构化建议，服务端校验 Schema、风险下限、权限和版本兼容性。状态统一为 `draft | evaluating | waiting_human | needs_info | rework_required | accepted | deferred | rejected | failed | cancelled`。
 
 `opinions` 只允许已分配的真人评估者或受控 AI 评估执行单元按岗位输出契约提交；`answers` 由需求负责人补充事实并创建新的需求/评估版本；`decisions` 请求体包含 `decision=accept|reject|request_more_info|request_rework|defer`、`comment` 和 `version` 乐观锁。`accepted` 后需求原子进入 `approved`，服务端再按 `iteration_config` 选择兼容 `planning` 版本。唯一合格候选可自动归组；候选并列、高风险新建版本或人工覆盖时创建 `decision_request`，需求保持 `approved`。组版成功后写入 `selected_version_id/version_created/grouping_reason` 并进入 `planned`。非 accepted 或未完成组版状态不得创建协作运行。
 
-同一 `requirement_revision + strategy_snapshot_id` 的进行中或成功评估幂等复用；需求发生实质修改后必须创建新评估，旧评估只作历史证据。
+同一 `requirement_revision + initial_strategy_snapshot_id` 的进行中或成功评估幂等复用；评估复核从初始快照派生最终快照时不改变该稳定业务键。若复核没有产生任何安全收紧差异，`final_strategy_snapshot_id = initial_strategy_snapshot_id`，当前 `strategy_snapshot_id` 也继续指向 base 快照，不创建空的 `assessment_resolved` 记录；只有 payload 实际变化时才创建 revision 1–2 派生快照。`requirement_id + request_id` 通过统一命令幂等记录约束，相同请求摘要返回原评估，不同摘要返回 `RD_IDEMPOTENCY_CONFLICT`。需求发生实质修改后必须创建新评估，旧评估只作历史证据。
 
 ### 统一研发执行策略
 
@@ -33,7 +35,9 @@ DELETE /api/delivery/rd-task-executor-policies/{policy_id}
 POST /api/delivery/rd-task-executor-policies/{policy_id}/validate
 ```
 
-原入口原位升级，不接受旧版单任务匹配写契约，也不提供任何旧/新双模式字段。策略主体必须包含：
+原入口原位升级，不接受旧版单任务匹配写契约，也不提供任何旧/新双模式字段。策略主记录增加服务端维护的 `policy_version` 乐观锁版本，创建时为 1；PATCH 请求必须提交 `expected_policy_version`，任何影响运行解释的字段或状态变更成功后原子递增，响应返回新的 `policy_version`。同一 `brain_app_id + product_id` 最多一条 active 产品策略，同一业务大脑最多一条 `product_id=null` 的 active 默认策略；解析时产品策略优先，未命中才使用默认策略，多个候选一律返回配置冲突而不按隐式优先级猜测。策略主体必须包含：
+
+PATCH 请求使用 `{"expected_policy_version":3,"changes":{...}}`；响应至少返回 `policy={id,policy_version,status,brain_app_id,product_id,...}` 和 `trace_id`。过期版本返回 `409 RD_VERSION_CONFLICT` 并携带 `current_policy_version`，不得应用部分字段；active 唯一约束冲突返回 `409 RD_EXECUTION_POLICY_INVALID`。
 
 ```json
 {
@@ -57,7 +61,9 @@ POST /api/delivery/rd-task-executor-policies/{policy_id}/validate
 }
 ```
 
-`delivery_target` 允许 `ready_for_release | deployed`，默认 `ready_for_release`；`deployed` 仍须通过现有发布评估、资源预检和人工确认。保存及激活前整体校验岗位、执行器、预算、门禁、Git 与风险配置。运行时冻结策略快照；策略缺失或无效返回 `RD_EXECUTION_POLICY_REQUIRED/INVALID`，不得走策略外执行路径。
+`delivery_target` 允许 `ready_for_release | deployed`，默认 `ready_for_release`；`deployed` 仍须通过现有发布评估、资源预检和人工确认。保存及激活前整体校验岗位、执行器、预算、门禁、Git 与风险配置。运行时把规范化策略独立冻结到 `rd_task_executor_policy_snapshots`，字段为 `id/policy_id/policy_version/parent_snapshot_id/snapshot_kind/resolution_context_key/resolution_revision/schema_version/content_hash/payload_json/created_by/created_at`。除 `parent_snapshot_id` 仅允许 base 为空外，其余身份、Schema、哈希和 payload 字段均为 NOT NULL。基础快照使用 `snapshot_kind=base/resolution_context_key=policy:{policy_id}:version:{policy_version}/resolution_revision=0/parent_snapshot_id=null`；评估自动收紧生成 `snapshot_kind=assessment_resolved` 的派生快照，以 `assessment:{assessment_id}` 作为 context key、以 1–2 作为收紧轮次，并要求 parent 非空且父子策略 ID/版本一致。唯一键为 `policy_id + policy_version + snapshot_kind + resolution_context_key + resolution_revision`；相同身份和哈希幂等复用、不同哈希冲突，不同评估可安全产生不同的最终 payload。
+
+快照表由数据库触发器拒绝 UPDATE/DELETE，应用运行角色只授予 INSERT/SELECT；`policy_id`、父快照和所有消费者外键使用 `ON DELETE RESTRICT`。策略 DELETE 在存在任何快照时返回 `409 RD_POLICY_IN_USE`，应改用停用。评估的 initial/final/effective 字段、岗位意见、协作运行、岗位反馈、经验候选及经验来源关联表都必须使用真实外键。策略缺失或无效返回 `RD_EXECUTION_POLICY_REQUIRED/INVALID`，快照缺失、哈希不一致或 Schema 无法读取返回 `RD_POLICY_SNAPSHOT_INVALID`，不得走策略外执行路径或用当前策略重算历史。
 
 评估后策略复核最多自动单调收紧两轮：只允许降低自动化、收紧风险/权限/工具/仓库/预算、增加门禁或必需岗位、或把 `deployed` 改为 `ready_for_release`。新增必需评估岗位必须补齐兼容意见；不可比较或可能扩大边界返回 `RD_POLICY_HUMAN_DECISION_REQUIRED`，超过两轮返回 `RD_POLICY_RESOLUTION_LIMIT`。
 
@@ -74,16 +80,286 @@ GET            /api/delivery/rd-collaboration-runs/{run_id}/work-items
 POST           /api/delivery/rd-work-items/{work_item_id}/claim
 POST           /api/delivery/rd-work-items/{work_item_id}/submit
 POST           /api/delivery/rd-work-items/{work_item_id}/review
+POST           /api/delivery/rd-work-items/{work_item_id}/cancel
 POST           /api/delivery/decision-requests/{decision_request_id}/decide
+POST           /api/delivery/decision-requests/{decision_request_id}/answers
 ```
 
 `rd-roles` 管理独立于系统 RBAC 的动态研发岗位；`rd-ai-employees` 管理独立于执行器的稳定 AI 数字员工身份、能力标签和人格版本；`rd-executor-profiles` 管理模型/Runner 运行能力。协作席位通过 `subject_type=ai_employee|human_user` 绑定 AI 数字员工或真人账号，AI 席位另行冻结 `executor_profile_id`。P0 真人选择只接受显式 `user_ids`，AI 选择只接受显式 `ai_employee_ids`，且调用时仍校验状态、系统权限或服务身份、产品范围、工作项席位和策略绑定。产品版本是协作聚合根：同一版本最多一个非终态运行。创建运行要求版本为 `planning`、至少包含一条 `planned` 需求、纳入需求最新评估均为 accepted，服务端锁定版本并冻结范围、策略、需求、岗位、员工和执行器快照，然后推进版本为 `active`。需求 GET 端点只定位所属版本运行，不创建第二个运行。
 
-权限点分别为 `delivery.rd_roles.manage`、`delivery.rd_ai_employees.manage`、`delivery.rd_executor_profiles.manage`、`delivery.requirement_assessments.read/decide`、`delivery.rd_collaboration.read/plan/work` 和 `delivery.decision_requests.decide`；策略继续使用 `delivery.rd_executor_policies.manage`，部署继续使用现有部署权限。岗位、员工档案或席位不会自动授予这些权限。
+权限点分别为 `delivery.rd_roles.manage`、`delivery.rd_ai_employees.manage`、`delivery.rd_executor_profiles.manage`、`delivery.requirement_assessments.read/decide`、`delivery.rd_collaboration.read/plan/work`、`delivery.decision_requests.decide` 和 `delivery.rd_role_experiences.read/decide`；策略继续使用 `delivery.rd_executor_policies.manage`，部署继续使用现有部署权限。岗位、员工档案或席位不会自动授予这些权限。
 
 工作项包含 `owner_seat_id/dependencies/input_contract/output_contract/acceptance_criteria/risk_level/status/resume_state/suspended_attempt_id/ai_task_id/reviewer_seat_id/idempotency_key`。依赖满足后才能进入 `ready`，无依赖项可并行；审核或质量门禁失败保留原 attempt，同范围返工进入 `rework_required` 并在下一次领取时创建新 attempt，范围/依赖/负责人变化则创建新计划版本和替代工作项。`blocked/awaiting_human` 保存平台冻结的恢复目标和解除条件；问题解除或决策完成后只能回到校验后的 `ready/running/rework_required/cancelled`。高风险、超权限、冲突、预算超限、门禁失败或部署边界创建 `decision_requests` 并暂停受影响分支。详情响应聚合 DAG、租约、AI 任务/Runner、审核、返工、门禁、Git、预算和角色反馈。
 
+#### 创建协作运行
+
+```http
+POST /api/product-versions/{version_id}/collaboration-runs
+```
+
+请求体：
+
+```json
+{
+  "request_id": "req-start-version-001",
+  "scope_version": 7,
+  "reason": "启动 2.0.0 研发协作"
+}
+```
+
+`scope_version` 必须等于版本当前需求范围版本。服务端事务锁定产品版本，验证全部纳入需求最新评估为 `accepted`，冻结最终策略快照、需求修订、验收标准、仓库基线和岗位席位；以 `version_id + scope_version + strategy_snapshot_id` 作为业务幂等约束，并以 `product_version_id + request_id` 保存命令幂等记录。并发重复请求返回同一活动运行；同一 request ID 使用不同摘要返回 `RD_IDEMPOTENCY_CONFLICT`，同一版本存在不同范围或快照的活动运行时返回冲突。
+
+`scope_version` 的事实源是 `product_versions.scope_version bigint NOT NULL DEFAULT 1`。规划版本的需求加入、移除、改派，纳入需求修订/验收标准变化，以及影响冻结输入的版本仓库或分支基线变化，必须在同一版本行锁事务中递增该值；普通字段展示修改不递增。版本进入 active 后只能由已批准的范围变更命令同时递增 `scope_version` 和协作 `plan_version`。版本列表/详情、需求归组结果、范围变更预览及 `RD_SCOPE_VERSION_CONFLICT.details.current_scope_version` 都必须返回当前值，客户端不得自行计算。
+
+响应核心字段：
+
+```json
+{
+  "data": {
+    "id": "rd_run_001",
+    "request_id": "req-start-version-001",
+    "product_version_id": "version_001",
+    "scope_version": 7,
+    "plan_version": 1,
+    "strategy_snapshot_id": "rd_policy_snapshot_001",
+    "strategy_snapshot_hash": "sha256:...",
+    "status": "planning",
+    "resume_state": null,
+    "suspended_decision_request_id": null,
+    "suspended_at": null,
+    "version": 1,
+    "idempotent_replay": false
+  },
+  "trace_id": "trace_rd_start_001"
+}
+```
+
+#### 领取工作项
+
+```http
+POST /api/delivery/rd-work-items/{work_item_id}/claim
+```
+
+请求体：
+
+```json
+{
+  "expected_version": 3,
+  "lease_seconds": 900,
+  "idempotency_key": "claim:rd_work_item_001:seat_dev_001:1"
+}
+```
+
+`lease_seconds` 允许 60–1800 秒。服务端校验工作项为 `ready`、依赖已批准、调用主体匹配席位、执行器/权限/预算仍有效，再原子创建 attempt、写入 lease 并把工作项推进到 `running`。相同幂等键和摘要返回原 claim；版本不匹配、已有有效租约或席位不匹配时不修改状态。成功或幂等重放响应：
+
+```json
+{
+  "data": {
+    "work_item": {"id": "rd_work_item_001", "status": "running", "version": 4},
+    "attempt": {"id": "rd_attempt_001", "attempt_no": 1, "status": "running"},
+    "lease_token": "lease-secret",
+    "lease_expires_at": "2026-07-16T12:15:00Z",
+    "lease_holder": {"seat_id": "seat_dev_001", "subject_type": "ai_employee", "subject_id": "ai_employee_dev_01"},
+    "strategy_snapshot_id": "rd_policy_snapshot_001",
+    "run": {"id": "rd_run_001", "status": "running", "version": 7},
+    "next_state": "running",
+    "idempotent_replay": false
+  },
+  "trace_id": "trace_rd_claim_001"
+}
+```
+
+claim 是永久命令幂等中的限时响应例外：租约有效期内，相同键和摘要解密到期前密文并返回同一 lease 成功响应；租约过期后固定返回 `RD_WORK_ITEM_LEASE_EXPIRED`，但保留幂等记录且绝不创建新 attempt。服务端只保存 token 摘要及到期前可重放的加密值，审计、通用响应快照和日志不得记录明文。要重新领取必须等待调度器把工作项重新推进为可领取状态，并使用新的幂等键和工作项版本。
+
+#### 提交工作项结果
+
+```http
+POST /api/delivery/rd-work-items/{work_item_id}/submit
+```
+
+请求体：
+
+```json
+{
+  "attempt_id": "rd_attempt_001",
+  "lease_token": "lease-secret",
+  "version": 4,
+  "idempotency_key": "submit:rd_attempt_001:result-v1",
+  "output": {
+    "summary": "完成订单幂等改造",
+    "artifacts": [{"type": "commit", "sha": "abc1234"}]
+  },
+  "evidence": {
+    "tests": [{"name": "payment idempotency", "status": "passed"}],
+    "logs": []
+  }
+}
+```
+
+服务端校验 attempt 属于当前工作项、租约未过期且 token/holder 匹配，输出满足冻结 `output_contract`，证据满足最小门禁，然后原子结束 attempt 并进入 `awaiting_review` 或策略允许的下一确定性状态。相同 `attempt_id + idempotency_key` 返回原结果；同一 attempt 不同 payload 返回 `RD_IDEMPOTENCY_CONFLICT`。
+
+```json
+{
+  "data": {
+    "work_item": {"id": "rd_work_item_001", "status": "awaiting_review", "version": 5},
+    "attempt": {"id": "rd_attempt_001", "status": "submitted", "output_ref": "rd_output_001", "evidence_ref": "rd_evidence_001"},
+    "next_state": "awaiting_review",
+    "run": {"id": "rd_run_001", "status": "running", "version": 8},
+    "idempotent_replay": false
+  },
+  "trace_id": "trace_rd_submit_001"
+}
+```
+
+#### 审核工作项
+
+```http
+POST /api/delivery/rd-work-items/{work_item_id}/review
+```
+
+请求体：
+
+```json
+{
+  "decision": "approve",
+  "comment": "实现和证据满足验收标准",
+  "version": 5,
+  "idempotency_key": "review:rd_work_item_001:v5:approve"
+}
+```
+
+`decision` 允许 `approve | request_rework | reject`。调用者必须属于冻结 reviewer 席位且不能是当前 attempt 执行主体；`version` 为工作项乐观锁。`approve` 推进为 `approved`；`request_rework` 必须有 comment，保留原 attempt 并推进为 `rework_required`，下一次 claim 创建新 attempt；`reject` 明确推进工作项为 `failed`、当前 attempt 为 `rejected`，必需工作项被拒绝时运行原子进入 `waiting_human` 并创建“重规划或终止”决策请求，不能隐式映射为 cancelled 或返工。
+
+```json
+{
+  "data": {
+    "work_item": {"id": "rd_work_item_001", "status": "approved", "version": 6},
+    "attempt": {"id": "rd_attempt_001", "status": "approved"},
+    "review": {"decision": "approve", "comment": "实现和证据满足验收标准", "version": 1},
+    "next_state": "approved",
+    "run": {"id": "rd_run_001", "status": "running", "version": 9},
+    "decision_request_id": null,
+    "idempotent_replay": false
+  },
+  "trace_id": "trace_rd_review_001"
+}
+```
+
+#### 取消工作项
+
+```http
+POST /api/delivery/rd-work-items/{work_item_id}/cancel
+```
+
+请求体：
+
+```json
+{
+  "reason": "需求范围调整，停止当前实现",
+  "version": 6,
+  "idempotency_key": "cancel:rd_work_item_001:v6:scope-change"
+}
+```
+
+调用者必须具备 `delivery.rd_collaboration.plan` 和产品范围；协作编排器使用内部服务身份调用同一领域命令。低风险、无已启动下游且策略允许直接取消时，服务端在一个数据库事务内校验工作项/运行版本，撤销数据库租约，关闭当前 attempt，取消 pending Review 和关联 AI task，把工作项推进为 `cancelled`，重算依赖和运行状态，并写入 Runner cancellation Outbox、协作事件和审计。物理 Runner 停止由 Outbox Worker 异步执行；被撤销租约的迟到完成回写必须拒绝，不能复活工作项。
+
+高风险、已有运行中下游、会扩大取消范围或策略要求人工确认时，不直接取消，返回 `202`、工作项 `status=awaiting_human` 和新建的 `decision_request`。成功或幂等重放响应返回 `work_item/attempt/ai_task/review/run/dependency_recalculation/runner_cancellation_outbox_id/decision_request/next_state/idempotent_replay/trace_id`。终态项返回 `RD_WORK_ITEM_STATE_INVALID`，版本冲突返回 `RD_VERSION_CONFLICT`，需要人工决策但无法创建请求时返回 `RD_DECISION_REQUIRED`；事务任一步失败不得留下部分取消。
+
+#### 处理人工决策
+
+```http
+POST /api/delivery/decision-requests/{decision_request_id}/decide
+```
+
+请求体：
+
+```json
+{
+  "selected_option": "continue_with_restricted_scope",
+  "comment": "仅保留支付模块改造",
+  "version": 2,
+  "idempotency_key": "decision:decision_001:v2:restricted"
+}
+```
+
+选项必须来自冻结 `options[]`。每项固定包含 `code/label/outcome/subject_transition/requires_comment/input_schema/effect_preview`：`outcome` 只允许 `approve | reject | request_more_info`，`subject_transition` 是平台已校验的目标状态或领域命令，客户端不能另传恢复状态。选择 approve/reject 后，决策请求分别进入 `approved/rejected` 并原子应用主体迁移；选择 request_more_info 后进入 `waiting_more_info`，主体继续保持暂停，不能提前恢复。选择“取消工作”这类业务选项时，option 自身使用 `outcome=approve/subject_transition=cancelled`；决策请求的 `cancelled` 仅表示请求被撤销或替代，不表示批准取消主体。
+
+调用者须具备 `delivery.decision_requests.decide`、产品范围和请求指定决策资格。处理协作运行暂停时，服务端同时校验 `rd_collaboration_runs.suspended_decision_request_id` 和运行版本，按冻结 option 和运行自己的 `resume_state` 恢复 `running/integrating/verifying`、返工、失败或取消，并在恢复时清空 `resume_state/suspended_decision_request_id/suspended_at`；客户端不能提交恢复阶段。已过期、已替代或不再绑定当前暂停聚合的请求返回稳定冲突错误。
+
+```json
+{
+  "data": {
+    "decision_request": {"id": "decision_001", "status": "approved", "selected_option": "continue_with_restricted_scope", "version": 3},
+    "affected_subject": {"type": "rd_collaboration_run", "id": "rd_run_001"},
+    "run": {"id": "rd_run_001", "status": "integrating", "version": 11, "resume_state": null, "suspended_decision_request_id": null, "suspended_at": null},
+    "next_state": "integrating",
+    "idempotent_replay": false
+  },
+  "trace_id": "trace_rd_decision_001"
+}
+```
+
+补充信息使用：
+
+```http
+POST /api/delivery/decision-requests/{decision_request_id}/answers
+```
+
+请求体包含 `answer/evidence/version/idempotency_key`。仅 `waiting_more_info` 可提交；服务端保存补充证据、重新校验并生成新 options/version 后回到 `pending`，仍不恢复主体。成功或幂等重放返回 `decision_request={id,status=pending,version,options,options_hash}`、`affected_subject`、`next_state=pending`、`idempotent_replay` 和 `trace_id`；版本冲突、过期请求或同键不同摘要均不得写入部分答案或新 options。`decision_requests.plan_version` 为 NOT NULL，组版前或无协作计划的决策使用 0；待决唯一约束覆盖 `pending/waiting_more_info`，避免 NULL 让同一问题产生多个活动请求。
+
+#### 岗位经验查询与审核（P1）
+
+```http
+GET  /api/delivery/rd-role-experiences?role_code=developer&product_id=product_001&status=approved&page=1&page_size=20
+GET  /api/delivery/rd-role-experiences/{experience_id}
+POST /api/delivery/rd-role-experiences/{experience_id}/decide
+```
+
+列表需要 `delivery.rd_role_experiences.read`，并在查询层按当前用户产品范围和业务大脑范围过滤；支持 `brain_app_id/product_id/role_code/work_item_type/scenario/risk_level/repository_trust_domain/tool_trust_domain/status/min_confidence/page/page_size`。返回 `experience_key/version/brain_app_id/role_code/product_scope/work_item_type/scenario/risk_scope/repository_trust_domains/tool_trust_domains/content/evidence_refs/strategy_snapshot_id/source_strategy_snapshot_ids/confidence/status/review_version`；`strategy_snapshot_id` 是候选生成时实际生效快照。决策请求体为：
+
+```json
+{
+  "decision": "approve",
+  "comment": "已验证三次交付均有效",
+  "version": 1,
+  "idempotency_key": "experience:exp_001:v1:approve"
+}
+```
+
+`decision` 允许 `approve | reject | retire`；调用者需要 `delivery.rd_role_experiences.decide`、产品和业务大脑范围，不能是唯一证据产生者。后续协作检索只返回 `approved` 且未退役、置信度达到策略阈值的经验，并逐项校验业务大脑、产品、岗位、工作项类型、场景、风险上限、仓库信任域、工具信任域、当前用户数据权限和当前策略允许版本；跨产品、跨业务大脑、低置信度、信任域不匹配或权限不足的记录必须在查询层排除，不能仅在 Prompt 拼装时过滤。响应中的经验引用不能直接改变策略、预算、权限或门禁。
+
+成功或幂等重放返回 `experience.id/status/review_version`、`review.decision/comment/reviewer_id`、`next_state/idempotent_replay` 和 `trace_id`。请求字段 `version` 对应持久化的 `review_version`；同一幂等键不同摘要返回 `RD_IDEMPOTENCY_CONFLICT`。
+
+#### 命令幂等与通用响应语义
+
+评估创建、协作启动、claim、submit、review、decision、decision answer、工作项取消和经验审核都在业务写事务内写入 `rd_command_idempotency_records`，固定保存 `command_type/aggregate_type/aggregate_id/idempotency_key/request_hash/result_type/result_id/http_status/response_hash/response_json/created_at`，唯一键为 `command_type + aggregate_type + aggregate_id + idempotency_key`。`response_json` 是完成命令时的不可变脱敏业务响应快照，`response_hash` 对排除每次请求 `trace_id` 和派生 `idempotent_replay` 标志后的规范化响应计算；后续不得从已经变化的聚合对象重新拼装“原响应”。密钥和大体积产物不进入该字段。claim 的 `response_json` 保存稳定 lease secret 引用，真实 `lease_token` 在独立加密列中只保留至租约过期，有效期内重放时解密回填同一 token。评估的 `request_id` 和启动运行的 `request_id` 分别映射为该表的 `idempotency_key`；除上文 claim 到期例外外，重放返回保存的原 HTTP 状态和业务响应，服务端在返回副本上设置 `idempotent_replay=true` 并生成本次 `trace_id`；不同 `request_hash` 必须冲突。该记录不设置 TTL 或 `expires_at`，不能因决策请求或聚合终态而允许同一键重新执行；仅可随依法批准的整聚合归档/清理一起处理。领域表上的活动运行、评估、attempt 和依赖唯一约束仍保留，用于抵御不同幂等键下的并发写入。
+
+上述写接口成功均返回 `data + trace_id`；除租约过期的 claim 例外外，幂等重放保持原 HTTP 成功码并把响应快照中的 `idempotent_replay` 置为 true。冲突统一返回 `{error:{code,message,details,current_version?},trace_id}`，不得创建 attempt、Review、决策结果、经验版本或领域事件等部分写入。
+
+#### 并发、租约和错误语义
+
+| HTTP | 错误码 | 语义 |
+|---|---|---|
+| 409 | `RD_SCOPE_VERSION_CONFLICT` | 启动协作时 `scope_version` 已过期；返回当前版本，不自动扩大范围。 |
+| 409 | `RD_ACTIVE_RUN_CONFLICT` | 同一产品版本已有范围或策略快照不同的非终态运行。 |
+| 409 | `RD_VERSION_CONFLICT` | 策略 PATCH、claim/submit/review/cancel/decision/decision answer/经验审核的乐观锁版本不匹配。 |
+| 409 | `RD_WORK_ITEM_NOT_READY` | 依赖、席位、权限、预算或工作区条件未满足，不能领取。 |
+| 409 | `RD_WORK_ITEM_LEASE_HELD` | 工作项已有未过期租约；返回 holder 摘要和过期时间。 |
+| 409 | `RD_WORK_ITEM_LEASE_EXPIRED` | claim 重放或 submit 使用的租约已过期、已回收或 token 不匹配，不创建新 attempt、不接受迟到结果。 |
+| 409 | `RD_WORK_ITEM_STATE_INVALID` | 工作项已终态或当前状态不允许取消、提交或审核。 |
+| 409 | `RD_DECISION_REQUIRED` | 当前工作项操作必须转人工决策，但决策请求未成功创建。 |
+| 409 | `RD_DECISION_EXPIRED` | 决策请求已过期、已替代或不再绑定当前暂停聚合。 |
+| 409 | `RD_IDEMPOTENCY_CONFLICT` | 同一幂等键对应不同请求摘要。 |
+| 409 | `RD_EXECUTION_POLICY_INVALID` | 策略 Schema、岗位/执行器绑定或 active 唯一规则不满足。 |
+| 409 | `RD_POLICY_IN_USE` | 策略已有不可变快照或运行引用，不能删除；可将策略停用。 |
+| 409 | `RD_POLICY_SNAPSHOT_INVALID` | 快照缺失、内容哈希不一致或 `schema_version` 不受支持；失败关闭并要求人工迁移。 |
+| 403 | `PERMISSION_DENIED` | 系统权限、产品范围、席位或审核隔离不满足。 |
+
 集成工作项通过 Outbox 推送版本开发分支或创建/更新 MR/PR，并保存 repository/provider、工作分支、版本开发分支、目标分支、local/remote commit SHA、MR/PR ID 和状态、Outbox ID、执行身份、时间、对账状态与质量证据。`ready_for_release` 完成判定只验证每个必需仓库已有对账成功的远程证据，不在完成接口内临时执行 push。默认策略下产品版本进入 `ready_for_release`，协作运行随后进入 `completed` 并返回 `completion_reason=ready_for_release`；版本不进入部署或发布状态。
+
+#### P1 策略控制的可选部署边界
+
+只有版本已具备上述 P0 可信交付证据、策略快照明确 `delivery_target=deployed`、现有部署资源/权限/回滚/质量门禁均通过且人工发布确认完成时，协作器才可调用既有部署域 API 创建部署请求；本分册不新增第二套部署接口。拒绝、失败或回滚不抹除 P0 交付事实，版本保持或返回 `ready_for_release`；部署成功后运行以 `completion_reason=deployed` 完成。
 
 ### 一次性升级控制
 
@@ -93,7 +369,7 @@ POST /api/system/rd-collaboration-upgrade/maintenance-fence
 POST /api/system/rd-collaboration-upgrade/cutover
 ```
 
-仅系统管理员可调用。围栏请求包含 `enabled/reason/version/expected_schema_version/health_marker`。启用后研发 approve/reject/direct-generate、AI 任务 start/retry、策略/协作写入和 Runner 新领取返回 `423 RD_UPGRADE_MAINTENANCE`，定时作业运行不受影响。cutover 只有在 preflight 无阻断、备份确认、Schema 109 已应用且围栏启用时执行策略转换、旧 draft 取消和 Schema v2 激活；新应用健康标记成功后才允许执行清理迁移 110。
+仅系统管理员可调用。围栏请求包含 `enabled/reason/version/expected_schema_version/health_marker`。启用后研发 approve/reject/direct-generate、AI 任务 start/retry/cancel、策略/协作写入、经验审核和 Runner 新领取返回 `423 RD_UPGRADE_MAINTENANCE`，定时作业运行不受影响。cutover 只有在 preflight 无阻断、备份确认、Schema 109 已应用且围栏启用时执行策略转换、旧 draft 取消和 Schema v2 激活；新应用健康标记成功后才允许执行清理迁移 110。
 
 解除围栏必须同时满足 Schema v2 已激活、迁移 110 已成功、v2 API 与协同 Worker 图版本一致、健康标记有效、v2 评估/协作写入冒烟检查通过。解除后新写路径恢复，旧 approve/generate/batch-delivery-advance/AI-task-create/start 写路径仍返回迁移错误。预检、健康、清理、Worker 或冒烟检查任一步失败都保持围栏并允许幂等重试。
 
@@ -612,7 +888,11 @@ POST /api/ai-tasks/batch-cancel
 }
 ```
 
-`draft`、`running`、`waiting_more_info`、`waiting_review` 和 `writing_back` 任务可取消；`completed`、`failed`、`cancelled` 等终态任务、重复任务 ID 和不存在的任务进入 `skipped`，不阻塞同批次其他合法任务。成功任务会同步取消待处理 Review，并写入逐任务 `ai_task.cancelled` 审计；批次完成后写入 `ai_task.batch_cancelled` 审计。
+公开取消只保留给未关联 v2 协作工作项的历史任务。单个任务一旦存在 `collaboration_run_id` 或 `work_item_id`，返回 `409 RD_COLLABORATION_REQUIRED`，响应给出 `collaboration_run_id/work_item_id` 和工作项取消或人工决策入口，任务、Review、attempt、工作项和运行均不改变。批量请求只要命中一个 v2 协作任务，整批返回 `409 RD_COLLABORATION_REQUIRED`，不得取消其余历史任务形成部分成功；调用方须拆分历史任务或改走协作入口。
+
+非协作历史任务仍允许取消 `draft`、`running`、`waiting_more_info`、`waiting_review` 和 `writing_back`；`completed`、`failed`、`cancelled` 等终态任务、重复任务 ID 和不存在的任务进入 `skipped`。成功任务同步取消待处理 Review，并写入逐任务 `ai_task.cancelled` 审计；批次完成后写入 `ai_task.batch_cancelled` 审计。
+
+v2 协作任务的取消由工作项取消命令或人工决策服务处理，必须在同一数据库事务：校验工作项和运行版本，停止/回收 Runner 租约，关闭当前 attempt，取消 pending Review 和 AI task，推进工作项为 `cancelled`，重新计算下游依赖和运行是否需要 `waiting_human/failed/cancelled`，写入协作事件和审计。任一步失败则全部回滚。
 
 响应：
 

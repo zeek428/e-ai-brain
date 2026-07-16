@@ -51,7 +51,7 @@ function ScheduledJobResultActionFields({
       </Space>
     );
   }
-  if (actionType === 'create_requirements') {
+  if (actionType === 'create_requirements' || actionType === 'write_internal_user_insights') {
     return null;
   }
   if (actionType === 'sync_dingtalk_document') {
@@ -153,6 +153,9 @@ export function ScheduledJobActionConfigSection({
     if (option.value === 'create_requirements') {
       return selectedJobType === 'plugin_action_invoke';
     }
+    if (option.value === 'write_internal_user_insights') {
+      return selectedJobType === 'plugin_action_invoke';
+    }
     if (option.value === 'sync_dingtalk_document') {
       return supportsDingtalkDocumentSync;
     }
@@ -197,7 +200,11 @@ export function ScheduledJobActionConfigSection({
                     rules={[{ required: true, message: '请选择结果动作' }]}
                     style={{ flex: 1, marginBottom: 8 }}
                   >
-                    <Select options={resultActionOptions} placeholder="请选择结果动作" />
+                    <Select
+                      aria-label="结果动作类型"
+                      options={resultActionOptions}
+                      placeholder="请选择结果动作"
+                    />
                   </Form.Item>
                   <ScheduledJobResultActionFields
                     dingtalkActionOptions={dingtalkActionOptions}

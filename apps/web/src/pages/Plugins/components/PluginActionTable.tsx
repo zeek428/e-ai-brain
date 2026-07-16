@@ -64,6 +64,23 @@ function normalizeActionSorter(
   };
 }
 
+function actionInvocationLabel(
+  action: PluginActionRecord,
+  pluginById: Map<string, PluginRecord>,
+) {
+  const plugin = pluginById.get(action.plugin_id);
+  if (plugin?.code === 'internal_data_source' && !action.connection_id) {
+    return '内部结果写入';
+  }
+  if (action.action_type === 'mcp_tool') {
+    return 'MCP 工具';
+  }
+  if (action.action_type === 'internal_query') {
+    return '内部数据读取';
+  }
+  return 'HTTP 请求';
+}
+
 export function PluginActionTable({
   actions,
   connectionById,
@@ -86,7 +103,13 @@ export function PluginActionTable({
       columns={[
         { dataIndex: 'name', sorter: true, title: '名称', ellipsis: true, width: 220 },
         { dataIndex: 'code', sorter: true, title: '编码', ellipsis: true, width: 200 },
-        { dataIndex: 'action_type', sorter: true, title: '类型', width: 130 },
+        {
+          dataIndex: 'action_type',
+          sorter: true,
+          title: '调用方式',
+          width: 140,
+          render: (_, row) => actionInvocationLabel(row, pluginById),
+        },
         {
           dataIndex: 'plugin_id',
           sorter: true,
