@@ -194,6 +194,14 @@ export function ConnectionSchemaFields({
           type="info"
         />
       ) : null}
+      {pluginCode === 'dingtalk_aitable' ? (
+        <Alert
+          description="Base ID 只需在钉钉 AI 表格连接中配置一次。新增记录动作选择此连接后会自动带出 Base ID，动作里只需填写数据表和记录内容。"
+          showIcon
+          title="钉钉表格连接包含表格范围"
+          type="info"
+        />
+      ) : null}
       {sections.map((section) => {
         const visibleFields = (section.fields ?? []).filter((field) => (
           isSchemaFieldVisible(field, selectedSourceTypes)

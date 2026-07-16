@@ -40,6 +40,9 @@ from app.services.plugin_store_helpers import _set_header, ensure_non_blank
 DINGTALK_DOCUMENT_WRITE_TARGET = "dingtalk_document"
 DINGTALK_DOCUMENT_LEGACY_UPDATE_TOOL_NAME = "doc.update_document_content"
 DINGTALK_DOCUMENT_UPDATE_TOOL_NAME = "update_document"
+DINGTALK_AITABLE_RECORDS_WRITE_TARGET = "dingtalk_aitable_records"
+DINGTALK_AITABLE_CREATE_RECORDS_TOOL_NAME = "create_records"
+DINGTALK_AITABLE_LEGACY_CREATE_RECORDS_TOOL_NAMES = {"aitable.create_records"}
 
 
 def _call_model_gateway_for_task(current_store: Any, *, task: dict[str, Any]) -> tuple[Any, Any]:
@@ -204,6 +207,18 @@ def _mcp_arguments(
             arguments["format"] = "markdown"
         arguments.pop("document_id", None)
         arguments.pop("content", None)
+    if request_config.get("tool_name") == DINGTALK_AITABLE_CREATE_RECORDS_TOOL_NAME:
+        if "baseId" not in arguments and arguments.get("base_id"):
+            arguments["baseId"] = arguments.get("base_id")
+        if "tableId" not in arguments and arguments.get("table_id"):
+            arguments["tableId"] = arguments.get("table_id")
+        if "records" not in arguments and arguments.get("record"):
+            arguments["records"] = [arguments.get("record")]
+        if "records" in arguments:
+            arguments["records"] = _dingtalk_aitable_records_from_value(arguments["records"])
+        arguments.pop("base_id", None)
+        arguments.pop("table_id", None)
+        arguments.pop("record", None)
     return arguments
 
 
@@ -268,6 +283,81 @@ def _apply_dingtalk_document_write_defaults(
     return normalized
 
 
+def _dingtalk_aitable_records_from_value(value: Any) -> Any:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        if stripped[0] in "[{":
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return value
+            return _dingtalk_aitable_records_from_value(parsed)
+        return value
+    if isinstance(value, dict):
+        nested_records = value.get("records")
+        if isinstance(nested_records, list):
+            return nested_records
+        if isinstance(value.get("cells"), dict):
+            return [value]
+        return [value]
+    return value
+
+
+def _apply_dingtalk_aitable_record_write_defaults(
+    action: dict[str, Any],
+    request_config: dict[str, Any],
+    connection_request_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result_mapping = _dict_config_section(action.get("result_mapping"))
+    if result_mapping.get("write_target") != DINGTALK_AITABLE_RECORDS_WRITE_TARGET:
+        return request_config
+    if action.get("action_type") != "mcp_tool":
+        return request_config
+
+    normalized = dict(request_config)
+    configured_tool_name = _non_blank_string(normalized.get("tool_name"))
+    if (
+        not configured_tool_name
+        or configured_tool_name in DINGTALK_AITABLE_LEGACY_CREATE_RECORDS_TOOL_NAMES
+    ):
+        normalized["tool_name"] = DINGTALK_AITABLE_CREATE_RECORDS_TOOL_NAME
+
+    mcp = _dict_config_section(normalized.get("mcp"))
+    if not _non_blank_string(mcp.get("provider")):
+        mcp["provider"] = "dingtalk"
+    if not _non_blank_string(mcp.get("server_name")):
+        mcp["server_name"] = "aitable"
+    normalized["mcp"] = mcp
+
+    arguments = _dict_config_section(normalized.get("arguments"))
+    connection_config = _dict_config_section(connection_request_config)
+    connection_base_id = _non_blank_string(connection_config.get("base_id"))
+    if not connection_base_id:
+        connection_base_id = _non_blank_string(
+            _dict_config_section(connection_config.get("query")).get("base_id")
+        )
+    mapping_argument_defaults = {
+        "baseId": connection_base_id or result_mapping.get("base_id"),
+        "records": result_mapping.get("records_template"),
+        "tableId": result_mapping.get("table_id"),
+    }
+    for key, value in mapping_argument_defaults.items():
+        if key == "baseId" and connection_base_id:
+            arguments[key] = connection_base_id
+            continue
+        if key not in arguments and value not in (None, ""):
+            arguments[key] = value
+    if "records" in arguments:
+        arguments["records"] = _dingtalk_aitable_records_from_value(arguments["records"])
+    arguments.pop("base_id", None)
+    arguments.pop("table_id", None)
+    if arguments:
+        normalized["arguments"] = arguments
+    return normalized
+
+
 def resolve_plugin_request_config(
     connection: dict[str, Any],
     action: dict[str, Any],
@@ -292,6 +382,11 @@ def resolve_plugin_request_config(
         merged["headers"] = {**connection_headers, **action_headers}
 
     merged = _apply_dingtalk_document_write_defaults(action, merged)
+    merged = _apply_dingtalk_aitable_record_write_defaults(
+        action,
+        merged,
+        connection_config,
+    )
     timezone = plugin_invocation_timezone(input_payload)
     return resolve_dynamic_parameter_value(
         merged,

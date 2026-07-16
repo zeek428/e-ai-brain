@@ -1,5 +1,5 @@
 import type { FormInstance } from 'antd';
-import { Button, Form, Input, InputNumber, Modal, Select, Space, Switch, Typography } from 'antd';
+import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Switch, Typography } from 'antd';
 
 import type { ResultWriteTargetRecord } from '../../../services/aiBrain';
 import {
@@ -19,6 +19,7 @@ type RequestParameterRow = {
 
 export type PluginActionFormValues = {
   action_type: string;
+  base_id?: string;
   branch_path?: string;
   code: string;
   commit_sha_path?: string;
@@ -40,6 +41,9 @@ export type PluginActionFormValues = {
   plugin_id?: string;
   request_config?: string;
   requires_human_review: boolean;
+  record_id_path?: string;
+  records_path?: string;
+  records_template?: string;
   records_imported_path?: string;
   recipients_path?: string;
   repository_id_path?: string;
@@ -53,6 +57,7 @@ export type PluginActionFormValues = {
   subject_path?: string;
   summary_path?: string;
   table_name?: string;
+  table_id?: string;
   time_field?: string;
   write_mode?: string;
   write_target?: string;
@@ -121,10 +126,12 @@ function resultMappingFieldControl(field: ResultWriteTargetRecord['mapping_field
 
 function ResultWriteTargetMappingFields({
   defaultWriteTarget,
+  requestPreview,
   writeTarget,
   writeTargets,
 }: {
   defaultWriteTarget: string;
+  requestPreview: Record<string, unknown>;
   writeTarget?: string;
   writeTargets: ResultWriteTargetRecord[];
 }) {
@@ -132,10 +139,27 @@ function ResultWriteTargetMappingFields({
   if (target && HIDDEN_RESULT_MAPPING_FIELD_TARGETS.has(target.code)) {
     return null;
   }
-  if (target?.mapping_fields.length) {
+  const isDingTalkAITable = target?.code === 'dingtalk_aitable_records';
+  const previewArguments = requestPreview.arguments;
+  const baseId =
+    previewArguments && typeof previewArguments === 'object' && !Array.isArray(previewArguments)
+      ? String((previewArguments as Record<string, unknown>).baseId ?? '').trim()
+      : '';
+  const mappingFields = target?.mapping_fields.filter((field) => field.key !== 'base_id') ?? [];
+  if (isDingTalkAITable || mappingFields.length) {
     return (
       <Space wrap>
-        {target.mapping_fields.map((field) => (
+        {isDingTalkAITable ? (
+          <Form.Item label="钉钉表格 Base ID（来自连接）">
+            <Input
+              disabled
+              placeholder="请先选择钉钉 AI 表格连接"
+              value={baseId || undefined}
+              style={{ width: 260 }}
+            />
+          </Form.Item>
+        ) : null}
+        {mappingFields.map((field) => (
           <Form.Item
             key={field.key}
             label={field.label}
@@ -145,6 +169,14 @@ function ResultWriteTargetMappingFields({
             {resultMappingFieldControl(field)}
           </Form.Item>
         ))}
+        {isDingTalkAITable && !baseId ? (
+          <Alert
+            description="请先编辑钉钉 AI 表格连接，在连接配置中填写 Base ID。动作保存后会自动使用该连接的 Base ID。"
+            showIcon
+            title="Base ID 未配置"
+            type="warning"
+          />
+        ) : null}
       </Space>
     );
   }
@@ -217,6 +249,7 @@ export function PluginActionModal({
             return (
               <ResultWriteTargetMappingFields
                 defaultWriteTarget={defaultWriteTarget}
+                requestPreview={requestPreview}
                 writeTarget={writeTarget}
                 writeTargets={resultWriteTargets}
               />

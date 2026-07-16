@@ -54,15 +54,15 @@ SYSTEM_INTERNAL_DATA_SOURCE_INPUT_SCHEMA = {
 
 DINGTALK_MCP_P0_CAPABILITIES: dict[str, dict[str, Any]] = {
     "dingtalk_aitable": {
-        "action_templates": ["钉钉 AI 表格 - 查询记录"],
+        "action_templates": ["钉钉 AI 表格 - 查询记录", "钉钉 AI 表格 - 新增记录"],
         "category": "business_system",
-        "description": "钉钉官方 AI 表格 MCP 插件，用于查询 AI 表格记录作为定时作业输入。",
+        "description": "钉钉官方 AI 表格 MCP 插件，用于查询或新增 AI 表格记录。",
         "mcp_id": "9555",
         "name": "钉钉 AI 表格",
-        "recommended_scenarios": ["业务台账定时读取", "项目数据汇总", "AI 表格记录分析"],
-        "risk_level": "medium",
+        "recommended_scenarios": ["业务台账定时读取", "项目数据汇总", "AI 表格记录分析", "洞察结果同步"],
+        "risk_level": "high",
         "server_name": "aitable",
-        "summary": "通过钉钉官方 MCP 连接 AI 表格记录查询能力。",
+        "summary": "通过钉钉官方 MCP 连接 AI 表格记录查询和新增能力。",
     },
     "dingtalk_bot": {
         "action_templates": ["钉钉机器人 - 发送消息"],
@@ -213,6 +213,21 @@ DINGTALK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"keyword": {"type": "string"}, "max_rows": {"type": "integer"}},
         "type": "object",
     },
+    "create_records": {
+        "properties": {
+            "baseId": {"type": "string"},
+            "records": {
+                "items": {
+                    "properties": {"cells": {"type": "object"}},
+                    "type": "object",
+                },
+                "type": "array",
+            },
+            "tableId": {"type": "string"},
+        },
+        "required": ["baseId", "tableId", "records"],
+        "type": "object",
+    },
     "bot.batch_send_robot_msg_to_users": {
         "properties": {"message": {"type": "string"}, "user_ids": {"type": "string"}},
         "type": "object",
@@ -313,6 +328,20 @@ DINGTALK_MCP_P0_ACTION_DEFINITIONS: list[dict[str, Any]] = [
         "plugin_code": "dingtalk_aitable",
         "risk_tier": "read",
         "tool_name": "aitable.search_records",
+    },
+    {
+        "code": "dingtalk_aitable_create_records",
+        "default_code": "create_dingtalk_aitable_records",
+        "default_name": "钉钉 AI 表格 - 新增记录",
+        "description": "调用钉钉 AI 表格 MCP 新增记录，用于把任务结果同步到指定表格。",
+        "form_defaults": {
+            "records_template": "{{result_json}}",
+            "table_id": "",
+        },
+        "plugin_code": "dingtalk_aitable",
+        "result_mapping": result_write_target_default_mapping("dingtalk_aitable_records"),
+        "risk_tier": "write",
+        "tool_name": "create_records",
     },
     {
         "code": "dingtalk_bot_send_message",
@@ -446,7 +475,7 @@ def _dingtalk_connection_defaults() -> dict[str, dict[str, Any]]:
             "max_retries": 1,
             "name": f"{capability['name']} MCP 连接",
             "protocol": DINGTALK_MCP_PROTOCOL,
-            "request_config": {},
+            "request_config": {"base_id": ""} if code == "dingtalk_aitable" else {},
             "status": "active",
             "timeout_seconds": 30,
         }
@@ -458,29 +487,55 @@ def _dingtalk_connection_schemas() -> dict[str, dict[str, Any]]:
     return {
         code: {
             "schema_version": "v1",
-            "sections": [
-                {
-                    "key": "dingtalk_mcp",
-                    "title": "钉钉 MCP 授权",
-                    "fields": [
+            "sections": (
+                [
+                    {
+                        "key": "dingtalk_mcp",
+                        "title": "钉钉 MCP 授权",
+                        "fields": [
+                            {
+                                "description": (
+                                    "个人使用填 user；企业统一连接可按授权实例选择 system 或 app。"
+                                ),
+                                "key": "auth_subject_type",
+                                "label": "授权主体",
+                                "options": [
+                                    {"label": "个人授权", "value": "user"},
+                                    {"label": "系统授权", "value": "system"},
+                                    {"label": "应用授权", "value": "app"},
+                                ],
+                                "path": "auth_config.auth_subject_type",
+                                "required": True,
+                                "type": "select",
+                            },
+                        ],
+                    },
+                ]
+                + (
+                    [
                         {
-                            "description": (
-                                "个人使用填 user；企业统一连接可按授权实例选择 system 或 app。"
-                            ),
-                            "key": "auth_subject_type",
-                            "label": "授权主体",
-                            "options": [
-                                {"label": "个人授权", "value": "user"},
-                                {"label": "系统授权", "value": "system"},
-                                {"label": "应用授权", "value": "app"},
+                            "key": "dingtalk_aitable",
+                            "title": "钉钉 AI 表格范围",
+                            "fields": [
+                                {
+                                    "description": (
+                                        "在连接中填写一次；新增记录动作会自动从所选连接读取，"
+                                        "无需在动作里重复填写。"
+                                    ),
+                                    "key": "base_id",
+                                    "label": "钉钉表格 Base ID",
+                                    "path": "request_config.base_id",
+                                    "placeholder": "请输入钉钉 AI 表格 Base ID",
+                                    "required": True,
+                                    "type": "text",
+                                },
                             ],
-                            "path": "auth_config.auth_subject_type",
-                            "required": True,
-                            "type": "select",
                         },
-                    ],
-                },
-            ],
+                    ]
+                    if code == "dingtalk_aitable"
+                    else []
+                )
+            ),
         }
         for code in DINGTALK_MCP_P0_CAPABILITIES
     }

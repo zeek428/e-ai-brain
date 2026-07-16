@@ -287,10 +287,17 @@ def test_dingtalk_p0_marketplace_exposes_standard_mcp_capabilities():
         assert item["publisher"] == "钉钉官方"
         assert item["connection_defaults"]["auth_type"] == "url_key"
         assert item["connection_defaults"]["endpoint_url"] == ""
-        assert item["connection_defaults"]["request_config"] == {}
+        assert item["connection_defaults"]["request_config"] == (
+            {"base_id": ""} if code == "dingtalk_aitable" else {}
+        )
         assert item["connection_defaults"]["auth_config"]["query_key"] == "key"
         assert item["connection_defaults"]["auth_config"]["auth_subject_type"] == "user"
         assert item["connection_schema"]["sections"][0]["key"] == "dingtalk_mcp"
+        if code == "dingtalk_aitable":
+            aitable_fields = item["connection_schema"]["sections"][1]["fields"]
+            assert aitable_fields[0]["key"] == "base_id"
+            assert aitable_fields[0]["path"] == "request_config.base_id"
+            assert aitable_fields[0]["required"] is True
         assert item["capability_discovery"]["known_tools"]
         assert item["capability_discovery"]["mcp_id"] == mcp_id
 
@@ -308,6 +315,12 @@ def test_dingtalk_p0_action_templates_include_risk_tiers_and_tool_metadata():
             "aitable.search_records",
             "read",
             "钉钉 AI 表格 - 查询记录",
+        ),
+        "dingtalk_aitable_create_records": (
+            "dingtalk_aitable",
+            "create_records",
+            "write",
+            "钉钉 AI 表格 - 新增记录",
         ),
         "dingtalk_bot_send_message": (
             "dingtalk_bot",
@@ -367,12 +380,21 @@ def test_dingtalk_p0_action_templates_include_risk_tiers_and_tool_metadata():
         assert template["default_name"] == default_name
         assert template["request_config"]["tool_name"] == tool_name
         assert template["request_config"]["mcp"]["provider"] == "dingtalk"
-        expected_write_target = (
-            "dingtalk_document"
-            if code == "dingtalk_doc_update_content"
-            else "scheduled_job_result"
-        )
+        expected_write_target = {
+            "dingtalk_aitable_create_records": "dingtalk_aitable_records",
+            "dingtalk_doc_update_content": "dingtalk_document",
+        }.get(code, "scheduled_job_result")
         assert template["result_mapping"]["write_target"] == expected_write_target
+    create_records_template = by_code["dingtalk_aitable_create_records"]
+    assert create_records_template["form_defaults"] == {
+        "records_template": "{{result_json}}",
+        "table_id": "",
+    }
+    assert create_records_template["request_config"]["tool_schema"]["required"] == [
+        "baseId",
+        "tableId",
+        "records",
+    ]
     update_template = by_code["dingtalk_doc_update_content"]
     assert update_template["form_defaults"] == {
         "content": "{{result_summary}}",
@@ -937,6 +959,107 @@ def test_dingtalk_document_trial_infers_update_tool_for_legacy_actions(monkeypat
         },
         "name": "update_document",
     }
+
+
+def test_dingtalk_aitable_create_records_trial_uses_configured_target(monkeypatch):
+    app.state.store.reset()
+    headers = auth_headers()
+    captured_requests: list[dict[str, object]] = []
+
+    marketplace = client.get("/api/system/plugin-marketplace", headers=headers).json()["data"]
+    dingtalk_aitable = {item["code"]: item for item in marketplace["items"]}[
+        "dingtalk_aitable"
+    ]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            **dingtalk_aitable["connection_defaults"],
+            "auth_config": {"query_key": "key", "secret_ref": "dingtalk-url-key-secret"},
+            "endpoint_url": "https://mcp-gw.dingtalk.com/server/aitable-instance-123",
+            "name": "钉钉表格个人授权",
+            "plugin_id": dingtalk_aitable["plugin_id"],
+            "request_config": {"base_id": "base-001"},
+        },
+        headers=headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "create_dingtalk_aitable_records",
+            "connection_id": connection["id"],
+            "name": "钉钉 AI 表格 - 新增记录",
+            "plugin_id": dingtalk_aitable["plugin_id"],
+            "request_config": {},
+            "result_mapping": {
+                "records_template": '[{"cells":{"field_title":"测试记录"}}]',
+                "record_id_path": "$.result.recordIds",
+                "status_path": "$.success",
+                "table_id": "tbl-001",
+                "write_target": "dingtalk_aitable_records",
+            },
+            "status": "active",
+        },
+        headers=headers,
+    ).json()["data"]
+    assert action["request_config"] == {}
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "id": action["id"],
+                    "jsonrpc": "2.0",
+                    "result": {"recordIds": ["rec-001"]},
+                    "success": True,
+                },
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured_requests.append(
+            {
+                "body": json.loads(request.data.decode("utf-8")),
+                "timeout": timeout,
+                "url": request.full_url,
+            },
+        )
+        return FakeResponse()
+
+    monkeypatch.setattr(plugin_invocation_runtime, "urlopen", fake_urlopen)
+
+    response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/trial",
+        json={"connection_id": connection["id"], "input_payload": {}},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "succeeded"
+    assert data["request_preview"]["tool_name"] == "create_records"
+    assert data["request_preview"]["arguments"] == {
+        "baseId": "base-001",
+        "records": [{"cells": {"field_title": "测试记录"}}],
+        "tableId": "tbl-001",
+    }
+    assert captured_requests[0]["body"]["params"] == {
+        "arguments": {
+            "baseId": "base-001",
+            "records": [{"cells": {"field_title": "测试记录"}}],
+            "tableId": "tbl-001",
+        },
+        "name": "create_records",
+    }
+    assert data["write_preview"]["write_target"] == "dingtalk_aitable_records"
+    assert data["write_preview"]["record_ids"] == ["rec-001"]
 
 
 def create_plugin_bundle(headers: dict[str, str]) -> tuple[dict, dict, dict]:
@@ -3934,6 +4057,7 @@ def test_result_write_targets_registry_drives_action_mapping_forms():
     by_code = {item["code"]: item for item in items}
     assert set(by_code) >= {
         "code_inspection_reports",
+        "dingtalk_aitable_records",
         "dingtalk_document",
         "email_notifications",
         "requirements",
@@ -3990,6 +4114,18 @@ def test_result_write_targets_registry_drives_action_mapping_forms():
         {"label": "追加内容", "value": "append"},
         {"label": "覆盖内容", "value": "overwrite"},
     ]
+    dingtalk_aitable = by_code["dingtalk_aitable_records"]
+    assert dingtalk_aitable["label"] == "钉钉表格"
+    assert dingtalk_aitable["default_result_mapping"] == {
+        "records_path": "$.records",
+        "records_template": "{{result_json}}",
+        "record_id_path": "$.result.recordIds",
+        "status_path": "$.success",
+        "table_id": "",
+        "write_target": "dingtalk_aitable_records",
+    }
+    assert dingtalk_aitable["mapping_fields"][0]["label"] == "数据表 Table ID"
+    assert dingtalk_aitable["mapping_fields"][1]["type"] == "textarea"
     requirements = by_code["requirements"]
     assert requirements["label"] == "需求管理"
     assert requirements["default_result_mapping"] == {
@@ -5354,6 +5490,25 @@ def test_json_path_mapping_supports_brackets_indexes_and_wildcards():
         "write_mode": "append",
         "write_target": "dingtalk_document",
         "write_target_label": "钉钉文档",
+    }
+    assert result_write_preview(
+        {"json": {"result": {"recordIds": ["rec-1", "rec-2"]}, "success": True}},
+        {
+            "base_id": "base-001",
+            "records_template": "[{\"cells\":{\"field_title\":\"测试\"}}]",
+            "table_id": "tbl-001",
+            "write_target": "dingtalk_aitable_records",
+        },
+    ) == {
+        "base_id": "base-001",
+        "candidate_count": 2,
+        "record_ids": ["rec-1", "rec-2"],
+        "records_imported": 2,
+        "sample_records": ['[{"cells":{"field_title":"测试"}}]'],
+        "status": True,
+        "table_id": "tbl-001",
+        "write_target": "dingtalk_aitable_records",
+        "write_target_label": "钉钉表格",
     }
 
 

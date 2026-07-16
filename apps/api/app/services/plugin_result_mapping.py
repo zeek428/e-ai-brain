@@ -311,6 +311,45 @@ def result_write_preview(
             "write_target_label": write_target_label,
         }
 
+    if write_target == "dingtalk_aitable_records":
+        record_ids = json_path_value(
+            raw_json,
+            str(mapping.get("record_id_path") or default_mapping.get("record_id_path")),
+        )
+        status = json_path_value(
+            raw_json,
+            str(mapping.get("status_path") or default_mapping.get("status_path")),
+        )
+        records = json_path_value(
+            raw_json,
+            str(mapping.get("records_path") or default_mapping.get("records_path")),
+        )
+        records_template = str(
+            mapping.get("records_template")
+            or default_mapping.get("records_template")
+            or "",
+        )
+        record_count = len(records) if isinstance(records, list) else 0
+        if record_count == 0 and isinstance(record_ids, list):
+            record_count = len(record_ids)
+        if record_count == 0 and (record_ids is not None or status is not None or raw_json is not None):
+            record_count = 1
+        return {
+            "base_id": compact_preview_value(mapping.get("base_id")),
+            "candidate_count": record_count,
+            "records_imported": record_count,
+            "sample_records": (
+                [compact_preview_value(record) for record in records[:3]]
+                if isinstance(records, list)
+                else ([compact_preview_value(records_template)] if records_template else [])
+            ),
+            "status": compact_preview_value(status),
+            "table_id": compact_preview_value(mapping.get("table_id")),
+            "record_ids": compact_preview_value(record_ids),
+            "write_target": write_target,
+            "write_target_label": write_target_label,
+        }
+
     if write_target == "requirements":
         requirements = json_path_value(
             raw_json,

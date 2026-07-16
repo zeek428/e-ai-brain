@@ -209,6 +209,60 @@ RESULT_WRITE_TARGETS = [
         ],
     },
     {
+        "code": "dingtalk_aitable_records",
+        "default_result_mapping": {
+            "records_path": "$.records",
+            "records_template": "{{result_json}}",
+            "record_id_path": "$.result.recordIds",
+            "status_path": "$.success",
+            "table_id": "",
+            "write_target": "dingtalk_aitable_records",
+        },
+        "description": "把 AI 处理结果作为新记录写入指定钉钉 AI 表格，并记录新增反馈。",
+        "form_label": "钉钉表格",
+        "label": "钉钉表格",
+        "mapping_fields": [
+            {
+                "description": "目标数据表 Table ID。",
+                "key": "table_id",
+                "label": "数据表 Table ID",
+                "placeholder": "tbl_xxx",
+                "required": True,
+            },
+            {
+                "description": (
+                    "新增记录 JSON，可填写数组，也可使用 {{result_json}}、{{records}} "
+                    "等任务结果变量。单条记录通常为 {\"cells\":{\"字段ID\":\"值\"}}。"
+                ),
+                "key": "records_template",
+                "label": "新增记录内容",
+                "placeholder": "[{\"cells\":{\"字段ID\":\"值\"}}]",
+                "required": True,
+                "type": "textarea",
+            },
+            {
+                "description": "从钉钉 MCP 返回中读取新增记录 ID 列表的路径。",
+                "key": "record_id_path",
+                "label": "返回记录 ID JSONPath",
+                "placeholder": "$.result.recordIds",
+                "required": False,
+            },
+            {
+                "description": "从钉钉 MCP 返回中读取写入状态的路径。",
+                "key": "status_path",
+                "label": "返回状态 JSONPath",
+                "placeholder": "$.success",
+                "required": False,
+            },
+        ],
+        "supported_job_types": [
+            "plugin_action_invoke",
+            "user_feedback_insight_extract",
+            "code_repository_inspection",
+            "online_log_ai_analysis",
+        ],
+    },
+    {
         "code": "requirements",
         "default_result_mapping": {
             "priority": "P1",

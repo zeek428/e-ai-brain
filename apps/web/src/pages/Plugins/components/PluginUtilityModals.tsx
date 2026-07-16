@@ -142,6 +142,24 @@ function trialInputGuide(action?: PluginActionRecord) {
   const argumentsConfig = actionRequestArguments(action);
   const writeTarget = stringValue(resultMapping.write_target);
   const toolName = stringValue(requestConfig.tool_name);
+  const isDingTalkAitableRecordWrite =
+    writeTarget === 'dingtalk_aitable_records'
+    || toolName === 'create_records'
+    || toolName === 'aitable.create_records';
+  if (isDingTalkAitableRecordWrite) {
+    return {
+      description: '表格、数据表和新增记录内容已经在动作里配置好。通常不用填写下面的 JSON，直接点击“试运行”即可；只有想临时覆盖记录内容时再展开高级 JSON。',
+      recommendedInputJson: '{}',
+      tags: [
+        { label: 'Base ID', value: stringValue(argumentsConfig.baseId, resultMapping.base_id) ?? '-' },
+        { label: 'Table ID', value: stringValue(argumentsConfig.tableId, resultMapping.table_id) ?? '-' },
+        { label: 'MCP 工具', value: toolName === 'aitable.create_records' ? 'create_records' : toolName ?? 'create_records' },
+        { label: '记录内容', value: stringValue(argumentsConfig.records, resultMapping.records_template) ?? '-' },
+      ],
+      title: '默认按动作配置试运行',
+      type: 'warning' as const,
+    };
+  }
   const isDingTalkDocumentWrite =
     writeTarget === 'dingtalk_document'
     || toolName === 'doc.update_document_content'

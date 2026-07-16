@@ -35,6 +35,8 @@ export const MAXCOMPUTE_DEFAULT_FIELDS =
   'feedback_id,user_id,product_id,module_code,feedback_type,content,sentiment,created_at';
 export const DEFAULT_RESULT_WRITE_TARGET = 'scheduled_job_result';
 const DINGTALK_DOCUMENT_UPDATE_TOOL_NAME = 'update_document';
+const DINGTALK_AITABLE_RECORDS_WRITE_TARGET = 'dingtalk_aitable_records';
+const DINGTALK_AITABLE_CREATE_RECORDS_TOOL_NAME = 'create_records';
 
 export function stableJson(value: Record<string, unknown>): string {
   return JSON.stringify(value, null, 2);
@@ -464,6 +466,28 @@ export function buildVisualRequestConfig(values: Partial<PluginActionFormValues>
         argumentsConfig.mode = values.write_mode.trim();
       }
     }
+    if (values.write_target === DINGTALK_AITABLE_RECORDS_WRITE_TARGET) {
+      if (!stringValue(config.tool_name)) {
+        config.tool_name = DINGTALK_AITABLE_CREATE_RECORDS_TOOL_NAME;
+      } else if (config.tool_name === 'aitable.create_records') {
+        config.tool_name = DINGTALK_AITABLE_CREATE_RECORDS_TOOL_NAME;
+      }
+      const mcpConfig = isPlainRecord(config.mcp) ? { ...config.mcp } : {};
+      config.mcp = {
+        ...mcpConfig,
+        provider: stringValue(mcpConfig.provider).trim() || 'dingtalk',
+        server_name: stringValue(mcpConfig.server_name).trim() || 'aitable',
+      };
+      if (values.base_id?.trim()) {
+        argumentsConfig.baseId = values.base_id.trim();
+      }
+      if (values.table_id?.trim()) {
+        argumentsConfig.tableId = values.table_id.trim();
+      }
+      if (values.records_template?.trim()) {
+        argumentsConfig.records = parseJsonLikeValue(values.records_template.trim());
+      }
+    }
     if (Object.keys(argumentsConfig).length > 0) {
       config.arguments = argumentsConfig;
     }
@@ -499,6 +523,18 @@ function parseOptionalJsonRecord(value: string | undefined): Record<string, unkn
   }
 }
 
+function parseJsonLikeValue(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed || !['[', '{'].includes(trimmed[0])) {
+    return value;
+  }
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return value;
+  }
+}
+
 export function buildActionRequestPreview(
   values: Partial<PluginActionFormValues> | undefined,
   connection?: PluginConnectionRecord,
@@ -508,31 +544,51 @@ export function buildActionRequestPreview(
     formValues.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
       ? buildMaxComputeRequestConfig(formValues)
       : buildVisualRequestConfig(formValues);
-  const method = String(config.method ?? 'POST').toUpperCase();
+  const previewConfig = { ...config };
+  if (
+    formValues.write_target === DINGTALK_AITABLE_RECORDS_WRITE_TARGET
+    && connection?.plugin_code === 'dingtalk_aitable'
+  ) {
+    const connectionRequestConfig = connection.request_config ?? {};
+    const connectionBaseId =
+      stringValue(connectionRequestConfig.base_id).trim()
+      || stringValue(
+        isPlainRecord(connectionRequestConfig.query)
+          ? connectionRequestConfig.query.base_id
+          : undefined,
+      ).trim();
+    if (connectionBaseId) {
+      const argumentsConfig = isPlainRecord(previewConfig.arguments)
+        ? { ...previewConfig.arguments }
+        : {};
+      previewConfig.arguments = { ...argumentsConfig, baseId: connectionBaseId };
+    }
+  }
+  const method = String(previewConfig.method ?? 'POST').toUpperCase();
   const connectionRequestConfig = connection?.request_config ?? {};
   const connectionQuery =
     connectionRequestConfig.query && typeof connectionRequestConfig.query === 'object'
       ? connectionRequestConfig.query
       : {};
-  const actionQuery = config.query && typeof config.query === 'object' ? config.query : {};
+  const actionQuery = previewConfig.query && typeof previewConfig.query === 'object' ? previewConfig.query : {};
   const query = { ...(connectionQuery as Record<string, unknown>), ...(actionQuery as Record<string, unknown>) };
   const connectionHeaders =
     connectionRequestConfig.headers && typeof connectionRequestConfig.headers === 'object'
       ? connectionRequestConfig.headers
       : {};
-  const actionHeaders = config.headers && typeof config.headers === 'object' ? config.headers : {};
+  const actionHeaders = previewConfig.headers && typeof previewConfig.headers === 'object' ? previewConfig.headers : {};
   const headers = { ...(connectionHeaders as Record<string, unknown>), ...(actionHeaders as Record<string, unknown>) };
-  const path = String(config.path ?? '');
+  const path = String(previewConfig.path ?? '');
   const baseUrl = connection?.endpoint_url?.replace(/\/$/, '') ?? '';
   const queryString = new URLSearchParams(query as Record<string, string>).toString();
   return {
-    arguments: config.arguments,
+    arguments: previewConfig.arguments,
     endpoint: connection?.endpoint_url ?? '-',
     headers,
     method,
-    path: path || (config.tool_name ? '(MCP tools/call)' : ''),
+    path: path || (previewConfig.tool_name ? '(MCP tools/call)' : ''),
     query,
-    tool_name: config.tool_name,
+    tool_name: previewConfig.tool_name,
     url: path
       ? `${baseUrl}/${path.replace(/^\//, '')}${queryString ? `?${queryString}` : ''}`
       : `${baseUrl}${queryString ? `?${queryString}` : ''}`,
@@ -718,6 +774,7 @@ export function resultMappingVisualFields(
   writeTargets: ResultWriteTargetRecord[] = [],
 ): Partial<PluginActionFormValues> {
   const values: Partial<PluginActionFormValues> & Record<string, string | undefined> = {
+    base_id: stringMappingValue(resultMapping, 'base_id'),
     branch_path: stringMappingValue(resultMapping, 'branch_path'),
     commit_sha_path: stringMappingValue(resultMapping, 'commit_sha_path'),
     content_template: stringMappingValue(resultMapping, 'content_template'),
@@ -727,6 +784,9 @@ export function resultMappingVisualFields(
     document_id_path: stringMappingValue(resultMapping, 'document_id_path'),
     findings_path: stringMappingValue(resultMapping, 'findings_path'),
     insights_path: stringMappingValue(resultMapping, 'insights_path'),
+    record_id_path: stringMappingValue(resultMapping, 'record_id_path'),
+    records_path: stringMappingValue(resultMapping, 'records_path'),
+    records_template: stringMappingValue(resultMapping, 'records_template'),
     records_imported_path: stringMappingValue(resultMapping, 'records_imported_path'),
     recipients_path: stringMappingValue(resultMapping, 'recipients_path'),
     repository_id_path: stringMappingValue(resultMapping, 'repository_id_path'),
@@ -735,6 +795,7 @@ export function resultMappingVisualFields(
     status_path: stringMappingValue(resultMapping, 'status_path'),
     subject_path: stringMappingValue(resultMapping, 'subject_path'),
     summary_path: stringMappingValue(resultMapping, 'summary_path'),
+    table_id: stringMappingValue(resultMapping, 'table_id'),
     write_mode: stringMappingValue(resultMapping, 'write_mode'),
     write_target: writeTargetFromResultMapping(resultMapping),
   };
