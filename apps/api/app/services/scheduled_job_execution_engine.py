@@ -492,6 +492,7 @@ class ScheduledJobExecutionEngine:
 
     @staticmethod
     def _trace_graph_entries(execution_nodes: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        has_requirement_creation = isinstance(execution_nodes.get("requirement_creation"), dict)
         ordered_node_ids = [
             "data_connection",
             "native_scan",
@@ -499,11 +500,12 @@ class ScheduledJobExecutionEngine:
             "skill_processing",
             "result_action",
             "requirement_creation",
-            "task_creation",
             "bug_creation",
             "notifications",
             "code_inspection_report",
         ]
+        if not has_requirement_creation:
+            ordered_node_ids.insert(6, "task_creation")
         entries: list[tuple[str, dict[str, Any]]] = []
         seen: set[str] = set()
         for node_id in ordered_node_ids:
@@ -536,7 +538,11 @@ class ScheduledJobExecutionEngine:
                 entries.append((node_id, node))
                 seen.add(node_id)
         for node_id, node in execution_nodes.items():
-            if node_id in {"result_actions"} or node_id in seen:
+            if (
+                node_id in {"result_actions"}
+                or node_id in seen
+                or (has_requirement_creation and node_id == "task_creation")
+            ):
                 continue
             if isinstance(node, dict):
                 entries.append((node_id, node))

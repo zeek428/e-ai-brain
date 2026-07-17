@@ -3630,6 +3630,10 @@ describe('ScheduledJobsPage', () => {
               output: { candidate_count: 1 },
               status: 'succeeded',
             },
+            requirement_creation: {
+              created_requirement_ids: ['requirement_001'],
+              status: 'succeeded',
+            },
           },
         },
         status: 'succeeded',
@@ -3660,6 +3664,10 @@ describe('ScheduledJobsPage', () => {
         },
         result_action: {
           created_ids: ['insight_001'],
+          status: 'succeeded',
+        },
+        requirement_creation: {
+          created_requirement_ids: ['requirement_001'],
           status: 'succeeded',
         },
       },
@@ -4278,14 +4286,14 @@ describe('ScheduledJobsPage', () => {
                 skill_codes: ['code_inspection_analysis'],
                 status: 'succeeded',
               },
-              task_creation: {
-                created_task_ids: [],
+              requirement_creation: {
+                created_requirement_ids: ['requirement_code_inspection_001'],
                 feedback: {
-                  task_ids: [],
+                  requirement_ids: ['requirement_code_inspection_001'],
                 },
-                label: 'Bug 确认后推进研发任务',
-                records_imported: 0,
-                status: 'deferred_to_bug_confirmation',
+                label: '严重问题自动创建整改需求',
+                records_imported: 1,
+                status: 'succeeded',
               },
             },
             finding_count: 1,
@@ -4316,10 +4324,14 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('succeeded');
     expect(within(dialog).getByLabelText('流程节点 AI执行处理内容')).toHaveTextContent('已调用');
     expect(within(dialog).getByLabelText('流程节点 动作反馈内容')).toHaveTextContent('code_inspection_reports');
+    expect(within(dialog).getByLabelText('流程节点 严重问题自动创建整改需求')).toHaveTextContent(
+      'requirement_code_inspection_001',
+    );
     expect(dialog).toHaveTextContent('代码仓库巡检');
     expect(dialog).toHaveTextContent('代码巡检报告写入结果');
-    expect(dialog).toHaveTextContent('Bug 确认后推进研发任务');
-    expect(dialog).toHaveTextContent('deferred_to_bug_confirmation');
+    expect(dialog).toHaveTextContent('严重问题自动创建整改需求');
+    expect(dialog).not.toHaveTextContent('Bug 确认后推进研发任务');
+    expect(dialog).toHaveTextContent('requirement_code_inspection_001');
     expect(dialog).toHaveTextContent('code_inspection_report_ai');
     expect(dialog).toHaveTextContent('model_log_code_inspection');
     expect(dialog).toHaveTextContent('write_code_inspection_report');

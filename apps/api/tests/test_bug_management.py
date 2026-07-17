@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app, settings
 from app.services.object_storage import object_storage
-from tests.test_rd_task_executor_policies import create_codex_runner
 
 client = TestClient(app)
 
@@ -332,104 +331,36 @@ def test_bug_batch_update_rejects_null_only_update_fields():
     assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
 
 
-def test_bug_can_promote_to_ai_task_and_queue_rd_executor():
+def test_bug_promotion_creates_requirement_for_assessment():
     headers = auth_headers()
     context = create_product_context(headers)
-    runner = create_codex_runner(headers)
-    app.state.store.rd_executor_profiles["bug-codex-profile"] = {
-        "id": "bug-codex-profile",
-        "executor_type": "codex",
-        "runner_id": runner["id"],
-        "status": "active",
-    }
-    policy_response = client.post(
-        "/api/delivery/rd-task-executor-policies",
-        json={
-            "name": "Bug 修复走 Codex",
-            "brain_app_id": "rd_brain",
-            "product_id": context["product_id"],
-            "status": "active",
-            "matching_config": {
-                "task_types": ["bug_fix"],
-                "execution_role_code": "developer",
-            },
-            "assessment_config": {
-                "instruction_template": (
-                    "修复 Bug {{bug_id}} / {{bug_title}}，任务 {{task_id}}，产品 {{product_id}}。"
-                ),
-                "output_contract": {"summary": "string"},
-            },
-            "iteration_config": {},
-            "delivery_target": "ready_for_release",
-            "team_config": {"required_role_codes": ["developer"]},
-            "autonomy_config": {"timeout_seconds": 600},
-            "quality_gate_config": {},
-            "git_config": {"workspace_root": "/Users/zeek/source/e-ai-brain"},
-            "experience_reuse_config": {},
-            "deployment_config": {},
-            "role_bindings": [
-                {
-                    "role_code": "developer",
-                    "actor_mode": "ai",
-                    "primary_executor_profile_id": "bug-codex-profile",
-                    "status": "active",
-                }
-            ],
-        },
-        headers=headers,
-    )
-    assert policy_response.status_code == 200
     bug = create_bug(
         headers,
         context,
         assignee="rd_owner@example.com",
         reproduce_steps=["进入知识检索", "使用 viewer 查询受限内容"],
         source="manual_test",
-        title="权限过滤 Bug 需要自动修复",
+        title="权限过滤 Bug 需要评估",
     )
 
-    promoted = client.post(
-        f"/api/bugs/{bug['id']}/promote-ai-task",
-        json={"auto_start": True},
-        headers=headers,
-    )
+    promoted = client.post(f"/api/bugs/{bug['id']}/promote-ai-task", headers=headers)
 
     assert promoted.status_code == 200
     data = promoted.json()["data"]
-    assert data["task"]["task_type"] == "bug_fix"
-    assert data["task"]["status"] == "running"
-    assert data["task"]["current_step"] == "waiting_ai_executor"
-    assert data["task"]["input_json"]["bug"]["id"] == bug["id"]
-    assert data["task"]["input_json"]["bug"]["reproduce_steps"] == [
-        "进入知识检索",
-        "使用 viewer 查询受限内容",
-    ]
-    assert data["start"]["executor_task_id"].startswith("ai_executor_task_")
-    assert data["start"]["runner_id"] == runner["id"]
-
-    detail = client.get(f"/api/ai-tasks/{data['task']['id']}", headers=headers).json()["data"]
-    assert detail["task_type"] == "bug_fix"
-    assert detail["status"] == "running"
-    assert detail["input"]["bug"]["id"] == bug["id"]
+    requirement_id = data["requirement_id"]
+    assert data["assessment_url"] == f"/api/requirements/{requirement_id}/assessments"
+    requirement = client.get(f"/api/requirements/{requirement_id}", headers=headers).json()["data"]
+    assert requirement["source_object_type"] == "bug"
+    assert requirement["source_object_id"] == bug["id"]
+    assert requirement["status"] == "submitted"
+    assert app.state.store.ai_tasks == {}
 
     updated_bug = client.get(
         f"/api/bugs?product_id={context['product_id']}&title=权限过滤",
         headers=headers,
     ).json()["data"]["items"][0]
-    assert updated_bug["evidence"]["ai_task_automation"]["latest_task_id"] == data["task"]["id"]
-    assert updated_bug["evidence"]["ai_task_automation"]["latest_task_status"] == "running"
-    assert updated_bug["evidence"]["ai_task_automation"]["task_ids"] == [data["task"]["id"]]
-
-    claimed = client.post(
-        "/api/system/ai-executor-tasks/claim",
-        json={"executor_type": "codex", "runner_id": runner["id"]},
-        headers={"X-Runner-Token": "runner-secret"},
-    )
-    assert claimed.status_code == 200
-    claimed_task = claimed.json()["data"]["task"]
-    assert claimed_task["ai_task_id"] == data["task"]["id"]
-    assert claimed_task["input_payload"]["bug"]["id"] == bug["id"]
-    assert "修复 Bug" in claimed_task["instruction"]
+    assert updated_bug["requirement_id"] == requirement_id
+    assert updated_bug["evidence"]["rd_requirement_adapter"]["requirement_id"] == requirement_id
 
 
 def test_bug_management_rejects_invalid_context_state_and_roles():

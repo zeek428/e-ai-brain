@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.core.store import MemoryStore
 from app.main import app
+from app.services.assistant_action_drafts import execute_assistant_action_draft
 from app.services.code_inspection_detail_projection import code_inspection_governance_summary
 from app.services.code_inspections import create_tasks_for_findings
 
@@ -99,6 +102,35 @@ def test_bug_promotion_links_one_open_requirement_instead_of_creating_ai_task():
     assert len(app.state.store.requirements) == 1
 
 
+def test_assistant_rd_task_adapter_denies_cross_product_scope():
+    current_store = MemoryStore()
+    current_store.products["product-allowed"] = {"id": "product-allowed", "status": "active"}
+    current_store.products["product-forbidden"] = {"id": "product-forbidden", "status": "active"}
+    draft = {
+        "action": "create_rd_task",
+        "id": "assistant-draft-forbidden-product",
+        "payload": {
+            "content": "不应跨产品创建研发需求。",
+            "product_id": "product-forbidden",
+            "title": "越权研发需求",
+        },
+        "title": "越权研发需求",
+    }
+    user = {
+        "id": "user-product-member",
+        "scope_summary": [
+            {"access_level": "write", "scope_id": "product-allowed", "scope_type": "product"}
+        ],
+    }
+
+    with pytest.raises(HTTPException) as failure:
+        execute_assistant_action_draft(current_store, draft=draft, user=user)
+
+    assert failure.value.status_code == 404
+    assert failure.value.detail["code"] == "NOT_FOUND"
+    assert current_store.requirements == {}
+
+
 def test_v2_requirement_task_generation_endpoints_are_non_mutating_compatibility_errors():
     app.state.store.reset()
     headers = auth_headers()
@@ -136,21 +168,18 @@ def test_legacy_requirement_task_generation_remains_available():
     assert len(app.state.store.ai_tasks) == 1
 
 
-def test_explicit_legacy_bug_task_promotion_cannot_bypass_a_v2_requirement():
+def test_public_bug_promotion_rejects_legacy_auto_start_switch():
     app.state.store.reset()
     headers = auth_headers()
     product = create_product(headers)
-    requirement = create_requirement(headers, product["id"])
-    mark_requirement_as_v2(requirement)
     bug = client.post(
         "/api/bugs",
         json={
-            "description": "必须交由 v2 协作处理。",
+            "description": "不得通过公开参数绕过需求评估。",
             "product_id": product["id"],
-            "requirement_id": requirement["id"],
             "severity": "major",
             "source": "manual_test",
-            "title": "v2 Bug",
+            "title": "不允许直接创建任务的 Bug",
         },
         headers=headers,
     ).json()["data"]
@@ -161,8 +190,9 @@ def test_explicit_legacy_bug_task_promotion_cannot_bypass_a_v2_requirement():
         headers=headers,
     )
 
-    assert_collaboration_required(response)
+    assert response.status_code == 422
     assert app.state.store.ai_tasks == {}
+    assert app.state.store.requirements == {}
 
 
 def test_v2_delivery_batch_advance_rejects_delivery_targets_without_partial_mutation():
@@ -325,7 +355,7 @@ def test_code_inspection_remediation_creates_requirement_and_requirement_coverag
         findings=[finding],
         report=report,
         severity_threshold="high",
-        user={"id": "user_admin"},
+        user={"id": "user_admin", "roles": ["admin"]},
     )
 
     assert created_ids == [finding["created_requirement_id"]]

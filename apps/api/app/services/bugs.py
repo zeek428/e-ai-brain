@@ -17,16 +17,9 @@ from app.services.bug_lifecycle import (
     validate_bug_enums,
 )
 from app.services.bug_listing import bug_summary_projection
-from app.services.legacy_rd_task_adapters import (
-    promote_legacy_bug_to_ai_task,
-    requests_legacy_bug_task,
-)
 from app.services.object_storage import object_storage
 from app.services.product_scope import require_product_scope
-from app.services.rd_requirement_entry_adapters import (
-    create_or_link_rd_requirement,
-    require_v2_requirement_entrypoint,
-)
+from app.services.rd_requirement_entry_adapters import create_or_link_rd_requirement
 from app.services.task_workflow_context import task_workflow_write_store
 
 BUG_IMAGE_MIME_TYPES = {
@@ -38,6 +31,8 @@ BUG_IMAGE_MIME_TYPES = {
 BUG_IMAGE_UPLOAD_SOURCES = {"clipboard", "file_picker"}
 MAX_BUG_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
 BUG_IMAGE_OBJECT_PREFIX = "bugs/evidence/"
+
+
 def ensure_non_blank(value: str | None, field: str) -> str:
     if value is None or not value.strip():
         raise api_error(400, "VALIDATION_ERROR", f"{field} is required")
@@ -108,9 +103,7 @@ def upload_bug_image_result(
     storage = object_storage()
     uploaded_at = datetime.now(UTC).isoformat()
     date_path = uploaded_at[:10]
-    object_key = (
-        f"bugs/evidence/{user['id']}/{date_path}/{digest}/{safe_object_filename(filename)}"
-    )
+    object_key = f"bugs/evidence/{user['id']}/{date_path}/{digest}/{safe_object_filename(filename)}"
     stored = storage.put_bytes(
         bucket=settings.object_storage_bucket,
         content=content,
@@ -319,9 +312,7 @@ def bug_task_product_context(current_store: Any, bug: dict[str, Any]) -> dict[st
 def promote_bug_to_ai_task_result(
     *,
     bug_id: str,
-    code_review_executor: Any | None = None,
     current_store: Any,
-    opener: Any | None = None,
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
@@ -336,28 +327,10 @@ def promote_bug_to_ai_task_result(
     if bug.get("status") == "closed":
         raise api_error(409, "BUG_STATE_INVALID", "Closed Bug cannot be promoted")
 
-    if requests_legacy_bug_task(payload):
-        if bug.get("requirement_id"):
-            require_v2_requirement_entrypoint(
-                current_store=write_store,
-                entrypoint="bugs.promote_ai_task",
-                requirement_id=str(bug["requirement_id"]),
-            )
-        return promote_legacy_bug_to_ai_task(
-            bug=bug,
-            code_review_executor=code_review_executor,
-            current_store=write_store,
-            opener=opener,
-            payload=payload,
-            product_context=bug_task_product_context(write_store, bug),
-            user=user,
-        )
-
     now = datetime.now(UTC).isoformat()
     title = str(getattr(payload, "title", None) or "").strip() or f"Bug 修复：{bug['title']}"
     adapter_result = create_or_link_rd_requirement(
         write_store,
-        actor_id=user["id"],
         evidence={
             "bug": write_store.snapshot(bug),
             "content": bug.get("description"),
@@ -368,6 +341,7 @@ def promote_bug_to_ai_task_result(
         product_id=str(bug["product_id"]),
         source_id=str(bug["id"]),
         source_type="bug",
+        user=user,
     )
     evidence = dict(bug.get("evidence") or {})
     evidence["rd_requirement_adapter"] = {

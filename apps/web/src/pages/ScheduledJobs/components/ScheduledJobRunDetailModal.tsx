@@ -607,7 +607,7 @@ export function ScheduledJobRunDetailModal({
           <JsonPreview title="动作反馈内容" value={getRunExecutionNode(run, 'result_action')} />
           <JsonPreview title="代码巡检报告写入结果" value={getRunExecutionNode(run, 'code_inspection_report')} />
           <JsonPreview title="严重问题自动创建 Bug" value={getRunExecutionNode(run, 'bug_creation')} />
-          <JsonPreview title="Bug 确认后推进研发任务" value={getRunExecutionNode(run, 'task_creation')} />
+          <JsonPreview title="严重问题自动创建整改需求" value={getRunExecutionNode(run, 'requirement_creation')} />
           <JsonPreview title="问题消息通知" value={getRunExecutionNode(run, 'notifications')} />
           <JsonPreview title="动作执行状态" value={getRunExecutionNode(run, 'result_actions')} />
           <JsonPreview title="结果摘要" value={run.result_summary} />

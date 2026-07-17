@@ -39,6 +39,52 @@ class RequirementReadRepository:
                 requirements = self._load_requirements(cursor)
         return {"requirements": requirements}
 
+    def get_open_requirement_by_source_adapter_key(
+        self,
+        source_adapter_key: str,
+    ) -> dict[str, Any] | None:
+        """Read the one active requirement reserved by a legacy entry source."""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                return self._open_requirement_by_source_adapter_key(cursor, source_adapter_key)
+
+    def create_or_get_open_requirement_for_source(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Atomically reserve an open source-adapter key and persist its requirement.
+
+        The partial unique index permits a new requirement after the previous
+        one reaches a terminal status.  `ON CONFLICT ... DO NOTHING` therefore
+        cannot name a normal table constraint; it must repeat the index
+        predicate and then read the winning open record inside the transaction.
+        """
+        source_adapter_key = str(record.get("source_adapter_key") or "").strip()
+        if not source_adapter_key:
+            raise ValueError("source_adapter_key is required")
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                existing = self._open_requirement_by_source_adapter_key(cursor, source_adapter_key)
+                if existing is not None:
+                    return existing, False
+                for _ in range(2):
+                    if self._insert_open_source_adapter_requirement(cursor, record):
+                        if audit_event is not None and self._upsert_audit_events is not None:
+                            self._upsert_audit_events(cursor, [audit_event])
+                        return record, True
+                    existing = self._open_requirement_by_source_adapter_key(
+                        cursor,
+                        source_adapter_key,
+                    )
+                    if existing is not None:
+                        return existing, False
+                raise RdCollaborationRepositoryError(
+                    "REQUIREMENT_SOURCE_ADAPTER_CONFLICT",
+                    "Could not resolve the open requirement for the source adapter key",
+                )
+
     def save_requirements(self, payload: dict[str, Any]) -> None:
         requirements = payload.get("requirements", {})
         with self._connect(autocommit=False) as connection:
@@ -47,6 +93,89 @@ class RequirementReadRepository:
                 if self._delete_missing is not None:
                     self._delete_missing(cursor, "requirements", requirements)
                 self.upsert_requirements(cursor, requirements)
+
+    @staticmethod
+    def _open_requirement_by_source_adapter_key(
+        cursor,
+        source_adapter_key: str,
+    ) -> dict[str, Any] | None:
+        cursor.execute(
+            """
+            SELECT id, brain_app_id, title, product_id, version_id, module_code,
+                   description, priority,
+                   status, created_by, approval_comment, rejection_reason, task_ids,
+                   assignee, source,
+                   created_at, updated_at, assessment_revision,
+                   source_collaboration_run_id, supersedes_requirement_id,
+                   source_object_type, source_object_id, source_adapter_key, source_evidence
+            FROM requirements
+            WHERE source_adapter_key = %s
+              AND status NOT IN (
+                'closed', 'cancelled', 'rejected', 'deferred', 'accepted', 'released'
+              )
+            ORDER BY created_at DESC, id
+            LIMIT 1
+            """,
+            (source_adapter_key,),
+        )
+        row = cursor.fetchone()
+        return _requirement_from_row(row) if row is not None else None
+
+    @staticmethod
+    def _insert_open_source_adapter_requirement(cursor, requirement: dict[str, Any]) -> bool:
+        created_at = requirement.get("created_at")
+        updated_at = requirement.get("updated_at") or created_at
+        cursor.execute(
+            """
+            INSERT INTO requirements (
+              id, brain_app_id, title, product_id, version_id, module_code,
+              description, priority, source,
+              status, created_by, assignee, approval_comment, rejection_reason, task_ids,
+              assessment_revision, source_collaboration_run_id, supersedes_requirement_id,
+              source_object_type, source_object_id, source_adapter_key, source_evidence,
+              created_at, updated_at
+            )
+            VALUES (
+              %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
+              %s, %s, %s, %s, %s, %s::jsonb,
+              COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+            )
+            ON CONFLICT (source_adapter_key)
+              WHERE source_adapter_key IS NOT NULL
+                AND status NOT IN (
+                  'closed', 'cancelled', 'rejected', 'deferred', 'accepted', 'released'
+                )
+              DO NOTHING
+            RETURNING id
+            """,
+            (
+                requirement["id"],
+                requirement.get("brain_app_id", DEFAULT_BRAIN_APP_ID),
+                requirement["title"],
+                requirement["product_id"],
+                requirement["version_id"],
+                requirement.get("module_code"),
+                requirement["content"],
+                requirement.get("priority", "P1"),
+                requirement.get("source", "business_department"),
+                requirement.get("status", "submitted"),
+                requirement["created_by"],
+                requirement.get("assignee"),
+                requirement.get("approval_comment"),
+                requirement.get("rejection_reason"),
+                json.dumps(requirement.get("task_ids", []), ensure_ascii=False),
+                requirement.get("assessment_revision", 1),
+                requirement.get("source_collaboration_run_id"),
+                requirement.get("supersedes_requirement_id"),
+                requirement.get("source_object_type"),
+                requirement.get("source_object_id"),
+                requirement.get("source_adapter_key"),
+                json.dumps(requirement.get("source_evidence", {}), ensure_ascii=False),
+                created_at,
+                updated_at,
+            ),
+        )
+        return cursor.fetchone() is not None
 
     def save_requirement_record(
         self,

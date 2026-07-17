@@ -247,8 +247,8 @@ function RunExecutionNodeCard({
     { label: '报告 ID', value: nodeNestedFieldText(node, 'feedback.report_id') ?? nodeFieldText(node.report_id) },
     { label: '创建记录', value: nodeNestedFieldText(node, 'feedback.created_ids') ?? nodeNestedFieldText(node, 'created_ids') },
     { label: 'Bug 数量', value: nodeNestedArrayCountText(node, 'feedback.bug_ids') ?? nodeNestedArrayCountText(node, 'created_bug_ids') },
-    { label: '任务数量', value: nodeNestedArrayCountText(node, 'feedback.task_ids') ?? nodeNestedArrayCountText(node, 'created_task_ids') },
-    { label: '整改任务', value: nodeNestedFieldText(node, 'feedback.task_ids') ?? nodeNestedFieldText(node, 'created_task_ids') },
+    { label: '整改需求数量', value: nodeNestedArrayCountText(node, 'feedback.requirement_ids') ?? nodeNestedArrayCountText(node, 'created_requirement_ids') },
+    { label: '整改需求', value: nodeNestedFieldText(node, 'feedback.requirement_ids') ?? nodeNestedFieldText(node, 'created_requirement_ids') },
     { label: '通知数量', value: nodeNestedArrayCountText(node, 'feedback.notification_ids') ?? nodeNestedArrayCountText(node, 'created_notification_ids') },
     { label: '投递 ID', value: nodeNestedFieldText(node, 'feedback.delivery_id') },
     { label: '投递状态', value: nodeNestedFieldText(node, 'feedback.delivery_status') },
@@ -312,8 +312,8 @@ export function RunExecutionChain({ run }: { run: ScheduledJobRunRecord }) {
       : []),
     { key: 'skill_processing', title: 'AI执行处理内容' },
     { key: 'result_action', title: '动作反馈内容' },
-    ...(getRunExecutionNode(run, 'task_creation')
-      ? [{ key: 'task_creation', title: 'Bug 确认后推进研发任务' }]
+    ...(getRunExecutionNode(run, 'requirement_creation')
+      ? [{ key: 'requirement_creation', title: '严重问题自动创建整改需求' }]
       : []),
   ];
   return (

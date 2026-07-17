@@ -864,7 +864,6 @@ def execute_assistant_action_draft(
         product_id = ensure_non_blank(str(payload.get("product_id") or ""), "product_id")
         result = create_or_link_rd_requirement(
             current_store,
-            actor_id=user["id"],
             evidence={
                 "content": str(payload.get("content") or ""),
                 "module_code": payload.get("module_code"),
@@ -876,6 +875,7 @@ def execute_assistant_action_draft(
             product_id=product_id,
             source_id=str(draft["id"]),
             source_type="assistant_action_draft",
+            user=user,
         )
         result = {
             **result,

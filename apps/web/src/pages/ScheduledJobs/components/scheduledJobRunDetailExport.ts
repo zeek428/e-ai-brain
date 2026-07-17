@@ -44,9 +44,9 @@ export function buildScheduledJobRunDetailExportPayload({
       code_inspection_report: getRunExecutionNode(run, 'code_inspection_report'),
       data_connection: getRunExecutionNode(run, 'data_connection'),
       notifications: getRunExecutionNode(run, 'notifications'),
+      requirement_creation: getRunExecutionNode(run, 'requirement_creation'),
       result_action: getRunExecutionNode(run, 'result_action'),
       result_actions: getRunExecutionNode(run, 'result_actions'),
-      task_creation: getRunExecutionNode(run, 'task_creation'),
     },
     snapshots: {
       agent: run.resolved_agent_snapshot,

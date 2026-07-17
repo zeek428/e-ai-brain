@@ -508,9 +508,8 @@ class ExecutionTraceBuilder:
 
         for runner in self.runners:
             runner_id = str(runner.get("id") or "")
-            if (
-                runner_id == SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID
-                and not self.tasks_by_runner.get(runner_id)
+            if runner_id == SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID and not self.tasks_by_runner.get(
+                runner_id
             ):
                 continue
             if runner_id and runner_id not in consumed["ai_executor_runner"]:
@@ -1037,9 +1036,7 @@ class ExecutionTraceBuilder:
 
     def assistant_chat_run_node(self, chat_run: dict[str, Any]) -> dict[str, Any]:
         metadata = (
-            chat_run.get("metadata_json")
-            if isinstance(chat_run.get("metadata_json"), dict)
-            else {}
+            chat_run.get("metadata_json") if isinstance(chat_run.get("metadata_json"), dict) else {}
         )
         return _node(
             duration_ms=_duration_ms(chat_run.get("started_at"), chat_run.get("finished_at")),
@@ -1227,6 +1224,7 @@ class ExecutionTraceBuilder:
         execution_nodes = result_summary.get("execution_nodes")
         if not isinstance(execution_nodes, dict):
             return [], []
+        has_requirement_creation = isinstance(execution_nodes.get("requirement_creation"), dict)
         ordered_keys = [
             "data_connection",
             "runner_execution",
@@ -1236,14 +1234,19 @@ class ExecutionTraceBuilder:
             "code_inspection_report",
             "bug_creation",
             "requirement_creation",
-            "task_creation",
             "notifications",
         ]
+        if not has_requirement_creation:
+            # Preserve pre-v2 run diagnostics, but never present a retired
+            # direct-task stage beside the canonical requirement-creation stage.
+            ordered_keys.insert(-1, "task_creation")
         present_keys = [key for key in ordered_keys if isinstance(execution_nodes.get(key), dict)]
         present_keys.extend(
             key
             for key, value in execution_nodes.items()
-            if key not in present_keys and isinstance(value, dict)
+            if key not in present_keys
+            and isinstance(value, dict)
+            and not (has_requirement_creation and key == "task_creation")
         )
         nodes = [
             self._stage_node(run_id, {"id": key, **execution_nodes[key]}) for key in present_keys
@@ -1654,9 +1657,7 @@ def list_execution_traces_response(
         )
     full_traces = ExecutionTraceBuilder(current_store).traces()
     if source_id:
-        full_traces = [
-            trace for trace in full_traces if _trace_matches_source_id(trace, source_id)
-        ]
+        full_traces = [trace for trace in full_traces if _trace_matches_source_id(trace, source_id)]
     if source_type:
         full_traces = [
             trace for trace in full_traces if _trace_matches_source_type(trace, source_type)

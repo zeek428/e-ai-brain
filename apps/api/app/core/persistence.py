@@ -675,6 +675,14 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
     def load_requirements(self) -> dict[str, Any]:
         return self._requirement_read_repository.load_requirements()
 
+    def get_open_requirement_by_source_adapter_key(
+        self,
+        source_adapter_key: str,
+    ) -> dict[str, Any] | None:
+        return self._requirement_read_repository.get_open_requirement_by_source_adapter_key(
+            source_adapter_key
+        )
+
     def list_product_version_summaries(self, *, active_only: bool = False) -> list[dict[str, Any]]:
         return self._product_config_read_repository.list_product_version_summaries(
             active_only=active_only,
@@ -2789,6 +2797,17 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
         audit_event: dict[str, Any] | None = None,
     ) -> None:
         self._requirement_read_repository.save_requirement_record(
+            record,
+            audit_event=audit_event,
+        )
+
+    def create_or_get_open_requirement_for_source(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        return self._requirement_read_repository.create_or_get_open_requirement_for_source(
             record,
             audit_event=audit_event,
         )

@@ -23,6 +23,7 @@ from app.core.repositories.rd_collaboration import (
     RdCollaborationVersionConflictError,
 )
 from app.main import app
+from app.services.rd_requirement_entry_adapters import create_or_link_rd_requirement
 from tests.test_technical_solution_export import auth_headers
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations"
@@ -118,6 +119,74 @@ def _insert_product_version(
             ),
         )
     return ids
+
+
+def test_requirement_entry_adapter_uses_postgres_product_and_reuses_open_requirement(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _insert_product_version(repository, prefix="entry-adapter-postgres")
+    current_store = PostgresRuntimeStore(repository)
+    evidence = {"content": "PostgreSQL 入口适配需求", "title": "PostgreSQL 入口适配需求"}
+
+    created = create_or_link_rd_requirement(
+        current_store,
+        evidence=evidence,
+        product_id=ids["product"],
+        source_id="draft-entry-adapter-postgres",
+        source_type="assistant_action_draft",
+        user={"id": "user_admin", "roles": ["admin"]},
+    )
+
+    def _unexpected_full_requirement_load() -> dict[str, object]:
+        raise AssertionError("adapter lookup must use the source-adapter-key repository query")
+
+    monkeypatch.setattr(repository, "load_requirements", _unexpected_full_requirement_load)
+    reused = create_or_link_rd_requirement(
+        current_store,
+        evidence=evidence,
+        product_id=ids["product"],
+        source_id="draft-entry-adapter-postgres",
+        source_type="assistant_action_draft",
+        user={"id": "user_admin", "roles": ["admin"]},
+    )
+
+    assert created["created"] is True
+    assert reused["created"] is False
+    assert reused["requirement_id"] == created["requirement_id"]
+    source_adapter_key = "assistant_action_draft:draft-entry-adapter-postgres"
+    requirement = repository.get_open_requirement_by_source_adapter_key(source_adapter_key)
+    assert requirement is not None
+    assert requirement["source_adapter_key"] == source_adapter_key
+
+
+def test_requirement_entry_adapter_create_or_link_is_atomic_in_postgres(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _insert_product_version(repository, prefix="entry-adapter-postgres-race")
+    evidence = {"content": "并发入口适配需求", "title": "并发入口适配需求"}
+
+    def create() -> dict[str, object]:
+        return create_or_link_rd_requirement(
+            PostgresRuntimeStore(repository),
+            evidence=evidence,
+            product_id=ids["product"],
+            source_id="draft-entry-adapter-postgres-race",
+            source_type="assistant_action_draft",
+            user={"id": "user_admin", "roles": ["admin"]},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: create(), range(2)))
+
+    requirement_ids = {str(result["requirement_id"]) for result in results}
+    assert len(requirement_ids) == 1
+    assert sorted(bool(result["created"]) for result in results) == [False, True]
+    requirement = repository.get_open_requirement_by_source_adapter_key(
+        "assistant_action_draft:draft-entry-adapter-postgres-race"
+    )
+    assert requirement is not None
+    assert requirement["id"] in requirement_ids
 
 
 def _policy_record(ids: dict[str, str], *, prefix: str) -> dict[str, object]:

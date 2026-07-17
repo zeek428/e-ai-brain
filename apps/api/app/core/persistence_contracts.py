@@ -501,6 +501,11 @@ class BrainAppRepository(Protocol):
 class RequirementRepository(Protocol):
     def load_requirements(self) -> dict[str, Any] | None: ...
 
+    def get_open_requirement_by_source_adapter_key(
+        self,
+        source_adapter_key: str,
+    ) -> dict[str, Any] | None: ...
+
     def save_requirements(self, payload: dict[str, Any]) -> None: ...
 
     def save_requirement_record(
@@ -509,6 +514,13 @@ class RequirementRepository(Protocol):
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None: ...
+
+    def create_or_get_open_requirement_for_source(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]: ...
 
     def delete_requirement_record(
         self,

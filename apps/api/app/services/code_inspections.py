@@ -745,7 +745,6 @@ def create_tasks_for_findings(
             continue
         adapter_result = create_or_link_rd_requirement(
             current_store,
-            actor_id=user["id"],
             evidence={
                 "content": str(finding.get("description") or finding.get("recommendation") or ""),
                 "finding": current_store.snapshot(finding),
@@ -756,6 +755,7 @@ def create_tasks_for_findings(
             product_id=str(report["product_id"]),
             source_id=str(finding["id"]),
             source_type="code_inspection_finding",
+            user=user,
         )
         requirement_id = str(adapter_result["requirement_id"])
         finding["created_requirement_id"] = requirement_id

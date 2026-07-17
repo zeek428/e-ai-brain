@@ -54,19 +54,9 @@ export type BugBatchUpdateResult = {
 };
 
 export type BugPromoteAiTaskResult = {
-  start?: {
-    current_step?: string;
-    executor_task_id?: string;
-    runner_id?: string;
-    status?: string;
-  } | null;
-  task: {
-    current_step?: string;
-    id: string;
-    status: string;
-    task_type: string;
-    title?: string;
-  };
+  assessment_url: string;
+  created: boolean;
+  requirement_id: string;
 };
 
 export type BugImageUploadSource = 'clipboard' | 'file_picker';
@@ -361,7 +351,7 @@ export async function batchUpdateManagementBugs(
 export async function promoteBugToAiTask(bugId: string): Promise<BugPromoteAiTaskResult> {
   const token = requireAccessToken();
   return apiRequest<BugPromoteAiTaskResult>(`/api/bugs/${bugId}/promote-ai-task`, {
-    body: { auto_start: true },
+    body: {},
     method: 'POST',
     token,
   });

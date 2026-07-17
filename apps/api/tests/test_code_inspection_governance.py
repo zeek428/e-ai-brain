@@ -77,8 +77,7 @@ def create_local_git_repository(path) -> str:
     source_dir = repo_path / "src"
     source_dir.mkdir()
     (source_dir / "config.py").write_text(
-        'API_KEY = "sk-live-native-scan-secret"\n'
-        'INTERNAL_URL = "http://127.0.0.1:8080/admin"\n',
+        'API_KEY = "sk-live-native-scan-secret"\nINTERNAL_URL = "http://127.0.0.1:8080/admin"\n',
         encoding="utf-8",
     )
     subprocess.run(["git", "add", "src/config.py"], cwd=repo_path, check=True)
@@ -830,9 +829,10 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions(monkeypatc
     assert detail_payload["report"]["plugin_invocation_log_id"].startswith(
         "plugin_invocation_log_",
     )
-    assert detail_payload["report"]["created_requirement_ids"] == requirement_creation[
-        "created_requirement_ids"
-    ]
+    assert (
+        detail_payload["report"]["created_requirement_ids"]
+        == requirement_creation["created_requirement_ids"]
+    )
     assert detail_payload["report"]["committer_summary"][0]["email"] == "alice@example.com"
     assert detail_payload["governance_summary"]["status"] == "healthy"
     assert detail_payload["governance_summary"]["active_severe_finding_count"] == 1
@@ -878,7 +878,6 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions(monkeypatc
 
     promoted = client.post(
         f"/api/bugs/{bug_items[0]['id']}/promote-ai-task",
-        json={"auto_start": False},
         headers=headers,
     )
     assert promoted.status_code == 200
@@ -888,9 +887,10 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions(monkeypatc
     )
     promoted_requirement = app.state.store.requirements[promoted_requirement_id]
     assert promoted_requirement["source_object_type"] == "bug"
-    assert promoted_requirement["source_evidence"]["bug"]["evidence"][
-        "code_inspection_report_id"
-    ] == report_id
+    assert (
+        promoted_requirement["source_evidence"]["bug"]["evidence"]["code_inspection_report_id"]
+        == report_id
+    )
     assert app.state.store.ai_tasks == {}
 
 
@@ -942,8 +942,7 @@ def test_code_inspection_task_list_projects_historical_finding_location():
     assert tasks.status_code == 200
     item = tasks.json()["data"]["items"][0]
     assert item["title"] == (
-        "[Code Inspection Remediation] "
-        "apps/api/app/auth.py:80 · 硬编码敏感凭据"
+        "[Code Inspection Remediation] apps/api/app/auth.py:80 · 硬编码敏感凭据"
     )
     assert "input_json" not in item
 
@@ -2695,9 +2694,9 @@ def test_code_inspection_dashboard_committer_governance_tracks_uncovered_actions
     assert branch_governance["active_severe_finding_count"] == 1
     assert branch_governance["uncovered_bug_finding_count"] == 1
     assert branch_governance["uncovered_requirement_finding_count"] == 1
-    assert branch_governance["latest_report_id"] == run.json()["data"]["result_summary"][
-        "report_id"
-    ]
+    assert (
+        branch_governance["latest_report_id"] == run.json()["data"]["result_summary"]["report_id"]
+    )
     governance = payload["committer_governance"][0]
     assert governance["email"] == "alice@example.com"
     assert governance["status"] == "action_required"
@@ -2738,9 +2737,7 @@ def test_code_inspection_dashboard_quality_gate_latest_report_uses_report_recenc
     latest_report = app.state.store.code_inspection_reports[latest_report_id]
     latest_report["quality_gate"] = {
         "status": "failed",
-        "violations": [
-            {"actual": 1, "limit": 0, "metric": "critical", "severity": "critical"}
-        ],
+        "violations": [{"actual": 1, "limit": 0, "metric": "critical", "severity": "critical"}],
     }
     latest_report["scan_finished_at"] = "2026-06-26T10:00:00+00:00"
     latest_report["summary"] = "Latest gate failure summary"
@@ -2752,9 +2749,7 @@ def test_code_inspection_dashboard_quality_gate_latest_report_uses_report_recenc
         "id": older_report_id,
         "quality_gate": {
             "status": "failed",
-            "violations": [
-                {"actual": 3, "limit": 0, "metric": "critical", "severity": "high"}
-            ],
+            "violations": [{"actual": 3, "limit": 0, "metric": "critical", "severity": "high"}],
         },
         "scan_finished_at": "2026-06-20T10:00:00+00:00",
         "summary": "Older gate failure summary",
@@ -3242,9 +3237,7 @@ def test_code_inspection_bug_dedupe_reads_repository_when_runtime_store_is_stale
     }
     fake_store = SimpleNamespace(
         bugs={},
-        repository=SimpleNamespace(
-            list_bug_summaries=lambda **kwargs: [bug]
-        ),
+        repository=SimpleNamespace(list_bug_summaries=lambda **kwargs: [bug]),
     )
 
     assert (

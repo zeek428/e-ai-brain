@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from time import perf_counter
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
@@ -66,9 +66,10 @@ class BugBatchUpdateRequest(BaseModel):
 
 
 class BugPromoteAiTaskRequest(BaseModel):
-    auto_start: bool = True
-    execution_mode: Literal["model_gateway", "deterministic"] | None = None
-    reason: str | None = None
+    """Canonical Bug-to-requirement request; direct task execution is retired."""
+
+    model_config = ConfigDict(extra="forbid")
+
     title: str | None = None
 
 
@@ -146,7 +147,6 @@ def promote_bug_to_ai_task(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     result = promote_bug_to_ai_task_result(
-        code_review_executor=getattr(request.app.state, "code_review_executor", None),
         current_store=store(request),
         payload=payload or BugPromoteAiTaskRequest(),
         user=user,

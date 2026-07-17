@@ -454,14 +454,13 @@ export default function BugsPage() {
   }, [ensureCanManageBugs, reload, reloadDuplicateBugs]);
 
   const handlePromoteAiTask = useCallback(async (row: BugRecord) => {
-    if (!ensureCanManageBugs('推进 Bug AI 任务')) {
+    if (!ensureCanManageBugs('创建 Bug 整改需求')) {
       return;
     }
     try {
       setPromotingBugId(row.id);
       const result = await promoteBugToAiTask(row.id);
-      const status = result.start?.status ?? result.task.status;
-      message.success(`已推进 AI Task ${result.task.id}（${status}）`);
+      message.success(`已创建整改需求 ${result.requirement_id}，请进入需求评估后推进协作。`);
       await reloadDuplicateBugs();
       await reload();
     } catch (promoteError) {
@@ -616,7 +615,7 @@ export default function BugsPage() {
                   disabled={row.status === 'closed'}
                   okText="推进"
                   onConfirm={() => handlePromoteAiTask(row)}
-                  title={`将 Bug ${row.id} 推进为 AI Task 并自动执行？`}
+                  title={`将 Bug ${row.id} 创建为整改需求并进入评估？`}
                 >
                   <Button
                     disabled={row.status === 'closed'}
@@ -624,7 +623,7 @@ export default function BugsPage() {
                     loading={promotingBugId === row.id}
                     type="link"
                   >
-                    AI处理
+                    创建整改需求
                   </Button>
                 </Popconfirm>
                 <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除 Bug ${row.id}？`}>

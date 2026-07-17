@@ -368,7 +368,7 @@ describe('bug management page', () => {
     ).toBeInTheDocument();
   });
 
-  it('promotes a bug to an auto-started AI task from the row actions', async () => {
+  it('creates a remediation requirement from the bug row actions', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
         headers: { 'Content-Type': 'application/json' },
@@ -390,7 +390,7 @@ describe('bug management page', () => {
               {
                 assignee: 'rd@example.com',
                 created_at: '2026-06-04T09:00:00+00:00',
-                description: '需要 AI 自动修复',
+                description: '需要进入研发需求评估。',
                 id: 'bug_promote',
                 module_code: 'delivery',
                 product_id: 'product_api',
@@ -398,7 +398,7 @@ describe('bug management page', () => {
                 severity: 'major',
                 source: 'manual_test',
                 status: 'open',
-                title: '推进 AI 任务 Bug',
+                title: '推进整改需求 Bug',
                 version_id: 'version_api',
                 version_name: 'v1 MVP',
               },
@@ -412,18 +412,9 @@ describe('bug management page', () => {
       if (path === '/api/bugs/bug_promote/promote-ai-task' && method === 'POST') {
         return jsonResponse({
           data: {
-            start: {
-              current_step: 'waiting_ai_executor',
-              executor_task_id: 'ai_executor_task_001',
-              runner_id: 'runner_codex',
-              status: 'running',
-            },
-            task: {
-              current_step: 'waiting_ai_executor',
-              id: 'task_bug_fix',
-              status: 'running',
-              task_type: 'bug_fix',
-            },
+            assessment_url: '/api/requirements/requirement_bug_fix/assessments',
+            created: true,
+            requirement_id: 'requirement_bug_fix',
           },
         });
       }
@@ -434,19 +425,19 @@ describe('bug management page', () => {
 
     render(<BugsPage />);
 
-    const bugRow = (await screen.findByText('推进 AI 任务 Bug')).closest('tr');
+    const bugRow = (await screen.findByText('推进整改需求 Bug')).closest('tr');
     expect(bugRow).not.toBeNull();
     expect(screen.getByRole('columnheader', { name: '操作' })).toHaveAttribute('data-width', '380');
     expect(Number(screen.getByRole('table').getAttribute('data-table-scroll-x'))).toBeGreaterThanOrEqual(1820);
-    expect(within(bugRow as HTMLElement).getByRole('button', { name: /AI处理/ })).toHaveTextContent('AI处理');
+    expect(within(bugRow as HTMLElement).getByRole('button', { name: /创建整改需求/ })).toHaveTextContent('创建整改需求');
     expect(within(bugRow as HTMLElement).getByRole('button', { name: /删除/ })).toBeInTheDocument();
-    fireEvent.click(within(bugRow as HTMLElement).getByRole('button', { name: /AI处理/ }));
+    fireEvent.click(within(bugRow as HTMLElement).getByRole('button', { name: /创建整改需求/ }));
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET', init?.body])).toContainEqual([
         '/api/bugs/bug_promote/promote-ai-task',
         'POST',
-        JSON.stringify({ auto_start: true }),
+        JSON.stringify({}),
       ]),
     );
   });

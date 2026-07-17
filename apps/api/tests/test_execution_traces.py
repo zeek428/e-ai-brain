@@ -6,6 +6,7 @@ from app.core.repositories.execution_traces import ExecutionTraceReadRepository
 from app.main import app
 from app.services.execution_traces import (
     EXECUTION_TRACE_SNAPSHOT_REFRESH_STATE_ATTR,
+    ExecutionTraceBuilder,
     get_execution_trace_response,
     list_execution_traces_response,
 )
@@ -135,8 +136,7 @@ class FakeExecutionTraceRepository:
                     for values in trace.get("related_ids", {}).values()
                 )
                 or any(
-                    node.get("source_id") == normalized_source_id
-                    for node in trace.get("nodes", [])
+                    node.get("source_id") == normalized_source_id for node in trace.get("nodes", [])
                 )
             ]
         if source_type:
@@ -383,6 +383,34 @@ def seed_execution_trace_records() -> None:
             "subject_type": "scheduled_job_run",
         }
     )
+
+
+def test_execution_trace_prefers_requirement_creation_over_stale_task_creation_stage() -> None:
+    app.state.store.reset()
+    run = {
+        "id": "scheduled_job_run_requirement_creation",
+        "result_summary": {
+            "execution_nodes": {
+                "data_connection": {"status": "succeeded"},
+                "requirement_creation": {
+                    "created_requirement_ids": ["requirement_001"],
+                    "label": "严重问题自动创建整改需求",
+                    "status": "succeeded",
+                },
+                "task_creation": {
+                    "created_task_ids": ["legacy_task_001"],
+                    "label": "Bug 确认后推进研发任务",
+                    "status": "succeeded",
+                },
+            }
+        },
+    }
+
+    nodes, _edges = ExecutionTraceBuilder(app.state.store).stage_nodes(run)
+
+    stage_ids = [node["source_id"] for node in nodes]
+    assert "scheduled_job_run_requirement_creation:requirement_creation" in stage_ids
+    assert "scheduled_job_run_requirement_creation:task_creation" not in stage_ids
 
 
 def seed_assistant_execution_trace_records() -> None:
@@ -705,8 +733,7 @@ def test_execution_trace_list_filters_by_any_related_source_id():
     assert body["items"][0]["root_type"] == "assistant_chat_run"
 
     message_response = client.get(
-        "/api/governance/execution-traces"
-        "?source_id=assistant_message_trace&page=1&page_size=10",
+        "/api/governance/execution-traces?source_id=assistant_message_trace&page=1&page_size=10",
         headers=headers,
     )
 
@@ -716,8 +743,7 @@ def test_execution_trace_list_filters_by_any_related_source_id():
     assert message_body["items"][0]["id"] == "assistant_chat_run_trace"
 
     message_type_response = client.get(
-        "/api/governance/execution-traces"
-        "?source_type=assistant_message&page=1&page_size=10",
+        "/api/governance/execution-traces?source_type=assistant_message&page=1&page_size=10",
         headers=headers,
     )
 
@@ -767,9 +793,10 @@ def test_execution_trace_list_filters_by_scheduled_job_stage_source():
     assert body["total"] == 1
     assert body["items"][0]["id"] == "scheduled_job_run_trace"
     assert body["items"][0]["root_type"] == "scheduled_job_run"
-    assert "scheduled_job_run_trace:runner_execution" in body["items"][0]["related_ids"][
-        "scheduled_job_stage"
-    ]
+    assert (
+        "scheduled_job_run_trace:runner_execution"
+        in body["items"][0]["related_ids"]["scheduled_job_stage"]
+    )
 
 
 def test_execution_trace_list_filters_by_ai_executor_runner_source():
@@ -790,9 +817,7 @@ def test_execution_trace_list_filters_by_ai_executor_runner_source():
     assert body["total"] == 1
     assert body["items"][0]["id"] == "scheduled_job_run_trace"
     assert body["items"][0]["root_type"] == "scheduled_job_run"
-    assert body["items"][0]["related_ids"]["ai_executor_runner"] == [
-        "ai_executor_runner_001"
-    ]
+    assert body["items"][0]["related_ids"]["ai_executor_runner"] == ["ai_executor_runner_001"]
 
 
 def test_execution_trace_requires_admin_diagnostics_permission():

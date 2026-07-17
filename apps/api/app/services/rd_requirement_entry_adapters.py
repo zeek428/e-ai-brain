@@ -5,6 +5,7 @@ from typing import Any
 
 from app.api.deps import api_error
 from app.core.store import DEFAULT_BRAIN_APP_ID
+from app.services.product_scope import require_product_scope
 
 OPEN_REQUIREMENT_STATUSES = {
     "draft",
@@ -61,6 +62,21 @@ def _open_requirement_for_source(
             continue
         if str(requirement.get("status") or "submitted") in OPEN_REQUIREMENT_STATUSES:
             return requirement
+    repository = getattr(current_store, "repository", None)
+    get_open_requirement = getattr(repository, "get_open_requirement_by_source_adapter_key", None)
+    if callable(get_open_requirement):
+        loaded = get_open_requirement(key)
+        return loaded if isinstance(loaded, dict) else None
+    load_requirements = getattr(repository, "load_requirements", None)
+    if not callable(load_requirements):
+        return None
+    payload = load_requirements()
+    requirements = payload.get("requirements", {}) if isinstance(payload, dict) else {}
+    for requirement in requirements.values() if isinstance(requirements, dict) else []:
+        if not isinstance(requirement, dict) or requirement.get("source_adapter_key") != key:
+            continue
+        if str(requirement.get("status") or "submitted") in OPEN_REQUIREMENT_STATUSES:
+            return requirement
     return None
 
 
@@ -76,6 +92,18 @@ def _requirement_record(current_store: Any, requirement_id: str) -> dict[str, An
     requirements = payload.get("requirements", {}) if isinstance(payload, dict) else {}
     candidate = requirements.get(requirement_id) if isinstance(requirements, dict) else None
     return candidate if isinstance(candidate, dict) else None
+
+
+def _product_record(current_store: Any, product_id: str) -> dict[str, Any] | None:
+    product = _read_records(current_store, "products").get(product_id)
+    if product is not None:
+        return product
+    repository = getattr(current_store, "repository", None)
+    get_product = getattr(repository, "get_product", None)
+    if not callable(get_product):
+        return None
+    loaded = get_product(product_id)
+    return loaded if isinstance(loaded, dict) else None
 
 
 def _accepted_assessments(current_store: Any, requirement_id: str) -> list[dict[str, Any]]:
@@ -155,7 +183,7 @@ def create_or_link_rd_requirement(
     source_id: str,
     product_id: str,
     evidence: dict[str, Any],
-    actor_id: str,
+    user: dict[str, Any],
 ) -> dict[str, Any]:
     """Create one open formal requirement for a legacy R&D source.
 
@@ -166,10 +194,13 @@ def create_or_link_rd_requirement(
     normalized_source_type = _non_blank(source_type, "source_type")
     normalized_source_id = _non_blank(source_id, "source_id")
     normalized_product_id = _non_blank(product_id, "product_id")
+    actor_id = _non_blank(user.get("id"), "actor_id")
     if normalized_source_type not in SOURCE_TO_REQUIREMENT_SOURCE:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported R&D requirement adapter source")
     if not isinstance(evidence, dict):
         raise api_error(400, "VALIDATION_ERROR", "evidence must be an object")
+
+    require_product_scope(user, normalized_product_id)
 
     existing = _open_requirement_for_source(
         current_store,
@@ -188,7 +219,7 @@ def create_or_link_rd_requirement(
             "requirement_id": existing["id"],
         }
 
-    product = _read_records(current_store, "products").get(normalized_product_id)
+    product = _product_record(current_store, normalized_product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product.get("status") != "active":
@@ -235,6 +266,16 @@ def create_or_link_rd_requirement(
             "source_object_type": normalized_source_type,
         },
     )
+    repository = getattr(current_store, "repository", None)
+    create_or_get = getattr(repository, "create_or_get_open_requirement_for_source", None)
+    if callable(create_or_get):
+        persisted_requirement, created = create_or_get(requirement, audit_event=audit_event)
+        return {
+            "created": created,
+            "idempotency_key": key,
+            "requirement": current_store.snapshot(persisted_requirement),
+            "requirement_id": persisted_requirement["id"],
+        }
     save_requirement_record(current_store, requirement, audit_event=audit_event)
     return {
         "created": True,
