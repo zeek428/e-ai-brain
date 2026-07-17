@@ -12,6 +12,28 @@ RD_ROLE_MANAGE_PERMISSION = "delivery.rd_roles.manage"
 RD_ROLE_STATUSES = {"active", "disabled"}
 RD_ROLE_RISK_LEVELS = {"low", "medium", "high", "critical"}
 RD_ASSIGNABLE_SUBJECT_TYPES = {"human_user", "ai_employee"}
+_SENSITIVE_METADATA_KEY_PREFIXES = (
+    "apikey",
+    "password",
+    "passwd",
+    "credential",
+    "secret",
+    "privatekey",
+    "authorization",
+    "accesskey",
+)
+_SENSITIVE_METADATA_KEY_SUFFIXES = ("token", "password", "passwd")
+_SENSITIVE_VALUE_PREFIXES = (
+    "secret://",
+    "secret/",
+    "env:",
+    "bearer ",
+    "sk-",
+    "sk_",
+    "ghp_",
+    "glpat-",
+    "akia",
+)
 
 
 def _repository(current_store: Any) -> Any | None:
@@ -42,17 +64,73 @@ def _non_blank(value: Any, field: str) -> str:
     return text
 
 
+def reject_explicit_nulls(payload: dict[str, Any], fields: set[str]) -> None:
+    for field in fields:
+        if field in payload and payload[field] is None:
+            raise api_error(400, "VALIDATION_ERROR", f"{field} cannot be null")
+
+
+def _is_sensitive_metadata_key(key: str) -> bool:
+    normalized = "".join(character for character in key.lower() if character.isalnum())
+    return normalized.startswith(_SENSITIVE_METADATA_KEY_PREFIXES) or normalized.endswith(
+        _SENSITIVE_METADATA_KEY_SUFFIXES
+    )
+
+
+def _is_sensitive_metadata_value(value: str) -> bool:
+    normalized = value.strip().lower()
+    return normalized.startswith(_SENSITIVE_VALUE_PREFIXES)
+
+
+def ensure_safe_metadata(value: Any, field: str) -> None:
+    """Reject credential-shaped data without including its value in an error response."""
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            if _is_sensitive_metadata_key(str(key)):
+                raise api_error(
+                    400,
+                    "RD_CATALOG_SECRET_FORBIDDEN",
+                    f"{field} cannot contain credential metadata",
+                )
+            ensure_safe_metadata(nested_value, field)
+    elif isinstance(value, list):
+        for nested_value in value:
+            ensure_safe_metadata(nested_value, field)
+    elif isinstance(value, str) and _is_sensitive_metadata_value(value):
+        raise api_error(
+            400,
+            "RD_CATALOG_SECRET_FORBIDDEN",
+            f"{field} cannot contain credential metadata",
+        )
+
+
+def redact_metadata(value: Any) -> Any:
+    """Redact legacy or corrupt metadata without leaking key names or values."""
+    if isinstance(value, dict):
+        return {
+            key: redact_metadata(nested_value)
+            for key, nested_value in value.items()
+            if not _is_sensitive_metadata_key(str(key))
+        }
+    if isinstance(value, list):
+        return [redact_metadata(nested_value) for nested_value in value]
+    if isinstance(value, str) and _is_sensitive_metadata_value(value):
+        return "[REDACTED]"
+    return value
+
+
 def _string_list(value: Any, field: str, *, allowed: set[str] | None = None) -> list[str]:
     if not isinstance(value, list) or not value:
         raise api_error(400, "VALIDATION_ERROR", f"{field} must be a non-empty string list")
     values = sorted({_non_blank(item, field) for item in value})
+    ensure_safe_metadata(values, field)
     if allowed is not None and not set(values).issubset(allowed):
         raise api_error(400, "VALIDATION_ERROR", f"{field} contains an unsupported value")
     return values
 
 
 def _status(value: Any) -> str:
-    status = str(value or "active").strip().lower()
+    status = str(value if value is not None else "").strip().lower()
     if status not in RD_ROLE_STATUSES:
         raise api_error(400, "VALIDATION_ERROR", "status must be active or disabled")
     return status
@@ -73,6 +151,9 @@ def _public_role(record: dict[str, Any]) -> dict[str, Any]:
         if key not in {"permissions", "granted_permissions", "system_role_id"}
     }
     # R&D role definitions are business catalog entries, not system RBAC roles.
+    for field in ("capabilities", "responsibilities"):
+        if field in public:
+            public[field] = redact_metadata(public[field])
     public["system_role_id"] = None
     return public
 
@@ -84,8 +165,26 @@ def _role_from_payload(
     user: dict[str, Any],
     existing: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    if existing is not None:
+        reject_explicit_nulls(
+            payload,
+            {
+                "brain_app_id",
+                "code",
+                "name",
+                "capabilities",
+                "responsibilities",
+                "maximum_risk_level",
+                "assignable_subject_types",
+                "status",
+            },
+        )
     source = {**(existing or {}), **payload}
-    risk = str(source.get("maximum_risk_level") or "medium").strip().lower()
+    risk = (
+        str(source.get("maximum_risk_level") if "maximum_risk_level" in source else "")
+        .strip()
+        .lower()
+    )
     if risk not in RD_ROLE_RISK_LEVELS:
         raise api_error(400, "VALIDATION_ERROR", "maximum_risk_level is invalid")
     now = datetime.now(UTC).isoformat()

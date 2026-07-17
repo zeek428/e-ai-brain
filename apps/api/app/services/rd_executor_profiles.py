@@ -5,7 +5,14 @@ from typing import Any
 
 from app.api.deps import api_error, require_permissions
 from app.core.store import DEFAULT_BRAIN_APP_ID
-from app.services.rd_role_definitions import _non_blank, _string_list, active_brain_app_id
+from app.services.rd_role_definitions import (
+    _non_blank,
+    _string_list,
+    active_brain_app_id,
+    ensure_safe_metadata,
+    redact_metadata,
+    reject_explicit_nulls,
+)
 
 RD_EXECUTOR_PROFILE_MANAGE_PERMISSION = "delivery.rd_executor_profiles.manage"
 RD_EXECUTOR_PROFILE_STATUSES = {"active", "disabled", "retired"}
@@ -35,7 +42,7 @@ def _collection(current_store: Any) -> dict[str, dict[str, Any]]:
 
 
 def _enum(value: Any, field: str, allowed: set[str], default: str) -> str:
-    result = str(value or default).strip().lower()
+    result = str(value if value is not None else "").strip().lower()
     if result not in allowed:
         raise api_error(400, "VALIDATION_ERROR", f"{field} is invalid")
     return result
@@ -54,6 +61,7 @@ def _positive_int(value: Any, field: str) -> int:
 def _object(value: Any, field: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise api_error(400, "VALIDATION_ERROR", f"{field} must be an object")
+    ensure_safe_metadata(value, field)
     return dict(value)
 
 
@@ -67,7 +75,11 @@ def _reject_credential_reference(payload: dict[str, Any]) -> None:
 
 
 def _public_profile(record: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in record.items() if key != "credential_ref"}
+    public = {key: value for key, value in record.items() if key != "credential_ref"}
+    for field in ("workspace_capabilities", "supported_role_codes"):
+        if field in public:
+            public[field] = redact_metadata(public[field])
+    return public
 
 
 def _profile_from_payload(
@@ -77,6 +89,22 @@ def _profile_from_payload(
     user: dict[str, Any],
     existing: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    if existing is not None:
+        reject_explicit_nulls(
+            payload,
+            {
+                "brain_app_id",
+                "code",
+                "name",
+                "executor_type",
+                "credential_ref",
+                "workspace_capabilities",
+                "max_concurrency",
+                "supported_role_codes",
+                "health_status",
+                "status",
+            },
+        )
     _reject_credential_reference(payload)
     source = {**(existing or {}), **payload}
     now = datetime.now(UTC).isoformat()

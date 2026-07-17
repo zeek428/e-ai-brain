@@ -5,7 +5,14 @@ from typing import Any
 
 from app.api.deps import api_error, require_permissions
 from app.core.store import DEFAULT_BRAIN_APP_ID
-from app.services.rd_role_definitions import _non_blank, _string_list, active_brain_app_id
+from app.services.rd_role_definitions import (
+    _non_blank,
+    _string_list,
+    active_brain_app_id,
+    ensure_safe_metadata,
+    redact_metadata,
+    reject_explicit_nulls,
+)
 
 RD_AI_EMPLOYEE_MANAGE_PERMISSION = "delivery.rd_ai_employees.manage"
 RD_AI_EMPLOYEE_STATUSES = {"active", "disabled", "retired"}
@@ -33,7 +40,7 @@ def _collection(current_store: Any) -> dict[str, dict[str, Any]]:
 
 
 def _status(value: Any) -> str:
-    status = str(value or "active").strip().lower()
+    status = str(value if value is not None else "").strip().lower()
     if status not in RD_AI_EMPLOYEE_STATUSES:
         raise api_error(400, "VALIDATION_ERROR", "status is invalid")
     return status
@@ -52,15 +59,20 @@ def _positive_version(value: Any, field: str) -> int:
 def _object(value: Any, field: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise api_error(400, "VALIDATION_ERROR", f"{field} must be an object")
+    ensure_safe_metadata(value, field)
     return dict(value)
 
 
 def _public_employee(record: dict[str, Any]) -> dict[str, Any]:
-    return {
+    public = {
         key: value
         for key, value in record.items()
         if key not in {"credential_ref", "permissions", "granted_permissions", "system_role_id"}
     }
+    for field in ("capability_tags", "persona_json", "work_style_json"):
+        if field in public:
+            public[field] = redact_metadata(public[field])
+    return public
 
 
 def _employee_from_payload(
@@ -70,6 +82,21 @@ def _employee_from_payload(
     user: dict[str, Any],
     existing: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    if existing is not None:
+        reject_explicit_nulls(
+            payload,
+            {
+                "brain_app_id",
+                "code",
+                "name",
+                "capability_tags",
+                "persona_version",
+                "persona_json",
+                "work_style_version",
+                "work_style_json",
+                "status",
+            },
+        )
     source = {**(existing or {}), **payload}
     now = datetime.now(UTC).isoformat()
     return {

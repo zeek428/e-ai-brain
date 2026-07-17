@@ -363,3 +363,185 @@ def test_migration_seeds_the_complete_rd_permission_matrix():
         "delivery.rd_role_experiences.decide",
     }
     assert all(f"'{permission}'" in migration for permission in expected_permissions)
+
+
+def test_role_patch_rejects_explicit_null_and_omission_preserves_disabled_status():
+    app.state.store.reset()
+    headers = auth_headers()
+    created = client.post(
+        "/api/delivery/rd-roles",
+        headers=headers,
+        json=role_payload(status="disabled", maximum_risk_level="high"),
+    ).json()["data"]
+
+    omitted = client.patch(f"/api/delivery/rd-roles/{created['id']}", headers=headers, json={})
+    assert omitted.status_code == 200
+    assert omitted.json()["data"]["status"] == "disabled"
+    assert omitted.json()["data"]["maximum_risk_level"] == "high"
+
+    for field in ("status", "maximum_risk_level", "capabilities"):
+        response = client.patch(
+            f"/api/delivery/rd-roles/{created['id']}", headers=headers, json={field: None}
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+    persisted = client.get("/api/delivery/rd-roles?status=disabled", headers=headers)
+    assert [item["id"] for item in persisted.json()["data"]["items"]] == [created["id"]]
+
+
+def test_employee_patch_rejects_explicit_null_and_omission_preserves_identity_metadata():
+    app.state.store.reset()
+    headers = auth_headers()
+    created = client.post(
+        "/api/delivery/rd-ai-employees",
+        headers=headers,
+        json=ai_employee_payload(status="disabled"),
+    ).json()["data"]
+
+    omitted = client.patch(
+        f"/api/delivery/rd-ai-employees/{created['id']}", headers=headers, json={}
+    )
+    assert omitted.status_code == 200
+    assert omitted.json()["data"]["status"] == "disabled"
+    assert omitted.json()["data"]["persona_version"] == 2
+
+    for field in ("status", "persona_version", "persona_json", "work_style_json"):
+        response = client.patch(
+            f"/api/delivery/rd-ai-employees/{created['id']}", headers=headers, json={field: None}
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
+def test_executor_profile_patch_rejects_security_nulls_and_allows_nullable_reference_clear():
+    app.state.store.reset()
+    headers = auth_headers()
+    created = client.post(
+        "/api/delivery/rd-executor-profiles",
+        headers=headers,
+        json=executor_profile_payload(status="disabled", runner_id="runner-clearable"),
+    ).json()["data"]
+
+    omitted = client.patch(
+        f"/api/delivery/rd-executor-profiles/{created['id']}", headers=headers, json={}
+    )
+    assert omitted.status_code == 200
+    assert omitted.json()["data"]["status"] == "disabled"
+    assert omitted.json()["data"]["health_status"] == "healthy"
+
+    for field in ("status", "health_status", "executor_type", "max_concurrency", "credential_ref"):
+        response = client.patch(
+            f"/api/delivery/rd-executor-profiles/{created['id']}",
+            headers=headers,
+            json={field: None},
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+    cleared = client.patch(
+        f"/api/delivery/rd-executor-profiles/{created['id']}",
+        headers=headers,
+        json={"runner_id": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["data"]["runner_id"] is None
+
+
+def test_catalog_metadata_rejects_secret_like_keys_and_values_on_create_and_patch():
+    app.state.store.reset()
+    headers = auth_headers()
+    create_cases = (
+        (
+            "/api/delivery/rd-ai-employees",
+            ai_employee_payload(persona_json={"api_key": "placeholder"}),
+        ),
+        (
+            "/api/delivery/rd-ai-employees",
+            ai_employee_payload(work_style_json={"nested": {"password": "placeholder"}}),
+        ),
+        (
+            "/api/delivery/rd-executor-profiles",
+            executor_profile_payload(workspace_capabilities={"access_token": "placeholder"}),
+        ),
+        (
+            "/api/delivery/rd-executor-profiles",
+            executor_profile_payload(workspace_capabilities={"reference": "secret://placeholder"}),
+        ),
+    )
+    for path, payload in create_cases:
+        response = client.post(path, headers=headers, json=payload)
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "RD_CATALOG_SECRET_FORBIDDEN"
+
+    employee = client.post(
+        "/api/delivery/rd-ai-employees", headers=headers, json=ai_employee_payload()
+    ).json()["data"]
+    profile = client.post(
+        "/api/delivery/rd-executor-profiles", headers=headers, json=executor_profile_payload()
+    ).json()["data"]
+    patch_cases = (
+        (f"/api/delivery/rd-ai-employees/{employee['id']}", {"persona_json": {"token": "x"}}),
+        (
+            f"/api/delivery/rd-ai-employees/{employee['id']}",
+            {"work_style_json": {"reference": "env:PLACEHOLDER"}},
+        ),
+        (
+            f"/api/delivery/rd-executor-profiles/{profile['id']}",
+            {"workspace_capabilities": {"credential": "placeholder"}},
+        ),
+    )
+    for path, payload in patch_cases:
+        response = client.patch(path, headers=headers, json=payload)
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "RD_CATALOG_SECRET_FORBIDDEN"
+
+
+def test_catalog_response_redacts_legacy_secret_like_metadata():
+    app.state.store.reset()
+    headers = auth_headers()
+    app.state.store.rd_ai_employees["legacy-employee"] = {
+        "id": "legacy-employee",
+        "code": "legacy-employee",
+        "persona_json": {"api_key": "placeholder", "safe": "visible"},
+        "work_style_json": {"reference": "secret://placeholder"},
+        "status": "active",
+    }
+    app.state.store.rd_executor_profiles["legacy-profile"] = {
+        "id": "legacy-profile",
+        "code": "legacy-profile",
+        "workspace_capabilities": {
+            "password": "placeholder",
+            "reference": "secret://placeholder",
+            "safe": "visible",
+        },
+        "credential_ref": "secret://placeholder",
+        "status": "active",
+    }
+
+    employee_response = client.get("/api/delivery/rd-ai-employees", headers=headers)
+    profile_response = client.get("/api/delivery/rd-executor-profiles", headers=headers)
+    employee_text = employee_response.text
+    profile_text = profile_response.text
+    assert employee_response.status_code == 200
+    assert profile_response.status_code == 200
+    assert "api_key" not in employee_text
+    assert "secret://placeholder" not in employee_text
+    assert "password" not in profile_text
+    assert "secret://placeholder" not in profile_text
+    assert "visible" in employee_text
+    assert "visible" in profile_text
+
+
+def test_catalog_metadata_allows_non_secret_business_terms():
+    app.state.store.reset()
+    response = client.post(
+        "/api/delivery/rd-ai-employees",
+        headers=auth_headers(),
+        json=ai_employee_payload(
+            persona_json={"tokenizer": "visible", "description": "secret review process"}
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["persona_json"]["tokenizer"] == "visible"
