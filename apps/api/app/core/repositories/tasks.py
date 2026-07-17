@@ -70,8 +70,11 @@ class TaskReadRepository:
             clauses.append("status = %s")
             params.append(status)
         if task_type is not None:
-            clauses.append("task_type = %s")
-            params.append(task_type)
+            clauses.append(
+                "(task_type = %s OR COALESCE("
+                "strategy_config->'matching_config'->'task_types', '[]'::jsonb) ? %s)"
+            )
+            params.extend([task_type, task_type])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -201,8 +204,11 @@ class TaskReadRepository:
             clauses.append("policy.status = %s")
             params.append(status)
         if task_type is not None:
-            clauses.append("policy.task_type = %s")
-            params.append(task_type)
+            clauses.append(
+                "(policy.task_type = %s OR COALESCE("
+                "policy.strategy_config->'matching_config'->'task_types', '[]'::jsonb) ? %s)"
+            )
+            params.extend([task_type, task_type])
         if executor_type is not None:
             clauses.append("policy.executor_type = %s")
             params.append(executor_type)

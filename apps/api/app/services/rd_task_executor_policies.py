@@ -263,6 +263,33 @@ def save_rd_task_executor_policy_record(
     return policy
 
 
+def save_unified_rd_policy_record(
+    current_store: Any,
+    policy: dict[str, Any],
+    *,
+    role_bindings: list[dict[str, Any]],
+    expected_policy_version: int | None = None,
+    audit_event: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    repository = _repository(current_store)
+    save_unified = getattr(repository, "save_unified_rd_policy", None)
+    if callable(save_unified):
+        return save_unified(
+            policy,
+            role_bindings=role_bindings,
+            expected_policy_version=expected_policy_version,
+            audit_event=audit_event,
+        )
+    persisted = save_rd_task_executor_policy_record(
+        current_store,
+        policy,
+        expected_policy_version=expected_policy_version,
+        audit_event=audit_event,
+    )
+    _memory_dict(current_store, "rd_policy_role_bindings")[persisted["id"]] = list(role_bindings)
+    return persisted
+
+
 def delete_rd_task_executor_policy_record(
     current_store: Any,
     policy_id: str,
@@ -270,6 +297,10 @@ def delete_rd_task_executor_policy_record(
     audit_event: dict[str, Any] | None = None,
 ) -> None:
     repository = _repository(current_store)
+    delete_unified = getattr(repository, "delete_unified_rd_policy", None)
+    if callable(delete_unified):
+        delete_unified(policy_id, audit_event=audit_event)
+        return
     if repository is not None:
         repository.delete_rd_task_executor_policy_record(policy_id, audit_event=audit_event)
         return
@@ -298,8 +329,14 @@ def sync_rd_task_executor_policy_store(
 
 def _policy_public(current_store: Any, policy: dict[str, Any]) -> dict[str, Any]:
     sync_policy_resource_store(current_store, policy)
-    public = dict(policy)
-    unified = unified_policy_from_record(policy)
+    repository = _repository(current_store)
+    get_policy = getattr(repository, "get_rd_task_executor_policy", None)
+    canonical = get_policy(str(policy.get("id") or "")) if callable(get_policy) else None
+    public = {**policy, **(canonical or {})}
+    unified = unified_policy_from_record(
+        public,
+        role_bindings=_policy_role_bindings(current_store, str(public.get("id") or "")),
+    )
     if unified is not None:
         public.update(unified)
         public["policy_version"] = int(policy.get("policy_version") or 1)
@@ -325,6 +362,15 @@ def _policy_public(current_store: Any, policy: dict[str, Any]) -> dict[str, Any]
     )
     public["product_name"] = product.get("name") if product else public.get("product_name")
     return public
+
+
+def _policy_role_bindings(current_store: Any, policy_id: str) -> list[dict[str, Any]]:
+    repository = _repository(current_store)
+    list_bindings = getattr(repository, "list_rd_policy_role_bindings", None)
+    if callable(list_bindings):
+        return list(list_bindings(policy_id))
+    record = _read_memory_dict(current_store, "rd_policy_role_bindings").get(policy_id)
+    return list(record) if isinstance(record, list) else []
 
 
 def sync_policy_resource_store(current_store: Any, policy: dict[str, Any]) -> None:
@@ -653,8 +699,14 @@ def _policy_from_payload(
     data = (
         payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else dict(payload)
     )
-    data.pop("policy_version", None)
-    previous = unified_policy_from_record(existing) if existing is not None else None
+    previous = (
+        unified_policy_from_record(
+            existing,
+            role_bindings=_policy_role_bindings(current_store, str(existing.get("id") or "")),
+        )
+        if existing is not None
+        else None
+    )
     try:
         unified = validate_unified_policy_payload({**(previous or {}), **data})
     except PolicyValidationError as exc:
@@ -683,7 +735,10 @@ def _policy_from_payload(
         "workspace_root": "",
         "branch": None,
         "instruction_template": "Unified R&D policy {{task_id}}",
-        "output_contract": unified_policy_contract(unified),
+        "output_contract": {},
+        "strategy_config": unified_policy_contract(
+            {key: value for key, value in unified.items() if key != "role_bindings"}
+        ),
         "timeout_seconds": 1800,
         "priority": 100,
         "code_change_review_mode": "manual_review",
@@ -725,9 +780,13 @@ def create_rd_task_executor_policy_response(
         },
     )
     try:
-        persisted = save_rd_task_executor_policy_record(
+        persisted = save_unified_rd_policy_record(
             current_store,
             policy,
+            role_bindings=unified_policy_from_record(
+                {"strategy_config": policy["strategy_config"]},
+                role_bindings=payload.role_bindings,
+            )["role_bindings"],
             audit_event=audit_event,
         )
     except RdCollaborationRepositoryError as exc:
@@ -747,10 +806,13 @@ def patch_rd_task_executor_policy_response(
     existing = _read_memory_dict(current_store, "rd_task_executor_policies").get(policy_id)
     if existing is None:
         raise api_error(404, "NOT_FOUND", "RD task executor policy not found")
+    get_policy = getattr(_repository(current_store), "get_rd_task_executor_policy", None)
+    if callable(get_policy):
+        existing = get_policy(policy_id) or existing
     policy = _policy_from_payload(
         current_store=current_store,
         existing=existing,
-        payload=payload,
+        payload=payload.changes,
         user=user,
     )
     audit_event = record_audit_event(
@@ -767,11 +829,19 @@ def patch_rd_task_executor_policy_response(
             "task_type": policy["task_type"],
         },
     )
-    expected_policy_version = getattr(payload, "policy_version", None)
+    expected_policy_version = payload.expected_policy_version
     try:
-        persisted = save_rd_task_executor_policy_record(
+        persisted = save_unified_rd_policy_record(
             current_store,
             policy,
+            role_bindings=unified_policy_from_record(
+                {"strategy_config": policy["strategy_config"]},
+                role_bindings=(
+                    payload.changes.role_bindings
+                    if payload.changes.role_bindings is not None
+                    else _policy_role_bindings(current_store, policy_id)
+                ),
+            )["role_bindings"],
             expected_policy_version=expected_policy_version,
             audit_event=audit_event,
         )
@@ -793,10 +863,6 @@ def delete_rd_task_executor_policy_response(
     existing = _read_memory_dict(current_store, "rd_task_executor_policies").get(policy_id)
     if existing is None:
         raise api_error(404, "NOT_FOUND", "RD task executor policy not found")
-    repository = _repository(current_store)
-    snapshots = getattr(repository, "list_rd_policy_snapshots", None)
-    if callable(snapshots) and snapshots(policy_id):
-        raise api_error(409, "RD_POLICY_IN_USE", "policy has immutable snapshots")
     audit_event = record_audit_event(
         current_store,
         event_type="rd_task_executor_policy.deleted",
@@ -805,11 +871,14 @@ def delete_rd_task_executor_policy_response(
         subject_id=policy_id,
         payload={"task_type": existing.get("task_type")},
     )
-    delete_rd_task_executor_policy_record(
-        current_store,
-        policy_id,
-        audit_event=audit_event,
-    )
+    try:
+        delete_rd_task_executor_policy_record(
+            current_store,
+            policy_id,
+            audit_event=audit_event,
+        )
+    except RdCollaborationRepositoryError as exc:
+        raise api_error(409, exc.code, str(exc), exc.details) from exc
     return {"deleted": True, "id": policy_id}
 
 
@@ -847,7 +916,13 @@ def resolve_rd_task_executor_policy(
     if not policies:
         return None
     policy = policies[0]
-    unified = unified_policy_from_record(policy)
+    get_policy = getattr(_repository(current_store), "get_rd_task_executor_policy", None)
+    canonical = get_policy(str(policy.get("id") or "")) if callable(get_policy) else None
+    policy = {**policy, **(canonical or {})}
+    unified = unified_policy_from_record(
+        policy,
+        role_bindings=_policy_role_bindings(current_store, str(policy.get("id") or "")),
+    )
     if unified is None:
         return policy
     role_code = str(
@@ -869,6 +944,8 @@ def resolve_rd_task_executor_policy(
     repository = _repository(current_store)
     get_profile = getattr(repository, "get_rd_executor_profile", None)
     profile = get_profile(profile_id) if callable(get_profile) and profile_id else None
+    if profile is None:
+        profile = _read_memory_dict(current_store, "rd_executor_profiles").get(profile_id)
     if profile is None or profile.get("status") != "active" or not profile.get("runner_id"):
         raise api_error(
             400,
@@ -879,6 +956,17 @@ def resolve_rd_task_executor_policy(
         **policy,
         "executor_type": profile.get("executor_type") or policy["executor_type"],
         "runner_id": profile["runner_id"],
+        "workspace_root": str(
+            bindings[0].get("context_config", {}).get("workspace_root")
+            or unified["git_config"].get("workspace_root")
+            or ""
+        ),
+        "instruction_template": str(
+            unified["assessment_config"].get("instruction_template")
+            or "执行统一研发策略 {{task_id}}"
+        ),
+        "output_contract": unified["assessment_config"].get("output_contract", {}),
+        "timeout_seconds": int(unified["autonomy_config"].get("timeout_seconds") or 1800),
     }
 
 

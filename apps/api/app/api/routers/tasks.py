@@ -69,7 +69,7 @@ class RdTaskExecutorPolicyRequest(BaseModel):
     role_bindings: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class RdTaskExecutorPolicyPatchRequest(BaseModel):
+class RdTaskExecutorPolicyChanges(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = None
@@ -87,7 +87,13 @@ class RdTaskExecutorPolicyPatchRequest(BaseModel):
     experience_reuse_config: dict[str, Any] | None = None
     deployment_config: dict[str, Any] | None = None
     role_bindings: list[dict[str, Any]] | None = None
-    policy_version: int = Field(ge=1)
+
+
+class RdTaskExecutorPolicyPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_policy_version: int = Field(ge=1)
+    changes: RdTaskExecutorPolicyChanges
 
 
 class MoreInfoRequest(BaseModel):

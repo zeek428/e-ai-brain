@@ -53,7 +53,7 @@ def _temporary_database(admin_url: str) -> Iterator[str]:
         with psycopg.connect(database_url, autocommit=True) as connection:
             for migration_path in sorted(MIGRATIONS_DIR.glob("*.sql")):
                 migration_number = int(migration_path.name.split("_", 1)[0])
-                if migration_number > 109:
+                if migration_number > 110:
                     break
                 connection.execute(migration_path.read_text(encoding="utf-8"))
         yield database_url
@@ -128,6 +128,59 @@ def _policy_record(ids: dict[str, str], *, prefix: str) -> dict[str, object]:
         "instruction_template": "execute safely",
         "status": "active",
     }
+
+
+def test_unified_policy_transaction_persists_strategy_and_reconciles_bindings(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _insert_product_version(repository, prefix="unified-policy")
+    created = repository.save_unified_rd_policy(
+        {
+            **_policy_record(ids, prefix="unified-policy"),
+            "strategy_config": {
+                "matching_config": {"task_types": ["development_planning", "testing"]},
+                "team_config": {"required_role_codes": ["developer", "tester"]},
+            },
+        },
+        role_bindings=[
+            {
+                "id": "binding-developer",
+                "role_code": "developer",
+                "actor_mode": "ai",
+                "status": "active",
+            },
+            {
+                "id": "binding-tester",
+                "role_code": "tester",
+                "actor_mode": "human",
+                "status": "active",
+            },
+        ],
+    )
+    assert created["policy_version"] == 1
+    assert repository.get_rd_task_executor_policy(created["id"])["strategy_config"][
+        "matching_config"
+    ]["task_types"] == ["development_planning", "testing"]
+    assert [
+        item["role_code"] for item in repository.list_rd_policy_role_bindings(created["id"])
+    ] == ["developer", "tester"]
+
+    updated = repository.save_unified_rd_policy(
+        {**created, "strategy_config": {"matching_config": {"task_types": ["testing"]}}},
+        role_bindings=[
+            {
+                "id": "binding-tester-v2",
+                "role_code": "tester",
+                "actor_mode": "ai",
+                "status": "active",
+            },
+        ],
+        expected_policy_version=1,
+    )
+    assert updated["policy_version"] == 2
+    assert [
+        item["role_code"] for item in repository.list_rd_policy_role_bindings(updated["id"])
+    ] == ["tester"]
 
 
 def _base_snapshot(policy: dict[str, object], *, prefix: str) -> dict[str, object]:

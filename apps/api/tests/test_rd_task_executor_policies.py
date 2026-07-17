@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services.rd_policy_resolution import (
     PolicyResolutionError,
+    _hash,
     derive_assessment_rd_policy_snapshot,
     freeze_base_rd_policy_snapshot,
     merge_policy_payloads,
@@ -110,7 +111,10 @@ def test_policy_patch_requires_matching_policy_version_and_keeps_unified_contrac
     updated = client.patch(
         f"/api/delivery/rd-task-executor-policies/{policy['id']}",
         headers=headers,
-        json={"name": "策略 v2", "policy_version": 1},
+        json={
+            "changes": {"name": "策略 v2"},
+            "expected_policy_version": 1,
+        },
     )
     assert updated.status_code == 200
     assert updated.json()["data"]["policy_version"] == 2
@@ -118,7 +122,10 @@ def test_policy_patch_requires_matching_policy_version_and_keeps_unified_contrac
     stale = client.patch(
         f"/api/delivery/rd-task-executor-policies/{policy['id']}",
         headers=headers,
-        json={"name": "过期更新", "policy_version": 1},
+        json={
+            "changes": {"name": "过期更新"},
+            "expected_policy_version": 1,
+        },
     )
     assert stale.status_code == 409
     assert stale.json()["detail"]["code"] == "RD_VERSION_CONFLICT"
@@ -155,13 +162,21 @@ def test_version_merge_tightens_known_policy_operators_and_rejects_unknown_delta
             {
                 "delivery_target": "deployed",
                 "quality_gate_config": {"gates": ["security"], "max_risk": "medium"},
-                "experience_reuse_config": {"enabled": True, "confidence": 0.6},
+                "experience_reuse_config": {
+                    "enabled": True,
+                    "min_confidence": 0.6,
+                    "require_independent_reviewer": False,
+                },
                 "git_config": {"allowlist": ["repo-a", "repo-b"]},
             },
             {
                 "delivery_target": "ready_for_release",
                 "quality_gate_config": {"gates": ["compliance"], "max_risk": "low"},
-                "experience_reuse_config": {"enabled": False, "confidence": 0.8},
+                "experience_reuse_config": {
+                    "enabled": False,
+                    "min_confidence": 0.8,
+                    "require_independent_reviewer": True,
+                },
                 "git_config": {"allowlist": ["repo-b", "repo-c"]},
             },
         ]
@@ -169,7 +184,11 @@ def test_version_merge_tightens_known_policy_operators_and_rejects_unknown_delta
     assert merged["delivery_target"] == "ready_for_release"
     assert merged["quality_gate_config"]["gates"] == ["compliance", "security"]
     assert merged["quality_gate_config"]["max_risk"] == "low"
-    assert merged["experience_reuse_config"] == {"confidence": 0.8, "enabled": False}
+    assert merged["experience_reuse_config"] == {
+        "enabled": False,
+        "min_confidence": 0.8,
+        "require_independent_reviewer": True,
+    }
     assert merged["git_config"]["allowlist"] == ["repo-b"]
 
     try:
@@ -254,7 +273,7 @@ def test_assessment_policy_expansion_requires_human_decision():
         "resolution_context_key": "policy:policy_1:version:1",
         "resolution_revision": 0,
         "schema_version": 1,
-        "content_hash": None,
+        "content_hash": _hash(payload),
         "payload_json": payload,
     }
     try:

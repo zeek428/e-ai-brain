@@ -27,6 +27,106 @@ from app.core.repositories.rd_collaboration_shared import (
 
 
 class RdCollaborationPolicyWriteMixin:
+    def delete_unified_rd_policy(
+        self,
+        policy_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        def operation(cursor: Any) -> None:
+            cursor.execute(
+                "SELECT id FROM rd_task_executor_policies WHERE id = %s FOR UPDATE",
+                (policy_id,),
+            )
+            if cursor.fetchone() is None:
+                return
+            cursor.execute(
+                "SELECT 1 FROM rd_task_executor_policy_snapshots WHERE policy_id = %s LIMIT 1",
+                (policy_id,),
+            )
+            if cursor.fetchone() is not None:
+                raise RdCollaborationRepositoryError(
+                    "RD_POLICY_IN_USE", "policy has immutable snapshots"
+                )
+            cursor.execute(
+                "DELETE FROM rd_task_executor_policy_role_bindings WHERE policy_id = %s",
+                (policy_id,),
+            )
+            try:
+                cursor.execute("DELETE FROM rd_task_executor_policies WHERE id = %s", (policy_id,))
+            except Exception as exc:
+                raise RdCollaborationRepositoryError(
+                    "RD_POLICY_IN_USE", "policy is referenced by immutable records"
+                ) from exc
+            if audit_event is not None:
+                if self._upsert_audit_events is None:
+                    raise RuntimeError("audit persistence callback is not configured")
+                self._upsert_audit_events(cursor, [audit_event])
+
+        self._in_transaction(operation)
+
+    def save_unified_rd_policy(
+        self,
+        record: dict[str, Any],
+        *,
+        role_bindings: list[dict[str, Any]],
+        expected_policy_version: int | None = None,
+        audit_event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: self._save_unified_rd_policy_cursor(
+                cursor,
+                record,
+                role_bindings=role_bindings,
+                expected_policy_version=expected_policy_version,
+                audit_event=audit_event,
+            )
+        )
+
+    def _save_unified_rd_policy_cursor(
+        self,
+        cursor: Any,
+        record: dict[str, Any],
+        *,
+        role_bindings: list[dict[str, Any]],
+        expected_policy_version: int | None,
+        audit_event: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        persisted = self._save_rd_task_executor_policy_record_cursor(
+            cursor,
+            record,
+            expected_policy_version=expected_policy_version,
+            audit_event=audit_event,
+        )
+        cursor.execute(
+            "DELETE FROM rd_task_executor_policy_role_bindings WHERE policy_id = %s",
+            (persisted["id"],),
+        )
+        for binding in role_bindings:
+            self._save_simple_cursor(
+                cursor,
+                "rd_task_executor_policy_role_bindings",
+                {
+                    "id": binding["id"],
+                    "policy_id": persisted["id"],
+                    "role_code": binding["role_code"],
+                    "actor_mode": binding["actor_mode"],
+                    "candidate_human_user_ids": binding.get("candidate_human_user_ids", []),
+                    "candidate_ai_employee_ids": binding.get("candidate_ai_employee_ids", []),
+                    "primary_executor_profile_id": binding.get("primary_executor_profile_id"),
+                    "fallback_executor_profile_ids": [],
+                    "repository_trust_domains": binding.get("repository_trust_domains", []),
+                    "tool_trust_domains": binding.get("tool_trust_domains", []),
+                    "context_config": binding.get("context_config", {}),
+                    "tool_config": binding.get("tool_config", {}),
+                    "budget_config": binding.get("budget_config", {}),
+                    "reviewer_role_codes": binding.get("reviewer_role_codes", []),
+                    "required_permissions": binding.get("required_permissions", []),
+                    "status": binding.get("status", "active"),
+                },
+            )
+        return persisted
+
     def save_rd_role_definition_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._save_simple("rd_role_definitions", record)
 

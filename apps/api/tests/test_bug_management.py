@@ -80,10 +80,7 @@ def test_bug_management_creates_filters_and_updates_state_machine():
     assert filtered["items"][0]["version_name"] == "v1 MVP"
 
     other_version_bugs = client.get(
-        (
-            f"/api/bugs?product_id={context['product_id']}"
-            f"&version_id={other_version['id']}"
-        ),
+        (f"/api/bugs?product_id={context['product_id']}&version_id={other_version['id']}"),
         headers=headers,
     ).json()["data"]
     assert other_version_bugs["items"] == []
@@ -158,10 +155,13 @@ def test_bug_image_upload_stores_image_in_object_storage(tmp_path, monkeypatch):
     assert image["size_bytes"] == len(content)
     assert image["source"] == "file_picker"
     assert image["object_key"].startswith("bugs/evidence/")
-    assert object_storage().get_bytes(
-        bucket=image["bucket"],
-        object_key=image["object_key"],
-    ) == content
+    assert (
+        object_storage().get_bytes(
+            bucket=image["bucket"],
+            object_key=image["object_key"],
+        )
+        == content
+    )
 
     preview = client.get(
         "/api/bugs/images/preview",
@@ -336,22 +336,45 @@ def test_bug_can_promote_to_ai_task_and_queue_rd_executor():
     headers = auth_headers()
     context = create_product_context(headers)
     runner = create_codex_runner(headers)
+    app.state.store.rd_executor_profiles["bug-codex-profile"] = {
+        "id": "bug-codex-profile",
+        "executor_type": "codex",
+        "runner_id": runner["id"],
+        "status": "active",
+    }
     policy_response = client.post(
         "/api/delivery/rd-task-executor-policies",
         json={
-            "executor_type": "codex",
-            "instruction_template": (
-                "修复 Bug {{bug_id}} / {{bug_title}}，任务 {{task_id}}，产品 {{product_id}}。"
-            ),
             "name": "Bug 修复走 Codex",
-            "output_contract": {"summary": "string"},
-            "priority": 10,
+            "brain_app_id": "rd_brain",
             "product_id": context["product_id"],
-            "runner_id": runner["id"],
             "status": "active",
-            "task_type": "bug_fix",
-            "timeout_seconds": 600,
-            "workspace_root": "/Users/zeek/source/e-ai-brain",
+            "matching_config": {
+                "task_types": ["bug_fix"],
+                "execution_role_code": "developer",
+            },
+            "assessment_config": {
+                "instruction_template": (
+                    "修复 Bug {{bug_id}} / {{bug_title}}，任务 {{task_id}}，产品 {{product_id}}。"
+                ),
+                "output_contract": {"summary": "string"},
+            },
+            "iteration_config": {},
+            "delivery_target": "ready_for_release",
+            "team_config": {"required_role_codes": ["developer"]},
+            "autonomy_config": {"timeout_seconds": 600},
+            "quality_gate_config": {},
+            "git_config": {"workspace_root": "/Users/zeek/source/e-ai-brain"},
+            "experience_reuse_config": {},
+            "deployment_config": {},
+            "role_bindings": [
+                {
+                    "role_code": "developer",
+                    "actor_mode": "ai",
+                    "primary_executor_profile_id": "bug-codex-profile",
+                    "status": "active",
+                }
+            ],
         },
         headers=headers,
     )

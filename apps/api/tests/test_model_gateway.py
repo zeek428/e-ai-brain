@@ -152,20 +152,43 @@ def test_ai_task_explicit_deterministic_start_bypasses_executor_policy(monkeypat
         },
         headers=headers,
     ).json()["data"]
+    app.state.store.rd_executor_profiles["gateway-codex-profile"] = {
+        "id": "gateway-codex-profile",
+        "executor_type": "codex",
+        "runner_id": runner["id"],
+        "status": "active",
+    }
     policy = client.post(
         "/api/delivery/rd-task-executor-policies",
         json={
-            "executor_type": "codex",
-            "instruction_template": "处理任务 {{task_id}}",
             "name": "产品设计任务走 Runner",
-            "output_contract": {"summary": "string"},
-            "priority": 1,
+            "brain_app_id": "rd_brain",
             "product_id": product_id,
-            "runner_id": runner["id"],
             "status": "active",
-            "task_type": "product_detail_design",
-            "timeout_seconds": 600,
-            "workspace_root": "/tmp",
+            "matching_config": {
+                "task_types": ["product_detail_design"],
+                "execution_role_code": "developer",
+            },
+            "assessment_config": {
+                "instruction_template": "处理任务 {{task_id}}",
+                "output_contract": {"summary": "string"},
+            },
+            "iteration_config": {},
+            "delivery_target": "ready_for_release",
+            "team_config": {"required_role_codes": ["developer"]},
+            "autonomy_config": {"timeout_seconds": 600},
+            "quality_gate_config": {},
+            "git_config": {"workspace_root": "/tmp"},
+            "experience_reuse_config": {},
+            "deployment_config": {},
+            "role_bindings": [
+                {
+                    "role_code": "developer",
+                    "actor_mode": "ai",
+                    "primary_executor_profile_id": "gateway-codex-profile",
+                    "status": "active",
+                }
+            ],
         },
         headers=headers,
     ).json()["data"]
@@ -858,11 +881,7 @@ def test_model_gateway_config_test_allows_chat_only_without_embedding_model(monk
             return json.dumps(
                 {
                     "choices": [
-                        {
-                            "message": {
-                                "content": json.dumps({"ok": True}, ensure_ascii=False)
-                            }
-                        }
+                        {"message": {"content": json.dumps({"ok": True}, ensure_ascii=False)}}
                     ],
                     "usage": {"completion_tokens": 1, "prompt_tokens": 2, "total_tokens": 3},
                 },
@@ -929,11 +948,7 @@ def test_model_gateway_config_test_allows_chat_only_with_partial_embedding_confi
             return json.dumps(
                 {
                     "choices": [
-                        {
-                            "message": {
-                                "content": json.dumps({"ok": True}, ensure_ascii=False)
-                            }
-                        }
+                        {"message": {"content": json.dumps({"ok": True}, ensure_ascii=False)}}
                     ],
                     "usage": {"completion_tokens": 1, "prompt_tokens": 2, "total_tokens": 3},
                 },

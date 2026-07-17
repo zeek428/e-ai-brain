@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 RD_POLICY_SCHEMA_VERSION = 1
+
 _CONFIG_FIELDS = (
     "matching_config",
     "assessment_config",
@@ -124,7 +125,16 @@ def validate_unified_policy_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def unified_policy_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
+def unified_policy_from_record(
+    record: dict[str, Any],
+    *,
+    role_bindings: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    strategy_config = record.get("strategy_config")
+    if isinstance(strategy_config, dict) and strategy_config:
+        if role_bindings is None:
+            return None
+        return validate_unified_policy_payload({**strategy_config, "role_bindings": role_bindings})
     contract = record.get("output_contract")
     if not isinstance(contract, dict):
         return None
@@ -135,7 +145,4 @@ def unified_policy_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def unified_policy_contract(policy: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "rd_policy_schema_version": RD_POLICY_SCHEMA_VERSION,
-        "unified_policy": validate_unified_policy_payload(policy),
-    }
+    return deepcopy(policy)

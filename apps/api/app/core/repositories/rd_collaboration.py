@@ -195,6 +195,28 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
             order_by=("brain_app_id", "product_id", "policy_version", "id"),
         )
 
+    def list_rd_collaboration_default_task_executor_policies(
+        self,
+        *,
+        brain_app_id: str,
+        status: str = "active",
+    ) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM rd_task_executor_policies
+                    WHERE brain_app_id = %s AND product_id IS NULL AND status = %s
+                    ORDER BY policy_version, id
+                    """,
+                    (brain_app_id, status),
+                )
+                return [
+                    row
+                    for item in cursor.fetchall()
+                    if (row := _row_dict(cursor, item)) is not None
+                ]
+
     def get_rd_policy_role_binding(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_task_executor_policy_role_bindings", record_id)
 
@@ -249,6 +271,22 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
             filters={"requirement_id": requirement_id},
             order_by=("requirement_revision", "created_at", "id"),
         )
+
+    def list_requirement_assessments_for_final_snapshot(
+        self,
+        snapshot_id: str,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM requirement_assessments WHERE final_strategy_snapshot_id = %s",
+                    (snapshot_id,),
+                )
+                return [
+                    row
+                    for item in cursor.fetchall()
+                    if (row := _row_dict(cursor, item)) is not None
+                ]
 
     def get_requirement_assessment_opinion(
         self,
