@@ -30,6 +30,7 @@ from tests.test_rd_collaboration_repository import (
     repository,
 )
 from tests.test_rd_collaboration_repository_hardening import (
+    _hash,
     _remove_scope_command,
     _work_item,
 )
@@ -495,6 +496,40 @@ def test_scope_creation_rejects_a_poisoned_decision_identity(
     )
     with pytest.raises(RdCollaborationRepositoryError) as error:
         repository.create_scope_change_request(**command)
+    assert error.value.code == "RD_IDEMPOTENCY_CONFLICT"
+    assert repository.get_rd_scope_change_request(request_id) is None
+    assert repository.get_rd_collaboration_run(str(seeded["run"]["id"]))["status"] == "running"
+
+
+@pytest.mark.parametrize("poison", ["swapped_outcomes", "initial_evidence"])
+def test_scope_creation_rejects_poisoned_frozen_decision_provenance(
+    repository: PostgresSnapshotRepository,
+    poison: str,
+) -> None:
+    prefix = f"poisoned-frozen-{poison}"
+    seeded = _seed_exact_run(repository, prefix=prefix)
+    request_id = f"{prefix}-request"
+    command = _remove_scope_command(seeded, request_id=request_id)
+    incoming_decision = command["decision_request"]
+    poisoned_decision = dict(incoming_decision)
+    if poison == "swapped_outcomes":
+        poisoned_options = [
+            {
+                **option,
+                "outcome": ("reject" if option["outcome"] == "approve" else "approve"),
+            }
+            for option in incoming_decision["options_json"]
+        ]
+        poisoned_decision["options_json"] = poisoned_options
+        poisoned_decision["options_hash"] = _hash(poisoned_options)
+    else:
+        poisoned_decision["options_hash"] = _hash(poisoned_decision["options_json"])
+        poisoned_decision["evidence_json"] = [{"ref": "poisoned-evidence"}]
+    repository.save_decision_request_record(poisoned_decision)
+
+    with pytest.raises(RdCollaborationRepositoryError) as error:
+        repository.create_scope_change_request(**command)
+
     assert error.value.code == "RD_IDEMPOTENCY_CONFLICT"
     assert repository.get_rd_scope_change_request(request_id) is None
     assert repository.get_rd_collaboration_run(str(seeded["run"]["id"]))["status"] == "running"

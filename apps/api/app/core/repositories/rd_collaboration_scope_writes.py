@@ -469,6 +469,33 @@ class RdCollaborationScopeWriteMixin:
             )
         return decision, mapping
 
+    def _assert_scope_decision_creation_provenance(
+        self,
+        *,
+        persisted: dict[str, Any],
+        incoming: dict[str, Any],
+    ) -> None:
+        persisted_options = persisted.get("options_json") or []
+        incoming_options = incoming.get("options_json") or []
+        persisted_hash = persisted.get("options_hash")
+        incoming_hash = incoming.get("options_hash")
+        if (
+            persisted_options != incoming_options
+            or persisted_hash != incoming_hash
+            or _canonical_hash(persisted_options) != persisted_hash
+        ):
+            raise self._idempotency_conflict(
+                "scope decision id is bound to different frozen options",
+                decision_request_id=incoming["id"],
+                field="options_json",
+            )
+        if (persisted.get("evidence_json") or []) != (incoming.get("evidence_json") or []):
+            raise self._idempotency_conflict(
+                "scope decision id is bound to different initial evidence",
+                decision_request_id=incoming["id"],
+                field="evidence_json",
+            )
+
     def _insert_scope_change_request(
         self,
         cursor: Any,
@@ -632,7 +659,14 @@ class RdCollaborationScopeWriteMixin:
                         message=("scope request id is bound to different immutable provenance"),
                         scope_change_request_id=request["id"],
                     )
-                    self._insert_decision_request(cursor, frozen_decision)
+                    persisted_decision = self._insert_decision_request(
+                        cursor,
+                        frozen_decision,
+                    )
+                    self._assert_scope_decision_creation_provenance(
+                        persisted=persisted_decision,
+                        incoming=frozen_decision,
+                    )
                     return replay
                 if version["status"] in {"ready_for_release", "deploying", "released"}:
                     raise self._ready_scope_frozen()
@@ -708,6 +742,10 @@ class RdCollaborationScopeWriteMixin:
                         "scope request decision id does not match the frozen decision",
                     )
                 persisted_decision = self._insert_decision_request(cursor, frozen_decision)
+                self._assert_scope_decision_creation_provenance(
+                    persisted=persisted_decision,
+                    incoming=frozen_decision,
+                )
                 persisted_request = self._insert_scope_change_request(
                     cursor,
                     {
