@@ -43,6 +43,8 @@ class RequirementRequest(BaseModel):
     content: str
     priority: str = "P1"
     source: str = "business_department"
+    source_collaboration_run_id: str | None = None
+    supersedes_requirement_id: str | None = None
 
 
 class RequirementPatchRequest(BaseModel):
@@ -83,6 +85,7 @@ class RequirementBatchGenerateTasksRequest(BaseModel):
 class RequirementDecisionRequest(BaseModel):
     comment: str | None = None
     rejection_reason: str | None = None
+
 
 @router.post("")
 def create_requirement(

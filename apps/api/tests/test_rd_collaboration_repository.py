@@ -892,6 +892,21 @@ def test_requirement_assignment_increments_scope_once_and_freezes_during_active_
     )
     assert replay["scope_version"] == 2
 
+    _insert_requirement(
+        repository,
+        ids,
+        requirement_id="assign-preselected-requirement",
+        status="approved",
+        version_id=ids["version"],
+    )
+    preselected = repository.assign_requirement_to_version_and_increment_scope(
+        requirement_id="assign-preselected-requirement",
+        product_version_id=ids["version"],
+        expected_scope_version=2,
+    )
+    assert preselected["scope_version"] == 3
+    assert preselected["requirement"]["status"] == "planned"
+
     seeded = _seed_exact_run(repository, prefix="assign-frozen")
     _insert_requirement(
         repository,
@@ -2332,6 +2347,61 @@ def test_stale_assessment_acceptance_cannot_approve_newer_requirement_revision(
         repository.load_requirements()["requirements"][seeded["requirement"]]["status"]
         == "submitted"
     )
+
+
+def test_accepting_assessment_groups_requirement_and_increments_scope(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(
+        repository,
+        prefix="assessment-iteration-grouping",
+        run_status="failed",
+        version_status="planning",
+    )
+    requirement_id = "assessment-iteration-grouping-new-requirement"
+    assessment_id = "assessment-iteration-grouping-new-assessment"
+    _insert_requirement(
+        repository,
+        {"product": seeded["product"], "version": seeded["version"]},
+        requirement_id=requirement_id,
+        status="submitted",
+    )
+    assessment = {
+        **_accepted_assessment(
+            assessment_id=assessment_id,
+            requirement_id=requirement_id,
+            snapshot_id=seeded["base_snapshot"]["id"],
+        ),
+        "status": "waiting_human",
+        "version": 1,
+    }
+    repository.save_assessment_bundle(assessment=assessment, opinions=[])
+    command = {
+        "id": "assessment-iteration-grouping-command",
+        "assessment_id": assessment_id,
+        "operation": "decision",
+        "idempotency_key": "assessment-iteration-grouping",
+        "request_hash": "sha256:assessment-iteration-grouping",
+        "created_by": "user_admin",
+    }
+
+    accepted = repository.execute_requirement_assessment_command(
+        command,
+        lambda transaction: transaction.accept_requirement_assessment(
+            {
+                **assessment,
+                "decided_by": "user_admin",
+                "decided_at": datetime.now(UTC).isoformat(),
+            },
+            expected_version=1,
+            requirement_id=requirement_id,
+        ),
+    )
+
+    assert accepted["grouping"]["status"] == "planned"
+    assert accepted["grouping"]["version_id"] == seeded["version"]
+    assert accepted["grouping"]["version"]["scope_version"] == 2
+    assert repository.load_requirements()["requirements"][requirement_id]["status"] == "planned"
 
 
 def test_assessment_api_returns_trace_envelope_for_invalid_assessment_state(

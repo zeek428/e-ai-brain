@@ -5,10 +5,14 @@ import json
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import AbstractContextManager
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 from psycopg import sql
 from psycopg.types.json import Jsonb
+
+from app.services.rd_policy_resolution import PolicyResolutionError, merge_policy_payloads
 
 
 class RdCollaborationRepositoryError(RuntimeError):
@@ -323,6 +327,11 @@ def _canonical_hash(payload: Any) -> str:
         default=str,
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _json_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Make command replay snapshots JSONB-safe without losing their response shape."""
+    return json.loads(json.dumps(payload, default=str))
 
 
 def _response_hash(response: dict[str, Any]) -> str:
@@ -1010,6 +1019,7 @@ class RdCollaborationTransaction:
     def accept_requirement_assessment(
         self, assessment: dict[str, Any], *, expected_version: int, requirement_id: str
     ) -> dict[str, Any]:
+        """Accept an assessment and select an iteration in the same command transaction."""
         self.cursor.execute(
             """
             UPDATE requirement_assessments SET status = 'accepted',
@@ -1039,7 +1049,308 @@ class RdCollaborationTransaction:
             raise RdCollaborationRepositoryError(
                 "REQUIREMENT_STATE_INVALID", "Requirement must still be submitted"
             )
-        return saved
+        return self._plan_accepted_requirement(saved, requirement_id=requirement_id)
+
+    def _plan_accepted_requirement(
+        self,
+        assessment: dict[str, Any],
+        *,
+        requirement_id: str,
+    ) -> dict[str, Any]:
+        """Lock candidates, score them deterministically, and never guess a tie."""
+        self.cursor.execute(
+            "SELECT * FROM requirements WHERE id = %s FOR UPDATE", (requirement_id,)
+        )
+        requirement = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if requirement is None or requirement.get("status") != "approved":
+            raise RdCollaborationRepositoryError(
+                "REQUIREMENT_STATE_INVALID",
+                "Requirement must be approved before iteration grouping",
+            )
+        self.cursor.execute(
+            "SELECT * FROM rd_task_executor_policy_snapshots WHERE id = %s",
+            (assessment["final_strategy_snapshot_id"],),
+        )
+        source_snapshot = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if source_snapshot is None:
+            raise RdCollaborationRepositoryError(
+                "RD_POLICY_SNAPSHOT_INVALID",
+                "Accepted assessment final strategy snapshot is unavailable",
+            )
+        self.cursor.execute(
+            """
+            SELECT * FROM product_versions
+            WHERE product_id = %s AND status = 'planning'
+            ORDER BY id FOR UPDATE
+            """,
+            (requirement["product_id"],),
+        )
+        candidates = [
+            record
+            for row in self.cursor.fetchall()
+            if (record := self._repository._row(cursor=self.cursor, row=row)) is not None
+        ]
+        scores = [
+            self._iteration_candidate_score(candidate=candidate, source_snapshot=source_snapshot)
+            for candidate in candidates
+        ]
+        eligible = [item for item in scores if item["hard_eligible"]]
+        idempotency_key = f"requirement:{requirement_id}:assessment:{assessment['id']}"
+        if eligible:
+            top_score = max(int(item["score"] or 0) for item in eligible)
+            top = [item for item in eligible if item["score"] == top_score]
+            if len(top) == 1:
+                selected_id = str(top[0]["version_id"])
+                selected = next(item for item in candidates if item["id"] == selected_id)
+                assigned = self.assign_requirement_to_version_and_increment_scope(
+                    requirement_id=requirement_id,
+                    product_version_id=selected_id,
+                    expected_scope_version=int(selected["scope_version"]),
+                )
+                return self._record_iteration_assignment(
+                    assessment=assessment,
+                    assignment_reason="unique_compatible_planning_version",
+                    candidate_scores=scores,
+                    created_version=False,
+                    idempotency_key=idempotency_key,
+                    requirement_id=requirement_id,
+                    score_breakdown=top[0],
+                    version=assigned,
+                )
+            return self._save_iteration_grouping_decision(
+                assessment=assessment,
+                candidate_scores=scores,
+                candidate_ids=[str(item["version_id"]) for item in top],
+                idempotency_key=idempotency_key,
+                reason="candidate_score_tie",
+                requirement=requirement,
+            )
+
+        risk_summary = assessment.get("risk_summary") or {}
+        risk_level = risk_summary.get("risk_level") if isinstance(risk_summary, dict) else None
+        if str(risk_level or "none") in {"high", "critical"}:
+            return self._save_iteration_grouping_decision(
+                assessment=assessment,
+                candidate_scores=scores,
+                candidate_ids=[],
+                idempotency_key=idempotency_key,
+                reason="high_risk_new_version",
+                requirement=requirement,
+            )
+
+        new_version_id = f"product_version_{uuid4().hex}"
+        new_code = f"RD-{requirement_id}-PLAN"
+        self.cursor.execute(
+            """
+            INSERT INTO product_versions (
+              id, product_id, code, name, status, scope_version, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, 'planning', 1, now(), now())
+            """,
+            (new_version_id, requirement["product_id"], new_code, f"{new_code} 自动规划版本"),
+        )
+        assigned = self.assign_requirement_to_version_and_increment_scope(
+            requirement_id=requirement_id,
+            product_version_id=new_version_id,
+            expected_scope_version=1,
+        )
+        return self._record_iteration_assignment(
+            assessment=assessment,
+            assignment_reason="created_low_risk_planning_version",
+            candidate_scores=scores,
+            created_version=True,
+            idempotency_key=idempotency_key,
+            requirement_id=requirement_id,
+            score_breakdown={
+                "hard_eligible": True,
+                "reasons": ["no_compatible_planning_version"],
+                "score": None,
+                "version_id": new_version_id,
+            },
+            version=assigned,
+        )
+
+    def _iteration_candidate_score(
+        self,
+        *,
+        candidate: dict[str, Any],
+        source_snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.cursor.execute(
+            """
+            SELECT 1 FROM rd_collaboration_runs
+            WHERE product_version_id = %s
+              AND status NOT IN ('completed', 'failed', 'cancelled')
+            LIMIT 1 FOR UPDATE
+            """,
+            (candidate["id"],),
+        )
+        active_run = self.cursor.fetchone() is not None
+        self.cursor.execute(
+            """
+            SELECT requirement.id, assessment.final_strategy_snapshot_id,
+                   snapshot.policy_id, snapshot.policy_version, snapshot.payload_json
+            FROM requirements requirement
+            LEFT JOIN LATERAL (
+              SELECT * FROM requirement_assessments
+              WHERE requirement_id = requirement.id
+                AND requirement_revision = requirement.assessment_revision
+                AND status = 'accepted'
+              ORDER BY updated_at DESC, id DESC LIMIT 1
+            ) assessment ON TRUE
+            LEFT JOIN rd_task_executor_policy_snapshots snapshot
+              ON snapshot.id = assessment.final_strategy_snapshot_id
+            WHERE requirement.version_id = %s
+            ORDER BY requirement.id FOR UPDATE OF requirement
+            """,
+            (candidate["id"],),
+        )
+        members = [
+            record
+            for row in self.cursor.fetchall()
+            if (record := self._repository._row(cursor=self.cursor, row=row)) is not None
+        ]
+        reasons: list[str] = ["active_run"] if active_run else []
+        payload = source_snapshot.get("payload_json")
+        iteration_config = payload.get("iteration_config") if isinstance(payload, dict) else {}
+        capacity = iteration_config.get("capacity") if isinstance(iteration_config, dict) else {}
+        capacity_limit = (
+            capacity.get("max_requirements")
+            if isinstance(capacity, dict)
+            else iteration_config.get("max_requirements")
+            if isinstance(iteration_config, dict)
+            else None
+        )
+        if (
+            isinstance(capacity_limit, int)
+            and capacity_limit > 0
+            and len(members) >= capacity_limit
+        ):
+            reasons.append("capacity_exhausted")
+        merge_payloads: list[dict[str, Any]] = []
+        for member in members:
+            if not member.get("final_strategy_snapshot_id"):
+                reasons.append("member_assessment_unaccepted")
+                break
+            if (
+                member.get("policy_id") != source_snapshot["policy_id"]
+                or member.get("policy_version") != source_snapshot["policy_version"]
+            ):
+                reasons.append("policy_identity_mismatch")
+                break
+            if member["final_strategy_snapshot_id"] != source_snapshot["id"]:
+                source_payload = source_snapshot.get("payload_json")
+                member_payload = member.get("payload_json")
+                if not isinstance(source_payload, dict) or not isinstance(member_payload, dict):
+                    reasons.append("policy_merge_required")
+                    break
+                if not merge_payloads:
+                    merge_payloads.append(source_payload)
+                merge_payloads.append(member_payload)
+        if not reasons and merge_payloads:
+            try:
+                merge_policy_payloads(merge_payloads)
+            except PolicyResolutionError:
+                reasons.append("policy_merge_required")
+        hard_eligible = not reasons
+        return {
+            "capacity_limit": capacity_limit if isinstance(capacity_limit, int) else None,
+            "current_requirement_count": len(members),
+            "hard_eligible": hard_eligible,
+            "reasons": reasons,
+            "score": 1_000 - len(members) if hard_eligible else None,
+            "version_id": candidate["id"],
+        }
+
+    def _record_iteration_assignment(
+        self,
+        *,
+        assessment: dict[str, Any],
+        assignment_reason: str,
+        candidate_scores: list[dict[str, Any]],
+        created_version: bool,
+        idempotency_key: str,
+        requirement_id: str,
+        score_breakdown: dict[str, Any],
+        version: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessments
+            SET candidate_version_id = %s, assignment_reason = %s, updated_at = now()
+            WHERE id = %s RETURNING *
+            """,
+            (version["id"], assignment_reason, assessment["id"]),
+        )
+        persisted = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        return {
+            **(persisted or assessment),
+            "grouping": {
+                "candidate_scores": candidate_scores,
+                "created_version": created_version,
+                "idempotency_key": idempotency_key,
+                "score_breakdown": score_breakdown,
+                "status": "planned",
+                "version": version,
+                "version_id": version["id"],
+            },
+        }
+
+    def _save_iteration_grouping_decision(
+        self,
+        *,
+        assessment: dict[str, Any],
+        candidate_scores: list[dict[str, Any]],
+        candidate_ids: list[str],
+        idempotency_key: str,
+        reason: str,
+        requirement: dict[str, Any],
+    ) -> dict[str, Any]:
+        options = [
+            {"code": f"select:{version_id}", "label": f"Select {version_id}"}
+            for version_id in candidate_ids
+        ] + [{"code": "create_new", "label": "Create new planning version"}]
+        decision = {
+            "id": f"iteration_grouping_decision_{uuid4().hex}",
+            "brain_app_id": requirement.get("brain_app_id") or "rd_brain",
+            "product_id": requirement["product_id"],
+            "subject_type": "requirement_iteration_grouping",
+            "subject_id": requirement["id"],
+            "decision_type": "iteration_grouping",
+            "plan_version": 0,
+            "options_json": options,
+            "options_hash": _canonical_hash(options),
+            "evidence_json": [{"candidate_scores": candidate_scores, "reason": reason}],
+            "recommendation_json": {"action": "select_planning_version"},
+            "decision_actor_selector": {"role_codes": ["rd_owner", "product_owner"]},
+            "answer_actor_selector": {"role_codes": ["rd_owner", "product_owner"]},
+            "answer_schema": {"type": "object", "additionalProperties": False},
+            "status": "pending",
+            "expires_at": datetime.now(UTC) + timedelta(hours=24),
+            "timeout_policy": "escalate_keep_paused",
+            "escalation_target_selector": {"role_codes": ["rd_owner"]},
+            "version": 1,
+            "created_by": assessment.get("decided_by") or requirement.get("created_by"),
+        }
+        saved_decision = self._repository._insert_decision_request(self.cursor, decision)
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessments
+            SET assignment_reason = %s, updated_at = now()
+            WHERE id = %s RETURNING *
+            """,
+            (reason, assessment["id"]),
+        )
+        persisted = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        return {
+            **(persisted or assessment),
+            "grouping": {
+                "candidate_scores": candidate_scores,
+                "created_version": False,
+                "decision_request": saved_decision,
+                "idempotency_key": idempotency_key,
+                "status": "waiting_human",
+            },
+        }
 
     def create_collaboration_run_with_exact_scope(
         self,
@@ -1430,7 +1741,7 @@ class RdCollaborationWriteBase:
                     )
                 if persisted.get("status") == "completed":
                     return {**persisted["response_snapshot"], "idempotent_replay": True}
-            response = effect(RdCollaborationTransaction(self, cursor))
+            response = _json_response_payload(effect(RdCollaborationTransaction(self, cursor)))
             cursor.execute(
                 """
                 UPDATE requirement_assessment_commands

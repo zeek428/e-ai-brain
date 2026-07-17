@@ -55,9 +55,7 @@ def test_viewer_can_read_product_management_without_write_permission():
         assert "product.read" in me["permissions"]
         assert "product.manage" not in me["permissions"]
         menu_codes = {
-            child["code"]
-            for item in me["menu_tree"]
-            for child in item.get("children", [])
+            child["code"] for item in me["menu_tree"] for child in item.get("children", [])
         }
         assert "product.products" in menu_codes
 
@@ -138,9 +136,7 @@ def test_product_members_grant_product_scoped_permissions_and_can_be_revoked():
             "scope_type": "product",
         } in me["scope_summary"]
         menu_codes = {
-            child["code"]
-            for item in me["menu_tree"]
-            for child in item.get("children", [])
+            child["code"] for item in me["menu_tree"] for child in item.get("children", [])
         }
         assert "product.products" in menu_codes
         assert "task.center" in menu_codes
@@ -223,9 +219,7 @@ def test_product_owner_member_can_manage_members_inside_assigned_product():
             headers=owner_headers,
         )
         assert candidates.status_code == 200
-        assert developer_user["id"] in [
-            item["id"] for item in candidates.json()["data"]["items"]
-        ]
+        assert developer_user["id"] in [item["id"] for item in candidates.json()["data"]["items"]]
 
         before_members = client.get(
             f"/api/products/{product['id']}/members",
@@ -238,7 +232,7 @@ def test_product_owner_member_can_manage_members_inside_assigned_product():
                 "members": [
                     {"member_role": "product_owner", "user_id": owner_user["id"]},
                     {"member_role": "developer", "user_id": developer_user["id"]},
-                ]
+                ],
             },
             headers=owner_headers,
         )
@@ -883,7 +877,14 @@ def test_product_config_rejects_duplicate_codes_and_invalid_statuses():
     assert direct_archive.status_code == 409
     assert direct_archive.json()["detail"]["code"] == "PRODUCT_VERSION_STATUS_ADVANCE_REQUIRED"
 
-    for target_status in ["active", "testing", "released", "archived"]:
+    for target_status in [
+        "active",
+        "testing",
+        "ready_for_release",
+        "deploying",
+        "released",
+        "archived",
+    ]:
         advance_response = client.post(
             f"/api/product-versions/{version['id']}/advance-status",
             json={"reason": "验证归档版本校验", "target_status": target_status},
@@ -928,10 +929,13 @@ def test_related_systems_and_model_gateway_configs_mask_secrets_and_audit_writes
         headers=headers,
     ).json()["data"]
     assert patched_system["status"] == "inactive"
-    assert client.get(
-        "/api/system/related-systems?active_only=true",
-        headers=headers,
-    ).json()["data"]["items"] == []
+    assert (
+        client.get(
+            "/api/system/related-systems?active_only=true",
+            headers=headers,
+        ).json()["data"]["items"]
+        == []
+    )
 
     config = client.post(
         "/api/system/model-gateway-configs",

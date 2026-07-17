@@ -98,7 +98,16 @@ def _read_memory_record(
     if record_id is None:
         return None
     record = _read_memory_dict(current_store, collection_name).get(str(record_id))
-    return record if isinstance(record, dict) else None
+    if isinstance(record, dict):
+        return record
+    repository = getattr(current_store, "repository", None)
+    getter_name = {
+        "product_versions": "get_product_version",
+        "rd_collaboration_runs": "get_rd_collaboration_run",
+    }.get(collection_name)
+    getter = getattr(repository, getter_name, None) if getter_name else None
+    resolved = getter(str(record_id)) if callable(getter) else None
+    return resolved if isinstance(resolved, dict) else None
 
 
 def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
@@ -270,6 +279,76 @@ def requirement_product_context(current_store: Any, requirement: dict[str, Any])
     }
 
 
+def _validate_requirement_lineage(
+    current_store: Any,
+    *,
+    product_id: str,
+    source_collaboration_run_id: str | None,
+    supersedes_requirement_id: str | None,
+    version_id: str | None,
+) -> None:
+    """Validate immutable post-ready follow-up provenance before creating a requirement."""
+    if supersedes_requirement_id is not None and source_collaboration_run_id is None:
+        raise api_error(
+            400,
+            "REQUIREMENT_LINEAGE_INVALID",
+            "supersedes_requirement_id requires source_collaboration_run_id",
+        )
+    if source_collaboration_run_id is None:
+        return
+
+    source_run = _read_memory_record(
+        current_store,
+        "rd_collaboration_runs",
+        source_collaboration_run_id,
+    )
+    if source_run is None or source_run.get("product_id") != product_id:
+        raise api_error(
+            400,
+            "REQUIREMENT_LINEAGE_INVALID",
+            "Source collaboration run must belong to the same product",
+        )
+    source_version = _read_memory_record(
+        current_store,
+        "product_versions",
+        source_run.get("product_version_id"),
+    )
+    if source_version is None or source_version.get("status") not in {
+        "ready_for_release",
+        "deploying",
+        "released",
+    }:
+        raise api_error(
+            400,
+            "REQUIREMENT_LINEAGE_INVALID",
+            "Source collaboration run must have reached ready-for-release",
+        )
+    if supersedes_requirement_id is not None:
+        superseded = _read_memory_record(
+            current_store,
+            "requirements",
+            supersedes_requirement_id,
+        )
+        if superseded is None or superseded.get("product_id") != product_id:
+            raise api_error(
+                400,
+                "REQUIREMENT_LINEAGE_INVALID",
+                "Superseded requirement must belong to the same product",
+            )
+    if version_id is not None:
+        version = _read_memory_record(current_store, "product_versions", version_id)
+        if (
+            version is None
+            or version.get("status") != "planning"
+            or version_id == source_run.get("product_version_id")
+        ):
+            raise api_error(
+                400,
+                "REQUIREMENT_LINEAGE_INVALID",
+                "Follow-up requirements can only reference a new planning version",
+            )
+
+
 def create_requirement_result(
     *,
     current_store: Any,
@@ -297,6 +376,13 @@ def create_requirement_result(
         raise api_error(404, "NOT_FOUND", "Product module not found")
     if payload.source not in REQUIREMENT_SOURCES:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported requirement source")
+    _validate_requirement_lineage(
+        current_store,
+        product_id=payload.product_id,
+        source_collaboration_run_id=payload.source_collaboration_run_id,
+        supersedes_requirement_id=payload.supersedes_requirement_id,
+        version_id=payload.version_id,
+    )
 
     requirement_id = current_store.new_id("requirement")
     requirement = {
@@ -310,7 +396,9 @@ def create_requirement_result(
         "priority": payload.priority,
         "product_id": payload.product_id,
         "source": payload.source,
+        "source_collaboration_run_id": payload.source_collaboration_run_id,
         "status": "submitted",
+        "supersedes_requirement_id": payload.supersedes_requirement_id,
         "task_ids": [],
         "title": title,
         "version_id": payload.version_id,

@@ -132,9 +132,11 @@ class ProductConfigListRepository:
                         ORDER BY CASE v.status
                             WHEN 'active' THEN 0
                             WHEN 'testing' THEN 1
-                            WHEN 'released' THEN 2
-                            WHEN 'planning' THEN 3
-                            ELSE 4
+                            WHEN 'ready_for_release' THEN 2
+                            WHEN 'deploying' THEN 3
+                            WHEN 'released' THEN 4
+                            WHEN 'planning' THEN 5
+                            ELSE 6
                         END,
                         COALESCE(v.updated_at, v.created_at) DESC,
                         v.code ASC
@@ -277,7 +279,8 @@ class ProductConfigListRepository:
                 cursor.execute(
                     f"""
                     SELECT v.id, v.product_id, v.code, v.name, v.description, v.status,
-                           v.start_date, v.release_date, p.code, p.name, v.created_at, v.updated_at
+                           v.start_date, v.release_date, v.scope_version, p.code, p.name,
+                           v.created_at, v.updated_at
                     FROM product_versions v
                     JOIN products p ON p.id = v.product_id
                     {where_clause}
@@ -293,13 +296,14 @@ class ProductConfigListRepository:
                         "description": row[4],
                         "id": row[0],
                         "name": row[3],
-                        "product_code": row[8],
+                        "product_code": row[9],
                         "product_id": row[1],
-                        "product_name": row[9],
+                        "product_name": row[10],
                         "release_date": row[7].isoformat() if row[7] else None,
+                        "scope_version": row[8],
                         "start_date": row[6].isoformat() if row[6] else None,
                         "status": row[5],
-                        "updated_at": row[11].isoformat() if row[11] else None,
+                        "updated_at": row[12].isoformat() if row[12] else None,
                     }
                     for row in cursor.fetchall()
                 ]

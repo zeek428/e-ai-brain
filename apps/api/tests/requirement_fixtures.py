@@ -13,8 +13,21 @@ def seed_accepted_assessment_provenance(store: Any, requirement: dict[str, Any] 
         "product_id": requirement["product_id"],
         "status": "accepted",
         "final_strategy_snapshot_id": "fixture-policy-snapshot",
+        "requirement_revision": int(requirement.get("assessment_revision") or 1),
     }
     store.requirement_assessments[assessment["id"]] = assessment
+    store.rd_task_executor_policy_snapshots.setdefault(
+        "fixture-policy-snapshot",
+        {
+            "id": "fixture-policy-snapshot",
+            "payload_json": {
+                "delivery_target": "ready_for_release",
+                "iteration_config": {"capacity": {"max_requirements": 20}},
+            },
+            "policy_id": "fixture-policy",
+            "policy_version": 1,
+        },
+    )
     repository = getattr(store, "repository", None)
     if repository is not None:
         records = getattr(repository, "_test_requirement_assessments", {})

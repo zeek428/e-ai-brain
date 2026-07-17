@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.api.deps import api_error, require_any_permission_or_roles
+from app.services.requirement_iteration_planning import validate_manual_iteration_assignment
 from app.services.requirements import (
     REQUIREMENT_BATCH_SCHEDULABLE_STATUSES,
     ensure_non_blank,
@@ -28,6 +29,44 @@ from app.services.version_status import (
 def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     return collection if isinstance(collection, dict) else {}
+
+
+def _assign_requirement_to_planning_version(
+    current_store: Any,
+    *,
+    requirement: dict[str, Any],
+    target_version: dict[str, Any],
+    now: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Persist requirement membership and the corresponding scope version together."""
+    if (
+        requirement.get("version_id") == target_version["id"]
+        and requirement.get("status") == "planned"
+    ):
+        return requirement, target_version
+    repository = getattr(current_store, "repository", None)
+    assign = getattr(repository, "assign_requirement_to_version_and_increment_scope", None)
+    if callable(assign):
+        assigned = assign(
+            requirement_id=requirement["id"],
+            product_version_id=target_version["id"],
+            expected_scope_version=int(target_version.get("scope_version") or 1),
+        )
+        return assigned["requirement"], assigned
+
+    scheduled_requirement = {
+        **requirement,
+        "status": "planned",
+        "updated_at": now,
+        "version_id": target_version["id"],
+    }
+    updated_version = {
+        **target_version,
+        "scope_version": int(target_version.get("scope_version") or 1) + 1,
+        "updated_at": now,
+    }
+    _read_memory_dict(current_store, "product_versions")[updated_version["id"]] = updated_version
+    return scheduled_requirement, updated_version
 
 
 def batch_generate_requirement_tasks_result(
@@ -283,11 +322,17 @@ def batch_schedule_requirements_result(
     ensure_requirement_product_scope(user, payload.product_id)
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
-    validate_requirement_version(
+    target_version = validate_requirement_version(
         current_store,
         product_id=payload.product_id,
         version_id=payload.version_id,
     )
+    if target_version is None or target_version.get("status") != "planning":
+        raise api_error(
+            400,
+            "PRODUCT_VERSION_NOT_SCHEDULABLE",
+            "Manual scheduling only accepts planning versions",
+        )
 
     batch_id = current_store.new_id("requirement_batch")
     now = datetime.now(UTC).isoformat()
@@ -349,13 +394,29 @@ def batch_schedule_requirements_result(
             )
             continue
 
+        grouping_check = validate_manual_iteration_assignment(
+            current_store,
+            requirement_id=requirement_id,
+            version_id=payload.version_id,
+        )
+        if not grouping_check["hard_eligible"]:
+            reason = str(grouping_check["reasons"][0])
+            skipped.append(
+                {
+                    "code": "ITERATION_CONSTRAINT_UNSATISFIED",
+                    "id": requirement_id,
+                    "message": f"Target planning version is not compatible: {reason}",
+                }
+            )
+            continue
+
         from_version_id = requirement.get("version_id")
-        scheduled_requirement = {
-            **requirement,
-            "status": "planned",
-            "updated_at": now,
-            "version_id": payload.version_id,
-        }
+        scheduled_requirement, target_version = _assign_requirement_to_planning_version(
+            current_store,
+            requirement=requirement,
+            target_version=target_version,
+            now=now,
+        )
         audit_event = record_audit_event(
             current_store,
             event_type="requirement.updated",
@@ -471,17 +532,15 @@ def batch_advance_requirement_status_result(
                 }
             )
             continue
-        if (
-            requires_requirement_version_for_batch_advance(target_status)
-            and not requirement.get("version_id")
+        if requires_requirement_version_for_batch_advance(target_status) and not requirement.get(
+            "version_id"
         ):
             skipped.append(
                 {
                     "code": "REQUIREMENT_VERSION_REQUIRED",
                     "id": requirement_id,
                     "message": (
-                        "Requirement must be scheduled to a version before advancing "
-                        "to this status"
+                        "Requirement must be scheduled to a version before advancing to this status"
                     ),
                 }
             )

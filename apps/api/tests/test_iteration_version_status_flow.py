@@ -185,7 +185,30 @@ def test_advancing_active_version_to_testing_syncs_included_requirements_to_test
     assert get_requirement(headers, review_requirement["id"])["status"] == "testing"
 
 
-def test_advancing_testing_version_to_released_blocks_unfinished_requirements():
+def test_version_ready_for_release_and_deploying_are_distinct_delivery_stages():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, "version-flow-ready-for-release")
+    version = create_version(headers, product["id"], "2026-08-ready", status="testing")
+
+    ready = client.post(
+        f"/api/product-versions/{version['id']}/advance-status",
+        json={"reason": "测试和远程交付证据已完成", "target_status": "ready_for_release"},
+        headers=headers,
+    )
+
+    assert ready.status_code == 200
+    assert ready.json()["data"]["version"]["status"] == "ready_for_release"
+    deploying = client.post(
+        f"/api/product-versions/{version['id']}/advance-status",
+        json={"reason": "人工批准部署", "target_status": "deploying"},
+        headers=headers,
+    )
+    assert deploying.status_code == 200
+    assert deploying.json()["data"]["version"]["status"] == "deploying"
+
+
+def test_ready_for_release_then_deploying_blocks_unfinished_requirements():
     app.state.store.reset()
     headers = auth_headers()
     product = create_product(headers, "version-flow-release")
@@ -209,7 +232,7 @@ def test_advancing_testing_version_to_released_blocks_unfinished_requirements():
 
     blocked = client.post(
         f"/api/product-versions/{version['id']}/advance-status",
-        json={"force": True, "target_status": "released"},
+        json={"target_status": "ready_for_release"},
         headers=headers,
     )
 
@@ -218,16 +241,39 @@ def test_advancing_testing_version_to_released_blocks_unfinished_requirements():
     assert get_requirement(headers, testing_requirement["id"])["status"] == "testing"
 
     set_requirement_status(unfinished_requirement["id"], "deferred")
-    released = client.post(
+    ready = client.post(
         f"/api/product-versions/{version['id']}/advance-status",
-        json={"reason": "版本发布", "target_status": "released"},
+        json={"reason": "待发布检查", "target_status": "ready_for_release"},
         headers=headers,
     )
 
-    assert released.status_code == 409
-    assert released.json()["detail"]["code"] == "PRODUCT_VERSION_STATUS_BLOCKED"
+    assert ready.status_code == 409
+    assert ready.json()["detail"]["code"] == "PRODUCT_VERSION_STATUS_BLOCKED"
     assert get_requirement(headers, testing_requirement["id"])["status"] == "testing"
     assert get_requirement(headers, ready_requirement["id"])["status"] == "ready_for_release"
+
+    set_requirement_status(testing_requirement["id"], "ready_for_release")
+    ready = client.post(
+        f"/api/product-versions/{version['id']}/advance-status",
+        json={"reason": "待发布检查完成", "target_status": "ready_for_release"},
+        headers=headers,
+    )
+
+    assert ready.status_code == 200
+    ready_data = ready.json()["data"]
+    assert ready_data["version"]["status"] == "ready_for_release"
+    assert ready_data["updated_requirements"] == []
+    assert get_requirement(headers, testing_requirement["id"])["status"] == "ready_for_release"
+    assert get_requirement(headers, ready_requirement["id"])["status"] == "ready_for_release"
+    assert get_requirement(headers, unfinished_requirement["id"])["status"] == "deferred"
+
+    deploying = client.post(
+        f"/api/product-versions/{version['id']}/advance-status",
+        json={"reason": "人工批准部署", "target_status": "deploying"},
+        headers=headers,
+    )
+    assert deploying.status_code == 200
+    assert deploying.json()["data"]["version"]["status"] == "deploying"
 
     set_requirement_status(testing_requirement["id"], "released")
     set_requirement_status(ready_requirement["id"], "released")
@@ -236,14 +282,8 @@ def test_advancing_testing_version_to_released_blocks_unfinished_requirements():
         json={"reason": "部署完成后发布版本", "target_status": "released"},
         headers=headers,
     )
-
     assert released.status_code == 200
-    released_data = released.json()["data"]
-    assert released_data["version"]["status"] == "released"
-    assert released_data["updated_requirements"] == []
-    assert get_requirement(headers, testing_requirement["id"])["status"] == "released"
-    assert get_requirement(headers, ready_requirement["id"])["status"] == "released"
-    assert get_requirement(headers, unfinished_requirement["id"])["status"] == "deferred"
+    assert released.json()["data"]["version"]["status"] == "released"
 
     archived = client.post(
         f"/api/product-versions/{version['id']}/advance-status",

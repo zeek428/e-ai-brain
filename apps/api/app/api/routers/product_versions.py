@@ -122,10 +122,13 @@ def _public_branch_config(
         and branch_config.get("repository_provider")
     )
     if missing_repository_projection:
-        repository = get_product_git_repository_record(
-            current_store,
-            str(branch_config["repository_id"]),
-        ) or {}
+        repository = (
+            get_product_git_repository_record(
+                current_store,
+                str(branch_config["repository_id"]),
+            )
+            or {}
+        )
     return {
         **branch_config,
         "repository_default_branch": branch_config.get("repository_default_branch")
@@ -440,6 +443,7 @@ def create_product_version(
         "status": payload.status,
         "start_date": payload.start_date,
         "release_date": payload.release_date,
+        "scope_version": 1,
     }
     audit_event = record_audit_event(
         current_store,

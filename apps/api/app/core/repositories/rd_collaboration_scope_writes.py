@@ -339,7 +339,10 @@ class RdCollaborationScopeWriteMixin:
                         "requirement does not belong to the product version",
                     )
                 current_scope = int(version["scope_version"])
-                if requirement.get("version_id") == product_version_id:
+                if (
+                    requirement.get("version_id") == product_version_id
+                    and requirement.get("status") == "planned"
+                ):
                     return {**version, "requirement": requirement, "idempotent_replay": True}
                 if current_scope != int(expected_scope_version):
                     raise RdCollaborationRepositoryError(

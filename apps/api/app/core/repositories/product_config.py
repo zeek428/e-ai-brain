@@ -74,7 +74,8 @@ class ProductConfigReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, product_id, code, name, description, status, start_date, release_date
+                    SELECT id, product_id, code, name, description, status, start_date,
+                           release_date, scope_version
                     FROM product_versions
                     WHERE id = %s
                     """,
@@ -260,9 +261,10 @@ class ProductConfigReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, product_id, code, name, description, status, start_date, release_date
+                    SELECT id, product_id, code, name, description, status, start_date,
+                           release_date, scope_version
                     FROM product_versions
-                    WHERE {' AND '.join(where_clauses)}
+                    WHERE {" AND ".join(where_clauses)}
                     ORDER BY code
                     """,
                     tuple(params),
@@ -286,7 +288,7 @@ class ProductConfigReadRepository:
                     SELECT id, product_id, code, name, description, owner_team,
                            status, display_order
                     FROM product_modules
-                    WHERE {' AND '.join(where_clauses)}
+                    WHERE {" AND ".join(where_clauses)}
                     ORDER BY display_order, code
                     """,
                     tuple(params),
@@ -310,15 +312,12 @@ class ProductConfigReadRepository:
                     SELECT id, product_id, repo_type, name, remote_url, git_provider, project_id,
                            project_path, credential_ref, default_branch, root_path, status
                     FROM product_git_repositories
-                    WHERE {' AND '.join(where_clauses)}
+                    WHERE {" AND ".join(where_clauses)}
                     ORDER BY name
                     """,
                     tuple(params),
                 )
-                return [
-                    _row_to_product_git_repository(row)
-                    for row in cursor.fetchall()
-                ]
+                return [_row_to_product_git_repository(row) for row in cursor.fetchall()]
 
     def list_product_version_branch_configs(self, version_id: str) -> list[dict[str, Any]]:
         with self._connect() as connection:
@@ -335,10 +334,7 @@ class ProductConfigReadRepository:
                     """,
                     (version_id,),
                 )
-                return [
-                    _row_to_product_version_branch_config(row)
-                    for row in cursor.fetchall()
-                ]
+                return [_row_to_product_version_branch_config(row) for row in cursor.fetchall()]
 
     def list_related_systems(
         self,
@@ -372,10 +368,7 @@ class ProductConfigReadRepository:
                     """,
                     tuple(params),
                 )
-                return [
-                    _row_to_related_system(row)
-                    for row in cursor.fetchall()
-                ]
+                return [_row_to_related_system(row) for row in cursor.fetchall()]
 
     def save_product_config(self, payload: dict[str, Any]) -> None:
         self._write_repository.save_product_config(payload)
@@ -460,15 +453,13 @@ class ProductConfigReadRepository:
     def _load_product_versions(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
-            SELECT id, product_id, code, name, description, status, start_date, release_date
+            SELECT id, product_id, code, name, description, status, start_date, release_date,
+                   scope_version
             FROM product_versions
             ORDER BY product_id, code
             """
         )
-        return {
-            row[0]: _row_to_product_version(row)
-            for row in cursor.fetchall()
-        }
+        return {row[0]: _row_to_product_version(row) for row in cursor.fetchall()}
 
     def _load_product_modules(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -478,10 +469,7 @@ class ProductConfigReadRepository:
             ORDER BY product_id, display_order, code
             """
         )
-        return {
-            row[0]: _row_to_product_module(row)
-            for row in cursor.fetchall()
-        }
+        return {row[0]: _row_to_product_module(row) for row in cursor.fetchall()}
 
     def _load_product_git_repositories(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -492,10 +480,7 @@ class ProductConfigReadRepository:
             ORDER BY product_id, name
             """
         )
-        return {
-            row[0]: _row_to_product_git_repository(row)
-            for row in cursor.fetchall()
-        }
+        return {row[0]: _row_to_product_git_repository(row) for row in cursor.fetchall()}
 
     def _load_product_version_branch_configs(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -508,10 +493,7 @@ class ProductConfigReadRepository:
             ORDER BY b.product_id, b.version_id, r.name
             """
         )
-        return {
-            row[0]: _row_to_product_version_branch_config(row)
-            for row in cursor.fetchall()
-        }
+        return {row[0]: _row_to_product_version_branch_config(row) for row in cursor.fetchall()}
 
     def _load_related_systems(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -521,10 +503,7 @@ class ProductConfigReadRepository:
             ORDER BY display_order, code
             """
         )
-        return {
-            row[0]: _row_to_related_system(row)
-            for row in cursor.fetchall()
-        }
+        return {row[0]: _row_to_related_system(row) for row in cursor.fetchall()}
 
     def count_product_summaries(
         self,
@@ -583,7 +562,7 @@ class ProductConfigReadRepository:
                 cursor.execute(
                     f"""
                     SELECT v.id, v.product_id, v.code, v.name, v.description, v.status,
-                           v.start_date, v.release_date, p.code, p.name
+                           v.start_date, v.release_date, v.scope_version, p.code, p.name
                     FROM product_versions v
                     JOIN products p ON p.id = v.product_id
                     {where_clause}
@@ -596,10 +575,11 @@ class ProductConfigReadRepository:
                         "description": row[4],
                         "id": row[0],
                         "name": row[3],
-                        "product_code": row[8],
+                        "product_code": row[9],
                         "product_id": row[1],
-                        "product_name": row[9],
+                        "product_name": row[10],
                         "release_date": row[7].isoformat() if row[7] else None,
+                        "scope_version": row[8],
                         "start_date": row[6].isoformat() if row[6] else None,
                         "status": row[5],
                     }
@@ -678,6 +658,7 @@ def _row_to_product_version(row: tuple[Any, ...]) -> dict[str, Any]:
         "name": row[3],
         "product_id": row[1],
         "release_date": row[7].isoformat() if row[7] else None,
+        "scope_version": row[8],
         "start_date": row[6].isoformat() if row[6] else None,
         "status": row[5],
     }

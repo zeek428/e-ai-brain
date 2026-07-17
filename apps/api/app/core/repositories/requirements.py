@@ -549,11 +549,12 @@ class RequirementReadRepository:
                   id, brain_app_id, title, product_id, version_id, module_code,
                   description, priority, source,
                   status, created_by, assignee, approval_comment, rejection_reason, task_ids,
-                  assessment_revision, created_at, updated_at
+                  assessment_revision, source_collaboration_run_id, supersedes_requirement_id,
+                  created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
-                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                  %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   brain_app_id = EXCLUDED.brain_app_id,
@@ -571,6 +572,8 @@ class RequirementReadRepository:
                   rejection_reason = EXCLUDED.rejection_reason,
                   task_ids = EXCLUDED.task_ids,
                   assessment_revision = EXCLUDED.assessment_revision,
+                  source_collaboration_run_id = EXCLUDED.source_collaboration_run_id,
+                  supersedes_requirement_id = EXCLUDED.supersedes_requirement_id,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -590,6 +593,8 @@ class RequirementReadRepository:
                     requirement.get("rejection_reason"),
                     json.dumps(requirement.get("task_ids", []), ensure_ascii=False),
                     requirement.get("assessment_revision", 1),
+                    requirement.get("source_collaboration_run_id"),
+                    requirement.get("supersedes_requirement_id"),
                     created_at,
                     updated_at,
                 ),
@@ -752,7 +757,8 @@ class RequirementReadRepository:
                            r.module_code, r.description, r.priority, r.status, r.created_by,
                            r.approval_comment, r.rejection_reason, r.task_ids,
                            r.created_at, r.updated_at, p.code, p.name, v.code, v.name,
-                           r.assignee, r.source
+                           r.assignee, r.source, r.source_collaboration_run_id,
+                           r.supersedes_requirement_id
                     FROM requirements r
                     JOIN products p ON p.id = r.product_id
                     LEFT JOIN product_versions v ON v.id = r.version_id
@@ -778,6 +784,8 @@ class RequirementReadRepository:
                         "product_name": row[16],
                         "status": row[8],
                         "source": row[20] or "business_department",
+                        "source_collaboration_run_id": row[21],
+                        "supersedes_requirement_id": row[22],
                         "task_ids": list(row[12] or []),
                         "title": row[2],
                         "updated_at": row[14].isoformat() if row[14] else None,
@@ -799,7 +807,8 @@ class RequirementReadRepository:
                    description, priority,
                    status, created_by, approval_comment, rejection_reason, task_ids,
                    assignee, source,
-                   created_at, updated_at, assessment_revision
+                   created_at, updated_at, assessment_revision,
+                   source_collaboration_run_id, supersedes_requirement_id
             FROM requirements
             ORDER BY created_at DESC, id
             """
@@ -829,6 +838,8 @@ def _requirement_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
         "product_id": row[3],
         "status": row[8],
         "source": row[14] or "business_department",
+        "source_collaboration_run_id": row[18],
+        "supersedes_requirement_id": row[19],
         "task_ids": list(row[12] or []),
         "title": row[2],
         "updated_at": row[16].isoformat() if row[16] else None,

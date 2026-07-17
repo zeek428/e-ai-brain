@@ -116,9 +116,7 @@ def product_config_source_store(repository: Any) -> ProductConfigRequestContext:
     source_store = ProductConfigRequestContext(repository)
     products = repository.list_products(active_only=False)
     source_store.products = {
-        str(product["id"]): dict(product)
-        for product in products
-        if product.get("id") is not None
+        str(product["id"]): dict(product) for product in products if product.get("id") is not None
     }
     for product in products:
         product_id = str(product["id"])
@@ -136,9 +134,7 @@ def product_config_source_store(repository: Any) -> ProductConfigRequestContext:
             product_id,
             active_only=False,
         ):
-            source_store.product_git_repositories[str(git_repository["id"])] = dict(
-                git_repository
-            )
+            source_store.product_git_repositories[str(git_repository["id"])] = dict(git_repository)
     source_store.related_systems = {
         str(system["id"]): dict(system)
         for system in repository.list_related_systems(active_only=False)
@@ -621,7 +617,15 @@ def product_current_version_for_list(
     current_store: Any,
     product_id: str,
 ) -> dict[str, Any] | None:
-    status_order = {"active": 0, "testing": 1, "released": 2, "planning": 3, "archived": 4}
+    status_order = {
+        "active": 0,
+        "testing": 1,
+        "ready_for_release": 2,
+        "deploying": 3,
+        "released": 4,
+        "planning": 5,
+        "archived": 6,
+    }
     versions = list_product_version_records(current_store, product_id, active_only=False)
     if not versions:
         return None

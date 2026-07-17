@@ -4,13 +4,30 @@ from typing import Any
 
 from fastapi import HTTPException
 
-VERSION_STATUSES = {"active", "archived", "planning", "released", "testing"}
-VERSION_MAIN_STATUSES = {"active", "planning", "released", "testing"}
+VERSION_STATUSES = {
+    "active",
+    "archived",
+    "deploying",
+    "planning",
+    "ready_for_release",
+    "released",
+    "testing",
+}
+VERSION_MAIN_STATUSES = {
+    "active",
+    "deploying",
+    "planning",
+    "ready_for_release",
+    "released",
+    "testing",
+}
 VERSION_STATUS_TRANSITIONS = {
     "active": {"testing"},
+    "deploying": {"ready_for_release", "released"},
     "planning": {"active"},
+    "ready_for_release": {"deploying"},
     "released": {"archived"},
-    "testing": {"released"},
+    "testing": {"ready_for_release"},
 }
 VERSION_REQUIREMENT_AUTO_ADVANCE = {
     "active": {
@@ -18,6 +35,7 @@ VERSION_REQUIREMENT_AUTO_ADVANCE = {
         "planned": "ready_for_dev",
     },
     "released": {},
+    "ready_for_release": {},
     "testing": {
         "approved": "testing",
         "code_reviewing": "testing",
@@ -51,6 +69,23 @@ VERSION_REQUIREMENT_ALLOWED_UNCHANGED = {
         "rejected",
         "released",
     },
+    "ready_for_release": {
+        "accepted",
+        "cancelled",
+        "closed",
+        "deferred",
+        "ready_for_release",
+        "rejected",
+    },
+    "deploying": {
+        "accepted",
+        "cancelled",
+        "closed",
+        "deferred",
+        "deploying",
+        "ready_for_release",
+        "rejected",
+    },
     "archived": {
         "accepted",
         "cancelled",
@@ -75,6 +110,8 @@ VERSION_REQUIREMENT_BLOCK_REASONS = {
     "active": "需求尚未进入可开发状态，版本进入开发会形成范围风险",
     "archived": "需求尚未达到发布或终止状态，归档会形成历史数据风险",
     "released": "需求尚未达到发布或终止状态，不能发布版本",
+    "ready_for_release": "需求、测试或交付证据尚未满足，不能进入待发布状态",
+    "deploying": "待发布需求或交付证据不完整，不能开始部署",
     "testing": "需求尚未进入可交付状态，进入测试会形成版本风险",
 }
 REQUIREMENT_SCHEDULABLE_VERSION_STATUSES = {"active", "planning"}

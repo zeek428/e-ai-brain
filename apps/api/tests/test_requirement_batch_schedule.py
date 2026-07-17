@@ -151,6 +151,7 @@ def test_batch_schedule_updates_eligible_requirements_and_records_audit():
     assert by_id[planned_requirement["id"]]["version_id"] == target_version["id"]
     assert by_id[submitted_requirement["id"]]["status"] == "submitted"
     assert by_id[submitted_requirement["id"]]["version_id"] is None
+    assert app.state.store.product_versions[target_version["id"]]["scope_version"] == 3
 
     batch_audits = client.get(
         f"/api/audit/events?subject_type=requirement_batch&subject_id={data['batch_id']}",
@@ -191,6 +192,81 @@ def test_batch_schedule_rejects_archived_target_version():
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "PRODUCT_VERSION_ARCHIVED"
+
+
+def test_batch_schedule_only_allows_planning_versions():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, "active-batch-product")
+    active_version = create_version(headers, product["id"], "active-v1", status="active")
+    requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "不能绕过迭代分组")["id"],
+    )
+
+    response = client.post(
+        "/api/requirements/batch-schedule",
+        json={
+            "product_id": product["id"],
+            "requirement_ids": [requirement["id"]],
+            "version_id": active_version["id"],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "PRODUCT_VERSION_NOT_SCHEDULABLE"
+
+
+def test_batch_schedule_skips_policy_incompatible_requirement():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, "incompatible-policy-batch-product")
+    target_version = create_version(headers, product["id"], "planning-v1")
+    requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "不能绕过策略合并")["id"],
+    )
+    app.state.store.requirements["existing-planned"] = {
+        "assessment_revision": 1,
+        "id": "existing-planned",
+        "product_id": product["id"],
+        "status": "planned",
+        "version_id": target_version["id"],
+    }
+    app.state.store.requirement_assessments["existing-assessment"] = {
+        "final_strategy_snapshot_id": "incompatible-snapshot",
+        "id": "existing-assessment",
+        "requirement_id": "existing-planned",
+        "requirement_revision": 1,
+        "status": "accepted",
+    }
+    app.state.store.rd_task_executor_policy_snapshots["incompatible-snapshot"] = {
+        "id": "incompatible-snapshot",
+        "payload_json": {"delivery_target": "deployed"},
+        "policy_id": "other-policy",
+        "policy_version": 1,
+    }
+
+    response = client.post(
+        "/api/requirements/batch-schedule",
+        json={
+            "product_id": product["id"],
+            "requirement_ids": [requirement["id"]],
+            "version_id": target_version["id"],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["updated_count"] == 0
+    assert response.json()["data"]["skipped"] == [
+        {
+            "code": "ITERATION_CONSTRAINT_UNSATISFIED",
+            "id": requirement["id"],
+            "message": "Target planning version is not compatible: policy_identity_mismatch",
+        }
+    ]
 
 
 def test_batch_assign_owner_updates_requirements_and_records_audit():
