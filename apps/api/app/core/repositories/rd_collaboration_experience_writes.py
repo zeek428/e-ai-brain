@@ -3,6 +3,7 @@ from __future__ import annotations
 # Aggregate modules intentionally share one serialization/transaction vocabulary.
 # ruff: noqa: F401
 from collections.abc import Callable, Iterable, Sequence
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -27,6 +28,15 @@ from app.core.repositories.rd_collaboration_shared import (
 
 class RdCollaborationExperienceWriteMixin:
     def save_role_feedback_once(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: self._save_role_feedback_once_cursor(cursor, record)
+        )
+
+    def _save_role_feedback_once_cursor(
+        self,
+        cursor: Any,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
         """Insert one immutable feedback fact per run/fingerprint."""
         columns = (
             "id",
@@ -52,8 +62,8 @@ class RdCollaborationExperienceWriteMixin:
             "created_at",
         )
         included = [column for column in columns if column in record]
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     sql.SQL(
                         "INSERT INTO role_feedback_records ({columns}) VALUES ({values}) "
@@ -90,6 +100,21 @@ class RdCollaborationExperienceWriteMixin:
 
     def save_rd_role_experience_record(
         self,
+        record: dict[str, Any],
+        *,
+        sources: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: self._save_rd_role_experience_record_cursor(
+                cursor,
+                record,
+                sources=sources,
+            )
+        )
+
+    def _save_rd_role_experience_record_cursor(
+        self,
+        cursor: Any,
         record: dict[str, Any],
         *,
         sources: list[dict[str, Any]],
@@ -131,8 +156,8 @@ class RdCollaborationExperienceWriteMixin:
             "created_at",
             "updated_at",
         )
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     "SELECT pg_advisory_xact_lock(hashtext(%s))",
                     (record["experience_key"],),
@@ -253,6 +278,33 @@ class RdCollaborationExperienceWriteMixin:
         reviewer_seat_id: str | None,
         require_independent_reviewer: bool,
     ) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: self._decide_role_experience_cursor(
+                cursor,
+                experience_id=experience_id,
+                decision=decision,
+                expected_review_version=expected_review_version,
+                reviewer_subject_type=reviewer_subject_type,
+                reviewer_subject_id=reviewer_subject_id,
+                reviewer_role_code=reviewer_role_code,
+                reviewer_seat_id=reviewer_seat_id,
+                require_independent_reviewer=require_independent_reviewer,
+            )
+        )
+
+    def _decide_role_experience_cursor(
+        self,
+        cursor: Any,
+        *,
+        experience_id: str,
+        decision: str,
+        expected_review_version: int,
+        reviewer_subject_type: str,
+        reviewer_subject_id: str,
+        reviewer_role_code: str | None,
+        reviewer_seat_id: str | None,
+        require_independent_reviewer: bool,
+    ) -> dict[str, Any]:
         status_by_decision = {
             "approve": "approved",
             "reject": "rejected",
@@ -264,8 +316,8 @@ class RdCollaborationExperienceWriteMixin:
                 "RD_EXPERIENCE_INVALID",
                 "experience decision and reviewer identity must be valid",
             )
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM rd_role_experience_records

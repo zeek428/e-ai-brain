@@ -3,6 +3,7 @@ from __future__ import annotations
 # Aggregate modules intentionally share one serialization/transaction vocabulary.
 # ruff: noqa: F401
 from collections.abc import Callable, Iterable, Sequence
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -154,8 +155,27 @@ class RdCollaborationScopeWriteMixin:
         snapshot: dict[str, Any] | None = None,
         sources: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._create_collaboration_run_with_exact_scope_cursor(
+                cursor,
+                run=run,
+                scope_rows=scope_rows,
+                snapshot=snapshot,
+                sources=sources,
+            )
+        )
+
+    def _create_collaboration_run_with_exact_scope_cursor(
+        self,
+        cursor: Any,
+        *,
+        run: dict[str, Any],
+        scope_rows: list[dict[str, Any]],
+        snapshot: dict[str, Any] | None = None,
+        sources: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     "SELECT * FROM product_versions WHERE id = %s FOR UPDATE",
                     (run["product_version_id"],),
@@ -201,8 +221,25 @@ class RdCollaborationScopeWriteMixin:
         run: dict[str, Any],
         scope_rows: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._restart_terminal_collaboration_run_cursor(
+                cursor,
+                terminal_run_id=terminal_run_id,
+                run=run,
+                scope_rows=scope_rows,
+            )
+        )
+
+    def _restart_terminal_collaboration_run_cursor(
+        self,
+        cursor: Any,
+        *,
+        terminal_run_id: str,
+        run: dict[str, Any],
+        scope_rows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     "SELECT * FROM product_versions WHERE id = %s FOR UPDATE",
                     (run["product_version_id"],),
@@ -262,8 +299,25 @@ class RdCollaborationScopeWriteMixin:
         product_version_id: str,
         expected_scope_version: int,
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._assign_requirement_to_version_and_increment_scope_cursor(
+                cursor,
+                requirement_id=requirement_id,
+                product_version_id=product_version_id,
+                expected_scope_version=expected_scope_version,
+            )
+        )
+
+    def _assign_requirement_to_version_and_increment_scope_cursor(
+        self,
+        cursor: Any,
+        *,
+        requirement_id: str,
+        product_version_id: str,
+        expected_scope_version: int,
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     "SELECT * FROM product_versions WHERE id = %s FOR UPDATE",
                     (product_version_id,),
@@ -497,10 +551,27 @@ class RdCollaborationScopeWriteMixin:
         operations: list[dict[str, Any]],
         decision_request: dict[str, Any],
     ) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: self._create_scope_change_request_cursor(
+                cursor,
+                request=request,
+                operations=operations,
+                decision_request=decision_request,
+            )
+        )
+
+    def _create_scope_change_request_cursor(
+        self,
+        cursor: Any,
+        *,
+        request: dict[str, Any],
+        operations: list[dict[str, Any]],
+        decision_request: dict[str, Any],
+    ) -> dict[str, Any]:
         canonical_operations = _canonical_scope_operations(operations)
         operations_hash = _canonical_hash(canonical_operations)
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     "SELECT * FROM product_versions WHERE id = %s FOR UPDATE",
                     (request["product_version_id"],),
@@ -527,6 +598,10 @@ class RdCollaborationScopeWriteMixin:
                     "operations_json": canonical_operations,
                     "operations_hash": operations_hash,
                 }
+                frozen_decision = {
+                    **decision_request,
+                    "options_hash": _canonical_hash(decision_request.get("options_json") or []),
+                }
                 cursor.execute(
                     """
                     SELECT * FROM rd_scope_change_requests
@@ -537,11 +612,27 @@ class RdCollaborationScopeWriteMixin:
                 )
                 replay = _row_dict(cursor, cursor.fetchone())
                 if replay is not None:
-                    if replay["operations_hash"] != operations_hash:
-                        raise RdCollaborationRepositoryError(
-                            "RD_IDEMPOTENCY_CONFLICT",
-                            "scope request id is already bound to different operations",
-                        )
+                    self._assert_immutable_replay(
+                        existing=replay,
+                        incoming=frozen_request,
+                        fields=(
+                            "id",
+                            "product_version_id",
+                            "request_id",
+                            "source_run_id",
+                            "expected_scope_version",
+                            "expected_run_generation",
+                            "operations_json",
+                            "operations_hash",
+                            "reason",
+                            "decision_request_id",
+                            "requested_by",
+                            "created_at",
+                        ),
+                        message=("scope request id is bound to different immutable provenance"),
+                        scope_change_request_id=request["id"],
+                    )
+                    self._insert_decision_request(cursor, frozen_decision)
                     return replay
                 if version["status"] in {"ready_for_release", "deploying", "released"}:
                     raise self._ready_scope_frozen()
@@ -605,10 +696,6 @@ class RdCollaborationScopeWriteMixin:
                             "next_action": "resolve_existing_decision",
                         },
                     )
-                frozen_decision = {
-                    **decision_request,
-                    "options_hash": _canonical_hash(decision_request.get("options_json") or []),
-                }
                 self._scope_decision(
                     cursor,
                     decision=frozen_decision,
@@ -809,8 +896,31 @@ class RdCollaborationScopeWriteMixin:
         cancellation_outbox_events: list[dict[str, Any]] | None = None,
         failure_injection: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._apply_scope_change_bundle_cursor(
+                cursor,
+                scope_change_request_id=scope_change_request_id,
+                decision=decision,
+                decided_by=decided_by,
+                expected_decision_version=expected_decision_version,
+                cancellation_outbox_events=cancellation_outbox_events,
+                failure_injection=failure_injection,
+            )
+        )
+
+    def _apply_scope_change_bundle_cursor(
+        self,
+        cursor: Any,
+        *,
+        scope_change_request_id: str,
+        decision: str,
+        decided_by: str,
+        expected_decision_version: int,
+        cancellation_outbox_events: list[dict[str, Any]] | None = None,
+        failure_injection: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     "SELECT * FROM rd_scope_change_requests WHERE id = %s",
                     (scope_change_request_id,),
@@ -842,8 +952,6 @@ class RdCollaborationScopeWriteMixin:
                         "RD_SCOPE_CHANGE_INVALID",
                         "scope change aggregate is incomplete",
                     )
-                if request["status"] in {"applied", "rejected"}:
-                    return self._scope_change_result(cursor, request)
                 cursor.execute(
                     "SELECT * FROM decision_requests WHERE id = %s FOR UPDATE",
                     (request["decision_request_id"],),
@@ -854,6 +962,39 @@ class RdCollaborationScopeWriteMixin:
                         "RD_DECISION_REQUIRED",
                         "scope change decision request is missing",
                     )
+                if request["status"] in {"applied", "rejected"}:
+                    _, terminal_option_mapping = self._scope_decision(
+                        cursor,
+                        decision=decision_row,
+                        request={**request, "product_id": run["product_id"]},
+                        require_active=False,
+                    )
+                    if int(decision_row["version"]) != int(expected_decision_version) + 1:
+                        raise RdCollaborationVersionConflictError(int(decision_row["version"]))
+                    if (
+                        decision_row.get("selected_option_code") != decision
+                        or decision_row.get("decided_by") != decided_by
+                    ):
+                        raise self._idempotency_conflict(
+                            "terminal scope decision replay changed option or actor",
+                            scope_change_request_id=request["id"],
+                            decision_request_id=decision_row["id"],
+                        )
+                    expected_outcome = "approve" if request["status"] == "applied" else "reject"
+                    if terminal_option_mapping.get(decision) != expected_outcome:
+                        raise self._idempotency_conflict(
+                            "terminal scope decision does not match its persisted outcome",
+                            scope_change_request_id=request["id"],
+                            decision_request_id=decision_row["id"],
+                        )
+                    if _canonical_hash(decision_row.get("options_json") or []) != decision_row.get(
+                        "options_hash"
+                    ):
+                        raise self._idempotency_conflict(
+                            "scope decision options no longer match their frozen hash",
+                            decision_request_id=decision_row["id"],
+                        )
+                    return self._scope_change_result(cursor, request)
                 _, option_mapping = self._scope_decision(
                     cursor,
                     decision=decision_row,

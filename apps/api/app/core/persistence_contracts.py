@@ -112,9 +112,9 @@ class RdCollaborationRepository(Protocol):
     def list_rd_task_executor_policies(
         self,
         *,
-        brain_app_id: str | None = None,
         product_id: str | None = None,
         status: str | None = None,
+        task_type: str | None = None,
     ) -> list[dict[str, Any]]: ...
     def list_rd_collaboration_task_executor_policies(
         self,

@@ -3,6 +3,7 @@ from __future__ import annotations
 # Aggregate modules intentionally share one serialization/transaction vocabulary.
 # ruff: noqa: F401
 from collections.abc import Callable, Iterable, Sequence
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -51,8 +52,25 @@ class RdCollaborationPolicyWriteMixin:
         expected_policy_version: int | None = None,
         audit_event: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._save_rd_task_executor_policy_record_cursor(
+                cursor,
+                record,
+                expected_policy_version=expected_policy_version,
+                audit_event=audit_event,
+            )
+        )
+
+    def _save_rd_task_executor_policy_record_cursor(
+        self,
+        cursor: Any,
+        record: dict[str, Any],
+        *,
+        expected_policy_version: int | None = None,
+        audit_event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 brain_app_id = str(record.get("brain_app_id", "rd_brain"))
                 product_id = record.get("product_id")
                 scope_key = str(product_id) if product_id is not None else "__default__"
@@ -208,10 +226,19 @@ class RdCollaborationPolicyWriteMixin:
         return persisted
 
     def freeze_base_policy_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: self._freeze_base_policy_snapshot_cursor(cursor, snapshot)
+        )
+
+    def _freeze_base_policy_snapshot_cursor(
+        self,
+        cursor: Any,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
         if snapshot.get("snapshot_kind") != "base":
             raise ValueError("base snapshot must use snapshot_kind=base")
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     "SELECT id FROM rd_task_executor_policies WHERE id = %s FOR KEY SHARE",
                     (snapshot["policy_id"],),
@@ -224,8 +251,23 @@ class RdCollaborationPolicyWriteMixin:
         base_snapshot_id: str,
         snapshot: dict[str, Any],
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._derive_assessment_policy_snapshot_cursor(
+                cursor,
+                base_snapshot_id=base_snapshot_id,
+                snapshot=snapshot,
+            )
+        )
+
+    def _derive_assessment_policy_snapshot_cursor(
+        self,
+        cursor: Any,
+        *,
+        base_snapshot_id: str,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     """
                     SELECT * FROM rd_task_executor_policy_snapshots
@@ -369,8 +411,25 @@ class RdCollaborationPolicyWriteMixin:
         opinions: list[dict[str, Any]],
         snapshots: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._save_assessment_bundle_cursor(
+                cursor,
+                assessment=assessment,
+                opinions=opinions,
+                snapshots=snapshots,
+            )
+        )
+
+    def _save_assessment_bundle_cursor(
+        self,
+        cursor: Any,
+        *,
+        assessment: dict[str, Any],
+        opinions: list[dict[str, Any]],
+        snapshots: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 persisted_snapshots = [
                     self._insert_snapshot(cursor, snapshot) for snapshot in (snapshots or [])
                 ]
@@ -438,10 +497,25 @@ class RdCollaborationPolicyWriteMixin:
         snapshot: dict[str, Any],
         sources: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: self._merge_version_policy_snapshot_with_sources_cursor(
+                cursor,
+                snapshot=snapshot,
+                sources=sources,
+            )
+        )
+
+    def _merge_version_policy_snapshot_with_sources_cursor(
+        self,
+        cursor: Any,
+        *,
+        snapshot: dict[str, Any],
+        sources: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         if snapshot.get("snapshot_kind") != "version_resolved":
             raise ValueError("version merge must persist a version_resolved snapshot")
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 persisted = self._insert_snapshot(cursor, snapshot)
                 for source in sorted(sources, key=lambda item: str(item["requirement_id"])):
                     self._insert_snapshot_source(

@@ -12,7 +12,7 @@ from app.core.product_version_dashboard_read_model import product_version_dashbo
 from app.core.repositories.rd_collaboration import RdCollaborationReadRepository
 
 
-class PostgresSnapshotRepository:
+class PostgresSnapshotRepository(RdCollaborationReadRepository):
     def __init__(
         self,
         database_url: str,
@@ -26,18 +26,10 @@ class PostgresSnapshotRepository:
             max_size=pool_max_size,
         )
         install_snapshot_repositories(self)
-        self._rd_collaboration_read_repository = RdCollaborationReadRepository(
-            self._connect,
-            upsert_audit_events=self._upsert_audit_events,
-        )
-        for method_name in dir(self._rd_collaboration_read_repository):
-            if method_name.startswith("_"):
-                continue
-            if hasattr(type(self), method_name):
-                continue
-            method = getattr(self._rd_collaboration_read_repository, method_name)
-            if callable(method):
-                setattr(self, method_name, method)
+        # Collaboration is a concrete mixin boundary so static and runtime structural
+        # contracts see the same methods. Keep the compatibility attribute for callers
+        # that historically inspected the registered repository.
+        self._rd_collaboration_read_repository = self
         if ensure_schema_compatibility:
             self._ensure_schema_compatibility()
 
@@ -1932,15 +1924,16 @@ class PostgresSnapshotRepository:
 
     def save_rd_task_executor_policy_record(
         self,
-        policy: dict[str, Any],
+        record: dict[str, Any],
         *,
-        audit_event: dict[str, Any] | None = None,
         expected_policy_version: int | None = None,
+        audit_event: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return self._rd_collaboration_read_repository.save_rd_task_executor_policy_record(
-            policy,
-            audit_event=audit_event,
+        return RdCollaborationReadRepository.save_rd_task_executor_policy_record(
+            self,
+            record,
             expected_policy_version=expected_policy_version,
+            audit_event=audit_event,
         )
 
     def delete_rd_task_executor_policy_record(

@@ -3,6 +3,7 @@ from __future__ import annotations
 # Aggregate modules intentionally share one serialization/transaction vocabulary.
 # ruff: noqa: F401
 from collections.abc import Callable, Iterable, Sequence
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -33,58 +34,35 @@ class RdCollaborationWorkWriteMixin:
         return self._save_simple("rd_role_sessions", record)
 
     def save_rd_work_item_record(self, record: dict[str, Any]) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
-                persisted = self._insert_record(
-                    cursor,
-                    "rd_work_items",
-                    record,
-                    update_on_conflict=False,
-                )
-                self._assert_immutable_replay(
-                    existing=persisted,
-                    incoming=record,
-                    fields=TABLE_COLUMNS["rd_work_items"],
-                    message="work item id is bound to different immutable creation data",
-                    work_item_id=record["id"],
-                )
-                return persisted
+        return self._in_transaction(
+            lambda cursor: self._save_rd_work_item_record_cursor(cursor, record)
+        )
+
+    def _save_rd_work_item_record_cursor(
+        self,
+        cursor: Any,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        persisted = self._insert_record(
+            cursor,
+            "rd_work_items",
+            record,
+            update_on_conflict=False,
+        )
+        self._assert_immutable_replay(
+            existing=persisted,
+            incoming=record,
+            fields=TABLE_COLUMNS["rd_work_items"],
+            message="work item id is bound to different immutable creation data",
+            work_item_id=record["id"],
+        )
+        return persisted
 
     def save_rd_work_item_dependency_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._save_simple("rd_work_item_dependencies", record)
 
     def save_rd_collaboration_event_record(self, record: dict[str, Any]) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
-                columns = [
-                    column
-                    for column in TABLE_COLUMNS["rd_collaboration_events"]
-                    if column in record
-                ]
-                cursor.execute(
-                    sql.SQL(
-                        "INSERT INTO rd_collaboration_events ({columns}) VALUES ({values}) "
-                        "ON CONFLICT (collaboration_run_id, event_key) DO NOTHING RETURNING *"
-                    ).format(
-                        columns=sql.SQL(", ").join(map(sql.Identifier, columns)),
-                        values=sql.SQL(", ").join(sql.Placeholder() for _ in columns),
-                    ),
-                    tuple(_adapt(record[column], column) for column in columns),
-                )
-                persisted = _row_dict(cursor, cursor.fetchone())
-                if persisted is not None:
-                    return persisted
-                cursor.execute(
-                    """
-                    SELECT * FROM rd_collaboration_events
-                    WHERE collaboration_run_id = %s AND event_key = %s
-                    """,
-                    (record["collaboration_run_id"], record["event_key"]),
-                )
-                existing = _row_dict(cursor, cursor.fetchone())
-                if existing is None:
-                    raise RuntimeError("collaboration event replay lookup failed")
-                return existing
+        return self._in_transaction(lambda cursor: self._insert_event_cursor(cursor, record))
 
     def _insert_decision_request(
         self,
@@ -141,12 +119,40 @@ class RdCollaborationWorkWriteMixin:
         existing = _row_dict(cursor, cursor.fetchone())
         if existing is None:
             raise RuntimeError("decision request replay lookup failed")
+        self._assert_immutable_replay(
+            existing=existing,
+            incoming=record,
+            fields=(
+                "id",
+                "brain_app_id",
+                "product_id",
+                "subject_type",
+                "subject_id",
+                "decision_type",
+                "plan_version",
+                "options_json",
+                "options_hash",
+                "evidence_json",
+                "recommendation_json",
+                "decision_actor_selector",
+                "answer_actor_selector",
+                "answer_schema",
+                "status",
+                "expires_at",
+                "timeout_policy",
+                "escalation_target_selector",
+                "escalation_level",
+                "supersedes_decision_request_id",
+                "created_by",
+                "created_at",
+            ),
+            message="decision request id is bound to different immutable provenance",
+            decision_request_id=record["id"],
+        )
         return existing
 
     def save_decision_request_record(self, record: dict[str, Any]) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
-                return self._insert_decision_request(cursor, record)
+        return self._in_transaction(lambda cursor: self._insert_decision_request(cursor, record))
 
     def claim_ready_work_item(
         self,
@@ -348,8 +354,31 @@ class RdCollaborationWorkWriteMixin:
         expected_version: int | None = None,
         event: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._save_work_item_attempt_bundle_cursor(
+                cursor,
+                work_item_id=work_item_id,
+                expected_statuses=expected_statuses,
+                next_status=next_status,
+                attempt=attempt,
+                expected_version=expected_version,
+                event=event,
+            )
+        )
+
+    def _save_work_item_attempt_bundle_cursor(
+        self,
+        cursor: Any,
+        *,
+        work_item_id: str,
+        expected_statuses: list[str],
+        next_status: str,
+        attempt: dict[str, Any],
+        expected_version: int | None = None,
+        event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     "SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE",
                     (work_item_id,),
@@ -433,8 +462,29 @@ class RdCollaborationWorkWriteMixin:
         decision_request: dict[str, Any] | None = None,
         event: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._cancel_work_item_bundle_cursor(
+                cursor,
+                work_item_id=work_item_id,
+                expected_version=expected_version,
+                high_risk=high_risk,
+                decision_request=decision_request,
+                event=event,
+            )
+        )
+
+    def _cancel_work_item_bundle_cursor(
+        self,
+        cursor: Any,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        high_risk: bool,
+        decision_request: dict[str, Any] | None = None,
+        event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     "SELECT collaboration_run_id FROM rd_work_items WHERE id = %s",
                     (work_item_id,),
@@ -578,8 +628,25 @@ class RdCollaborationWorkWriteMixin:
         decision_request_id: str,
         expected_version: int,
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._suspend_collaboration_run_cursor(
+                cursor,
+                collaboration_run_id=collaboration_run_id,
+                decision_request_id=decision_request_id,
+                expected_version=expected_version,
+            )
+        )
+
+    def _suspend_collaboration_run_cursor(
+        self,
+        cursor: Any,
+        *,
+        collaboration_run_id: str,
+        decision_request_id: str,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 cursor.execute(
                     "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
                     (collaboration_run_id,),
@@ -790,8 +857,31 @@ class RdCollaborationWorkWriteMixin:
         decided_by: str,
         expected_version: int,
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._apply_decision_bundle_cursor(
+                cursor,
+                decision_request_id=decision_request_id,
+                selected_option_code=selected_option_code,
+                input_json=input_json,
+                comment=comment,
+                decided_by=decided_by,
+                expected_version=expected_version,
+            )
+        )
+
+    def _apply_decision_bundle_cursor(
+        self,
+        cursor: Any,
+        *,
+        decision_request_id: str,
+        selected_option_code: str,
+        input_json: Any,
+        comment: str | None,
+        decided_by: str,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 decision, bound_run, bound_work_item = self._lock_decision_subject(
                     cursor,
                     decision_request_id,
@@ -1004,8 +1094,37 @@ class RdCollaborationWorkWriteMixin:
         options_json: list[dict[str, Any]],
         options_hash: str,
     ) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._answer_decision_request_cursor(
+                cursor,
+                decision_request_id=decision_request_id,
+                expected_version=expected_version,
+                actor_id=actor_id,
+                actor_role_codes=actor_role_codes,
+                actor_seat_ids=actor_seat_ids,
+                answer_json=answer_json,
+                evidence_json=evidence_json,
+                options_json=options_json,
+                options_hash=options_hash,
+            )
+        )
+
+    def _answer_decision_request_cursor(
+        self,
+        cursor: Any,
+        *,
+        decision_request_id: str,
+        expected_version: int,
+        actor_id: str,
+        actor_role_codes: list[str],
+        actor_seat_ids: list[str],
+        answer_json: Any,
+        evidence_json: list[Any],
+        options_json: list[dict[str, Any]],
+        options_hash: str,
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 decision, bound_run, bound_work_item = self._lock_decision_subject(
                     cursor,
                     decision_request_id,
@@ -1086,8 +1205,25 @@ class RdCollaborationWorkWriteMixin:
         successor_request: dict[str, Any],
         expiry_event: dict[str, Any],
     ) -> dict[str, Any] | None:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
+        return self._in_transaction(
+            lambda cursor: self._expire_and_escalate_decision_request_cursor(
+                cursor,
+                decision_request_id=decision_request_id,
+                successor_request=successor_request,
+                expiry_event=expiry_event,
+            )
+        )
+
+    def _expire_and_escalate_decision_request_cursor(
+        self,
+        cursor: Any,
+        *,
+        decision_request_id: str,
+        successor_request: dict[str, Any],
+        expiry_event: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
                 decision, bound_run, bound_work_item = self._lock_decision_subject(
                     cursor,
                     decision_request_id,

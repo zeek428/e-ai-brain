@@ -395,6 +395,355 @@ class RdCollaborationTransaction:
             attempt=attempt,
         )
 
+    def save_rd_task_executor_policy_record(
+        self,
+        record: dict[str, Any],
+        *,
+        expected_policy_version: int | None = None,
+        audit_event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._repository._save_rd_task_executor_policy_record_cursor(
+            self.cursor,
+            record,
+            expected_policy_version=expected_policy_version,
+            audit_event=audit_event,
+        )
+
+    def save_rd_role_definition_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._repository._save_simple_cursor(
+            self.cursor,
+            "rd_role_definitions",
+            record,
+        )
+
+    def save_rd_ai_employee_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._repository._save_simple_cursor(
+            self.cursor,
+            "rd_ai_employees",
+            record,
+        )
+
+    def save_rd_executor_profile_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._repository._save_simple_cursor(
+            self.cursor,
+            "rd_executor_profiles",
+            record,
+        )
+
+    def save_rd_policy_role_binding_record(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._repository._save_simple_cursor(
+            self.cursor,
+            "rd_task_executor_policy_role_bindings",
+            record,
+        )
+
+    def save_rd_task_executor_policy_role_binding_record(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.save_rd_policy_role_binding_record(record)
+
+    def freeze_base_policy_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return self._repository._freeze_base_policy_snapshot_cursor(self.cursor, snapshot)
+
+    def derive_assessment_policy_snapshot(
+        self,
+        *,
+        base_snapshot_id: str,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._repository._derive_assessment_policy_snapshot_cursor(
+            self.cursor,
+            base_snapshot_id=base_snapshot_id,
+            snapshot=snapshot,
+        )
+
+    def merge_version_policy_snapshot_with_sources(
+        self,
+        *,
+        snapshot: dict[str, Any],
+        sources: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return self._repository._merge_version_policy_snapshot_with_sources_cursor(
+            self.cursor,
+            snapshot=snapshot,
+            sources=sources,
+        )
+
+    def save_assessment_bundle(
+        self,
+        *,
+        assessment: dict[str, Any],
+        opinions: list[dict[str, Any]],
+        snapshots: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        return self._repository._save_assessment_bundle_cursor(
+            self.cursor,
+            assessment=assessment,
+            opinions=opinions,
+            snapshots=snapshots,
+        )
+
+    def create_collaboration_run_with_exact_scope(
+        self,
+        *,
+        run: dict[str, Any],
+        scope_rows: list[dict[str, Any]],
+        snapshot: dict[str, Any] | None = None,
+        sources: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        return self._repository._create_collaboration_run_with_exact_scope_cursor(
+            self.cursor,
+            run=run,
+            scope_rows=scope_rows,
+            snapshot=snapshot,
+            sources=sources,
+        )
+
+    def restart_terminal_collaboration_run(
+        self,
+        *,
+        terminal_run_id: str,
+        run: dict[str, Any],
+        scope_rows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return self._repository._restart_terminal_collaboration_run_cursor(
+            self.cursor,
+            terminal_run_id=terminal_run_id,
+            run=run,
+            scope_rows=scope_rows,
+        )
+
+    def assign_requirement_to_version_and_increment_scope(
+        self,
+        *,
+        requirement_id: str,
+        product_version_id: str,
+        expected_scope_version: int,
+    ) -> dict[str, Any]:
+        return self._repository._assign_requirement_to_version_and_increment_scope_cursor(
+            self.cursor,
+            requirement_id=requirement_id,
+            product_version_id=product_version_id,
+            expected_scope_version=expected_scope_version,
+        )
+
+    def create_scope_change_request(
+        self,
+        *,
+        request: dict[str, Any],
+        operations: list[dict[str, Any]],
+        decision_request: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._repository._create_scope_change_request_cursor(
+            self.cursor,
+            request=request,
+            operations=operations,
+            decision_request=decision_request,
+        )
+
+    def apply_scope_change_bundle(
+        self,
+        *,
+        scope_change_request_id: str,
+        decision: str,
+        decided_by: str,
+        expected_decision_version: int,
+        cancellation_outbox_events: list[dict[str, Any]] | None = None,
+        failure_injection: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        return self._repository._apply_scope_change_bundle_cursor(
+            self.cursor,
+            scope_change_request_id=scope_change_request_id,
+            decision=decision,
+            decided_by=decided_by,
+            expected_decision_version=expected_decision_version,
+            cancellation_outbox_events=cancellation_outbox_events,
+            failure_injection=failure_injection,
+        )
+
+    def save_work_item_attempt_bundle(
+        self,
+        *,
+        work_item_id: str,
+        expected_statuses: list[str],
+        next_status: str,
+        attempt: dict[str, Any],
+        expected_version: int | None = None,
+        event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._repository._save_work_item_attempt_bundle_cursor(
+            self.cursor,
+            work_item_id=work_item_id,
+            expected_statuses=expected_statuses,
+            next_status=next_status,
+            attempt=attempt,
+            expected_version=expected_version,
+            event=event,
+        )
+
+    def save_rd_run_seat_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._repository._save_simple_cursor(self.cursor, "rd_run_seats", record)
+
+    def save_rd_role_session_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._repository._save_simple_cursor(self.cursor, "rd_role_sessions", record)
+
+    def save_rd_work_item_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._repository._save_rd_work_item_record_cursor(self.cursor, record)
+
+    def save_rd_work_item_dependency_record(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._repository._save_simple_cursor(
+            self.cursor,
+            "rd_work_item_dependencies",
+            record,
+        )
+
+    def save_rd_collaboration_event_record(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._repository._insert_event_cursor(self.cursor, record)
+
+    def save_decision_request_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._repository._insert_decision_request(self.cursor, record)
+
+    def cancel_work_item_bundle(
+        self,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        high_risk: bool,
+        decision_request: dict[str, Any] | None = None,
+        event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._repository._cancel_work_item_bundle_cursor(
+            self.cursor,
+            work_item_id=work_item_id,
+            expected_version=expected_version,
+            high_risk=high_risk,
+            decision_request=decision_request,
+            event=event,
+        )
+
+    def suspend_collaboration_run(
+        self,
+        *,
+        collaboration_run_id: str,
+        decision_request_id: str,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        return self._repository._suspend_collaboration_run_cursor(
+            self.cursor,
+            collaboration_run_id=collaboration_run_id,
+            decision_request_id=decision_request_id,
+            expected_version=expected_version,
+        )
+
+    def apply_decision_bundle(
+        self,
+        *,
+        decision_request_id: str,
+        selected_option_code: str,
+        input_json: Any,
+        comment: str | None,
+        decided_by: str,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        return self._repository._apply_decision_bundle_cursor(
+            self.cursor,
+            decision_request_id=decision_request_id,
+            selected_option_code=selected_option_code,
+            input_json=input_json,
+            comment=comment,
+            decided_by=decided_by,
+            expected_version=expected_version,
+        )
+
+    def answer_decision_request(
+        self,
+        *,
+        decision_request_id: str,
+        expected_version: int,
+        actor_id: str,
+        actor_role_codes: list[str],
+        actor_seat_ids: list[str],
+        answer_json: Any,
+        evidence_json: list[Any],
+        options_json: list[dict[str, Any]],
+        options_hash: str,
+    ) -> dict[str, Any]:
+        return self._repository._answer_decision_request_cursor(
+            self.cursor,
+            decision_request_id=decision_request_id,
+            expected_version=expected_version,
+            actor_id=actor_id,
+            actor_role_codes=actor_role_codes,
+            actor_seat_ids=actor_seat_ids,
+            answer_json=answer_json,
+            evidence_json=evidence_json,
+            options_json=options_json,
+            options_hash=options_hash,
+        )
+
+    def expire_and_escalate_decision_request(
+        self,
+        *,
+        decision_request_id: str,
+        successor_request: dict[str, Any],
+        expiry_event: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return self._repository._expire_and_escalate_decision_request_cursor(
+            self.cursor,
+            decision_request_id=decision_request_id,
+            successor_request=successor_request,
+            expiry_event=expiry_event,
+        )
+
+    def save_role_feedback_once(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._repository._save_role_feedback_once_cursor(self.cursor, record)
+
+    def save_rd_role_experience_record(
+        self,
+        record: dict[str, Any],
+        *,
+        sources: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return self._repository._save_rd_role_experience_record_cursor(
+            self.cursor,
+            record,
+            sources=sources,
+        )
+
+    def decide_role_experience(
+        self,
+        *,
+        experience_id: str,
+        decision: str,
+        expected_review_version: int,
+        reviewer_subject_type: str,
+        reviewer_subject_id: str,
+        reviewer_role_code: str | None,
+        reviewer_seat_id: str | None,
+        require_independent_reviewer: bool,
+    ) -> dict[str, Any]:
+        return self._repository._decide_role_experience_cursor(
+            self.cursor,
+            experience_id=experience_id,
+            decision=decision,
+            expected_review_version=expected_review_version,
+            reviewer_subject_type=reviewer_subject_type,
+            reviewer_subject_id=reviewer_subject_id,
+            reviewer_role_code=reviewer_role_code,
+            reviewer_seat_id=reviewer_seat_id,
+            require_independent_reviewer=require_independent_reviewer,
+        )
+
     def save_collaboration_event(self, event: dict[str, Any]) -> dict[str, Any]:
         return self._repository._insert_event_cursor(self.cursor, event)
 
@@ -462,6 +811,11 @@ class RdCollaborationWriteBase:
     @staticmethod
     def _row(*, cursor: Any, row: Sequence[Any] | None) -> dict[str, Any] | None:
         return _row_dict(cursor, row)
+
+    def _in_transaction(self, operation: Callable[[Any], Any]) -> Any:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                return operation(cursor)
 
     @staticmethod
     def _idempotency_conflict(message: str, **details: Any) -> RdCollaborationRepositoryError:
@@ -531,12 +885,20 @@ class RdCollaborationWriteBase:
             raise RuntimeError(f"failed to persist {table_name} record")
         return existing
 
+    def _save_simple_cursor(
+        self,
+        cursor: Any,
+        table_name: str,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._insert_record(
+            cursor,
+            table_name,
+            record,
+            update_on_conflict=True,
+        )
+
     def _save_simple(self, table_name: str, record: dict[str, Any]) -> dict[str, Any]:
-        with self._connect(autocommit=False) as connection:
-            with connection.cursor() as cursor:
-                return self._insert_record(
-                    cursor,
-                    table_name,
-                    record,
-                    update_on_conflict=True,
-                )
+        return self._in_transaction(
+            lambda cursor: self._save_simple_cursor(cursor, table_name, record)
+        )
