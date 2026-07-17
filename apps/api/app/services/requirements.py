@@ -604,10 +604,6 @@ def generate_requirement_task_result(
     requirement_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    raise_legacy_rd_entrypoint_required(
-        entrypoint="requirements.generate_task",
-        requirement_id=requirement_id,
-    )
     require_any_permission_or_roles(
         user,
         {"requirement.task_generate", "task.create"},
@@ -617,6 +613,11 @@ def generate_requirement_task_result(
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     ensure_requirement_product_scope(user, requirement.get("product_id"))
+    raise_legacy_rd_entrypoint_required(
+        current_store=current_store,
+        entrypoint="requirements.generate_task",
+        requirement_id=requirement_id,
+    )
     if canonical_requirement_status(requirement.get("status")) != "planned":
         raise api_error(
             409,

@@ -58,9 +58,6 @@ def _temporary_database(admin_url: str) -> Iterator[str]:
         database_url = _database_url(admin_url, database_name)
         with psycopg.connect(database_url, autocommit=True) as connection:
             for migration_path in sorted(MIGRATIONS_DIR.glob("*.sql")):
-                migration_number = int(migration_path.name.split("_", 1)[0])
-                if migration_number > 111:
-                    break
                 connection.execute(migration_path.read_text(encoding="utf-8"))
         yield database_url
     finally:

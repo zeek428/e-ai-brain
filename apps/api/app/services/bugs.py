@@ -17,9 +17,16 @@ from app.services.bug_lifecycle import (
     validate_bug_enums,
 )
 from app.services.bug_listing import bug_summary_projection
+from app.services.legacy_rd_task_adapters import (
+    promote_legacy_bug_to_ai_task,
+    requests_legacy_bug_task,
+)
 from app.services.object_storage import object_storage
 from app.services.product_scope import require_product_scope
-from app.services.rd_requirement_entry_adapters import create_or_link_rd_requirement
+from app.services.rd_requirement_entry_adapters import (
+    create_or_link_rd_requirement,
+    require_v2_requirement_entrypoint,
+)
 from app.services.task_workflow_context import task_workflow_write_store
 
 BUG_IMAGE_MIME_TYPES = {
@@ -31,13 +38,6 @@ BUG_IMAGE_MIME_TYPES = {
 BUG_IMAGE_UPLOAD_SOURCES = {"clipboard", "file_picker"}
 MAX_BUG_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
 BUG_IMAGE_OBJECT_PREFIX = "bugs/evidence/"
-BUG_FIX_TASK_TYPE = "bug_fix"
-
-
-def uses_repository_context(current_store: Any) -> bool:
-    return getattr(current_store, "repository", None) is not None
-
-
 def ensure_non_blank(value: str | None, field: str) -> str:
     if value is None or not value.strip():
         raise api_error(400, "VALIDATION_ERROR", f"{field} is required")
@@ -325,7 +325,6 @@ def promote_bug_to_ai_task_result(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    del code_review_executor, opener
     require_bug_write_role(user)
     write_store = bug_write_store(current_store)
     bug = _read_memory_record(write_store, "bugs", bug_id)
@@ -336,6 +335,23 @@ def promote_bug_to_ai_task_result(
         raise api_error(409, "BUG_STATE_INVALID", "Duplicate Bug cannot be promoted")
     if bug.get("status") == "closed":
         raise api_error(409, "BUG_STATE_INVALID", "Closed Bug cannot be promoted")
+
+    if requests_legacy_bug_task(payload):
+        if bug.get("requirement_id"):
+            require_v2_requirement_entrypoint(
+                current_store=write_store,
+                entrypoint="bugs.promote_ai_task",
+                requirement_id=str(bug["requirement_id"]),
+            )
+        return promote_legacy_bug_to_ai_task(
+            bug=bug,
+            code_review_executor=code_review_executor,
+            current_store=write_store,
+            opener=opener,
+            payload=payload,
+            product_context=bug_task_product_context(write_store, bug),
+            user=user,
+        )
 
     now = datetime.now(UTC).isoformat()
     title = str(getattr(payload, "title", None) or "").strip() or f"Bug 修复：{bug['title']}"

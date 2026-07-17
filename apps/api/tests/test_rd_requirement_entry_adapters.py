@@ -7,7 +7,6 @@ from app.main import app
 from app.services.code_inspection_detail_projection import code_inspection_governance_summary
 from app.services.code_inspections import create_tasks_for_findings
 
-
 client = TestClient(app)
 
 
@@ -52,6 +51,20 @@ def assert_collaboration_required(response) -> None:
     assert detail["details"]["next_action"]
 
 
+def mark_requirement_as_v2(requirement: dict[str, str]) -> None:
+    snapshot_id = f"snapshot-v2-{requirement['id']}"
+    app.state.store.requirement_assessments[f"assessment-v2-{requirement['id']}"] = {
+        "final_strategy_snapshot_id": snapshot_id,
+        "id": f"assessment-v2-{requirement['id']}",
+        "requirement_id": requirement["id"],
+        "status": "accepted",
+    }
+    app.state.store.rd_task_executor_policy_snapshots[snapshot_id] = {
+        "id": snapshot_id,
+        "snapshot_kind": "assessment_resolved",
+    }
+
+
 def test_bug_promotion_links_one_open_requirement_instead_of_creating_ai_task():
     app.state.store.reset()
     headers = auth_headers()
@@ -86,11 +99,12 @@ def test_bug_promotion_links_one_open_requirement_instead_of_creating_ai_task():
     assert len(app.state.store.requirements) == 1
 
 
-def test_legacy_requirement_task_generation_endpoints_are_non_mutating_compatibility_errors():
+def test_v2_requirement_task_generation_endpoints_are_non_mutating_compatibility_errors():
     app.state.store.reset()
     headers = auth_headers()
     product = create_product(headers)
     requirement = create_requirement(headers, product["id"])
+    mark_requirement_as_v2(requirement)
     app.state.store.requirements[requirement["id"]]["status"] = "planned"
     before_task_ids = list(app.state.store.requirements[requirement["id"]]["task_ids"])
 
@@ -108,11 +122,55 @@ def test_legacy_requirement_task_generation_endpoints_are_non_mutating_compatibi
     assert app.state.store.ai_tasks == {}
 
 
-def test_delivery_batch_advance_rejects_delivery_targets_without_partial_mutation():
+def test_legacy_requirement_task_generation_remains_available():
     app.state.store.reset()
     headers = auth_headers()
     product = create_product(headers)
     requirement = create_requirement(headers, product["id"])
+    app.state.store.requirements[requirement["id"]]["status"] = "planned"
+
+    response = client.post(f"/api/requirements/{requirement['id']}/generate-task", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["task_id"]
+    assert len(app.state.store.ai_tasks) == 1
+
+
+def test_explicit_legacy_bug_task_promotion_cannot_bypass_a_v2_requirement():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers)
+    requirement = create_requirement(headers, product["id"])
+    mark_requirement_as_v2(requirement)
+    bug = client.post(
+        "/api/bugs",
+        json={
+            "description": "必须交由 v2 协作处理。",
+            "product_id": product["id"],
+            "requirement_id": requirement["id"],
+            "severity": "major",
+            "source": "manual_test",
+            "title": "v2 Bug",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    response = client.post(
+        f"/api/bugs/{bug['id']}/promote-ai-task",
+        json={"auto_start": True},
+        headers=headers,
+    )
+
+    assert_collaboration_required(response)
+    assert app.state.store.ai_tasks == {}
+
+
+def test_v2_delivery_batch_advance_rejects_delivery_targets_without_partial_mutation():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers)
+    requirement = create_requirement(headers, product["id"])
+    mark_requirement_as_v2(requirement)
 
     assert_collaboration_required(
         client.post(
@@ -161,8 +219,25 @@ def test_public_v2_task_start_and_cancel_are_rejected_without_state_changes():
     app.state.store.ai_tasks[task["id"]] = task
 
     assert_collaboration_required(client.post(f"/api/ai-tasks/{task['id']}/start", headers=headers))
-    assert_collaboration_required(client.post(f"/api/ai-tasks/{task['id']}/cancel", headers=headers))
+    assert_collaboration_required(
+        client.post(f"/api/ai-tasks/{task['id']}/cancel", headers=headers)
+    )
     assert app.state.store.ai_tasks[task["id"]]["status"] == "draft"
+
+
+def test_public_legacy_task_cancel_remains_available():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers)
+    task = _v2_task(task_id="task-legacy-cancel", product_id=product["id"])
+    task.pop("collaboration_run_id")
+    task.pop("work_item_id")
+    app.state.store.ai_tasks[task["id"]] = task
+
+    response = client.post(f"/api/ai-tasks/{task['id']}/cancel", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert app.state.store.ai_tasks[task["id"]]["status"] == "cancelled"
 
 
 def test_mixed_batch_cancel_with_v2_task_is_atomic():
@@ -192,6 +267,7 @@ def test_public_ai_task_create_and_retry_are_retired_compatibility_entrypoints()
     headers = auth_headers()
     product = create_product(headers)
     requirement = create_requirement(headers, product["id"])
+    mark_requirement_as_v2(requirement)
     retry_task = _v2_task(
         task_id="task-v2-retry-entry-adapter",
         product_id=product["id"],

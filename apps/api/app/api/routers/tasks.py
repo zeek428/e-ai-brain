@@ -251,12 +251,14 @@ def create_ai_task(
     payload: AiTaskRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    current_store = store(request)
     raise_legacy_rd_entrypoint_required(
+        current_store=current_store,
         entrypoint="ai_tasks.create",
         requirement_id=payload.requirement_id,
     )
     result = create_ai_task_response(
-        current_store=store(request),
+        current_store=current_store,
         input_payload=payload.input,
         requirement_id=payload.requirement_id,
         task_type=payload.task_type,

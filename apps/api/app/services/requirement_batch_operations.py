@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.api.deps import api_error, require_any_permission_or_roles
-from app.services.rd_requirement_entry_adapters import raise_legacy_rd_entrypoint_required
+from app.services.rd_requirement_entry_adapters import require_v2_requirement_entrypoint
 from app.services.requirement_iteration_planning import validate_manual_iteration_assignment
 from app.services.requirements import (
     REQUIREMENT_BATCH_SCHEDULABLE_STATUSES,
@@ -19,7 +19,10 @@ from app.services.requirements import (
     save_requirement_record,
 )
 from app.services.version_status import (
+    can_batch_advance_requirement_status,
     canonical_requirement_status,
+    requires_requirement_version_for_batch_advance,
+    validate_requirement_batch_advance_target,
     validate_requirement_version,
 )
 
@@ -103,7 +106,6 @@ def batch_generate_requirement_tasks_result(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    raise_legacy_rd_entrypoint_required(entrypoint="requirements.batch_generate_tasks")
     require_any_permission_or_roles(
         user,
         {"requirement.task_generate", "task.create"},
@@ -115,6 +117,22 @@ def batch_generate_requirement_tasks_result(
     ensure_requirement_product_scope(user, payload.product_id)
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
+
+    # Preflight every eligible item before generating the first legacy task so
+    # a mixed public batch cannot partially bypass a v2 requirement.
+    for requirement_id in dict.fromkeys(payload.requirement_ids):
+        requirement = _read_memory_dict(current_store, "requirements").get(requirement_id)
+        if requirement is None or requirement.get("product_id") != payload.product_id:
+            continue
+        try:
+            ensure_requirement_product_scope(user, requirement.get("product_id"))
+        except HTTPException:
+            continue
+        require_v2_requirement_entrypoint(
+            current_store=current_store,
+            entrypoint="requirements.batch_generate_tasks",
+            requirement_id=requirement_id,
+        )
 
     batch_id = current_store.new_id("requirement_task_batch")
     now = datetime.now(UTC).isoformat()
@@ -580,10 +598,14 @@ def batch_advance_requirement_status_result(
         {"product_owner", "rd_owner"},
     )
     target_status = canonical_requirement_status(payload.target_status)
+    validate_requirement_batch_advance_target(target_status)
     if target_status not in {"cancelled", "closed"}:
-        raise_legacy_rd_entrypoint_required(
-            entrypoint="requirements.batch_advance_status",
-        )
+        for requirement_id in dict.fromkeys(payload.requirement_ids):
+            require_v2_requirement_entrypoint(
+                current_store=current_store,
+                entrypoint="requirements.batch_advance_status",
+                requirement_id=requirement_id,
+            )
     batch_id = current_store.new_id("requirement_status_batch")
     now = datetime.now(UTC).isoformat()
     updated: list[dict[str, Any]] = []
@@ -633,6 +655,28 @@ def batch_advance_requirement_status_result(
                 }
             )
             continue
+        if not can_batch_advance_requirement_status(current_status, target_status):
+            skipped.append(
+                {
+                    "code": "REQUIREMENT_STATE_INVALID",
+                    "id": requirement_id,
+                    "message": "Requirement cannot be advanced to target status",
+                }
+            )
+            continue
+        if requires_requirement_version_for_batch_advance(target_status) and not requirement.get(
+            "version_id"
+        ):
+            skipped.append(
+                {
+                    "code": "REQUIREMENT_VERSION_REQUIRED",
+                    "id": requirement_id,
+                    "message": (
+                        "Requirement must be scheduled to a version before advancing to this status"
+                    ),
+                }
+            )
+            continue
         if current_status in {"cancelled", "closed"} or current_status == target_status:
             skipped.append(
                 {
@@ -650,14 +694,14 @@ def batch_advance_requirement_status_result(
         }
         audit_event = record_audit_event(
             current_store,
-            event_type=f"requirement.batch_{target_status}",
+            event_type="requirement.updated",
             actor_id=user["id"],
             subject_type="requirement",
             subject_id=requirement_id,
             payload={
                 "batch_id": batch_id,
                 "from_status": current_status,
-                "operation": f"batch_{target_status}",
+                "operation": "batch_advance_status",
                 "reason": payload.reason,
                 "to_status": target_status,
             },
@@ -671,7 +715,7 @@ def batch_advance_requirement_status_result(
 
     batch_audit_event = record_audit_event(
         current_store,
-        event_type=f"requirement.batch_{target_status}",
+        event_type="requirement.batch_status_advanced",
         actor_id=user["id"],
         subject_type="requirement_status_batch",
         subject_id=batch_id,

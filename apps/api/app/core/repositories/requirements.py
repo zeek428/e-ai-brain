@@ -737,7 +737,7 @@ class RequirementReadRepository:
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
-                  %s, %s, %s, %s, %s::jsonb,
+                  %s, %s, %s, %s, %s, %s::jsonb,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET

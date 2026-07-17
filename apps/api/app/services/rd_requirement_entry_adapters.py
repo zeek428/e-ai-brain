@@ -26,6 +26,12 @@ SOURCE_TO_REQUIREMENT_SOURCE = {
     "code_inspection_finding": "other",
 }
 
+V2_POLICY_SNAPSHOT_KINDS = {
+    "base",
+    "assessment_resolved",
+    "version_resolved",
+}
+
 
 def adapter_idempotency_key(*, source_id: str, source_type: str) -> str:
     return f"{source_type}:{source_id}"
@@ -56,6 +62,71 @@ def _open_requirement_for_source(
         if str(requirement.get("status") or "submitted") in OPEN_REQUIREMENT_STATUSES:
             return requirement
     return None
+
+
+def _requirement_record(current_store: Any, requirement_id: str) -> dict[str, Any] | None:
+    requirement = _read_records(current_store, "requirements").get(requirement_id)
+    if requirement is not None:
+        return requirement
+    repository = getattr(current_store, "repository", None)
+    load_requirements = getattr(repository, "load_requirements", None)
+    if not callable(load_requirements):
+        return None
+    payload = load_requirements()
+    requirements = payload.get("requirements", {}) if isinstance(payload, dict) else {}
+    candidate = requirements.get(requirement_id) if isinstance(requirements, dict) else None
+    return candidate if isinstance(candidate, dict) else None
+
+
+def _accepted_assessments(current_store: Any, requirement_id: str) -> list[dict[str, Any]]:
+    assessments = [
+        item
+        for item in _read_records(current_store, "requirement_assessments").values()
+        if item.get("requirement_id") == requirement_id
+    ]
+    if not assessments:
+        repository = getattr(current_store, "repository", None)
+        list_assessments = getattr(repository, "list_requirement_assessments", None)
+        if callable(list_assessments):
+            loaded = list_assessments(requirement_id)
+            assessments = [item for item in loaded if isinstance(item, dict)]
+    return [item for item in assessments if item.get("status") == "accepted"]
+
+
+def _v2_snapshot(current_store: Any, snapshot_id: Any) -> dict[str, Any] | None:
+    if not snapshot_id:
+        return None
+    snapshot = _read_records(current_store, "rd_task_executor_policy_snapshots").get(
+        str(snapshot_id)
+    )
+    if snapshot is not None:
+        return snapshot
+    repository = getattr(current_store, "repository", None)
+    get_snapshot = getattr(repository, "get_rd_policy_snapshot", None)
+    if not callable(get_snapshot):
+        return None
+    loaded = get_snapshot(str(snapshot_id))
+    return loaded if isinstance(loaded, dict) else None
+
+
+def is_v2_collaboration_requirement(current_store: Any, requirement_id: str) -> bool:
+    """Return true only for requirements owned by the v2 collaboration flow.
+
+    Legacy requirements may have an accepted compatibility assessment record but
+    no v2 snapshot kind.  Keeping those paths writable is required while the
+    v2 assessment/collaboration contract is rolled out incrementally.
+    """
+    requirement = _requirement_record(current_store, requirement_id)
+    if requirement is None:
+        return False
+    if requirement.get("source_adapter_key") or requirement.get("source_collaboration_run_id"):
+        return True
+    return any(
+        (snapshot := _v2_snapshot(current_store, assessment.get("final_strategy_snapshot_id")))
+        is not None
+        and snapshot.get("snapshot_kind") in V2_POLICY_SNAPSHOT_KINDS
+        for assessment in _accepted_assessments(current_store, requirement_id)
+    )
 
 
 def _source_title(source_type: str, source_id: str, evidence: dict[str, Any]) -> str:
@@ -216,11 +287,14 @@ def require_v2_task_work_item_entrypoint(task: dict[str, Any], *, entrypoint: st
         )
 
 
-def raise_legacy_rd_entrypoint_required(
+def require_v2_requirement_entrypoint(
     *,
+    current_store: Any,
     entrypoint: str,
-    requirement_id: str | None = None,
+    requirement_id: str,
 ) -> None:
+    if not is_v2_collaboration_requirement(current_store, requirement_id):
+        return
     raise api_error(
         409,
         "RD_COLLABORATION_REQUIRED",
@@ -229,4 +303,19 @@ def raise_legacy_rd_entrypoint_required(
             entrypoint=entrypoint,
             requirement_id=requirement_id,
         ),
+    )
+
+
+def raise_legacy_rd_entrypoint_required(
+    *,
+    current_store: Any,
+    entrypoint: str,
+    requirement_id: str | None = None,
+) -> None:
+    if requirement_id is None:
+        return
+    require_v2_requirement_entrypoint(
+        current_store=current_store,
+        entrypoint=entrypoint,
+        requirement_id=requirement_id,
     )

@@ -262,6 +262,7 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "101_deployment_strategies.sql" in applied_migrations
     assert "102_autonomous_delivery_governance.sql" in applied_migrations
     assert "109_requirement_driven_rd_collaboration.sql" in applied_migrations
+    assert "112_rd_requirement_entry_adapters.sql" in applied_migrations
 
 
 def test_postgres_execution_governance_delegates_to_domain_repository(monkeypatch):
@@ -1417,6 +1418,8 @@ def test_ai_task_summary_repository_projects_code_inspection_location_title():
                 "[Code Inspection Remediation] 硬编码敏感凭据",
                 "draft",
                 "product_119",
+                None,
+                None,
                 None,
                 None,
                 None,
