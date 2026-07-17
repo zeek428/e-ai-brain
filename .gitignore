@@ -41,3 +41,4 @@ backups/
 
 # Local assistant workspace
 .claude/
+.worktrees/
