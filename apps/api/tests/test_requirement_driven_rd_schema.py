@@ -206,6 +206,13 @@ def test_policy_snapshot_is_insert_only_and_has_exact_identity(migration_sql: st
     normalized = _normalized(migration_sql)
     assert "idx_rd_policy_snapshot_content_hash" in normalized
     assert "trg_rd_policy_snapshot_parent_integrity" in normalized
+    assert (
+        "foreign key (policy_id) references rd_task_executor_policies(id) on delete restrict"
+        in normalized
+    )
+    assert "foreign key (policy_id, policy_version)" not in normalized
+    assert "trg_rd_policy_snapshot_current_policy_version" in normalized
+    assert "trg_requirement_assessment_provenance_immutable" in normalized
     assert "old.parent_snapshot_id is null" in normalized or "parent_snapshot_id is null" in body
 
 
@@ -296,6 +303,7 @@ def test_run_pause_generation_decision_expiry_and_fence_are_constrained(migratio
     assert "where supersedes_run_id is not null" in normalized
     assert "where status not in ('completed', 'failed', 'cancelled')" in normalized
     assert "trg_rd_collaboration_run_scope_identity_immutable" in normalized
+    assert "failed or cancelled terminal collaboration runs are immutable" in normalized
     for frozen_field in (
         "product_id",
         "product_version_id",
@@ -528,6 +536,10 @@ def test_feedback_producer_identity_is_distinct_scoped_and_immutable(migration_s
     assert "from users" in normalized
     assert "from rd_ai_employees" in normalized
     assert "trg_role_feedback_producer_seat_role" in normalized
+    assert "producer seat subject must match producer subject type and id" in normalized
+    assert "trg_rd_run_seat_feedback_identity_immutable" in normalized
+    assert "trg_users_feedback_producer_identity" in normalized
+    assert "trg_rd_ai_employees_feedback_producer_identity" in normalized
     assert "trg_role_feedback_records_immutable" in normalized
 
 
@@ -536,6 +548,16 @@ def test_graph_version_task_links_permissions_and_runtime_grants_are_additive(
 ):
     normalized = _normalized(migration_sql)
     assert "add column if not exists policy_version bigint not null default 1" in normalized
+    assert (
+        "create unique index if not exists uk_rd_task_executor_policies_active_product"
+        not in normalized
+    )
+    assert (
+        "create unique index if not exists uk_rd_task_executor_policies_active_default"
+        not in normalized
+    )
+    assert "idx_rd_task_executor_policies_active_product_advisory" in normalized
+    assert "idx_rd_task_executor_policies_active_default_advisory" in normalized
     assert "add column if not exists scope_version bigint not null default 1" in normalized
     for table_name in ("graph_runs", "graph_checkpoints"):
         assert f"alter table if exists {table_name}" in normalized

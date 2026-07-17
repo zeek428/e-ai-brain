@@ -7,11 +7,16 @@ ALTER TABLE IF EXISTS rd_task_executor_policies
 CREATE UNIQUE INDEX IF NOT EXISTS uk_rd_task_executor_policies_version
   ON rd_task_executor_policies (id, policy_version);
 
-CREATE UNIQUE INDEX IF NOT EXISTS uk_rd_task_executor_policies_active_product
+DROP INDEX IF EXISTS uk_rd_task_executor_policies_active_product;
+DROP INDEX IF EXISTS uk_rd_task_executor_policies_active_default;
+
+-- Task 2 keeps legacy task-type policy selection writable. These indexes are
+-- advisory lookup aids only; unified one-active-policy enforcement is a Task 14 cutover step.
+CREATE INDEX IF NOT EXISTS idx_rd_task_executor_policies_active_product_advisory
   ON rd_task_executor_policies (brain_app_id, product_id)
   WHERE status = 'active' AND product_id IS NOT NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uk_rd_task_executor_policies_active_default
+CREATE INDEX IF NOT EXISTS idx_rd_task_executor_policies_active_default_advisory
   ON rd_task_executor_policies (brain_app_id)
   WHERE status = 'active' AND product_id IS NULL;
 
@@ -138,8 +143,6 @@ CREATE TABLE IF NOT EXISTS rd_task_executor_policy_snapshots (
   created_by text NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (policy_id, policy_version, snapshot_kind, resolution_context_key, resolution_revision),
-  CONSTRAINT fk_rd_policy_snapshot_policy_version FOREIGN KEY (policy_id, policy_version)
-    REFERENCES rd_task_executor_policies(id, policy_version) ON DELETE RESTRICT,
   CONSTRAINT ck_rd_policy_snapshot_kind CHECK (
     snapshot_kind IN ('base', 'assessment_resolved', 'version_resolved')
   ),
@@ -165,6 +168,19 @@ CREATE TABLE IF NOT EXISTS rd_task_executor_policy_snapshots (
     policy_version > 0 AND schema_version > 0
   )
 );
+
+-- Snapshots preserve the version value that produced their payload, while the identity
+-- FK deliberately follows only the stable policy row. The insert trigger below checks
+-- that a newly frozen snapshot uses the policy's then-current version.
+ALTER TABLE rd_task_executor_policy_snapshots
+  DROP CONSTRAINT IF EXISTS fk_rd_policy_snapshot_policy_version;
+
+ALTER TABLE rd_task_executor_policy_snapshots
+  DROP CONSTRAINT IF EXISTS fk_rd_policy_snapshot_policy;
+
+ALTER TABLE rd_task_executor_policy_snapshots
+  ADD CONSTRAINT fk_rd_policy_snapshot_policy
+  FOREIGN KEY (policy_id) REFERENCES rd_task_executor_policies(id) ON DELETE RESTRICT;
 
 CREATE INDEX IF NOT EXISTS idx_rd_policy_snapshot_content_hash
   ON rd_task_executor_policy_snapshots (content_hash);
@@ -927,9 +943,52 @@ BEGIN
      AND parent_row.snapshot_kind NOT IN ('base', 'assessment_resolved') THEN
     RAISE EXCEPTION 'assessment_resolved snapshot parent is invalid';
   END IF;
+  IF NEW.snapshot_kind = 'version_resolved' THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM product_versions version
+      JOIN rd_task_executor_policies policy ON policy.id = NEW.policy_id
+      WHERE NEW.resolution_context_key =
+        'version:' || version.id || ':scope:' || version.scope_version::text
+        AND (policy.product_id IS NULL OR policy.product_id = version.product_id)
+    ) THEN
+      RAISE EXCEPTION 'version_resolved snapshot must match current version scope and policy ownership';
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1
+      FROM rd_task_executor_policy_snapshot_sources source
+      WHERE source.snapshot_id = NEW.id
+    ) THEN
+      RAISE EXCEPTION 'version_resolved snapshot must have immutable source coverage';
+    END IF;
+  END IF;
   RETURN NEW;
 END;
 $$;
+
+CREATE OR REPLACE FUNCTION validate_rd_policy_snapshot_current_policy_version()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  current_policy_version bigint;
+BEGIN
+  SELECT policy_version INTO current_policy_version
+  FROM rd_task_executor_policies
+  WHERE id = NEW.policy_id;
+  IF NOT FOUND OR current_policy_version IS DISTINCT FROM NEW.policy_version THEN
+    RAISE EXCEPTION 'policy snapshot version must equal the current policy version';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_rd_policy_snapshot_current_policy_version
+  ON rd_task_executor_policy_snapshots;
+
+CREATE TRIGGER trg_rd_policy_snapshot_current_policy_version
+BEFORE INSERT ON rd_task_executor_policy_snapshots
+FOR EACH ROW EXECUTE FUNCTION validate_rd_policy_snapshot_current_policy_version();
 
 DROP TRIGGER IF EXISTS trg_rd_policy_snapshot_parent_integrity
   ON rd_task_executor_policy_snapshots;
@@ -944,18 +1003,51 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  initial_kind text;
-  final_kind text;
+  initial_snapshot rd_task_executor_policy_snapshots%ROWTYPE;
+  final_snapshot rd_task_executor_policy_snapshots%ROWTYPE;
+  prior_revision_snapshot rd_task_executor_policy_snapshots%ROWTYPE;
 BEGIN
-  SELECT snapshot_kind INTO initial_kind
+  SELECT * INTO initial_snapshot
   FROM rd_task_executor_policy_snapshots WHERE id = NEW.initial_strategy_snapshot_id;
-  SELECT snapshot_kind INTO final_kind
+  SELECT * INTO final_snapshot
   FROM rd_task_executor_policy_snapshots WHERE id = NEW.final_strategy_snapshot_id;
-  IF initial_kind <> 'base' OR final_kind NOT IN ('base', 'assessment_resolved') THEN
+  IF initial_snapshot.snapshot_kind <> 'base'
+     OR final_snapshot.snapshot_kind NOT IN ('base', 'assessment_resolved') THEN
     RAISE EXCEPTION 'requirement assessment strategy snapshot kinds are invalid';
   END IF;
   IF NEW.strategy_snapshot_id <> NEW.final_strategy_snapshot_id THEN
     RAISE EXCEPTION 'strategy_snapshot_id must equal final_strategy_snapshot_id';
+  END IF;
+  IF final_snapshot.snapshot_kind = 'base' THEN
+    IF final_snapshot.id <> initial_snapshot.id THEN
+      RAISE EXCEPTION 'assessment snapshot base must equal its initial snapshot root';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF final_snapshot.policy_id <> initial_snapshot.policy_id
+     OR final_snapshot.policy_version <> initial_snapshot.policy_version
+     OR final_snapshot.resolution_context_key <> 'assessment:' || NEW.id THEN
+    RAISE EXCEPTION 'assessment snapshot must match assessment context and initial root policy';
+  END IF;
+  IF final_snapshot.resolution_revision = 1 THEN
+    IF final_snapshot.parent_snapshot_id <> initial_snapshot.id THEN
+      RAISE EXCEPTION 'assessment snapshot revision 1 must descend from its initial root';
+    END IF;
+  ELSIF final_snapshot.resolution_revision = 2 THEN
+    SELECT * INTO prior_revision_snapshot
+    FROM rd_task_executor_policy_snapshots
+    WHERE id = final_snapshot.parent_snapshot_id;
+    IF NOT FOUND
+       OR prior_revision_snapshot.snapshot_kind <> 'assessment_resolved'
+       OR prior_revision_snapshot.policy_id <> initial_snapshot.policy_id
+       OR prior_revision_snapshot.policy_version <> initial_snapshot.policy_version
+       OR prior_revision_snapshot.resolution_context_key <> 'assessment:' || NEW.id
+       OR prior_revision_snapshot.resolution_revision <> 1
+       OR prior_revision_snapshot.parent_snapshot_id <> initial_snapshot.id THEN
+      RAISE EXCEPTION 'assessment snapshot revision 2 must follow revision 1 from its initial root';
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'assessment snapshot revision is invalid';
   END IF;
   RETURN NEW;
 END;
@@ -965,23 +1057,68 @@ DROP TRIGGER IF EXISTS trg_requirement_assessment_snapshot_integrity
   ON requirement_assessments;
 
 CREATE CONSTRAINT TRIGGER trg_requirement_assessment_snapshot_integrity
-AFTER INSERT OR UPDATE OF initial_strategy_snapshot_id, final_strategy_snapshot_id, strategy_snapshot_id
+AFTER INSERT OR UPDATE OF id, initial_strategy_snapshot_id, final_strategy_snapshot_id, strategy_snapshot_id
 ON requirement_assessments
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION validate_requirement_assessment_snapshot_integrity();
+
+CREATE OR REPLACE FUNCTION protect_referenced_requirement_assessment_provenance()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF ROW(
+    NEW.requirement_id, NEW.requirement_revision,
+    NEW.initial_strategy_snapshot_id, NEW.final_strategy_snapshot_id,
+    NEW.strategy_snapshot_id, NEW.status
+  ) IS DISTINCT FROM ROW(
+    OLD.requirement_id, OLD.requirement_revision,
+    OLD.initial_strategy_snapshot_id, OLD.final_strategy_snapshot_id,
+    OLD.strategy_snapshot_id, OLD.status
+  ) AND (
+    EXISTS (
+      SELECT 1 FROM rd_task_executor_policy_snapshot_sources
+      WHERE assessment_id = OLD.id
+    ) OR EXISTS (
+      SELECT 1 FROM rd_collaboration_run_requirements
+      WHERE assessment_id = OLD.id
+    )
+  ) THEN
+    RAISE EXCEPTION 'referenced assessment provenance is immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_requirement_assessment_provenance_immutable
+  ON requirement_assessments;
+
+CREATE TRIGGER trg_requirement_assessment_provenance_immutable
+BEFORE UPDATE ON requirement_assessments
+FOR EACH ROW EXECUTE FUNCTION protect_referenced_requirement_assessment_provenance();
 
 CREATE OR REPLACE FUNCTION validate_rd_collaboration_run_integrity()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  snapshot_kind_value text;
   previous_run rd_collaboration_runs%ROWTYPE;
 BEGIN
-  SELECT snapshot_kind INTO snapshot_kind_value
-  FROM rd_task_executor_policy_snapshots WHERE id = NEW.strategy_snapshot_id;
-  IF snapshot_kind_value <> 'version_resolved' THEN
-    RAISE EXCEPTION 'collaboration run must use a version_resolved policy snapshot';
+  IF NOT EXISTS (
+    SELECT 1
+    FROM rd_task_executor_policy_snapshots snapshot
+    JOIN rd_task_executor_policies policy ON policy.id = snapshot.policy_id
+    JOIN product_versions version ON version.id = NEW.product_version_id
+    WHERE snapshot.id = NEW.strategy_snapshot_id
+      AND snapshot.snapshot_kind = 'version_resolved'
+      AND snapshot.resolution_context_key =
+        'version:' || NEW.product_version_id || ':scope:' || NEW.scope_version::text
+      AND version.product_id = NEW.product_id
+      AND version.scope_version = NEW.scope_version
+      AND policy.brain_app_id = NEW.brain_app_id
+      AND (policy.product_id IS NULL OR policy.product_id = NEW.product_id)
+  ) THEN
+    RAISE EXCEPTION 'collaboration run snapshot must match version, scope, and current ownership';
   END IF;
   IF NEW.supersedes_run_id IS NOT NULL THEN
     SELECT * INTO previous_run FROM rd_collaboration_runs WHERE id = NEW.supersedes_run_id;
@@ -1016,6 +1153,9 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
+  IF OLD.status IN ('failed', 'cancelled') THEN
+    RAISE EXCEPTION 'failed or cancelled terminal collaboration runs are immutable';
+  END IF;
   IF ROW(
     NEW.brain_app_id, NEW.product_id, NEW.product_version_id,
     NEW.strategy_snapshot_id, NEW.run_generation, NEW.supersedes_run_id,
@@ -1100,9 +1240,12 @@ BEGIN
 
   SELECT count(*) INTO mismatch_count
   FROM rd_collaboration_run_requirements scope_row
-  FULL JOIN rd_task_executor_policy_snapshot_sources source_row
-    ON source_row.snapshot_id = run_row.strategy_snapshot_id
-   AND source_row.requirement_id = scope_row.requirement_id
+  FULL JOIN (
+    SELECT *
+    FROM rd_task_executor_policy_snapshot_sources
+    WHERE snapshot_id = run_row.strategy_snapshot_id
+  ) source_row
+    ON source_row.requirement_id = scope_row.requirement_id
   LEFT JOIN requirement_assessments assessment
     ON assessment.id = COALESCE(scope_row.assessment_id, source_row.assessment_id)
   LEFT JOIN rd_task_executor_policy_snapshots target_snapshot
@@ -1275,15 +1418,30 @@ AS $$
 DECLARE
   seat_role text;
   seat_run_id text;
+  seat_subject_type text;
+  seat_subject_id text;
 BEGIN
   IF NEW.producer_seat_id IS NULL THEN
     RETURN NEW;
   END IF;
-  SELECT role_code, collaboration_run_id INTO seat_role, seat_run_id
+  SELECT
+    role_code,
+    collaboration_run_id,
+    subject_type,
+    CASE
+      WHEN subject_type = 'human_user' THEN human_user_id
+      WHEN subject_type = 'ai_employee' THEN ai_employee_id
+    END
+  INTO seat_role, seat_run_id, seat_subject_type, seat_subject_id
   FROM rd_run_seats WHERE id = NEW.producer_seat_id;
   IF seat_role IS DISTINCT FROM NEW.producer_role_code
      OR seat_run_id IS DISTINCT FROM NEW.collaboration_run_id THEN
     RAISE EXCEPTION 'feedback producer frozen role and run must match producer seat';
+  END IF;
+  IF NEW.producer_subject_type = 'service'
+     OR seat_subject_type IS DISTINCT FROM NEW.producer_subject_type
+     OR seat_subject_id IS DISTINCT FROM NEW.producer_subject_id THEN
+    RAISE EXCEPTION 'feedback producer seat subject must match producer subject type and id';
   END IF;
   RETURN NEW;
 END;
@@ -1296,6 +1454,78 @@ CREATE CONSTRAINT TRIGGER trg_role_feedback_producer_seat_role
 AFTER INSERT ON role_feedback_records
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION validate_role_feedback_producer_seat_role();
+
+CREATE OR REPLACE FUNCTION protect_feedback_referenced_rd_run_seat_identity()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF ROW(
+    NEW.collaboration_run_id, NEW.role_code, NEW.subject_type,
+    NEW.human_user_id, NEW.ai_employee_id
+  ) IS DISTINCT FROM ROW(
+    OLD.collaboration_run_id, OLD.role_code, OLD.subject_type,
+    OLD.human_user_id, OLD.ai_employee_id
+  ) AND EXISTS (
+    SELECT 1
+    FROM role_feedback_records feedback
+    WHERE feedback.seat_id = OLD.id OR feedback.producer_seat_id = OLD.id
+  ) THEN
+    RAISE EXCEPTION 'feedback-referenced seat identity is immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_rd_run_seat_feedback_identity_immutable
+  ON rd_run_seats;
+
+CREATE TRIGGER trg_rd_run_seat_feedback_identity_immutable
+BEFORE UPDATE ON rd_run_seats
+FOR EACH ROW EXECUTE FUNCTION protect_feedback_referenced_rd_run_seat_identity();
+
+CREATE OR REPLACE FUNCTION protect_role_feedback_polymorphic_producer_identity()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  feedback_subject_type text;
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.id IS NOT DISTINCT FROM OLD.id THEN
+    RETURN NEW;
+  END IF;
+  feedback_subject_type := CASE
+    WHEN TG_TABLE_NAME = 'users' THEN 'human_user'
+    WHEN TG_TABLE_NAME = 'rd_ai_employees' THEN 'ai_employee'
+  END;
+  IF EXISTS (
+    SELECT 1
+    FROM role_feedback_records feedback
+    WHERE feedback.producer_subject_type = feedback_subject_type
+      AND feedback.producer_subject_id = OLD.id
+  ) THEN
+    RAISE EXCEPTION 'feedback producer identity cannot be changed or deleted';
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_users_feedback_producer_identity
+  ON users;
+
+CREATE TRIGGER trg_users_feedback_producer_identity
+BEFORE UPDATE OR DELETE ON users
+FOR EACH ROW EXECUTE FUNCTION protect_role_feedback_polymorphic_producer_identity();
+
+DROP TRIGGER IF EXISTS trg_rd_ai_employees_feedback_producer_identity
+  ON rd_ai_employees;
+
+CREATE TRIGGER trg_rd_ai_employees_feedback_producer_identity
+BEFORE UPDATE OR DELETE ON rd_ai_employees
+FOR EACH ROW EXECUTE FUNCTION protect_role_feedback_polymorphic_producer_identity();
 
 CREATE OR REPLACE FUNCTION scrub_expired_rd_command_replay_secrets()
 RETURNS bigint

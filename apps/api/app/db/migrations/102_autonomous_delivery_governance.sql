@@ -372,7 +372,6 @@ CREATE TABLE IF NOT EXISTS knowledge_processing_profiles (
   created_by text REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT ck_knowledge_profile_provider CHECK (
     provider_type IN ('builtin', 'http', 'mineru', 'paddleocr', 'gotenberg', 'multimodal_gateway')
   ),
