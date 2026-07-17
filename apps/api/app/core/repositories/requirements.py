@@ -43,6 +43,7 @@ class RequirementReadRepository:
         requirements = payload.get("requirements", {})
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
+                self._guard_bulk_requirement_scope_mutation(cursor, requirements)
                 if self._delete_missing is not None:
                     self._delete_missing(cursor, "requirements", requirements)
                 self.upsert_requirements(cursor, requirements)
@@ -55,6 +56,17 @@ class RequirementReadRepository:
     ) -> None:
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
+                fetchone = getattr(cursor, "fetchone", None)
+                if callable(fetchone):
+                    cursor.execute(
+                        "SELECT id, version_id, status FROM requirements WHERE id = %s FOR UPDATE",
+                        (record["id"],),
+                    )
+                    self._guard_requirement_membership_mutation(
+                        cursor,
+                        existing=fetchone(),
+                        record=record,
+                    )
                 self.upsert_requirements(cursor, {record["id"]: record})
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])
@@ -69,10 +81,18 @@ class RequirementReadRepository:
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT id FROM requirements WHERE id = %s FOR UPDATE", (record["id"],)
+                    "SELECT id, version_id, status FROM requirements WHERE id = %s FOR UPDATE",
+                    (record["id"],),
                 )
-                if cursor.fetchone() is None:
+                existing = cursor.fetchone()
+                if existing is None:
                     raise KeyError(record["id"])
+                self._guard_requirement_membership_mutation(
+                    cursor,
+                    existing=existing,
+                    record=record,
+                    substantive_revision=True,
+                )
                 self.upsert_requirements(cursor, {record["id"]: record})
                 cursor.execute(
                     """
@@ -110,6 +130,155 @@ class RequirementReadRepository:
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])
 
+    @staticmethod
+    def _guard_bulk_requirement_scope_mutation(
+        cursor,
+        requirements: dict[str, dict[str, Any]],
+    ) -> None:
+        """Apply the same frozen-scope rule to snapshot-style bulk writes."""
+        cursor.execute(
+            "SELECT id, version_id, status, assessment_revision FROM requirements FOR UPDATE"
+        )
+        fetchall = getattr(cursor, "fetchall", None)
+        if not callable(fetchall):
+            return
+        existing_by_id = {str(row[0]): row for row in fetchall()}
+        version_ids: set[str] = set()
+        for requirement_id, existing in existing_by_id.items():
+            incoming = requirements.get(requirement_id)
+            existing_scope = existing[1] if existing[2] == "planned" else None
+            incoming_scope = (
+                incoming.get("version_id")
+                if incoming is not None and incoming.get("status") == "planned"
+                else None
+            )
+            substantive_revision = (
+                incoming is not None
+                and existing_scope is not None
+                and int(incoming.get("assessment_revision") or 1) != int(existing[3] or 1)
+            )
+            if existing_scope != incoming_scope or substantive_revision:
+                version_ids.update(
+                    str(version_id)
+                    for version_id in (existing_scope, incoming_scope)
+                    if version_id is not None
+                )
+        for requirement_id, incoming in requirements.items():
+            if requirement_id not in existing_by_id and incoming.get("status") == "planned":
+                version_id = incoming.get("version_id")
+                if version_id is not None:
+                    version_ids.add(str(version_id))
+        RequirementReadRepository._guard_scope_mutation(cursor, sorted(version_ids))
+
+    @staticmethod
+    def _guard_requirement_membership_mutation(
+        cursor,
+        *,
+        existing: Any | None,
+        record: dict[str, Any],
+        substantive_revision: bool = False,
+    ) -> None:
+        """Freeze only the membership changes that alter an iteration's scope.
+
+        Requirement records may be displayed or annotated while a run is
+        active.  Adding/removing/reassigning a planned requirement, and a
+        substantive edit of an already planned requirement, are different:
+        they must lock the owning planning version and refresh its scope
+        version atomically with the requirement write.
+        """
+        existing_version_id = existing[1] if existing is not None else None
+        existing_planned = existing is not None and existing[2] == "planned"
+        incoming_version_id = record.get("version_id")
+        incoming_planned = record.get("status") == "planned"
+        existing_scope_version = existing_version_id if existing_planned else None
+        incoming_scope_version = incoming_version_id if incoming_planned else None
+        changed_membership = existing_scope_version != incoming_scope_version
+        if not changed_membership and not (
+            substantive_revision and existing_scope_version is not None
+        ):
+            return
+        RequirementReadRepository._guard_scope_mutation(
+            cursor,
+            sorted(
+                {
+                    str(version_id)
+                    for version_id in (existing_scope_version, incoming_scope_version)
+                    if version_id is not None
+                }
+            ),
+        )
+
+    @staticmethod
+    def _guard_scope_mutation(cursor, version_ids: list[str]) -> None:
+        if not version_ids:
+            return
+        cursor.execute(
+            "SELECT id, status FROM product_versions WHERE id = ANY(%s) ORDER BY id FOR UPDATE",
+            (version_ids,),
+        )
+        versions = cursor.fetchall()
+        if len(versions) != len(version_ids):
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_CHANGE_INVALID", "product version does not exist"
+            )
+        if any(row[1] in {"ready_for_release", "deploying", "released"} for row in versions):
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_FROZEN",
+                "delivered product version scope must move to a new planning version",
+                details={
+                    "retryable": False,
+                    "resolution": "new_planning_version",
+                    "next_action": "create_followup_requirement",
+                },
+            )
+        if any(row[1] != "planning" for row in versions):
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_FROZEN",
+                "only a planning product version accepts ordinary scope changes",
+                details={
+                    "retryable": False,
+                    "next_action": "create_scope_change_request",
+                },
+            )
+        cursor.execute(
+            """
+            SELECT id, status, suspended_decision_request_id
+            FROM rd_collaboration_runs
+            WHERE product_version_id = ANY(%s)
+              AND status NOT IN ('completed', 'failed', 'cancelled')
+            ORDER BY run_generation DESC
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (version_ids,),
+        )
+        active_run = cursor.fetchone()
+        if active_run is not None:
+            details: dict[str, Any] = {
+                "retryable": False,
+                "next_action": "create_scope_change_request",
+            }
+            if active_run[1] == "waiting_human":
+                details.update(
+                    {
+                        "decision_request_id": active_run[2],
+                        "next_action": "resolve_existing_decision",
+                    }
+                )
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_FROZEN",
+                "product version scope is frozen by an active collaboration run",
+                details=details,
+            )
+        cursor.execute(
+            """
+            UPDATE product_versions
+            SET scope_version = scope_version + 1, updated_at = now()
+            WHERE id = ANY(%s)
+            """,
+            (version_ids,),
+        )
+
     def delete_requirement_record(
         self,
         record_id: str,
@@ -118,6 +287,19 @@ class RequirementReadRepository:
     ) -> None:
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
+                fetchone = getattr(cursor, "fetchone", None)
+                if callable(fetchone):
+                    cursor.execute(
+                        "SELECT id, version_id, status FROM requirements WHERE id = %s FOR UPDATE",
+                        (record_id,),
+                    )
+                    existing = fetchone()
+                    if existing is not None:
+                        self._guard_requirement_membership_mutation(
+                            cursor,
+                            existing=existing,
+                            record={"status": "deleted", "version_id": None},
+                        )
                 cursor.execute("DELETE FROM requirements WHERE id = %s", (record_id,))
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])

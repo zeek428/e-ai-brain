@@ -924,6 +924,303 @@ def test_requirement_assignment_increments_scope_once_and_freezes_during_active_
     assert frozen.value.details["next_action"] == "create_scope_change_request"
 
 
+def test_batch_schedule_locks_accumulated_capacity_dependencies_and_repository_scope(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _insert_product_version(repository, prefix="batch-atomic")
+    policy = _policy_record(ids, prefix="batch-atomic")
+    repository.save_rd_task_executor_policy_record(policy)
+    snapshot = repository.freeze_base_policy_snapshot(
+        {
+            **_base_snapshot(policy, prefix="batch-atomic"),
+            "payload_json": {
+                "delivery_target": "ready_for_release",
+                "git_config": {"repository_ids": ["batch-atomic-repository"]},
+                "iteration_config": {"capacity": {"max_requirements": 2}},
+            },
+        }
+    )
+    for requirement_id in ("batch-atomic-a-dependency", "batch-atomic-z-dependent"):
+        _insert_requirement(repository, ids, requirement_id=requirement_id)
+        repository.save_assessment_bundle(
+            assessment={
+                **_accepted_assessment(
+                    assessment_id=f"{requirement_id}-assessment",
+                    requirement_id=requirement_id,
+                    snapshot_id=str(snapshot["id"]),
+                ),
+                "dependency_summary": (
+                    [{"hard": True, "requirement_id": "batch-atomic-a-dependency"}]
+                    if requirement_id.endswith("dependent")
+                    else []
+                ),
+            },
+            opinions=[],
+        )
+
+    with pytest.raises(RdCollaborationRepositoryError) as repository_failure:
+        repository.batch_schedule_requirements_into_planning_version(
+            product_id=ids["product"],
+            product_version_id=ids["version"],
+            requirement_ids=["batch-atomic-a-dependency", "batch-atomic-z-dependent"],
+            audit_events=[],
+        )
+    assert repository_failure.value.code == "ITERATION_CONSTRAINT_UNSATISFIED"
+    assert "repository_incompatible" in str(repository_failure.value)
+    assert repository.get_product_version(ids["version"])["scope_version"] == 1
+
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO product_git_repositories (
+              id, product_id, repo_type, name, remote_url, git_provider, default_branch, status
+            ) VALUES (%s, %s, 'service', 'batch', 'https://example.invalid/batch.git',
+                      'gitlab', 'main', 'active')
+            """,
+            ("batch-atomic-repository", ids["product"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO product_version_branch_configs (
+              id, product_id, version_id, repository_id, base_branch, working_branch
+            ) VALUES ('batch-atomic-branch', %s, %s, 'batch-atomic-repository', 'main',
+                      'feature/batch-atomic')
+            """,
+            (ids["product"], ids["version"]),
+        )
+
+    scheduled = repository.batch_schedule_requirements_into_planning_version(
+        product_id=ids["product"],
+        product_version_id=ids["version"],
+        requirement_ids=["batch-atomic-a-dependency", "batch-atomic-z-dependent"],
+        audit_events=[],
+    )
+    assert [item["id"] for item in scheduled["requirements"]] == [
+        "batch-atomic-a-dependency",
+        "batch-atomic-z-dependent",
+    ]
+    assert scheduled["version"]["scope_version"] == 3
+
+    _insert_requirement(repository, ids, requirement_id="batch-atomic-third")
+    repository.save_assessment_bundle(
+        assessment=_accepted_assessment(
+            assessment_id="batch-atomic-third-assessment",
+            requirement_id="batch-atomic-third",
+            snapshot_id=str(snapshot["id"]),
+        ),
+        opinions=[],
+    )
+    with pytest.raises(RdCollaborationRepositoryError) as capacity_failure:
+        repository.batch_schedule_requirements_into_planning_version(
+            product_id=ids["product"],
+            product_version_id=ids["version"],
+            requirement_ids=["batch-atomic-third"],
+            audit_events=[],
+        )
+    assert capacity_failure.value.code == "ITERATION_CONSTRAINT_UNSATISFIED"
+    assert "capacity_exhausted" in str(capacity_failure.value)
+    assert (
+        repository.load_requirements()["requirements"]["batch-atomic-third"]["status"] == "approved"
+    )
+    assert repository.get_product_version(ids["version"])["scope_version"] == 3
+
+
+def test_batch_schedule_api_uses_postgres_atomic_membership_write(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _insert_product_version(repository, prefix="batch-api")
+    policy = _policy_record(ids, prefix="batch-api")
+    repository.save_rd_task_executor_policy_record(policy)
+    snapshot = repository.freeze_base_policy_snapshot(_base_snapshot(policy, prefix="batch-api"))
+    requirement_ids = ["batch-api-one", "batch-api-two"]
+    for requirement_id in requirement_ids:
+        _insert_requirement(repository, ids, requirement_id=requirement_id)
+        repository.save_assessment_bundle(
+            assessment=_accepted_assessment(
+                assessment_id=f"{requirement_id}-assessment",
+                requirement_id=requirement_id,
+                snapshot_id=str(snapshot["id"]),
+            ),
+            opinions=[],
+        )
+
+    headers = auth_headers()
+    original_store = app.state.store
+    app.state.store = PostgresRuntimeStore(repository)
+    try:
+        response = TestClient(app).post(
+            "/api/requirements/batch-schedule",
+            json={
+                "product_id": ids["product"],
+                "requirement_ids": requirement_ids,
+                "version_id": ids["version"],
+            },
+            headers=headers,
+        )
+    finally:
+        app.state.store = original_store
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["updated_count"] == 2
+    assert repository.get_product_version(ids["version"])["scope_version"] == 3
+    scheduled = repository.load_requirements()["requirements"]
+    assert all(
+        scheduled[requirement_id]["status"] == "planned" for requirement_id in requirement_ids
+    )
+
+
+def test_requirement_revision_scope_change_is_rejected_while_run_is_active(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="revision-frozen")
+    requirement = repository.load_requirements()["requirements"][seeded["requirement"]]
+
+    with pytest.raises(RdCollaborationRepositoryError) as frozen:
+        repository.save_requirement_revision_with_assessment_supersession(
+            {
+                **requirement,
+                "assessment_revision": 2,
+                "content": "scope-changing revision",
+                "status": "submitted",
+            }
+        )
+
+    assert frozen.value.code == "RD_SCOPE_FROZEN"
+    assert frozen.value.details["next_action"] == "create_scope_change_request"
+    assert repository.get_product_version(seeded["version"])["scope_version"] == 1
+    assert (
+        repository.load_requirements()["requirements"][seeded["requirement"]]["status"] == "planned"
+    )
+
+
+def test_requirement_revision_increments_scope_but_display_only_edit_does_not(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="revision-scope", run_status="failed")
+    version = repository.get_product_version(seeded["version"])
+    assert version is not None
+    repository.save_product_config_record("product_versions", {**version, "status": "planning"})
+    requirement = repository.load_requirements()["requirements"][seeded["requirement"]]
+
+    repository.save_requirement_revision_with_assessment_supersession(
+        {
+            **requirement,
+            "assessment_revision": 2,
+            "content": "scope-changing revision",
+            "status": "submitted",
+        }
+    )
+
+    assert repository.get_product_version(seeded["version"])["scope_version"] == 2
+    revised = repository.load_requirements()["requirements"][seeded["requirement"]]
+    repository.save_requirement_record({**revised, "approval_comment": "display-only"})
+    assert repository.get_product_version(seeded["version"])["scope_version"] == 2
+
+
+def test_requirement_patch_api_rejects_scope_change_while_run_is_active(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="revision-api-frozen")
+    headers = auth_headers()
+    original_store = app.state.store
+    app.state.store = PostgresRuntimeStore(repository)
+    try:
+        response = TestClient(app).patch(
+            f"/api/requirements/{seeded['requirement']}",
+            json={"content": "change frozen iteration scope"},
+            headers=headers,
+        )
+    finally:
+        app.state.store = original_store
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "RD_SCOPE_FROZEN"
+    assert response.headers["x-trace-id"]
+    assert repository.get_product_version(seeded["version"])["scope_version"] == 1
+    assert (
+        repository.load_requirements()["requirements"][seeded["requirement"]]["status"] == "planned"
+    )
+
+
+def test_branch_baseline_change_is_rejected_while_run_is_active(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="branch-frozen")
+    branch_id = "branch-frozen-config"
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO product_git_repositories (
+              id, product_id, repo_type, name, remote_url, git_provider, default_branch, status
+            ) VALUES (%s, %s, 'service', 'branch-frozen', 'https://example.invalid/branch-frozen.git',
+                      'gitlab', 'main', 'active')
+            """,
+            ("branch-frozen-repository", seeded["product"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO product_version_branch_configs (
+              id, product_id, version_id, repository_id, base_branch, working_branch
+            ) VALUES (%s, %s, %s, %s, 'main', 'feature/frozen')
+            """,
+            (branch_id, seeded["product"], seeded["version"], "branch-frozen-repository"),
+        )
+    branch_config = repository.get_product_version_branch_config(branch_id)
+    assert branch_config is not None
+
+    with pytest.raises(RdCollaborationRepositoryError) as frozen:
+        repository.save_product_config_record(
+            "product_version_branch_configs",
+            {**branch_config, "base_branch": "release/frozen"},
+        )
+
+    assert frozen.value.code == "RD_SCOPE_FROZEN"
+    assert repository.get_product_version(seeded["version"])["scope_version"] == 1
+    assert repository.get_product_version_branch_config(branch_id)["base_branch"] == "main"
+
+
+def test_branch_baseline_change_increments_scope_but_description_does_not(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="branch-scope", run_status="failed")
+    version = repository.get_product_version(seeded["version"])
+    assert version is not None
+    repository.save_product_config_record("product_versions", {**version, "status": "planning"})
+    branch_id = "branch-scope-config"
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO product_git_repositories (
+              id, product_id, repo_type, name, remote_url, git_provider, default_branch, status
+            ) VALUES (%s, %s, 'service', 'branch-scope', 'https://example.invalid/branch-scope.git',
+                      'gitlab', 'main', 'active')
+            """,
+            ("branch-scope-repository", seeded["product"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO product_version_branch_configs (
+              id, product_id, version_id, repository_id, base_branch, working_branch
+            ) VALUES (%s, %s, %s, %s, 'main', 'feature/scope')
+            """,
+            (branch_id, seeded["product"], seeded["version"], "branch-scope-repository"),
+        )
+    branch_config = repository.get_product_version_branch_config(branch_id)
+    assert branch_config is not None
+
+    repository.save_product_config_record(
+        "product_version_branch_configs",
+        {**branch_config, "base_branch": "release/scope"},
+    )
+    assert repository.get_product_version(seeded["version"])["scope_version"] == 2
+    changed = repository.get_product_version_branch_config(branch_id)
+    repository.save_product_config_record(
+        "product_version_branch_configs",
+        {**changed, "description": "display-only"},
+    )
+    assert repository.get_product_version(seeded["version"])["scope_version"] == 2
+
+
 def test_scope_change_request_is_idempotent_pauses_run_and_reject_resumes_it(
     repository: PostgresSnapshotRepository,
 ) -> None:
@@ -2287,7 +2584,14 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
 def test_substantive_requirement_edit_cancels_prior_nonterminal_assessments(
     repository: PostgresSnapshotRepository,
 ) -> None:
-    seeded = _seed_exact_run(repository, prefix="assessment-edit-supersession")
+    seeded = _seed_exact_run(
+        repository,
+        prefix="assessment-edit-supersession",
+        run_status="failed",
+    )
+    version = repository.get_product_version(seeded["version"])
+    assert version is not None
+    repository.save_product_config_record("product_versions", {**version, "status": "planning"})
     requirement = repository.load_requirements()["requirements"][seeded["requirement"]]
     current_assessment = repository.get_requirement_assessment(seeded["assessment"])
     assert current_assessment is not None
@@ -2314,7 +2618,14 @@ def test_substantive_requirement_edit_cancels_prior_nonterminal_assessments(
 def test_stale_assessment_acceptance_cannot_approve_newer_requirement_revision(
     repository: PostgresSnapshotRepository,
 ) -> None:
-    seeded = _seed_exact_run(repository, prefix="assessment-stale-acceptance")
+    seeded = _seed_exact_run(
+        repository,
+        prefix="assessment-stale-acceptance",
+        run_status="failed",
+    )
+    version = repository.get_product_version(seeded["version"])
+    assert version is not None
+    repository.save_product_config_record("product_versions", {**version, "status": "planning"})
     requirement = repository.load_requirements()["requirements"][seeded["requirement"]]
     repository.save_requirement_record(
         {**requirement, "status": "submitted", "assessment_revision": 2}

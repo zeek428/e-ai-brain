@@ -6,6 +6,7 @@ from app.services.requirement_iteration_planning import (
     plan_accepted_requirement,
     validate_manual_iteration_assignment,
 )
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -250,6 +251,39 @@ def test_follow_up_requirement_rejects_supersedes_without_a_source_run() -> None
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "REQUIREMENT_LINEAGE_INVALID"
+
+
+def test_v2_accepted_assessment_cannot_bypass_canonical_iteration_grouping() -> None:
+    app.state.store.reset()
+    headers = _headers()
+    product = client.post(
+        "/api/products",
+        json={"code": "v2-approve-block", "name": "v2-approve-block"},
+        headers=headers,
+    ).json()["data"]
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "content": "必须由协作编排器归组",
+            "product_id": product["id"],
+            "title": "拒绝旧批准绕过",
+        },
+        headers=headers,
+    ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement["id"])
+    app.state.store.rd_task_executor_policy_snapshots["fixture-policy-snapshot"][
+        "snapshot_kind"
+    ] = "assessment_resolved"
+
+    response = client.post(
+        f"/api/requirements/{requirement['id']}/approve",
+        json={"comment": "不应直接批准"},
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "RD_COLLABORATION_REQUIRED"
+    assert app.state.store.requirements[requirement["id"]]["status"] == "submitted"
 
 
 def test_follow_up_requirement_persists_same_product_ready_run_lineage() -> None:

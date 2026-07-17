@@ -19,6 +19,10 @@ def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dic
 
 
 def _requirement_has_accepted_assessment(current_store: Any, requirement_id: str) -> bool:
+    return bool(_accepted_assessments(current_store, requirement_id))
+
+
+def _accepted_assessments(current_store: Any, requirement_id: str) -> list[dict[str, Any]]:
     repository = getattr(current_store, "repository", None)
     list_assessments = getattr(repository, "list_requirement_assessments", None)
     if callable(list_assessments):
@@ -29,7 +33,29 @@ def _requirement_has_accepted_assessment(current_store: Any, requirement_id: str
             for item in _read_memory_dict(current_store, "requirement_assessments").values()
             if item.get("requirement_id") == requirement_id
         ]
-    return any(item.get("status") == "accepted" for item in assessments)
+    return [item for item in assessments if item.get("status") == "accepted"]
+
+
+def _v2_assessment_owns_requirement_decision(current_store: Any, requirement_id: str) -> bool:
+    """Keep legacy approvals readable while preventing a v2 grouping bypass."""
+    repository = getattr(current_store, "repository", None)
+    get_snapshot = getattr(repository, "get_rd_policy_snapshot", None)
+    snapshots = _read_memory_dict(current_store, "rd_task_executor_policy_snapshots")
+    for assessment in _accepted_assessments(current_store, requirement_id):
+        snapshot_id = assessment.get("final_strategy_snapshot_id")
+        if not snapshot_id:
+            continue
+        snapshot = snapshots.get(str(snapshot_id))
+        if snapshot is None and callable(get_snapshot):
+            loaded = get_snapshot(str(snapshot_id))
+            snapshot = loaded if isinstance(loaded, dict) else None
+        if isinstance(snapshot, dict) and snapshot.get("snapshot_kind") in {
+            "base",
+            "assessment_resolved",
+            "version_resolved",
+        }:
+            return True
+    return False
 
 
 def approve_requirement_result(
@@ -50,6 +76,12 @@ def approve_requirement_result(
             409,
             "REQUIREMENT_ASSESSMENT_REQUIRED",
             "Only accepted assessment provenance can advance a submitted requirement",
+        )
+    if _v2_assessment_owns_requirement_decision(current_store, requirement_id):
+        raise api_error(
+            409,
+            "RD_COLLABORATION_REQUIRED",
+            "Accepted v2 assessments must use the canonical iteration grouping workflow",
         )
     if canonical_requirement_status(requirement.get("status")) != "submitted":
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement is not pending approval")
@@ -89,6 +121,12 @@ def reject_requirement_result(
             409,
             "REQUIREMENT_ASSESSMENT_REQUIRED",
             "Only accepted assessment provenance can decide a submitted requirement",
+        )
+    if _v2_assessment_owns_requirement_decision(current_store, requirement_id):
+        raise api_error(
+            409,
+            "RD_COLLABORATION_REQUIRED",
+            "Accepted v2 assessments must use the canonical assessment decision workflow",
         )
     if canonical_requirement_status(requirement.get("status")) != "submitted":
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement is not pending approval")

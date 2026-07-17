@@ -24,9 +24,312 @@ from app.core.repositories.rd_collaboration_shared import (
     _response_hash,
     _row_dict,
 )
+from app.services.rd_policy_resolution import PolicyResolutionError, merge_policy_payloads
 
 
 class RdCollaborationScopeWriteMixin:
+    @staticmethod
+    def _iteration_repository_ids(payload: Any) -> set[str]:
+        git_config = payload.get("git_config") if isinstance(payload, dict) else None
+        if not isinstance(git_config, dict):
+            return set()
+        repository_ids = {
+            str(value)
+            for value in git_config.get("repository_ids", [])
+            if value is not None and str(value)
+        }
+        if git_config.get("repository_id"):
+            repository_ids.add(str(git_config["repository_id"]))
+        return repository_ids
+
+    @staticmethod
+    def _iteration_hard_dependency_ids(summary: Any) -> set[str]:
+        if not isinstance(summary, list):
+            return set()
+        return {
+            str(item.get("requirement_id") or item.get("dependency_requirement_id"))
+            for item in summary
+            if isinstance(item, dict)
+            and (item.get("hard") is True or item.get("type") == "hard")
+            and (item.get("requirement_id") or item.get("dependency_requirement_id"))
+        }
+
+    def batch_schedule_requirements_into_planning_version(
+        self,
+        *,
+        product_id: str,
+        product_version_id: str,
+        requirement_ids: list[str],
+        audit_events: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Schedule one batch under a single version lock and transaction.
+
+        The target-version row serializes concurrent schedulers.  Every
+        requirement is re-read with a row lock and checked against the
+        *accumulated* membership before any membership, scope, or audit write
+        occurs.  A stale or incompatible item therefore rolls back the whole
+        durable batch rather than leaving a partially scheduled iteration.
+        """
+        return self._in_transaction(
+            lambda cursor: self._batch_schedule_requirements_into_planning_version_cursor(
+                cursor,
+                product_id=product_id,
+                product_version_id=product_version_id,
+                requirement_ids=requirement_ids,
+                audit_events=audit_events,
+            )
+        )
+
+    def _batch_schedule_requirements_into_planning_version_cursor(
+        self,
+        cursor: Any,
+        *,
+        product_id: str,
+        product_version_id: str,
+        requirement_ids: list[str],
+        audit_events: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        unique_ids = sorted({str(requirement_id) for requirement_id in requirement_ids})
+        if not unique_ids:
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_CHANGE_INVALID", "at least one requirement is required"
+            )
+        cursor.execute(
+            "SELECT * FROM product_versions WHERE id = %s FOR UPDATE",
+            (product_version_id,),
+        )
+        version = _row_dict(cursor, cursor.fetchone())
+        if (
+            version is None
+            or version.get("product_id") != product_id
+            or version.get("status") != "planning"
+        ):
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_FROZEN", "only a planning product version accepts scheduling"
+            )
+        cursor.execute(
+            """
+            SELECT id FROM rd_collaboration_runs
+            WHERE product_version_id = %s
+              AND status NOT IN ('completed', 'failed', 'cancelled')
+            LIMIT 1 FOR UPDATE
+            """,
+            (product_version_id,),
+        )
+        if cursor.fetchone() is not None:
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_FROZEN", "product version scope is frozen by an active collaboration run"
+            )
+        cursor.execute(
+            "SELECT * FROM requirements WHERE id = ANY(%s) ORDER BY id FOR UPDATE",
+            (unique_ids,),
+        )
+        requirements = [
+            record for row in cursor.fetchall() if (record := _row_dict(cursor, row)) is not None
+        ]
+        if len(requirements) != len(unique_ids):
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_CHANGE_INVALID", "requirement does not exist"
+            )
+
+        cursor.execute(
+            """
+            SELECT config.repository_id
+            FROM product_version_branch_configs config
+            WHERE config.version_id = %s AND config.repository_id IS NOT NULL
+            FOR KEY SHARE
+            """,
+            (product_version_id,),
+        )
+        configured_repository_ids = {str(row[0]) for row in cursor.fetchall()}
+        cursor.execute(
+            """
+            SELECT requirement.id, assessment.final_strategy_snapshot_id, snapshot.policy_id,
+                   snapshot.policy_version, snapshot.payload_json
+            FROM requirements requirement
+            LEFT JOIN LATERAL (
+              SELECT * FROM requirement_assessments
+              WHERE requirement_id = requirement.id
+                AND requirement_revision = requirement.assessment_revision
+                AND status = 'accepted'
+              ORDER BY updated_at DESC, id DESC LIMIT 1
+            ) assessment ON TRUE
+            LEFT JOIN rd_task_executor_policy_snapshots snapshot
+              ON snapshot.id = assessment.final_strategy_snapshot_id
+            WHERE requirement.version_id = %s
+            ORDER BY requirement.id FOR UPDATE OF requirement
+            """,
+            (product_version_id,),
+        )
+        members = [
+            record for row in cursor.fetchall() if (record := _row_dict(cursor, row)) is not None
+        ]
+        member_ids = {str(member["id"]) for member in members}
+        member_snapshots = [
+            member for member in members if member.get("final_strategy_snapshot_id")
+        ]
+        changed: list[dict[str, Any]] = []
+
+        for requirement in requirements:
+            if requirement.get("product_id") != product_id or requirement.get("status") not in {
+                "approved",
+                "planned",
+            }:
+                raise RdCollaborationRepositoryError(
+                    "RD_SCOPE_CHANGE_INVALID", "requirement is not schedulable"
+                )
+            if (
+                requirement.get("version_id") == product_version_id
+                and requirement.get("status") == "planned"
+            ):
+                continue
+            cursor.execute(
+                """
+                SELECT assessment.dependency_summary, snapshot.id, snapshot.policy_id,
+                       snapshot.policy_version, snapshot.payload_json
+                FROM requirement_assessments assessment
+                JOIN rd_task_executor_policy_snapshots snapshot
+                  ON snapshot.id = assessment.final_strategy_snapshot_id
+                WHERE assessment.requirement_id = %s
+                  AND assessment.requirement_revision = %s
+                  AND assessment.status = 'accepted'
+                ORDER BY assessment.updated_at DESC, assessment.id DESC
+                LIMIT 1 FOR KEY SHARE
+                """,
+                (requirement["id"], requirement.get("assessment_revision") or 1),
+            )
+            source = _row_dict(cursor, cursor.fetchone())
+            if source is None:
+                raise RdCollaborationRepositoryError(
+                    "ITERATION_CONSTRAINT_UNSATISFIED", "assessment_unaccepted"
+                )
+            source_payload = source.get("payload_json")
+            if not isinstance(source_payload, dict):
+                raise RdCollaborationRepositoryError(
+                    "ITERATION_CONSTRAINT_UNSATISFIED", "policy_payload_invalid"
+                )
+            iteration_config = source_payload.get("iteration_config")
+            capacity = (
+                iteration_config.get("capacity") if isinstance(iteration_config, dict) else {}
+            )
+            capacity_limit = (
+                capacity.get("max_requirements")
+                if isinstance(capacity, dict)
+                else iteration_config.get("max_requirements")
+                if isinstance(iteration_config, dict)
+                else None
+            )
+            if (
+                isinstance(capacity_limit, int)
+                and capacity_limit > 0
+                and len(member_ids) >= capacity_limit
+            ):
+                raise RdCollaborationRepositoryError(
+                    "ITERATION_CONSTRAINT_UNSATISFIED", "capacity_exhausted"
+                )
+            requested_repository_ids = self._iteration_repository_ids(source_payload)
+            if (
+                requested_repository_ids
+                and not requested_repository_ids & configured_repository_ids
+            ):
+                raise RdCollaborationRepositoryError(
+                    "ITERATION_CONSTRAINT_UNSATISFIED", "repository_incompatible"
+                )
+            if (
+                not self._iteration_hard_dependency_ids(source.get("dependency_summary"))
+                <= member_ids
+            ):
+                raise RdCollaborationRepositoryError(
+                    "ITERATION_CONSTRAINT_UNSATISFIED", "hard_dependency_unsatisfied"
+                )
+            if source.get("policy_id") is None or source.get("policy_version") is None:
+                raise RdCollaborationRepositoryError(
+                    "ITERATION_CONSTRAINT_UNSATISFIED", "policy_identity_missing"
+                )
+            policy_payloads = [source_payload]
+            for member in member_snapshots:
+                if member.get("policy_id") != source.get("policy_id") or member.get(
+                    "policy_version"
+                ) != source.get("policy_version"):
+                    raise RdCollaborationRepositoryError(
+                        "ITERATION_CONSTRAINT_UNSATISFIED", "policy_identity_mismatch"
+                    )
+                member_payload = member.get("payload_json")
+                if member.get("final_strategy_snapshot_id") != source.get("id"):
+                    if not isinstance(member_payload, dict):
+                        raise RdCollaborationRepositoryError(
+                            "ITERATION_CONSTRAINT_UNSATISFIED", "policy_merge_required"
+                        )
+                    policy_payloads.append(member_payload)
+            # The dry-run includes delivery_target: a malformed or unmergeable
+            # delivery policy cannot be scheduled merely because the version is empty.
+            try:
+                merged = (
+                    merge_policy_payloads(policy_payloads)
+                    if len(policy_payloads) > 1
+                    else source_payload
+                )
+            except PolicyResolutionError as exc:
+                raise RdCollaborationRepositoryError(
+                    "ITERATION_CONSTRAINT_UNSATISFIED", "policy_merge_required"
+                ) from exc
+            if merged.get("delivery_target", "ready_for_release") not in {
+                "ready_for_release",
+                "deployed",
+            }:
+                raise RdCollaborationRepositoryError(
+                    "ITERATION_CONSTRAINT_UNSATISFIED", "delivery_target_incompatible"
+                )
+            member_ids.add(str(requirement["id"]))
+            member_snapshots.append(
+                {
+                    "final_strategy_snapshot_id": source["id"],
+                    "payload_json": source_payload,
+                    "policy_id": source["policy_id"],
+                    "policy_version": source["policy_version"],
+                }
+            )
+            changed.append(requirement)
+
+        if changed:
+            changed_ids = [item["id"] for item in changed]
+            cursor.execute(
+                """
+                UPDATE requirements
+                SET version_id = %s, status = 'planned', updated_at = now()
+                WHERE id = ANY(%s)
+                """,
+                (product_version_id, changed_ids),
+            )
+            cursor.execute(
+                """
+                UPDATE product_versions
+                SET scope_version = scope_version + %s, updated_at = now()
+                WHERE id = %s RETURNING *
+                """,
+                (len(changed), product_version_id),
+            )
+            version = _row_dict(cursor, cursor.fetchone()) or version
+            cursor.execute(
+                "SELECT * FROM requirements WHERE id = ANY(%s) ORDER BY id",
+                (changed_ids,),
+            )
+            changed = [
+                record
+                for row in cursor.fetchall()
+                if (record := _row_dict(cursor, row)) is not None
+            ]
+        cursor.execute(
+            "SELECT * FROM requirements WHERE id = ANY(%s) ORDER BY id",
+            (unique_ids,),
+        )
+        scheduled = [
+            record for row in cursor.fetchall() if (record := _row_dict(cursor, row)) is not None
+        ]
+        if audit_events and self._upsert_audit_events is not None:
+            self._upsert_audit_events(cursor, audit_events)
+        return {"requirements": scheduled, "version": version}
+
     def _insert_run(self, cursor: Any, run: dict[str, Any]) -> dict[str, Any]:
         columns = (
             "id",

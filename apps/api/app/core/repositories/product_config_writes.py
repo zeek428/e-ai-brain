@@ -4,6 +4,8 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Any
 
+from app.core.repositories.rd_collaboration_shared import RdCollaborationRepositoryError
+
 PRODUCT_CONFIG_TABLES = {
     "product_git_repositories": "product_git_repositories",
     "product_modules": "product_modules",
@@ -36,6 +38,7 @@ class ProductConfigWriteRepository:
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 if self._delete_missing is not None:
+                    self._guard_branch_config_bulk_deletions(cursor, branch_configs)
                     self._delete_missing(cursor, "related_systems", related_systems)
                     self._delete_missing(
                         cursor,
@@ -50,6 +53,8 @@ class ProductConfigWriteRepository:
                 self.upsert_product_versions(cursor, versions)
                 self.upsert_product_modules(cursor, modules)
                 self.upsert_product_git_repositories(cursor, repositories)
+                for branch_config in branch_configs.values():
+                    self._guard_branch_config_scope_mutation(cursor, branch_config)
                 self.upsert_product_version_branch_configs(cursor, branch_configs)
                 self.upsert_related_systems(cursor, related_systems)
 
@@ -73,6 +78,8 @@ class ProductConfigWriteRepository:
             raise ValueError(f"Unsupported product config collection: {collection_name}")
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
+                if collection_name == "product_version_branch_configs":
+                    self._guard_branch_config_scope_mutation(cursor, record)
                 upsert(cursor, {record["id"]: record})
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])
@@ -89,12 +96,150 @@ class ProductConfigWriteRepository:
             raise ValueError(f"Unsupported product config collection: {collection_name}")
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
+                if collection_name == "product_version_branch_configs":
+                    self._guard_branch_config_deletion(cursor, record_id)
                 cursor.execute(
                     f"DELETE FROM {table_name} WHERE id = %s",  # noqa: S608
                     (record_id,),
                 )
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])
+
+    @staticmethod
+    def _guard_branch_config_bulk_deletions(
+        cursor,
+        branch_configs: dict[str, dict[str, Any]],
+    ) -> None:
+        cursor.execute(
+            """
+            SELECT id, version_id FROM product_version_branch_configs
+            ORDER BY id FOR UPDATE
+            """
+        )
+        deleted_version_ids = [
+            str(row[1]) for row in cursor.fetchall() if str(row[0]) not in branch_configs
+        ]
+        ProductConfigWriteRepository._guard_scope_mutation(
+            cursor,
+            sorted(set(deleted_version_ids)),
+        )
+
+    @staticmethod
+    def _guard_branch_config_scope_mutation(cursor, record: dict[str, Any]) -> None:
+        cursor.execute(
+            """
+            SELECT version_id, repository_id, base_branch, working_branch, branch_status
+            FROM product_version_branch_configs
+            WHERE id = %s FOR UPDATE
+            """,
+            (record["id"],),
+        )
+        existing = cursor.fetchone()
+        if existing is not None and all(
+            existing[index] == record.get(field)
+            for index, field in enumerate(
+                (
+                    "version_id",
+                    "repository_id",
+                    "base_branch",
+                    "working_branch",
+                    "branch_status",
+                )
+            )
+        ):
+            return
+        version_ids = sorted(
+            {
+                str(version_id)
+                for version_id in (
+                    existing[0] if existing is not None else None,
+                    record.get("version_id"),
+                )
+                if version_id is not None
+            }
+        )
+        ProductConfigWriteRepository._guard_scope_mutation(cursor, version_ids)
+
+    @staticmethod
+    def _guard_branch_config_deletion(cursor, record_id: str) -> None:
+        cursor.execute(
+            "SELECT version_id FROM product_version_branch_configs WHERE id = %s FOR UPDATE",
+            (record_id,),
+        )
+        existing = cursor.fetchone()
+        if existing is not None:
+            ProductConfigWriteRepository._guard_scope_mutation(cursor, [str(existing[0])])
+
+    @staticmethod
+    def _guard_scope_mutation(cursor, version_ids: list[str]) -> None:
+        if not version_ids:
+            return
+        cursor.execute(
+            "SELECT id, status FROM product_versions WHERE id = ANY(%s) ORDER BY id FOR UPDATE",
+            (version_ids,),
+        )
+        versions = cursor.fetchall()
+        if len(versions) != len(version_ids):
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_CHANGE_INVALID", "product version does not exist"
+            )
+        if any(row[1] in {"ready_for_release", "deploying", "released"} for row in versions):
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_FROZEN",
+                "delivered product version scope must move to a new planning version",
+                details={
+                    "retryable": False,
+                    "resolution": "new_planning_version",
+                    "next_action": "create_followup_requirement",
+                },
+            )
+        if any(row[1] != "planning" for row in versions):
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_FROZEN",
+                "only a planning product version accepts ordinary scope changes",
+                details={
+                    "retryable": False,
+                    "next_action": "create_scope_change_request",
+                },
+            )
+        cursor.execute(
+            """
+            SELECT id, status, suspended_decision_request_id
+            FROM rd_collaboration_runs
+            WHERE product_version_id = ANY(%s)
+              AND status NOT IN ('completed', 'failed', 'cancelled')
+            ORDER BY run_generation DESC
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (version_ids,),
+        )
+        active_run = cursor.fetchone()
+        if active_run is not None:
+            details: dict[str, Any] = {
+                "retryable": False,
+                "next_action": "create_scope_change_request",
+            }
+            if active_run[1] == "waiting_human":
+                details.update(
+                    {
+                        "decision_request_id": active_run[2],
+                        "next_action": "resolve_existing_decision",
+                    }
+                )
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_FROZEN",
+                "product version scope is frozen by an active collaboration run",
+                details=details,
+            )
+        cursor.execute(
+            """
+            UPDATE product_versions
+            SET scope_version = scope_version + 1, updated_at = now()
+            WHERE id = ANY(%s)
+            """,
+            (version_ids,),
+        )
 
     def upsert_products(self, cursor, products: dict[str, dict[str, Any]]) -> None:
         for product in products.values():

@@ -158,6 +158,7 @@ def _candidate_score(
     *,
     candidate: dict[str, Any],
     source_snapshot: dict[str, Any],
+    source_assessment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     members = _version_members(store, str(candidate["id"]))
     reasons: list[str] = []
@@ -169,6 +170,48 @@ def _candidate_score(
     limit = _capacity_limit(source_snapshot)
     if limit is not None and len(members) >= limit:
         reasons.append("capacity_exhausted")
+
+    payload = source_snapshot.get("payload_json")
+    if not isinstance(payload, dict):
+        # Historical read-only snapshots did not retain the unified payload.
+        # They have no declared repository/dependency/delivery constraint, so
+        # remain compatible while current frozen snapshots are fully checked.
+        payload = {}
+    git_config = payload.get("git_config")
+    requested_repository_ids: set[str] = set()
+    if isinstance(git_config, dict):
+        raw_ids = git_config.get("repository_ids")
+        if isinstance(raw_ids, list):
+            requested_repository_ids.update(str(item) for item in raw_ids if item)
+        if git_config.get("repository_id"):
+            requested_repository_ids.add(str(git_config["repository_id"]))
+    if requested_repository_ids:
+        configured_repository_ids = {
+            str(config.get("repository_id"))
+            for config in _records(store, "product_version_branch_configs").values()
+            if config.get("version_id") == candidate["id"] and config.get("repository_id")
+        }
+        if not requested_repository_ids & configured_repository_ids:
+            reasons.append("repository_incompatible")
+    if payload.get("delivery_target", "ready_for_release") not in {
+        "ready_for_release",
+        "deployed",
+    }:
+        reasons.append("delivery_target_incompatible")
+    if source_assessment is not None:
+        dependencies = source_assessment.get("dependency_summary")
+        member_ids = {str(item.get("id")) for item in members}
+        if isinstance(dependencies, list):
+            for dependency in dependencies:
+                if not isinstance(dependency, dict):
+                    continue
+                is_hard = dependency.get("hard") is True or dependency.get("type") == "hard"
+                dependency_id = dependency.get("requirement_id") or dependency.get(
+                    "dependency_requirement_id"
+                )
+                if is_hard and dependency_id and str(dependency_id) not in member_ids:
+                    reasons.append("hard_dependency_unsatisfied")
+                    break
 
     merge_payloads: list[dict[str, Any]] = []
     for member in members:
@@ -240,44 +283,12 @@ def validate_manual_iteration_assignment(
             "version_id": version_id,
         }
     source_snapshot = _snapshot(store, str(assessment["final_strategy_snapshot_id"]))
-    result = _candidate_score(store, candidate=candidate, source_snapshot=source_snapshot)
-    reasons = list(result["reasons"])
-    candidate_members = _version_members(store, version_id)
-    candidate_member_ids = {str(item.get("id")) for item in candidate_members}
-
-    payload = source_snapshot.get("payload_json")
-    git_config = payload.get("git_config") if isinstance(payload, dict) else None
-    requested_repository_ids: set[str] = set()
-    if isinstance(git_config, dict):
-        raw_ids = git_config.get("repository_ids")
-        if isinstance(raw_ids, list):
-            requested_repository_ids.update(str(item) for item in raw_ids if item)
-        if git_config.get("repository_id"):
-            requested_repository_ids.add(str(git_config["repository_id"]))
-    if requested_repository_ids:
-        configured_repository_ids = {
-            str(config.get("repository_id"))
-            for config in _records(store, "product_version_branch_configs").values()
-            if config.get("version_id") == version_id and config.get("repository_id")
-        }
-        if not requested_repository_ids & configured_repository_ids:
-            reasons.append("repository_incompatible")
-
-    dependencies = assessment.get("dependency_summary")
-    if isinstance(dependencies, list):
-        for dependency in dependencies:
-            if not isinstance(dependency, dict):
-                continue
-            is_hard = dependency.get("hard") is True or dependency.get("type") == "hard"
-            dependency_id = dependency.get("requirement_id") or dependency.get(
-                "dependency_requirement_id"
-            )
-            if is_hard and dependency_id and str(dependency_id) not in candidate_member_ids:
-                reasons.append("hard_dependency_unsatisfied")
-                break
-
-    result["reasons"] = reasons
-    result["hard_eligible"] = not reasons
+    result = _candidate_score(
+        store,
+        candidate=candidate,
+        source_snapshot=source_snapshot,
+        source_assessment=assessment,
+    )
     result["score"] = (
         1_000 - int(result["current_requirement_count"]) if result["hard_eligible"] else None
     )
@@ -411,7 +422,12 @@ def plan_accepted_requirement(
         if item.get("product_id") == requirement["product_id"] and item.get("status") == "planning"
     ]
     score_breakdowns = [
-        _candidate_score(store, candidate=candidate, source_snapshot=source_snapshot)
+        _candidate_score(
+            store,
+            candidate=candidate,
+            source_snapshot=source_snapshot,
+            source_assessment=assessment,
+        )
         for candidate in sorted(candidates, key=lambda item: str(item["id"]))
     ]
     eligible = [item for item in score_breakdowns if item["hard_eligible"]]

@@ -339,6 +339,11 @@ def batch_schedule_requirements_result(
     updated: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
     seen_requirement_ids: set[str] = set()
+    pending_repository_schedule: list[tuple[dict[str, Any], str, str | None]] = []
+    repository = getattr(current_store, "repository", None)
+    schedule_atomically = getattr(
+        repository, "batch_schedule_requirements_into_planning_version", None
+    )
 
     for requirement_id in payload.requirement_ids:
         if requirement_id in seen_requirement_ids:
@@ -411,6 +416,9 @@ def batch_schedule_requirements_result(
             continue
 
         from_version_id = requirement.get("version_id")
+        if callable(schedule_atomically):
+            pending_repository_schedule.append((requirement, current_status, from_version_id))
+            continue
         scheduled_requirement, target_version = _assign_requirement_to_planning_version(
             current_store,
             requirement=requirement,
@@ -439,6 +447,67 @@ def batch_schedule_requirements_result(
             audit_event=audit_event,
         )
         updated.append(requirement_summary_projection(scheduled_requirement, current_store))
+
+    if pending_repository_schedule:
+        requirement_audits = [
+            record_audit_event(
+                current_store,
+                event_type="requirement.updated",
+                actor_id=user["id"],
+                subject_type="requirement",
+                subject_id=requirement["id"],
+                payload={
+                    "batch_id": batch_id,
+                    "from_status": current_status,
+                    "from_version_id": from_version_id,
+                    "operation": "batch_schedule",
+                    "reason": payload.reason,
+                    "to_status": "planned",
+                    "to_version_id": payload.version_id,
+                },
+            )
+            for requirement, current_status, from_version_id in pending_repository_schedule
+        ]
+        batch_audit_event = record_audit_event(
+            current_store,
+            event_type="requirement.batch_scheduled",
+            actor_id=user["id"],
+            subject_type="requirement_batch",
+            subject_id=batch_id,
+            payload={
+                "product_id": payload.product_id,
+                "reason": payload.reason,
+                "requirement_ids": payload.requirement_ids,
+                "skipped": skipped,
+                "skipped_count": len(skipped),
+                "updated_count": len(pending_repository_schedule),
+                "updated_ids": [item[0]["id"] for item in pending_repository_schedule],
+                "version_id": payload.version_id,
+            },
+        )
+        saved = schedule_atomically(
+            product_id=payload.product_id,
+            product_version_id=payload.version_id,
+            requirement_ids=[item[0]["id"] for item in pending_repository_schedule],
+            audit_events=[*requirement_audits, batch_audit_event],
+        )
+        target_version = saved["version"]
+        saved_by_id = {item["id"]: item for item in saved["requirements"]}
+        updated.extend(
+            requirement_summary_projection(saved_by_id[requirement["id"]], current_store)
+            for requirement, _, _ in pending_repository_schedule
+            if requirement["id"] in saved_by_id
+        )
+        return {
+            "batch_id": batch_id,
+            "product_id": payload.product_id,
+            "reason": payload.reason,
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+            "updated": updated,
+            "updated_count": len(updated),
+            "version_id": payload.version_id,
+        }
 
     batch_audit_event = record_audit_event(
         current_store,

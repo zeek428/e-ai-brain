@@ -1091,7 +1091,11 @@ class RdCollaborationTransaction:
             if (record := self._repository._row(cursor=self.cursor, row=row)) is not None
         ]
         scores = [
-            self._iteration_candidate_score(candidate=candidate, source_snapshot=source_snapshot)
+            self._iteration_candidate_score(
+                candidate=candidate,
+                source_snapshot=source_snapshot,
+                source_assessment=assessment,
+            )
             for candidate in candidates
         ]
         eligible = [item for item in scores if item["hard_eligible"]]
@@ -1174,6 +1178,7 @@ class RdCollaborationTransaction:
         *,
         candidate: dict[str, Any],
         source_snapshot: dict[str, Any],
+        source_assessment: dict[str, Any],
     ) -> dict[str, Any]:
         self.cursor.execute(
             """
@@ -1211,6 +1216,8 @@ class RdCollaborationTransaction:
         ]
         reasons: list[str] = ["active_run"] if active_run else []
         payload = source_snapshot.get("payload_json")
+        if not isinstance(payload, dict):
+            payload = {}
         iteration_config = payload.get("iteration_config") if isinstance(payload, dict) else {}
         capacity = iteration_config.get("capacity") if isinstance(iteration_config, dict) else {}
         capacity_limit = (
@@ -1226,6 +1233,48 @@ class RdCollaborationTransaction:
             and len(members) >= capacity_limit
         ):
             reasons.append("capacity_exhausted")
+        git_config = payload.get("git_config") if isinstance(payload, dict) else None
+        requested_repository_ids = (
+            {
+                str(value)
+                for value in git_config.get("repository_ids", [])
+                if value is not None and str(value)
+            }
+            if isinstance(git_config, dict)
+            else set()
+        )
+        if isinstance(git_config, dict) and git_config.get("repository_id"):
+            requested_repository_ids.add(str(git_config["repository_id"]))
+        if requested_repository_ids:
+            self.cursor.execute(
+                """
+                SELECT repository_id FROM product_version_branch_configs
+                WHERE version_id = %s AND repository_id IS NOT NULL
+                FOR KEY SHARE
+                """,
+                (candidate["id"],),
+            )
+            configured_repository_ids = {str(row[0]) for row in self.cursor.fetchall()}
+            if not requested_repository_ids & configured_repository_ids:
+                reasons.append("repository_incompatible")
+        member_ids = {str(member["id"]) for member in members}
+        dependencies = source_assessment.get("dependency_summary")
+        if isinstance(dependencies, list) and any(
+            isinstance(dependency, dict)
+            and (dependency.get("hard") is True or dependency.get("type") == "hard")
+            and str(
+                dependency.get("requirement_id")
+                or dependency.get("dependency_requirement_id")
+            ) not in member_ids
+            for dependency in dependencies
+            if dependency.get("requirement_id") or dependency.get("dependency_requirement_id")
+        ):
+            reasons.append("hard_dependency_unsatisfied")
+        if payload.get("delivery_target", "ready_for_release") not in {
+            "ready_for_release",
+            "deployed",
+        }:
+            reasons.append("delivery_target_incompatible")
         merge_payloads: list[dict[str, Any]] = []
         for member in members:
             if not member.get("final_strategy_snapshot_id"):
