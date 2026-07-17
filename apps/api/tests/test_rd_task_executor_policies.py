@@ -8,9 +8,11 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services.rd_policy_resolution import (
     PolicyResolutionError,
+    _base_snapshot_for_source,
     _hash,
     derive_assessment_rd_policy_snapshot,
     freeze_base_rd_policy_snapshot,
+    is_monotonic_strengthening,
     merge_policy_payloads,
     merge_version_rd_policy_snapshot,
     resolve_final_rd_policy,
@@ -1019,6 +1021,22 @@ def test_version_merge_tightens_known_policy_operators_and_rejects_unknown_delta
     else:
         raise AssertionError("undeclared numeric paths must require a human decision")
 
+    base = {"quality_gate_config": {}}
+    candidate = {"quality_gate_config": {"max_undeclared": 3}}
+    try:
+        merge_policy_payloads([base, candidate])
+    except PolicyResolutionError as exc:
+        assert exc.code == "RD_VERSION_POLICY_MERGE_REQUIRED"
+    else:
+        raise AssertionError("absent unregistered fields must require a human decision")
+    assert not is_monotonic_strengthening(base, candidate)
+
+    base = {"experience_reuse_config": {}}
+    candidate = {"experience_reuse_config": {"policy_compatibility": "same_policy_schema"}}
+    normalized = merge_policy_payloads([base, candidate])
+    assert normalized["experience_reuse_config"]["policy_compatibility"] == ("same_policy_version")
+    assert not is_monotonic_strengthening(base, candidate)
+
     try:
         merge_policy_payloads([{"undeclared": "one"}, {"undeclared": "two"}])
     except PolicyResolutionError as exc:
@@ -1163,6 +1181,37 @@ def test_snapshot_chain_rejects_cross_assessment_revision_two_parent():
         assert exc.code == "RD_POLICY_SNAPSHOT_INVALID"
     else:
         raise AssertionError("revision two must use the same assessment revision one parent")
+
+
+def test_base_snapshot_source_traversal_rejects_parent_cycle():
+    payload = valid_policy_payload()
+    first = {
+        "id": "assessment_a",
+        "policy_id": "policy_1",
+        "policy_version": 1,
+        "parent_snapshot_id": "assessment_b",
+        "snapshot_kind": "assessment_resolved",
+        "resolution_context_key": "assessment:assessment_1",
+        "resolution_revision": 2,
+        "schema_version": 1,
+        "created_by": "user_admin",
+        "content_hash": _hash(payload),
+        "payload_json": payload,
+    }
+    second = {
+        **first,
+        "id": "assessment_b",
+        "parent_snapshot_id": "assessment_a",
+        "resolution_revision": 1,
+    }
+    snapshots = {"assessment_a": first, "assessment_b": second}
+
+    try:
+        _base_snapshot_for_source(first, snapshots.get)
+    except PolicyResolutionError as exc:
+        assert exc.code == "RD_POLICY_SNAPSHOT_INVALID"
+    else:
+        raise AssertionError("source traversal must reject a parent cycle")
 
 
 def test_merge_ambiguity_persists_constrained_decision_without_snapshot():

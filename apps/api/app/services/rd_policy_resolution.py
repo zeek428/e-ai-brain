@@ -398,7 +398,11 @@ def _persist_merge_decision_request(
 def _base_snapshot_for_source(source: dict[str, Any], get_snapshot: Any) -> dict[str, Any]:
     _validate_snapshot(source)
     current = source
+    seen: set[str] = set()
     while current["snapshot_kind"] != "base":
+        if current["id"] in seen:
+            raise PolicyResolutionError("RD_POLICY_SNAPSHOT_INVALID", "snapshot parent cycle")
+        seen.add(current["id"])
         parent = get_snapshot(current.get("parent_snapshot_id")) if callable(get_snapshot) else None
         if parent is None:
             raise PolicyResolutionError(
@@ -651,14 +655,29 @@ def _merge_config(
         )
     merged: dict[str, Any] = {}
     for key in set(left) | set(right):
-        a, b = left.get(key), right.get(key)
-        if a == b or a is None or b is None:
-            merged[key] = deepcopy(b if a is None else a)
-        else:
-            operator = STRATEGY_MERGE_OPERATOR_REGISTRY.get(f"{path}.{key}")
+        field_path = f"{path}.{key}"
+        operator = STRATEGY_MERGE_OPERATOR_REGISTRY.get(field_path)
+        left_missing, right_missing = key not in left, key not in right
+        if left_missing or right_missing:
             if operator is None:
                 raise PolicyResolutionError(
-                    "RD_VERSION_POLICY_MERGE_REQUIRED", f"{path}.{key} is incomparable"
+                    "RD_VERSION_POLICY_MERGE_REQUIRED", f"{field_path} is incomparable"
+                )
+            default = _merge_default(operator, field_path)
+            if default is _NO_DEFAULT:
+                raise PolicyResolutionError(
+                    "RD_VERSION_POLICY_MERGE_REQUIRED", f"{field_path} is incomparable"
+                )
+            a = deepcopy(default) if left_missing else left[key]
+            b = deepcopy(default) if right_missing else right[key]
+        else:
+            a, b = left[key], right[key]
+        if a == b:
+            merged[key] = deepcopy(a)
+        else:
+            if operator is None:
+                raise PolicyResolutionError(
+                    "RD_VERSION_POLICY_MERGE_REQUIRED", f"{field_path} is incomparable"
                 )
             if operator == "intersection" and isinstance(a, list) and isinstance(b, list):
                 merged[key] = sorted(set(a) & set(b))
@@ -694,6 +713,21 @@ def _merge_config(
                     "RD_VERSION_POLICY_MERGE_REQUIRED", f"{path}.{key} is incomparable"
                 )
     return merged
+
+
+_NO_DEFAULT = object()
+
+
+def _merge_default(operator: str, field_path: str) -> Any:
+    if field_path == "experience_reuse_config.policy_compatibility":
+        return "same_policy_version"
+    if operator in {"union", "intersection"}:
+        return []
+    if operator == "and":
+        return True
+    if operator == "or":
+        return False
+    return _NO_DEFAULT
 
 
 def _merge_experience(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
