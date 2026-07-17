@@ -493,10 +493,10 @@ class RequirementReadRepository:
                   id, brain_app_id, title, product_id, version_id, module_code,
                   description, priority, source,
                   status, created_by, assignee, approval_comment, rejection_reason, task_ids,
-                  created_at, updated_at
+                  assessment_revision, created_at, updated_at
                 )
                 VALUES (
-                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -514,6 +514,7 @@ class RequirementReadRepository:
                   approval_comment = EXCLUDED.approval_comment,
                   rejection_reason = EXCLUDED.rejection_reason,
                   task_ids = EXCLUDED.task_ids,
+                  assessment_revision = EXCLUDED.assessment_revision,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -532,6 +533,7 @@ class RequirementReadRepository:
                     requirement.get("approval_comment"),
                     requirement.get("rejection_reason"),
                     json.dumps(requirement.get("task_ids", []), ensure_ascii=False),
+                    requirement.get("assessment_revision", 1),
                     created_at,
                     updated_at,
                 ),

@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from psycopg import Error as PsycopgError
 
 from app.api.routers.acceptance_tests import router as acceptance_tests_router
 from app.api.routers.assistant import router as assistant_router
@@ -75,6 +76,7 @@ from app.core.repositories.authorization import (
     CompatibilityAuthorizationRepository,
     PostgresAuthorizationRepository,
 )
+from app.core.repositories.rd_collaboration_shared import RdCollaborationRepositoryError
 from app.core.store import MemoryStore
 from app.core.trace import get_trace_id, new_trace_id
 from app.core.users import MemoryUserRepository, PostgresUserRepository
@@ -285,6 +287,38 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         detail = {"code": "HTTP_ERROR", "message": str(exc.detail)}
     detail["trace_id"] = get_trace_id(request)
     return JSONResponse(status_code=exc.status_code, content={"detail": detail})
+
+
+@app.exception_handler(RdCollaborationRepositoryError)
+async def rd_collaboration_repository_exception_handler(
+    request: Request,
+    exc: RdCollaborationRepositoryError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": {
+                "code": exc.code,
+                "message": str(exc),
+                "trace_id": get_trace_id(request),
+                **exc.details,
+            }
+        },
+    )
+
+
+@app.exception_handler(PsycopgError)
+async def postgres_exception_handler(request: Request, _exc: PsycopgError) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": {
+                "code": "PERSISTENCE_UNAVAILABLE",
+                "message": "Persistence operation failed",
+                "trace_id": get_trace_id(request),
+            }
+        },
+    )
 
 
 @app.exception_handler(RequestValidationError)

@@ -209,7 +209,9 @@ class ModelGatewayReadRepository:
                 cursor.execute(
                     f"""
                     SELECT id, ai_task_id, provider, model, purpose, tokens, latency_ms,
-                           status, error, model_gateway_config_id, created_at, updated_at
+                           status, error, model_gateway_config_id, created_at, updated_at,
+                           executor_profile_id, product_id, requirement_revision,
+                           strategy_snapshot_id
                     FROM model_gateway_logs
                     {where_clause}
                     ORDER BY created_at DESC, id DESC
@@ -266,7 +268,9 @@ class ModelGatewayReadRepository:
                 cursor.execute(
                     f"""
                     SELECT id, ai_task_id, provider, model, purpose, tokens, latency_ms,
-                           status, error, model_gateway_config_id, created_at, updated_at
+                           status, error, model_gateway_config_id, created_at, updated_at,
+                           executor_profile_id, product_id, requirement_revision,
+                           strategy_snapshot_id
                     FROM model_gateway_logs
                     {where_clause}
                     ORDER BY {sort_expression} {direction}, id {direction}
@@ -406,7 +410,8 @@ class ModelGatewayReadRepository:
         cursor.execute(
             """
             SELECT id, ai_task_id, provider, model, purpose, tokens, latency_ms,
-                   status, error, model_gateway_config_id, created_at, updated_at
+                   status, error, model_gateway_config_id, created_at, updated_at,
+                   executor_profile_id, product_id, requirement_revision, strategy_snapshot_id
             FROM model_gateway_logs
             ORDER BY created_at, id
             """
@@ -429,12 +434,20 @@ class ModelGatewayReadRepository:
                 "status": row[7],
                 "tokens": dict(row[5] or {}),
                 "updated_at": row[11].isoformat() if row[11] else None,
+                "executor_profile_id": row[12],
+                "product_id": row[13],
+                "requirement_revision": row[14],
+                "strategy_snapshot_id": row[15],
             }
             for optional_key in (
                 "ai_task_id",
                 "created_at",
                 "error",
                 "model_gateway_config_id",
+                "executor_profile_id",
+                "product_id",
+                "requirement_revision",
+                "strategy_snapshot_id",
                 "updated_at",
             ):
                 if log[optional_key] is None:
@@ -540,10 +553,12 @@ class ModelGatewayReadRepository:
                 """
                 INSERT INTO model_gateway_logs (
                   id, ai_task_id, provider, model, purpose, tokens, latency_ms,
-                  status, error, model_gateway_config_id, created_at, updated_at
+                  status, error, model_gateway_config_id, executor_profile_id,
+                  product_id, requirement_revision, strategy_snapshot_id, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s,
+                  %s, %s, %s, %s,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -556,6 +571,10 @@ class ModelGatewayReadRepository:
                   status = EXCLUDED.status,
                   error = EXCLUDED.error,
                   model_gateway_config_id = EXCLUDED.model_gateway_config_id,
+                  executor_profile_id = EXCLUDED.executor_profile_id,
+                  product_id = EXCLUDED.product_id,
+                  requirement_revision = EXCLUDED.requirement_revision,
+                  strategy_snapshot_id = EXCLUDED.strategy_snapshot_id,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -569,6 +588,10 @@ class ModelGatewayReadRepository:
                     log["status"],
                     log.get("error"),
                     log.get("model_gateway_config_id"),
+                    log.get("executor_profile_id"),
+                    log.get("product_id"),
+                    log.get("requirement_revision"),
+                    log.get("strategy_snapshot_id"),
                     created_at,
                     updated_at,
                 ),

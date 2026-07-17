@@ -1995,30 +1995,6 @@ def complete_ai_executor_task_response(
     assessment_execution_id = str(
         task.get("input_payload", {}).get("assessment_execution_id") or ""
     )
-    if assessment_execution_id and status == "succeeded":
-        from app.services.requirement_assessments import (
-            complete_ai_assessment_execution_from_runner,
-        )
-
-        assessment_id = str(task["input_payload"].get("assessment_id") or "")
-        executor_profile_id = str(task["input_payload"].get("executor_profile_id") or "")
-        if not assessment_id or not executor_profile_id:
-            raise api_error(
-                409,
-                "ASSESSMENT_EXECUTION_INVALID",
-                "Assessment runner task is missing frozen execution provenance",
-            )
-        complete_ai_assessment_execution_from_runner(
-            current_store=current_store,
-            assessment_id=assessment_id,
-            execution_id=assessment_execution_id,
-            executor_profile_id=executor_profile_id,
-            runner_id=runner_id,
-            model_result={
-                "model_invocation_id": task["result_json"].get("model_invocation_id"),
-                "assessment_opinion": task["result_json"].get("assessment_opinion"),
-            },
-        )
     audit_event = record_audit_event(
         current_store,
         event_type=f"ai_executor_task.{status}",
@@ -2035,12 +2011,87 @@ def complete_ai_executor_task_response(
             "status": status,
         },
     )
-    _persist_record(
-        current_store,
-        "save_ai_executor_task_record",
-        task,
-        audit_event=audit_event,
-    )
+    persisted_assessment_completion = False
+    if assessment_execution_id and status == "succeeded":
+        from app.services.requirement_assessments import (
+            complete_ai_assessment_execution_from_runner,
+        )
+
+        assessment_id = str(task["input_payload"].get("assessment_id") or "")
+        executor_profile_id = str(task["input_payload"].get("executor_profile_id") or "")
+        if not assessment_id or not executor_profile_id:
+            raise api_error(
+                409,
+                "ASSESSMENT_EXECUTION_INVALID",
+                "Assessment runner task is missing frozen execution provenance",
+            )
+        complete_atomically = getattr(
+            getattr(current_store, "repository", None),
+            "complete_ai_assessment_runner_task",
+            None,
+        )
+        if callable(complete_atomically):
+            opinion = task["result_json"].get("assessment_opinion")
+            if not isinstance(opinion, dict):
+                raise api_error(
+                    400,
+                    "ASSESSMENT_OPINION_INVALID",
+                    "Assessment runner result must include a structured assessment opinion",
+                )
+            model_invocation_id = str(task["result_json"].get("model_invocation_id") or "").strip()
+            if not model_invocation_id:
+                raise api_error(
+                    400,
+                    "ASSESSMENT_MODEL_INVOCATION_INVALID",
+                    "Assessment runner result must include model_invocation_id",
+                )
+            try:
+                complete_atomically(
+                    task=task,
+                    assessment_id=assessment_id,
+                    execution_id=assessment_execution_id,
+                    executor_profile_id=executor_profile_id,
+                    runner_id=runner_id,
+                    model_invocation_id=model_invocation_id,
+                    opinion={**opinion, "actor_id": executor_profile_id},
+                    audit_event=audit_event,
+                    outbox_event={
+                        "id": f"assessment-runner-complete-{task_id}",
+                        "aggregate_type": "requirement_assessment_execution",
+                        "aggregate_id": assessment_execution_id,
+                        "event_type": "requirement_assessment.runner_completed",
+                        "idempotency_key": f"assessment-runner-complete:{task_id}",
+                        "payload_json": {
+                            "assessment_id": assessment_id,
+                            "execution_id": assessment_execution_id,
+                            "model_invocation_id": model_invocation_id,
+                            "runner_id": runner_id,
+                        },
+                    },
+                )
+            except Exception as exc:
+                code = getattr(exc, "code", "ASSESSMENT_EXECUTION_INVALID")
+                raise api_error(409, code, str(exc)) from exc
+            persisted_assessment_completion = True
+        else:
+            complete_ai_assessment_execution_from_runner(
+                current_store=current_store,
+                assessment_id=assessment_id,
+                execution_id=assessment_execution_id,
+                executor_profile_id=executor_profile_id,
+                runner_id=runner_id,
+                model_result={
+                    "model_invocation_id": task["result_json"].get("model_invocation_id"),
+                    "assessment_opinion": task["result_json"].get("assessment_opinion"),
+                },
+            )
+    if not persisted_assessment_completion:
+        _persist_record(
+            current_store,
+            "save_ai_executor_task_record",
+            task,
+            audit_event=audit_event,
+        )
     probe_runner = runner_with_deployment_probe_result(runner, task=task)
     if probe_runner is not None:
         probe_audit_event = record_audit_event(

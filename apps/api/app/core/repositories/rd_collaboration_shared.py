@@ -521,6 +521,163 @@ class RdCollaborationTransaction:
             executions=executions,
         )
 
+    def dispatch_ai_assessment_execution(self, task: dict[str, Any]) -> dict[str, Any]:
+        """Create the runner task and bind it to its frozen execution in this cursor."""
+        self._repository.upsert_ai_executor_tasks(self.cursor, {task["id"]: task})
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessment_executions
+            SET ai_executor_task_id = %s, runner_id = %s, updated_at = now()
+            WHERE id = %s AND ai_executor_task_id IS NULL
+            RETURNING *
+            """,
+            (
+                task["id"],
+                task["runner_id"],
+                task["input_payload"]["assessment_execution_id"],
+            ),
+        )
+        execution = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if execution is None:
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_CONFLICT",
+                "Assessment execution is already dispatched or missing",
+            )
+        return execution
+
+    def complete_ai_assessment_runner_task(
+        self,
+        *,
+        task: dict[str, Any],
+        assessment_id: str,
+        execution_id: str,
+        executor_profile_id: str,
+        runner_id: str,
+        model_invocation_id: str,
+        opinion: dict[str, Any],
+        audit_event: dict[str, Any],
+        outbox_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Commit the frozen runner task, gateway evidence, opinion and event trail together."""
+        self.cursor.execute(
+            """
+            SELECT id, runner_id, status, input_payload
+            FROM ai_executor_tasks WHERE id = %s FOR UPDATE
+            """,
+            (task["id"],),
+        )
+        persisted_task = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if persisted_task is None or persisted_task["runner_id"] != runner_id:
+            raise RdCollaborationRepositoryError("NOT_FOUND", "AI executor task not found")
+        if persisted_task["status"] in {"succeeded", "failed", "cancelled"}:
+            raise RdCollaborationRepositoryError(
+                "AI_EXECUTOR_TASK_TERMINAL", "Terminal task cannot be completed"
+            )
+        input_payload = persisted_task.get("input_payload") or {}
+        if input_payload.get("assessment_execution_id") != execution_id:
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_INVALID", "Runner task is not bound to this execution"
+            )
+        self.cursor.execute(
+            """
+            SELECT execution.*, assessment.product_id
+            FROM requirement_assessment_executions execution
+            JOIN requirement_assessments assessment ON assessment.id = execution.assessment_id
+            WHERE execution.id = %s AND execution.assessment_id = %s
+            FOR UPDATE OF execution, assessment
+            """,
+            (execution_id, assessment_id),
+        )
+        execution = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if execution is None or execution.get("status") != "pending":
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_INVALID",
+                "Assessment execution is not eligible for completion",
+            )
+        if (
+            execution.get("ai_executor_task_id") != task["id"]
+            or execution.get("runner_id") != runner_id
+            or execution.get("executor_profile_id") != executor_profile_id
+        ):
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_INVALID", "Runner task provenance does not match execution"
+            )
+        self.cursor.execute(
+            """
+            SELECT id, status, executor_profile_id, product_id, requirement_revision,
+                   strategy_snapshot_id
+            FROM model_gateway_logs WHERE id = %s FOR UPDATE
+            """,
+            (model_invocation_id,),
+        )
+        invocation = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if invocation is None or (
+            invocation.get("status") != "succeeded"
+            or invocation.get("executor_profile_id") != executor_profile_id
+            or invocation.get("product_id") != execution.get("product_id")
+            or int(invocation.get("requirement_revision") or 0)
+            != int(execution.get("input_revision") or 0)
+            or invocation.get("strategy_snapshot_id") != execution.get("strategy_snapshot_id")
+        ):
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_MODEL_INVOCATION_INVALID",
+                "Model invocation is not a successful frozen assessment invocation",
+            )
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessment_opinions
+            SET conclusion_json = %s::jsonb, evidence_refs = %s::jsonb, confidence = %s,
+                risk_summary = %s::jsonb, cost_summary = %s::jsonb, actor_id = %s,
+                policy_proposal_json = %s::jsonb, outcome_code = %s, risk_level = %s,
+                updated_at = now()
+            WHERE id = %s AND conclusion_json = '{}'::jsonb
+            RETURNING *
+            """,
+            (
+                Jsonb(opinion.get("conclusion_json", {})),
+                Jsonb(opinion.get("evidence_refs", [])),
+                opinion.get("confidence"),
+                Jsonb(opinion.get("risk_summary", {})),
+                Jsonb(opinion.get("cost_summary", {})),
+                opinion["actor_id"],
+                Jsonb(opinion.get("policy_proposal_json", {})),
+                opinion.get("outcome_code"),
+                opinion.get("risk_level"),
+                execution["opinion_id"],
+            ),
+        )
+        if self.cursor.fetchone() is None:
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_OPINION_RECORDED", "Opinion is already recorded"
+            )
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessment_executions
+            SET status = 'completed', model_invocation_id = %s, result_summary = %s::jsonb,
+                updated_at = now()
+            WHERE id = %s
+            """,
+            (model_invocation_id, Jsonb(opinion.get("conclusion_json", {})), execution_id),
+        )
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessments assessment SET status = 'waiting_human',
+              version = version + 1, updated_at = now()
+            WHERE assessment.id = %s AND assessment.status = 'evaluating'
+              AND NOT EXISTS (
+                SELECT 1 FROM requirement_assessment_opinions pending
+                WHERE pending.assessment_id = assessment.id
+                  AND pending.opinion_round = assessment.opinion_round
+                  AND pending.conclusion_json = '{}'::jsonb
+              )
+            """,
+            (assessment_id,),
+        )
+        self._repository.upsert_ai_executor_tasks(self.cursor, {task["id"]: task})
+        self.save_audit_event(audit_event)
+        self.save_outbox_event(outbox_event)
+        return execution
+
     def advance_assessment_policy_round(
         self,
         *,
@@ -692,6 +849,19 @@ class RdCollaborationTransaction:
         decision_request: dict[str, Any],
     ) -> dict[str, Any]:
         """Persist one actionable policy conflict with its decision command response."""
+        self.cursor.execute(
+            """
+            SELECT * FROM decision_requests
+            WHERE subject_type = 'requirement_assessment' AND subject_id = %s
+              AND decision_type = 'policy_resolution' AND plan_version = %s
+              AND status IN ('pending', 'waiting_more_info')
+            FOR UPDATE
+            """,
+            (assessment["id"], int(assessment.get("opinion_round") or 1)),
+        )
+        existing_decision = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if existing_decision is not None:
+            return {"assessment": assessment, "decision_request": existing_decision}
         self.cursor.execute(
             """
             UPDATE requirement_assessments SET status = 'waiting_human',
@@ -1082,15 +1252,16 @@ class RdCollaborationWriteBase:
             cursor.execute(
                 """
                 INSERT INTO requirement_assessment_commands (
-                  id, assessment_id, operation, idempotency_key, request_hash,
+                  id, assessment_id, requirement_id, operation, idempotency_key, request_hash,
                   response_snapshot, status, created_by
-                ) VALUES (%s, %s, %s, %s, %s, '{}'::jsonb, 'pending', %s)
-                ON CONFLICT (assessment_id, operation, idempotency_key) DO NOTHING
+                ) VALUES (%s, %s, %s, %s, %s, %s, '{}'::jsonb, 'pending', %s)
+                ON CONFLICT DO NOTHING
                 RETURNING *
                 """,
                 (
                     command["id"],
                     command["assessment_id"],
+                    command.get("requirement_id"),
                     command["operation"],
                     command["idempotency_key"],
                     command["request_hash"],
@@ -1108,6 +1279,17 @@ class RdCollaborationWriteBase:
                     (command["assessment_id"], command["operation"], command["idempotency_key"]),
                 )
                 persisted = _row_dict(cursor, cursor.fetchone())
+                if persisted is None and command["operation"] == "start":
+                    cursor.execute(
+                        """
+                        SELECT * FROM requirement_assessment_commands
+                        WHERE requirement_id = %s AND operation = 'start'
+                          AND idempotency_key = %s
+                        FOR UPDATE
+                        """,
+                        (command.get("requirement_id"), command["idempotency_key"]),
+                    )
+                    persisted = _row_dict(cursor, cursor.fetchone())
                 if persisted is None:
                     raise RuntimeError("assessment command replay lookup failed")
                 if persisted["request_hash"] != command["request_hash"]:
@@ -1133,6 +1315,16 @@ class RdCollaborationWriteBase:
             return response
 
         return self._in_transaction(operation)
+
+    def complete_ai_assessment_runner_task(
+        self,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: RdCollaborationTransaction(
+                self, cursor
+            ).complete_ai_assessment_runner_task(**kwargs)
+        )
 
     @staticmethod
     def _idempotency_conflict(message: str, **details: Any) -> RdCollaborationRepositoryError:

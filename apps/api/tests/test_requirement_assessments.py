@@ -43,6 +43,8 @@ class AssessmentRepository:
         self.assessments: dict[str, dict] = {}
         self.opinions: dict[str, dict] = {}
         self.executions: dict[str, dict] = {}
+        self.ai_executor_tasks: dict[str, dict] = {}
+        self.model_gateway_logs: list[dict] = []
         self.requirements: dict[str, dict] = {}
         self.commands: dict[tuple[str, str, str], dict] = {}
         self.decision_requests: dict[str, dict] = {}
@@ -101,6 +103,7 @@ class AssessmentRepository:
                 "brain_app_id": "rd_brain",
                 "status": "active",
                 "health_status": "healthy",
+                "runner_id": "runner_architect",
                 "supported_role_codes": ["architect"],
             }
         }
@@ -144,6 +147,9 @@ class AssessmentRepository:
 
     def get_rd_executor_profile(self, profile_id: str):
         return deepcopy(self.profiles.get(profile_id))
+
+    def list_model_gateway_logs(self):
+        return deepcopy(self.model_gateway_logs)
 
     def save_assessment_bundle(
         self, *, assessment: dict, opinions: list[dict], snapshots=None, executions=None
@@ -286,6 +292,15 @@ class AssessmentRepository:
                     assessment=assessment, opinions=opinions, executions=executions
                 )
 
+            def dispatch_ai_assessment_execution(self, task: dict):
+                repository.ai_executor_tasks[task["id"]] = deepcopy(task)
+                execution_id = task["input_payload"]["assessment_execution_id"]
+                repository.executions[execution_id] = {
+                    **repository.executions[execution_id],
+                    "ai_executor_task_id": task["id"],
+                }
+                return deepcopy(repository.executions[execution_id])
+
             def record_assessment_opinion(self, opinion: dict):
                 return repository.update_requirement_assessment_opinion(opinion)
 
@@ -349,6 +364,8 @@ class AssessmentRepository:
                 repository.assessments[assessment["id"]] = persisted
                 for opinion in opinions:
                     repository.opinions[opinion["id"]] = deepcopy(opinion)
+                for execution in executions:
+                    repository.executions[execution["id"]] = deepcopy(execution)
                 return deepcopy(persisted)
 
         response = effect(Transaction())
@@ -394,6 +411,15 @@ def test_assessment_resolves_initial_policy_before_ai_roles():
     assert assessment["initial_policy_snapshot"]["snapshot_kind"] == "base"
     assert assessment["initial_policy_snapshot"]["resolution_revision"] == 0
     assert assessment["status"] == "evaluating"
+    assert len(store.repository.ai_executor_tasks) == 1
+    dispatched = next(iter(store.repository.ai_executor_tasks.values()))
+    assert (
+        dispatched["input_payload"]["assessment_execution_id"]
+        == (assessment["executions"][0]["id"])
+    )
+    assert dispatched["input_payload"]["executor_profile_id"] == "executor_architect"
+    assert dispatched["input_payload"]["product_id"] == "product_1"
+    assert dispatched["input_payload"]["requirement_revision"] == 1
 
 
 def test_policy_re_evaluation_round_reassigns_every_new_active_qualified_role():
@@ -433,6 +459,7 @@ def test_policy_re_evaluation_round_reassigns_every_new_active_qualified_role():
         "brain_app_id": "rd_brain",
         "status": "active",
         "health_status": "healthy",
+        "runner_id": "runner_reviewer",
         "supported_role_codes": ["reviewer"],
     }
     store = RepositoryStore(repository)
@@ -637,6 +664,32 @@ def test_ai_assessment_completion_requires_the_frozen_executor_profile():
         user=owner,
     )
     execution = assessment["executions"][0]
+    try:
+        complete_ai_assessment_execution_from_runner(
+            current_store=store,
+            assessment_id=assessment["id"],
+            execution_id=execution["id"],
+            executor_profile_id="executor_architect",
+            runner_id="runner_architect",
+            model_result={
+                "model_invocation_id": "gateway-log-1",
+                "assessment_opinion": {"conclusion_json": {"recommendation": "accept"}},
+            },
+        )
+    except Exception as exc:
+        assert getattr(exc, "detail", {}).get("code") == "ASSESSMENT_MODEL_INVOCATION_INVALID"
+    else:
+        raise AssertionError("fabricated model invocation must be rejected")
+    store.repository.model_gateway_logs.append(
+        {
+            "id": "gateway-log-1",
+            "status": "succeeded",
+            "executor_profile_id": "executor_architect",
+            "product_id": "product_1",
+            "requirement_revision": 1,
+            "strategy_snapshot_id": execution["strategy_snapshot_id"],
+        }
+    )
     completed = complete_ai_assessment_execution_from_runner(
         current_store=store,
         assessment_id=assessment["id"],
@@ -785,6 +838,8 @@ def test_assessment_persistence_contract_has_versioned_commands_and_requirement_
     assert "create table if not exists requirement_assessment_commands" in body
     assert "request_hash" in body and "response_snapshot" in body
     assert "unique (assessment_id, operation, idempotency_key)" in body
+    assert "uk_requirement_assessment_start_request" in body
+    assert "'assessment'" in body
 
     persistence = (
         Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"

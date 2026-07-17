@@ -3553,6 +3553,10 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
             audit_event=audit_event,
         )
 
+    def upsert_ai_executor_tasks(self, cursor: Any, tasks: dict[str, dict[str, Any]]) -> None:
+        """Cursor-scoped task write used by assessment orchestration transactions."""
+        self._plugin_read_repository.upsert_ai_executor_tasks(cursor, tasks)
+
     def save_pending_attribution(self, payload: dict[str, Any]) -> None:
         self._operational_collection_read_repository.save_pending_attribution(payload)
 

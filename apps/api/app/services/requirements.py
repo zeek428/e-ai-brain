@@ -223,11 +223,7 @@ def ensure_requirement_product_scope(user: dict[str, Any], product_id: Any) -> N
 
 
 def public_git_repository(repository: dict[str, Any]) -> dict[str, Any]:
-    public_repository = {
-        key: value
-        for key, value in repository.items()
-        if key != "credential_ref"
-    }
+    public_repository = {key: value for key, value in repository.items() if key != "credential_ref"}
     public_repository["credential_ref_configured"] = bool(
         repository.get("credential_ref") or repository.get("credential_ref_configured")
     )
@@ -375,6 +371,17 @@ def patch_requirement_result(
     ):
         raise api_error(404, "NOT_FOUND", "Product module not found")
 
+    assessment_relevant_fields = {
+        "title",
+        "content",
+        "product_id",
+        "version_id",
+        "module_code",
+        "source",
+    }
+    changed_assessment_fields = assessment_relevant_fields & updates.keys()
+    if any(requirement.get(field) != updates[field] for field in changed_assessment_fields):
+        requirement["assessment_revision"] = int(requirement.get("assessment_revision") or 1) + 1
     requirement = {**requirement, **updates}
     if current_status in {"approved", "planned"} and "version_id" in updates:
         requirement["status"] = "planned" if updates["version_id"] else "approved"

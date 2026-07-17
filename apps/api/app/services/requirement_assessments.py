@@ -350,6 +350,63 @@ def _new_opinion_round(
     return opinions, executions
 
 
+def _assessment_dispatch_task(
+    *,
+    current_store: Any,
+    execution: dict[str, Any],
+    requirement: dict[str, Any],
+    user: dict[str, Any],
+    repository: Any,
+) -> dict[str, Any] | None:
+    if execution.get("actor_type") != "ai_employee":
+        return None
+    profile = getattr(repository, "get_rd_executor_profile", lambda _id: None)(
+        execution.get("executor_profile_id")
+    )
+    if profile is None:
+        raise api_error(
+            409,
+            "ASSESSMENT_EXECUTOR_PROFILE_INVALID",
+            "Frozen executor profile is missing",
+        )
+    runner_id = str(profile.get("runner_id") or "").strip()
+    if not runner_id:
+        raise api_error(
+            409,
+            "ASSESSMENT_EXECUTOR_PROFILE_INVALID",
+            "Frozen AI assessment executor profile has no runner binding",
+        )
+    now = datetime.now(UTC).isoformat()
+    return {
+        "id": _new_id(current_store, "ai_executor_task"),
+        "runner_id": runner_id,
+        "executor_type": profile.get("executor_type") or "codex",
+        "instruction": "Produce only the structured requirement assessment opinion.",
+        "workspace_root": "assessment://readonly",
+        "timeout_seconds": 1800,
+        "input_payload": {
+            "assessment_id": execution["assessment_id"],
+            "assessment_execution_id": execution["id"],
+            "executor_profile_id": execution["executor_profile_id"],
+            "product_id": requirement["product_id"],
+            "requirement_id": requirement["id"],
+            "requirement_revision": execution["input_revision"],
+            "strategy_snapshot_id": execution["strategy_snapshot_id"],
+        },
+        "request_config": {
+            "assessment_only": True,
+            "side_effect_policy": execution["side_effect_policy"],
+        },
+        "result_json": {},
+        "logs": [],
+        "status": "queued",
+        "created_by": user["id"],
+        "created_at": now,
+        "updated_at": now,
+        "task_kind": "assessment",
+    }
+
+
 def _aggregate_policy_proposal(
     *, snapshot: dict[str, Any], opinions: list[dict[str, Any]]
 ) -> tuple[dict[str, Any], str | None, list[Any]]:
@@ -434,6 +491,7 @@ def start_requirement_assessment(
                 item
                 for item in list_assessments(requirement["id"])
                 if item.get("initial_strategy_snapshot_id") == initial_snapshot["id"]
+                and int(item.get("requirement_revision") or 1) == current_revision
                 and item.get("status")
                 in {
                     "draft",
@@ -505,10 +563,28 @@ def start_requirement_assessment(
         saved = transaction.save_assessment_bundle(
             assessment=assessment, opinions=opinions, executions=executions
         )
+        dispatches = [
+            task
+            for execution in executions
+            if (
+                task := _assessment_dispatch_task(
+                    current_store=current_store,
+                    execution=execution,
+                    requirement=requirement,
+                    user=user,
+                    repository=repository,
+                )
+            )
+            is not None
+        ]
+        dispatched_executions = [
+            transaction.dispatch_ai_assessment_execution(task) for task in dispatches
+        ]
         persisted = deepcopy(saved.get("assessment") or assessment)
         persisted["initial_policy_snapshot"] = deepcopy(initial_snapshot)
         persisted["opinions"] = deepcopy(saved.get("opinions") or opinions)
         persisted["executions"] = deepcopy(saved.get("executions") or executions)
+        persisted["dispatched_executions"] = dispatched_executions
         return persisted
 
     try:
@@ -516,6 +592,7 @@ def start_requirement_assessment(
             {
                 "id": _new_id(current_store, "requirement_assessment_command"),
                 "assessment_id": assessment_id,
+                "requirement_id": requirement["id"],
                 "operation": "start",
                 "idempotency_key": request_id or f"start:{requirement['id']}:{current_revision}",
                 "request_hash": _request_hash(
@@ -699,6 +776,27 @@ def complete_ai_assessment_execution_from_runner(
             400,
             "ASSESSMENT_MODEL_RESULT_INVALID",
             "Authenticated runner must provide a model invocation and structured assessment result",
+        )
+    logs = getattr(repository, "list_model_gateway_logs", lambda: [])()
+    assessment = _assessment(repository, assessment_id)
+    matching_log = next(
+        (
+            log
+            for log in logs
+            if log.get("id") == invocation_id
+            and log.get("status") == "succeeded"
+            and log.get("executor_profile_id") == executor_profile_id
+            and log.get("product_id") == assessment.get("product_id")
+            and int(log.get("requirement_revision") or 0) == int(execution["input_revision"])
+            and log.get("strategy_snapshot_id") == execution["strategy_snapshot_id"]
+        ),
+        None,
+    )
+    if matching_log is None:
+        raise api_error(
+            409,
+            "ASSESSMENT_MODEL_INVOCATION_INVALID",
+            "Model invocation is not a successful frozen assessment execution result",
         )
     # The frozen execution remains the actor authority. Runner/model output is never
     # allowed to set an employee, profile, or any non-assessment side effect.
@@ -990,11 +1088,32 @@ def finalize_requirement_assessment(
                 opinions=next_opinions,
                 executions=executions,
             )
+            dispatches = [
+                task
+                for execution in executions
+                if (
+                    task := _assessment_dispatch_task(
+                        current_store=current_store,
+                        execution=execution,
+                        requirement={
+                            "id": assessment["requirement_id"],
+                            "product_id": _assessment_product_id(assessment),
+                        },
+                        user=user,
+                        repository=repository,
+                    )
+                )
+                is not None
+            ]
+            dispatched_executions = [
+                active_transaction.dispatch_ai_assessment_execution(task) for task in dispatches
+            ]
             return {
                 **persisted,
                 "policy_re_evaluation_required": True,
                 "opinions": next_opinions,
                 "executions": executions,
+                "dispatched_executions": dispatched_executions,
             }
 
         if transaction is not None:

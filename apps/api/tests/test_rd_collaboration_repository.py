@@ -1836,6 +1836,59 @@ def test_assessment_command_replays_same_hash_and_rejects_conflicting_hash(
         )
 
 
+def test_assessment_start_command_is_scoped_to_requirement_request_id(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="assessment-start-command")
+    secondary_assessment = {
+        "id": "assessment-start-command-secondary",
+        "requirement_id": seeded["requirement"],
+        "requirement_revision": 2,
+        "product_id": seeded["product"],
+        "initial_strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "final_strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "structured_assessment": {},
+        "status": "evaluating",
+        "created_by": "user_admin",
+    }
+    repository.save_assessment_bundle(assessment=secondary_assessment, opinions=[])
+    command = {
+        "id": "assessment-start-command-1",
+        "assessment_id": seeded["assessment"],
+        "requirement_id": seeded["requirement"],
+        "operation": "start",
+        "idempotency_key": "same-request-id",
+        "request_hash": "sha256:start-request",
+        "created_by": "user_admin",
+    }
+
+    first = repository.execute_requirement_assessment_command(
+        command, lambda _transaction: {"assessment_id": seeded["assessment"]}
+    )
+    replay = repository.execute_requirement_assessment_command(
+        {
+            **command,
+            "id": "assessment-start-command-2",
+            "assessment_id": secondary_assessment["id"],
+        },
+        lambda _transaction: {"unexpected": True},
+    )
+
+    assert first == {"assessment_id": seeded["assessment"]}
+    assert replay == {"assessment_id": seeded["assessment"], "idempotent_replay": True}
+    with pytest.raises(RdCollaborationRepositoryError, match="different request"):
+        repository.execute_requirement_assessment_command(
+            {
+                **command,
+                "id": "assessment-start-command-3",
+                "assessment_id": secondary_assessment["id"],
+                "request_hash": "sha256:other-request",
+            },
+            lambda _transaction: {"unexpected": True},
+        )
+
+
 def test_assessment_command_rolls_back_effect_when_provenance_is_invalid(
     repository: PostgresSnapshotRepository,
 ) -> None:
@@ -1929,6 +1982,23 @@ def test_assessment_ai_completion_uses_frozen_pg_execution_attribution(
         opinions=[opinion],
         executions=[execution],
     )
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO model_gateway_logs (
+              id, provider, model, purpose, status, executor_profile_id,
+              product_id, requirement_revision, strategy_snapshot_id
+            ) VALUES (%s, 'test', 'test-model', 'requirement_assessment', 'succeeded',
+                      %s, %s, %s, %s)
+            """,
+            (
+                "assessment-ai-completion-model-log",
+                "assessment-ai-completion-profile",
+                seeded["product"],
+                1,
+                seeded["base_snapshot"]["id"],
+            ),
+        )
 
     saved = complete_ai_assessment_execution_from_runner(
         current_store=PostgresRuntimeStore(repository),
@@ -1949,6 +2019,167 @@ def test_assessment_ai_completion_uses_frozen_pg_execution_attribution(
     assert persisted_execution["runner_id"] == "assessment-ai-completion-runner"
 
 
+def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atomically(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="assessment-runner-atomic")
+    assessment = repository.get_requirement_assessment(str(seeded["assessment"]))
+    assert assessment is not None
+    runner_id = "assessment-runner-atomic-runner"
+    profile_id = "assessment-runner-atomic-profile"
+    employee_id = "assessment-runner-atomic-ai"
+    repository.save_ai_executor_runner_record(
+        {
+            "id": runner_id,
+            "name": "Assessment runner",
+            "token_hash": "test-token-hash",
+            "executor_types": ["codex"],
+            "created_by": "user_admin",
+        }
+    )
+    repository.save_rd_ai_employee_record(
+        {
+            "id": employee_id,
+            "brain_app_id": "rd_brain",
+            "code": employee_id,
+            "name": "Assessment AI",
+            "created_by": "user_admin",
+        }
+    )
+    repository.save_rd_executor_profile_record(
+        {
+            "id": profile_id,
+            "brain_app_id": "rd_brain",
+            "code": profile_id,
+            "name": "Assessment profile",
+            "executor_type": "codex",
+            "runner_id": runner_id,
+            "created_by": "user_admin",
+        }
+    )
+    opinion = {
+        "id": "assessment-runner-atomic-opinion",
+        "assessment_id": assessment["id"],
+        "role_code": "architect",
+        "ai_employee_id": employee_id,
+        "executor_profile_id": profile_id,
+        "input_revision": 1,
+        "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "opinion_round": 1,
+        "conclusion_json": {},
+        "evidence_refs": [],
+        "risk_summary": {},
+        "cost_summary": {},
+        "assigned_subject_type": "ai_employee",
+        "assigned_ai_employee_id": employee_id,
+    }
+    execution = {
+        "id": "assessment-runner-atomic-execution",
+        "assessment_id": assessment["id"],
+        "opinion_id": opinion["id"],
+        "role_code": "architect",
+        "actor_type": "ai_employee",
+        "ai_employee_id": employee_id,
+        "executor_profile_id": profile_id,
+        "input_revision": 1,
+        "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "execution_kind": "assessment_only",
+        "side_effect_policy": "no_code_git_deploy_runner_work_item",
+        "status": "pending",
+    }
+    repository.save_assessment_bundle(
+        assessment=assessment, opinions=[opinion], executions=[execution]
+    )
+    task = {
+        "id": "assessment-runner-atomic-task",
+        "runner_id": runner_id,
+        "executor_type": "codex",
+        "instruction": "Assess requirement only",
+        "workspace_root": "assessment://readonly",
+        "input_payload": {"assessment_execution_id": execution["id"]},
+        "request_config": {"assessment_only": True},
+        "result_json": {},
+        "logs": [],
+        "status": "queued",
+        "created_by": "user_admin",
+        "task_kind": "assessment",
+    }
+    repository.save_ai_executor_task_record(task)
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            UPDATE requirement_assessment_executions
+            SET ai_executor_task_id = %s, runner_id = %s
+            WHERE id = %s
+            """,
+            (task["id"], runner_id, execution["id"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO model_gateway_logs (
+              id, provider, model, purpose, status, executor_profile_id,
+              product_id, requirement_revision, strategy_snapshot_id
+            ) VALUES (%s, 'test', 'test-model', 'requirement_assessment', 'succeeded',
+                      %s, %s, %s, %s)
+            """,
+            (
+                "assessment-runner-atomic-log",
+                profile_id,
+                seeded["product"],
+                1,
+                seeded["base_snapshot"]["id"],
+            ),
+        )
+    completed_task = {
+        **task,
+        "status": "succeeded",
+        "result_json": {"model_invocation_id": "assessment-runner-atomic-log"},
+    }
+    kwargs = {
+        "task": completed_task,
+        "assessment_id": assessment["id"],
+        "execution_id": execution["id"],
+        "executor_profile_id": profile_id,
+        "runner_id": runner_id,
+        "opinion": {"actor_id": employee_id, "conclusion_json": {"recommendation": "accept"}},
+        "audit_event": {
+            "id": "assessment-runner-atomic-audit",
+            "event_type": "ai_executor_task.succeeded",
+            "actor_id": runner_id,
+            "subject_type": "ai_executor_task",
+            "subject_id": task["id"],
+            "payload": {},
+        },
+        "outbox_event": {
+            "id": "assessment-runner-atomic-outbox",
+            "aggregate_type": "requirement_assessment_execution",
+            "aggregate_id": execution["id"],
+            "event_type": "requirement_assessment.runner_completed",
+            "idempotency_key": "assessment-runner-atomic-outbox",
+            "payload_json": {},
+        },
+    }
+
+    with pytest.raises(RdCollaborationRepositoryError, match="successful frozen assessment"):
+        repository.complete_ai_assessment_runner_task(
+            **kwargs, model_invocation_id="missing-model-invocation"
+        )
+    assert repository.get_requirement_assessment_execution(execution["id"])["status"] == "pending"
+    assert repository.list_ai_executor_tasks(runner_id=runner_id)[0]["status"] == "queued"
+
+    repository.complete_ai_assessment_runner_task(
+        **kwargs, model_invocation_id="assessment-runner-atomic-log"
+    )
+    assert repository.get_requirement_assessment_execution(execution["id"])["status"] == "completed"
+    assert repository.list_ai_executor_tasks(runner_id=runner_id)[0]["status"] == "succeeded"
+    assert any(item["id"] == kwargs["audit_event"]["id"] for item in repository.list_audit_events())
+    with repository._connect() as connection:
+        assert connection.execute(
+            "SELECT 1 FROM execution_outbox_events WHERE id = %s",
+            (kwargs["outbox_event"]["id"],),
+        ).fetchone()
+
+
 def test_assessment_api_returns_trace_envelope_for_invalid_assessment_state(
     repository: PostgresSnapshotRepository,
 ) -> None:
@@ -1966,6 +2197,30 @@ def test_assessment_api_returns_trace_envelope_for_invalid_assessment_state(
         assert body["detail"]["code"] == "ASSESSMENT_STATE_INVALID"
         assert response.headers["x-trace-id"]
     finally:
+        app.state.store = original_store
+
+
+def test_assessment_api_wraps_repository_failures_in_trace_envelope(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="assessment-api-repository-error")
+    original_store = app.state.store
+    original_get = repository.get_requirement_assessment
+    app.state.store = PostgresRuntimeStore(repository)
+    repository.get_requirement_assessment = lambda _assessment_id: (_ for _ in ()).throw(
+        RdCollaborationRepositoryError("ASSESSMENT_REPOSITORY_FAILURE", "forced repository failure")
+    )
+    try:
+        response = TestClient(app).post(
+            f"/api/requirement-assessments/{seeded['assessment']}/opinions",
+            json={"role_code": "developer", "conclusion_json": {"recommendation": "accept"}},
+            headers=auth_headers(),
+        )
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "ASSESSMENT_REPOSITORY_FAILURE"
+        assert response.headers["x-trace-id"]
+    finally:
+        repository.get_requirement_assessment = original_get
         app.state.store = original_store
 
 
@@ -2043,10 +2298,15 @@ def test_assessment_api_replays_canonical_policy_conflict_with_decision_request(
             json=payload,
             headers=auth_headers(),
         )
+        new_key = client.post(
+            f"/api/requirement-assessments/{waiting['id']}/decisions",
+            json={**payload, "version": 2, "idempotency_key": "K2"},
+            headers=auth_headers(),
+        )
     finally:
         app.state.store = original_store
 
-    for response in (first, replay):
+    for response in (first, replay, new_key):
         assert response.status_code == 409
         detail = response.json()["detail"]
         assert detail["code"] == "RD_POLICY_HUMAN_DECISION_REQUIRED"

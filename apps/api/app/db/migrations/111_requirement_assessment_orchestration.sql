@@ -111,6 +111,19 @@ ALTER TABLE requirement_assessment_commands
   ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'pending';
 
 ALTER TABLE requirement_assessment_commands
+  ADD COLUMN IF NOT EXISTS requirement_id text REFERENCES requirements(id) ON DELETE RESTRICT;
+
+UPDATE requirement_assessment_commands command
+SET requirement_id = assessment.requirement_id
+FROM requirement_assessments assessment
+WHERE command.assessment_id = assessment.id
+  AND command.requirement_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_requirement_assessment_start_request
+  ON requirement_assessment_commands (requirement_id, idempotency_key)
+  WHERE operation = 'start' AND requirement_id IS NOT NULL;
+
+ALTER TABLE requirement_assessment_commands
   DROP CONSTRAINT IF EXISTS ck_requirement_assessment_command_operation,
   ADD CONSTRAINT ck_requirement_assessment_command_operation
   CHECK (operation IN ('start', 'opinion', 'answers', 'decision', 'finalize'));
@@ -127,4 +140,23 @@ ALTER TABLE requirement_assessment_commands
 ALTER TABLE requirement_assessment_executions
   ADD COLUMN IF NOT EXISTS runner_id text,
   ADD COLUMN IF NOT EXISTS model_invocation_id text,
-  ADD COLUMN IF NOT EXISTS result_summary jsonb NOT NULL DEFAULT '{}'::jsonb;
+  ADD COLUMN IF NOT EXISTS result_summary jsonb NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS ai_executor_task_id text;
+
+ALTER TABLE requirement_assessment_executions
+  DROP CONSTRAINT IF EXISTS fk_requirement_assessment_execution_runner_task,
+  ADD CONSTRAINT fk_requirement_assessment_execution_runner_task
+  FOREIGN KEY (ai_executor_task_id) REFERENCES ai_executor_tasks(id)
+  ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
+ALTER TABLE ai_executor_tasks
+  DROP CONSTRAINT IF EXISTS ck_ai_executor_tasks_task_kind,
+  ADD CONSTRAINT ck_ai_executor_tasks_task_kind CHECK (
+    task_kind IN ('coding', 'quality_gate', 'deployment', 'integration', 'assessment')
+  );
+
+ALTER TABLE model_gateway_logs
+  ADD COLUMN IF NOT EXISTS executor_profile_id text,
+  ADD COLUMN IF NOT EXISTS product_id text,
+  ADD COLUMN IF NOT EXISTS requirement_revision bigint,
+  ADD COLUMN IF NOT EXISTS strategy_snapshot_id text;
