@@ -5,6 +5,7 @@ from gitlab_fakes import install_real_gitlab_api_stub
 
 import app.services.git_review as git_review_service
 from app.main import app
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -195,6 +196,7 @@ def build_confirmed_solution_context(
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
     design_task = client.post(
         f"/api/requirements/{requirement['id']}/generate-task",

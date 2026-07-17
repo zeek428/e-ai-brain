@@ -159,6 +159,13 @@ def test_requirement_list_detail_reject_and_close_state_machine():
         headers=headers,
     ).json()["data"]
     assert [item["id"] for item in pending["items"]] == [second["id"], first["id"]]
+    app.state.store.requirement_assessments = {
+        "accepted-first": {
+            "id": "accepted-first",
+            "requirement_id": first["id"],
+            "status": "accepted",
+        }
+    }
 
     reject_without_reason = client.post(
         f"/api/requirements/{first['id']}/reject",
@@ -217,6 +224,13 @@ def test_requirement_can_start_in_backlog_and_be_planned_into_iteration_version(
     ).json()["data"]
     assert requirement["status"] == "submitted"
     assert requirement["version_id"] is None
+    app.state.store.requirement_assessments = {
+        "accepted-backlog": {
+            "id": "accepted-backlog",
+            "requirement_id": requirement["id"],
+            "status": "accepted",
+        }
+    }
 
     approved = client.post(
         f"/api/requirements/{requirement['id']}/approve",

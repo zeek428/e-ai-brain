@@ -208,13 +208,14 @@ def derive_assessment_rd_policy_snapshot(
     parent_snapshot_id: str,
     resolution_revision: int,
     tightened_payload: dict[str, Any],
+    repository: Any | None = None,
 ) -> dict[str, Any]:
     if resolution_revision not in {1, 2}:
         raise PolicyResolutionError(
             "RD_POLICY_RESOLUTION_LIMIT", "at most two strengthening rounds"
         )
-    repository = _repository(store)
-    get_snapshot = getattr(repository, "get_rd_policy_snapshot", None)
+    policy_repository = repository or _repository(store)
+    get_snapshot = getattr(policy_repository, "get_rd_policy_snapshot", None)
     parent = get_snapshot(parent_snapshot_id) if callable(get_snapshot) else None
     if parent is None:
         raise PolicyResolutionError(
@@ -234,7 +235,7 @@ def derive_assessment_rd_policy_snapshot(
         raise PolicyResolutionError(
             "RD_POLICY_SNAPSHOT_INVALID", "assessment revision two must parent its revision one"
         )
-    base_payload = validate_snapshot_chain(repository, parent)
+    base_payload = validate_snapshot_chain(policy_repository, parent)
     candidate = validate_unified_policy_payload(tightened_payload)
     if candidate == base_payload:
         return parent
@@ -256,7 +257,7 @@ def derive_assessment_rd_policy_snapshot(
         "payload_json": candidate,
         "created_by": parent.get("created_by") or "system",
     }
-    derive = getattr(repository, "derive_assessment_policy_snapshot", None)
+    derive = getattr(policy_repository, "derive_assessment_policy_snapshot", None)
     return (
         derive(base_snapshot_id=parent_snapshot_id, snapshot=snapshot)
         if callable(derive)
@@ -504,31 +505,37 @@ def resolve_final_rd_policy(
     *,
     requirement: dict[str, Any],
     assessment: dict[str, Any],
+    repository: Any | None = None,
 ) -> dict[str, Any]:
-    base_id = assessment.get("initial_strategy_snapshot_id")
+    # A second strengthening round extends the first frozen assessment result,
+    # never jumps back to the base snapshot.
+    base_id = assessment.get("final_strategy_snapshot_id") or assessment.get(
+        "initial_strategy_snapshot_id"
+    )
     if not base_id:
         return resolve_initial_rd_policy(store, requirement=requirement)
     delta = assessment.get("tightened_policy") or assessment.get("policy_delta")
     if not delta:
-        repository = _repository(store)
-        get_snapshot = getattr(repository, "get_rd_policy_snapshot", None)
+        policy_repository = repository or _repository(store)
+        get_snapshot = getattr(policy_repository, "get_rd_policy_snapshot", None)
         base = get_snapshot(base_id) if callable(get_snapshot) else None
         if base is None:
             raise PolicyResolutionError("RD_POLICY_SNAPSHOT_INVALID", "base snapshot is missing")
-        validate_snapshot_chain(repository, base)
+        validate_snapshot_chain(policy_repository, base)
         return base
-    repository = _repository(store)
-    get_snapshot = getattr(repository, "get_rd_policy_snapshot", None)
+    policy_repository = repository or _repository(store)
+    get_snapshot = getattr(policy_repository, "get_rd_policy_snapshot", None)
     base = get_snapshot(base_id) if callable(get_snapshot) else None
     if base is None:
         raise PolicyResolutionError("RD_POLICY_SNAPSHOT_INVALID", "base snapshot is missing")
-    payload = {**validate_snapshot_chain(repository, base), **delta}
+    payload = {**validate_snapshot_chain(policy_repository, base), **delta}
     return derive_assessment_rd_policy_snapshot(
         store,
         assessment_id=str(assessment["id"]),
         parent_snapshot_id=base_id,
         resolution_revision=int(assessment.get("resolution_revision") or 1),
         tightened_payload=payload,
+        repository=repository,
     )
 
 

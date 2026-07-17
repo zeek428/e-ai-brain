@@ -10,6 +10,7 @@ from test_database_persistence import (
 from app.core.persistence import PersistentMemoryStore
 from app.core.users import MemoryUserRepository
 from app.services.mock_writeback import create_mock_writeback_result
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 
 def test_mock_writebacks_are_persisted_through_fine_grained_repository_payload():
@@ -182,6 +183,7 @@ def _create_generated_design_task(
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(
         f"/api/requirements/{requirement['id']}/approve",
         json={"comment": "进入设计"},

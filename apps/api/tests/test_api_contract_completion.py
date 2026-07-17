@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.core.store import MemoryStore
 from app.main import app
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -60,6 +61,7 @@ def create_draft_task(
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
     generated = client.post(
         f"/api/requirements/{requirement['id']}/generate-task",
@@ -288,14 +290,20 @@ def test_ai_task_batch_cancel_updates_valid_tasks_and_skips_terminal_tasks():
             "message": "AI task not found",
         },
     ]
-    assert client.get(
-        f"/api/ai-tasks/{first_context['task_id']}",
-        headers=headers,
-    ).json()["data"]["status"] == "cancelled"
-    assert client.get(
-        f"/api/ai-tasks/{second_context['task_id']}",
-        headers=headers,
-    ).json()["data"]["status"] == "completed"
+    assert (
+        client.get(
+            f"/api/ai-tasks/{first_context['task_id']}",
+            headers=headers,
+        ).json()["data"]["status"]
+        == "cancelled"
+    )
+    assert (
+        client.get(
+            f"/api/ai-tasks/{second_context['task_id']}",
+            headers=headers,
+        ).json()["data"]["status"]
+        == "completed"
+    )
 
 
 def test_ai_task_batch_retry_restarts_retryable_failed_tasks_and_skips_invalid_items():

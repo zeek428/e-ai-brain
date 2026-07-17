@@ -12,6 +12,7 @@ from app.services.requirement_full_chain import (
     get_requirement_full_chain_response,
 )
 from app.services.task_workflow_context import TaskWorkflowSourceStore
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -136,6 +137,7 @@ def build_mvp_lifecycle(headers: dict[str, str]) -> dict[str, str]:
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
 
     design_task = client.post(

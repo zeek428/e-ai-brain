@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -67,6 +68,7 @@ def test_dashboard_it_team_returns_real_mvp_aggregate_without_fake_rows():
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, approved_requirement)
     client.post(
         f"/api/requirements/{approved_requirement['id']}/approve",
         json={},

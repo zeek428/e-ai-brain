@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -36,6 +37,7 @@ def create_waiting_review_task(headers: dict[str, str]) -> tuple[str, str]:
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
     task_response = client.post(
         f"/api/requirements/{requirement['id']}/generate-task",

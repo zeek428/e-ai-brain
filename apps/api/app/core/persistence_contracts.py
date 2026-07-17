@@ -206,6 +206,7 @@ class RdCollaborationRepository(Protocol):
         assessment: dict[str, Any],
         opinions: list[dict[str, Any]],
         snapshots: list[dict[str, Any]] | None = None,
+        executions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]: ...
     def merge_version_policy_snapshot_with_sources(
         self, *, snapshot: dict[str, Any], sources: list[dict[str, Any]]

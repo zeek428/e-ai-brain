@@ -2,6 +2,7 @@ from test_database_persistence import FakeSnapshotRepository, app, auth_headers,
 
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.users import MemoryUserRepository
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 
 def test_requirements_are_persisted_through_fine_grained_repository_payload():
@@ -424,6 +425,7 @@ def test_ai_task_api_writes_fine_grained_repository_payload():
             },
             headers=headers,
         ).json()["data"]
+        seed_accepted_assessment_provenance(app.state.store, requirement)
         client.post(
             f"/api/requirements/{requirement['id']}/approve",
             json={"comment": "通过"},
@@ -477,6 +479,7 @@ def test_ai_task_start_and_review_update_write_workflow_runtime_payload():
             },
             headers=headers,
         ).json()["data"]
+        seed_accepted_assessment_provenance(app.state.store, requirement)
         client.post(
             f"/api/requirements/{requirement['id']}/approve",
             json={"comment": "通过"},
@@ -496,9 +499,10 @@ def test_ai_task_start_and_review_update_write_workflow_runtime_payload():
         assert started["graph_run_id"] in repository.workflow_runtime_payload["graph_runs"]
         assert started["checkpoint_id"] in repository.workflow_runtime_payload["graph_checkpoints"]
         assert started["review_id"] in repository.workflow_runtime_payload["human_reviews"]
-        assert repository.workflow_runtime_payload["human_reviews"][started["review_id"]][
-            "status"
-        ] == "pending"
+        assert (
+            repository.workflow_runtime_payload["human_reviews"][started["review_id"]]["status"]
+            == "pending"
+        )
 
         client.post(
             f"/api/reviews/{started['review_id']}/approve",
@@ -506,12 +510,14 @@ def test_ai_task_start_and_review_update_write_workflow_runtime_payload():
             headers=headers,
         )
 
-        assert repository.workflow_runtime_payload["human_reviews"][started["review_id"]][
-            "status"
-        ] == "approved"
-        assert repository.workflow_runtime_payload["graph_runs"][started["graph_run_id"]][
-            "status"
-        ] == "completed"
+        assert (
+            repository.workflow_runtime_payload["human_reviews"][started["review_id"]]["status"]
+            == "approved"
+        )
+        assert (
+            repository.workflow_runtime_payload["graph_runs"][started["graph_run_id"]]["status"]
+            == "completed"
+        )
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users
@@ -560,6 +566,7 @@ def test_requirement_routes_write_repository_without_request_persist():
         assert detail["title"] == requirement["title"]
         assert detail["status"] == "submitted"
 
+        seed_accepted_assessment_provenance(app.state.store, requirement)
         approved = client.post(
             f"/api/requirements/{requirement['id']}/approve",
             json={"comment": "进入需求池"},
@@ -595,6 +602,7 @@ def test_requirement_routes_write_repository_without_request_persist():
             },
             headers=headers,
         ).json()["data"]
+        seed_accepted_assessment_provenance(app.state.store, rejected_candidate)
         rejected = client.post(
             f"/api/requirements/{rejected_candidate['id']}/reject",
             json={"rejection_reason": "边界不清晰"},
@@ -672,6 +680,7 @@ def test_generate_task_writes_requirement_and_ai_task_without_request_persist():
             },
             headers=headers,
         ).json()["data"]
+        seed_accepted_assessment_provenance(app.state.store, requirement)
         client.post(
             f"/api/requirements/{requirement['id']}/approve",
             json={"comment": "进入需求池"},
@@ -752,6 +761,7 @@ def test_requirement_and_task_writes_use_postgres_runtime_source_rows():
             },
             headers=headers,
         ).json()["data"]
+        seed_accepted_assessment_provenance(app.state.store, requirement)
         approved = client.post(
             f"/api/requirements/{requirement['id']}/approve",
             json={"comment": "进入需求池"},
@@ -818,6 +828,7 @@ def test_start_task_writes_review_graph_and_checkpoint_without_request_persist()
             },
             headers=headers,
         ).json()["data"]
+        seed_accepted_assessment_provenance(app.state.store, requirement)
         client.post(
             f"/api/requirements/{requirement['id']}/approve",
             json={"comment": "进入设计"},
@@ -885,7 +896,6 @@ def test_start_task_writes_review_graph_and_checkpoint_without_request_persist()
         app.state.user_repository = original_users
 
 
-
 def _create_generated_design_task(
     headers: dict[str, str],
     *,
@@ -913,6 +923,7 @@ def _create_generated_design_task(
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(
         f"/api/requirements/{requirement['id']}/approve",
         json={"comment": "进入设计"},

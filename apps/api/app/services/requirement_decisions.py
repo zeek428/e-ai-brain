@@ -18,7 +18,7 @@ def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dic
     return collection if isinstance(collection, dict) else {}
 
 
-def _requirement_has_open_assessment(current_store: Any, requirement_id: str) -> bool:
+def _requirement_has_accepted_assessment(current_store: Any, requirement_id: str) -> bool:
     repository = getattr(current_store, "repository", None)
     list_assessments = getattr(repository, "list_requirement_assessments", None)
     if callable(list_assessments):
@@ -29,11 +29,7 @@ def _requirement_has_open_assessment(current_store: Any, requirement_id: str) ->
             for item in _read_memory_dict(current_store, "requirement_assessments").values()
             if item.get("requirement_id") == requirement_id
         ]
-    return any(
-        item.get("status")
-        in {"draft", "evaluating", "waiting_human", "needs_info", "rework_required"}
-        for item in assessments
-    )
+    return any(item.get("status") == "accepted" for item in assessments)
 
 
 def approve_requirement_result(
@@ -49,11 +45,11 @@ def approve_requirement_result(
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     ensure_requirement_product_scope(user, requirement.get("product_id"))
-    if _requirement_has_open_assessment(current_store, requirement_id):
+    if not _requirement_has_accepted_assessment(current_store, requirement_id):
         raise api_error(
             409,
             "REQUIREMENT_ASSESSMENT_REQUIRED",
-            "Complete the requirement assessment instead of using standalone approval",
+            "Only accepted assessment provenance can advance a submitted requirement",
         )
     if canonical_requirement_status(requirement.get("status")) != "submitted":
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement is not pending approval")
@@ -88,11 +84,11 @@ def reject_requirement_result(
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     ensure_requirement_product_scope(user, requirement.get("product_id"))
-    if _requirement_has_open_assessment(current_store, requirement_id):
+    if not _requirement_has_accepted_assessment(current_store, requirement_id):
         raise api_error(
             409,
             "REQUIREMENT_ASSESSMENT_REQUIRED",
-            "Complete the requirement assessment instead of using standalone rejection",
+            "Only accepted assessment provenance can decide a submitted requirement",
         )
     if canonical_requirement_status(requirement.get("status")) != "submitted":
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement is not pending approval")

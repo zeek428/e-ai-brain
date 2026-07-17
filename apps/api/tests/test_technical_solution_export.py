@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -46,7 +47,11 @@ def create_confirmed_product_detail_task(headers: dict[str, str]) -> tuple[dict[
         },
         headers=headers,
     ).json()["data"]
-    client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
+    seed_accepted_assessment_provenance(app.state.store, requirement)
+    approved = client.post(
+        f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers
+    )
+    assert approved.status_code == 200
     generated = client.post(
         f"/api/requirements/{requirement['id']}/generate-task",
         headers=headers,

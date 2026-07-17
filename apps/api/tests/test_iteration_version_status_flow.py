@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.product_version_dashboard import product_version_dashboard_response
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -55,6 +56,7 @@ def create_requirement(
 
 
 def approve_requirement(headers: dict[str, str], requirement_id: str) -> dict[str, str]:
+    seed_accepted_assessment_provenance(app.state.store, requirement_id)
     return client.post(
         f"/api/requirements/{requirement_id}/approve",
         json={"comment": "进入版本范围"},
@@ -498,8 +500,7 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     }
     assert data["governance_conclusion"] == {
         "detail": (
-            "当前版本有 6 个发布阻塞项，未关闭 Bug 2 个，"
-            "门禁失败 1 份，状态推进阻塞需求 0 条。"
+            "当前版本有 6 个发布阻塞项，未关闭 Bug 2 个，门禁失败 1 份，状态推进阻塞需求 0 条。"
         ),
         "level": "error",
         "next_action": "先处理阻塞队列中的 Bug、发布记录和分支问题，再重新查看推进影响。",
@@ -523,9 +524,7 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     assert data["release_readiness_checklist"]["missing_items"] == 0
     assert data["release_readiness_checklist"]["ready_items"] == 4
     assert data["release_readiness_checklist"]["risk_items"] == 0
-    readiness_by_key = {
-        item["key"]: item for item in data["release_readiness_checklist"]["items"]
-    }
+    readiness_by_key = {item["key"]: item for item in data["release_readiness_checklist"]["items"]}
     assert list(readiness_by_key) == [
         "requirements",
         "tasks",
@@ -603,21 +602,16 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
         "title": "研发任务",
         "value": "任务进行中",
     }
+    assert delivery_stage_by_key["branches"]["action_target_id"] == "version_branch_dashboard"
     assert (
-        delivery_stage_by_key["branches"]["action_target_id"]
-        == "version_branch_dashboard"
-    )
-    assert (
-        delivery_stage_by_key["branches"]["action_target_type"]
-        == "product_version_branch_config"
+        delivery_stage_by_key["branches"]["action_target_type"] == "product_version_branch_config"
     )
     assert delivery_stage_by_key["branches"]["detail"] == "1 个分支 · 未创建 1 个"
     assert delivery_stage_by_key["branches"]["level"] == "warning"
     assert delivery_stage_by_key["inspections"]["detail"] == "1 份报告 · 高风险 1 份"
     assert delivery_stage_by_key["inspections"]["level"] == "warning"
     assert (
-        delivery_stage_by_key["code-reviews"]["action_target_id"]
-        == "code_review_report_dashboard"
+        delivery_stage_by_key["code-reviews"]["action_target_id"] == "code_review_report_dashboard"
     )
     assert delivery_stage_by_key["code-reviews"]["detail"] == "1 份报告 · 待确认 1 份"
     assert delivery_stage_by_key["bugs"]["detail"] == "2 个 Bug · 未关闭 2 个"
@@ -1184,14 +1178,12 @@ def test_product_version_dashboard_blocks_release_without_successful_deployment(
         if item["key"] == "deployments"
     )
     assert (
-        deployment_stage["detail"]
-        == "1 个部署单 · 暂无部署阻塞 · 成功 1 个 · 失败 0 个 · "
+        deployment_stage["detail"] == "1 个部署单 · 暂无部署阻塞 · 成功 1 个 · 失败 0 个 · "
         "最近 succeeded 生产部署 · 2026-06-04 18:00"
     )
     assert data_with_release["governance_conclusion"] == {
         "detail": (
-            "待确认评审 0 份，状态推进阻塞需求 0 条，"
-            "交付证据覆盖：分支 0、巡检 0、评审 0、知识 0。"
+            "待确认评审 0 份，状态推进阻塞需求 0 条，交付证据覆盖：分支 0、巡检 0、评审 0、知识 0。"
         ),
         "level": "warning",
         "next_action": "补齐待确认评审、知识索引或交付证据后，再执行版本推进。",

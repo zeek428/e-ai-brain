@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.requirements import save_audit_event
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -78,6 +79,7 @@ def create_requirement(
 
 
 def approve_requirement(headers: dict[str, str], requirement_id: str) -> dict[str, str]:
+    seed_accepted_assessment_provenance(app.state.store, requirement_id)
     return client.post(
         f"/api/requirements/{requirement_id}/approve",
         json={"comment": "进入需求池"},
@@ -133,10 +135,7 @@ def test_batch_schedule_updates_eligible_requirements_and_records_audit():
         pool_requirement["id"],
         planned_requirement["id"],
     ]
-    assert {
-        item["id"]: item["code"]
-        for item in data["skipped"]
-    } == {
+    assert {item["id"]: item["code"] for item in data["skipped"]} == {
         submitted_requirement["id"]: "REQUIREMENT_STATE_INVALID",
         other_requirement["id"]: "PRODUCT_MISMATCH",
     }
@@ -255,9 +254,7 @@ def test_batch_assign_owner_updates_requirements_and_records_audit():
         f"/api/audit/events?subject_type=requirement_owner_batch&subject_id={data['batch_id']}",
         headers=headers,
     ).json()["data"]["items"]
-    assert [event["event_type"] for event in batch_audits] == [
-        "requirement.batch_owner_assigned"
-    ]
+    assert [event["event_type"] for event in batch_audits] == ["requirement.batch_owner_assigned"]
     requirement_audits = client.get(
         f"/api/audit/events?event_type=requirement.updated&subject_id={requirement['id']}",
         headers=headers,
@@ -342,9 +339,7 @@ def test_batch_advance_status_updates_valid_requirements_and_records_audit():
         f"/api/audit/events?subject_type=requirement_status_batch&subject_id={data['batch_id']}",
         headers=headers,
     ).json()["data"]["items"]
-    assert [event["event_type"] for event in batch_audits] == [
-        "requirement.batch_status_advanced"
-    ]
+    assert [event["event_type"] for event in batch_audits] == ["requirement.batch_status_advanced"]
     requirement_audits = client.get(
         f"/api/audit/events?event_type=requirement.updated&subject_id={requirement['id']}",
         headers=headers,
@@ -396,10 +391,7 @@ def test_batch_generate_tasks_creates_tasks_for_planned_requirements_and_records
         second_requirement["id"],
     ]
     assert [item["task_status"] for item in data["generated"]] == ["draft", "draft"]
-    assert {
-        item["id"]: item["code"]
-        for item in data["skipped"]
-    } == {
+    assert {item["id"]: item["code"] for item in data["skipped"]} == {
         pool_requirement["id"]: "REQUIREMENT_STATE_INVALID",
         first_requirement["id"]: "DUPLICATE_REQUIREMENT",
     }
@@ -427,8 +419,6 @@ def test_batch_generate_tasks_creates_tasks_for_planned_requirements_and_records
         f"/api/audit/events?subject_type=requirement_task_batch&subject_id={data['batch_id']}",
         headers=headers,
     ).json()["data"]["items"]
-    assert [event["event_type"] for event in batch_audits] == [
-        "requirement.batch_tasks_generated"
-    ]
+    assert [event["event_type"] for event in batch_audits] == ["requirement.batch_tasks_generated"]
     assert batch_audits[0]["payload"]["generated_count"] == 2
     assert batch_audits[0]["payload"]["skipped_count"] == 2

@@ -1183,6 +1183,24 @@ def test_snapshot_chain_rejects_cross_assessment_revision_two_parent():
         raise AssertionError("revision two must use the same assessment revision one parent")
 
 
+def test_assessment_policy_strengthening_never_allows_a_third_round():
+    class Store:
+        repository = None
+
+    try:
+        derive_assessment_rd_policy_snapshot(
+            Store(),
+            assessment_id="assessment_1",
+            parent_snapshot_id="snapshot_2",
+            resolution_revision=3,
+            tightened_payload=valid_policy_payload(),
+        )
+    except PolicyResolutionError as exc:
+        assert exc.code == "RD_POLICY_RESOLUTION_LIMIT"
+    else:
+        raise AssertionError("a third assessment strengthening round must be rejected")
+
+
 def test_base_snapshot_source_traversal_rejects_parent_cycle():
     payload = valid_policy_payload()
     first = {

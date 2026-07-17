@@ -5,7 +5,10 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Any
 
-from app.core.repositories.rd_collaboration_shared import RdCollaborationVersionConflictError
+from app.core.repositories.rd_collaboration_shared import (
+    RdCollaborationRepositoryError,
+    RdCollaborationVersionConflictError,
+)
 from app.core.store import DEFAULT_BRAIN_APP_ID
 
 
@@ -106,6 +109,12 @@ class RequirementReadRepository:
                     "decided_by": assessment.get("decided_by"),
                     "decided_at": assessment.get("decided_at"),
                     "opinion_round": assessment.get("opinion_round", 1),
+                    "decision_action": assessment.get("decision_action"),
+                    "decision_comment": assessment.get("decision_comment"),
+                    "proposed_policy_json": json.dumps(assessment.get("proposed_policy_json", {})),
+                    "proposed_risk_level": assessment.get("proposed_risk_level"),
+                    "assessment_outcome": assessment.get("assessment_outcome"),
+                    "assessment_evidence": json.dumps(assessment.get("assessment_evidence", [])),
                 }
                 cursor.execute(
                     """
@@ -115,6 +124,9 @@ class RequirementReadRepository:
                       dependency_summary = %s::jsonb, effort_estimate = %s::jsonb,
                       llm_suggestion = %s::jsonb, deterministic_validation = %s::jsonb,
                       decided_by = %s, decided_at = %s::timestamptz, opinion_round = %s,
+                      decision_action = %s, decision_comment = %s,
+                      proposed_policy_json = %s::jsonb, proposed_risk_level = %s,
+                      assessment_outcome = %s, assessment_evidence = %s::jsonb,
                       version = version + 1, updated_at = now()
                     WHERE id = %s
                     RETURNING *
@@ -123,7 +135,19 @@ class RequirementReadRepository:
                 )
                 saved = _cursor_row(cursor, cursor.fetchone())
                 if requirement is not None:
-                    self.upsert_requirements(cursor, {requirement["id"]: requirement})
+                    cursor.execute(
+                        """
+                        UPDATE requirements SET status = %s, updated_at = now()
+                        WHERE id = %s AND status = 'submitted'
+                        RETURNING id
+                        """,
+                        (requirement["status"], requirement["id"]),
+                    )
+                    if cursor.fetchone() is None:
+                        raise RdCollaborationRepositoryError(
+                            "REQUIREMENT_STATE_INVALID",
+                            "Requirement must still be submitted for assessment finalization",
+                        )
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])
                 return saved or assessment
@@ -133,11 +157,20 @@ class RequirementReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    UPDATE requirement_assessment_opinions SET
+                    UPDATE requirement_assessment_opinions opinion SET
                       conclusion_json = %s::jsonb, evidence_refs = %s::jsonb,
                       confidence = %s, risk_summary = %s::jsonb, cost_summary = %s::jsonb,
-                      actor_id = %s, updated_at = now()
-                    WHERE id = %s RETURNING *
+                      actor_id = %s, policy_proposal_json = %s::jsonb,
+                      outcome_code = %s, risk_level = %s, updated_at = now()
+                    FROM requirement_assessments assessment
+                    WHERE opinion.id = %s
+                      AND assessment.id = opinion.assessment_id
+                      AND assessment.opinion_round = opinion.opinion_round
+                      AND assessment.strategy_snapshot_id = opinion.strategy_snapshot_id
+                      AND opinion.assigned_subject_type = 'human_user'
+                      AND opinion.assigned_user_id = %s
+                      AND opinion.conclusion_json = '{}'::jsonb
+                    RETURNING opinion.*
                     """,
                     (
                         json.dumps(opinion.get("conclusion_json", {})),
@@ -146,10 +179,21 @@ class RequirementReadRepository:
                         json.dumps(opinion.get("risk_summary", {})),
                         json.dumps(opinion.get("cost_summary", {})),
                         opinion.get("actor_id"),
+                        json.dumps(opinion.get("policy_proposal_json", {})),
+                        opinion.get("outcome_code"),
+                        opinion.get("risk_level"),
                         opinion["id"],
+                        opinion.get("actor_id"),
                     ),
                 )
-                return _cursor_row(cursor, cursor.fetchone()) or opinion
+                saved = _cursor_row(cursor, cursor.fetchone())
+                if saved is None:
+                    raise RdCollaborationRepositoryError(
+                        "ASSESSMENT_OPINION_CONFLICT",
+                        "Opinion is stale, unassigned, completed, or outside the current "
+                        "snapshot round",
+                    )
+                return saved
 
     def submit_assessment_answers(
         self,
@@ -184,6 +228,23 @@ class RequirementReadRepository:
                     raise KeyError(assessment["requirement_id"])
                 next_revision = int(requirement_row[0])
                 next_round = int(assessment.get("opinion_round") or 1) + 1
+                cursor.execute(
+                    """
+                    INSERT INTO requirement_assessment_answer_revisions (
+                      id, assessment_id, requirement_id, requirement_revision, opinion_round,
+                      answers_json, actor_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)
+                    """,
+                    (
+                        f"{assessment_id}:answer:{next_revision}",
+                        assessment_id,
+                        assessment["requirement_id"],
+                        next_revision,
+                        next_round,
+                        json.dumps(answers),
+                        actor_id,
+                    ),
+                )
                 cursor.execute(
                     """
                     SELECT * FROM requirement_assessment_opinions

@@ -69,6 +69,9 @@ JSON_FIELDS = {
     "output_contract",
     "payload_json",
     "persona_json",
+    "policy_proposal_json",
+    "proposed_policy_json",
+    "assessment_evidence",
     "product_scope",
     "recommendation_json",
     "resume_metadata",
@@ -239,6 +242,23 @@ TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
         "payload_json",
         "occurred_at",
         "processed_at",
+        "created_at",
+        "updated_at",
+    ),
+    "requirement_assessment_executions": (
+        "id",
+        "assessment_id",
+        "opinion_id",
+        "role_code",
+        "actor_type",
+        "human_user_id",
+        "ai_employee_id",
+        "executor_profile_id",
+        "input_revision",
+        "strategy_snapshot_id",
+        "execution_kind",
+        "side_effect_policy",
+        "status",
         "created_at",
         "updated_at",
     ),
@@ -451,6 +471,13 @@ class RdCollaborationTransaction:
     def freeze_base_policy_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         return self._repository._freeze_base_policy_snapshot_cursor(self.cursor, snapshot)
 
+    def get_rd_policy_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        self.cursor.execute(
+            "SELECT * FROM rd_task_executor_policy_snapshots WHERE id = %s",
+            (snapshot_id,),
+        )
+        return self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+
     def derive_assessment_policy_snapshot(
         self,
         *,
@@ -481,13 +508,61 @@ class RdCollaborationTransaction:
         assessment: dict[str, Any],
         opinions: list[dict[str, Any]],
         snapshots: list[dict[str, Any]] | None = None,
+        executions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return self._repository._save_assessment_bundle_cursor(
             self.cursor,
             assessment=assessment,
             opinions=opinions,
             snapshots=snapshots,
+            executions=executions,
         )
+
+    def advance_assessment_policy_round(
+        self,
+        *,
+        assessment: dict[str, Any],
+        expected_version: int,
+        opinions: list[dict[str, Any]],
+        executions: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessments
+            SET final_strategy_snapshot_id = %s, strategy_snapshot_id = %s,
+                opinion_round = %s, status = 'evaluating',
+                proposed_policy_json = %s::jsonb, proposed_risk_level = %s,
+                assessment_outcome = %s, assessment_evidence = %s::jsonb,
+                version = version + 1, updated_at = now()
+            WHERE id = %s AND version = %s
+            RETURNING *
+            """,
+            (
+                assessment["final_strategy_snapshot_id"],
+                assessment["strategy_snapshot_id"],
+                assessment["opinion_round"],
+                Jsonb(assessment.get("proposed_policy_json", {})),
+                assessment.get("proposed_risk_level"),
+                assessment.get("assessment_outcome"),
+                Jsonb(assessment.get("assessment_evidence", [])),
+                assessment["id"],
+                expected_version,
+            ),
+        )
+        persisted = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if persisted is None:
+            raise RdCollaborationVersionConflictError(expected_version)
+        for opinion in opinions:
+            self._repository._insert_assessment_opinion(self.cursor, opinion)
+        for execution in executions:
+            self._repository._save_simple_cursor(
+                self.cursor, "requirement_assessment_executions", execution
+            )
+            self.cursor.execute(
+                "UPDATE requirement_assessment_opinions SET execution_id = %s WHERE id = %s",
+                (execution["id"], execution["opinion_id"]),
+            )
+        return persisted
 
     def create_collaboration_run_with_exact_scope(
         self,
@@ -818,6 +893,69 @@ class RdCollaborationWriteBase:
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 return operation(cursor)
+
+    def execute_requirement_assessment_command(
+        self,
+        command: dict[str, Any],
+        effect: Callable[[RdCollaborationTransaction], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Reserve/check a command and commit its assessment effect and replay snapshot together."""
+
+        def operation(cursor: Any) -> dict[str, Any]:
+            cursor.execute(
+                """
+                INSERT INTO requirement_assessment_commands (
+                  id, assessment_id, operation, idempotency_key, request_hash,
+                  response_snapshot, status, created_by
+                ) VALUES (%s, %s, %s, %s, %s, '{}'::jsonb, 'pending', %s)
+                ON CONFLICT (assessment_id, operation, idempotency_key) DO NOTHING
+                RETURNING *
+                """,
+                (
+                    command["id"],
+                    command["assessment_id"],
+                    command["operation"],
+                    command["idempotency_key"],
+                    command["request_hash"],
+                    command["created_by"],
+                ),
+            )
+            persisted = _row_dict(cursor, cursor.fetchone())
+            if persisted is None:
+                cursor.execute(
+                    """
+                    SELECT * FROM requirement_assessment_commands
+                    WHERE assessment_id = %s AND operation = %s AND idempotency_key = %s
+                    FOR UPDATE
+                    """,
+                    (command["assessment_id"], command["operation"], command["idempotency_key"]),
+                )
+                persisted = _row_dict(cursor, cursor.fetchone())
+                if persisted is None:
+                    raise RuntimeError("assessment command replay lookup failed")
+                if persisted["request_hash"] != command["request_hash"]:
+                    raise self._idempotency_conflict(
+                        "assessment command key is bound to a different request",
+                        assessment_id=command["assessment_id"],
+                        operation=command["operation"],
+                    )
+                if persisted.get("status") == "completed":
+                    return {**persisted["response_snapshot"], "idempotent_replay": True}
+            response = effect(RdCollaborationTransaction(self, cursor))
+            cursor.execute(
+                """
+                UPDATE requirement_assessment_commands
+                SET response_snapshot = %s::jsonb, status = 'completed', updated_at = now()
+                WHERE id = %s AND status = 'pending'
+                RETURNING *
+                """,
+                (Jsonb(response), command["id"]),
+            )
+            if cursor.fetchone() is None:
+                raise RuntimeError("assessment command completion lost its reservation")
+            return response
+
+        return self._in_transaction(operation)
 
     @staticmethod
     def _idempotency_conflict(message: str, **details: Any) -> RdCollaborationRepositoryError:

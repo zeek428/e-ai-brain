@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -217,6 +218,7 @@ def test_requirement_delete_blocks_existing_ai_tasks_with_related_counts():
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
     client.post(f"/api/requirements/{requirement['id']}/generate-task", headers=headers)
 
@@ -246,6 +248,7 @@ def test_product_version_and_module_delete_block_existing_ai_tasks():
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
     client.post(f"/api/requirements/{requirement['id']}/generate-task", headers=headers)
 

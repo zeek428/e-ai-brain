@@ -4,6 +4,7 @@ import app.main as main
 import app.services.model_gateway as model_gateway_service
 from app.core.persistence import PersistentMemoryStore
 from app.core.users import MemoryUserRepository
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 
 def test_workflow_runtime_is_persisted_through_fine_grained_repository_payload():
@@ -61,9 +62,10 @@ def test_workflow_runtime_is_persisted_through_fine_grained_repository_payload()
     assert repository.workflow_runtime_payload["graph_runs"]["graph_run_004"]["status"] == (
         "interrupted"
     )
-    assert repository.workflow_runtime_payload["graph_checkpoints"]["checkpoint_005"][
-        "graph_run_id"
-    ] == "graph_run_004"
+    assert (
+        repository.workflow_runtime_payload["graph_checkpoints"]["checkpoint_005"]["graph_run_id"]
+        == "graph_run_004"
+    )
     assert repository.workflow_runtime_payload["human_reviews"]["review_006"]["status"] == (
         "pending"
     )
@@ -375,6 +377,7 @@ def _create_generated_design_task(
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(
         f"/api/requirements/{requirement['id']}/approve",
         json={"comment": "进入设计"},
@@ -384,6 +387,7 @@ def _create_generated_design_task(
         f"/api/requirements/{requirement['id']}/generate-task",
         headers=headers,
     ).json()["data"]
+
 
 def test_start_task_config_failure_writes_failed_state_without_request_persist(monkeypatch):
     original_store = app.state.store
@@ -433,6 +437,7 @@ def test_start_task_config_failure_writes_failed_state_without_request_persist(m
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users
+
 
 def test_start_task_call_failure_and_retry_write_failed_logs_without_request_persist(monkeypatch):
     original_store = app.state.store
@@ -493,6 +498,7 @@ def test_start_task_call_failure_and_retry_write_failed_logs_without_request_per
         app.state.store = original_store
         app.state.user_repository = original_users
 
+
 def test_approve_review_writes_completion_records_without_request_persist():
     original_store = app.state.store
     original_users = app.state.user_repository
@@ -528,6 +534,7 @@ def test_approve_review_writes_completion_records_without_request_persist():
             },
             headers=headers,
         ).json()["data"]
+        seed_accepted_assessment_provenance(app.state.store, requirement)
         client.post(
             f"/api/requirements/{requirement['id']}/approve",
             json={"comment": "进入设计"},
@@ -592,6 +599,7 @@ def test_approve_review_writes_completion_records_without_request_persist():
         app.state.store = original_store
         app.state.user_repository = original_users
 
+
 def test_edit_approve_review_writes_completion_records_without_request_persist():
     original_store = app.state.store
     original_users = app.state.user_repository
@@ -627,6 +635,7 @@ def test_edit_approve_review_writes_completion_records_without_request_persist()
             },
             headers=headers,
         ).json()["data"]
+        seed_accepted_assessment_provenance(app.state.store, requirement)
         client.post(
             f"/api/requirements/{requirement['id']}/approve",
             json={"comment": "进入设计"},
@@ -699,6 +708,7 @@ def test_edit_approve_review_writes_completion_records_without_request_persist()
         app.state.store = original_store
         app.state.user_repository = original_users
 
+
 def test_reject_and_more_info_reviews_write_decisions_without_request_persist():
     original_store = app.state.store
     original_users = app.state.user_repository
@@ -736,6 +746,7 @@ def test_reject_and_more_info_reviews_write_decisions_without_request_persist():
                 },
                 headers=headers,
             ).json()["data"]
+            seed_accepted_assessment_provenance(app.state.store, requirement)
             client.post(
                 f"/api/requirements/{requirement['id']}/approve",
                 json={"comment": "进入设计"},
@@ -814,9 +825,7 @@ def test_reject_and_more_info_reviews_write_decisions_without_request_persist():
         assert more_info_detail["status"] == "waiting_more_info"
         assert more_info_detail["pending_review"] is None
         assert more_info_detail["reviews"]["items"][0]["status"] == "requested_more_info"
-        assert more_info_detail["reviews"]["items"][0]["questions"] == [
-            "请补充边界条件和验收口径"
-        ]
+        assert more_info_detail["reviews"]["items"][0]["questions"] == ["请补充边界条件和验收口径"]
         assert more_info_detail["reviews"]["items"][0]["decided_at"]
         assert more_info_detail["updated_at"] != more_info_waiting_detail["updated_at"]
         assert more_info_graph_runs[0]["status"] == "interrupted"
@@ -832,6 +841,7 @@ def test_reject_and_more_info_reviews_write_decisions_without_request_persist():
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users
+
 
 def test_cancel_and_submit_more_info_write_task_state_without_request_persist():
     original_store = app.state.store
@@ -870,6 +880,7 @@ def test_cancel_and_submit_more_info_write_task_state_without_request_persist():
                 },
                 headers=headers,
             ).json()["data"]
+            seed_accepted_assessment_provenance(app.state.store, requirement)
             client.post(
                 f"/api/requirements/{requirement['id']}/approve",
                 json={"comment": "进入设计"},
@@ -945,9 +956,7 @@ def test_cancel_and_submit_more_info_write_task_state_without_request_persist():
         assert more_info_detail["input"]["more_info_answers"] == [
             {"question": "请补充验收边界", "answer": "补充 P0 验收边界"}
         ]
-        assert (
-            f"task:{cancelled_start['id']}:cancelled" in repository.task_state_direct_writes
-        )
+        assert f"task:{cancelled_start['id']}:cancelled" in repository.task_state_direct_writes
         assert f"task:{more_info_start['id']}:draft" in repository.task_state_direct_writes
     finally:
         app.state.store = original_store

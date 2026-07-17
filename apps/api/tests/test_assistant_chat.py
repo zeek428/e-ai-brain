@@ -24,6 +24,7 @@ from app.services.assistant_references import (
     resolve_assistant_references,
 )
 from app.services.assistant_request_context import assistant_task_source_store
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -9050,6 +9051,7 @@ def test_ai_assistant_chat_includes_ai_brain_system_progress_context(monkeypatch
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
     task_response = client.post(
         f"/api/requirements/{requirement['id']}/generate-task",

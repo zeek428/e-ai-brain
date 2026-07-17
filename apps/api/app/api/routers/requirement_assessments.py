@@ -38,6 +38,9 @@ class AssessmentOpinionRequest(BaseModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
     risk_summary: dict[str, Any] = Field(default_factory=dict)
     cost_summary: dict[str, Any] = Field(default_factory=dict)
+    policy_proposal_json: dict[str, Any] = Field(default_factory=dict)
+    outcome_code: str | None = Field(default=None, max_length=100)
+    risk_level: str | None = Field(default=None, max_length=20)
     idempotency_key: str | None = Field(default=None, max_length=200)
 
 

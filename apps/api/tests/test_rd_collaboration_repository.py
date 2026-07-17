@@ -57,7 +57,7 @@ def _temporary_database(admin_url: str) -> Iterator[str]:
         with psycopg.connect(database_url, autocommit=True) as connection:
             for migration_path in sorted(MIGRATIONS_DIR.glob("*.sql")):
                 migration_number = int(migration_path.name.split("_", 1)[0])
-                if migration_number > 110:
+                if migration_number > 111:
                     break
                 connection.execute(migration_path.read_text(encoding="utf-8"))
         yield database_url
@@ -1799,4 +1799,38 @@ def test_database_constraints_reject_invalid_identity_dependency_and_plan_duplic
                 "status": "draft",
                 "idempotency_key": "constraints-work-a",
             }
+        )
+
+
+def test_assessment_command_replays_same_hash_and_rejects_conflicting_hash(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="assessment-command")
+    command = {
+        "id": "assessment-command-1",
+        "assessment_id": seeded["assessment"],
+        "operation": "decision",
+        "idempotency_key": "same-key",
+        "request_hash": "sha256:same",
+        "created_by": "user_admin",
+    }
+    calls = 0
+
+    def effect(_transaction):
+        nonlocal calls
+        calls += 1
+        return {"assessment_id": seeded["assessment"], "result": "deferred"}
+
+    first = repository.execute_requirement_assessment_command(command, effect)
+    replay = repository.execute_requirement_assessment_command(command, effect)
+
+    assert first == {"assessment_id": seeded["assessment"], "result": "deferred"}
+    assert replay["result"] == "deferred"
+    assert replay["idempotent_replay"] is True
+    assert calls == 1
+
+    with pytest.raises(RdCollaborationRepositoryError, match="different request"):
+        repository.execute_requirement_assessment_command(
+            {**command, "id": "assessment-command-2", "request_hash": "sha256:different"},
+            effect,
         )

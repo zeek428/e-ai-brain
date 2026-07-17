@@ -399,6 +399,17 @@ class RdCollaborationPolicyWriteMixin:
         cursor: Any,
         assessment: dict[str, Any],
     ) -> dict[str, Any]:
+        if not assessment.get("product_id"):
+            cursor.execute(
+                "SELECT product_id FROM requirements WHERE id = %s FOR KEY SHARE",
+                (assessment["requirement_id"],),
+            )
+            requirement = cursor.fetchone()
+            if requirement is None or not requirement[0]:
+                raise RdCollaborationRepositoryError(
+                    "ASSESSMENT_PROVENANCE_INVALID", "Assessment requirement product is unavailable"
+                )
+            assessment = {**assessment, "product_id": requirement[0]}
         columns = (
             "id",
             "requirement_id",
@@ -417,6 +428,12 @@ class RdCollaborationPolicyWriteMixin:
             "status",
             "version",
             "opinion_round",
+            "decision_action",
+            "decision_comment",
+            "proposed_policy_json",
+            "proposed_risk_level",
+            "assessment_outcome",
+            "assessment_evidence",
             "llm_suggestion",
             "deterministic_validation",
             "created_by",
@@ -481,6 +498,12 @@ class RdCollaborationPolicyWriteMixin:
             "confidence",
             "risk_summary",
             "cost_summary",
+            "assigned_subject_type",
+            "assigned_user_id",
+            "assigned_ai_employee_id",
+            "policy_proposal_json",
+            "outcome_code",
+            "risk_level",
             "actor_id",
             "candidate_human_user_ids",
             "created_at",
@@ -515,6 +538,7 @@ class RdCollaborationPolicyWriteMixin:
         assessment: dict[str, Any],
         opinions: list[dict[str, Any]],
         snapshots: list[dict[str, Any]] | None = None,
+        executions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return self._in_transaction(
             lambda cursor: self._save_assessment_bundle_cursor(
@@ -522,6 +546,7 @@ class RdCollaborationPolicyWriteMixin:
                 assessment=assessment,
                 opinions=opinions,
                 snapshots=snapshots,
+                executions=executions,
             )
         )
 
@@ -532,6 +557,7 @@ class RdCollaborationPolicyWriteMixin:
         assessment: dict[str, Any],
         opinions: list[dict[str, Any]],
         snapshots: list[dict[str, Any]] | None = None,
+        executions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         with nullcontext():
             with nullcontext(cursor) as cursor:
@@ -542,10 +568,21 @@ class RdCollaborationPolicyWriteMixin:
                 persisted_opinions = [
                     self._insert_assessment_opinion(cursor, opinion) for opinion in opinions
                 ]
+                persisted_executions = [
+                    self._save_simple_cursor(cursor, "requirement_assessment_executions", execution)
+                    for execution in (executions or [])
+                ]
+                for execution in persisted_executions:
+                    cursor.execute(
+                        "UPDATE requirement_assessment_opinions SET execution_id = %s "
+                        "WHERE id = %s",
+                        (execution["id"], execution["opinion_id"]),
+                    )
                 return {
                     "assessment": persisted_assessment,
                     "opinions": persisted_opinions,
                     "snapshots": persisted_snapshots,
+                    "executions": persisted_executions,
                     **persisted_assessment,
                 }
 

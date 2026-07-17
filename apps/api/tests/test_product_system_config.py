@@ -3,6 +3,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
 
@@ -284,6 +285,7 @@ def _create_requirement_and_task(
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
     task = client.post(
         f"/api/requirements/{requirement['id']}/generate-task",
@@ -747,6 +749,7 @@ def test_related_systems_are_saved_in_generated_task_product_context():
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(
         f"/api/requirements/{requirement['id']}/approve",
         json={"comment": "进入设计"},
@@ -801,6 +804,7 @@ def test_generated_task_product_context_does_not_expose_git_credentials():
         },
         headers=headers,
     ).json()["data"]
+    seed_accepted_assessment_provenance(app.state.store, requirement)
     client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
 
     generated = client.post(
