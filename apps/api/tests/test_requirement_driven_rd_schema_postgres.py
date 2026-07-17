@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from threading import Event
+from queue import Empty, Queue
 from uuid import uuid4
 
 import psycopg
@@ -476,41 +476,108 @@ def _insert_feedback(
     )
 
 
-def _delete_feedback_producer(
+def _execute_bounded_worker_statement(
     database_url: str,
     *,
-    producer_table: str,
-    producer_id: str,
-    started: Event,
+    statement: str | sql.Composable,
+    params: tuple[object, ...],
+    backend_pids: Queue[int],
 ) -> str:
     try:
-        with psycopg.connect(database_url) as connection:
-            started.set()
-            connection.execute(
-                sql.SQL("DELETE FROM {} WHERE id = %s").format(sql.Identifier(producer_table)),
-                (producer_id,),
-            )
+        with psycopg.connect(database_url, connect_timeout=5) as connection:
+            connection.execute("SET LOCAL lock_timeout = '5s'")
+            connection.execute("SET LOCAL statement_timeout = '8s'")
+            backend_pid = connection.execute("SELECT pg_backend_pid()").fetchone()
+            assert backend_pid is not None
+            backend_pids.put(backend_pid[0])
+            connection.execute(statement, params)
     except psycopg.Error as exc:
         return str(exc)
-    return "deleted"
+    return "completed"
 
 
-def _update_run_seat_role(
+def _wait_for_postgres_lock(
     database_url: str,
     *,
-    seat_id: str,
-    started: Event,
+    backend_pid: int,
+    worker_future: Future[str],
+    timeout_seconds: float = 3.0,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_activity: tuple[object, ...] | None = None
+    with psycopg.connect(
+        database_url,
+        autocommit=True,
+        connect_timeout=5,
+    ) as observer:
+        observer.execute("SET statement_timeout = '2s'")
+        while time.monotonic() < deadline:
+            last_activity = observer.execute(
+                """
+                SELECT wait_event_type, wait_event, state
+                FROM pg_stat_activity
+                WHERE pid = %s
+                """,
+                (backend_pid,),
+            ).fetchone()
+            if last_activity is not None and last_activity[0] == "Lock":
+                return
+            if worker_future.done():
+                worker_result = worker_future.result()
+                raise AssertionError(
+                    "worker completed before entering a PostgreSQL lock wait: "
+                    f"result={worker_result!r}, last_activity={last_activity!r}"
+                )
+            time.sleep(0.02)
+    raise AssertionError(
+        "worker did not enter a PostgreSQL lock wait before the bounded deadline: "
+        f"backend_pid={backend_pid}, last_activity={last_activity!r}"
+    )
+
+
+def _execute_after_observed_lock_wait(
+    database_url: str,
+    *,
+    lock_holding_connection: psycopg.Connection,
+    statement: str | sql.Composable,
+    params: tuple[object, ...],
 ) -> str:
+    backend_pids: Queue[int] = Queue(maxsize=1)
+    executor = ThreadPoolExecutor(max_workers=1)
+    worker_future = executor.submit(
+        _execute_bounded_worker_statement,
+        database_url,
+        statement=statement,
+        params=params,
+        backend_pids=backend_pids,
+    )
     try:
-        with psycopg.connect(database_url) as connection:
-            started.set()
-            connection.execute(
-                "UPDATE rd_run_seats SET role_code = 'architect' WHERE id = %s",
-                (seat_id,),
-            )
-    except psycopg.Error as exc:
-        return str(exc)
-    return "updated"
+        try:
+            backend_pid = backend_pids.get(timeout=2)
+        except Empty as exc:
+            raise AssertionError("worker did not publish its PostgreSQL backend pid") from exc
+        _wait_for_postgres_lock(
+            database_url,
+            backend_pid=backend_pid,
+            worker_future=worker_future,
+        )
+        lock_holding_connection.commit()
+        lock_holding_connection.close()
+        return worker_future.result(timeout=10)
+    finally:
+        if not lock_holding_connection.closed:
+            try:
+                lock_holding_connection.rollback()
+            except psycopg.Error:
+                pass
+            finally:
+                lock_holding_connection.close()
+        if not worker_future.done():
+            try:
+                worker_future.result(timeout=10)
+            except Exception:
+                pass
+        executor.shutdown(wait=worker_future.done(), cancel_futures=True)
 
 
 def test_fresh_historical_migration_chain_reaches_109_and_109_replays(
@@ -533,6 +600,35 @@ def test_fresh_historical_migration_chain_reaches_109_and_109_replays(
             "rd_collaboration_runs",
             "rd_task_executor_policy_snapshots",
         )
+
+
+def test_lock_wait_helper_rejects_slow_non_locking_worker_and_cleans_up(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        lock_holding_connection = psycopg.connect(database_url)
+        lock_holding_connection.execute("SELECT 1")
+
+        with pytest.raises(AssertionError, match="PostgreSQL lock wait"):
+            _execute_after_observed_lock_wait(
+                database_url,
+                lock_holding_connection=lock_holding_connection,
+                statement="SELECT pg_sleep(0.5)",
+                params=(),
+            )
+
+        assert lock_holding_connection.closed
+        with psycopg.connect(database_url) as verification_connection:
+            other_session_count = verification_connection.execute(
+                """
+                SELECT count(*)
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                """
+            ).fetchone()
+
+        assert other_session_count == (0,)
 
 
 def test_migration_109_preserves_legacy_multiple_active_task_type_policies(
@@ -1116,10 +1212,7 @@ def test_assessment_source_insert_cannot_race_accepted_provenance_change(
             )
             setup_connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
-        with (
-            psycopg.connect(database_url) as source_connection,
-            psycopg.connect(database_url) as assessment_connection,
-        ):
+        with psycopg.connect(database_url) as source_connection:
             source_connection.execute(
                 """
                 INSERT INTO rd_task_executor_policy_snapshots (
@@ -1156,21 +1249,28 @@ def test_assessment_source_insert_cannot_race_accepted_provenance_change(
                 ),
             )
             source_connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            source_connection.execute(
+                """
+                SELECT id
+                FROM requirement_assessments
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (ids["assessment"],),
+            )
 
-            with pytest.raises(
-                psycopg.errors.RaiseException,
-                match="accepted assessment provenance",
-            ):
-                assessment_connection.execute(
-                    """
+            assessment_result = _execute_after_observed_lock_wait(
+                database_url,
+                lock_holding_connection=source_connection,
+                statement="""
                     UPDATE requirement_assessments
                     SET status = 'rejected'
                     WHERE id = %s
-                    """,
-                    (ids["assessment"],),
-                )
-            assessment_connection.rollback()
-            source_connection.commit()
+                """,
+                params=(ids["assessment"],),
+            )
+
+        assert "accepted assessment provenance" in assessment_result
 
         with psycopg.connect(database_url) as verification_connection:
             state = verification_connection.execute(
@@ -1290,20 +1390,14 @@ def test_feedback_insert_serializes_with_polymorphic_producer_delete(
             )
             feedback_connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
-            started = Event()
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                delete_future = executor.submit(
-                    _delete_feedback_producer,
-                    database_url,
-                    producer_table=producer_table,
-                    producer_id=producer_id,
-                    started=started,
-                )
-                assert started.wait(timeout=2)
-                with pytest.raises(FutureTimeoutError):
-                    delete_future.result(timeout=0.25)
-                feedback_connection.commit()
-                delete_result = delete_future.result(timeout=5)
+            delete_result = _execute_after_observed_lock_wait(
+                database_url,
+                lock_holding_connection=feedback_connection,
+                statement=sql.SQL("DELETE FROM {} WHERE id = %s").format(
+                    sql.Identifier(producer_table)
+                ),
+                params=(producer_id,),
+            )
 
         assert "feedback producer identity cannot be changed or deleted" in delete_result
         with psycopg.connect(database_url) as verification_connection:
@@ -1343,19 +1437,12 @@ def test_feedback_insert_cannot_race_run_seat_identity_update(
             )
             feedback_connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
-            started = Event()
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                update_future = executor.submit(
-                    _update_run_seat_role,
-                    database_url,
-                    seat_id=ids["human_seat"],
-                    started=started,
-                )
-                assert started.wait(timeout=2)
-                with pytest.raises(FutureTimeoutError):
-                    update_future.result(timeout=0.25)
-                feedback_connection.commit()
-                update_result = update_future.result(timeout=5)
+            update_result = _execute_after_observed_lock_wait(
+                database_url,
+                lock_holding_connection=feedback_connection,
+                statement="UPDATE rd_run_seats SET role_code = 'architect' WHERE id = %s",
+                params=(ids["human_seat"],),
+            )
 
         assert "seat identity" in update_result
 
