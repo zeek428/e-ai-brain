@@ -133,7 +133,7 @@
 | Assistant | GET | `/api/assistant/metrics/details` | 按 `metric`、`window_days/date_from/date_to/product_id/role/action` 和 `limit` 返回当前用户指标明细列表，支持从草案生成、草案状态、动作运行、聊天运行、定时作业运行、失败修复、引用使用和知识命中钻取到脱敏来源记录。 |
 | Assistant | GET | `/api/assistant/metrics/export` | 按同一指标过滤口径导出助手效果指标，`format=csv` 返回 `content/content_type/filename`，`format=json` 返回结构化指标 payload；导出不得包含完整对话正文、知识正文、密钥、Header、完整 Prompt 或外部调用明文。 |
 | Requirement | GET | `/api/requirements` | 需求列表；校验 `requirement.read`，分页、排序、筛选和产品 scope 过滤由 SQL read model 完成。 |
-| Requirement | POST | `/api/requirements` | 新增待审批需求。 |
+| Requirement | POST | `/api/requirements` | 新增 submitted 需求；待发布后的后续需求必填 `source_collaboration_run_id`，延续/替代旧需求时可再填 `supersedes_requirement_id`，并仍须独立评估后进入新 planning 版本。 |
 | Requirement | POST | `/api/requirements/batch-assign-owner` | 批量分配需求负责人。 |
 | Requirement | POST | `/api/requirements/batch-advance-status` | v2.0 不得推进任何研发交付状态；仅在既无活动协作运行、也不存在非终态工作项时允许批量取消/关闭，其余目标返回 `RD_COLLABORATION_REQUIRED`。 |
 | Requirement | POST | `/api/requirements/batch-schedule` | v2.0 仅供有权限人员调整自动组版结果；目标必须为 `planning`，并重新校验产品、容量、仓库、交付终点和依赖硬条件。 |
@@ -155,13 +155,14 @@
 | AI Task | POST | `/api/ai-tasks/{task_id}/agent-loop/takeover` | 请求人工接管运行中的 Agent 自治循环，取消仍在执行的循环 Runner 任务，停止继续派发并保留轮次、门禁和接管审计。 |
 | Delivery Policy | GET/POST/PATCH/DELETE | `/api/delivery/rd-task-executor-policies`, `/api/delivery/rd-task-executor-policies/{policy_id}` | 原入口原位升级为唯一统一研发执行策略；整体管理匹配、评估、版本归组、交付终点、团队、自治、质量门禁、Git、部署和 `role_bindings`，不接受旧单任务匹配写契约。 |
 | Delivery Team | GET/POST/PATCH | `/api/delivery/rd-roles`, `/api/delivery/rd-ai-employees`, `/api/delivery/rd-executor-profiles` | 分别管理动态研发岗位、稳定 AI 数字员工身份和运行执行器配置；三者不得合并，AI 席位同时冻结员工与执行器。 |
-| Delivery Run | POST/GET | `/api/product-versions/{version_id}/collaboration-runs`, `/api/delivery/rd-collaboration-runs/{run_id}` | 以产品版本为聚合根创建和查询协作运行；同一版本最多一个非终态运行，创建时冻结需求、策略、岗位、员工和执行器快照。 |
-| Delivery Work Item | GET/POST | `/api/delivery/rd-collaboration-runs/{run_id}/work-items`, `/api/delivery/rd-work-items/{work_item_id}/claim`, `/submit`, `/review` | 查询 DAG 并执行领取、提交和审核；依赖满足后并行，失败可返工，`blocked/awaiting_human` 只能按冻结 `resume_state` 恢复。 |
-| Delivery Decision | POST | `/api/delivery/decision-requests/{decision_request_id}/decide` | 对高风险、超权限、冲突、预算、门禁或部署边界进行人工决策，并恢复或取消受影响工作项。 |
+| Delivery Run | POST/GET | `/api/product-versions/{version_id}/collaboration-runs`, `/api/product-versions/{version_id}/collaboration-runs/restart`, `/api/requirements/{requirement_id}/collaboration-run`, `/api/delivery/rd-collaboration-runs/{run_id}` | 以产品版本为聚合根创建、重启和查询协作运行；同一版本最多一个非终态运行，创建时冻结需求、策略、岗位、员工和执行器快照，restart 使用 `terminal_run_id` 创建新 generation。 |
+| Delivery Scope Change | POST/GET | `/api/product-versions/{version_id}/scope-change-requests`, `/api/delivery/rd-scope-change-requests/{scope_change_request_id}` | 待发布前提交带期望 scope/generation 和类型化 operations 的受控范围变更；人工批准事务原子终结旧运行、应用全部操作并递增一次范围版本，待发布后只引导创建后续需求。 |
+| Delivery Work Item | GET/POST | `/api/delivery/rd-collaboration-runs/{run_id}/work-items`, `/api/delivery/rd-work-items/{work_item_id}/claim`, `/submit`, `/review`, `/cancel` | 查询 DAG 并执行领取、提交、审核和受控取消；依赖满足后并行，失败可返工，`blocked/awaiting_human` 只能按冻结 `resume_state` 恢复。 |
+| Delivery Decision | POST | `/api/delivery/decision-requests/{decision_request_id}/decide`, `/answers` | 对高风险、超权限、冲突、预算、门禁、范围或部署边界进行人工决策，或由符合冻结 selector 的主体补充信息；只按冻结状态映射恢复或取消受影响聚合。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/more-info` | 提交补充信息。 |
-| AI Task | POST | `/api/ai-tasks/batch-cancel` | 批量取消任务，逐条校验状态并返回 updated/skipped 明细。 |
+| AI Task | POST | `/api/ai-tasks/batch-cancel` | 仅兼容取消历史非协作任务并返回 updated/skipped；请求只要命中任一 v2 协作任务即整批返回 `409 RD_COLLABORATION_REQUIRED`，历史任务也不得部分取消，v2 取消必须改走工作项命令或人工决策。 |
 | AI Task | POST | `/api/ai-tasks/batch-retry` | v2.0 对真人和外部调用固定返回 `RD_COLLABORATION_REQUIRED`；失败恢复由工作项调度器按 attempt、幂等键、预算和重试上限内部执行。 |
-| AI Task | POST | `/api/ai-tasks/{task_id}/cancel` | 取消任务。 |
+| AI Task | POST | `/api/ai-tasks/{task_id}/cancel` | 仅兼容取消历史非协作任务；关联 `collaboration_run_id` 或 `work_item_id` 的 v2 任务返回 `409 RD_COLLABORATION_REQUIRED` 且不修改任务、Review、attempt、工作项或运行。 |
 | Graph Runtime | GET | `/api/graph-runs` | Graph Run 列表，支持按 `task_id` 查询任务运行态；返回 `runtime`、`node_path`、`checkpoint_id` 和 `state_snapshot.graph_runtime`，并按任务读权限过滤。 |
 | Review | GET | `/api/reviews/pending` | 待确认列表；支持 `ai_task_id` 精准筛选某个 AI 任务的待确认项，支持 `page/page_size/sort_by/sort_order`，排序字段为 `created_at`、`updated_at`、`id`、`ai_task_id`、`stage`、`status`；PostgreSQL 运行时优先通过待确认 Review count/page SQL 摘要查询，并按任务读权限范围过滤，响应包含 `query/performance`。 |
 | Review | GET | `/api/reviews/{review_id}` | 确认详情；读取 task workflow source rows 并返回关联 AI 任务快照，必须先校验任务读权限。 |

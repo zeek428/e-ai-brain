@@ -66,8 +66,8 @@ FastAPI 模块化单体
 | assistant | 基于服务端脱敏系统上下文回答 AI Brain 系统信息、项目进展、产品、任务、Git 仓库和模型网关状态问题 | FastAPI + 模型网关 Chat |
 | product_config | 产品、版本、模块、Git 资源、内部 GitLab 项目绑定和相关系统主数据 | PostgreSQL |
 | requirement | 需求台账、正式评估、补充/决策、规划版本归组、取消和关闭；不直接创建研发 AI 任务 | PostgreSQL |
-| rd_policy | 需求评估、版本归组、岗位、AI 数字员工候选、执行器、预算、门禁、Git、风险和交付终点统一策略；`policy_version` 乐观锁控制更新，active 产品策略优先于业务大脑默认策略；独立不可变快照表保存策略版本、Schema、哈希和规范化 payload | PostgreSQL |
-| rd_collaboration | 版本级运行、真人/AI 员工岗位席位、工作项 DAG、并行调度、运行/工作项暂停恢复、审核返工、决策请求、岗位反馈和经验治理 | PostgreSQL + LangGraph |
+| rd_policy | 需求评估、版本归组、岗位、AI 数字员工候选、执行器、预算、门禁、Git、风险和交付终点统一策略；`policy_version` 乐观锁控制更新，active 产品策略优先于业务大脑默认策略；不可变 base/assessment_resolved/version_resolved 快照及来源关系保存历史解释 | PostgreSQL |
+| rd_collaboration | 版本级运行与不可变逐需求范围、失败/取消后新 generation 恢复、真人/AI 员工岗位席位、工作项 DAG、并行调度、运行/工作项暂停恢复、决策超时升级、审核返工、岗位反馈和经验治理 | PostgreSQL + LangGraph |
 | ai_task | AI 任务类型、生命周期、状态流转和任务详情 | PostgreSQL + LangGraph |
 | agent_loop / quality_gate | 自治轮次、执行上下文、独立验证证据、预算终止、人工接管和受控自动合入 | PostgreSQL + 隔离 Runner / CI |
 | graph_runtime | 研发任务图和版本协作图的节点、持久化检查点、中断与恢复 | LangGraph + PostgreSQL Checkpointer |
@@ -98,16 +98,19 @@ FastAPI 模块化单体
 → 正式评估需求，LLM 提出建议、确定性服务校验风险/权限/完整度
 → 优先归入兼容 planning 版本，无合适版本才创建新规划版本
 → 冻结统一研发执行策略 base 快照；评估自动收紧按 assessment context/revision 生成父链清晰的 final 派生快照，不修改策略版本
-→ product_version.scope_version 随需求成员/修订/验收、仓库、分支等冻结输入变化原子递增；以产品版本为根幂等创建唯一活动 rd_collaboration_run，引用独立不可变 final 策略快照并冻结多需求范围、岗位、真人/AI 员工、执行器和工作项 DAG
-→ 评估、启动、领取、提交、审核、决策和工作项取消把幂等键、请求哈希、结果引用及脱敏响应快照与领域状态原子写入；claim 只在原租约有效期内重放
+→ 无活动运行时，product_version.scope_version 随已接受的需求成员/修订/验收、仓库、分支等冻结输入变化原子递增；同版本多需求 final/effective 快照须属同一 policy_id/version，并按 merge operator 确定性收紧为唯一 version_resolved 快照，来源逐条关联 requirement/assessment，冲突时不启动
+→ 以产品版本为根幂等创建唯一活动 rd_collaboration_run，引用 version_resolved 策略快照；不可变运行需求范围与策略来源逐条完全一致，再冻结岗位、真人/AI 员工、执行器和工作项 DAG
+→ generation 启动后普通入口拒绝需求/修订/验收/final 快照/仓库分支范围变化；非范围重规划只更新 plan_version，待发布前范围变化只能通过受控 scope-change 命令和人工决策原子终结旧运行、应用范围并递增一次 scope，再以 terminal_run_id 显式 restart；进入 ready_for_release/deploying 后只能创建带来源血缘的后续需求并进入新 planning 版本
+→ 评估、启动、终态运行 restart、领取、提交、审核、决策和工作项取消把幂等键、请求哈希、结果引用及脱敏响应快照与领域状态原子写入；claim token 由独立限时密文记录支持有效期重放并在到期后擦除
 → 并行派发 ready 工作项到 AI 数字员工或真人席位；AI 席位另行冻结执行器
 → AI 工作项复用 ai_task / Agent Loop / Runner，冻结 execution_context_manifest
 → 检索 knowledge_chunks
 → 可选查询 GBrain 长期记忆和知识图谱
 → 按 task_type 生成产品详细设计、技术方案、内部 GitLab MR Review 报告、开发计划、测试分析、发布评估或上线后分析
 → 编码结果进入独立 quality_gate；审核失败创建返工项，高风险/超权限问题创建人类决策请求
-→ 人工决策选项冻结 outcome 与主体状态映射；补充信息进入 waiting_more_info 并通过 answers 子资源生成新版本。工作项按冻结 resume_state 恢复/返工/取消，运行按 resume_state/suspended_decision_request_id/suspended_at 从 running/integrating/verifying 恢复；领域状态与 Outbox 原子提交，Checkpoint 独立持久化执行游标
-→ P0 反馈写不可变岗位归因记录；P1 再生成 pending 经验候选，只有经权限、自审隔离、业务大脑/产品/岗位/工作项/场景/风险/信任域/置信度和策略校验批准的版本可带证据引用进入后续岗位上下文
+→ 人工决策选项冻结 outcome 与主体状态映射；补充信息进入 waiting_more_info 并通过 answers 子资源生成新版本；到期默认保持主体暂停并幂等升级后继请求，绝不自动批准。工作项按冻结 resume_state 恢复/返工/取消，运行按 resume_state/suspended_decision_request_id/suspended_at 从 running/integrating/verifying 恢复；领域状态与 Outbox 原子提交，Checkpoint 独立持久化执行游标
+→ failed/cancelled 运行保持不可变，产品版本保留 active/testing 阶段；显式 restart 重新校验后创建引用旧运行的新 generation，不复活旧工作项/attempt/lease
+→ P0 反馈把被归因执行主体与实际 producer subject/role/seat 分开写入不可变记录；P1 再生成 pending 经验候选，审核人通过全部来源关系与生产者隔离，只有平台标志与冻结 experience_reuse_config 同时允许且经权限、范围、时效、信任域、置信度、容量和策略校验批准的版本可带证据引用进入后续岗位上下文
 → 生成 mock_issues / code_review_reports / Bug / Markdown / knowledge_deposits
 → lifecycle_context 写入需求、任务、提交、Review、测试、Bug、发布、日志和知识之间的关系边
 → lifecycle_context 归集需求变更、设计缺口、代码质量、Review、测试、Bug、发布和线上异常风险信号
@@ -118,7 +121,7 @@ FastAPI 模块化单体
 → AI 自动测试和人工测试登记 Bug，关联产品、任务、提交、发布或日志
 → 首页 IT 团队看板聚合需求、研发进展、Bug、代码质量、发布、线上健康、用户洞察、用户反馈和迭代规划建议
 → AI 助手读取脱敏系统上下文并通过模型网关 Chat 回答系统状态和项目进展问题
-→ 集成工作项通过 Outbox 推送并对账远程分支/commit/MR-PR 证据；默认让版本停在 ready_for_release、协作运行以 completion_reason=ready_for_release 完成，策略允许且人工确认后才进入部署域
+→ 集成工作项通过 Outbox 推送并对账远程分支/commit/MR-PR 证据；统一固化 ready_for_release 证据后，待发布目标完成运行，部署目标让运行保持非终态 ready_for_release，策略允许且人工确认后才进入部署域
 → 反馈分别归因到岗位、真人用户或 AI 数字员工、执行器和策略版本并写入 audit_events
 ```
 
@@ -160,7 +163,7 @@ Docker Compose
   └─ minio：知识原始资产和解析产物
 ```
 
-API 容器启动入口会在服务启动前按已注册的 additive migration 清单执行迁移，用于升级已有数据库卷；破坏性的 `110_requirement_driven_rd_cutover.sql` 明确不注册，必须在维护围栏、健康标记和显式 cleanup 命令下执行。数据库结构或种子数据变更不得依赖清空 volume。PostgreSQL 服务使用同主版本 pgvector 镜像，避免已有 PG18 数据目录被错误挂载到 PG16。
+API 容器启动入口会在服务启动前按已注册的 additive migration 清单执行迁移，用于升级已有数据库卷；破坏性的 `110_requirement_driven_rd_cutover.sql` 明确不注册，必须先完成围栏外只读预检，经 `draining` 收敛到零活动并进入不可回退旧运行时的 `cutover_locked`，再在健康标记和显式 cleanup 命令下执行。数据库结构或种子数据变更不得依赖清空 volume。PostgreSQL 服务使用同主版本 pgvector 镜像，避免已有 PG18 数据目录被错误挂载到 PG16。
 
 ## 外部依赖
 

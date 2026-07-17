@@ -66,8 +66,13 @@ GET /api/audit/events/export?subject_type=knowledge_document&created_from=2026-0
 | GET `/api/auth/dingtalk/callback` | 302 回前端错误页 | DINGTALK_CORP_NOT_ALLOWED / DINGTALK_ACCOUNT_NOT_BOUND / DINGTALK_ACCOUNT_PENDING_APPROVAL / DINGTALK_ACCOUNT_INACTIVE / EXTERNAL_IDENTITY_CONFLICT | 否 | 自动开户成功记录 `dingtalk_account.provisioned`；拒绝只保存 corp_id 等非敏感摘要。 | 展示企业不允许、未绑定、待审批、账号停用或绑定冲突的明确提示。 |
 | POST `/api/auth/dingtalk/exchange-ticket` | 401 | DINGTALK_TICKET_INVALID | 否 | 记录失败摘要可选；不得记录 ticket 明文。 | 回到登录页重新发起钉钉登录。 |
 | POST `/api/auth/dingtalk/bind/start` / bind callback | 302/409 | EXTERNAL_IDENTITY_CONFLICT | 否 | 绑定成功记录 `dingtalk_account.bound`，解绑成功记录 `dingtalk_account.unbound`；冲突不返回被占用用户敏感信息。 | 提示该钉钉账号已绑定其它 AI Brain 账号，联系管理员处理。 |
-| POST `/api/ai-tasks`、POST `/api/ai-tasks/{task_id}/start`、POST `/api/ai-tasks/batch-retry` | 409 | RD_COLLABORATION_REQUIRED | 否 | 记录被拒绝的绕过动作、操作者、入口、关联需求/任务和 trace_id；不得记录成功创建、启动或重试审计。 | 隐藏直接操作入口，引导查看需求对应的协作运行、工作项或待人工决策。 |
-| 协作运行内部 `create_ai_task_for_work_item` / `dispatch_ai_task_for_work_item` | 400/409 | VALIDATION_ERROR / WORK_ITEM_STATE_INVALID / STRATEGY_SNAPSHOT_INVALID | 否 | 记录工作项、冻结策略、角色席位、AI 数字员工、执行器配置和失败原因。 | 在协作工作台展示阻塞原因；确定性修复后通过工作项恢复动作继续，不允许改走公开任务入口。 |
+| POST `/api/ai-tasks`、POST `/api/ai-tasks/{task_id}/start|cancel`、POST `/api/ai-tasks/batch-retry|batch-cancel` | 409 | RD_COLLABORATION_REQUIRED | 否 | 记录被拒绝的绕过动作、操作者、入口、关联运行/工作项/任务和 trace_id；混合批量请求不得记录部分成功审计。 | 隐藏直接操作入口，引导查看需求对应的协作运行、工作项或待人工决策。 |
+| 创建需求评估/协作运行 | 409 | RD_EXECUTION_POLICY_REQUIRED | 否 | 记录产品、业务大脑、缺失策略层级和 trace_id，不记录策略 payload。 | 打开统一研发执行策略配置；配置完成后重新发起，不得走策略外执行。 |
+| 评估策略收紧 | 409 | RD_POLICY_HUMAN_DECISION_REQUIRED / RD_POLICY_RESOLUTION_LIMIT | 否，先人工决策 | 记录 assessment、冲突字段或轮次上限、决策请求和冻结快照。 | 保持评估 waiting_human，打开返回的决策请求。 |
+| 协作运行内部 `create_ai_task_for_work_item` / `dispatch_ai_task_for_work_item` | 409 | RD_ROLE_ASSIGNMENT_REQUIRED / RD_WORK_ITEM_NOT_READY | 否 | 记录工作项、冻结策略、缺失岗位、候选席位和失败原因。 | 保持工作项阻断，补齐岗位席位或前置条件后由调度器恢复。 |
+| 协作运行内部任务派发 | 503 | RD_EXECUTOR_UNAVAILABLE | 是，按 `retry_after_seconds` | 记录 executor profile、健康/容量摘要、work_item_id 和 trace_id，不记录凭据。 | 展示执行器暂不可用；到期后由调度器重试，不创建空 attempt。 |
+| POST `/api/product-versions/{version_id}/scope-change-requests` | 409 | RD_SCOPE_VERSION_CONFLICT / RD_RUN_GENERATION_CONFLICT / RD_SCOPE_FROZEN | 否，先刷新或处理现有决策 | 记录版本、来源运行、提交/当前 scope 与 generation、冻结边界或现有决策，不记录任意 payload。 | 刷新协作运行；待发布前使用受控入口，已有决策先处理，待发布后创建后续需求。 |
+| POST `/api/product-versions/{version_id}/scope-change-requests` | 422 | RD_SCOPE_CHANGE_INVALID | 否，修改提议后重试 | 记录 operations_hash、operation index、字段问题和 trace_id；不得记录应用成功或部分范围审计。 | 保留表单并定位 operation/field，修正后使用新 request_id 提交。 |
 | 协作运行内部任务派发 | 400 | MODEL_GATEWAY_CONFIG_INVALID | 否 | 记录任务失败、工作项 attempt 和配置缺陷，不记录密钥明文。 | 提示管理员修复冻结执行器所依赖的模型网关配置，再由调度器恢复工作项。 |
 | 协作运行内部任务派发 | 502/503 | MODEL_GATEWAY_FAILED | 是，由调度器按策略处理 | 记录模型网关失败、provider、model、purpose、work_item_id、attempt 和 trace_id。 | 展示调度器重试进度；超过上限后进入 blocked 或创建 decision request，不展示完整 prompt 或输出。 |
 | POST `/api/system/model-gateway-configs/test` | 400 | MODEL_GATEWAY_CONFIG_INVALID / VALIDATION_ERROR | 否 | 记录可选；不得记录密钥明文。 | 提示补齐 base_url、API Key、Chat 模型和 Embedding 模型。 |

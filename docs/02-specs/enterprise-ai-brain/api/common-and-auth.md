@@ -168,10 +168,16 @@ curl -X POST http://localhost:8000/api/auth/login \
   "detail": {
     "code": "VALIDATION_ERROR",
     "message": "需求必须选择有效产品；生成 AI 任务前必须排入有效迭代版本",
+    "details": {
+      "retryable": false,
+      "next_action": "select_valid_product"
+    },
     "trace_id": "trace_001"
   }
 }
 ```
+
+`detail.code/message/trace_id` 必须存在；`detail.details` 为可选结构化对象。需要客户端处理恢复动作、并发版本或字段问题的业务错误必须在 `details` 中返回稳定的 `retryable/next_action`，并按领域补充 current version、资源 ID 或字段级 issues。业务错误不得改用 `{data:{code...}}` 或另一套 `{error:...}` envelope。
 
 未改造完成的框架级异常也必须在响应 Header 或日志中关联同一 `trace_id`。
 

@@ -24,20 +24,23 @@
 - AI digital employees are persistent actors distinct from role definitions and executor profiles; AI seats freeze both `ai_employee_id` and `executor_profile_id`.
 - Every assessment, assessment opinion, collaboration run, feedback record, and governed experience source references an immutable `rd_task_executor_policy_snapshots` row. Base and assessment-resolved snapshots have separate stable identities and a parent chain, so automatic tightening never overwrites a policy version; historical interpretation never rereads the mutable policy.
 - Unified policy records have a monotonic `policy_version`; snapshot identity columns are non-null and no-delta assessment finalization reuses the base snapshot.
-- `product_versions.scope_version` is the sole requirement-scope concurrency fact and increments atomically with every scope-affecting change.
+- `product_versions.scope_version` is the sole requirement-scope concurrency fact and increments atomically with every accepted scope-affecting change, including included final/effective strategy snapshot replacement; active generations reject changes, and ready_for_release/deploying/released versions route them to a new planning version.
+- Every run has immutable per-requirement scope rows whose requirement/assessment/final-snapshot set exactly equals the version-resolved source set; database deferred constraints reject missing or extra provenance.
 - P0 human assignment uses explicit user IDs; team pools, calendars, and capacity-based automatic selection are not inferred.
 - Requirement `batch-advance-status` may only cancel/close when no active collaboration work exists; all delivery targets and external AI-task create/start/batch-retry calls return `RD_COLLABORATION_REQUIRED`. Public single or batch cancel also returns that error when any task is linked to v2 collaboration; work-item cancellation atomically updates task, Review, attempt, work item, and run.
 - `blocked/awaiting_human` work items persist a platform-controlled `resume_state`; clients cannot choose arbitrary recovery states.
 - Collaboration runs entering `waiting_human` atomically persist `resume_state`, `suspended_decision_request_id`, and `suspended_at`, and resume from `running/integrating/verifying` only through the matching decision request.
-- Default delivery leaves the product version at `ready_for_release` and completes the collaboration run with `completion_reason=ready_for_release`.
+- Failed/cancelled runs are immutable; restart creates a new generation referencing the latest terminal run after scope and resource revalidation.
+- Decision expiry never auto-approves or resumes work; the subject stays paused while one successor request is idempotently escalated.
+- Default delivery leaves the product version at `ready_for_release` and completes the collaboration run with `completion_reason=ready_for_release`; a deployed-target run remains non-terminal `ready_for_release` until P1 deployment succeeds.
 - Coding success is not completion; independent quality evidence and reviewer separation are mandatory.
 - P0 includes minimum worktree/branch isolation, remote push or MR/PR Outbox, version-level integration tests, reconciliation, and trusted delivery evidence through `ready_for_release`; optional deployment and advanced conflict/capacity optimization are P1.
-- Role feedback is immutable P0 evidence. P1 experience candidates use `pending/approved/rejected/retired`, governed query/decision APIs, reviewer separation, optimistic locking, full brain/product/work-item/trust-domain filtering, and policy-scoped retrieval; approved experience never mutates active policy automatically.
+- Role feedback is immutable P0 evidence. P1 experience candidates use `pending/approved/rejected/retired`, governed query/decision APIs, reviewer separation from every source producer, optimistic locking, full brain/product/work-item/trust-domain filtering, and frozen `experience_reuse_config` capacity/age/policy-scoped retrieval; approved experience never mutates active policy automatically.
 - All new production behavior starts with a failing test and follows red-green-refactor.
 - Do not deploy. Completion for this development branch is tests, browser validation, documentation, commit, and remote push.
-- Use additive schema migration before implementation and a maintenance-fenced destructive cutover only after preflight; there is still one runtime rule after activation.
-- The previous 2026-07-16 test snapshot is invalid because app-scope files continued changing after capture. No failure allowlist is active. Before implementation begins, stop parallel app edits, capture `HEAD`, `git diff HEAD --binary -- apps`, `git status --porcelain=v1 --untracked-files=all -- apps`, and a path/content hash manifest for every untracked app file twice with identical results, then run the full backend and frontend suites against that frozen snapshot.
-- Scheduled-job definitions and runtime semantics are an explicit unchanged boundary, so scheduled-job backend/frontend failures cannot be accepted as a known baseline. They must be fixed or independently isolated before Task 1 implementation; otherwise failures that stop before the run-detail assertions can mask regressions. Any remaining unrelated pre-existing failure requires an explicit owner, exact test/signature, frozen snapshot hashes, and approval before feature work.
+- Use additive schema migration before implementation, advisory preflight while open, `draining` with an early-abort boundary, then irreversible `cutover_locked` for destructive cutover; there is still one runtime rule after activation.
+- The previous 2026-07-16 test snapshot is invalid because app-scope files continued changing after capture. No failure allowlist is active. Before implementation begins, stop parallel app edits, capture `HEAD`, `git diff HEAD --binary -- apps`, `git status --porcelain=v1 --untracked-files=all -- apps`, and a path/content hash manifest for every untracked app file twice with identical results, then run the full backend and frontend suites against that frozen snapshot. Any failure blocks implementation; after fixing it, recapture the stable manifests and rerun the full suites.
+- Scheduled-job definitions and runtime semantics are an explicit unchanged boundary, so scheduled-job backend/frontend failures can never be accepted as a known baseline or independently ignored; otherwise failures that stop before the run-detail assertions can mask regressions.
 
 ---
 
@@ -97,7 +100,7 @@ git commit -m "docs: adopt requirement-driven rd collaboration"
 - Create: `apps/api/tests/test_requirement_driven_rd_schema.py`
 
 **Interfaces:**
-- Produces: `rd_role_definitions`, `rd_ai_employees`, `rd_executor_profiles`, `rd_task_executor_policy_role_bindings`, `rd_task_executor_policy_snapshots`, `requirement_assessments`, `requirement_assessment_opinions`, `rd_collaboration_runs`, `rd_run_seats`, `rd_role_sessions`, `rd_work_items`, `rd_work_item_dependencies`, `rd_work_item_attempts`, `rd_collaboration_events`, `decision_requests`, `rd_command_idempotency_records`, `role_feedback_records`, `rd_role_experience_records`, `rd_role_experience_sources`, and `rd_collaboration_upgrade_state`.
+- Produces: `rd_role_definitions`, `rd_ai_employees`, `rd_executor_profiles`, `rd_task_executor_policy_role_bindings`, `rd_task_executor_policy_snapshots`, `rd_task_executor_policy_snapshot_sources`, `requirement_assessments`, `requirement_assessment_opinions`, `rd_collaboration_runs`, `rd_collaboration_run_requirements`, `rd_run_seats`, `rd_role_sessions`, `rd_work_items`, `rd_work_item_dependencies`, `rd_work_item_attempts`, `rd_collaboration_events`, `decision_requests`, `rd_command_idempotency_records`, `rd_command_replay_secrets`, `role_feedback_records`, `rd_role_experience_records`, `rd_role_experience_sources`, and `rd_collaboration_upgrade_state`.
 - Produces: generalized graph subjects, policy/version references, version delivery statuses, work-item linkage on `ai_tasks`, and `rd_collaboration_upgrade_state` maintenance/cutover metadata.
 
 - [ ] **Step 1: Write failing migration-contract tests**
@@ -142,6 +145,100 @@ def test_all_rd_commands_have_persistent_idempotency(migration_sql):
         "rd_command_idempotency_records",
         ("command_type", "aggregate_type", "aggregate_id", "idempotency_key"),
     )
+
+
+def test_version_resolved_snapshot_sources_are_deferred_and_immutable(migration_sql):
+    assert_unique_constraint(migration_sql, "rd_task_executor_policy_snapshot_sources", ("snapshot_id", "requirement_id"))
+    assert_no_unique_constraint(migration_sql, "rd_task_executor_policy_snapshot_sources", ("snapshot_id", "source_snapshot_id"))
+    assert_table_has_columns(migration_sql, "rd_task_executor_policy_snapshot_sources", {"snapshot_id", "source_snapshot_id", "requirement_id", "assessment_id", "created_at"})
+    assert_table_lacks_column(migration_sql, "rd_task_executor_policy_snapshot_sources", "updated_at")
+    assert_deferrable_source_integrity_trigger(migration_sql, minimum_sources=1, same_policy_version=True, exact_run_scope_coverage=True)
+    assert_source_mutation_trigger_rejects_update_and_delete(migration_sql)
+
+
+def test_run_requirement_scope_is_immutable_and_exact(migration_sql):
+    assert_table_has_columns(
+        migration_sql,
+        "rd_collaboration_run_requirements",
+        {"collaboration_run_id", "requirement_id", "requirement_revision", "assessment_id", "final_strategy_snapshot_id", "acceptance_criteria_hash", "repository_scope_hash", "created_at"},
+    )
+    assert_table_lacks_column(migration_sql, "rd_collaboration_run_requirements", "updated_at")
+    assert_unique_constraint(migration_sql, "rd_collaboration_run_requirements", ("collaboration_run_id", "requirement_id"))
+    assert_run_scope_mutation_trigger_rejects_update_and_delete(migration_sql)
+
+
+def test_run_generation_decision_expiry_and_fence_phases_are_constrained(migration_sql):
+    assert_unique_constraint(migration_sql, "rd_collaboration_runs", ("product_version_id", "run_generation"))
+    assert_partial_unique_index(migration_sql, "rd_collaboration_runs", ("supersedes_run_id",), "supersedes_run_id IS NOT NULL")
+    assert_fk_on_delete_restrict(migration_sql, "rd_collaboration_runs", "supersedes_run_id", "rd_collaboration_runs")
+    assert_decision_expiry_fields_and_due_index(migration_sql)
+    assert_partial_unique_index(migration_sql, "decision_requests", ("supersedes_decision_request_id",), "supersedes_decision_request_id IS NOT NULL")
+    assert_upgrade_fence_modes(migration_sql, {"disabled", "draining", "cutover_locked"})
+
+
+def test_feedback_producer_identity_is_distinct_and_immutable(migration_sql):
+    assert_table_has_columns(
+        migration_sql,
+        "role_feedback_records",
+        {"collaboration_run_id", "feedback_kind", "source_event_id", "feedback_fingerprint", "producer_subject_type", "producer_subject_id", "producer_role_code", "producer_seat_id", "created_at"},
+    )
+    assert_columns_not_null(migration_sql, "role_feedback_records", {"collaboration_run_id", "feedback_kind", "source_event_id", "feedback_fingerprint", "producer_subject_type", "producer_subject_id"})
+    assert_feedback_producer_type_check(migration_sql, {"human_user", "ai_employee", "service"})
+    assert_feedback_producer_subject_resolution_triggers(
+        migration_sql,
+        human_table="users",
+        ai_employee_table="rd_ai_employees",
+        service_codes={"collaboration_orchestrator", "quality_gate", "delivery_reconciler", "decision_expiry_worker"},
+    )
+    assert_feedback_producer_role_seat_pair_check(migration_sql)
+    assert_feedback_producer_seat_fk_restrict(migration_sql)
+    assert_feedback_producer_seat_role_match_trigger(migration_sql)
+    assert_unique_constraint(migration_sql, "rd_collaboration_events", ("collaboration_run_id", "id"))
+    assert_composite_fk_on_delete_restrict(
+        migration_sql,
+        "role_feedback_records",
+        ("collaboration_run_id", "source_event_id"),
+        "rd_collaboration_events",
+        ("collaboration_run_id", "id"),
+    )
+    assert_unique_constraint(migration_sql, "role_feedback_records", ("collaboration_run_id", "feedback_fingerprint"))
+    assert_table_lacks_column(migration_sql, "role_feedback_records", "updated_at")
+    assert_feedback_mutation_trigger_rejects_update_and_delete(migration_sql)
+
+
+def test_scope_change_requests_are_versioned_idempotent_and_single_pending(migration_sql):
+    assert_table_has_columns(
+        migration_sql,
+        "rd_scope_change_requests",
+        {"product_version_id", "request_id", "source_run_id", "source_run_state", "expected_scope_version", "expected_run_generation", "operations_json", "operations_hash", "status", "decision_request_id", "applied_scope_version", "requested_by", "applied_at", "created_at", "updated_at"},
+    )
+    assert_unique_constraint(migration_sql, "rd_scope_change_requests", ("product_version_id", "request_id"))
+    assert_partial_unique_index(migration_sql, "rd_scope_change_requests", ("product_version_id",), "status = 'pending_decision'")
+    assert_fk_on_delete_restrict(migration_sql, "rd_scope_change_requests", "source_run_id", "rd_collaboration_runs")
+    assert_fk_on_delete_restrict(migration_sql, "rd_scope_change_requests", "decision_request_id", "decision_requests")
+    assert_scope_change_request_state_checks(migration_sql)
+    assert_scope_change_request_proposal_fields_immutable(migration_sql)
+    assert_table_has_columns(
+        migration_sql,
+        "rd_scope_change_request_operations",
+        {"scope_change_request_id", "position", "op", "requirement_id", "requirement_revision", "assessment_id", "final_strategy_snapshot_id", "repository_id", "branch_config_version", "base_commit_sha", "destination", "created_at"},
+    )
+    assert_unique_constraint(migration_sql, "rd_scope_change_request_operations", ("scope_change_request_id", "position"))
+    assert_scope_change_operation_kind_checks(migration_sql)
+    assert_scope_change_operation_fks_restrict(migration_sql)
+    assert_immutable_table_trigger(migration_sql, "rd_scope_change_request_operations")
+    assert_table_has_columns(migration_sql, "requirements", {"supersedes_requirement_id", "source_collaboration_run_id"})
+    assert_fk_on_delete_restrict(migration_sql, "requirements", "supersedes_requirement_id", "requirements")
+    assert_fk_on_delete_restrict(migration_sql, "requirements", "source_collaboration_run_id", "rd_collaboration_runs")
+    assert_requirement_supersedes_requires_source_run_check(migration_sql)
+    assert_requirement_lineage_same_product_ready_source_trigger(migration_sql)
+    assert_index(migration_sql, "requirements", ("supersedes_requirement_id", "source_collaboration_run_id"))
+
+
+def test_claim_replay_secret_is_expiring_and_scrubbable(migration_sql):
+    assert_table_has_columns(migration_sql, "rd_command_replay_secrets", {"command_record_id", "secret_ciphertext", "key_id", "expires_at", "scrubbed_at", "created_at", "updated_at"})
+    assert_unique_constraint(migration_sql, "rd_command_replay_secrets", ("command_record_id",))
+    assert_expired_secret_scrub_contract(migration_sql)
 ```
 
 - [ ] **Step 2: Run the test and confirm red**
@@ -152,11 +249,13 @@ Expected: FAIL because migration 109 and new collections are absent.
 
 - [ ] **Step 3: Add normalized tables, constraints, indexes, and compatibility-safe columns**
 
-Migration 109 is additive only: add `rd_task_executor_policies.policy_version bigint NOT NULL DEFAULT 1` and `product_versions.scope_version bigint NOT NULL DEFAULT 1`; create canonical tables and indexes including stable AI employee identity, immutable base/derived policy snapshots, command idempotency response records, and relational experience sources; add work-item `resume_state`/suspension metadata; add collaboration `resume_state/suspended_decision_request_id/suspended_at/completion_reason`; add versioned experience governance fields; add nullable graph/version/task links; seed permission definitions including `delivery.rd_ai_employees.manage` and `delivery.rd_role_experiences.read/decide`; and add cutover-state metadata. It must not convert policies, cancel tasks, change API behavior, or remove old columns; those actions happen only after maintenance fencing and preflight in Task 14.
+Migration 109 is additive only: add `rd_task_executor_policies.policy_version bigint NOT NULL DEFAULT 1` and `product_versions.scope_version bigint NOT NULL DEFAULT 1`; add `requirements.supersedes_requirement_id/source_collaboration_run_id`; create canonical tables and indexes including stable AI employee identity, immutable base/assessment_resolved/version_resolved policy snapshots, relational version snapshot sources, immutable run requirement scope, governed `rd_scope_change_requests` plus immutable typed operation rows, permanent command idempotency response records, expiring claim replay secrets, and relational experience sources; add work-item `resume_state`/suspension metadata; add collaboration `run_generation/supersedes_run_id/resume_state/suspended_decision_request_id/suspended_at/completion_reason`; add decision expiry/escalation fields, versioned experience governance fields, and phased fence metadata; add nullable graph/version/task links; seed permission definitions including `delivery.rd_ai_employees.manage`, `delivery.decision_requests.answer`, and `delivery.rd_role_experiences.read/decide`. It must not convert policies, cancel tasks, change API behavior, or remove old columns; those actions happen only after draining, locked preflight, and cutover in Task 14.
 
-Add the exact snapshot identity constraint `policy_id + policy_version + snapshot_kind + resolution_context_key + resolution_revision`, make every identity/content column NOT NULL except base `parent_snapshot_id`, add content-hash index and self-parent FK, and enforce base `resolution_context_key=policy:{policy_id}:version:{policy_version}`/parent-null/revision-0 plus derived `resolution_context_key=assessment:{assessment_id}`/parent-present/revision-1..2 CHECKs. A trigger validates parent and child use the same policy ID/version and compatible context. Add a BEFORE UPDATE/DELETE rejection trigger and runtime-role INSERT/SELECT grants; policy and all consumer FKs use `ON DELETE RESTRICT`, so policy DELETE with snapshots is rejected. Required snapshot consumers are `requirement_assessments.initial_strategy_snapshot_id/final_strategy_snapshot_id/strategy_snapshot_id`, `requirement_assessment_opinions.strategy_snapshot_id`, `rd_collaboration_runs.strategy_snapshot_id`, `role_feedback_records.strategy_snapshot_id`, `rd_role_experience_records.strategy_snapshot_id`, and `rd_role_experience_sources.strategy_snapshot_id`. Immutable snapshots and command idempotency rows intentionally have only `created_at`; migration guardrails must exempt them from the mutable-table `updated_at` rule.
+Add the exact snapshot identity constraint `policy_id + policy_version + snapshot_kind + resolution_context_key + resolution_revision`, make every identity/content column NOT NULL except base `parent_snapshot_id`, add content-hash index and self-parent FK, and enforce row-local CHECKs for base `policy:{policy_id}:version:{policy_version}`/parent-null/revision-0, assessment_resolved `assessment:{assessment_id}`/parent-present/revision-1..2, and version_resolved `version:{version_id}:scope:{scope_version}`/base-parent/revision-1. Create `rd_task_executor_policy_snapshot_sources(snapshot_id, source_snapshot_id, requirement_id, assessment_id, created_at)` with unique `(snapshot_id,requirement_id)` edges; do not make `(snapshot_id,source_snapshot_id)` unique because multiple no-delta requirements may legitimately share one base/final snapshot. Create immutable `rd_collaboration_run_requirements(collaboration_run_id,requirement_id,requirement_revision,assessment_id,final_strategy_snapshot_id,acceptance_criteria_hash,repository_scope_hash,created_at)` with unique run/requirement rows. A `DEFERRABLE INITIALLY DEFERRED` constraint trigger validates at commit that every run has at least one scope row, source count equals scope count, both requirement sets are exactly equal, and each source uses the same policy ID/version and matching accepted assessment/final snapshot; mutation triggers reject snapshot/source/run-scope UPDATE/DELETE. Runtime-role grants are INSERT/SELECT only; policy and all consumer/source FKs use `ON DELETE RESTRICT`. Required snapshot consumers are `requirement_assessments.initial_strategy_snapshot_id/final_strategy_snapshot_id/strategy_snapshot_id`, `requirement_assessment_opinions.strategy_snapshot_id`, `rd_collaboration_runs.strategy_snapshot_id` (version_resolved only), `rd_collaboration_run_requirements.final_strategy_snapshot_id`, `rd_scope_change_request_operations.final_strategy_snapshot_id`, `role_feedback_records.strategy_snapshot_id`, `rd_role_experience_records.strategy_snapshot_id`, and `rd_role_experience_sources.strategy_snapshot_id`. Immutable snapshots, snapshot sources, run scope, typed scope-change operations, command idempotency rows, and `role_feedback_records` intentionally have only `created_at`; migration guardrails must exempt them from the mutable-table `updated_at` rule. `rd_scope_change_requests` and `rd_command_replay_secrets` are mutable and retain both timestamps.
 
-Add partial unique indexes for one active product policy and one active business-brain default policy, the assessment key on `requirement_id + requirement_revision + initial_strategy_snapshot_id`, one active run per version, one active decision per subject/type/non-null plan version across `pending/waiting_more_info`, unique dependency edges, work-item/attempt identities, experience version/one-approved-version/source-feedback uniqueness, and `rd_command_idempotency_records(command_type, aggregate_type, aggregate_id, idempotency_key)`. Command records store `response_hash/response_json`, have no `expires_at` or TTL, and cannot be reused after aggregate terminal states; claim retains a permanent record but uses the documented lease-expiry replay exception. Add `suspended_decision_request_id -> decision_requests(id) ON DELETE RESTRICT` and a CHECK requiring all three run suspension fields only for `waiting_human`, with `resume_state IN ('running','integrating','verifying')`. Migration-contract tests must assert exact predicates, checks, trigger behavior, grants, and foreign keys.
+Add partial unique indexes for one active product policy and one active business-brain default policy, the assessment key on `requirement_id + requirement_revision + initial_strategy_snapshot_id`, one active run per version, unique `(product_version_id,run_generation)`, unique non-null run `supersedes_run_id`, one scope-change request per `(product_version_id,request_id)`, one pending scope-change per version, unique typed operation `(scope_change_request_id,position)`, one active decision per subject/type/non-null plan version across `pending/waiting_more_info`, decision expiry due/event indexes, unique non-null decision `supersedes_decision_request_id`, unique dependency edges, work-item/attempt identities, unique `(collaboration_run_id,feedback_fingerprint)`, experience version/one-approved-version/source-feedback uniqueness, and `rd_command_idempotency_records(command_type, aggregate_type, aggregate_id, idempotency_key)`. Command records store `response_hash/response_json`, have no `expires_at` or TTL, and cannot be reused after aggregate terminal states. Claim retains a permanent record but stores the token only in `rd_command_replay_secrets`, uniquely keyed by command record; expiry cleanup nulls ciphertext and sets `scrubbed_at`, while later replay returns the fixed lease-expired error. Add `suspended_decision_request_id -> decision_requests(id) ON DELETE RESTRICT` and a CHECK requiring all three run suspension fields only for `waiting_human`, with `resume_state IN ('running','integrating','verifying')`. Decision rows freeze `expires_at/timeout_policy/escalation_target_selector/escalation_level` and record `expired_at/expiry_event_id/supersedes_decision_request_id`; upgrade state uses `fence_mode=disabled|draining|cutover_locked`, optimistic version, cleanup markers and abort audit fields. Migration-contract tests must assert exact predicates, checks, deferred trigger behavior, secret scrubbing, grants, and foreign keys.
+
+Create immutable `role_feedback_records` with attributed actor fields, `collaboration_run_id/feedback_kind/source_event_id/feedback_fingerprint`, and mandatory `producer_subject_type/producer_subject_id`; add unique `rd_collaboration_events(collaboration_run_id,id)` and an `ON DELETE RESTRICT` composite feedback FK so an existing event from another run cannot be cited. Add nullable `producer_role_code/producer_seat_id` that become required when the producer acts through a collaboration seat. The polymorphic producer ID is validated by subject-type-specific deferred constraint triggers against the human-user or AI-employee table; `service` is constrained by a database CHECK to the stable codes `collaboration_orchestrator|quality_gate|delivery_reconciler|decision_expiry_worker`. `producer_seat_id` uses `ON DELETE RESTRICT` to `rd_run_seats`, and its frozen role must match the seat. Canonical fingerprint input covers run generation, source event, feedback kind, attributed role/seat/subject, work item/attempt, and strategy snapshot; enforce unique `(collaboration_run_id,feedback_fingerprint)`, database UPDATE/DELETE rejection, and only `created_at` so event replay returns the same record and experience review can join every source to the actual producer rather than infer it from the evaluated actor.
 
 - [ ] **Step 4: Generalize graph subjects and version statuses**
 
@@ -186,8 +285,8 @@ git commit -m "feat: add requirement-driven collaboration schema"
 - Create: `apps/api/tests/test_rd_collaboration_repository.py`
 
 **Interfaces:**
-- Produces: list/get/save methods for roles, AI digital employees, executor profiles, unified policies/bindings/immutable snapshots, assessments/opinions, collaboration runs, seats, sessions, work items/dependencies/attempts/events, decisions, command idempotency, immutable feedback, governed experiences, and relational experience sources.
-- Produces: `freeze_base_policy_snapshot`, `derive_assessment_policy_snapshot`, `execute_idempotent_rd_command`, `save_assessment_bundle`, `assign_requirement_to_version_and_increment_scope`, `claim_ready_work_item`, `save_work_item_attempt_bundle`, `cancel_work_item_bundle`, `suspend_collaboration_run`, `apply_decision_bundle`, `answer_decision_request`, and `decide_role_experience` transaction methods.
+- Produces: list/get/save methods for roles, AI digital employees, executor profiles, unified policies/bindings/immutable snapshots/version source edges, assessments/opinions, collaboration runs and immutable run requirement scope, governed scope-change requests, seats, sessions, work items/dependencies/attempts/events, decisions, permanent command idempotency, expiring replay secrets, immutable feedback, governed experiences, and relational experience sources.
+- Produces: `freeze_base_policy_snapshot`, `derive_assessment_policy_snapshot`, `merge_version_policy_snapshot_with_sources`, `create_collaboration_run_with_exact_scope`, `restart_terminal_collaboration_run`, `create_scope_change_request`, `apply_scope_change_bundle`, `execute_idempotent_rd_command`, `save_and_scrub_claim_replay_secret`, `save_assessment_bundle`, `assign_requirement_to_version_and_increment_scope`, `claim_ready_work_item`, `save_work_item_attempt_bundle`, `cancel_work_item_bundle`, `suspend_collaboration_run`, `apply_decision_bundle`, `answer_decision_request`, `expire_and_escalate_decision_request`, `save_role_feedback_once`, and `decide_role_experience` transaction methods.
 
 - [ ] **Step 1: Write failing repository transaction tests**
 
@@ -199,7 +298,7 @@ def test_claim_ready_work_item_is_atomic(repository, ready_work_item):
     assert second is None
 ```
 
-Cover policy PATCH version increments, one active product/default policy, base/derived immutable snapshot insert, parent chain, no-tightening base reuse, identity NOT NULL/CHECK, idempotent read and database update/delete rejection; product scope-version increments; optimistic decisions and request-more-info reopening; one active run per version; DAG edge uniqueness; plan-version uniqueness; assessment revision/initial-snapshot uniqueness; AI employee/executor identity separation; work-item and run-level suspension/resume atomicity plus FK/CHECK violations from `running/integrating/verifying`; immutable response-snapshot command idempotency and claim expiry exception; work-item/attempt/cancel idempotency; experience version/approval/source uniqueness; and requirement/version assignment idempotency.
+Cover policy PATCH version increments, one active product/default policy, base/assessment_resolved/version_resolved immutable snapshot insert, parent chain, no-tightening assessment base reuse including multiple requirements sharing one base source, deterministic version merge/source edges, exact run-scope/source coverage, deferred source integrity, identity NOT NULL/CHECK, idempotent read and database snapshot/source/run-scope update/delete rejection; product scope-version increments only without a non-terminal run, `RD_SCOPE_FROZEN` during an active generation, concurrent same/different scope-change requests, stale scope/generation, invalid operations, pre-ready pause plus approve/reject, atomic terminalize/change/exactly-once increment/restart, and ready-target completed and ready/deploying changes returning `RD_SCOPE_FROZEN` with `resolution=new_planning_version` and routed to a follow-up requirement in a new planning version; optimistic decisions, structured input validation, answer permission/selector and request-more-info reopening, database-time expiry and idempotent keep-paused escalation; one active run per version, unique run generations, terminal-run immutability and restart to a new generation; DAG edge uniqueness; plan-version uniqueness; assessment revision/initial-snapshot uniqueness; AI employee/executor identity separation; work-item and run-level suspension/resume atomicity plus FK/CHECK violations from `running/integrating/verifying`; immutable feedback with attributed actor distinct from producer subject/role/seat, invalid human/AI/service producer resolution rejected, producer role/seat null-pair or mismatch rejected, cross-run source-event FK rejection, and concurrent Graph/event replay returning one `(run,fingerprint)` record; immutable response-snapshot command idempotency, valid claim token replay and expired secret scrub; work-item/attempt/cancel idempotency including high-risk continue-to-ready/new-attempt; experience version/approval/source uniqueness and reviewer rejection against every joined producer; and requirement/version assignment idempotency.
 
 - [ ] **Step 2: Verify red**
 
@@ -234,9 +333,9 @@ git commit -m "feat: persist rd collaboration state"
 **Interfaces:**
 - Produces: `resolve_initial_rd_policy(store, *, requirement) -> dict`.
 - Produces: `resolve_final_rd_policy(store, *, requirement, assessment) -> dict`.
-- Produces: version-locked policy create/PATCH with monotonic `policy_version`, `freeze_base_rd_policy_snapshot(store, *, policy, role_bindings, schema_version) -> dict`, `derive_assessment_rd_policy_snapshot(store, *, assessment_id, parent_snapshot_id, resolution_revision, tightened_payload) -> dict`, no-delta base reuse, and identity/parent/hash validation on every read.
+- Produces: version-locked policy create/PATCH with monotonic `policy_version`, `freeze_base_rd_policy_snapshot(store, *, policy, role_bindings, schema_version) -> dict`, `derive_assessment_rd_policy_snapshot(store, *, assessment_id, parent_snapshot_id, resolution_revision, tightened_payload) -> dict`, `merge_version_rd_policy_snapshot(store, *, version_id, scope_version, source_snapshot_ids) -> dict`, no-delta assessment base reuse, version_resolved source persistence, and identity/parent/hash validation on every read.
 - Produces: `resolve_work_item_binding(policy_snapshot, *, role_code, task_type) -> dict`.
-- API remains `/api/delivery/rd-task-executor-policies` but accepts one strategy payload with `name`, `brain_app_id`, `product_id`, `status`, `matching_config`, `assessment_config`, `iteration_config`, `delivery_target`, `team_config`, `autonomy_config`, `quality_gate_config`, `git_config`, `deployment_config`, and `role_bindings`.
+- API remains `/api/delivery/rd-task-executor-policies` but accepts one strategy payload with `name`, `brain_app_id`, `product_id`, `status`, `matching_config`, `assessment_config`, `iteration_config`, `delivery_target`, `team_config`, `autonomy_config`, `quality_gate_config`, `git_config`, `experience_reuse_config`, `deployment_config`, and `role_bindings`.
 
 - [ ] **Step 1: Write failing unified-policy API tests**
 
@@ -251,7 +350,7 @@ def test_policy_rejects_missing_required_role_binding(client, admin_headers):
     assert response.json()["detail"]["code"] == "RD_POLICY_REQUIRED_ROLE_MISSING"
 ```
 
-Also assert old top-level `task_type/executor_type/runner_id` fields are rejected, no fallback executor is used, stale policy PATCH versions conflict, only one active product/default policy is allowed, concurrent identical base/derived freezes return one snapshot, no-delta finalization reuses base, two assessments may derive different final payloads from one policy version without conflict, historical reads never use the mutable policy, policy DELETE with snapshots returns `RD_POLICY_IN_USE`, and missing/hash-mismatched/unsupported snapshots return `RD_POLICY_SNAPSHOT_INVALID`.
+Also assert old top-level `task_type/executor_type/runner_id` fields, assessment `strategy_id`, and any version-level policy override are rejected; policy changes require a new policy_version and requirement re-evaluation. Assert no fallback executor is used, stale policy PATCH versions conflict, only one active product/default policy is allowed, concurrent identical base/derived/version freezes return one snapshot, no-delta assessment finalization reuses base, and two assessments may derive different final payloads from one policy version without conflict. Cover version merge operators: allowlists intersect, denylists/roles/gates/human points union, upper bounds tighten, ready_for_release dominates deployed, budget preserves the base run cap plus per-requirement allocations, and experience reuse uses enabled AND, confidence max, capacity/age minima, trust-domain intersection, strictest compatibility and reviewer OR. Undeclared/incomparable fields return `RD_VERSION_POLICY_MERGE_REQUIRED` without a run. Assert source edges and immutable run scope cover every included requirement exactly once with no missing/extra rows, are immutable and same-policy-version, historical reads never use the mutable policy, policy DELETE with snapshots returns `RD_POLICY_IN_USE`, and missing/hash-mismatched/unsupported snapshots return `RD_POLICY_SNAPSHOT_INVALID`.
 
 - [ ] **Step 2: Verify red**
 
@@ -261,7 +360,7 @@ Expected: FAIL because the API still requires the old per-task fields.
 
 - [ ] **Step 3: Split validation, resolution, persistence, and Runner payload responsibilities**
 
-Keep each service focused. Initial resolution uses stable requirement fields only. Final resolution implements the design's explicit monotonic comparator: only less automation, tighter risk/permission/tool/repository/budget limits, more gates/roles, or `deployed -> ready_for_release` are automatically stronger. Incomparable or expanding changes return `RD_POLICY_HUMAN_DECISION_REQUIRED`; more than two strengthening rounds return `RD_POLICY_RESOLUTION_LIMIT`. Work-item resolution requires exactly one active role binding.
+Keep each service focused. Initial resolution uses stable requirement fields only. Final resolution implements the design's explicit monotonic comparator: only less automation, tighter risk/permission/tool/repository/budget limits, more gates/roles, or `deployed -> ready_for_release` are automatically stronger. Incomparable or expanding assessment changes return `RD_POLICY_HUMAN_DECISION_REQUIRED`; more than two strengthening rounds return `RD_POLICY_RESOLUTION_LIMIT`. Version merge is deterministic and only combines final/effective snapshots from the same policy ID/version using the Schema merge-operator registry; ambiguity creates a decision request and no run. Work-item resolution requires exactly one active role binding.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -315,7 +414,7 @@ Run: `cd apps/api && uv run pytest tests/test_rd_organization.py -q`
 
 - [ ] **Step 3: Implement scoped CRUD and qualification**
 
-Human seats must use explicit `user_ids` in P0 and pass existing RBAC, product scope, collaboration permission, and seat-state checks. AI seats use explicit `ai_employee_ids` for actor identity and a separate executor profile for service identity, trust domain, tool policy, and execution-resource grants. Employee records store stable identity/capability/persona metadata but no secrets or permissions. Seed and test the canonical permission matrix, including `delivery.rd_ai_employees.manage`.
+Human seats must use explicit `user_ids` in P0 and pass existing RBAC, product scope, collaboration permission, and seat-state checks. AI seats use explicit `ai_employee_ids` for actor identity and a separate executor profile for service identity, trust domain, tool policy, and execution-resource grants. Employee records store stable identity/capability/persona metadata but no secrets or permissions. Seed and test the canonical permission matrix, including `delivery.rd_ai_employees.manage` and `delivery.decision_requests.answer`; answer permission never bypasses the request's brain/product scope or frozen `answer_actor_selector`.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -348,7 +447,7 @@ def test_assessment_resolves_initial_policy_before_ai_roles(client, submitted_re
     assert assessment["status"] == "evaluating"
 ```
 
-Cover assigned human/AI opinion authorization and opinion snapshot FK, answer-created revisions, `accept/reject/request_more_info/request_rework/defer`, `waiting_human/needs_info/rework_required/accepted/deferred/rejected`, risk floor, no-delta final/effective base reuse, at most two monotonic policy-strengthening rounds, base -> assessment_resolved parent chain, required-opinion completion after strengthening, incomparable policies, human conflict, ordinary callers being unable to supply arbitrary `strategy_id`, stable initial-snapshot assessment uniqueness, and persisted request-hash/response-snapshot idempotency.
+Cover assigned human/AI opinion authorization and opinion snapshot FK, answer-created revisions, `accept/reject/request_more_info/request_rework/defer`, `waiting_human/needs_info/rework_required/accepted/deferred/rejected`, risk floor, no-delta final/effective base reuse, at most two monotonic policy-strengthening rounds, base -> assessment_resolved parent chain, required-opinion completion after strengthening, incomparable policies, human conflict, every caller being unable to supply `strategy_id`, policy change through the unified policy API followed by re-evaluation, stable initial-snapshot assessment uniqueness, and persisted request-hash/response-snapshot idempotency.
 
 - [ ] **Step 2: Verify red**
 
@@ -356,7 +455,7 @@ Run: `cd apps/api && uv run pytest tests/test_requirement_assessments.py -q`
 
 - [ ] **Step 3: Implement assessment orchestration**
 
-Create one opinion request per required role. Assessment AI tasks are internal execution units authorized by the initial policy and are the only pre-accepted exception to normal work-item task creation; they cannot create code, Git, or deployment side effects. Opinions require the assigned actor and persist the snapshot used to produce them; answers create a new requirement/assessment revision; decisions accept only the five canonical actions and use optimistic locking. Each automatic tightening round creates an `assessment_resolved` child snapshot for the same policy version and assessment context; it never updates the base snapshot. Finalization requires all mandatory compatible opinions, stores evidence/confidence/cost/actor/executor attribution, and atomically advances `submitted + accepted` to `approved`. Existing standalone approve/reject endpoints cannot bypass this transition, and public callers cannot override policy resolution with arbitrary strategy IDs.
+Create one opinion request per required role. Assessment AI tasks are internal execution units authorized by the initial policy and are the only pre-accepted exception to normal work-item task creation; they cannot create code, Git, or deployment side effects. Opinions require the assigned actor and persist the snapshot used to produce them; answers create a new requirement/assessment revision; decisions accept only the five canonical actions and use optimistic locking. The assessment request model has no `strategy_id`; even policy managers must update the unified product/default policy to a new policy_version and start a new evaluation rather than inject a candidate strategy. Each automatic tightening round creates an `assessment_resolved` child snapshot for the same policy version and assessment context; it never updates the base snapshot. Finalization requires all mandatory compatible opinions, stores evidence/confidence/cost/actor/executor attribution, and atomically advances `submitted + accepted` to `approved`. Existing standalone approve/reject endpoints cannot bypass this transition.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -377,6 +476,7 @@ Run the Step 2 command plus `tests/test_requirement_lifecycle.py`, then commit `
 **Interfaces:**
 - Produces: `plan_accepted_requirement(store, *, requirement_id, assessment_id, actor_id) -> dict`.
 - Produces: candidate scoring with hard eligibility, deterministic score breakdown, idempotency key, and either an existing version assignment or one new planning version.
+- Extends standard requirement creation with required `source_collaboration_run_id` for post-ready follow-ups and optional `supersedes_requirement_id` for continuations/replacements; provided references are validated same-product `ON DELETE RESTRICT` lineage, supersedes cannot appear without the source run, and the follow-up requirement always begins at submitted for a new planning cycle.
 
 - [ ] **Step 1: Write failing grouping tests**
 
@@ -387,7 +487,7 @@ def test_accepted_requirement_prefers_compatible_planning_version(store):
     assert result["created_version"] is False
 ```
 
-Cover no candidate, high-risk new-version confirmation, tied candidates requiring human decision while the requirement remains `approved`, capacity, policy mismatch, concurrent replay, manual batch scheduling rechecking all hard constraints, exact `scope_version` increments/returns for membership and frozen-input changes, no increment for display-only edits, and refusal to mutate active/testing versions outside controlled range change.
+Cover no candidate, high-risk new-version confirmation, tied candidates requiring human decision while the requirement remains `approved`, capacity, policy mismatch, different policy ID/version, non-mergeable final snapshots, concurrent replay, manual batch scheduling rechecking all hard constraints, exact `scope_version` increments/returns for membership, revision/acceptance, included final/effective strategy snapshot, repository and branch frozen-input changes, no increment for display-only edits, and refusal to mutate active/testing versions outside controlled range change.
 
 - [ ] **Step 2: Verify red**
 
@@ -395,7 +495,7 @@ Run: `cd apps/api && uv run pytest tests/test_requirement_iteration_grouping.py 
 
 - [ ] **Step 3: Implement deterministic grouping and new states**
 
-Use a transaction lock on requirement and candidate versions. Accepted assessment atomically advances the requirement to `approved`; successful assignment advances it to `planned` and compare-and-increments `product_versions.scope_version`. Requirement add/remove/reassign, included revision/acceptance change, and frozen repository/branch baseline change increment the same field; display-only edits do not. Version list/detail, grouping results and scope conflict responses return it. Tied candidates and high-risk new-version creation produce a `plan_version=0` decision request without prematurely setting `planned`. Manual `batch-schedule` is not a bypass: it rechecks strategy, capacity, repository, delivery-target, and hard-dependency compatibility and only accepts `planning` versions. Add `ready_for_release/deploying` version transitions, keep `ready_for_release` distinct from `released`, and reject automatic additions once a version is active or its scope is frozen; approved active-range changes increment both scope and collaboration plan versions.
+Use a transaction lock on requirement and candidate versions. Accepted assessment atomically advances the requirement to `approved`; successful assignment advances it to `planned` and compare-and-increments `product_versions.scope_version`. Requirement add/remove/reassign, included revision/acceptance change, included final/effective strategy snapshot replacement, and frozen repository/branch baseline change increment the same field only when no non-terminal collaboration run exists; display-only edits do not. Version list/detail, grouping results and scope conflict responses return it. Candidate versions must have the same resolved policy ID/version and pass a dry-run version merge against all included final/effective snapshots; versions do not store or accept an explicit strategy override. Tied candidates, non-mergeable policies, and high-risk new-version creation produce a `plan_version=0` decision request without prematurely setting `planned`. Manual `batch-schedule` is not a bypass: it rechecks policy merge, capacity, repository, delivery-target, and hard-dependency compatibility and only accepts `planning` versions. Add `ready_for_release/deploying` version transitions and keep `ready_for_release` distinct from `released`. Once a non-terminal run exists, ordinary scope-changing commands return `RD_SCOPE_FROZEN`; only non-scope replanning increments `plan_version`, and Task 9 owns the single governed scope-change command. Once a ready-target run completes or a deployed-target run reaches `ready_for_release/deploying`, the version and delivery evidence must not roll back; scope changes return `RD_SCOPE_FROZEN` with `resolution=new_planning_version`, and standard requirement creation persists required `source_collaboration_run_id` plus optional `supersedes_requirement_id` before independent assessment and grouping into a new planning version.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -460,14 +560,16 @@ Run the Step 2 command, then commit `feat: route rd work through requirements`.
 - Create: `apps/api/app/services/rd_collaboration_planning.py`
 - Create: `apps/api/app/services/rd_work_item_scheduler.py`
 - Create: `apps/api/app/services/rd_collaboration_decisions.py`
+- Create: `apps/api/app/services/rd_scope_changes.py`
+- Create: `apps/api/app/services/rd_command_replay_secrets.py`
 - Create: `apps/api/app/services/rd_feedback_attribution.py`
 - Modify: `apps/api/app/main.py`
 - Create: `apps/api/tests/test_rd_collaboration_runtime.py`
 - Create: `apps/api/tests/test_rd_work_item_scheduler.py`
 
 **Interfaces:**
-- Produces implementation-level contracts for `POST /api/product-versions/{version_id}/collaboration-runs`, `GET /api/requirements/{requirement_id}/collaboration-run`, run detail, plan/replan, work-item claim/submit/block/review/cancel, event, and decision decide/answers APIs.
-- Produces: `validate_work_item_plan`, `ready_work_items`, `claim_work_item`, `suspend_work_item`, `cancel_work_item`, `suspend_collaboration_run`, `resume_work_item`, `resume_collaboration_run`, `complete_attempt`, `apply_decision`, and `answer_decision_request`.
+- Produces implementation-level contracts for `POST /api/product-versions/{version_id}/collaboration-runs`, `POST /api/product-versions/{version_id}/collaboration-runs/restart`, `POST /api/product-versions/{version_id}/scope-change-requests`, `GET /api/delivery/rd-scope-change-requests/{id}`, `GET /api/requirements/{requirement_id}/collaboration-run`, run detail, plan/replan, work-item claim/submit/block/review/cancel, event, and decision decide/answers APIs.
+- Produces: `validate_work_item_plan`, `ready_work_items`, `claim_work_item`, `scrub_expired_command_replay_secrets`, `suspend_work_item`, `cancel_work_item`, `suspend_collaboration_run`, `resume_work_item`, `resume_collaboration_run`, `restart_terminal_collaboration_run`, `create_scope_change_request`, `apply_scope_change_decision`, `complete_attempt`, `apply_decision`, `answer_decision_request`, and `expire_decision_requests`.
 
 - [ ] **Step 1: Write failing DAG and scheduling tests**
 
@@ -477,9 +579,9 @@ def test_scheduler_does_not_release_item_before_dependencies_are_approved(store)
     assert "integration-item" not in {item["id"] for item in items}
 ```
 
-Cover the exact API fields: start `request_id/scope_version`; claim `expected_version/lease_seconds/idempotency_key`; submit `attempt_id/lease_token/version/output/evidence/idempotency_key`; review `decision/comment/version/idempotency_key`; cancel `reason/version/idempotency_key`; decision `selected_option/comment/version/idempotency_key`; decision answers `answer/evidence/version/idempotency_key`. Start returns request/scope/idempotent replay; claim/submit/review/cancel/decision return complete work-item, attempt, run/decision version, `next_state`, `idempotent_replay`, and `trace_id` envelopes. Assert immutable response snapshots reproduce the original business version, `response_hash` excludes per-call `trace_id/idempotent_replay`, replay uses a new trace ID, claim replays success only before lease expiry and returns the fixed expiry error afterward without a new attempt, and all conflicts perform no partial write. Review mapping is fixed as approve -> approved, request_rework -> rework_required, reject -> failed plus a run-level replan/terminate decision for required items. Decision options freeze `outcome/subject_transition`; request_more_info enters `waiting_more_info`, answers create new options/version and return to pending without resuming the subject. Cover cycles, duplicate dependency edges, acceptance coverage, reviewer separation, capacity, leases, cancellation Outbox/late-result fencing, rework attempts, plan versions, stale decisions, no-progress escalation, distinct AI employee/executor attribution, and platform-controlled recovery from `blocked/awaiting_human`.
+Cover the exact API fields: start `request_id/scope_version`; restart `request_id/terminal_run_id/scope_version/reason`; scope change `request_id/expected_scope_version/expected_run_generation/source_run_id/reason/operations`; claim `expected_version/lease_seconds/idempotency_key`; submit `attempt_id/lease_token/version/output/evidence/idempotency_key`; review `decision/comment/version/idempotency_key`; cancel `reason/version/idempotency_key`; decision `selected_option/input/comment/version/idempotency_key`; decision answers `answer/evidence/version/idempotency_key`. Start/restart return request/scope/run_generation/supersedes_run_id/version_resolved snapshot kind/hash/source count/idempotent replay; scope change returns request/decision/source run/current or applied scope/terminal run/restart_required/idempotent replay; claim/submit/review/cancel/decision return complete work-item, attempt, run/decision version, `next_state`, `idempotent_replay`, and `trace_id` envelopes. Assert immutable response snapshots reproduce the original business version, `response_hash` excludes per-call `trace_id/idempotent_replay`, replay uses a new trace ID, claim replays the same encrypted token only before lease expiry, expiry scrubs ciphertext and returns the fixed error afterward without a new attempt, and all conflicts perform no partial write. Review mapping is fixed as approve -> approved, request_rework -> rework_required, reject -> failed plus a run-level replan/terminate decision for required items. Decision options freeze `outcome/subject_transition/input_schema`; test required input, extra fields, type mismatch and parameterless options. request_more_info enters `waiting_more_info`; answers require `delivery.decision_requests.answer`, business-brain/product scope and `answer_actor_selector`, then create new options/version and return to pending without resuming the subject. Cover cycles, duplicate dependency edges, acceptance coverage, reviewer separation, capacity, leases, cancellation Outbox/late-result fencing, high-risk cancel suspension and continue-to-ready with a new attempt/lease, rework attempts, plan versions, stale decisions, no-progress escalation, distinct AI employee/executor attribution, and platform-controlled recovery from `blocked/awaiting_human`.
 
-Also cover one non-terminal run per version, concurrent idempotent start, current `product_versions.scope_version` returned by list/detail/grouping/conflict responses, `RD_SCOPE_VERSION_CONFLICT/RD_ACTIVE_RUN_CONFLICT`, scope freeze at start, all included requirements having accepted assessments, approved range changes incrementing both scope and plan versions, one active decision across pending/waiting-more-info including plan version 0, and run-level `waiting_human` recovery from each of `running/integrating/verifying` with `resume_state/suspended_decision_request_id/suspended_at` cleared after success.
+Also cover one non-terminal run per version, concurrent idempotent start, current `product_versions.scope_version` returned by list/detail/grouping/conflict responses, `RD_SCOPE_VERSION_CONFLICT/RD_RUN_GENERATION_CONFLICT/RD_SCOPE_FROZEN/RD_SCOPE_CHANGE_INVALID/RD_ACTIVE_RUN_CONFLICT/RD_VERSION_POLICY_MERGE_REQUIRED/RD_RUN_RESTART_NOT_ALLOWED`, scope freeze at start, all included requirements having accepted assessments, version_resolved deterministic merge and exact immutable run-scope/source provenance, ordinary scope writes rejected while a non-terminal run exists, non-scope plan-version replanning, and the governed scope-change lifecycle. Test same/different request concurrency, stale scope/generation, each allowed and invalid operation, one pending request per version, pause from running/integrating/verifying, draft/planning scheduling fence, conflict with an existing waiting_human decision, and rejection restoring only the phase paused by this request. Approval must atomically revoke every old-generation lease/replay secret; cancel all non-terminal work items/current attempts/pending Reviews/linked AI tasks; cancel undispatched Runner/Git Outbox; write Runner cancellation and dispatched/unknown external-action reconciliation Outbox; terminalize the old run; apply all operations; and increment scope exactly once. Inject a failure at each boundary and assert full rollback; after commit, replay late submit/review/Runner completion/Git callback and assert audit/reconciliation only, with no old/new run transition. Then explicitly restart with returned `terminal_run_id` and assert new work items, attempts, leases and generation-isolated worktrees/branches. Also cover ready-target completed plus ready_for_release/deploying returning frozen/new-planning/follow-up-requirement resolution. Cover one active decision across pending/waiting-more-info including plan version 0, and run-level `waiting_human` recovery from each of `running/integrating/verifying` with `resume_state/suspended_decision_request_id/suspended_at` cleared after success. For failed/cancelled runs, assert the old run is immutable, product version keeps its active/testing phase, restart only targets the latest terminal generation with no active run, concurrent restart is idempotent, stale scope/policy/resources fail with no partial plan, and only revalidated approved evidence may be cited by new work items. For decision expiry, use database-time boundary tests, idempotent/concurrent scans, expired-at/event persistence, subject kept paused, successor escalation assignment, stale decide/answer rejection, and an explicit assertion that no option is auto-approved. Assert the public FastAPI `detail` error envelope and stable HTTP/details/retry/state contract for `RD_EXECUTION_POLICY_REQUIRED`, `RD_ROLE_ASSIGNMENT_REQUIRED`, `RD_EXECUTOR_UNAVAILABLE`, `RD_POLICY_HUMAN_DECISION_REQUIRED`, `RD_POLICY_RESOLUTION_LIMIT`, `RD_COLLABORATION_REQUIRED`, and `RD_SCOPE_CHANGE_INVALID`.
 
 - [ ] **Step 2: Verify red**
 
@@ -487,7 +589,7 @@ Run: `cd apps/api && uv run pytest tests/test_rd_collaboration_runtime.py tests/
 
 - [ ] **Step 3: Implement deterministic control plane**
 
-LLM plans are JSON proposals only. The product version is the aggregate root: lock it during start, freeze requirement and repository scope plus immutable strategy snapshot, move it from `planning` to `active`, and return the same run for duplicate starts. Persist each plan version and validate scope, permissions, budgets, dependencies, role availability, and review separation before activation. AI seats freeze both employee and executor identities. Suspending an item persists `resume_state`, attempt, decision/event, and release conditions; suspending a run atomically persists its source phase, decision request, timestamp, and optimistic version. Only the scheduler or matching decision service may restore validated item/run states; clients never submit a recovery phase.
+LLM plans are JSON proposals only. The product version is the aggregate root: lock it during start, freeze immutable per-requirement scope and the version_resolved strategy snapshot plus exact sources, move it from `planning` to `active`, and return the same run for duplicate starts. Persist each plan version and validate scope, permissions, budgets, dependencies, role availability, and review separation before activation. Terminal runs never reopen; restart locks the version/latest terminal run and creates a new generation/scope/plan while preserving old rows. The scope-change service accepts only typed references, canonicalizes operations before hashing, and locks version/run/request/decision. `apply_scope_change_bundle` first fences the old run generation, scrubs/revokes leases and replay secrets, terminalizes every non-terminal work item/attempt/Review/AI task, cancels undispatched external Outbox intents, and writes Runner cancellation plus Git/Runner reconciliation Outbox rows. In the same database transaction it terminalizes the run, applies all typed operations, compare-and-increments scope exactly once, saves the applied version, events and audit; any failure rolls back the entire bundle. Provider workers stop/reconcile external actions asynchronously, but late results are checked against terminal run/generation/lease fences and become audit-only evidence. Restart creates generation-isolated worktrees, work items, attempts and leases; reject restores only the persisted valid phase. AI seats freeze both employee and executor identities. Claim stores only a secret reference in the immutable response and writes the encrypted token to the expiring replay-secret table; the scheduled scrubber nulls expired ciphertext and is safe to repeat. Suspending an item persists `resume_state`, attempt, decision/event, and release conditions; suspending a run atomically persists its source phase, decision request, timestamp, and optimistic version. Decision creation freezes expiry/escalation metadata; the collaboration maintenance worker expires and escalates without resuming or approving the subject. Only the scheduler or matching decision service may restore validated item/run states; clients never submit a recovery phase.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -527,6 +629,7 @@ def test_domain_commit_survives_checkpoint_failure_without_duplicate_side_effect
     runtime.handle_event(event_id="event-1")
     assert runtime.domain_transition_count("event-1") == 1
     assert runtime.outbox_count("event-1") == 1
+    assert runtime.role_feedback_count(source_event_id="event-1") == 1
 ```
 
 - [ ] **Step 2: Verify red**
@@ -535,7 +638,7 @@ Run: `cd apps/api && uv run pytest tests/test_graph_runtime.py tests/test_workfl
 
 - [ ] **Step 3: Add the official PostgreSQL checkpoint dependency and adapters**
 
-Compile both graph types with a Checkpointer. Tests use a fresh in-memory saver; PostgreSQL runtime uses the configured checkpoint connection. Domain state, Inbox event, audit, and Outbox commit atomically through the collaboration repository; Checkpointer persistence is a separate execution-cursor commit. Every resumed node re-reads domain state and emits idempotent commands, so either checkpoint/domain partial failure is safely retryable. Checkpoint incompatibility fails closed to human takeover.
+Compile both graph types with a Checkpointer. Tests use a fresh in-memory saver; PostgreSQL runtime uses the configured checkpoint connection. Domain state, Inbox event, audit, Outbox, and feedback source event commit atomically through the collaboration repository; Checkpointer persistence is a separate execution-cursor commit. Every resumed node re-reads domain state and emits idempotent commands; feedback uses `save_role_feedback_once` and the database `(collaboration_run_id,feedback_fingerprint)` unique key, so checkpoint/domain partial failure, concurrent resume and event replay are safely retryable without duplicate feedback. Checkpoint incompatibility fails closed to human takeover.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -558,7 +661,7 @@ Run the Step 2 command, then commit `feat: persist rd collaboration graph checkp
 
 - [ ] **Step 1: Write failing execution integration tests**
 
-Assert an AI work item creates one linked AI task through the internal service, freezes separate AI employee and executor IDs, uses only the frozen executor, coding success enters verification, passed review approves the work item, failed gate enters `rework_required` with the original attempt preserved, and duplicate Runner completion is idempotent. Assert low-risk cancel atomically revokes the lease, closes attempt/Review/task/item, recalculates run/dependencies and writes Runner cancellation Outbox; high-risk cancel creates a decision request; late Runner completion cannot revive cancelled work. Also assert public task create/start/cancel cannot invoke these services directly.
+Assert an AI work item creates one linked AI task through the internal service, freezes separate AI employee and executor IDs, uses only the frozen executor, coding success enters verification, passed review approves the work item, failed gate enters `rework_required` with the original attempt preserved, and duplicate Runner completion is idempotent. Assert low-risk cancel atomically revokes the lease, closes attempt/Review/task/item, recalculates run/dependencies and writes Runner cancellation Outbox. High-risk cancel must first revoke the lease, mark the attempt suspended, fence late results, write the Runner cancellation Outbox and pause the item before returning a decision request; approving cancel completes the aggregate, while rejecting/continuing revalidates and returns only to ready so a new claim creates a new attempt/lease. Late Runner completion cannot revive either path. Also assert public task create/start/cancel cannot invoke these services directly.
 
 - [ ] **Step 2: Verify red**
 
@@ -587,12 +690,12 @@ Run the Step 2 command, then commit `feat: execute rd collaboration work items`.
 - Create: `apps/api/tests/test_rd_feedback_attribution.py`
 
 **Interfaces:**
-- Produces: `record_version_git_delivery`, `verify_version_git_delivery`, and `complete_collaboration_at_ready_for_release`; completion leaves the version at `ready_for_release` and writes run `status=completed/completion_reason=ready_for_release`.
-- Produces immutable brain/product/role/seat/actor/executor/work-item/attempt/strategy-snapshot feedback records and evidence fingerprints for later experience governance.
+- Produces: `record_version_git_delivery`, `verify_version_git_delivery`, `record_ready_for_release_evidence`, and `finalize_ready_for_release_target`. Evidence recording always leaves the product version at `ready_for_release`; finalization completes the run only for `delivery_target=ready_for_release`, while a deployed target leaves the run in non-terminal `ready_for_release` for Task 12C.
+- Produces immutable brain/product/run/role/seat/actor/executor/work-item/attempt/strategy-snapshot feedback records with `feedback_kind/source_event_id/feedback_fingerprint` for later experience governance.
 
 - [ ] **Step 1: Write failing delivery-boundary tests**
 
-Assert every coding item uses the minimum isolated worktree/branch path, the explicit integration item runs version-level tests, pushes through Outbox, and stores repository/branch/local SHA/remote SHA/MR-PR/outbox/reconciliation/test evidence. `ready_for_release` only verifies this immutable evidence and creates no push or deployment request; missing, stale, or mismatched remote/test evidence blocks completion. Default completion leaves the product version at `ready_for_release`, completes the run with `completion_reason=ready_for_release`, and creates no deployment request.
+Assert every coding item uses the minimum isolated worktree/branch path, the explicit integration item runs version-level tests, pushes through Outbox, and stores repository/branch/local SHA/remote SHA/MR-PR/outbox/reconciliation/test evidence. `record_ready_for_release_evidence` only verifies this immutable evidence and creates no push or deployment request; missing, stale, or mismatched remote/test evidence blocks completion. With `delivery_target=ready_for_release`, finalization leaves the product version at `ready_for_release`, completes the run with `completion_reason=ready_for_release`, and creates no deployment request. Add a contract test for `delivery_target=deployed` that leaves the version and run at `ready_for_release` with no completion_reason or deployment request; the P0 flag-disabled policy tests still reject creating that strategy, so this branch is a service contract consumed only by Task 12C. For feedback, replay the same persisted source event sequentially and concurrently and assert one row by `(collaboration_run_id,feedback_fingerprint)`; different feedback kinds or attributed subjects must produce distinct rows.
 
 - [ ] **Step 2: Verify red**
 
@@ -600,7 +703,7 @@ Run: `cd apps/api && uv run pytest tests/test_rd_collaboration_delivery.py tests
 
 - [ ] **Step 3: Implement delivery and attribution projections**
 
-Reuse existing trusted delivery records, reconciliation, and Outbox. Persist immutable `role_feedback_records` with business brain, product, role/seat, `human_user_id` or `ai_employee_id`, executor profile, work item, attempt, strategy snapshot, evidence references, and evidence fingerprint. Do not implement deployment in this P0 task and do not inject unreviewed feedback as experience.
+Reuse existing trusted delivery records, reconciliation, and Outbox. Separate evidence recording from target finalization and branch strictly on the frozen version_resolved `delivery_target`; never unconditionally close the run. Persist immutable `role_feedback_records` with business brain, product, collaboration run, feedback kind, persisted source event, attributed role/seat, attributed `human_user_id` or `ai_employee_id`, executor profile, work item, attempt, strategy snapshot, evidence references, and canonical feedback fingerprint. Compute the fingerprint from run generation, source event, feedback kind, attributed role/seat/subject, work item/attempt, and strategy snapshot, then call `save_role_feedback_once`; rely on the database unique key rather than a read-before-write race. Separately persist the actual feedback producer as `producer_subject_type/producer_subject_id/producer_role_code/producer_seat_id`; enforce subject-type checks and seat FKs, and never infer the producer from the attributed actor. Do not implement deployment in this P0 task and do not inject unreviewed feedback as experience.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -623,7 +726,7 @@ Run the Step 2 command, then commit `feat: complete trusted rd delivery`.
 
 - [ ] **Step 1: Write failing lifecycle, authorization, and retrieval tests**
 
-Cover evidence-fingerprint deduplication, direct experience `strategy_snapshot_id` FK plus each source feedback snapshot FK, immutable versions, `pending -> approved/rejected`, `approved -> retired`, one approved version per experience key, reviewer permission plus business-brain/product scope, unique-evidence self-review rejection, optimistic locking, stable audit events, and paged filters. List/detail queries must support and enforce business brain, product, role, work-item type, scenario, risk, repository/tool trust domain, minimum confidence, status, version, evidence subject, and current-caller permissions in the database query layer. For reuse, assert only approved non-retired records matching every scope and strategy-allowed version are returned with experience ID/version/evidence references. Cross-brain/product, low-confidence, trust-domain mismatch, permission-inaccessible, retired, or policy-conflicting experience must not enter the prompt or leak metadata.
+Assert `RD_ROLE_EXPERIENCE_ENABLED=false` leaves P0 feedback and collaboration suites green while experience routes/candidate generation/injection remain disabled. With the P1 flag enabled, cover evidence-fingerprint deduplication, direct experience `strategy_snapshot_id` FK plus each source feedback snapshot FK, immutable versions, `pending -> approved/rejected`, `approved -> retired`, one approved version per experience key, reviewer permission plus business-brain/product scope, rejection when the reviewer produced any source feedback, extra role/seat separation when `require_independent_reviewer=true`, optimistic locking, stable audit events, and paged filters. List/detail queries must support and enforce business brain, product, role, work-item type, scenario, risk, repository/tool trust domain, minimum confidence, status, version, evidence subject, and current-caller permissions in the database query layer. For reuse, require both the platform flag and frozen `experience_reuse_config.enabled`; assert only approved non-retired records matching every scope, min confidence, max age, policy compatibility and trust domain are deterministically truncated by max items/context tokens and returned with experience ID/version/evidence references. Empty trust domains are deny-all; same_policy_version requires exact policy ID/version, while same_policy_schema remains same-brain/product/schema and cannot widen current constraints. Cross-brain/product, low-confidence, expired, trust-domain mismatch, permission-inaccessible, retired, or policy-conflicting experience must not enter the prompt or leak metadata.
 
 - [ ] **Step 2: Verify red**
 
@@ -631,7 +734,7 @@ Run: `cd apps/api && uv run pytest tests/test_rd_role_experiences.py tests/test_
 
 - [ ] **Step 3: Implement governance without automatic policy mutation**
 
-Keep `role_feedback_records` immutable. Generate versioned `rd_role_experience_records` candidates; approve/reject/retire only through the governed API. Inject approved experience as cited read-only context after deterministic scope checks. Experience may create a playbook or policy-change suggestion, but it cannot change active policy, permissions, budget, quality gates, or delivery target.
+Keep `role_feedback_records` immutable. Generate versioned `rd_role_experience_records` candidates; approve/reject/retire only through the governed API. Resolve every source feedback producer through relational source rows and reject any matching reviewer subject; when configured, also reject matching producer roles/seats. Inject approved experience as cited read-only context only after deterministic scope checks and frozen-config capacity limits. Experience may create a playbook or policy-change suggestion, but it cannot change active policy, permissions, budget, quality gates, or delivery target.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -645,11 +748,11 @@ Run the Step 2 command, then commit `feat: govern rd role experience`.
 - Create: `apps/api/tests/test_rd_collaboration_deployment.py`
 
 **Interfaces:**
-- Produces: `enter_policy_controlled_deployment` only after Task 12 has completed trusted `ready_for_release` evidence.
+- Produces: `enter_policy_controlled_deployment` only after Task 12 has recorded trusted `ready_for_release` evidence and left a deployed-target run in non-terminal `ready_for_release`.
 
 - [ ] **Step 1: Write failing optional-deployment boundary tests**
 
-Assert `delivery_target=deployed` creates a request only after readiness, scope, approval, rollback, and resource gates. Rejection, failure, or rollback preserves the P0 `ready_for_release` delivery fact; success completes with `completion_reason=deployed`. Existing deployment Outbox, authorization, and human gates remain authoritative.
+Assert `RD_COLLABORATION_DEPLOYMENT_ENABLED=false` rejects creation/activation of `delivery_target=deployed` without affecting P0 policy/UI/tests. With the P1 flag enabled, `delivery_target=deployed` consumes a run already in `ready_for_release`, creates a request only after readiness, scope, approval, rollback, and resource gates, and advances it to `deploying`. Rejection, failure, or rollback preserves the trusted `ready_for_release` delivery fact and returns/keeps the run there; success alone completes it with `completion_reason=deployed`. Existing deployment Outbox, authorization, and human gates remain authoritative.
 
 - [ ] **Step 2: Verify red**
 
@@ -663,7 +766,7 @@ Do not create a second deployment engine. Link the collaboration run to existing
 
 Run the Step 2 command, then commit `feat: add optional rd deployment`.
 
-### Task 13: Upgrade the Web Workbench
+### Task 13A: Upgrade the P0 Web Workbench
 
 **Files:**
 - Refactor: `apps/web/src/pages/RdExecutorPolicies/index.tsx`
@@ -674,29 +777,26 @@ Run the Step 2 command, then commit `feat: add optional rd deployment`.
 - Create: `apps/web/src/pages/RdCollaboration/index.tsx`
 - Create: `apps/web/src/pages/RdCollaboration/WorkItemDag.tsx`
 - Create: `apps/web/src/pages/RdCollaboration/DecisionPanel.tsx`
-- Create: `apps/web/src/pages/RdRoleExperiences/index.tsx`
 - Modify: `apps/web/config/routes.ts`
 - Modify: `apps/web/src/services/systemOperationsClient.ts`
 - Modify: `apps/web/src/services/requirementClient.ts`
 - Create: `apps/web/src/services/rdCollaborationClient.ts`
-- Create: `apps/web/src/services/rdRoleExperienceClient.ts`
 - Rewrite: `apps/web/tests/RdExecutorPoliciesPage.test.tsx`
 - Modify: `apps/web/tests/RequirementsPage.test.tsx`
 - Modify: `apps/web/tests/IterationVersionsPage.test.tsx`
 - Create: `apps/web/tests/RdCollaborationPage.test.tsx`
-- Create: `apps/web/tests/RdRoleExperiencesPage.test.tsx`
 
 **Interfaces:**
-- Consumes: Tasks 4-12C APIs.
-- Produces: one unified policy editor, AI digital employee catalog, assessment review, grouping explanation, collaboration DAG/board, role seats, work-item attempts, blockers, human decisions, and governed role-experience query/review.
+- Consumes: Tasks 4-12 P0 APIs only; Task 12B/12C are not prerequisites.
+- Produces: one unified policy editor, AI digital employee catalog, assessment review, grouping explanation, collaboration DAG/board, role seats, work-item attempts, blockers, human decisions, immutable feedback attribution, and deployment-disabled `ready_for_release` completion.
 
 - [ ] **Step 1: Write failing user-flow tests**
 
-Test unified policy editing without old executor fields, separate AI employee/executor selection, full assessment opinion/answer/decision actions, existing-version grouping rationale, absence of delivery-state batch advancement and public task-start/cancel controls, work-item review/rework/recovery, RBAC read-only states, deployment-disabled completion with version/run status separation, and experience pending/approved/rejected/retired filters plus decision/version conflicts.
+Test unified policy editing without old executor fields or version-level strategy override, separate AI employee/executor selection, full assessment opinion/answer/decision actions, existing-version grouping and version_resolved rationale/source evidence, absence of delivery-state batch advancement and public task-start/cancel controls, work-item review/rework/recovery, high-risk cancel continue-to-ready/new-attempt behavior, decision input Schema and answer qualification, RBAC read-only states, deployment-disabled completion with version/run status separation, and immutable feedback attribution. When P1 feature flags are disabled, the UI must not expose experience management or allow activating `delivery_target=deployed`.
 
 - [ ] **Step 2: Verify red**
 
-Run: `cd apps/web && npm test -- RdExecutorPoliciesPage.test.tsx RequirementsPage.test.tsx IterationVersionsPage.test.tsx RdCollaborationPage.test.tsx RdRoleExperiencesPage.test.tsx`
+Run: `cd apps/web && npm test -- RdExecutorPoliciesPage.test.tsx RequirementsPage.test.tsx IterationVersionsPage.test.tsx RdCollaborationPage.test.tsx`
 
 - [ ] **Step 3: Implement focused components and clients**
 
@@ -708,12 +808,43 @@ Run:
 
 ```bash
 cd apps/web
-npm test -- RdExecutorPoliciesPage.test.tsx RequirementsPage.test.tsx IterationVersionsPage.test.tsx RdCollaborationPage.test.tsx RdRoleExperiencesPage.test.tsx
+npm test -- RdExecutorPoliciesPage.test.tsx RequirementsPage.test.tsx IterationVersionsPage.test.tsx RdCollaborationPage.test.tsx
 npm run typecheck
 npm run lint
 ```
 
 Then commit `feat: add rd collaboration workbench`.
+
+### Task 13B: Add the P1 Experience and Optional-Deployment Workbench
+
+**Files:**
+- Create: `apps/web/src/pages/RdRoleExperiences/index.tsx`
+- Create: `apps/web/src/pages/RdCollaboration/DeploymentPanel.tsx`
+- Modify: `apps/web/src/pages/RdCollaboration/index.tsx`
+- Modify: `apps/web/config/routes.ts`
+- Create: `apps/web/src/services/rdRoleExperienceClient.ts`
+- Create: `apps/web/tests/RdRoleExperiencesPage.test.tsx`
+- Create: `apps/web/tests/RdCollaborationDeploymentPage.test.tsx`
+
+**Interfaces:**
+- Consumes: Task 12B and 12C P1 APIs only after their independent feature flags and backend suites are green.
+- Produces: governed experience query/review/reuse evidence and a link to the existing deployment domain after P0 readiness; it does not create a second deployment engine.
+
+- [ ] **Step 1: Write failing P1 user-flow tests**
+
+Test experience pending/approved/rejected/retired filters, full brain/product/role/work-item/scenario/risk/trust/confidence scope, reviewer separation and decision/version conflicts. Test that deployed strategy activation is rejected while the P1 deployment flag is off; when enabled, the collaboration page only exposes the existing deployment request flow after P0 `ready_for_release` evidence and required human confirmation.
+
+- [ ] **Step 2: Verify red**
+
+Run: `cd apps/web && npm test -- RdRoleExperiencesPage.test.tsx RdCollaborationDeploymentPage.test.tsx`
+
+- [ ] **Step 3: Implement P1 pages behind independent flags**
+
+Keep P0 routes and tests runnable with both P1 flags disabled. Experience and deployment failures must not make the P0 workbench unavailable.
+
+- [ ] **Step 4: Verify P1 green and commit**
+
+Run the Step 2 command plus `npm run typecheck && npm run lint`, then commit `feat: add rd collaboration p1 workbench`.
 
 ### Task 14: Add Maintenance Fence, Upgrade Preflight, and Cutover Validation
 
@@ -728,7 +859,7 @@ Then commit `feat: add rd collaboration workbench`.
 - Create: `apps/api/tests/test_rd_maintenance_fence.py`
 
 **Interfaces:**
-- Produces: read-only preflight, maintenance-fence enable/disable, deterministic policy-conversion preview, and an admin-only cutover command that refuses active tasks, active Agent Loops, active Runner tasks, policy conflicts, missing roles, or invalid resources.
+- Produces: read-only advisory and locked preflight, version-locked maintenance-fence transitions `disabled -> draining -> cutover_locked -> disabled`, draining abort, deterministic policy-conversion preview, and an admin-only cutover command that refuses active tasks, active Agent Loops, active Runner tasks, policy conflicts, missing roles, or invalid resources.
 - Produces: migration 110 as the final cleanup contract; it runs only after cutover sets `rd_collaboration_schema_version=2` and records the new-application health marker.
 
 - [ ] **Step 1: Write failing preflight tests**
@@ -741,9 +872,25 @@ def test_upgrade_preflight_blocks_active_ai_task(store):
 
 
 def test_maintenance_fence_blocks_rd_writes_but_not_scheduled_jobs(client, admin_headers):
-    enable_rd_fence(client, admin_headers)
+    set_rd_fence(client, admin_headers, mode="draining")
     assert start_ai_task(client, admin_headers).status_code == 423
     assert run_scheduled_job(client, admin_headers).status_code != 423
+
+
+def test_draining_allows_inflight_completion_and_abort_before_cutover(client, admin_headers):
+    set_rd_fence(client, admin_headers, mode="draining")
+    assert complete_already_claimed_task(client).status_code == 200
+    assert admin_drain_cancel(client, admin_headers).status_code == 200
+    assert set_rd_fence(client, admin_headers, mode="disabled", reason="preflight blocker").status_code == 200
+
+
+def test_cutover_locked_cannot_abort_to_old_runtime(client, admin_headers):
+    set_rd_fence(client, admin_headers, mode="draining")
+    mark_zero_active_and_backup_complete()
+    set_rd_fence(client, admin_headers, mode="cutover_locked")
+    response = set_rd_fence(client, admin_headers, mode="disabled", reason="try rollback")
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RD_UPGRADE_ABORT_NOT_ALLOWED"
 
 
 def test_destructive_cleanup_is_not_in_automatic_migration_registry():
@@ -751,10 +898,10 @@ def test_destructive_cleanup_is_not_in_automatic_migration_registry():
 
 
 def test_fence_can_open_only_after_v2_workers_and_smoke_write_are_healthy(client, admin_headers):
-    response = disable_rd_fence(client, admin_headers)
+    response = set_rd_fence(client, admin_headers, mode="disabled")
     assert response.status_code == 409
     mark_cleanup_worker_and_smoke_checks_successful()
-    assert disable_rd_fence(client, admin_headers).status_code == 200
+    assert set_rd_fence(client, admin_headers, mode="disabled").status_code == 200
     assert start_v2_assessment(client, admin_headers).status_code != 423
     assert legacy_generate_task(client, admin_headers).status_code == 409
 ```
@@ -765,7 +912,7 @@ Run: `cd apps/api && uv run pytest tests/test_rd_collaboration_migration.py test
 
 - [ ] **Step 3: Implement maintenance-fenced preflight and one-way cutover**
 
-The API and scripts never deploy. Enable the fence before preflight; block requirement approval/rejection/direct task generation, AI task start/retry/cancel, policy writes, collaboration writes, experience decisions, and Runner claims while leaving scheduled jobs unchanged. Convert policies and cancel legacy drafts only after blockers are zero. Set Schema v2, start the new application with old columns still present, validate health, then record the health marker. Migration 110 is destructive and must be executed explicitly by `rd_collaboration_cutover.py cleanup` as one SQL transaction after that marker; do not register it in the automatic additive compatibility runner. After cleanup, resume v2 workers, verify worker/schema/graph-version equality, execute v2 assessment and collaboration write smoke tests, and only then disable the fence with the expected schema version and health marker. Any failure keeps maintenance enabled and retryable. After release, v2 writes succeed while all legacy write paths remain rejected.
+The API and scripts never deploy. Run advisory preflight while `fence_mode=disabled`, then enter `draining` with `reason/version`: block new requirement approval/rejection/direct task generation, AI task start/retry, policy/collaboration/experience writes, and Runner claims while leaving scheduled jobs unchanged. Allow already claimed work and in-flight transactions to commit terminal callbacks, and allow only the audited admin drain-cancel service to cancel remaining work. Before Schema v2 activation or cleanup starts, a version-locked draining abort may return to disabled; test that it restores the old write path without changing schema. After active tasks/Agent Loops/Runner leases/collaboration commands reach zero and a backup marker exists, atomically enter `cutover_locked`, rerun locked preflight, then convert policies and cancel legacy drafts. From cutover_locked onward, abort to the old runtime is forbidden; failures retry forward. Set Schema v2, start the new application with old columns still present, validate health, then record the health marker. Migration 110 is destructive and must be executed explicitly by `rd_collaboration_cutover.py cleanup` as one SQL transaction after that marker; do not register it in the automatic additive compatibility runner. After cleanup, resume v2 workers, verify worker/schema/graph-version equality, execute v2 assessment and collaboration write smoke tests, and only then set the fence to disabled with the expected schema version and health marker. Any locked failure remains cutover_locked and retryable. After release, v2 writes succeed while all legacy write paths remain rejected.
 
 - [ ] **Step 4: Verify green and commit**
 
@@ -790,19 +937,19 @@ Run the Step 2 command plus `python scripts/rd_collaboration_upgrade_check.py --
 
 - [ ] **Step 1: Extend full-chain regression**
 
-The required P0 chain covers requirement submission; assigned opinions, answers, and all assessment decisions; compatible planning-version selection; two requirements sharing one version run; immutable policy snapshot/hash/schema references; distinct AI employee/executor identity; collaboration DAG; work-item blocked/human-wait recovery and cancel; run-level recovery from `running/integrating/verifying`; internal AI work-item execution and retry; independent review; rework; version-level integration tests; reconciled remote branch/commit/MR-PR evidence; product version `ready_for_release`; run `completed/completion_reason=ready_for_release`; deployment-disabled stop; and immutable actor/executor/work-item/attempt/snapshot feedback attribution. It also verifies Bug/code-inspection/assistant legacy entry adapters create requirements rather than AI tasks, delivery-state batch advancement and public AI-task create/start/batch-retry/cancel are rejected, maintenance-fence release restores only v2 writes, and a representative scheduled job retains its pre-upgrade definition, schedule, Agent/Skill snapshot, and run semantics. A separate P1 extension suite covers experience candidate approval/query/retirement/approved-context reuse and optional deployment; P1 failure does not redefine P0 completion, while each released phase must pass its own suite.
+The required P0 chain covers requirement submission; rejection of assessment `strategy_id`; assigned opinions, qualified answers, structured decision input and all assessment decisions; compatible planning-version selection; two requirements with different final payloads deterministically merged into one version_resolved snapshot with immutable exact run-scope/source coverage; immutable policy snapshot/hash/schema references; claim token replay-before-expiry and ciphertext scrub-after-expiry; distinct AI employee/executor identity; collaboration DAG; work-item blocked/human-wait recovery and low/high-risk cancel including continue-to-ready/new-attempt; run-level recovery from `running/integrating/verifying`; database-time decision expiry that keeps the subject paused and creates one successor without auto-approval; failed/cancelled terminal-run restart to a new generation with old evidence immutable; internal AI work-item execution and retry; independent review; rework; version-level integration tests; reconciled remote branch/commit/MR-PR evidence; product version `ready_for_release`; ready-target run `completed/completion_reason=ready_for_release`; deployment-disabled stop; and immutable actor/executor/work-item/attempt/snapshot feedback attribution. It also verifies Bug/code-inspection/assistant legacy entry adapters create requirements rather than AI tasks, delivery-state batch advancement and public AI-task create/start/batch-retry/cancel are rejected, maintenance draining/abort/cutover-locked/release restores only v2 writes, and a representative scheduled job retains its pre-upgrade definition, schedule, Agent/Skill snapshot, and run semantics. A separate P1 extension suite covers experience candidate approval/query/retirement plus frozen-config-bound approved-context reuse, and optional deployment consuming a non-terminal ready_for_release run; P1 failure does not redefine P0 completion, while each released phase must pass its own suite.
 
 - [ ] **Step 2: Run focused backend and frontend suites**
 
-Run all new tests plus existing requirement, version, policy, workflow, quality-gate, Runner, and deployment tests. Expected: all focused tests pass.
+For P0, run Tasks 2-12 and 13A tests plus existing requirement, version, policy, workflow, quality-gate and Runner suites; do not require Task 12B/12C/13B files or deployment/experience feature flags. For a P1 release, separately run Task 12B/12C/13B experience and deployment suites in addition to the already-green P0 gate. Expected: the selected phase's focused suites all pass, and P1 failure never retroactively changes P0 completion evidence.
 
 - [ ] **Step 3: Run full suites and preserve known-baseline accounting**
 
-First verify the frozen HEAD/patch/status/untracked manifests still match the pre-implementation capture. Run `cd apps/api && uv run pytest` and `cd apps/web && npm test`; all suites must pass. Scheduled-job failures are never allowlisted because that domain is an unchanged boundary. If an unrelated failure was explicitly approved before Task 1, it must still match the same frozen snapshot, test name and signature and must be reported with its owner; otherwise completion is blocked.
+First verify the frozen HEAD/patch/status/untracked manifests still match the pre-implementation capture. Run `cd apps/api && uv run pytest` and `cd apps/web && npm test`; all suites must pass with no failure allowlist. Any failure blocks completion and requires a fix, stable manifest recapture, and a full rerun; scheduled-job failures are especially non-waivable because that domain is an unchanged boundary.
 
 - [ ] **Step 4: Validate the real PostgreSQL-backed UI**
 
-Start the real stack, log in with `admin`, `product_owner`, `rd_owner`, and `tester` as applicable, and validate `/delivery/requirements`, `/delivery/versions`, `/delivery/rd-executor-policies`, `/delivery/rd-collaboration`, task detail, decisions, and deployment-disabled completion. Confirm non-blank render, exact role permissions, no stale UI, and no console/runtime/network errors.
+Start the real stack, log in with `admin`, `product_owner`, `rd_owner`, and `tester` as applicable, and validate the P0 routes `/delivery/requirements`, `/delivery/versions`, `/delivery/rd-executor-policies`, `/delivery/rd-collaboration`, task detail, decisions, qualified answers, cancellation recovery, version-resolved evidence and deployment-disabled completion. Confirm non-blank render, exact role permissions, no stale UI, and no console/runtime/network errors. Only during a P1 release, additionally validate the flagged experience page and existing deployment flow.
 
 - [ ] **Step 5: Update help screenshots and docs**
 
@@ -816,17 +963,18 @@ Run final diff review, commit remaining docs/tests, and push the current `codex/
 
 - Every approved design section maps to Tasks 1-15.
 - Unified policy has one API and one page; Task 2 only adds compatible schema, Task 4 rejects old writes, and Task 14 removes old fields after maintenance-fenced cutover.
-- Requirement assessment resolves policy before and after AI evaluation in Tasks 4 and 6.
-- Version grouping is deterministic and idempotent in Task 7.
+- Requirement assessment resolves policy before and after AI evaluation in Tasks 4 and 6; no caller can inject `strategy_id`, and policy changes require re-evaluation.
+- Version grouping is deterministic and idempotent in Task 7; Tasks 2-4/9 create one version_resolved snapshot plus immutable run requirement scope with deferred-validated exact provenance for every run.
 - Direct R&D entry bypasses are converted to requirement adapters in Task 8.
 - Public delivery-state batch advancement and AI-task create/start/retry/cancel bypasses are rejected in Task 8; internal work-item services are integrated in Task 11.
-- Human/AI roles, persistent AI employee identity, executor separation, RBAC separation, seats, sessions, DAG, review, recovery, rework, decisions, and attribution are covered by Tasks 5, 9, 11, and 12.
-- Immutable `rd_task_executor_policy_snapshots`, their foreign keys, hash/schema validation, and uniqueness constraints are covered by Tasks 2-4.
+- Human/AI roles, persistent AI employee identity, executor separation, RBAC separation, seats, sessions, DAG, review, recovery, rework, structured decisions, qualified answers, decision expiry escalation, terminal-run restart, cancellation-specific ready/new-lease recovery, and attribution are covered by Tasks 2, 3, 5, 9, 11, and 12.
+- Immutable `rd_task_executor_policy_snapshots`, version source relations, their foreign keys/deferred constraint triggers, merge operators, hash/schema validation, and uniqueness constraints are covered by Tasks 2-4 and 9.
+- Permanent command idempotency and expiring/scrubbable claim replay secrets are separately modeled and tested in Tasks 2, 3, and 9.
 - Run-level pause/resume metadata and recovery tests for `running/integrating/verifying` are covered by Tasks 2, 3, 9, and 10.
-- Governed experience lifecycle, query/decision APIs, reviewer separation, versions, and policy-scoped retrieval are covered by Tasks 12B and 13.
+- Governed experience lifecycle, query/decision APIs, reviewer separation from every source, versions, and frozen `experience_reuse_config` retrieval limits are covered by Tasks 4 and P1 Tasks 12B/13B; P0 Task 13A has no dependency on experience runtime or Task 12C deployment.
 - Existing LangGraph is reused and upgraded with a PostgreSQL Checkpointer in Task 10; domain state and event Inbox remain the consistency source.
 - Scheduled-job engine behavior is explicitly unchanged in Global Constraints, Tasks 8, 11, 14, and 15.
-- P0 delivery in Task 12 includes isolated branches, remote Git Outbox/reconciliation, version-level tests, and trusted evidence, leaves the version at `ready_for_release`, and completes the run with `completion_reason=ready_for_release`. Optional deployment is explicitly P1 in Task 12C.
-- Additive schema, maintenance fence, zero-active-task preflight, policy conversion, draft cancellation, one-way activation, cleanup, v2 Worker/smoke verification, and safe fence release are covered by Tasks 2 and 14.
+- P0 delivery in Task 12 includes isolated branches, remote Git Outbox/reconciliation, version-level tests, and trusted evidence. Target finalization completes only ready-for-release runs; deployed-target runs remain non-terminal `ready_for_release` for explicit P1 Task 12C deployment.
+- Additive schema, advisory preflight, draining/early abort, zero-active cutover lock, locked preflight, policy conversion, draft cancellation, one-way activation, cleanup, v2 Worker/smoke verification, and safe fence release are covered by Tasks 2 and 14.
 - No stale baseline is trusted. Implementation begins only after a stable double-captured HEAD/patch/status/untracked manifest and green scheduled-job suites; any snapshot drift requires recapture before feature work continues.
 - No implementation step contains an unresolved placeholder.
