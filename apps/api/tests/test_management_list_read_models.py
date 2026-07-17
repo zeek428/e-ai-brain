@@ -28,9 +28,7 @@ def _operational_metric_user(*permissions: str) -> dict:
     return {
         "permissions": list(permissions),
         "roles": [],
-        "scope_summary": [
-            {"access_level": "read", "scope_id": "*", "scope_type": "global"}
-        ],
+        "scope_summary": [{"access_level": "read", "scope_id": "*", "scope_type": "global"}],
     }
 
 
@@ -751,6 +749,7 @@ def test_rd_task_executor_policy_list_uses_repository_read_model_for_sql_paginat
                     "priority": 20,
                     "product_id": "product_ai_brain",
                     "product_name": "AI Brain",
+                    "policy_version": 7,
                     "repository_default_branch": "master",
                     "repository_id": "repo_ai_brain",
                     "repository_name": "AI Brain Web",
@@ -787,6 +786,7 @@ def test_rd_task_executor_policy_list_uses_repository_read_model_for_sql_paginat
         assert data["page"] == 1
         assert data["page_size"] == 1
         assert data["items"][0]["id"] == "rd_executor_policy_read_model"
+        assert data["items"][0]["policy_version"] == 7
         assert data["items"][0]["product_name"] == "AI Brain"
         assert data["performance"]["result_count"] == 1
         assert repository.count_reads == [

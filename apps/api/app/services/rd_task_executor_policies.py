@@ -12,6 +12,10 @@ from app.core.listing import (
     list_text_matches,
     sort_list_items,
 )
+from app.core.repositories.rd_collaboration import (
+    RdCollaborationRepositoryError,
+    RdCollaborationVersionConflictError,
+)
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.agent_autonomy import (
     attach_agent_loop_coding_task,
@@ -32,6 +36,12 @@ from app.services.knowledge_documents import (
 )
 from app.services.knowledge_search import memory_knowledge_search_candidates
 from app.services.operational_records import record_audit_event
+from app.services.rd_policy_validation import (
+    PolicyValidationError,
+    unified_policy_contract,
+    unified_policy_from_record,
+    validate_unified_policy_payload,
+)
 
 RD_TASK_EXECUTOR_POLICY_MANAGE_PERMISSION = "delivery.rd_executor_policies.manage"
 RD_TASK_EXECUTOR_TYPES = {"claude", "codex", "openclaw"}
@@ -191,11 +201,9 @@ def _policy_collection(current_store: Any) -> dict[str, dict[str, Any]]:
 def _replace_policies(current_store: Any, policies: list[dict[str, Any]]) -> None:
     collection = _policy_collection(current_store)
     collection.clear()
-    collection.update({
-        str(policy["id"]): dict(policy)
-        for policy in policies
-        if policy.get("id") is not None
-    })
+    collection.update(
+        {str(policy["id"]): dict(policy) for policy in policies if policy.get("id") is not None}
+    )
 
 
 def _cache_product_record(current_store: Any, product: dict[str, Any]) -> None:
@@ -208,22 +216,51 @@ def _cache_product_git_repository_record(
     git_repository: dict[str, Any],
 ) -> None:
     if git_repository.get("id") is not None:
-        _memory_dict(current_store, "product_git_repositories")[
-            str(git_repository["id"])
-        ] = dict(git_repository)
+        _memory_dict(current_store, "product_git_repositories")[str(git_repository["id"])] = dict(
+            git_repository
+        )
 
 
 def save_rd_task_executor_policy_record(
     current_store: Any,
     policy: dict[str, Any],
     *,
+    expected_policy_version: int | None = None,
     audit_event: dict[str, Any] | None = None,
-) -> None:
+) -> dict[str, Any]:
     repository = _repository(current_store)
     if repository is not None:
-        repository.save_rd_task_executor_policy_record(policy, audit_event=audit_event)
-        return
+        return repository.save_rd_task_executor_policy_record(
+            policy,
+            expected_policy_version=expected_policy_version,
+            audit_event=audit_event,
+        )
+    if policy.get("status") == "active":
+        for other_id, other in _policy_collection(current_store).items():
+            if (
+                other_id != policy["id"]
+                and other.get("status") == "active"
+                and other.get("brain_app_id", DEFAULT_BRAIN_APP_ID)
+                == policy.get("brain_app_id", DEFAULT_BRAIN_APP_ID)
+                and other.get("product_id") == policy.get("product_id")
+            ):
+                raise RdCollaborationRepositoryError(
+                    "RD_EXECUTION_POLICY_INVALID",
+                    "only one active unified policy is allowed for the scope",
+                    details={"conflicting_policy_id": other_id},
+                )
+    existing = _policy_collection(current_store).get(policy["id"])
+    if existing is not None:
+        current_version = int(existing.get("policy_version") or 1)
+        if expected_policy_version is not None and expected_policy_version != current_version:
+            raise RdCollaborationVersionConflictError(current_version)
+        policy = {**policy, "policy_version": current_version + 1}
+    else:
+        if expected_policy_version not in {None, 0}:
+            raise RdCollaborationVersionConflictError(None)
+        policy = {**policy, "policy_version": 1}
     _policy_collection(current_store)[policy["id"]] = policy
+    return policy
 
 
 def delete_rd_task_executor_policy_record(
@@ -262,6 +299,11 @@ def sync_rd_task_executor_policy_store(
 def _policy_public(current_store: Any, policy: dict[str, Any]) -> dict[str, Any]:
     sync_policy_resource_store(current_store, policy)
     public = dict(policy)
+    unified = unified_policy_from_record(policy)
+    if unified is not None:
+        public.update(unified)
+        public["policy_version"] = int(policy.get("policy_version") or 1)
+        return public
     public["autonomy_mode"] = _ensure_autonomy_mode(public.get("autonomy_mode"))
     public["auto_merge_risk_threshold"] = _ensure_auto_merge_risk_threshold(
         public.get("auto_merge_risk_threshold")
@@ -269,9 +311,7 @@ def _policy_public(current_store: Any, policy: dict[str, Any]) -> dict[str, Any]
     public["code_change_review_mode"] = _ensure_code_change_review_mode(
         public.get("code_change_review_mode")
     )
-    runner = _read_memory_dict(current_store, "ai_executor_runners").get(
-        policy.get("runner_id")
-    )
+    runner = _read_memory_dict(current_store, "ai_executor_runners").get(policy.get("runner_id"))
     repository = _read_memory_dict(current_store, "product_git_repositories").get(
         policy.get("repository_id")
     )
@@ -281,9 +321,7 @@ def _policy_public(current_store: Any, policy: dict[str, Any]) -> dict[str, Any]
         repository.get("name") if repository else public.get("repository_name")
     )
     public["repository_default_branch"] = (
-        repository.get("default_branch")
-        if repository
-        else public.get("repository_default_branch")
+        repository.get("default_branch") if repository else public.get("repository_default_branch")
     )
     public["product_name"] = product.get("name") if product else public.get("product_name")
     return public
@@ -306,7 +344,8 @@ def sync_policy_resource_store(current_store: Any, policy: dict[str, Any]) -> No
     if (
         product_id
         and repository_id
-        and repository_id not in _read_memory_dict(
+        and repository_id
+        not in _read_memory_dict(
             current_store,
             "product_git_repositories",
         )
@@ -479,10 +518,7 @@ def _validate_resource_scope(current_store: Any, policy: dict[str, Any]) -> None
                 "repository must belong to policy product",
             )
     runner_id = policy.get("runner_id")
-    if (
-        runner_id
-        and runner_id not in _read_memory_dict(current_store, "ai_executor_runners")
-    ):
+    if runner_id and runner_id not in _read_memory_dict(current_store, "ai_executor_runners"):
         raise api_error(400, "AI_EXECUTOR_RUNNER_NOT_FOUND", "runner_id does not exist")
     quality_gate_policy_id = policy.get("quality_gate_policy_id")
     if quality_gate_policy_id:
@@ -509,7 +545,7 @@ def _validate_resource_scope(current_store: Any, policy: dict[str, Any]) -> None
             )
 
 
-def _policy_from_payload(
+def _legacy_policy_from_payload(
     *,
     current_store: Any,
     existing: dict[str, Any] | None,
@@ -561,9 +597,7 @@ def _policy_from_payload(
         "max_duration_seconds": int(
             value("max_duration_seconds", base.get("max_duration_seconds", 3600)) or 3600
         ),
-        "max_iterations": int(
-            value("max_iterations", base.get("max_iterations", 1)) or 1
-        ),
+        "max_iterations": int(value("max_iterations", base.get("max_iterations", 1)) or 1),
         "name": _ensure_non_blank(value("name", base.get("name")), "name"),
         "output_contract": dict(value("output_contract", base.get("output_contract") or {}) or {}),
         "priority": int(value("priority", base.get("priority", 100)) or 100),
@@ -608,6 +642,62 @@ def _policy_from_payload(
     return policy
 
 
+def _policy_from_payload(
+    *,
+    current_store: Any,
+    existing: dict[str, Any] | None,
+    payload: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
+    data = (
+        payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else dict(payload)
+    )
+    data.pop("policy_version", None)
+    previous = unified_policy_from_record(existing) if existing is not None else None
+    try:
+        unified = validate_unified_policy_payload({**(previous or {}), **data})
+    except PolicyValidationError as exc:
+        raise api_error(400, exc.code, str(exc)) from exc
+    task_types = unified["matching_config"].get("task_types")
+    task_type = (
+        str(task_types[0]).strip() if isinstance(task_types, list) and task_types else "unified"
+    )
+    base = existing or {
+        "created_at": now,
+        "created_by": user["id"],
+        "id": current_store.new_id("rd_executor_policy"),
+    }
+    # The legacy columns remain a read-model compatibility projection only. The immutable
+    # unified policy is the JSON payload below and is the sole policy resolution input.
+    return {
+        **base,
+        "brain_app_id": unified["brain_app_id"],
+        "name": unified["name"],
+        "product_id": unified["product_id"],
+        "status": unified["status"],
+        "task_type": task_type,
+        "executor_type": "codex",
+        "runner_id": None,
+        "repository_id": None,
+        "workspace_root": "",
+        "branch": None,
+        "instruction_template": "Unified R&D policy {{task_id}}",
+        "output_contract": unified_policy_contract(unified),
+        "timeout_seconds": 1800,
+        "priority": 100,
+        "code_change_review_mode": "manual_review",
+        "autonomy_mode": "single_pass",
+        "max_iterations": 1,
+        "max_duration_seconds": 3600,
+        "token_budget": None,
+        "cost_budget": None,
+        "quality_gate_policy_id": None,
+        "auto_merge_risk_threshold": "low",
+        "updated_at": now,
+    }
+
+
 def create_rd_task_executor_policy_response(
     *,
     current_store: Any,
@@ -634,12 +724,15 @@ def create_rd_task_executor_policy_response(
             "task_type": policy["task_type"],
         },
     )
-    save_rd_task_executor_policy_record(
-        current_store,
-        policy,
-        audit_event=audit_event,
-    )
-    return _policy_public(current_store, policy)
+    try:
+        persisted = save_rd_task_executor_policy_record(
+            current_store,
+            policy,
+            audit_event=audit_event,
+        )
+    except RdCollaborationRepositoryError as exc:
+        raise api_error(409, exc.code, str(exc), exc.details) from exc
+    return _policy_public(current_store, persisted)
 
 
 def patch_rd_task_executor_policy_response(
@@ -674,12 +767,19 @@ def patch_rd_task_executor_policy_response(
             "task_type": policy["task_type"],
         },
     )
-    save_rd_task_executor_policy_record(
-        current_store,
-        policy,
-        audit_event=audit_event,
-    )
-    return _policy_public(current_store, policy)
+    expected_policy_version = getattr(payload, "policy_version", None)
+    try:
+        persisted = save_rd_task_executor_policy_record(
+            current_store,
+            policy,
+            expected_policy_version=expected_policy_version,
+            audit_event=audit_event,
+        )
+    except RdCollaborationVersionConflictError as exc:
+        raise api_error(409, exc.code, str(exc), exc.details) from exc
+    except RdCollaborationRepositoryError as exc:
+        raise api_error(409, exc.code, str(exc), exc.details) from exc
+    return _policy_public(current_store, persisted)
 
 
 def delete_rd_task_executor_policy_response(
@@ -693,6 +793,10 @@ def delete_rd_task_executor_policy_response(
     existing = _read_memory_dict(current_store, "rd_task_executor_policies").get(policy_id)
     if existing is None:
         raise api_error(404, "NOT_FOUND", "RD task executor policy not found")
+    repository = _repository(current_store)
+    snapshots = getattr(repository, "list_rd_policy_snapshots", None)
+    if callable(snapshots) and snapshots(policy_id):
+        raise api_error(409, "RD_POLICY_IN_USE", "policy has immutable snapshots")
     audit_event = record_audit_event(
         current_store,
         event_type="rd_task_executor_policy.deleted",
@@ -740,7 +844,42 @@ def resolve_rd_task_executor_policy(
     task: dict[str, Any],
 ) -> dict[str, Any] | None:
     policies = _matching_policies(current_store, task)
-    return policies[0] if policies else None
+    if not policies:
+        return None
+    policy = policies[0]
+    unified = unified_policy_from_record(policy)
+    if unified is None:
+        return policy
+    role_code = str(
+        unified["matching_config"].get("execution_role_code")
+        or (unified["team_config"].get("required_role_codes") or [""])[0]
+    ).strip()
+    bindings = [
+        binding
+        for binding in unified["role_bindings"]
+        if binding.get("role_code") == role_code and binding.get("status") == "active"
+    ]
+    if len(bindings) != 1 or bindings[0].get("fallback_executor_profile_ids"):
+        raise api_error(
+            400,
+            "RD_POLICY_ROLE_BINDING_INVALID",
+            "exactly one active execution role binding is required",
+        )
+    profile_id = str(bindings[0].get("primary_executor_profile_id") or "").strip()
+    repository = _repository(current_store)
+    get_profile = getattr(repository, "get_rd_executor_profile", None)
+    profile = get_profile(profile_id) if callable(get_profile) and profile_id else None
+    if profile is None or profile.get("status") != "active" or not profile.get("runner_id"):
+        raise api_error(
+            400,
+            "RD_POLICY_ROLE_BINDING_INVALID",
+            "the role binding must name an active executor profile and runner",
+        )
+    return {
+        **policy,
+        "executor_type": profile.get("executor_type") or policy["executor_type"],
+        "runner_id": profile["runner_id"],
+    }
 
 
 def _task_input(task: dict[str, Any]) -> dict[str, Any]:
@@ -768,10 +907,7 @@ def _executor_branch(policy: dict[str, Any], task: dict[str, Any]) -> str:
     input_json = _task_input(task)
     repository = _task_repository(task)
     return str(
-        policy.get("branch")
-        or input_json.get("branch")
-        or repository.get("default_branch")
-        or "",
+        policy.get("branch") or input_json.get("branch") or repository.get("default_branch") or "",
     )
 
 
@@ -789,10 +925,7 @@ def _executor_repository_id(policy: dict[str, Any], task: dict[str, Any]) -> str
 def _code_inspection_context(task: dict[str, Any], policy: dict[str, Any]) -> dict[str, str]:
     input_json = _task_input(task)
     repository = _task_repository(task)
-    context = {
-        field: str(input_json.get(field) or "")
-        for field in CODE_INSPECTION_CONTEXT_FIELDS
-    }
+    context = {field: str(input_json.get(field) or "") for field in CODE_INSPECTION_CONTEXT_FIELDS}
     context["branch"] = _executor_branch(policy, task)
     context["repository_id"] = _executor_repository_id(policy, task)
     context["repository_default_branch"] = str(repository.get("default_branch") or "")
@@ -802,11 +935,7 @@ def _code_inspection_context(task: dict[str, Any], policy: dict[str, Any]) -> di
 
 
 def _code_inspection_payload(task: dict[str, Any], policy: dict[str, Any]) -> dict[str, str]:
-    return {
-        key: value
-        for key, value in _code_inspection_context(task, policy).items()
-        if value
-    }
+    return {key: value for key, value in _code_inspection_context(task, policy).items() if value}
 
 
 def _code_inspection_instruction_block(task: dict[str, Any], policy: dict[str, Any]) -> str:
@@ -981,9 +1110,7 @@ def _template_context(task: dict[str, Any], policy: dict[str, Any]) -> dict[str,
     input_json = _task_input(task)
     bug = input_json.get("bug") if isinstance(input_json.get("bug"), dict) else {}
     product = (
-        product_context.get("product")
-        if isinstance(product_context.get("product"), dict)
-        else {}
+        product_context.get("product") if isinstance(product_context.get("product"), dict) else {}
     )
     requirement = (
         task.get("requirement_snapshot")

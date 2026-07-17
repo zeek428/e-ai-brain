@@ -52,53 +52,42 @@ class AiTaskRequest(BaseModel):
 class RdTaskExecutorPolicyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    branch: str | None = None
-    autonomy_mode: str = "single_pass"
-    auto_merge_risk_threshold: str = "low"
-    code_change_review_mode: str = "manual_review"
-    cost_budget: float | None = None
-    executor_type: str
-    instruction_template: str
     name: str
-    max_duration_seconds: int = 3600
-    max_iterations: int = 1
-    output_contract: dict[str, Any] = Field(default_factory=dict)
-    priority: int = 100
+    brain_app_id: str = "rd_brain"
     product_id: str | None = None
-    quality_gate_policy_id: str | None = None
-    repository_id: str | None = None
-    runner_id: str | None = None
     status: str = "active"
-    task_type: str
-    timeout_seconds: int = 1800
-    token_budget: int | None = None
-    workspace_root: str = ""
+    matching_config: dict[str, Any] = Field(default_factory=dict)
+    assessment_config: dict[str, Any] = Field(default_factory=dict)
+    iteration_config: dict[str, Any] = Field(default_factory=dict)
+    delivery_target: str = "ready_for_release"
+    team_config: dict[str, Any] = Field(default_factory=dict)
+    autonomy_config: dict[str, Any] = Field(default_factory=dict)
+    quality_gate_config: dict[str, Any] = Field(default_factory=dict)
+    git_config: dict[str, Any] = Field(default_factory=dict)
+    experience_reuse_config: dict[str, Any] = Field(default_factory=dict)
+    deployment_config: dict[str, Any] = Field(default_factory=dict)
+    role_bindings: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RdTaskExecutorPolicyPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    branch: str | None = None
-    autonomy_mode: str | None = None
-    auto_merge_risk_threshold: str | None = None
-    code_change_review_mode: str | None = None
-    cost_budget: float | None = None
-    executor_type: str | None = None
-    instruction_template: str | None = None
     name: str | None = None
-    max_duration_seconds: int | None = None
-    max_iterations: int | None = None
-    output_contract: dict[str, Any] | None = None
-    priority: int | None = None
+    brain_app_id: str | None = None
     product_id: str | None = None
-    quality_gate_policy_id: str | None = None
-    repository_id: str | None = None
-    runner_id: str | None = None
     status: str | None = None
-    task_type: str | None = None
-    timeout_seconds: int | None = None
-    token_budget: int | None = None
-    workspace_root: str | None = None
+    matching_config: dict[str, Any] | None = None
+    assessment_config: dict[str, Any] | None = None
+    iteration_config: dict[str, Any] | None = None
+    delivery_target: str | None = None
+    team_config: dict[str, Any] | None = None
+    autonomy_config: dict[str, Any] | None = None
+    quality_gate_config: dict[str, Any] | None = None
+    git_config: dict[str, Any] | None = None
+    experience_reuse_config: dict[str, Any] | None = None
+    deployment_config: dict[str, Any] | None = None
+    role_bindings: list[dict[str, Any]] | None = None
+    policy_version: int = Field(ge=1)
 
 
 class MoreInfoRequest(BaseModel):

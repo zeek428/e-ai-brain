@@ -19,11 +19,9 @@ class TaskReadRepository:
         upsert_requirements: Callable[[Any, dict[str, dict[str, Any]]], None] | None = None,
         upsert_audit_events: Callable[[Any, list[dict[str, Any]]], None] | None = None,
         upsert_model_gateway_logs: Callable[[Any, list[dict[str, Any]]], None] | None = None,
-        upsert_code_review_reports: Callable[[Any, dict[str, dict[str, Any]]], None]
-        | None = None,
+        upsert_code_review_reports: Callable[[Any, dict[str, dict[str, Any]]], None] | None = None,
         upsert_bugs: Callable[[Any, dict[str, dict[str, Any]]], None] | None = None,
-        upsert_knowledge_deposits: Callable[[Any, dict[str, dict[str, Any]]], None]
-        | None = None,
+        upsert_knowledge_deposits: Callable[[Any, dict[str, dict[str, Any]]], None] | None = None,
     ) -> None:
         self._connect = connect
         self._upsert_requirements = upsert_requirements
@@ -85,7 +83,7 @@ class TaskReadRepository:
                            timeout_seconds, priority, status, created_by, created_at, updated_at,
                            autonomy_mode, max_iterations, max_duration_seconds,
                            token_budget, cost_budget, quality_gate_policy_id,
-                           auto_merge_risk_threshold
+                           auto_merge_risk_threshold, policy_version
                     FROM rd_task_executor_policies
                     {where}
                     ORDER BY priority ASC, task_type ASC, product_id NULLS FIRST, id ASC
@@ -166,7 +164,7 @@ class TaskReadRepository:
                            policy.autonomy_mode, policy.max_iterations,
                            policy.max_duration_seconds, policy.token_budget,
                            policy.cost_budget, policy.quality_gate_policy_id,
-                           policy.auto_merge_risk_threshold,
+                           policy.auto_merge_risk_threshold, policy.policy_version,
                            product.name AS product_name,
                            repository.name AS repository_name,
                            repository.default_branch AS repository_default_branch,
@@ -402,6 +400,9 @@ class TaskReadRepository:
                     "auto_merge_risk_threshold": "low",
                 }
             )
+        if len(row) > metadata_offset:
+            policy["policy_version"] = int(row[metadata_offset] or 1)
+            metadata_offset += 1
         if len(row) > metadata_offset:
             policy["product_name"] = row[metadata_offset]
             policy["repository_name"] = row[metadata_offset + 1]
