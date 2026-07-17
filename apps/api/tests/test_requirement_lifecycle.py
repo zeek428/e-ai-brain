@@ -252,20 +252,11 @@ def test_requirement_can_start_in_backlog_and_be_planned_into_iteration_version(
         json={"version_id": version["id"]},
         headers=headers,
     ).json()["data"]
-    assert planned["status"] == "submitted"
+    assert planned["status"] == "planned"
     assert planned["version_id"] == version["id"]
-    app.state.store.requirement_assessments["accepted-after-edit"] = {
-        "id": "accepted-after-edit",
-        "requirement_id": requirement["id"],
-        "requirement_revision": planned["assessment_revision"],
-        "status": "accepted",
-    }
-    reapproved = client.post(
-        f"/api/requirements/{requirement['id']}/approve",
-        json={"comment": "评估更新后重新批准"},
-        headers=headers,
-    ).json()["data"]
-    assert reapproved["status"] == "planned"
+    assert app.state.store.requirements[requirement["id"]].get(
+        "assessment_revision", 1
+    ) == requirement.get("assessment_revision", 1)
 
     generated = client.post(
         f"/api/requirements/{requirement['id']}/generate-task",

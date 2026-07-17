@@ -375,8 +375,6 @@ def patch_requirement_result(
         "title",
         "content",
         "product_id",
-        "version_id",
-        "module_code",
         "source",
     }
     changed_assessment_fields = assessment_relevant_fields & updates.keys()
