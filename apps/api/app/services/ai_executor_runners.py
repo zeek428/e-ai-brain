@@ -252,8 +252,29 @@ def _load_executor_policy_for_ai_task(
     if not policy_id:
         return None
     policy = _read_record(current_store, "rd_task_executor_policies", policy_id)
+    input_json = ai_task.get("input_json") if isinstance(ai_task.get("input_json"), dict) else {}
+    executor_snapshot = (
+        input_json.get("executor") if isinstance(input_json.get("executor"), dict) else {}
+    )
+    runner_task = _read_record(
+        current_store,
+        "ai_executor_tasks",
+        str(executor_snapshot.get("runner_task_id") or ""),
+    )
+    request_config = (
+        runner_task.get("request_config")
+        if isinstance(runner_task, dict) and isinstance(runner_task.get("request_config"), dict)
+        else {}
+    )
+    runtime_policy = request_config.get("runtime_policy")
+    if not isinstance(runtime_policy, dict):
+        runtime_policy = (
+            executor_snapshot.get("runtime_policy")
+            if isinstance(executor_snapshot.get("runtime_policy"), dict)
+            else {}
+        )
     if policy is not None:
-        return policy
+        return {**policy, **runtime_policy}
     repository = getattr(current_store, "repository", None)
     list_policies = getattr(repository, "list_rd_task_executor_policies", None)
     if not callable(list_policies):
@@ -264,7 +285,7 @@ def _load_executor_policy_for_ai_task(
         task_type=str(ai_task.get("task_type") or ""),
     ):
         if candidate.get("id") == policy_id:
-            return dict(candidate)
+            return {**dict(candidate), **runtime_policy}
     return None
 
 

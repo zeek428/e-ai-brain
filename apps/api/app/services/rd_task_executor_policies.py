@@ -406,7 +406,7 @@ def _canonical_binding_rows(
         for item in _policy_role_bindings(current_store, str(policy["id"]))
         if item.get("id")
     }
-    return [
+    rows = [
         {
             **binding,
             "id": previous.get(binding["role_code"])
@@ -414,6 +414,22 @@ def _canonical_binding_rows(
         }
         for binding in normalized["role_bindings"]
     ]
+    repository = _repository(current_store)
+    get_profile = getattr(repository, "get_rd_executor_profile", None)
+    for binding in rows:
+        profile_id = str(binding.get("primary_executor_profile_id") or "").strip()
+        if not profile_id:
+            continue
+        profile = get_profile(profile_id) if callable(get_profile) else None
+        if profile is None:
+            profile = _read_memory_dict(current_store, "rd_executor_profiles").get(profile_id)
+        if profile is not None and profile.get("executor_type") not in RD_TASK_EXECUTOR_TYPES:
+            raise api_error(
+                400,
+                "RD_EXECUTION_POLICY_INVALID",
+                "role bindings must use an engineering executor profile",
+            )
+    return rows
 
 
 def sync_policy_resource_store(current_store: Any, policy: dict[str, Any]) -> None:
@@ -1013,13 +1029,16 @@ def resolve_rd_task_executor_policy(
             "RD_POLICY_ROLE_BINDING_INVALID",
             "the role binding must name an active executor profile and runner",
         )
+    autonomy_config = unified["autonomy_config"]
+    quality_gate_config = unified["quality_gate_config"]
+    git_config = unified["git_config"]
     return {
         **policy,
         "executor_type": profile.get("executor_type") or policy["executor_type"],
         "runner_id": profile["runner_id"],
         "workspace_root": str(
             bindings[0].get("context_config", {}).get("workspace_root")
-            or unified["git_config"].get("workspace_root")
+            or git_config.get("workspace_root")
             or ""
         ),
         "instruction_template": str(
@@ -1027,7 +1046,20 @@ def resolve_rd_task_executor_policy(
             or "执行统一研发策略 {{task_id}}"
         ),
         "output_contract": unified["assessment_config"].get("output_contract", {}),
-        "timeout_seconds": int(unified["autonomy_config"].get("timeout_seconds") or 1800),
+        "timeout_seconds": int(autonomy_config.get("timeout_seconds") or 1800),
+        "autonomy_mode": str(autonomy_config.get("mode") or "single_pass"),
+        "max_iterations": int(autonomy_config.get("max_iterations") or 1),
+        "max_duration_seconds": int(autonomy_config.get("max_duration_seconds") or 3600),
+        "token_budget": autonomy_config.get("token_budget"),
+        "cost_budget": autonomy_config.get("cost_budget"),
+        "code_change_review_mode": str(
+            quality_gate_config.get("code_change_review_mode") or "manual_review"
+        ),
+        "auto_merge_risk_threshold": str(
+            quality_gate_config.get("auto_merge_risk_threshold") or "low"
+        ),
+        "branch": git_config.get("branch"),
+        "repository_id": git_config.get("repository_id"),
     }
 
 
@@ -1393,6 +1425,19 @@ def queue_rd_task_executor_task(
         "executor_policy_id": policy["id"],
         "output_contract": policy.get("output_contract") or {},
         "repository_id": repository_id,
+        "runtime_policy": {
+            key: policy.get(key)
+            for key in (
+                "auto_merge_risk_threshold",
+                "autonomy_mode",
+                "code_change_review_mode",
+                "cost_budget",
+                "max_duration_seconds",
+                "max_iterations",
+                "quality_gate_policy_id",
+                "token_budget",
+            )
+        },
         "source": "rd_task_executor_policy",
     }
     runner_task = create_ai_executor_task(

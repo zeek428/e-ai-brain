@@ -232,6 +232,56 @@ def test_unified_policy_route_persists_server_binding_ids_in_postgres(
         app.state.store = original_store
 
 
+def test_unified_policy_executor_filter_uses_all_active_role_bindings(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _insert_product_version(repository, prefix="multi-role-filter")
+    for profile_id, executor_type in (("profile-codex", "codex"), ("profile-claude", "claude")):
+        repository.save_rd_executor_profile_record(
+            {
+                "id": profile_id,
+                "brain_app_id": "rd_brain",
+                "code": profile_id,
+                "name": profile_id,
+                "executor_type": executor_type,
+                "created_by": "user_admin",
+            }
+        )
+    policy = repository.save_unified_rd_policy(
+        {
+            **_policy_record(ids, prefix="multi-role-filter"),
+            "strategy_config": {"matching_config": {"task_types": ["development_planning"]}},
+        },
+        role_bindings=[
+            {
+                "id": "binding-codex",
+                "role_code": "developer",
+                "actor_mode": "ai",
+                "primary_executor_profile_id": "profile-codex",
+                "status": "active",
+            },
+            {
+                "id": "binding-claude",
+                "role_code": "reviewer",
+                "actor_mode": "ai",
+                "primary_executor_profile_id": "profile-claude",
+                "status": "active",
+            },
+        ],
+    )
+
+    def listed(executor_type: str) -> list[dict]:
+        return repository.list_rd_task_executor_policy_page(
+            executor_type=executor_type,
+            limit=20,
+            offset=0,
+        )
+
+    assert [item["id"] for item in listed("codex")] == [policy["id"]]
+    assert [item["id"] for item in listed("claude")] == [policy["id"]]
+    assert listed("openclaw") == []
+
+
 def _base_snapshot(policy: dict[str, object], *, prefix: str) -> dict[str, object]:
     return {
         "id": f"{prefix}-snapshot-base",
