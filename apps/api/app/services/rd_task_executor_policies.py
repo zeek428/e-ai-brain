@@ -389,6 +389,16 @@ def _policy_role_bindings(current_store: Any, policy_id: str) -> list[dict[str, 
     return list(record) if isinstance(record, list) else []
 
 
+def _matches_canonical_task_type(
+    current_store: Any, policy: dict[str, Any], task_type: str
+) -> bool:
+    unified = unified_policy_from_record(
+        policy,
+        role_bindings=_policy_role_bindings(current_store, str(policy.get("id") or "")),
+    )
+    return task_type in (unified or {}).get("matching_config", {}).get("task_types", [])
+
+
 def _canonical_binding_rows(
     *,
     current_store: Any,
@@ -550,7 +560,7 @@ def list_rd_task_executor_policies_response(
         for policy in _read_memory_dict(current_store, "rd_task_executor_policies").values()
         if (product_id is None or policy.get("product_id") == product_id)
         and (status is None or policy.get("status") == status)
-        and (task_type is None or policy.get("task_type") == task_type)
+        and (task_type is None or _matches_canonical_task_type(current_store, policy, task_type))
         and (
             executor_type is None
             or executor_type in policy.get("executor_types", [policy.get("executor_type")])
@@ -910,7 +920,12 @@ def patch_rd_task_executor_policy_response(
             audit_event=audit_event,
         )
     except RdCollaborationVersionConflictError as exc:
-        raise api_error(409, exc.code, str(exc), exc.details) from exc
+        raise api_error(
+            409,
+            exc.code,
+            str(exc),
+            {"details": {"current_policy_version": exc.current_version}},
+        ) from exc
     except RdCollaborationRepositoryError as exc:
         raise api_error(409, exc.code, str(exc), exc.details) from exc
     return {"policy": _policy_public(current_store, persisted)}

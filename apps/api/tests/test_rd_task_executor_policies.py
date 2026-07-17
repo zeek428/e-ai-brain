@@ -15,6 +15,7 @@ from app.services.rd_policy_resolution import (
     merge_version_rd_policy_snapshot,
     resolve_final_rd_policy,
     resolve_work_item_binding,
+    validate_snapshot_chain,
 )
 from tests.test_technical_solution_export import auth_headers
 
@@ -870,6 +871,29 @@ def test_policy_patch_requires_matching_policy_version_and_keeps_unified_contrac
     }
 
 
+def test_policy_list_uses_all_canonical_task_types_without_legacy_scalar_filter():
+    app.state.store.reset()
+    headers = auth_headers()
+    created = client.post(
+        "/api/delivery/rd-task-executor-policies",
+        headers=headers,
+        json=valid_policy_payload(
+            matching_config={"task_types": ["development_planning", "automated_testing"]}
+        ),
+    )
+    assert created.status_code == 200
+
+    response = client.get(
+        "/api/delivery/rd-task-executor-policies?task_type=automated_testing",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["data"]["items"]] == [
+        created.json()["data"]["policy"]["id"]
+    ]
+
+
 def test_work_item_binding_requires_exactly_one_active_role_without_fallback():
     snapshot = {
         "content_hash": "sha256:ignored",
@@ -905,7 +929,7 @@ def test_version_merge_tightens_known_policy_operators_and_rejects_unknown_delta
                     "min_confidence": 0.6,
                     "max_capacity": 8,
                     "max_age_days": 30,
-                    "policy_compatibility": "same_policy",
+                    "policy_compatibility": "same_policy_schema",
                     "repository_trust_domains": ["trusted", "internal"],
                     "tool_trust_domains": ["approved", "internal"],
                     "require_independent_reviewer": False,
@@ -972,6 +996,28 @@ def test_version_merge_tightens_known_policy_operators_and_rejects_unknown_delta
         "base_run_cap": 60,
         "per_requirement_allocations": {"req-a": 80, "req-b": 40},
     }
+
+    compatibility = merge_policy_payloads(
+        [
+            {"experience_reuse_config": {"policy_compatibility": "same_policy_version"}},
+            {"experience_reuse_config": {"policy_compatibility": "same_policy_schema"}},
+        ]
+    )
+    assert compatibility["experience_reuse_config"]["policy_compatibility"] == (
+        "same_policy_version"
+    )
+
+    try:
+        merge_policy_payloads(
+            [
+                {"quality_gate_config": {"max_undeclared": 5}},
+                {"quality_gate_config": {"max_undeclared": 3}},
+            ]
+        )
+    except PolicyResolutionError as exc:
+        assert exc.code == "RD_VERSION_POLICY_MERGE_REQUIRED"
+    else:
+        raise AssertionError("undeclared numeric paths must require a human decision")
 
     try:
         merge_policy_payloads([{"undeclared": "one"}, {"undeclared": "two"}])
@@ -1073,6 +1119,160 @@ def test_assessment_policy_expansion_requires_human_decision():
         raise AssertionError("assessment must not expand automation or risk scope")
 
 
+def test_snapshot_chain_rejects_cross_assessment_revision_two_parent():
+    payload = valid_policy_payload()
+    base = {
+        "id": "base",
+        "policy_id": "policy_1",
+        "policy_version": 1,
+        "parent_snapshot_id": None,
+        "snapshot_kind": "base",
+        "resolution_context_key": "policy:policy_1:version:1",
+        "resolution_revision": 0,
+        "schema_version": 1,
+        "created_by": "user_admin",
+        "content_hash": _hash(payload),
+        "payload_json": payload,
+    }
+    revision_one = {
+        **base,
+        "id": "revision_one",
+        "parent_snapshot_id": "base",
+        "snapshot_kind": "assessment_resolved",
+        "resolution_context_key": "assessment:other_assessment",
+        "resolution_revision": 1,
+    }
+    revision_two = {
+        **base,
+        "id": "revision_two",
+        "parent_snapshot_id": "revision_one",
+        "snapshot_kind": "assessment_resolved",
+        "resolution_context_key": "assessment:this_assessment",
+        "resolution_revision": 2,
+    }
+
+    class Repository:
+        snapshots = {"base": base, "revision_one": revision_one}
+
+        def get_rd_policy_snapshot(self, snapshot_id: str) -> dict | None:
+            return self.snapshots.get(snapshot_id)
+
+    try:
+        validate_snapshot_chain(Repository(), revision_two)
+    except PolicyResolutionError as exc:
+        assert exc.code == "RD_POLICY_SNAPSHOT_INVALID"
+    else:
+        raise AssertionError("revision two must use the same assessment revision one parent")
+
+
+def test_merge_ambiguity_persists_constrained_decision_without_snapshot():
+    base_payload = valid_policy_payload(product_id="product_1")
+
+    def snapshot(
+        snapshot_id: str,
+        *,
+        parent_id: str | None,
+        kind: str,
+        context: str,
+        revision: int,
+        payload: dict,
+    ) -> dict:
+        return {
+            "id": snapshot_id,
+            "policy_id": "policy_1",
+            "policy_version": 1,
+            "parent_snapshot_id": parent_id,
+            "snapshot_kind": kind,
+            "resolution_context_key": context,
+            "resolution_revision": revision,
+            "schema_version": 1,
+            "created_by": "user_admin",
+            "content_hash": _hash(payload),
+            "payload_json": payload,
+        }
+
+    base = snapshot(
+        "base",
+        parent_id=None,
+        kind="base",
+        context="policy:policy_1:version:1",
+        revision=0,
+        payload=base_payload,
+    )
+    first = snapshot(
+        "assessment_one",
+        parent_id="base",
+        kind="assessment_resolved",
+        context="assessment:assessment_1",
+        revision=1,
+        payload=valid_policy_payload(
+            product_id="product_1", assessment_config={"unregistered": "first"}
+        ),
+    )
+    second = snapshot(
+        "assessment_two",
+        parent_id="base",
+        kind="assessment_resolved",
+        context="assessment:assessment_2",
+        revision=1,
+        payload=valid_policy_payload(
+            product_id="product_1", assessment_config={"unregistered": "second"}
+        ),
+    )
+
+    class Repository:
+        snapshots = {"base": base, "assessment_one": first, "assessment_two": second}
+        assessments = {
+            "assessment_1": {"id": "assessment_1", "requirement_id": "requirement_1"},
+            "assessment_2": {"id": "assessment_2", "requirement_id": "requirement_2"},
+        }
+
+        def __init__(self) -> None:
+            self.decisions: list[dict] = []
+
+        def get_rd_policy_snapshot(self, snapshot_id: str) -> dict | None:
+            return self.snapshots.get(snapshot_id)
+
+        def get_requirement_assessment(self, assessment_id: str) -> dict | None:
+            return self.assessments.get(assessment_id)
+
+        def save_decision_request_record(self, record: dict) -> dict:
+            self.decisions.append(record)
+            return record
+
+    class Store:
+        def __init__(self) -> None:
+            self.repository = Repository()
+            self.index = 0
+
+        def new_id(self, prefix: str) -> str:
+            self.index += 1
+            return f"{prefix}_{self.index}"
+
+    store = Store()
+    try:
+        merge_version_rd_policy_snapshot(
+            store,
+            version_id="version_1",
+            scope_version=1,
+            source_provenance=[
+                {"final_snapshot_id": "assessment_one", "assessment_id": "assessment_1"},
+                {"final_snapshot_id": "assessment_two", "assessment_id": "assessment_2"},
+            ],
+        )
+    except PolicyResolutionError as exc:
+        assert exc.code == "RD_VERSION_POLICY_MERGE_REQUIRED"
+        assert exc.details["decision_request_id"] == store.repository.decisions[0]["id"]
+    else:
+        raise AssertionError("an unregistered merge path must not create a version snapshot")
+    assert [option["code"] for option in store.repository.decisions[0]["options_json"]] == [
+        "split_requirements",
+        "remove_requirement",
+        "reassess_with_updated_policy",
+        "cancel_start",
+    ]
+
+
 def test_version_merge_persists_requirement_assessment_source_provenance():
     class Repository:
         def __init__(self) -> None:
@@ -1127,6 +1327,15 @@ def test_version_merge_persists_requirement_assessment_source_provenance():
         resolution_revision=1,
         tightened_payload=valid_policy_payload(quality_gate_config={"max_risk": "low"}),
     )
+    first_revision_two = derive_assessment_rd_policy_snapshot(
+        store,
+        assessment_id="assessment_1",
+        parent_snapshot_id=first["id"],
+        resolution_revision=2,
+        tightened_payload=valid_policy_payload(
+            quality_gate_config={"max_risk": "low", "gates": ["security"]}
+        ),
+    )
     second = derive_assessment_rd_policy_snapshot(
         store,
         assessment_id="assessment_2",
@@ -1142,7 +1351,10 @@ def test_version_merge_persists_requirement_assessment_source_provenance():
         version_id="version_1",
         scope_version=3,
         source_provenance=[
-            {"final_snapshot_id": first["id"], "assessment_id": "assessment_1"},
+            {
+                "final_snapshot_id": first_revision_two["id"],
+                "assessment_id": "assessment_1",
+            },
             {"final_snapshot_id": second["id"], "assessment_id": "assessment_2"},
         ],
     )

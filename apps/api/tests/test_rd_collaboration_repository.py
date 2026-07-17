@@ -228,6 +228,18 @@ def test_unified_policy_route_persists_server_binding_ids_in_postgres(
         )
         assert updated.status_code == 200
         assert repository.list_rd_policy_role_bindings(policy["id"])[0]["id"] == binding["id"]
+        stale = client.patch(
+            f"/api/delivery/rd-task-executor-policies/{policy['id']}",
+            json={"expected_policy_version": 1, "changes": {"name": "stale policy"}},
+            headers=auth_headers(),
+        )
+        assert stale.status_code == 409
+        assert stale.json()["detail"]["code"] == "RD_VERSION_CONFLICT"
+        assert stale.json()["detail"]["details"] == {"current_policy_version": 2}
+        assert repository.get_rd_task_executor_policy(policy["id"])["strategy_config"]["name"] == (
+            "Postgres route strategy v2"
+        )
+        assert repository.list_rd_policy_role_bindings(policy["id"])[0]["id"] == binding["id"]
     finally:
         app.state.store = original_store
 

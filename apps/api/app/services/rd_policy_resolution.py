@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.services.rd_policy_validation import (
@@ -15,9 +16,10 @@ from app.services.rd_policy_validation import (
 
 
 class PolicyResolutionError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.details = details or {}
 
 
 # The registry is deliberately public: assessment strengthening and version merge
@@ -26,6 +28,7 @@ STRATEGY_MERGE_OPERATOR_REGISTRY = {
     "delivery_target": "ready_for_release_dominates",
     "quality_gate_config.gates": "union",
     "quality_gate_config.human_points": "union",
+    "quality_gate_config.reviewer_role_codes": "union",
     "quality_gate_config.max_risk": "minimum_risk",
     "git_config.allowlist": "intersection",
     "git_config.denylist": "union",
@@ -33,13 +36,20 @@ STRATEGY_MERGE_OPERATOR_REGISTRY = {
     "git_config.tool_trust_domains": "intersection",
     "iteration_config.budget.base_run_cap": "minimum",
     "iteration_config.budget.per_requirement_allocations": "minimum_per_requirement",
+    "autonomy_config.mode": "less_automation",
+    "autonomy_config.timeout_seconds": "minimum",
+    "autonomy_config.max_iterations": "minimum",
+    "autonomy_config.max_duration_seconds": "minimum",
+    "autonomy_config.token_budget": "minimum",
+    "autonomy_config.cost_budget": "minimum",
+    "team_config.required_role_codes": "union",
     "experience_reuse_config.enabled": "and",
     "experience_reuse_config.min_confidence": "maximum",
     "experience_reuse_config.max_capacity": "minimum",
     "experience_reuse_config.max_age_days": "minimum",
     "experience_reuse_config.repository_trust_domains": "intersection",
     "experience_reuse_config.tool_trust_domains": "intersection",
-    "experience_reuse_config.policy_compatibility": "intersection",
+    "experience_reuse_config.policy_compatibility": "strictest_compatibility",
     "experience_reuse_config.require_independent_reviewer": "or",
 }
 
@@ -143,6 +153,22 @@ def validate_snapshot_chain(repository: Any, snapshot: dict[str, Any]) -> dict[s
             )
         if current["snapshot_kind"] == "version_resolved" and parent["snapshot_kind"] != "base":
             raise PolicyResolutionError("RD_POLICY_SNAPSHOT_INVALID", "version parent must be base")
+        if current["snapshot_kind"] == "assessment_resolved":
+            assessment_context = str(current["resolution_context_key"])
+            revision = int(current["resolution_revision"])
+            if revision == 1 and parent["snapshot_kind"] != "base":
+                raise PolicyResolutionError(
+                    "RD_POLICY_SNAPSHOT_INVALID", "assessment revision one must parent base"
+                )
+            if revision == 2 and (
+                parent["snapshot_kind"] != "assessment_resolved"
+                or parent.get("resolution_context_key") != assessment_context
+                or parent.get("resolution_revision") != 1
+            ):
+                raise PolicyResolutionError(
+                    "RD_POLICY_SNAPSHOT_INVALID",
+                    "assessment revision two must parent its revision one",
+                )
         current = parent
     return payload
 
@@ -193,6 +219,20 @@ def derive_assessment_rd_policy_snapshot(
     if parent is None:
         raise PolicyResolutionError(
             "RD_POLICY_SNAPSHOT_INVALID", "assessment parent snapshot is missing"
+        )
+    _validate_snapshot(parent)
+    expected_context = f"assessment:{assessment_id}"
+    if resolution_revision == 1 and parent.get("snapshot_kind") != "base":
+        raise PolicyResolutionError(
+            "RD_POLICY_SNAPSHOT_INVALID", "assessment revision one must parent base"
+        )
+    if resolution_revision == 2 and (
+        parent.get("snapshot_kind") != "assessment_resolved"
+        or parent.get("resolution_context_key") != expected_context
+        or parent.get("resolution_revision") != 1
+    ):
+        raise PolicyResolutionError(
+            "RD_POLICY_SNAPSHOT_INVALID", "assessment revision two must parent its revision one"
         )
     base_payload = validate_snapshot_chain(repository, parent)
     candidate = validate_unified_policy_payload(tightened_payload)
@@ -257,9 +297,23 @@ def merge_version_rd_policy_snapshot(
             "RD_VERSION_POLICY_MERGE_REQUIRED",
             "sources do not share one base policy snapshot",
         )
-    payload = merge_policy_payloads(
-        [validate_snapshot_chain(repository, source) for source in typed_sources]
-    )
+    try:
+        payload = merge_policy_payloads(
+            [validate_snapshot_chain(repository, source) for source in typed_sources]
+        )
+    except PolicyResolutionError as exc:
+        decision = _persist_merge_decision_request(
+            store,
+            version_id=version_id,
+            scope_version=scope_version,
+            sources=typed_sources,
+            reason=str(exc),
+        )
+        raise PolicyResolutionError(
+            exc.code,
+            str(exc),
+            details={"decision_request_id": decision.get("id")} if decision else {},
+        ) from exc
     first = typed_sources[0]
     snapshot = {
         "id": _new_id(store, "rd_policy_snapshot"),
@@ -294,20 +348,72 @@ def merge_version_rd_policy_snapshot(
     return merge(snapshot=snapshot, sources=sources_payload) if callable(merge) else snapshot
 
 
+def _persist_merge_decision_request(
+    store: Any,
+    *,
+    version_id: str,
+    scope_version: int,
+    sources: list[dict[str, Any]],
+    reason: str,
+) -> dict[str, Any] | None:
+    """Persist the only allowed resolution choices; never invent a merged payload."""
+    repository = _repository(store)
+    save = getattr(repository, "save_decision_request_record", None)
+    payload = sources[0].get("payload_json") if sources else {}
+    product_id = str((payload or {}).get("product_id") or "").strip()
+    if not callable(save) or not product_id:
+        return None
+    now = datetime.now(UTC)
+    options = [
+        {"code": "split_requirements", "label": "Split requirements"},
+        {"code": "remove_requirement", "label": "Remove requirement"},
+        {"code": "reassess_with_updated_policy", "label": "Update policy and reassess"},
+        {"code": "cancel_start", "label": "Cancel start"},
+    ]
+    record = {
+        "id": _new_id(store, "rd_policy_merge_decision"),
+        "brain_app_id": str((payload or {}).get("brain_app_id") or "rd_brain"),
+        "product_id": product_id,
+        "subject_type": "product_version_policy_merge",
+        "subject_id": version_id,
+        "decision_type": "policy_merge",
+        "plan_version": scope_version,
+        "options_json": options,
+        "options_hash": _hash(options),
+        "evidence_json": [{"reason": reason, "source_snapshot_ids": [s["id"] for s in sources]}],
+        "recommendation_json": {"action": "reassess_with_updated_policy"},
+        "decision_actor_selector": {"role_codes": ["rd_owner"]},
+        "answer_actor_selector": {"role_codes": ["rd_owner"]},
+        "answer_schema": {"type": "object", "additionalProperties": False},
+        "status": "pending",
+        "expires_at": now + timedelta(hours=24),
+        "timeout_policy": "escalate_keep_paused",
+        "escalation_target_selector": {"role_codes": ["rd_owner"]},
+        "version": 1,
+        "created_by": sources[0].get("created_by") or "system",
+    }
+    return save(record)
+
+
 def _base_snapshot_for_source(source: dict[str, Any], get_snapshot: Any) -> dict[str, Any]:
     _validate_snapshot(source)
-    if source["snapshot_kind"] == "base":
-        return source
-    parent = get_snapshot(source.get("parent_snapshot_id")) if callable(get_snapshot) else None
-    if parent is None or parent.get("snapshot_kind") != "base":
-        raise PolicyResolutionError("RD_POLICY_SNAPSHOT_INVALID", "source base parent is invalid")
-    _validate_snapshot(parent)
-    if (
-        parent["policy_id"] != source["policy_id"]
-        or parent["policy_version"] != source["policy_version"]
-    ):
-        raise PolicyResolutionError("RD_POLICY_SNAPSHOT_INVALID", "source parent policy differs")
-    return parent
+    current = source
+    while current["snapshot_kind"] != "base":
+        parent = get_snapshot(current.get("parent_snapshot_id")) if callable(get_snapshot) else None
+        if parent is None:
+            raise PolicyResolutionError(
+                "RD_POLICY_SNAPSHOT_INVALID", "source base parent is invalid"
+            )
+        _validate_snapshot(parent)
+        if (
+            parent["policy_id"] != source["policy_id"]
+            or parent["policy_version"] != source["policy_version"]
+        ):
+            raise PolicyResolutionError(
+                "RD_POLICY_SNAPSHOT_INVALID", "source parent policy differs"
+            )
+        current = parent
+    return current
 
 
 def _source_edge_for_snapshot(
@@ -508,26 +614,21 @@ def _merge_pair(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
             merged[key] = _merge_config(
                 a,
                 b,
-                union_keys={"gates", "human_points", "reviewer_role_codes"},
-                risk_keys={"max_risk"},
+                path="quality_gate_config",
             )
         elif key == "git_config":
             merged[key] = _merge_config(
                 a,
                 b,
-                intersect_keys={
-                    "allowlist",
-                    "repository_allowlist",
-                    "repository_trust_domains",
-                    "tool_trust_domains",
-                },
-                union_keys={"denylist", "repository_denylist"},
+                path="git_config",
             )
         elif key == "experience_reuse_config":
             merged[key] = _merge_experience(a, b)
         elif key == "autonomy_config":
             merged[key] = _merge_autonomy(a, b)
-        elif key in {"team_config", "role_bindings"}:
+        elif key == "team_config":
+            merged[key] = _merge_config(a, b, path="team_config")
+        elif key == "role_bindings":
             merged[key] = _union_value(a, b)
         elif key == "iteration_config":
             merged[key] = _merge_iteration(a, b)
@@ -542,105 +643,68 @@ def _merge_config(
     left: dict[str, Any],
     right: dict[str, Any],
     *,
-    intersect_keys: set[str] | None = None,
-    union_keys: set[str] | None = None,
-    risk_keys: set[str] | None = None,
+    path: str,
 ) -> dict[str, Any]:
     if not isinstance(left, dict) or not isinstance(right, dict):
         raise PolicyResolutionError(
             "RD_VERSION_POLICY_MERGE_REQUIRED", "configuration must be objects"
         )
-    intersect_keys, union_keys, risk_keys = (
-        intersect_keys or set(),
-        union_keys or set(),
-        risk_keys or set(),
-    )
     merged: dict[str, Any] = {}
     for key in set(left) | set(right):
         a, b = left.get(key), right.get(key)
         if a == b or a is None or b is None:
             merged[key] = deepcopy(b if a is None else a)
-        elif key in intersect_keys and isinstance(a, list) and isinstance(b, list):
-            merged[key] = sorted(set(a) & set(b))
-        elif key in union_keys and isinstance(a, list) and isinstance(b, list):
-            merged[key] = sorted(set(a) | set(b))
-        elif key in risk_keys:
-            merged[key] = a if _risk_rank(a) <= _risk_rank(b) else b
-        elif (
-            key.startswith(("max_", "budget_", "timeout_", "capacity_"))
-            and isinstance(a, (int, float))
-            and isinstance(b, (int, float))
-        ):
-            merged[key] = min(a, b)
         else:
-            raise PolicyResolutionError(
-                "RD_VERSION_POLICY_MERGE_REQUIRED", f"{key} is incomparable"
-            )
+            operator = STRATEGY_MERGE_OPERATOR_REGISTRY.get(f"{path}.{key}")
+            if operator is None:
+                raise PolicyResolutionError(
+                    "RD_VERSION_POLICY_MERGE_REQUIRED", f"{path}.{key} is incomparable"
+                )
+            if operator == "intersection" and isinstance(a, list) and isinstance(b, list):
+                merged[key] = sorted(set(a) & set(b))
+            elif operator == "union" and isinstance(a, list) and isinstance(b, list):
+                merged[key] = sorted(set(a) | set(b))
+            elif operator == "minimum_risk":
+                merged[key] = a if _risk_rank(a) <= _risk_rank(b) else b
+            elif (
+                operator == "minimum"
+                and isinstance(a, (int, float))
+                and isinstance(b, (int, float))
+            ):
+                merged[key] = min(a, b)
+            elif (
+                operator == "maximum"
+                and isinstance(a, (int, float))
+                and isinstance(b, (int, float))
+            ):
+                merged[key] = max(a, b)
+            elif operator == "and":
+                merged[key] = bool(a) and bool(b)
+            elif operator == "or":
+                merged[key] = bool(a) or bool(b)
+            elif operator == "strictest_compatibility":
+                order = {"any": 0, "same_policy_schema": 1, "same_policy_version": 2}
+                if str(a) not in order or str(b) not in order:
+                    raise PolicyResolutionError(
+                        "RD_VERSION_POLICY_MERGE_REQUIRED", "policy compatibility is invalid"
+                    )
+                merged[key] = max((str(a), str(b)), key=order.__getitem__)
+            else:
+                raise PolicyResolutionError(
+                    "RD_VERSION_POLICY_MERGE_REQUIRED", f"{path}.{key} is incomparable"
+                )
     return merged
 
 
 def _merge_experience(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
-    mergeable_left = {
-        key: value
-        for key, value in left.items()
-        if key
-        not in {
-            "enabled",
-            "min_confidence",
-            "max_capacity",
-            "max_age_days",
-            "require_independent_reviewer",
-            "policy_compatibility",
-        }
-    }
-    mergeable_right = {
-        key: value
-        for key, value in right.items()
-        if key
-        not in {
-            "enabled",
-            "min_confidence",
-            "max_capacity",
-            "max_age_days",
-            "require_independent_reviewer",
-            "policy_compatibility",
-        }
-    }
-    merged = _merge_config(
-        mergeable_left,
-        mergeable_right,
-        intersect_keys={
-            "repository_trust_domains",
-            "tool_trust_domains",
-            "policy_compatibility",
-        },
-    )
-    if "policy_compatibility" in left and "policy_compatibility" in right:
-        order = {"any": 0, "same_policy": 1, "same_policy_version": 2}
-        merged["policy_compatibility"] = max(
-            (left["policy_compatibility"], right["policy_compatibility"]),
-            key=lambda value: order.get(str(value), 99),
-        )
-    if "enabled" in left and "enabled" in right:
-        merged["enabled"] = bool(left["enabled"]) and bool(right["enabled"])
-    if "min_confidence" in left and "min_confidence" in right:
-        merged["min_confidence"] = max(
-            float(left["min_confidence"]), float(right["min_confidence"])
-        )
-    for field in ("max_capacity", "max_age_days"):
-        if field in left and field in right:
-            merged[field] = min(left[field], right[field])
-    if "require_independent_reviewer" in left and "require_independent_reviewer" in right:
-        merged["require_independent_reviewer"] = bool(left["require_independent_reviewer"]) or bool(
-            right["require_independent_reviewer"]
-        )
-    return merged
+    return _merge_config(left, right, path="experience_reuse_config")
 
 
 def _merge_autonomy(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
     merged = _merge_config(
         {key: value for key, value in left.items() if key != "mode"},
         {key: value for key, value in right.items() if key != "mode"},
+        path="autonomy_config",
     )
     modes = {left.get("mode", "single_pass"), right.get("mode", "single_pass")}
     if not modes <= {"single_pass", "autonomous_loop"}:
@@ -653,6 +717,7 @@ def _merge_iteration(left: dict[str, Any], right: dict[str, Any]) -> dict[str, A
     merged = _merge_config(
         {key: value for key, value in left.items() if key != "budget"},
         {key: value for key, value in right.items() if key != "budget"},
+        path="iteration_config",
     )
     if "budget" not in left or "budget" not in right:
         return merged
@@ -685,5 +750,6 @@ def _union_value(left: Any, right: Any) -> Any:
         }
         return [unique[key] for key in sorted(unique)]
     if isinstance(left, dict) and isinstance(right, dict):
-        return _merge_config(left, right, union_keys=set(left) | set(right))
+        if left == right:
+            return deepcopy(left)
     raise PolicyResolutionError("RD_VERSION_POLICY_MERGE_REQUIRED", "values cannot be merged")
