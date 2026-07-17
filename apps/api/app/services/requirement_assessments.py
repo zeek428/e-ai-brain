@@ -7,7 +7,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.api.deps import api_error, require_any_permission_or_roles
-from app.core.repositories.rd_collaboration_shared import RdCollaborationVersionConflictError
+from app.core.repositories.rd_collaboration_shared import (
+    RdCollaborationRepositoryError,
+    RdCollaborationVersionConflictError,
+)
 from app.services.rd_ai_employees import qualify_ai_actor
 from app.services.rd_policy_resolution import (
     PolicyResolutionError,
@@ -15,7 +18,10 @@ from app.services.rd_policy_resolution import (
     resolve_initial_rd_policy,
 )
 from app.services.rd_role_definitions import qualify_human_actor
-from app.services.requirement_assessment_execution import create_assessment_execution
+from app.services.requirement_assessment_execution import (
+    create_assessment_execution,
+    ensure_assessment_only_execution,
+)
 from app.services.requirements import ensure_requirement_product_scope
 
 
@@ -95,6 +101,10 @@ def _save_idempotent_response(
 
 
 def _policy_error(error: PolicyResolutionError) -> Any:
+    raise api_error(409, error.code, str(error), extra=error.details)
+
+
+def _repository_error(error: RdCollaborationRepositoryError) -> Any:
     raise api_error(409, error.code, str(error), extra=error.details)
 
 
@@ -239,17 +249,21 @@ def _aggregate_policy_proposal(
     *, snapshot: dict[str, Any], opinions: list[dict[str, Any]]
 ) -> tuple[dict[str, Any], str | None, list[Any]]:
     """Accept one comparable policy proposal only; ambiguity and excess risk stay human-owned."""
+    conclusions = {
+        json.dumps(item.get("conclusion_json") or {}, sort_keys=True, separators=(",", ":"))
+        for item in opinions
+    }
     proposals = {
         json.dumps(item.get("policy_proposal_json") or {}, sort_keys=True, separators=(",", ":"))
         for item in opinions
         if item.get("policy_proposal_json")
     }
     outcomes = {str(item.get("outcome_code")) for item in opinions if item.get("outcome_code")}
-    if len(proposals) > 1 or len(outcomes) > 1:
+    if len(conclusions) > 1 or len(proposals) > 1 or len(outcomes) > 1:
         raise api_error(
             409,
             "ASSESSMENT_INCOMPARABLE_HUMAN_DECISION_REQUIRED",
-            "Required assessment opinions have incomparable policy proposals or outcomes",
+            "Required opinions have incomparable conclusions, policy proposals, or outcomes",
         )
     risk_levels = [
         str(item.get("risk_level") or (item.get("risk_summary") or {}).get("risk_level") or "none")
@@ -362,23 +376,30 @@ def start_requirement_assessment(
         user=user,
         opinion_round=1,
     )
-    save = getattr(repository, "save_assessment_bundle", None)
-    if not callable(save):
+    execute = getattr(repository, "execute_requirement_assessment_command", None)
+    if not callable(execute):
         raise api_error(503, "REPOSITORY_REQUIRED", "Assessment transaction is unavailable")
-    saved = save(assessment=assessment, opinions=opinions, executions=executions)
-    persisted = deepcopy(saved.get("assessment") or assessment)
-    persisted["initial_policy_snapshot"] = deepcopy(initial_snapshot)
-    persisted["opinions"] = deepcopy(saved.get("opinions") or opinions)
-    persisted["executions"] = deepcopy(saved.get("executions") or executions)
-    return _save_idempotent_response(
-        current_store,
-        repository,
-        assessment_id=assessment_id,
-        operation="start",
-        key=idempotency_key,
-        payload={"requirement_id": requirement["id"]},
-        actor_id=user["id"],
-        response=persisted,
+
+    def effect(transaction: Any) -> dict[str, Any]:
+        saved = transaction.save_assessment_bundle(
+            assessment=assessment, opinions=opinions, executions=executions
+        )
+        persisted = deepcopy(saved.get("assessment") or assessment)
+        persisted["initial_policy_snapshot"] = deepcopy(initial_snapshot)
+        persisted["opinions"] = deepcopy(saved.get("opinions") or opinions)
+        persisted["executions"] = deepcopy(saved.get("executions") or executions)
+        return persisted
+
+    return execute(
+        {
+            "id": _new_id(current_store, "requirement_assessment_command"),
+            "assessment_id": assessment_id,
+            "operation": "start",
+            "idempotency_key": idempotency_key or f"start:{requirement['id']}",
+            "request_hash": _request_hash({"requirement_id": requirement["id"]}),
+            "created_by": user["id"],
+        },
+        effect,
     )
 
 
@@ -481,32 +502,55 @@ def record_assessment_opinion(
         "actor_id": user["id"],
         "updated_at": datetime.now(UTC).isoformat(),
     }
-    save_opinion = getattr(repository, "update_requirement_assessment_opinion", None)
-    if not callable(save_opinion):
+    execute = getattr(repository, "execute_requirement_assessment_command", None)
+    if not callable(execute):
         raise api_error(503, "REPOSITORY_REQUIRED", "Assessment opinion transaction is unavailable")
-    saved_opinion = save_opinion(saved_opinion)
-    all_current = _assessment_opinions(repository, assessment_id)
-    current_complete = all(
-        item.get("conclusion_json")
-        for item in all_current
-        if int(item.get("opinion_round") or 1) == expected_round
+
+    def effect(transaction: Any) -> dict[str, Any]:
+        try:
+            return transaction.record_assessment_opinion(saved_opinion)
+        except RdCollaborationRepositoryError as exc:
+            _repository_error(exc)
+
+    return execute(
+        {
+            "id": _new_id(current_store, "requirement_assessment_command"),
+            "assessment_id": assessment_id,
+            "operation": "opinion",
+            "idempotency_key": payload.get("idempotency_key") or f"opinion:{opinion['id']}",
+            "request_hash": _request_hash(payload),
+            "created_by": user["id"],
+        },
+        effect,
     )
-    if current_complete and assessment.get("status") == "evaluating":
-        _update_assessment(
-            repository,
-            {**assessment, "status": "waiting_human", "updated_at": datetime.now(UTC).isoformat()},
-            expected_version=int(assessment.get("version") or 1),
-        )
-    return _save_idempotent_response(
-        current_store,
-        repository,
-        assessment_id=assessment_id,
-        operation="opinion",
-        key=payload.get("idempotency_key"),
-        payload=payload,
-        actor_id=user["id"],
-        response=saved_opinion,
-    )
+
+
+def complete_ai_assessment_execution(
+    *,
+    current_store: Any,
+    assessment_id: str,
+    execution_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Internal-only completion path for an AI-assigned assessment opinion.
+
+    The caller supplies no actor identity: the frozen execution row is the sole authority.
+    """
+    repository = _repository(current_store)
+    _assessment(repository, assessment_id)
+    get_execution = getattr(repository, "get_requirement_assessment_execution", None)
+    execution = get_execution(execution_id) if callable(get_execution) else None
+    if execution is None or execution.get("assessment_id") != assessment_id:
+        raise api_error(404, "NOT_FOUND", "Assessment execution not found")
+    ensure_assessment_only_execution(execution)
+    complete = getattr(repository, "complete_ai_assessment_execution", None)
+    if not callable(complete):
+        raise api_error(503, "REPOSITORY_REQUIRED", "AI assessment completion is unavailable")
+    try:
+        saved = complete(execution_id=execution_id, opinion=payload)
+    except RdCollaborationRepositoryError as exc:
+        _repository_error(exc)
+    return saved
 
 
 _DECISION_STATUSES = {
@@ -559,46 +603,54 @@ def decide_requirement_assessment(
         "rework_required",
     }:
         raise api_error(409, "ASSESSMENT_STATE_INVALID", "Assessment decision is not available")
+    execute = getattr(repository, "execute_requirement_assessment_command", None)
+    if not callable(execute):
+        raise api_error(
+            503, "REPOSITORY_REQUIRED", "Assessment decision transaction is unavailable"
+        )
     if action == "accept":
-        result = finalize_requirement_assessment(
-            current_store=current_store,
-            assessment_id=assessment_id,
-            expected_version=expected_version,
-            user=user,
+        return execute(
+            {
+                "id": _new_id(current_store, "requirement_assessment_command"),
+                "assessment_id": assessment_id,
+                "operation": "decision",
+                "idempotency_key": payload.get("idempotency_key") or f"decision:{expected_version}",
+                "request_hash": _request_hash(payload),
+                "created_by": user["id"],
+            },
+            lambda transaction: finalize_requirement_assessment(
+                current_store=current_store,
+                assessment_id=assessment_id,
+                expected_version=expected_version,
+                user=user,
+                transaction=transaction,
+            ),
         )
-        return _save_idempotent_response(
-            current_store,
-            repository,
-            assessment_id=assessment_id,
-            operation="decision",
-            key=payload.get("idempotency_key"),
-            payload=payload,
-            actor_id=user["id"],
-            response=result,
+    decision = {
+        **assessment,
+        "status": _DECISION_STATUSES[action],
+        "decided_by": user["id"],
+        "decision_action": action,
+        "decision_comment": payload.get("comment"),
+        "decided_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    try:
+        return execute(
+            {
+                "id": _new_id(current_store, "requirement_assessment_command"),
+                "assessment_id": assessment_id,
+                "operation": "decision",
+                "idempotency_key": payload.get("idempotency_key") or f"decision:{expected_version}",
+                "request_hash": _request_hash(payload),
+                "created_by": user["id"],
+            },
+            lambda transaction: transaction.decide_assessment(
+                decision, expected_version=expected_version
+            ),
         )
-    result = _update_assessment(
-        repository,
-        {
-            **assessment,
-            "status": _DECISION_STATUSES[action],
-            "decided_by": user["id"],
-            "decision_action": action,
-            "decision_comment": payload.get("comment"),
-            "decided_at": datetime.now(UTC).isoformat(),
-            "updated_at": datetime.now(UTC).isoformat(),
-        },
-        expected_version=expected_version,
-    )
-    return _save_idempotent_response(
-        current_store,
-        repository,
-        assessment_id=assessment_id,
-        operation="decision",
-        key=payload.get("idempotency_key"),
-        payload=payload,
-        actor_id=user["id"],
-        response=result,
-    )
+    except RdCollaborationVersionConflictError as exc:
+        raise api_error(409, exc.code, str(exc), extra=exc.details) from exc
 
 
 def finalize_requirement_assessment(
@@ -607,6 +659,7 @@ def finalize_requirement_assessment(
     assessment_id: str,
     expected_version: int,
     user: dict[str, Any],
+    transaction: Any | None = None,
 ) -> dict[str, Any]:
     """Accept only a complete compatible round and atomically approve the submitted requirement."""
     repository = _repository(current_store)
@@ -672,7 +725,7 @@ def finalize_requirement_assessment(
                 "Assessment command transaction is unavailable",
             )
 
-        def effect(transaction: Any) -> dict[str, Any]:
+        def effect(active_transaction: Any) -> dict[str, Any]:
             candidate_assessment = {
                 **assessment,
                 "policy_delta": proposal,
@@ -686,19 +739,19 @@ def finalize_requirement_assessment(
                         "product_id": _assessment_product_id(assessment),
                     },
                     assessment=candidate_assessment,
-                    repository=transaction,
+                    repository=active_transaction,
                 )
             except PolicyResolutionError as exc:
                 _policy_error(exc)
             if next_snapshot["id"] == assessment.get("strategy_snapshot_id"):
                 return {**assessment, "policy_re_evaluation_required": False}
-            next_round = current_round + 1
-            if next_round > 2:
+            if current_round > 2:
                 raise api_error(
                     409,
                     "RD_POLICY_RESOLUTION_LIMIT",
                     "At most two assessment strengthening rounds are permitted",
                 )
+            next_round = current_round + 1
             next_opinions, executions = _new_opinion_round(
                 current_store=current_store,
                 repository=repository,
@@ -712,7 +765,7 @@ def finalize_requirement_assessment(
                 user=user,
                 opinion_round=next_round,
             )
-            persisted = transaction.advance_assessment_policy_round(
+            persisted = active_transaction.advance_assessment_policy_round(
                 assessment={
                     **assessment,
                     "final_strategy_snapshot_id": next_snapshot["id"],
@@ -734,6 +787,8 @@ def finalize_requirement_assessment(
                 "executions": executions,
             }
 
+        if transaction is not None:
+            return effect(transaction)
         try:
             return execute(
                 {
@@ -761,6 +816,18 @@ def finalize_requirement_assessment(
         )
     except PolicyResolutionError as exc:
         _policy_error(exc)
+    if transaction is not None:
+        return transaction.accept_requirement_assessment(
+            {
+                **assessment,
+                "final_strategy_snapshot_id": final_snapshot["id"],
+                "strategy_snapshot_id": final_snapshot["id"],
+                "decided_by": user["id"],
+                "decided_at": datetime.now(UTC).isoformat(),
+            },
+            expected_version=expected_version,
+            requirement_id=assessment["requirement_id"],
+        )
     load_requirements = getattr(repository, "load_requirements", None)
     requirements = (
         (load_requirements() or {}).get("requirements", {}) if callable(load_requirements) else {}
@@ -794,6 +861,8 @@ def finalize_requirement_assessment(
             expected_version=expected_version,
             requirement=updated_requirement,
         )
+    except RdCollaborationRepositoryError as exc:
+        _repository_error(exc)
     except RdCollaborationVersionConflictError as exc:
         raise api_error(409, exc.code, str(exc), extra=exc.details) from exc
 
@@ -845,25 +914,27 @@ def submit_assessment_answers(
     if assessment.get("status") not in {"needs_info", "rework_required"}:
         raise api_error(409, "ASSESSMENT_STATE_INVALID", "Assessment does not require answers")
     expected_version = payload.get("expected_version")
-    advance = getattr(repository, "submit_assessment_answers", None)
-    if not callable(advance):
+    execute = getattr(repository, "execute_requirement_assessment_command", None)
+    if not callable(execute):
         raise api_error(503, "REPOSITORY_REQUIRED", "Assessment answer transaction is unavailable")
     try:
-        result = advance(
-            assessment_id=assessment_id,
-            expected_version=expected_version,
-            answers=deepcopy(payload.get("answers") or {}),
-            actor_id=user["id"],
+        return execute(
+            {
+                "id": _new_id(current_store, "requirement_assessment_command"),
+                "assessment_id": assessment_id,
+                "operation": "answers",
+                "idempotency_key": payload.get("idempotency_key") or f"answers:{expected_version}",
+                "request_hash": _request_hash(payload),
+                "created_by": user["id"],
+            },
+            lambda transaction: transaction.submit_assessment_answers(
+                assessment_id=assessment_id,
+                expected_version=expected_version,
+                answers=deepcopy(payload.get("answers") or {}),
+                actor_id=user["id"],
+            ),
         )
-        return _save_idempotent_response(
-            current_store,
-            repository,
-            assessment_id=assessment_id,
-            operation="answers",
-            key=payload.get("idempotency_key"),
-            payload=payload,
-            actor_id=user["id"],
-            response=result,
-        )
+    except RdCollaborationRepositoryError as exc:
+        _repository_error(exc)
     except RdCollaborationVersionConflictError as exc:
         raise api_error(409, exc.code, str(exc), extra=exc.details) from exc

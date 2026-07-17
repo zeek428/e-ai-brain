@@ -1834,3 +1834,156 @@ def test_assessment_command_replays_same_hash_and_rejects_conflicting_hash(
             {**command, "id": "assessment-command-2", "request_hash": "sha256:different"},
             effect,
         )
+
+
+def test_assessment_command_rolls_back_effect_when_provenance_is_invalid(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="assessment-command-rollback")
+    command = {
+        "id": "assessment-command-rollback-1",
+        "assessment_id": seeded["assessment"],
+        "operation": "answers",
+        "idempotency_key": "invalid-provenance",
+        "request_hash": "sha256:invalid-provenance",
+        "created_by": "user_admin",
+    }
+
+    def invalid_effect(_transaction):
+        raise RdCollaborationRepositoryError(
+            "ASSESSMENT_EXECUTION_REQUIRED", "typed execution provenance is required"
+        )
+
+    with pytest.raises(RdCollaborationRepositoryError, match="typed execution provenance"):
+        repository.execute_requirement_assessment_command(command, invalid_effect)
+    assert (
+        repository.get_requirement_assessment_command(
+            assessment_id=seeded["assessment"],
+            operation="answers",
+            idempotency_key="invalid-provenance",
+        )
+        is None
+    )
+
+
+def test_assessment_ai_completion_uses_frozen_pg_execution_attribution(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    from app.services.requirement_assessments import complete_ai_assessment_execution
+
+    seeded = _seed_exact_run(repository, prefix="assessment-ai-completion")
+    repository.save_rd_ai_employee_record(
+        {
+            "id": "assessment-ai-completion-ai",
+            "brain_app_id": "rd_brain",
+            "code": "assessment-ai-completion-ai",
+            "name": "Assessment AI",
+            "created_by": "user_admin",
+        }
+    )
+    repository.save_rd_executor_profile_record(
+        {
+            "id": "assessment-ai-completion-profile",
+            "brain_app_id": "rd_brain",
+            "code": "assessment-ai-completion-profile",
+            "name": "Assessment Profile",
+            "executor_type": "codex",
+            "created_by": "user_admin",
+        }
+    )
+    source_assessment = repository.get_requirement_assessment(str(seeded["assessment"]))
+    assert source_assessment is not None
+    assessment = source_assessment
+    opinion = {
+        "id": "assessment-ai-completion-opinion",
+        "assessment_id": assessment["id"],
+        "role_code": "architect",
+        "ai_employee_id": "assessment-ai-completion-ai",
+        "executor_profile_id": "assessment-ai-completion-profile",
+        "input_revision": 1,
+        "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "opinion_round": 1,
+        "conclusion_json": {},
+        "evidence_refs": [],
+        "risk_summary": {},
+        "cost_summary": {},
+        "assigned_subject_type": "ai_employee",
+        "assigned_ai_employee_id": "assessment-ai-completion-ai",
+    }
+    execution = {
+        "id": "assessment-ai-completion-execution",
+        "assessment_id": assessment["id"],
+        "opinion_id": opinion["id"],
+        "role_code": "architect",
+        "actor_type": "ai_employee",
+        "ai_employee_id": "assessment-ai-completion-ai",
+        "executor_profile_id": "assessment-ai-completion-profile",
+        "input_revision": 1,
+        "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "execution_kind": "assessment_only",
+        "side_effect_policy": "no_code_git_deploy_runner_work_item",
+        "status": "pending",
+    }
+    repository.save_assessment_bundle(
+        assessment=assessment,
+        opinions=[opinion],
+        executions=[execution],
+    )
+
+    saved = complete_ai_assessment_execution(
+        current_store=PostgresRuntimeStore(repository),
+        assessment_id=assessment["id"],
+        execution_id=execution["id"],
+        payload={"conclusion_json": {"recommendation": "accept"}, "actor_id": "forged"},
+    )
+
+    assert saved["actor_id"] == "assessment-ai-completion-ai"
+    assert repository.get_requirement_assessment_execution(execution["id"])["status"] == "completed"
+
+
+def test_assessment_api_returns_trace_envelope_for_invalid_assessment_state(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="assessment-api-envelope")
+    original_store = app.state.store
+    app.state.store = PostgresRuntimeStore(repository)
+    try:
+        response = TestClient(app).post(
+            f"/api/requirement-assessments/{seeded['assessment']}/opinions",
+            json={"role_code": "developer", "conclusion_json": {"recommendation": "accept"}},
+            headers=auth_headers(),
+        )
+        assert response.status_code == 409
+        body = response.json()
+        assert body["detail"]["code"] == "ASSESSMENT_STATE_INVALID"
+        assert response.headers["x-trace-id"]
+    finally:
+        app.state.store = original_store
+
+
+def test_assessment_public_command_replay_and_hash_conflict(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="assessment-public-command")
+    command = {
+        "id": "assessment-public-command-1",
+        "assessment_id": seeded["assessment"],
+        "operation": "opinion",
+        "idempotency_key": "public-key",
+        "request_hash": "sha256:public-one",
+        "created_by": "user_admin",
+    }
+    response = repository.execute_requirement_assessment_command(
+        command, lambda _transaction: {"status": "recorded"}
+    )
+    replay = repository.execute_requirement_assessment_command(
+        command, lambda _transaction: {"status": "mutated-again"}
+    )
+    assert response == {"status": "recorded"}
+    assert replay == {"status": "recorded", "idempotent_replay": True}
+    with pytest.raises(RdCollaborationRepositoryError) as conflict:
+        repository.execute_requirement_assessment_command(
+            {**command, "id": "assessment-public-command-2", "request_hash": "sha256:public-two"},
+            lambda _transaction: {"status": "different"},
+        )
+    assert conflict.value.code == "RD_IDEMPOTENCY_CONFLICT"

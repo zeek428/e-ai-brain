@@ -14,6 +14,7 @@ class AssessmentRepository:
     def __init__(self) -> None:
         self.assessments: dict[str, dict] = {}
         self.opinions: dict[str, dict] = {}
+        self.executions: dict[str, dict] = {}
         self.requirements: dict[str, dict] = {}
         self.commands: dict[tuple[str, str, str], dict] = {}
         self.snapshots: dict[str, dict] = {}
@@ -121,6 +122,8 @@ class AssessmentRepository:
         self.assessments[assessment["id"]] = deepcopy(assessment)
         for opinion in opinions:
             self.opinions[opinion["id"]] = deepcopy(opinion)
+        for execution in executions or []:
+            self.executions[execution["id"]] = deepcopy(execution)
         return {
             "assessment": deepcopy(assessment),
             "opinions": deepcopy(opinions),
@@ -144,6 +147,31 @@ class AssessmentRepository:
             for item in self.opinions.values()
             if item["assessment_id"] == assessment_id
         ]
+
+    def get_requirement_assessment_execution(self, execution_id: str):
+        execution = self.executions.get(execution_id)
+        return deepcopy(execution) if execution else None
+
+    def complete_ai_assessment_execution(self, *, execution_id: str, opinion: dict):
+        execution = self.executions[execution_id]
+        if (
+            execution.get("actor_type") != "ai_employee"
+            or execution.get("execution_kind") != "assessment_only"
+            or execution.get("side_effect_policy") != "no_code_git_deploy_runner_work_item"
+        ):
+            from app.core.repositories.rd_collaboration_shared import RdCollaborationRepositoryError
+
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_INVALID", "execution is not assessment-only"
+            )
+        saved = {
+            **self.opinions[execution["opinion_id"]],
+            **deepcopy(opinion),
+            "actor_id": execution["ai_employee_id"],
+        }
+        self.opinions[execution["opinion_id"]] = saved
+        self.executions[execution_id] = {**execution, "status": "completed"}
+        return deepcopy(saved)
 
     def update_requirement_assessment(
         self, assessment: dict, *, expected_version: int, requirement=None, audit_event=None
@@ -212,6 +240,35 @@ class AssessmentRepository:
         repository = self
 
         class Transaction:
+            def save_assessment_bundle(self, *, assessment: dict, opinions: list, executions=None):
+                return repository.save_assessment_bundle(
+                    assessment=assessment, opinions=opinions, executions=executions
+                )
+
+            def record_assessment_opinion(self, opinion: dict):
+                return repository.update_requirement_assessment_opinion(opinion)
+
+            def submit_assessment_answers(self, **kwargs):
+                return repository.submit_assessment_answers(**kwargs)
+
+            def decide_assessment(self, assessment: dict, *, expected_version: int):
+                return repository.update_requirement_assessment(
+                    assessment, expected_version=expected_version
+                )
+
+            def accept_requirement_assessment(
+                self,
+                assessment: dict,
+                *,
+                expected_version: int,
+                requirement_id: str,
+            ):
+                return repository.update_requirement_assessment(
+                    {**assessment, "status": "accepted"},
+                    expected_version=expected_version,
+                    requirement={**repository.requirements[requirement_id], "status": "approved"},
+                )
+
             def get_rd_policy_snapshot(self, snapshot_id: str):
                 return repository.get_rd_policy_snapshot(snapshot_id)
 
@@ -390,6 +447,21 @@ def test_policy_proposal_aggregation_fails_closed_for_incomparable_or_excess_ris
     else:
         raise AssertionError("risk above the frozen policy limit must require a human decision")
 
+    try:
+        _aggregate_policy_proposal(
+            snapshot=snapshot,
+            opinions=[
+                {"role_code": "architect", "conclusion_json": {"recommendation": "accept"}},
+                {"role_code": "reviewer", "conclusion_json": {"recommendation": "reject"}},
+            ],
+        )
+    except Exception as exc:
+        assert getattr(exc, "detail", {}).get("code") == (
+            "ASSESSMENT_INCOMPARABLE_HUMAN_DECISION_REQUIRED"
+        )
+    else:
+        raise AssertionError("conflicting required conclusions must require a human decision")
+
 
 def test_policy_proposal_creates_versioned_snapshot_and_requires_second_round():
     from app.services.rd_policy_resolution import resolve_initial_rd_policy
@@ -448,6 +520,81 @@ def test_policy_proposal_creates_versioned_snapshot_and_requires_second_round():
     assert result["opinion_round"] == 2
     assert result["strategy_snapshot_id"] != base["id"]
     assert result["opinions"][0]["strategy_snapshot_id"] == result["strategy_snapshot_id"]
+
+    second_proposal = deepcopy(
+        repository.get_rd_policy_snapshot(result["strategy_snapshot_id"])["payload_json"]
+    )
+    second_proposal["quality_gate_config"]["max_risk"] = "low"
+    repository.opinions[result["opinions"][0]["id"]] = {
+        **result["opinions"][0],
+        "conclusion_json": {"recommendation": "accept"},
+        "policy_proposal_json": second_proposal,
+        "outcome_code": "accept",
+        "risk_level": "low",
+    }
+    second_result = finalize_requirement_assessment(
+        current_store=store, assessment_id="assessment_1", expected_version=2, user=owner
+    )
+
+    assert second_result["policy_re_evaluation_required"] is True
+    assert second_result["opinion_round"] == 3
+    assert (
+        repository.get_rd_policy_snapshot(second_result["strategy_snapshot_id"])[
+            "resolution_revision"
+        ]
+        == 2
+    )
+
+
+def test_ai_assessment_completion_uses_frozen_execution_and_rejects_side_effects():
+    from app.services.requirement_assessments import (
+        complete_ai_assessment_execution,
+        start_requirement_assessment,
+    )
+
+    store = RepositoryStore(AssessmentRepository())
+    owner = {
+        "id": "user_owner",
+        "roles": ["product_owner"],
+        "permissions": [],
+        "scope_summary": [
+            {"scope_type": "product", "scope_id": "product_1", "access_level": "write"}
+        ],
+    }
+    assessment = start_requirement_assessment(
+        current_store=store,
+        requirement={
+            "id": "requirement_1",
+            "brain_app_id": "rd_brain",
+            "product_id": "product_1",
+            "status": "submitted",
+        },
+        user=owner,
+    )
+    execution = assessment["executions"][0]
+    completed = complete_ai_assessment_execution(
+        current_store=store,
+        assessment_id=assessment["id"],
+        execution_id=execution["id"],
+        payload={"conclusion_json": {"recommendation": "accept"}},
+    )
+
+    assert completed["actor_id"] == "ai_architect"
+    assert store.repository.executions[execution["id"]]["status"] == "completed"
+
+    invalid_execution = {**execution, "id": "unsafe-execution", "execution_kind": "runner"}
+    store.repository.executions[invalid_execution["id"]] = invalid_execution
+    try:
+        complete_ai_assessment_execution(
+            current_store=store,
+            assessment_id=assessment["id"],
+            execution_id=invalid_execution["id"],
+            payload={"conclusion_json": {"recommendation": "accept"}},
+        )
+    except Exception as exc:
+        assert getattr(exc, "detail", {}).get("code") == "ASSESSMENT_EXECUTION_INVALID"
+    else:
+        raise AssertionError("non-assessment execution must be rejected")
 
 
 def test_assessment_opinion_rejects_ai_employee_bearer_identity():

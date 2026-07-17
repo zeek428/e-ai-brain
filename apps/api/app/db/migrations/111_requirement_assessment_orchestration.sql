@@ -117,3 +117,9 @@ ALTER TABLE requirement_assessment_commands
 
 CREATE INDEX IF NOT EXISTS idx_requirement_assessment_commands_lookup
   ON requirement_assessment_commands (assessment_id, operation, created_at DESC);
+
+ALTER TABLE requirement_assessment_commands
+  DROP CONSTRAINT IF EXISTS requirement_assessment_commands_assessment_id_fkey,
+  ADD CONSTRAINT requirement_assessment_commands_assessment_id_fkey
+  FOREIGN KEY (assessment_id) REFERENCES requirement_assessments(id)
+  ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;

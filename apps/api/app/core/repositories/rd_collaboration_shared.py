@@ -564,6 +564,155 @@ class RdCollaborationTransaction:
             )
         return persisted
 
+    def record_assessment_opinion(self, opinion: dict[str, Any]) -> dict[str, Any]:
+        """Conditionally persist one frozen human opinion and advance ready state in this tx."""
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessment_opinions opinion SET
+              conclusion_json = %s::jsonb, evidence_refs = %s::jsonb, confidence = %s,
+              risk_summary = %s::jsonb, cost_summary = %s::jsonb, actor_id = %s,
+              policy_proposal_json = %s::jsonb, outcome_code = %s, risk_level = %s,
+              updated_at = now()
+            FROM requirement_assessments assessment
+            WHERE opinion.id = %s AND assessment.id = opinion.assessment_id
+              AND assessment.opinion_round = opinion.opinion_round
+              AND assessment.strategy_snapshot_id = opinion.strategy_snapshot_id
+              AND opinion.assigned_subject_type = 'human_user'
+              AND opinion.assigned_user_id = %s AND opinion.conclusion_json = '{}'::jsonb
+            RETURNING opinion.*
+            """,
+            (
+                Jsonb(opinion.get("conclusion_json", {})),
+                Jsonb(opinion.get("evidence_refs", [])),
+                opinion.get("confidence"),
+                Jsonb(opinion.get("risk_summary", {})),
+                Jsonb(opinion.get("cost_summary", {})),
+                opinion["actor_id"],
+                Jsonb(opinion.get("policy_proposal_json", {})),
+                opinion.get("outcome_code"),
+                opinion.get("risk_level"),
+                opinion["id"],
+                opinion["actor_id"],
+            ),
+        )
+        saved = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if saved is None:
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_OPINION_CONFLICT", "Opinion is stale or no longer eligible"
+            )
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessments assessment SET status = 'waiting_human',
+              version = version + 1, updated_at = now()
+            WHERE assessment.id = %s AND assessment.status = 'evaluating'
+              AND NOT EXISTS (
+                SELECT 1 FROM requirement_assessment_opinions pending
+                WHERE pending.assessment_id = assessment.id
+                  AND pending.opinion_round = assessment.opinion_round
+                  AND pending.conclusion_json = '{}'::jsonb
+              )
+            """,
+            (saved["assessment_id"],),
+        )
+        return saved
+
+    def submit_assessment_answers(
+        self, *, assessment_id: str, expected_version: int, answers: dict[str, Any], actor_id: str
+    ) -> dict[str, Any]:
+        """Cursor-scoped answer command; reject missing execution provenance before writes."""
+        self.cursor.execute(
+            "SELECT * FROM requirement_assessments WHERE id = %s FOR UPDATE", (assessment_id,)
+        )
+        assessment = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if assessment is None:
+            raise RdCollaborationRepositoryError("NOT_FOUND", "Assessment not found")
+        if int(assessment["version"]) != expected_version:
+            raise RdCollaborationVersionConflictError(int(assessment["version"]))
+        next_round = int(assessment.get("opinion_round") or 1) + 1
+        self.cursor.execute(
+            "SELECT * FROM requirement_assessment_opinions "
+            "WHERE assessment_id = %s AND opinion_round = %s",
+            (assessment_id, next_round - 1),
+        )
+        prior = [
+            self._repository._row(cursor=self.cursor, row=row) for row in self.cursor.fetchall()
+        ]
+        if not prior or any(
+            item is None or not item.get("assigned_subject_type") or not item.get("execution_id")
+            for item in prior
+        ):
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_REQUIRED",
+                "Answer re-round requires typed execution provenance",
+            )
+        # Delegate the already cursor-safe implementation after its precondition has been proved.
+        return self._repository._submit_assessment_answers_cursor(
+            self.cursor,
+            assessment_id=assessment_id,
+            expected_version=expected_version,
+            answers=answers,
+            actor_id=actor_id,
+        )
+
+    def decide_assessment(
+        self, assessment: dict[str, Any], *, expected_version: int
+    ) -> dict[str, Any]:
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessments SET status = %s, decided_by = %s,
+              decision_action = %s, decision_comment = %s, decided_at = %s::timestamptz,
+              version = version + 1, updated_at = now()
+            WHERE id = %s AND version = %s RETURNING *
+            """,
+            (
+                assessment["status"],
+                assessment.get("decided_by"),
+                assessment.get("decision_action"),
+                assessment.get("decision_comment"),
+                assessment.get("decided_at"),
+                assessment["id"],
+                expected_version,
+            ),
+        )
+        saved = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if saved is None:
+            raise RdCollaborationVersionConflictError(expected_version)
+        return saved
+
+    def accept_requirement_assessment(
+        self, assessment: dict[str, Any], *, expected_version: int, requirement_id: str
+    ) -> dict[str, Any]:
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessments SET status = 'accepted',
+              final_strategy_snapshot_id = %s, strategy_snapshot_id = %s,
+              decided_by = %s, decided_at = %s::timestamptz, version = version + 1,
+              updated_at = now()
+            WHERE id = %s AND version = %s RETURNING *
+            """,
+            (
+                assessment["final_strategy_snapshot_id"],
+                assessment["strategy_snapshot_id"],
+                assessment["decided_by"],
+                assessment["decided_at"],
+                assessment["id"],
+                expected_version,
+            ),
+        )
+        saved = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if saved is None:
+            raise RdCollaborationVersionConflictError(expected_version)
+        self.cursor.execute(
+            "UPDATE requirements SET status = 'approved', updated_at = now() "
+            "WHERE id = %s AND status = 'submitted' RETURNING id",
+            (requirement_id,),
+        )
+        if self.cursor.fetchone() is None:
+            raise RdCollaborationRepositoryError(
+                "REQUIREMENT_STATE_INVALID", "Requirement must still be submitted"
+            )
+        return saved
+
     def create_collaboration_run_with_exact_scope(
         self,
         *,

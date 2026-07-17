@@ -2807,6 +2807,14 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
     def update_requirement_assessment_opinion(self, opinion: dict[str, Any]) -> dict[str, Any]:
         return self._requirement_read_repository.update_requirement_assessment_opinion(opinion)
 
+    def complete_ai_assessment_execution(
+        self, *, execution_id: str, opinion: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._requirement_read_repository.complete_ai_assessment_execution(
+            execution_id=execution_id,
+            opinion=opinion,
+        )
+
     def submit_assessment_answers(
         self,
         *,

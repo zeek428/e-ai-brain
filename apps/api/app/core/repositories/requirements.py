@@ -195,6 +195,76 @@ class RequirementReadRepository:
                     )
                 return saved
 
+    def complete_ai_assessment_execution(
+        self, *, execution_id: str, opinion: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Complete only the frozen AI assessment execution and its one empty opinion."""
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM requirement_assessment_executions WHERE id = %s FOR UPDATE",
+                    (execution_id,),
+                )
+                execution = _cursor_row(cursor, cursor.fetchone())
+                if (
+                    execution is None
+                    or execution.get("actor_type") != "ai_employee"
+                    or execution.get("status") != "pending"
+                    or execution.get("execution_kind") != "assessment_only"
+                    or execution.get("side_effect_policy") != "no_code_git_deploy_runner_work_item"
+                ):
+                    raise RdCollaborationRepositoryError(
+                        "ASSESSMENT_EXECUTION_INVALID",
+                        "AI assessment execution is not an eligible assessment-only execution",
+                    )
+                cursor.execute(
+                    """
+                    UPDATE requirement_assessment_opinions opinion SET
+                      conclusion_json = %s::jsonb, evidence_refs = %s::jsonb,
+                      confidence = %s, risk_summary = %s::jsonb, cost_summary = %s::jsonb,
+                      actor_id = %s, policy_proposal_json = %s::jsonb,
+                      outcome_code = %s, risk_level = %s, updated_at = now()
+                    FROM requirement_assessments assessment
+                    WHERE opinion.id = %s
+                      AND opinion.execution_id = %s
+                      AND assessment.id = opinion.assessment_id
+                      AND assessment.opinion_round = opinion.opinion_round
+                      AND assessment.strategy_snapshot_id = opinion.strategy_snapshot_id
+                      AND opinion.assigned_subject_type = 'ai_employee'
+                      AND opinion.assigned_ai_employee_id = %s
+                      AND opinion.executor_profile_id = %s
+                      AND opinion.conclusion_json = '{}'::jsonb
+                    RETURNING opinion.*
+                    """,
+                    (
+                        json.dumps(opinion.get("conclusion_json", {})),
+                        json.dumps(opinion.get("evidence_refs", [])),
+                        opinion.get("confidence"),
+                        json.dumps(opinion.get("risk_summary", {})),
+                        json.dumps(opinion.get("cost_summary", {})),
+                        execution["ai_employee_id"],
+                        json.dumps(opinion.get("policy_proposal_json", {})),
+                        opinion.get("outcome_code"),
+                        opinion.get("risk_level"),
+                        execution["opinion_id"],
+                        execution_id,
+                        execution["ai_employee_id"],
+                        execution["executor_profile_id"],
+                    ),
+                )
+                saved = _cursor_row(cursor, cursor.fetchone())
+                if saved is None:
+                    raise RdCollaborationRepositoryError(
+                        "ASSESSMENT_OPINION_CONFLICT",
+                        "AI assessment opinion is stale or no longer assigned to this execution",
+                    )
+                cursor.execute(
+                    "UPDATE requirement_assessment_executions "
+                    "SET status = 'completed', updated_at = now() WHERE id = %s",
+                    (execution_id,),
+                )
+                return saved
+
     def submit_assessment_answers(
         self,
         *,
@@ -206,91 +276,153 @@ class RequirementReadRepository:
         """Advance requirement and assessment revisions together, then reopen all opinions."""
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT * FROM requirement_assessments WHERE id = %s FOR UPDATE",
-                    (assessment_id,),
+                return self._submit_assessment_answers_cursor(
+                    cursor,
+                    assessment_id=assessment_id,
+                    expected_version=expected_version,
+                    answers=answers,
+                    actor_id=actor_id,
                 )
-                assessment = _cursor_row(cursor, cursor.fetchone())
-                if assessment is None:
-                    raise KeyError(assessment_id)
-                if int(assessment.get("version") or 1) != expected_version:
-                    raise RdCollaborationVersionConflictError(assessment.get("version"))
-                cursor.execute(
-                    """
-                    UPDATE requirements
-                    SET assessment_revision = assessment_revision + 1, updated_at = now()
-                    WHERE id = %s RETURNING assessment_revision
-                    """,
-                    (assessment["requirement_id"],),
+
+    def _submit_assessment_answers_cursor(
+        self,
+        cursor: Any,
+        *,
+        assessment_id: str,
+        expected_version: int,
+        answers: dict[str, Any],
+        actor_id: str,
+    ) -> dict[str, Any]:
+        cursor.execute(
+            "SELECT * FROM requirement_assessments WHERE id = %s FOR UPDATE",
+            (assessment_id,),
+        )
+        assessment = _cursor_row(cursor, cursor.fetchone())
+        if assessment is None:
+            raise KeyError(assessment_id)
+        if int(assessment.get("version") or 1) != expected_version:
+            raise RdCollaborationVersionConflictError(assessment.get("version"))
+        cursor.execute(
+            """
+            UPDATE requirements
+            SET assessment_revision = assessment_revision + 1, updated_at = now()
+            WHERE id = %s RETURNING assessment_revision
+            """,
+            (assessment["requirement_id"],),
+        )
+        requirement_row = cursor.fetchone()
+        if requirement_row is None:
+            raise KeyError(assessment["requirement_id"])
+        next_revision = int(requirement_row[0])
+        next_round = int(assessment.get("opinion_round") or 1) + 1
+        cursor.execute(
+            """
+            INSERT INTO requirement_assessment_answer_revisions (
+              id, assessment_id, requirement_id, requirement_revision, opinion_round,
+              answers_json, actor_id
+            ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)
+            """,
+            (
+                f"{assessment_id}:answer:{next_revision}",
+                assessment_id,
+                assessment["requirement_id"],
+                next_revision,
+                next_round,
+                json.dumps(answers),
+                actor_id,
+            ),
+        )
+        cursor.execute(
+            """
+            SELECT * FROM requirement_assessment_opinions
+            WHERE assessment_id = %s AND opinion_round = %s
+            ORDER BY role_code, id
+            """,
+            (assessment_id, next_round - 1),
+        )
+        prior_opinions = [_cursor_row(cursor, row) for row in cursor.fetchall()]
+        for prior in prior_opinions:
+            if prior is None:
+                continue
+            cursor.execute(
+                """
+                INSERT INTO requirement_assessment_opinions (
+                  id, assessment_id, role_code, ai_employee_id, executor_profile_id,
+                  input_revision, strategy_snapshot_id, opinion_round, conclusion_json,
+                  evidence_refs, risk_summary, cost_summary, candidate_human_user_ids,
+                  assigned_subject_type, assigned_user_id, assigned_ai_employee_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '{}'::jsonb, '[]'::jsonb,
+                          '{}'::jsonb, '{}'::jsonb, %s::jsonb, %s, %s, %s)
+                """,
+                (
+                    f"{assessment_id}:opinion:{prior['role_code']}:{next_round}",
+                    assessment_id,
+                    prior["role_code"],
+                    prior.get("ai_employee_id"),
+                    prior.get("executor_profile_id"),
+                    next_revision,
+                    assessment["final_strategy_snapshot_id"],
+                    next_round,
+                    json.dumps(prior.get("candidate_human_user_ids") or []),
+                    prior.get("assigned_subject_type"),
+                    prior.get("assigned_user_id"),
+                    prior.get("assigned_ai_employee_id"),
+                ),
+            )
+            cursor.execute(
+                """
+                SELECT * FROM requirement_assessment_executions
+                WHERE opinion_id = %s
+                """,
+                (prior["id"],),
+            )
+            execution = _cursor_row(cursor, cursor.fetchone())
+            if execution is None:
+                raise RdCollaborationRepositoryError(
+                    "ASSESSMENT_EXECUTION_REQUIRED",
+                    "Every regenerated assessment opinion requires frozen execution provenance",
                 )
-                requirement_row = cursor.fetchone()
-                if requirement_row is None:
-                    raise KeyError(assessment["requirement_id"])
-                next_revision = int(requirement_row[0])
-                next_round = int(assessment.get("opinion_round") or 1) + 1
-                cursor.execute(
-                    """
-                    INSERT INTO requirement_assessment_answer_revisions (
-                      id, assessment_id, requirement_id, requirement_revision, opinion_round,
-                      answers_json, actor_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)
-                    """,
-                    (
-                        f"{assessment_id}:answer:{next_revision}",
-                        assessment_id,
-                        assessment["requirement_id"],
-                        next_revision,
-                        next_round,
-                        json.dumps(answers),
-                        actor_id,
-                    ),
-                )
-                cursor.execute(
-                    """
-                    SELECT * FROM requirement_assessment_opinions
-                    WHERE assessment_id = %s AND opinion_round = %s
-                    ORDER BY role_code, id
-                    """,
-                    (assessment_id, next_round - 1),
-                )
-                prior_opinions = [_cursor_row(cursor, row) for row in cursor.fetchall()]
-                for prior in prior_opinions:
-                    if prior is None:
-                        continue
-                    cursor.execute(
-                        """
-                        INSERT INTO requirement_assessment_opinions (
-                          id, assessment_id, role_code, ai_employee_id, executor_profile_id,
-                          input_revision, strategy_snapshot_id, opinion_round, conclusion_json,
-                          evidence_refs, risk_summary, cost_summary, candidate_human_user_ids
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '{}'::jsonb, '[]'::jsonb,
-                                  '{}'::jsonb, '{}'::jsonb, %s::jsonb)
-                        """,
-                        (
-                            f"{assessment_id}:opinion:{prior['role_code']}:{next_round}",
-                            assessment_id,
-                            prior["role_code"],
-                            prior.get("ai_employee_id"),
-                            prior.get("executor_profile_id"),
-                            next_revision,
-                            assessment["final_strategy_snapshot_id"],
-                            next_round,
-                            json.dumps(prior.get("candidate_human_user_ids") or []),
-                        ),
-                    )
-                structured = dict(assessment.get("structured_assessment") or {})
-                structured["answers"] = answers
-                structured["answers_actor_id"] = actor_id
-                cursor.execute(
-                    """
-                    UPDATE requirement_assessments SET
-                      requirement_revision = %s, opinion_round = %s, status = 'evaluating',
-                      structured_assessment = %s::jsonb, version = version + 1, updated_at = now()
-                    WHERE id = %s RETURNING *
-                    """,
-                    (next_revision, next_round, json.dumps(structured), assessment_id),
-                )
-                return _cursor_row(cursor, cursor.fetchone()) or assessment
+            next_opinion_id = f"{assessment_id}:opinion:{prior['role_code']}:{next_round}"
+            next_execution_id = f"{assessment_id}:execution:{prior['role_code']}:{next_round}"
+            cursor.execute(
+                """
+                INSERT INTO requirement_assessment_executions (
+                  id, assessment_id, opinion_id, role_code, actor_type, human_user_id,
+                  ai_employee_id, executor_profile_id, input_revision, strategy_snapshot_id,
+                  execution_kind, side_effect_policy, status
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'assessment_only',
+                          'no_code_git_deploy_runner_work_item', 'pending')
+                """,
+                (
+                    next_execution_id,
+                    assessment_id,
+                    next_opinion_id,
+                    prior["role_code"],
+                    execution["actor_type"],
+                    execution.get("human_user_id"),
+                    execution.get("ai_employee_id"),
+                    execution.get("executor_profile_id"),
+                    next_revision,
+                    assessment["final_strategy_snapshot_id"],
+                ),
+            )
+            cursor.execute(
+                "UPDATE requirement_assessment_opinions SET execution_id = %s WHERE id = %s",
+                (next_execution_id, next_opinion_id),
+            )
+        structured = dict(assessment.get("structured_assessment") or {})
+        structured["answers"] = answers
+        structured["answers_actor_id"] = actor_id
+        cursor.execute(
+            """
+            UPDATE requirement_assessments SET
+              requirement_revision = %s, opinion_round = %s, status = 'evaluating',
+              structured_assessment = %s::jsonb, version = version + 1, updated_at = now()
+            WHERE id = %s RETURNING *
+            """,
+            (next_revision, next_round, json.dumps(structured), assessment_id),
+        )
+        return _cursor_row(cursor, cursor.fetchone()) or assessment
 
     def get_requirement_assessment_command(
         self, *, assessment_id: str, operation: str, idempotency_key: str

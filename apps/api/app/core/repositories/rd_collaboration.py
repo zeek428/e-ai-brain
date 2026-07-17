@@ -304,6 +304,9 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
             order_by=("opinion_round", "role_code", "id"),
         )
 
+    def get_requirement_assessment_execution(self, record_id: str) -> dict[str, Any] | None:
+        return self._get("requirement_assessment_executions", record_id)
+
     def get_rd_collaboration_run(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_collaboration_runs", record_id)
 

@@ -5,9 +5,10 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.deps import CurrentUser, store
+from app.api.deps import CurrentUser, require_any_permission_or_roles, store
 from app.core.trace import envelope, get_trace_id
 from app.services.requirement_assessments import (
+    complete_ai_assessment_execution,
     decide_requirement_assessment,
     get_latest_requirement_assessment,
     record_assessment_opinion,
@@ -50,6 +51,10 @@ class AssessmentAnswersRequest(BaseModel):
     answers: dict[str, Any]
     expected_version: int = Field(ge=1)
     idempotency_key: str | None = Field(default=None, max_length=200)
+
+
+class AssessmentAiExecutionCompletionRequest(AssessmentOpinionRequest):
+    """Internal executor payload; actor identity is read from the frozen execution."""
 
 
 class AssessmentDecisionRequest(BaseModel):
@@ -123,6 +128,28 @@ def submit_answers(
             assessment_id=assessment_id,
             payload=payload.model_dump(),
             user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@assessments_router.post("/{assessment_id}/executions/{execution_id}/complete")
+def complete_ai_execution(
+    assessment_id: str,
+    execution_id: str,
+    request: Request,
+    payload: AssessmentAiExecutionCompletionRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    # The authenticated executor boundary may invoke completion, while completion
+    # itself verifies the frozen AI/executor record rather than user input.
+    require_any_permission_or_roles(user, {"system.manage"}, {"admin"})
+    return envelope(
+        complete_ai_assessment_execution(
+            current_store=requirement_write_store(store(request)),
+            assessment_id=assessment_id,
+            execution_id=execution_id,
+            payload=payload.model_dump(exclude={"idempotency_key", "role_code"}),
         ),
         get_trace_id(request),
     )
