@@ -10,14 +10,18 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from fastapi.testclient import TestClient
 from psycopg import sql
 
 from app.core.persistence import PostgresSnapshotRepository
+from app.core.persistence_runtime import PostgresRuntimeStore
 from app.core.repositories.rd_collaboration import (
     RdCollaborationReadRepository,
     RdCollaborationRepositoryError,
     RdCollaborationVersionConflictError,
 )
+from app.main import app
+from tests.test_technical_solution_export import auth_headers
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations"
 DEFAULT_POSTGRES_ADMIN_URL = "postgresql://ai_brain:ai_brain_password@127.0.0.1:5432/postgres"
@@ -181,6 +185,51 @@ def test_unified_policy_transaction_persists_strategy_and_reconciles_bindings(
     assert [
         item["role_code"] for item in repository.list_rd_policy_role_bindings(updated["id"])
     ] == ["tester"]
+
+
+def test_unified_policy_route_persists_server_binding_ids_in_postgres(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    original_store = app.state.store
+    app.state.store = PostgresRuntimeStore(repository)
+    client = TestClient(app)
+    payload = {
+        "name": "Postgres route strategy",
+        "brain_app_id": "rd_brain",
+        "status": "active",
+        "matching_config": {"task_types": ["development_planning"]},
+        "assessment_config": {},
+        "iteration_config": {},
+        "delivery_target": "ready_for_release",
+        "team_config": {"required_role_codes": ["developer"]},
+        "autonomy_config": {},
+        "quality_gate_config": {},
+        "git_config": {},
+        "experience_reuse_config": {},
+        "deployment_config": {},
+        "role_bindings": [{"role_code": "developer", "actor_mode": "ai", "status": "active"}],
+    }
+    try:
+        created = client.post(
+            "/api/delivery/rd-task-executor-policies", json=payload, headers=auth_headers()
+        )
+        assert created.status_code == 200
+        policy = created.json()["data"]["policy"]
+        binding = repository.list_rd_policy_role_bindings(policy["id"])[0]
+        assert binding["id"] == f"rd_policy_binding_{policy['id']}_developer"
+        assert (
+            repository.get_rd_task_executor_policy(policy["id"])["strategy_config"]["name"]
+            == payload["name"]
+        )
+        updated = client.patch(
+            f"/api/delivery/rd-task-executor-policies/{policy['id']}",
+            json={"expected_policy_version": 1, "changes": {"name": "Postgres route strategy v2"}},
+            headers=auth_headers(),
+        )
+        assert updated.status_code == 200
+        assert repository.list_rd_policy_role_bindings(policy["id"])[0]["id"] == binding["id"]
+    finally:
+        app.state.store = original_store
 
 
 def _base_snapshot(policy: dict[str, object], *, prefix: str) -> dict[str, object]:

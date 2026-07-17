@@ -340,6 +340,22 @@ def _policy_public(current_store: Any, policy: dict[str, Any]) -> dict[str, Any]
     if unified is not None:
         public.update(unified)
         public["policy_version"] = int(policy.get("policy_version") or 1)
+        profiles = {
+            binding.get("primary_executor_profile_id")
+            for binding in public["role_bindings"]
+            if binding.get("primary_executor_profile_id")
+        }
+        get_profile = getattr(repository, "get_rd_executor_profile", None)
+        public["executor_types"] = sorted(
+            {
+                profile.get("executor_type")
+                for profile_id in profiles
+                if callable(get_profile)
+                and (profile := get_profile(profile_id)) is not None
+                and profile.get("status") == "active"
+                and profile.get("executor_type")
+            }
+        )
         return public
     public["autonomy_mode"] = _ensure_autonomy_mode(public.get("autonomy_mode"))
     public["auto_merge_risk_threshold"] = _ensure_auto_merge_risk_threshold(
@@ -519,7 +535,10 @@ def list_rd_task_executor_policies_response(
         if (product_id is None or policy.get("product_id") == product_id)
         and (status is None or policy.get("status") == status)
         and (task_type is None or policy.get("task_type") == task_type)
-        and (executor_type is None or policy.get("executor_type") == executor_type)
+        and (
+            executor_type is None
+            or executor_type in policy.get("executor_types", [policy.get("executor_type")])
+        )
     ]
     policies = [
         policy
@@ -819,7 +838,7 @@ def create_rd_task_executor_policy_response(
         )
     except RdCollaborationRepositoryError as exc:
         raise api_error(409, exc.code, str(exc), exc.details) from exc
-    return _policy_public(current_store, persisted)
+    return {"policy": _policy_public(current_store, persisted)}
 
 
 def patch_rd_task_executor_policy_response(
@@ -878,7 +897,7 @@ def patch_rd_task_executor_policy_response(
         raise api_error(409, exc.code, str(exc), exc.details) from exc
     except RdCollaborationRepositoryError as exc:
         raise api_error(409, exc.code, str(exc), exc.details) from exc
-    return _policy_public(current_store, persisted)
+    return {"policy": _policy_public(current_store, persisted)}
 
 
 def delete_rd_task_executor_policy_response(
@@ -923,7 +942,16 @@ def _matching_policies(current_store: Any, task: dict[str, Any]) -> list[dict[st
         policy
         for policy in _read_memory_dict(current_store, "rd_task_executor_policies").values()
         if policy.get("status") == "active"
-        and policy.get("task_type") == task.get("task_type")
+        and (
+            (
+                unified := unified_policy_from_record(
+                    policy,
+                    role_bindings=_policy_role_bindings(current_store, str(policy.get("id") or "")),
+                )
+            )
+            is not None
+            and task.get("task_type") in unified["matching_config"].get("task_types", [])
+        )
         and (policy.get("brain_app_id") or DEFAULT_BRAIN_APP_ID) == brain_app_id
         and (policy.get("product_id") in {None, "", product_id})
     ]

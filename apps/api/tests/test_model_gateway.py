@@ -191,7 +191,7 @@ def test_ai_task_explicit_deterministic_start_bypasses_executor_policy(monkeypat
             ],
         },
         headers=headers,
-    ).json()["data"]
+    ).json()["data"]["policy"]
 
     response = client.post(
         f"/api/ai-tasks/{task['task_id']}/start",

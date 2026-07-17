@@ -210,7 +210,14 @@ class TaskReadRepository:
             )
             params.extend([task_type, task_type])
         if executor_type is not None:
-            clauses.append("policy.executor_type = %s")
+            clauses.append(
+                "EXISTS ("
+                "SELECT 1 FROM rd_task_executor_policy_role_bindings AS binding "
+                "JOIN rd_executor_profiles AS profile "
+                "ON profile.id = binding.primary_executor_profile_id "
+                "WHERE binding.policy_id = policy.id AND binding.status = 'active' "
+                "AND profile.status = 'active' AND profile.executor_type = %s)"
+            )
             params.append(executor_type)
         if name:
             clauses.append("LOWER(policy.name) LIKE %s")

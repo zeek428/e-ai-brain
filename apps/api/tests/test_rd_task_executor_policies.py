@@ -96,7 +96,7 @@ def test_policy_patch_requires_matching_policy_version_and_keeps_unified_contrac
         json=valid_policy_payload(),
     )
     assert created.status_code == 200
-    policy = created.json()["data"]
+    policy = created.json()["data"]["policy"]
     assert policy["policy_version"] == 1
     assert policy["role_bindings"][0]["role_code"] == "developer"
 
@@ -117,7 +117,7 @@ def test_policy_patch_requires_matching_policy_version_and_keeps_unified_contrac
         },
     )
     assert updated.status_code == 200
-    assert updated.json()["data"]["policy_version"] == 2
+    assert updated.json()["data"]["policy"]["policy_version"] == 2
 
     stale = client.patch(
         f"/api/delivery/rd-task-executor-policies/{policy['id']}",
@@ -129,7 +129,7 @@ def test_policy_patch_requires_matching_policy_version_and_keeps_unified_contrac
     )
     assert stale.status_code == 409
     assert stale.json()["detail"]["code"] == "RD_VERSION_CONFLICT"
-    assert updated.json()["data"]["role_bindings"][0]["role_code"] == "developer"
+    assert updated.json()["data"]["policy"]["role_bindings"][0]["role_code"] == "developer"
 
 
 def test_work_item_binding_requires_exactly_one_active_role_without_fallback():
