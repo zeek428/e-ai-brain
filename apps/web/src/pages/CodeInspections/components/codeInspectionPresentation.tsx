@@ -149,3 +149,14 @@ export function taskLink(value?: string | null) {
     </Typography.Link>
   );
 }
+
+export function requirementLink(value?: string | null) {
+  if (!value) {
+    return '-';
+  }
+  return (
+    <Typography.Link href={`/delivery/requirements/${encodeURIComponent(value)}/full-chain`}>
+      {value}
+    </Typography.Link>
+  );
+}

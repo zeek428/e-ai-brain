@@ -760,8 +760,9 @@ class TaskReadRepository:
                 cursor.execute(
                     f"""
                     SELECT t.id, t.brain_app_id, t.requirement_id, t.task_type, t.title,
-                           t.status, t.product_id, t.version_id, t.module_code,
-                           t.current_step, t.created_by, t.created_at, t.updated_at,
+                           t.status, t.product_id, t.version_id, t.collaboration_run_id,
+                           t.work_item_id, t.module_code, t.current_step, t.created_by,
+                           t.created_at, t.updated_at,
                            COALESCE(p.name, t.product_context->'product'->>'name'),
                            t.input_json
                     FROM ai_tasks t
@@ -775,26 +776,28 @@ class TaskReadRepository:
                 return [
                     {
                         "brain_app_id": row[1] or DEFAULT_BRAIN_APP_ID,
-                        "created_at": row[11].isoformat() if row[11] else None,
-                        "created_by": row[10],
-                        "current_step": row[9],
+                        "collaboration_run_id": row[8],
+                        "created_at": row[13].isoformat() if row[13] else None,
+                        "created_by": row[12],
+                        "current_step": row[11],
                         "id": row[0],
-                        "module_code": row[8],
+                        "module_code": row[10],
                         "product_id": row[6],
-                        "product_name": row[13],
+                        "product_name": row[15],
                         "requirement_id": row[2],
                         "status": row[5],
                         "task_type": row[3],
                         "title": (
                             code_inspection_remediation_title(
-                                row[14] if isinstance(row[14], dict) else {},
+                                row[16] if isinstance(row[16], dict) else {},
                                 fallback_title=row[4],
                             )
                             if row[3] == "code_inspection_remediation"
                             else row[4]
                         ),
-                        "updated_at": row[12].isoformat() if row[12] else None,
+                        "updated_at": row[14].isoformat() if row[14] else None,
                         "version_id": row[7],
+                        "work_item_id": row[9],
                     }
                     for row in cursor.fetchall()
                 ]
@@ -803,7 +806,7 @@ class TaskReadRepository:
         cursor.execute(
             """
             SELECT id, brain_app_id, requirement_id, task_type, title, status,
-                   product_id, version_id,
+                   product_id, version_id, collaboration_run_id, work_item_id,
                    module_code, requirement_snapshot, product_context, input_json, output_json,
                    current_step, error_code, error_message, created_by, created_at, updated_at
             FROM ai_tasks
@@ -814,26 +817,28 @@ class TaskReadRepository:
         for row in cursor.fetchall():
             task = {
                 "brain_app_id": row[1] or DEFAULT_BRAIN_APP_ID,
-                "created_at": row[17].isoformat() if row[17] else None,
-                "created_by": row[16],
-                "current_step": row[13],
-                "error_code": row[14],
-                "error_message": row[15],
+                "collaboration_run_id": row[8],
+                "created_at": row[19].isoformat() if row[19] else None,
+                "created_by": row[18],
+                "current_step": row[15],
+                "error_code": row[16],
+                "error_message": row[17],
                 "graph_run_ids": [],
                 "id": row[0],
-                "input_json": dict(row[11] or {}),
-                "module_code": row[8],
-                "output_json": row[12],
-                "product_context": dict(row[10] or {}),
+                "input_json": dict(row[13] or {}),
+                "module_code": row[10],
+                "output_json": row[14],
+                "product_context": dict(row[12] or {}),
                 "product_id": row[6],
                 "requirement_id": row[2],
-                "requirement_snapshot": row[9],
+                "requirement_snapshot": row[11],
                 "review_ids": [],
                 "status": row[5],
                 "task_type": row[3],
                 "title": row[4],
-                "updated_at": row[18].isoformat() if row[18] else None,
+                "updated_at": row[20].isoformat() if row[20] else None,
                 "version_id": row[7],
+                "work_item_id": row[9],
             }
             ai_tasks[row[0]] = task
         return ai_tasks

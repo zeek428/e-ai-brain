@@ -15,10 +15,10 @@ import {
   compactText,
   detailSingleLineText,
   findingProblemText,
+  requirementLink,
   severityColorByValue,
   suppressionReasonText,
   suppressionStatusTag,
-  taskLink,
 } from './codeInspectionPresentation';
 
 export type CodeInspectionDetailState = {
@@ -281,10 +281,10 @@ function codeInspectionGovernanceItems(detail: CodeInspectionDetailRecord) {
       )}`,
     },
     {
-      key: 'task_coverage',
-      label: '任务推进',
-      children: `${governance?.covered_by_task_count ?? detail.report.created_task_ids?.length ?? 0} 个 · ${percentageText(
-        governance?.task_coverage_rate,
+      key: 'requirement_coverage',
+      label: '整改需求',
+      children: `${governance?.covered_by_requirement_count ?? detail.report.created_requirement_ids?.length ?? 0} 个 · ${percentageText(
+        governance?.requirement_coverage_rate,
       )}`,
     },
     {
@@ -293,9 +293,9 @@ function codeInspectionGovernanceItems(detail: CodeInspectionDetailRecord) {
       children: `${governance?.uncovered_bug_finding_count ?? 0} 个`,
     },
     {
-      key: 'uncovered_task',
-      label: '待推进任务',
-      children: `${governance?.uncovered_task_finding_count ?? 0} 个`,
+      key: 'uncovered_requirement',
+      label: '待建整改需求',
+      children: `${governance?.uncovered_requirement_finding_count ?? 0} 个`,
     },
     {
       key: 'pending_suppression',
@@ -367,7 +367,8 @@ export function CodeInspectionDetailModal({
               { key: 'finding_count', label: '问题数', children: detail.report.finding_count },
               { key: 'severe_count', label: '严重问题', children: detail.report.severe_finding_count },
               { key: 'bugs', label: '创建 Bug', children: detail.report.created_bug_ids?.join('、') || '-' },
-              { key: 'tasks', label: '已推进任务', children: detail.report.created_task_ids?.join('、') || '-' },
+              { key: 'requirements', label: '创建整改需求', children: detail.report.created_requirement_ids?.join('、') || '-' },
+              { key: 'historical_tasks', label: '历史 AI Task', children: detail.report.created_task_ids?.join('、') || '-' },
               { key: 'summary', label: '摘要', children: detail.report.summary || '-' },
             ]}
           />
@@ -469,10 +470,10 @@ export function CodeInspectionDetailModal({
               },
               { dataIndex: 'created_bug_id', title: 'Bug', width: 140, render: (value) => bugLink(String(value ?? '')) },
               {
-                dataIndex: 'created_task_id',
-                title: 'AI Task',
+                dataIndex: 'created_requirement_id',
+                title: '整改需求',
                 width: 150,
-                render: (value) => taskLink(String(value ?? '')),
+                render: (value) => requirementLink(String(value ?? '')),
               },
               {
                 dataIndex: 'suppression_status',

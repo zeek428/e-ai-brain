@@ -732,11 +732,13 @@ class RequirementReadRepository:
                   description, priority, source,
                   status, created_by, assignee, approval_comment, rejection_reason, task_ids,
                   assessment_revision, source_collaboration_run_id, supersedes_requirement_id,
+                  source_object_type, source_object_id, source_adapter_key, source_evidence,
                   created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
-                  %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                  %s, %s, %s, %s, %s::jsonb,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   brain_app_id = EXCLUDED.brain_app_id,
@@ -756,6 +758,10 @@ class RequirementReadRepository:
                   assessment_revision = EXCLUDED.assessment_revision,
                   source_collaboration_run_id = EXCLUDED.source_collaboration_run_id,
                   supersedes_requirement_id = EXCLUDED.supersedes_requirement_id,
+                  source_object_type = EXCLUDED.source_object_type,
+                  source_object_id = EXCLUDED.source_object_id,
+                  source_adapter_key = EXCLUDED.source_adapter_key,
+                  source_evidence = EXCLUDED.source_evidence,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -777,6 +783,10 @@ class RequirementReadRepository:
                     requirement.get("assessment_revision", 1),
                     requirement.get("source_collaboration_run_id"),
                     requirement.get("supersedes_requirement_id"),
+                    requirement.get("source_object_type"),
+                    requirement.get("source_object_id"),
+                    requirement.get("source_adapter_key"),
+                    json.dumps(requirement.get("source_evidence", {}), ensure_ascii=False),
                     created_at,
                     updated_at,
                 ),
@@ -940,7 +950,8 @@ class RequirementReadRepository:
                            r.approval_comment, r.rejection_reason, r.task_ids,
                            r.created_at, r.updated_at, p.code, p.name, v.code, v.name,
                            r.assignee, r.source, r.source_collaboration_run_id,
-                           r.supersedes_requirement_id
+                           r.supersedes_requirement_id, r.source_object_type,
+                           r.source_object_id, r.source_adapter_key, r.source_evidence
                     FROM requirements r
                     JOIN products p ON p.id = r.product_id
                     LEFT JOIN product_versions v ON v.id = r.version_id
@@ -968,6 +979,10 @@ class RequirementReadRepository:
                         "source": row[20] or "business_department",
                         "source_collaboration_run_id": row[21],
                         "supersedes_requirement_id": row[22],
+                        "source_object_type": row[23],
+                        "source_object_id": row[24],
+                        "source_adapter_key": row[25],
+                        "source_evidence": row[26] or {},
                         "task_ids": list(row[12] or []),
                         "title": row[2],
                         "updated_at": row[14].isoformat() if row[14] else None,
@@ -990,7 +1005,8 @@ class RequirementReadRepository:
                    status, created_by, approval_comment, rejection_reason, task_ids,
                    assignee, source,
                    created_at, updated_at, assessment_revision,
-                   source_collaboration_run_id, supersedes_requirement_id
+                   source_collaboration_run_id, supersedes_requirement_id,
+                   source_object_type, source_object_id, source_adapter_key, source_evidence
             FROM requirements
             ORDER BY created_at DESC, id
             """
@@ -1022,6 +1038,10 @@ def _requirement_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
         "source": row[14] or "business_department",
         "source_collaboration_run_id": row[18],
         "supersedes_requirement_id": row[19],
+        "source_object_type": row[20],
+        "source_object_id": row[21],
+        "source_adapter_key": row[22],
+        "source_evidence": row[23] or {},
         "task_ids": list(row[12] or []),
         "title": row[2],
         "updated_at": row[16].isoformat() if row[16] else None,

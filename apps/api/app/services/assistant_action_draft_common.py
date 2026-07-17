@@ -237,8 +237,12 @@ PLUGIN_ACTION_DEFAULTS = {
     "status": "active",
 }
 RD_TASK_DEFAULTS = {
-    "input": {},
-    "task_type": "product_detail_design",
+    "content": "",
+    "module_code": None,
+    "priority": "P1",
+    "product_id": None,
+    "source_requirement_id": None,
+    "title": "",
 }
 
 CRON_MONTH_NAMES = {

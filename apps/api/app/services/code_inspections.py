@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.api.deps import api_error, require_permissions
-from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.core.task_titles import code_inspection_remediation_title
 from app.services.bugs import create_bug_result
 from app.services.code_inspection_common import (
@@ -45,6 +44,8 @@ from app.services.code_inspection_read_models import (
 )
 from app.services.plugin_result_mapping import json_path_value
 from app.services.product_scope import user_can_read_product
+from app.services.rd_requirement_entry_adapters import create_or_link_rd_requirement
+from app.services.requirements import save_audit_event
 from app.services.system_settings import send_system_email
 
 
@@ -224,6 +225,7 @@ def normalized_findings(
             "committer_username": committer_field(raw, "username"),
             "created_at": now,
             "created_bug_id": None,
+            "created_requirement_id": None,
             "created_task_id": None,
             "description": str(raw.get("description") or ""),
             "file_path": str(raw.get("file_path") or ""),
@@ -437,6 +439,7 @@ def create_code_inspection_report_records(
         "commit_sha": source_json.get("commit_sha"),
         "created_at": now,
         "created_bug_ids": [],
+        "created_requirement_ids": [],
         "created_task_ids": [],
         "created_by": user["id"],
         "committer_count": committer_count(findings),
@@ -727,57 +730,59 @@ def create_tasks_for_findings(
     severity_threshold: str,
     user: dict[str, Any],
 ) -> list[str]:
-    created_ids: list[str] = []
+    """Compatibility-named remediation action that now creates requirements.
+
+    Scheduled-job orchestration remains unchanged; only its business write
+    target moves from a directly runnable task to the formal requirement
+    ledger used by the v2 assessment and collaboration flow.
+    """
+    linked_ids: list[str] = []
     threshold_rank = severity_rank(severity_threshold)
-    now = datetime.now(UTC).isoformat()
     for finding in findings:
         if severity_rank(finding.get("severity")) < threshold_rank:
             continue
-        if finding.get("created_task_id"):
+        if finding.get("created_requirement_id"):
             continue
-        task_id = current_store.new_id("task")
-        task = {
-            "brain_app_id": DEFAULT_BRAIN_APP_ID,
-            "created_at": now,
-            "created_by": user["id"],
-            "current_step": "draft",
-            "error_code": None,
-            "error_message": None,
-            "graph_run_ids": [],
-            "id": task_id,
-            "input_json": finding_task_input(finding, report),
-            "module_code": None,
-            "output_json": None,
-            "product_context": {
-                "repository": report.get("repository") or {},
-                "source": "code_inspection",
+        adapter_result = create_or_link_rd_requirement(
+            current_store,
+            actor_id=user["id"],
+            evidence={
+                "content": str(finding.get("description") or finding.get("recommendation") or ""),
+                "finding": current_store.snapshot(finding),
+                "report": current_store.snapshot(report),
+                "priority": "P0" if finding.get("severity") in {"blocker", "critical"} else "P1",
+                "title": finding_task_title(finding),
             },
-            "product_id": report["product_id"],
-            "requirement_id": None,
-            "requirement_snapshot": None,
-            "review_ids": [],
-            "status": "draft",
-            "task_type": "code_inspection_remediation",
-            "title": finding_task_title(finding),
-            "updated_at": now,
-            "version_id": None,
-        }
-        finding["created_task_id"] = task_id
-        created_ids.append(task_id)
+            product_id=str(report["product_id"]),
+            source_id=str(finding["id"]),
+            source_type="code_inspection_finding",
+        )
+        requirement_id = str(adapter_result["requirement_id"])
+        finding["created_requirement_id"] = requirement_id
+        if requirement_id not in linked_ids:
+            linked_ids.append(requirement_id)
         audit_event = record_audit_event(
             current_store,
-            event_type="code_inspection_remediation_task.created",
+            event_type="code_inspection_remediation_requirement.linked",
             actor_id=user["id"],
-            subject_type="ai_task",
-            subject_id=task_id,
+            subject_type="requirement",
+            subject_id=requirement_id,
             payload={
                 "code_inspection_finding_id": finding["id"],
                 "code_inspection_report_id": report["id"],
+                "idempotency_key": adapter_result["idempotency_key"],
                 "severity": finding.get("severity"),
             },
         )
-        persist_ai_task_record(current_store, task=task, audit_event=audit_event)
-    report["created_task_ids"] = [*report.get("created_task_ids", []), *created_ids]
+        save_audit_event(current_store, audit_event)
+    report["created_requirement_ids"] = [
+        *report.get("created_requirement_ids", []),
+        *[
+            requirement_id
+            for requirement_id in linked_ids
+            if requirement_id not in report.get("created_requirement_ids", [])
+        ],
+    ]
     report["updated_at"] = datetime.now(UTC).isoformat()
     persist_code_inspection_records(
         current_store,
@@ -785,7 +790,7 @@ def create_tasks_for_findings(
         findings=findings,
         notifications=[],
     )
-    return created_ids
+    return linked_ids
 
 
 def create_code_inspection_notifications(
@@ -875,8 +880,7 @@ def execute_code_inspection_result_actions(
     bug_ids: list[str] = []
     deduplicated_bug_ids: list[str] = []
     notification_ids: list[str] = []
-    task_ids: list[str] = []
-    task_promotion_deferred = False
+    requirement_ids: list[str] = []
     action_results: list[dict[str, Any]] = []
     report_written = False
     for action in actions:
@@ -958,26 +962,22 @@ def execute_code_inspection_result_actions(
                         "status": "succeeded",
                     }
                 )
-            bug_result = create_bugs_for_findings(
+            linked_requirement_ids = create_tasks_for_findings(
                 current_store,
                 findings=findings,
                 report=report,
                 severity_threshold=action.get("severity_threshold") or "high",
                 user=user,
             )
-            bug_ids.extend(bug_result["created_ids"])
-            deduplicated_bug_ids.extend(bug_result["deduplicated_ids"])
-            task_promotion_deferred = True
+            requirement_ids.extend(linked_requirement_ids)
             action_results.append(
                 {
-                    "action_type": action_type,
-                    "created_bug_ids": bug_result["created_ids"],
-                    "created_task_ids": [],
-                    "deduplicated_bug_ids": bug_result["deduplicated_ids"],
-                    "deferred_to": "bug_confirmation",
-                    "message": "代码扫描不直接创建研发任务；请在 Bug 确认后推进 AI Task。",
+                    "action_type": "create_requirement_for_severe_findings",
+                    "configured_action_type": action_type,
+                    "created_requirement_ids": linked_requirement_ids,
+                    "message": "代码扫描已创建或关联整改需求；后续由需求评估和研发协作推进。",
                     "severity_threshold": action.get("severity_threshold") or "high",
-                    "status": "deferred_to_bug_confirmation",
+                    "status": "succeeded",
                 }
             )
         elif action_type == "send_notification":
@@ -1044,8 +1044,7 @@ def execute_code_inspection_result_actions(
         "report": report,
         "report_written": report_written,
         "result_actions": actions,
-        "task_promotion_deferred": task_promotion_deferred,
-        "task_ids": task_ids,
+        "requirement_ids": requirement_ids,
     }
 
 

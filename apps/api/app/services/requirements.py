@@ -6,6 +6,7 @@ from typing import Any
 from app.api.deps import api_error, require_any_permission_or_roles
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.product_scope import require_product_scope
+from app.services.rd_requirement_entry_adapters import raise_legacy_rd_entrypoint_required
 from app.services.requirement_listing import (
     list_requirements_response,
     requirement_summary_projection,
@@ -603,6 +604,10 @@ def generate_requirement_task_result(
     requirement_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    raise_legacy_rd_entrypoint_required(
+        entrypoint="requirements.generate_task",
+        requirement_id=requirement_id,
+    )
     require_any_permission_or_roles(
         user,
         {"requirement.task_generate", "task.create"},

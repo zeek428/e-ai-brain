@@ -10,6 +10,7 @@ from app.services.model_gateway import (
     ModelGatewayConfigError,
     call_model_gateway_for_task,
 )
+from app.services.rd_requirement_entry_adapters import require_v2_task_work_item_entrypoint
 from app.services.rd_task_executor_policies import (
     queue_rd_task_executor_task,
     resolve_rd_task_executor_policy,
@@ -79,6 +80,7 @@ def start_ai_task_response(
     task = write_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
+    require_v2_task_work_item_entrypoint(task, entrypoint="ai_tasks.start")
     is_retry_start = (
         task["status"] == "failed"
         and task.get("current_step") in RETRYABLE_TASK_FAILURE_STEPS

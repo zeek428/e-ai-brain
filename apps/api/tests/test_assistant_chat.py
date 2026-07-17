@@ -7175,9 +7175,9 @@ def test_ai_assistant_chat_generates_and_confirms_rd_task_draft_from_requirement
     assert draft_item["client_draft_id"] == (
         "assistant_draft_rd_task_requirement_assistant_rd"
     )
-    assert draft_item["payload"]["requirement_id"] == "requirement_assistant_rd"
-    assert draft_item["payload"]["task_type"] == "product_detail_design"
-    assert draft_item["preview"]["target"]["resource_type"] == "ai_task"
+    assert draft_item["payload"]["source_requirement_id"] == "requirement_assistant_rd"
+    assert draft_item["payload"]["product_id"] == "product_assistant_rd"
+    assert draft_item["preview"]["target"]["resource_type"] == "requirement"
     assert draft_item["preview"]["validation"]["status"] == "passed"
     assert draft_item["status"] == "pending"
     assert [step["title"] for step in draft_item["wizard_steps"]] == [
@@ -7199,13 +7199,13 @@ def test_ai_assistant_chat_generates_and_confirms_rd_task_draft_from_requirement
     assert confirm_payload["draft"]["status"] == "confirmed"
     run = confirm_payload["run"]
     assert run["action"] == "create_rd_task"
-    assert run["result_type"] == "ai_task"
-    task_id = run["result_id"]
-    task = app.state.store.ai_tasks[task_id]
-    assert task["task_type"] == "product_detail_design"
-    assert task["requirement_id"] == "requirement_assistant_rd"
-    assert app.state.store.requirements["requirement_assistant_rd"]["status"] == "designing"
-    assert app.state.store.requirements["requirement_assistant_rd"]["task_ids"] == [task_id]
+    assert run["result_type"] == "requirement"
+    requirement_id = run["result_id"]
+    requirement = app.state.store.requirements[requirement_id]
+    assert requirement["source_object_type"] == "assistant_action_draft"
+    assert requirement["source_object_id"] == draft_item["draft_id"]
+    assert requirement["status"] == "submitted"
+    assert app.state.store.ai_tasks == {}
 
 
 def test_ai_assistant_chat_diagnoses_failed_plugin_connection_without_model_gateway(monkeypatch):

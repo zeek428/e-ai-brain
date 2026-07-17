@@ -16,7 +16,7 @@ const assistantDraftActionLabels: Record<string, string> = {
   create_analysis_draft: '创建分析草案',
   create_plugin_action: '创建动作',
   create_plugin_connection: '创建插件连接',
-  create_rd_task: '创建研发任务',
+  create_rd_task: '创建研发需求',
   create_scheduled_job: '创建定时作业',
 };
 

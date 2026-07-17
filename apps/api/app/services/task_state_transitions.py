@@ -7,6 +7,7 @@ from app.api.deps import api_error
 from app.services.ai_executor_workspace_isolation import (
     mark_ai_executor_workspace_isolation_decision,
 )
+from app.services.rd_requirement_entry_adapters import require_v2_task_work_item_entrypoint
 from app.services.task_access import require_task_permission_or_roles
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_persistence_helpers import (
@@ -136,6 +137,7 @@ def cancel_ai_task_response(
     task = write_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
+    require_v2_task_work_item_entrypoint(task, entrypoint="ai_tasks.cancel")
     if task["status"] in {"completed", "failed", "cancelled"}:
         raise api_error(409, "TASK_STATE_INVALID", "Task cannot be cancelled from current status")
     require_task_permission_or_roles(user, task, {"task.cancel"})

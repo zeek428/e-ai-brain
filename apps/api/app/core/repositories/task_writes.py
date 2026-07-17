@@ -34,12 +34,12 @@ class TaskWriteRepository:
                 """
                 INSERT INTO ai_tasks (
                   id, brain_app_id, requirement_id, task_type, title, status,
-                  product_id, version_id,
+                  product_id, version_id, collaboration_run_id, work_item_id,
                   module_code, requirement_snapshot, product_context, input_json, output_json,
                   current_step, error_code, error_message, created_by, created_at, updated_at
                 )
                 VALUES (
-                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
                   %s::jsonb, %s, %s, %s, %s,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
@@ -51,6 +51,8 @@ class TaskWriteRepository:
                   status = EXCLUDED.status,
                   product_id = EXCLUDED.product_id,
                   version_id = EXCLUDED.version_id,
+                  collaboration_run_id = EXCLUDED.collaboration_run_id,
+                  work_item_id = EXCLUDED.work_item_id,
                   module_code = EXCLUDED.module_code,
                   requirement_snapshot = EXCLUDED.requirement_snapshot,
                   product_context = EXCLUDED.product_context,
@@ -71,6 +73,8 @@ class TaskWriteRepository:
                     task.get("status", "draft"),
                     task["product_id"],
                     task["version_id"],
+                    task.get("collaboration_run_id"),
+                    task.get("work_item_id"),
                     task.get("module_code"),
                     json.dumps(task.get("requirement_snapshot"), ensure_ascii=False),
                     json.dumps(task.get("product_context", {}), ensure_ascii=False),

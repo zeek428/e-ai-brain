@@ -8,7 +8,7 @@ export const actionOptions = [
   { label: '动作草案', value: 'create_plugin_action' },
   { label: 'AI Skill 草案', value: 'create_ai_skill' },
   { label: 'AI角色草案', value: 'create_ai_agent' },
-  { label: '研发任务草案', value: 'create_rd_task' },
+  { label: '研发需求草案', value: 'create_rd_task' },
   { label: '分析草案', value: 'create_analysis_draft' },
 ];
 

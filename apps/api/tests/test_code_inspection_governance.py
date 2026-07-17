@@ -792,8 +792,9 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions(monkeypatc
         "code_inspection_report_",
     )
     assert execution_nodes["bug_creation"]["created_bug_ids"][0].startswith("bug_")
-    assert execution_nodes["task_creation"]["created_task_ids"] == []
-    assert execution_nodes["task_creation"]["status"] == "deferred_to_bug_confirmation"
+    requirement_creation = execution_nodes["requirement_creation"]
+    assert requirement_creation["created_requirement_ids"]
+    assert requirement_creation["status"] == "succeeded"
     assert execution_nodes["notifications"]["created_notification_ids"]
 
     report_id = execution_nodes["code_inspection_report"]["report_id"]
@@ -829,16 +830,18 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions(monkeypatc
     assert detail_payload["report"]["plugin_invocation_log_id"].startswith(
         "plugin_invocation_log_",
     )
-    assert detail_payload["report"]["created_task_ids"] == []
+    assert detail_payload["report"]["created_requirement_ids"] == requirement_creation[
+        "created_requirement_ids"
+    ]
     assert detail_payload["report"]["committer_summary"][0]["email"] == "alice@example.com"
     assert detail_payload["governance_summary"]["status"] == "healthy"
     assert detail_payload["governance_summary"]["active_severe_finding_count"] == 1
     assert detail_payload["governance_summary"]["covered_by_bug_count"] == 1
-    assert detail_payload["governance_summary"]["covered_by_task_count"] == 0
+    assert detail_payload["governance_summary"]["covered_by_requirement_count"] == 1
     assert detail_payload["governance_summary"]["bug_coverage_rate"] == 1
-    assert detail_payload["governance_summary"]["task_coverage_rate"] == 0
+    assert detail_payload["governance_summary"]["requirement_coverage_rate"] == 1
     assert detail_payload["governance_summary"]["uncovered_bug_finding_count"] == 0
-    assert detail_payload["governance_summary"]["uncovered_task_finding_count"] == 1
+    assert detail_payload["governance_summary"]["uncovered_requirement_finding_count"] == 0
     assert detail_payload["findings"][0]["severity"] == "critical"
     assert detail_payload["findings"][0]["committer_email"] == "alice@example.com"
     assert detail_payload["findings"][0]["created_task_id"] is None
@@ -879,14 +882,16 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions(monkeypatc
         headers=headers,
     )
     assert promoted.status_code == 200
-    promoted_task = promoted.json()["data"]["task"]
-    assert promoted_task["task_type"] == "bug_fix"
-    assert promoted_task["status"] == "draft"
-    task_detail = client.get(f"/api/ai-tasks/{promoted_task['id']}", headers=headers)
-    assert task_detail.status_code == 200
-    assert task_detail.json()["data"]["input"]["bug"]["evidence"][
+    promoted_requirement_id = promoted.json()["data"]["requirement_id"]
+    assert promoted.json()["data"]["assessment_url"] == (
+        f"/api/requirements/{promoted_requirement_id}/assessments"
+    )
+    promoted_requirement = app.state.store.requirements[promoted_requirement_id]
+    assert promoted_requirement["source_object_type"] == "bug"
+    assert promoted_requirement["source_evidence"]["bug"]["evidence"][
         "code_inspection_report_id"
     ] == report_id
+    assert app.state.store.ai_tasks == {}
 
 
 def test_code_inspection_task_list_projects_historical_finding_location():
@@ -2563,10 +2568,10 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["summary"]["bug_created_count"] == 1
     assert payload["sla"]["status"] == "healthy"
     assert payload["sla"]["bug_coverage_rate"] == 1
-    assert payload["sla"]["task_coverage_rate"] == 0
-    assert payload["sla"]["covered_by_task_count"] == 0
-    assert payload["sla"]["uncovered_task_finding_count"] == 1
-    assert payload["sla"]["oldest_without_task_at"] is not None
+    assert payload["sla"]["requirement_coverage_rate"] == 1
+    assert payload["sla"]["covered_by_requirement_count"] == 1
+    assert payload["sla"]["uncovered_requirement_finding_count"] == 0
+    assert payload["sla"]["oldest_without_requirement_at"] is None
     assert payload["governance_pressure"] == {
         "accepted_risk_count": 0,
         "action_required_branch_count": 1,
@@ -2581,7 +2586,7 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
         "quality_gate_violation_count": 1,
         "status": "action_required",
         "uncovered_bug_finding_count": 0,
-        "uncovered_task_finding_count": 1,
+        "uncovered_requirement_finding_count": 0,
     }
     assert payload["rule_distribution"][0]["rule_id"] == "SEC001"
     assert payload["rule_distribution"][0]["severe_finding_count"] == 1
@@ -2593,7 +2598,7 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["branch_governance"][0]["status"] == "action_required"
     assert payload["branch_governance"][0]["active_severe_finding_count"] == 1
     assert payload["branch_governance"][0]["covered_by_bug_count"] == 1
-    assert payload["branch_governance"][0]["covered_by_task_count"] == 0
+    assert payload["branch_governance"][0]["covered_by_requirement_count"] == 1
     assert payload["branch_governance"][0]["quality_gate_failed_report_count"] == 1
     assert payload["branch_governance"][0]["quality_gate_violation_count"] == 1
     assert payload["committer_ranking"][0]["email"] == "alice@example.com"
@@ -2602,9 +2607,9 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["committer_governance"][0]["status"] == "healthy"
     assert payload["committer_governance"][0]["active_severe_finding_count"] == 1
     assert payload["committer_governance"][0]["covered_by_bug_count"] == 1
-    assert payload["committer_governance"][0]["covered_by_task_count"] == 0
+    assert payload["committer_governance"][0]["covered_by_requirement_count"] == 1
     assert payload["committer_governance"][0]["uncovered_bug_finding_count"] == 0
-    assert payload["committer_governance"][0]["uncovered_task_finding_count"] == 1
+    assert payload["committer_governance"][0]["uncovered_requirement_finding_count"] == 0
     assert payload["trend"][0]["report_count"] == 1
     assert payload["trend"][0]["quality_gate_passed_count"] == 0
     assert payload["trend"][0]["quality_gate_failed_count"] == 1
@@ -2683,13 +2688,13 @@ def test_code_inspection_dashboard_committer_governance_tracks_uncovered_actions
     assert payload["governance_pressure"]["action_required_branch_count"] == 1
     assert payload["governance_pressure"]["action_required_committer_count"] == 1
     assert payload["governance_pressure"]["uncovered_bug_finding_count"] == 1
-    assert payload["governance_pressure"]["uncovered_task_finding_count"] == 1
+    assert payload["governance_pressure"]["uncovered_requirement_finding_count"] == 1
     branch_governance = payload["branch_governance"][0]
     assert branch_governance["branch"] == "main"
     assert branch_governance["status"] == "action_required"
     assert branch_governance["active_severe_finding_count"] == 1
     assert branch_governance["uncovered_bug_finding_count"] == 1
-    assert branch_governance["uncovered_task_finding_count"] == 1
+    assert branch_governance["uncovered_requirement_finding_count"] == 1
     assert branch_governance["latest_report_id"] == run.json()["data"]["result_summary"][
         "report_id"
     ]
@@ -2699,7 +2704,7 @@ def test_code_inspection_dashboard_committer_governance_tracks_uncovered_actions
     assert governance["report_count"] == 1
     assert governance["active_severe_finding_count"] == 1
     assert governance["uncovered_bug_finding_count"] == 1
-    assert governance["uncovered_task_finding_count"] == 1
+    assert governance["uncovered_requirement_finding_count"] == 1
     assert governance["latest_report_id"] == run.json()["data"]["result_summary"]["report_id"]
 
 

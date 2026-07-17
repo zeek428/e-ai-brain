@@ -332,6 +332,8 @@ def lifecycle_subject_tasks(
             for task_id in report.get("created_task_ids", [])
             if (task := _task(current_store, str(task_id))) is not None
         ]
+        for requirement_id in report.get("created_requirement_ids", []):
+            tasks.extend(lifecycle_require_tasks_by_requirement(current_store, requirement_id))
         for bug_id in report.get("created_bug_ids", []):
             bug = _record(current_store, "bugs", str(bug_id))
             if bug is None:

@@ -73,10 +73,7 @@ from app.services.plugins import (
     sync_plugin_action_store,
     sync_plugin_connection_store,
 )
-from app.services.requirements import (
-    generate_requirement_task_result,
-    requirement_write_store,
-)
+from app.services.rd_requirement_entry_adapters import create_or_link_rd_requirement
 from app.services.scheduled_job_ai_capabilities import (
     create_ai_agent_response,
     create_ai_skill_response,
@@ -101,7 +98,6 @@ from app.services.scheduled_jobs import (
     create_scheduled_job_response,
     run_scheduled_job_response,
 )
-from app.services.version_status import canonical_requirement_status
 
 
 def create_assistant_action_draft_response(
@@ -865,28 +861,29 @@ def execute_assistant_action_draft(
         return "plugin_action", str(result["id"]), result
     if action == "create_rd_task":
         payload = with_defaults(RD_TASK_DEFAULTS, payload)
-        requirement_id = ensure_non_blank(
-            str(payload.get("requirement_id") or ""),
-            "requirement_id",
-        )
-        task_type = str(payload.get("task_type") or "product_detail_design")
-        if task_type != "product_detail_design":
-            raise api_error(
-                400,
-                "VALIDATION_ERROR",
-                "Only product_detail_design rd task drafts are supported",
-            )
-        result = generate_requirement_task_result(
-            current_store=requirement_write_store(current_store),
-            requirement_id=requirement_id,
-            user=user,
+        product_id = ensure_non_blank(str(payload.get("product_id") or ""), "product_id")
+        result = create_or_link_rd_requirement(
+            current_store,
+            actor_id=user["id"],
+            evidence={
+                "content": str(payload.get("content") or ""),
+                "module_code": payload.get("module_code"),
+                "priority": payload.get("priority") or "P1",
+                "source_draft_id": draft["id"],
+                "source_requirement_id": payload.get("source_requirement_id"),
+                "title": str(payload.get("title") or draft["title"]),
+            },
+            product_id=product_id,
+            source_id=str(draft["id"]),
+            source_type="assistant_action_draft",
         )
         result = {
             **result,
+            "assessment_url": f"/api/requirements/{result['requirement_id']}/assessments",
             "source_draft_id": draft["id"],
             "title": payload.get("title") or draft["title"],
         }
-        return "ai_task", str(result["task_id"]), result
+        return "requirement", str(result["requirement_id"]), result
     if action == "create_ai_skill":
         payload = with_defaults(AI_SKILL_DEFAULTS, payload)
         result = create_ai_skill_response(
@@ -1625,60 +1622,24 @@ def _rd_task_draft_preview(
     preview = _generic_create_draft_preview(
         {"action": draft["action"], "payload": payload},
         diff_fields=[
-            ("requirement_id", "需求"),
-            ("task_type", "任务类型"),
+            ("source_requirement_id", "来源需求"),
+            ("product_id", "产品"),
             ("title", "标题"),
-            ("input.owner_role", "负责人角色"),
-            ("input.acceptance_criteria", "验收标准"),
+            ("priority", "优先级"),
+            ("content", "需求内容"),
         ],
-        required_fields=["requirement_id", "task_type"],
-        resource_type="ai_task",
+        required_fields=["product_id", "title", "content"],
+        resource_type="requirement",
     )
     validation = preview["validation"]
-    task_type = str(payload.get("task_type") or "product_detail_design")
-    if task_type != "product_detail_design":
-        _add_issue(
-            validation,
-            "task_type",
-            "error",
-            "Only product_detail_design rd task drafts are supported",
-        )
-    requirement_id = str(payload.get("requirement_id") or "").strip()
-    if not requirement_id:
-        _finalize_validation(validation)
-        return preview
-    requirement = _read_memory_dict(current_store, "requirements").get(requirement_id)
-    if requirement is None:
-        _add_issue(
-            validation,
-            "requirement_id",
-            "error",
-            f"Requirement not found: {requirement_id}",
-        )
-        _finalize_validation(validation)
-        return preview
-    if canonical_requirement_status(requirement.get("status")) != "planned":
-        _add_issue(
-            validation,
-            "requirement_id",
-            "error",
-            "Requirement must be planned before creating an rd task",
-        )
-    if requirement.get("task_ids"):
-        _add_issue(
-            validation,
-            "requirement_id",
-            "error",
-            "Requirement already has linked tasks",
-        )
-    product_id = str(requirement.get("product_id") or "").strip()
+    product_id = str(payload.get("product_id") or "").strip()
     products = _read_memory_dict(current_store, "products")
     if not product_id or product_id not in products:
         _add_issue(
             validation,
             "product_id",
             "error",
-            "Requirement product is missing or inactive",
+            "Product is missing or inactive",
         )
     else:
         product = products[product_id]
@@ -1687,16 +1648,8 @@ def _rd_task_draft_preview(
                 validation,
                 "product_id",
                 "error",
-                "Requirement product is inactive",
+                "Product is inactive",
             )
-    version_id = str(requirement.get("version_id") or "").strip()
-    if not version_id or version_id not in _read_memory_dict(current_store, "product_versions"):
-        _add_issue(
-            validation,
-            "version_id",
-            "error",
-            "Planned requirement must have a version before creating an rd task",
-        )
     _finalize_validation(validation)
     return preview
 

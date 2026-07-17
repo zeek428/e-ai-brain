@@ -581,7 +581,7 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getByText('代码巡检治理结论')).toBeInTheDocument();
     expect(screen.getByText('优先处理质量门禁失败')).toBeInTheDocument();
     expect(
-      screen.getByText('当前范围有 1 份巡检报告、1 个严重问题，门禁失败报告 1 份、失败项 1 个，缺 Bug 0 个、待推进任务 0 个。'),
+      screen.getByText('当前范围有 1 份巡检报告、1 个严重问题，门禁失败报告 1 份、失败项 1 个，缺 Bug 0 个、待建整改需求 0 个。'),
     ).toBeInTheDocument();
     expect(screen.getByText('门禁失败报告 1')).toBeInTheDocument();
     expect(screen.getByText('待闭环分支 1')).toBeInTheDocument();
@@ -688,12 +688,12 @@ describe('CodeInspectionsPage', () => {
     expect(branchGovernanceCard?.querySelector('.code-inspection-metric-table')).not.toBeNull();
     expect(branchGovernanceCard?.querySelector('table')).toHaveStyle({ tableLayout: 'fixed' });
     expect(screen.getAllByText('活跃严重').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('待推进任务').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('待建整改需求').length).toBeGreaterThan(0);
     expect(screen.getAllByText('健康').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/到期风险/).length).toBeGreaterThan(0);
     expect(screen.getByText('严重问题 SLA')).toBeInTheDocument();
-    expect(screen.getByText('任务推进 100%')).toBeInTheDocument();
-    expect(screen.getByText('已推进任务')).toBeInTheDocument();
+    expect(screen.getByText('整改需求 0%')).toBeInTheDocument();
+    expect(screen.getByText('已建整改需求')).toBeInTheDocument();
     expect(screen.getAllByText('整体 healthy').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('tab', { name: '风险分布' }));
@@ -786,13 +786,12 @@ describe('CodeInspectionsPage', () => {
     expect(within(dialog).getByText('已闭环')).toBeInTheDocument();
     expect(within(dialog).getByText('有效严重问题')).toBeInTheDocument();
     expect(within(dialog).getByText('Bug 覆盖')).toBeInTheDocument();
-    expect(within(dialog).getByText('任务推进')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('整改需求').length).toBeGreaterThan(0);
     expect(within(dialog).getByText('未关联 Bug')).toBeInTheDocument();
-    expect(within(dialog).getByText('待推进任务')).toBeInTheDocument();
-    expect(within(dialog).getByRole('link', { name: 'task_code_fix_001' })).toHaveAttribute(
-      'href',
-      '/delivery/rd-tasks?task_id=task_code_fix_001',
-    );
+    expect(within(dialog).getByText('待建整改需求')).toBeInTheDocument();
+    expect(within(dialog).getByText('历史 AI Task')).toBeInTheDocument();
+    expect(within(dialog).getByText('task_code_fix_001')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('link', { name: 'task_code_fix_001' })).not.toBeInTheDocument();
     expect(within(dialog).getAllByText('inspection.incomplete_source_data').length).toBeGreaterThan(1);
     expect(within(dialog).getByText('src/config.py')).toBeInTheDocument();
   });

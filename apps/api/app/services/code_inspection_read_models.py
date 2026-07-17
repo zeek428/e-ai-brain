@@ -302,10 +302,11 @@ def code_inspection_dashboard_response(
     trend_stats: dict[str, dict[str, Any]] = {}
     severe_finding_count = 0
     covered_by_bug_count = 0
-    covered_by_task_count = 0
+    covered_by_requirement_count = 0
+    historical_covered_by_task_count = 0
     quality_gate_failed_report_count = 0
     oldest_uncovered_at: str | None = None
-    oldest_without_task_at: str | None = None
+    oldest_without_requirement_at: str | None = None
 
     for report in reports:
         report_id = str(report["id"])
@@ -452,8 +453,9 @@ def code_inspection_dashboard_response(
                 "active_severe_finding_count": 0,
                 "branch": report.get("branch") or "-",
                 "covered_by_bug_count": 0,
-                "covered_by_task_count": 0,
+                "covered_by_requirement_count": 0,
                 "expired_accepted_risk_count": 0,
+                "historical_covered_by_task_count": 0,
                 "finding_count": 0,
                 "latest_report_id": None,
                 "latest_report_summary": None,
@@ -466,7 +468,7 @@ def code_inspection_dashboard_response(
                 "severe_finding_count": 0,
                 "status": "healthy",
                 "uncovered_bug_finding_count": 0,
-                "uncovered_task_finding_count": 0,
+                "uncovered_requirement_finding_count": 0,
             },
         )
         branch_governance_entry["_report_ids"].add(report_id)
@@ -524,9 +526,10 @@ def code_inspection_dashboard_response(
                     "accepted_risk_count": 0,
                     "active_severe_finding_count": 0,
                     "covered_by_bug_count": 0,
-                    "covered_by_task_count": 0,
+                    "covered_by_requirement_count": 0,
                     "email": finding.get("committer_email"),
                     "expired_accepted_risk_count": 0,
+                    "historical_covered_by_task_count": 0,
                     "finding_count": 0,
                     "latest_report_id": None,
                     "latest_report_summary": None,
@@ -536,7 +539,7 @@ def code_inspection_dashboard_response(
                     "severe_finding_count": 0,
                     "status": "healthy",
                     "uncovered_bug_finding_count": 0,
-                    "uncovered_task_finding_count": 0,
+                    "uncovered_requirement_finding_count": 0,
                     "username": finding.get("committer_username"),
                 },
             )
@@ -592,12 +595,15 @@ def code_inspection_dashboard_response(
                             branch_governance_entry["oldest_uncovered_at"] = str(
                                 finding.get("created_at") or ""
                             )
-                    if finding.get("created_task_id"):
-                        committer_governance_entry["covered_by_task_count"] += 1
-                        branch_governance_entry["covered_by_task_count"] += 1
+                    if finding.get("created_requirement_id"):
+                        committer_governance_entry["covered_by_requirement_count"] += 1
+                        branch_governance_entry["covered_by_requirement_count"] += 1
                     else:
-                        committer_governance_entry["uncovered_task_finding_count"] += 1
-                        branch_governance_entry["uncovered_task_finding_count"] += 1
+                        committer_governance_entry["uncovered_requirement_finding_count"] += 1
+                        branch_governance_entry["uncovered_requirement_finding_count"] += 1
+                    if finding.get("created_task_id"):
+                        committer_governance_entry["historical_covered_by_task_count"] += 1
+                        branch_governance_entry["historical_covered_by_task_count"] += 1
                 if finding.get("created_bug_id"):
                     covered_by_bug_count += 1
                 elif (
@@ -605,13 +611,15 @@ def code_inspection_dashboard_response(
                     or str(finding.get("created_at") or "") < oldest_uncovered_at
                 ):
                     oldest_uncovered_at = str(finding.get("created_at") or "")
-                if finding.get("created_task_id"):
-                    covered_by_task_count += 1
+                if finding.get("created_requirement_id"):
+                    covered_by_requirement_count += 1
                 elif (
-                    oldest_without_task_at is None
-                    or str(finding.get("created_at") or "") < oldest_without_task_at
+                    oldest_without_requirement_at is None
+                    or str(finding.get("created_at") or "") < oldest_without_requirement_at
                 ):
-                    oldest_without_task_at = str(finding.get("created_at") or "")
+                    oldest_without_requirement_at = str(finding.get("created_at") or "")
+                if finding.get("created_task_id"):
+                    historical_covered_by_task_count += 1
             rule_entry = rule_stats.setdefault(
                 rule_id,
                 {
@@ -661,6 +669,7 @@ def code_inspection_dashboard_response(
     for entry in committer_governance_stats.values():
         if (
             entry["uncovered_bug_finding_count"]
+            or entry["uncovered_requirement_finding_count"]
             or entry["expired_accepted_risk_count"]
         ):
             entry["status"] = "action_required"
@@ -669,6 +678,7 @@ def code_inspection_dashboard_response(
     for entry in branch_governance_stats.values():
         if (
             entry["uncovered_bug_finding_count"]
+            or entry["uncovered_requirement_finding_count"]
             or entry["expired_accepted_risk_count"]
             or entry["quality_gate_failed_report_count"]
         ):
@@ -694,7 +704,7 @@ def code_inspection_dashboard_response(
         ),
         key=lambda item: (
             -int(item.get("uncovered_bug_finding_count") or 0),
-            -int(item.get("uncovered_task_finding_count") or 0),
+            -int(item.get("uncovered_requirement_finding_count") or 0),
             -int(item.get("quality_gate_failed_report_count") or 0),
             -int(item.get("pending_suppression_count") or 0),
             -int(item.get("expired_accepted_risk_count") or 0),
@@ -717,7 +727,7 @@ def code_inspection_dashboard_response(
         ),
         key=lambda item: (
             -int(item.get("uncovered_bug_finding_count") or 0),
-            -int(item.get("uncovered_task_finding_count") or 0),
+            -int(item.get("uncovered_requirement_finding_count") or 0),
             -int(item.get("pending_suppression_count") or 0),
             -int(item.get("expired_accepted_risk_count") or 0),
             -int(item.get("active_severe_finding_count") or 0),
@@ -771,8 +781,8 @@ def code_inspection_dashboard_response(
             int(entry.get("uncovered_bug_finding_count") or 0)
             for entry in committer_governance_stats.values()
         ),
-        "uncovered_task_finding_count": sum(
-            int(entry.get("uncovered_task_finding_count") or 0)
+        "uncovered_requirement_finding_count": sum(
+            int(entry.get("uncovered_requirement_finding_count") or 0)
             for entry in committer_governance_stats.values()
         ),
     }
@@ -780,6 +790,7 @@ def code_inspection_dashboard_response(
         governance_pressure["failed_report_count"]
         or governance_pressure["quality_gate_failed_report_count"]
         or governance_pressure["uncovered_bug_finding_count"]
+        or governance_pressure["uncovered_requirement_finding_count"]
         or governance_pressure["expired_accepted_risk_count"]
     ):
         governance_pressure["status"] = "action_required"
@@ -831,12 +842,21 @@ def code_inspection_dashboard_response(
         if severe_finding_count
         else 1
     )
-    task_coverage_rate = (
-        round(covered_by_task_count / severe_finding_count, 4)
+    requirement_coverage_rate = (
+        round(covered_by_requirement_count / severe_finding_count, 4)
         if severe_finding_count
         else 1
     )
-    sla_status = "healthy" if bug_coverage_rate >= 0.8 else "at_risk"
+    historical_task_coverage_rate = (
+        round(historical_covered_by_task_count / severe_finding_count, 4)
+        if severe_finding_count
+        else 1
+    )
+    sla_status = (
+        "healthy"
+        if bug_coverage_rate >= 0.8 and requirement_coverage_rate >= 0.8
+        else "at_risk"
+    )
     return {
         "branch_governance": branch_governance,
         "branch_ranking": branch_ranking,
@@ -885,15 +905,19 @@ def code_inspection_dashboard_response(
         "sla": {
             "bug_coverage_rate": bug_coverage_rate,
             "covered_by_bug_count": covered_by_bug_count,
-            "covered_by_task_count": covered_by_task_count,
+            "covered_by_requirement_count": covered_by_requirement_count,
+            "historical_covered_by_task_count": historical_covered_by_task_count,
             "oldest_uncovered_at": oldest_uncovered_at,
-            "oldest_without_task_at": oldest_without_task_at,
+            "oldest_without_requirement_at": oldest_without_requirement_at,
             "severe_finding_count": severe_finding_count,
             "severe_threshold": SEVERE_FINDING_THRESHOLD,
             "status": sla_status,
-            "task_coverage_rate": task_coverage_rate,
+            "requirement_coverage_rate": requirement_coverage_rate,
+            "historical_task_coverage_rate": historical_task_coverage_rate,
             "uncovered_severe_finding_count": severe_finding_count - covered_by_bug_count,
-            "uncovered_task_finding_count": severe_finding_count - covered_by_task_count,
+            "uncovered_requirement_finding_count": (
+                severe_finding_count - covered_by_requirement_count
+            ),
         },
         "summary": {
             "bug_created_count": sum(

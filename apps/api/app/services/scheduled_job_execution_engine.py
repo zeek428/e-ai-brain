@@ -433,7 +433,7 @@ class ScheduledJobExecutionEngine:
                 "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
                 "notification_ids": inspection_result["notification_ids"],
                 "report_id": report["id"],
-                "task_ids": inspection_result.get("task_ids") or [],
+                "requirement_ids": inspection_result.get("requirement_ids") or [],
             },
             "label": "结果动作反馈内容",
             "records_imported": int(report.get("finding_count") or 0),
@@ -498,6 +498,7 @@ class ScheduledJobExecutionEngine:
             "runner_execution",
             "skill_processing",
             "result_action",
+            "requirement_creation",
             "task_creation",
             "bug_creation",
             "notifications",
@@ -644,6 +645,7 @@ class ScheduledJobExecutionEngine:
             "bug_creation",
             "code_inspection_report",
             "notifications",
+            "requirement_creation",
             "task_creation",
         }:
             return "business_side_effect", "业务副作用"
@@ -840,6 +842,7 @@ class ScheduledJobExecutionEngine:
             "bug_creation",
             "code_inspection_report",
             "notifications",
+            "requirement_creation",
             "task_creation",
         }:
             plan.update(
@@ -1087,13 +1090,24 @@ class ScheduledJobExecutionEngine:
         if canonical_id == "skill_processing":
             value = node.get("output")
             return dict(value) if isinstance(value, dict) else {}
-        if canonical_id in {"result_action", "task_creation", "bug_creation", "notifications"}:
+        if canonical_id in {
+            "result_action",
+            "requirement_creation",
+            "task_creation",
+            "bug_creation",
+            "notifications",
+        }:
             feedback = node.get("feedback")
             if isinstance(feedback, dict):
                 return dict(feedback)
             return {
                 key: node.get(key)
-                for key in ("created_task_ids", "created_bug_ids", "created_notification_ids")
+                for key in (
+                    "created_requirement_ids",
+                    "created_task_ids",
+                    "created_bug_ids",
+                    "created_notification_ids",
+                )
                 if key in node
             }
         if canonical_id == "runner_execution":

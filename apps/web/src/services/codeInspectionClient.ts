@@ -22,6 +22,8 @@ export type CodeInspectionReportRecord = {
   }>;
   created_at?: string;
   created_bug_ids?: string[];
+  created_requirement_ids?: string[];
+  /** Historical pre-v2 task links only. */
   created_task_ids?: string[];
   finding_count: number;
   full_chain_available?: boolean;
@@ -74,6 +76,8 @@ export type CodeInspectionFindingRecord = {
   committer_name?: string | null;
   committer_username?: string | null;
   created_bug_id?: string | null;
+  created_requirement_id?: string | null;
+  /** Historical pre-v2 task link only. */
   created_task_id?: string | null;
   description?: string;
   file_path?: string;
@@ -113,15 +117,17 @@ export type CodeInspectionDetailRecord = {
     active_severe_finding_count?: number;
     bug_coverage_rate?: number;
     covered_by_bug_count?: number;
-    covered_by_task_count?: number;
+    covered_by_requirement_count?: number;
     expired_accepted_risk_count?: number;
     pending_suppression_count?: number;
     severe_threshold?: string;
     status?: 'action_required' | 'healthy' | 'pending_review' | string;
     suppressed_finding_count?: number;
-    task_coverage_rate?: number;
+    historical_covered_by_task_count?: number;
+    historical_task_coverage_rate?: number;
+    requirement_coverage_rate?: number;
     uncovered_bug_finding_count?: number;
-    uncovered_task_finding_count?: number;
+    uncovered_requirement_finding_count?: number;
   };
   notifications: CodeInspectionNotificationRecord[];
   report: CodeInspectionReportRecord & Record<string, unknown>;
@@ -143,8 +149,9 @@ export type CodeInspectionDashboardRecord = {
     active_severe_finding_count: number;
     branch?: string | null;
     covered_by_bug_count: number;
-    covered_by_task_count: number;
+    covered_by_requirement_count: number;
     expired_accepted_risk_count?: number;
+    historical_covered_by_task_count?: number;
     finding_count: number;
     latest_report_id?: string | null;
     latest_report_summary?: string | null;
@@ -158,7 +165,7 @@ export type CodeInspectionDashboardRecord = {
     severe_finding_count: number;
     status: 'action_required' | 'healthy' | 'pending_review' | string;
     uncovered_bug_finding_count: number;
-    uncovered_task_finding_count: number;
+    uncovered_requirement_finding_count: number;
   }>;
   branch_ranking: Array<{
     branch?: string | null;
@@ -181,9 +188,10 @@ export type CodeInspectionDashboardRecord = {
     accepted_risk_count: number;
     active_severe_finding_count: number;
     covered_by_bug_count: number;
-    covered_by_task_count: number;
+    covered_by_requirement_count: number;
     email?: string | null;
     expired_accepted_risk_count?: number;
+    historical_covered_by_task_count?: number;
     finding_count: number;
     latest_report_id?: string | null;
     latest_report_summary?: string | null;
@@ -194,7 +202,7 @@ export type CodeInspectionDashboardRecord = {
     severe_finding_count: number;
     status: 'action_required' | 'healthy' | 'pending_review' | string;
     uncovered_bug_finding_count: number;
-    uncovered_task_finding_count: number;
+    uncovered_requirement_finding_count: number;
     username?: string | null;
   }>;
   governance_pressure?: {
@@ -211,7 +219,7 @@ export type CodeInspectionDashboardRecord = {
     quality_gate_violation_count?: number;
     status?: 'action_required' | 'healthy' | 'pending_review' | string;
     uncovered_bug_finding_count?: number;
-    uncovered_task_finding_count?: number;
+    uncovered_requirement_finding_count?: number;
   };
   repository_ranking: Array<{
     branch_count: number;
@@ -257,15 +265,17 @@ export type CodeInspectionDashboardRecord = {
   sla: {
     bug_coverage_rate: number;
     covered_by_bug_count: number;
-    covered_by_task_count: number;
+    covered_by_requirement_count: number;
+    historical_covered_by_task_count: number;
+    historical_task_coverage_rate: number;
     oldest_uncovered_at?: string | null;
-    oldest_without_task_at?: string | null;
+    oldest_without_requirement_at?: string | null;
     severe_finding_count: number;
     severe_threshold: string;
     status: 'at_risk' | 'healthy' | string;
-    task_coverage_rate: number;
+    requirement_coverage_rate: number;
     uncovered_severe_finding_count: number;
-    uncovered_task_finding_count: number;
+    uncovered_requirement_finding_count: number;
   };
   summary: {
     bug_created_count: number;

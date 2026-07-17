@@ -100,6 +100,10 @@ import {
 
 const { Paragraph, Text } = Typography;
 
+function isV2CollaborationTask(task: TaskCenterTaskRecord) {
+  return Boolean(task.collaborationRunId || task.workItemId);
+}
+
 export default function TaskCenterPage() {
   const [editApproveForm] = Form.useForm<EditApproveFormValues>();
   const [rejectReviewForm] = Form.useForm<RejectReviewFormValues>();
@@ -331,7 +335,10 @@ export default function TaskCenterPage() {
   );
 
   const selectedBatchCancellableTasks = useMemo(
-    () => selectedTasks.filter((row) => taskBatchCancellableStatuses.has(row.status)),
+    () =>
+      selectedTasks.filter(
+        (row) => !isV2CollaborationTask(row) && taskBatchCancellableStatuses.has(row.status),
+      ),
     [selectedTasks],
   );
 
@@ -339,6 +346,7 @@ export default function TaskCenterPage() {
     () =>
       selectedTasks.filter(
         (row) =>
+          !isV2CollaborationTask(row) &&
           row.status === 'failed' &&
           row.currentStep !== undefined &&
           taskBatchRetryableFailureSteps.has(row.currentStep),
@@ -859,6 +867,10 @@ export default function TaskCenterPage() {
       return actions;
     }
 
+    if (isV2CollaborationTask(selectedActionTask)) {
+      return actions;
+    }
+
     if (selectedActionTask.status === 'draft') {
       actions.push({
         key: 'start',
@@ -1185,6 +1197,7 @@ export default function TaskCenterPage() {
           ? {
               getCheckboxProps: (row) => ({
                 disabled:
+                  isV2CollaborationTask(row) ||
                   !taskBatchCancellableStatuses.has(row.status) &&
                   !(
                     row.status === 'failed' &&

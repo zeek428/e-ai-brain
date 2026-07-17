@@ -746,7 +746,9 @@ def requirement_full_chain_payload(
         [
             report
             for report in _read_memory_dict(current_store, "code_inspection_reports").values()
-            if set(str(task_id) for task_id in report.get("created_task_ids", [])).intersection(
+            if str(requirement.get("id"))
+            in {str(requirement_id) for requirement_id in report.get("created_requirement_ids", [])}
+            or set(str(task_id) for task_id in report.get("created_task_ids", [])).intersection(
                 task_ids
             )
             or set(str(bug_id) for bug_id in report.get("created_bug_ids", [])).intersection(

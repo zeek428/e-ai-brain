@@ -5,6 +5,15 @@ from contextlib import AbstractContextManager
 from typing import Any
 
 
+def _serialize_date_or_datetime(value: Any) -> str | None:
+    if value is None:
+        return None
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return str(isoformat())
+    return str(value)
+
+
 class ProductConfigListRepository:
     def __init__(self, connect: Callable[..., AbstractContextManager[Any]]) -> None:
         self._connect = connect
@@ -292,18 +301,18 @@ class ProductConfigListRepository:
                 return [
                     {
                         "code": row[2],
-                        "created_at": row[10].isoformat() if row[10] else None,
+                        "created_at": _serialize_date_or_datetime(row[11]),
                         "description": row[4],
                         "id": row[0],
                         "name": row[3],
                         "product_code": row[9],
                         "product_id": row[1],
                         "product_name": row[10],
-                        "release_date": row[7].isoformat() if row[7] else None,
+                        "release_date": _serialize_date_or_datetime(row[7]),
                         "scope_version": row[8],
-                        "start_date": row[6].isoformat() if row[6] else None,
+                        "start_date": _serialize_date_or_datetime(row[6]),
                         "status": row[5],
-                        "updated_at": row[12].isoformat() if row[12] else None,
+                        "updated_at": _serialize_date_or_datetime(row[12]),
                     }
                     for row in cursor.fetchall()
                 ]

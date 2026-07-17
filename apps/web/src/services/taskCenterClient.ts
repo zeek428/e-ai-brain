@@ -29,6 +29,7 @@ type RemoteListResult<Row> = {
 };
 
 export type TaskCenterTaskRecord = {
+  collaborationRunId?: string;
   createdAt: string;
   createdAtValue?: string;
   currentStep?: string;
@@ -40,6 +41,7 @@ export type TaskCenterTaskRecord = {
   requirementId?: string;
   status: string;
   type: string;
+  workItemId?: string;
 };
 
 export type TaskCenterTaskQuery = {
@@ -180,6 +182,7 @@ export type TaskWritebackResultRecord = {
 };
 
 export type TaskListItem = {
+  collaboration_run_id?: string;
   created_at?: string;
   created_by?: string;
   current_step?: string;
@@ -191,6 +194,7 @@ export type TaskListItem = {
   task_type?: string;
   title?: string;
   updated_at?: string;
+  work_item_id?: string;
 };
 
 type TaskDetailItem = TaskListItem & {
@@ -376,6 +380,7 @@ function readableTaskOutputSummary(output: unknown) {
 
 export function mapTaskRecord(task: TaskListItem): TaskCenterTaskRecord {
   return {
+    collaborationRunId: task.collaboration_run_id ?? undefined,
     createdAt: formatListDate(task.created_at ?? task.updated_at),
     createdAtValue: task.created_at ?? task.updated_at,
     currentStep: task.current_step ?? undefined,
@@ -387,6 +392,7 @@ export function mapTaskRecord(task: TaskListItem): TaskCenterTaskRecord {
     requirementId: task.requirement_id,
     status: task.status ?? '-',
     type: task.task_type ?? '-',
+    workItemId: task.work_item_id ?? undefined,
   };
 }
 

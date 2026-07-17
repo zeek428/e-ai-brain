@@ -33,25 +33,22 @@ class AssistantDraftBuilder:
             self.context["products"],
             str(requirement.get("product_id") or "") if requirement else "",
         )
-        version = _find_by_id(
-            self.context["versions"],
-            str(requirement.get("version_id") or "") if requirement else "",
-        )
         requirement_id = requirement.get("id") if requirement else None
         requirement_title = requirement.get("title") if requirement else None
-        product_version_summary = _rd_task_product_version_summary(product, version)
         payload = {
-            "input": {
-                "acceptance_criteria": [],
-                "owner_role": "rd_owner",
-                "source": "ai_assistant",
-            },
-            "requirement_id": requirement_id,
-            "task_type": "product_detail_design",
-            "title": (
-                f"产品详细设计：{requirement_title}"
+            "content": (
+                f"{message.strip()}\n\n来源需求：{requirement_title}"
                 if requirement_title
-                else "产品详细设计任务"
+                else message.strip()
+            ),
+            "module_code": requirement.get("module_code") if requirement else None,
+            "priority": requirement.get("priority") if requirement else "P1",
+            "product_id": product.get("id") if product else None,
+            "source_requirement_id": requirement_id,
+            "title": (
+                f"研发需求：{requirement_title}"
+                if requirement_title
+                else "研发需求草案"
             ),
         }
         item = {
@@ -69,40 +66,40 @@ class AssistantDraftBuilder:
                 {
                     "depends_on": [],
                     "key": "data_source",
-                    "status": "ready" if requirement_id and product and version else "blocked",
+                    "status": "ready" if requirement_id and product else "blocked",
                     "summary": (
-                        f"{requirement_title} · {product_version_summary}"
+                        f"{requirement_title} · {product.get('name') or product.get('code')}"
                         if requirement_title
-                        else "请先 @ 一个已规划需求"
+                        else "请先 @ 一个需求以确定产品归属"
                     ),
                     "title": "数据来源",
                 },
                 {
                     "depends_on": ["data_source"],
                     "key": "ai_processing",
-                    "status": "ready" if requirement_id and product and version else "blocked",
-                    "summary": "生成产品详细设计 AI 研发任务草案",
+                    "status": "ready" if requirement_id and product else "blocked",
+                    "summary": "生成可评估的正式研发需求草案",
                     "title": "AI处理",
                 },
                 {
                     "depends_on": ["ai_processing"],
                     "key": "result_action",
-                    "status": "ready" if requirement_id and product and version else "blocked",
-                    "summary": "创建 AI 研发任务并推进需求状态",
+                    "status": "ready" if requirement_id and product else "blocked",
+                    "summary": "创建正式需求，后续由评估与协作流程推进",
                     "title": "结果动作",
                 },
                 {
                     "depends_on": [],
                     "key": "schedule",
                     "status": "skipped",
-                    "summary": "研发任务创建为一次性确认动作，不创建定时调度",
+                    "summary": "需求创建为一次性确认动作，不创建定时调度",
                     "title": "调度策略",
                 },
                 {
                     "depends_on": ["data_source", "ai_processing", "result_action"],
                     "key": "confirmation",
                     "status": "pending",
-                    "summary": "确认后创建 AI 研发任务并更新需求状态",
+                    "summary": "确认后创建正式需求并进入评估入口",
                     "title": "确认执行",
                 },
             ],
@@ -123,7 +120,7 @@ class AssistantDraftBuilder:
             "summary": {
                 "draft_count": 1,
                 "requires_confirmation": True,
-                "target": "ai_tasks",
+                "target": "requirements",
             },
             "tool": "assistant.action_draft",
         }

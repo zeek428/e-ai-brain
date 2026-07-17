@@ -259,10 +259,11 @@ function draftPayloadFields({
   }
   if (draft.action === 'create_rd_task') {
     return [
-      field('需求', 'requirement_id'),
-      field('任务类型', 'task_type'),
-      field('负责人角色', 'input.owner_role'),
-      field('验收标准', 'input.acceptance_criteria'),
+      field('来源需求', 'source_requirement_id'),
+      field('产品', 'product_id'),
+      field('标题', 'title'),
+      field('优先级', 'priority'),
+      field('需求内容', 'content'),
     ];
   }
   if (draft.action === 'create_ai_skill') {
@@ -394,7 +395,7 @@ export function AssistantActionDraftCards({
             : isAiCapabilityDraft
               ? '确认前不会写入 AI 能力配置'
               : isRdTaskDraft
-                ? '确认前不会创建研发任务'
+                ? '确认前不会创建研发需求'
                 : isAnalysisDraft
                   ? '确认前不会写入分析结果'
                   : '确认前不会写入作业定义';

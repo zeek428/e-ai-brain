@@ -5,7 +5,6 @@ import {
   EditOutlined,
   LinkOutlined,
   MoreOutlined,
-  RocketOutlined,
 } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Dropdown, Form, Input, Modal, Select, Space, Spin, message } from 'antd';
@@ -19,16 +18,13 @@ import { formatRemoteRowsError, normalizeRemoteRowsError, useRemoteRows, type Re
 import {
   AUTH_STATE_EVENT,
   approveManagementRequirement,
-  batchAdvanceRequirementStatus,
   batchAssignRequirementOwner,
-  batchGenerateRequirementTasks,
   batchScheduleRequirements,
   createManagementRequirement,
   deleteManagementRequirement,
   fetchManagementRequirementList,
   fetchRequirementFullChain,
   fetchRequirementProductContextOptions,
-  generateRequirementTask,
   getStoredCurrentUser,
   rejectManagementRequirement,
   type CurrentUserResponse,
@@ -38,7 +34,6 @@ import {
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
 import {
-  batchAdvanceTargetOptions,
   batchAssignableStatuses,
   buildRequirementListQuery,
   formatRequirementDeleteError,
@@ -48,9 +43,7 @@ import {
   requirementSourceOptions,
   requirementWriteRoles,
   statusLabels,
-  type BatchAdvanceStatusFormValues,
   type BatchAssignOwnerFormValues,
-  type BatchGenerateTaskFormValues,
   type BatchScheduleFormValues,
   type RequirementFormValues,
 } from './requirementPageHelpers';
@@ -58,16 +51,12 @@ import {
 export default function RequirementsPage() {
   const [form] = Form.useForm<RequirementFormValues>();
   const [batchForm] = Form.useForm<BatchScheduleFormValues>();
-  const [batchAdvanceStatusForm] = Form.useForm<BatchAdvanceStatusFormValues>();
   const [batchAssignOwnerForm] = Form.useForm<BatchAssignOwnerFormValues>();
-  const [batchGenerateForm] = Form.useForm<BatchGenerateTaskFormValues>();
   const [rejectForm] = Form.useForm<{ rejection_reason: string }>();
   const [editingRequirement, setEditingRequirement] = useState<RequirementRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isBatchAdvanceStatusModalOpen, setIsBatchAdvanceStatusModalOpen] = useState(false);
   const [isBatchAssignOwnerModalOpen, setIsBatchAssignOwnerModalOpen] = useState(false);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
-  const [isBatchGenerateModalOpen, setIsBatchGenerateModalOpen] = useState(false);
   const [rejectingRequirement, setRejectingRequirement] = useState<RequirementRecord | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
   const [fullChainRequirement, setFullChainRequirement] = useState<RequirementRecord | null>(null);
@@ -76,9 +65,7 @@ export default function RequirementsPage() {
   const [fullChainVersionRequirements, setFullChainVersionRequirements] = useState<RequirementRecord[]>([]);
   const [isFullChainLoading, setIsFullChainLoading] = useState(false);
   const [batchResult, setBatchResult] = useState<ManagementBatchResult | null>(null);
-  const [isBatchAdvanceStatusSaving, setIsBatchAdvanceStatusSaving] = useState(false);
   const [isBatchAssignOwnerSaving, setIsBatchAssignOwnerSaving] = useState(false);
-  const [isBatchGenerateSaving, setIsBatchGenerateSaving] = useState(false);
   const [isBatchSaving, setIsBatchSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
@@ -189,10 +176,6 @@ export default function RequirementsPage() {
     const selectedIds = new Set(selectedRequirementIds);
     return listState.rows.filter((row) => selectedIds.has(row.id));
   }, [listState.rows, selectedRequirementIds]);
-  const selectedBatchGeneratableRequirements = useMemo(
-    () => selectedRequirements.filter((row) => row.status === 'planned'),
-    [selectedRequirements],
-  );
   const productOptions = useMemo(
     () =>
       productContexts.map((product) => ({
@@ -451,120 +434,6 @@ export default function RequirementsPage() {
     }
   };
 
-  const openBatchAdvanceStatusModal = useCallback(() => {
-    if (!ensureCanWriteRequirements('批量推进状态')) {
-      return;
-    }
-    if (selectedRequirements.length === 0) {
-      message.warning('请先选择要推进状态的需求');
-      return;
-    }
-    batchAdvanceStatusForm.resetFields();
-    batchAdvanceStatusForm.setFieldsValue({ target_status: 'ready_for_dev' });
-    setIsBatchAdvanceStatusModalOpen(true);
-  }, [batchAdvanceStatusForm, ensureCanWriteRequirements, selectedRequirements.length]);
-
-  const handleBatchAdvanceStatus = async () => {
-    if (!ensureCanWriteRequirements('批量推进状态')) {
-      return;
-    }
-    let values: BatchAdvanceStatusFormValues;
-    try {
-      values = await batchAdvanceStatusForm.validateFields();
-    } catch {
-      return;
-    }
-    setIsBatchAdvanceStatusSaving(true);
-    try {
-      const result = await batchAdvanceRequirementStatus({
-        reason: trimText(values.reason),
-        requirement_ids: selectedRequirementIds,
-        target_status: values.target_status,
-      });
-      const targetLabel = statusLabels[result.targetStatus]?.label ?? result.targetStatus;
-      showBatchResult({
-        batchId: result.batchId,
-        primaryCount: result.updatedCount,
-        primaryLabel: `已推进到${targetLabel}`,
-        skipped: result.skipped,
-        title: '批量推进状态结果',
-      });
-      setIsBatchAdvanceStatusModalOpen(false);
-      setSelectedRowKeys([]);
-      await reload();
-    } catch (batchError) {
-      message.error(formatMutationError(batchError));
-    } finally {
-      setIsBatchAdvanceStatusSaving(false);
-    }
-  };
-
-  const openBatchGenerateTaskModal = useCallback(() => {
-    if (!ensureCanWriteRequirements('批量生成任务')) {
-      return;
-    }
-    if (selectedRequirements.length === 0) {
-      message.warning('请先选择要生成任务的需求');
-      return;
-    }
-    const productIds = Array.from(
-      new Set(
-        selectedRequirements
-          .map((row) => row.productId)
-          .filter((productId): productId is string => Boolean(productId)),
-      ),
-    );
-    if (productIds.length !== 1) {
-      message.warning('请选择同一产品下的需求批量生成任务');
-      return;
-    }
-    if (selectedBatchGeneratableRequirements.length === 0) {
-      message.warning('请选择已排期需求生成任务');
-      return;
-    }
-    batchGenerateForm.resetFields();
-    setIsBatchGenerateModalOpen(true);
-  }, [batchGenerateForm, ensureCanWriteRequirements, selectedBatchGeneratableRequirements.length, selectedRequirements]);
-
-  const handleBatchGenerateTasks = async () => {
-    if (!ensureCanWriteRequirements('批量生成任务')) {
-      return;
-    }
-    let values: BatchGenerateTaskFormValues;
-    try {
-      values = await batchGenerateForm.validateFields();
-    } catch {
-      return;
-    }
-    const productId = selectedRequirements.find((row) => row.productId)?.productId;
-    if (!productId) {
-      message.warning('未找到所选需求的产品');
-      return;
-    }
-    setIsBatchGenerateSaving(true);
-    try {
-      const result = await batchGenerateRequirementTasks({
-        product_id: productId,
-        reason: trimText(values.reason),
-        requirement_ids: selectedRequirementIds,
-      });
-      showBatchResult({
-        batchId: result.batchId,
-        primaryCount: result.generatedCount,
-        primaryLabel: '已生成任务',
-        skipped: result.skipped,
-        title: '批量生成任务结果',
-      });
-      setIsBatchGenerateModalOpen(false);
-      setSelectedRowKeys([]);
-      await reload();
-    } catch (batchError) {
-      message.error(formatMutationError(batchError));
-    } finally {
-      setIsBatchGenerateSaving(false);
-    }
-  };
-
   const handleApprove = useCallback(async (row: RequirementRecord) => {
     if (!ensureCanWriteRequirements('审批需求')) {
       return;
@@ -606,19 +475,6 @@ export default function RequirementsPage() {
       message.error(formatMutationError(decisionError));
     }
   };
-
-  const handleGenerateTask = useCallback(async (row: RequirementRecord) => {
-    if (!ensureCanWriteRequirements('生成任务')) {
-      return;
-    }
-    try {
-      const result = await generateRequirementTask(row.id);
-      message.success(`已生成 ${result.task_type} 任务：${result.task_id}`);
-      await reload();
-    } catch (decisionError) {
-      message.error(formatMutationError(decisionError));
-    }
-  }, [ensureCanWriteRequirements, reload]);
 
   const openFullChainModal = useCallback(async (row: RequirementRecord) => {
     setFullChainRequirement(row);
@@ -675,33 +531,16 @@ export default function RequirementsPage() {
       </Button>,
       <Button
         disabled={selectedRowKeys.length === 0}
-        key="batch-advance-status"
-        onClick={openBatchAdvanceStatusModal}
-      >
-        批量推进状态
-      </Button>,
-      <Button
-        disabled={selectedRowKeys.length === 0}
         icon={<CalendarOutlined />}
         key="batch-schedule"
         onClick={openBatchScheduleModal}
       >
         批量排期
       </Button>,
-      <Button
-        disabled={selectedRowKeys.length === 0}
-        icon={<RocketOutlined />}
-        key="batch-generate-tasks"
-        onClick={openBatchGenerateTaskModal}
-      >
-        批量生成任务
-      </Button>,
     ] : [],
     [
       canWriteRequirements,
-      openBatchAdvanceStatusModal,
       openBatchAssignOwnerModal,
-      openBatchGenerateTaskModal,
       openBatchScheduleModal,
       selectedRowKeys.length,
     ],
@@ -826,14 +665,6 @@ export default function RequirementsPage() {
                         },
                       ]
                     : []),
-                  ...(canWriteRequirements && row.status === 'planned'
-                    ? [
-                        {
-                          key: 'generate-task',
-                          label: '生成任务',
-                        },
-                      ]
-                    : []),
                   ...(canWriteRequirements
                     ? [
                         {
@@ -861,10 +692,6 @@ export default function RequirementsPage() {
                     openRejectModal(row);
                     return;
                   }
-                  if (key === 'generate-task') {
-                    void handleGenerateTask(row);
-                    return;
-                  }
                   if (key === 'delete') {
                     openDeleteConfirm(row);
                   }
@@ -884,7 +711,6 @@ export default function RequirementsPage() {
       canRejectRequirements,
       canWriteRequirements,
       handleApprove,
-      handleGenerateTask,
       openDeleteConfirm,
       openEditModal,
       openFullChainModal,
@@ -1059,65 +885,6 @@ export default function RequirementsPage() {
             </Form.Item>
             <Form.Item label="分配原因" name="reason">
               <Input.TextArea placeholder="可填写批量分配原因" rows={2} />
-            </Form.Item>
-          </Form>
-        </Space>
-      </Modal>
-      <Modal
-        confirmLoading={isBatchAdvanceStatusSaving}
-        destroyOnHidden
-        okText="确认推进"
-        onCancel={() => setIsBatchAdvanceStatusModalOpen(false)}
-        onOk={() => void handleBatchAdvanceStatus()}
-        open={isBatchAdvanceStatusModalOpen}
-        title="批量推进状态"
-      >
-        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-          <Alert
-            description="仅支持按研发流程向前推进，终态、重复或不符合路径的需求会由后端跳过。"
-            title={`已选择 ${selectedRequirements.length} 条需求`}
-            type="info"
-          />
-          <Form<BatchAdvanceStatusFormValues> form={batchAdvanceStatusForm} layout="vertical">
-            <Form.Item
-              label="目标状态"
-              name="target_status"
-              rules={[{ message: '请选择目标状态', required: true }]}
-            >
-              <Select options={batchAdvanceTargetOptions} placeholder="请选择目标状态" />
-            </Form.Item>
-            <Form.Item label="推进原因" name="reason">
-              <Input.TextArea placeholder="可填写批量推进原因" rows={2} />
-            </Form.Item>
-          </Form>
-        </Space>
-      </Modal>
-      <Modal
-        confirmLoading={isBatchGenerateSaving}
-        destroyOnHidden
-        okText="确认生成"
-        onCancel={() => setIsBatchGenerateModalOpen(false)}
-        onOk={() => void handleBatchGenerateTasks()}
-        open={isBatchGenerateModalOpen}
-        title="批量生成任务"
-      >
-        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-          <Alert
-            title={`将为 ${selectedBatchGeneratableRequirements.length} 条已排期需求生成产品详细设计任务`}
-            type="info"
-          />
-          {selectedRequirements.length > selectedBatchGeneratableRequirements.length ? (
-            <Alert
-              showIcon
-              title={`另有 ${
-                selectedRequirements.length - selectedBatchGeneratableRequirements.length
-              } 条非已排期需求将由后端跳过`}
-              type="warning"
-            />
-          ) : null}
-          <Form<BatchGenerateTaskFormValues> form={batchGenerateForm} layout="vertical">
-            <Form.Item label="生成原因" name="reason">
-              <Input.TextArea rows={2} />
             </Form.Item>
           </Form>
         </Space>

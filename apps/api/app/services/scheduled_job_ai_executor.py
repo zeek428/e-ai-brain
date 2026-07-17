@@ -642,15 +642,11 @@ def _code_inspection_ai_executor_result_summary(
             "records_imported": len(inspection_result["bug_ids"]),
             "status": "succeeded",
         },
-        "task_creation": {
-            "created_task_ids": inspection_result.get("task_ids") or [],
-            "label": "Bug 确认后推进研发任务",
-            "records_imported": len(inspection_result.get("task_ids") or []),
-            "status": (
-                "deferred_to_bug_confirmation"
-                if inspection_result.get("task_promotion_deferred")
-                else "not_configured"
-            ),
+        "requirement_creation": {
+            "created_requirement_ids": inspection_result.get("requirement_ids") or [],
+            "label": "严重问题创建整改需求",
+            "records_imported": len(inspection_result.get("requirement_ids") or []),
+            "status": "succeeded" if inspection_result.get("requirement_ids") else "not_configured",
         },
         "code_inspection_report": {
             "finding_count": report["finding_count"],
@@ -702,7 +698,7 @@ def _code_inspection_ai_executor_result_summary(
         "result_actions": inspection_result["result_actions"],
         "risk_level": report["risk_level"],
         "severe_finding_count": report["severe_finding_count"],
-        "task_ids": inspection_result.get("task_ids") or [],
+        "requirement_ids": inspection_result.get("requirement_ids") or [],
         "write_target": "code_inspection_reports",
     }, records_imported
 

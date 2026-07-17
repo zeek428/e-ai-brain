@@ -49,7 +49,7 @@ function issueGapTags(row: Record<string, unknown>) {
   return (
     <Space className="code-inspection-table-tags" size={[4, 4]} wrap>
       {countTag('缺 Bug', row.uncovered_bug_finding_count, 'red')}
-      {countTag('待推进任务', row.uncovered_task_finding_count, 'orange')}
+      {countTag('缺整改需求', row.uncovered_requirement_finding_count, 'orange')}
     </Space>
   );
 }
@@ -192,7 +192,7 @@ function buildCodeInspectionGovernanceConclusion(
   const actionRequiredBranchCount = metricValue(governancePressure?.action_required_branch_count);
   const actionRequiredCommitterCount = metricValue(governancePressure?.action_required_committer_count);
   const uncoveredBugCount = metricValue(governancePressure?.uncovered_bug_finding_count);
-  const uncoveredTaskCount = metricValue(governancePressure?.uncovered_task_finding_count);
+  const uncoveredRequirementCount = metricValue(governancePressure?.uncovered_requirement_finding_count);
   const pendingSuppressionCount = metricValue(governancePressure?.pending_suppression_count);
   const pendingReviewCount =
     metricValue(governancePressure?.pending_review_branch_count) +
@@ -226,10 +226,10 @@ function buildCodeInspectionGovernanceConclusion(
 
   if (!risks.length) {
     risks.push(`Bug 覆盖率 ${percentText(sla?.bug_coverage_rate)}`);
-    risks.push(`任务推进率 ${percentText(sla?.task_coverage_rate)}`);
+    risks.push(`整改需求覆盖率 ${percentText(sla?.requirement_coverage_rate)}`);
   }
 
-  const detail = `当前范围有 ${reportCount} 份巡检报告、${severeFindingCount} 个严重问题，门禁失败报告 ${failedReportCount} 份、失败项 ${qualityGateViolationCount} 个，缺 Bug ${uncoveredBugCount} 个、待推进任务 ${uncoveredTaskCount} 个。`;
+  const detail = `当前范围有 ${reportCount} 份巡检报告、${severeFindingCount} 个严重问题，门禁失败报告 ${failedReportCount} 份、失败项 ${qualityGateViolationCount} 个，缺 Bug ${uncoveredBugCount} 个、待建整改需求 ${uncoveredRequirementCount} 个。`;
 
   if (failedReportCount > 0 || qualityGateViolationCount > 0) {
     return {
@@ -244,7 +244,7 @@ function buildCodeInspectionGovernanceConclusion(
     return {
       detail,
       level: 'warning',
-      nextAction: '先处理“分支治理待办”中的待闭环分支，确认 Bug、风险接受，并按需从 Bug 或需求推进任务。',
+      nextAction: '先处理“分支治理待办”中的待闭环分支，确认 Bug、风险接受，并补齐整改需求后进入评估协作。',
       risks,
       value: '优先处理分支治理待办',
     };
@@ -253,7 +253,7 @@ function buildCodeInspectionGovernanceConclusion(
     return {
       detail,
       level: 'warning',
-      nextAction: '先处理“提交人治理待办”中的责任人闭环，补齐缺失 Bug 或忽略审批，再按需推进任务。',
+      nextAction: '先处理“提交人治理待办”中的责任人闭环，补齐缺失 Bug、整改需求或忽略审批。',
       risks,
       value: '优先处理提交人治理待办',
     };
@@ -262,7 +262,7 @@ function buildCodeInspectionGovernanceConclusion(
     return {
       detail,
       level: 'warning',
-      nextAction: '先为严重问题补齐 Bug，确认后再从 Bug 或需求推进研发任务。',
+      nextAction: '先为严重问题补齐 Bug，并为需要整改的问题创建正式需求。',
       risks,
       value: '优先补齐 Bug',
     };
@@ -392,7 +392,7 @@ export function CodeInspectionGovernanceOverview({
               title="Bug 覆盖率"
               value={percentText(sla?.bug_coverage_rate)}
             />
-            <Text type="secondary">{`任务推进 ${percentText(sla?.task_coverage_rate)}`}</Text>
+            <Text type="secondary">{`整改需求 ${percentText(sla?.requirement_coverage_rate)}`}</Text>
           </Card>
         </Col>
         <Col lg={6} md={12} xs={12}>
@@ -423,7 +423,7 @@ export function CodeInspectionGovernanceOverview({
                     {pressureMetric('待审批分支', governancePressure?.pending_review_branch_count, 'gold')}
                     {pressureMetric('待审批忽略', governancePressure?.pending_suppression_count, 'gold')}
                     {pressureMetric('缺 Bug', governancePressure?.uncovered_bug_finding_count, 'red')}
-                    {pressureMetric('待推进任务', governancePressure?.uncovered_task_finding_count)}
+                    {pressureMetric('待建整改需求', governancePressure?.uncovered_requirement_finding_count)}
                     {pressureMetric('门禁失败报告', governancePressure?.quality_gate_failed_report_count, 'red')}
                     {pressureMetric('门禁失败项', governancePressure?.quality_gate_violation_count, 'red')}
                     {pressureMetric('到期接受风险', governancePressure?.expired_accepted_risk_count)}
@@ -532,9 +532,10 @@ export function CodeInspectionGovernanceOverview({
                       { key: 'covered', label: '已关联 Bug', children: sla?.covered_by_bug_count ?? 0 },
                       { key: 'uncovered', label: '未覆盖严重问题', children: sla?.uncovered_severe_finding_count ?? 0 },
                       { key: 'oldest', label: '最早未覆盖', children: sla?.oldest_uncovered_at ?? '-' },
-                      { key: 'task_covered', label: '已推进任务', children: sla?.covered_by_task_count ?? 0 },
-                      { key: 'task_uncovered', label: '待推进任务', children: sla?.uncovered_task_finding_count ?? 0 },
-                      { key: 'task_oldest', label: '最早待推进任务', children: sla?.oldest_without_task_at ?? '-' },
+                      { key: 'requirement_covered', label: '已建整改需求', children: sla?.covered_by_requirement_count ?? 0 },
+                      { key: 'requirement_uncovered', label: '待建整改需求', children: sla?.uncovered_requirement_finding_count ?? 0 },
+                      { key: 'requirement_oldest', label: '最早待建整改需求', children: sla?.oldest_without_requirement_at ?? '-' },
+                      { key: 'historical_task_covered', label: '历史 AI Task', children: sla?.historical_covered_by_task_count ?? 0 },
                     ]}
                     size="small"
                   />

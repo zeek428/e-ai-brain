@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.services.rd_requirement_entry_adapters import require_v2_task_work_item_entrypoint
 from app.services.task_access import require_task_permission_or_roles
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_persistence_helpers import (
@@ -27,6 +28,13 @@ def batch_cancel_ai_tasks_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     write_store = task_workflow_write_store(current_store)
+    # Preflight before the first historical task is mutated. A v2 task must
+    # be cancelled by the work-item aggregate, so mixed public batches fail as
+    # one command rather than producing a partial historical cancellation.
+    for task_id in task_ids:
+        task = write_store.ai_tasks.get(task_id)
+        if task is not None:
+            require_v2_task_work_item_entrypoint(task, entrypoint="ai_tasks.batch_cancel")
     batch_id = write_store.new_id("ai_task_cancel_batch")
     updated: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
@@ -153,6 +161,10 @@ def batch_retry_ai_tasks_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     write_store = task_workflow_write_store(current_store)
+    for task_id in task_ids:
+        task = write_store.ai_tasks.get(task_id)
+        if task is not None:
+            require_v2_task_work_item_entrypoint(task, entrypoint="ai_tasks.batch_retry")
     batch_id = write_store.new_id("ai_task_retry_batch")
     retried: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []

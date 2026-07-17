@@ -1235,6 +1235,7 @@ class ExecutionTraceBuilder:
             "result_action",
             "code_inspection_report",
             "bug_creation",
+            "requirement_creation",
             "task_creation",
             "notifications",
         ]

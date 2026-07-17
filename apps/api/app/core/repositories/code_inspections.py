@@ -19,6 +19,7 @@ suppressed_finding_count, suppression_summary, quality_gate,
 scan_profile, previous_report_id, previous_comparison,
 finding_count, severe_finding_count, status, result_actions,
 created_bug_ids, notification_ids, created_task_ids,
+created_requirement_ids,
 committer_count, committer_summary, created_by, created_at, updated_at
 """
 
@@ -194,6 +195,7 @@ class CodeInspectionReadRepository:
                            scan_profile, previous_report_id, previous_comparison,
                            finding_count, severe_finding_count, status, result_actions,
                            created_bug_ids, notification_ids, created_task_ids,
+                           created_requirement_ids,
                            committer_count, committer_summary, created_by, created_at, updated_at
                     FROM code_inspection_reports
                     WHERE id = %s
@@ -209,7 +211,8 @@ class CodeInspectionReadRepository:
                     SELECT id, report_id, rule_id, category, severity, title, description,
                            file_path, line_number, recommendation, raw, committer_name,
                            committer_email, committer_username, created_bug_id,
-                           created_task_id, suppression_status, suppression_reason,
+                            created_task_id, created_requirement_id, suppression_status,
+                            suppression_reason,
                            suppression_note, suppression_requested_by,
                            suppression_requested_at, suppression_reviewed_by,
                            suppression_reviewed_at, suppression_owner,
@@ -265,6 +268,7 @@ class CodeInspectionReadRepository:
                   quality_gate, scan_profile, previous_report_id, previous_comparison,
                   finding_count, severe_finding_count, status,
                   result_actions, created_bug_ids, notification_ids, created_task_ids,
+                  created_requirement_ids,
                   committer_count, committer_summary, created_by, created_at, updated_at
                 )
                 VALUES (
@@ -274,7 +278,7 @@ class CodeInspectionReadRepository:
                   %s, %s, %s, %s, %s, %s, %s::timestamptz, %s::timestamptz,
                   %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb,
                   %s, %s, %s, %s::jsonb, %s::jsonb,
-                  %s::jsonb, %s::jsonb, %s, %s::jsonb, %s,
+                  %s::jsonb, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -323,6 +327,7 @@ class CodeInspectionReadRepository:
                   created_bug_ids = EXCLUDED.created_bug_ids,
                   notification_ids = EXCLUDED.notification_ids,
                   created_task_ids = EXCLUDED.created_task_ids,
+                  created_requirement_ids = EXCLUDED.created_requirement_ids,
                   committer_count = EXCLUDED.committer_count,
                   committer_summary = EXCLUDED.committer_summary,
                   updated_at = EXCLUDED.updated_at
@@ -374,6 +379,7 @@ class CodeInspectionReadRepository:
                     _json(report.get("created_bug_ids"), []),
                     _json(report.get("notification_ids"), []),
                     _json(report.get("created_task_ids"), []),
+                    _json(report.get("created_requirement_ids"), []),
                     report.get("committer_count", 0),
                     _json(report.get("committer_summary"), []),
                     report.get("created_by"),
@@ -394,7 +400,7 @@ class CodeInspectionReadRepository:
                   id, report_id, rule_id, category, severity, title, description,
                   file_path, line_number, recommendation, raw, committer_name,
                   committer_email, committer_username, created_bug_id,
-                  created_task_id, suppression_status, suppression_reason,
+                  created_task_id, created_requirement_id, suppression_status, suppression_reason,
                   suppression_note, suppression_requested_by, suppression_requested_at,
                   suppression_reviewed_by, suppression_reviewed_at, suppression_owner,
                   suppression_expires_at, created_at, updated_at
@@ -402,7 +408,7 @@ class CodeInspectionReadRepository:
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s::jsonb, %s,
-                  %s, %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s, %s, %s,
                   %s, %s, %s::timestamptz, %s,
                   %s::timestamptz, %s, %s::timestamptz, COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
@@ -422,6 +428,7 @@ class CodeInspectionReadRepository:
                   committer_username = EXCLUDED.committer_username,
                   created_bug_id = EXCLUDED.created_bug_id,
                   created_task_id = EXCLUDED.created_task_id,
+                  created_requirement_id = EXCLUDED.created_requirement_id,
                   suppression_status = EXCLUDED.suppression_status,
                   suppression_reason = EXCLUDED.suppression_reason,
                   suppression_note = EXCLUDED.suppression_note,
@@ -450,6 +457,7 @@ class CodeInspectionReadRepository:
                     finding.get("committer_username"),
                     finding.get("created_bug_id"),
                     finding.get("created_task_id"),
+                    finding.get("created_requirement_id"),
                     finding.get("suppression_status") or "none",
                     finding.get("suppression_reason"),
                     finding.get("suppression_note"),
@@ -597,11 +605,12 @@ class CodeInspectionReadRepository:
             "created_bug_ids": row[43] or [],
             "notification_ids": row[44] or [],
             "created_task_ids": row[45] or [],
-            "committer_count": row[46] or 0,
-            "committer_summary": row[47] or [],
-            "created_by": row[48],
-            "created_at": row[49].isoformat() if row[49] else None,
-            "updated_at": row[50].isoformat() if row[50] else None,
+            "created_requirement_ids": row[46] or [],
+            "committer_count": row[47] or 0,
+            "committer_summary": row[48] or [],
+            "created_by": row[49],
+            "created_at": row[50].isoformat() if row[50] else None,
+            "updated_at": row[51].isoformat() if row[51] else None,
         }
 
     def _finding_from_row(self, row: Any) -> dict[str, Any]:
@@ -622,17 +631,18 @@ class CodeInspectionReadRepository:
             "committer_username": row[13],
             "created_bug_id": row[14],
             "created_task_id": row[15],
-            "suppression_status": row[16] or "none",
-            "suppression_reason": row[17],
-            "suppression_note": row[18],
-            "suppression_requested_by": row[19],
-            "suppression_requested_at": row[20].isoformat() if row[20] else None,
-            "suppression_reviewed_by": row[21],
-            "suppression_reviewed_at": row[22].isoformat() if row[22] else None,
-            "suppression_owner": row[23],
-            "suppression_expires_at": row[24].isoformat() if row[24] else None,
-            "created_at": row[25].isoformat() if row[25] else None,
-            "updated_at": row[26].isoformat() if row[26] else None,
+            "created_requirement_id": row[16],
+            "suppression_status": row[17] or "none",
+            "suppression_reason": row[18],
+            "suppression_note": row[19],
+            "suppression_requested_by": row[20],
+            "suppression_requested_at": row[21].isoformat() if row[21] else None,
+            "suppression_reviewed_by": row[22],
+            "suppression_reviewed_at": row[23].isoformat() if row[23] else None,
+            "suppression_owner": row[24],
+            "suppression_expires_at": row[25].isoformat() if row[25] else None,
+            "created_at": row[26].isoformat() if row[26] else None,
+            "updated_at": row[27].isoformat() if row[27] else None,
         }
 
     def _notification_from_row(self, row: Any) -> dict[str, Any]:

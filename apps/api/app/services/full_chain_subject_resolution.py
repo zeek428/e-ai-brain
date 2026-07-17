@@ -85,6 +85,10 @@ def resolve_code_inspection_report_requirement_id(
     current_store: Any,
     report: dict[str, Any],
 ) -> str | None:
+    requirements = read_memory_dict(current_store, "requirements")
+    for requirement_id in report.get("created_requirement_ids") or []:
+        if str(requirement_id) in requirements:
+            return str(requirement_id)
     for bug_id in report.get("created_bug_ids") or []:
         bug = read_memory_dict(current_store, "bugs").get(str(bug_id))
         if bug is not None and bug.get("requirement_id"):

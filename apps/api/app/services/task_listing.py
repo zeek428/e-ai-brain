@@ -88,6 +88,7 @@ def task_display_title(task: dict[str, Any]) -> str:
 def task_summary_projection(task: dict[str, Any], current_store: Any) -> dict[str, Any]:
     return {
         "brain_app_id": task.get("brain_app_id", DEFAULT_BRAIN_APP_ID),
+        "collaboration_run_id": task.get("collaboration_run_id"),
         "created_at": task.get("created_at"),
         "created_by": task.get("created_by"),
         "current_step": task.get("current_step"),
@@ -101,6 +102,7 @@ def task_summary_projection(task: dict[str, Any], current_store: Any) -> dict[st
         "title": task_display_title(task),
         "updated_at": task.get("updated_at"),
         "version_id": task["version_id"],
+        "work_item_id": task.get("work_item_id"),
     }
 
 

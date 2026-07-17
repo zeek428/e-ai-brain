@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.api.deps import api_error, require_any_permission_or_roles
+from app.services.rd_requirement_entry_adapters import raise_legacy_rd_entrypoint_required
 from app.services.requirement_iteration_planning import validate_manual_iteration_assignment
 from app.services.requirements import (
     REQUIREMENT_BATCH_SCHEDULABLE_STATUSES,
@@ -18,10 +19,7 @@ from app.services.requirements import (
     save_requirement_record,
 )
 from app.services.version_status import (
-    can_batch_advance_requirement_status,
     canonical_requirement_status,
-    requires_requirement_version_for_batch_advance,
-    validate_requirement_batch_advance_target,
     validate_requirement_version,
 )
 
@@ -29,6 +27,36 @@ from app.services.version_status import (
 def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     return collection if isinstance(collection, dict) else {}
+
+
+def _has_active_collaboration_run(current_store: Any, requirement_id: str) -> bool:
+    """Prevent a legacy batch close from bypassing a v2 work-item decision."""
+    terminal_statuses = {"cancelled", "completed", "failed"}
+    runs = _read_memory_dict(current_store, "rd_collaboration_runs")
+    scope_by_run: dict[str, set[str]] = {}
+    for scope in _read_memory_dict(
+        current_store,
+        "rd_collaboration_run_requirements",
+    ).values():
+        run_id = str(scope.get("collaboration_run_id") or "")
+        scoped_requirement_id = str(scope.get("requirement_id") or "")
+        if run_id and scoped_requirement_id:
+            scope_by_run.setdefault(run_id, set()).add(scoped_requirement_id)
+    for run in runs.values():
+        if str(run.get("status") or "") in terminal_statuses:
+            continue
+        run_requirement_ids = {
+            str(value)
+            for value in run.get("requirement_ids", [])
+            if value is not None
+        }
+        run_requirement_ids.update(scope_by_run.get(str(run.get("id") or ""), set()))
+        if (
+            str(run.get("requirement_id") or "") == requirement_id
+            or requirement_id in run_requirement_ids
+        ):
+            return True
+    return False
 
 
 def _assign_requirement_to_planning_version(
@@ -75,6 +103,7 @@ def batch_generate_requirement_tasks_result(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    raise_legacy_rd_entrypoint_required(entrypoint="requirements.batch_generate_tasks")
     require_any_permission_or_roles(
         user,
         {"requirement.task_generate", "task.create"},
@@ -551,7 +580,10 @@ def batch_advance_requirement_status_result(
         {"product_owner", "rd_owner"},
     )
     target_status = canonical_requirement_status(payload.target_status)
-    validate_requirement_batch_advance_target(target_status)
+    if target_status not in {"cancelled", "closed"}:
+        raise_legacy_rd_entrypoint_required(
+            entrypoint="requirements.batch_advance_status",
+        )
     batch_id = current_store.new_id("requirement_status_batch")
     now = datetime.now(UTC).isoformat()
     updated: list[dict[str, Any]] = []
@@ -592,25 +624,21 @@ def batch_advance_requirement_status_result(
             )
             continue
         current_status = canonical_requirement_status(requirement.get("status"))
-        if not can_batch_advance_requirement_status(current_status, target_status):
+        if _has_active_collaboration_run(current_store, requirement_id):
+            skipped.append(
+                {
+                    "code": "RD_COLLABORATION_REQUIRED",
+                    "id": requirement_id,
+                    "message": "Active v2 collaboration must be cancelled through its work item",
+                }
+            )
+            continue
+        if current_status in {"cancelled", "closed"} or current_status == target_status:
             skipped.append(
                 {
                     "code": "REQUIREMENT_STATE_INVALID",
                     "id": requirement_id,
-                    "message": "Requirement cannot be advanced to target status",
-                }
-            )
-            continue
-        if requires_requirement_version_for_batch_advance(target_status) and not requirement.get(
-            "version_id"
-        ):
-            skipped.append(
-                {
-                    "code": "REQUIREMENT_VERSION_REQUIRED",
-                    "id": requirement_id,
-                    "message": (
-                        "Requirement must be scheduled to a version before advancing to this status"
-                    ),
+                    "message": "Requirement is already in a terminal status",
                 }
             )
             continue
@@ -622,14 +650,14 @@ def batch_advance_requirement_status_result(
         }
         audit_event = record_audit_event(
             current_store,
-            event_type="requirement.updated",
+            event_type=f"requirement.batch_{target_status}",
             actor_id=user["id"],
             subject_type="requirement",
             subject_id=requirement_id,
             payload={
                 "batch_id": batch_id,
                 "from_status": current_status,
-                "operation": "batch_advance_status",
+                "operation": f"batch_{target_status}",
                 "reason": payload.reason,
                 "to_status": target_status,
             },
@@ -643,7 +671,7 @@ def batch_advance_requirement_status_result(
 
     batch_audit_event = record_audit_event(
         current_store,
-        event_type="requirement.batch_status_advanced",
+        event_type=f"requirement.batch_{target_status}",
         actor_id=user["id"],
         subject_type="requirement_status_batch",
         subject_id=batch_id,

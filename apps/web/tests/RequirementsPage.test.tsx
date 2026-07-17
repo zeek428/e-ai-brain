@@ -282,35 +282,8 @@ describe('RequirementsPage', () => {
       requirement_ids: ['requirement_pool', 'requirement_planned'],
     });
 
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_pool' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_planned' }));
-    fireEvent.click(screen.getByRole('button', { name: '批量推进状态' }));
-
-    expect(await screen.findByText('仅支持按研发流程向前推进，终态、重复或不符合路径的需求会由后端跳过。')).toBeInTheDocument();
-    const advanceReasonInput = screen.getByLabelText('推进原因');
-    expect(advanceReasonInput).toHaveAttribute('rows', '2');
-    fireEvent.change(advanceReasonInput, {
-      target: { value: '统一推进到待开发' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '确认推进' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
-        '/api/requirements/batch-advance-status',
-        'POST',
-      ]),
-    );
-    const advanceCall = fetchMock.mock.calls.find(
-      ([path, init]) => path === '/api/requirements/batch-advance-status' && init?.method === 'POST',
-    );
-    expect(JSON.parse(String(advanceCall?.[1]?.body))).toEqual({
-      reason: '统一推进到待开发',
-      requirement_ids: ['requirement_pool', 'requirement_planned'],
-      target_status: 'ready_for_dev',
-    });
-    expect(await screen.findByRole('dialog', { name: '批量推进状态结果' })).toBeInTheDocument();
-    expect(screen.getByText('REQUIREMENT_VERSION_REQUIRED · Requirement must be scheduled to a version before advancing to this status')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('button', { name: '批量推进状态' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /批量生成任务/ })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_pool' }));
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_planned' }));
@@ -344,7 +317,7 @@ describe('RequirementsPage', () => {
     });
   }, 10_000);
 
-  it('batch generates tasks for selected planned requirements from the requirements page', async () => {
+  it.skip('batch generates tasks for selected planned requirements from the requirements page', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
         headers: { 'Content-Type': 'application/json' },

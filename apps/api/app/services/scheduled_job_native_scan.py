@@ -104,8 +104,7 @@ def execute_native_multi_code_inspection_summary(
     bug_ids: list[str] = []
     deduplicated_bug_ids: list[str] = []
     notification_ids: list[str] = []
-    task_ids: list[str] = []
-    task_promotion_deferred = False
+    requirement_ids: list[str] = []
     severe_finding_count = 0
     model_gateway_called = False
     native_scan_items: list[dict[str, Any]] = []
@@ -185,11 +184,7 @@ def execute_native_multi_code_inspection_summary(
         bug_ids.extend(inspection_result["bug_ids"])
         deduplicated_bug_ids.extend(inspection_result["deduplicated_bug_ids"])
         notification_ids.extend(inspection_result["notification_ids"])
-        task_promotion_deferred = (
-            task_promotion_deferred
-            or bool(inspection_result.get("task_promotion_deferred"))
-        )
-        task_ids.extend(inspection_result.get("task_ids") or [])
+        requirement_ids.extend(inspection_result.get("requirement_ids") or [])
         native_scan = (plugin_summary.get("response_summary") or {}).get("native_scan")
         native_scan_node: dict[str, Any] = {}
         if isinstance(native_scan, dict):
@@ -281,15 +276,11 @@ def execute_native_multi_code_inspection_summary(
                     "skill_ids": list(job.get("skill_ids", [])),
                     "status": skill_processing_status,
                 },
-                "task_creation": {
-                    "created_task_ids": task_ids,
-                    "label": "Bug 确认后推进研发任务",
-                    "records_imported": len(task_ids),
-                    "status": (
-                        "deferred_to_bug_confirmation"
-                        if task_promotion_deferred
-                        else "not_configured"
-                    ),
+                "requirement_creation": {
+                    "created_requirement_ids": requirement_ids,
+                    "label": "严重问题创建整改需求",
+                    "records_imported": len(requirement_ids),
+                    "status": "succeeded" if requirement_ids else "not_configured",
                 },
             },
             "finding_count": total_findings,
@@ -308,7 +299,7 @@ def execute_native_multi_code_inspection_summary(
             "result_actions": job.get("result_actions") or [],
             "risk_level": risk_level,
             "severe_finding_count": severe_finding_count,
-            "task_ids": task_ids,
+            "requirement_ids": requirement_ids,
         },
         total_findings,
     )
@@ -338,15 +329,11 @@ def code_inspection_single_result_summary(
             "records_imported": len(inspection_result["bug_ids"]),
             "status": "succeeded",
         },
-        "task_creation": {
-            "created_task_ids": inspection_result.get("task_ids") or [],
-            "label": "Bug 确认后推进研发任务",
-            "records_imported": len(inspection_result.get("task_ids") or []),
-            "status": (
-                "deferred_to_bug_confirmation"
-                if inspection_result.get("task_promotion_deferred")
-                else "not_configured"
-            ),
+        "requirement_creation": {
+            "created_requirement_ids": inspection_result.get("requirement_ids") or [],
+            "label": "严重问题创建整改需求",
+            "records_imported": len(inspection_result.get("requirement_ids") or []),
+            "status": "succeeded" if inspection_result.get("requirement_ids") else "not_configured",
         },
         "code_inspection_report": {
             "finding_count": report["finding_count"],
@@ -413,7 +400,7 @@ def code_inspection_single_result_summary(
         "result_actions": inspection_result["result_actions"],
         "risk_level": report["risk_level"],
         "severe_finding_count": report["severe_finding_count"],
-        "task_ids": inspection_result.get("task_ids") or [],
+        "requirement_ids": inspection_result.get("requirement_ids") or [],
     }
 
 

@@ -197,16 +197,26 @@ def code_inspection_governance_summary(
         finding for finding in accepted_risk_findings if finding_accepted_risk_is_expired(finding)
     ]
     bug_covered = [finding for finding in active_severe_findings if finding.get("created_bug_id")]
-    task_covered = [finding for finding in active_severe_findings if finding.get("created_task_id")]
+    requirement_covered = [
+        finding for finding in active_severe_findings if finding.get("created_requirement_id")
+    ]
+    historical_task_covered = [
+        finding for finding in active_severe_findings if finding.get("created_task_id")
+    ]
     uncovered_bug_findings = [
         finding for finding in active_severe_findings if not finding.get("created_bug_id")
     ]
-    uncovered_task_findings = [
-        finding for finding in active_severe_findings if not finding.get("created_task_id")
+    uncovered_requirement_findings = [
+        finding for finding in active_severe_findings if not finding.get("created_requirement_id")
     ]
     active_count = len(active_severe_findings)
     bug_coverage_rate = round(len(bug_covered) / active_count, 4) if active_count else 1
-    task_coverage_rate = round(len(task_covered) / active_count, 4) if active_count else 1
+    requirement_coverage_rate = (
+        round(len(requirement_covered) / active_count, 4) if active_count else 1
+    )
+    historical_task_coverage_rate = (
+        round(len(historical_task_covered) / active_count, 4) if active_count else 1
+    )
     action_items = []
     if uncovered_bug_findings:
         action_items.append(
@@ -216,12 +226,12 @@ def code_inspection_governance_summary(
                 "label": "为未关联 Bug 的严重问题创建缺陷",
             }
         )
-    if uncovered_task_findings:
+    if uncovered_requirement_findings:
         action_items.append(
             {
-                "code": "promote_bug_or_requirement_after_confirmation",
-                "count": len(uncovered_task_findings),
-                "label": "Bug 或需求确认后推进研发任务",
+                "code": "create_requirement_for_uncovered_severe_findings",
+                "count": len(uncovered_requirement_findings),
+                "label": "为未关联正式需求的严重问题创建整改需求",
             }
         )
     if pending_suppression_findings:
@@ -241,7 +251,11 @@ def code_inspection_governance_summary(
             }
         )
     status = "healthy"
-    if uncovered_bug_findings or expired_accepted_risk_findings:
+    if (
+        uncovered_bug_findings
+        or uncovered_requirement_findings
+        or expired_accepted_risk_findings
+    ):
         status = "action_required"
     elif pending_suppression_findings:
         status = "pending_review"
@@ -251,13 +265,15 @@ def code_inspection_governance_summary(
         "active_severe_finding_count": active_count,
         "bug_coverage_rate": bug_coverage_rate,
         "covered_by_bug_count": len(bug_covered),
-        "covered_by_task_count": len(task_covered),
+        "covered_by_requirement_count": len(requirement_covered),
+        "historical_covered_by_task_count": len(historical_task_covered),
         "expired_accepted_risk_count": len(expired_accepted_risk_findings),
         "pending_suppression_count": len(pending_suppression_findings),
         "severe_threshold": SEVERE_FINDING_THRESHOLD,
         "status": status,
         "suppressed_finding_count": len(approved_suppression_findings),
-        "task_coverage_rate": task_coverage_rate,
+        "historical_task_coverage_rate": historical_task_coverage_rate,
+        "requirement_coverage_rate": requirement_coverage_rate,
         "uncovered_bug_finding_count": len(uncovered_bug_findings),
-        "uncovered_task_finding_count": len(uncovered_task_findings),
+        "uncovered_requirement_finding_count": len(uncovered_requirement_findings),
     }

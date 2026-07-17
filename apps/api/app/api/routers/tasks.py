@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
+from app.services.rd_requirement_entry_adapters import raise_legacy_rd_entrypoint_required
 from app.services.rd_task_executor_policies import (
     create_rd_task_executor_policy_response,
     delete_rd_task_executor_policy_response,
@@ -250,6 +251,10 @@ def create_ai_task(
     payload: AiTaskRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    raise_legacy_rd_entrypoint_required(
+        entrypoint="ai_tasks.create",
+        requirement_id=payload.requirement_id,
+    )
     result = create_ai_task_response(
         current_store=store(request),
         input_payload=payload.input,

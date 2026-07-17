@@ -7321,10 +7321,10 @@ describe('AssistantPage', () => {
                     items: [
                       {
                         dependencies: [],
-                        description: '选择或 @ 一个已规划需求后，生成可确认的产品详细设计研发任务草案。',
+                        description: '选择或 @ 一个来源需求后，生成可确认的研发需求草案，并进入评估与协作入口。',
                         draft_action: 'create_rd_task',
-                        prompt: '我要新增研发任务，请先让我 @需求 后生成产品详细设计任务草案',
-                        title: '研发任务',
+                        prompt: '我要新增研发需求，请先让我 @需求 后生成研发需求草案',
+                        title: '研发需求',
                         type: 'rd_task',
                         wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
                       },
@@ -7413,7 +7413,7 @@ describe('AssistantPage', () => {
     expect(
       screen.getAllByText('流程：数据来源、AI处理、结果动作、调度策略、确认执行'),
     ).toHaveLength(6);
-    expect(screen.getByText('研发任务')).toBeInTheDocument();
+    expect(screen.getByText('研发需求')).toBeInTheDocument();
     expect(screen.getByText('定时作业')).toBeInTheDocument();
     expect(screen.getByText('AI能力配置')).toBeInTheDocument();
     expect(screen.getByText('动作')).toBeInTheDocument();
