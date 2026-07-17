@@ -105,6 +105,9 @@ class AssessmentRepository:
                 "health_status": "healthy",
                 "runner_id": "runner_architect",
                 "supported_role_codes": ["architect"],
+                "workspace_capabilities": {
+                    "assessment_workspace_root": "/srv/workspaces/project-a"
+                },
             }
         }
 
@@ -420,6 +423,7 @@ def test_assessment_resolves_initial_policy_before_ai_roles():
     assert dispatched["input_payload"]["executor_profile_id"] == "executor_architect"
     assert dispatched["input_payload"]["product_id"] == "product_1"
     assert dispatched["input_payload"]["requirement_revision"] == 1
+    assert dispatched["workspace_root"] == "/srv/workspaces/project-a"
 
 
 def test_policy_re_evaluation_round_reassigns_every_new_active_qualified_role():
@@ -461,6 +465,7 @@ def test_policy_re_evaluation_round_reassigns_every_new_active_qualified_role():
         "health_status": "healthy",
         "runner_id": "runner_reviewer",
         "supported_role_codes": ["reviewer"],
+        "workspace_capabilities": {"assessment_workspace_root": "/srv/workspaces/project-a"},
     }
     store = RepositoryStore(repository)
     requirement = {

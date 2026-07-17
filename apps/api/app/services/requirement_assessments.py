@@ -376,13 +376,24 @@ def _assessment_dispatch_task(
             "ASSESSMENT_EXECUTOR_PROFILE_INVALID",
             "Frozen AI assessment executor profile has no runner binding",
         )
+    workspace_capabilities = profile.get("workspace_capabilities")
+    workspace_capabilities = (
+        workspace_capabilities if isinstance(workspace_capabilities, dict) else {}
+    )
+    workspace_root = str(workspace_capabilities.get("assessment_workspace_root") or "").strip()
+    if not workspace_root.startswith("/"):
+        raise api_error(
+            409,
+            "ASSESSMENT_EXECUTOR_PROFILE_INVALID",
+            "Frozen AI assessment executor profile has no approved read-only workspace",
+        )
     now = datetime.now(UTC).isoformat()
     return {
         "id": _new_id(current_store, "ai_executor_task"),
         "runner_id": runner_id,
         "executor_type": profile.get("executor_type") or "codex",
         "instruction": "Produce only the structured requirement assessment opinion.",
-        "workspace_root": "assessment://readonly",
+        "workspace_root": workspace_root,
         "timeout_seconds": 1800,
         "input_payload": {
             "assessment_id": execution["assessment_id"],

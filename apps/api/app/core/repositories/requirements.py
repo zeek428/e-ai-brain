@@ -59,6 +59,57 @@ class RequirementReadRepository:
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])
 
+    def save_requirement_revision_with_assessment_supersession(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist a substantive edit and retire stale assessment work in one transaction."""
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM requirements WHERE id = %s FOR UPDATE", (record["id"],)
+                )
+                if cursor.fetchone() is None:
+                    raise KeyError(record["id"])
+                self.upsert_requirements(cursor, {record["id"]: record})
+                cursor.execute(
+                    """
+                    UPDATE requirement_assessments
+                    SET status = 'cancelled', updated_at = now()
+                    WHERE requirement_id = %s
+                      AND requirement_revision < %s
+                      AND status IN ('draft', 'evaluating', 'waiting_human', 'needs_info',
+                                     'rework_required', 'deferred')
+                    RETURNING id
+                    """,
+                    (record["id"], int(record["assessment_revision"])),
+                )
+                cancelled_ids = [row[0] for row in cursor.fetchall()]
+                if cancelled_ids:
+                    cursor.execute(
+                        """
+                        UPDATE requirement_assessment_executions
+                        SET status = 'cancelled', updated_at = now()
+                        WHERE assessment_id = ANY(%s) AND status = 'pending'
+                        """,
+                        (cancelled_ids,),
+                    )
+                    cursor.execute(
+                        """
+                        UPDATE ai_executor_tasks task
+                        SET status = 'cancelled', finished_at = now(), updated_at = now()
+                        FROM requirement_assessment_executions execution
+                        WHERE execution.assessment_id = ANY(%s)
+                          AND task.id = execution.ai_executor_task_id
+                          AND task.status IN ('queued', 'claimed', 'running')
+                        """,
+                        (cancelled_ids,),
+                    )
+                if audit_event is not None and self._upsert_audit_events is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def delete_requirement_record(
         self,
         record_id: str,
@@ -139,9 +190,14 @@ class RequirementReadRepository:
                         """
                         UPDATE requirements SET status = %s, updated_at = now()
                         WHERE id = %s AND status = 'submitted'
+                          AND assessment_revision = %s
                         RETURNING id
                         """,
-                        (requirement["status"], requirement["id"]),
+                        (
+                            requirement["status"],
+                            requirement["id"],
+                            assessment.get("requirement_revision"),
+                        ),
                     )
                     if cursor.fetchone() is None:
                         raise RdCollaborationRepositoryError(

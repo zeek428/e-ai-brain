@@ -159,4 +159,58 @@ ALTER TABLE model_gateway_logs
   ADD COLUMN IF NOT EXISTS executor_profile_id text,
   ADD COLUMN IF NOT EXISTS product_id text,
   ADD COLUMN IF NOT EXISTS requirement_revision bigint,
-  ADD COLUMN IF NOT EXISTS strategy_snapshot_id text;
+  ADD COLUMN IF NOT EXISTS strategy_snapshot_id text,
+  ADD COLUMN IF NOT EXISTS ai_executor_task_id text
+    REFERENCES ai_executor_tasks(id) ON DELETE RESTRICT,
+  ADD COLUMN IF NOT EXISTS requirement_assessment_execution_id text
+    REFERENCES requirement_assessment_executions(id) ON DELETE RESTRICT;
+
+ALTER TABLE model_gateway_logs
+  DROP CONSTRAINT IF EXISTS ck_model_gateway_logs_assessment_provenance,
+  ADD CONSTRAINT ck_model_gateway_logs_assessment_provenance CHECK (
+    purpose <> 'requirement_assessment'
+    OR (
+      ai_executor_task_id IS NOT NULL
+      AND requirement_assessment_execution_id IS NOT NULL
+      AND executor_profile_id IS NOT NULL
+      AND product_id IS NOT NULL
+      AND requirement_revision IS NOT NULL
+      AND strategy_snapshot_id IS NOT NULL
+    )
+  );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_model_gateway_logs_assessment_execution_invocation
+  ON model_gateway_logs (requirement_assessment_execution_id)
+  WHERE purpose = 'requirement_assessment';
+
+CREATE OR REPLACE FUNCTION reject_model_gateway_assessment_provenance_mutation()
+RETURNS trigger AS $$
+BEGIN
+  IF OLD.purpose = 'requirement_assessment' AND (
+    NEW.purpose,
+    NEW.ai_executor_task_id,
+    NEW.requirement_assessment_execution_id,
+    NEW.executor_profile_id,
+    NEW.product_id,
+    NEW.requirement_revision,
+    NEW.strategy_snapshot_id
+  ) IS DISTINCT FROM (
+    OLD.purpose,
+    OLD.ai_executor_task_id,
+    OLD.requirement_assessment_execution_id,
+    OLD.executor_profile_id,
+    OLD.product_id,
+    OLD.requirement_revision,
+    OLD.strategy_snapshot_id
+  ) THEN
+    RAISE EXCEPTION 'assessment model invocation provenance is immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_model_gateway_logs_assessment_provenance_immutable
+  ON model_gateway_logs;
+CREATE TRIGGER trg_model_gateway_logs_assessment_provenance_immutable
+BEFORE UPDATE ON model_gateway_logs
+FOR EACH ROW EXECUTE FUNCTION reject_model_gateway_assessment_provenance_mutation();

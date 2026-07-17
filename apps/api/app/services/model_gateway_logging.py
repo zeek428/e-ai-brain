@@ -66,6 +66,8 @@ def model_gateway_log(
 ) -> dict[str, Any]:
     ai_task_id = task["id"] if task else None
     resolved_purpose = purpose or (task["task_type"] if task else "model_gateway")
+    assessment_input = task.get("input_payload") if isinstance(task, dict) else {}
+    assessment_input = assessment_input if isinstance(assessment_input, dict) else {}
     log = {
         "id": current_store.new_id("model_log"),
         "ai_task_id": ai_task_id,
@@ -79,5 +81,18 @@ def model_gateway_log(
         "model_gateway_config_id": config_id,
         "created_at": datetime.now(UTC).isoformat(),
     }
+    if resolved_purpose == "requirement_assessment":
+        log.update(
+            {
+                "ai_executor_task_id": task["id"] if task else None,
+                "requirement_assessment_execution_id": assessment_input.get(
+                    "assessment_execution_id"
+                ),
+                "executor_profile_id": assessment_input.get("executor_profile_id"),
+                "product_id": assessment_input.get("product_id"),
+                "requirement_revision": assessment_input.get("requirement_revision"),
+                "strategy_snapshot_id": assessment_input.get("strategy_snapshot_id"),
+            }
+        )
     _model_gateway_logs_collection(current_store).append(log)
     return log

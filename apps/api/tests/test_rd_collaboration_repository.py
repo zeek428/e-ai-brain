@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
@@ -1988,7 +1989,7 @@ def test_assessment_ai_completion_uses_frozen_pg_execution_attribution(
             INSERT INTO model_gateway_logs (
               id, provider, model, purpose, status, executor_profile_id,
               product_id, requirement_revision, strategy_snapshot_id
-            ) VALUES (%s, 'test', 'test-model', 'requirement_assessment', 'succeeded',
+            ) VALUES (%s, 'test', 'test-model', 'model_gateway', 'succeeded',
                       %s, %s, %s, %s)
             """,
             (
@@ -1999,7 +2000,6 @@ def test_assessment_ai_completion_uses_frozen_pg_execution_attribution(
                 seeded["base_snapshot"]["id"],
             ),
         )
-
     saved = complete_ai_assessment_execution_from_runner(
         current_store=PostgresRuntimeStore(repository),
         assessment_id=assessment["id"],
@@ -2032,8 +2032,9 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
         {
             "id": runner_id,
             "name": "Assessment runner",
-            "token_hash": "test-token-hash",
+            "token_hash": sha256(b"runner-secret").hexdigest(),
             "executor_types": ["codex"],
+            "workspace_roots": ["/srv/workspaces/project-a"],
             "created_by": "user_admin",
         }
     )
@@ -2054,6 +2055,7 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
             "name": "Assessment profile",
             "executor_type": "codex",
             "runner_id": runner_id,
+            "workspace_capabilities": {"assessment_workspace_root": "/srv/workspaces/project-a"},
             "created_by": "user_admin",
         }
     )
@@ -2095,8 +2097,15 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
         "runner_id": runner_id,
         "executor_type": "codex",
         "instruction": "Assess requirement only",
-        "workspace_root": "assessment://readonly",
-        "input_payload": {"assessment_execution_id": execution["id"]},
+        "workspace_root": "/srv/workspaces/project-a",
+        "input_payload": {
+            "assessment_id": assessment["id"],
+            "assessment_execution_id": execution["id"],
+            "executor_profile_id": profile_id,
+            "product_id": seeded["product"],
+            "requirement_revision": 1,
+            "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        },
         "request_config": {"assessment_only": True},
         "result_json": {},
         "logs": [],
@@ -2118,12 +2127,31 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
             """
             INSERT INTO model_gateway_logs (
               id, provider, model, purpose, status, executor_profile_id,
-              product_id, requirement_revision, strategy_snapshot_id
+              product_id, requirement_revision, strategy_snapshot_id,
+              ai_executor_task_id, requirement_assessment_execution_id
             ) VALUES (%s, 'test', 'test-model', 'requirement_assessment', 'succeeded',
-                      %s, %s, %s, %s)
+                      %s, %s, %s, %s, %s, %s)
             """,
             (
                 "assessment-runner-atomic-log",
+                profile_id,
+                seeded["product"],
+                1,
+                seeded["base_snapshot"]["id"],
+                task["id"],
+                execution["id"],
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO model_gateway_logs (
+              id, provider, model, purpose, status, executor_profile_id,
+              product_id, requirement_revision, strategy_snapshot_id
+            ) VALUES (%s, 'test', 'test-model', 'unrelated_operation', 'succeeded',
+                      %s, %s, %s, %s)
+            """,
+            (
+                "assessment-runner-atomic-unrelated-log",
                 profile_id,
                 seeded["product"],
                 1,
@@ -2160,12 +2188,56 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
         },
     }
 
+    original_store = app.state.store
+    app.state.store = PostgresRuntimeStore(repository)
+    try:
+        claimed = TestClient(app).post(
+            "/api/system/ai-executor-tasks/claim",
+            json={"executor_type": "codex", "runner_id": runner_id},
+            headers={"X-Runner-Token": "runner-secret"},
+        )
+        assert claimed.status_code == 200
+        assert claimed.json()["data"]["task"]["id"] == task["id"]
+    finally:
+        app.state.store = original_store
+
+    original_complete = repository.complete_ai_assessment_runner_task
+    repository.complete_ai_assessment_runner_task = lambda **_kwargs: (_ for _ in ()).throw(
+        psycopg.OperationalError("forced persistence failure")
+    )
+    app.state.store = PostgresRuntimeStore(repository)
+    try:
+        unavailable = TestClient(app).post(
+            f"/api/system/ai-executor-tasks/{task['id']}/complete",
+            json={
+                "runner_id": runner_id,
+                "status": "succeeded",
+                "result_json": {
+                    "model_invocation_id": "assessment-runner-atomic-log",
+                    "assessment_opinion": {"conclusion_json": {"recommendation": "accept"}},
+                },
+            },
+            headers={"X-Runner-Token": "runner-secret"},
+        )
+        assert unavailable.status_code == 503
+        assert unavailable.json()["detail"]["code"] == "PERSISTENCE_UNAVAILABLE"
+        assert unavailable.headers["x-trace-id"]
+    finally:
+        repository.complete_ai_assessment_runner_task = original_complete
+        app.state.store = original_store
+
     with pytest.raises(RdCollaborationRepositoryError, match="successful frozen assessment"):
         repository.complete_ai_assessment_runner_task(
             **kwargs, model_invocation_id="missing-model-invocation"
         )
     assert repository.get_requirement_assessment_execution(execution["id"])["status"] == "pending"
-    assert repository.list_ai_executor_tasks(runner_id=runner_id)[0]["status"] == "queued"
+    assert repository.list_ai_executor_tasks(runner_id=runner_id)[0]["status"] == "claimed"
+
+    with pytest.raises(RdCollaborationRepositoryError, match="successful frozen assessment"):
+        repository.complete_ai_assessment_runner_task(
+            **kwargs, model_invocation_id="assessment-runner-atomic-unrelated-log"
+        )
+    assert repository.get_requirement_assessment_execution(execution["id"])["status"] == "pending"
 
     repository.complete_ai_assessment_runner_task(
         **kwargs, model_invocation_id="assessment-runner-atomic-log"
@@ -2178,6 +2250,71 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
             "SELECT 1 FROM execution_outbox_events WHERE id = %s",
             (kwargs["outbox_event"]["id"],),
         ).fetchone()
+
+
+def test_substantive_requirement_edit_cancels_prior_nonterminal_assessments(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="assessment-edit-supersession")
+    requirement = repository.load_requirements()["requirements"][seeded["requirement"]]
+    current_assessment = repository.get_requirement_assessment(seeded["assessment"])
+    assert current_assessment is not None
+    revision_two = {**requirement, "assessment_revision": 2, "status": "submitted"}
+    repository.save_requirement_record(revision_two)
+    stale_assessment = {
+        **current_assessment,
+        "id": "assessment-edit-supersession-stale",
+        "requirement_revision": 2,
+        "status": "evaluating",
+        "version": 1,
+    }
+    repository.save_assessment_bundle(assessment=stale_assessment, opinions=[])
+
+    repository.save_requirement_revision_with_assessment_supersession(
+        {**revision_two, "assessment_revision": 3, "title": "Changed requirement"}
+    )
+
+    assert repository.get_requirement_assessment(stale_assessment["id"])["status"] == "cancelled"
+    persisted = repository.load_requirements()["requirements"][seeded["requirement"]]
+    assert persisted["assessment_revision"] == 3
+
+
+def test_stale_assessment_acceptance_cannot_approve_newer_requirement_revision(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="assessment-stale-acceptance")
+    requirement = repository.load_requirements()["requirements"][seeded["requirement"]]
+    repository.save_requirement_record(
+        {**requirement, "status": "submitted", "assessment_revision": 2}
+    )
+    assessment = repository.get_requirement_assessment(seeded["assessment"])
+    assert assessment is not None
+    command = {
+        "id": "assessment-stale-acceptance-command",
+        "assessment_id": assessment["id"],
+        "operation": "decision",
+        "idempotency_key": "stale-acceptance",
+        "request_hash": "sha256:stale-acceptance",
+        "created_by": "user_admin",
+    }
+
+    with pytest.raises(RdCollaborationRepositoryError, match="Requirement must still be submitted"):
+        repository.execute_requirement_assessment_command(
+            command,
+            lambda transaction: transaction.accept_requirement_assessment(
+                {
+                    **assessment,
+                    "decided_by": "user_admin",
+                    "decided_at": datetime.now(UTC).isoformat(),
+                },
+                expected_version=int(assessment["version"]),
+                requirement_id=seeded["requirement"],
+            ),
+        )
+    assert (
+        repository.load_requirements()["requirements"][seeded["requirement"]]["status"]
+        == "submitted"
+    )
 
 
 def test_assessment_api_returns_trace_envelope_for_invalid_assessment_state(

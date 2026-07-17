@@ -380,10 +380,15 @@ def patch_requirement_result(
         "source",
     }
     changed_assessment_fields = assessment_relevant_fields & updates.keys()
-    if any(requirement.get(field) != updates[field] for field in changed_assessment_fields):
+    assessment_revision_changed = any(
+        requirement.get(field) != updates[field] for field in changed_assessment_fields
+    )
+    if assessment_revision_changed:
         requirement["assessment_revision"] = int(requirement.get("assessment_revision") or 1) + 1
     requirement = {**requirement, **updates}
-    if current_status in {"approved", "planned"} and "version_id" in updates:
+    if assessment_revision_changed and current_status in {"approved", "planned"}:
+        requirement["status"] = "submitted"
+    elif current_status in {"approved", "planned"} and "version_id" in updates:
         requirement["status"] = "planned" if updates["version_id"] else "approved"
     requirement["updated_at"] = datetime.now(UTC).isoformat()
     audit_event = record_audit_event(
@@ -393,7 +398,15 @@ def patch_requirement_result(
         subject_type="requirement",
         subject_id=requirement_id,
     )
-    save_requirement_record(current_store, requirement, audit_event=audit_event)
+    save_revision = getattr(
+        getattr(current_store, "repository", None),
+        "save_requirement_revision_with_assessment_supersession",
+        None,
+    )
+    if assessment_revision_changed and callable(save_revision):
+        save_revision(requirement, audit_event=audit_event)
+    else:
+        save_requirement_record(current_store, requirement, audit_event=audit_event)
     return requirement
 
 

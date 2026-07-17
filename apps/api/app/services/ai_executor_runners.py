@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import Request
+from psycopg import Error as PsycopgError
 
 from app.api.deps import api_error, require_permissions
 from app.core.listing import add_list_observability, sort_list_items
@@ -2069,6 +2070,8 @@ def complete_ai_executor_task_response(
                         },
                     },
                 )
+            except PsycopgError:
+                raise
             except Exception as exc:
                 code = getattr(exc, "code", "ASSESSMENT_EXECUTION_INVALID")
                 raise api_error(409, code, str(exc)) from exc

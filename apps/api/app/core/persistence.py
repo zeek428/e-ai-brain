@@ -2789,6 +2789,17 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
             audit_event=audit_event,
         )
 
+    def save_requirement_revision_with_assessment_supersession(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._requirement_read_repository.save_requirement_revision_with_assessment_supersession(
+            record,
+            audit_event=audit_event,
+        )
+
     def update_requirement_assessment(
         self,
         assessment: dict[str, Any],

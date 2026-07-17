@@ -211,7 +211,8 @@ class ModelGatewayReadRepository:
                     SELECT id, ai_task_id, provider, model, purpose, tokens, latency_ms,
                            status, error, model_gateway_config_id, created_at, updated_at,
                            executor_profile_id, product_id, requirement_revision,
-                           strategy_snapshot_id
+                           strategy_snapshot_id, ai_executor_task_id,
+                           requirement_assessment_execution_id
                     FROM model_gateway_logs
                     {where_clause}
                     ORDER BY created_at DESC, id DESC
@@ -270,7 +271,8 @@ class ModelGatewayReadRepository:
                     SELECT id, ai_task_id, provider, model, purpose, tokens, latency_ms,
                            status, error, model_gateway_config_id, created_at, updated_at,
                            executor_profile_id, product_id, requirement_revision,
-                           strategy_snapshot_id
+                           strategy_snapshot_id, ai_executor_task_id,
+                           requirement_assessment_execution_id
                     FROM model_gateway_logs
                     {where_clause}
                     ORDER BY {sort_expression} {direction}, id {direction}
@@ -411,7 +413,8 @@ class ModelGatewayReadRepository:
             """
             SELECT id, ai_task_id, provider, model, purpose, tokens, latency_ms,
                    status, error, model_gateway_config_id, created_at, updated_at,
-                   executor_profile_id, product_id, requirement_revision, strategy_snapshot_id
+                   executor_profile_id, product_id, requirement_revision, strategy_snapshot_id,
+                   ai_executor_task_id, requirement_assessment_execution_id
             FROM model_gateway_logs
             ORDER BY created_at, id
             """
@@ -438,6 +441,8 @@ class ModelGatewayReadRepository:
                 "product_id": row[13],
                 "requirement_revision": row[14],
                 "strategy_snapshot_id": row[15],
+                "ai_executor_task_id": row[16],
+                "requirement_assessment_execution_id": row[17],
             }
             for optional_key in (
                 "ai_task_id",
@@ -448,6 +453,8 @@ class ModelGatewayReadRepository:
                 "product_id",
                 "requirement_revision",
                 "strategy_snapshot_id",
+                "ai_executor_task_id",
+                "requirement_assessment_execution_id",
                 "updated_at",
             ):
                 if log[optional_key] is None:
@@ -554,11 +561,12 @@ class ModelGatewayReadRepository:
                 INSERT INTO model_gateway_logs (
                   id, ai_task_id, provider, model, purpose, tokens, latency_ms,
                   status, error, model_gateway_config_id, executor_profile_id,
-                  product_id, requirement_revision, strategy_snapshot_id, created_at, updated_at
+                  product_id, requirement_revision, strategy_snapshot_id, ai_executor_task_id,
+                  requirement_assessment_execution_id, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s,
-                  %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s, %s,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -575,6 +583,9 @@ class ModelGatewayReadRepository:
                   product_id = EXCLUDED.product_id,
                   requirement_revision = EXCLUDED.requirement_revision,
                   strategy_snapshot_id = EXCLUDED.strategy_snapshot_id,
+                  ai_executor_task_id = EXCLUDED.ai_executor_task_id,
+                  requirement_assessment_execution_id =
+                    EXCLUDED.requirement_assessment_execution_id,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -592,6 +603,8 @@ class ModelGatewayReadRepository:
                     log.get("product_id"),
                     log.get("requirement_revision"),
                     log.get("strategy_snapshot_id"),
+                    log.get("ai_executor_task_id"),
+                    log.get("requirement_assessment_execution_id"),
                     created_at,
                     updated_at,
                 ),

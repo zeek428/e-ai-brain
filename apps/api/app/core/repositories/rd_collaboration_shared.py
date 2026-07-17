@@ -604,20 +604,23 @@ class RdCollaborationTransaction:
             )
         self.cursor.execute(
             """
-            SELECT id, status, executor_profile_id, product_id, requirement_revision,
-                   strategy_snapshot_id
+            SELECT id, purpose, status, executor_profile_id, product_id, requirement_revision,
+                   strategy_snapshot_id, ai_executor_task_id, requirement_assessment_execution_id
             FROM model_gateway_logs WHERE id = %s FOR UPDATE
             """,
             (model_invocation_id,),
         )
         invocation = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
         if invocation is None or (
-            invocation.get("status") != "succeeded"
+            invocation.get("purpose") != "requirement_assessment"
+            or invocation.get("status") != "succeeded"
             or invocation.get("executor_profile_id") != executor_profile_id
             or invocation.get("product_id") != execution.get("product_id")
             or int(invocation.get("requirement_revision") or 0)
             != int(execution.get("input_revision") or 0)
             or invocation.get("strategy_snapshot_id") != execution.get("strategy_snapshot_id")
+            or invocation.get("ai_executor_task_id") != task["id"]
+            or invocation.get("requirement_assessment_execution_id") != execution_id
         ):
             raise RdCollaborationRepositoryError(
                 "ASSESSMENT_MODEL_INVOCATION_INVALID",
@@ -902,8 +905,8 @@ class RdCollaborationTransaction:
             raise RdCollaborationVersionConflictError(expected_version)
         self.cursor.execute(
             "UPDATE requirements SET status = 'approved', updated_at = now() "
-            "WHERE id = %s AND status = 'submitted' RETURNING id",
-            (requirement_id,),
+            "WHERE id = %s AND status = 'submitted' AND assessment_revision = %s RETURNING id",
+            (requirement_id, assessment["requirement_revision"]),
         )
         if self.cursor.fetchone() is None:
             raise RdCollaborationRepositoryError(
