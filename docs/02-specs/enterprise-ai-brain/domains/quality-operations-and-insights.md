@@ -5,7 +5,7 @@
 ## 职责边界
 
 - 执行诊断统一追踪定时作业、插件调用、Runner、AI 助手运行、模型网关、代码巡检和审计事件。
-- 代码巡检从“生成报告”升级为质量治理闭环，覆盖本地完整扫描、质量门禁、baseline、误报忽略审批、Bug/任务派生和趋势分析。
+- 代码巡检从“生成报告”升级为质量治理闭环，覆盖本地完整扫描、质量门禁、baseline、误报忽略审批、Bug/正式整改需求派生和趋势分析；历史任务字段只读。
 - Bug 管理维护人工、自动化测试、代码巡检和发布后分析产生的问题生命周期。
 - 用户洞察将用户反馈转需求，反馈状态随需求归属和处理动作同步。
 - 团队看板可以在 Python 中做聚合，但来源必须是 PostgreSQL source rows 或可重建只读缓存。
@@ -33,7 +33,7 @@
 - 模型网关配置页必须展示最近模型调用日志，只返回和展示日志 ID、用途、模型、状态、耗时、Token 摘要、关联任务、错误摘要和创建时间等脱敏元数据；每条日志必须按 `source_type=model_gateway_log` 和日志 ID 提供统一执行诊断入口，不展示完整 Prompt、输出正文或密钥。
 - 首页团队看板允许 Python 聚合，但输入必须来自 PostgreSQL source rows 或可重建只读缓存；看板快照写入优先调用 `save_dashboard_metric_snapshot_record`，MemoryStore 仅作为测试 fallback，通过 helper 写入 `dashboard_metric_snapshots` 并保留稳定快照 ID 与首次创建时间。
 - AI 助手聊天运行可作为执行诊断根节点，关联用户消息、助手消息、模型网关日志和审计事件；`source_id` 支持按 `assistant_message_id` 反查整条助手运行链路，详情只展示排障元数据，不展示完整对话、Prompt 或知识正文。
-- 代码巡检报告列表必须优先走 PostgreSQL read model，在数据库层完成产品 scope、仓库、风险、状态、摘要、提交人、排序和分页；列表接口必须校验 `code_inspection.read` 权限，产品 scope 不能只依赖前端菜单隐藏；MemoryStore 仅作为测试和降级路径。
+- 代码巡检报告列表必须走 PostgreSQL read model，在数据库层完成产品 scope、仓库、风险、状态、摘要、提交人、排序和分页；列表接口必须校验 `code_inspection.read` 权限，产品 scope 不能只依赖前端菜单隐藏；MemoryStore 仅作为测试 helper，非测试环境不得降级到内存读取。
 - 代码巡检服务入口 `code_inspections.py` 必须聚焦报告写入、治理概览、详情和 Bug/整改需求写回编排；巡检枚举、严重级别归一化、提交人摘要和结果动作校验统一由 `code_inspection_common` 维护，并由架构守护测试防止通用规则回流主服务文件。
 - 代码巡检报告、finding、通知、误报忽略审批和整改需求派生属于 DB-first 写路径：服务层不得直接写 `current_store.code_inspection_*`、`current_store.requirements` 或 `current_store.ai_tasks`；MemoryStore fallback 仅用于测试，PostgreSQL 运行态必须通过需求适配器把报告、finding、仓库、文件、行号、规则和修复建议写为正式需求证据，并与报告/finding 回填、通知和审计在一致性边界内提交。v2.0 不得从代码巡检直接写入 `ai_tasks`；历史 `created_task_ids/created_task_id` 只读。
 - 代码巡检本地完整扫描需记录仓库、分支、提交、提交人、规则版本、扫描范围、增量基线 Commit、扫描覆盖、质量门禁和 suppression 摘要。
