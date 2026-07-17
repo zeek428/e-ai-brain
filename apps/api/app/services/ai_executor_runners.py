@@ -1992,6 +1992,33 @@ def complete_ai_executor_task_response(
         "status": status,
         "updated_at": now,
     }
+    assessment_execution_id = str(
+        task.get("input_payload", {}).get("assessment_execution_id") or ""
+    )
+    if assessment_execution_id and status == "succeeded":
+        from app.services.requirement_assessments import (
+            complete_ai_assessment_execution_from_runner,
+        )
+
+        assessment_id = str(task["input_payload"].get("assessment_id") or "")
+        executor_profile_id = str(task["input_payload"].get("executor_profile_id") or "")
+        if not assessment_id or not executor_profile_id:
+            raise api_error(
+                409,
+                "ASSESSMENT_EXECUTION_INVALID",
+                "Assessment runner task is missing frozen execution provenance",
+            )
+        complete_ai_assessment_execution_from_runner(
+            current_store=current_store,
+            assessment_id=assessment_id,
+            execution_id=assessment_execution_id,
+            executor_profile_id=executor_profile_id,
+            runner_id=runner_id,
+            model_result={
+                "model_invocation_id": task["result_json"].get("model_invocation_id"),
+                "assessment_opinion": task["result_json"].get("assessment_opinion"),
+            },
+        )
     audit_event = record_audit_event(
         current_store,
         event_type=f"ai_executor_task.{status}",
@@ -2003,6 +2030,8 @@ def complete_ai_executor_task_response(
             "runner_id": runner_id,
             "scheduled_job_id": task.get("scheduled_job_id"),
             "scheduled_job_run_id": task.get("scheduled_job_run_id"),
+            "assessment_execution_id": assessment_execution_id or None,
+            "model_invocation_id": task["result_json"].get("model_invocation_id"),
             "status": status,
         },
     )

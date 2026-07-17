@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.api.deps import api_error, require_any_permission_or_roles
@@ -106,6 +106,111 @@ def _policy_error(error: PolicyResolutionError) -> Any:
 
 def _repository_error(error: RdCollaborationRepositoryError) -> Any:
     raise api_error(409, error.code, str(error), extra=error.details)
+
+
+def _policy_conflict_response(
+    *,
+    code: str,
+    decision_request_id: str,
+    conflict_fields: list[str],
+    message: str,
+    resolution_round: int | None = None,
+) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "decision_request_id": decision_request_id,
+        "conflict_fields": conflict_fields,
+        "retryable": False,
+        "next_action": "resolve_policy_decision",
+    }
+    if resolution_round is not None:
+        details.update({"resolution_round": resolution_round, "max_resolution_rounds": 2})
+    return {"policy_conflict": {"code": code, "message": message, "details": details}}
+
+
+def _raise_recorded_policy_conflict(response: dict[str, Any]) -> dict[str, Any]:
+    conflict = response.get("policy_conflict")
+    if not isinstance(conflict, dict):
+        return response
+    raise api_error(
+        409,
+        str(conflict["code"]),
+        str(conflict["message"]),
+        extra=deepcopy(conflict.get("details") or {}),
+    )
+
+
+def _policy_decision_request(
+    *,
+    current_store: Any,
+    assessment: dict[str, Any],
+    user: dict[str, Any],
+    evidence: list[dict[str, Any]],
+    code: str,
+) -> dict[str, Any]:
+    options = [
+        {"code": "resolve_policy", "label": "Resolve policy conflict"},
+        {"code": "request_rework", "label": "Request rework"},
+        {"code": "reject_requirement", "label": "Reject requirement"},
+    ]
+    now = datetime.now(UTC)
+    return {
+        "id": _new_id(current_store, "requirement_assessment_policy_decision"),
+        "brain_app_id": "rd_brain",
+        "product_id": _assessment_product_id(assessment),
+        "subject_type": "requirement_assessment",
+        "subject_id": assessment["id"],
+        "decision_type": "policy_resolution",
+        "plan_version": int(assessment.get("opinion_round") or 1),
+        "options_json": options,
+        "options_hash": _request_hash(options),
+        "evidence_json": evidence,
+        "recommendation_json": {"action": "resolve_policy_decision", "reason": code},
+        "decision_actor_selector": {"role_codes": ["product_owner", "rd_owner"]},
+        "answer_actor_selector": {"role_codes": ["product_owner", "rd_owner"]},
+        "answer_schema": {"type": "object", "additionalProperties": False},
+        "status": "pending",
+        "expires_at": now + timedelta(hours=24),
+        "timeout_policy": "escalate_keep_paused",
+        "escalation_target_selector": {"role_codes": ["rd_owner"]},
+        "version": 1,
+        "created_by": user["id"],
+    }
+
+
+def _record_policy_conflict_response(
+    *,
+    current_store: Any,
+    transaction: Any,
+    assessment: dict[str, Any],
+    expected_version: int,
+    user: dict[str, Any],
+    code: str,
+    message: str,
+    conflict_fields: list[str],
+    evidence: list[dict[str, Any]],
+    resolution_round: int | None = None,
+) -> dict[str, Any]:
+    decision_request = _policy_decision_request(
+        current_store=current_store,
+        assessment=assessment,
+        user=user,
+        evidence=evidence,
+        code=code,
+    )
+    persisted = transaction.record_assessment_policy_conflict(
+        assessment=assessment,
+        expected_version=expected_version,
+        outcome_code=code,
+        evidence=evidence,
+        decision_request=decision_request,
+    )
+    return _policy_conflict_response(
+        code=code,
+        decision_request_id=persisted["decision_request"]["id"],
+        conflict_fields=conflict_fields,
+        message=message,
+        resolution_round=resolution_round,
+    )
 
 
 def _required_assessment_bindings(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -294,7 +399,9 @@ def start_requirement_assessment(
     current_store: Any,
     requirement: dict[str, Any],
     user: dict[str, Any],
-    idempotency_key: str | None = None,
+    request_id: str | None = None,
+    requirement_revision: int | None = None,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     """Freeze the initial policy and create the required opinion requests atomically."""
     require_any_permission_or_roles(
@@ -305,6 +412,16 @@ def start_requirement_assessment(
     ensure_requirement_product_scope(user, requirement.get("product_id"))
     if requirement.get("status") != "submitted":
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement is not awaiting assessment")
+    current_revision = int(
+        requirement.get("assessment_revision") or requirement.get("revision") or 1
+    )
+    if requirement_revision is not None and requirement_revision != current_revision:
+        raise api_error(
+            409,
+            "RD_VERSION_CONFLICT",
+            "Requirement revision conflict",
+            extra={"current_version": current_revision, "next_action": "reload_requirement"},
+        )
     repository = _repository(current_store)
     try:
         initial_snapshot = resolve_initial_rd_policy(current_store, requirement=requirement)
@@ -334,8 +451,12 @@ def start_requirement_assessment(
                 repository,
                 assessment_id=existing["id"],
                 operation="start",
-                key=idempotency_key,
-                payload={"requirement_id": requirement["id"]},
+                key=request_id,
+                payload={
+                    "requirement_id": requirement["id"],
+                    "requirement_revision": current_revision,
+                    "reason": reason,
+                },
             )
             if replay is not None:
                 return replay
@@ -390,17 +511,26 @@ def start_requirement_assessment(
         persisted["executions"] = deepcopy(saved.get("executions") or executions)
         return persisted
 
-    return execute(
-        {
-            "id": _new_id(current_store, "requirement_assessment_command"),
-            "assessment_id": assessment_id,
-            "operation": "start",
-            "idempotency_key": idempotency_key or f"start:{requirement['id']}",
-            "request_hash": _request_hash({"requirement_id": requirement["id"]}),
-            "created_by": user["id"],
-        },
-        effect,
-    )
+    try:
+        return execute(
+            {
+                "id": _new_id(current_store, "requirement_assessment_command"),
+                "assessment_id": assessment_id,
+                "operation": "start",
+                "idempotency_key": request_id or f"start:{requirement['id']}:{current_revision}",
+                "request_hash": _request_hash(
+                    {
+                        "requirement_id": requirement["id"],
+                        "requirement_revision": current_revision,
+                        "reason": reason,
+                    }
+                ),
+                "created_by": user["id"],
+            },
+            effect,
+        )
+    except RdCollaborationRepositoryError as exc:
+        _repository_error(exc)
 
 
 def _assessment(repository: Any, assessment_id: str) -> dict[str, Any]:
@@ -454,7 +584,7 @@ def record_assessment_opinion(
         payload=payload,
     )
     if replay is not None:
-        return replay
+        return _raise_recorded_policy_conflict(replay)
     assessment = _assessment(repository, assessment_id)
     ensure_requirement_product_scope(user, _assessment_product_id(assessment))
     if assessment.get("status") not in {
@@ -512,29 +642,35 @@ def record_assessment_opinion(
         except RdCollaborationRepositoryError as exc:
             _repository_error(exc)
 
-    return execute(
-        {
-            "id": _new_id(current_store, "requirement_assessment_command"),
-            "assessment_id": assessment_id,
-            "operation": "opinion",
-            "idempotency_key": payload.get("idempotency_key") or f"opinion:{opinion['id']}",
-            "request_hash": _request_hash(payload),
-            "created_by": user["id"],
-        },
-        effect,
-    )
+    try:
+        return execute(
+            {
+                "id": _new_id(current_store, "requirement_assessment_command"),
+                "assessment_id": assessment_id,
+                "operation": "opinion",
+                "idempotency_key": payload.get("idempotency_key") or f"opinion:{opinion['id']}",
+                "request_hash": _request_hash(payload),
+                "created_by": user["id"],
+            },
+            effect,
+        )
+    except RdCollaborationRepositoryError as exc:
+        _repository_error(exc)
 
 
-def complete_ai_assessment_execution(
+def complete_ai_assessment_execution_from_runner(
     *,
     current_store: Any,
     assessment_id: str,
     execution_id: str,
-    payload: dict[str, Any],
+    executor_profile_id: str,
+    runner_id: str,
+    model_result: dict[str, Any],
 ) -> dict[str, Any]:
-    """Internal-only completion path for an AI-assigned assessment opinion.
+    """Complete a model result after the runner authenticated it to a frozen profile.
 
-    The caller supplies no actor identity: the frozen execution row is the sole authority.
+    This is intentionally not an HTTP assessment endpoint.  Only the authenticated
+    AI-executor runner boundary may call it after a model-gateway invocation.
     """
     repository = _repository(current_store)
     _assessment(repository, assessment_id)
@@ -543,11 +679,57 @@ def complete_ai_assessment_execution(
     if execution is None or execution.get("assessment_id") != assessment_id:
         raise api_error(404, "NOT_FOUND", "Assessment execution not found")
     ensure_assessment_only_execution(execution)
+    if execution.get("executor_profile_id") != executor_profile_id:
+        raise api_error(
+            403,
+            "ASSESSMENT_EXECUTOR_PROFILE_INVALID",
+            "Runner is not authenticated to the frozen assessment executor profile",
+        )
+    profile = getattr(repository, "get_rd_executor_profile", lambda _id: None)(executor_profile_id)
+    if profile is None or (profile.get("runner_id") and profile["runner_id"] != runner_id):
+        raise api_error(
+            403,
+            "ASSESSMENT_EXECUTOR_PROFILE_INVALID",
+            "Runner does not match the frozen assessment executor profile",
+        )
+    invocation_id = str(model_result.get("model_invocation_id") or "").strip()
+    opinion = model_result.get("assessment_opinion")
+    if not invocation_id or not isinstance(opinion, dict):
+        raise api_error(
+            400,
+            "ASSESSMENT_MODEL_RESULT_INVALID",
+            "Authenticated runner must provide a model invocation and structured assessment result",
+        )
+    # The frozen execution remains the actor authority. Runner/model output is never
+    # allowed to set an employee, profile, or any non-assessment side effect.
+    assessment_opinion = {
+        key: deepcopy(value)
+        for key, value in opinion.items()
+        if key
+        in {
+            "conclusion_json",
+            "evidence_refs",
+            "confidence",
+            "risk_summary",
+            "cost_summary",
+            "policy_proposal_json",
+            "outcome_code",
+            "risk_level",
+        }
+    }
+    assessment_opinion.setdefault("evidence_refs", []).append(
+        {"model_invocation_id": invocation_id, "runner_id": runner_id}
+    )
     complete = getattr(repository, "complete_ai_assessment_execution", None)
     if not callable(complete):
         raise api_error(503, "REPOSITORY_REQUIRED", "AI assessment completion is unavailable")
     try:
-        saved = complete(execution_id=execution_id, opinion=payload)
+        saved = complete(
+            execution_id=execution_id,
+            opinion=assessment_opinion,
+            runner_id=runner_id,
+            model_invocation_id=invocation_id,
+        )
     except RdCollaborationRepositoryError as exc:
         _repository_error(exc)
     return saved
@@ -574,14 +756,14 @@ def decide_requirement_assessment(
         {"requirement.approve", "delivery.requirement_assessments.decide"},
         {"product_owner", "rd_owner"},
     )
-    action = str(payload.get("action") or "").strip()
+    action = str(payload.get("decision") or payload.get("action") or "").strip()
     if action not in _DECISION_STATUSES:
         raise api_error(
             400,
             "VALIDATION_ERROR",
             "action must be accept, reject, request_more_info, request_rework, or defer",
         )
-    expected_version = payload.get("expected_version")
+    expected_version = payload.get("version", payload.get("expected_version"))
     if not isinstance(expected_version, int) or expected_version < 1:
         raise api_error(400, "VALIDATION_ERROR", "expected_version is required")
     repository = _repository(current_store)
@@ -593,7 +775,7 @@ def decide_requirement_assessment(
         payload=payload,
     )
     if replay is not None:
-        return replay
+        return _raise_recorded_policy_conflict(replay)
     assessment = _assessment(repository, assessment_id)
     ensure_requirement_product_scope(user, _assessment_product_id(assessment))
     if assessment.get("status") not in {
@@ -609,23 +791,28 @@ def decide_requirement_assessment(
             503, "REPOSITORY_REQUIRED", "Assessment decision transaction is unavailable"
         )
     if action == "accept":
-        return execute(
-            {
-                "id": _new_id(current_store, "requirement_assessment_command"),
-                "assessment_id": assessment_id,
-                "operation": "decision",
-                "idempotency_key": payload.get("idempotency_key") or f"decision:{expected_version}",
-                "request_hash": _request_hash(payload),
-                "created_by": user["id"],
-            },
-            lambda transaction: finalize_requirement_assessment(
-                current_store=current_store,
-                assessment_id=assessment_id,
-                expected_version=expected_version,
-                user=user,
-                transaction=transaction,
-            ),
-        )
+        try:
+            response = execute(
+                {
+                    "id": _new_id(current_store, "requirement_assessment_command"),
+                    "assessment_id": assessment_id,
+                    "operation": "decision",
+                    "idempotency_key": payload.get("idempotency_key")
+                    or f"decision:{expected_version}",
+                    "request_hash": _request_hash(payload),
+                    "created_by": user["id"],
+                },
+                lambda transaction: finalize_requirement_assessment(
+                    current_store=current_store,
+                    assessment_id=assessment_id,
+                    expected_version=expected_version,
+                    user=user,
+                    transaction=transaction,
+                ),
+            )
+        except RdCollaborationRepositoryError as exc:
+            _repository_error(exc)
+        return _raise_recorded_policy_conflict(response)
     decision = {
         **assessment,
         "status": _DECISION_STATUSES[action],
@@ -651,6 +838,8 @@ def decide_requirement_assessment(
         )
     except RdCollaborationVersionConflictError as exc:
         raise api_error(409, exc.code, str(exc), extra=exc.details) from exc
+    except RdCollaborationRepositoryError as exc:
+        _repository_error(exc)
 
 
 def finalize_requirement_assessment(
@@ -695,24 +884,29 @@ def finalize_requirement_assessment(
             "ASSESSMENT_RISK_HUMAN_DECISION_REQUIRED",
         }:
             raise
-        _update_assessment(
-            repository,
-            {
-                **assessment,
-                "status": "waiting_human",
-                "assessment_outcome": code,
-                "assessment_evidence": [
-                    {
-                        "role_code": item["role_code"],
-                        "evidence_refs": item.get("evidence_refs") or [],
-                    }
-                    for item in opinions
-                ],
-                "updated_at": datetime.now(UTC).isoformat(),
-            },
+        canonical_code = "RD_POLICY_HUMAN_DECISION_REQUIRED"
+        evidence = [
+            {"role_code": item["role_code"], "evidence_refs": item.get("evidence_refs") or []}
+            for item in opinions
+        ]
+        if transaction is None:
+            raise api_error(
+                409,
+                canonical_code,
+                "Assessment opinions require a human policy decision",
+                extra={"conflict_fields": ["opinions"], "next_action": "resolve_policy_decision"},
+            ) from exc
+        return _record_policy_conflict_response(
+            current_store=current_store,
+            transaction=transaction,
+            assessment=assessment,
             expected_version=expected_version,
+            user=user,
+            code=canonical_code,
+            message="Assessment opinions require a human policy decision",
+            conflict_fields=["opinions"],
+            evidence=evidence,
         )
-        raise
     # A policy change creates a fresh full round.  The new assignments are
     # derived only after Task4 accepts the monotonic strengthening.
     if proposal:
@@ -742,7 +936,23 @@ def finalize_requirement_assessment(
                     repository=active_transaction,
                 )
             except PolicyResolutionError as exc:
-                _policy_error(exc)
+                if exc.code not in {
+                    "RD_POLICY_HUMAN_DECISION_REQUIRED",
+                    "RD_POLICY_RESOLUTION_LIMIT",
+                }:
+                    _policy_error(exc)
+                return _record_policy_conflict_response(
+                    current_store=current_store,
+                    transaction=active_transaction,
+                    assessment=assessment,
+                    expected_version=expected_version,
+                    user=user,
+                    code=exc.code,
+                    message=str(exc),
+                    conflict_fields=["policy_delta"],
+                    evidence=evidence,
+                    resolution_round=current_round,
+                )
             if next_snapshot["id"] == assessment.get("strategy_snapshot_id"):
                 return {**assessment, "policy_re_evaluation_required": False}
             if current_round > 2:

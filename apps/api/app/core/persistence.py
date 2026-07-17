@@ -2808,11 +2808,18 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
         return self._requirement_read_repository.update_requirement_assessment_opinion(opinion)
 
     def complete_ai_assessment_execution(
-        self, *, execution_id: str, opinion: dict[str, Any]
+        self,
+        *,
+        execution_id: str,
+        opinion: dict[str, Any],
+        runner_id: str | None = None,
+        model_invocation_id: str | None = None,
     ) -> dict[str, Any]:
         return self._requirement_read_repository.complete_ai_assessment_execution(
             execution_id=execution_id,
             opinion=opinion,
+            runner_id=runner_id,
+            model_invocation_id=model_invocation_id,
         )
 
     def submit_assessment_answers(

@@ -1869,7 +1869,7 @@ def test_assessment_command_rolls_back_effect_when_provenance_is_invalid(
 def test_assessment_ai_completion_uses_frozen_pg_execution_attribution(
     repository: PostgresSnapshotRepository,
 ) -> None:
-    from app.services.requirement_assessments import complete_ai_assessment_execution
+    from app.services.requirement_assessments import complete_ai_assessment_execution_from_runner
 
     seeded = _seed_exact_run(repository, prefix="assessment-ai-completion")
     repository.save_rd_ai_employee_record(
@@ -1930,15 +1930,23 @@ def test_assessment_ai_completion_uses_frozen_pg_execution_attribution(
         executions=[execution],
     )
 
-    saved = complete_ai_assessment_execution(
+    saved = complete_ai_assessment_execution_from_runner(
         current_store=PostgresRuntimeStore(repository),
         assessment_id=assessment["id"],
         execution_id=execution["id"],
-        payload={"conclusion_json": {"recommendation": "accept"}, "actor_id": "forged"},
+        executor_profile_id="assessment-ai-completion-profile",
+        runner_id="assessment-ai-completion-runner",
+        model_result={
+            "model_invocation_id": "assessment-ai-completion-model-log",
+            "assessment_opinion": {"conclusion_json": {"recommendation": "accept"}},
+        },
     )
 
     assert saved["actor_id"] == "assessment-ai-completion-ai"
-    assert repository.get_requirement_assessment_execution(execution["id"])["status"] == "completed"
+    persisted_execution = repository.get_requirement_assessment_execution(execution["id"])
+    assert persisted_execution["status"] == "completed"
+    assert persisted_execution["model_invocation_id"] == "assessment-ai-completion-model-log"
+    assert persisted_execution["runner_id"] == "assessment-ai-completion-runner"
 
 
 def test_assessment_api_returns_trace_envelope_for_invalid_assessment_state(
@@ -1959,6 +1967,96 @@ def test_assessment_api_returns_trace_envelope_for_invalid_assessment_state(
         assert response.headers["x-trace-id"]
     finally:
         app.state.store = original_store
+
+
+def test_assessment_api_replays_canonical_policy_conflict_with_decision_request(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="assessment-api-policy-conflict")
+    requirement_id = "assessment-api-policy-conflict-pending-requirement"
+    _insert_requirement(
+        repository,
+        seeded,
+        requirement_id=requirement_id,
+        status="submitted",
+        version_id=str(seeded["version"]),
+    )
+    waiting = {
+        "id": "assessment-api-policy-conflict-pending-assessment",
+        "requirement_id": requirement_id,
+        "requirement_revision": 1,
+        "product_id": seeded["product"],
+        "initial_strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "final_strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "structured_assessment": {},
+        "status": "waiting_human",
+        "version": 1,
+        "opinion_round": 1,
+        "created_by": "user_admin",
+    }
+    repository.save_assessment_bundle(
+        assessment=waiting,
+        opinions=[],
+    )
+    repository.save_assessment_bundle(
+        assessment=waiting,
+        opinions=[
+            {
+                "id": "assessment-api-policy-conflict-architect",
+                "assessment_id": waiting["id"],
+                "role_code": "architect",
+                "input_revision": 1,
+                "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+                "opinion_round": 1,
+                "conclusion_json": {"recommendation": "accept"},
+                "evidence_refs": [],
+                "risk_summary": {},
+                "cost_summary": {},
+            },
+            {
+                "id": "assessment-api-policy-conflict-reviewer",
+                "assessment_id": waiting["id"],
+                "role_code": "reviewer",
+                "input_revision": 1,
+                "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+                "opinion_round": 1,
+                "conclusion_json": {"recommendation": "reject"},
+                "evidence_refs": [],
+                "risk_summary": {},
+                "cost_summary": {},
+            },
+        ],
+    )
+    original_store = app.state.store
+    app.state.store = PostgresRuntimeStore(repository)
+    try:
+        payload = {"decision": "accept", "version": waiting["version"], "idempotency_key": "K"}
+        client = TestClient(app)
+        first = client.post(
+            f"/api/requirement-assessments/{waiting['id']}/decisions",
+            json=payload,
+            headers=auth_headers(),
+        )
+        replay = client.post(
+            f"/api/requirement-assessments/{waiting['id']}/decisions",
+            json=payload,
+            headers=auth_headers(),
+        )
+    finally:
+        app.state.store = original_store
+
+    for response in (first, replay):
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["code"] == "RD_POLICY_HUMAN_DECISION_REQUIRED"
+        assert detail["decision_request_id"]
+        assert detail["next_action"] == "resolve_policy_decision"
+        assert response.headers["x-trace-id"]
+    command = repository.get_requirement_assessment_command(
+        assessment_id=waiting["id"], operation="decision", idempotency_key="K"
+    )
+    assert command is not None and command["status"] == "completed"
 
 
 def test_assessment_public_command_replay_and_hash_conflict(

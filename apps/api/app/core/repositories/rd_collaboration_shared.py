@@ -250,6 +250,9 @@ TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
         "assessment_id",
         "opinion_id",
         "role_code",
+        "runner_id",
+        "model_invocation_id",
+        "result_summary",
         "actor_type",
         "human_user_id",
         "ai_employee_id",
@@ -678,6 +681,31 @@ class RdCollaborationTransaction:
         if saved is None:
             raise RdCollaborationVersionConflictError(expected_version)
         return saved
+
+    def record_assessment_policy_conflict(
+        self,
+        *,
+        assessment: dict[str, Any],
+        expected_version: int,
+        outcome_code: str,
+        evidence: list[dict[str, Any]],
+        decision_request: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist one actionable policy conflict with its decision command response."""
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessments SET status = 'waiting_human',
+              assessment_outcome = %s, assessment_evidence = %s::jsonb,
+              version = version + 1, updated_at = now()
+            WHERE id = %s AND version = %s RETURNING *
+            """,
+            (outcome_code, Jsonb(evidence), assessment["id"], expected_version),
+        )
+        persisted = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if persisted is None:
+            raise RdCollaborationVersionConflictError(expected_version)
+        saved_decision = self._repository._insert_decision_request(self.cursor, decision_request)
+        return {"assessment": persisted, "decision_request": saved_decision}
 
     def accept_requirement_assessment(
         self, assessment: dict[str, Any], *, expected_version: int, requirement_id: str

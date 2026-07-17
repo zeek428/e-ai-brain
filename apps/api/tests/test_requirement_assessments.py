@@ -3,9 +3,37 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+
+
+def test_assessment_http_models_follow_delivery_contract_and_expose_no_ai_completion_route():
+    from pydantic import ValidationError
+
+    from app.api.routers.requirement_assessments import (
+        AssessmentDecisionRequest,
+        AssessmentStartRequest,
+    )
+
+    with pytest.raises(ValidationError):
+        AssessmentStartRequest.model_validate({})
+    start = AssessmentStartRequest.model_validate(
+        {"request_id": "start-1", "requirement_revision": 3, "reason": "review"}
+    )
+    assert start.request_id == "start-1"
+    assert start.requirement_revision == 3
+
+    with pytest.raises(ValidationError):
+        AssessmentDecisionRequest.model_validate({"action": "accept", "expected_version": 1})
+    decision = AssessmentDecisionRequest.model_validate({"decision": "accept", "version": 2})
+    assert decision.decision == "accept"
+    assert decision.version == 2
+
+    assert not any(
+        route.path.endswith("/executions/{execution_id}/complete") for route in app.routes
+    )
 
 
 class AssessmentRepository:
@@ -17,6 +45,7 @@ class AssessmentRepository:
         self.executions: dict[str, dict] = {}
         self.requirements: dict[str, dict] = {}
         self.commands: dict[tuple[str, str, str], dict] = {}
+        self.decision_requests: dict[str, dict] = {}
         self.snapshots: dict[str, dict] = {}
         self.policy = {
             "id": "policy_requirement_assessment",
@@ -152,7 +181,14 @@ class AssessmentRepository:
         execution = self.executions.get(execution_id)
         return deepcopy(execution) if execution else None
 
-    def complete_ai_assessment_execution(self, *, execution_id: str, opinion: dict):
+    def complete_ai_assessment_execution(
+        self,
+        *,
+        execution_id: str,
+        opinion: dict,
+        runner_id: str | None = None,
+        model_invocation_id: str | None = None,
+    ):
         execution = self.executions[execution_id]
         if (
             execution.get("actor_type") != "ai_employee"
@@ -170,7 +206,12 @@ class AssessmentRepository:
             "actor_id": execution["ai_employee_id"],
         }
         self.opinions[execution["opinion_id"]] = saved
-        self.executions[execution_id] = {**execution, "status": "completed"}
+        self.executions[execution_id] = {
+            **execution,
+            "status": "completed",
+            "runner_id": runner_id,
+            "model_invocation_id": model_invocation_id,
+        }
         return deepcopy(saved)
 
     def update_requirement_assessment(
@@ -255,6 +296,30 @@ class AssessmentRepository:
                 return repository.update_requirement_assessment(
                     assessment, expected_version=expected_version
                 )
+
+            def record_assessment_policy_conflict(
+                self,
+                *,
+                assessment: dict,
+                expected_version: int,
+                outcome_code: str,
+                evidence: list,
+                decision_request: dict,
+            ):
+                persisted_assessment = repository.update_requirement_assessment(
+                    {
+                        **assessment,
+                        "status": "waiting_human",
+                        "assessment_outcome": outcome_code,
+                        "assessment_evidence": deepcopy(evidence),
+                    },
+                    expected_version=expected_version,
+                )
+                repository.decision_requests[decision_request["id"]] = deepcopy(decision_request)
+                return {
+                    "assessment": persisted_assessment,
+                    "decision_request": deepcopy(decision_request),
+                }
 
             def accept_requirement_assessment(
                 self,
@@ -546,9 +611,9 @@ def test_policy_proposal_creates_versioned_snapshot_and_requires_second_round():
     )
 
 
-def test_ai_assessment_completion_uses_frozen_execution_and_rejects_side_effects():
+def test_ai_assessment_completion_requires_the_frozen_executor_profile():
     from app.services.requirement_assessments import (
-        complete_ai_assessment_execution,
+        complete_ai_assessment_execution_from_runner,
         start_requirement_assessment,
     )
 
@@ -572,11 +637,16 @@ def test_ai_assessment_completion_uses_frozen_execution_and_rejects_side_effects
         user=owner,
     )
     execution = assessment["executions"][0]
-    completed = complete_ai_assessment_execution(
+    completed = complete_ai_assessment_execution_from_runner(
         current_store=store,
         assessment_id=assessment["id"],
         execution_id=execution["id"],
-        payload={"conclusion_json": {"recommendation": "accept"}},
+        executor_profile_id="executor_architect",
+        runner_id="runner_architect",
+        model_result={
+            "model_invocation_id": "gateway-log-1",
+            "assessment_opinion": {"conclusion_json": {"recommendation": "accept"}},
+        },
     )
 
     assert completed["actor_id"] == "ai_architect"
@@ -585,11 +655,16 @@ def test_ai_assessment_completion_uses_frozen_execution_and_rejects_side_effects
     invalid_execution = {**execution, "id": "unsafe-execution", "execution_kind": "runner"}
     store.repository.executions[invalid_execution["id"]] = invalid_execution
     try:
-        complete_ai_assessment_execution(
+        complete_ai_assessment_execution_from_runner(
             current_store=store,
             assessment_id=assessment["id"],
             execution_id=invalid_execution["id"],
-            payload={"conclusion_json": {"recommendation": "accept"}},
+            executor_profile_id="executor_architect",
+            runner_id="runner_architect",
+            model_result={
+                "model_invocation_id": "gateway-log-2",
+                "assessment_opinion": {"conclusion_json": {"recommendation": "accept"}},
+            },
         )
     except Exception as exc:
         assert getattr(exc, "detail", {}).get("code") == "ASSESSMENT_EXECUTION_INVALID"
@@ -844,3 +919,67 @@ def test_decision_idempotency_replays_the_persisted_response_snapshot():
 
     assert replay == first
     assert store.repository.assessments["assessment_1"]["version"] == 2
+
+
+def test_accept_policy_conflict_is_recorded_and_replayed_by_the_same_decision_command():
+    from app.services.rd_policy_resolution import resolve_initial_rd_policy
+    from app.services.requirement_assessments import decide_requirement_assessment
+
+    store = RepositoryStore(AssessmentRepository())
+    requirement = {"id": "requirement_1", "product_id": "product_1", "brain_app_id": "rd_brain"}
+    snapshot = resolve_initial_rd_policy(store, requirement=requirement)
+    store.repository.requirements["requirement_1"] = {**requirement, "status": "submitted"}
+    store.repository.assessments["assessment_1"] = {
+        "id": "assessment_1",
+        "requirement_id": "requirement_1",
+        "product_id": "product_1",
+        "initial_strategy_snapshot_id": snapshot["id"],
+        "final_strategy_snapshot_id": snapshot["id"],
+        "strategy_snapshot_id": snapshot["id"],
+        "opinion_round": 1,
+        "status": "waiting_human",
+        "version": 1,
+    }
+    for role_code, conclusion in (("architect", "accept"), ("reviewer", "reject")):
+        store.repository.opinions[f"opinion_{role_code}"] = {
+            "id": f"opinion_{role_code}",
+            "assessment_id": "assessment_1",
+            "role_code": role_code,
+            "opinion_round": 1,
+            "strategy_snapshot_id": snapshot["id"],
+            "conclusion_json": {"recommendation": conclusion},
+        }
+    user = {
+        "id": "user_owner",
+        "roles": ["product_owner"],
+        "permissions": [],
+        "scope_summary": [
+            {"scope_type": "product", "scope_id": "product_1", "access_level": "write"}
+        ],
+    }
+    payload = {"decision": "accept", "version": 1, "idempotency_key": "conflict-once"}
+
+    for _ in range(2):
+        with pytest.raises(Exception) as failure:
+            decide_requirement_assessment(
+                current_store=store,
+                assessment_id="assessment_1",
+                payload=payload,
+                user=user,
+            )
+        detail = getattr(failure.value, "detail", {})
+        assert detail["code"] == "RD_POLICY_HUMAN_DECISION_REQUIRED"
+        assert detail["next_action"] == "resolve_policy_decision"
+        assert detail["decision_request_id"]
+
+    assessment = store.repository.assessments["assessment_1"]
+    assert assessment["status"] == "waiting_human"
+    assert assessment["version"] == 2
+    command = store.repository.get_requirement_assessment_command(
+        assessment_id="assessment_1", operation="decision", idempotency_key="conflict-once"
+    )
+    assert command is not None
+    assert (
+        command["response_snapshot"]["policy_conflict"]["details"]["decision_request_id"]
+        == (detail["decision_request_id"])
+    )

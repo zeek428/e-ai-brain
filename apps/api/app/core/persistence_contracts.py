@@ -136,7 +136,12 @@ class RdCollaborationRepository(Protocol):
     def list_requirement_assessment_opinions(self, assessment_id: str) -> list[dict[str, Any]]: ...
     def get_requirement_assessment_execution(self, record_id: str) -> dict[str, Any] | None: ...
     def complete_ai_assessment_execution(
-        self, *, execution_id: str, opinion: dict[str, Any]
+        self,
+        *,
+        execution_id: str,
+        opinion: dict[str, Any],
+        runner_id: str | None = None,
+        model_invocation_id: str | None = None,
     ) -> dict[str, Any]: ...
     def get_rd_collaboration_run(self, record_id: str) -> dict[str, Any] | None: ...
     def list_rd_collaboration_runs(

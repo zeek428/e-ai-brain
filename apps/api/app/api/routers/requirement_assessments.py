@@ -5,10 +5,9 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.deps import CurrentUser, require_any_permission_or_roles, store
+from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
 from app.services.requirement_assessments import (
-    complete_ai_assessment_execution,
     decide_requirement_assessment,
     get_latest_requirement_assessment,
     record_assessment_opinion,
@@ -27,7 +26,9 @@ assessments_router = APIRouter(
 class AssessmentStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    idempotency_key: str | None = Field(default=None, max_length=200)
+    request_id: str = Field(min_length=1, max_length=200)
+    requirement_revision: int = Field(ge=1)
+    reason: str | None = Field(default=None, max_length=2000)
 
 
 class AssessmentOpinionRequest(BaseModel):
@@ -53,15 +54,11 @@ class AssessmentAnswersRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=200)
 
 
-class AssessmentAiExecutionCompletionRequest(AssessmentOpinionRequest):
-    """Internal executor payload; actor identity is read from the frozen execution."""
-
-
 class AssessmentDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action: str
-    expected_version: int = Field(ge=1)
+    decision: str
+    version: int = Field(ge=1)
     comment: str | None = None
     idempotency_key: str | None = Field(default=None, max_length=200)
 
@@ -80,7 +77,9 @@ def start_assessment(
         current_store=requirement_write_store(store(request)),
         requirement=requirement,
         user=user,
-        idempotency_key=payload.idempotency_key,
+        request_id=payload.request_id,
+        requirement_revision=payload.requirement_revision,
+        reason=payload.reason,
     )
     return envelope(result, get_trace_id(request))
 
@@ -128,28 +127,6 @@ def submit_answers(
             assessment_id=assessment_id,
             payload=payload.model_dump(),
             user=user,
-        ),
-        get_trace_id(request),
-    )
-
-
-@assessments_router.post("/{assessment_id}/executions/{execution_id}/complete")
-def complete_ai_execution(
-    assessment_id: str,
-    execution_id: str,
-    request: Request,
-    payload: AssessmentAiExecutionCompletionRequest,
-    user: dict[str, Any] = CurrentUser,
-) -> dict[str, Any]:
-    # The authenticated executor boundary may invoke completion, while completion
-    # itself verifies the frozen AI/executor record rather than user input.
-    require_any_permission_or_roles(user, {"system.manage"}, {"admin"})
-    return envelope(
-        complete_ai_assessment_execution(
-            current_store=requirement_write_store(store(request)),
-            assessment_id=assessment_id,
-            execution_id=execution_id,
-            payload=payload.model_dump(exclude={"idempotency_key", "role_code"}),
         ),
         get_trace_id(request),
     )

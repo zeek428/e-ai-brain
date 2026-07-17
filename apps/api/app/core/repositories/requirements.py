@@ -196,7 +196,12 @@ class RequirementReadRepository:
                 return saved
 
     def complete_ai_assessment_execution(
-        self, *, execution_id: str, opinion: dict[str, Any]
+        self,
+        *,
+        execution_id: str,
+        opinion: dict[str, Any],
+        runner_id: str | None = None,
+        model_invocation_id: str | None = None,
     ) -> dict[str, Any]:
         """Complete only the frozen AI assessment execution and its one empty opinion."""
         with self._connect(autocommit=False) as connection:
@@ -260,8 +265,14 @@ class RequirementReadRepository:
                     )
                 cursor.execute(
                     "UPDATE requirement_assessment_executions "
-                    "SET status = 'completed', updated_at = now() WHERE id = %s",
-                    (execution_id,),
+                    "SET status = 'completed', runner_id = %s, model_invocation_id = %s, "
+                    "result_summary = %s::jsonb, updated_at = now() WHERE id = %s",
+                    (
+                        runner_id,
+                        model_invocation_id,
+                        json.dumps({"opinion_id": execution["opinion_id"]}),
+                        execution_id,
+                    ),
                 )
                 return saved
 

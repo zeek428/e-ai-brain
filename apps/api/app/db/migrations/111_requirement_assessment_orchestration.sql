@@ -123,3 +123,8 @@ ALTER TABLE requirement_assessment_commands
   ADD CONSTRAINT requirement_assessment_commands_assessment_id_fkey
   FOREIGN KEY (assessment_id) REFERENCES requirement_assessments(id)
   ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
+ALTER TABLE requirement_assessment_executions
+  ADD COLUMN IF NOT EXISTS runner_id text,
+  ADD COLUMN IF NOT EXISTS model_invocation_id text,
+  ADD COLUMN IF NOT EXISTS result_summary jsonb NOT NULL DEFAULT '{}'::jsonb;
