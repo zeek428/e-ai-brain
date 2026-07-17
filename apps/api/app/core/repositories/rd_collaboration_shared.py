@@ -554,7 +554,6 @@ class RdCollaborationTransaction:
         executor_profile_id: str,
         runner_id: str,
         model_invocation_id: str,
-        opinion: dict[str, Any],
         audit_event: dict[str, Any],
         outbox_event: dict[str, Any],
     ) -> dict[str, Any]:
@@ -604,28 +603,40 @@ class RdCollaborationTransaction:
             )
         self.cursor.execute(
             """
-            SELECT id, purpose, status, executor_profile_id, product_id, requirement_revision,
-                   strategy_snapshot_id, ai_executor_task_id, requirement_assessment_execution_id
-            FROM model_gateway_logs WHERE id = %s FOR UPDATE
+            SELECT id, status, executor_profile_id, product_id, requirement_revision,
+                   strategy_snapshot_id, ai_executor_task_id, assessment_execution_id, output_json,
+                   output_digest
+            FROM requirement_assessment_model_invocations WHERE id = %s FOR UPDATE
             """,
             (model_invocation_id,),
         )
         invocation = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
         if invocation is None or (
-            invocation.get("purpose") != "requirement_assessment"
-            or invocation.get("status") != "succeeded"
+            invocation.get("status") != "succeeded"
             or invocation.get("executor_profile_id") != executor_profile_id
             or invocation.get("product_id") != execution.get("product_id")
             or int(invocation.get("requirement_revision") or 0)
             != int(execution.get("input_revision") or 0)
             or invocation.get("strategy_snapshot_id") != execution.get("strategy_snapshot_id")
             or invocation.get("ai_executor_task_id") != task["id"]
-            or invocation.get("requirement_assessment_execution_id") != execution_id
+            or invocation.get("assessment_execution_id") != execution_id
         ):
             raise RdCollaborationRepositoryError(
                 "ASSESSMENT_MODEL_INVOCATION_INVALID",
                 "Model invocation is not a successful frozen assessment invocation",
             )
+        output = invocation.get("output_json")
+        if not isinstance(output, dict):
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_MODEL_INVOCATION_INVALID",
+                "Model invocation output is not a structured assessment result",
+            )
+        if invocation.get("output_digest") != _canonical_hash(output):
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_MODEL_INVOCATION_INVALID",
+                "Model invocation output digest does not match its frozen result",
+            )
+        opinion = self._assessment_opinion_from_gateway_output(output, executor_profile_id)
         self.cursor.execute(
             """
             UPDATE requirement_assessment_opinions
@@ -680,6 +691,122 @@ class RdCollaborationTransaction:
         self.save_audit_event(audit_event)
         self.save_outbox_event(outbox_event)
         return execution
+
+    def save_assessment_model_invocation(
+        self,
+        *,
+        task: dict[str, Any],
+        execution_id: str,
+        model_log: dict[str, Any],
+        output: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.record_assessment_model_invocation(
+            task=task,
+            execution_id=execution_id,
+            model_log=model_log,
+            output=output,
+        )
+
+    @staticmethod
+    def _assessment_opinion_from_gateway_output(
+        output: dict[str, Any], actor_id: str
+    ) -> dict[str, Any]:
+        """Map a frozen gateway response to the persisted assessment opinion shape."""
+        conclusion = output.get("conclusion_json")
+        if not isinstance(conclusion, dict):
+            summary = str(output.get("summary") or "").strip()
+            if not summary:
+                raise RdCollaborationRepositoryError(
+                    "ASSESSMENT_MODEL_INVOCATION_INVALID",
+                    "Model invocation output is missing an assessment summary",
+                )
+            conclusion = {"summary": summary}
+        return {
+            "actor_id": actor_id,
+            "conclusion_json": conclusion,
+            "evidence_refs": output.get("evidence_refs")
+            if isinstance(output.get("evidence_refs"), list)
+            else [],
+            "confidence": output.get("confidence"),
+            "risk_summary": output.get("risk_summary")
+            if isinstance(output.get("risk_summary"), dict)
+            else {},
+            "cost_summary": output.get("cost_summary")
+            if isinstance(output.get("cost_summary"), dict)
+            else {},
+            "policy_proposal_json": output.get("policy_proposal_json")
+            if isinstance(output.get("policy_proposal_json"), dict)
+            else {},
+            "outcome_code": output.get("outcome_code"),
+            "risk_level": output.get("risk_level"),
+        }
+
+    def record_assessment_model_invocation(
+        self,
+        *,
+        task: dict[str, Any],
+        execution_id: str,
+        model_log: dict[str, Any],
+        output: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Append one immutable gateway result bound to exactly one task/execution."""
+        payload = task.get("input_payload") if isinstance(task.get("input_payload"), dict) else {}
+        if payload.get("assessment_execution_id") != execution_id:
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_INVALID", "Runner task is not bound to this execution"
+            )
+        required = {
+            "executor_profile_id": payload.get("executor_profile_id"),
+            "product_id": payload.get("product_id"),
+            "requirement_revision": payload.get("requirement_revision"),
+            "strategy_snapshot_id": payload.get("strategy_snapshot_id"),
+        }
+        if any(value is None or value == "" for value in required.values()):
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_INVALID",
+                "Runner task is missing frozen invocation provenance",
+            )
+        upsert_model_logs = getattr(self._repository, "upsert_model_gateway_logs", None)
+        if not callable(upsert_model_logs):
+            upsert_model_logs = getattr(self._repository, "_upsert_model_gateway_logs", None)
+        if not callable(upsert_model_logs):
+            raise RdCollaborationRepositoryError(
+                "REPOSITORY_REQUIRED", "Model gateway log persistence is unavailable"
+            )
+        upsert_model_logs(self.cursor, [model_log])
+        invocation = {
+            "id": model_log["id"],
+            "ai_executor_task_id": task["id"],
+            "assessment_execution_id": execution_id,
+            "model_gateway_log_id": model_log["id"],
+            "status": model_log.get("status"),
+            **required,
+            "output_json": output,
+            "output_digest": _canonical_hash(output),
+        }
+        self.cursor.execute(
+            """
+            INSERT INTO requirement_assessment_model_invocations (
+              id, ai_executor_task_id, assessment_execution_id, model_gateway_log_id, status,
+              executor_profile_id, product_id, requirement_revision, strategy_snapshot_id,
+              output_json, output_digest
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+            """,
+            (
+                invocation["id"],
+                invocation["ai_executor_task_id"],
+                invocation["assessment_execution_id"],
+                invocation["model_gateway_log_id"],
+                invocation["status"],
+                invocation["executor_profile_id"],
+                invocation["product_id"],
+                invocation["requirement_revision"],
+                invocation["strategy_snapshot_id"],
+                Jsonb(invocation["output_json"]),
+                invocation["output_digest"],
+            ),
+        )
+        return invocation
 
     def advance_assessment_policy_round(
         self,
@@ -1327,6 +1454,13 @@ class RdCollaborationWriteBase:
             lambda cursor: RdCollaborationTransaction(
                 self, cursor
             ).complete_ai_assessment_runner_task(**kwargs)
+        )
+
+    def save_assessment_model_invocation(self, **kwargs: Any) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: RdCollaborationTransaction(
+                self, cursor
+            ).save_assessment_model_invocation(**kwargs)
         )
 
     @staticmethod

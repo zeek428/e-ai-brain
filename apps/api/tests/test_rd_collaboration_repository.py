@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from psycopg import sql
 
@@ -2000,27 +2001,26 @@ def test_assessment_ai_completion_uses_frozen_pg_execution_attribution(
                 seeded["base_snapshot"]["id"],
             ),
         )
-    saved = complete_ai_assessment_execution_from_runner(
-        current_store=PostgresRuntimeStore(repository),
-        assessment_id=assessment["id"],
-        execution_id=execution["id"],
-        executor_profile_id="assessment-ai-completion-profile",
-        runner_id="assessment-ai-completion-runner",
-        model_result={
-            "model_invocation_id": "assessment-ai-completion-model-log",
-            "assessment_opinion": {"conclusion_json": {"recommendation": "accept"}},
-        },
-    )
-
-    assert saved["actor_id"] == "assessment-ai-completion-ai"
+    with pytest.raises(HTTPException) as exc_info:
+        complete_ai_assessment_execution_from_runner(
+            current_store=PostgresRuntimeStore(repository),
+            assessment_id=assessment["id"],
+            execution_id=execution["id"],
+            executor_profile_id="assessment-ai-completion-profile",
+            runner_id="assessment-ai-completion-runner",
+            model_result={
+                "model_invocation_id": "assessment-ai-completion-model-log",
+                "assessment_opinion": {"conclusion_json": {"recommendation": "accept"}},
+            },
+        )
+    assert exc_info.value.detail["code"] == "ASSESSMENT_GATEWAY_REQUIRED"
     persisted_execution = repository.get_requirement_assessment_execution(execution["id"])
-    assert persisted_execution["status"] == "completed"
-    assert persisted_execution["model_invocation_id"] == "assessment-ai-completion-model-log"
-    assert persisted_execution["runner_id"] == "assessment-ai-completion-runner"
+    assert persisted_execution["status"] == "pending"
 
 
 def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atomically(
     repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seeded = _seed_exact_run(repository, prefix="assessment-runner-atomic")
     assessment = repository.get_requirement_assessment(str(seeded["assessment"]))
@@ -2103,6 +2103,7 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
             "assessment_execution_id": execution["id"],
             "executor_profile_id": profile_id,
             "product_id": seeded["product"],
+            "requirement_id": seeded["requirement"],
             "requirement_revision": 1,
             "strategy_snapshot_id": seeded["base_snapshot"]["id"],
         },
@@ -2122,25 +2123,6 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
             WHERE id = %s
             """,
             (task["id"], runner_id, execution["id"]),
-        )
-        connection.execute(
-            """
-            INSERT INTO model_gateway_logs (
-              id, provider, model, purpose, status, executor_profile_id,
-              product_id, requirement_revision, strategy_snapshot_id,
-              ai_executor_task_id, requirement_assessment_execution_id
-            ) VALUES (%s, 'test', 'test-model', 'requirement_assessment', 'succeeded',
-                      %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                "assessment-runner-atomic-log",
-                profile_id,
-                seeded["product"],
-                1,
-                seeded["base_snapshot"]["id"],
-                task["id"],
-                execution["id"],
-            ),
         )
         connection.execute(
             """
@@ -2169,7 +2151,6 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
         "execution_id": execution["id"],
         "executor_profile_id": profile_id,
         "runner_id": runner_id,
-        "opinion": {"actor_id": employee_id, "conclusion_json": {"recommendation": "accept"}},
         "audit_event": {
             "id": "assessment-runner-atomic-audit",
             "event_type": "ai_executor_task.succeeded",
@@ -2239,16 +2220,52 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
         )
     assert repository.get_requirement_assessment_execution(execution["id"])["status"] == "pending"
 
-    repository.complete_ai_assessment_runner_task(
-        **kwargs, model_invocation_id="assessment-runner-atomic-log"
+    def gateway_result(_store, *, task):
+        output = {"summary": "accept", "conclusion_json": {"recommendation": "accept"}}
+        payload = task["input_payload"]
+        return output, {
+            "id": "assessment-runner-atomic-gateway-log",
+            "provider": "test",
+            "model": "test-model",
+            "purpose": "requirement_assessment",
+            "status": "succeeded",
+            "tokens": {},
+            "latency_ms": 1,
+            "executor_profile_id": payload["executor_profile_id"],
+            "product_id": payload["product_id"],
+            "requirement_revision": payload["requirement_revision"],
+            "strategy_snapshot_id": payload["strategy_snapshot_id"],
+            "ai_executor_task_id": task["id"],
+            "requirement_assessment_execution_id": payload["assessment_execution_id"],
+        }
+
+    monkeypatch.setattr(
+        "app.services.ai_executor_assessment_gateway.call_model_gateway_for_task", gateway_result
     )
+    app.state.store = PostgresRuntimeStore(repository)
+    try:
+        completed = TestClient(app).post(
+            f"/api/system/ai-executor-tasks/{task['id']}/execute-assessment-gateway",
+            json={"runner_id": runner_id},
+            headers={"X-Runner-Token": "runner-secret"},
+        )
+        assert completed.status_code == 200, completed.text
+        assert (
+            completed.json()["data"]["model_invocation_id"]
+            == "assessment-runner-atomic-gateway-log"
+        )
+    finally:
+        app.state.store = original_store
     assert repository.get_requirement_assessment_execution(execution["id"])["status"] == "completed"
     assert repository.list_ai_executor_tasks(runner_id=runner_id)[0]["status"] == "succeeded"
-    assert any(item["id"] == kwargs["audit_event"]["id"] for item in repository.list_audit_events())
+    assert any(
+        item["subject_id"] == task["id"] and item["event_type"] == "ai_executor_task.succeeded"
+        for item in repository.list_audit_events()
+    )
     with repository._connect() as connection:
         assert connection.execute(
             "SELECT 1 FROM execution_outbox_events WHERE id = %s",
-            (kwargs["outbox_event"]["id"],),
+            (f"assessment-runner-complete-{task['id']}",),
         ).fetchone()
 
 

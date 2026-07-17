@@ -11,6 +11,7 @@ from app.core.repositories.rd_collaboration_shared import (
     RdCollaborationRepositoryError,
     RdCollaborationVersionConflictError,
 )
+from app.services.ai_executor_runner_workspace import workspace_match_detail
 from app.services.rd_ai_employees import qualify_ai_actor
 from app.services.rd_policy_resolution import (
     PolicyResolutionError,
@@ -244,16 +245,26 @@ def _resolve_assessment_actor(
     role: dict[str, Any],
     product_id: str,
     user: dict[str, Any],
+    human_user_lookup: Any | None = None,
 ) -> tuple[str, str, str | None]:
     """Return one frozen `(subject type, subject id, executor profile)` or fail closed."""
     actor_mode = binding.get("actor_mode")
     candidates: list[tuple[str, str, str | None]] = []
-    if (
-        actor_mode in {"human", "hybrid"}
-        and user.get("id") in set(binding.get("candidate_human_user_ids") or [])
-        and qualify_human_actor(user, role_definition=role, product_id=product_id)
-    ):
-        candidates.append(("human_user", user["id"], None))
+    if actor_mode in {"human", "hybrid"}:
+        for candidate_id in binding.get("candidate_human_user_ids") or []:
+            candidate_id = str(candidate_id or "").strip()
+            if not candidate_id:
+                continue
+            candidate = user if candidate_id == user.get("id") else None
+            if candidate is None and callable(human_user_lookup):
+                candidate = human_user_lookup(candidate_id)
+            if candidate is None:
+                get_candidate = getattr(repository, "get_assessment_candidate_user", None)
+                candidate = get_candidate(candidate_id) if callable(get_candidate) else None
+            if isinstance(candidate, dict) and qualify_human_actor(
+                candidate, role_definition=role, product_id=product_id
+            ):
+                candidates.append(("human_user", candidate_id, None))
     if actor_mode in {"ai", "hybrid"}:
         get_employee = getattr(repository, "get_rd_ai_employee", None)
         get_profile = getattr(repository, "get_rd_executor_profile", None)
@@ -293,6 +304,7 @@ def _new_opinion_round(
     snapshot: dict[str, Any],
     user: dict[str, Any],
     opinion_round: int,
+    human_user_lookup: Any | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Freeze fresh, complete assignments for every active required role."""
     now = datetime.now(UTC).isoformat()
@@ -310,6 +322,7 @@ def _new_opinion_round(
             role=role,
             product_id=requirement["product_id"],
             user=user,
+            human_user_lookup=human_user_lookup,
         )
         opinion_id = _new_id(current_store, "requirement_assessment_opinion")
         execution_id = _new_id(current_store, "requirement_assessment_execution")
@@ -387,11 +400,23 @@ def _assessment_dispatch_task(
             "ASSESSMENT_EXECUTOR_PROFILE_INVALID",
             "Frozen AI assessment executor profile has no approved read-only workspace",
         )
+    runners = getattr(repository, "list_ai_executor_runners", lambda **_filters: [])(
+        status="active"
+    )
+    runner = next((item for item in runners if item.get("id") == runner_id), None)
+    if runner is None or not workspace_match_detail(runner, workspace_root)["allowed"]:
+        raise api_error(
+            409,
+            "ASSESSMENT_EXECUTOR_PROFILE_INVALID",
+            "Frozen AI assessment workspace is not allowed by its bound runner",
+        )
     now = datetime.now(UTC).isoformat()
     return {
         "id": _new_id(current_store, "ai_executor_task"),
         "runner_id": runner_id,
         "executor_type": profile.get("executor_type") or "codex",
+        "task_type": "requirement_assessment",
+        "title": f"Requirement assessment: {requirement['id']}",
         "instruction": "Produce only the structured requirement assessment opinion.",
         "workspace_root": workspace_root,
         "timeout_seconds": 1800,
@@ -404,6 +429,13 @@ def _assessment_dispatch_task(
             "requirement_revision": execution["input_revision"],
             "strategy_snapshot_id": execution["strategy_snapshot_id"],
         },
+        "input_json": {
+            "assessment_execution_id": execution["id"],
+            "requirement_id": requirement["id"],
+            "requirement_revision": execution["input_revision"],
+        },
+        "requirement_snapshot": deepcopy(requirement),
+        "product_context": {"product_id": requirement["product_id"]},
         "request_config": {
             "assessment_only": True,
             "side_effect_policy": execution["side_effect_policy"],
@@ -629,6 +661,21 @@ def _assessment(repository: Any, assessment_id: str) -> dict[str, Any]:
     return assessment
 
 
+def _assessment_requirement(repository: Any, assessment: dict[str, Any]) -> dict[str, Any]:
+    payload = getattr(repository, "load_requirements", lambda: {})()
+    requirements = payload.get("requirements") if isinstance(payload, dict) else {}
+    requirement = (
+        requirements.get(assessment.get("requirement_id"))
+        if isinstance(requirements, dict)
+        else None
+    )
+    if not isinstance(requirement, dict):
+        raise api_error(
+            409, "ASSESSMENT_REQUIREMENT_INVALID", "Assessment requirement is unavailable"
+        )
+    return requirement
+
+
 def _assessment_opinions(repository: Any, assessment_id: str) -> list[dict[str, Any]]:
     list_opinions = getattr(repository, "list_requirement_assessment_opinions", None)
     if not callable(list_opinions):
@@ -761,6 +808,12 @@ def complete_ai_assessment_execution_from_runner(
     AI-executor runner boundary may call it after a model-gateway invocation.
     """
     repository = _repository(current_store)
+    if callable(getattr(repository, "complete_ai_assessment_runner_task", None)):
+        raise api_error(
+            409,
+            "ASSESSMENT_GATEWAY_REQUIRED",
+            "PostgreSQL assessment executions must be completed by the runner gateway path",
+        )
     _assessment(repository, assessment_id)
     get_execution = getattr(repository, "get_requirement_assessment_execution", None)
     execution = get_execution(execution_id) if callable(get_execution) else None
@@ -1258,6 +1311,48 @@ def submit_assessment_answers(
     if not callable(execute):
         raise api_error(503, "REPOSITORY_REQUIRED", "Assessment answer transaction is unavailable")
     try:
+        requirement = _assessment_requirement(repository, assessment)
+
+        def effect(transaction: Any) -> dict[str, Any]:
+            saved = transaction.submit_assessment_answers(
+                assessment_id=assessment_id,
+                expected_version=expected_version,
+                answers=deepcopy(payload.get("answers") or {}),
+                actor_id=user["id"],
+            )
+            cursor = getattr(transaction, "cursor", None)
+            if cursor is None:
+                return saved
+            cursor.execute(
+                """
+                SELECT * FROM requirement_assessment_executions
+                WHERE assessment_id = %s AND input_revision = %s AND actor_type = 'ai_employee'
+                  AND ai_executor_task_id IS NULL
+                ORDER BY id
+                """,
+                (assessment_id, saved["requirement_revision"]),
+            )
+            executions = [
+                transaction._repository._row(cursor=cursor, row=row) for row in cursor.fetchall()
+            ]
+            dispatches = [
+                _assessment_dispatch_task(
+                    current_store=current_store,
+                    execution=execution,
+                    requirement=requirement,
+                    user=user,
+                    repository=repository,
+                )
+                for execution in executions
+                if execution is not None
+            ]
+            saved["dispatched_executions"] = [
+                transaction.dispatch_ai_assessment_execution(task)
+                for task in dispatches
+                if task is not None
+            ]
+            return saved
+
         return execute(
             {
                 "id": _new_id(current_store, "requirement_assessment_command"),
@@ -1267,12 +1362,7 @@ def submit_assessment_answers(
                 "request_hash": _request_hash(payload),
                 "created_by": user["id"],
             },
-            lambda transaction: transaction.submit_assessment_answers(
-                assessment_id=assessment_id,
-                expected_version=expected_version,
-                answers=deepcopy(payload.get("answers") or {}),
-                actor_id=user["id"],
-            ),
+            effect,
         )
     except RdCollaborationRepositoryError as exc:
         _repository_error(exc)

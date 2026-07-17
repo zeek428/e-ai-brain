@@ -110,6 +110,23 @@ class AssessmentRepository:
                 },
             }
         }
+        self.runners = {
+            "runner_architect": {
+                "id": "runner_architect",
+                "status": "active",
+                "workspace_roots": ["/srv/workspaces/project-a"],
+            }
+        }
+        self.assessment_users = {
+            "user_delegate": {
+                "id": "user_delegate",
+                "roles": ["product_owner"],
+                "permissions": ["delivery.rd_collaboration.work"],
+                "scope_summary": [
+                    {"scope_type": "product", "scope_id": "product_1", "access_level": "write"}
+                ],
+            }
+        }
 
     def list_rd_collaboration_task_executor_policies(self, **_filters):
         return [deepcopy(self.policy)]
@@ -150,6 +167,12 @@ class AssessmentRepository:
 
     def get_rd_executor_profile(self, profile_id: str):
         return deepcopy(self.profiles.get(profile_id))
+
+    def list_ai_executor_runners(self, **_filters):
+        return deepcopy(list(self.runners.values()))
+
+    def get_assessment_candidate_user(self, user_id: str):
+        return deepcopy(self.assessment_users.get(user_id))
 
     def list_model_gateway_logs(self):
         return deepcopy(self.model_gateway_logs)
@@ -424,6 +447,50 @@ def test_assessment_resolves_initial_policy_before_ai_roles():
     assert dispatched["input_payload"]["product_id"] == "product_1"
     assert dispatched["input_payload"]["requirement_revision"] == 1
     assert dispatched["workspace_root"] == "/srv/workspaces/project-a"
+    assert dispatched["task_type"] == "requirement_assessment"
+    assert dispatched["title"] == "Requirement assessment: requirement_1"
+
+
+def test_assessment_resolves_configured_human_candidate_independently_of_starter():
+    from app.services.requirement_assessments import start_requirement_assessment
+
+    repository = AssessmentRepository()
+    repository.bindings = [
+        {
+            "id": "binding_human_architect",
+            "role_code": "architect",
+            "actor_mode": "human",
+            "candidate_human_user_ids": ["user_delegate"],
+            "status": "active",
+        }
+    ]
+    repository.policy["role_bindings"] = deepcopy(repository.bindings)
+    repository.roles["architect"] = {
+        **repository.roles["architect"],
+        "assignable_subject_types": ["human_user"],
+    }
+    assessment = start_requirement_assessment(
+        current_store=RepositoryStore(repository),
+        requirement={
+            "id": "requirement_human",
+            "brain_app_id": "rd_brain",
+            "product_id": "product_1",
+            "status": "submitted",
+            "revision": 1,
+        },
+        user={
+            "id": "user_owner",
+            "roles": ["product_owner"],
+            "permissions": ["requirement.approve"],
+            "scope_summary": [
+                {"scope_type": "product", "scope_id": "product_1", "access_level": "write"}
+            ],
+        },
+    )
+
+    opinion = assessment["opinions"][0]
+    assert opinion["assigned_subject_type"] == "human_user"
+    assert opinion["assigned_user_id"] == "user_delegate"
 
 
 def test_policy_re_evaluation_round_reassigns_every_new_active_qualified_role():
@@ -466,6 +533,11 @@ def test_policy_re_evaluation_round_reassigns_every_new_active_qualified_role():
         "runner_id": "runner_reviewer",
         "supported_role_codes": ["reviewer"],
         "workspace_capabilities": {"assessment_workspace_root": "/srv/workspaces/project-a"},
+    }
+    repository.runners["runner_reviewer"] = {
+        "id": "runner_reviewer",
+        "status": "active",
+        "workspace_roots": ["/srv/workspaces/project-a"],
     }
     store = RepositoryStore(repository)
     requirement = {
@@ -879,6 +951,11 @@ def test_answers_create_a_new_requirement_and_opinion_round():
         "status": "needs_info",
         "version": 1,
         "product_id": "product_1",
+    }
+    store.repository.requirements["requirement_1"] = {
+        "id": "requirement_1",
+        "product_id": "product_1",
+        "assessment_revision": 1,
     }
     user = {
         "id": "user_owner",

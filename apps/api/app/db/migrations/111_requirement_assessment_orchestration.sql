@@ -214,3 +214,40 @@ DROP TRIGGER IF EXISTS trg_model_gateway_logs_assessment_provenance_immutable
 CREATE TRIGGER trg_model_gateway_logs_assessment_provenance_immutable
 BEFORE UPDATE ON model_gateway_logs
 FOR EACH ROW EXECUTE FUNCTION reject_model_gateway_assessment_provenance_mutation();
+
+-- The generic model log is observability metadata.  Assessment completion instead
+-- consumes this purpose-built, append-only record so a runner cannot invent or
+-- later edit the opinion that is attributed to a gateway call.
+CREATE TABLE IF NOT EXISTS requirement_assessment_model_invocations (
+  id text PRIMARY KEY,
+  ai_executor_task_id text NOT NULL REFERENCES ai_executor_tasks(id) ON DELETE RESTRICT,
+  assessment_execution_id text NOT NULL
+    REFERENCES requirement_assessment_executions(id) ON DELETE RESTRICT,
+  model_gateway_log_id text NOT NULL REFERENCES model_gateway_logs(id) ON DELETE RESTRICT,
+  status text NOT NULL CHECK (status IN ('succeeded', 'failed')),
+  executor_profile_id text NOT NULL REFERENCES rd_executor_profiles(id) ON DELETE RESTRICT,
+  product_id text NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  requirement_revision bigint NOT NULL,
+  strategy_snapshot_id text NOT NULL
+    REFERENCES rd_task_executor_policy_snapshots(id) ON DELETE RESTRICT,
+  output_json jsonb NOT NULL,
+  output_digest text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (ai_executor_task_id),
+  UNIQUE (assessment_execution_id),
+  UNIQUE (model_gateway_log_id)
+);
+
+CREATE OR REPLACE FUNCTION reject_requirement_assessment_model_invocation_mutation()
+RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'requirement assessment model invocation is immutable';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_requirement_assessment_model_invocation_immutable
+  ON requirement_assessment_model_invocations;
+CREATE TRIGGER trg_requirement_assessment_model_invocation_immutable
+BEFORE UPDATE OR DELETE ON requirement_assessment_model_invocations
+FOR EACH ROW EXECUTE FUNCTION reject_requirement_assessment_model_invocation_mutation();

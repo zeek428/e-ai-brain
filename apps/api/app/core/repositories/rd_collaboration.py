@@ -82,6 +82,51 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
     def get_rd_role_definition(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_role_definitions", record_id)
 
+    def get_assessment_candidate_user(self, user_id: str) -> dict[str, Any] | None:
+        """Load a candidate with the same authorization facts used for role qualification."""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, roles
+                    FROM users WHERE id = %s AND status = 'active'
+                    """,
+                    (user_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+                candidate_id, legacy_roles = row
+                cursor.execute(
+                    """
+                    SELECT DISTINCT permission_code
+                    FROM user_roles ur
+                    JOIN role_permissions rp ON rp.role_id = ur.role_id
+                    WHERE ur.user_id = %s AND ur.status = 'active'
+                    """,
+                    (user_id,),
+                )
+                permissions = [item[0] for item in cursor.fetchall()]
+                cursor.execute(
+                    """
+                    SELECT scope_type, scope_id, access_level
+                    FROM user_scope_grants
+                    WHERE user_id = %s AND status = 'active'
+                      AND (expires_at IS NULL OR expires_at > now())
+                    """,
+                    (user_id,),
+                )
+                scopes = [
+                    {"scope_type": item[0], "scope_id": item[1], "access_level": item[2]}
+                    for item in cursor.fetchall()
+                ]
+        return {
+            "id": candidate_id,
+            "roles": list(legacy_roles or []),
+            "permissions": permissions,
+            "scope_summary": scopes,
+        }
+
     def list_rd_role_definitions(
         self,
         *,

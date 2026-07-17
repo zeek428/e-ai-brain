@@ -25,6 +25,7 @@ from app.services.ai_executor_runners import (
     create_ai_executor_runner_install_package_response,
     create_ai_executor_runner_response,
     delete_ai_executor_runner_response,
+    execute_ai_assessment_task_gateway_response,
     list_ai_executor_runners_response,
     list_ai_executor_task_logs_response,
     list_ai_executor_tasks_response,
@@ -249,6 +250,10 @@ class AiExecutorTaskCompleteRequest(BaseModel):
     result_json: dict[str, Any] = Field(default_factory=dict)
     runner_id: str
     status: str
+
+
+class AiExecutorAssessmentGatewayRequest(BaseModel):
+    runner_id: str
 
 
 class AiExecutorTaskWorkspaceDecisionRequest(BaseModel):
@@ -578,6 +583,23 @@ def complete_ai_executor_task(
             current_store=store(request),
             payload=payload,
             request=request,
+            task_id=task_id,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-tasks/{task_id}/execute-assessment-gateway")
+def execute_ai_assessment_gateway_task(
+    payload: AiExecutorAssessmentGatewayRequest,
+    request: Request,
+    task_id: str,
+) -> dict[str, Any]:
+    return envelope(
+        execute_ai_assessment_task_gateway_response(
+            current_store=store(request),
+            request=request,
+            runner_id=payload.runner_id,
             task_id=task_id,
         ),
         get_trace_id(request),

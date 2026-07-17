@@ -15,6 +15,7 @@ from app.services.agent_autonomy import (
     handle_agent_quality_gate_outcome,
     record_agent_coding_completed,
 )
+from app.services.ai_executor_assessment_gateway import execute_assessment_gateway_task
 from app.services.ai_executor_runner_constants import (
     AI_EXECUTOR_LOCAL_RUNNER_TYPES,
     AI_EXECUTOR_RUNNER_CAPABILITIES,
@@ -2032,13 +2033,6 @@ def complete_ai_executor_task_response(
             None,
         )
         if callable(complete_atomically):
-            opinion = task["result_json"].get("assessment_opinion")
-            if not isinstance(opinion, dict):
-                raise api_error(
-                    400,
-                    "ASSESSMENT_OPINION_INVALID",
-                    "Assessment runner result must include a structured assessment opinion",
-                )
             model_invocation_id = str(task["result_json"].get("model_invocation_id") or "").strip()
             if not model_invocation_id:
                 raise api_error(
@@ -2054,7 +2048,6 @@ def complete_ai_executor_task_response(
                     executor_profile_id=executor_profile_id,
                     runner_id=runner_id,
                     model_invocation_id=model_invocation_id,
-                    opinion={**opinion, "actor_id": executor_profile_id},
                     audit_event=audit_event,
                     outbox_event={
                         "id": f"assessment-runner-complete-{task_id}",
@@ -2127,3 +2120,21 @@ def complete_ai_executor_task_response(
     )
     _sync_runner_task_to_deployment(current_store, runner_id=runner_id, task=task)
     return {"task": _task_public(task)}
+
+
+def execute_ai_assessment_task_gateway_response(
+    *,
+    current_store: Any,
+    request: Request,
+    runner_id: str,
+    task_id: str,
+) -> dict[str, Any]:
+    return execute_assessment_gateway_task(
+        authenticate_runner=_authenticated_runner,
+        complete_task=complete_ai_executor_task_response,
+        current_store=current_store,
+        request=request,
+        runner_id=runner_id,
+        sync_task=_sync_ai_executor_task_by_id,
+        task_id=task_id,
+    )
