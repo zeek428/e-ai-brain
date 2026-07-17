@@ -899,6 +899,14 @@ def test_postgres_repository_patches_additive_schema_gaps_for_existing_volumes()
 
 
 def test_all_structured_tables_define_created_and_updated_timestamps():
+    immutable_created_at_only_tables = {
+        "rd_task_executor_policy_snapshots",
+        "rd_task_executor_policy_snapshot_sources",
+        "rd_collaboration_run_requirements",
+        "rd_scope_change_request_operations",
+        "rd_command_idempotency_records",
+        "role_feedback_records",
+    }
     missing: list[str] = []
     for migration_path in sorted(Path("app/db/migrations").glob("*.sql")):
         migration = migration_path.read_text()
@@ -909,9 +917,22 @@ def test_all_structured_tables_define_created_and_updated_timestamps():
         ):
             table_name = match.group(1)
             table_body = match.group(2)
-            for column_name in ("created_at", "updated_at"):
+            required_columns = (
+                ("created_at",)
+                if table_name in immutable_created_at_only_tables
+                else ("created_at", "updated_at")
+            )
+            for column_name in required_columns:
                 if not re.search(rf"\b{column_name}\s+timestamptz\b", table_body):
                     missing.append(f"{migration_path.name}:{table_name}.{column_name}")
+
+            if table_name in immutable_created_at_only_tables and re.search(
+                r"\bupdated_at\s+timestamptz\b",
+                table_body,
+            ):
+                missing.append(
+                    f"{migration_path.name}:{table_name}.updated_at must be absent",
+                )
 
     assert missing == []
 

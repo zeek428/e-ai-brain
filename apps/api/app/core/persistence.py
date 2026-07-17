@@ -378,6 +378,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "107_trusted_delivery_records.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "109_requirement_driven_rd_collaboration.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -386,10 +390,9 @@ class PostgresSnapshotRepository:
         migration_path = Path(__file__).resolve().parents[1] / "db" / "migrations" / filename
         if not migration_path.exists():
             return
-        for statement in migration_path.read_text(encoding="utf-8").split(";"):
-            sql = statement.strip()
-            if sql:
-                cursor.execute(sql)
+        sql = migration_path.read_text(encoding="utf-8").strip()
+        if sql:
+            cursor.execute(sql)
 
     def load(self) -> dict[str, Any] | None:
         return self._system_state_repository.load_snapshot()
