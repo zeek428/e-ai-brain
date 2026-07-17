@@ -438,11 +438,15 @@ def test_decision_and_scope_request_replays_reject_divergent_provenance(
     seeded = _seed_exact_run(repository, prefix="replay-provenance")
     decision = _decision_record(seeded, decision_id="replay-provenance-decision")
     repository.save_decision_request_record(decision)
-    with pytest.raises(RdCollaborationRepositoryError) as decision_error:
-        repository.save_decision_request_record(
-            {**decision, "subject_id": "different-run", "product_id": "product_default"}
-        )
-    assert decision_error.value.code == "RD_IDEMPOTENCY_CONFLICT"
+    for mutation in (
+        {"subject_id": "different-run"},
+        {"product_id": "product_default"},
+        {"brain_app_id": "other_brain"},
+        {"plan_version": 99},
+    ):
+        with pytest.raises(RdCollaborationRepositoryError) as decision_error:
+            repository.save_decision_request_record({**decision, **mutation})
+        assert decision_error.value.code == "RD_IDEMPOTENCY_CONFLICT"
 
     request_id = "replay-provenance-request"
     command = _remove_scope_command(seeded, request_id=request_id)
@@ -494,6 +498,89 @@ def test_scope_creation_rejects_a_poisoned_decision_identity(
     assert error.value.code == "RD_IDEMPOTENCY_CONFLICT"
     assert repository.get_rd_scope_change_request(request_id) is None
     assert repository.get_rd_collaboration_run(str(seeded["run"]["id"]))["status"] == "running"
+
+
+@pytest.mark.parametrize(
+    "selected",
+    ["approve_apply_and_restart", "reject_keep_current_scope"],
+)
+def test_scope_create_exact_replay_survives_terminal_decision_lifecycle(
+    repository: PostgresSnapshotRepository,
+    selected: str,
+) -> None:
+    prefix = f"create-after-{selected.split('_', 1)[0]}"
+    seeded = _seed_exact_run(repository, prefix=prefix)
+    request_id = f"{prefix}-request"
+    command = _remove_scope_command(seeded, request_id=request_id)
+    repository.create_scope_change_request(**command)
+    terminal = repository.apply_scope_change_bundle(
+        scope_change_request_id=request_id,
+        decision=selected,
+        decided_by="user_admin",
+        expected_decision_version=1,
+    )
+
+    replay = repository.create_scope_change_request(**command)
+
+    assert replay["id"] == request_id
+    assert replay["status"] == terminal["scope_change_request"]["status"]
+    assert repository.get_decision_request(f"{request_id}-decision")["version"] == 2
+
+
+def test_decision_exact_creation_replay_survives_answer_refresh(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="decision-after-answer")
+    decision = _decision_record(
+        seeded,
+        decision_id="decision-after-answer-request",
+        answer_actor_selector={"user_ids": ["user_admin"]},
+    )
+    repository.save_decision_request_record(decision)
+    repository.suspend_collaboration_run(
+        collaboration_run_id=str(seeded["run"]["id"]),
+        decision_request_id=str(decision["id"]),
+        expected_version=1,
+    )
+    repository.apply_decision_bundle(
+        decision_request_id=str(decision["id"]),
+        selected_option_code="more_info",
+        input_json=None,
+        comment="need details",
+        decided_by="user_admin",
+        expected_version=1,
+    )
+    refreshed_options = [
+        *decision["options_json"],
+        {
+            "code": "defer",
+            "label": "Defer",
+            "outcome": "reject",
+            "subject_transition": "cancelled",
+            "requires_comment": True,
+            "input_schema": {},
+            "effect_preview": {},
+        },
+    ]
+    repository.answer_decision_request(
+        decision_request_id=str(decision["id"]),
+        expected_version=2,
+        actor_id="user_admin",
+        actor_role_codes=[],
+        actor_seat_ids=[],
+        answer_json={"detail": "complete"},
+        evidence_json=[{"ref": "document-1"}],
+        options_json=refreshed_options,
+        options_hash="caller-hash-is-ignored",
+    )
+
+    replay = repository.save_decision_request_record(decision)
+
+    assert replay["id"] == decision["id"]
+    assert replay["status"] == "pending"
+    assert replay["version"] == 3
+    assert replay["options_json"] == refreshed_options
+    assert replay["evidence_json"] == [{"ref": "document-1"}]
 
 
 @pytest.mark.parametrize(
