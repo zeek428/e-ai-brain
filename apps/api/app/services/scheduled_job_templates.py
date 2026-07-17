@@ -240,10 +240,10 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
         "category": "ai_service",
         "code": "ai_executor_repository_task",
         "description": (
-            "默认使用系统默认 AI 大模型执行仓库任务，也可切换到本地 "
-            "Codex、Claude、Hermes 或 OpenClaw Runner 并回写结果。"
+            "定时向系统默认 AI 模型或本地 Codex、Claude、Hermes、OpenClaw "
+            "执行器下达任务指令并回写结果；该模板不预设代码仓库。"
         ),
-        "name": "AI 执行器仓库任务",
+        "name": "AI 执行器定时指令",
         "payload_defaults": {
             "config_json": {
                 "ai_executor": {
@@ -256,15 +256,15 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
             "enabled": True,
             "execution_mode": "deterministic",
             "job_type": "plugin_action_invoke",
-            "name": "AI 执行器仓库巡检",
+            "name": "AI 执行器定时任务",
             "result_actions": [],
             "schedule_type": "cron",
             "source_system": "ai_executor",
         },
         "recommended_scenarios": [
-            "系统默认执行器",
-            "系统 AI 大模型仓库分析",
-            "本地 Codex/OpenClaw Runner",
+            "系统默认 AI 执行",
+            "本地 Codex/Claude/Hermes/OpenClaw 执行",
+            "定时任务指令自动化",
         ],
         "resource_selectors": {
             "plugin_action": {"code_candidates": ["run_ai_executor_instruction"]},

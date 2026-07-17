@@ -1431,15 +1431,18 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     ]
 
     ai_executor = by_code["ai_executor_repository_task"]
-    assert "系统默认 AI 大模型" in ai_executor["description"]
+    assert ai_executor["name"] == "AI 执行器定时指令"
+    assert "系统默认 AI 模型" in ai_executor["description"]
+    assert "不预设代码仓库" in ai_executor["description"]
     assert ai_executor["payload_defaults"]["job_type"] == "plugin_action_invoke"
+    assert ai_executor["payload_defaults"]["name"] == "AI 执行器定时任务"
     assert ai_executor["payload_defaults"]["source_system"] == "ai_executor"
     assert ai_executor["payload_defaults"]["config_json"]["ai_executor"] == {
         "executor_type": "model_gateway",
         "runner_id": "ai_executor_runner_system_default",
         "runner_label": "系统默认执行器",
     }
-    assert "系统默认执行器" in ai_executor["recommended_scenarios"]
+    assert "系统默认 AI 执行" in ai_executor["recommended_scenarios"]
     assert ai_executor["resource_selectors"]["plugin_action"]["code_candidates"] == [
         "run_ai_executor_instruction",
     ]

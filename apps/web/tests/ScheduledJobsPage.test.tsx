@@ -471,8 +471,8 @@ function installScheduledJobsFetchMock(
             },
             {
               code: 'ai_executor_repository_task',
-              description: '默认使用系统默认 AI 大模型执行仓库任务，也可切换到本地 Runner。',
-              name: 'AI 执行器仓库任务',
+              description: '定时向系统默认 AI 模型或本地 Runner 下达任务指令并回写结果；该模板不预设代码仓库。',
+              name: 'AI 执行器定时指令',
               payload_defaults: {
                 config_json: {
                   ai_executor: {
@@ -485,12 +485,12 @@ function installScheduledJobsFetchMock(
                 enabled: true,
                 execution_mode: 'deterministic',
                 job_type: 'plugin_action_invoke',
-                name: 'AI 执行器仓库巡检',
+                name: 'AI 执行器定时任务',
                 result_actions: [],
                 schedule_type: 'cron',
                 source_system: 'ai_executor',
               },
-              recommended_scenarios: ['系统默认执行器', '系统 AI 大模型仓库分析', '本地 Codex/OpenClaw Runner'],
+              recommended_scenarios: ['系统默认 AI 执行', '本地 Codex/Claude/Hermes/OpenClaw 执行', '定时任务指令自动化'],
               resource_selectors: {
                 plugin_action: { code_candidates: ['run_ai_executor_instruction'] },
               },
@@ -1911,7 +1911,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
     expect(await screen.findByText('邮件摘要收取')).toBeInTheDocument();
     expect(screen.getByText('GitLab MR AI 审查')).toBeInTheDocument();
-    expect(screen.getByText('AI 执行器仓库任务')).toBeInTheDocument();
+    expect(screen.getByText('AI 执行器定时指令')).toBeInTheDocument();
     fireEvent.click(await screen.findByText('每周用户反馈洞察抽取'));
 
     await waitFor(() =>
@@ -2231,9 +2231,9 @@ describe('ScheduledJobsPage', () => {
     const executorDialog = await screen.findByRole('dialog', { name: '新增定时作业' });
     await waitFor(() => expect(within(executorDialog).getByLabelText('作业模板')).toBeInTheDocument());
     fireEvent.mouseDown(within(executorDialog).getByLabelText('作业模板'));
-    fireEvent.click(await screen.findByText('AI 执行器仓库任务'));
+    fireEvent.click(await screen.findByText('AI 执行器定时指令'));
 
-    expect(within(executorDialog).getByLabelText('名称')).toHaveValue('AI 执行器仓库巡检');
+    expect(within(executorDialog).getByLabelText('名称')).toHaveValue('AI 执行器定时任务');
     expect(within(executorDialog).getByText('系统默认 AI 执行器')).toBeInTheDocument();
     expect(within(executorDialog).getByText('AI 执行器下达指令')).toBeInTheDocument();
     expect(within(executorDialog).getByDisplayValue('0 3 * * MON')).toBeInTheDocument();
@@ -2253,7 +2253,7 @@ describe('ScheduledJobsPage', () => {
         enabled: true,
         execution_mode: 'deterministic',
         job_type: 'plugin_action_invoke',
-        name: 'AI 执行器仓库巡检',
+        name: 'AI 执行器定时任务',
         plugin_action_id: 'plugin_action_ai_executor_command',
         plugin_connection_id: 'connection_ai_executor_system',
         product_id: 'product_ai_brain',
