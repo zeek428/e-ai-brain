@@ -39,6 +39,7 @@ from app.api.routers.product_modules import router as product_modules_router
 from app.api.routers.product_versions import router as product_versions_router
 from app.api.routers.products import router as products_router
 from app.api.routers.related_systems import router as related_systems_router
+from app.api.routers.rd_organization import router as rd_organization_router
 from app.api.routers.requirements import router as requirements_router
 from app.api.routers.scheduled_jobs import router as scheduled_jobs_router
 from app.api.routers.system_external_identities import router as system_external_identities_router
@@ -239,6 +240,7 @@ app.include_router(plugins_router)
 app.include_router(product_git_repositories_router)
 app.include_router(product_modules_router)
 app.include_router(product_versions_router)
+app.include_router(rd_organization_router)
 app.include_router(products_router)
 app.include_router(related_systems_router)
 app.include_router(requirements_router)
