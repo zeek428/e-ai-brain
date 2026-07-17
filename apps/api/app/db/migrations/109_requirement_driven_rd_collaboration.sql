@@ -4,8 +4,33 @@
 ALTER TABLE IF EXISTS rd_task_executor_policies
   ADD COLUMN IF NOT EXISTS policy_version bigint NOT NULL DEFAULT 1;
 
+ALTER TABLE IF EXISTS rd_task_executor_policies
+  DROP CONSTRAINT IF EXISTS ck_rd_task_executor_policies_policy_version;
+
+ALTER TABLE IF EXISTS rd_task_executor_policies
+  ADD CONSTRAINT ck_rd_task_executor_policies_policy_version CHECK (policy_version > 0);
+
 CREATE UNIQUE INDEX IF NOT EXISTS uk_rd_task_executor_policies_version
   ON rd_task_executor_policies (id, policy_version);
+
+CREATE OR REPLACE FUNCTION protect_rd_task_executor_policy_version_monotonic()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.policy_version < OLD.policy_version THEN
+    RAISE EXCEPTION 'policy_version cannot decrease';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_rd_task_executor_policy_version_monotonic
+  ON rd_task_executor_policies;
+
+CREATE TRIGGER trg_rd_task_executor_policy_version_monotonic
+BEFORE UPDATE OF policy_version ON rd_task_executor_policies
+FOR EACH ROW EXECUTE FUNCTION protect_rd_task_executor_policy_version_monotonic();
 
 DROP INDEX IF EXISTS uk_rd_task_executor_policies_active_product;
 DROP INDEX IF EXISTS uk_rd_task_executor_policies_active_default;
@@ -1075,16 +1100,19 @@ BEGIN
     OLD.requirement_id, OLD.requirement_revision,
     OLD.initial_strategy_snapshot_id, OLD.final_strategy_snapshot_id,
     OLD.strategy_snapshot_id, OLD.status
-  ) AND (
-    EXISTS (
+  ) THEN
+    IF OLD.status = 'accepted' THEN
+      RAISE EXCEPTION 'accepted assessment provenance is immutable; create a new assessment';
+    END IF;
+    IF EXISTS (
       SELECT 1 FROM rd_task_executor_policy_snapshot_sources
       WHERE assessment_id = OLD.id
     ) OR EXISTS (
       SELECT 1 FROM rd_collaboration_run_requirements
       WHERE assessment_id = OLD.id
-    )
-  ) THEN
-    RAISE EXCEPTION 'referenced assessment provenance is immutable';
+    ) THEN
+      RAISE EXCEPTION 'referenced assessment provenance is immutable';
+    END IF;
   END IF;
   RETURN NEW;
 END;
@@ -1104,21 +1132,32 @@ AS $$
 DECLARE
   previous_run rd_collaboration_runs%ROWTYPE;
 BEGIN
-  IF NOT EXISTS (
+  IF TG_OP = 'INSERT' THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM rd_task_executor_policy_snapshots snapshot
+      JOIN rd_task_executor_policies policy ON policy.id = snapshot.policy_id
+      JOIN product_versions version ON version.id = NEW.product_version_id
+      WHERE snapshot.id = NEW.strategy_snapshot_id
+        AND snapshot.snapshot_kind = 'version_resolved'
+        AND snapshot.resolution_context_key =
+          'version:' || NEW.product_version_id || ':scope:' || NEW.scope_version::text
+        AND version.product_id = NEW.product_id
+        AND version.scope_version = NEW.scope_version
+        AND policy.brain_app_id = NEW.brain_app_id
+        AND (policy.product_id IS NULL OR policy.product_id = NEW.product_id)
+    ) THEN
+      RAISE EXCEPTION 'collaboration run snapshot must match version, scope, and current ownership';
+    END IF;
+  ELSIF NOT EXISTS (
     SELECT 1
     FROM rd_task_executor_policy_snapshots snapshot
-    JOIN rd_task_executor_policies policy ON policy.id = snapshot.policy_id
-    JOIN product_versions version ON version.id = NEW.product_version_id
     WHERE snapshot.id = NEW.strategy_snapshot_id
       AND snapshot.snapshot_kind = 'version_resolved'
       AND snapshot.resolution_context_key =
         'version:' || NEW.product_version_id || ':scope:' || NEW.scope_version::text
-      AND version.product_id = NEW.product_id
-      AND version.scope_version = NEW.scope_version
-      AND policy.brain_app_id = NEW.brain_app_id
-      AND (policy.product_id IS NULL OR policy.product_id = NEW.product_id)
   ) THEN
-    RAISE EXCEPTION 'collaboration run snapshot must match version, scope, and current ownership';
+    RAISE EXCEPTION 'collaboration run snapshot must match frozen version and scope';
   END IF;
   IF NEW.supersedes_run_id IS NOT NULL THEN
     SELECT * INTO previous_run FROM rd_collaboration_runs WHERE id = NEW.supersedes_run_id;
@@ -1391,13 +1430,25 @@ CREATE OR REPLACE FUNCTION validate_role_feedback_producer_subject()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  locked_subject_id text;
 BEGIN
-  IF NEW.producer_subject_type = 'human_user'
-     AND NOT EXISTS (SELECT 1 FROM users WHERE id = NEW.producer_subject_id) THEN
-    RAISE EXCEPTION 'feedback producer human user does not exist';
-  ELSIF NEW.producer_subject_type = 'ai_employee'
-     AND NOT EXISTS (SELECT 1 FROM rd_ai_employees WHERE id = NEW.producer_subject_id) THEN
-    RAISE EXCEPTION 'feedback producer ai employee does not exist';
+  IF NEW.producer_subject_type = 'human_user' THEN
+    SELECT id INTO locked_subject_id
+    FROM users
+    WHERE id = NEW.producer_subject_id
+    FOR KEY SHARE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'feedback producer human user does not exist';
+    END IF;
+  ELSIF NEW.producer_subject_type = 'ai_employee' THEN
+    SELECT id INTO locked_subject_id
+    FROM rd_ai_employees
+    WHERE id = NEW.producer_subject_id
+    FOR KEY SHARE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'feedback producer ai employee does not exist';
+    END IF;
   END IF;
   RETURN NEW;
 END;
@@ -1433,7 +1484,9 @@ BEGIN
       WHEN subject_type = 'ai_employee' THEN ai_employee_id
     END
   INTO seat_role, seat_run_id, seat_subject_type, seat_subject_id
-  FROM rd_run_seats WHERE id = NEW.producer_seat_id;
+  FROM rd_run_seats
+  WHERE id = NEW.producer_seat_id
+  FOR KEY SHARE;
   IF seat_role IS DISTINCT FROM NEW.producer_role_code
      OR seat_run_id IS DISTINCT FROM NEW.collaboration_run_id THEN
     RAISE EXCEPTION 'feedback producer frozen role and run must match producer seat';
@@ -1466,12 +1519,8 @@ BEGIN
   ) IS DISTINCT FROM ROW(
     OLD.collaboration_run_id, OLD.role_code, OLD.subject_type,
     OLD.human_user_id, OLD.ai_employee_id
-  ) AND EXISTS (
-    SELECT 1
-    FROM role_feedback_records feedback
-    WHERE feedback.seat_id = OLD.id OR feedback.producer_seat_id = OLD.id
   ) THEN
-    RAISE EXCEPTION 'feedback-referenced seat identity is immutable';
+    RAISE EXCEPTION 'feedback-referenced seat identity is immutable from creation';
   END IF;
   RETURN NEW;
 END;

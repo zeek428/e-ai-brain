@@ -212,7 +212,11 @@ def test_policy_snapshot_is_insert_only_and_has_exact_identity(migration_sql: st
     )
     assert "foreign key (policy_id, policy_version)" not in normalized
     assert "trg_rd_policy_snapshot_current_policy_version" in normalized
+    assert "check (policy_version > 0)" in normalized
+    assert "trg_rd_task_executor_policy_version_monotonic" in normalized
+    assert "new.policy_version < old.policy_version" in normalized
     assert "trg_requirement_assessment_provenance_immutable" in normalized
+    assert "if old.status = 'accepted'" in normalized
     assert "old.parent_snapshot_id is null" in normalized or "parent_snapshot_id is null" in body
 
 
@@ -304,6 +308,8 @@ def test_run_pause_generation_decision_expiry_and_fence_are_constrained(migratio
     assert "where status not in ('completed', 'failed', 'cancelled')" in normalized
     assert "trg_rd_collaboration_run_scope_identity_immutable" in normalized
     assert "failed or cancelled terminal collaboration runs are immutable" in normalized
+    assert "if tg_op = 'insert' then" in normalized
+    assert "collaboration run snapshot must match frozen version and scope" in normalized
     for frozen_field in (
         "product_id",
         "product_version_id",
@@ -536,8 +542,10 @@ def test_feedback_producer_identity_is_distinct_scoped_and_immutable(migration_s
     assert "from users" in normalized
     assert "from rd_ai_employees" in normalized
     assert "trg_role_feedback_producer_seat_role" in normalized
+    assert normalized.count("for key share") >= 3
     assert "producer seat subject must match producer subject type and id" in normalized
     assert "trg_rd_run_seat_feedback_identity_immutable" in normalized
+    assert "feedback-referenced seat identity is immutable from creation" in normalized
     assert "trg_users_feedback_producer_identity" in normalized
     assert "trg_rd_ai_employees_feedback_producer_identity" in normalized
     assert "trg_role_feedback_records_immutable" in normalized

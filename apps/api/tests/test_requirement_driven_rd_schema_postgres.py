@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Event
 from uuid import uuid4
 
 import psycopg
@@ -471,6 +474,43 @@ def _insert_feedback(
             producer_seat_id,
         ),
     )
+
+
+def _delete_feedback_producer(
+    database_url: str,
+    *,
+    producer_table: str,
+    producer_id: str,
+    started: Event,
+) -> str:
+    try:
+        with psycopg.connect(database_url) as connection:
+            started.set()
+            connection.execute(
+                sql.SQL("DELETE FROM {} WHERE id = %s").format(sql.Identifier(producer_table)),
+                (producer_id,),
+            )
+    except psycopg.Error as exc:
+        return str(exc)
+    return "deleted"
+
+
+def _update_run_seat_role(
+    database_url: str,
+    *,
+    seat_id: str,
+    started: Event,
+) -> str:
+    try:
+        with psycopg.connect(database_url) as connection:
+            started.set()
+            connection.execute(
+                "UPDATE rd_run_seats SET role_code = 'architect' WHERE id = %s",
+                (seat_id,),
+            )
+    except psycopg.Error as exc:
+        return str(exc)
+    return "updated"
 
 
 def test_fresh_historical_migration_chain_reaches_109_and_109_replays(
@@ -1048,3 +1088,453 @@ def test_feedback_producer_seat_delete_remains_restricted(
                     "DELETE FROM rd_run_seats WHERE id = %s",
                     (ids["human_seat"],),
                 )
+
+
+def test_assessment_source_insert_cannot_race_accepted_provenance_change(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=109)
+        with psycopg.connect(database_url) as setup_connection:
+            ids = _seed_assessment_inputs(setup_connection, prefix="assessment-write-skew")
+            setup_connection.execute(
+                """
+                INSERT INTO requirement_assessments (
+                  id, requirement_id, requirement_revision,
+                  initial_strategy_snapshot_id, final_strategy_snapshot_id,
+                  strategy_snapshot_id, status, created_by
+                )
+                VALUES (%s, %s, 1, %s, %s, %s, 'accepted', 'user_admin')
+                """,
+                (
+                    ids["assessment"],
+                    ids["requirement"],
+                    ids["base_snapshot"],
+                    ids["base_snapshot"],
+                    ids["base_snapshot"],
+                ),
+            )
+            setup_connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+        with (
+            psycopg.connect(database_url) as source_connection,
+            psycopg.connect(database_url) as assessment_connection,
+        ):
+            source_connection.execute(
+                """
+                INSERT INTO rd_task_executor_policy_snapshots (
+                  id, policy_id, policy_version, parent_snapshot_id, snapshot_kind,
+                  resolution_context_key, resolution_revision, schema_version,
+                  content_hash, payload_json, created_by
+                )
+                VALUES (
+                  'assessment-write-skew-version-snapshot', %s, 1, %s,
+                  'version_resolved', %s, 1, 1,
+                  'assessment-write-skew-version-hash', '{}'::jsonb, 'user_admin'
+                )
+                """,
+                (
+                    ids["policy"],
+                    ids["base_snapshot"],
+                    f"version:{ids['version']}:scope:1",
+                ),
+            )
+            source_connection.execute(
+                """
+                INSERT INTO rd_task_executor_policy_snapshot_sources (
+                  id, snapshot_id, source_snapshot_id, requirement_id, assessment_id
+                )
+                VALUES (
+                  'assessment-write-skew-source',
+                  'assessment-write-skew-version-snapshot', %s, %s, %s
+                )
+                """,
+                (
+                    ids["base_snapshot"],
+                    ids["requirement"],
+                    ids["assessment"],
+                ),
+            )
+            source_connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+            with pytest.raises(
+                psycopg.errors.RaiseException,
+                match="accepted assessment provenance",
+            ):
+                assessment_connection.execute(
+                    """
+                    UPDATE requirement_assessments
+                    SET status = 'rejected'
+                    WHERE id = %s
+                    """,
+                    (ids["assessment"],),
+                )
+            assessment_connection.rollback()
+            source_connection.commit()
+
+        with psycopg.connect(database_url) as verification_connection:
+            state = verification_connection.execute(
+                """
+                SELECT assessment.status, count(source.id)
+                FROM requirement_assessments assessment
+                LEFT JOIN rd_task_executor_policy_snapshot_sources source
+                  ON source.assessment_id = assessment.id
+                WHERE assessment.id = %s
+                GROUP BY assessment.status
+                """,
+                (ids["assessment"],),
+            ).fetchone()
+
+        assert state == ("accepted", 1)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "status",
+        "requirement_revision",
+        "initial_strategy_snapshot_id",
+        "final_strategy_snapshot_id",
+        "strategy_snapshot_id",
+    ],
+)
+def test_accepted_assessment_provenance_is_unconditionally_immutable(
+    postgres_admin_url: str,
+    mutation: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=109)
+        with psycopg.connect(database_url) as connection:
+            ids = _seed_assessment_inputs(connection, prefix=f"accepted-freeze-{mutation}")
+            connection.execute(
+                """
+                INSERT INTO requirement_assessments (
+                  id, requirement_id, requirement_revision,
+                  initial_strategy_snapshot_id, final_strategy_snapshot_id,
+                  strategy_snapshot_id, status, created_by
+                )
+                VALUES (%s, %s, 1, %s, %s, %s, 'accepted', 'user_admin')
+                """,
+                (
+                    ids["assessment"],
+                    ids["requirement"],
+                    ids["base_snapshot"],
+                    ids["base_snapshot"],
+                    ids["base_snapshot"],
+                ),
+            )
+            connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            connection.commit()
+
+            statements: dict[str, tuple[str, object]] = {
+                "status": ("status = %s", "rejected"),
+                "requirement_revision": ("requirement_revision = %s", 2),
+                "initial_strategy_snapshot_id": (
+                    "initial_strategy_snapshot_id = %s",
+                    ids["alternate_base_snapshot"],
+                ),
+                "final_strategy_snapshot_id": (
+                    "final_strategy_snapshot_id = %s",
+                    ids["alternate_base_snapshot"],
+                ),
+                "strategy_snapshot_id": (
+                    "strategy_snapshot_id = %s",
+                    ids["alternate_base_snapshot"],
+                ),
+            }
+            set_clause, value = statements[mutation]
+            with pytest.raises(
+                psycopg.errors.RaiseException,
+                match="accepted assessment provenance",
+            ):
+                connection.execute(
+                    sql.SQL("UPDATE requirement_assessments SET {} WHERE id = %s").format(
+                        sql.SQL(set_clause)
+                    ),
+                    (value, ids["assessment"]),
+                )
+
+
+@pytest.mark.parametrize("producer_type", ["human_user", "ai_employee"])
+def test_feedback_insert_serializes_with_polymorphic_producer_delete(
+    postgres_admin_url: str,
+    producer_type: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=109)
+        with psycopg.connect(database_url) as setup_connection:
+            prefix = f"feedback-delete-race-{producer_type}"
+            ids = _seed_feedback_context(setup_connection, prefix=prefix)
+            if producer_type == "human_user":
+                producer_id = f"{prefix}-user"
+                producer_table = "users"
+                setup_connection.execute(
+                    """
+                    INSERT INTO users (id, email, display_name, password_hash)
+                    VALUES (%s, %s, 'feedback race producer', 'test-hash')
+                    """,
+                    (producer_id, f"{producer_id}@example.com"),
+                )
+            else:
+                producer_id = ids["alternate_ai_employee"]
+                producer_table = "rd_ai_employees"
+            setup_connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+        with psycopg.connect(database_url) as feedback_connection:
+            _insert_feedback(
+                feedback_connection,
+                ids=ids,
+                feedback_id=f"{prefix}-feedback",
+                producer_subject_type=producer_type,
+                producer_subject_id=producer_id,
+            )
+            feedback_connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+            started = Event()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                delete_future = executor.submit(
+                    _delete_feedback_producer,
+                    database_url,
+                    producer_table=producer_table,
+                    producer_id=producer_id,
+                    started=started,
+                )
+                assert started.wait(timeout=2)
+                with pytest.raises(FutureTimeoutError):
+                    delete_future.result(timeout=0.25)
+                feedback_connection.commit()
+                delete_result = delete_future.result(timeout=5)
+
+        assert "feedback producer identity cannot be changed or deleted" in delete_result
+        with psycopg.connect(database_url) as verification_connection:
+            producer_count = verification_connection.execute(
+                sql.SQL("SELECT count(*) FROM {} WHERE id = %s").format(
+                    sql.Identifier(producer_table)
+                ),
+                (producer_id,),
+            ).fetchone()
+            feedback_count = verification_connection.execute(
+                "SELECT count(*) FROM role_feedback_records WHERE id = %s",
+                (f"{prefix}-feedback",),
+            ).fetchone()
+
+        assert producer_count == (1,)
+        assert feedback_count == (1,)
+
+
+def test_feedback_insert_cannot_race_run_seat_identity_update(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=109)
+        with psycopg.connect(database_url) as setup_connection:
+            ids = _seed_feedback_context(setup_connection, prefix="feedback-seat-race")
+            setup_connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+        with psycopg.connect(database_url) as feedback_connection:
+            _insert_feedback(
+                feedback_connection,
+                ids=ids,
+                feedback_id="feedback-seat-race-feedback",
+                producer_subject_type="human_user",
+                producer_subject_id="user_admin",
+                producer_role_code="reviewer",
+                producer_seat_id=ids["human_seat"],
+            )
+            feedback_connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+            started = Event()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                update_future = executor.submit(
+                    _update_run_seat_role,
+                    database_url,
+                    seat_id=ids["human_seat"],
+                    started=started,
+                )
+                assert started.wait(timeout=2)
+                with pytest.raises(FutureTimeoutError):
+                    update_future.result(timeout=0.25)
+                feedback_connection.commit()
+                update_result = update_future.result(timeout=5)
+
+        assert "seat identity" in update_result
+
+        with psycopg.connect(database_url) as verification_connection:
+            seat_role = verification_connection.execute(
+                "SELECT role_code FROM rd_run_seats WHERE id = %s",
+                (ids["human_seat"],),
+            ).fetchone()
+
+        assert seat_role == ("reviewer",)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["collaboration_run_id", "role_code", "subject_type", "subject_id"],
+)
+def test_run_seat_identity_is_immutable_from_creation(
+    postgres_admin_url: str,
+    mutation: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=109)
+        with psycopg.connect(database_url) as connection:
+            prefix = f"seat-created-freeze-{mutation}"
+            ids = _seed_feedback_context(connection, prefix=prefix)
+            other_ids = _seed_collaboration_scope(connection, prefix=f"{prefix}-other")
+            connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            connection.commit()
+
+            statements: dict[str, tuple[str, tuple[object, ...]]] = {
+                "collaboration_run_id": (
+                    "collaboration_run_id = %s",
+                    (other_ids["run"],),
+                ),
+                "role_code": ("role_code = %s", ("architect",)),
+                "subject_type": (
+                    "subject_type = 'ai_employee', human_user_id = NULL, "
+                    "ai_employee_id = %s, executor_profile_id = %s",
+                    (ids["ai_employee"], ids["executor_profile"]),
+                ),
+                "subject_id": ("human_user_id = %s", ("user_reviewer",)),
+            }
+            set_clause, params = statements[mutation]
+            with pytest.raises(psycopg.errors.RaiseException, match="seat identity"):
+                connection.execute(
+                    sql.SQL("UPDATE rd_run_seats SET {} WHERE id = %s").format(sql.SQL(set_clause)),
+                    (*params, ids["human_seat"]),
+                )
+
+
+def test_historical_run_update_uses_frozen_snapshot_ownership(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=109)
+        with psycopg.connect(database_url) as connection:
+            ids = _seed_collaboration_scope(connection, prefix="historical-run")
+            connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            connection.commit()
+
+            connection.execute(
+                """
+                INSERT INTO products (id, code, name)
+                VALUES ('historical-run-new-product', 'historical-run-new', 'New owner')
+                """
+            )
+            connection.execute(
+                """
+                UPDATE rd_task_executor_policies
+                SET product_id = 'historical-run-new-product'
+                WHERE id = %s
+                """,
+                (ids["policy"],),
+            )
+            connection.commit()
+
+            connection.execute(
+                """
+                UPDATE rd_collaboration_runs
+                SET status = 'integrating'
+                WHERE id = %s
+                """,
+                (ids["run"],),
+            )
+            connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            connection.commit()
+
+        with psycopg.connect(database_url) as verification_connection:
+            state = verification_connection.execute(
+                """
+                SELECT run.status, run.product_id, policy.product_id
+                FROM rd_collaboration_runs run
+                JOIN rd_task_executor_policy_snapshots snapshot
+                  ON snapshot.id = run.strategy_snapshot_id
+                JOIN rd_task_executor_policies policy ON policy.id = snapshot.policy_id
+                WHERE run.id = %s
+                """,
+                (ids["run"],),
+            ).fetchone()
+
+        assert state == (
+            "integrating",
+            ids["product"],
+            "historical-run-new-product",
+        )
+
+
+@pytest.mark.parametrize("policy_version", [0, -1])
+def test_policy_version_must_be_positive(
+    postgres_admin_url: str,
+    policy_version: int,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=109)
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            with pytest.raises(psycopg.errors.CheckViolation):
+                connection.execute(
+                    """
+                    INSERT INTO rd_task_executor_policies (
+                      id, name, brain_app_id, task_type, executor_type,
+                      instruction_template, status, policy_version
+                    )
+                    VALUES (
+                      %s, 'Invalid version', 'rd_brain', 'code_change', 'codex',
+                      'invalid', 'active', %s
+                    )
+                    """,
+                    (f"policy-version-{policy_version}", policy_version),
+                )
+
+
+def test_policy_version_is_monotonic_but_equal_legacy_update_is_allowed(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=109)
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO rd_task_executor_policies (
+                  id, name, brain_app_id, task_type, executor_type,
+                  instruction_template, status, policy_version
+                )
+                VALUES (
+                  'policy-monotonic', 'Monotonic', 'rd_brain', 'code_change',
+                  'codex', 'monotonic', 'active', 1
+                )
+                """
+            )
+            connection.execute(
+                """
+                UPDATE rd_task_executor_policies
+                SET policy_version = 1
+                WHERE id = 'policy-monotonic'
+                """
+            )
+            connection.execute(
+                """
+                UPDATE rd_task_executor_policies
+                SET policy_version = 2
+                WHERE id = 'policy-monotonic'
+                """
+            )
+
+            with pytest.raises(psycopg.errors.RaiseException, match="cannot decrease"):
+                connection.execute(
+                    """
+                    UPDATE rd_task_executor_policies
+                    SET policy_version = 1
+                    WHERE id = 'policy-monotonic'
+                    """
+                )
+
+            stored_version = connection.execute(
+                """
+                SELECT policy_version
+                FROM rd_task_executor_policies
+                WHERE id = 'policy-monotonic'
+                """
+            ).fetchone()
+
+        assert stored_version == (2,)
