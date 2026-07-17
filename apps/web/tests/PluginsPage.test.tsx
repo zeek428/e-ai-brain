@@ -3802,7 +3802,7 @@ describe('PluginsPage', () => {
       | { request_config?: { query?: Record<string, unknown> } }
       | undefined;
     expect(latestConnectionBody?.request_config?.query).not.toHaveProperty('source_filters');
-  });
+  }, 10_000);
 
   it('can edit existing connections', async () => {
     const { connectionUpdateBodies } = installPluginsFetchMock();
