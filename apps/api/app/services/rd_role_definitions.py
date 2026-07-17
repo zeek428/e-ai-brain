@@ -22,7 +22,17 @@ _SENSITIVE_METADATA_KEY_PREFIXES = (
     "authorization",
     "accesskey",
 )
-_SENSITIVE_METADATA_KEY_SUFFIXES = ("token", "password", "passwd")
+_SENSITIVE_METADATA_KEY_SUFFIXES = (
+    "apikey",
+    "secret",
+    "privatekey",
+    "accesskey",
+    "credential",
+    "authorization",
+    "token",
+    "password",
+    "passwd",
+)
 _SENSITIVE_VALUE_PREFIXES = (
     "secret://",
     "secret/",

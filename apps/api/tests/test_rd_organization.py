@@ -545,3 +545,63 @@ def test_catalog_metadata_allows_non_secret_business_terms():
 
     assert response.status_code == 200
     assert response.json()["data"]["persona_json"]["tokenizer"] == "visible"
+
+
+def test_catalog_metadata_rejects_service_prefixed_credential_keys_on_create_and_patch():
+    app.state.store.reset()
+    headers = auth_headers()
+    create = client.post(
+        "/api/delivery/rd-ai-employees",
+        headers=headers,
+        json=ai_employee_payload(persona_json={"nested": {"openai_api_key": "placeholder"}}),
+    )
+    assert create.status_code == 400
+    assert create.json()["detail"]["code"] == "RD_CATALOG_SECRET_FORBIDDEN"
+
+    employee = client.post(
+        "/api/delivery/rd-ai-employees", headers=headers, json=ai_employee_payload()
+    ).json()["data"]
+    profile = client.post(
+        "/api/delivery/rd-executor-profiles", headers=headers, json=executor_profile_payload()
+    ).json()["data"]
+    for path, payload in (
+        (
+            f"/api/delivery/rd-ai-employees/{employee['id']}",
+            {"work_style_json": {"client_secret": "placeholder"}},
+        ),
+        (
+            f"/api/delivery/rd-executor-profiles/{profile['id']}",
+            {"workspace_capabilities": {"tls_private_key": "placeholder"}},
+        ),
+    ):
+        response = client.patch(path, headers=headers, json=payload)
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "RD_CATALOG_SECRET_FORBIDDEN"
+
+
+def test_catalog_response_redacts_service_prefixed_legacy_credential_keys():
+    app.state.store.reset()
+    headers = auth_headers()
+    app.state.store.rd_ai_employees["legacy-prefixed-employee"] = {
+        "id": "legacy-prefixed-employee",
+        "code": "legacy-prefixed-employee",
+        "persona_json": {"openai_api_key": "placeholder", "safe": "visible"},
+        "work_style_json": {"client_secret": "placeholder"},
+        "status": "active",
+    }
+    app.state.store.rd_executor_profiles["legacy-prefixed-profile"] = {
+        "id": "legacy-prefixed-profile",
+        "code": "legacy-prefixed-profile",
+        "workspace_capabilities": {"tls_private_key": "placeholder", "safe": "visible"},
+        "status": "active",
+    }
+
+    employee_response = client.get("/api/delivery/rd-ai-employees", headers=headers)
+    profile_response = client.get("/api/delivery/rd-executor-profiles", headers=headers)
+    assert employee_response.status_code == 200
+    assert profile_response.status_code == 200
+    assert "openai_api_key" not in employee_response.text
+    assert "client_secret" not in employee_response.text
+    assert "tls_private_key" not in profile_response.text
+    assert "visible" in employee_response.text
+    assert "visible" in profile_response.text
