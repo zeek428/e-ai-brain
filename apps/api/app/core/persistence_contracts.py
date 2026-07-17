@@ -78,6 +78,7 @@ __all__ = [
     "PendingAttributionRepository",
     "ProductConfigRepository",
     "RequirementRepository",
+    "RdCollaborationRepository",
     "SnapshotRepository",
     "UserFeedbackRepository",
     "UserUsageMetricRepository",
@@ -89,6 +90,83 @@ class SnapshotRepository(Protocol):
     def load(self) -> dict[str, Any] | None: ...
 
     def save(self, payload: dict[str, Any]) -> None: ...
+
+
+class RdCollaborationRepository(Protocol):
+    """Persistence boundary for requirement-driven R&D collaboration state."""
+
+    def get_rd_collaboration_run(self, record_id: str) -> dict[str, Any] | None: ...
+
+    def get_rd_work_item(self, record_id: str) -> dict[str, Any] | None: ...
+
+    def get_decision_request(self, record_id: str) -> dict[str, Any] | None: ...
+
+    def save_rd_role_definition_record(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+    def save_rd_ai_employee_record(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+    def save_rd_executor_profile_record(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+    def save_rd_task_executor_policy_record(
+        self,
+        record: dict[str, Any],
+        *,
+        expected_policy_version: int | None = None,
+        audit_event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
+    def create_collaboration_run_with_exact_scope(
+        self,
+        *,
+        run: dict[str, Any],
+        scope_rows: list[dict[str, Any]],
+    ) -> dict[str, Any]: ...
+
+    def create_scope_change_request(
+        self,
+        **kwargs: Any,
+    ) -> dict[str, Any]: ...
+
+    def apply_scope_change_bundle(
+        self,
+        **kwargs: Any,
+    ) -> dict[str, Any]: ...
+
+    def claim_ready_work_item(
+        self,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None: ...
+
+    def execute_idempotent_rd_command(
+        self,
+        **kwargs: Any,
+    ) -> dict[str, Any]: ...
+
+    def apply_decision_bundle(
+        self,
+        **kwargs: Any,
+    ) -> dict[str, Any]: ...
+
+    def save_role_feedback_once(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+    def save_rd_role_experience_record(
+        self,
+        record: dict[str, Any],
+        *,
+        sources: list[dict[str, Any]],
+    ) -> dict[str, Any]: ...
 
 
 class ProductConfigRepository(Protocol):

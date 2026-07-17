@@ -48,6 +48,16 @@ CREATE INDEX IF NOT EXISTS idx_rd_task_executor_policies_active_default_advisory
 ALTER TABLE IF EXISTS product_versions
   ADD COLUMN IF NOT EXISTS scope_version bigint NOT NULL DEFAULT 1;
 
+ALTER TABLE IF EXISTS product_version_branch_configs
+  ADD COLUMN IF NOT EXISTS branch_config_version bigint NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS base_commit_sha text;
+
+ALTER TABLE IF EXISTS product_version_branch_configs
+  DROP CONSTRAINT IF EXISTS ck_product_version_branch_configs_version;
+
+ALTER TABLE IF EXISTS product_version_branch_configs
+  ADD CONSTRAINT ck_product_version_branch_configs_version CHECK (branch_config_version > 0);
+
 ALTER TABLE IF EXISTS product_versions
   DROP CONSTRAINT IF EXISTS ck_product_versions_status;
 
@@ -489,7 +499,7 @@ CREATE TABLE IF NOT EXISTS rd_scope_change_request_operations (
       AND requirement_id IS NOT NULL AND requirement_revision IS NULL
       AND assessment_id IS NULL AND final_strategy_snapshot_id IS NULL
       AND repository_id IS NULL AND branch_config_version IS NULL
-      AND base_commit_sha IS NULL AND destination IS NULL
+      AND base_commit_sha IS NULL AND destination = 'approved_pool'
     ) OR (
       op = 'replace_requirement_snapshot'
       AND requirement_id IS NOT NULL AND requirement_revision IS NOT NULL
@@ -501,10 +511,42 @@ CREATE TABLE IF NOT EXISTS rd_scope_change_request_operations (
       AND requirement_id IS NULL AND requirement_revision IS NULL
       AND assessment_id IS NULL AND final_strategy_snapshot_id IS NULL
       AND repository_id IS NOT NULL AND branch_config_version IS NOT NULL
-      AND base_commit_sha IS NOT NULL AND destination IS NOT NULL
+      AND base_commit_sha IS NOT NULL AND destination IS NULL
     )
   )
 );
+
+ALTER TABLE IF EXISTS rd_scope_change_request_operations
+  DROP CONSTRAINT IF EXISTS ck_rd_scope_change_operation_fields;
+
+ALTER TABLE IF EXISTS rd_scope_change_request_operations
+  ADD CONSTRAINT ck_rd_scope_change_operation_fields CHECK (
+    (
+      op = 'add_requirement'
+      AND requirement_id IS NOT NULL AND requirement_revision IS NOT NULL
+      AND assessment_id IS NOT NULL AND final_strategy_snapshot_id IS NOT NULL
+      AND repository_id IS NULL AND branch_config_version IS NULL
+      AND base_commit_sha IS NULL AND destination IS NULL
+    ) OR (
+      op = 'remove_requirement'
+      AND requirement_id IS NOT NULL AND requirement_revision IS NULL
+      AND assessment_id IS NULL AND final_strategy_snapshot_id IS NULL
+      AND repository_id IS NULL AND branch_config_version IS NULL
+      AND base_commit_sha IS NULL AND destination = 'approved_pool'
+    ) OR (
+      op = 'replace_requirement_snapshot'
+      AND requirement_id IS NOT NULL AND requirement_revision IS NOT NULL
+      AND assessment_id IS NOT NULL AND final_strategy_snapshot_id IS NOT NULL
+      AND repository_id IS NULL AND branch_config_version IS NULL
+      AND base_commit_sha IS NULL AND destination IS NULL
+    ) OR (
+      op = 'update_repository_baseline'
+      AND requirement_id IS NULL AND requirement_revision IS NULL
+      AND assessment_id IS NULL AND final_strategy_snapshot_id IS NULL
+      AND repository_id IS NOT NULL AND branch_config_version IS NOT NULL
+      AND base_commit_sha IS NOT NULL AND destination IS NULL
+    )
+  );
 
 ALTER TABLE IF EXISTS requirements
   ADD COLUMN IF NOT EXISTS supersedes_requirement_id text REFERENCES requirements(id) ON DELETE RESTRICT,
@@ -588,6 +630,7 @@ CREATE TABLE IF NOT EXISTS rd_work_items (
   lease_owner text,
   lease_expires_at timestamptz,
   idempotency_key text NOT NULL,
+  version bigint NOT NULL DEFAULT 1,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (collaboration_run_id, idempotency_key),
@@ -606,8 +649,18 @@ CREATE TABLE IF NOT EXISTS rd_work_items (
       status <> 'waiting_human'
       AND resume_state IS NULL AND suspended_decision_request_id IS NULL AND suspended_at IS NULL
     )
-  )
+  ),
+  CONSTRAINT ck_rd_work_items_version CHECK (version > 0)
 );
+
+ALTER TABLE IF EXISTS rd_work_items
+  ADD COLUMN IF NOT EXISTS version bigint NOT NULL DEFAULT 1;
+
+ALTER TABLE IF EXISTS rd_work_items
+  DROP CONSTRAINT IF EXISTS ck_rd_work_items_version;
+
+ALTER TABLE IF EXISTS rd_work_items
+  ADD CONSTRAINT ck_rd_work_items_version CHECK (version > 0);
 
 CREATE TABLE IF NOT EXISTS rd_work_item_dependencies (
   id text PRIMARY KEY,

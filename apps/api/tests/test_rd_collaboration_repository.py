@@ -1,0 +1,1611 @@
+from __future__ import annotations
+
+import os
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from uuid import uuid4
+
+import psycopg
+import pytest
+from psycopg import sql
+
+from app.core.persistence import PostgresSnapshotRepository
+from app.core.repositories.rd_collaboration import (
+    RdCollaborationReadRepository,
+    RdCollaborationRepositoryError,
+    RdCollaborationVersionConflictError,
+)
+
+MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations"
+DEFAULT_POSTGRES_ADMIN_URL = "postgresql://ai_brain:ai_brain_password@127.0.0.1:5432/postgres"
+
+
+@pytest.fixture(scope="session")
+def postgres_admin_url() -> str:
+    database_url = os.getenv(
+        "AI_BRAIN_TEST_POSTGRES_ADMIN_URL",
+        DEFAULT_POSTGRES_ADMIN_URL,
+    )
+    try:
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            connection.execute("SELECT 1")
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"real PostgreSQL is required for collaboration repository tests: {exc}")
+    return database_url
+
+
+def _database_url(admin_url: str, database_name: str) -> str:
+    return str(psycopg.conninfo.make_conninfo(admin_url, dbname=database_name))
+
+
+@contextmanager
+def _temporary_database(admin_url: str) -> Iterator[str]:
+    database_name = f"ai_brain_rd_repo_{uuid4().hex}"
+    with psycopg.connect(admin_url, autocommit=True) as admin_connection:
+        admin_connection.execute(
+            sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name))
+        )
+    try:
+        database_url = _database_url(admin_url, database_name)
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            for migration_path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+                migration_number = int(migration_path.name.split("_", 1)[0])
+                if migration_number > 109:
+                    break
+                connection.execute(migration_path.read_text(encoding="utf-8"))
+        yield database_url
+    finally:
+        with psycopg.connect(admin_url, autocommit=True) as admin_connection:
+            admin_connection.execute(
+                """
+                SELECT pg_terminate_backend(pid)
+                FROM pg_stat_activity
+                WHERE datname = %s AND pid <> pg_backend_pid()
+                """,
+                (database_name,),
+            )
+            admin_connection.execute(
+                sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database_name))
+            )
+
+
+@pytest.fixture
+def repository(postgres_admin_url: str) -> Iterator[PostgresSnapshotRepository]:
+    with _temporary_database(postgres_admin_url) as database_url:
+        value = PostgresSnapshotRepository(database_url, pool_max_size=8)
+        try:
+            yield value
+        finally:
+            value._pool.close()
+
+
+def _insert_product_version(
+    repository: PostgresSnapshotRepository,
+    *,
+    prefix: str,
+    status: str = "planning",
+    scope_version: int = 1,
+) -> dict[str, str]:
+    ids = {
+        "product": f"{prefix}-product",
+        "version": f"{prefix}-version",
+    }
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            "INSERT INTO products (id, code, name) VALUES (%s, %s, %s)",
+            (ids["product"], f"{prefix}-code", f"{prefix} product"),
+        )
+        connection.execute(
+            """
+            INSERT INTO product_versions (
+              id, product_id, code, name, status, scope_version
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                ids["version"],
+                ids["product"],
+                f"{prefix}-v1",
+                f"{prefix} v1",
+                status,
+                scope_version,
+            ),
+        )
+    return ids
+
+
+def _policy_record(ids: dict[str, str], *, prefix: str) -> dict[str, object]:
+    return {
+        "id": f"{prefix}-policy",
+        "name": f"{prefix} policy",
+        "brain_app_id": "rd_brain",
+        "product_id": ids["product"],
+        "task_type": "code_change",
+        "executor_type": "codex",
+        "instruction_template": "execute safely",
+        "status": "active",
+    }
+
+
+def _base_snapshot(policy: dict[str, object], *, prefix: str) -> dict[str, object]:
+    return {
+        "id": f"{prefix}-snapshot-base",
+        "policy_id": policy["id"],
+        "policy_version": 1,
+        "parent_snapshot_id": None,
+        "snapshot_kind": "base",
+        "resolution_context_key": f"policy:{policy['id']}:version:1",
+        "resolution_revision": 0,
+        "schema_version": 1,
+        "content_hash": f"{prefix}-base-hash",
+        "payload_json": {
+            "allowed_tools": ["read", "test"],
+            "forbidden_tools": ["deploy"],
+            "max_parallelism": 2,
+        },
+        "created_by": "user_admin",
+    }
+
+
+def _insert_requirement(
+    repository: PostgresSnapshotRepository,
+    ids: dict[str, str],
+    *,
+    requirement_id: str,
+    status: str = "approved",
+    version_id: str | None = None,
+) -> None:
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO requirements (
+              id, brain_app_id, title, product_id, version_id, description,
+              priority, source, status, created_by
+            )
+            VALUES (%s, 'rd_brain', %s, %s, %s, 'seed', 'P1',
+                    'business_department', %s, 'user_admin')
+            """,
+            (
+                requirement_id,
+                f"{requirement_id} title",
+                ids["product"],
+                version_id,
+                status,
+            ),
+        )
+
+
+def _accepted_assessment(
+    *,
+    assessment_id: str,
+    requirement_id: str,
+    snapshot_id: str,
+    revision: int = 1,
+) -> dict[str, object]:
+    return {
+        "id": assessment_id,
+        "requirement_id": requirement_id,
+        "requirement_revision": revision,
+        "initial_strategy_snapshot_id": snapshot_id,
+        "final_strategy_snapshot_id": snapshot_id,
+        "strategy_snapshot_id": snapshot_id,
+        "structured_assessment": {"complete": True},
+        "status": "accepted",
+        "created_by": "user_admin",
+        "decided_by": "user_admin",
+        "decided_at": datetime.now(UTC),
+    }
+
+
+def _version_snapshot(
+    *,
+    base_snapshot_id: str,
+    ids: dict[str, str],
+    policy_id: str,
+    prefix: str,
+    scope_version: int = 1,
+) -> dict[str, object]:
+    return {
+        "id": f"{prefix}-snapshot-version",
+        "policy_id": policy_id,
+        "policy_version": 1,
+        "parent_snapshot_id": base_snapshot_id,
+        "snapshot_kind": "version_resolved",
+        "resolution_context_key": (f"version:{ids['version']}:scope:{scope_version}"),
+        "resolution_revision": 1,
+        "schema_version": 1,
+        "content_hash": f"{prefix}-version-hash",
+        "payload_json": {"resolved": True},
+        "created_by": "user_admin",
+    }
+
+
+def _run_record(
+    *,
+    ids: dict[str, str],
+    snapshot_id: str,
+    prefix: str,
+    status: str = "running",
+    scope_version: int = 1,
+    generation: int = 1,
+    supersedes_run_id: str | None = None,
+) -> dict[str, object]:
+    return {
+        "id": f"{prefix}-run-g{generation}",
+        "brain_app_id": "rd_brain",
+        "product_id": ids["product"],
+        "product_version_id": ids["version"],
+        "strategy_snapshot_id": snapshot_id,
+        "run_generation": generation,
+        "supersedes_run_id": supersedes_run_id,
+        "scope_version": scope_version,
+        "plan_version": 0,
+        "status": status,
+        "delivery_target": "ready_for_release",
+        "graph_version": "v1",
+        "created_by": "user_admin",
+    }
+
+
+def _run_scope(
+    *,
+    assessment_id: str,
+    final_snapshot_id: str,
+    requirement_id: str,
+    run_id: str,
+    prefix: str,
+) -> dict[str, object]:
+    return {
+        "id": f"{prefix}-run-scope-{requirement_id}",
+        "collaboration_run_id": run_id,
+        "requirement_id": requirement_id,
+        "requirement_revision": 1,
+        "assessment_id": assessment_id,
+        "final_strategy_snapshot_id": final_snapshot_id,
+        "acceptance_criteria_hash": f"{requirement_id}-acceptance",
+        "repository_scope_hash": f"{requirement_id}-repository",
+    }
+
+
+def _seed_exact_run(
+    repository: PostgresSnapshotRepository,
+    *,
+    prefix: str,
+    run_status: str = "running",
+    version_status: str = "active",
+) -> dict[str, object]:
+    ids = _insert_product_version(
+        repository,
+        prefix=prefix,
+        status=version_status,
+    )
+    policy = _policy_record(ids, prefix=prefix)
+    repository.save_rd_task_executor_policy_record(policy)
+    base = repository.freeze_base_policy_snapshot(_base_snapshot(policy, prefix=prefix))
+    requirement_id = f"{prefix}-requirement"
+    assessment_id = f"{prefix}-assessment"
+    _insert_requirement(
+        repository,
+        ids,
+        requirement_id=requirement_id,
+        status="planned",
+        version_id=ids["version"],
+    )
+    assessment = _accepted_assessment(
+        assessment_id=assessment_id,
+        requirement_id=requirement_id,
+        snapshot_id=str(base["id"]),
+    )
+    repository.save_assessment_bundle(assessment=assessment, opinions=[])
+    version_snapshot = _version_snapshot(
+        base_snapshot_id=str(base["id"]),
+        ids=ids,
+        policy_id=str(policy["id"]),
+        prefix=prefix,
+    )
+    repository.merge_version_policy_snapshot_with_sources(
+        snapshot=version_snapshot,
+        sources=[
+            {
+                "id": f"{prefix}-source",
+                "snapshot_id": version_snapshot["id"],
+                "source_snapshot_id": base["id"],
+                "requirement_id": requirement_id,
+                "assessment_id": assessment_id,
+            }
+        ],
+    )
+    run = _run_record(
+        ids=ids,
+        snapshot_id=str(version_snapshot["id"]),
+        prefix=prefix,
+        status=run_status,
+    )
+    scope = _run_scope(
+        assessment_id=assessment_id,
+        final_snapshot_id=str(base["id"]),
+        requirement_id=requirement_id,
+        run_id=str(run["id"]),
+        prefix=prefix,
+    )
+    repository.create_collaboration_run_with_exact_scope(
+        run=run,
+        scope_rows=[scope],
+    )
+    return {
+        **ids,
+        "policy": policy,
+        "base_snapshot": base,
+        "requirement": requirement_id,
+        "assessment": assessment_id,
+        "version_snapshot": version_snapshot,
+        "run": run,
+        "scope": scope,
+    }
+
+
+def _decision_record(
+    ids: dict[str, object],
+    *,
+    decision_id: str,
+    subject_type: str = "rd_collaboration_run",
+    subject_id: str | None = None,
+    status: str = "pending",
+    expires_at: datetime | None = None,
+    answer_actor_selector: dict[str, object] | None = None,
+    answer_schema: dict[str, object] | None = None,
+) -> dict[str, object]:
+    effective_subject_id = subject_id or str(ids["run"]["id"])
+    return {
+        "id": decision_id,
+        "brain_app_id": "rd_brain",
+        "product_id": ids["product"],
+        "subject_type": subject_type,
+        "subject_id": effective_subject_id,
+        "decision_type": "risk",
+        "plan_version": 0,
+        "options_json": [
+            {
+                "code": "continue",
+                "label": "Continue",
+                "outcome": "approve",
+                "subject_transition": "resume",
+                "requires_comment": False,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "modules": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        }
+                    },
+                    "required": ["modules"],
+                    "additionalProperties": False,
+                },
+                "effect_preview": {},
+            },
+            {
+                "code": "more_info",
+                "label": "More info",
+                "outcome": "request_more_info",
+                "subject_transition": "keep_paused",
+                "requires_comment": True,
+                "input_schema": {},
+                "effect_preview": {},
+            },
+        ],
+        "options_hash": f"{decision_id}-options-v1",
+        "decision_actor_selector": {"user_ids": ["user_admin"]},
+        "answer_actor_selector": answer_actor_selector or {"user_ids": ["user_admin"]},
+        "answer_schema": answer_schema
+        or {
+            "type": "object",
+            "properties": {"detail": {"type": "string"}},
+            "required": ["detail"],
+            "additionalProperties": False,
+        },
+        "status": status,
+        "expires_at": expires_at or datetime.now(UTC) + timedelta(hours=1),
+        "timeout_policy": "escalate_keep_paused",
+        "escalation_target_selector": {"role_codes": ["rd_owner"]},
+        "version": 1,
+        "created_by": "user_admin",
+    }
+
+
+def test_repository_is_registered_and_crud_keeps_actor_and_executor_identity_separate(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    assert isinstance(repository._rd_collaboration_read_repository, RdCollaborationReadRepository)
+
+    repository.save_rd_role_definition_record(
+        {
+            "id": "role-dev",
+            "brain_app_id": "rd_brain",
+            "code": "developer",
+            "name": "Developer",
+            "created_by": "user_admin",
+        }
+    )
+    repository.save_rd_ai_employee_record(
+        {
+            "id": "ai-dev",
+            "brain_app_id": "rd_brain",
+            "code": "ai-developer",
+            "name": "AI Developer",
+            "created_by": "user_admin",
+        }
+    )
+    repository.save_rd_executor_profile_record(
+        {
+            "id": "executor-dev",
+            "brain_app_id": "rd_brain",
+            "code": "codex-dev",
+            "name": "Codex Dev",
+            "executor_type": "codex",
+            "created_by": "user_admin",
+        }
+    )
+
+    assert repository.get_rd_role_definition("role-dev")["code"] == "developer"
+    assert repository.get_rd_ai_employee("ai-dev")["id"] == "ai-dev"
+    assert repository.get_rd_executor_profile("executor-dev")["id"] == "executor-dev"
+    assert repository.list_rd_role_definitions(status="active")[0]["id"] == "role-dev"
+
+
+def test_policy_patch_increments_version_and_enforces_one_active_scope(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _insert_product_version(repository, prefix="policy-version")
+    policy = _policy_record(ids, prefix="policy-version")
+    created = repository.save_rd_task_executor_policy_record(policy)
+    assert created["policy_version"] == 1
+
+    updated = repository.save_rd_task_executor_policy_record(
+        {**policy, "instruction_template": "new instructions"},
+        expected_policy_version=1,
+    )
+    assert updated["policy_version"] == 2
+
+    with pytest.raises(RdCollaborationVersionConflictError) as stale:
+        repository.save_rd_task_executor_policy_record(
+            {**policy, "instruction_template": "stale"},
+            expected_policy_version=1,
+        )
+    assert stale.value.current_version == 2
+
+    duplicate = {**policy, "id": "policy-version-duplicate", "task_type": "code_review"}
+    with pytest.raises(RdCollaborationRepositoryError, match="active") as conflict:
+        repository.save_rd_task_executor_policy_record(duplicate)
+    assert conflict.value.code == "RD_EXECUTION_POLICY_INVALID"
+
+
+def test_base_and_assessment_snapshots_are_idempotent_and_immutable(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _insert_product_version(repository, prefix="snapshot")
+    policy = _policy_record(ids, prefix="snapshot")
+    repository.save_rd_task_executor_policy_record(policy)
+    base_record = _base_snapshot(policy, prefix="snapshot")
+    base = repository.freeze_base_policy_snapshot(base_record)
+    assert repository.freeze_base_policy_snapshot(base_record)["id"] == base["id"]
+
+    reused = repository.derive_assessment_policy_snapshot(
+        base_snapshot_id=str(base["id"]),
+        snapshot={
+            **base_record,
+            "id": "snapshot-derived-empty",
+            "parent_snapshot_id": base["id"],
+            "snapshot_kind": "assessment_resolved",
+            "resolution_context_key": "assessment:snapshot-assessment",
+            "resolution_revision": 1,
+        },
+    )
+    assert reused["id"] == base["id"]
+
+    derived = repository.derive_assessment_policy_snapshot(
+        base_snapshot_id=str(base["id"]),
+        snapshot={
+            **base_record,
+            "id": "snapshot-derived-1",
+            "parent_snapshot_id": base["id"],
+            "snapshot_kind": "assessment_resolved",
+            "resolution_context_key": "assessment:snapshot-assessment",
+            "resolution_revision": 1,
+            "content_hash": "snapshot-tightened-hash",
+            "payload_json": {"allowed_tools": ["read"], "forbidden_tools": ["deploy"]},
+        },
+    )
+    assert derived["parent_snapshot_id"] == base["id"]
+
+    with repository._connect(autocommit=False) as connection:
+        with pytest.raises(psycopg.errors.RaiseException, match="immutable"):
+            connection.execute(
+                "UPDATE rd_task_executor_policy_snapshots "
+                "SET content_hash = 'changed' WHERE id = %s",
+                (base["id"],),
+            )
+
+
+def test_assessment_bundle_and_version_merge_preserve_exact_relational_sources(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _insert_product_version(repository, prefix="merge", status="active")
+    policy = _policy_record(ids, prefix="merge")
+    repository.save_rd_task_executor_policy_record(policy)
+    base = repository.freeze_base_policy_snapshot(_base_snapshot(policy, prefix="merge"))
+
+    sources: list[dict[str, object]] = []
+    for number in (2, 1):
+        requirement_id = f"merge-requirement-{number}"
+        assessment_id = f"merge-assessment-{number}"
+        _insert_requirement(
+            repository,
+            ids,
+            requirement_id=requirement_id,
+            status="planned",
+            version_id=ids["version"],
+        )
+        repository.save_assessment_bundle(
+            assessment=_accepted_assessment(
+                assessment_id=assessment_id,
+                requirement_id=requirement_id,
+                snapshot_id=str(base["id"]),
+            ),
+            opinions=[
+                {
+                    "id": f"merge-opinion-{number}",
+                    "assessment_id": assessment_id,
+                    "role_code": "developer",
+                    "input_revision": 1,
+                    "strategy_snapshot_id": base["id"],
+                    "opinion_round": 1,
+                    "conclusion_json": {"result": "accept"},
+                }
+            ],
+        )
+        sources.append(
+            {
+                "id": f"merge-source-{number}",
+                "snapshot_id": "merge-snapshot-version",
+                "source_snapshot_id": base["id"],
+                "requirement_id": requirement_id,
+                "assessment_id": assessment_id,
+            }
+        )
+
+    snapshot = _version_snapshot(
+        base_snapshot_id=str(base["id"]),
+        ids=ids,
+        policy_id=str(policy["id"]),
+        prefix="merge",
+    )
+    persisted = repository.merge_version_policy_snapshot_with_sources(
+        snapshot=snapshot,
+        sources=sources,
+    )
+    assert persisted["id"] == snapshot["id"]
+    assert [
+        row["requirement_id"]
+        for row in repository.list_rd_policy_snapshot_sources(str(snapshot["id"]))
+    ] == ["merge-requirement-1", "merge-requirement-2"]
+
+
+def test_create_run_exact_scope_rolls_back_on_deferred_source_mismatch(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="exact-good")
+    assert repository.get_rd_collaboration_run(str(seeded["run"]["id"]))["status"] == "running"
+
+    other = _insert_product_version(repository, prefix="exact-bad", status="active")
+    policy = _policy_record(other, prefix="exact-bad")
+    repository.save_rd_task_executor_policy_record(policy)
+    base = repository.freeze_base_policy_snapshot(_base_snapshot(policy, prefix="exact-bad"))
+    requirement_id = "exact-bad-requirement"
+    _insert_requirement(
+        repository,
+        other,
+        requirement_id=requirement_id,
+        status="planned",
+        version_id=other["version"],
+    )
+    assessment_id = "exact-bad-assessment"
+    repository.save_assessment_bundle(
+        assessment=_accepted_assessment(
+            assessment_id=assessment_id,
+            requirement_id=requirement_id,
+            snapshot_id=str(base["id"]),
+        ),
+        opinions=[],
+    )
+    snapshot = _version_snapshot(
+        base_snapshot_id=str(base["id"]),
+        ids=other,
+        policy_id=str(policy["id"]),
+        prefix="exact-bad",
+    )
+    repository.merge_version_policy_snapshot_with_sources(
+        snapshot=snapshot,
+        sources=[
+            {
+                "id": "exact-bad-source",
+                "snapshot_id": snapshot["id"],
+                "source_snapshot_id": base["id"],
+                "requirement_id": requirement_id,
+                "assessment_id": assessment_id,
+            }
+        ],
+    )
+    run = _run_record(
+        ids=other,
+        snapshot_id=str(snapshot["id"]),
+        prefix="exact-bad",
+    )
+    with pytest.raises(psycopg.errors.RaiseException, match="exact run requirement scope"):
+        repository.create_collaboration_run_with_exact_scope(run=run, scope_rows=[])
+    assert repository.get_rd_collaboration_run(str(run["id"])) is None
+
+
+def test_restart_creates_new_generation_without_mutating_terminal_run(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="restart", run_status="failed")
+    old_run = repository.get_rd_collaboration_run(str(seeded["run"]["id"]))
+    next_run = _run_record(
+        ids={"product": seeded["product"], "version": seeded["version"]},
+        snapshot_id=str(seeded["version_snapshot"]["id"]),
+        prefix="restart",
+        status="draft",
+        generation=2,
+        supersedes_run_id=str(seeded["run"]["id"]),
+    )
+    next_scope = _run_scope(
+        assessment_id=str(seeded["assessment"]),
+        final_snapshot_id=str(seeded["base_snapshot"]["id"]),
+        requirement_id=str(seeded["requirement"]),
+        run_id=str(next_run["id"]),
+        prefix="restart-g2",
+    )
+    restarted = repository.restart_terminal_collaboration_run(
+        terminal_run_id=str(seeded["run"]["id"]),
+        run=next_run,
+        scope_rows=[next_scope],
+    )
+    assert restarted["run_generation"] == 2
+    assert repository.get_rd_collaboration_run(str(seeded["run"]["id"])) == old_run
+
+
+def test_requirement_assignment_increments_scope_once_and_freezes_during_active_run(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _insert_product_version(repository, prefix="assign")
+    _insert_requirement(
+        repository,
+        ids,
+        requirement_id="assign-requirement",
+        status="approved",
+    )
+    assigned = repository.assign_requirement_to_version_and_increment_scope(
+        requirement_id="assign-requirement",
+        product_version_id=ids["version"],
+        expected_scope_version=1,
+    )
+    assert assigned["scope_version"] == 2
+    replay = repository.assign_requirement_to_version_and_increment_scope(
+        requirement_id="assign-requirement",
+        product_version_id=ids["version"],
+        expected_scope_version=2,
+    )
+    assert replay["scope_version"] == 2
+
+    seeded = _seed_exact_run(repository, prefix="assign-frozen")
+    _insert_requirement(
+        repository,
+        {"product": seeded["product"], "version": seeded["version"]},
+        requirement_id="assign-frozen-new",
+        status="approved",
+    )
+    with pytest.raises(RdCollaborationRepositoryError) as frozen:
+        repository.assign_requirement_to_version_and_increment_scope(
+            requirement_id="assign-frozen-new",
+            product_version_id=str(seeded["version"]),
+            expected_scope_version=1,
+        )
+    assert frozen.value.code == "RD_SCOPE_FROZEN"
+    assert frozen.value.details["next_action"] == "create_scope_change_request"
+
+
+def test_scope_change_request_is_idempotent_pauses_run_and_reject_resumes_it(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="scope-reject")
+    decision = _decision_record(
+        seeded,
+        decision_id="scope-reject-decision",
+        subject_type="rd_scope_change_request",
+        subject_id="scope-reject-request",
+    )
+    request = {
+        "id": "scope-reject-request",
+        "product_version_id": seeded["version"],
+        "request_id": "scope-reject-key",
+        "source_run_id": seeded["run"]["id"],
+        "expected_scope_version": 1,
+        "expected_run_generation": 1,
+        "operations_json": [
+            {
+                "op": "remove_requirement",
+                "requirement_id": seeded["requirement"],
+                "destination": "approved_pool",
+            }
+        ],
+        "operations_hash": "scope-reject-hash",
+        "reason": "remove requirement",
+        "decision_request_id": decision["id"],
+        "requested_by": "user_admin",
+    }
+    operations = [
+        {
+            "id": "scope-reject-operation",
+            "scope_change_request_id": request["id"],
+            "position": 0,
+            "op": "remove_requirement",
+            "requirement_id": seeded["requirement"],
+            "destination": "approved_pool",
+        }
+    ]
+    created = repository.create_scope_change_request(
+        request=request,
+        operations=operations,
+        decision_request=decision,
+    )
+    replay = repository.create_scope_change_request(
+        request=request,
+        operations=operations,
+        decision_request=decision,
+    )
+    assert replay["id"] == created["id"]
+    assert (
+        repository.list_rd_scope_change_request_operations(created["id"])[0]["id"]
+        == "scope-reject-operation"
+    )
+    paused = repository.get_rd_collaboration_run(str(seeded["run"]["id"]))
+    assert paused["status"] == "waiting_human"
+    assert paused["resume_state"] == "running"
+
+    result = repository.apply_scope_change_bundle(
+        scope_change_request_id=str(request["id"]),
+        decision="reject",
+        decided_by="user_admin",
+        expected_decision_version=1,
+    )
+    assert result["scope_change_request"]["status"] == "rejected"
+    assert result["run"]["status"] == "running"
+    assert result["product_version"]["scope_version"] == 1
+
+
+def test_concurrent_scope_change_same_request_replays_and_different_request_fences(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    same = _seed_exact_run(repository, prefix="scope-race-same")
+
+    def create_request(
+        seeded: dict[str, object],
+        *,
+        suffix: str,
+        request_key: str,
+    ) -> dict[str, object]:
+        request_id = f"scope-race-{suffix}"
+        decision = _decision_record(
+            seeded,
+            decision_id=f"{request_id}-decision",
+            subject_type="rd_scope_change_request",
+            subject_id=request_id,
+        )
+        request = {
+            "id": request_id,
+            "product_version_id": seeded["version"],
+            "request_id": request_key,
+            "source_run_id": seeded["run"]["id"],
+            "expected_scope_version": 1,
+            "expected_run_generation": 1,
+            "operations_json": [
+                {
+                    "op": "remove_requirement",
+                    "requirement_id": seeded["requirement"],
+                    "destination": "approved_pool",
+                }
+            ],
+            "operations_hash": f"{request_id}-hash",
+            "reason": "concurrency fence",
+            "decision_request_id": decision["id"],
+            "requested_by": "user_admin",
+        }
+        operation = {
+            "id": f"{request_id}-operation",
+            "scope_change_request_id": request_id,
+            "position": 0,
+            "op": "remove_requirement",
+            "requirement_id": seeded["requirement"],
+            "destination": "approved_pool",
+        }
+        return {
+            "request": request,
+            "decision_request": decision,
+            "operations": [operation],
+        }
+
+    same_command = create_request(same, suffix="same", request_key="same-key")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        same_results = list(
+            executor.map(
+                lambda _: repository.create_scope_change_request(**same_command),
+                range(2),
+            )
+        )
+    assert {row["id"] for row in same_results} == {"scope-race-same"}
+
+    different = _seed_exact_run(repository, prefix="scope-race-different")
+    commands = [
+        create_request(different, suffix="different-a", request_key="different-a"),
+        create_request(different, suffix="different-b", request_key="different-b"),
+    ]
+
+    def submit(command: dict[str, object]) -> dict[str, object] | str:
+        try:
+            return repository.create_scope_change_request(**command)
+        except RdCollaborationRepositoryError as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        different_results = list(executor.map(submit, commands))
+    assert sum(isinstance(result, dict) for result in different_results) == 1
+    assert different_results.count("RD_SCOPE_FROZEN") == 1
+
+
+def test_scope_change_approval_cancels_generation_and_increments_scope_exactly_once(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="scope-apply")
+    new_requirement_id = "scope-apply-new-requirement"
+    _insert_requirement(
+        repository,
+        {"product": seeded["product"], "version": seeded["version"]},
+        requirement_id=new_requirement_id,
+        status="approved",
+    )
+    new_assessment_id = "scope-apply-new-assessment"
+    repository.save_assessment_bundle(
+        assessment=_accepted_assessment(
+            assessment_id=new_assessment_id,
+            requirement_id=new_requirement_id,
+            snapshot_id=str(seeded["base_snapshot"]["id"]),
+        ),
+        opinions=[],
+    )
+    repository.save_rd_work_item_record(
+        {
+            "id": "scope-apply-work",
+            "collaboration_run_id": seeded["run"]["id"],
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "implement",
+            "objective": "implement",
+            "status": "running",
+            "idempotency_key": "scope-apply-work",
+            "lease_owner": "worker-a",
+            "lease_expires_at": datetime.now(UTC) + timedelta(minutes=10),
+        }
+    )
+    repository.save_work_item_attempt_bundle(
+        work_item_id="scope-apply-work",
+        expected_statuses=["running"],
+        next_status="running",
+        attempt={
+            "id": "scope-apply-attempt",
+            "work_item_id": "scope-apply-work",
+            "attempt_no": 1,
+            "idempotency_key": "scope-apply-attempt",
+            "status": "running",
+        },
+    )
+    decision = _decision_record(
+        seeded,
+        decision_id="scope-apply-decision",
+        subject_type="rd_scope_change_request",
+        subject_id="scope-apply-request",
+    )
+    request = {
+        "id": "scope-apply-request",
+        "product_version_id": seeded["version"],
+        "request_id": "scope-apply-key",
+        "source_run_id": seeded["run"]["id"],
+        "expected_scope_version": 1,
+        "expected_run_generation": 1,
+        "operations_json": [
+            {
+                "op": "add_requirement",
+                "requirement_id": new_requirement_id,
+                "requirement_revision": 1,
+                "assessment_id": new_assessment_id,
+                "final_strategy_snapshot_id": seeded["base_snapshot"]["id"],
+            }
+        ],
+        "operations_hash": "scope-apply-hash",
+        "reason": "add requirement",
+        "decision_request_id": decision["id"],
+        "requested_by": "user_admin",
+    }
+    repository.create_scope_change_request(
+        request=request,
+        decision_request=decision,
+        operations=[
+            {
+                "id": "scope-apply-operation",
+                "scope_change_request_id": request["id"],
+                "position": 0,
+                "op": "add_requirement",
+                "requirement_id": new_requirement_id,
+                "requirement_revision": 1,
+                "assessment_id": new_assessment_id,
+                "final_strategy_snapshot_id": seeded["base_snapshot"]["id"],
+            }
+        ],
+    )
+
+    result = repository.apply_scope_change_bundle(
+        scope_change_request_id=str(request["id"]),
+        decision="approve",
+        decided_by="user_admin",
+        expected_decision_version=1,
+    )
+    assert result["run"]["status"] == "cancelled"
+    assert result["run"]["completion_reason"] == "scope_change"
+    assert result["product_version"]["scope_version"] == 2
+    assert result["scope_change_request"]["applied_scope_version"] == 2
+    assert repository.get_rd_work_item("scope-apply-work")["status"] == "cancelled"
+    assert repository.get_rd_work_item_attempt("scope-apply-attempt")["status"] == "cancelled"
+
+    replay = repository.apply_scope_change_bundle(
+        scope_change_request_id=str(request["id"]),
+        decision="approve",
+        decided_by="user_admin",
+        expected_decision_version=1,
+    )
+    assert replay["product_version"]["scope_version"] == 2
+
+
+@pytest.mark.parametrize("version_status", ["ready_for_release", "deploying"])
+def test_ready_boundary_scope_change_returns_followup_resolution(
+    repository: PostgresSnapshotRepository,
+    version_status: str,
+) -> None:
+    seeded = _seed_exact_run(
+        repository,
+        prefix=f"ready-{version_status}",
+        run_status="completed",
+        version_status=version_status,
+    )
+    decision = _decision_record(
+        seeded,
+        decision_id=f"ready-{version_status}-decision",
+        subject_type="rd_scope_change_request",
+        subject_id=f"ready-{version_status}-request",
+    )
+    with pytest.raises(RdCollaborationRepositoryError) as frozen:
+        repository.create_scope_change_request(
+            request={
+                "id": f"ready-{version_status}-request",
+                "product_version_id": seeded["version"],
+                "request_id": f"ready-{version_status}-key",
+                "source_run_id": seeded["run"]["id"],
+                "expected_scope_version": 1,
+                "expected_run_generation": 1,
+                "operations_json": [],
+                "operations_hash": f"ready-{version_status}-hash",
+                "reason": "late change",
+                "decision_request_id": decision["id"],
+                "requested_by": "user_admin",
+            },
+            decision_request=decision,
+            operations=[],
+        )
+    assert frozen.value.code == "RD_SCOPE_FROZEN"
+    assert frozen.value.details == {
+        "retryable": False,
+        "resolution": "new_planning_version",
+        "next_action": "create_followup_requirement",
+    }
+
+
+def test_claim_ready_work_item_is_atomic(repository: PostgresSnapshotRepository) -> None:
+    seeded = _seed_exact_run(repository, prefix="claim")
+    repository.save_rd_work_item_record(
+        {
+            "id": "claim-work",
+            "collaboration_run_id": seeded["run"]["id"],
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "claim me",
+            "objective": "claim me",
+            "status": "ready",
+            "idempotency_key": "claim-work",
+        }
+    )
+
+    first = repository.claim_ready_work_item("claim-work", lease_owner="worker-a")
+    second = repository.claim_ready_work_item("claim-work", lease_owner="worker-b")
+    assert first["lease_owner"] == "worker-a"
+    assert second is None
+
+
+def test_concurrent_claim_uses_skip_locked_and_only_one_worker_wins(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="claim-race")
+    repository.save_rd_work_item_record(
+        {
+            "id": "claim-race-work",
+            "collaboration_run_id": seeded["run"]["id"],
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "claim race",
+            "objective": "claim race",
+            "status": "ready",
+            "idempotency_key": "claim-race-work",
+        }
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                repository.claim_ready_work_item,
+                "claim-race-work",
+                lease_owner=f"worker-{number}",
+            )
+            for number in (1, 2)
+        ]
+        results = [future.result(timeout=10) for future in futures]
+    assert sum(result is not None for result in results) == 1
+
+
+def test_high_risk_cancel_continue_fences_old_attempt_and_requires_new_attempt(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="cancel-high-risk")
+    repository.save_rd_work_item_record(
+        {
+            "id": "cancel-high-risk-work",
+            "collaboration_run_id": seeded["run"]["id"],
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "sensitive change",
+            "objective": "sensitive change",
+            "status": "ready",
+            "risk_level": "high",
+            "idempotency_key": "cancel-high-risk-work",
+        }
+    )
+    claimed = repository.claim_ready_work_item(
+        "cancel-high-risk-work",
+        lease_owner="worker-old",
+        attempt={
+            "id": "cancel-high-risk-attempt-1",
+            "work_item_id": "cancel-high-risk-work",
+            "attempt_no": 1,
+            "idempotency_key": "cancel-high-risk-attempt-1",
+            "status": "running",
+        },
+    )
+    decision = _decision_record(
+        seeded,
+        decision_id="cancel-high-risk-decision",
+        subject_type="rd_work_item",
+        subject_id="cancel-high-risk-work",
+    )
+    decision["options_json"] = [
+        {
+            "code": "continue_ready",
+            "label": "Continue with a new attempt",
+            "outcome": "reject",
+            "subject_transition": "ready",
+            "requires_comment": False,
+            "input_schema": {},
+            "effect_preview": {},
+        }
+    ]
+    decision["options_hash"] = "cancel-high-risk-options-v1"
+    paused = repository.cancel_work_item_bundle(
+        work_item_id="cancel-high-risk-work",
+        expected_version=int(claimed["version"]),
+        high_risk=True,
+        decision_request=decision,
+    )
+    assert paused["work_item"]["status"] == "waiting_human"
+    assert paused["attempt"]["status"] == "waiting_human"
+    assert paused["work_item"]["lease_owner"] is None
+
+    continued = repository.apply_decision_bundle(
+        decision_request_id="cancel-high-risk-decision",
+        selected_option_code="continue_ready",
+        input_json=None,
+        comment=None,
+        decided_by="user_admin",
+        expected_version=1,
+    )
+    assert continued["work_item"]["status"] == "ready"
+    assert (
+        repository.get_rd_work_item_attempt("cancel-high-risk-attempt-1")["status"] == "cancelled"
+    )
+
+    reclaimed = repository.claim_ready_work_item(
+        "cancel-high-risk-work",
+        lease_owner="worker-new",
+        attempt={
+            "id": "cancel-high-risk-attempt-2",
+            "work_item_id": "cancel-high-risk-work",
+            "attempt_no": 2,
+            "idempotency_key": "cancel-high-risk-attempt-2",
+            "status": "running",
+        },
+    )
+    assert reclaimed["attempt"]["id"] == "cancel-high-risk-attempt-2"
+    assert reclaimed["lease_owner"] == "worker-new"
+
+
+def test_idempotent_command_replays_immutable_response_and_rolls_back_failure(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    calls = 0
+
+    def operation(cursor):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        cursor.execute(
+            "INSERT INTO rd_collaboration_events "
+            "(id, collaboration_run_id, event_type, event_key, subject_type, subject_id) "
+            "VALUES ('never', 'missing', 'test', 'never', 'test', 'never')"
+        )
+        return {}
+
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        repository.execute_idempotent_rd_command(
+            command_type="test",
+            aggregate_type="test",
+            aggregate_id="test",
+            idempotency_key="failed",
+            request_hash="failed-hash",
+            operation=operation,
+            command_record_id="failed-command",
+        )
+    assert repository.get_rd_command_idempotency_record("failed-command") is None
+
+    def success(_cursor):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        return {
+            "result_type": "thing",
+            "result_id": "thing-1",
+            "http_status": 201,
+            "response_json": {"data": {"value": 1}, "trace_id": "first"},
+        }
+
+    first = repository.execute_idempotent_rd_command(
+        command_type="create",
+        aggregate_type="thing",
+        aggregate_id="thing-1",
+        idempotency_key="same",
+        request_hash="same-hash",
+        operation=success,
+        command_record_id="command-1",
+    )
+    with repository._connect(autocommit=False) as connection:
+        connection.execute("SELECT 1")
+    replay = repository.execute_idempotent_rd_command(
+        command_type="create",
+        aggregate_type="thing",
+        aggregate_id="thing-1",
+        idempotency_key="same",
+        request_hash="same-hash",
+        operation=lambda _cursor: pytest.fail("replay must not rerun operation"),
+        command_record_id="command-other",
+    )
+    assert first["http_status"] == replay["http_status"] == 201
+    assert replay["response_json"]["data"] == {"value": 1}
+    assert replay["idempotent_replay"] is True
+
+    with pytest.raises(RdCollaborationRepositoryError) as conflict:
+        repository.execute_idempotent_rd_command(
+            command_type="create",
+            aggregate_type="thing",
+            aggregate_id="thing-1",
+            idempotency_key="same",
+            request_hash="different-hash",
+            operation=success,
+            command_record_id="command-conflict",
+        )
+    assert conflict.value.code == "RD_IDEMPOTENCY_CONFLICT"
+
+
+def test_claim_replay_secret_is_valid_until_database_expiry_then_scrubbed(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    repository.execute_idempotent_rd_command(
+        command_type="claim",
+        aggregate_type="rd_work_item",
+        aggregate_id="secret-work",
+        idempotency_key="secret-key",
+        request_hash="secret-hash",
+        command_record_id="secret-command",
+        operation=lambda _cursor: {
+            "result_type": "rd_work_item_attempt",
+            "result_id": "secret-attempt",
+            "http_status": 200,
+            "response_json": {"data": {"secret_ref": "secret-command"}},
+        },
+    )
+    repository.save_and_scrub_claim_replay_secret(
+        secret={
+            "id": "secret-1",
+            "command_record_id": "secret-command",
+            "secret_ciphertext": "ciphertext",
+            "key_id": "test-key",
+            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+        }
+    )
+    assert repository.get_valid_claim_replay_secret("secret-command")["secret_ciphertext"] == (
+        "ciphertext"
+    )
+
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            "UPDATE rd_command_replay_secrets SET expires_at = now() - interval '1 second' "
+            "WHERE command_record_id = 'secret-command'"
+        )
+    scrubbed = repository.save_and_scrub_claim_replay_secret()
+    assert scrubbed["scrubbed_count"] == 1
+    assert repository.get_valid_claim_replay_secret("secret-command") is None
+
+
+def test_suspend_and_decide_run_uses_optimistic_version_and_validates_input(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="decision")
+    decision = _decision_record(seeded, decision_id="decision-1")
+    repository.save_decision_request_record(decision)
+    paused = repository.suspend_collaboration_run(
+        collaboration_run_id=str(seeded["run"]["id"]),
+        decision_request_id="decision-1",
+        expected_version=1,
+    )
+    assert paused["status"] == "waiting_human"
+
+    with pytest.raises(RdCollaborationRepositoryError) as invalid:
+        repository.apply_decision_bundle(
+            decision_request_id="decision-1",
+            selected_option_code="continue",
+            input_json={"unknown": True},
+            comment=None,
+            decided_by="user_admin",
+            expected_version=1,
+        )
+    assert invalid.value.code == "RD_DECISION_INPUT_INVALID"
+    assert repository.get_decision_request("decision-1")["status"] == "pending"
+
+    result = repository.apply_decision_bundle(
+        decision_request_id="decision-1",
+        selected_option_code="continue",
+        input_json={"modules": ["payments"]},
+        comment=None,
+        decided_by="user_admin",
+        expected_version=1,
+    )
+    assert result["decision_request"]["status"] == "approved"
+    assert result["decision_request"]["version"] == 2
+    assert result["run"]["status"] == "running"
+
+    with pytest.raises(RdCollaborationVersionConflictError):
+        repository.apply_decision_bundle(
+            decision_request_id="decision-1",
+            selected_option_code="continue",
+            input_json={"modules": ["payments"]},
+            comment=None,
+            decided_by="user_admin",
+            expected_version=1,
+        )
+
+
+def test_request_more_info_and_answer_selector_reopens_pending_without_resuming(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="answer")
+    decision = _decision_record(
+        seeded,
+        decision_id="answer-decision",
+        answer_actor_selector={"user_ids": ["user_admin"]},
+    )
+    repository.save_decision_request_record(decision)
+    repository.suspend_collaboration_run(
+        collaboration_run_id=str(seeded["run"]["id"]),
+        decision_request_id="answer-decision",
+        expected_version=1,
+    )
+    more_info = repository.apply_decision_bundle(
+        decision_request_id="answer-decision",
+        selected_option_code="more_info",
+        input_json=None,
+        comment="need details",
+        decided_by="user_admin",
+        expected_version=1,
+    )
+    assert more_info["decision_request"]["status"] == "waiting_more_info"
+    assert more_info["run"]["status"] == "waiting_human"
+
+    with pytest.raises(RdCollaborationRepositoryError) as denied:
+        repository.answer_decision_request(
+            decision_request_id="answer-decision",
+            expected_version=2,
+            actor_id="user_viewer",
+            actor_role_codes=[],
+            actor_seat_ids=[],
+            answer_json={"detail": "complete"},
+            evidence_json=[],
+            options_json=decision["options_json"],
+            options_hash="answer-options-v2",
+        )
+    assert denied.value.code == "PERMISSION_DENIED"
+
+    answered = repository.answer_decision_request(
+        decision_request_id="answer-decision",
+        expected_version=2,
+        actor_id="user_admin",
+        actor_role_codes=[],
+        actor_seat_ids=[],
+        answer_json={"detail": "complete"},
+        evidence_json=[{"ref": "document-1"}],
+        options_json=decision["options_json"],
+        options_hash="answer-options-v2",
+    )
+    assert answered["status"] == "pending"
+    assert answered["version"] == 3
+    assert (
+        repository.get_rd_collaboration_run(str(seeded["run"]["id"]))["status"] == "waiting_human"
+    )
+
+
+def test_database_time_expiry_is_idempotent_and_keeps_subject_paused(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="expiry")
+    due = _decision_record(
+        seeded,
+        decision_id="expiry-old",
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    repository.save_decision_request_record(due)
+    repository.suspend_collaboration_run(
+        collaboration_run_id=str(seeded["run"]["id"]),
+        decision_request_id="expiry-old",
+        expected_version=1,
+    )
+    successor = _decision_record(
+        seeded,
+        decision_id="expiry-new",
+        expires_at=datetime.now(UTC) + timedelta(hours=2),
+    )
+    successor["supersedes_decision_request_id"] = "expiry-old"
+    successor["escalation_level"] = 1
+    event = {
+        "id": "expiry-event",
+        "collaboration_run_id": seeded["run"]["id"],
+        "event_type": "decision.expired",
+        "event_key": "decision.expired:expiry-old",
+        "subject_type": "decision_request",
+        "subject_id": "expiry-old",
+        "payload_json": {},
+    }
+    first = repository.expire_and_escalate_decision_request(
+        decision_request_id="expiry-old",
+        successor_request=successor,
+        expiry_event=event,
+    )
+    second = repository.expire_and_escalate_decision_request(
+        decision_request_id="expiry-old",
+        successor_request=successor,
+        expiry_event=event,
+    )
+    assert first["expired_request"]["status"] == "expired"
+    assert second["successor_request"]["id"] == "expiry-new"
+    run = repository.get_rd_collaboration_run(str(seeded["run"]["id"]))
+    assert run["status"] == "waiting_human"
+    assert run["suspended_decision_request_id"] == "expiry-new"
+    assert len(repository.list_rd_collaboration_events(str(seeded["run"]["id"]))) == 1
+
+
+def test_feedback_is_insert_once_under_concurrent_graph_replay(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="feedback")
+    repository.save_rd_collaboration_event_record(
+        {
+            "id": "feedback-event",
+            "collaboration_run_id": seeded["run"]["id"],
+            "event_type": "feedback.created",
+            "event_key": "feedback-event",
+            "subject_type": "collaboration_run",
+            "subject_id": seeded["run"]["id"],
+            "payload_json": {},
+        }
+    )
+    feedback = {
+        "id": "feedback-record",
+        "brain_app_id": "rd_brain",
+        "product_id": seeded["product"],
+        "collaboration_run_id": seeded["run"]["id"],
+        "feedback_kind": "review",
+        "source_event_id": "feedback-event",
+        "feedback_fingerprint": "same-fingerprint",
+        "role_code": "developer",
+        "human_user_id": "user_admin",
+        "strategy_snapshot_id": seeded["version_snapshot"]["id"],
+        "producer_subject_type": "service",
+        "producer_subject_id": "quality_gate",
+    }
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        rows = list(
+            executor.map(
+                lambda _: repository.save_role_feedback_once(feedback),
+                range(2),
+            )
+        )
+    assert {row["id"] for row in rows} == {"feedback-record"}
+    assert len(repository.list_role_feedback_records(str(seeded["run"]["id"]))) == 1
+
+
+def test_experience_version_sources_and_reviewer_producer_separation(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="experience")
+    repository.save_rd_collaboration_event_record(
+        {
+            "id": "experience-event",
+            "collaboration_run_id": seeded["run"]["id"],
+            "event_type": "feedback.created",
+            "event_key": "experience-event",
+            "subject_type": "collaboration_run",
+            "subject_id": seeded["run"]["id"],
+            "payload_json": {},
+        }
+    )
+    feedback = repository.save_role_feedback_once(
+        {
+            "id": "experience-feedback",
+            "brain_app_id": "rd_brain",
+            "product_id": seeded["product"],
+            "collaboration_run_id": seeded["run"]["id"],
+            "feedback_kind": "review",
+            "source_event_id": "experience-event",
+            "feedback_fingerprint": "experience-feedback-fingerprint",
+            "role_code": "developer",
+            "human_user_id": "user_admin",
+            "strategy_snapshot_id": seeded["version_snapshot"]["id"],
+            "producer_subject_type": "human_user",
+            "producer_subject_id": "user_admin",
+        }
+    )
+    candidate = {
+        "id": "experience-1",
+        "experience_key": "developer:payments",
+        "brain_app_id": "rd_brain",
+        "product_scope": [seeded["product"]],
+        "role_code": "developer",
+        "work_item_type": "implementation",
+        "scenario": "payments",
+        "risk_scope": {"maximum": "high"},
+        "content": {"guidance": "run idempotency tests"},
+        "strategy_snapshot_id": seeded["version_snapshot"]["id"],
+        "confidence": 0.9,
+        "status": "pending",
+    }
+    first = repository.save_rd_role_experience_record(
+        candidate,
+        sources=[
+            {
+                "id": "experience-source-1",
+                "experience_id": "experience-1",
+                "role_feedback_record_id": feedback["id"],
+                "strategy_snapshot_id": seeded["version_snapshot"]["id"],
+            }
+        ],
+    )
+    second = repository.save_rd_role_experience_record(
+        {**candidate, "id": "experience-2", "content": {"guidance": "new evidence"}},
+        sources=[
+            {
+                "id": "experience-source-2",
+                "experience_id": "experience-2",
+                "role_feedback_record_id": feedback["id"],
+                "strategy_snapshot_id": seeded["version_snapshot"]["id"],
+            }
+        ],
+    )
+    assert (first["version"], second["version"]) == (1, 2)
+
+    with pytest.raises(RdCollaborationRepositoryError) as self_review:
+        repository.decide_role_experience(
+            experience_id="experience-1",
+            decision="approve",
+            expected_review_version=1,
+            reviewer_subject_type="human_user",
+            reviewer_subject_id="user_admin",
+            reviewer_role_code=None,
+            reviewer_seat_id=None,
+            require_independent_reviewer=False,
+        )
+    assert self_review.value.code == "PERMISSION_DENIED"
+
+    approved = repository.decide_role_experience(
+        experience_id="experience-1",
+        decision="approve",
+        expected_review_version=1,
+        reviewer_subject_type="human_user",
+        reviewer_subject_id="user_reviewer",
+        reviewer_role_code="rd_owner",
+        reviewer_seat_id=None,
+        require_independent_reviewer=True,
+    )
+    assert approved["status"] == "approved"
+    assert approved["review_version"] == 2
+
+
+def test_database_constraints_reject_invalid_identity_dependency_and_plan_duplicates(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="constraints")
+    repository.save_rd_work_item_record(
+        {
+            "id": "constraints-work-a",
+            "collaboration_run_id": seeded["run"]["id"],
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "a",
+            "objective": "a",
+            "status": "draft",
+            "idempotency_key": "constraints-work-a",
+        }
+    )
+    with pytest.raises(psycopg.errors.CheckViolation):
+        repository.save_rd_run_seat_record(
+            {
+                "id": "invalid-seat",
+                "collaboration_run_id": seeded["run"]["id"],
+                "role_code": "developer",
+                "subject_type": "ai_employee",
+                "human_user_id": "user_admin",
+            }
+        )
+    with pytest.raises(psycopg.errors.CheckViolation):
+        repository.save_rd_work_item_dependency_record(
+            {
+                "id": "invalid-dependency",
+                "collaboration_run_id": seeded["run"]["id"],
+                "plan_version": 1,
+                "predecessor_work_item_id": "constraints-work-a",
+                "successor_work_item_id": "constraints-work-a",
+            }
+        )
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        repository.save_rd_work_item_record(
+            {
+                "id": "constraints-work-duplicate",
+                "collaboration_run_id": seeded["run"]["id"],
+                "plan_version": 1,
+                "work_item_type": "implementation",
+                "title": "duplicate",
+                "objective": "duplicate",
+                "status": "draft",
+                "idempotency_key": "constraints-work-a",
+            }
+        )

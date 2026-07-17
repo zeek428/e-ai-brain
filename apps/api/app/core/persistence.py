@@ -9,6 +9,7 @@ from app.core.persistence_repositories import install_snapshot_repositories
 from app.core.persistence_runtime import PostgresRuntimeStore as PostgresRuntimeStore
 from app.core.persistent_memory_store import PersistentMemoryStore as PersistentMemoryStore
 from app.core.product_version_dashboard_read_model import product_version_dashboard_source_rows
+from app.core.repositories.rd_collaboration import RdCollaborationReadRepository
 
 
 class PostgresSnapshotRepository:
@@ -25,6 +26,18 @@ class PostgresSnapshotRepository:
             max_size=pool_max_size,
         )
         install_snapshot_repositories(self)
+        self._rd_collaboration_read_repository = RdCollaborationReadRepository(
+            self._connect,
+            upsert_audit_events=self._upsert_audit_events,
+        )
+        for method_name in dir(self._rd_collaboration_read_repository):
+            if method_name.startswith("_"):
+                continue
+            if hasattr(type(self), method_name):
+                continue
+            method = getattr(self._rd_collaboration_read_repository, method_name)
+            if callable(method):
+                setattr(self, method_name, method)
         if ensure_schema_compatibility:
             self._ensure_schema_compatibility()
 
@@ -1922,10 +1935,12 @@ class PostgresSnapshotRepository:
         policy: dict[str, Any],
         *,
         audit_event: dict[str, Any] | None = None,
-    ) -> None:
-        self._task_read_repository.save_rd_task_executor_policy_record(
+        expected_policy_version: int | None = None,
+    ) -> dict[str, Any]:
+        return self._rd_collaboration_read_repository.save_rd_task_executor_policy_record(
             policy,
             audit_event=audit_event,
+            expected_policy_version=expected_policy_version,
         )
 
     def delete_rd_task_executor_policy_record(

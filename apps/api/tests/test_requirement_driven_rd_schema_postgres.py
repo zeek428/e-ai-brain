@@ -1625,3 +1625,200 @@ def test_policy_version_is_monotonic_but_equal_legacy_update_is_allowed(
             ).fetchone()
 
         assert stored_version == (2,)
+
+
+def test_task3_repository_versions_support_real_optimistic_updates(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=109)
+        with psycopg.connect(database_url) as connection:
+            ids = _seed_collaboration_scope(connection, prefix="task3-repository-version")
+            connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            connection.commit()
+            connection.autocommit = True
+            connection.execute(
+                """
+                INSERT INTO rd_work_items (
+                  id, collaboration_run_id, plan_version, work_item_type,
+                  title, objective, status, idempotency_key, version
+                )
+                VALUES (
+                  'task3-version-work', %s, 1, 'implementation',
+                  'Versioned work', 'Prove optimistic update', 'ready',
+                  'task3-version-work', 1
+                )
+                """,
+                (ids["run"],),
+            )
+            first_work_update = connection.execute(
+                """
+                UPDATE rd_work_items
+                SET status = 'claimed', version = version + 1, updated_at = now()
+                WHERE id = 'task3-version-work' AND version = 1
+                RETURNING version
+                """
+            ).fetchone()
+            stale_work_update = connection.execute(
+                """
+                UPDATE rd_work_items
+                SET status = 'running', version = version + 1, updated_at = now()
+                WHERE id = 'task3-version-work' AND version = 1
+                RETURNING version
+                """
+            ).fetchone()
+
+            connection.execute(
+                """
+                INSERT INTO product_git_repositories (
+                  id, product_id, name, default_branch
+                )
+                VALUES ('task3-version-repository', %s, 'Task 3 repository', 'main')
+                """,
+                (ids["product"],),
+            )
+            connection.execute(
+                """
+                INSERT INTO product_version_branch_configs (
+                  id, product_id, version_id, repository_id, working_branch,
+                  branch_config_version, base_commit_sha
+                )
+                VALUES (
+                  'task3-version-branch', %s, %s, 'task3-version-repository',
+                  'version/task3', 1, 'base-1'
+                )
+                """,
+                (ids["product"], ids["version"]),
+            )
+            first_branch_update = connection.execute(
+                """
+                UPDATE product_version_branch_configs
+                SET base_commit_sha = 'base-2',
+                    branch_config_version = branch_config_version + 1,
+                    updated_at = now()
+                WHERE id = 'task3-version-branch' AND branch_config_version = 1
+                RETURNING branch_config_version, base_commit_sha
+                """
+            ).fetchone()
+            stale_branch_update = connection.execute(
+                """
+                UPDATE product_version_branch_configs
+                SET base_commit_sha = 'stale',
+                    branch_config_version = branch_config_version + 1,
+                    updated_at = now()
+                WHERE id = 'task3-version-branch' AND branch_config_version = 1
+                RETURNING branch_config_version
+                """
+            ).fetchone()
+
+            with pytest.raises(psycopg.errors.CheckViolation):
+                connection.execute(
+                    """
+                    UPDATE rd_work_items
+                    SET version = 0
+                    WHERE id = 'task3-version-work'
+                    """
+                )
+            with pytest.raises(psycopg.errors.CheckViolation):
+                connection.execute(
+                    """
+                    UPDATE product_version_branch_configs
+                    SET branch_config_version = 0
+                    WHERE id = 'task3-version-branch'
+                    """
+                )
+
+        assert first_work_update == (2,)
+        assert stale_work_update is None
+        assert first_branch_update == (2, "base-2")
+        assert stale_branch_update is None
+
+
+def test_scope_change_operation_check_accepts_approved_typed_destinations(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=109)
+        with psycopg.connect(database_url) as connection:
+            ids = _seed_collaboration_scope(connection, prefix="typed-scope-operation")
+            connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            connection.commit()
+            connection.execute(
+                """
+                INSERT INTO product_git_repositories (id, product_id, name)
+                VALUES ('typed-scope-repository', %s, 'Typed scope repository')
+                """,
+                (ids["product"],),
+            )
+            connection.execute(
+                """
+                INSERT INTO decision_requests (
+                  id, brain_app_id, product_id, subject_type, subject_id,
+                  decision_type, options_hash, expires_at, created_by
+                )
+                VALUES (
+                  'typed-scope-decision', 'rd_brain', %s,
+                  'rd_scope_change_request', 'typed-scope-request',
+                  'scope_change', 'typed-options', now() + interval '1 hour',
+                  'user_admin'
+                )
+                """,
+                (ids["product"],),
+            )
+            connection.execute(
+                """
+                INSERT INTO rd_scope_change_requests (
+                  id, product_version_id, request_id, source_run_id,
+                  source_run_state, expected_scope_version,
+                  expected_run_generation, operations_json, operations_hash,
+                  reason, decision_request_id, requested_by
+                )
+                VALUES (
+                  'typed-scope-request', %s, 'typed-scope-key', %s,
+                  'running', 1, 1, '[]'::jsonb, 'typed-operations',
+                  'verify typed operations', 'typed-scope-decision', 'user_admin'
+                )
+                """,
+                (ids["version"], ids["run"]),
+            )
+            connection.execute(
+                """
+                INSERT INTO rd_scope_change_request_operations (
+                  id, scope_change_request_id, position, op,
+                  requirement_id, destination
+                )
+                VALUES (
+                  'typed-remove', 'typed-scope-request', 0,
+                  'remove_requirement', %s, 'approved_pool'
+                )
+                """,
+                (ids["requirement"],),
+            )
+            connection.execute(
+                """
+                INSERT INTO rd_scope_change_request_operations (
+                  id, scope_change_request_id, position, op,
+                  repository_id, branch_config_version, base_commit_sha
+                )
+                VALUES (
+                  'typed-baseline', 'typed-scope-request', 1,
+                  'update_repository_baseline', 'typed-scope-repository', 2, 'base-2'
+                )
+                """
+            )
+            connection.commit()
+
+        with psycopg.connect(database_url) as verification:
+            operations = verification.execute(
+                """
+                SELECT op, destination
+                FROM rd_scope_change_request_operations
+                WHERE scope_change_request_id = 'typed-scope-request'
+                ORDER BY position
+                """
+            ).fetchall()
+
+        assert operations == [
+            ("remove_requirement", "approved_pool"),
+            ("update_repository_baseline", None),
+        ]

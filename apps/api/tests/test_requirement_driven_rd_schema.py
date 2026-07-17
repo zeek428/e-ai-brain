@@ -104,6 +104,42 @@ def test_migration_creates_the_complete_unified_collaboration_schema(migration_s
         _table_body(migration_sql, table_name)
 
 
+def test_task3_repository_optimistic_versions_are_persisted_by_migration_109(
+    migration_sql: str,
+) -> None:
+    work_item_body = _normalized(_table_body(migration_sql, "rd_work_items"))
+    normalized = _normalized(migration_sql)
+
+    assert "version bigint not null default 1" in work_item_body
+    assert "version > 0" in work_item_body
+    assert (
+        "alter table if exists rd_work_items add column if not exists version bigint not null "
+        "default 1"
+    ) in normalized
+    assert (
+        "alter table if exists product_version_branch_configs add column if not exists "
+        "branch_config_version bigint not null default 1"
+    ) in normalized
+    assert "add column if not exists base_commit_sha text" in normalized
+    assert "ck_rd_work_items_version" in normalized
+    assert "ck_product_version_branch_configs_version" in normalized
+
+
+def test_scope_change_operation_check_matches_approved_typed_destinations(
+    migration_sql: str,
+) -> None:
+    body = _normalized(_table_body(migration_sql, "rd_scope_change_request_operations"))
+
+    assert re.search(
+        r"op = 'remove_requirement'.*destination = 'approved_pool'",
+        body,
+    )
+    assert re.search(
+        r"op = 'update_repository_baseline'.*destination is null",
+        body,
+    )
+
+
 def test_new_collaboration_tables_follow_timestamp_mutability_contract(migration_sql: str):
     immutable_tables = {
         "rd_task_executor_policy_snapshots",
