@@ -1262,10 +1262,8 @@ class RdCollaborationTransaction:
         if isinstance(dependencies, list) and any(
             isinstance(dependency, dict)
             and (dependency.get("hard") is True or dependency.get("type") == "hard")
-            and str(
-                dependency.get("requirement_id")
-                or dependency.get("dependency_requirement_id")
-            ) not in member_ids
+            and str(dependency.get("requirement_id") or dependency.get("dependency_requirement_id"))
+            not in member_ids
             for dependency in dependencies
             if dependency.get("requirement_id") or dependency.get("dependency_requirement_id")
         ):
