@@ -273,6 +273,7 @@ def test_assessment_policy_expansion_requires_human_decision():
         "resolution_context_key": "policy:policy_1:version:1",
         "resolution_revision": 0,
         "schema_version": 1,
+        "created_by": "user_admin",
         "content_hash": _hash(payload),
         "payload_json": payload,
     }

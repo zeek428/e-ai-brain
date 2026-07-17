@@ -373,6 +373,33 @@ def _policy_role_bindings(current_store: Any, policy_id: str) -> list[dict[str, 
     return list(record) if isinstance(record, list) else []
 
 
+def _canonical_binding_rows(
+    *,
+    current_store: Any,
+    policy: dict[str, Any],
+    role_bindings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    normalized = unified_policy_from_record(
+        {"strategy_config": policy["strategy_config"]},
+        role_bindings=role_bindings,
+    )
+    if normalized is None:
+        raise api_error(400, "RD_EXECUTION_POLICY_INVALID", "canonical strategy is required")
+    previous = {
+        item["role_code"]: item["id"]
+        for item in _policy_role_bindings(current_store, str(policy["id"]))
+        if item.get("id")
+    }
+    return [
+        {
+            **binding,
+            "id": previous.get(binding["role_code"])
+            or f"rd_policy_binding_{policy['id']}_{binding['role_code']}",
+        }
+        for binding in normalized["role_bindings"]
+    ]
+
+
 def sync_policy_resource_store(current_store: Any, policy: dict[str, Any]) -> None:
     repository = getattr(current_store, "repository", None)
     list_products = getattr(repository, "list_products", None)
@@ -783,10 +810,11 @@ def create_rd_task_executor_policy_response(
         persisted = save_unified_rd_policy_record(
             current_store,
             policy,
-            role_bindings=unified_policy_from_record(
-                {"strategy_config": policy["strategy_config"]},
+            role_bindings=_canonical_binding_rows(
+                current_store=current_store,
+                policy=policy,
                 role_bindings=payload.role_bindings,
-            )["role_bindings"],
+            ),
             audit_event=audit_event,
         )
     except RdCollaborationRepositoryError as exc:
@@ -834,14 +862,15 @@ def patch_rd_task_executor_policy_response(
         persisted = save_unified_rd_policy_record(
             current_store,
             policy,
-            role_bindings=unified_policy_from_record(
-                {"strategy_config": policy["strategy_config"]},
+            role_bindings=_canonical_binding_rows(
+                current_store=current_store,
+                policy=policy,
                 role_bindings=(
                     payload.changes.role_bindings
                     if payload.changes.role_bindings is not None
                     else _policy_role_bindings(current_store, policy_id)
                 ),
-            )["role_bindings"],
+            ),
             expected_policy_version=expected_policy_version,
             audit_event=audit_event,
         )
@@ -924,7 +953,11 @@ def resolve_rd_task_executor_policy(
         role_bindings=_policy_role_bindings(current_store, str(policy.get("id") or "")),
     )
     if unified is None:
-        return policy
+        raise api_error(
+            400,
+            "RD_EXECUTION_POLICY_REQUIRED",
+            "active policy has no canonical strategy configuration",
+        )
     role_code = str(
         unified["matching_config"].get("execution_role_code")
         or (unified["team_config"].get("required_role_codes") or [""])[0]

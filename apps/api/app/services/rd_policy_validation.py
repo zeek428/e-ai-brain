@@ -135,13 +135,7 @@ def unified_policy_from_record(
         if role_bindings is None:
             return None
         return validate_unified_policy_payload({**strategy_config, "role_bindings": role_bindings})
-    contract = record.get("output_contract")
-    if not isinstance(contract, dict):
-        return None
-    policy = contract.get("unified_policy")
-    if not isinstance(policy, dict):
-        return None
-    return validate_unified_policy_payload(policy)
+    return None
 
 
 def unified_policy_contract(policy: dict[str, Any]) -> dict[str, Any]:

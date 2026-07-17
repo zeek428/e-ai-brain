@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -65,6 +66,11 @@ def _policy_payload(
 
 
 def _validate_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    if any(
+        not snapshot.get(field)
+        for field in ("id", "policy_id", "policy_version", "created_by", "content_hash")
+    ):
+        raise PolicyResolutionError("RD_POLICY_SNAPSHOT_INVALID", "snapshot identity is incomplete")
     payload = snapshot.get("payload_json")
     if not isinstance(payload, dict) or snapshot.get("schema_version") != RD_POLICY_SCHEMA_VERSION:
         raise PolicyResolutionError(
@@ -93,7 +99,7 @@ def _validate_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         )
     if kind == "assessment_resolved" and (
         not snapshot.get("parent_snapshot_id")
-        or not str(context_key or "").startswith("assessment:")
+        or not re.fullmatch(r"assessment:[^:]+", str(context_key or ""))
         or revision not in {1, 2}
     ):
         raise PolicyResolutionError(
@@ -101,7 +107,7 @@ def _validate_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         )
     if kind == "version_resolved" and (
         not snapshot.get("parent_snapshot_id")
-        or not str(context_key or "").startswith("version:")
+        or not re.fullmatch(r"version:[^:]+:scope:[0-9]+", str(context_key or ""))
         or revision != 1
     ):
         raise PolicyResolutionError(
@@ -117,7 +123,11 @@ def validate_snapshot_chain(repository: Any, snapshot: dict[str, Any]) -> dict[s
     """Validate immutable snapshot content and every parent without reading policy rows."""
     payload = _validate_snapshot(snapshot)
     current = snapshot
+    seen: set[str] = set()
     while current["snapshot_kind"] != "base":
+        if current["id"] in seen:
+            raise PolicyResolutionError("RD_POLICY_SNAPSHOT_INVALID", "snapshot parent cycle")
+        seen.add(current["id"])
         get_snapshot = getattr(repository, "get_rd_policy_snapshot", None)
         parent_id = current.get("parent_snapshot_id")
         parent = get_snapshot(parent_id) if callable(get_snapshot) else None
@@ -131,6 +141,8 @@ def validate_snapshot_chain(repository: Any, snapshot: dict[str, Any]) -> dict[s
             raise PolicyResolutionError(
                 "RD_POLICY_SNAPSHOT_INVALID", "snapshot parent policy differs"
             )
+        if current["snapshot_kind"] == "version_resolved" and parent["snapshot_kind"] != "base":
+            raise PolicyResolutionError("RD_POLICY_SNAPSHOT_INVALID", "version parent must be base")
         current = parent
     return payload
 
@@ -217,13 +229,17 @@ def merge_version_rd_policy_snapshot(
     *,
     version_id: str,
     scope_version: int,
-    source_snapshot_ids: list[str],
+    source_snapshot_ids: list[str] | None = None,
+    source_provenance: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     repository = _repository(store)
     get_snapshot = getattr(repository, "get_rd_policy_snapshot", None)
-    if not callable(get_snapshot) or not source_snapshot_ids:
+    if not callable(get_snapshot) or not (source_snapshot_ids or source_provenance):
         raise PolicyResolutionError("RD_POLICY_SNAPSHOT_INVALID", "version sources are required")
-    sources = [get_snapshot(snapshot_id) for snapshot_id in source_snapshot_ids]
+    provenance = source_provenance or [
+        {"final_snapshot_id": snapshot_id} for snapshot_id in (source_snapshot_ids or [])
+    ]
+    sources = [get_snapshot(item.get("final_snapshot_id")) for item in provenance]
     if any(source is None for source in sources):
         raise PolicyResolutionError(
             "RD_POLICY_SNAPSHOT_INVALID", "version source snapshot is missing"
@@ -266,9 +282,14 @@ def merge_version_rd_policy_snapshot(
             source=source,
             get_assessment=get_assessment,
             list_by_final=list_by_final,
+            provenance=item,
         )
-        for source in typed_sources
+        for source, item in zip(typed_sources, provenance, strict=True)
     ]
+    if len({source["requirement_id"] for source in sources_payload}) != len(sources_payload):
+        raise PolicyResolutionError(
+            "RD_VERSION_POLICY_MERGE_REQUIRED", "each requirement may appear only once"
+        )
     merge = getattr(repository, "merge_version_policy_snapshot_with_sources", None)
     return merge(snapshot=snapshot, sources=sources_payload) if callable(merge) else snapshot
 
@@ -295,21 +316,28 @@ def _source_edge_for_snapshot(
     source: dict[str, Any],
     get_assessment: Any,
     list_by_final: Any,
+    provenance: dict[str, str],
 ) -> dict[str, Any]:
     context_key = str(source.get("resolution_context_key") or "")
+    requested_assessment_id = str(provenance.get("assessment_id") or "")
+    requested_requirement_id = str(provenance.get("requirement_id") or "")
     if source.get("snapshot_kind") == "assessment_resolved" and context_key.startswith(
         "assessment:"
     ):
         assessment_id = context_key.removeprefix("assessment:")
+        if requested_assessment_id and requested_assessment_id != assessment_id:
+            raise PolicyResolutionError("RD_VERSION_POLICY_MERGE_REQUIRED", "assessment differs")
         assessment = get_assessment(assessment_id) if callable(get_assessment) else None
     elif source.get("snapshot_kind") == "base" and callable(list_by_final):
         assessments = list_by_final(source["id"])
-        if len(assessments) != 1:
+        assessment = next(
+            (item for item in assessments if item.get("id") == requested_assessment_id), None
+        )
+        if assessment is None:
             raise PolicyResolutionError(
-                "RD_POLICY_SNAPSHOT_INVALID",
-                "base source must have one no-delta assessment provenance",
+                "RD_VERSION_POLICY_MERGE_REQUIRED",
+                "base source requires explicit assessment provenance",
             )
-        assessment = assessments[0]
         assessment_id = str(assessment["id"])
     else:
         raise PolicyResolutionError(
@@ -317,6 +345,8 @@ def _source_edge_for_snapshot(
             "version source is missing assessment provenance",
         )
     requirement_id = str((assessment or {}).get("requirement_id") or "").strip()
+    if requested_requirement_id and requested_requirement_id != requirement_id:
+        raise PolicyResolutionError("RD_VERSION_POLICY_MERGE_REQUIRED", "requirement differs")
     if not requirement_id:
         raise PolicyResolutionError(
             "RD_POLICY_SNAPSHOT_INVALID",
@@ -495,6 +525,8 @@ def _merge_pair(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
             )
         elif key == "experience_reuse_config":
             merged[key] = _merge_experience(a, b)
+        elif key == "autonomy_config":
+            merged[key] = _merge_autonomy(a, b)
         elif key in {"team_config", "role_bindings"}:
             merged[key] = _union_value(a, b)
         elif key == "iteration_config":
@@ -558,6 +590,7 @@ def _merge_experience(left: dict[str, Any], right: dict[str, Any]) -> dict[str, 
             "max_capacity",
             "max_age_days",
             "require_independent_reviewer",
+            "policy_compatibility",
         }
     }
     mergeable_right = {
@@ -570,6 +603,7 @@ def _merge_experience(left: dict[str, Any], right: dict[str, Any]) -> dict[str, 
             "max_capacity",
             "max_age_days",
             "require_independent_reviewer",
+            "policy_compatibility",
         }
     }
     merged = _merge_config(
@@ -581,6 +615,12 @@ def _merge_experience(left: dict[str, Any], right: dict[str, Any]) -> dict[str, 
             "policy_compatibility",
         },
     )
+    if "policy_compatibility" in left and "policy_compatibility" in right:
+        order = {"any": 0, "same_policy": 1, "same_policy_version": 2}
+        merged["policy_compatibility"] = max(
+            (left["policy_compatibility"], right["policy_compatibility"]),
+            key=lambda value: order.get(str(value), 99),
+        )
     if "enabled" in left and "enabled" in right:
         merged["enabled"] = bool(left["enabled"]) and bool(right["enabled"])
     if "min_confidence" in left and "min_confidence" in right:
@@ -597,6 +637,18 @@ def _merge_experience(left: dict[str, Any], right: dict[str, Any]) -> dict[str, 
     return merged
 
 
+def _merge_autonomy(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    merged = _merge_config(
+        {key: value for key, value in left.items() if key != "mode"},
+        {key: value for key, value in right.items() if key != "mode"},
+    )
+    modes = {left.get("mode", "single_pass"), right.get("mode", "single_pass")}
+    if not modes <= {"single_pass", "autonomous_loop"}:
+        raise PolicyResolutionError("RD_VERSION_POLICY_MERGE_REQUIRED", "autonomy mode invalid")
+    merged["mode"] = "single_pass" if "single_pass" in modes else "autonomous_loop"
+    return merged
+
+
 def _merge_iteration(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
     merged = _merge_config(
         {key: value for key, value in left.items() if key != "budget"},
@@ -609,9 +661,14 @@ def _merge_iteration(left: dict[str, Any], right: dict[str, Any]) -> dict[str, A
         raise PolicyResolutionError("RD_VERSION_POLICY_MERGE_REQUIRED", "budget is invalid")
     base_cap = min(first.get("base_run_cap"), second.get("base_run_cap"))
     allocations = {
-        key: min(first.get("per_requirement_allocations", {}).get(key), value)
-        for key, value in second.get("per_requirement_allocations", {}).items()
-        if key in first.get("per_requirement_allocations", {})
+        key: min(
+            first.get("per_requirement_allocations", {}).get(key, value),
+            second.get("per_requirement_allocations", {}).get(key, value),
+        )
+        for key, value in {
+            **first.get("per_requirement_allocations", {}),
+            **second.get("per_requirement_allocations", {}),
+        }.items()
     }
     merged["budget"] = {
         "base_run_cap": base_cap,
