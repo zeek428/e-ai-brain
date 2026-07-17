@@ -602,6 +602,141 @@ def test_fresh_historical_migration_chain_reaches_109_and_109_replays(
         )
 
 
+def test_migration_109_normalizes_rows_from_previous_operation_constraint(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=109)
+        with psycopg.connect(database_url) as connection:
+            ids = _seed_collaboration_scope(connection, prefix="legacy-operation-replay")
+            connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            connection.commit()
+            connection.autocommit = True
+            connection.execute(
+                """
+                INSERT INTO product_git_repositories (
+                  id, product_id, git_provider, name, remote_url, default_branch
+                )
+                VALUES (
+                  'legacy-operation-repository', %s, 'gitlab', 'Legacy operation repo',
+                  'https://git.example.com/legacy/operation.git', 'main'
+                )
+                """,
+                (ids["product"],),
+            )
+            connection.execute(
+                """
+                INSERT INTO decision_requests (
+                  id, brain_app_id, product_id, subject_type, subject_id,
+                  decision_type, options_json, options_hash, status,
+                  expires_at, created_by
+                )
+                VALUES (
+                  'legacy-operation-decision', 'rd_brain', %s,
+                  'rd_scope_change_request', 'legacy-operation-request',
+                  'scope_change', '[]'::jsonb, 'legacy-options', 'pending',
+                  now() + interval '1 hour', 'user_admin'
+                )
+                """,
+                (ids["product"],),
+            )
+            connection.execute(
+                """
+                INSERT INTO rd_scope_change_requests (
+                  id, product_version_id, request_id, source_run_id,
+                  source_run_state, expected_scope_version,
+                  expected_run_generation, operations_json, operations_hash,
+                  reason, status, decision_request_id, requested_by
+                )
+                VALUES (
+                  'legacy-operation-request', %s, 'legacy-operation-key', %s,
+                  'running', 1, 1, '[]'::jsonb, 'legacy-operations',
+                  'legacy operation rows', 'pending_decision',
+                  'legacy-operation-decision', 'user_admin'
+                )
+                """,
+                (ids["version"], ids["run"]),
+            )
+            connection.execute(
+                "ALTER TABLE rd_scope_change_request_operations "
+                "DROP CONSTRAINT ck_rd_scope_change_operation_fields"
+            )
+            connection.execute(
+                """
+                ALTER TABLE rd_scope_change_request_operations
+                ADD CONSTRAINT ck_rd_scope_change_operation_fields CHECK (
+                  (
+                    op = 'remove_requirement'
+                    AND requirement_id IS NOT NULL AND requirement_revision IS NULL
+                    AND assessment_id IS NULL AND final_strategy_snapshot_id IS NULL
+                    AND repository_id IS NULL AND branch_config_version IS NULL
+                    AND base_commit_sha IS NULL AND destination IS NULL
+                  ) OR (
+                    op = 'update_repository_baseline'
+                    AND requirement_id IS NULL AND requirement_revision IS NULL
+                    AND assessment_id IS NULL AND final_strategy_snapshot_id IS NULL
+                    AND repository_id IS NOT NULL AND branch_config_version IS NOT NULL
+                    AND base_commit_sha IS NOT NULL AND destination IS NOT NULL
+                  )
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO rd_scope_change_request_operations (
+                  id, scope_change_request_id, position, op, requirement_id
+                )
+                VALUES (
+                  'legacy-remove-operation', 'legacy-operation-request', 0,
+                  'remove_requirement', %s
+                )
+                """,
+                (ids["requirement"],),
+            )
+            connection.execute(
+                """
+                INSERT INTO rd_scope_change_request_operations (
+                  id, scope_change_request_id, position, op, repository_id,
+                  branch_config_version, base_commit_sha, destination
+                )
+                VALUES (
+                  'legacy-baseline-operation', 'legacy-operation-request', 1,
+                  'update_repository_baseline', 'legacy-operation-repository',
+                  1, 'abc123', 'legacy-branch'
+                )
+                """
+            )
+
+            _apply_migration(connection, MIGRATION_109)
+
+            normalized = connection.execute(
+                """
+                SELECT id, destination
+                FROM rd_scope_change_request_operations
+                WHERE scope_change_request_id = 'legacy-operation-request'
+                ORDER BY position
+                """
+            ).fetchall()
+            assert normalized == [
+                ("legacy-remove-operation", "approved_pool"),
+                ("legacy-baseline-operation", None),
+            ]
+            with pytest.raises(psycopg.errors.CheckViolation):
+                connection.execute(
+                    """
+                    INSERT INTO rd_scope_change_request_operations (
+                      id, scope_change_request_id, position, op, requirement_id,
+                      destination
+                    )
+                    VALUES (
+                      'invalid-null-remove-operation', 'legacy-operation-request', 2,
+                      'remove_requirement', %s, NULL
+                    )
+                    """,
+                    (ids["requirement"],),
+                )
+
+
 def test_lock_wait_helper_rejects_slow_non_locking_worker_and_cleans_up(
     postgres_admin_url: str,
 ) -> None:

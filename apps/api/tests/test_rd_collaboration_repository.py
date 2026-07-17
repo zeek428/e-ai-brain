@@ -359,15 +359,30 @@ def _decision_record(
     answer_schema: dict[str, object] | None = None,
 ) -> dict[str, object]:
     effective_subject_id = subject_id or str(ids["run"]["id"])
-    return {
-        "id": decision_id,
-        "brain_app_id": "rd_brain",
-        "product_id": ids["product"],
-        "subject_type": subject_type,
-        "subject_id": effective_subject_id,
-        "decision_type": "risk",
-        "plan_version": 0,
-        "options_json": [
+    scope_change = subject_type == "rd_scope_change_request"
+    options_json = (
+        [
+            {
+                "code": "approve_apply_and_restart",
+                "label": "Approve",
+                "outcome": "approve",
+                "subject_transition": "cancel_and_restart",
+                "requires_comment": False,
+                "input_schema": {},
+                "effect_preview": {},
+            },
+            {
+                "code": "reject_keep_current_scope",
+                "label": "Reject",
+                "outcome": "reject",
+                "subject_transition": "resume",
+                "requires_comment": False,
+                "input_schema": {},
+                "effect_preview": {},
+            },
+        ]
+        if scope_change
+        else [
             {
                 "code": "continue",
                 "label": "Continue",
@@ -396,7 +411,17 @@ def _decision_record(
                 "input_schema": {},
                 "effect_preview": {},
             },
-        ],
+        ]
+    )
+    return {
+        "id": decision_id,
+        "brain_app_id": "rd_brain",
+        "product_id": ids["product"],
+        "subject_type": subject_type,
+        "subject_id": effective_subject_id,
+        "decision_type": "scope_change" if scope_change else "risk",
+        "plan_version": 0,
+        "options_json": options_json,
         "options_hash": f"{decision_id}-options-v1",
         "decision_actor_selector": {"user_ids": ["user_admin"]},
         "answer_actor_selector": answer_actor_selector or {"user_ids": ["user_admin"]},
@@ -778,7 +803,7 @@ def test_scope_change_request_is_idempotent_pauses_run_and_reject_resumes_it(
 
     result = repository.apply_scope_change_bundle(
         scope_change_request_id=str(request["id"]),
-        decision="reject",
+        decision="reject_keep_current_scope",
         decided_by="user_admin",
         expected_decision_version=1,
     )
@@ -958,7 +983,7 @@ def test_scope_change_approval_cancels_generation_and_increments_scope_exactly_o
 
     result = repository.apply_scope_change_bundle(
         scope_change_request_id=str(request["id"]),
-        decision="approve",
+        decision="approve_apply_and_restart",
         decided_by="user_admin",
         expected_decision_version=1,
     )
@@ -971,7 +996,7 @@ def test_scope_change_approval_cancels_generation_and_increments_scope_exactly_o
 
     replay = repository.apply_scope_change_bundle(
         scope_change_request_id=str(request["id"]),
-        decision="approve",
+        decision="approve_apply_and_restart",
         decided_by="user_admin",
         expected_decision_version=1,
     )
@@ -1382,7 +1407,7 @@ def test_database_time_expiry_is_idempotent_and_keeps_subject_paused(
     due = _decision_record(
         seeded,
         decision_id="expiry-old",
-        expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        expires_at=datetime.now(UTC) + timedelta(milliseconds=50),
     )
     repository.save_decision_request_record(due)
     repository.suspend_collaboration_run(
@@ -1390,6 +1415,8 @@ def test_database_time_expiry_is_idempotent_and_keeps_subject_paused(
         decision_request_id="expiry-old",
         expected_version=1,
     )
+    with repository._connect() as connection:
+        connection.execute("SELECT pg_sleep(0.08)")
     successor = _decision_record(
         seeded,
         decision_id="expiry-new",

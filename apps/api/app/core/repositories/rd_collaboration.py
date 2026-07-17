@@ -173,6 +173,28 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
             order_by=("brain_app_id", "product_id", "id"),
         )
 
+    def list_rd_collaboration_task_executor_policies(
+        self,
+        *,
+        brain_app_id: str | None = None,
+        product_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List the versioned collaboration contract without shadowing the legacy list."""
+        return self._list(
+            "rd_task_executor_policies",
+            filters={
+                key: value
+                for key, value in {
+                    "brain_app_id": brain_app_id,
+                    "product_id": product_id,
+                    "status": status,
+                }.items()
+                if value is not None
+            },
+            order_by=("brain_app_id", "product_id", "policy_version", "id"),
+        )
+
     def get_rd_policy_role_binding(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_task_executor_policy_role_bindings", record_id)
 
@@ -285,6 +307,27 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
 
     def get_rd_scope_change_request(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_scope_change_requests", record_id)
+
+    def list_rd_scope_change_requests(
+        self,
+        *,
+        product_version_id: str | None = None,
+        source_run_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._list(
+            "rd_scope_change_requests",
+            filters={
+                key: value
+                for key, value in {
+                    "product_version_id": product_version_id,
+                    "source_run_id": source_run_id,
+                    "status": status,
+                }.items()
+                if value is not None
+            },
+            order_by=("product_version_id", "created_at", "id"),
+        )
 
     def list_rd_scope_change_request_operations(
         self,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from app.core.persistence_fields import (
@@ -95,27 +96,95 @@ class SnapshotRepository(Protocol):
 class RdCollaborationRepository(Protocol):
     """Persistence boundary for requirement-driven R&D collaboration state."""
 
+    def get_rd_role_definition(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_role_definitions(
+        self, *, brain_app_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]: ...
+    def get_rd_ai_employee(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_ai_employees(
+        self, *, brain_app_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]: ...
+    def get_rd_executor_profile(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_executor_profiles(
+        self, *, brain_app_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]: ...
+    def get_rd_task_executor_policy(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_task_executor_policies(
+        self,
+        *,
+        brain_app_id: str | None = None,
+        product_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+    def list_rd_collaboration_task_executor_policies(
+        self,
+        *,
+        brain_app_id: str | None = None,
+        product_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+    def get_rd_policy_role_binding(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_policy_role_bindings(self, policy_id: str) -> list[dict[str, Any]]: ...
+    def get_rd_policy_snapshot(self, record_id: str) -> dict[str, Any] | None: ...
+    def get_rd_task_executor_policy_snapshot(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_policy_snapshots(self, policy_id: str) -> list[dict[str, Any]]: ...
+    def get_rd_policy_snapshot_source(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_policy_snapshot_sources(self, snapshot_id: str) -> list[dict[str, Any]]: ...
+    def get_requirement_assessment(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_requirement_assessments(self, requirement_id: str) -> list[dict[str, Any]]: ...
+    def get_requirement_assessment_opinion(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_requirement_assessment_opinions(self, assessment_id: str) -> list[dict[str, Any]]: ...
     def get_rd_collaboration_run(self, record_id: str) -> dict[str, Any] | None: ...
-
+    def list_rd_collaboration_runs(
+        self,
+        *,
+        product_version_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+    def get_rd_collaboration_run_requirement(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_collaboration_run_requirements(
+        self, collaboration_run_id: str
+    ) -> list[dict[str, Any]]: ...
+    def get_rd_scope_change_request(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_scope_change_requests(
+        self,
+        *,
+        product_version_id: str | None = None,
+        source_run_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+    def list_rd_scope_change_request_operations(
+        self, scope_change_request_id: str
+    ) -> list[dict[str, Any]]: ...
+    def get_rd_scope_change_request_operation(self, record_id: str) -> dict[str, Any] | None: ...
+    def get_rd_run_seat(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_run_seats(self, collaboration_run_id: str) -> list[dict[str, Any]]: ...
+    def get_rd_role_session(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_role_sessions(self, collaboration_run_id: str) -> list[dict[str, Any]]: ...
     def get_rd_work_item(self, record_id: str) -> dict[str, Any] | None: ...
-
+    def list_rd_work_items(self, collaboration_run_id: str) -> list[dict[str, Any]]: ...
+    def get_rd_work_item_dependency(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_work_item_dependencies(self, collaboration_run_id: str) -> list[dict[str, Any]]: ...
+    def get_rd_work_item_attempt(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_work_item_attempts(self, work_item_id: str) -> list[dict[str, Any]]: ...
     def get_decision_request(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_decision_requests(
+        self, *, subject_type: str, subject_id: str
+    ) -> list[dict[str, Any]]: ...
+    def get_rd_collaboration_event(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_collaboration_events(self, collaboration_run_id: str) -> list[dict[str, Any]]: ...
+    def get_rd_command_idempotency_record(self, record_id: str) -> dict[str, Any] | None: ...
+    def get_valid_claim_replay_secret(self, command_record_id: str) -> dict[str, Any] | None: ...
+    def get_role_feedback_record(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_role_feedback_records(self, collaboration_run_id: str) -> list[dict[str, Any]]: ...
+    def get_rd_role_experience_record(self, record_id: str) -> dict[str, Any] | None: ...
+    def list_rd_role_experience_records(self, experience_key: str) -> list[dict[str, Any]]: ...
+    def list_rd_role_experience_sources(self, experience_id: str) -> list[dict[str, Any]]: ...
+    def get_rd_role_experience_source(self, record_id: str) -> dict[str, Any] | None: ...
 
-    def save_rd_role_definition_record(
-        self,
-        record: dict[str, Any],
-    ) -> dict[str, Any]: ...
-
-    def save_rd_ai_employee_record(
-        self,
-        record: dict[str, Any],
-    ) -> dict[str, Any]: ...
-
-    def save_rd_executor_profile_record(
-        self,
-        record: dict[str, Any],
-    ) -> dict[str, Any]: ...
-
+    def save_rd_role_definition_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+    def save_rd_ai_employee_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+    def save_rd_executor_profile_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
     def save_rd_task_executor_policy_record(
         self,
         record: dict[str, Any],
@@ -123,49 +192,167 @@ class RdCollaborationRepository(Protocol):
         expected_policy_version: int | None = None,
         audit_event: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
-
+    def save_rd_policy_role_binding_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+    def save_rd_task_executor_policy_role_binding_record(
+        self, record: dict[str, Any]
+    ) -> dict[str, Any]: ...
+    def freeze_base_policy_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]: ...
+    def derive_assessment_policy_snapshot(
+        self, *, base_snapshot_id: str, snapshot: dict[str, Any]
+    ) -> dict[str, Any]: ...
+    def save_assessment_bundle(
+        self,
+        *,
+        assessment: dict[str, Any],
+        opinions: list[dict[str, Any]],
+        snapshots: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]: ...
+    def merge_version_policy_snapshot_with_sources(
+        self, *, snapshot: dict[str, Any], sources: list[dict[str, Any]]
+    ) -> dict[str, Any]: ...
     def create_collaboration_run_with_exact_scope(
         self,
         *,
         run: dict[str, Any],
         scope_rows: list[dict[str, Any]],
+        snapshot: dict[str, Any] | None = None,
+        sources: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]: ...
-
+    def restart_terminal_collaboration_run(
+        self,
+        *,
+        terminal_run_id: str,
+        run: dict[str, Any],
+        scope_rows: list[dict[str, Any]],
+    ) -> dict[str, Any]: ...
+    def assign_requirement_to_version_and_increment_scope(
+        self,
+        *,
+        requirement_id: str,
+        product_version_id: str,
+        expected_scope_version: int,
+    ) -> dict[str, Any]: ...
     def create_scope_change_request(
         self,
-        **kwargs: Any,
+        *,
+        request: dict[str, Any],
+        operations: list[dict[str, Any]],
+        decision_request: dict[str, Any],
     ) -> dict[str, Any]: ...
-
     def apply_scope_change_bundle(
         self,
-        **kwargs: Any,
+        *,
+        scope_change_request_id: str,
+        decision: str,
+        decided_by: str,
+        expected_decision_version: int,
+        cancellation_outbox_events: list[dict[str, Any]] | None = None,
+        failure_injection: Callable[[str], None] | None = None,
     ) -> dict[str, Any]: ...
-
     def claim_ready_work_item(
         self,
-        **kwargs: Any,
+        work_item_id: str,
+        *,
+        lease_owner: str,
+        lease_seconds: int = 900,
+        expected_version: int | None = None,
+        attempt: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None: ...
-
+    def save_rd_run_seat_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+    def save_rd_role_session_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+    def save_rd_work_item_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+    def save_rd_work_item_dependency_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+    def save_rd_collaboration_event_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+    def save_decision_request_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+    def save_work_item_attempt_bundle(
+        self,
+        *,
+        work_item_id: str,
+        expected_statuses: list[str],
+        next_status: str,
+        attempt: dict[str, Any],
+        expected_version: int | None = None,
+        event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+    def cancel_work_item_bundle(
+        self,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        high_risk: bool,
+        decision_request: dict[str, Any] | None = None,
+        event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
     def execute_idempotent_rd_command(
         self,
-        **kwargs: Any,
+        *,
+        command_type: str,
+        aggregate_type: str,
+        aggregate_id: str,
+        idempotency_key: str,
+        request_hash: str,
+        operation: Callable[[Any], dict[str, Any]],
+        command_record_id: str | None = None,
+        failure_injection: Callable[[str], None] | None = None,
     ) -> dict[str, Any]: ...
-
+    def save_and_scrub_claim_replay_secret(
+        self, *, secret: dict[str, Any] | None = None
+    ) -> dict[str, Any]: ...
+    def suspend_collaboration_run(
+        self,
+        *,
+        collaboration_run_id: str,
+        decision_request_id: str,
+        expected_version: int,
+    ) -> dict[str, Any]: ...
     def apply_decision_bundle(
         self,
-        **kwargs: Any,
+        *,
+        decision_request_id: str,
+        selected_option_code: str,
+        input_json: Any,
+        comment: str | None,
+        decided_by: str,
+        expected_version: int,
     ) -> dict[str, Any]: ...
-
-    def save_role_feedback_once(
+    def answer_decision_request(
         self,
-        record: dict[str, Any],
+        *,
+        decision_request_id: str,
+        expected_version: int,
+        actor_id: str,
+        actor_role_codes: list[str],
+        actor_seat_ids: list[str],
+        answer_json: Any,
+        evidence_json: list[Any],
+        options_json: list[dict[str, Any]],
+        options_hash: str,
     ) -> dict[str, Any]: ...
-
+    def expire_and_escalate_decision_request(
+        self,
+        *,
+        decision_request_id: str,
+        successor_request: dict[str, Any],
+        expiry_event: dict[str, Any],
+    ) -> dict[str, Any] | None: ...
+    def save_role_feedback_once(self, record: dict[str, Any]) -> dict[str, Any]: ...
     def save_rd_role_experience_record(
         self,
         record: dict[str, Any],
         *,
         sources: list[dict[str, Any]],
+    ) -> dict[str, Any]: ...
+    def decide_role_experience(
+        self,
+        *,
+        experience_id: str,
+        decision: str,
+        expected_review_version: int,
+        reviewer_subject_type: str,
+        reviewer_subject_id: str,
+        reviewer_role_code: str | None,
+        reviewer_seat_id: str | None,
+        require_independent_reviewer: bool,
     ) -> dict[str, Any]: ...
 
 

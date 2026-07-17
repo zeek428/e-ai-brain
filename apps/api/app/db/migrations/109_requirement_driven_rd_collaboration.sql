@@ -499,7 +499,8 @@ CREATE TABLE IF NOT EXISTS rd_scope_change_request_operations (
       AND requirement_id IS NOT NULL AND requirement_revision IS NULL
       AND assessment_id IS NULL AND final_strategy_snapshot_id IS NULL
       AND repository_id IS NULL AND branch_config_version IS NULL
-      AND base_commit_sha IS NULL AND destination = 'approved_pool'
+      AND base_commit_sha IS NULL AND destination IS NOT NULL
+      AND length(trim(destination)) > 0 AND destination = 'approved_pool'
     ) OR (
       op = 'replace_requirement_snapshot'
       AND requirement_id IS NOT NULL AND requirement_revision IS NOT NULL
@@ -519,6 +520,19 @@ CREATE TABLE IF NOT EXISTS rd_scope_change_request_operations (
 ALTER TABLE IF EXISTS rd_scope_change_request_operations
   DROP CONSTRAINT IF EXISTS ck_rd_scope_change_operation_fields;
 
+DROP TRIGGER IF EXISTS trg_rd_scope_change_request_operations_immutable
+  ON rd_scope_change_request_operations;
+
+UPDATE rd_scope_change_request_operations
+SET destination = 'approved_pool'
+WHERE op = 'remove_requirement'
+  AND (destination IS NULL OR length(trim(destination)) = 0);
+
+UPDATE rd_scope_change_request_operations
+SET destination = NULL
+WHERE op = 'update_repository_baseline'
+  AND destination IS NOT NULL;
+
 ALTER TABLE IF EXISTS rd_scope_change_request_operations
   ADD CONSTRAINT ck_rd_scope_change_operation_fields CHECK (
     (
@@ -532,7 +546,8 @@ ALTER TABLE IF EXISTS rd_scope_change_request_operations
       AND requirement_id IS NOT NULL AND requirement_revision IS NULL
       AND assessment_id IS NULL AND final_strategy_snapshot_id IS NULL
       AND repository_id IS NULL AND branch_config_version IS NULL
-      AND base_commit_sha IS NULL AND destination = 'approved_pool'
+      AND base_commit_sha IS NULL AND destination IS NOT NULL
+      AND length(trim(destination)) > 0 AND destination = 'approved_pool'
     ) OR (
       op = 'replace_requirement_snapshot'
       AND requirement_id IS NOT NULL AND requirement_revision IS NOT NULL
