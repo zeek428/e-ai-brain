@@ -391,6 +391,10 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
                     cursor,
                     "110_unified_rd_execution_policy.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "111_requirement_assessment_orchestration.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -2784,6 +2788,49 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
             record,
             audit_event=audit_event,
         )
+
+    def update_requirement_assessment(
+        self,
+        assessment: dict[str, Any],
+        *,
+        expected_version: int,
+        audit_event: dict[str, Any] | None = None,
+        requirement: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._requirement_read_repository.update_requirement_assessment(
+            assessment,
+            expected_version=expected_version,
+            audit_event=audit_event,
+            requirement=requirement,
+        )
+
+    def update_requirement_assessment_opinion(self, opinion: dict[str, Any]) -> dict[str, Any]:
+        return self._requirement_read_repository.update_requirement_assessment_opinion(opinion)
+
+    def submit_assessment_answers(
+        self,
+        *,
+        assessment_id: str,
+        expected_version: int,
+        answers: dict[str, Any],
+        actor_id: str,
+    ) -> dict[str, Any]:
+        return self._requirement_read_repository.submit_assessment_answers(
+            assessment_id=assessment_id,
+            expected_version=expected_version,
+            answers=answers,
+            actor_id=actor_id,
+        )
+
+    def get_requirement_assessment_command(
+        self, *, assessment_id: str, operation: str, idempotency_key: str
+    ) -> dict[str, Any] | None:
+        return self._requirement_read_repository.get_requirement_assessment_command(
+            assessment_id=assessment_id, operation=operation, idempotency_key=idempotency_key
+        )
+
+    def save_requirement_assessment_command(self, command: dict[str, Any]) -> dict[str, Any]:
+        return self._requirement_read_repository.save_requirement_assessment_command(command)
 
     def delete_requirement_record(
         self,

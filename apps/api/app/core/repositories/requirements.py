@@ -5,7 +5,17 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Any
 
+from app.core.repositories.rd_collaboration_shared import RdCollaborationVersionConflictError
 from app.core.store import DEFAULT_BRAIN_APP_ID
+
+
+def _cursor_row(cursor: Any, row: Any) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {
+        getattr(description, "name", description[0]): value
+        for description, value in zip(cursor.description, row, strict=True)
+    }
 
 
 class RequirementReadRepository:
@@ -57,6 +67,217 @@ class RequirementReadRepository:
                 cursor.execute("DELETE FROM requirements WHERE id = %s", (record_id,))
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])
+
+    def update_requirement_assessment(
+        self,
+        assessment: dict[str, Any],
+        *,
+        expected_version: int,
+        audit_event: dict[str, Any] | None = None,
+        requirement: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Lock and advance assessment state, optionally advancing its requirement atomically."""
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT version FROM requirement_assessments WHERE id = %s FOR UPDATE",
+                    (assessment["id"],),
+                )
+                row = cursor.fetchone()
+                current_version = int(row[0]) if row is not None else None
+                if current_version is None:
+                    raise KeyError(assessment["id"])
+                if current_version != expected_version:
+                    raise RdCollaborationVersionConflictError(current_version)
+                values = {
+                    "status": assessment.get("status"),
+                    "final_strategy_snapshot_id": assessment.get("final_strategy_snapshot_id"),
+                    "strategy_snapshot_id": assessment.get("strategy_snapshot_id"),
+                    "structured_assessment": json.dumps(
+                        assessment.get("structured_assessment", {})
+                    ),
+                    "risk_summary": json.dumps(assessment.get("risk_summary", {})),
+                    "dependency_summary": json.dumps(assessment.get("dependency_summary", [])),
+                    "effort_estimate": json.dumps(assessment.get("effort_estimate", {})),
+                    "llm_suggestion": json.dumps(assessment.get("llm_suggestion", {})),
+                    "deterministic_validation": json.dumps(
+                        assessment.get("deterministic_validation", {})
+                    ),
+                    "decided_by": assessment.get("decided_by"),
+                    "decided_at": assessment.get("decided_at"),
+                    "opinion_round": assessment.get("opinion_round", 1),
+                }
+                cursor.execute(
+                    """
+                    UPDATE requirement_assessments SET
+                      status = %s, final_strategy_snapshot_id = %s, strategy_snapshot_id = %s,
+                      structured_assessment = %s::jsonb, risk_summary = %s::jsonb,
+                      dependency_summary = %s::jsonb, effort_estimate = %s::jsonb,
+                      llm_suggestion = %s::jsonb, deterministic_validation = %s::jsonb,
+                      decided_by = %s, decided_at = %s::timestamptz, opinion_round = %s,
+                      version = version + 1, updated_at = now()
+                    WHERE id = %s
+                    RETURNING *
+                    """,
+                    (*values.values(), assessment["id"]),
+                )
+                saved = _cursor_row(cursor, cursor.fetchone())
+                if requirement is not None:
+                    self.upsert_requirements(cursor, {requirement["id"]: requirement})
+                if audit_event is not None and self._upsert_audit_events is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+                return saved or assessment
+
+    def update_requirement_assessment_opinion(self, opinion: dict[str, Any]) -> dict[str, Any]:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE requirement_assessment_opinions SET
+                      conclusion_json = %s::jsonb, evidence_refs = %s::jsonb,
+                      confidence = %s, risk_summary = %s::jsonb, cost_summary = %s::jsonb,
+                      actor_id = %s, updated_at = now()
+                    WHERE id = %s RETURNING *
+                    """,
+                    (
+                        json.dumps(opinion.get("conclusion_json", {})),
+                        json.dumps(opinion.get("evidence_refs", [])),
+                        opinion.get("confidence"),
+                        json.dumps(opinion.get("risk_summary", {})),
+                        json.dumps(opinion.get("cost_summary", {})),
+                        opinion.get("actor_id"),
+                        opinion["id"],
+                    ),
+                )
+                return _cursor_row(cursor, cursor.fetchone()) or opinion
+
+    def submit_assessment_answers(
+        self,
+        *,
+        assessment_id: str,
+        expected_version: int,
+        answers: dict[str, Any],
+        actor_id: str,
+    ) -> dict[str, Any]:
+        """Advance requirement and assessment revisions together, then reopen all opinions."""
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM requirement_assessments WHERE id = %s FOR UPDATE",
+                    (assessment_id,),
+                )
+                assessment = _cursor_row(cursor, cursor.fetchone())
+                if assessment is None:
+                    raise KeyError(assessment_id)
+                if int(assessment.get("version") or 1) != expected_version:
+                    raise RdCollaborationVersionConflictError(assessment.get("version"))
+                cursor.execute(
+                    """
+                    UPDATE requirements
+                    SET assessment_revision = assessment_revision + 1, updated_at = now()
+                    WHERE id = %s RETURNING assessment_revision
+                    """,
+                    (assessment["requirement_id"],),
+                )
+                requirement_row = cursor.fetchone()
+                if requirement_row is None:
+                    raise KeyError(assessment["requirement_id"])
+                next_revision = int(requirement_row[0])
+                next_round = int(assessment.get("opinion_round") or 1) + 1
+                cursor.execute(
+                    """
+                    SELECT * FROM requirement_assessment_opinions
+                    WHERE assessment_id = %s AND opinion_round = %s
+                    ORDER BY role_code, id
+                    """,
+                    (assessment_id, next_round - 1),
+                )
+                prior_opinions = [_cursor_row(cursor, row) for row in cursor.fetchall()]
+                for prior in prior_opinions:
+                    if prior is None:
+                        continue
+                    cursor.execute(
+                        """
+                        INSERT INTO requirement_assessment_opinions (
+                          id, assessment_id, role_code, ai_employee_id, executor_profile_id,
+                          input_revision, strategy_snapshot_id, opinion_round, conclusion_json,
+                          evidence_refs, risk_summary, cost_summary, candidate_human_user_ids
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '{}'::jsonb, '[]'::jsonb,
+                                  '{}'::jsonb, '{}'::jsonb, %s::jsonb)
+                        """,
+                        (
+                            f"{assessment_id}:opinion:{prior['role_code']}:{next_round}",
+                            assessment_id,
+                            prior["role_code"],
+                            prior.get("ai_employee_id"),
+                            prior.get("executor_profile_id"),
+                            next_revision,
+                            assessment["final_strategy_snapshot_id"],
+                            next_round,
+                            json.dumps(prior.get("candidate_human_user_ids") or []),
+                        ),
+                    )
+                structured = dict(assessment.get("structured_assessment") or {})
+                structured["answers"] = answers
+                structured["answers_actor_id"] = actor_id
+                cursor.execute(
+                    """
+                    UPDATE requirement_assessments SET
+                      requirement_revision = %s, opinion_round = %s, status = 'evaluating',
+                      structured_assessment = %s::jsonb, version = version + 1, updated_at = now()
+                    WHERE id = %s RETURNING *
+                    """,
+                    (next_revision, next_round, json.dumps(structured), assessment_id),
+                )
+                return _cursor_row(cursor, cursor.fetchone()) or assessment
+
+    def get_requirement_assessment_command(
+        self, *, assessment_id: str, operation: str, idempotency_key: str
+    ) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT * FROM requirement_assessment_commands
+                    WHERE assessment_id = %s AND operation = %s AND idempotency_key = %s
+                    """,
+                    (assessment_id, operation, idempotency_key),
+                )
+                return _cursor_row(cursor, cursor.fetchone())
+
+    def save_requirement_assessment_command(self, command: dict[str, Any]) -> dict[str, Any]:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO requirement_assessment_commands (
+                      id, assessment_id, operation, idempotency_key, request_hash,
+                      response_snapshot, created_by
+                    ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)
+                    ON CONFLICT (assessment_id, operation, idempotency_key) DO NOTHING
+                    RETURNING *
+                    """,
+                    (
+                        command["id"],
+                        command["assessment_id"],
+                        command["operation"],
+                        command["idempotency_key"],
+                        command["request_hash"],
+                        json.dumps(command["response_snapshot"], default=str),
+                        command["created_by"],
+                    ),
+                )
+                saved = _cursor_row(cursor, cursor.fetchone())
+                if saved is not None:
+                    return saved
+                cursor.execute(
+                    """
+                    SELECT * FROM requirement_assessment_commands
+                    WHERE assessment_id = %s AND operation = %s AND idempotency_key = %s
+                    """,
+                    (command["assessment_id"], command["operation"], command["idempotency_key"]),
+                )
+                return _cursor_row(cursor, cursor.fetchone()) or command
 
     def upsert_requirements(self, cursor, requirements: dict[str, dict[str, Any]]) -> None:
         for requirement in requirements.values():
@@ -316,7 +537,7 @@ class RequirementReadRepository:
                    description, priority,
                    status, created_by, approval_comment, rejection_reason, task_ids,
                    assignee, source,
-                   created_at, updated_at
+                   created_at, updated_at, assessment_revision
             FROM requirements
             ORDER BY created_at DESC, id
             """
@@ -334,6 +555,7 @@ class RequirementReadRepository:
 
 def _requirement_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
     return {
+        "assessment_revision": int(row[17] or 1),
         "brain_app_id": row[1] or DEFAULT_BRAIN_APP_ID,
         "content": row[6],
         "created_at": row[15].isoformat() if row[15] else None,
