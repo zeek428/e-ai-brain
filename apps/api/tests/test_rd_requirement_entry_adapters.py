@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from test_database_persistence import FakeSnapshotRepository
 
+from app.core.persistence_runtime import PostgresRuntimeStore
 from app.core.store import MemoryStore
 from app.main import app
-from app.services.assistant_action_drafts import execute_assistant_action_draft
+from app.services.assistant_action_drafts import (
+    confirm_assistant_action_draft_response,
+    create_assistant_action_draft_response,
+    execute_assistant_action_draft,
+)
 from app.services.code_inspection_detail_projection import code_inspection_governance_summary
 from app.services.code_inspections import create_tasks_for_findings
 
@@ -129,6 +137,70 @@ def test_assistant_rd_task_adapter_denies_cross_product_scope():
     assert failure.value.status_code == 404
     assert failure.value.detail["code"] == "NOT_FOUND"
     assert current_store.requirements == {}
+
+
+def test_assistant_rd_task_confirmation_uses_repository_product_under_postgres_runtime():
+    class ProductLookupRepository(FakeSnapshotRepository):
+        def list_products(self, *, active_only: bool = False) -> list[dict]:
+            del active_only
+            return []
+
+    repository = ProductLookupRepository()
+    repository.product_config_payload = {
+        "products": {
+            "product-repository-rd": {
+                "code": "REPOSITORY-RD",
+                "id": "product-repository-rd",
+                "name": "Repository R&D",
+                "status": "active",
+            },
+        },
+    }
+    current_store = PostgresRuntimeStore(repository)
+    user = {
+        "id": "user-rd-owner",
+        "roles": ["rd_owner"],
+        "scope_summary": [
+            {
+                "access_level": "write",
+                "scope_id": "product-repository-rd",
+                "scope_type": "product",
+            },
+        ],
+    }
+    draft = create_assistant_action_draft_response(
+        current_store=current_store,
+        payload=SimpleNamespace(
+            action="create_rd_task",
+            client_draft_id=None,
+            metadata_json={},
+            payload={
+                "content": "通过 PostgreSQL 运行时确认的研发需求。",
+                "product_id": "product-repository-rd",
+                "title": "Repository 产品研发需求",
+            },
+            risk_level="medium",
+            source_message_id=None,
+            title="Repository 产品研发需求",
+        ),
+        user=user,
+    )
+
+    assert draft["preview"]["validation"]["status"] == "passed"
+
+    confirmed = confirm_assistant_action_draft_response(
+        current_store=current_store,
+        draft_id=draft["id"],
+        user=user,
+    )
+
+    assert confirmed["draft"]["status"] == "confirmed"
+    assert confirmed["run"]["result_type"] == "requirement"
+    requirement_id = confirmed["run"]["result_id"]
+    assert repository.requirements_payload["requirements"][requirement_id]["product_id"] == (
+        "product-repository-rd"
+    )
+    assert "get_product:product-repository-rd" in repository.product_config_single_reads
 
 
 def test_v2_requirement_task_generation_endpoints_are_non_mutating_compatibility_errors():

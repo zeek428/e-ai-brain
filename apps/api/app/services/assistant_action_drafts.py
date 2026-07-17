@@ -73,6 +73,7 @@ from app.services.plugins import (
     sync_plugin_action_store,
     sync_plugin_connection_store,
 )
+from app.services.product_config_context import get_product_record
 from app.services.rd_requirement_entry_adapters import create_or_link_rd_requirement
 from app.services.scheduled_job_ai_capabilities import (
     create_ai_agent_response,
@@ -1633,23 +1634,21 @@ def _rd_task_draft_preview(
     )
     validation = preview["validation"]
     product_id = str(payload.get("product_id") or "").strip()
-    products = _read_memory_dict(current_store, "products")
-    if not product_id or product_id not in products:
+    product = get_product_record(current_store, product_id) if product_id else None
+    if product is None:
         _add_issue(
             validation,
             "product_id",
             "error",
             "Product is missing or inactive",
         )
-    else:
-        product = products[product_id]
-        if product.get("status") and product.get("status") != "active":
-            _add_issue(
-                validation,
-                "product_id",
-                "error",
-                "Product is inactive",
-            )
+    elif product.get("status") and product.get("status") != "active":
+        _add_issue(
+            validation,
+            "product_id",
+            "error",
+            "Product is inactive",
+        )
     _finalize_validation(validation)
     return preview
 
