@@ -6,6 +6,7 @@ from typing import Any
 from app.services.ai_executor_workspace_isolation import (
     mark_ai_executor_workspace_isolation_decision,
 )
+from app.services.rd_work_item_execution import approve_work_item_after_task_review
 from app.services.task_access import require_task_permission_or_roles
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_persistence_helpers import save_review_decision_records
@@ -39,6 +40,12 @@ def approve_review_response(
     review["updated_at"] = now
     task["status"] = "completed"
     task["updated_at"] = now
+    approve_work_item_after_task_review(
+        current_store,
+        ai_task_id=task["id"],
+        review_id=review_id,
+        actor_id=user["id"],
+    )
     mark_ai_executor_workspace_isolation_decision(
         write_store,
         action="merge",
@@ -108,6 +115,12 @@ def edit_approve_review_response(
         review=review,
         review_id=review_id,
         task=task,
+    )
+    approve_work_item_after_task_review(
+        current_store,
+        ai_task_id=task["id"],
+        review_id=review_id,
+        actor_id=user["id"],
     )
     mark_ai_executor_workspace_isolation_decision(
         write_store,

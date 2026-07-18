@@ -97,6 +97,10 @@ from app.services.quality_gates import (
     quality_gate_allows_auto_merge,
     start_pre_merge_quality_gate,
 )
+from app.services.rd_work_item_execution import (
+    is_rd_collaboration_task,
+    project_work_item_quality_gate_result,
+)
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_output_summary import readable_task_output_summary
 from app.services.task_persistence_helpers import (
@@ -532,6 +536,16 @@ def _sync_runner_completion_to_ai_task(
         )
         if quality_gate_run is None:
             return
+        work_item_projection = project_work_item_quality_gate_result(
+            current_store,
+            ai_task_id=ai_task["id"],
+            quality_gate_run=quality_gate_run,
+            runner_task_id=task["id"],
+        )
+        if work_item_projection and work_item_projection.get("late_result"):
+            return
+        if work_item_projection and work_item_projection.get("next_state") == "rework_required":
+            return
         output_json = (
             ai_task.get("output_json") if isinstance(ai_task.get("output_json"), dict) else {}
         )
@@ -684,7 +698,11 @@ def _sync_runner_completion_to_ai_task(
         if output_summary:
             output_json["summary"] = output_summary
         policy = _load_executor_policy_for_ai_task(current_store, ai_task)
-        if _code_change_review_mode(policy) == "auto_commit" or autonomy_enabled(policy):
+        if (
+            is_rd_collaboration_task(ai_task)
+            or _code_change_review_mode(policy) == "auto_commit"
+            or autonomy_enabled(policy)
+        ):
             quality_gate_run, verifier_task = start_pre_merge_quality_gate(
                 current_store,
                 ai_task=ai_task,

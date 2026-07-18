@@ -63,6 +63,7 @@ TRANSACTION_METHODS = {
     "save_rd_collaboration_event_record",
     "save_decision_request_record",
     "save_work_item_attempt_bundle",
+    "dispatch_work_item_execution_bundle",
     "cancel_work_item_bundle",
     "suspend_collaboration_run",
     "apply_decision_bundle",

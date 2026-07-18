@@ -426,6 +426,100 @@ def _active_attempt(store: Any, *, work_item_id: str, attempt_id: str) -> dict[s
     return attempt
 
 
+def _fence_linked_delivery_memory(
+    store: Any,
+    *,
+    attempt: dict[str, Any] | None,
+    item: dict[str, Any],
+    reason: str,
+) -> None:
+    """Cancel local delivery state and enqueue the asynchronous Runner stop.
+
+    The external process may already be executing, so the outbox is not a
+    substitute for local fencing: task/review/attempt state changes happen
+    first and make every late Runner callback audit-only.
+    """
+    now = _now().isoformat()
+    work_item_id = str(item["id"])
+    task_store = _records(store, "ai_tasks")
+    task_ids = [
+        task_id for task_id, task in task_store.items() if task.get("work_item_id") == work_item_id
+    ]
+    for task_id in task_ids:
+        task = task_store[task_id]
+        if task.get("status") not in {"completed", "failed", "cancelled"}:
+            task.update(
+                {
+                    "status": "cancelled",
+                    "current_step": "rd_work_item_cancelled",
+                    "error_code": "RD_WORK_ITEM_CANCELLED",
+                    "error_message": reason,
+                    "updated_at": now,
+                }
+            )
+    for review in _records(store, "human_reviews").values():
+        if review.get("ai_task_id") in task_ids and review.get("status") == "pending":
+            review.update(
+                {
+                    "status": "cancelled",
+                    "decision_reason": reason,
+                    "decided_at": now,
+                    "updated_at": now,
+                    "version": int(review.get("version") or 1) + 1,
+                }
+            )
+    runner_tasks = _records(store, "ai_executor_tasks")
+    runner_task_ids = [
+        runner_task_id
+        for runner_task_id, runner_task in runner_tasks.items()
+        if runner_task.get("ai_task_id") in task_ids
+    ]
+    for runner_task_id in runner_task_ids:
+        runner_task = runner_tasks[runner_task_id]
+        if runner_task.get("status") in {"succeeded", "failed", "cancelled", "timed_out"}:
+            continue
+        runner_task.update(
+            {
+                "status": (
+                    "cancelled" if runner_task.get("status") == "queued" else "cancel_requested"
+                ),
+                "error_code": "RD_WORK_ITEM_CANCELLED",
+                "error_message": reason,
+                "finished_at": now if runner_task.get("status") == "queued" else None,
+                "updated_at": now,
+            }
+        )
+    aggregate_ids = {work_item_id, *task_ids}
+    if attempt is not None:
+        aggregate_ids.add(str(attempt["id"]))
+    for outbox in _records(store, "execution_outbox_events").values():
+        if outbox.get("aggregate_id") in aggregate_ids and outbox.get("status") in {
+            "pending",
+            "failed",
+        }:
+            outbox.update({"status": "cancelled", "lease_owner": None, "lease_until": None})
+    outbox_id = f"outbox:work-item:{work_item_id}:cancel"
+    _records(store, "execution_outbox_events").setdefault(
+        outbox_id,
+        {
+            "id": outbox_id,
+            "aggregate_type": "rd_work_item",
+            "aggregate_id": work_item_id,
+            "event_type": "rd.work_item.cancel_runner",
+            "idempotency_key": f"work-item:{work_item_id}:cancel",
+            "payload_json": {
+                "attempt_id": attempt.get("id") if attempt else None,
+                "ai_task_ids": task_ids,
+                "reason": reason,
+                "runner_task_ids": runner_task_ids,
+            },
+            "status": "pending",
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+
+
 def complete_attempt(
     store: Any,
     *,
@@ -961,6 +1055,17 @@ def cancel_work_item(
             }
         )
         next_state = "cancelled"
+    _fence_linked_delivery_memory(store, attempt=attempt, item=item, reason=reason)
+    event = {
+        "id": _new_id(store, "rd_collaboration_event"),
+        "collaboration_run_id": item["collaboration_run_id"],
+        "event_type": "work_item.cancel_requested",
+        "event_key": f"cancel:{work_item_id}:{idempotency_key}",
+        "subject_type": "rd_work_item",
+        "subject_id": work_item_id,
+        "payload_json": {"reason": reason, "high_risk": high_risk},
+    }
+    _records(store, "rd_collaboration_events")[event["id"]] = event
     response = {
         "work_item": deepcopy(item),
         "attempt": deepcopy(attempt) if attempt else None,

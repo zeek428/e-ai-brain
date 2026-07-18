@@ -586,6 +586,11 @@ def persist_work_item_plan(
                 "id": persisted_id,
                 "collaboration_run_id": collaboration_run_id,
                 "plan_version": plan_version,
+                # A version-level run can contain several requirements.  Keep
+                # this link on the durable work item so the internal task
+                # bridge never has to guess which requirement supplies its
+                # scope, assessment and acceptance evidence.
+                "requirement_id": item.get("requirement_id"),
                 "work_item_type": item.get("work_item_type", "implementation"),
                 "title": item.get("title", item["id"]),
                 "objective": item.get("objective", item.get("title", item["id"])),

@@ -855,6 +855,7 @@ def test_protocol_has_explicit_task3_signatures() -> None:
         "restart_terminal_collaboration_run",
         "save_assessment_bundle",
         "save_work_item_attempt_bundle",
+        "dispatch_work_item_execution_bundle",
         "cancel_work_item_bundle",
         "suspend_collaboration_run",
         "answer_decision_request",
@@ -865,6 +866,7 @@ def test_protocol_has_explicit_task3_signatures() -> None:
     critical = {
         "create_scope_change_request",
         "apply_scope_change_bundle",
+        "dispatch_work_item_execution_bundle",
         "claim_ready_work_item",
         "execute_idempotent_rd_command",
         "apply_decision_bundle",

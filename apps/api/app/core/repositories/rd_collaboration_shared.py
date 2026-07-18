@@ -200,6 +200,7 @@ TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
         "id",
         "collaboration_run_id",
         "plan_version",
+        "requirement_id",
         "work_item_type",
         "title",
         "objective",
@@ -1507,6 +1508,28 @@ class RdCollaborationTransaction:
             attempt=attempt,
             expected_version=expected_version,
             event=event,
+        )
+
+    def dispatch_work_item_execution_bundle(
+        self,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        task: dict[str, Any],
+        runner_task: dict[str, Any],
+        attempt: dict[str, Any],
+        event: dict[str, Any],
+        audit_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._repository._dispatch_work_item_execution_bundle_cursor(
+            self.cursor,
+            work_item_id=work_item_id,
+            expected_version=expected_version,
+            task=task,
+            runner_task=runner_task,
+            attempt=attempt,
+            event=event,
+            audit_event=audit_event,
         )
 
     def save_rd_run_seat_record(self, record: dict[str, Any]) -> dict[str, Any]:

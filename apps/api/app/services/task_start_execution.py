@@ -10,6 +10,7 @@ from app.services.model_gateway import (
     ModelGatewayConfigError,
     call_model_gateway_for_task,
 )
+from app.services.operational_records import read_memory_dict
 from app.services.rd_requirement_entry_adapters import require_v2_task_work_item_entrypoint
 from app.services.rd_task_executor_policies import (
     queue_rd_task_executor_task,
@@ -21,8 +22,10 @@ from app.services.task_code_review_execution import (
     create_code_review_report,
 )
 from app.services.task_contexts import public_product_context
+from app.services.task_creation import _collaboration_record, create_ai_task_for_work_item
 from app.services.task_graph_runtime import start_graph_run
 from app.services.task_persistence_helpers import (
+    record_audit_event,
     save_task_start_records,
     save_task_state_records,
     uses_repository_context,
@@ -34,6 +37,333 @@ RETRYABLE_TASK_FAILURE_STEPS = {
     "executor_failed",
     "model_gateway_failed",
 }
+
+
+def _work_item_execution_records(
+    current_store: Any,
+    collection_name: str,
+) -> dict[str, dict[str, Any]]:
+    return read_memory_dict(current_store, collection_name)
+
+
+def _frozen_work_item_execution_policy(
+    *,
+    executor_profile: dict[str, Any],
+    strategy_snapshot: dict[str, Any],
+    task: dict[str, Any],
+    work_item: dict[str, Any],
+) -> dict[str, Any]:
+    """Translate an immutable strategy snapshot to the existing Runner contract.
+
+    The result deliberately has no current policy lookup.  Runner selection is
+    limited to the profile frozen on the run seat, so changing an active policy
+    or executor profile after dispatch cannot redirect the work item.
+    """
+    payload = strategy_snapshot.get("payload_json") or {}
+    autonomy = (
+        payload.get("autonomy_config") if isinstance(payload.get("autonomy_config"), dict) else {}
+    )
+    quality = (
+        payload.get("quality_gate_config")
+        if isinstance(payload.get("quality_gate_config"), dict)
+        else {}
+    )
+    git = payload.get("git_config") if isinstance(payload.get("git_config"), dict) else {}
+    workspace_root = str(git.get("workspace_root") or "").strip()
+    if not workspace_root:
+        raise api_error(
+            409,
+            "RD_EXECUTION_POLICY_REQUIRED",
+            "Frozen strategy snapshot is missing workspace_root",
+        )
+    executor_type = str(executor_profile.get("executor_type") or "").strip()
+    runner_id = str(executor_profile.get("runner_id") or "").strip()
+    if not executor_type or not runner_id:
+        raise api_error(409, "RD_EXECUTOR_UNAVAILABLE", "Frozen executor profile has no runner")
+    mode = str(autonomy.get("mode") or "single_pass").strip()
+    return {
+        "id": f"snapshot:{strategy_snapshot['id']}:work-item:{work_item['id']}",
+        "executor_type": executor_type,
+        "runner_id": runner_id,
+        "workspace_root": workspace_root,
+        "branch": git.get("branch"),
+        "repository_id": git.get("repository_id"),
+        "instruction_template": (
+            "Execute the frozen R&D collaboration work item {{task_id}}. "
+            "Respect the supplied input/output contracts and provide test evidence."
+        ),
+        "output_contract": dict(work_item.get("output_contract") or {}),
+        "timeout_seconds": int(autonomy.get("timeout_seconds") or 1800),
+        "autonomy_mode": "autonomous_loop" if mode == "autonomous_loop" else "single_pass",
+        "max_iterations": int(autonomy.get("max_iterations") or 1),
+        "max_duration_seconds": int(autonomy.get("max_duration_seconds") or 3600),
+        "token_budget": autonomy.get("token_budget"),
+        "cost_budget": autonomy.get("cost_budget"),
+        "quality_gate_policy_id": quality.get("quality_gate_policy_id"),
+        "code_change_review_mode": str(quality.get("code_change_review_mode") or "manual_review"),
+        "auto_merge_risk_threshold": str(quality.get("auto_merge_risk_threshold") or "low"),
+        "task_type": task["task_type"],
+    }
+
+
+def dispatch_ai_task_for_work_item(
+    current_store: Any,
+    *,
+    collaboration_run_id: str,
+    work_item_id: str,
+) -> dict[str, Any]:
+    """Dispatch a ready AI work item through its frozen employee/executor pair.
+
+    This internal command is the only bridge from a collaboration work item to
+    the legacy AI-task/Agent Loop/Runner pipeline.  It does not call the public
+    task start endpoint, and cannot silently fall back to a current executor
+    policy, model gateway, or deterministic execution mode.
+    """
+    created = create_ai_task_for_work_item(
+        current_store,
+        collaboration_run_id=collaboration_run_id,
+        work_item_id=work_item_id,
+    )
+    task = dict(created["task"])
+    run = _collaboration_record(current_store, "rd_collaboration_runs", collaboration_run_id)
+    work_item = _collaboration_record(current_store, "rd_work_items", work_item_id)
+    if (
+        run is None
+        or work_item is None
+        or work_item.get("collaboration_run_id") != collaboration_run_id
+    ):
+        raise api_error(404, "NOT_FOUND", "Collaboration work item was not found")
+    if work_item.get("status") not in {"ready", "rework_required"}:
+        raise api_error(409, "RD_WORK_ITEM_NOT_READY", "Work item is not ready for dispatch")
+    owner = _collaboration_record(
+        current_store,
+        "rd_run_seats",
+        str(work_item.get("owner_seat_id") or ""),
+    )
+    snapshot = _collaboration_record(
+        current_store,
+        "rd_task_executor_policy_snapshots",
+        str(run.get("strategy_snapshot_id") or ""),
+    )
+    profile = _collaboration_record(
+        current_store,
+        "rd_executor_profiles",
+        str((owner or {}).get("executor_profile_id") or ""),
+    )
+    if (
+        owner is None
+        or owner.get("subject_type") != "ai_employee"
+        or owner.get("status") != "active"
+        or not owner.get("ai_employee_id")
+        or profile is None
+        or profile.get("status") != "active"
+        or snapshot is None
+    ):
+        raise api_error(
+            409,
+            "RD_ROLE_ASSIGNMENT_REQUIRED",
+            "Work item no longer has its frozen AI employee/executor assignment",
+        )
+
+    repository = getattr(current_store, "repository", None)
+    list_attempts = getattr(repository, "list_rd_work_item_attempts", None)
+    persisted_attempts = list_attempts(work_item_id) if callable(list_attempts) else None
+    attempt_store = _work_item_execution_records(current_store, "rd_work_item_attempts")
+    attempts = (
+        [dict(attempt) for attempt in persisted_attempts if isinstance(attempt, dict)]
+        if isinstance(persisted_attempts, list)
+        else list(attempt_store.values())
+    )
+    active_attempt = next(
+        (
+            attempt
+            for attempt in attempts
+            if attempt.get("work_item_id") == work_item_id
+            and attempt.get("status") in {"claimed", "running"}
+        ),
+        None,
+    )
+    if active_attempt is not None:
+        list_runner_tasks = getattr(repository, "list_ai_executor_tasks", None)
+        persisted_runner_tasks = (
+            list_runner_tasks(ai_task_id=task["id"]) if callable(list_runner_tasks) else None
+        )
+        runner_tasks = (
+            [dict(candidate) for candidate in persisted_runner_tasks if isinstance(candidate, dict)]
+            if isinstance(persisted_runner_tasks, list)
+            else list(_work_item_execution_records(current_store, "ai_executor_tasks").values())
+        )
+        runner_task = next(
+            (
+                runner_task
+                for runner_task in runner_tasks
+                if runner_task.get("ai_task_id") == task["id"]
+                and (runner_task.get("input_payload") or {}).get("rd_work_item_attempt_id")
+                == active_attempt["id"]
+            ),
+            None,
+        )
+        if runner_task is not None:
+            return {
+                "task": task,
+                "attempt": dict(active_attempt),
+                "runner_task": dict(runner_task),
+                "idempotent_replay": True,
+            }
+        raise api_error(409, "RD_WORK_ITEM_NOT_READY", "Work item already has an active dispatch")
+
+    attempt_no = 1 + max(
+        (
+            int(candidate.get("attempt_no") or 0)
+            for candidate in attempts
+            if candidate.get("work_item_id") == work_item_id
+        ),
+        default=0,
+    )
+    now = datetime.now(UTC).isoformat()
+    attempt = {
+        "id": current_store.new_id("rd_work_item_attempt"),
+        "work_item_id": work_item_id,
+        "attempt_no": attempt_no,
+        "idempotency_key": f"ai-dispatch:{task['id']}:attempt:{attempt_no}",
+        "lease_id": current_store.new_id("rd_lease"),
+        # Runner events are also fenced by this immutable attempt id.  The
+        # opaque token is not exposed because an AI seat does not receive a
+        # public claim credential.
+        "lease_token_hash": None,
+        "status": "running",
+        "executor_profile_id": profile["id"],
+        "ai_employee_id": owner["ai_employee_id"],
+        "input_json": {"task_id": task["id"], "strategy_snapshot_id": snapshot["id"]},
+        "result_json": None,
+        "failure_json": None,
+        "rework_evidence": [],
+        "claimed_at": now,
+        "started_at": now,
+        "completed_at": None,
+    }
+    policy = _frozen_work_item_execution_policy(
+        executor_profile=profile,
+        strategy_snapshot=snapshot,
+        task=task,
+        work_item=work_item,
+    )
+    system_actor = {
+        "id": "system",
+        "roles": ["admin"],
+        "permissions": ["system.admin"],
+        "scope_summary": [{"scope_type": "global", "scope_id": "*", "access_level": "admin"}],
+    }
+    runner_task = queue_rd_task_executor_task(
+        current_store=current_store,
+        policy=policy,
+        task=task,
+        user=system_actor,
+    )
+    runner_task["input_payload"] = {
+        **dict(runner_task.get("input_payload") or {}),
+        "rd_collaboration_run_id": collaboration_run_id,
+        "rd_work_item_attempt_id": attempt["id"],
+        "rd_work_item_id": work_item_id,
+    }
+    runner_task["request_config"] = {
+        **dict(runner_task.get("request_config") or {}),
+        "rd_collaboration_run_id": collaboration_run_id,
+        "rd_work_item_attempt_id": attempt["id"],
+        "rd_work_item_id": work_item_id,
+    }
+    _work_item_execution_records(current_store, "ai_executor_tasks")[runner_task["id"]] = (
+        runner_task
+    )
+
+    executor_snapshot = {
+        "executor_policy_id": policy["id"],
+        "executor_profile_id": profile["id"],
+        "executor_type": profile.get("executor_type"),
+        "runner_id": profile.get("runner_id"),
+        "runner_task_id": runner_task["id"],
+        "status": runner_task["status"],
+        "workspace_root": runner_task.get("workspace_root"),
+    }
+    task.update(
+        {
+            "current_step": "waiting_ai_executor",
+            "input_json": {
+                **dict(task.get("input_json") or {}),
+                "executor": executor_snapshot,
+                "rd_collaboration": {
+                    **dict((task.get("input_json") or {}).get("rd_collaboration") or {}),
+                    "attempt_id": attempt["id"],
+                },
+            },
+            "status": "running",
+            "updated_at": now,
+        }
+    )
+    work_item.update(
+        {
+            "ai_task_id": task["id"],
+            "lease_owner": owner["id"],
+            "status": "running",
+            "version": int(work_item.get("version") or 1) + 1,
+        }
+    )
+    audit_event = record_audit_event(
+        current_store,
+        event_type="rd_work_item.ai_task_dispatched",
+        actor_id="system",
+        ai_task_id=task["id"],
+        subject_type="rd_work_item",
+        subject_id=work_item_id,
+        payload={
+            "attempt_id": attempt["id"],
+            "executor_profile_id": profile["id"],
+            "runner_id": runner_task["runner_id"],
+            "runner_task_id": runner_task["id"],
+        },
+    )
+    dispatch_bundle = getattr(repository, "dispatch_work_item_execution_bundle", None)
+    if callable(dispatch_bundle):
+        persisted = dispatch_bundle(
+            work_item_id=work_item_id,
+            expected_version=int(work_item["version"]) - 1,
+            task=task,
+            runner_task=runner_task,
+            attempt=attempt,
+            event={
+                "id": current_store.new_id("rd_collaboration_event"),
+                "collaboration_run_id": collaboration_run_id,
+                "event_type": "work_item.ai_task_dispatched",
+                "event_key": f"work-item-dispatch:{work_item_id}:{attempt['id']}",
+                "subject_type": "rd_work_item",
+                "subject_id": work_item_id,
+                "payload_json": {
+                    "attempt_id": attempt["id"],
+                    "ai_task_id": task["id"],
+                    "runner_task_id": runner_task["id"],
+                },
+                "occurred_at": now,
+            },
+            audit_event=audit_event,
+        )
+        return {
+            "task": dict(persisted["task"]),
+            "attempt": dict(persisted["attempt"]),
+            "runner_task": dict(persisted["runner_task"]),
+            "idempotent_replay": False,
+        }
+
+    # MemoryStore is a test-only command fixture; collaboration record reads
+    # return defensive copies, so explicitly write the canonical fixture row.
+    _work_item_execution_records(current_store, "rd_work_items")[work_item["id"]] = work_item
+    attempt_store[attempt["id"]] = attempt
+    _work_item_execution_records(current_store, "ai_tasks")[task["id"]] = task
+    return {
+        "task": task,
+        "attempt": attempt,
+        "runner_task": runner_task,
+        "idempotent_replay": False,
+    }
 
 
 def deterministic_task_output(task: dict[str, Any]) -> dict[str, Any]:
@@ -82,8 +412,7 @@ def start_ai_task_response(
         raise api_error(404, "NOT_FOUND", "AI task not found")
     require_v2_task_work_item_entrypoint(task, entrypoint="ai_tasks.start")
     is_retry_start = (
-        task["status"] == "failed"
-        and task.get("current_step") in RETRYABLE_TASK_FAILURE_STEPS
+        task["status"] == "failed" and task.get("current_step") in RETRYABLE_TASK_FAILURE_STEPS
     )
     require_task_permission_or_roles(
         user,

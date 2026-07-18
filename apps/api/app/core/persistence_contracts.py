@@ -285,6 +285,17 @@ class RdCollaborationRepository(Protocol):
         expected_version: int | None = None,
         event: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
+    def dispatch_work_item_execution_bundle(
+        self,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        task: dict[str, Any],
+        runner_task: dict[str, Any],
+        attempt: dict[str, Any],
+        event: dict[str, Any],
+        audit_event: dict[str, Any],
+    ) -> dict[str, Any]: ...
     def cancel_work_item_bundle(
         self,
         *,

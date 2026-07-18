@@ -98,6 +98,22 @@ def test_scope_provenance_migration_persists_replacement_selection_for_restart()
     assert "unique (product_version_id, assessment_id)" in normalized
 
 
+def test_work_item_execution_migration_is_bootstrapped_with_rework_and_requirement_scope():
+    persistence_source = (
+        Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"
+    ).read_text(encoding="utf-8")
+    assert "114_rd_work_item_execution_states.sql" in persistence_source
+
+    sql = (MIGRATIONS_DIR / "114_rd_work_item_execution_states.sql").read_text(encoding="utf-8")
+    normalized = _normalized(sql)
+    assert "'rework_required'" in normalized
+    assert (
+        "add column if not exists requirement_id text references requirements(id)"
+        " on delete restrict" in normalized
+    )
+    assert "idx_rd_work_items_run_requirement" in normalized
+
+
 def test_migration_creates_the_complete_unified_collaboration_schema(migration_sql: str):
     for table_name in (
         "rd_role_definitions",

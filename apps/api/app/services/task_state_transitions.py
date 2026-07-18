@@ -18,6 +18,37 @@ from app.services.task_review_artifacts import ensure_review_decidable
 from app.services.task_workflow_context import task_workflow_write_store
 
 
+def cancel_ai_task_for_work_item(
+    current_store: Any,
+    *,
+    collaboration_run_id: str,
+    work_item_id: str,
+    reason: str,
+    actor: dict[str, Any],
+    version: int,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """Internal cancellation path for collaboration-owned AI delivery.
+
+    The public AI-task cancel endpoint remains intentionally blocked for v2
+    tasks.  Both work-item HTTP cancellation and this internal service route
+    through the scheduler's single cancellation aggregate instead.
+    """
+    from app.services.rd_work_item_scheduler import cancel_work_item
+
+    item = getattr(current_store, "rd_work_items", {}).get(work_item_id)
+    if item is not None and item.get("collaboration_run_id") != collaboration_run_id:
+        raise api_error(404, "NOT_FOUND", "Collaboration work item was not found")
+    return cancel_work_item(
+        current_store,
+        work_item_id=work_item_id,
+        reason=reason,
+        actor=actor,
+        version=version,
+        idempotency_key=idempotency_key,
+    )
+
+
 def reject_review_response(
     *,
     current_store: Any,

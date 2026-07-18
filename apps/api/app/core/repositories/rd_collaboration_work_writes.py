@@ -38,6 +38,103 @@ class RdCollaborationWorkWriteMixin:
             lambda cursor: self._save_rd_work_item_record_cursor(cursor, record)
         )
 
+    def dispatch_work_item_execution_bundle(
+        self,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        task: dict[str, Any],
+        runner_task: dict[str, Any],
+        attempt: dict[str, Any],
+        event: dict[str, Any],
+        audit_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Bind task, Runner and attempt to one ready work item atomically.
+
+        Runner creation is intentionally asynchronous, but once a Runner task
+        exists the durable task provenance, lease and collaboration event must
+        move together.  This prevents a request-local MemoryStore update from
+        becoming the apparent source of truth in PostgreSQL mode.
+        """
+        return self._in_transaction(
+            lambda cursor: self._dispatch_work_item_execution_bundle_cursor(
+                cursor,
+                work_item_id=work_item_id,
+                expected_version=expected_version,
+                task=task,
+                runner_task=runner_task,
+                attempt=attempt,
+                event=event,
+                audit_event=audit_event,
+            )
+        )
+
+    def _dispatch_work_item_execution_bundle_cursor(
+        self,
+        cursor: Any,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        task: dict[str, Any],
+        runner_task: dict[str, Any],
+        attempt: dict[str, Any],
+        event: dict[str, Any],
+        audit_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        cursor.execute("SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE", (work_item_id,))
+        work_item = _row_dict(cursor, cursor.fetchone())
+        if work_item is None or work_item.get("status") not in {"ready", "rework_required"}:
+            raise RdCollaborationRepositoryError(
+                "RD_WORK_ITEM_STATE_INVALID", "work item is not ready for dispatch"
+            )
+        if int(work_item["version"]) != int(expected_version):
+            raise RdCollaborationVersionConflictError(int(work_item["version"]))
+        if attempt.get("work_item_id") != work_item_id:
+            raise self._idempotency_conflict(
+                "attempt belongs to a different work item",
+                work_item_id=work_item_id,
+                attempt_id=attempt.get("id"),
+            )
+        task_repository = getattr(self, "_task_read_repository", None)
+        upsert_tasks = getattr(task_repository, "upsert_ai_tasks", None)
+        upsert_runner_tasks = getattr(self, "upsert_ai_executor_tasks", None)
+        if not callable(upsert_tasks) or not callable(upsert_runner_tasks):
+            raise RuntimeError("task execution persistence callbacks are not configured")
+        upsert_tasks(cursor, {task["id"]: task})
+        upsert_runner_tasks(cursor, {runner_task["id"]: runner_task})
+        persisted_attempt = self._insert_attempt(cursor, attempt)
+        cursor.execute(
+            """
+            UPDATE rd_work_items
+            SET status = 'running', ai_task_id = %s, lease_owner = %s,
+                lease_expires_at = NULL, version = version + 1, updated_at = now()
+            WHERE id = %s AND version = %s AND status = ANY(%s)
+            RETURNING *
+            """,
+            (
+                task["id"],
+                work_item.get("owner_seat_id"),
+                work_item_id,
+                expected_version,
+                ["ready", "rework_required"],
+            ),
+        )
+        persisted_work_item = _row_dict(cursor, cursor.fetchone())
+        if persisted_work_item is None:
+            raise RuntimeError("work item dispatch bundle did not update work item")
+        persisted_event = self._insert_event_cursor(cursor, event)
+        callback = self._upsert_audit_events
+        if callback is None:
+            raise RuntimeError("audit persistence callback is not configured")
+        callback(cursor, [audit_event])
+        return {
+            "work_item": persisted_work_item,
+            "attempt": persisted_attempt,
+            "event": persisted_event,
+            "task": task,
+            "runner_task": runner_task,
+        }
+
     def _save_rd_work_item_record_cursor(
         self,
         cursor: Any,
