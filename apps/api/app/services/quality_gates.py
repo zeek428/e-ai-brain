@@ -131,6 +131,33 @@ def resolve_pre_merge_quality_gate_policy(
     ai_task: dict[str, Any],
     executor_policy: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    input_json = ai_task.get("input_json") if isinstance(ai_task.get("input_json"), dict) else {}
+    collaboration = (
+        input_json.get("rd_collaboration")
+        if isinstance(input_json.get("rd_collaboration"), dict)
+        else {}
+    )
+    frozen_execution = (
+        collaboration.get("execution_policy_snapshot")
+        if isinstance(collaboration.get("execution_policy_snapshot"), dict)
+        else None
+    )
+    if frozen_execution is not None:
+        frozen_gate_policy = frozen_execution.get("quality_gate_policy_snapshot")
+        if isinstance(frozen_gate_policy, dict):
+            return deepcopy(frozen_gate_policy)
+        frozen_gate_config = frozen_execution.get("quality_gate_config")
+        if isinstance(frozen_gate_config, dict):
+            # A strategy may reference a platform gate by id without carrying
+            # a custom catalog.  Freeze the effective default catalog under
+            # that durable identity instead of consulting a mutable policy.
+            return {
+                **deepcopy(DEFAULT_PRE_MERGE_POLICY),
+                **deepcopy(frozen_gate_config),
+                "id": frozen_gate_config.get("quality_gate_policy_id")
+                or f"rd-policy-snapshot:{frozen_execution.get('source_snapshot_id')}",
+                "version": frozen_execution.get("source_policy_version") or 1,
+            }
     explicit_id = str((executor_policy or {}).get("quality_gate_policy_id") or "").strip()
     candidates = _policy_candidates(current_store)
     if explicit_id:

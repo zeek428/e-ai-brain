@@ -1367,6 +1367,7 @@ def queue_rd_task_executor_task(
     policy: dict[str, Any],
     task: dict[str, Any],
     user: dict[str, Any],
+    persist: bool = True,
 ) -> dict[str, Any]:
     workspace_root = _ensure_non_blank(policy.get("workspace_root"), "workspace_root")
     knowledge_references = _task_knowledge_references(
@@ -1474,6 +1475,7 @@ def queue_rd_task_executor_task(
         scheduled_job_run_id=None,
         timeout_seconds=int(policy.get("timeout_seconds") or 1800),
         workspace_root=workspace_root,
+        persist=persist,
     )
     if agent_loop_run is not None and agent_loop_iteration is not None:
         attach_agent_loop_coding_task(

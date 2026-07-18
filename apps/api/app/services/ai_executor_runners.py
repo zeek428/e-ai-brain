@@ -98,6 +98,7 @@ from app.services.quality_gates import (
     start_pre_merge_quality_gate,
 )
 from app.services.rd_work_item_execution import (
+    fence_stale_coding_runner_completion,
     is_rd_collaboration_task,
     project_work_item_quality_gate_result,
 )
@@ -254,11 +255,27 @@ def _load_executor_policy_for_ai_task(
     current_store: Any,
     ai_task: dict[str, Any],
 ) -> dict[str, Any] | None:
+    input_json = ai_task.get("input_json") if isinstance(ai_task.get("input_json"), dict) else {}
+    collaboration = (
+        input_json.get("rd_collaboration")
+        if isinstance(input_json.get("rd_collaboration"), dict)
+        else {}
+    )
+    frozen_execution = (
+        collaboration.get("execution_policy_snapshot")
+        if isinstance(collaboration.get("execution_policy_snapshot"), dict)
+        else {}
+    )
+    frozen_policy = frozen_execution.get("resolved_executor_policy")
+    if isinstance(frozen_policy, dict):
+        # Collaboration work is intentionally isolated from the mutable
+        # executor-policy catalog after dispatch.  Completion and quality-gate
+        # behavior must use only this immutable, task-bound projection.
+        return dict(frozen_policy)
     policy_id = _executor_policy_id_from_task(ai_task)
     if not policy_id:
         return None
     policy = _read_record(current_store, "rd_task_executor_policies", policy_id)
-    input_json = ai_task.get("input_json") if isinstance(ai_task.get("input_json"), dict) else {}
     executor_snapshot = (
         input_json.get("executor") if isinstance(input_json.get("executor"), dict) else {}
     )
@@ -526,6 +543,12 @@ def _sync_runner_completion_to_ai_task(
 ) -> None:
     ai_task = _load_ai_task(current_store, task.get("ai_task_id"))
     if ai_task is None:
+        return
+    if fence_stale_coding_runner_completion(
+        current_store,
+        ai_task=ai_task,
+        runner_task=task,
+    ):
         return
     if task.get("task_kind") == "quality_gate":
         if task.get("status") in {"queued", "claimed", "running"}:
@@ -2012,6 +2035,23 @@ def complete_ai_executor_task_response(
         "status": status,
         "updated_at": now,
     }
+    # This guard belongs before the completion write and every downstream
+    # projection.  A stale v2 coding result may be retained as Runner evidence,
+    # but it must not create a verifier, quality gate, Review or AI-task state
+    # transition after its attempt/work-item lease was revoked.
+    linked_ai_task = _load_ai_task(current_store, task.get("ai_task_id"))
+    if linked_ai_task is not None and fence_stale_coding_runner_completion(
+        current_store,
+        ai_task=linked_ai_task,
+        runner_task=task,
+    ):
+        _persist_record(
+            current_store,
+            "save_ai_executor_task_record",
+            task,
+            audit_event=None,
+        )
+        return {"task": _task_public(task)}
     assessment_execution_id = str(
         task.get("input_payload", {}).get("assessment_execution_id") or ""
     )

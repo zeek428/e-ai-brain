@@ -284,6 +284,9 @@ class RdCollaborationRepository(Protocol):
         attempt: dict[str, Any],
         expected_version: int | None = None,
         event: dict[str, Any] | None = None,
+        task: dict[str, Any] | None = None,
+        audit_events: list[dict[str, Any]] | None = None,
+        failure_injection: Callable[[str], None] | None = None,
     ) -> dict[str, Any]: ...
     def dispatch_work_item_execution_bundle(
         self,
@@ -291,8 +294,21 @@ class RdCollaborationRepository(Protocol):
         work_item_id: str,
         expected_version: int,
         task: dict[str, Any],
+        requirement: dict[str, Any] | None,
         runner_task: dict[str, Any],
         attempt: dict[str, Any],
+        event: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+    ) -> dict[str, Any]: ...
+    def fence_work_item_runner_result(
+        self,
+        *,
+        collaboration_run_id: str,
+        work_item_id: str,
+        attempt_id: str,
+        ai_task_id: str,
+        runner_task_id: str,
+        runner_status: str,
         event: dict[str, Any],
         audit_event: dict[str, Any],
     ) -> dict[str, Any]: ...

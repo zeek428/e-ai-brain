@@ -100,6 +100,7 @@ def create_ai_task_for_work_item(
     *,
     collaboration_run_id: str,
     work_item_id: str,
+    persist: bool = True,
 ) -> dict[str, Any]:
     """Create the one AI task owned by a ready AI collaboration work item.
 
@@ -258,13 +259,19 @@ def create_ai_task_for_work_item(
             "strategy_snapshot_id": strategy_snapshot["id"],
         },
     )
-    save_requirement_and_ai_task_records(
-        write_store,
-        requirement=requirement,
-        task=task,
-        audit_event=audit_event,
-    )
-    return {"task": task, "idempotent_replay": False}
+    if persist:
+        save_requirement_and_ai_task_records(
+            write_store,
+            requirement=requirement,
+            task=task,
+            audit_event=audit_event,
+        )
+    return {
+        "task": task,
+        "requirement": requirement,
+        "creation_audit_event": audit_event,
+        "idempotent_replay": False,
+    }
 
 
 def create_ai_task_response(

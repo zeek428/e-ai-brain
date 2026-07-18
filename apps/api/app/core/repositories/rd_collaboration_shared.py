@@ -1499,6 +1499,9 @@ class RdCollaborationTransaction:
         attempt: dict[str, Any],
         expected_version: int | None = None,
         event: dict[str, Any] | None = None,
+        task: dict[str, Any] | None = None,
+        audit_events: list[dict[str, Any]] | None = None,
+        failure_injection: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         return self._repository._save_work_item_attempt_bundle_cursor(
             self.cursor,
@@ -1508,6 +1511,9 @@ class RdCollaborationTransaction:
             attempt=attempt,
             expected_version=expected_version,
             event=event,
+            task=task,
+            audit_events=audit_events or [],
+            failure_injection=failure_injection,
         )
 
     def dispatch_work_item_execution_bundle(
@@ -1516,24 +1522,29 @@ class RdCollaborationTransaction:
         work_item_id: str,
         expected_version: int,
         task: dict[str, Any],
+        requirement: dict[str, Any] | None,
         runner_task: dict[str, Any],
         attempt: dict[str, Any],
         event: dict[str, Any],
-        audit_event: dict[str, Any],
+        audit_events: list[dict[str, Any]],
     ) -> dict[str, Any]:
         return self._repository._dispatch_work_item_execution_bundle_cursor(
             self.cursor,
             work_item_id=work_item_id,
             expected_version=expected_version,
             task=task,
+            requirement=requirement,
             runner_task=runner_task,
             attempt=attempt,
             event=event,
-            audit_event=audit_event,
+            audit_events=audit_events,
         )
 
     def save_rd_run_seat_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._repository._save_simple_cursor(self.cursor, "rd_run_seats", record)
+
+    def fence_work_item_runner_result(self, **kwargs: Any) -> dict[str, Any]:
+        return self._repository._fence_work_item_runner_result_cursor(self.cursor, **kwargs)
 
     def save_rd_role_session_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._repository._save_simple_cursor(self.cursor, "rd_role_sessions", record)

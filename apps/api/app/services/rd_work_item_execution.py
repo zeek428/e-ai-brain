@@ -38,6 +38,7 @@ def _record(
     """
     repository = getattr(current_store, "repository", None)
     method_name = {
+        "rd_collaboration_runs": "get_rd_collaboration_run",
         "rd_work_items": "get_rd_work_item",
         "rd_work_item_attempts": "get_rd_work_item_attempt",
         "rd_run_seats": "get_rd_run_seat",
@@ -195,6 +196,140 @@ def _existing_event(
     )
 
 
+def fence_stale_coding_runner_completion(
+    current_store: Any,
+    *,
+    ai_task: dict[str, Any],
+    runner_task: dict[str, Any],
+) -> bool:
+    """Return ``True`` only after a v2 completion has been durably fenced.
+
+    This is deliberately the first v2 coding-completion operation.  It checks
+    the immutable attempt provenance before creating a quality gate, Review or
+    task-state projection, so a completion racing cancellation/suspension can
+    never revive the collaboration aggregate.
+    """
+    if not is_rd_collaboration_task(ai_task):
+        return False
+    task_kind = str(runner_task.get("task_kind") or "coding")
+    if task_kind != "coding":
+        return False
+    runner_status = str(runner_task.get("status") or "")
+    if runner_status in {"queued", "claimed", "running"}:
+        return False
+
+    input_payload = (
+        runner_task.get("input_payload")
+        if isinstance(runner_task.get("input_payload"), dict)
+        else {}
+    )
+    frozen = (
+        (ai_task.get("input_json") or {}).get("rd_collaboration")
+        if isinstance(ai_task.get("input_json"), dict)
+        else {}
+    )
+    expected_attempt_id = str(input_payload.get("rd_work_item_attempt_id") or "")
+    current_attempt_id = str((frozen or {}).get("attempt_id") or "")
+    attempt_id = expected_attempt_id or current_attempt_id or "missing"
+    collaboration_run_id = str(ai_task.get("collaboration_run_id") or "")
+    work_item_id = str(ai_task.get("work_item_id") or "")
+    repository = getattr(current_store, "repository", None)
+    persist_fence = getattr(repository, "fence_work_item_runner_result", None)
+    if callable(persist_fence):
+        event_key = (
+            f"work-item-runner-fenced:{work_item_id}:{attempt_id}:{runner_task.get('id')}"
+        )
+        event = {
+            "id": current_store.new_id("rd_collaboration_event"),
+            "collaboration_run_id": collaboration_run_id,
+            "event_type": "work_item.runner_result_fenced",
+            "event_key": event_key,
+            "subject_type": "rd_work_item",
+            "subject_id": work_item_id,
+            "payload_json": {},
+            "occurred_at": datetime.now(UTC).isoformat(),
+        }
+        audit_event = record_audit_event(
+            current_store,
+            event_type="rd_work_item.runner_result_fenced",
+            actor_id="system",
+            ai_task_id=ai_task["id"],
+            subject_type="rd_work_item",
+            subject_id=work_item_id,
+            payload={},
+        )
+        persisted = persist_fence(
+            collaboration_run_id=collaboration_run_id,
+            work_item_id=work_item_id,
+            attempt_id=attempt_id,
+            ai_task_id=ai_task["id"],
+            runner_task_id=str(runner_task.get("id") or ""),
+            runner_status=runner_status,
+            event=event,
+            audit_event=audit_event,
+        )
+        return bool(persisted.get("fenced"))
+
+    item = _record(current_store, "rd_work_items", str(ai_task.get("work_item_id") or ""))
+    attempt = _attempt_for_runner(
+        current_store,
+        task=ai_task,
+        runner_task_id=str(runner_task.get("id") or ""),
+    )
+    run = _record(
+        current_store,
+        "rd_collaboration_runs",
+        str(ai_task.get("collaboration_run_id") or ""),
+    )
+    reasons: list[str] = []
+    if item is None or attempt is None or run is None:
+        reasons.append("missing_frozen_provenance")
+    if attempt is not None and attempt.get("id") not in {expected_attempt_id, current_attempt_id}:
+        reasons.append("attempt_provenance_mismatch")
+    if attempt is not None and attempt.get("status") != "running":
+        reasons.append("attempt_not_currently_running")
+    if item is not None and item.get("status") != "running":
+        reasons.append("work_item_not_currently_running")
+    if run is not None and run.get("status") not in {"running", "integrating", "verifying"}:
+        reasons.append("collaboration_run_not_dispatchable")
+    if not reasons:
+        return False
+
+    attempt_id = str((attempt or {}).get("id") or expected_attempt_id or "missing")
+    event_key = f"work-item-runner-fenced:{work_item_id}:{attempt_id}:{runner_task.get('id')}"
+    existing = _existing_event(
+        current_store,
+        collaboration_run_id=collaboration_run_id,
+        event_key=event_key,
+    )
+    if existing is not None:
+        return True
+    event = _save_event(
+        current_store,
+        event_key=event_key,
+        event_type="work_item.runner_result_fenced",
+        task=ai_task,
+        payload={
+            "attempt_id": attempt_id,
+            "reason": reasons[0],
+            "reasons": reasons,
+            "runner_task_id": runner_task.get("id"),
+            "runner_status": runner_status,
+        },
+    )
+    audit_event = record_audit_event(
+        current_store,
+        event_type="rd_work_item.runner_result_fenced",
+        actor_id="system",
+        ai_task_id=ai_task["id"],
+        subject_type="rd_work_item",
+        subject_id=work_item_id,
+        payload={"event_id": event["id"], "attempt_id": attempt_id, "reasons": reasons},
+    )
+    save_audit_event(current_store, audit_event)
+    return True
+
+
 def project_work_item_quality_gate_result(
     current_store: Any,
     *,
@@ -302,26 +437,37 @@ def project_work_item_quality_gate_result(
         "quality_gate_run_id": gate_id,
         "quality_gate_status": gate_status,
     }
+    event_record = {
+        "id": current_store.new_id("rd_collaboration_event"),
+        "collaboration_run_id": task["collaboration_run_id"],
+        "event_type": event_type,
+        "event_key": event_key,
+        "subject_type": "rd_work_item",
+        "subject_id": item["id"],
+        "payload_json": deepcopy(event_payload),
+        "occurred_at": datetime.now(UTC).isoformat(),
+    }
+    audit_event = record_audit_event(
+        current_store,
+        event_type=f"rd_work_item.{event_type.rsplit('.', 1)[-1]}",
+        actor_id="system",
+        ai_task_id=task["id"],
+        subject_type="rd_work_item",
+        subject_id=item["id"],
+        payload={"attempt_id": attempt["id"], "event_id": event_record["id"], "gate_id": gate_id},
+    )
     repository = getattr(current_store, "repository", None)
     save_bundle = getattr(repository, "save_work_item_attempt_bundle", None)
     if callable(save_bundle):
-        event = {
-            "id": current_store.new_id("rd_collaboration_event"),
-            "collaboration_run_id": task["collaboration_run_id"],
-            "event_type": event_type,
-            "event_key": event_key,
-            "subject_type": "rd_work_item",
-            "subject_id": item["id"],
-            "payload_json": deepcopy(event_payload),
-            "occurred_at": datetime.now(UTC).isoformat(),
-        }
         persisted = save_bundle(
             work_item_id=item["id"],
             expected_statuses=["running"],
             next_status=next_status,
             attempt=attempt,
             expected_version=int(item["version"]) - 1,
-            event=event,
+            event=event_record,
+            task=task,
+            audit_events=[audit_event],
         )
         item = dict(persisted["work_item"])
         attempt = dict(persisted["attempt"])
@@ -339,19 +485,16 @@ def project_work_item_quality_gate_result(
         )
         _records(current_store, "rd_work_items")[item["id"]] = item
         _records(current_store, "rd_work_item_attempts")[attempt["id"]] = attempt
-    audit_event = record_audit_event(
-        current_store,
-        event_type=f"rd_work_item.{event_type.rsplit('.', 1)[-1]}",
-        actor_id="system",
-        ai_task_id=task["id"],
-        subject_type="rd_work_item",
-        subject_id=item["id"],
-        payload={"attempt_id": attempt["id"], "event_id": event["id"], "gate_id": gate_id},
-    )
-    if next_status == "rework_required":
-        save_task_state_records(current_store, task=task, audit_events=[audit_event])
-    else:
-        save_audit_event(current_store, audit_event)
+        audit_event["payload"]["event_id"] = event["id"]
+    if not callable(save_bundle):
+        if next_status == "rework_required":
+            save_task_state_records(current_store, task=task, audit_events=[audit_event])
+        else:
+            save_audit_event(current_store, audit_event)
+    elif next_status != "rework_required":
+        # The transaction already persisted the audit with the work-item
+        # transition; retaining this branch makes the no-op intent explicit.
+        pass
     return {
         "attempt": deepcopy(attempt),
         "event": event,
@@ -443,28 +586,43 @@ def approve_work_item_after_task_review(
         "review_id": review_id,
         "reviewer_seat_id": reviewer["id"],
     }
+    event_record = {
+        "id": current_store.new_id("rd_collaboration_event"),
+        "collaboration_run_id": task["collaboration_run_id"],
+        "event_type": "work_item.review_approved",
+        "event_key": event_key,
+        "subject_type": "rd_work_item",
+        "subject_id": item["id"],
+        "payload_json": deepcopy(event_payload),
+        "occurred_at": datetime.now(UTC).isoformat(),
+    }
+    audit_event = record_audit_event(
+        current_store,
+        event_type="rd_work_item.review_approved",
+        actor_id=actor_id,
+        ai_task_id=task["id"],
+        subject_type="rd_work_item",
+        subject_id=item["id"],
+        payload={
+            "attempt_id": attempt["id"],
+            "event_id": event_record["id"],
+            "review_id": review_id,
+        },
+    )
     if callable(save_bundle):
-        event = {
-            "id": current_store.new_id("rd_collaboration_event"),
-            "collaboration_run_id": task["collaboration_run_id"],
-            "event_type": "work_item.review_approved",
-            "event_key": event_key,
-            "subject_type": "rd_work_item",
-            "subject_id": item["id"],
-            "payload_json": deepcopy(event_payload),
-            "occurred_at": datetime.now(UTC).isoformat(),
-        }
         persisted = save_bundle(
             work_item_id=item["id"],
             expected_statuses=["reviewing"],
             next_status="completed",
             attempt=attempt,
             expected_version=int(item["version"]),
-            event=event,
+            event=event_record,
+            task=task,
+            audit_events=[audit_event],
         )
         item = dict(persisted["work_item"])
         attempt = dict(persisted["attempt"])
-        event = dict(persisted["event"] or event)
+        event = dict(persisted["event"] or event_record)
         _records(current_store, "rd_work_items")[item["id"]] = item
         _records(current_store, "rd_work_item_attempts")[attempt["id"]] = attempt
         _records(current_store, "rd_collaboration_events")[event["id"]] = event
@@ -487,15 +645,8 @@ def approve_work_item_after_task_review(
         )
         _records(current_store, "rd_work_items")[item["id"]] = item
         _records(current_store, "rd_work_item_attempts")[attempt["id"]] = attempt
-    record_audit_event(
-        current_store,
-        event_type="rd_work_item.review_approved",
-        actor_id=actor_id,
-        ai_task_id=task["id"],
-        subject_type="rd_work_item",
-        subject_id=item["id"],
-        payload={"attempt_id": attempt["id"], "event_id": event["id"], "review_id": review_id},
-    )
+        audit_event["payload"]["event_id"] = event["id"]
+        save_audit_event(current_store, audit_event)
     return {
         "work_item": deepcopy(item),
         "attempt": deepcopy(attempt),

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from app.core.store import MemoryStore
-from app.services.ai_executor_runners import _sync_runner_completion_to_ai_task
+from app.services.ai_executor_runners import (
+    _load_executor_policy_for_ai_task,
+    _sync_runner_completion_to_ai_task,
+)
+from app.services.quality_gates import resolve_pre_merge_quality_gate_policy
 from app.services.rd_collaboration_decisions import apply_decision
 from app.services.rd_work_item_execution import (
     approve_work_item_after_task_review,
@@ -156,6 +160,77 @@ def test_internal_dispatch_uses_only_frozen_executor_and_creates_attempt() -> No
     assert store.rd_work_items["work-1"]["status"] == "running"
 
 
+def test_internal_dispatch_persists_complete_immutable_execution_gate_snapshot() -> None:
+    store = _ai_work_item_store()
+    store.ai_executor_runners["runner-frozen"] = {
+        "id": "runner-frozen",
+        "status": "active",
+        "executor_types": ["codex"],
+        "workspace_roots": ["/tmp/work-item"],
+    }
+    store.rd_task_executor_policy_snapshots["snapshot-1"]["payload_json"].update(
+        {
+            "quality_gate_config": {
+                "code_change_review_mode": "manual_review",
+                "quality_gate_policy_id": "quality-gate-frozen",
+                "required_checks": ["unit_test", "code_review"],
+            },
+            "git_config": {
+                "workspace_root": "/tmp/work-item",
+                "branch": "release/frozen",
+                "repository_id": "repo-frozen",
+            },
+        }
+    )
+    store.quality_gate_policies["quality-gate-frozen"] = {
+        "id": "quality-gate-frozen",
+        "phase": "pre_merge",
+        "status": "active",
+        "required_checks": [{"required": True, "type": "unit_test"}],
+        "version": 8,
+    }
+
+    dispatched = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+
+    frozen = dispatched["task"]["input_json"]["rd_collaboration"]["execution_policy_snapshot"]
+    assert frozen["source_snapshot_id"] == "snapshot-1"
+    assert frozen["source_policy_id"] == "policy-1"
+    assert frozen["source_policy_version"] == 3
+    assert frozen["source_content_hash"] == "sha256:frozen-policy"
+    assert frozen["quality_gate_config"] == {
+        "code_change_review_mode": "manual_review",
+        "quality_gate_policy_id": "quality-gate-frozen",
+        "required_checks": ["unit_test", "code_review"],
+    }
+    assert frozen["git_config"]["branch"] == "release/frozen"
+    assert dispatched["runner_task"]["request_config"]["rd_execution_policy_snapshot"] == frozen
+    store.quality_gate_policies["quality-gate-frozen"]["required_checks"] = [
+        {"required": True, "type": "secret_scan"}
+    ]
+    resolved_gate = resolve_pre_merge_quality_gate_policy(
+        store,
+        ai_task=dispatched["task"],
+        executor_policy={"quality_gate_policy_id": "mutable-policy-id"},
+    )
+    assert resolved_gate["id"] == "quality-gate-frozen"
+    assert resolved_gate["required_checks"] == [{"required": True, "type": "unit_test"}]
+    assert _load_executor_policy_for_ai_task(store, dispatched["task"]) == {
+        "autonomy_mode": "single_pass",
+        "auto_merge_risk_threshold": "low",
+        "code_change_review_mode": "manual_review",
+        "cost_budget": None,
+        "id": "policy-1",
+        "max_duration_seconds": 3600,
+        "max_iterations": 1,
+        "quality_gate_policy_id": "quality-gate-frozen",
+        "token_budget": None,
+    }
+
+
 def test_failed_quality_gate_preserves_attempt_and_requires_a_new_attempt() -> None:
     store = _ai_work_item_store()
     store.ai_executor_runners["runner-frozen"] = {
@@ -239,6 +314,59 @@ def test_coding_runner_success_always_enters_independent_verification() -> None:
     assert store.ai_tasks[dispatch["task"]["id"]]["current_step"] == "quality_gate_running"
     assert len(store.quality_gate_runs) == 1
     assert next(iter(store.quality_gate_runs.values()))["status"] == "running"
+
+
+def test_cancelled_attempt_fences_coding_completion_before_quality_gate() -> None:
+    store = _ai_work_item_store()
+    store.ai_executor_runners.update(
+        {
+            "runner-frozen": {
+                "id": "runner-frozen",
+                "status": "active",
+                "executor_types": ["codex"],
+                "workspace_roots": ["/tmp/work-item"],
+                "trust_boundary_id": "coding-boundary",
+                "trust_domain": "coding",
+                "attestation_status": "active",
+            },
+            "runner-verifier": {
+                "id": "runner-verifier",
+                "status": "active",
+                "executor_types": ["codex"],
+                "workspace_roots": ["/tmp/work-item"],
+                "trust_boundary_id": "verification-boundary",
+                "trust_domain": "verification",
+                "attestation_status": "active",
+            },
+        }
+    )
+    dispatch = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    attempt = store.rd_work_item_attempts[dispatch["attempt"]["id"]]
+    attempt["status"] = "cancelled"
+    coding_task = store.ai_executor_tasks[dispatch["runner_task"]["id"]]
+    coding_task.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-18T00:00:00+00:00",
+            "result_json": {"summary": "late implementation"},
+        }
+    )
+
+    _sync_runner_completion_to_ai_task(store, task=coding_task, runner_id="runner-frozen")
+    _sync_runner_completion_to_ai_task(store, task=coding_task, runner_id="runner-frozen")
+
+    assert store.quality_gate_runs == {}
+    events = [
+        event
+        for event in store.rd_collaboration_events.values()
+        if event["event_type"] == "work_item.runner_result_fenced"
+    ]
+    assert len(events) == 1
+    assert events[0]["payload_json"]["reason"] == "attempt_not_currently_running"
 
 
 def test_passed_independent_review_completes_the_linked_work_item() -> None:

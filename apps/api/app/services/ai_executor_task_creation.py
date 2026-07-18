@@ -58,6 +58,7 @@ def create_ai_executor_task(
     deployment_run_id: str | None = None,
     quality_gate_run_id: str | None = None,
     task_kind: str = "coding",
+    persist: bool = True,
 ) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
     task_id = current_store.new_id("ai_executor_task")
@@ -175,5 +176,6 @@ def create_ai_executor_task(
             "workspace_root": workspace_root,
         },
     )
-    _persist_ai_executor_task(current_store, task, audit_event=audit_event)
+    if persist:
+        _persist_ai_executor_task(current_store, task, audit_event=audit_event)
     return task

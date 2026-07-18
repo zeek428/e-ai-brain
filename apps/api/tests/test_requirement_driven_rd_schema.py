@@ -685,6 +685,25 @@ def test_migration_trigger_and_late_constraint_creation_is_replay_safe(migration
     assert "drop constraint if exists fk_rd_work_items_suspended_attempt" in normalized
 
 
+def test_work_item_execution_schema_has_one_active_task_fence():
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "db"
+        / "migrations"
+        / "115_rd_work_item_execution_fences.sql"
+    )
+    normalized = _normalized(migration.read_text(encoding="utf-8"))
+
+    assert "create unique index if not exists uq_ai_tasks_active_work_item" in normalized
+    assert "on ai_tasks (work_item_id)" in normalized
+    assert "where work_item_id is not null" in normalized
+    assert (
+        "status in ('draft', 'running', 'waiting_more_info', 'waiting_review', 'writing_back')"
+        in normalized
+    )
+
+
 def test_store_exposes_and_resets_new_collaboration_collections():
     from app.core.store import MemoryStore
 

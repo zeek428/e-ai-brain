@@ -27,6 +27,110 @@ from app.core.repositories.rd_collaboration_shared import (
 
 
 class RdCollaborationWorkWriteMixin:
+    def fence_work_item_runner_result(
+        self,
+        *,
+        collaboration_run_id: str,
+        work_item_id: str,
+        attempt_id: str,
+        ai_task_id: str,
+        runner_task_id: str,
+        runner_status: str,
+        event: dict[str, Any],
+        audit_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically decide whether a terminal coding result is stale.
+
+        The Runner result itself is external evidence; this command only writes
+        the one idempotent fence event/audit when the locked collaboration
+        aggregate no longer owns that attempt.
+        """
+        return self._in_transaction(
+            lambda cursor: self._fence_work_item_runner_result_cursor(
+                cursor,
+                collaboration_run_id=collaboration_run_id,
+                work_item_id=work_item_id,
+                attempt_id=attempt_id,
+                ai_task_id=ai_task_id,
+                runner_task_id=runner_task_id,
+                runner_status=runner_status,
+                event=event,
+                audit_event=audit_event,
+            )
+        )
+
+    def _fence_work_item_runner_result_cursor(
+        self,
+        cursor: Any,
+        *,
+        collaboration_run_id: str,
+        work_item_id: str,
+        attempt_id: str,
+        ai_task_id: str,
+        runner_task_id: str,
+        runner_status: str,
+        event: dict[str, Any],
+        audit_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        cursor.execute(
+            "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+            (collaboration_run_id,),
+        )
+        run = _row_dict(cursor, cursor.fetchone())
+        cursor.execute("SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE", (work_item_id,))
+        work_item = _row_dict(cursor, cursor.fetchone())
+        cursor.execute(
+            "SELECT * FROM rd_work_item_attempts WHERE id = %s FOR UPDATE",
+            (attempt_id,),
+        )
+        attempt = _row_dict(cursor, cursor.fetchone())
+        cursor.execute("SELECT status FROM ai_tasks WHERE id = %s FOR UPDATE", (ai_task_id,))
+        task_row = cursor.fetchone()
+        task_status = task_row[0] if task_row is not None else None
+        reasons: list[str] = []
+        if run is None or work_item is None or attempt is None or task_row is None:
+            reasons.append("missing_frozen_provenance")
+        if attempt is not None and attempt.get("work_item_id") != work_item_id:
+            reasons.append("attempt_provenance_mismatch")
+        if attempt is not None and attempt.get("status") != "running":
+            reasons.append("attempt_not_currently_running")
+        if work_item is not None and work_item.get("status") != "running":
+            reasons.append("work_item_not_currently_running")
+        if run is not None and run.get("status") not in {"running", "integrating", "verifying"}:
+            reasons.append("collaboration_run_not_dispatchable")
+        if task_status != "running":
+            reasons.append("ai_task_not_currently_running")
+        if not reasons:
+            return {"fenced": False}
+        cursor.execute(
+            "SELECT * FROM rd_collaboration_events "
+            "WHERE collaboration_run_id = %s AND event_key = %s FOR UPDATE",
+            (collaboration_run_id, event["event_key"]),
+        )
+        existing = _row_dict(cursor, cursor.fetchone())
+        if existing is not None:
+            return {"fenced": True, "event": existing, "idempotent_replay": True}
+        event["payload_json"] = {
+            **dict(event.get("payload_json") or {}),
+            "attempt_id": attempt_id,
+            "reason": reasons[0],
+            "reasons": reasons,
+            "runner_task_id": runner_task_id,
+            "runner_status": runner_status,
+        }
+        audit_event["payload"] = {
+            **dict(audit_event.get("payload") or {}),
+            "attempt_id": attempt_id,
+            "reasons": reasons,
+        }
+        persisted_event = self._insert_event_cursor(cursor, event)
+        audit_event["payload"]["event_id"] = persisted_event["id"]
+        callback = self._upsert_audit_events
+        if callback is None:
+            raise RuntimeError("audit persistence callback is not configured")
+        callback(cursor, [audit_event])
+        return {"fenced": True, "event": persisted_event, "idempotent_replay": False}
+
     def save_rd_run_seat_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._save_simple("rd_run_seats", record)
 
@@ -44,10 +148,11 @@ class RdCollaborationWorkWriteMixin:
         work_item_id: str,
         expected_version: int,
         task: dict[str, Any],
+        requirement: dict[str, Any] | None,
         runner_task: dict[str, Any],
         attempt: dict[str, Any],
         event: dict[str, Any],
-        audit_event: dict[str, Any],
+        audit_events: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Bind task, Runner and attempt to one ready work item atomically.
 
@@ -62,10 +167,11 @@ class RdCollaborationWorkWriteMixin:
                 work_item_id=work_item_id,
                 expected_version=expected_version,
                 task=task,
+                requirement=requirement,
                 runner_task=runner_task,
                 attempt=attempt,
                 event=event,
-                audit_event=audit_event,
+                audit_events=audit_events,
             )
         )
 
@@ -76,10 +182,11 @@ class RdCollaborationWorkWriteMixin:
         work_item_id: str,
         expected_version: int,
         task: dict[str, Any],
+        requirement: dict[str, Any] | None,
         runner_task: dict[str, Any],
         attempt: dict[str, Any],
         event: dict[str, Any],
-        audit_event: dict[str, Any],
+        audit_events: list[dict[str, Any]],
     ) -> dict[str, Any]:
         cursor.execute("SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE", (work_item_id,))
         work_item = _row_dict(cursor, cursor.fetchone())
@@ -97,10 +204,15 @@ class RdCollaborationWorkWriteMixin:
             )
         task_repository = getattr(self, "_task_read_repository", None)
         upsert_tasks = getattr(task_repository, "upsert_ai_tasks", None)
+        upsert_requirements = getattr(task_repository, "_upsert_requirements", None)
         upsert_runner_tasks = getattr(self, "upsert_ai_executor_tasks", None)
         if not callable(upsert_tasks) or not callable(upsert_runner_tasks):
             raise RuntimeError("task execution persistence callbacks are not configured")
         upsert_tasks(cursor, {task["id"]: task})
+        if requirement is not None:
+            if not callable(upsert_requirements):
+                raise RuntimeError("requirement execution persistence callback is not configured")
+            upsert_requirements(cursor, {requirement["id"]: requirement})
         upsert_runner_tasks(cursor, {runner_task["id"]: runner_task})
         persisted_attempt = self._insert_attempt(cursor, attempt)
         cursor.execute(
@@ -126,7 +238,7 @@ class RdCollaborationWorkWriteMixin:
         callback = self._upsert_audit_events
         if callback is None:
             raise RuntimeError("audit persistence callback is not configured")
-        callback(cursor, [audit_event])
+        callback(cursor, audit_events)
         return {
             "work_item": persisted_work_item,
             "attempt": persisted_attempt,
@@ -528,6 +640,9 @@ class RdCollaborationWorkWriteMixin:
         attempt: dict[str, Any],
         expected_version: int | None = None,
         event: dict[str, Any] | None = None,
+        task: dict[str, Any] | None = None,
+        audit_events: list[dict[str, Any]] | None = None,
+        failure_injection: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         return self._in_transaction(
             lambda cursor: self._save_work_item_attempt_bundle_cursor(
@@ -538,6 +653,9 @@ class RdCollaborationWorkWriteMixin:
                 attempt=attempt,
                 expected_version=expected_version,
                 event=event,
+                task=task,
+                audit_events=audit_events or [],
+                failure_injection=failure_injection,
             )
         )
 
@@ -551,6 +669,9 @@ class RdCollaborationWorkWriteMixin:
         attempt: dict[str, Any],
         expected_version: int | None = None,
         event: dict[str, Any] | None = None,
+        task: dict[str, Any] | None = None,
+        audit_events: list[dict[str, Any]] | None = None,
+        failure_injection: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         with nullcontext():
             with nullcontext(cursor) as cursor:
@@ -574,7 +695,25 @@ class RdCollaborationWorkWriteMixin:
                         work_item_id=work_item_id,
                         attempt_id=attempt.get("id"),
                     )
+                if task is not None:
+                    task_repository = getattr(self, "_task_read_repository", None)
+                    upsert_tasks = getattr(task_repository, "upsert_ai_tasks", None)
+                    if not callable(upsert_tasks):
+                        raise RuntimeError("task state persistence callback is not configured")
+                    cursor.execute(
+                        "SELECT id FROM ai_tasks WHERE id = %s FOR UPDATE",
+                        (task["id"],),
+                    )
+                    if cursor.fetchone() is None:
+                        raise RdCollaborationRepositoryError(
+                            "RD_WORK_ITEM_STATE_INVALID", "linked AI task is unavailable"
+                        )
+                    upsert_tasks(cursor, {task["id"]: task})
+                    if failure_injection is not None:
+                        failure_injection("after_task")
                 persisted_attempt = self._insert_attempt(cursor, attempt)
+                if failure_injection is not None:
+                    failure_injection("after_attempt")
                 cursor.execute(
                     """
                     UPDATE rd_work_items
@@ -598,8 +737,17 @@ class RdCollaborationWorkWriteMixin:
                 persisted_event = None
                 if event is not None:
                     persisted_event = self._insert_event_cursor(cursor, event)
+                    if failure_injection is not None:
+                        failure_injection("after_event")
                 if persisted_work_item is None:
                     raise RuntimeError("work item attempt bundle did not update work item")
+                if audit_events:
+                    callback = self._upsert_audit_events
+                    if callback is None:
+                        raise RuntimeError("audit persistence callback is not configured")
+                    callback(cursor, audit_events)
+                    if failure_injection is not None:
+                        failure_injection("after_audit")
                 return {
                     "work_item": persisted_work_item,
                     "attempt": persisted_attempt,
