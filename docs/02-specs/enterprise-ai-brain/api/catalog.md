@@ -158,7 +158,7 @@
 | Delivery Run | POST/GET | `/api/product-versions/{version_id}/collaboration-runs`, `/api/product-versions/{version_id}/collaboration-runs/restart`, `/api/requirements/{requirement_id}/collaboration-run`, `/api/delivery/rd-collaboration-runs/{run_id}` | 以产品版本为聚合根创建、重启和查询协作运行；同一版本最多一个非终态运行，创建时冻结需求、策略、岗位、员工和执行器快照，restart 使用 `terminal_run_id` 创建新 generation。 |
 | Delivery Scope Change | POST/GET | `/api/product-versions/{version_id}/scope-change-requests`, `/api/delivery/rd-scope-change-requests/{scope_change_request_id}` | 待发布前提交带期望 scope/generation 和类型化 operations 的受控范围变更；人工批准事务原子终结旧运行、应用全部操作并递增一次范围版本，待发布后只引导创建后续需求。 |
 | Delivery Work Item | GET/POST | `/api/delivery/rd-collaboration-runs/{run_id}/work-items`, `/api/delivery/rd-work-items/{work_item_id}/claim`, `/submit`, `/review`, `/cancel` | 查询 DAG 并执行领取、提交、审核和受控取消；依赖满足后并行，失败可返工，`blocked/awaiting_human` 只能按冻结 `resume_state` 恢复。 |
-| Delivery Decision | POST | `/api/delivery/decision-requests/{decision_request_id}/decide`, `/answers` | 对高风险、超权限、冲突、预算、门禁、范围或部署边界进行人工决策，或由符合冻结 selector 的主体补充信息；只按冻结状态映射恢复或取消受影响聚合。 |
+| Delivery Decision | GET/POST | `/api/delivery/decision-requests/{decision_request_id}`, `/decide`, `/answers` | 读取冻结决策版本和选项，并对高风险、超权限、冲突、预算、门禁、范围或部署边界进行人工决策，或由符合冻结 selector 的主体补充信息；只按冻结状态映射恢复或取消受影响聚合。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/more-info` | 提交补充信息。 |
 | AI Task | POST | `/api/ai-tasks/batch-cancel` | 仅兼容取消历史非协作任务并返回 updated/skipped；请求只要命中任一 v2 协作任务即整批返回 `409 RD_COLLABORATION_REQUIRED`，历史任务也不得部分取消，v2 取消必须改走工作项命令或人工决策。 |
 | AI Task | POST | `/api/ai-tasks/batch-retry` | v2.0 对真人和外部调用固定返回 `RD_COLLABORATION_REQUIRED`；失败恢复由工作项调度器按 attempt、幂等键、预算和重试上限内部执行。 |

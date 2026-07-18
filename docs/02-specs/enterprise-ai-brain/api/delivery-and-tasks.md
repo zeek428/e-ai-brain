@@ -91,6 +91,7 @@ GET            /api/delivery/rd-scope-change-requests/{scope_change_request_id}
 GET            /api/requirements/{requirement_id}/collaboration-run
 GET            /api/delivery/rd-collaboration-runs/{run_id}
 GET            /api/delivery/rd-collaboration-runs/{run_id}/work-items
+GET            /api/delivery/decision-requests/{decision_request_id}
 POST           /api/delivery/rd-work-items/{work_item_id}/claim
 POST           /api/delivery/rd-work-items/{work_item_id}/submit
 POST           /api/delivery/rd-work-items/{work_item_id}/review
@@ -104,6 +105,14 @@ POST           /api/delivery/decision-requests/{decision_request_id}/answers
 权限点分别为 `delivery.rd_roles.manage`、`delivery.rd_ai_employees.manage`、`delivery.rd_executor_profiles.manage`、`delivery.requirement_assessments.read/decide`、`delivery.rd_collaboration.read/plan/work`、`delivery.decision_requests.decide/answer` 和 `delivery.rd_role_experiences.read/decide`；策略继续使用 `delivery.rd_executor_policies.manage`，部署继续使用现有部署权限。岗位、员工档案或席位不会自动授予这些权限。
 
 工作项包含 `owner_seat_id/dependencies/input_contract/output_contract/acceptance_criteria/risk_level/status/resume_state/suspended_attempt_id/ai_task_id/reviewer_seat_id/idempotency_key`。依赖满足后才能进入 `ready`，无依赖项可并行；审核或质量门禁失败保留原 attempt，同范围返工进入 `rework_required` 并在下一次领取时创建新 attempt，范围/依赖/负责人变化则创建新计划版本和替代工作项。`blocked/awaiting_human` 保存平台冻结的恢复目标和解除条件；问题解除或决策完成后只能回到校验后的 `ready/running/rework_required/cancelled`。高风险、超权限、冲突、预算超限、门禁失败或部署边界创建 `decision_requests` 并暂停受影响分支。详情响应聚合 DAG、租约、AI 任务/Runner、审核、返工、门禁、Git、预算和角色反馈。
+
+#### 查询人工决策
+
+```http
+GET /api/delivery/decision-requests/{decision_request_id}
+```
+
+调用者须具备 `delivery.rd_collaboration.read` 和关联产品范围。成功响应的 `data` 是冻结的决策记录，至少包含 `id/status/version/prompt/reason/options_json/expires_at/timeout_policy/escalation_target_selector` 与关联聚合引用；`options_json` 中的 `code/label/input_schema` 是决定接口唯一允许提交的选项和输入契约。记录不存在返回 `404 RESOURCE_NOT_FOUND`，无产品范围返回权限错误；客户端只读该版本并在提交时回传 `version`，不能根据本地状态生成或改写选项。
 
 #### 创建协作运行
 
@@ -543,6 +552,7 @@ POST /api/delivery/rd-role-experiences/{experience_id}/decide
 GET  /api/system/rd-collaboration-upgrade/preflight
 POST /api/system/rd-collaboration-upgrade/maintenance-fence
 POST /api/system/rd-collaboration-upgrade/cutover
+POST /api/system/rd-collaboration-upgrade/drain-cancel/{work_item_id}
 ```
 
 维护围栏请求体：
@@ -551,15 +561,14 @@ POST /api/system/rd-collaboration-upgrade/cutover
 {
   "mode": "draining",
   "reason": "研发协同 2.0 契约切换",
-  "version": 3,
-  "expected_schema_version": 1,
-  "health_marker": null
+  "expected_version": 3,
+  "expected_schema_version": 1
 }
 ```
 
-仅系统管理员可调用。`preflight` 是围栏外可重复执行的只读建议检查，不改变写路径。围栏请求使用 `mode=disabled|draining|cutover_locked`、`reason`、`version`、`expected_schema_version` 和可选 `health_marker`，不再使用模糊布尔 `enabled`。从 `disabled` 进入 `draining` 后，需求 approve/reject/direct-generate、AI 任务 start/retry、策略/协作/经验写入和 Runner 新领取返回 `423 RD_UPGRADE_MAINTENANCE`；已领取工作可提交终态回写，在途事务可以收敛，系统管理员可通过专用 drain 服务受控取消并记录审计，普通任务 cancel 仍被围栏阻断；定时作业运行不受影响。待活动 AI task、Agent Loop、Runner lease 和协作命令归零并生成备份标记后，服务端原子把围栏推进到 `cutover_locked`，随后重新执行锁内 preflight。cutover 只有在锁内 preflight 无阻断、备份确认、Schema 109 已应用且围栏为 `cutover_locked` 时执行策略转换、旧 draft 取消和 Schema v2 激活；新应用健康标记成功后才允许执行清理迁移 110。
+仅系统管理员可调用。`preflight` 是围栏外可重复执行的只读建议检查，不改变写路径；任何 active 旧策略缺少非空统一 `strategy_config` 时固定返回 `RD_UPGRADE_POLICY_CONVERSION_REQUIRED`，平台不臆测岗位、真人/AI 账号或执行器映射，管理员必须先通过唯一的统一策略 API 完成转换，再进入 `draining`。maintenance-fence 只接受 `mode=disabled|draining`、`reason`、`expected_version` 和可选 `expected_schema_version`，不再使用模糊布尔 `enabled` 或客户端直接锁定围栏。`drain-cancel/{work_item_id}` 必须提供 `reason/version/idempotency_key`，只在 `draining` 中由管理员取消既有工作项，且不会领取或创建新工作；高风险工作仍进入既有人工取消决策。从 `disabled` 进入 `draining` 后，需求 approve/reject/direct-generate、AI 任务 start/retry、策略/协作/经验写入和 Runner 新领取返回 `423 RD_UPGRADE_MAINTENANCE`；已领取工作可提交终态回写，在途事务可以收敛，普通 v2 工作项 cancel 仍被围栏阻断，非协作历史 draft 仍通过既有任务取消路径收敛；定时作业运行不受影响。待活动 AI task、Agent Loop、Runner lease 和协作命令归零并生成备份标记后，管理员调用 cutover 的 `action=lock`，请求必须带 `backup_marker/expected_version/v2_api_version/v2_worker_version/v2_graph_version`；服务端在同一状态转换内重跑锁内 preflight 并推进到 `cutover_locked` 和 Schema v2。新应用健康与两类写入冒烟完成后，调用 `action=record_health` 带同一组版本、`health_marker/smoke_test` 记录证据；只有显式 cleanup 成功后才允许解除围栏。
 
-在 `draining` 且 `rd_collaboration_schema_version < 2`、cleanup 尚未开始时，管理员可通过同一 maintenance-fence 端点提交 `mode=disabled/reason/version` 中止窗口；服务端乐观锁更新、写入 abort 审计并恢复旧写路径。围栏 `version` 过期统一返回 `RD_VERSION_CONFLICT`；其他转换或前置条件不满足返回 `RD_UPGRADE_STATE_INVALID`。进入 `cutover_locked`、Schema v2 已激活或 cleanup 已开始后，任何提前降级到 `disabled` 都返回 `409 RD_UPGRADE_ABORT_NOT_ALLOWED`，只能修复后向前重试。最终解除围栏同样使用 `mode=disabled`，但必须同时满足 Schema v2 已激活、迁移 110 已成功、v2 API 与协同 Worker 图版本一致、健康标记有效、v2 评估/协作写入冒烟检查通过。解除后新写路径恢复，旧 approve/generate/batch-delivery-advance/AI-task-create/start 写路径仍返回迁移错误。锁内预检、健康、清理、Worker 或冒烟检查任一步失败都保持 `cutover_locked` 并允许幂等重试。
+在 `draining` 且 `rd_collaboration_schema_version < 2`、cleanup 尚未开始时，管理员可通过同一 maintenance-fence 端点提交 `mode=disabled/reason/expected_version` 中止窗口；服务端乐观锁更新、写入 abort 审计并恢复旧写路径。围栏版本过期统一返回 `RD_VERSION_CONFLICT`；其他转换或前置条件不满足返回 `RD_UPGRADE_STATE_INVALID`。进入 `cutover_locked`、Schema v2 已激活或 cleanup 已开始后，任何提前降级到 `disabled` 都返回 `409 RD_UPGRADE_ABORT_NOT_ALLOWED`，只能修复后向前重试。最终解除围栏同样使用 `mode=disabled`，但必须同时满足 Schema v2 已激活、未注册启动迁移器的 `121_requirement_driven_rd_cutover.sql` 已由显式脚本成功执行、v2 API 与协同 Worker 图版本一致、健康标记有效、v2 评估/协作写入冒烟检查通过。该 cleanup 仅删除旧研发命令幂等记录；物理列收缩需要独立保留期评审。解除后新写路径恢复，旧 approve/generate/batch-delivery-advance/AI-task-create/start 写路径仍返回迁移错误。锁内预检、健康、清理、Worker 或冒烟检查任一步失败都保持 `cutover_locked` 并允许幂等重试。
 
 ### 需求管理
 

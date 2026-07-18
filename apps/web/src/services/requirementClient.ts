@@ -31,6 +31,31 @@ export type RequirementResponse = {
   status: string;
 };
 
+export type RequirementDetail = RequirementListItem & {
+  assessment_revision?: number;
+  revision?: number;
+};
+
+export type RequirementAssessmentOpinion = {
+  conclusion_json?: Record<string, unknown>;
+  confidence?: number | null;
+  outcome_code?: string | null;
+  risk_level?: string | null;
+  role_code: string;
+};
+
+export type RequirementAssessment = {
+  id: string;
+  opinion_round?: number;
+  opinions?: RequirementAssessmentOpinion[];
+  requirement_id: string;
+  requirement_revision: number;
+  risk_summary?: Record<string, unknown>;
+  status: string;
+  structured_assessment?: Record<string, unknown>;
+  version: number;
+};
+
 export type RequirementListQuery = RemoteListQuery & {
   priority?: string;
   product?: string;
@@ -442,4 +467,53 @@ export async function generateRequirementTask(requirementId: string) {
       token,
     },
   );
+}
+
+export async function fetchRequirementDetail(requirementId: string) {
+  const token = requireAccessToken();
+  return apiRequest<RequirementDetail>(`/api/requirements/${requirementId}`, { token });
+}
+
+export async function fetchLatestRequirementAssessment(requirementId: string) {
+  const token = requireAccessToken();
+  return apiRequest<RequirementAssessment>(
+    `/api/requirements/${requirementId}/assessments/latest`,
+    { token },
+  );
+}
+
+export async function startRequirementAssessment(
+  requirementId: string,
+  payload: { reason?: string; request_id: string; requirement_revision: number },
+) {
+  const token = requireAccessToken();
+  return apiRequest<RequirementAssessment>(`/api/requirements/${requirementId}/assessments`, {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function decideRequirementAssessment(
+  assessmentId: string,
+  payload: { comment?: string; decision: 'accept' | 'defer' | 'reject' | 'request_more_info' | 'request_rework'; version: number },
+) {
+  const token = requireAccessToken();
+  return apiRequest<RequirementAssessment>(`/api/requirement-assessments/${assessmentId}/decisions`, {
+    body: { ...payload, idempotency_key: crypto.randomUUID() },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function submitRequirementAssessmentAnswers(
+  assessmentId: string,
+  payload: { answers: Record<string, unknown>; expected_version: number },
+) {
+  const token = requireAccessToken();
+  return apiRequest<RequirementAssessment>(`/api/requirement-assessments/${assessmentId}/answers`, {
+    body: { ...payload, idempotency_key: crypto.randomUUID() },
+    method: 'POST',
+    token,
+  });
 }

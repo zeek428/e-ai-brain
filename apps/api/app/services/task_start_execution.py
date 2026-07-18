@@ -553,6 +553,9 @@ def start_ai_task_response(
     task_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(current_store, operation="ai_task.start")
     write_store = task_workflow_write_store(current_store)
     task = write_store.ai_tasks.get(task_id)
     if task is None:

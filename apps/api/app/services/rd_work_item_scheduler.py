@@ -114,8 +114,7 @@ def advance_delivery_phase_after_work_item_completion(
     integration_items = [
         item
         for item in work_items
-        if str(item.get("work_item_type") or "").strip().lower()
-        in _INTEGRATION_WORK_ITEM_TYPES
+        if str(item.get("work_item_type") or "").strip().lower() in _INTEGRATION_WORK_ITEM_TYPES
     ]
     if not integration_items:
         return None
@@ -130,9 +129,7 @@ def advance_delivery_phase_after_work_item_completion(
         )
     else:
         next_status = (
-            "verifying"
-            if all(item.get("status") == "completed" for item in work_items)
-            else None
+            "verifying" if all(item.get("status") == "completed" for item in work_items) else None
         )
     if next_status is None:
         return None
@@ -274,6 +271,9 @@ def claim_work_item(
     use the same immutable command vocabulary through the repository in later
     command adapters; no caller is allowed to manufacture a replacement lease.
     """
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(store, operation="work_item.claim")
     if not 60 <= lease_seconds <= 1800:
         raise api_error(422, "VALIDATION_ERROR", "lease_seconds must be between 60 and 1800")
     request = {
@@ -620,6 +620,15 @@ def complete_attempt(
     idempotency_key: str,
 ) -> dict[str, Any]:
     """Submit a leased attempt and deterministically route it to review."""
+    # A leased worker must be able to return an already-started result while
+    # the cutover fence drains.  It cannot claim or start further work there.
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(
+        store,
+        operation="work_item.inflight_completion",
+        allow_inflight_completion=True,
+    )
     request = {
         "attempt_id": attempt_id,
         "lease_token_hash": hashlib.sha256(lease_token.encode()).hexdigest(),
@@ -774,10 +783,19 @@ def review_work_item(
     idempotency_key: str,
 ) -> dict[str, Any]:
     """Apply the fixed approve/rework/reject review mapping."""
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
     if decision not in {"approve", "request_rework", "reject"}:
         raise api_error(422, "VALIDATION_ERROR", "Review decision is invalid")
     if decision == "request_rework" and not str(comment or "").strip():
         raise api_error(422, "VALIDATION_ERROR", "Rework decision requires a comment")
+    # Approval/rejection finish an existing review.  Rework creates another
+    # executable unit, so it remains blocked until the fence is released.
+    require_rd_write_allowed(
+        store,
+        operation="work_item.review",
+        allow_inflight_completion=decision in {"approve", "reject"},
+    )
     request = {
         "decision": decision,
         "comment": comment,
@@ -1064,9 +1082,27 @@ def cancel_work_item(
     actor: dict[str, Any],
     version: int,
     idempotency_key: str,
+    maintenance_drain_cancel: bool = False,
 ) -> dict[str, Any]:
     """Cancel low-risk work atomically, or pause high-risk work for a decision."""
-    request = {"reason": reason, "version": version, "actor_id": actor.get("id")}
+    from app.services.rd_maintenance_fence import get_rd_maintenance_state, require_rd_write_allowed
+
+    if maintenance_drain_cancel:
+        fence_state = get_rd_maintenance_state(store)
+        if fence_state["fence_mode"] != "draining":
+            raise api_error(
+                409,
+                "RD_UPGRADE_STATE_INVALID",
+                "Controlled drain cancellation requires a draining maintenance fence",
+            )
+    else:
+        require_rd_write_allowed(store, operation="work_item.cancel")
+    request = {
+        "reason": reason,
+        "version": version,
+        "actor_id": actor.get("id"),
+        "maintenance_drain_cancel": maintenance_drain_cancel,
+    }
     command_id = _command_key(
         command_type="cancel_work_item", aggregate_id=work_item_id, idempotency_key=idempotency_key
     )

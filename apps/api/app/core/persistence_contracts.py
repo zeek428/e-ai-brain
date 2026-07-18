@@ -96,6 +96,11 @@ class SnapshotRepository(Protocol):
 class RdCollaborationRepository(Protocol):
     """Persistence boundary for requirement-driven R&D collaboration state."""
 
+    def get_rd_collaboration_upgrade_state(self, record_id: str) -> dict[str, Any] | None: ...
+    def update_rd_collaboration_upgrade_state(
+        self, *, expected_version: int, changes: dict[str, Any]
+    ) -> dict[str, Any]: ...
+
     def get_rd_role_definition(self, record_id: str) -> dict[str, Any] | None: ...
     def list_rd_role_definitions(
         self, *, brain_app_id: str | None = None, status: str | None = None

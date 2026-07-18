@@ -376,8 +376,7 @@ def _reviewer_identity(
     reviewer_seat_ids = {
         str(seat["id"])
         for seat in seats
-        if seat.get("subject_type") == "human_user"
-        and seat.get("human_user_id") == user.get("id")
+        if seat.get("subject_type") == "human_user" and seat.get("human_user_id") == user.get("id")
     }
     role_codes.update(
         str(seat.get("role_code"))
@@ -397,6 +396,9 @@ def decide_role_experience(
     idempotency_key: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(store, operation="rd_role_experience.decide")
     require_role_experience_enabled()
     _require_decide_permission(user)
     if decision not in _DECISIONS or not idempotency_key.strip():
@@ -507,12 +509,8 @@ def decide_role_experience(
                 403, "PERMISSION_DENIED", "Feedback producer cannot review its derived experience"
             )
         if independent and (
-            (
-                feedback.get("producer_role_code") in reviewer_role_codes
-            )
-            or (
-                feedback.get("producer_seat_id") in reviewer_seat_ids
-            )
+            (feedback.get("producer_role_code") in reviewer_role_codes)
+            or (feedback.get("producer_seat_id") in reviewer_seat_ids)
         ):
             raise api_error(
                 403,

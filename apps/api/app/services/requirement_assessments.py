@@ -504,6 +504,9 @@ def start_requirement_assessment(
     reason: str | None = None,
 ) -> dict[str, Any]:
     """Freeze the initial policy and create the required opinion requests atomically."""
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(current_store, operation="requirement_assessment.start")
     require_any_permission_or_roles(
         user,
         {"requirement.approve"},
@@ -913,6 +916,9 @@ def decide_requirement_assessment(
     payload: dict[str, Any],
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(current_store, operation="requirement_assessment.decide")
     require_any_permission_or_roles(
         user,
         {"requirement.approve", "delivery.requirement_assessments.decide"},
@@ -1289,6 +1295,9 @@ def submit_assessment_answers(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     """Persist answers as a new assessment/requirement revision; stale submissions fail closed."""
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(current_store, operation="requirement_assessment.answer")
     repository = _repository(current_store)
     replay = _idempotent_replay(
         repository,

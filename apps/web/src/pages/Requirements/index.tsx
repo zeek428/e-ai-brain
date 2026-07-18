@@ -33,6 +33,7 @@ import {
   updateManagementRequirement,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
+import { RequirementAssessmentDrawer } from './RequirementAssessmentDrawer';
 import {
   batchAssignableStatuses,
   buildRequirementListQuery,
@@ -60,6 +61,7 @@ export default function RequirementsPage() {
   const [rejectingRequirement, setRejectingRequirement] = useState<RequirementRecord | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
   const [fullChainRequirement, setFullChainRequirement] = useState<RequirementRecord | null>(null);
+  const [assessmentRequirement, setAssessmentRequirement] = useState<RequirementRecord | null>(null);
   const [fullChain, setFullChain] = useState<RequirementFullChainRecord | null>(null);
   const [fullChainError, setFullChainError] = useState<RemoteRowsError>();
   const [fullChainVersionRequirements, setFullChainVersionRequirements] = useState<RequirementRecord[]>([]);
@@ -507,6 +509,13 @@ export default function RequirementsPage() {
     }
   }, []);
 
+  const openAssessmentDrawer = useCallback((row: RequirementRecord) => {
+    if (!ensureCanWriteRequirements('启动需求评估')) {
+      return;
+    }
+    setAssessmentRequirement(row);
+  }, [ensureCanWriteRequirements]);
+
   const openDeleteConfirm = useCallback((row: RequirementRecord) => {
     if (!ensureCanWriteRequirements('删除需求')) {
       return;
@@ -651,6 +660,10 @@ export default function RequirementsPage() {
                   ...(canWriteRequirements && row.status === 'submitted'
                     ? [
                         {
+                          key: 'assess',
+                          label: '研发评估',
+                        },
+                        {
                           key: 'approve',
                           label: '审批通过',
                         },
@@ -688,6 +701,10 @@ export default function RequirementsPage() {
                     void handleApprove(row);
                     return;
                   }
+                  if (key === 'assess') {
+                    openAssessmentDrawer(row);
+                    return;
+                  }
                   if (key === 'reject') {
                     openRejectModal(row);
                     return;
@@ -711,6 +728,7 @@ export default function RequirementsPage() {
       canRejectRequirements,
       canWriteRequirements,
       handleApprove,
+      openAssessmentDrawer,
       openDeleteConfirm,
       openEditModal,
       openFullChainModal,
@@ -834,6 +852,13 @@ export default function RequirementsPage() {
           </Space>
         </Spin>
       </Modal>
+      <RequirementAssessmentDrawer
+        open={Boolean(assessmentRequirement)}
+        requirementId={assessmentRequirement?.id}
+        requirementTitle={assessmentRequirement?.title}
+        onChanged={() => void reload()}
+        onClose={() => setAssessmentRequirement(null)}
+      />
       <Modal
         confirmLoading={isBatchSaving}
         destroyOnHidden

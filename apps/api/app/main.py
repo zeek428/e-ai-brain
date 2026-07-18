@@ -40,6 +40,7 @@ from app.api.routers.product_modules import router as product_modules_router
 from app.api.routers.product_versions import router as product_versions_router
 from app.api.routers.products import router as products_router
 from app.api.routers.rd_collaboration import router as rd_collaboration_router
+from app.api.routers.rd_migration import router as rd_migration_router
 from app.api.routers.rd_organization import router as rd_organization_router
 from app.api.routers.rd_role_experiences import router as rd_role_experiences_router
 from app.api.routers.related_systems import router as related_systems_router
@@ -251,6 +252,7 @@ app.include_router(product_git_repositories_router)
 app.include_router(product_modules_router)
 app.include_router(product_versions_router)
 app.include_router(rd_collaboration_router)
+app.include_router(rd_migration_router)
 app.include_router(rd_organization_router)
 app.include_router(rd_role_experiences_router)
 app.include_router(products_router)

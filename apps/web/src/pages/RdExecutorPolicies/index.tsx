@@ -1,933 +1,324 @@
-import type { ProColumns } from '@ant-design/pro-components';
-import { Alert, Button, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Tag, message } from 'antd';
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Spin,
+  Table,
+  Tabs,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import type { ManagementListQuery } from '../../components/ManagementListPage';
-import type { ProductGitRepositoryRecord, ProductRecord } from '../../data/management';
 import {
-  createRdTaskExecutorPolicy,
-  deleteRdTaskExecutorPolicy,
-  fetchAiExecutorRunners,
-  fetchManagementProducts,
-  fetchProductGitRepositoryRecords,
-  fetchRdTaskExecutorPolicies,
-  fetchRdTaskExecutorPolicyList,
-  updateRdTaskExecutorPolicy,
-  type AiExecutorRunnerRecord,
-  type RdTaskExecutorPolicyRecord,
-  type RemoteListPerformance,
-} from '../../services/aiBrain';
-import { formatDisplayDateTime } from '../../utils/dateTime';
+  createRdDeliveryPolicy,
+  fetchRdAiEmployees,
+  fetchRdDeliveryPolicies,
+  fetchRdExecutorProfiles,
+  fetchRdRoles,
+  updateRdDeliveryPolicy,
+  type RdAiEmployee,
+  type RdDeliveryPolicy,
+  type RdDeliveryPolicyPayload,
+  type RdExecutorProfile,
+  type RdPolicyRoleBinding,
+  type RdRoleDefinition,
+} from '../../services/rdCollaborationClient';
 import { formatMutationError } from '../../utils/managementCrud';
+import { AiEmployeeCatalog } from './AiEmployeeCatalog';
+import { PolicyRoleBindings } from './PolicyRoleBindings';
 
 type PolicyFormValues = {
-  autonomy_mode: string;
-  auto_merge_risk_threshold: string;
-  branch?: string;
-  code_change_review_mode: string;
-  cost_budget?: number;
-  executor_type: string;
-  instruction_template: string;
+  deliveryTarget: 'ready_for_release';
   name: string;
-  max_duration_seconds: number;
-  max_iterations: number;
-  output_contract_json?: string;
-  priority: number;
-  product_id?: string;
-  repository_id?: string;
-  quality_gate_policy_id?: string;
-  runner_id?: string;
-  status: string;
-  task_type: string;
-  timeout_seconds: number;
-  token_budget?: number;
-  workspace_root: string;
+  productId?: string;
+  status: 'active' | 'disabled';
+  taskTypes: string[];
 };
 
-type RdTaskExecutorPolicyRow = RdTaskExecutorPolicyRecord & Record<string, unknown>;
-
-type PolicyHitHint = {
-  color: string;
-  description: string;
-  label: string;
+type PolicyEditorState = {
+  bindings: RdPolicyRoleBinding[];
+  policy?: RdDeliveryPolicy;
 };
 
-type ModalPolicyPreview = {
-  detail?: string;
-  message: string;
-  type: 'info' | 'success' | 'warning';
-  warning?: string;
-};
-
-const LEGACY_CODE_INSPECTION_REMEDIATION_TYPE = 'code_inspection_remediation';
-
-const TASK_TYPE_LABEL_OPTIONS = [
-  { label: 'PRD / 原型 / 产品详细设计', value: 'product_detail_design' },
-  { label: '技术方案设计', value: 'technical_solution' },
-  { label: '代码实现 / 开发计划', value: 'development_planning' },
-  { label: '代码评审', value: 'code_review' },
+const taskTypeOptions = [
+  { label: '需求评估', value: 'requirement_assessment' },
+  { label: '迭代归组', value: 'iteration_grouping' },
+  { label: '技术方案', value: 'technical_solution' },
+  { label: '开发实现', value: 'development_planning' },
   { label: '自动化测试', value: 'automated_testing' },
-  { label: '代码巡检整改', value: LEGACY_CODE_INSPECTION_REMEDIATION_TYPE },
-  { label: 'Bug 修复', value: 'bug_fix' },
-  { label: '发布上线评估', value: 'release_readiness' },
-  { label: '上线后分析', value: 'post_release_analysis' },
+  { label: '代码评审', value: 'code_review' },
 ];
 
-const TASK_TYPE_OPTIONS = TASK_TYPE_LABEL_OPTIONS.filter(
-  (item) => item.value !== LEGACY_CODE_INSPECTION_REMEDIATION_TYPE,
-);
-
-const EXECUTOR_OPTIONS = [
-  { label: 'Codex', value: 'codex' },
-  { label: 'Claude Code', value: 'claude' },
-  { label: 'OpenClaw', value: 'openclaw' },
-];
-
-const STATUS_OPTIONS = [
-  { label: '启用', value: 'active' },
-  { label: '停用', value: 'disabled' },
-];
-
-const CODE_CHANGE_REVIEW_MODE_OPTIONS = [
-  { label: '人工确认', value: 'manual_review' },
-  { label: '独立门禁通过后自动提交', value: 'auto_commit' },
-];
-
-const AUTONOMY_MODE_OPTIONS = [
-  { label: '单次执行', value: 'single_pass' },
-  { label: 'Agent 自治循环', value: 'autonomous_loop' },
-];
-
-const AUTO_MERGE_RISK_OPTIONS = [
-  { label: '仅无风险', value: 'none' },
-  { label: '低风险及以下', value: 'low' },
-  { label: '中风险及以下', value: 'medium' },
-];
-
-const QUALITY_GATE_POLICY_OPTIONS = [
-  { label: '平台默认合并前门禁', value: '' },
-  { label: '系统严格合并前门禁', value: 'quality_gate_policy_system_pre_merge' },
-];
-
-const STATUS_COLORS: Record<string, string> = {
-  active: 'green',
-  disabled: 'default',
-};
-
-function taskTypeLabel(value: string) {
-  return TASK_TYPE_LABEL_OPTIONS.find((item) => item.value === value)?.label ?? value;
-}
-
-function executorLabel(value: string) {
-  return EXECUTOR_OPTIONS.find((item) => item.value === value)?.label ?? value;
-}
-
-function codeChangeReviewModeLabel(value: string | undefined) {
-  return CODE_CHANGE_REVIEW_MODE_OPTIONS.find((item) => item.value === value)?.label ?? '人工确认';
-}
-
-function normalizeProductId(value: string | null | undefined) {
-  return String(value ?? '').trim();
-}
-
-function productNameLabel(products: ProductRecord[], productId: string | null | undefined) {
-  const normalizedProductId = normalizeProductId(productId);
-  if (!normalizedProductId) {
-    return '未指定产品';
-  }
-  return products.find((product) => product.id === normalizedProductId)?.name ?? normalizedProductId;
-}
-
-function isActivePolicy(policy: Pick<RdTaskExecutorPolicyRecord, 'status'>) {
-  return policy.status === 'active';
-}
-
-function policyMatchesTask(
-  policy: Pick<RdTaskExecutorPolicyRecord, 'product_id' | 'status' | 'task_type'>,
-  taskType: string | undefined,
-  productId: string | null | undefined,
-) {
-  if (!taskType || !isActivePolicy(policy) || policy.task_type !== taskType) {
-    return false;
-  }
-  const policyProductId = normalizeProductId(policy.product_id);
-  const targetProductId = normalizeProductId(productId);
-  return !policyProductId || policyProductId === targetProductId;
-}
-
-function sortPoliciesForTask(
-  policies: RdTaskExecutorPolicyRecord[],
-  taskType: string | undefined,
-  productId: string | null | undefined,
-) {
-  const targetProductId = normalizeProductId(productId);
-  return policies
-    .filter((policy) => policyMatchesTask(policy, taskType, targetProductId))
-    .sort((left, right) => {
-      const leftProductId = normalizeProductId(left.product_id);
-      const rightProductId = normalizeProductId(right.product_id);
-      const leftScopeRank = leftProductId === targetProductId ? 0 : 1;
-      const rightScopeRank = rightProductId === targetProductId ? 0 : 1;
-      if (leftScopeRank !== rightScopeRank) {
-        return leftScopeRank - rightScopeRank;
-      }
-      if (left.priority !== right.priority) {
-        return left.priority - right.priority;
-      }
-      return left.id.localeCompare(right.id);
-    });
-}
-
-function samePolicyScope(left: RdTaskExecutorPolicyRecord, right: RdTaskExecutorPolicyRecord) {
-  return left.task_type === right.task_type && normalizeProductId(left.product_id) === normalizeProductId(right.product_id);
-}
-
-function buildPolicyHitHint(policy: RdTaskExecutorPolicyRecord, policies: RdTaskExecutorPolicyRecord[]): PolicyHitHint {
-  if (!isActivePolicy(policy)) {
-    return {
-      color: 'default',
-      description: '停用策略不会参与任务命中',
-      label: '不参与',
-    };
-  }
-  const productId = normalizeProductId(policy.product_id);
-  const candidates = sortPoliciesForTask(policies, policy.task_type, productId);
-  const winner = candidates[0];
-  if (winner && winner.id !== policy.id) {
-    return {
-      color: 'red',
-      description: `当前会命中「${winner.name}」`,
-      label: '被覆盖',
-    };
-  }
-  const productSpecificCount = policies.filter(
-    (candidate) =>
-      isActivePolicy(candidate) &&
-      candidate.task_type === policy.task_type &&
-      normalizeProductId(candidate.product_id),
-  ).length;
-  if (!productId && productSpecificCount > 0) {
-    return {
-      color: 'gold',
-      description: '同任务类型已有产品专用策略，产品任务会优先命中产品专用策略',
-      label: '通用兜底',
-    };
-  }
-  const sameScopeCandidates = candidates.filter((candidate) => samePolicyScope(candidate, policy));
-  if (sameScopeCandidates.length > 1) {
-    return {
-      color: 'blue',
-      description: `同范围还有 ${sameScopeCandidates.length - 1} 条候选，按优先级和策略 ID 排序`,
-      label: '当前命中',
-    };
-  }
+function buildPayload(values: PolicyFormValues, bindings: RdPolicyRoleBinding[]): RdDeliveryPolicyPayload {
+  const requiredRoleCodes = bindings
+    .filter((binding) => binding.status === 'active')
+    .map((binding) => binding.role_code);
   return {
-    color: 'green',
-    description: productId ? '当前产品任务会优先命中该策略' : '未指定产品的任务会命中该通用策略',
-    label: '当前命中',
+    assessment_config: {
+      llm_role: 'proposal_only',
+      require_human_confirmation_for: ['high', 'critical'],
+    },
+    autonomy_config: {
+      low_risk: 'policy_auto',
+      high_risk: 'human_decision_required',
+      state_transition_owner: 'deterministic_control_plane',
+    },
+    brain_app_id: 'rd_brain',
+    delivery_target: values.deliveryTarget,
+    deployment_config: { enabled: false },
+    experience_reuse_config: {
+      enabled: true,
+      max_context_tokens: 2000,
+      max_items: 5,
+      policy_compatibility: 'same_policy_schema',
+      require_independent_reviewer: true,
+    },
+    git_config: {
+      delivery_evidence_required: true,
+      push_remote: true,
+      prohibit_deployment: true,
+    },
+    iteration_config: {
+      create_when_no_compatible_planning_version: true,
+      prefer_compatible_planning_version: true,
+      require_human_decision_on_tie: true,
+    },
+    matching_config: {
+      task_types: values.taskTypes,
+    },
+    name: values.name.trim(),
+    product_id: values.productId?.trim() || null,
+    quality_gate_config: {
+      require_code_review: true,
+      require_test_evidence: true,
+      require_trusted_remote_push: true,
+    },
+    role_bindings: bindings,
+    status: values.status,
+    team_config: { required_role_codes: requiredRoleCodes },
   };
 }
 
-function buildModalPolicyPreview({
-  currentPolicy,
-  policies,
-  products,
-}: {
-  currentPolicy: RdTaskExecutorPolicyRecord;
-  policies: RdTaskExecutorPolicyRecord[];
-  products: ProductRecord[];
-}): ModalPolicyPreview {
-  if (!currentPolicy.task_type) {
-    return { message: '请选择任务类型后查看命中预览', type: 'info' };
-  }
-  if (!isActivePolicy(currentPolicy)) {
-    return {
-      message: '当前表单策略停用，不参与任务命中',
-      type: 'warning',
-    };
-  }
-  const productId = normalizeProductId(currentPolicy.product_id);
-  const candidates = sortPoliciesForTask(policies, currentPolicy.task_type, productId);
-  const winner = candidates[0];
-  const samePriorityCandidates = candidates.filter(
-    (candidate) =>
-      samePolicyScope(candidate, currentPolicy) && candidate.priority === currentPolicy.priority,
-  );
-  const warning =
-    samePriorityCandidates.length > 1
-      ? '存在同级策略，priority 相同，保存后会继续按策略 ID 兜底排序，建议调整优先级'
-      : undefined;
-  if (winner?.id === currentPolicy.id) {
-    return {
-      detail: productId
-        ? `当前配置会优先命中 ${productNameLabel(products, productId)} 的 ${taskTypeLabel(currentPolicy.task_type)} 任务`
-        : '当前表单策略将作为通用兜底策略',
-      message: '命中预览',
-      type: warning ? 'warning' : 'success',
-      warning,
-    };
-  }
+function initialFormValues(policy?: RdDeliveryPolicy): PolicyFormValues {
   return {
-    detail: winner
-      ? `当前配置会命中「${winner.name}」，当前表单策略不会被优先命中`
-      : '当前没有可命中的启用策略',
-    message: '命中预览',
-    type: 'warning',
-    warning,
+    deliveryTarget: 'ready_for_release',
+    name: policy?.name ?? '',
+    productId: policy?.product_id ?? undefined,
+    status: policy?.status ?? 'active',
+    taskTypes: Array.isArray(policy?.matching_config?.task_types)
+      ? policy.matching_config.task_types.filter((item): item is string => typeof item === 'string')
+      : ['requirement_assessment', 'iteration_grouping', 'development_planning', 'automated_testing'],
   };
 }
 
-function mutationError(error: unknown, fallback: string) {
-  const detail = formatMutationError(error);
-  return detail === '请求失败' ? fallback : detail;
-}
-
-function stableJson(value: unknown) {
-  return JSON.stringify(value ?? {}, null, 2);
-}
-
-function parseJsonObject(value: string | undefined, field: string) {
-  const text = (value ?? '').trim();
-  if (!text) {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(text);
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-      throw new Error(`${field} must be a JSON object`);
-    }
-    return parsed as Record<string, unknown>;
-  } catch {
-    throw new Error(`${field} 不是合法 JSON 对象`);
-  }
-}
-
-function normalizeFilterText(value: unknown) {
-  return String(value ?? '').trim() || undefined;
-}
-
-function buildPolicyListQuery(query: ManagementListQuery) {
-  return {
-    executorType: normalizeFilterText(query.filters.executor_type),
-    name: normalizeFilterText(query.filters.name),
-    page: query.page,
-    pageSize: query.pageSize,
-    productName: normalizeFilterText(query.filters.product_name),
-    sortField: query.sortField,
-    sortOrder: query.sortOrder,
-    status: normalizeFilterText(query.filters.status),
-    taskType: normalizeFilterText(query.filters.task_type),
-  };
+function policyTargetTag(policy: RdDeliveryPolicy) {
+  return policy.delivery_target === 'ready_for_release'
+    ? <Tag color="blue">推送远程仓库并待发布</Tag>
+    : <Tag color="default">不在当前交付范围</Tag>;
 }
 
 export default function RdExecutorPoliciesPage() {
   const [form] = Form.useForm<PolicyFormValues>();
-  const [editingPolicy, setEditingPolicy] = useState<RdTaskExecutorPolicyRecord | undefined>();
-  const [referenceLoading, setReferenceLoading] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [products, setProducts] = useState<ProductRecord[]>([]);
-  const [repositories, setRepositories] = useState<ProductGitRepositoryRecord[]>([]);
-  const [runners, setRunners] = useState<AiExecutorRunnerRecord[]>([]);
-  const [listQuery, setListQuery] = useState<ManagementListQuery>({
-    filters: {},
-    page: 1,
-    pageSize: 10,
-    sortField: 'priority',
-    sortOrder: 'ascend',
-  });
-  const [listState, setListState] = useState<{
-    page: number;
-    pageSize: number;
-    performance?: RemoteListPerformance;
-    rows: RdTaskExecutorPolicyRecord[];
-    status: 'error' | 'loading' | 'ready';
-    total: number;
-  }>({
-    page: 1,
-    pageSize: 10,
-    rows: [],
-    status: 'loading',
-    total: 0,
-  });
-  const [policyCandidates, setPolicyCandidates] = useState<RdTaskExecutorPolicyRecord[]>([]);
-  const selectedExecutorType = Form.useWatch('executor_type', form);
-  const watchedAutonomyMode = Form.useWatch('autonomy_mode', form);
-  const watchedCodeChangeReviewMode = Form.useWatch('code_change_review_mode', form);
-  const watchedName = Form.useWatch('name', form);
-  const watchedPriority = Form.useWatch('priority', form);
-  const watchedProductId = Form.useWatch('product_id', form);
-  const watchedStatus = Form.useWatch('status', form);
-  const watchedTaskType = Form.useWatch('task_type', form);
-
-  const loadReferences = useCallback(async () => {
-    setReferenceLoading(true);
-    try {
-      const [nextProducts, nextRunners] = await Promise.all([
-        fetchManagementProducts(),
-        fetchAiExecutorRunners({ status: 'active' }),
-      ]);
-      setProducts(nextProducts);
-      setRunners(nextRunners.filter((runner) => runner.id !== 'ai_executor_runner_system_default'));
-    } catch (error) {
-      message.error(mutationError(error, '加载研发执行器策略配置资源失败'));
-    } finally {
-      setReferenceLoading(false);
-    }
-  }, []);
-
-  const loadPolicies = useCallback(async (query: ManagementListQuery) => {
-    setListState((current) => ({ ...current, status: 'loading' }));
-    try {
-      const result = await fetchRdTaskExecutorPolicyList(buildPolicyListQuery(query));
-      setListState({
-        page: result.page,
-        pageSize: result.pageSize,
-        performance: result.performance,
-        rows: result.rows,
-        status: 'ready',
-        total: result.total,
-      });
-    } catch (error) {
-      setListState((current) => ({ ...current, rows: [], status: 'error' }));
-      message.error(mutationError(error, '加载研发执行器策略失败'));
-    }
-  }, []);
-
-  const loadPolicyCandidates = useCallback(async () => {
-    try {
-      setPolicyCandidates(await fetchRdTaskExecutorPolicies());
-    } catch (error) {
-      message.error(mutationError(error, '加载研发执行器策略命中预览失败'));
-    }
-  }, []);
+  const [policies, setPolicies] = useState<RdDeliveryPolicy[]>([]);
+  const [roles, setRoles] = useState<RdRoleDefinition[]>([]);
+  const [aiEmployees, setAiEmployees] = useState<RdAiEmployee[]>([]);
+  const [profiles, setProfiles] = useState<RdExecutorProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string>();
+  const [editor, setEditor] = useState<PolicyEditorState>();
+  const [saving, setSaving] = useState(false);
 
   const reload = useCallback(async () => {
-    await Promise.all([loadPolicies(listQuery), loadPolicyCandidates(), loadReferences()]);
-  }, [listQuery, loadPolicies, loadPolicyCandidates, loadReferences]);
-
-  useEffect(() => {
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (!cancelled) {
-        void loadReferences();
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadReferences]);
-
-  useEffect(() => {
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (!cancelled) {
-        void loadPolicies(listQuery);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [listQuery, loadPolicies]);
-
-  useEffect(() => {
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (!cancelled) {
-        void loadPolicyCandidates();
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadPolicyCandidates]);
-
-  const productOptions = useMemo(
-    () => [
-      { label: '全局默认', value: '' },
-      ...products.map((product) => ({ label: product.name, value: product.id })),
-    ],
-    [products],
-  );
-
-  const repositoryOptions = useMemo(
-    () => [
-      { label: '不绑定', value: '' },
-      ...repositories.map((repository) => ({
-        label: `${repository.name} (${repository.defaultBranch})`,
-        value: repository.id,
-      })),
-    ],
-    [repositories],
-  );
-
-  const runnerOptions = useMemo(() => {
-    return runners
-      .filter((runner) => !selectedExecutorType || (runner.executor_types ?? []).includes(selectedExecutorType))
-      .map((runner) => ({
-        label: `${runner.name} (${(runner.executor_types ?? []).map(executorLabel).join(', ')})`,
-        value: runner.id,
-      }));
-  }, [runners, selectedExecutorType]);
-  const conflictPolicies = policyCandidates.length ? policyCandidates : listState.rows;
-  const modalPreview = useMemo(() => {
-    const currentPolicy: RdTaskExecutorPolicyRecord = {
-      autonomy_mode: watchedAutonomyMode ?? 'single_pass',
-      code_change_review_mode: watchedCodeChangeReviewMode ?? 'manual_review',
-      executor_type: selectedExecutorType ?? 'codex',
-      id: editingPolicy?.id ?? '__current_form_policy__',
-      instruction_template: '',
-      name: String(watchedName || '').trim() || '当前表单策略',
-      priority: Number(watchedPriority || 100),
-      product_id: watchedProductId || null,
-      status: watchedStatus || 'active',
-      task_type: watchedTaskType || '',
-      timeout_seconds: 1800,
-      workspace_root: '',
-    };
-    const nextPolicies = [
-      ...conflictPolicies.filter((policy) => policy.id !== editingPolicy?.id),
-      currentPolicy,
-    ];
-    return buildModalPolicyPreview({
-      currentPolicy,
-      policies: nextPolicies,
-      products,
-    });
-  }, [
-    conflictPolicies,
-    editingPolicy?.id,
-    products,
-    selectedExecutorType,
-    watchedCodeChangeReviewMode,
-    watchedAutonomyMode,
-    watchedName,
-    watchedPriority,
-    watchedProductId,
-    watchedStatus,
-    watchedTaskType,
-  ]);
-  const taskTypeOptions = useMemo(() => {
-    if (editingPolicy?.task_type !== LEGACY_CODE_INSPECTION_REMEDIATION_TYPE) {
-      return TASK_TYPE_OPTIONS;
-    }
-    return [
-      {
-        disabled: true,
-        label: '代码巡检整改（历史兼容，建议改用 Bug 修复）',
-        value: LEGACY_CODE_INSPECTION_REMEDIATION_TYPE,
-      },
-      ...TASK_TYPE_OPTIONS,
-    ];
-  }, [editingPolicy?.task_type]);
-
-  const loadRepositories = useCallback(async (productId?: string | null) => {
-    if (!productId) {
-      setRepositories([]);
-      return;
-    }
+    setLoading(true);
+    setLoadError(undefined);
     try {
-      setRepositories(await fetchProductGitRepositoryRecords(productId));
+      const [nextPolicies, nextRoles, nextEmployees, nextProfiles] = await Promise.all([
+        fetchRdDeliveryPolicies(),
+        fetchRdRoles(),
+        fetchRdAiEmployees(),
+        fetchRdExecutorProfiles(),
+      ]);
+      setPolicies(nextPolicies);
+      setRoles(nextRoles);
+      setAiEmployees(nextEmployees);
+      setProfiles(nextProfiles);
     } catch (error) {
-      setRepositories([]);
-      message.error(mutationError(error, '加载产品代码库失败'));
+      setLoadError(formatMutationError(error));
+    } finally {
+      setLoading(false);
     }
   }, []);
 
-  const openCreateModal = () => {
-    setEditingPolicy(undefined);
-    setRepositories([]);
-    form.resetFields();
-    form.setFieldsValue({
-      autonomy_mode: 'single_pass',
-      auto_merge_risk_threshold: 'low',
-      code_change_review_mode: 'manual_review',
-      cost_budget: undefined,
-      executor_type: 'codex',
-      instruction_template: '请基于研发任务 {{task_id}} / {{task_title}} 在当前仓库完成分析，并输出结构化结果。',
-      max_duration_seconds: 3600,
-      max_iterations: 1,
-      output_contract_json: stableJson({ summary: 'string', details: 'object' }),
-      priority: 100,
-      quality_gate_policy_id: '',
-      status: 'active',
-      task_type: 'product_detail_design',
-      timeout_seconds: 1800,
-      token_budget: undefined,
-      workspace_root: '',
-    });
-    setModalOpen(true);
+  useEffect(() => {
+    const timer = globalThis.setTimeout(() => void reload(), 0);
+    return () => globalThis.clearTimeout(timer);
+  }, [reload]);
+
+  const activePolicies = useMemo(
+    () => policies.filter((policy) => policy.status === 'active'),
+    [policies],
+  );
+
+  const openEditor = (policy?: RdDeliveryPolicy) => {
+    form.setFieldsValue(initialFormValues(policy));
+    setEditor({ bindings: Array.isArray(policy?.role_bindings) ? policy.role_bindings : [], policy });
   };
 
-  const openEditModal = async (policy: RdTaskExecutorPolicyRecord) => {
-    setEditingPolicy(policy);
-    await loadRepositories(policy.product_id);
-    form.resetFields();
-    form.setFieldsValue({
-      autonomy_mode: policy.autonomy_mode ?? 'single_pass',
-      auto_merge_risk_threshold: policy.auto_merge_risk_threshold ?? 'low',
-      branch: policy.branch ?? undefined,
-      code_change_review_mode: policy.code_change_review_mode ?? 'manual_review',
-      cost_budget: policy.cost_budget ?? undefined,
-      executor_type: policy.executor_type,
-      instruction_template: policy.instruction_template,
-      name: policy.name,
-      max_duration_seconds: policy.max_duration_seconds ?? 3600,
-      max_iterations: policy.max_iterations ?? 1,
-      output_contract_json: stableJson(policy.output_contract ?? {}),
-      priority: policy.priority,
-      product_id: policy.product_id ?? '',
-      quality_gate_policy_id: policy.quality_gate_policy_id ?? '',
-      repository_id: policy.repository_id ?? '',
-      runner_id: policy.runner_id ?? undefined,
-      status: policy.status,
-      task_type: policy.task_type,
-      timeout_seconds: policy.timeout_seconds,
-      token_budget: policy.token_budget ?? undefined,
-      workspace_root: policy.workspace_root,
-    });
-    setModalOpen(true);
-  };
-
-  const submitPolicy = async () => {
+  const savePolicy = async () => {
+    if (!editor) {
+      return;
+    }
+    const values = await form.validateFields();
+    if (!editor.bindings.length) {
+      message.warning('请至少配置一个岗位责任主体');
+      return;
+    }
+    setSaving(true);
     try {
-      const values = await form.validateFields();
-      const outputContract = parseJsonObject(values.output_contract_json, '输出契约');
-      const payload = {
-        autonomy_mode: values.autonomy_mode,
-        auto_merge_risk_threshold: values.auto_merge_risk_threshold,
-        branch: values.branch || null,
-        code_change_review_mode: values.code_change_review_mode,
-        cost_budget: values.cost_budget ?? null,
-        executor_type: values.executor_type,
-        instruction_template: values.instruction_template,
-        name: values.name,
-        max_duration_seconds: values.max_duration_seconds,
-        max_iterations: values.autonomy_mode === 'autonomous_loop' ? values.max_iterations : 1,
-        output_contract: outputContract,
-        priority: values.priority,
-        product_id: values.product_id || null,
-        quality_gate_policy_id: values.quality_gate_policy_id || null,
-        repository_id: values.repository_id || null,
-        runner_id: values.runner_id || null,
-        status: values.status,
-        task_type: values.task_type,
-        timeout_seconds: values.timeout_seconds,
-        token_budget: values.token_budget ?? null,
-        workspace_root: values.workspace_root,
-      };
-      if (editingPolicy) {
-        await updateRdTaskExecutorPolicy(editingPolicy.id, payload);
-        message.success('研发执行器策略已更新');
-      } else {
-        await createRdTaskExecutorPolicy(payload);
-        message.success('研发执行器策略已创建');
-      }
-      setModalOpen(false);
-      await Promise.all([loadPolicies(listQuery), loadPolicyCandidates()]);
+      const payload = buildPayload(values, editor.bindings);
+      const saved = editor.policy
+        ? await updateRdDeliveryPolicy(editor.policy.id, editor.policy.policy_version, payload)
+        : await createRdDeliveryPolicy(payload);
+      setPolicies((current) => {
+        const withoutSaved = current.filter((policy) => policy.id !== saved.id);
+        return [...withoutSaved, saved];
+      });
+      message.success(editor.policy ? '研发执行策略已更新并形成新版本' : '研发执行策略已创建');
+      setEditor(undefined);
     } catch (error) {
-      message.error(mutationError(error, '保存研发执行器策略失败'));
+      message.error(formatMutationError(error));
+    } finally {
+      setSaving(false);
     }
   };
-
-  const removePolicy = async (policy: RdTaskExecutorPolicyRecord) => {
-    try {
-      await deleteRdTaskExecutorPolicy(policy.id);
-      message.success('研发执行器策略已删除');
-      await Promise.all([loadPolicies(listQuery), loadPolicyCandidates()]);
-    } catch (error) {
-      message.error(mutationError(error, '删除研发执行器策略失败'));
-    }
-  };
-
-  const columns: ProColumns<RdTaskExecutorPolicyRow>[] = [
-    {
-      dataIndex: 'name',
-      title: '策略名称',
-      width: 220,
-    },
-    {
-      dataIndex: 'task_type',
-      render: (_, row) => <Tag>{taskTypeLabel(row.task_type)}</Tag>,
-      title: '任务类型',
-      width: 190,
-    },
-    {
-      dataIndex: 'executor_type',
-      render: (_, row) => <Tag color="blue">{executorLabel(row.executor_type)}</Tag>,
-      title: '执行器',
-      width: 130,
-    },
-    {
-      dataIndex: 'autonomy_mode',
-      render: (_, row) => (
-        <Space orientation="vertical" size={2}>
-          <Tag color={row.autonomy_mode === 'autonomous_loop' ? 'cyan' : 'default'}>
-            {row.autonomy_mode === 'autonomous_loop' ? 'Agent 自治循环' : '单次执行'}
-          </Tag>
-          {row.autonomy_mode === 'autonomous_loop' ? (
-            <span style={{ color: 'rgba(0, 0, 0, 0.45)', fontSize: 12 }}>
-              最多 {row.max_iterations ?? 3} 轮
-            </span>
-          ) : null}
-        </Space>
-      ),
-      title: '执行模式',
-      width: 150,
-    },
-    {
-      dataIndex: 'code_change_review_mode',
-      render: (_, row) => (
-        <Tag color={row.code_change_review_mode === 'auto_commit' ? 'green' : 'gold'}>
-          {codeChangeReviewModeLabel(row.code_change_review_mode)}
-        </Tag>
-      ),
-      title: '代码提交方式',
-      width: 160,
-    },
-    {
-      dataIndex: 'runner_name',
-      render: (_, row) => row.runner_name ?? row.runner_id ?? '-',
-      title: 'Runner',
-      width: 220,
-    },
-    {
-      dataIndex: 'product_name',
-      render: (_, row) => row.product_name ?? '全局默认',
-      title: '产品',
-      width: 160,
-    },
-    {
-      dataIndex: 'repository_name',
-      render: (_, row) => row.repository_name ?? row.repository_id ?? '-',
-      title: '代码库',
-      width: 180,
-    },
-    {
-      dataIndex: 'workspace_root',
-      ellipsis: true,
-      title: '工作区',
-      width: 260,
-    },
-    {
-      dataIndex: 'priority',
-      sorter: (left, right) => left.priority - right.priority,
-      title: '优先级',
-      width: 100,
-    },
-    {
-      dataIndex: 'policy_hit_hint',
-      render: (_, row) => {
-        const hint = buildPolicyHitHint(row, conflictPolicies);
-        return (
-          <Space orientation="vertical" size={2}>
-            <Tag color={hint.color}>{hint.label}</Tag>
-            <span style={{ color: 'rgba(0, 0, 0, 0.45)', fontSize: 12 }}>{hint.description}</span>
-          </Space>
-        );
-      },
-      title: '命中提示',
-      width: 260,
-    },
-    {
-      dataIndex: 'status',
-      render: (_, row) => (
-        <StatusTag color={STATUS_COLORS[row.status] ?? 'default'} label={row.status === 'active' ? '启用' : '停用'} />
-      ),
-      title: '状态',
-      width: 100,
-    },
-    {
-      dataIndex: 'updated_at',
-      render: (value) => formatDisplayDateTime(value as string | undefined),
-      title: '更新时间',
-      width: 170,
-    },
-    {
-      fixed: 'right',
-      render: (_, row) => (
-        <Space>
-          <Button size="small" type="link" onClick={() => openEditModal(row)}>
-            编辑
-          </Button>
-          <Popconfirm title={`删除策略「${row.name}」？`} onConfirm={() => removePolicy(row)}>
-            <Button danger size="small" type="link">
-              删除
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
-      title: '操作',
-      valueType: 'option',
-      width: 140,
-    },
-  ];
 
   return (
-    <>
-      <ManagementListPage<RdTaskExecutorPolicyRow>
-        breadcrumbGroup="需求交付"
-        columns={columns}
-        dataSource={listState.rows as RdTaskExecutorPolicyRow[]}
-        viewStorageKey="delivery.rd_executor_policies"
-        filters={[
-          { label: '策略名称', name: 'name', type: 'text' },
-          { label: '任务类型', name: 'task_type', options: taskTypeOptions, type: 'select' },
-          { label: '执行器', name: 'executor_type', options: EXECUTOR_OPTIONS, type: 'select' },
-          { label: '产品', name: 'product_name', type: 'text' },
-          { label: '状态', name: 'status', options: STATUS_OPTIONS, type: 'select' },
-        ]}
-        loading={referenceLoading || listState.status === 'loading'}
-        onPrimaryAction={openCreateModal}
-        onReload={() => void reload()}
-        primaryAction="新增策略"
-        remote={{
-          onChange: setListQuery,
-          page: listState.page,
-          pageSize: listState.pageSize,
-          performance: listState.performance,
-          total: listState.total,
-        }}
-        rowKey="id"
-        tableLayout="fixed"
-        tableScroll={{ x: 2440 }}
-        tableTitle="研发执行器策略"
-        title="研发执行器策略"
+    <main>
+      <Typography.Title level={2}>统一研发执行策略</Typography.Title>
+      <Typography.Paragraph type="secondary">
+        一套策略覆盖需求评估、优先归组、开发、测试、审核与远程推送。LLM 只生成建议和计划；工作项、依赖、权限、人工关卡与状态转换由确定性控制平面执行。
+      </Typography.Paragraph>
+      <Alert
+        showIcon
+        type="info"
+        title="当前交付边界：开发、测试、代码审核、可信远程推送与待发布证据。部署默认禁用，不会由本页面或协同流程触发。"
       />
-
+      {loadError ? (
+        <Alert
+          action={<Button size="small" onClick={() => void reload()}>重试</Button>}
+        title={loadError}
+          style={{ marginTop: 16 }}
+          type="error"
+        />
+      ) : null}
+      <Card style={{ marginTop: 16 }}>
+        <Tabs
+          items={[
+            {
+              key: 'policies',
+              label: `交付策略（${policies.length}）`,
+              children: loading ? <Spin /> : (
+                <>
+                  <Space style={{ marginBottom: 12 }}>
+                    <Button type="primary" onClick={() => openEditor()}>新增研发执行策略</Button>
+                    <Button onClick={() => void reload()}>刷新</Button>
+                    <Typography.Text type="secondary">启用中：{activePolicies.length}</Typography.Text>
+                  </Space>
+                  <Table
+                    dataSource={policies}
+                    pagination={false}
+                    rowKey="id"
+                    columns={[
+                      { dataIndex: 'name', title: '策略名称' },
+                      {
+                        dataIndex: 'matching_config',
+                        title: '适用任务',
+                        render: (config: Record<string, unknown>) =>
+                          Array.isArray(config?.task_types)
+                            ? config.task_types.map((taskType) => <Tag key={String(taskType)}>{String(taskType)}</Tag>)
+                            : '-',
+                      },
+                      {
+                        dataIndex: 'role_bindings',
+                        title: '岗位责任',
+                        render: (bindings: unknown) => {
+                          if (!Array.isArray(bindings)) {
+                            return '-';
+                          }
+                          return bindings.map((binding) => {
+                            const roleCode = typeof binding?.role_code === 'string' ? binding.role_code : '未配置岗位';
+                            return <Tag key={roleCode}>{roleCode}</Tag>;
+                          });
+                        },
+                      },
+                      { title: '交付终点', render: (_, policy: RdDeliveryPolicy) => policyTargetTag(policy) },
+                      { dataIndex: 'policy_version', title: '版本', render: (version: number) => `v${version}` },
+                      {
+                        dataIndex: 'status',
+                        title: '状态',
+                        render: (status: string) => <Tag color={status === 'active' ? 'green' : 'default'}>{status === 'active' ? '启用' : '停用'}</Tag>,
+                      },
+                      { title: '操作', render: (_, policy: RdDeliveryPolicy) => <Button type="link" onClick={() => openEditor(policy)}>编辑</Button> },
+                    ]}
+                  />
+                </>
+              ),
+            },
+            {
+              key: 'employees',
+              label: `AI 数字员工（${aiEmployees.length}）`,
+              children: loading ? <Spin /> : (
+                <AiEmployeeCatalog
+                  employees={aiEmployees}
+                  onCreated={(employee) => setAiEmployees((current) => [...current, employee])}
+                />
+              ),
+            },
+          ]}
+        />
+      </Card>
       <Modal
         destroyOnHidden
-        open={modalOpen}
-        title={editingPolicy ? '编辑研发执行器策略' : '新增研发执行器策略'}
-        width={760}
-        onCancel={() => setModalOpen(false)}
-        onOk={submitPolicy}
+        open={Boolean(editor)}
+        title={editor?.policy ? '编辑统一研发执行策略' : '新增统一研发执行策略'}
+        width={900}
+        confirmLoading={saving}
+        onCancel={() => setEditor(undefined)}
+        onOk={() => void savePolicy()}
       >
-        <Form<PolicyFormValues> form={form} labelCol={{ span: 6 }} layout="horizontal">
-          <Form.Item label="策略名称" name="name" rules={[{ required: true, message: '请输入策略名称' }]}>
+        <Form form={form} layout="vertical">
+          <Form.Item label="策略名称" name="name" rules={[{ required: true, whitespace: true }]}>
+            <Input placeholder="例如：研发团队标准交付策略" />
+          </Form.Item>
+          <Form.Item label="产品 ID（留空表示全局策略）" name="productId">
             <Input />
           </Form.Item>
-          <Form.Item label="任务类型" name="task_type" rules={[{ required: true, message: '请选择任务类型' }]}>
-            <Select optionFilterProp="label" options={taskTypeOptions} showSearch />
+          <Form.Item label="适用任务" name="taskTypes" rules={[{ required: true, type: 'array', min: 1 }]}>
+            <Select mode="multiple" options={taskTypeOptions} />
           </Form.Item>
-          <Form.Item label="执行器" name="executor_type" rules={[{ required: true, message: '请选择执行器' }]}>
-            <Select
-              options={EXECUTOR_OPTIONS}
-              onChange={() => {
-                form.setFieldValue('runner_id', undefined);
-              }}
-            />
+          <Form.Item label="策略状态" name="status" rules={[{ required: true }]}>
+            <Select options={[{ label: '启用', value: 'active' }, { label: '停用', value: 'disabled' }]} />
           </Form.Item>
-          <Form.Item label="Runner" name="runner_id" rules={[{ required: true, message: '请选择 Runner' }]}>
-            <Select options={runnerOptions} />
-          </Form.Item>
-          <Form.Item label="产品" name="product_id">
-            <Select
-              options={productOptions}
-              onChange={async (value) => {
-                form.setFieldValue('repository_id', '');
-                await loadRepositories(value);
-              }}
-            />
-          </Form.Item>
-          <Form.Item label="代码库" name="repository_id">
-            <Select options={repositoryOptions} />
-          </Form.Item>
-          <Form.Item label="分支" name="branch">
-            <Input />
-          </Form.Item>
-          <Form.Item label="工作区" name="workspace_root" rules={[{ required: true, message: '请输入工作区路径' }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item
-            label="执行模式"
-            name="autonomy_mode"
-            rules={[{ required: true, message: '请选择执行模式' }]}
-          >
-            <Segmented
-              block
-              options={AUTONOMY_MODE_OPTIONS}
-              onChange={(value) => {
-                if (value === 'autonomous_loop' && Number(form.getFieldValue('max_iterations') || 1) === 1) {
-                  form.setFieldValue('max_iterations', 3);
-                }
-              }}
-            />
-          </Form.Item>
-          <Form.Item
-            label="代码提交方式"
-            name="code_change_review_mode"
-            rules={[{ required: true, message: '请选择代码提交方式' }]}
-          >
-            <Select options={CODE_CHANGE_REVIEW_MODE_OPTIONS} />
-          </Form.Item>
-          <Form.Item label="独立质量门禁" name="quality_gate_policy_id">
-            <Select options={QUALITY_GATE_POLICY_OPTIONS} />
-          </Form.Item>
-          {watchedCodeChangeReviewMode === 'auto_commit' ? (
-            <Form.Item
-              label="自动合并风险"
-              name="auto_merge_risk_threshold"
-              rules={[{ required: true, message: '请选择自动合并风险阈值' }]}
-            >
-              <Select options={AUTO_MERGE_RISK_OPTIONS} />
-            </Form.Item>
-          ) : null}
-          {watchedAutonomyMode === 'autonomous_loop' ? (
-            <>
-              <Form.Item label="最大循环轮次" name="max_iterations" rules={[{ required: true, message: '请输入最大循环轮次' }]}>
-                <InputNumber max={20} min={2} style={{ width: '100%' }} />
-              </Form.Item>
-              <Form.Item label="自治时长上限（秒）" name="max_duration_seconds" rules={[{ required: true, message: '请输入自治时长上限' }]}>
-                <InputNumber max={86400} min={60} style={{ width: '100%' }} />
-              </Form.Item>
-              <Form.Item label="Token 预算" name="token_budget">
-                <InputNumber max={100000000} min={1} placeholder="不填表示不限" style={{ width: '100%' }} />
-              </Form.Item>
-              <Form.Item label="费用预算（USD）" name="cost_budget">
-                <InputNumber max={100000} min={0.01} precision={2} placeholder="不填表示不限" style={{ width: '100%' }} />
-              </Form.Item>
-            </>
-          ) : null}
-          {watchedCodeChangeReviewMode === 'auto_commit' ? (
-            <Form.Item label="安全说明">
-              <Alert
-                showIcon
-                title="只有平台独立门禁通过且风险不高于阈值时才会自动合入；迁移、受保护目录和安全问题仍强制人工确认。"
-                type="info"
-              />
-            </Form.Item>
-          ) : null}
-          <Form.Item label="超时秒数" name="timeout_seconds" rules={[{ required: true, message: '请输入超时秒数' }]}>
-            <InputNumber max={86400} min={60} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item label="优先级" name="priority" rules={[{ required: true, message: '请输入优先级' }]}>
-            <InputNumber max={10000} min={1} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
-            <Select options={STATUS_OPTIONS} />
-          </Form.Item>
-          <Form.Item label="策略预览">
-            <Alert
-              description={
-                <Space orientation="vertical" size={4}>
-                  {modalPreview.detail ? <span>{modalPreview.detail}</span> : null}
-                  {modalPreview.warning ? <span>{modalPreview.warning}</span> : null}
-                </Space>
-              }
-              showIcon
-              title={modalPreview.message}
-              type={modalPreview.type}
-            />
-          </Form.Item>
-          <Form.Item label="指令模板" name="instruction_template" rules={[{ required: true, message: '请输入指令模板' }]}>
-            <Input.TextArea rows={5} />
-          </Form.Item>
-          <Form.Item label="输出契约" name="output_contract_json">
-            <Input.TextArea rows={5} />
+          <Form.Item label="交付终点" name="deliveryTarget">
+            <Select disabled options={[{ label: '推送远程仓库并待发布', value: 'ready_for_release' }]} />
           </Form.Item>
         </Form>
+        <PolicyRoleBindings
+          aiEmployees={aiEmployees}
+          executorProfiles={profiles}
+          roles={roles}
+          value={editor?.bindings}
+          onChange={(bindings) => setEditor((current) => current ? { ...current, bindings } : current)}
+          onRoleCreated={(role) => setRoles((current) => [...current, role])}
+        />
       </Modal>
-    </>
+    </main>
   );
 }

@@ -532,6 +532,9 @@ def persist_work_item_plan(
     actor: dict[str, Any],
 ) -> dict[str, Any]:
     """Validate then persist one immutable plan version with frozen seat ids."""
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(store, operation="collaboration_run.plan")
     repository = getattr(store, "repository", None)
     get_run = getattr(repository, "get_rd_collaboration_run", None)
     run = (
@@ -686,6 +689,9 @@ def start_collaboration_run(
     reason: str | None = None,
 ) -> dict[str, Any]:
     """Freeze version scope and strategy into one non-terminal collaboration run."""
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(store, operation="collaboration_run.start")
     version = _version(store, product_version_id)
     if int(version.get("scope_version") or 1) != scope_version:
         raise api_error(
@@ -888,6 +894,9 @@ def restart_terminal_collaboration_run(
     reason: str | None = None,
 ) -> dict[str, Any]:
     """Create a new generation; terminal collaboration state is never reopened."""
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(store, operation="collaboration_run.restart")
     version = _version(store, product_version_id)
     repository = getattr(store, "repository", None)
     get_terminal = getattr(repository, "get_rd_collaboration_run", None)

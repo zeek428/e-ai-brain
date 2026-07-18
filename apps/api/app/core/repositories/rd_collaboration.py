@@ -5,6 +5,7 @@ from contextlib import AbstractContextManager
 from typing import Any
 
 from psycopg import sql
+from psycopg.types.json import Jsonb
 
 from app.core.repositories.rd_collaboration_writes import (
     RdCollaborationRepositoryError,
@@ -78,6 +79,99 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
                     for item in cursor.fetchall()
                     if (row := _row_dict(cursor, item)) is not None
                 ]
+
+    def get_rd_collaboration_upgrade_state(self, record_id: str) -> dict[str, Any] | None:
+        return self._get("rd_collaboration_upgrade_state", record_id)
+
+    def update_rd_collaboration_upgrade_state(
+        self, *, expected_version: int, changes: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Persist the maintenance fence with optimistic locking.
+
+        Upgrade state is a durable, single-row control-plane fact; do not fall
+        back to the request-local runtime store in PostgreSQL mode.
+        """
+        json_fields = (
+            "advisory_preflight_json",
+            "locked_preflight_json",
+            "active_counts_json",
+            "smoke_test_json",
+            "fence_release_evidence",
+        )
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT version FROM rd_collaboration_upgrade_state WHERE id = %s FOR UPDATE",
+                    (str(changes["id"]),),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise RdCollaborationRepositoryError(
+                        "NOT_FOUND", "R&D collaboration upgrade state does not exist"
+                    )
+                current_version = int(row[0])
+                if current_version != expected_version:
+                    raise RdCollaborationVersionConflictError(current_version)
+                assignments = [
+                    "fence_mode = %s",
+                    "schema_version = %s",
+                    "fence_reason = %s",
+                    "advisory_preflight_json = %s",
+                    "locked_preflight_json = %s",
+                    "active_counts_json = %s",
+                    "backup_marker = %s",
+                    "cutover_started_at = %s",
+                    "cleanup_started_at = %s",
+                    "cleanup_completed_at = %s",
+                    "v2_api_version = %s",
+                    "v2_worker_version = %s",
+                    "v2_graph_version = %s",
+                    "health_marker = %s",
+                    "smoke_test_json = %s",
+                    "abort_reason = %s",
+                    "abort_actor_id = %s",
+                    "aborted_at = %s",
+                    "fence_released_at = %s",
+                    "fence_release_evidence = %s",
+                    "version = version + 1",
+                    "updated_at = now()",
+                ]
+                values: list[Any] = [
+                    changes.get("fence_mode"),
+                    changes.get("schema_version"),
+                    changes.get("fence_reason"),
+                    *[Jsonb(changes.get(field) or {}) for field in json_fields[:3]],
+                    changes.get("backup_marker"),
+                    changes.get("cutover_started_at"),
+                    changes.get("cleanup_started_at"),
+                    changes.get("cleanup_completed_at"),
+                    changes.get("v2_api_version"),
+                    changes.get("v2_worker_version"),
+                    changes.get("v2_graph_version"),
+                    changes.get("health_marker"),
+                    Jsonb(changes.get("smoke_test_json") or {}),
+                    changes.get("abort_reason"),
+                    changes.get("abort_actor_id"),
+                    changes.get("aborted_at"),
+                    changes.get("fence_released_at"),
+                    Jsonb(changes.get("fence_release_evidence") or {}),
+                    str(changes["id"]),
+                    expected_version,
+                ]
+                cursor.execute(
+                    f"""
+                    UPDATE rd_collaboration_upgrade_state
+                    SET {", ".join(assignments)}
+                    WHERE id = %s AND version = %s
+                    RETURNING *
+                    """,
+                    values,
+                )
+                saved = _row_dict(cursor, cursor.fetchone())
+                if saved is None:
+                    raise RdCollaborationVersionConflictError(current_version)
+            connection.commit()
+        return saved
 
     def get_rd_role_definition(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_role_definitions", record_id)

@@ -65,6 +65,9 @@ def approve_requirement_result(
     requirement_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(current_store, operation="requirement.approve")
     require_any_permission_or_roles(user, {"requirement.approve"}, {"product_owner", "rd_owner"})
     requirements = _read_memory_dict(current_store, "requirements")
     requirement = requirements.get(requirement_id)
@@ -110,6 +113,9 @@ def reject_requirement_result(
     requirement_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(current_store, operation="requirement.reject")
     require_any_permission_or_roles(user, {"requirement.approve"}, {"product_owner"})
     requirements = _read_memory_dict(current_store, "requirements")
     requirement = requirements.get(requirement_id)

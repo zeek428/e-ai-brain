@@ -604,6 +604,9 @@ def generate_requirement_task_result(
     requirement_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(current_store, operation="requirements.generate_task")
     require_any_permission_or_roles(
         user,
         {"requirement.task_generate", "task.create"},

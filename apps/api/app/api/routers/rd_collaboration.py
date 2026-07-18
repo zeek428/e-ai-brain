@@ -485,6 +485,18 @@ def decide(
     return envelope(result, get_trace_id(request))
 
 
+@router.get("/api/delivery/decision-requests/{decision_request_id}")
+def get_decision_request(
+    decision_request_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    """Expose the frozen options and optimistic-lock version for the human workbench."""
+    _require(user, "delivery.rd_collaboration.read")
+    decision = require_decision_scope(store(request), user, decision_request_id)
+    return envelope(decision, get_trace_id(request))
+
+
 @router.post("/api/delivery/decision-requests/{decision_request_id}/answers")
 def answer(
     decision_request_id: str,

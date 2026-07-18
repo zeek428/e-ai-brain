@@ -730,3 +730,34 @@ def test_collaboration_routes_enforce_aggregate_product_scope() -> None:
 
     assert denied.status_code == 403
     assert denied.json()["detail"]["code"] == "FORBIDDEN"
+
+
+def test_decision_request_detail_route_returns_the_versioned_human_choice() -> None:
+    client = TestClient(app)
+    app.state.store.reset()
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "admin@example.com", "password": "admin123"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['data']['access_token']}"}
+    app.state.store.decision_requests["decision-detail-route"] = {
+        "id": "decision-detail-route",
+        "options_json": [
+            {"label": "继续协作", "code": "continue"},
+            {"label": "停止并返工", "code": "rework"},
+        ],
+        "product_id": "product-route",
+        "status": "pending",
+        "subject_id": "run-route",
+        "subject_type": "rd_collaboration_run",
+        "version": 3,
+    }
+
+    response = client.get(
+        "/api/delivery/decision-requests/decision-detail-route",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["version"] == 3
+    assert response.json()["data"]["options_json"][0]["code"] == "continue"

@@ -489,6 +489,9 @@ def list_rd_task_executor_policies_response(
     task_type: str | None = None,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(current_store, operation="rd_execution_policy.create")
     _ensure_policy_manager(user)
     started_at = perf_counter()
     if executor_type is not None:
@@ -849,6 +852,9 @@ def create_rd_task_executor_policy_response(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(current_store, operation="rd_execution_policy.update")
     _ensure_policy_manager(user)
     policy = _policy_from_payload(
         current_store=current_store,
@@ -892,6 +898,9 @@ def patch_rd_task_executor_policy_response(
     policy_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(current_store, operation="rd_execution_policy.delete")
     _ensure_policy_manager(user)
     sync_rd_task_executor_policy_store(current_store)
     existing = _read_memory_dict(current_store, "rd_task_executor_policies").get(policy_id)

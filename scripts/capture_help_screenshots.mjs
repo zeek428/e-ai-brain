@@ -169,11 +169,16 @@ async function loginIfNeeded(page, options) {
   if ((await username.count()) > 0 && (await password.count()) > 0) {
     await username.fill(options.username);
     await password.fill(options.password);
-    const challenge = page.locator('input').filter({ hasText: /\d+/ }).last();
-    if ((await challenge.count()) > 0) {
-      await challenge.fill('0');
+    const challengeQuestion = page.locator('input[disabled]').last();
+    const question = (await challengeQuestion.count()) > 0
+      ? await challengeQuestion.inputValue()
+      : '';
+    const addition = /(\d+)\s*\+\s*(\d+)/.exec(question);
+    const challengeAnswer = page.getByPlaceholder('请输入计算结果');
+    if (addition && (await challengeAnswer.count()) > 0) {
+      await challengeAnswer.fill(String(Number(addition[1]) + Number(addition[2])));
     }
-    await page.getByRole('button').filter({ hasText: /登录|Sign in/i }).first().click();
+    await page.getByRole('button', { name: /登\s*录|Sign in/i }).first().click();
     await page.waitForLoadState('networkidle');
   }
 }

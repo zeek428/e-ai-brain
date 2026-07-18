@@ -107,9 +107,20 @@ const routes = [
       },
       {
         path: '/delivery/rd-executor-policies',
-        name: '研发执行器策略',
+        name: '研发执行策略',
         icon: 'ControlOutlined',
         component: './RdExecutorPolicies',
+      },
+      {
+        path: '/delivery/rd-collaboration',
+        name: '研发协同',
+        icon: 'ApartmentOutlined',
+        component: './RdCollaboration',
+      },
+      {
+        path: '/delivery/rd-role-experiences',
+        component: './RdRoleExperiences',
+        hideInMenu: true,
       },
       {
         path: '/delivery/versions',

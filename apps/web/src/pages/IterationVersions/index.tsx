@@ -66,6 +66,7 @@ import {
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
 import { VersionDashboardModal } from './components/VersionDashboardModal';
+import { RequirementGroupingPanel } from './RequirementGroupingPanel';
 
 type IterationVersionFormValues = {
   code: string;
@@ -1007,6 +1008,7 @@ export default function IterationVersionsPage() {
         width={980}
       >
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <RequirementGroupingPanel version={collectingVersion} />
           <Alert
             title={
               branchConfigVersion

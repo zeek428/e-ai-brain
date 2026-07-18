@@ -78,6 +78,7 @@ ALLOWED_MEMORY_FALLBACK_SETATTR_FUNCTIONS = {
     ("apps/api/app/services/product_module_listing.py", "_memory_dict"),
     ("apps/api/app/services/product_version_listing.py", "_memory_dict"),
     ("apps/api/app/services/rd_task_executor_policies.py", "_memory_dict"),
+    ("apps/api/app/services/rd_maintenance_fence.py", "_memory_states"),
     ("apps/api/app/services/related_system_listing.py", "_memory_dict"),
     ("apps/api/app/services/requirement_listing.py", "_memory_dict"),
     ("apps/api/app/services/requirements.py", "_memory_dict"),
